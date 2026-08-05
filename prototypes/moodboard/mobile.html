@@ -1,0 +1,97 @@
+<!--
+THESIS: glass on a phone. At 390px the aurora IS the wallpaper and the whole screen is one frosted pane; cards float, the private backlight carries the connection state. Survives: the feed, the cards, the prep verb. Dies: multi-column anything.
+OWN-WORLD: themed by tokens.css via ?dir= (glass default); wordmark via ?name=; scheme via ?scheme=.
+FINISH: unreviewed and undocumented is unfinished.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rennet companion · Live feed</title>
+<link rel="stylesheet" href="assets/tokens.css">
+<link rel="stylesheet" href="assets/screens.css">
+<style>
+  /* the phone floats on the gallery ground, not inside the desktop window */
+  body { padding: 26px 18px; }
+</style>
+
+<body data-screen="mobile">
+<div class="phone-stage">
+  <div class="phone" role="application" aria-label="Rennet companion">
+    <div class="screen">
+      <div class="statusbar" aria-hidden="true">
+        <span class="num">14:03</span>
+        <span style="display:flex; gap:5px; align-items:center">
+          <svg width="15" height="11" viewBox="0 0 16 12" fill="currentColor"><rect x="0" y="7" width="3" height="4" rx=".8"/><rect x="4.5" y="5" width="3" height="6" rx=".8"/><rect x="9" y="2.5" width="3" height="8.5" rx=".8"/><rect x="13" y="0" width="3" height="11" rx=".8" opacity=".35"/></svg>
+          <svg width="21" height="11" viewBox="0 0 22 12" fill="none"><rect x=".8" y="1" width="17" height="10" rx="2.6" stroke="currentColor" stroke-width="1"/><rect x="2.4" y="2.6" width="11" height="6.8" rx="1.4" fill="currentColor"/><path d="M19.4 4v4a2.2 2.2 0 0 0 0-4z" fill="currentColor" opacity=".5"/></svg>
+        </span>
+      </div>
+
+      <header class="m-head">
+        <div class="link-line">
+          <span class="pulse" aria-hidden="true"></span>
+          latios · direct · your desk is working
+        </div>
+        <h1>Breaking down #482</h1>
+        <p class="pr">atlas · Per-org rate limiting for the public API · <span class="sha num">a3f9c21</span></p>
+      </header>
+
+      <main class="m-feed" aria-label="Live analysis feed">
+        <p class="feed-title">Everything below happened on your Mac</p>
+
+        <div class="entry">
+          <time class="num">14:02:11</time>
+          <p class="what">Fetched the PR · <b class="num">23 files, +1,412 −435</b></p>
+        </div>
+        <div class="entry">
+          <time class="num">14:02:19</time>
+          <p class="what">Read <b>docs/plan.md</b> · it makes <b class="num">12 claims</b> this change must answer</p>
+        </div>
+        <div class="entry">
+          <time class="num">14:02:36</time>
+          <p class="what">Sequenced the change · <b class="num">6 chunks</b>, spine first, prose folded away</p>
+          <button class="m-card">
+            <span class="nbox num">6</span>
+            <span class="t"><b>The sequence is ready</b><small>Schema → bucket → wiring → call sites → evidence → verified noise</small></span>
+            <svg class="go" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2.5 8 6 4 9.5"/></svg>
+          </button>
+        </div>
+        <div class="entry">
+          <time class="num">14:02:58</time>
+          <p class="what">Pulled out the calls only you can make · capped at <b class="num">4</b></p>
+          <button class="m-card">
+            <span class="nbox num">4</span>
+            <span class="t"><b>Decisions, readable now</b><small>Fail-open · per-org keys · 429 contract · irreversible backfill</small></span>
+            <svg class="go" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2.5 8 6 4 9.5"/></svg>
+          </button>
+        </div>
+        <div class="entry">
+          <time class="num">14:03:07</time>
+          <p class="what">Noise pass · <b class="num">592 lines</b> classified, 214 lines carry deletion findings</p>
+        </div>
+        <div class="entry flagged">
+          <time class="num">14:03:14</time>
+          <p class="what">Claims and evidence · 11 of 12 covered, <b>1 unclaimed change</b> found</p>
+        </div>
+
+        <div class="working" aria-live="polite">
+          <span class="spin" aria-hidden="true"></span>
+          <p class="what">Weighing blast radius<small>2 flags so far · the migration, and a CI coverage threshold drop</small></p>
+        </div>
+      </main>
+
+      <div class="m-bottom">
+        <button class="prep">
+          <svg width="17" height="17" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="8" r="6.2"/><path d="M8 4.8V8l2.4 1.6"/></svg>
+          <span class="t">
+            <b>Queue #479 next</b>
+            <small>It will be broken down and waiting when you sit down</small>
+          </span>
+          <svg class="go" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2.5 8 6 4 9.5"/></svg>
+        </button>
+        <p class="desk-note">Reading and triage live here. Signing stays at the desk: paper only exists where the repo does.</p>
+        <div class="home-bar" aria-hidden="true"></div>
+      </div>
+    </div>
+  </div>
+</div>
+<script src="assets/app.js"></script>
+</body>

@@ -1,0 +1,150 @@
+<!--
+THESIS: the subtraction angle on glass. The delete queue: which of the 1,847 changed lines should not exist, with receipts only a local tool can produce. Where a proposal needs the author's intent, the conversation is right there: asking the author's agent opens a backlit thread, same language as every other surface.
+OWN-WORLD: themed by tokens.css via ?dir= (glass default); wordmark via ?name=; scheme via ?scheme=.
+FINISH: unreviewed and undocumented is unfinished.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wingman · Subtraction angle</title>
+<link rel="stylesheet" href="assets/tokens.css">
+<link rel="stylesheet" href="assets/screens.css">
+
+<body data-screen="subtraction">
+<div class="window" role="application" aria-label="Wingman subtraction angle">
+  <header class="titlebar">
+    <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
+    <span class="wm"></span>
+    <div class="doc"><strong>atlas</strong> · #482 Per-org rate limiting <span class="sha">a3f9c21</span></div>
+    <div class="right">Snapshot · nothing changed since you started</div>
+  </header>
+
+  <div class="toolbar">
+    <div class="angles" role="group" aria-label="Angles">
+      <button class="angle" aria-pressed="false"><span class="key">1</span> Sequence</button>
+      <button class="angle" aria-pressed="false"><span class="key">2</span> Decisions <span class="count num">4</span></button>
+      <button class="angle" aria-pressed="false"><span class="key">3</span> Claims <span class="count num">11/12</span></button>
+      <button class="angle" aria-pressed="true"><span class="key">4</span> Subtraction <span class="count num">−214</span></button>
+      <button class="angle" aria-pressed="false"><span class="key">5</span> Blast <span class="flagn num">2</span></button>
+    </div>
+    <div class="spacer"></div>
+    <div class="coverage" title="Private to you. Never published.">
+      <div class="cells" aria-hidden="true"><i class="read"></i><i class="now"></i><i></i><i></i><i></i><i class="read"></i></div>
+      <em>2 of 6 read · private</em>
+    </div>
+    <button class="publish-chip" disabled aria-disabled="true">Publish route<small>3 obligations remain</small></button>
+  </div>
+
+  <main class="pane">
+    <div class="queue-pane">
+      <h1>Subtraction · <span class="sum num">214 lines</span> that should not exist</h1>
+      <p class="lede">Before you spend attention understanding these, consider not shipping them. Each proposal carries its evidence from the repo on this disk, which is how it can see what a diff-only tool cannot: what already exists.</p>
+      <div class="tally" aria-label="214 of 1,847 changed lines proposed for removal">
+        <div class="bar"><span class="cut"></span></div>
+        <em class="num">214 of 1,847 changed lines · 6 proposals · 1 kept so far</em>
+      </div>
+
+      <section class="family">
+        <h2>Already exists in this repo <span class="fam-sum num">2 proposals · 79 lines</span></h2>
+        <p class="note">Reimplementation of things the codebase already has. Invisible to any reviewer who cannot see past the diff.</p>
+
+        <article class="item">
+          <div class="i-head"><h3>A hand-rolled LRU cache</h3><span class="lines num">−38 lines</span></div>
+          <p class="i-body"><code>src/rate/lru.ts</code> is new in this PR and reimplements eviction, touch-on-get, and max-size handling.</p>
+          <div class="file" style="margin-top: 12px">
+            <div class="file-head"><span class="path">src/rate/lru.ts · new file, excerpt</span></div>
+            <div class="code cut-code">
+              <div class="crow del"><span class="ln">9</span><span class="ln"></span><span class="g">−</span><span class="src"><span class="k">export class</span> Lru&lt;K, V&gt; {</span></div>
+              <div class="crow del"><span class="ln">10</span><span class="ln"></span><span class="g">−</span><span class="src">  <span class="k">private</span> map = <span class="k">new</span> Map&lt;K, V&gt;()</span></div>
+              <div class="crow del"><span class="ln">11</span><span class="ln"></span><span class="g">−</span><span class="src">  get(key: K): V | <span class="k">undefined</span> {</span></div>
+              <div class="crow del"><span class="ln">12</span><span class="ln"></span><span class="g">−</span><span class="src">    <span class="k">const</span> hit = <span class="k">this</span>.map.get(key)</span></div>
+              <div class="crow del"><span class="ln">13</span><span class="ln"></span><span class="g">−</span><span class="src">    <span class="k">if</span> (hit !== <span class="k">undefined</span>) { <span class="k">this</span>.map.delete(key); <span class="k">this</span>.map.set(key, hit) }</span></div>
+            </div>
+          </div>
+          <div class="receipt">
+            <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="5.2" cy="5.2" r="3.4"/><path d="m8 8 2.6 2.6"/></svg>
+            <span><b>The repo already answers this.</b> <code>lru-cache@11.2.1</code> is in package.json and imported in 7 files, including <code>src/http/session-cache.ts</code>, which this PR touches two functions away.</span>
+          </div>
+          <div class="i-acts">
+            <button class="btn">Draft removal request <kbd>D</kbd></button>
+            <button class="btn quiet">Keep, with a reason <kbd>K</kbd></button>
+            <button class="btn quiet">Open in the diff <kbd>O</kbd></button>
+            <span class="hint">Drafts land only when the route is published</span>
+          </div>
+        </article>
+
+        <article class="item">
+          <div class="i-head"><h3>A retry wrapper around a synchronous function</h3><span class="lines num">−41 lines</span></div>
+          <p class="i-body"><code>withRetry(computeWindow)</code> retries a pure calculation that cannot fail transiently. The wrapper, its backoff config, and its two tests defend against an error class that cannot occur.</p>
+          <div class="i-acts">
+            <button class="btn">Draft removal request <kbd>D</kbd></button>
+            <button class="btn quiet">Keep, with a reason <kbd>K</kbd></button>
+          </div>
+        </article>
+      </section>
+
+      <section class="family">
+        <h2>Defensive scaffolding <span class="fam-sum num">3 proposals · 92 lines</span></h2>
+        <p class="note">Guard code that looks like rigour. Each guard protects against a state the surrounding code already rules out.</p>
+
+        <article class="item">
+          <div class="i-head"><h3>try/catch around metrics counters, six times</h3><span class="lines num">−24 lines</span></div>
+          <p class="i-body"><code>metrics.count()</code> is fire-and-forget and swallows its own transport errors. Six call sites wrap it anyway, and one catch block logs the error with the very logger the catch was protecting.</p>
+          <div class="i-acts">
+            <button class="btn">Draft removal request <kbd>D</kbd></button>
+            <button class="btn quiet">Keep, with a reason <kbd>K</kbd></button>
+            <button class="btn quiet">Open all 6 sites <kbd>O</kbd></button>
+          </div>
+        </article>
+
+        <article class="item">
+          <div class="i-head"><h3>Null guard on ctx.org after requireOrg middleware</h3><span class="lines num">−18 lines</span></div>
+          <p class="i-body">Nine sites re-check <code>ctx.org</code> for null after <code>requireOrg</code> has already thrown for the anonymous case.</p>
+          <div class="kept-line">
+            <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 5 9.5 10 3"/></svg>
+            <span>Kept. Your reason, recorded: "requireOrg is bypassed in the admin router; the guard is load-bearing there."</span>
+          </div>
+        </article>
+
+        <article class="item">
+          <div class="i-head"><h3>An unused error hierarchy</h3><span class="lines num">−50 lines</span></div>
+          <p class="i-body"><code>RateLimitError</code>, <code>StoreUnavailableError</code>, and <code>ConfigError</code> subclass a new base. Nothing catches by type anywhere in the changeset or the repo; every catch is generic.</p>
+          <div class="i-acts">
+            <button class="btn">Draft removal request <kbd>D</kbd></button>
+            <button class="btn quiet">Keep, with a reason <kbd>K</kbd></button>
+          </div>
+        </article>
+      </section>
+
+      <section class="family">
+        <h2>Dead on arrival <span class="fam-sum num">1 proposal · 43 lines</span></h2>
+        <article class="item">
+          <div class="i-head"><h3>A shadow-mode flag nothing reads</h3><span class="lines num">−43 lines</span></div>
+          <p class="i-body"><code>RATE_LIMIT_SHADOW_MODE</code> is added to config schema, env parsing, and the settings doc. No code path reads it. Either the feature was abandoned mid-PR, or it belongs in a follow-up with the code that uses it.</p>
+          <div class="i-acts">
+            <button class="btn">Draft removal request <kbd>D</kbd></button>
+            <button class="btn quiet">Keep, with a reason <kbd>K</kbd></button>
+            <button class="thread-open">
+              <span class="thread-mark" aria-hidden="true"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 1.5h7v5h-4L2 9V6.5h-.5z"/></svg></span>
+              Ask the author's agent <kbd>C</kbd>
+            </button>
+          </div>
+        </article>
+      </section>
+
+      <p class="lede" style="margin-top: 30px; padding-top: 18px; border-top: 1px solid var(--hairline)">Every draft above is exactly that: a draft. Nothing reaches the PR until the route is published, and each removal request lands as an ordinary review comment in your name.</p>
+    </div>
+  </main>
+
+  <footer class="footbar">
+    <span><kbd>J</kbd> <kbd>K</kbd> proposals</span>
+    <span><kbd>D</kbd> draft removal</span>
+    <span><kbd>K</kbd> keep with reason</span>
+    <span><kbd>O</kbd> open in diff</span>
+    <span><kbd>C</kbd> ask about this</span>
+    <span><kbd>1</kbd>–<kbd>5</kbd> angles</span>
+    <span class="grow"></span>
+    <span><kbd>⌘K</kbd> commands</span>
+  </footer>
+</div>
+<script src="assets/app.js"></script>
+</body>

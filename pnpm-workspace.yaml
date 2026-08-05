@@ -1,0 +1,5 @@
+packages:
+  - "apps/*"
+  - "packages/*"
+
+# Evidence spikes are intentionally isolated from the product workspace.

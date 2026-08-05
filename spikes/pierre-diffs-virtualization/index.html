@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" href="data:," />
+    <title>Pierre diffs virtualization spike</title>
+    <style>
+      html, body { margin: 0; padding: 0; background: #0d0d0f; color: #ddd; }
+      body { font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace; }
+      #root { height: 100vh; display: flex; flex-direction: column; }
+      .bar { flex: 0 0 auto; padding: 6px 10px; background: #17171b; border-bottom: 1px solid #2a2a30; }
+      .scroller { flex: 1 1 auto; min-height: 0; overflow-y: auto; overflow-x: hidden; }
+      .filewrap { margin: 0 0 12px 0; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>

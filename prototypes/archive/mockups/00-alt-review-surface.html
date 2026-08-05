@@ -1,0 +1,346 @@
+<!--
+THESIS: alternate direction, "The Instrument". Same review surface as 01, rendered as a dark graphite precision tool: monochrome plus functional color only, SF Pro throughout, denser metrics. Shown so the calm-paper argument can be judged against its opposite.
+OWN-WORLD: graphite panels, hairline seams, tabular numerals, colour spent only on meaning (add, delete, risk, private).
+FINISH: unreviewed and undocumented is unfinished.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wingman · Review surface · The Instrument (alt)</title>
+<style>
+  :root {
+    --bg: #131417;
+    --panel: #191B1F;
+    --panel-2: #1F2226;
+    --raised: #24272C;
+    --text: #E9EAEC;
+    --text-soft: #A9ADB4;
+    --text-faint: #7C8189;
+    --seam: #2A2D33;
+    --seam-strong: #383C43;
+    --accent: #6FA3DC;
+    --accent-dim: #24303F;
+    --private: #6FB2C9;
+    --private-dim: #1E2E33;
+    --amber: #D6A75B;
+    --amber-dim: #322A1C;
+    --add: #66A97C;
+    --add-dim: #1C2921;
+    --del: #C77B67;
+    --del-dim: #2E211E;
+    --string: #A4B080;
+    --comment: #767B70;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { font-size: 16px; }
+  body {
+    background: #0B0C0E; font-family: var(--sans); color: var(--text);
+    display: grid; place-items: center; min-height: 100vh; padding: 28px 20px;
+  }
+  .window {
+    width: min(1400px, 100%); background: var(--bg); border-radius: 11px;
+    border: 1px solid #000;
+    box-shadow: 0 20px 64px rgba(0,0,0,.6), 0 2px 8px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.05);
+    overflow: hidden; display: flex; flex-direction: column; min-height: 880px;
+  }
+  .titlebar {
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+    padding: 10px 16px 9px; border-bottom: 1px solid var(--seam);
+    background: var(--panel);
+  }
+  .lights { display: flex; gap: 8px; }
+  .lights span { width: 12px; height: 12px; border-radius: 50%; }
+  .lights span:nth-child(1) { background: #F26057; }
+  .lights span:nth-child(2) { background: #F5BE4F; }
+  .lights span:nth-child(3) { background: #58C43B; }
+  .doc { font-size: .78125rem; color: var(--text-soft); display: flex; align-items: baseline; gap: 8px; letter-spacing: .01em; }
+  .doc strong { color: var(--text); font-weight: 600; }
+  .doc .sha { font-family: var(--mono); font-size: .71875rem; color: var(--text-faint); }
+  .titlebar .right { justify-self: end; font-size: .71875rem; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+
+  .toolbar {
+    display: flex; align-items: center; gap: 18px; padding: 8px 16px;
+    border-bottom: 1px solid var(--seam); background: var(--panel);
+  }
+  .angles { display: flex; background: var(--bg); border: 1px solid var(--seam); border-radius: 7px; padding: 2px; gap: 1px; }
+  .angle {
+    appearance: none; border: 0; background: transparent;
+    font: 500 .75rem/1 var(--sans); color: var(--text-soft);
+    padding: 7px 12px; border-radius: 5px; cursor: pointer;
+    display: flex; align-items: center; gap: 7px; letter-spacing: .01em;
+  }
+  .angle .key { font-family: var(--mono); font-size: .65625rem; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+  .angle .count { font-variant-numeric: tabular-nums; font-size: .65625rem; color: var(--text-faint); }
+  .angle[aria-pressed="true"] { background: var(--raised); color: var(--text); box-shadow: 0 1px 3px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.06); }
+  .angle[aria-pressed="true"] .key { color: var(--accent); }
+  .angle .flag { color: var(--amber); font-size: .65625rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .toolbar .spacer { flex: 1; }
+  .coverage {
+    display: flex; align-items: center; gap: 9px; padding: 6px 11px;
+    background: var(--private-dim); border: 1px solid #2C4750; border-radius: 6px;
+  }
+  .coverage .cells { display: flex; gap: 3px; }
+  .coverage .cells i { width: 13px; height: 7px; border-radius: 1.5px; background: #2C4750; }
+  .coverage .cells i.read { background: var(--private); }
+  .coverage .cells i.now { background: var(--private); opacity: .45; }
+  .coverage em { font-style: normal; font-size: .6875rem; color: var(--private); font-variant-numeric: tabular-nums; }
+  .publish {
+    appearance: none; cursor: pointer; font: 600 .75rem/1 var(--sans);
+    color: var(--text-soft); background: var(--raised);
+    border: 1px solid var(--seam-strong); border-radius: 6px; padding: 8px 14px;
+    box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
+  }
+  .publish small { display: block; font-weight: 400; font-size: .65625rem; color: var(--text-faint); margin-top: 3px; }
+
+  .main { display: grid; grid-template-columns: 248px minmax(0,1fr) 284px; flex: 1; min-height: 0; }
+
+  .rail { border-right: 1px solid var(--seam); background: var(--panel); padding: 18px 0 12px; display: flex; flex-direction: column; }
+  .rail h2 { font-size: .75rem; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint); padding: 0 16px; }
+  .ordering {
+    margin: 10px 16px 14px; font-size: .71875rem; color: var(--text-soft);
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--seam); border-radius: 5px; padding: 5px 8px;
+    background: var(--bg); width: fit-content; cursor: pointer;
+  }
+  .chunks { list-style: none; flex: 1; }
+  .chunk-item {
+    display: grid; grid-template-columns: 30px 1fr auto; align-items: baseline;
+    padding: 8px 16px 8px 10px; cursor: pointer; border-left: 2px solid transparent;
+  }
+  .chunk-item:hover { background: var(--panel-2); }
+  .chunk-item .state { justify-self: center; align-self: center; width: 12px; height: 12px; border-radius: 50%; border: 1.5px solid var(--seam-strong); position: relative; }
+  .chunk-item.read .state { border-color: var(--private); background: var(--private); }
+  .chunk-item.read .state::after { content: ""; position: absolute; inset: 3px 2.5px; border: solid #10171A; border-width: 0 0 1.5px 1.5px; transform: rotate(-45deg) translateY(-1px); }
+  .chunk-item.skimmed .state { border-color: var(--private); background: linear-gradient(90deg, var(--private) 50%, transparent 50%); }
+  .chunk-item.current { background: var(--accent-dim); border-left-color: var(--accent); }
+  .chunk-item.current .state { border-color: var(--accent); background: var(--accent); box-shadow: inset 0 0 0 2.5px var(--panel); }
+  .chunk-item .t { font-size: .78125rem; font-weight: 500; color: var(--text); }
+  .chunk-item .t small { display: block; font-weight: 400; font-size: .6875rem; color: var(--text-faint); margin-top: 2px; }
+  .chunk-item .loc { font-family: var(--mono); font-size: .65625rem; color: var(--text-faint); font-variant-numeric: tabular-nums; }
+  .chunk-item .loc b { color: var(--amber); font-weight: 600; }
+  .rail .session { margin: 12px 16px 0; padding-top: 12px; border-top: 1px solid var(--seam); font-size: .6875rem; color: var(--private); }
+  .rail .session b { font-variant-numeric: tabular-nums; }
+
+  .pane { overflow-y: auto; padding: 28px 36px 56px; background: var(--bg); min-width: 0; }
+  .chunk-head h1 { font-size: 1.375rem; font-weight: 600; letter-spacing: -0.01em; }
+  .chunk-head h1 .n { color: var(--text-faint); font-weight: 400; margin-right: 9px; font-variant-numeric: tabular-nums; }
+  .chunk-head .meta { margin-top: 7px; font-size: .75rem; color: var(--text-soft); display: flex; gap: 14px; flex-wrap: wrap; font-variant-numeric: tabular-nums; }
+  .why { margin-top: 12px; font-size: .8125rem; line-height: 1.6; color: var(--text-soft); max-width: 70ch; }
+  .why button { appearance: none; border: 0; background: none; cursor: pointer; font: inherit; font-size: .75rem; color: var(--accent); padding: 0; margin-left: 6px; }
+
+  .file {
+    margin-top: 22px; border: 1px solid var(--seam); border-radius: 8px;
+    background: var(--panel); overflow: hidden;
+    box-shadow: 0 1px 4px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.04);
+  }
+  .file-head {
+    display: flex; align-items: center; gap: 12px; padding: 8px 13px;
+    border-bottom: 1px solid var(--seam); background: var(--panel-2);
+  }
+  .file-head .path { font-family: var(--mono); font-size: .71875rem; color: var(--text); }
+  .file-head .delta { font-family: var(--mono); font-size: .65625rem; font-variant-numeric: tabular-nums; }
+  .file-head .delta .a { color: var(--add); }
+  .file-head .delta .d { color: var(--del); margin-left: 6px; }
+  .file-head .spacer { flex: 1; }
+  .blast-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: .65625rem; font-weight: 600; color: var(--amber);
+    background: var(--amber-dim); border: 1px solid #4A3D26;
+    border-radius: 5px; padding: 4px 8px; letter-spacing: .02em;
+  }
+  .code { font-family: var(--mono); font-size: .75rem; line-height: 1.6; overflow-x: auto; }
+  .row { display: grid; grid-template-columns: 42px 42px 18px 1fr; min-width: fit-content; }
+  .row .ln { text-align: right; padding-right: 9px; color: #5A5F67; font-size: .6875rem; font-variant-numeric: tabular-nums; user-select: none; padding-top: .1em; }
+  .row .g { text-align: center; user-select: none; }
+  .row .src { white-space: pre; padding-right: 18px; }
+  .row.add { background: var(--add-dim); } .row.add .g { color: var(--add); font-weight: 600; }
+  .row.del { background: var(--del-dim); } .row.del .g { color: var(--del); font-weight: 600; }
+  .row.ctx .src, .row.ctx .ln { color: var(--text-soft); }
+  .hunk-sep { padding: 3px 0 3px 102px; font-family: var(--mono); font-size: .65625rem; color: var(--text-faint); background: var(--panel-2); border-block: 1px solid var(--seam); }
+  .k { font-weight: 600; color: var(--accent); } .s { color: var(--string); } .c { color: var(--comment); font-style: italic; }
+
+  .reach { border-top: 1px solid var(--seam); background: var(--bg); }
+  .reach-head { display: flex; align-items: center; gap: 10px; padding: 7px 13px; font-size: .6875rem; color: var(--text-soft); }
+  .reach-head .badge { font-weight: 600; border: 1px solid var(--seam-strong); border-radius: 4px; padding: 2px 7px; background: var(--panel-2); font-size: .625rem; letter-spacing: .05em; text-transform: uppercase; }
+  .reach-head .path { font-family: var(--mono); }
+  .reach .code { opacity: .8; }
+  .reach .row { grid-template-columns: 84px 18px 1fr; }
+
+  .margin { border-left: 1px solid var(--seam); background: var(--panel); padding: 18px 16px; display: flex; flex-direction: column; gap: 12px; overflow-y: auto; }
+  .note {
+    border: 1px solid var(--seam); border-radius: 8px; background: var(--panel-2);
+    padding: 12px 13px; box-shadow: inset 0 1px 0 rgba(255,255,255,.04);
+  }
+  .note .who { display: flex; align-items: center; gap: 7px; font-size: .6875rem; font-weight: 600; color: var(--text-soft); margin-bottom: 6px; letter-spacing: .02em; }
+  .note .who .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+  .note p { font-size: .75rem; line-height: 1.55; color: var(--text); }
+  .note p code { font-family: var(--mono); font-size: .6875rem; background: var(--bg); padding: 1px 4px; border-radius: 3px; }
+  .note .anchor { margin-top: 7px; font-family: var(--mono); font-size: .625rem; color: var(--accent); }
+  .oblig { border: 1px solid #4A3D26; background: var(--amber-dim); border-radius: 8px; padding: 12px 13px; }
+  .oblig .who { display: flex; gap: 7px; align-items: center; font-size: .6875rem; font-weight: 600; color: var(--amber); margin-bottom: 6px; letter-spacing: .02em; }
+  .oblig p { font-size: .75rem; line-height: 1.5; color: var(--text); }
+  .oblig .act {
+    margin-top: 9px; display: inline-flex; gap: 7px; align-items: center;
+    font: 600 .71875rem/1 var(--sans); color: var(--amber);
+    background: var(--panel-2); border: 1px solid #4A3D26; border-radius: 5px;
+    padding: 7px 10px; cursor: pointer;
+  }
+  .oblig .act kbd { font-family: var(--mono); font-weight: 400; font-size: .625rem; color: var(--text-faint); }
+  .private-card { border: 1px solid #2C4750; background: var(--private-dim); border-radius: 8px; padding: 12px 13px; margin-top: auto; }
+  .private-card .lock { display: flex; gap: 7px; align-items: center; font-size: .6875rem; font-weight: 600; color: var(--private); margin-bottom: 6px; letter-spacing: .02em; }
+  .private-card p { font-size: .71875rem; line-height: 1.5; color: var(--private); }
+  .private-card b { font-variant-numeric: tabular-nums; }
+
+  .footer {
+    display: flex; gap: 20px; align-items: center; border-top: 1px solid var(--seam);
+    padding: 7px 16px; font-size: .6875rem; color: var(--text-faint); background: var(--panel);
+  }
+  .footer kbd {
+    font-family: var(--mono); font-size: .625rem; background: var(--bg);
+    border: 1px solid var(--seam); border-bottom-width: 2px; border-radius: 3px;
+    padding: 1px 5px; color: var(--text-soft);
+  }
+  .footer .grow { flex: 1; }
+  @media (max-width: 1100px) { .margin { display: none; } .main { grid-template-columns: 232px minmax(0,1fr); } }
+  @media (max-width: 760px) { .rail { display: none; } .main { grid-template-columns: 1fr; } .pane { padding: 20px 16px 44px; } .toolbar { flex-wrap: wrap; } }
+</style>
+
+<div class="window" role="application" aria-label="Wingman review surface, instrument direction">
+  <header class="titlebar">
+    <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
+    <div class="doc"><strong>atlas/api</strong> · #482 Per-org rate limiting for the public API <span class="sha">a3f9c21</span></div>
+    <div class="right">Snapshot · 0 changes since start</div>
+  </header>
+
+  <div class="toolbar">
+    <div class="angles" role="group" aria-label="Angles">
+      <button class="angle" aria-pressed="true"><span class="key">1</span> Sequence</button>
+      <button class="angle" aria-pressed="false"><span class="key">2</span> Decisions <span class="count">4</span></button>
+      <button class="angle" aria-pressed="false"><span class="key">3</span> Claims <span class="count">11/12</span></button>
+      <button class="angle" aria-pressed="false"><span class="key">4</span> Subtraction <span class="count">−214</span></button>
+      <button class="angle" aria-pressed="false"><span class="key">5</span> Blast radius <span class="flag">2</span></button>
+    </div>
+    <div class="spacer"></div>
+    <div class="coverage" title="Private to you. Never published.">
+      <div class="cells" aria-hidden="true"><i class="read"></i><i class="now"></i><i></i><i></i><i></i><i class="read"></i></div>
+      <em>2/6 read · private</em>
+    </div>
+    <button class="publish" disabled aria-disabled="true">Publish route<small>3 obligations remain</small></button>
+  </div>
+
+  <div class="main">
+    <nav class="rail" aria-label="The route">
+      <h2>Route</h2>
+      <button class="ordering">
+        Spine first
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5 5 6.5 8 3.5"/></svg>
+      </button>
+      <ol class="chunks">
+        <li class="chunk-item read" tabindex="0"><span class="state" aria-label="read"></span><span class="t">The limit schema<small>migration · config</small></span><span class="loc">96 <b>▲</b></span></li>
+        <li class="chunk-item current" tabindex="0" aria-current="true"><span class="state" aria-label="reading now"></span><span class="t">The token bucket<small>src/rate</small></span><span class="loc">118</span></li>
+        <li class="chunk-item" tabindex="0"><span class="state" aria-label="unread"></span><span class="t">Wiring the middleware<small>src/http</small></span><span class="loc">214 <b>▲</b></span></li>
+        <li class="chunk-item" tabindex="0"><span class="state" aria-label="unread"></span><span class="t">Call sites and headers<small>src/routes · 9 files</small></span><span class="loc">187</span></li>
+        <li class="chunk-item" tabindex="0"><span class="state" aria-label="unread"></span><span class="t">Evidence: the tests<small>collapsed to claims</small></span><span class="loc">640</span></li>
+        <li class="chunk-item skimmed" tabindex="0"><span class="state" aria-label="skimmed"></span><span class="t">Appendix<small>lockfile · generated types</small></span><span class="loc">592</span></li>
+      </ol>
+      <p class="session">Session <b>47 min</b> · resume is free.</p>
+    </nav>
+
+    <main class="pane">
+      <div class="chunk-head">
+        <h1><span class="n">2</span>The token bucket</h1>
+        <p class="meta"><span>118 lines · 2 files</span><span>builds on the limit schema</span><span>feeds the middleware</span></p>
+        <p class="why">One refill-on-read bucket per org, stored behind RateStore. No timers, no background jobs: state advances only when a request arrives.<button>Show the full reasoning</button></p>
+      </div>
+
+      <section class="file" aria-label="src/rate/bucket.ts">
+        <div class="file-head">
+          <span class="path">src/rate/bucket.ts</span>
+          <span class="delta"><span class="a">+74</span><span class="d">−0</span></span>
+          <span class="spacer"></span>
+        </div>
+        <div class="code">
+          <div class="row add"><span class="ln"></span><span class="ln">14</span><span class="g">+</span><span class="src">  <span class="k">async</span> take(key: <span class="k">string</span>, cost = 1): <span class="k">Promise</span>&lt;TakeResult&gt; {</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">15</span><span class="g">+</span><span class="src">    <span class="k">const</span> now = Date.now()</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">16</span><span class="g">+</span><span class="src">    <span class="k">const</span> prior = (<span class="k">await</span> <span class="k">this</span>.store.get(key)) ?? <span class="k">this</span>.full(now)</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">17</span><span class="g">+</span><span class="src">    <span class="k">const</span> elapsed = (now - prior.updatedAt) / 1000</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">18</span><span class="g">+</span><span class="src">    <span class="k">const</span> tokens = Math.min(<span class="k">this</span>.capacity, prior.tokens + elapsed * <span class="k">this</span>.refillPerSec)</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">19</span><span class="g">+</span><span class="src">    <span class="k">if</span> (tokens &lt; cost) {</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">20</span><span class="g">+</span><span class="src">      <span class="k">return</span> { allowed: <span class="k">false</span>, retryAfterMs: ((cost - tokens) / <span class="k">this</span>.refillPerSec) * 1000 }</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">21</span><span class="g">+</span><span class="src">    }</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">22</span><span class="g">+</span><span class="src">    <span class="k">await</span> <span class="k">this</span>.store.set(key, { tokens: tokens - cost, updatedAt: now })</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">23</span><span class="g">+</span><span class="src">    <span class="k">return</span> { allowed: <span class="k">true</span>, remaining: Math.floor(tokens - cost) }</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">24</span><span class="g">+</span><span class="src">  }</span></div>
+        </div>
+        <div class="reach">
+          <div class="reach-head">
+            <span class="badge">Reach</span>
+            <span>unchanged · referenced at line 11</span>
+            <span class="path">src/rate/store.ts</span>
+          </div>
+          <div class="code">
+            <div class="row ctx"><span class="ln">6</span><span class="g"></span><span class="src"><span class="k">export interface</span> RateStore {</span></div>
+            <div class="row ctx"><span class="ln">7</span><span class="g"></span><span class="src">  get(key: <span class="k">string</span>): <span class="k">Promise</span>&lt;BucketState | <span class="k">null</span>&gt;</span></div>
+            <div class="row ctx"><span class="ln">8</span><span class="g"></span><span class="src">  set(key: <span class="k">string</span>, state: BucketState): <span class="k">Promise</span>&lt;<span class="k">void</span>&gt;  <span class="c">// TTL = 2× refill window</span></span></div>
+            <div class="row ctx"><span class="ln">9</span><span class="g"></span><span class="src">}</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="file" aria-label="src/rate/keys.ts">
+        <div class="file-head">
+          <span class="path">src/rate/keys.ts</span>
+          <span class="delta"><span class="a">+31</span><span class="d">−13</span></span>
+          <span class="spacer"></span>
+          <span class="blast-chip">
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 1.5 11 10.5H1z"/><path d="M6 5v2.4"/><circle cx="6" cy="9" r=".2"/></svg>
+            Blast · public contract
+          </span>
+        </div>
+        <div class="code">
+          <div class="hunk-sep">@@ orgKey · the key the whole limit hangs off @@</div>
+          <div class="row ctx"><span class="ln">17</span><span class="ln">17</span><span class="g"></span><span class="src"><span class="k">export function</span> orgKey(ctx: RequestContext): <span class="k">string</span> {</span></div>
+          <div class="row del"><span class="ln">18</span><span class="ln"></span><span class="g">−</span><span class="src">  <span class="k">return</span> <span class="s">`rl:${ctx.apiKey.id}`</span></span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">18</span><span class="g">+</span><span class="src">  <span class="c">// keys are free to mint; orgs are not (AT-1291)</span></span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">19</span><span class="g">+</span><span class="src">  <span class="k">return</span> <span class="s">`rl:org:${ctx.org.id}`</span></span></div>
+          <div class="row ctx"><span class="ln">19</span><span class="ln">20</span><span class="g"></span><span class="src">}</span></div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="margin" aria-label="Margin">
+      <div class="note">
+        <div class="who"><span class="dot"></span>Claude Code · note</div>
+        <p>The refill is elapsed-based, so two calls in the same millisecond share one <code>prior</code> read. Under concurrency this over-admits by at most <code>cost</code>. The tests in chunk 5 never exercise it.</p>
+        <div class="anchor">bucket.ts · L16–23</div>
+      </div>
+      <div class="oblig">
+        <div class="who">
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 1.5 11 10.5H1z"/><path d="M6 5v2.4"/><circle cx="6" cy="9" r=".2"/></svg>
+          1 obligation in this chunk
+        </div>
+        <p>Re-keying limits from API key to org changes what a 429 means for every existing client. Reading is not enough here.</p>
+        <button class="act">Acknowledge as a risk <kbd>⇧A</kbd></button>
+      </div>
+      <div class="private-card">
+        <div class="lock">
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.2" y="5.2" width="7.6" height="5.2" rx="1.2"/><path d="M4 5V3.8a2 2 0 0 1 4 0V5"/></svg>
+          Private to you
+        </div>
+        <p><b>612 of 1,847</b> lines read · <b>2 of 6</b> chunks. Pace, coverage, and chat never leave this Mac.</p>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="footer">
+    <span><kbd>J</kbd> <kbd>K</kbd> hunks</span>
+    <span><kbd>R</kbd> mark read</span>
+    <span><kbd>space</kbd> next chunk</span>
+    <span><kbd>1</kbd>–<kbd>5</kbd> angles</span>
+    <span><kbd>C</kbd> ask about this</span>
+    <span class="grow"></span>
+    <span><kbd>⌘K</kbd> commands</span>
+  </footer>
+</div>

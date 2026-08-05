@@ -1,0 +1,213 @@
+<!--
+THESIS: the author-first home surface. Local work that has not become somebody else's problem leads; incoming PRs remain one engine away. Project context freshness is visible beside the work it informs.
+OWN-WORLD: themed entirely by tokens.css; direction arrives via ?dir=.
+FINISH: unreviewed and undocumented is unfinished.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rennet · Home</title>
+<link rel="stylesheet" href="assets/tokens.css">
+<link rel="stylesheet" href="assets/screens.css">
+
+<body data-screen="home">
+<div class="window" role="application" aria-label="Rennet home">
+  <header class="titlebar">
+    <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
+    <button class="collapse-btn" aria-expanded="true" aria-label="Toggle sidebar">
+      <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="1.5" y="2" width="11" height="10" rx="2"/><path d="M5.5 2v10"/></svg>
+    </button>
+    <div class="doc"><strong>orbital</strong> · workspace</div>
+    <div class="right">Everything synced · 14:02</div>
+  </header>
+
+  <div class="home-main">
+    <aside class="side" aria-label="Workspace">
+      <span class="wm"></span>
+      <p class="ws">~/orbital <code>3 repos · 2 worktrees</code></p>
+
+      <nav aria-label="Views">
+        <a href="#" class="active">Needs you <span class="n num">3</span></a>
+        <a href="#">Yours, out for review <span class="n num">2</span></a>
+        <a href="#">Watching <span class="n num">1</span></a>
+        <a href="#">All branches <span class="n num">11</span></a>
+      </nav>
+
+      <p class="sec label">Repos</p>
+      <details open>
+        <summary>
+          <svg class="chev" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2 7 5 3.5 8"/></svg>
+          atlas <span class="n num">7 branches</span>
+        </summary>
+        <div class="tree">
+          <a href="#"><span class="dot" style="background: var(--green)"></span>main <code>· clean</code></a>
+          <a href="#"><span class="dot" style="background: var(--accent)"></span>feat/rate-limiting <code>wt/rate-482</code></a>
+          <a href="#"><span class="dot" style="background: var(--amber)"></span>fix/session-ttl <code>wt/hotfix-501</code></a>
+          <a href="#"><span class="dot" style="background: var(--text-faint)"></span>spike/lakehouse-reads</a>
+        </div>
+      </details>
+      <details open>
+        <summary>
+          <svg class="chev" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2 7 5 3.5 8"/></svg>
+          navcore <span class="n num">2</span>
+        </summary>
+        <div class="tree">
+          <a href="#"><span class="dot" style="background: var(--green)"></span>main <code>· clean</code></a>
+          <a href="#"><span class="dot" style="background: var(--text-faint)"></span>spike/ipc-tokens</a>
+        </div>
+      </details>
+      <details>
+        <summary>
+          <svg class="chev" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3.5 2 7 5 3.5 8"/></svg>
+          atlas-docs <span class="n num">2</span>
+        </summary>
+        <div class="tree">
+          <a href="#"><span class="dot" style="background: var(--green)"></span>main <code>· clean</code></a>
+        </div>
+      </details>
+
+      <div class="foot">
+        <p class="listening" title="Attached to this workspace. Ask from any line; threads stay on this Mac.">
+          <span class="hdots" aria-hidden="true"><i></i><i></i><i></i></span>
+          <span>Claude Code · codex · omp <b>listening</b></span>
+        </p>
+        <p class="pair">
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><rect x="3.4" y="1.2" width="5.2" height="9.6" rx="1.4"/><path d="M5.4 9.2h1.2"/></svg>
+          Phone paired · direct
+        </p>
+      </div>
+    </aside>
+
+    <main class="deck">
+      <div class="deck-head">
+        <h1>Your code, before it becomes somebody else's problem</h1>
+        <span class="hint">Jump anywhere <kbd>⌘K</kbd></span>
+      </div>
+
+      <section class="repo-group" aria-label="atlas">
+        <header>
+          <h2>atlas</h2>
+          <span class="meta"><code>github.com/orbital/atlas</code> <span class="ci-ok">CI green on main</span> <span>2 worktrees under <code>wt/</code></span></span>
+        </header>
+        <div class="rows">
+          <article class="row-card author-lead" tabindex="0">
+            <span class="st needs" aria-label="local review needs attention"></span>
+            <span class="t">
+              <b>feat/rate-limiting · working tree, no PR yet</b>
+              <span class="sub">
+                <span>Your worktree · <span class="num">7</span> changed files</span>
+                <span class="badge private">2 analyses need refresh after your last edit</span>
+                <span class="badge plain">4 exact matches remain complete</span>
+              </span>
+            </span>
+            <span class="act"><button class="btn">Continue self-review</button></span>
+          </article>
+
+          <article class="row-card context-row" tabindex="0">
+            <span class="st ready" aria-label="project context current"></span>
+            <span class="t">
+              <b><code>.rennet</code> project snapshot · current</b>
+              <span class="sub">
+                <span>default branch <code>main@7c21e9a</code></span>
+                <span class="badge success">updated incrementally</span>
+                <span class="badge plain">shared in Git · configuration toggle on</span>
+              </span>
+            </span>
+            <span class="act"><button class="btn quiet">Inspect context</button></span>
+          </article>
+
+          <article class="row-card" tabindex="0">
+            <span class="st needs" aria-label="needs your review"></span>
+            <span class="t">
+              <b>#482 · Per-org rate limiting for the public API</b>
+              <span class="sub">
+                <span>Marta's PR · 23 files · <span class="num">+1,412 −435</span></span>
+                <span class="badge success">Analysis ready</span>
+                <span class="badge private num">2 of 6 chunks · resumes free</span>
+                <span class="badge private num"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 1.5h7v5h-4L2 9V6.5h-.5z"/></svg>4 threads · private</span>
+                <span class="badge blast num">2 blast flags</span>
+              </span>
+            </span>
+            <span class="act"><button class="btn">Resume review</button></span>
+          </article>
+
+          <article class="row-card" tabindex="0">
+            <span class="st progress" aria-label="prepared"></span>
+            <span class="t">
+              <b>#479 · Retire the legacy CSV export path</b>
+              <span class="sub">
+                <span>Deniz's PR · 9 files · <span class="num">+204 −1,118</span></span>
+                <span class="badge success">Broken down overnight</span>
+                <span class="badge plain">Mostly verified noise · est. 25 min</span>
+              </span>
+            </span>
+            <span class="act"><button class="btn quiet">Start fresh</button></span>
+          </article>
+
+          <article class="row-card" tabindex="0">
+            <span class="st waiting" aria-label="waiting on reviewer"></span>
+            <span class="t">
+              <b>#475 · Session cache warm-up on deploy</b>
+              <span class="sub">
+                <span>Yours · PR opened Tue</span>
+                <span class="badge plain num">2 threads open · reviewer reading</span>
+              </span>
+            </span>
+            <span class="act"><button class="btn quiet">Open threads</button></span>
+          </article>
+
+        </div>
+      </section>
+
+      <section class="repo-group" aria-label="navcore">
+        <header>
+          <h2>navcore</h2>
+          <span class="meta"><code>github.com/orbital/navcore</code> <span class="ci-ok">CI green</span></span>
+        </header>
+        <div class="rows">
+          <article class="row-card" tabindex="0">
+            <span class="st draft" aria-label="draft"></span>
+            <span class="t">
+              <b>#212 · IPC token handshake</b>
+              <span class="sub">
+                <span>Yours · draft · 6 files · <span class="num">+310 −22</span></span>
+                <span class="badge private">Self-review 4 of 4 chunks · PR preview ready</span>
+                <span class="badge private num"><svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M1.5 1.5h7v5h-4L2 9V6.5h-.5z"/></svg>6 threads · private</span>
+              </span>
+            </span>
+            <span class="act"><button class="btn">Preview PR submission</button></span>
+          </article>
+        </div>
+      </section>
+
+      <section class="repo-group" aria-label="atlas-docs">
+        <header>
+          <h2>atlas-docs</h2>
+          <span class="meta"><code>github.com/orbital/atlas-docs</code></span>
+        </header>
+        <div class="rows">
+          <article class="row-card" tabindex="0">
+            <span class="st ready" aria-label="small and ready"></span>
+            <span class="t">
+              <b>#88 · Rate limit headers reference page</b>
+              <span class="sub">
+                <span>Marta's PR · 2 files · <span class="num">+86 −4</span></span>
+                <span class="badge plain">Small · est. 12 min, one sitting</span>
+              </span>
+            </span>
+            <span class="act"><button class="btn quiet">Read now</button></span>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <footer class="footbar">
+    <span><kbd>J</kbd> <kbd>K</kbd> rows</span>
+    <span><kbd>⏎</kbd> open</span>
+    <span><kbd>P</kbd> prep-ahead</span>
+    <span class="grow"></span>
+    <span>No Rennet backend. Selected context may be sent through the harness you choose; inspect the assembled context before a run.</span>
+  </footer>
+</div>
+<script src="assets/app.js"></script>
+</body>

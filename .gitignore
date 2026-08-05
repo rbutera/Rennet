@@ -1,0 +1,45 @@
+# Operating system and editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build and package outputs
+dist/
+build/
+out/
+release/
+.vite/
+.turbo/
+.nx/
+coverage/
+playwright-report/
+test-results/
+*.tsbuildinfo
+
+# Runtime state and local project context
+.rennet/
+*.db
+*.db-*
+*.sqlite
+*.sqlite-*
+*.log
+logs/
+
+# Secrets and local configuration
+.private/
+.env
+.env.*
+!.env.example
+
+# Temporary files
+.cache/
+.tmp/
+tmp/
+*.tmp

@@ -1,0 +1,133 @@
+<!--
+THESIS: diff chat on glass: anchored marginalia in a frosted thread panel, the harness chip on the composer, and the disagreement verdict as the moment two instruments split and the human is summoned. It is the ambient conversation layer caught full-screen.
+OWN-WORLD: themed by tokens.css via ?dir= (glass default); scheme via ?scheme=.
+FINISH: unreviewed and undocumented is unfinished.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rennet · Diff chat</title>
+<link rel="stylesheet" href="assets/tokens.css">
+<link rel="stylesheet" href="assets/screens.css">
+
+<body data-screen="chat">
+<div class="window" role="application" aria-label="Rennet diff chat">
+  <header class="titlebar">
+    <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
+    <span class="wm"></span>
+    <div class="doc"><strong>atlas</strong> · #482 Per-org rate limiting <span class="sha">a3f9c21</span></div>
+    <div class="right">Snapshot · nothing changed since you started</div>
+  </header>
+
+  <div class="chat-main">
+    <main class="chat-pane">
+      <h1><span class="n num">3</span>Wiring the middleware</h1>
+      <p class="meta">Reading with an open thread · the marked lines are what the conversation is about</p>
+
+      <section class="file" aria-label="src/http/middleware/rate-limit.ts" style="margin-top: 22px">
+        <div class="file-head">
+          <span class="path">src/http/middleware/rate-limit.ts</span>
+          <span class="delta num"><span class="a">+58</span></span>
+        </div>
+        <div class="code">
+          <div class="crow add"><span class="ln"></span><span class="ln">39</span><span class="g">+</span><span class="src"><span class="k">export function</span> rateLimit(bucket: TokenBucket): Middleware {</span></div>
+          <div class="crow add"><span class="ln"></span><span class="ln">40</span><span class="g">+</span><span class="src">  <span class="k">return async</span> (ctx, next) =&gt; {</span></div>
+          <div class="crow add"><span class="ln"></span><span class="ln">41</span><span class="g">+</span><span class="src">    <span class="k">let</span> result: TakeResult</span></div>
+          <div class="crow add"><span class="ln"></span><span class="ln">42</span><span class="g">+</span><span class="src">    <span class="k">try</span> {</span></div>
+          <div class="crow add"><span class="ln"></span><span class="ln">43</span><span class="g">+</span><span class="src">      result = <span class="k">await</span> bucket.take(orgKey(ctx))</span></div>
+          <div class="crow add anchored"><span class="ln"></span><span class="ln">44</span><span class="g">+</span><span class="src">    } <span class="k">catch</span> (err) {</span></div>
+          <div class="crow add anchored"><span class="ln"></span><span class="ln">45</span><span class="g">+</span><span class="src">      metrics.count(<span class="s">'rate.store_error'</span>)  <span class="thread-mark" title="Open thread, 4 messages"><svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 1.5h7v5h-4L2 9V6.5h-.5z"/></svg></span></span></div>
+          <div class="crow add anchored"><span class="ln"></span><span class="ln">46</span><span class="g">+</span><span class="src">      <span class="k">return</span> next()  <span class="c">// fail open: limiter outage must not become API outage</span></span></div>
+          <div class="crow add anchored"><span class="ln"></span><span class="ln">47</span><span class="g">+</span><span class="src">    }</span></div>
+          <div class="crow add"><span class="ln"></span><span class="ln">48</span><span class="g">+</span><span class="src">    <span class="k">if</span> (!result.allowed) {</span></div>
+          <div class="crow add"><span class="ln"></span><span class="ln">49</span><span class="g">+</span><span class="src">      ctx.set(<span class="s">'Retry-After'</span>, String(Math.ceil(result.retryAfterMs / 1000)))</span></div>
+          <div class="crow add"><span class="ln"></span><span class="ln">50</span><span class="g">+</span><span class="src">      ctx.throw(429, <span class="s">'rate_limited'</span>)</span></div>
+          <div class="crow add"><span class="ln"></span><span class="ln">51</span><span class="g">+</span><span class="src">    }</span></div>
+          <div class="crow add"><span class="ln"></span><span class="ln">52</span><span class="g">+</span><span class="src">    ctx.set(<span class="s">'X-RateLimit-Remaining'</span>, String(result.remaining))</span></div>
+          <div class="crow add"><span class="ln"></span><span class="ln">53</span><span class="g">+</span><span class="src">    <span class="k">return</span> next()</span></div>
+          <div class="crow add"><span class="ln"></span><span class="ln">54</span><span class="g">+</span><span class="src">  }</span></div>
+          <div class="crow add"><span class="ln"></span><span class="ln">55</span><span class="g">+</span><span class="src">}</span></div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="thread" aria-label="Anchored thread">
+      <div class="t-head">
+        <div class="kind">
+          <span class="lockc"><svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.2" y="5.2" width="7.6" height="5.2" rx="1.2"/><path d="M4 5V3.8a2 2 0 0 1 4 0V5"/></svg></span>
+          Thread on the fail-open path
+        </div>
+        <span class="anchor-chip">
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"><path d="M3.5 6.5 6.5 3.5M4.6 2.6l.9-.9a1.7 1.7 0 0 1 2.8 2.8l-.9.9M5.4 7.4l-.9.9a1.7 1.7 0 0 1-2.8-2.8l.9-.9"/></svg>
+          rate-limit.ts · L44–47
+        </span>
+        <p class="privacy">Stored locally by Rennet. The selected lines and project context are sent through Claude Code for this answer.</p>
+      </div>
+
+      <div class="msgs">
+        <div class="msg you">
+          <div class="who"><span class="dot"></span>You <time>14:36</time></div>
+          <div class="bubble">Why fail open here? If Redis goes down, doesn't this switch off limiting across the whole API exactly when load is weirdest?</div>
+        </div>
+
+        <div class="msg claude">
+          <div class="who"><span class="dot"></span>Claude Code <time>14:36</time></div>
+          <div class="bubble">
+            <p>It follows the plan: <code>docs/plan.md</code> names "limiter outage must never become API outage" as a hard requirement. Failing closed turns every Redis blip into a full 5xx storm for all 4,112 orgs, which is a worse incident than a window of unmetered traffic.</p>
+            <p>The window is also observable: <code>rate.store_error</code> counts every pass-through, so an outage is visible the moment it starts.</p>
+          </div>
+          <div class="msg-acts">
+            <button>Promote to finding</button>
+            <button>Draft as PR comment</button>
+            <button>Second opinion</button>
+          </div>
+        </div>
+
+        <div class="msg codex">
+          <div class="who"><span class="dot"></span>codex · second opinion <time>14:38</time></div>
+          <div class="bubble">
+            <p>I read the same plan and disagree with the shape. Fail-open is defensible; <em>unbounded</em> fail-open is not. Combined with decision 2 (per-org keying) an outage means any org can scrape without limit, and the plan's availability requirement doesn't ask for that.</p>
+            <p>A process-local bucket at 5× the org limit as the fallback keeps the API up and caps the damage. About 20 lines, no new dependency.</p>
+          </div>
+          <div class="msg-acts">
+            <button>Promote to finding</button>
+            <button>Draft as PR comment</button>
+          </div>
+        </div>
+
+        <div class="verdict">
+          <div class="v-title">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 1.5 11 10.5H1z"/><path d="M6 5v2.4"/><circle cx="6" cy="9" r=".2"/></svg>
+            The harnesses disagree, and it is not noise
+          </div>
+          <p>Each harness answered 3 of 3 runs consistently. The split is substantive: this line is either ambiguous or load-bearing, which makes it exactly the kind of call decision 1 exists for.</p>
+          <div class="consistency num">
+            <span>claude-code 3/3</span>
+            <span>codex 3/3</span>
+            <span>divergence: substantive</span>
+          </div>
+          <button class="v-act">Attach this thread to decision 1</button>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="box">
+          <div class="ph">Ask about these lines…</div>
+          <div class="bar">
+            <button class="harness-chip" aria-label="Answering harness: Claude Code">
+              <span class="dot"></span> Claude Code
+              <svg width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5 5 6.5 8 3.5"/></svg>
+            </button>
+            <span class="grow"></span>
+            <button class="send">
+              Ask
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1.5 5h7M5.5 2 8.5 5 5.5 8"/></svg>
+            </button>
+          </div>
+        </div>
+        <p class="switch-note">No Rennet backend. Found on this Mac: Claude Code, codex, omp · switch per message with <kbd>⌘H</kbd> · inspect context before sending</p>
+      </div>
+    </aside>
+  </div>
+</div>
+<script src="assets/app.js"></script>
+</body>

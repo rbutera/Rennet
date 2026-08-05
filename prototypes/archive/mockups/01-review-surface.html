@@ -1,0 +1,604 @@
+<!--
+THESIS: a review is a document you read, not a cockpit you monitor. Refuses the category's dark gradient dashboard.
+OWN-WORLD: warm paper ground, ink text, New York serif for narrative, SF mono for code, non-photo blue for everything private to the reviewer, amber only for blast radius. Recognizable with content removed by the paper, the route rail, and the blue private strip.
+STORY: the reviewer opens chunk 2 of 6, reads the diff with its reach, sees one obligation, and knows exactly where they are.
+FIRST VIEWPORT: route rail left, reading pane centre with serif chunk heading and diff, margin right with harness note and private coverage.
+FORM: reading-room direction, built as assigned by the coordinator brief (no seed script in headless session).
+FINISH: unreviewed and undocumented is unfinished; this build ends with the finish review, the verdict, and DESIGN.md.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wingman · Review surface · Reading Room</title>
+<style>
+  :root {
+    --paper: #FAF9F5;
+    --paper-deep: #F3F1EA;
+    --raised: #FFFFFF;
+    --ink: #23211C;
+    --ink-soft: #57534A;
+    --ink-faint: #7D7869;
+    --hairline: #E5E1D6;
+    --hairline-strong: #D6D1C3;
+    --accent: #2F5FA3;
+    --accent-soft: #EBF1F8;
+    --private: #33617F;
+    --private-fill: #EDF4F8;
+    --private-line: #C9DEEA;
+    --amber: #8A4B0A;
+    --amber-fill: #F9EFDD;
+    --amber-line: #EAD9B8;
+    --add-fill: #EAF2E6;
+    --add-glyph: #3E7A4E;
+    --del-fill: #F7ECE7;
+    --del-glyph: #A14434;
+    --string: #5F6E33;
+    --comment: #8D8776;
+    --serif: "New York", ui-serif, Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { font-size: 16px; }
+  body {
+    background: #E9E6DE;
+    font-family: var(--sans);
+    color: var(--ink);
+    display: grid;
+    place-items: center;
+    min-height: 100vh;
+    padding: 28px 20px;
+  }
+  .window {
+    width: min(1400px, 100%);
+    background: var(--paper);
+    border-radius: 11px;
+    border: 1px solid rgba(0,0,0,.09);
+    box-shadow: 0 18px 60px rgba(42, 37, 26, .22), 0 2px 8px rgba(42,37,26,.10);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    min-height: 880px;
+  }
+
+  /* ————— titlebar ————— */
+  .titlebar {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    align-items: center;
+    padding: 11px 16px 10px;
+    border-bottom: 1px solid var(--hairline);
+    background: var(--paper);
+  }
+  .lights { display: flex; gap: 8px; }
+  .lights span { width: 12px; height: 12px; border-radius: 50%; }
+  .lights span:nth-child(1) { background: #F26057; }
+  .lights span:nth-child(2) { background: #F5BE4F; }
+  .lights span:nth-child(3) { background: #58C43B; }
+  .titlebar .doc {
+    font-size: .8125rem;
+    color: var(--ink-soft);
+    display: flex; align-items: baseline; gap: 8px;
+  }
+  .doc strong { color: var(--ink); font-weight: 600; }
+  .doc .sha { font-family: var(--mono); font-size: .75rem; color: var(--ink-faint); }
+  .titlebar .right { justify-self: end; font-size: .75rem; color: var(--ink-faint); }
+
+  /* ————— toolbar: angle switcher + coverage + publish ————— */
+  .toolbar {
+    display: flex; align-items: center; gap: 20px;
+    padding: 10px 20px;
+    border-bottom: 1px solid var(--hairline);
+  }
+  .angles {
+    display: flex;
+    background: var(--paper-deep);
+    border: 1px solid var(--hairline);
+    border-radius: 8px;
+    padding: 3px;
+    gap: 2px;
+  }
+  .angle {
+    appearance: none; border: 0; background: transparent;
+    font: 500 .8125rem/1 var(--sans); color: var(--ink-soft);
+    padding: 7px 13px; border-radius: 6px; cursor: pointer;
+    display: flex; align-items: center; gap: 7px;
+  }
+  .angle .key {
+    font-family: var(--mono); font-size: .6875rem; color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .angle .count {
+    font-variant-numeric: tabular-nums;
+    font-size: .6875rem; color: var(--ink-faint);
+  }
+  .angle[aria-pressed="true"] {
+    background: var(--raised); color: var(--ink);
+    box-shadow: 0 1px 3px rgba(42,37,26,.14);
+  }
+  .angle[aria-pressed="true"] .key { color: var(--accent); }
+  .angle:focus-visible, button:focus-visible, [tabindex]:focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
+  }
+  .angle .flag { color: var(--amber); font-variant-numeric: tabular-nums; font-size: .6875rem; font-weight: 600; }
+  .toolbar .spacer { flex: 1; }
+
+  .coverage {
+    display: flex; align-items: center; gap: 10px;
+    padding: 6px 12px;
+    background: var(--private-fill);
+    border: 1px solid var(--private-line);
+    border-radius: 7px;
+  }
+  .coverage .cells { display: flex; gap: 3px; }
+  .coverage .cells i {
+    width: 14px; height: 8px; border-radius: 2px;
+    background: var(--private-line);
+  }
+  .coverage .cells i.read { background: var(--private); }
+  .coverage .cells i.now { background: var(--private); opacity: .45; }
+  .coverage em {
+    font-style: normal; font-size: .71875rem; color: var(--private);
+    letter-spacing: .01em;
+  }
+  .publish {
+    appearance: none; cursor: pointer;
+    font: 600 .8125rem/1 var(--sans);
+    color: var(--ink-soft);
+    background: var(--raised);
+    border: 1px solid var(--hairline-strong);
+    border-radius: 7px;
+    padding: 9px 16px;
+    box-shadow: 0 1px 2px rgba(42,37,26,.08);
+  }
+  .publish small { display: block; font-weight: 400; font-size: .6875rem; color: var(--ink-faint); margin-top: 3px; }
+
+  /* ————— main grid ————— */
+  .main {
+    display: grid;
+    grid-template-columns: 264px minmax(0, 1fr) 296px;
+    flex: 1;
+    min-height: 0;
+  }
+
+  /* route rail */
+  .rail {
+    border-right: 1px solid var(--hairline);
+    padding: 24px 0 16px;
+    display: flex; flex-direction: column;
+    background: var(--paper);
+  }
+  .rail h2 {
+    font: 600 .9375rem/1.2 var(--serif);
+    padding: 0 20px;
+  }
+  .ordering {
+    margin: 10px 20px 18px;
+    font-size: .75rem; color: var(--ink-soft);
+    display: inline-flex; align-items: center; gap: 6px;
+    border: 1px solid var(--hairline); border-radius: 6px;
+    padding: 5px 9px; background: var(--raised);
+    width: fit-content; cursor: pointer;
+  }
+  .ordering svg { color: var(--ink-faint); }
+  .chunks { list-style: none; flex: 1; }
+  .chunk-item {
+    display: grid;
+    grid-template-columns: 34px 1fr auto;
+    align-items: baseline;
+    padding: 9px 20px 9px 12px;
+    cursor: pointer;
+    border-left: 2px solid transparent;
+  }
+  .chunk-item:hover { background: var(--paper-deep); }
+  .chunk-item .state {
+    justify-self: center; align-self: center;
+    width: 13px; height: 13px; border-radius: 50%;
+    border: 1.5px solid var(--hairline-strong);
+    position: relative;
+  }
+  .chunk-item.read .state { border-color: var(--private); background: var(--private); }
+  .chunk-item.read .state::after {
+    content: ""; position: absolute; inset: 3px 2.5px;
+    border: solid #fff; border-width: 0 0 1.5px 1.5px;
+    transform: rotate(-45deg) translateY(-1px);
+  }
+  .chunk-item.skimmed .state {
+    border-color: var(--private);
+    background: linear-gradient(90deg, var(--private) 50%, transparent 50%);
+  }
+  .chunk-item.current { background: var(--accent-soft); border-left-color: var(--accent); }
+  .chunk-item.current .state { border-color: var(--accent); box-shadow: inset 0 0 0 2.5px var(--paper); background: var(--accent); }
+  .chunk-item .t { font-size: .8125rem; font-weight: 500; color: var(--ink); }
+  .chunk-item .t small { display: block; font-weight: 400; font-size: .71875rem; color: var(--ink-faint); margin-top: 2px; }
+  .chunk-item .loc {
+    font-family: var(--mono); font-size: .6875rem; color: var(--ink-faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .chunk-item .loc b { color: var(--amber); font-weight: 600; }
+  .rail .session {
+    margin: 14px 20px 0; padding-top: 14px;
+    border-top: 1px solid var(--hairline);
+    font-size: .71875rem; color: var(--private);
+  }
+  .rail .session b { font-weight: 600; font-variant-numeric: tabular-nums; }
+
+  /* reading pane */
+  .pane {
+    overflow-y: auto;
+    padding: 36px 44px 60px;
+    background: var(--paper);
+    min-width: 0;
+  }
+  .chunk-head { max-width: 76ch; }
+  .chunk-head h1 {
+    font: 600 1.75rem/1.25 var(--serif);
+    letter-spacing: -0.01em;
+  }
+  .chunk-head h1 .n {
+    color: var(--ink-faint); font-weight: 400;
+    margin-right: 10px;
+  }
+  .chunk-head .meta {
+    margin-top: 8px;
+    font-size: .8125rem; color: var(--ink-soft);
+    display: flex; gap: 14px; flex-wrap: wrap;
+  }
+  .chunk-head .meta span { display: inline-flex; gap: 5px; align-items: center; }
+  .chunk-head .meta .num { font-variant-numeric: tabular-nums; }
+  .why {
+    margin-top: 14px;
+    font: 400 .9375rem/1.6 var(--serif);
+    color: var(--ink-soft);
+    max-width: 68ch;
+  }
+  .why button {
+    appearance: none; border: 0; background: none; cursor: pointer;
+    font: inherit; font-size: .8125rem; color: var(--accent);
+    padding: 0; margin-left: 6px;
+  }
+
+  /* diff */
+  .file {
+    margin-top: 28px;
+    border: 1px solid var(--hairline);
+    border-radius: 9px;
+    background: var(--raised);
+    overflow: hidden;
+    box-shadow: 0 1px 3px rgba(42,37,26,.06);
+  }
+  .file-head {
+    display: flex; align-items: center; gap: 12px;
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--hairline);
+    background: var(--paper);
+  }
+  .file-head .path { font-family: var(--mono); font-size: .75rem; color: var(--ink); }
+  .file-head .delta { font-family: var(--mono); font-size: .6875rem; font-variant-numeric: tabular-nums; }
+  .file-head .delta .a { color: var(--add-glyph); }
+  .file-head .delta .d { color: var(--del-glyph); margin-left: 6px; }
+  .file-head .spacer { flex: 1; }
+  .blast-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: .6875rem; font-weight: 600; color: var(--amber);
+    background: var(--amber-fill);
+    border: 1px solid var(--amber-line);
+    border-radius: 6px; padding: 4px 9px;
+  }
+  .code { font-family: var(--mono); font-size: .78125rem; line-height: 1.65; overflow-x: auto; }
+  .row { display: grid; grid-template-columns: 44px 44px 20px 1fr; min-width: fit-content; }
+  .row .ln {
+    text-align: right; padding-right: 10px;
+    color: #A8A292; user-select: none;
+    font-size: .71875rem; font-variant-numeric: tabular-nums;
+    padding-top: .1em;
+  }
+  .row .g { text-align: center; user-select: none; }
+  .row .src { white-space: pre; padding-right: 20px; }
+  .row.add { background: var(--add-fill); }
+  .row.add .g { color: var(--add-glyph); font-weight: 600; }
+  .row.del { background: var(--del-fill); }
+  .row.del .g { color: var(--del-glyph); font-weight: 600; }
+  .row.ctx .src, .row.ctx .ln { color: var(--ink-soft); }
+  .hunk-sep {
+    padding: 4px 0 4px 108px;
+    font-family: var(--mono); font-size: .6875rem;
+    color: var(--ink-faint);
+    background: var(--paper);
+    border-block: 1px solid var(--hairline);
+  }
+  .k { font-weight: 600; }
+  .s { color: var(--string); }
+  .c { color: var(--comment); font-style: italic; }
+
+  /* context reach */
+  .reach {
+    border-top: 1px solid var(--hairline);
+    background: var(--paper-deep);
+  }
+  .reach-head {
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 14px;
+    font-size: .71875rem; color: var(--ink-soft);
+  }
+  .reach-head .badge {
+    font-weight: 600; color: var(--ink-soft);
+    border: 1px solid var(--hairline-strong); border-radius: 5px;
+    padding: 2px 7px; background: var(--raised);
+    font-size: .65625rem; letter-spacing: .02em;
+  }
+  .reach-head .path { font-family: var(--mono); }
+  .reach .code { opacity: .84; }
+  .reach .row { grid-template-columns: 88px 20px 1fr; }
+
+  /* margin column */
+  .margin {
+    border-left: 1px solid var(--hairline);
+    padding: 24px 20px;
+    display: flex; flex-direction: column; gap: 16px;
+    background: var(--paper);
+    overflow-y: auto;
+  }
+  .note {
+    border: 1px solid var(--hairline);
+    border-radius: 9px;
+    background: var(--raised);
+    padding: 13px 14px;
+    box-shadow: 0 1px 3px rgba(42,37,26,.05);
+  }
+  .note .who {
+    display: flex; align-items: center; gap: 7px;
+    font-size: .71875rem; font-weight: 600; color: var(--ink-soft);
+    margin-bottom: 7px;
+  }
+  .note .who .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--accent); }
+  .note p { font-size: .78125rem; line-height: 1.55; color: var(--ink); }
+  .note p code { font-family: var(--mono); font-size: .71875rem; background: var(--paper-deep); padding: 1px 4px; border-radius: 4px; }
+  .note .anchor {
+    margin-top: 8px; font-family: var(--mono); font-size: .65625rem;
+    color: var(--accent);
+  }
+  .oblig {
+    border: 1px solid var(--amber-line);
+    background: var(--amber-fill);
+    border-radius: 9px; padding: 13px 14px;
+  }
+  .oblig .who { display: flex; gap: 7px; align-items: center; font-size: .71875rem; font-weight: 600; color: var(--amber); margin-bottom: 7px; }
+  .oblig p { font-size: .78125rem; line-height: 1.5; color: var(--ink); }
+  .oblig .act {
+    margin-top: 10px;
+    display: inline-flex; gap: 7px; align-items: center;
+    font: 600 .75rem/1 var(--sans); color: var(--amber);
+    background: var(--raised); border: 1px solid var(--amber-line);
+    border-radius: 6px; padding: 7px 11px; cursor: pointer;
+  }
+  .oblig .act kbd { font-family: var(--mono); font-weight: 400; font-size: .65625rem; color: var(--ink-faint); }
+  .private-card {
+    border: 1px solid var(--private-line);
+    background: var(--private-fill);
+    border-radius: 9px; padding: 13px 14px;
+    margin-top: auto;
+  }
+  .private-card p { font-size: .75rem; line-height: 1.5; color: var(--private); }
+  .private-card b { font-variant-numeric: tabular-nums; }
+  .private-card .lock { display: flex; gap: 7px; align-items: center; font-size: .71875rem; font-weight: 600; color: var(--private); margin-bottom: 6px; }
+
+  /* footer */
+  .footer {
+    display: flex; gap: 22px; align-items: center;
+    border-top: 1px solid var(--hairline);
+    padding: 8px 20px;
+    font-size: .71875rem; color: var(--ink-faint);
+    background: var(--paper);
+  }
+  .footer kbd {
+    font-family: var(--mono); font-size: .65625rem;
+    background: var(--paper-deep); border: 1px solid var(--hairline);
+    border-bottom-width: 2px; border-radius: 4px;
+    padding: 1px 5px; color: var(--ink-soft);
+  }
+  .footer .grow { flex: 1; }
+
+  @media (max-width: 1100px) {
+    .margin { display: none; }
+    .main { grid-template-columns: 240px minmax(0,1fr); }
+  }
+  @media (max-width: 760px) {
+    .rail { display: none; }
+    .main { grid-template-columns: 1fr; }
+    .pane { padding: 24px 20px 48px; }
+    .toolbar { flex-wrap: wrap; }
+  }
+</style>
+
+<div class="window" role="application" aria-label="Wingman review surface">
+
+  <header class="titlebar">
+    <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
+    <div class="doc">
+      <strong>atlas/api</strong> · #482 Per-org rate limiting for the public API
+      <span class="sha">a3f9c21</span>
+    </div>
+    <div class="right">Snapshot · nothing changed since you started</div>
+  </header>
+
+  <div class="toolbar">
+    <div class="angles" role="group" aria-label="Angles">
+      <button class="angle" aria-pressed="true"><span class="key">1</span> Sequence</button>
+      <button class="angle" aria-pressed="false"><span class="key">2</span> Decisions <span class="count">4</span></button>
+      <button class="angle" aria-pressed="false"><span class="key">3</span> Claims <span class="count">11/12</span></button>
+      <button class="angle" aria-pressed="false"><span class="key">4</span> Subtraction <span class="count">−214</span></button>
+      <button class="angle" aria-pressed="false"><span class="key">5</span> Blast radius <span class="flag">2</span></button>
+    </div>
+    <div class="spacer"></div>
+    <div class="coverage" title="Private to you. Never published.">
+      <div class="cells" aria-hidden="true">
+        <i class="read"></i><i class="now"></i><i></i><i></i><i></i><i class="read"></i>
+      </div>
+      <em>2 of 6 read · private</em>
+    </div>
+    <button class="publish" disabled aria-disabled="true">
+      Publish route
+      <small>3 obligations remain</small>
+    </button>
+  </div>
+
+  <div class="main">
+
+    <nav class="rail" aria-label="The route">
+      <h2>The route</h2>
+      <button class="ordering">
+        Spine first
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3.5 5 6.5 8 3.5"/></svg>
+      </button>
+      <ol class="chunks">
+        <li class="chunk-item read" tabindex="0">
+          <span class="state" aria-label="read"></span>
+          <span class="t">The limit schema<small>migration · config</small></span>
+          <span class="loc">96 <b>▲</b></span>
+        </li>
+        <li class="chunk-item current" tabindex="0" aria-current="true">
+          <span class="state" aria-label="reading now"></span>
+          <span class="t">The token bucket<small>src/rate</small></span>
+          <span class="loc">118</span>
+        </li>
+        <li class="chunk-item" tabindex="0">
+          <span class="state" aria-label="unread"></span>
+          <span class="t">Wiring the middleware<small>src/http</small></span>
+          <span class="loc">214 <b>▲</b></span>
+        </li>
+        <li class="chunk-item" tabindex="0">
+          <span class="state" aria-label="unread"></span>
+          <span class="t">Call sites and headers<small>src/routes · 9 files</small></span>
+          <span class="loc">187</span>
+        </li>
+        <li class="chunk-item" tabindex="0">
+          <span class="state" aria-label="unread"></span>
+          <span class="t">Evidence: the tests<small>collapsed to claims</small></span>
+          <span class="loc">640</span>
+        </li>
+        <li class="chunk-item skimmed" tabindex="0">
+          <span class="state" aria-label="skimmed"></span>
+          <span class="t">Appendix<small>lockfile · generated types</small></span>
+          <span class="loc">592</span>
+        </li>
+      </ol>
+      <p class="session">Session <b>47 min</b> · stop anywhere, this page holds your place.</p>
+    </nav>
+
+    <main class="pane">
+      <div class="chunk-head">
+        <h1><span class="n">2</span>The token bucket</h1>
+        <p class="meta">
+          <span class="num">118 lines · 2 files</span>
+          <span>builds on the limit schema</span>
+          <span>feeds the middleware</span>
+        </p>
+        <p class="why">One refill-on-read bucket per org, stored behind <em>RateStore</em>. No timers, no background jobs: state advances only when a request arrives.<button>Show the full reasoning</button></p>
+      </div>
+
+      <section class="file" aria-label="src/rate/bucket.ts">
+        <div class="file-head">
+          <span class="path">src/rate/bucket.ts</span>
+          <span class="delta"><span class="a">+74</span><span class="d">−0</span></span>
+          <span class="spacer"></span>
+        </div>
+        <div class="code">
+          <div class="row add"><span class="ln"></span><span class="ln">1</span><span class="g">+</span><span class="src"><span class="k">import</span> { RateStore } <span class="k">from</span> <span class="s">'./store'</span></span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">2</span><span class="g">+</span><span class="src"></span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">3</span><span class="g">+</span><span class="src"><span class="k">export type</span> TakeResult =</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">4</span><span class="g">+</span><span class="src">  | { allowed: <span class="k">true</span>; remaining: <span class="k">number</span> }</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">5</span><span class="g">+</span><span class="src">  | { allowed: <span class="k">false</span>; retryAfterMs: <span class="k">number</span> }</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">6</span><span class="g">+</span><span class="src"></span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">7</span><span class="g">+</span><span class="src"><span class="k">export class</span> TokenBucket {</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">8</span><span class="g">+</span><span class="src">  <span class="k">constructor</span>(</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">9</span><span class="g">+</span><span class="src">    <span class="k">private readonly</span> capacity: <span class="k">number</span>,</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">10</span><span class="g">+</span><span class="src">    <span class="k">private readonly</span> refillPerSec: <span class="k">number</span>,</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">11</span><span class="g">+</span><span class="src">    <span class="k">private readonly</span> store: RateStore,</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">12</span><span class="g">+</span><span class="src">  ) {}</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">13</span><span class="g">+</span><span class="src"></span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">14</span><span class="g">+</span><span class="src">  <span class="k">async</span> take(key: <span class="k">string</span>, cost = 1): <span class="k">Promise</span>&lt;TakeResult&gt; {</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">15</span><span class="g">+</span><span class="src">    <span class="k">const</span> now = Date.now()</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">16</span><span class="g">+</span><span class="src">    <span class="k">const</span> prior = (<span class="k">await</span> <span class="k">this</span>.store.get(key)) ?? <span class="k">this</span>.full(now)</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">17</span><span class="g">+</span><span class="src">    <span class="k">const</span> elapsed = (now - prior.updatedAt) / 1000</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">18</span><span class="g">+</span><span class="src">    <span class="k">const</span> tokens = Math.min(</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">19</span><span class="g">+</span><span class="src">      <span class="k">this</span>.capacity,</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">20</span><span class="g">+</span><span class="src">      prior.tokens + elapsed * <span class="k">this</span>.refillPerSec,</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">21</span><span class="g">+</span><span class="src">    )</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">22</span><span class="g">+</span><span class="src">    <span class="k">if</span> (tokens &lt; cost) {</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">23</span><span class="g">+</span><span class="src">      <span class="k">return</span> { allowed: <span class="k">false</span>, retryAfterMs: ((cost - tokens) / <span class="k">this</span>.refillPerSec) * 1000 }</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">24</span><span class="g">+</span><span class="src">    }</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">25</span><span class="g">+</span><span class="src">    <span class="k">await</span> <span class="k">this</span>.store.set(key, { tokens: tokens - cost, updatedAt: now })</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">26</span><span class="g">+</span><span class="src">    <span class="k">return</span> { allowed: <span class="k">true</span>, remaining: Math.floor(tokens - cost) }</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">27</span><span class="g">+</span><span class="src">  }</span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">28</span><span class="g">+</span><span class="src">}</span></div>
+        </div>
+        <div class="reach">
+          <div class="reach-head">
+            <span class="badge">Reach</span>
+            <span>unchanged · referenced at line 11</span>
+            <span class="path">src/rate/store.ts</span>
+          </div>
+          <div class="code">
+            <div class="row ctx"><span class="ln">6</span><span class="g"></span><span class="src"><span class="k">export interface</span> RateStore {</span></div>
+            <div class="row ctx"><span class="ln">7</span><span class="g"></span><span class="src">  get(key: <span class="k">string</span>): <span class="k">Promise</span>&lt;BucketState | <span class="k">null</span>&gt;</span></div>
+            <div class="row ctx"><span class="ln">8</span><span class="g"></span><span class="src">  set(key: <span class="k">string</span>, state: BucketState): <span class="k">Promise</span>&lt;<span class="k">void</span>&gt;  <span class="c">// TTL = 2× refill window</span></span></div>
+            <div class="row ctx"><span class="ln">9</span><span class="g"></span><span class="src">}</span></div>
+          </div>
+        </div>
+      </section>
+
+      <section class="file" aria-label="src/rate/keys.ts">
+        <div class="file-head">
+          <span class="path">src/rate/keys.ts</span>
+          <span class="delta"><span class="a">+31</span><span class="d">−13</span></span>
+          <span class="spacer"></span>
+          <span class="blast-chip">
+            <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 1.5 11 10.5H1z"/><path d="M6 5v2.4"/><circle cx="6" cy="9" r=".2"/></svg>
+            Blast radius · public contract
+          </span>
+        </div>
+        <div class="code">
+          <div class="hunk-sep">@@ orgKey · the key the whole limit hangs off @@</div>
+          <div class="row ctx"><span class="ln">17</span><span class="ln">17</span><span class="g"></span><span class="src"><span class="k">export function</span> orgKey(ctx: RequestContext): <span class="k">string</span> {</span></div>
+          <div class="row del"><span class="ln">18</span><span class="ln"></span><span class="g">−</span><span class="src">  <span class="k">return</span> <span class="s">`rl:${ctx.apiKey.id}`</span></span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">18</span><span class="g">+</span><span class="src">  <span class="c">// keys are free to mint; orgs are not (AT-1291)</span></span></div>
+          <div class="row add"><span class="ln"></span><span class="ln">19</span><span class="g">+</span><span class="src">  <span class="k">return</span> <span class="s">`rl:org:${ctx.org.id}`</span></span></div>
+          <div class="row ctx"><span class="ln">19</span><span class="ln">20</span><span class="g"></span><span class="src">}</span></div>
+        </div>
+      </section>
+    </main>
+
+    <aside class="margin" aria-label="Margin">
+      <div class="note">
+        <div class="who"><span class="dot"></span>Claude Code · margin note</div>
+        <p>The refill is elapsed-based, so two calls in the same millisecond share one <code>prior</code> read. Under concurrency this over-admits by at most <code>cost</code>. Probably acceptable; the tests in chunk 5 never exercise it.</p>
+        <div class="anchor">bucket.ts · L16–25</div>
+      </div>
+      <div class="oblig">
+        <div class="who">
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 1.5 11 10.5H1z"/><path d="M6 5v2.4"/><circle cx="6" cy="9" r=".2"/></svg>
+          1 obligation in this chunk
+        </div>
+        <p>Re-keying limits from API key to org changes what a 429 means for every existing client. Reading is not enough here.</p>
+        <button class="act">Acknowledge as a risk <kbd>⇧A</kbd></button>
+      </div>
+      <div class="private-card">
+        <div class="lock">
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2.2" y="5.2" width="7.6" height="5.2" rx="1.2"/><path d="M4 5V3.8a2 2 0 0 1 4 0V5"/></svg>
+          Private to you
+        </div>
+        <p><b>612 of 1,847</b> lines read · <b>2 of 6</b> chunks. Pace, coverage, and chat never leave this Mac and never enter the published route.</p>
+      </div>
+    </aside>
+  </div>
+
+  <footer class="footer">
+    <span><kbd>J</kbd> <kbd>K</kbd> hunks</span>
+    <span><kbd>R</kbd> mark read</span>
+    <span><kbd>space</kbd> next chunk</span>
+    <span><kbd>1</kbd>–<kbd>5</kbd> angles</span>
+    <span><kbd>C</kbd> ask about this</span>
+    <span class="grow"></span>
+    <span><kbd>⌘K</kbd> commands</span>
+  </footer>
+</div>

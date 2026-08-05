@@ -1,0 +1,111 @@
+<!--
+THESIS: publication is always an explicit preview. Author-side local review produces PR copy without pushing; reviewer-side review previews the exact GitHub mutation before the human submits it. Paper is what leaves the machine.
+OWN-WORLD: themed by tokens.css via ?dir=; scheme via ?scheme=.
+FINISH: unreviewed and undocumented is unfinished.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Rennet · Publish preview</title>
+<link rel="stylesheet" href="assets/tokens.css">
+<link rel="stylesheet" href="assets/screens.css">
+
+<body data-screen="publish">
+<div class="window" role="dialog" aria-label="Rennet publication preview">
+  <header class="titlebar">
+    <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
+    <span class="wm"></span>
+    <div class="doc"><strong>atlas</strong> · publication preview <span class="sha">exact inputs bound</span></div>
+    <div class="right">Nothing has been sent</div>
+  </header>
+
+  <div class="publish-mode" role="group" aria-label="Publication variant">
+    <button data-publish-mode="author" aria-pressed="true">Your local change · PR preview</button>
+    <button data-publish-mode="reviewer" aria-pressed="false">Someone else's PR · review preview</button>
+  </div>
+
+  <div class="publish-stage">
+    <div class="scrim" aria-hidden="true"></div>
+    <div class="publish-pair">
+      <section class="sheet">
+        <div class="publish-variant" data-publish-variant="author">
+          <div class="doc-line">
+            <span>atlas · feat/rate-limiting · draft patchset 8</span>
+            <span class="sha">local working-tree snapshot 91fb0aa</span>
+          </div>
+          <h1>PR submission preview</h1>
+          <p class="sub">Rennet has prepared the title and body from the review you completed. It will not push your branch, create a PR, or update GitHub.</p>
+
+          <div class="travels">
+            <h2>Proposed PR content</h2>
+            <ul>
+              <li><span><b>Title</b> · Apply per-organisation rate limits at the API boundary</span></li>
+              <li><span><b>Summary</b> · Adds the persisted limit schema, token bucket, middleware, and response headers.</span></li>
+              <li><span><b>Decisions</b> · Fail open on store outage; key limits by organisation; return 429 with Retry-After.</span></li>
+              <li class="warn"><span><b>Risk called out</b> · Backfill writes defaults to 4,112 rows and has no down migration.</span></li>
+            </ul>
+          </div>
+
+          <div class="signature">
+            <p class="statement">This is editable copy, not a remote action. Review it, then choose what you do with it.</p>
+            <div class="sig-row">
+              <div class="sig-line">
+                <div class="rule"><div class="name">Prepared locally by Rennet</div></div>
+                <div class="cap"><span>Bound to draft patchset 8</span><span class="sha num">91fb0aa · 5 Aug 2026</span></div>
+              </div>
+              <button class="copy-preview btn">Copy PR title and body</button>
+            </div>
+            <p class="signed-note">Copied. GitHub is unchanged.</p>
+          </div>
+        </div>
+
+        <div class="publish-variant" data-publish-variant="reviewer" hidden>
+          <div class="doc-line">
+            <span>atlas · #482 Per-org rate limiting</span>
+            <span class="sha">reviewed at a3f9c21</span>
+          </div>
+          <h1>GitHub review preview</h1>
+          <p class="sub">This is the exact review Rennet will submit only after you sign. If the remote head changes first, this sheet closes and affected analysis reopens.</p>
+
+          <div class="travels">
+            <h2>One batched review will send</h2>
+            <ul>
+              <li><span><b>Verdict</b> · Request changes</span></li>
+              <li><span><b>2 inline comments</b> · fail-open fallback and unclaimed logging rework</span></li>
+              <li><span><b>Summary</b> · 4 decisions inspected, 12 requirements traced, 1 obligation unresolved</span></li>
+              <li class="warn"><span><b>Degradation</b> · one multiline comment will anchor to its first changed line</span></li>
+            </ul>
+          </div>
+
+          <div class="signature">
+            <p class="statement">This is an explicit GitHub mutation in your name, bound to the exact head you reviewed.</p>
+            <div class="sig-row">
+              <div class="sig-line">
+                <div class="rule"><div class="name">Rai Butera</div></div>
+                <div class="cap"><span>Reviewer of record</span><span class="sha num">a3f9c21 · 5 Aug 2026</span></div>
+              </div>
+              <button class="sign-btn">
+                <span class="fill" aria-hidden="true"></span>
+                Sign and submit review
+                <span class="hold-hint">hold to submit · <kbd>⌘⏎</kbd></span>
+              </button>
+            </div>
+            <p class="signed-note">Submitted. One review landed on PR #482.</p>
+          </div>
+        </div>
+      </section>
+
+      <aside class="stays-panel" aria-label="Local data and egress">
+        <h2>Before anything leaves</h2>
+        <ul>
+          <li><span><b>No Rennet backend.</b> GitHub receives only the paper preview you explicitly submit.</span></li>
+          <li><span>Coverage, pace, dismissed findings, raw harness frames, and private chat stay out of the payload.</span></li>
+          <li><span>Project context lives in <code>.rennet</code>; temporary materialisation stays in Rennet's application cache.</span></li>
+        </ul>
+        <p class="keep-note">The outbound payload is derived from this preview, not from private event history.</p>
+        <p class="material-note">Paper is what leaves the machine. Everything still on glass stays here.</p>
+      </aside>
+    </div>
+  </div>
+</div>
+<script src="assets/app.js"></script>
+</body>

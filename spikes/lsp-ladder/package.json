@@ -1,0 +1,8 @@
+{
+  "name": "rennet-lsp-ladder-spike",
+  "private": true,
+  "version": "0.0.0",
+  "dependencies": {
+    "@typescript/native-preview": "7.0.0-dev.20260707.2"
+  }
+}

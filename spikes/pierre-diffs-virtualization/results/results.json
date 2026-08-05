@@ -1,0 +1,4340 @@
+{
+  "generatedAt": "2026-08-04T20:19:15.462Z",
+  "headless": false,
+  "repeats": 3,
+  "results": [
+    {
+      "mode": "idle",
+      "size": "small",
+      "stall": 0,
+      "tag": "FLOOR-idle-scroller",
+      "url": "http://localhost:5199/?mode=idle&size=small&stall=0",
+      "runs": 3,
+      "renderMs": 0,
+      "renderedLines": 0,
+      "domNodesAfterRender": 17,
+      "domNodesAfterScroll": 17,
+      "renderedLinesAfterScroll": 0,
+      "tokenSpansAfterRender": 0,
+      "tokenSpansAfterScroll": 0,
+      "heapAfterRenderMB": 4.4,
+      "heapAfterScrollMB": 4.88,
+      "cdpNodes": 60,
+      "cdpHeapMB": 4.2,
+      "fps": 120.29,
+      "frameP50": 8.3,
+      "frameP95": 9.9,
+      "frameP99": 10.3,
+      "frameMax": 10.3,
+      "frames": 392,
+      "over16_7ms": 0,
+      "over50ms": 0,
+      "longtaskCount": 0,
+      "longtaskTotalMs": 0,
+      "longtaskMaxMs": 0,
+      "display": {
+        "dpr": 1,
+        "screen": "1440x900",
+        "hw": 15
+      },
+      "errors": [],
+      "raw": [
+        {
+          "url": "http://localhost:5199/?mode=idle&size=small&stall=0",
+          "mode": "idle",
+          "size": "small",
+          "stall": 0,
+          "tag": "FLOOR-idle-scroller",
+          "ready": {
+            "mode": "idle",
+            "size": "small",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 500,
+              "files": 6
+            },
+            "actual": {
+              "totalChanged": 504,
+              "files": 6,
+              "patchBytes": 50267
+            },
+            "renderMs": 0,
+            "renderedLines": 0,
+            "timedOut": false,
+            "domNodes": 17,
+            "tokenSpans": 0,
+            "heapAfterRenderBytes": 4077418,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 392,
+            "elapsedMs": 3257.4,
+            "scrollHeightPx": 39131,
+            "fps": 120.34,
+            "frameMs": {
+              "mean": 8.33,
+              "p50": 8.3,
+              "p95": 9.9,
+              "p99": 10.21,
+              "max": 10.3
+            },
+            "over8_3ms": 177,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 17,
+              "renderedLines": 0,
+              "tokenSpans": 0,
+              "heap": 4826816
+            },
+            "after": {
+              "domNodes": 17,
+              "renderedLines": 0,
+              "tokenSpans": 0,
+              "heap": 5123564
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 60,
+            "JSHeapUsedSize": 4413148,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=idle&size=small&stall=0",
+          "mode": "idle",
+          "size": "small",
+          "stall": 0,
+          "tag": "FLOOR-idle-scroller",
+          "ready": {
+            "mode": "idle",
+            "size": "small",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 500,
+              "files": 6
+            },
+            "actual": {
+              "totalChanged": 504,
+              "files": 6,
+              "patchBytes": 50267
+            },
+            "renderMs": 0,
+            "renderedLines": 0,
+            "timedOut": false,
+            "domNodes": 17,
+            "tokenSpans": 0,
+            "heapAfterRenderBytes": 4616198,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 392,
+            "elapsedMs": 3263.2,
+            "scrollHeightPx": 39131,
+            "fps": 120.13,
+            "frameMs": {
+              "mean": 8.36,
+              "p50": 8.3,
+              "p95": 9.9,
+              "p99": 10.3,
+              "max": 17.6
+            },
+            "over8_3ms": 184,
+            "over16_7ms": 1,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 17,
+              "renderedLines": 0,
+              "tokenSpans": 0,
+              "heap": 4820930
+            },
+            "after": {
+              "domNodes": 17,
+              "renderedLines": 0,
+              "tokenSpans": 0,
+              "heap": 5118562
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 60,
+            "JSHeapUsedSize": 4408148,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=idle&size=small&stall=0",
+          "mode": "idle",
+          "size": "small",
+          "stall": 0,
+          "tag": "FLOOR-idle-scroller",
+          "ready": {
+            "mode": "idle",
+            "size": "small",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 500,
+              "files": 6
+            },
+            "actual": {
+              "totalChanged": 504,
+              "files": 6,
+              "patchBytes": 50267
+            },
+            "renderMs": 0,
+            "renderedLines": 0,
+            "timedOut": false,
+            "domNodes": 17,
+            "tokenSpans": 0,
+            "heapAfterRenderBytes": 4609180,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 392,
+            "elapsedMs": 3258.8,
+            "scrollHeightPx": 39131,
+            "fps": 120.29,
+            "frameMs": {
+              "mean": 8.34,
+              "p50": 8.3,
+              "p95": 10,
+              "p99": 10.3,
+              "max": 10.3
+            },
+            "over8_3ms": 182,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 17,
+              "renderedLines": 0,
+              "tokenSpans": 0,
+              "heap": 4813608
+            },
+            "after": {
+              "domNodes": 17,
+              "renderedLines": 0,
+              "tokenSpans": 0,
+              "heap": 5111628
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 60,
+            "JSHeapUsedSize": 4401200,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "mode": "idle",
+      "size": "small",
+      "stall": 50,
+      "tag": "FLOOR-idle+50ms-stall",
+      "url": "http://localhost:5199/?mode=idle&size=small&stall=50",
+      "runs": 3,
+      "renderMs": 0,
+      "renderedLines": 0,
+      "domNodesAfterRender": 17,
+      "domNodesAfterScroll": 17,
+      "renderedLinesAfterScroll": 0,
+      "tokenSpansAfterRender": 0,
+      "tokenSpansAfterScroll": 0,
+      "heapAfterRenderMB": 4.42,
+      "heapAfterScrollMB": 4.78,
+      "cdpNodes": 60,
+      "cdpHeapMB": 4.11,
+      "fps": 19.96,
+      "frameP50": 50,
+      "frameP95": 50.5,
+      "frameP99": 57.3,
+      "frameMax": 58.4,
+      "frames": 392,
+      "over16_7ms": 391,
+      "over50ms": 98,
+      "longtaskCount": 316,
+      "longtaskTotalMs": 15800,
+      "longtaskMaxMs": 50,
+      "display": {
+        "dpr": 1,
+        "screen": "1440x900",
+        "hw": 15
+      },
+      "errors": [],
+      "raw": [
+        {
+          "url": "http://localhost:5199/?mode=idle&size=small&stall=50",
+          "mode": "idle",
+          "size": "small",
+          "stall": 50,
+          "tag": "FLOOR-idle+50ms-stall",
+          "ready": {
+            "mode": "idle",
+            "size": "small",
+            "stallMs": 50,
+            "spec": {
+              "changedLines": 500,
+              "files": 6
+            },
+            "actual": {
+              "totalChanged": 504,
+              "files": 6,
+              "patchBytes": 50267
+            },
+            "renderMs": 0,
+            "renderedLines": 0,
+            "timedOut": false,
+            "domNodes": 17,
+            "tokenSpans": 0,
+            "heapAfterRenderBytes": 4637030,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 392,
+            "elapsedMs": 19629.9,
+            "scrollHeightPx": 39131,
+            "fps": 19.97,
+            "frameMs": {
+              "mean": 50.06,
+              "p50": 50,
+              "p95": 50.75,
+              "p99": 58.12,
+              "max": 58.4
+            },
+            "over8_3ms": 391,
+            "over16_7ms": 391,
+            "over50ms": 88,
+            "longtasks": {
+              "count": 303,
+              "totalMs": 15150,
+              "maxMs": 50
+            },
+            "before": {
+              "domNodes": 17,
+              "renderedLines": 0,
+              "tokenSpans": 0,
+              "heap": 4965850
+            },
+            "after": {
+              "domNodes": 17,
+              "renderedLines": 0,
+              "tokenSpans": 0,
+              "heap": 4943542
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 60,
+            "JSHeapUsedSize": 4234600,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=idle&size=small&stall=50",
+          "mode": "idle",
+          "size": "small",
+          "stall": 50,
+          "tag": "FLOOR-idle+50ms-stall",
+          "ready": {
+            "mode": "idle",
+            "size": "small",
+            "stallMs": 50,
+            "spec": {
+              "changedLines": 500,
+              "files": 6
+            },
+            "actual": {
+              "totalChanged": 504,
+              "files": 6,
+              "patchBytes": 50267
+            },
+            "renderMs": 0,
+            "renderedLines": 0,
+            "timedOut": false,
+            "domNodes": 17,
+            "tokenSpans": 0,
+            "heapAfterRenderBytes": 4664550,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 392,
+            "elapsedMs": 19637.3,
+            "scrollHeightPx": 39131,
+            "fps": 19.96,
+            "frameMs": {
+              "mean": 50.08,
+              "p50": 50,
+              "p95": 50.4,
+              "p99": 52.11,
+              "max": 58.7
+            },
+            "over8_3ms": 391,
+            "over16_7ms": 391,
+            "over50ms": 98,
+            "longtasks": {
+              "count": 316,
+              "totalMs": 15800,
+              "maxMs": 50
+            },
+            "before": {
+              "domNodes": 17,
+              "renderedLines": 0,
+              "tokenSpans": 0,
+              "heap": 5000278
+            },
+            "after": {
+              "domNodes": 17,
+              "renderedLines": 0,
+              "tokenSpans": 0,
+              "heap": 5016342
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 60,
+            "JSHeapUsedSize": 4307388,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=idle&size=small&stall=50",
+          "mode": "idle",
+          "size": "small",
+          "stall": 50,
+          "tag": "FLOOR-idle+50ms-stall",
+          "ready": {
+            "mode": "idle",
+            "size": "small",
+            "stallMs": 50,
+            "spec": {
+              "changedLines": 500,
+              "files": 6
+            },
+            "actual": {
+              "totalChanged": 504,
+              "files": 6,
+              "patchBytes": 50267
+            },
+            "renderMs": 0,
+            "renderedLines": 0,
+            "timedOut": false,
+            "domNodes": 17,
+            "tokenSpans": 0,
+            "heapAfterRenderBytes": 4614833,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 392,
+            "elapsedMs": 19634.8,
+            "scrollHeightPx": 39131,
+            "fps": 19.96,
+            "frameMs": {
+              "mean": 50.09,
+              "p50": 50,
+              "p95": 50.5,
+              "p99": 57.3,
+              "max": 58.4
+            },
+            "over8_3ms": 391,
+            "over16_7ms": 391,
+            "over50ms": 100,
+            "longtasks": {
+              "count": 326,
+              "totalMs": 16300,
+              "maxMs": 50
+            },
+            "before": {
+              "domNodes": 17,
+              "renderedLines": 0,
+              "tokenSpans": 0,
+              "heap": 4952853
+            },
+            "after": {
+              "domNodes": 17,
+              "renderedLines": 0,
+              "tokenSpans": 0,
+              "heap": 6745617
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 60,
+            "JSHeapUsedSize": 6036652,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "mode": "pierre-virtual",
+      "size": "medium",
+      "stall": 0,
+      "tag": "calibration-baseline",
+      "url": "http://localhost:5199/?mode=pierre-virtual&size=medium&stall=0",
+      "runs": 3,
+      "renderMs": 185,
+      "renderedLines": 100,
+      "domNodesAfterRender": 1650,
+      "domNodesAfterScroll": 1650,
+      "renderedLinesAfterScroll": 100,
+      "tokenSpansAfterRender": 1188,
+      "tokenSpansAfterScroll": 1188,
+      "heapAfterRenderMB": 29.26,
+      "heapAfterScrollMB": 17.67,
+      "cdpNodes": 4574,
+      "cdpHeapMB": 16.62,
+      "fps": 120.21,
+      "frameP50": 8.3,
+      "frameP95": 9.68,
+      "frameP99": 10.2,
+      "frameMax": 10.4,
+      "frames": 666,
+      "over16_7ms": 0,
+      "over50ms": 0,
+      "longtaskCount": 0,
+      "longtaskTotalMs": 0,
+      "longtaskMaxMs": 0,
+      "display": {
+        "dpr": 1,
+        "screen": "1440x900",
+        "hw": 15
+      },
+      "errors": [],
+      "raw": [
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=medium&stall=0",
+          "mode": "pierre-virtual",
+          "size": "medium",
+          "stall": 0,
+          "tag": "calibration-baseline",
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "medium",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 2000,
+              "files": 18
+            },
+            "actual": {
+              "totalChanged": 2004,
+              "files": 18,
+              "patchBytes": 195384
+            },
+            "renderMs": 196.9,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 1650,
+            "tokenSpans": 1188,
+            "heapAfterRenderBytes": 30677791,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 666,
+            "elapsedMs": 5540.8,
+            "scrollHeightPx": 66427,
+            "fps": 120.2,
+            "frameMs": {
+              "mean": 8.33,
+              "p50": 8.3,
+              "p95": 9.8,
+              "p99": 10.2,
+              "max": 10.4
+            },
+            "over8_3ms": 270,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 31511421
+            },
+            "after": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 18532180
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 4574,
+            "JSHeapUsedSize": 17431268,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=medium&stall=0",
+          "mode": "pierre-virtual",
+          "size": "medium",
+          "stall": 0,
+          "tag": "calibration-baseline",
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "medium",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 2000,
+              "files": 18
+            },
+            "actual": {
+              "totalChanged": 2004,
+              "files": 18,
+              "patchBytes": 195384
+            },
+            "renderMs": 179.9,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 1650,
+            "tokenSpans": 1188,
+            "heapAfterRenderBytes": 30968373,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 666,
+            "elapsedMs": 5540.4,
+            "scrollHeightPx": 66427,
+            "fps": 120.21,
+            "frameMs": {
+              "mean": 8.33,
+              "p50": 8.3,
+              "p95": 9.68,
+              "p99": 10.24,
+              "max": 10.4
+            },
+            "over8_3ms": 278,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 31554187
+            },
+            "after": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 18523430
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 4574,
+            "JSHeapUsedSize": 17422532,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=medium&stall=0",
+          "mode": "pierre-virtual",
+          "size": "medium",
+          "stall": 0,
+          "tag": "calibration-baseline",
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "medium",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 2000,
+              "files": 18
+            },
+            "actual": {
+              "totalChanged": 2004,
+              "files": 18,
+              "patchBytes": 195384
+            },
+            "renderMs": 185,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 1650,
+            "tokenSpans": 1188,
+            "heapAfterRenderBytes": 26899323,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 666,
+            "elapsedMs": 5539.7,
+            "scrollHeightPx": 66427,
+            "fps": 120.22,
+            "frameMs": {
+              "mean": 8.33,
+              "p50": 8.3,
+              "p95": 9.3,
+              "p99": 10,
+              "max": 10.2
+            },
+            "over8_3ms": 268,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 22195325
+            },
+            "after": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 19200113
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 27883,
+            "JSHeapUsedSize": 18088772,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "mode": "pierre-virtual",
+      "size": "medium",
+      "stall": 8,
+      "tag": "calibration-stall-8ms",
+      "url": "http://localhost:5199/?mode=pierre-virtual&size=medium&stall=8",
+      "runs": 3,
+      "renderMs": 228.7,
+      "renderedLines": 100,
+      "domNodesAfterRender": 1650,
+      "domNodesAfterScroll": 1650,
+      "renderedLinesAfterScroll": 100,
+      "tokenSpansAfterRender": 1188,
+      "tokenSpansAfterScroll": 1188,
+      "heapAfterRenderMB": 17.18,
+      "heapAfterScrollMB": 17.62,
+      "cdpNodes": 18146,
+      "cdpHeapMB": 16.56,
+      "fps": 106.99,
+      "frameP50": 8.3,
+      "frameP95": 16.7,
+      "frameP99": 17.07,
+      "frameMax": 18.2,
+      "frames": 666,
+      "over16_7ms": 30,
+      "over50ms": 0,
+      "longtaskCount": 0,
+      "longtaskTotalMs": 0,
+      "longtaskMaxMs": 0,
+      "display": {
+        "dpr": 1,
+        "screen": "1440x900",
+        "hw": 15
+      },
+      "errors": [],
+      "raw": [
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=medium&stall=8",
+          "mode": "pierre-virtual",
+          "size": "medium",
+          "stall": 8,
+          "tag": "calibration-stall-8ms",
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "medium",
+            "stallMs": 8,
+            "spec": {
+              "changedLines": 2000,
+              "files": 18
+            },
+            "actual": {
+              "totalChanged": 2004,
+              "files": 18,
+              "patchBytes": 195384
+            },
+            "renderMs": 236.1,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 1650,
+            "tokenSpans": 1188,
+            "heapAfterRenderBytes": 18015754,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 666,
+            "elapsedMs": 6204.7,
+            "scrollHeightPx": 66427,
+            "fps": 107.34,
+            "frameMs": {
+              "mean": 9.31,
+              "p50": 8.3,
+              "p95": 16.7,
+              "p99": 17.07,
+              "max": 18.6
+            },
+            "over8_3ms": 309,
+            "over16_7ms": 30,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 19721400
+            },
+            "after": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 18478758
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 29003,
+            "JSHeapUsedSize": 17369060,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=medium&stall=8",
+          "mode": "pierre-virtual",
+          "size": "medium",
+          "stall": 8,
+          "tag": "calibration-stall-8ms",
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "medium",
+            "stallMs": 8,
+            "spec": {
+              "changedLines": 2000,
+              "files": 18
+            },
+            "actual": {
+              "totalChanged": 2004,
+              "files": 18,
+              "patchBytes": 195384
+            },
+            "renderMs": 228.7,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 1650,
+            "tokenSpans": 1188,
+            "heapAfterRenderBytes": 17990731,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 666,
+            "elapsedMs": 6224.9,
+            "scrollHeightPx": 66427,
+            "fps": 106.99,
+            "frameMs": {
+              "mean": 9.35,
+              "p50": 8.3,
+              "p95": 16.7,
+              "p99": 17.17,
+              "max": 18.2
+            },
+            "over8_3ms": 307,
+            "over16_7ms": 28,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 25731961
+            },
+            "after": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 18376775
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 18146,
+            "JSHeapUsedSize": 17270836,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=medium&stall=8",
+          "mode": "pierre-virtual",
+          "size": "medium",
+          "stall": 8,
+          "tag": "calibration-stall-8ms",
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "medium",
+            "stallMs": 8,
+            "spec": {
+              "changedLines": 2000,
+              "files": 18
+            },
+            "actual": {
+              "totalChanged": 2004,
+              "files": 18,
+              "patchBytes": 195384
+            },
+            "renderMs": 219.6,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 1650,
+            "tokenSpans": 1188,
+            "heapAfterRenderBytes": 20610673,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 666,
+            "elapsedMs": 6228.8,
+            "scrollHeightPx": 66427,
+            "fps": 106.92,
+            "frameMs": {
+              "mean": 9.35,
+              "p50": 8.3,
+              "p95": 16.7,
+              "p99": 17.04,
+              "max": 17.7
+            },
+            "over8_3ms": 311,
+            "over16_7ms": 30,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 18395235
+            },
+            "after": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 18804901
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 17128,
+            "JSHeapUsedSize": 17697612,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "mode": "pierre-virtual",
+      "size": "medium",
+      "stall": 50,
+      "tag": "calibration-stall-50ms",
+      "url": "http://localhost:5199/?mode=pierre-virtual&size=medium&stall=50",
+      "runs": 3,
+      "renderMs": 786.8,
+      "renderedLines": 100,
+      "domNodesAfterRender": 1650,
+      "domNodesAfterScroll": 1650,
+      "renderedLinesAfterScroll": 100,
+      "tokenSpansAfterRender": 1188,
+      "tokenSpansAfterScroll": 1188,
+      "heapAfterRenderMB": 24.96,
+      "heapAfterScrollMB": 27.09,
+      "cdpNodes": 15673,
+      "cdpHeapMB": 26.03,
+      "fps": 19.22,
+      "frameP50": 50,
+      "frameP95": 58.4,
+      "frameP99": 59.94,
+      "frameMax": 66.7,
+      "frames": 666,
+      "over16_7ms": 665,
+      "over50ms": 290,
+      "longtaskCount": 665,
+      "longtaskTotalMs": 34286,
+      "longtaskMaxMs": 64,
+      "display": {
+        "dpr": 1,
+        "screen": "1440x900",
+        "hw": 15
+      },
+      "errors": [],
+      "raw": [
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=medium&stall=50",
+          "mode": "pierre-virtual",
+          "size": "medium",
+          "stall": 50,
+          "tag": "calibration-stall-50ms",
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "medium",
+            "stallMs": 50,
+            "spec": {
+              "changedLines": 2000,
+              "files": 18
+            },
+            "actual": {
+              "totalChanged": 2004,
+              "files": 18,
+              "patchBytes": 195384
+            },
+            "renderMs": 833.6,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 1650,
+            "tokenSpans": 1188,
+            "heapAfterRenderBytes": 19567379,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 666,
+            "elapsedMs": 34675,
+            "scrollHeightPx": 66427,
+            "fps": 19.21,
+            "frameMs": {
+              "mean": 52.07,
+              "p50": 50,
+              "p95": 58.4,
+              "p99": 66.6,
+              "max": 67.8
+            },
+            "over8_3ms": 665,
+            "over16_7ms": 665,
+            "over50ms": 286,
+            "longtasks": {
+              "count": 666,
+              "totalMs": 34357,
+              "maxMs": 65
+            },
+            "before": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 19920485
+            },
+            "after": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 36742602
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 20782,
+            "JSHeapUsedSize": 35635528,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=medium&stall=50",
+          "mode": "pierre-virtual",
+          "size": "medium",
+          "stall": 50,
+          "tag": "calibration-stall-50ms",
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "medium",
+            "stallMs": 50,
+            "spec": {
+              "changedLines": 2000,
+              "files": 18
+            },
+            "actual": {
+              "totalChanged": 2004,
+              "files": 18,
+              "patchBytes": 195384
+            },
+            "renderMs": 786.8,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 1650,
+            "tokenSpans": 1188,
+            "heapAfterRenderBytes": 26177406,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 666,
+            "elapsedMs": 34659.4,
+            "scrollHeightPx": 66427,
+            "fps": 19.22,
+            "frameMs": {
+              "mean": 52.04,
+              "p50": 50,
+              "p95": 58.4,
+              "p99": 59.1,
+              "max": 66.6
+            },
+            "over8_3ms": 665,
+            "over16_7ms": 665,
+            "over50ms": 290,
+            "longtasks": {
+              "count": 665,
+              "totalMs": 34286,
+              "maxMs": 63
+            },
+            "before": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 26547072
+            },
+            "after": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 28404106
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 15673,
+            "JSHeapUsedSize": 27298548,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=medium&stall=50",
+          "mode": "pierre-virtual",
+          "size": "medium",
+          "stall": 50,
+          "tag": "calibration-stall-50ms",
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "medium",
+            "stallMs": 50,
+            "spec": {
+              "changedLines": 2000,
+              "files": 18
+            },
+            "actual": {
+              "totalChanged": 2004,
+              "files": 18,
+              "patchBytes": 195384
+            },
+            "renderMs": 786.7,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 1650,
+            "tokenSpans": 1188,
+            "heapAfterRenderBytes": 26911323,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 666,
+            "elapsedMs": 34651.5,
+            "scrollHeightPx": 66427,
+            "fps": 19.22,
+            "frameMs": {
+              "mean": 52.03,
+              "p50": 50,
+              "p95": 58.4,
+              "p99": 59.94,
+              "max": 66.7
+            },
+            "over8_3ms": 665,
+            "over16_7ms": 665,
+            "over50ms": 316,
+            "longtasks": {
+              "count": 664,
+              "totalMs": 34224,
+              "maxMs": 64
+            },
+            "before": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 27281549
+            },
+            "after": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 25414893
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 12123,
+            "JSHeapUsedSize": 24309932,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "mode": "pierre-virtual",
+      "size": "small",
+      "stall": 0,
+      "url": "http://localhost:5199/?mode=pierre-virtual&size=small&stall=0",
+      "runs": 3,
+      "renderMs": 107.1,
+      "renderedLines": 100,
+      "domNodesAfterRender": 1398,
+      "domNodesAfterScroll": 1398,
+      "renderedLinesAfterScroll": 100,
+      "tokenSpansAfterRender": 956,
+      "tokenSpansAfterScroll": 956,
+      "heapAfterRenderMB": 11,
+      "heapAfterScrollMB": 12.92,
+      "cdpNodes": 30323,
+      "cdpHeapMB": 7.62,
+      "fps": 120.6,
+      "frameP50": 8.3,
+      "frameP95": 10,
+      "frameP99": 10.2,
+      "frameMax": 16,
+      "frames": 164,
+      "over16_7ms": 0,
+      "over50ms": 0,
+      "longtaskCount": 0,
+      "longtaskTotalMs": 0,
+      "longtaskMaxMs": 0,
+      "display": {
+        "dpr": 1,
+        "screen": "1440x900",
+        "hw": 15
+      },
+      "errors": [],
+      "raw": [
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=small&stall=0",
+          "mode": "pierre-virtual",
+          "size": "small",
+          "stall": 0,
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "small",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 500,
+              "files": 6
+            },
+            "actual": {
+              "totalChanged": 504,
+              "files": 6,
+              "patchBytes": 50267
+            },
+            "renderMs": 107.1,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 1398,
+            "tokenSpans": 956,
+            "heapAfterRenderBytes": 11529654,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 164,
+            "elapsedMs": 1357.7,
+            "scrollHeightPx": 16379,
+            "fps": 120.79,
+            "frameMs": {
+              "mean": 8.33,
+              "p50": 8.3,
+              "p95": 10,
+              "p99": 10.2,
+              "max": 10.3
+            },
+            "over8_3ms": 70,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1398,
+              "renderedLines": 100,
+              "tokenSpans": 956,
+              "heap": 11837020
+            },
+            "after": {
+              "domNodes": 1398,
+              "renderedLines": 100,
+              "tokenSpans": 956,
+              "heap": 13543535
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 13469,
+            "JSHeapUsedSize": 7726184,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=small&stall=0",
+          "mode": "pierre-virtual",
+          "size": "small",
+          "stall": 0,
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "small",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 500,
+              "files": 6
+            },
+            "actual": {
+              "totalChanged": 504,
+              "files": 6,
+              "patchBytes": 50267
+            },
+            "renderMs": 93.3,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 1398,
+            "tokenSpans": 956,
+            "heapAfterRenderBytes": 11603191,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 164,
+            "elapsedMs": 1369.3,
+            "scrollHeightPx": 16379,
+            "fps": 119.77,
+            "frameMs": {
+              "mean": 8.44,
+              "p50": 8.3,
+              "p95": 10.1,
+              "p99": 12.66,
+              "max": 16.6
+            },
+            "over8_3ms": 68,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1398,
+              "renderedLines": 100,
+              "tokenSpans": 956,
+              "heap": 11904449
+            },
+            "after": {
+              "domNodes": 1398,
+              "renderedLines": 100,
+              "tokenSpans": 956,
+              "heap": 9856060
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 31220,
+            "JSHeapUsedSize": 8873388,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=small&stall=0",
+          "mode": "pierre-virtual",
+          "size": "small",
+          "stall": 0,
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "small",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 500,
+              "files": 6
+            },
+            "actual": {
+              "totalChanged": 504,
+              "files": 6,
+              "patchBytes": 50267
+            },
+            "renderMs": 116,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 1398,
+            "tokenSpans": 956,
+            "heapAfterRenderBytes": 11427723,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 164,
+            "elapsedMs": 1359.9,
+            "scrollHeightPx": 16379,
+            "fps": 120.6,
+            "frameMs": {
+              "mean": 8.38,
+              "p50": 8.3,
+              "p95": 9.88,
+              "p99": 10.2,
+              "max": 16
+            },
+            "over8_3ms": 69,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1398,
+              "renderedLines": 100,
+              "tokenSpans": 956,
+              "heap": 11735113
+            },
+            "after": {
+              "domNodes": 1398,
+              "renderedLines": 100,
+              "tokenSpans": 956,
+              "heap": 15544904
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 30323,
+            "JSHeapUsedSize": 7992984,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "mode": "pierre-virtual",
+      "size": "medium",
+      "stall": 0,
+      "url": "http://localhost:5199/?mode=pierre-virtual&size=medium&stall=0",
+      "runs": 3,
+      "renderMs": 190,
+      "renderedLines": 100,
+      "domNodesAfterRender": 1650,
+      "domNodesAfterScroll": 1650,
+      "renderedLinesAfterScroll": 100,
+      "tokenSpansAfterRender": 1188,
+      "tokenSpansAfterScroll": 1188,
+      "heapAfterRenderMB": 25.83,
+      "heapAfterScrollMB": 28.73,
+      "cdpNodes": 41175,
+      "cdpHeapMB": 27.67,
+      "fps": 120.18,
+      "frameP50": 8.3,
+      "frameP95": 9.4,
+      "frameP99": 10.2,
+      "frameMax": 10.4,
+      "frames": 666,
+      "over16_7ms": 0,
+      "over50ms": 0,
+      "longtaskCount": 0,
+      "longtaskTotalMs": 0,
+      "longtaskMaxMs": 0,
+      "display": {
+        "dpr": 1,
+        "screen": "1440x900",
+        "hw": 15
+      },
+      "errors": [],
+      "raw": [
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=medium&stall=0",
+          "mode": "pierre-virtual",
+          "size": "medium",
+          "stall": 0,
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "medium",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 2000,
+              "files": 18
+            },
+            "actual": {
+              "totalChanged": 2004,
+              "files": 18,
+              "patchBytes": 195384
+            },
+            "renderMs": 190.7,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 637,
+            "tokenSpans": 175,
+            "heapAfterRenderBytes": 24431995,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 666,
+            "elapsedMs": 5541.1,
+            "scrollHeightPx": 66427,
+            "fps": 120.19,
+            "frameMs": {
+              "mean": 8.33,
+              "p50": 8.3,
+              "p95": 9.5,
+              "p99": 10.24,
+              "max": 10.4
+            },
+            "over8_3ms": 277,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 29599705
+            },
+            "after": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 30170155
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 41189,
+            "JSHeapUsedSize": 29058532,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=medium&stall=0",
+          "mode": "pierre-virtual",
+          "size": "medium",
+          "stall": 0,
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "medium",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 2000,
+              "files": 18
+            },
+            "actual": {
+              "totalChanged": 2004,
+              "files": 18,
+              "patchBytes": 195384
+            },
+            "renderMs": 190,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 1650,
+            "tokenSpans": 1188,
+            "heapAfterRenderBytes": 31016882,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 666,
+            "elapsedMs": 5541.7,
+            "scrollHeightPx": 66427,
+            "fps": 120.18,
+            "frameMs": {
+              "mean": 8.33,
+              "p50": 8.3,
+              "p95": 9.28,
+              "p99": 10.1,
+              "max": 10.3
+            },
+            "over8_3ms": 266,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 31488284
+            },
+            "after": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 20459971
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 8968,
+            "JSHeapUsedSize": 19353908,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=medium&stall=0",
+          "mode": "pierre-virtual",
+          "size": "medium",
+          "stall": 0,
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "medium",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 2000,
+              "files": 18
+            },
+            "actual": {
+              "totalChanged": 2004,
+              "files": 18,
+              "patchBytes": 195384
+            },
+            "renderMs": 175.6,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 1650,
+            "tokenSpans": 1188,
+            "heapAfterRenderBytes": 27082695,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 666,
+            "elapsedMs": 5541.7,
+            "scrollHeightPx": 66427,
+            "fps": 120.18,
+            "frameMs": {
+              "mean": 8.33,
+              "p50": 8.3,
+              "p95": 9.4,
+              "p99": 10.2,
+              "max": 10.4
+            },
+            "over8_3ms": 269,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 32345377
+            },
+            "after": {
+              "domNodes": 1650,
+              "renderedLines": 100,
+              "tokenSpans": 1188,
+              "heap": 30121491
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 41175,
+            "JSHeapUsedSize": 29012144,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "mode": "pierre-virtual",
+      "size": "large",
+      "stall": 0,
+      "url": "http://localhost:5199/?mode=pierre-virtual&size=large&stall=0",
+      "runs": 3,
+      "renderMs": 364.4,
+      "renderedLines": 100,
+      "domNodesAfterRender": 1525,
+      "domNodesAfterScroll": 1525,
+      "renderedLinesAfterScroll": 100,
+      "tokenSpansAfterRender": 1015,
+      "tokenSpansAfterScroll": 1015,
+      "heapAfterRenderMB": 22.74,
+      "heapAfterScrollMB": 51.96,
+      "cdpNodes": 26289,
+      "cdpHeapMB": 50.68,
+      "fps": 119.93,
+      "frameP50": 8.3,
+      "frameP95": 9.7,
+      "frameP99": 10.2,
+      "frameMax": 16.7,
+      "frames": 1638,
+      "over16_7ms": 1,
+      "over50ms": 0,
+      "longtaskCount": 0,
+      "longtaskTotalMs": 0,
+      "longtaskMaxMs": 0,
+      "display": {
+        "dpr": 1,
+        "screen": "1440x900",
+        "hw": 15
+      },
+      "errors": [],
+      "raw": [
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=large&stall=0",
+          "mode": "pierre-virtual",
+          "size": "large",
+          "stall": 0,
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "large",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 5000,
+              "files": 34
+            },
+            "actual": {
+              "totalChanged": 5016,
+              "files": 34,
+              "patchBytes": 465741
+            },
+            "renderMs": 273.8,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 1525,
+            "tokenSpans": 1015,
+            "heapAfterRenderBytes": 23843783,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 1638,
+            "elapsedMs": 13643.5,
+            "scrollHeightPx": 163723,
+            "fps": 120.06,
+            "frameMs": {
+              "mean": 8.34,
+              "p50": 8.3,
+              "p95": 9.6,
+              "p99": 10.1,
+              "max": 16.7
+            },
+            "over8_3ms": 655,
+            "over16_7ms": 1,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1525,
+              "renderedLines": 100,
+              "tokenSpans": 1015,
+              "heap": 37825113
+            },
+            "after": {
+              "domNodes": 1525,
+              "renderedLines": 100,
+              "tokenSpans": 1015,
+              "heap": 59283785
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 26289,
+            "JSHeapUsedSize": 57941436,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=large&stall=0",
+          "mode": "pierre-virtual",
+          "size": "large",
+          "stall": 0,
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "large",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 5000,
+              "files": 34
+            },
+            "actual": {
+              "totalChanged": 5016,
+              "files": 34,
+              "patchBytes": 465741
+            },
+            "renderMs": 367,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 1525,
+            "tokenSpans": 1015,
+            "heapAfterRenderBytes": 22831136,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 1638,
+            "elapsedMs": 13663.7,
+            "scrollHeightPx": 163723,
+            "fps": 119.88,
+            "frameMs": {
+              "mean": 8.35,
+              "p50": 8.3,
+              "p95": 9.7,
+              "p99": 10.2,
+              "max": 23.6
+            },
+            "over8_3ms": 676,
+            "over16_7ms": 1,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1525,
+              "renderedLines": 100,
+              "tokenSpans": 1015,
+              "heap": 40021854
+            },
+            "after": {
+              "domNodes": 1525,
+              "renderedLines": 100,
+              "tokenSpans": 1015,
+              "heap": 54485990
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 21968,
+            "JSHeapUsedSize": 53138444,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=large&stall=0",
+          "mode": "pierre-virtual",
+          "size": "large",
+          "stall": 0,
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "large",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 5000,
+              "files": 34
+            },
+            "actual": {
+              "totalChanged": 5016,
+              "files": 34,
+              "patchBytes": 465741
+            },
+            "renderMs": 364.4,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 1525,
+            "tokenSpans": 1015,
+            "heapAfterRenderBytes": 23998962,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 1638,
+            "elapsedMs": 13657.4,
+            "scrollHeightPx": 163723,
+            "fps": 119.93,
+            "frameMs": {
+              "mean": 8.34,
+              "p50": 8.3,
+              "p95": 9.7,
+              "p99": 10.2,
+              "max": 16.7
+            },
+            "over8_3ms": 662,
+            "over16_7ms": 1,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1525,
+              "renderedLines": 100,
+              "tokenSpans": 1015,
+              "heap": 40091080
+            },
+            "after": {
+              "domNodes": 1525,
+              "renderedLines": 100,
+              "tokenSpans": 1015,
+              "heap": 45114975
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 33088,
+            "JSHeapUsedSize": 43764684,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "mode": "pierre-plain",
+      "size": "small",
+      "stall": 0,
+      "url": "http://localhost:5199/?mode=pierre-plain&size=small&stall=0",
+      "runs": 3,
+      "renderMs": 69.3,
+      "renderedLines": 764,
+      "domNodesAfterRender": 9819,
+      "domNodesAfterScroll": 9819,
+      "renderedLinesAfterScroll": 764,
+      "tokenSpansAfterRender": 6873,
+      "tokenSpansAfterScroll": 6873,
+      "heapAfterRenderMB": 10.41,
+      "heapAfterScrollMB": 11.89,
+      "cdpNodes": 24694,
+      "cdpHeapMB": 10.89,
+      "fps": 120.72,
+      "frameP50": 8.3,
+      "frameP95": 9.5,
+      "frameP99": 10.2,
+      "frameMax": 10.3,
+      "frames": 164,
+      "over16_7ms": 0,
+      "over50ms": 0,
+      "longtaskCount": 0,
+      "longtaskTotalMs": 0,
+      "longtaskMaxMs": 0,
+      "display": {
+        "dpr": 1,
+        "screen": "1440x900",
+        "hw": 15
+      },
+      "errors": [],
+      "raw": [
+        {
+          "url": "http://localhost:5199/?mode=pierre-plain&size=small&stall=0",
+          "mode": "pierre-plain",
+          "size": "small",
+          "stall": 0,
+          "ready": {
+            "mode": "pierre-plain",
+            "size": "small",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 500,
+              "files": 6
+            },
+            "actual": {
+              "totalChanged": 504,
+              "files": 6,
+              "patchBytes": 50267
+            },
+            "renderMs": 70.8,
+            "renderedLines": 764,
+            "timedOut": false,
+            "domNodes": 9819,
+            "tokenSpans": 6873,
+            "heapAfterRenderBytes": 10909430,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 164,
+            "elapsedMs": 1358,
+            "scrollHeightPx": 16379,
+            "fps": 120.77,
+            "frameMs": {
+              "mean": 8.33,
+              "p50": 8.3,
+              "p95": 9.5,
+              "p99": 10.08,
+              "max": 10.3
+            },
+            "over8_3ms": 65,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 9819,
+              "renderedLines": 764,
+              "tokenSpans": 6873,
+              "heap": 11691320
+            },
+            "after": {
+              "domNodes": 9819,
+              "renderedLines": 764,
+              "tokenSpans": 6873,
+              "heap": 12463320
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 24694,
+            "JSHeapUsedSize": 11418860,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-plain&size=small&stall=0",
+          "mode": "pierre-plain",
+          "size": "small",
+          "stall": 0,
+          "ready": {
+            "mode": "pierre-plain",
+            "size": "small",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 500,
+              "files": 6
+            },
+            "actual": {
+              "totalChanged": 504,
+              "files": 6,
+              "patchBytes": 50267
+            },
+            "renderMs": 68.3,
+            "renderedLines": 764,
+            "timedOut": false,
+            "domNodes": 9819,
+            "tokenSpans": 6873,
+            "heapAfterRenderBytes": 11879745,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 164,
+            "elapsedMs": 1358.5,
+            "scrollHeightPx": 16379,
+            "fps": 120.72,
+            "frameMs": {
+              "mean": 8.33,
+              "p50": 8.3,
+              "p95": 9.59,
+              "p99": 10.2,
+              "max": 10.3
+            },
+            "over8_3ms": 68,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 9819,
+              "renderedLines": 764,
+              "tokenSpans": 6873,
+              "heap": 12661627
+            },
+            "after": {
+              "domNodes": 9819,
+              "renderedLines": 764,
+              "tokenSpans": 6873,
+              "heap": 13435143
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 24694,
+            "JSHeapUsedSize": 12390412,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-plain&size=small&stall=0",
+          "mode": "pierre-plain",
+          "size": "small",
+          "stall": 0,
+          "ready": {
+            "mode": "pierre-plain",
+            "size": "small",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 500,
+              "files": 6
+            },
+            "actual": {
+              "totalChanged": 504,
+              "files": 6,
+              "patchBytes": 50267
+            },
+            "renderMs": 69.3,
+            "renderedLines": 764,
+            "timedOut": false,
+            "domNodes": 9819,
+            "tokenSpans": 6873,
+            "heapAfterRenderBytes": 10910477,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 164,
+            "elapsedMs": 1359.2,
+            "scrollHeightPx": 16379,
+            "fps": 120.66,
+            "frameMs": {
+              "mean": 8.38,
+              "p50": 8.3,
+              "p95": 9.5,
+              "p99": 10.3,
+              "max": 15.9
+            },
+            "over8_3ms": 70,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 9819,
+              "renderedLines": 764,
+              "tokenSpans": 6873,
+              "heap": 11692347
+            },
+            "after": {
+              "domNodes": 9819,
+              "renderedLines": 764,
+              "tokenSpans": 6873,
+              "heap": 12465867
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 24694,
+            "JSHeapUsedSize": 11421136,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "mode": "pierre-plain",
+      "size": "medium",
+      "stall": 0,
+      "url": "http://localhost:5199/?mode=pierre-plain&size=medium&stall=0",
+      "runs": 3,
+      "renderMs": 115.8,
+      "renderedLines": 3036,
+      "domNodesAfterRender": 33596,
+      "domNodesAfterScroll": 40822,
+      "renderedLinesAfterScroll": 3036,
+      "tokenSpansAfterRender": 22446,
+      "tokenSpansAfterScroll": 29672,
+      "heapAfterRenderMB": 28.75,
+      "heapAfterScrollMB": 18.87,
+      "cdpNodes": 75700,
+      "cdpHeapMB": 17.76,
+      "fps": 120.18,
+      "frameP50": 8.3,
+      "frameP95": 9.68,
+      "frameP99": 10.2,
+      "frameMax": 10.4,
+      "frames": 666,
+      "over16_7ms": 0,
+      "over50ms": 0,
+      "longtaskCount": 0,
+      "longtaskTotalMs": 0,
+      "longtaskMaxMs": 0,
+      "display": {
+        "dpr": 1,
+        "screen": "1440x900",
+        "hw": 15
+      },
+      "errors": [],
+      "raw": [
+        {
+          "url": "http://localhost:5199/?mode=pierre-plain&size=medium&stall=0",
+          "mode": "pierre-plain",
+          "size": "medium",
+          "stall": 0,
+          "ready": {
+            "mode": "pierre-plain",
+            "size": "medium",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 2000,
+              "files": 18
+            },
+            "actual": {
+              "totalChanged": 2004,
+              "files": 18,
+              "patchBytes": 195384
+            },
+            "renderMs": 116,
+            "renderedLines": 3036,
+            "timedOut": false,
+            "domNodes": 33596,
+            "tokenSpans": 22446,
+            "heapAfterRenderBytes": 30149968,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 666,
+            "elapsedMs": 5541.6,
+            "scrollHeightPx": 66427,
+            "fps": 120.18,
+            "frameMs": {
+              "mean": 8.33,
+              "p50": 8.3,
+              "p95": 9.68,
+              "p99": 10.3,
+              "max": 10.4
+            },
+            "over8_3ms": 273,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 40822,
+              "renderedLines": 3036,
+              "tokenSpans": 29672,
+              "heap": 32850114
+            },
+            "after": {
+              "domNodes": 40822,
+              "renderedLines": 3036,
+              "tokenSpans": 29672,
+              "heap": 19776674
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 75700,
+            "JSHeapUsedSize": 18609064,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-plain&size=medium&stall=0",
+          "mode": "pierre-plain",
+          "size": "medium",
+          "stall": 0,
+          "ready": {
+            "mode": "pierre-plain",
+            "size": "medium",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 2000,
+              "files": 18
+            },
+            "actual": {
+              "totalChanged": 2004,
+              "files": 18,
+              "patchBytes": 195384
+            },
+            "renderMs": 112,
+            "renderedLines": 3036,
+            "timedOut": false,
+            "domNodes": 34890,
+            "tokenSpans": 23740,
+            "heapAfterRenderBytes": 33389877,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 666,
+            "elapsedMs": 5540.4,
+            "scrollHeightPx": 66427,
+            "fps": 120.21,
+            "frameMs": {
+              "mean": 8.34,
+              "p50": 8.3,
+              "p95": 9.68,
+              "p99": 10.2,
+              "max": 10.3
+            },
+            "over8_3ms": 268,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 40822,
+              "renderedLines": 3036,
+              "tokenSpans": 29672,
+              "heap": 45624911
+            },
+            "after": {
+              "domNodes": 40822,
+              "renderedLines": 3036,
+              "tokenSpans": 29672,
+              "heap": 19787955
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 75700,
+            "JSHeapUsedSize": 18619864,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-plain&size=medium&stall=0",
+          "mode": "pierre-plain",
+          "size": "medium",
+          "stall": 0,
+          "ready": {
+            "mode": "pierre-plain",
+            "size": "medium",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 2000,
+              "files": 18
+            },
+            "actual": {
+              "totalChanged": 2004,
+              "files": 18,
+              "patchBytes": 195384
+            },
+            "renderMs": 115.8,
+            "renderedLines": 3036,
+            "timedOut": false,
+            "domNodes": 33596,
+            "tokenSpans": 22446,
+            "heapAfterRenderBytes": 21363212,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 666,
+            "elapsedMs": 5544.5,
+            "scrollHeightPx": 66427,
+            "fps": 120.12,
+            "frameMs": {
+              "mean": 8.35,
+              "p50": 8.3,
+              "p95": 9.78,
+              "p99": 10.2,
+              "max": 18
+            },
+            "over8_3ms": 283,
+            "over16_7ms": 1,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 40822,
+              "renderedLines": 3036,
+              "tokenSpans": 29672,
+              "heap": 26551710
+            },
+            "after": {
+              "domNodes": 40822,
+              "renderedLines": 3036,
+              "tokenSpans": 29672,
+              "heap": 29551186
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 95582,
+            "JSHeapUsedSize": 28382232,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "mode": "pierre-plain",
+      "size": "large",
+      "stall": 0,
+      "url": "http://localhost:5199/?mode=pierre-plain&size=large&stall=0",
+      "runs": 3,
+      "renderMs": 179.6,
+      "renderedLines": 7412,
+      "domNodesAfterRender": 73999,
+      "domNodesAfterScroll": 97139,
+      "renderedLinesAfterScroll": 7412,
+      "tokenSpansAfterRender": 47265,
+      "tokenSpansAfterScroll": 70405,
+      "heapAfterRenderMB": 37.04,
+      "heapAfterScrollMB": 43.61,
+      "cdpNodes": 188529,
+      "cdpHeapMB": 42.25,
+      "fps": 119.85,
+      "frameP50": 8.3,
+      "frameP95": 9.7,
+      "frameP99": 10.3,
+      "frameMax": 25.3,
+      "frames": 1638,
+      "over16_7ms": 2,
+      "over50ms": 0,
+      "longtaskCount": 0,
+      "longtaskTotalMs": 0,
+      "longtaskMaxMs": 0,
+      "display": {
+        "dpr": 1,
+        "screen": "1440x900",
+        "hw": 15
+      },
+      "errors": [],
+      "raw": [
+        {
+          "url": "http://localhost:5199/?mode=pierre-plain&size=large&stall=0",
+          "mode": "pierre-plain",
+          "size": "large",
+          "stall": 0,
+          "ready": {
+            "mode": "pierre-plain",
+            "size": "large",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 5000,
+              "files": 34
+            },
+            "actual": {
+              "totalChanged": 5016,
+              "files": 34,
+              "patchBytes": 465741
+            },
+            "renderMs": 161.6,
+            "renderedLines": 7412,
+            "timedOut": false,
+            "domNodes": 73999,
+            "tokenSpans": 47265,
+            "heapAfterRenderBytes": 53607862,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 1638,
+            "elapsedMs": 13663.7,
+            "scrollHeightPx": 163723,
+            "fps": 119.88,
+            "frameMs": {
+              "mean": 8.35,
+              "p50": 8.3,
+              "p95": 9.6,
+              "p99": 10.3,
+              "max": 16.6
+            },
+            "over8_3ms": 664,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 97139,
+              "renderedLines": 7412,
+              "tokenSpans": 70405,
+              "heap": 38672858
+            },
+            "after": {
+              "domNodes": 97139,
+              "renderedLines": 7412,
+              "tokenSpans": 70405,
+              "heap": 45733554
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 188529,
+            "JSHeapUsedSize": 44341800,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-plain&size=large&stall=0",
+          "mode": "pierre-plain",
+          "size": "large",
+          "stall": 0,
+          "ready": {
+            "mode": "pierre-plain",
+            "size": "large",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 5000,
+              "files": 34
+            },
+            "actual": {
+              "totalChanged": 5016,
+              "files": 34,
+              "patchBytes": 465741
+            },
+            "renderMs": 192.2,
+            "renderedLines": 7412,
+            "timedOut": false,
+            "domNodes": 94110,
+            "tokenSpans": 67376,
+            "heapAfterRenderBytes": 38839009,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 1638,
+            "elapsedMs": 13666.9,
+            "scrollHeightPx": 163723,
+            "fps": 119.85,
+            "frameMs": {
+              "mean": 8.35,
+              "p50": 8.3,
+              "p95": 9.9,
+              "p99": 10.2,
+              "max": 25.3
+            },
+            "over8_3ms": 683,
+            "over16_7ms": 2,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 97139,
+              "renderedLines": 7412,
+              "tokenSpans": 70405,
+              "heap": 55030631
+            },
+            "after": {
+              "domNodes": 97139,
+              "renderedLines": 7412,
+              "tokenSpans": 70405,
+              "heap": 62049463
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 198828,
+            "JSHeapUsedSize": 32169288,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-plain&size=large&stall=0",
+          "mode": "pierre-plain",
+          "size": "large",
+          "stall": 0,
+          "ready": {
+            "mode": "pierre-plain",
+            "size": "large",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 5000,
+              "files": 34
+            },
+            "actual": {
+              "totalChanged": 5016,
+              "files": 34,
+              "patchBytes": 465741
+            },
+            "renderMs": 179.6,
+            "renderedLines": 7412,
+            "timedOut": false,
+            "domNodes": 73999,
+            "tokenSpans": 47265,
+            "heapAfterRenderBytes": 29541954,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 1638,
+            "elapsedMs": 13950.1,
+            "scrollHeightPx": 163723,
+            "fps": 117.42,
+            "frameMs": {
+              "mean": 8.52,
+              "p50": 8.3,
+              "p95": 9.7,
+              "p99": 10.3,
+              "max": 233.6
+            },
+            "over8_3ms": 686,
+            "over16_7ms": 4,
+            "over50ms": 2,
+            "longtasks": {
+              "count": 1,
+              "totalMs": 300,
+              "maxMs": 300
+            },
+            "before": {
+              "domNodes": 97139,
+              "renderedLines": 7412,
+              "tokenSpans": 70405,
+              "heap": 38657546
+            },
+            "after": {
+              "domNodes": 97139,
+              "renderedLines": 7412,
+              "tokenSpans": 70405,
+              "heap": 45693750
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 188529,
+            "JSHeapUsedSize": 44302128,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "mode": "pierre-virtual",
+      "size": "mono",
+      "stall": 0,
+      "tag": "CRUX pierre-virtual / 1 file x 5k",
+      "url": "http://localhost:5199/?mode=pierre-virtual&size=mono&stall=0",
+      "runs": 3,
+      "renderMs": 89.4,
+      "renderedLines": 100,
+      "domNodesAfterRender": 755,
+      "domNodesAfterScroll": 1956,
+      "renderedLinesAfterScroll": 100,
+      "tokenSpansAfterRender": 352,
+      "tokenSpansAfterScroll": 1553,
+      "heapAfterRenderMB": 11.59,
+      "heapAfterScrollMB": 31.11,
+      "cdpNodes": 35114,
+      "cdpHeapMB": 29.83,
+      "fps": 119.67,
+      "frameP50": 8.3,
+      "frameP95": 9.6,
+      "frameP99": 10.2,
+      "frameMax": 43.1,
+      "frames": 1572,
+      "over16_7ms": 2,
+      "over50ms": 0,
+      "longtaskCount": 0,
+      "longtaskTotalMs": 0,
+      "longtaskMaxMs": 0,
+      "display": {
+        "dpr": 1,
+        "screen": "1440x900",
+        "hw": 15
+      },
+      "errors": [],
+      "raw": [
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=mono&stall=0",
+          "mode": "pierre-virtual",
+          "size": "mono",
+          "stall": 0,
+          "tag": "CRUX pierre-virtual / 1 file x 5k",
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "mono",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 5000,
+              "files": 1
+            },
+            "actual": {
+              "totalChanged": 5000,
+              "files": 1,
+              "patchBytes": 445058
+            },
+            "renderMs": 93.5,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 755,
+            "tokenSpans": 352,
+            "heapAfterRenderBytes": 12147890,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 1572,
+            "elapsedMs": 13136,
+            "scrollHeightPx": 157147,
+            "fps": 119.67,
+            "frameMs": {
+              "mean": 8.36,
+              "p50": 8.3,
+              "p95": 9.6,
+              "p99": 10.2,
+              "max": 50.1
+            },
+            "over8_3ms": 630,
+            "over16_7ms": 1,
+            "over50ms": 1,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 755,
+              "renderedLines": 100,
+              "tokenSpans": 352,
+              "heap": 12421996
+            },
+            "after": {
+              "domNodes": 1956,
+              "renderedLines": 100,
+              "tokenSpans": 1553,
+              "heap": 32540606
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 35114,
+            "JSHeapUsedSize": 31205264,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=mono&stall=0",
+          "mode": "pierre-virtual",
+          "size": "mono",
+          "stall": 0,
+          "tag": "CRUX pierre-virtual / 1 file x 5k",
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "mono",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 5000,
+              "files": 1
+            },
+            "actual": {
+              "totalChanged": 5000,
+              "files": 1,
+              "patchBytes": 445058
+            },
+            "renderMs": 79.6,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 755,
+            "tokenSpans": 352,
+            "heapAfterRenderBytes": 12375767,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 1572,
+            "elapsedMs": 13128.3,
+            "scrollHeightPx": 157147,
+            "fps": 119.74,
+            "frameMs": {
+              "mean": 8.36,
+              "p50": 8.3,
+              "p95": 9.6,
+              "p99": 10.2,
+              "max": 41.7
+            },
+            "over8_3ms": 639,
+            "over16_7ms": 2,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 755,
+              "renderedLines": 100,
+              "tokenSpans": 352,
+              "heap": 12649289
+            },
+            "after": {
+              "domNodes": 1956,
+              "renderedLines": 100,
+              "tokenSpans": 1553,
+              "heap": 44295426
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 57600,
+            "JSHeapUsedSize": 42950984,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-virtual&size=mono&stall=0",
+          "mode": "pierre-virtual",
+          "size": "mono",
+          "stall": 0,
+          "tag": "CRUX pierre-virtual / 1 file x 5k",
+          "ready": {
+            "mode": "pierre-virtual",
+            "size": "mono",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 5000,
+              "files": 1
+            },
+            "actual": {
+              "totalChanged": 5000,
+              "files": 1,
+              "patchBytes": 445058
+            },
+            "renderMs": 89.4,
+            "renderedLines": 100,
+            "timedOut": false,
+            "domNodes": 755,
+            "tokenSpans": 352,
+            "heapAfterRenderBytes": 12149116,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 1572,
+            "elapsedMs": 13137.2,
+            "scrollHeightPx": 157147,
+            "fps": 119.66,
+            "frameMs": {
+              "mean": 8.37,
+              "p50": 8.3,
+              "p95": 9.8,
+              "p99": 10.23,
+              "max": 43.1
+            },
+            "over8_3ms": 655,
+            "over16_7ms": 2,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 755,
+              "renderedLines": 100,
+              "tokenSpans": 352,
+              "heap": 12423198
+            },
+            "after": {
+              "domNodes": 1956,
+              "renderedLines": 100,
+              "tokenSpans": 1553,
+              "heap": 32618187
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 35114,
+            "JSHeapUsedSize": 31282788,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "mode": "pierre-plain",
+      "size": "mono",
+      "stall": 0,
+      "tag": "CRUX pierre-plain / 1 file x 5k",
+      "url": "http://localhost:5199/?mode=pierre-plain&size=mono&stall=0",
+      "runs": 3,
+      "renderMs": 129.5,
+      "renderedLines": 7274,
+      "domNodesAfterRender": 31253,
+      "domNodesAfterScroll": 94375,
+      "renderedLinesAfterScroll": 7274,
+      "tokenSpansAfterRender": 7274,
+      "tokenSpansAfterScroll": 70396,
+      "heapAfterRenderMB": 30.33,
+      "heapAfterScrollMB": 37.14,
+      "cdpNodes": 224936,
+      "cdpHeapMB": 35.82,
+      "fps": 113.95,
+      "frameP50": 8.3,
+      "frameP95": 9.7,
+      "frameP99": 10.3,
+      "frameMax": 493,
+      "frames": 1572,
+      "over16_7ms": 6,
+      "over50ms": 4,
+      "longtaskCount": 5,
+      "longtaskTotalMs": 765,
+      "longtaskMaxMs": 362,
+      "display": {
+        "dpr": 1,
+        "screen": "1440x900",
+        "hw": 15
+      },
+      "errors": [],
+      "raw": [
+        {
+          "url": "http://localhost:5199/?mode=pierre-plain&size=mono&stall=0",
+          "mode": "pierre-plain",
+          "size": "mono",
+          "stall": 0,
+          "tag": "CRUX pierre-plain / 1 file x 5k",
+          "ready": {
+            "mode": "pierre-plain",
+            "size": "mono",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 5000,
+              "files": 1
+            },
+            "actual": {
+              "totalChanged": 5000,
+              "files": 1,
+              "patchBytes": 445058
+            },
+            "renderMs": 129.5,
+            "renderedLines": 7274,
+            "timedOut": false,
+            "domNodes": 31253,
+            "tokenSpans": 7274,
+            "heapAfterRenderBytes": 31808257,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 1572,
+            "elapsedMs": 13795.1,
+            "scrollHeightPx": 157147,
+            "fps": 113.95,
+            "frameMs": {
+              "mean": 8.78,
+              "p50": 8.3,
+              "p95": 9.8,
+              "p99": 10.3,
+              "max": 493
+            },
+            "over8_3ms": 649,
+            "over16_7ms": 5,
+            "over50ms": 4,
+            "longtasks": {
+              "count": 5,
+              "totalMs": 765,
+              "maxMs": 362
+            },
+            "before": {
+              "domNodes": 31253,
+              "renderedLines": 7274,
+              "tokenSpans": 7274,
+              "heap": 34063655
+            },
+            "after": {
+              "domNodes": 94375,
+              "renderedLines": 7274,
+              "tokenSpans": 70396,
+              "heap": 38949265
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 224936,
+            "JSHeapUsedSize": 37568816,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-plain&size=mono&stall=0",
+          "mode": "pierre-plain",
+          "size": "mono",
+          "stall": 0,
+          "tag": "CRUX pierre-plain / 1 file x 5k",
+          "ready": {
+            "mode": "pierre-plain",
+            "size": "mono",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 5000,
+              "files": 1
+            },
+            "actual": {
+              "totalChanged": 5000,
+              "files": 1,
+              "patchBytes": 445058
+            },
+            "renderMs": 136.6,
+            "renderedLines": 7274,
+            "timedOut": false,
+            "domNodes": 31253,
+            "tokenSpans": 7274,
+            "heapAfterRenderBytes": 31807717,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 1572,
+            "elapsedMs": 14090.3,
+            "scrollHeightPx": 157147,
+            "fps": 111.57,
+            "frameMs": {
+              "mean": 8.97,
+              "p50": 8.3,
+              "p95": 9.7,
+              "p99": 10.3,
+              "max": 558.1
+            },
+            "over8_3ms": 640,
+            "over16_7ms": 7,
+            "over50ms": 5,
+            "longtasks": {
+              "count": 5,
+              "totalMs": 1028,
+              "maxMs": 570
+            },
+            "before": {
+              "domNodes": 31253,
+              "renderedLines": 7274,
+              "tokenSpans": 7274,
+              "heap": 34063223
+            },
+            "after": {
+              "domNodes": 94375,
+              "renderedLines": 7274,
+              "tokenSpans": 70396,
+              "heap": 38670557
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 196813,
+            "JSHeapUsedSize": 37290088,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=pierre-plain&size=mono&stall=0",
+          "mode": "pierre-plain",
+          "size": "mono",
+          "stall": 0,
+          "tag": "CRUX pierre-plain / 1 file x 5k",
+          "ready": {
+            "mode": "pierre-plain",
+            "size": "mono",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 5000,
+              "files": 1
+            },
+            "actual": {
+              "totalChanged": 5000,
+              "files": 1,
+              "patchBytes": 445058
+            },
+            "renderMs": 128.5,
+            "renderedLines": 7274,
+            "timedOut": false,
+            "domNodes": 31253,
+            "tokenSpans": 7274,
+            "heapAfterRenderBytes": 31808049,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 1572,
+            "elapsedMs": 13781.4,
+            "scrollHeightPx": 157147,
+            "fps": 114.07,
+            "frameMs": {
+              "mean": 8.77,
+              "p50": 8.3,
+              "p95": 9.7,
+              "p99": 10.3,
+              "max": 467.6
+            },
+            "over8_3ms": 648,
+            "over16_7ms": 6,
+            "over50ms": 4,
+            "longtasks": {
+              "count": 5,
+              "totalMs": 743,
+              "maxMs": 336
+            },
+            "before": {
+              "domNodes": 31253,
+              "renderedLines": 7274,
+              "tokenSpans": 7274,
+              "heap": 34063595
+            },
+            "after": {
+              "domNodes": 94375,
+              "renderedLines": 7274,
+              "tokenSpans": 70396,
+              "heap": 38941341
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 224936,
+            "JSHeapUsedSize": 37560904,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "mode": "tanstack",
+      "size": "mono",
+      "stall": 0,
+      "tag": "CRUX tanstack / 1 file x 5k",
+      "url": "http://localhost:5199/?mode=tanstack&size=mono&stall=0",
+      "runs": 3,
+      "renderMs": 20.3,
+      "renderedLines": 82,
+      "domNodesAfterRender": 1164,
+      "domNodesAfterScroll": 1240,
+      "renderedLinesAfterScroll": 87,
+      "tokenSpansAfterRender": 1061,
+      "tokenSpansAfterScroll": 1132,
+      "heapAfterRenderMB": 5.89,
+      "heapAfterScrollMB": 17.41,
+      "cdpNodes": 8271,
+      "cdpHeapMB": 16.06,
+      "fps": 120.05,
+      "frameP50": 8.3,
+      "frameP95": 9.7,
+      "frameP99": 10.2,
+      "frameMax": 17,
+      "frames": 1424,
+      "over16_7ms": 1,
+      "over50ms": 0,
+      "longtaskCount": 0,
+      "longtaskTotalMs": 0,
+      "longtaskMaxMs": 0,
+      "display": {
+        "dpr": 1,
+        "screen": "1440x900",
+        "hw": 15
+      },
+      "errors": [],
+      "raw": [
+        {
+          "url": "http://localhost:5199/?mode=tanstack&size=mono&stall=0",
+          "mode": "tanstack",
+          "size": "mono",
+          "stall": 0,
+          "tag": "CRUX tanstack / 1 file x 5k",
+          "ready": {
+            "mode": "tanstack",
+            "size": "mono",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 5000,
+              "files": 1
+            },
+            "actual": {
+              "totalChanged": 5000,
+              "files": 1,
+              "patchBytes": 445058
+            },
+            "renderMs": 20.6,
+            "renderedLines": 82,
+            "timedOut": false,
+            "domNodes": 1164,
+            "tokenSpans": 1061,
+            "heapAfterRenderBytes": 6188606,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 1424,
+            "elapsedMs": 11859.7,
+            "scrollHeightPx": 142296,
+            "fps": 120.07,
+            "frameMs": {
+              "mean": 8.34,
+              "p50": 8.3,
+              "p95": 9.8,
+              "p99": 10.3,
+              "max": 17
+            },
+            "over8_3ms": 574,
+            "over16_7ms": 1,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1164,
+              "renderedLines": 82,
+              "tokenSpans": 1061,
+              "heap": 6499642
+            },
+            "after": {
+              "domNodes": 1240,
+              "renderedLines": 87,
+              "tokenSpans": 1132,
+              "heap": 18258118
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 8271,
+            "JSHeapUsedSize": 16838376,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=tanstack&size=mono&stall=0",
+          "mode": "tanstack",
+          "size": "mono",
+          "stall": 0,
+          "tag": "CRUX tanstack / 1 file x 5k",
+          "ready": {
+            "mode": "tanstack",
+            "size": "mono",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 5000,
+              "files": 1
+            },
+            "actual": {
+              "totalChanged": 5000,
+              "files": 1,
+              "patchBytes": 445058
+            },
+            "renderMs": 19.9,
+            "renderedLines": 82,
+            "timedOut": false,
+            "domNodes": 1164,
+            "tokenSpans": 1061,
+            "heapAfterRenderBytes": 6180540,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 1424,
+            "elapsedMs": 11862.1,
+            "scrollHeightPx": 142296,
+            "fps": 120.05,
+            "frameMs": {
+              "mean": 8.34,
+              "p50": 8.3,
+              "p95": 9.7,
+              "p99": 10.2,
+              "max": 17
+            },
+            "over8_3ms": 579,
+            "over16_7ms": 1,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1164,
+              "renderedLines": 82,
+              "tokenSpans": 1061,
+              "heap": 6503140
+            },
+            "after": {
+              "domNodes": 1240,
+              "renderedLines": 87,
+              "tokenSpans": 1132,
+              "heap": 29345879
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 19220,
+            "JSHeapUsedSize": 27943004,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=tanstack&size=mono&stall=0",
+          "mode": "tanstack",
+          "size": "mono",
+          "stall": 0,
+          "tag": "CRUX tanstack / 1 file x 5k",
+          "ready": {
+            "mode": "tanstack",
+            "size": "mono",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 5000,
+              "files": 1
+            },
+            "actual": {
+              "totalChanged": 5000,
+              "files": 1,
+              "patchBytes": 445058
+            },
+            "renderMs": 20.3,
+            "renderedLines": 82,
+            "timedOut": false,
+            "domNodes": 1164,
+            "tokenSpans": 1061,
+            "heapAfterRenderBytes": 6157194,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 1424,
+            "elapsedMs": 11863,
+            "scrollHeightPx": 142296,
+            "fps": 120.04,
+            "frameMs": {
+              "mean": 8.34,
+              "p50": 8.3,
+              "p95": 9.7,
+              "p99": 10.2,
+              "max": 15.6
+            },
+            "over8_3ms": 576,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1164,
+              "renderedLines": 82,
+              "tokenSpans": 1061,
+              "heap": 6480350
+            },
+            "after": {
+              "domNodes": 1240,
+              "renderedLines": 87,
+              "tokenSpans": 1132,
+              "heap": 12529945
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 2751,
+            "JSHeapUsedSize": 11263128,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "mode": "tanstack",
+      "size": "small",
+      "stall": 0,
+      "url": "http://localhost:5199/?mode=tanstack&size=small&stall=0",
+      "runs": 3,
+      "renderMs": 11.3,
+      "renderedLines": 80,
+      "domNodesAfterRender": 1329,
+      "domNodesAfterScroll": 1351,
+      "renderedLinesAfterScroll": 81,
+      "tokenSpansAfterRender": 1226,
+      "tokenSpansAfterScroll": 1247,
+      "heapAfterRenderMB": 5.82,
+      "heapAfterScrollMB": 11.22,
+      "cdpNodes": 8194,
+      "cdpHeapMB": 7.05,
+      "fps": 120.47,
+      "frameP50": 8.3,
+      "frameP95": 9.38,
+      "frameP99": 10.3,
+      "frameMax": 17,
+      "frames": 146,
+      "over16_7ms": 1,
+      "over50ms": 0,
+      "longtaskCount": 0,
+      "longtaskTotalMs": 0,
+      "longtaskMaxMs": 0,
+      "display": {
+        "dpr": 1,
+        "screen": "1440x900",
+        "hw": 15
+      },
+      "errors": [],
+      "raw": [
+        {
+          "url": "http://localhost:5199/?mode=tanstack&size=small&stall=0",
+          "mode": "tanstack",
+          "size": "small",
+          "stall": 0,
+          "ready": {
+            "mode": "tanstack",
+            "size": "small",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 500,
+              "files": 6
+            },
+            "actual": {
+              "totalChanged": 504,
+              "files": 6,
+              "patchBytes": 50267
+            },
+            "renderMs": 11.3,
+            "renderedLines": 80,
+            "timedOut": false,
+            "domNodes": 1329,
+            "tokenSpans": 1226,
+            "heapAfterRenderBytes": 6100694,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 146,
+            "elapsedMs": 1212.1,
+            "scrollHeightPx": 14407,
+            "fps": 120.45,
+            "frameMs": {
+              "mean": 8.39,
+              "p50": 8.3,
+              "p95": 9.1,
+              "p99": 10.3,
+              "max": 17
+            },
+            "over8_3ms": 55,
+            "over16_7ms": 1,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1329,
+              "renderedLines": 80,
+              "tokenSpans": 1226,
+              "heap": 6512390
+            },
+            "after": {
+              "domNodes": 1351,
+              "renderedLines": 81,
+              "tokenSpans": 1247,
+              "heap": 8172675
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 4495,
+            "JSHeapUsedSize": 7392428,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=tanstack&size=small&stall=0",
+          "mode": "tanstack",
+          "size": "small",
+          "stall": 0,
+          "ready": {
+            "mode": "tanstack",
+            "size": "small",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 500,
+              "files": 6
+            },
+            "actual": {
+              "totalChanged": 504,
+              "files": 6,
+              "patchBytes": 50267
+            },
+            "renderMs": 14.9,
+            "renderedLines": 80,
+            "timedOut": false,
+            "domNodes": 1329,
+            "tokenSpans": 1226,
+            "heapAfterRenderBytes": 6696198,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 146,
+            "elapsedMs": 1211.9,
+            "scrollHeightPx": 14407,
+            "fps": 120.47,
+            "frameMs": {
+              "mean": 8.39,
+              "p50": 8.3,
+              "p95": 9.8,
+              "p99": 10.3,
+              "max": 17.7
+            },
+            "over8_3ms": 61,
+            "over16_7ms": 1,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1329,
+              "renderedLines": 80,
+              "tokenSpans": 1226,
+              "heap": 6530502
+            },
+            "after": {
+              "domNodes": 1351,
+              "renderedLines": 81,
+              "tokenSpans": 1247,
+              "heap": 13885907
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 8194,
+            "JSHeapUsedSize": 4924872,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=tanstack&size=small&stall=0",
+          "mode": "tanstack",
+          "size": "small",
+          "stall": 0,
+          "ready": {
+            "mode": "tanstack",
+            "size": "small",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 500,
+              "files": 6
+            },
+            "actual": {
+              "totalChanged": 504,
+              "files": 6,
+              "patchBytes": 50267
+            },
+            "renderMs": 11.1,
+            "renderedLines": 80,
+            "timedOut": false,
+            "domNodes": 1329,
+            "tokenSpans": 1226,
+            "heapAfterRenderBytes": 5969443,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 146,
+            "elapsedMs": 1211.2,
+            "scrollHeightPx": 14407,
+            "fps": 120.54,
+            "frameMs": {
+              "mean": 8.39,
+              "p50": 8.3,
+              "p95": 9.38,
+              "p99": 10.16,
+              "max": 17
+            },
+            "over8_3ms": 59,
+            "over16_7ms": 1,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1329,
+              "renderedLines": 80,
+              "tokenSpans": 1226,
+              "heap": 6402167
+            },
+            "after": {
+              "domNodes": 1351,
+              "renderedLines": 81,
+              "tokenSpans": 1247,
+              "heap": 11764210
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 18806,
+            "JSHeapUsedSize": 10987264,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "mode": "tanstack",
+      "size": "medium",
+      "stall": 0,
+      "url": "http://localhost:5199/?mode=tanstack&size=medium&stall=0",
+      "runs": 3,
+      "renderMs": 13.9,
+      "renderedLines": 81,
+      "domNodesAfterRender": 1216,
+      "domNodesAfterScroll": 1375,
+      "renderedLinesAfterScroll": 90,
+      "tokenSpansAfterRender": 1113,
+      "tokenSpansAfterScroll": 1263,
+      "heapAfterRenderMB": 6.27,
+      "heapAfterScrollMB": 15.49,
+      "cdpNodes": 9882,
+      "cdpHeapMB": 14.52,
+      "fps": 120.15,
+      "frameP50": 8.3,
+      "frameP95": 9.6,
+      "frameP99": 10.2,
+      "frameMax": 16.8,
+      "frames": 594,
+      "over16_7ms": 1,
+      "over50ms": 0,
+      "longtaskCount": 0,
+      "longtaskTotalMs": 0,
+      "longtaskMaxMs": 0,
+      "display": {
+        "dpr": 1,
+        "screen": "1440x900",
+        "hw": 15
+      },
+      "errors": [],
+      "raw": [
+        {
+          "url": "http://localhost:5199/?mode=tanstack&size=medium&stall=0",
+          "mode": "tanstack",
+          "size": "medium",
+          "stall": 0,
+          "ready": {
+            "mode": "tanstack",
+            "size": "medium",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 2000,
+              "files": 18
+            },
+            "actual": {
+              "totalChanged": 2004,
+              "files": 18,
+              "patchBytes": 195384
+            },
+            "renderMs": 13.9,
+            "renderedLines": 81,
+            "timedOut": false,
+            "domNodes": 1216,
+            "tokenSpans": 1113,
+            "heapAfterRenderBytes": 6580283,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 594,
+            "elapsedMs": 4946.6,
+            "scrollHeightPx": 59361,
+            "fps": 120.08,
+            "frameMs": {
+              "mean": 8.35,
+              "p50": 8.3,
+              "p95": 9.6,
+              "p99": 10.2,
+              "max": 16.8
+            },
+            "over8_3ms": 243,
+            "over16_7ms": 1,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1216,
+              "renderedLines": 81,
+              "tokenSpans": 1113,
+              "heap": 6902363
+            },
+            "after": {
+              "domNodes": 1375,
+              "renderedLines": 90,
+              "tokenSpans": 1263,
+              "heap": 16242174
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 9882,
+            "JSHeapUsedSize": 15222004,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=tanstack&size=medium&stall=0",
+          "mode": "tanstack",
+          "size": "medium",
+          "stall": 0,
+          "ready": {
+            "mode": "tanstack",
+            "size": "medium",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 2000,
+              "files": 18
+            },
+            "actual": {
+              "totalChanged": 2004,
+              "files": 18,
+              "patchBytes": 195384
+            },
+            "renderMs": 16.3,
+            "renderedLines": 81,
+            "timedOut": false,
+            "domNodes": 1216,
+            "tokenSpans": 1113,
+            "heapAfterRenderBytes": 6551098,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 594,
+            "elapsedMs": 4944,
+            "scrollHeightPx": 59361,
+            "fps": 120.15,
+            "frameMs": {
+              "mean": 8.35,
+              "p50": 8.3,
+              "p95": 9.6,
+              "p99": 10.2,
+              "max": 17.1
+            },
+            "over8_3ms": 238,
+            "over16_7ms": 1,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1216,
+              "renderedLines": 81,
+              "tokenSpans": 1113,
+              "heap": 6873242
+            },
+            "after": {
+              "domNodes": 1375,
+              "renderedLines": 90,
+              "tokenSpans": 1263,
+              "heap": 17356556
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 10878,
+            "JSHeapUsedSize": 16336848,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=tanstack&size=medium&stall=0",
+          "mode": "tanstack",
+          "size": "medium",
+          "stall": 0,
+          "ready": {
+            "mode": "tanstack",
+            "size": "medium",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 2000,
+              "files": 18
+            },
+            "actual": {
+              "totalChanged": 2004,
+              "files": 18,
+              "patchBytes": 195384
+            },
+            "renderMs": 13.6,
+            "renderedLines": 81,
+            "timedOut": false,
+            "domNodes": 1216,
+            "tokenSpans": 1113,
+            "heapAfterRenderBytes": 6574318,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 594,
+            "elapsedMs": 4943.7,
+            "scrollHeightPx": 59361,
+            "fps": 120.15,
+            "frameMs": {
+              "mean": 8.35,
+              "p50": 8.3,
+              "p95": 9.6,
+              "p99": 10.21,
+              "max": 15.1
+            },
+            "over8_3ms": 236,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1216,
+              "renderedLines": 81,
+              "tokenSpans": 1113,
+              "heap": 6896418
+            },
+            "after": {
+              "domNodes": 1375,
+              "renderedLines": 90,
+              "tokenSpans": 1263,
+              "heap": 15113873
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 8841,
+            "JSHeapUsedSize": 14099356,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        }
+      ]
+    },
+    {
+      "mode": "tanstack",
+      "size": "large",
+      "stall": 0,
+      "url": "http://localhost:5199/?mode=tanstack&size=large&stall=0",
+      "runs": 3,
+      "renderMs": 19.7,
+      "renderedLines": 82,
+      "domNodesAfterRender": 1192,
+      "domNodesAfterScroll": 1269,
+      "renderedLinesAfterScroll": 89,
+      "tokenSpansAfterRender": 1089,
+      "tokenSpansAfterScroll": 1159,
+      "heapAfterRenderMB": 6.49,
+      "heapAfterScrollMB": 20.03,
+      "cdpNodes": 10241,
+      "cdpHeapMB": 18.75,
+      "fps": 120.05,
+      "frameP50": 8.3,
+      "frameP95": 9.8,
+      "frameP99": 10.2,
+      "frameMax": 15.7,
+      "frames": 1464,
+      "over16_7ms": 0,
+      "over50ms": 0,
+      "longtaskCount": 0,
+      "longtaskTotalMs": 0,
+      "longtaskMaxMs": 0,
+      "display": {
+        "dpr": 1,
+        "screen": "1440x900",
+        "hw": 15
+      },
+      "errors": [],
+      "raw": [
+        {
+          "url": "http://localhost:5199/?mode=tanstack&size=large&stall=0",
+          "mode": "tanstack",
+          "size": "large",
+          "stall": 0,
+          "ready": {
+            "mode": "tanstack",
+            "size": "large",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 5000,
+              "files": 34
+            },
+            "actual": {
+              "totalChanged": 5016,
+              "files": 34,
+              "patchBytes": 465741
+            },
+            "renderMs": 19.9,
+            "renderedLines": 82,
+            "timedOut": false,
+            "domNodes": 1192,
+            "tokenSpans": 1089,
+            "heapAfterRenderBytes": 6703412,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 1464,
+            "elapsedMs": 12195.6,
+            "scrollHeightPx": 146324,
+            "fps": 120.04,
+            "frameMs": {
+              "mean": 8.34,
+              "p50": 8.3,
+              "p95": 9.6,
+              "p99": 10.1,
+              "max": 17.1
+            },
+            "over8_3ms": 600,
+            "over16_7ms": 1,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1192,
+              "renderedLines": 82,
+              "tokenSpans": 1089,
+              "heap": 7061620
+            },
+            "after": {
+              "domNodes": 1269,
+              "renderedLines": 89,
+              "tokenSpans": 1159,
+              "heap": 22218577
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 11394,
+            "JSHeapUsedSize": 20738224,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=tanstack&size=large&stall=0",
+          "mode": "tanstack",
+          "size": "large",
+          "stall": 0,
+          "ready": {
+            "mode": "tanstack",
+            "size": "large",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 5000,
+              "files": 34
+            },
+            "actual": {
+              "totalChanged": 5016,
+              "files": 34,
+              "patchBytes": 465741
+            },
+            "renderMs": 16.2,
+            "renderedLines": 82,
+            "timedOut": false,
+            "domNodes": 1192,
+            "tokenSpans": 1089,
+            "heapAfterRenderBytes": 6805187,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 1464,
+            "elapsedMs": 12194.2,
+            "scrollHeightPx": 146324,
+            "fps": 120.06,
+            "frameMs": {
+              "mean": 8.34,
+              "p50": 8.3,
+              "p95": 9.8,
+              "p99": 10.2,
+              "max": 15.7
+            },
+            "over8_3ms": 598,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1192,
+              "renderedLines": 82,
+              "tokenSpans": 1089,
+              "heap": 7163363
+            },
+            "after": {
+              "domNodes": 1269,
+              "renderedLines": 89,
+              "tokenSpans": 1159,
+              "heap": 15591192
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 4881,
+            "JSHeapUsedSize": 14121396,
+            "LayoutCount": 0,
+            "RecalcStyleCount": 0
+          },
+          "errors": []
+        },
+        {
+          "url": "http://localhost:5199/?mode=tanstack&size=large&stall=0",
+          "mode": "tanstack",
+          "size": "large",
+          "stall": 0,
+          "ready": {
+            "mode": "tanstack",
+            "size": "large",
+            "stallMs": 0,
+            "spec": {
+              "changedLines": 5000,
+              "files": 34
+            },
+            "actual": {
+              "totalChanged": 5016,
+              "files": 34,
+              "patchBytes": 465741
+            },
+            "renderMs": 19.7,
+            "renderedLines": 82,
+            "timedOut": false,
+            "domNodes": 1192,
+            "tokenSpans": 1089,
+            "heapAfterRenderBytes": 6805906,
+            "longtaskSupported": true
+          },
+          "scroll": {
+            "frames": 1464,
+            "elapsedMs": 12194.8,
+            "scrollHeightPx": 146324,
+            "fps": 120.05,
+            "frameMs": {
+              "mean": 8.34,
+              "p50": 8.3,
+              "p95": 9.8,
+              "p99": 10.2,
+              "max": 15.5
+            },
+            "over8_3ms": 606,
+            "over16_7ms": 0,
+            "over50ms": 0,
+            "longtasks": {
+              "count": 0,
+              "totalMs": 0,
+              "maxMs": 0
+            },
+            "before": {
+              "domNodes": 1192,
+              "renderedLines": 82,
+              "tokenSpans": 1089,
+              "heap": 7164062
+            },
+            "after": {
+              "domNodes": 1269,
+              "renderedLines": 89,
+              "tokenSpans": 1159,
+              "heap": 20999584
+            }
+          },
+          "display": {
+            "dpr": 1,
+            "screen": "1440x900",
+            "hw": 15
+          },
+          "cdp": {
+            "Nodes": 10241,
+            "JSHeapUsedSize": 19656508,
+            "LayoutCount": 1,
+            "RecalcStyleCount": 1
+          },
+          "errors": []
+        }
+      ]
+    }
+  ]
+}

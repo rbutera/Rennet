@@ -1,0 +1,302 @@
+<!--
+THESIS: a naming tie-break rendered, not argued. Two finalists worn by the same product: Digestif and Rennet, each given its best single wordmark call, in the masthead and on a landing hero.
+OWN-WORLD: Reading Room paper world from mockups 01-06. Digestif takes lowercase New York serif with an amber level-line mark; Rennet takes capitalised SF semibold with a cleave mark. No bottles, no clip-art.
+FINISH: unreviewed and undocumented is unfinished.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Name tie-break · Digestif vs Rennet</title>
+<style>
+  :root {
+    --paper: #FAF9F5; --paper-deep: #F3F1EA; --raised: #FFFFFF;
+    --ink: #23211C; --ink-soft: #57534A; --ink-faint: #7D7869;
+    --hairline: #E5E1D6; --hairline-strong: #D6D1C3;
+    --accent: #2F5FA3; --accent-soft: #EBF1F8;
+    --private: #33617F; --private-fill: #EDF4F8; --private-line: #C9DEEA;
+    --amber: #B06E1F; --amber-deep: #8A4B0A; --amber-fill: #F9EFDD; --amber-line: #EAD9B8;
+    --serif: "New York", ui-serif, Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { font-size: 16px; }
+  body {
+    background: #E9E6DE; font-family: var(--sans); color: var(--ink);
+    min-height: 100vh; padding: 44px 28px 64px;
+  }
+  .sheet { max-width: 1240px; margin: 0 auto; }
+  .sheet > h1 { font: 600 1.5rem/1.25 var(--serif); letter-spacing: -0.01em; }
+  .sheet > p.standfirst {
+    margin-top: 8px; font-size: .875rem; line-height: 1.6; color: var(--ink-soft); max-width: 70ch;
+  }
+  .grid {
+    margin-top: 28px;
+    display: grid; grid-template-columns: 1fr 1fr; gap: 26px;
+  }
+  figure { display: flex; flex-direction: column; gap: 10px; }
+  figcaption {
+    font-size: .75rem; color: var(--ink-soft);
+    display: flex; gap: 8px; align-items: baseline;
+  }
+  figcaption b { font-weight: 600; color: var(--ink); }
+  figcaption .tag { font-family: var(--mono); font-size: .65625rem; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+  .pane {
+    border: 1px solid rgba(0,0,0,.09); border-radius: 10px;
+    box-shadow: 0 10px 34px rgba(42,37,26,.16), 0 1px 4px rgba(42,37,26,.08);
+    overflow: hidden; background: var(--paper);
+  }
+
+  /* ————— shared wordmarks ————— */
+  .wm { display: inline-flex; align-items: center; gap: 9px; }
+  .wm .glyph { flex: none; display: block; }
+  .wm-digestif {
+    font: 600 1.0625rem/1 var(--serif);
+    letter-spacing: -0.015em; color: var(--ink);
+  }
+  .wm-digestif .tittle { color: var(--amber); }
+  .wm-rennet {
+    font: 650 1rem/1 var(--sans);
+    letter-spacing: .005em; color: var(--ink);
+  }
+
+  /* ————— masthead crops ————— */
+  .mast { height: 218px; display: flex; flex-direction: column; }
+  .titlebar {
+    display: grid; grid-template-columns: auto auto 1fr auto; gap: 16px; align-items: center;
+    padding: 11px 16px 10px; border-bottom: 1px solid var(--hairline);
+  }
+  .lights { display: flex; gap: 8px; }
+  .lights span { width: 12px; height: 12px; border-radius: 50%; }
+  .lights span:nth-child(1) { background: #F26057; }
+  .lights span:nth-child(2) { background: #F5BE4F; }
+  .lights span:nth-child(3) { background: #58C43B; }
+  .doc { justify-self: center; font-size: .8125rem; color: var(--ink-soft); display: flex; align-items: baseline; gap: 8px; grid-column: 3; }
+  .doc strong { color: var(--ink); font-weight: 600; }
+  .doc .sha { font-family: var(--mono); font-size: .75rem; color: var(--ink-faint); }
+  .titlebar .right { justify-self: end; font-size: .75rem; color: var(--ink-faint); }
+  .toolbar { display: flex; align-items: center; gap: 20px; padding: 10px 20px; border-bottom: 1px solid var(--hairline); }
+  .angles { display: flex; background: var(--paper-deep); border: 1px solid var(--hairline); border-radius: 8px; padding: 3px; gap: 2px; }
+  .angle {
+    appearance: none; border: 0; background: transparent;
+    font: 500 .8125rem/1 var(--sans); color: var(--ink-soft);
+    padding: 7px 13px; border-radius: 6px; cursor: pointer;
+    display: flex; align-items: center; gap: 7px;
+  }
+  .angle .key { font-family: var(--mono); font-size: .6875rem; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+  .angle .count { font-variant-numeric: tabular-nums; font-size: .6875rem; color: var(--ink-faint); }
+  .angle[aria-pressed="true"] { background: var(--raised); color: var(--ink); box-shadow: 0 1px 3px rgba(42,37,26,.14); }
+  .angle[aria-pressed="true"] .key { color: var(--accent); }
+  .angle .flagn { color: var(--amber-deep); font-size: .6875rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .toolbar .spacer { flex: 1; }
+  .coverage {
+    display: flex; align-items: center; gap: 10px; padding: 6px 12px;
+    background: var(--private-fill); border: 1px solid var(--private-line); border-radius: 7px;
+  }
+  .coverage .cells { display: flex; gap: 3px; }
+  .coverage .cells i { width: 14px; height: 8px; border-radius: 2px; background: var(--private-line); }
+  .coverage .cells i.read { background: var(--private); }
+  .coverage .cells i.now { background: var(--private); opacity: .45; }
+  .coverage em { font-style: normal; font-size: .71875rem; color: var(--private); }
+  .mast .peek { padding: 26px 40px 0; }
+  .mast .peek h2 { font: 600 1.5rem/1.25 var(--serif); letter-spacing: -0.01em; }
+  .mast .peek h2 .n { color: var(--ink-faint); font-weight: 400; margin-right: 9px; }
+  .mast .peek .meta { margin-top: 7px; font-size: .8125rem; color: var(--ink-soft); }
+
+  /* ————— heroes ————— */
+  .hero {
+    min-height: 430px;
+    padding: 40px 48px 44px;
+    display: flex; flex-direction: column;
+  }
+  .hero .nav { display: flex; align-items: center; }
+  .hero .nav .links { margin-left: auto; display: flex; gap: 22px; font-size: .8125rem; color: var(--ink-soft); }
+  .hero .nav .links a { color: inherit; text-decoration: none; }
+  .hero .nav .links a:hover { color: var(--ink); }
+  .hero .body { margin: auto 0; padding: 44px 0 36px; max-width: 30ch; }
+  .hero h2 {
+    font: 600 2.125rem/1.18 var(--serif);
+    letter-spacing: -0.018em;
+    text-wrap: balance;
+  }
+  .hero .oneliner {
+    margin-top: 18px;
+    font-size: .9375rem; line-height: 1.65; color: var(--ink-soft);
+    max-width: 46ch;
+  }
+  .hero .oneliner b { color: var(--ink); font-weight: 600; }
+  .hero .cta-row { margin-top: 28px; display: flex; align-items: center; gap: 16px; }
+  .cta {
+    appearance: none; cursor: pointer; text-decoration: none;
+    font: 600 .875rem/1 var(--sans); color: #fff;
+    background: var(--ink); border: 1px solid #14120E; border-radius: 8px;
+    padding: 13px 22px;
+    box-shadow: 0 2px 6px rgba(35,33,28,.22);
+    display: inline-flex; align-items: center; gap: 9px;
+  }
+  .cta:hover { background: #2E2B25; }
+  .cta-sub { font-size: .71875rem; color: var(--ink-faint); line-height: 1.5; }
+  .hero .foot { font-size: .71875rem; color: var(--ink-faint); }
+  .hero .foot .pv { color: var(--private); }
+
+  .hero-digestif .body h2 em { font-style: italic; font-weight: 500; }
+  .hero-digestif { background: linear-gradient(180deg, var(--paper) 62%, var(--amber-fill) 165%); }
+  .hero-rennet .split-rule { margin-top: 26px; height: 1px; background: var(--hairline-strong); position: relative; max-width: 46ch; }
+  .hero-rennet .split-rule::after {
+    content: ""; position: absolute; left: 38%; top: -4px; height: 9px; width: 1.5px; background: var(--ink);
+  }
+  .hero-rennet .split-cap { margin-top: 8px; display: flex; max-width: 46ch; font-size: .6875rem; color: var(--ink-faint); }
+  .hero-rennet .split-cap span:first-child { flex: 0 0 38%; }
+
+  .verdict-note {
+    margin-top: 30px; padding-top: 18px; border-top: 1px solid var(--hairline-strong);
+    font-size: .78125rem; color: var(--ink-soft); line-height: 1.6; max-width: 78ch;
+  }
+
+  @media (max-width: 980px) {
+    .grid { grid-template-columns: 1fr; }
+    .hero { padding: 30px 26px 34px; }
+  }
+</style>
+
+<div class="sheet">
+  <h1>Two names, worn</h1>
+  <p class="standfirst">Digestif and Rennet on the same product: the review-surface masthead, then a minimal landing hero. Each name gets its one best wordmark call, not a grid of options. Judge by eye.</p>
+
+  <div class="grid">
+
+    <!-- 1 · masthead · digestif -->
+    <figure>
+      <figcaption><b>Digestif</b> · masthead <span class="tag">lowercase New York serif · amber level-line glyph</span></figcaption>
+      <div class="pane mast" role="img" aria-label="Review surface masthead wearing the Digestif wordmark">
+        <div class="titlebar">
+          <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
+          <span class="wm" aria-label="Digestif">
+            <svg class="glyph" width="17" height="17" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+              <circle cx="9" cy="9" r="7.4" stroke="#23211C" stroke-width="1.4"/>
+              <path d="M3.4 11.2h11.2" stroke="#B06E1F" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+            <span class="wm-digestif">digest<span class="tittle">i</span>f</span>
+          </span>
+          <div class="doc"><strong>atlas/api</strong> · #482 Per-org rate limiting <span class="sha">a3f9c21</span></div>
+          <div class="right">Snapshot</div>
+        </div>
+        <div class="toolbar">
+          <div class="angles" role="group" aria-label="Angles">
+            <button class="angle" aria-pressed="true"><span class="key">1</span> Sequence</button>
+            <button class="angle" aria-pressed="false"><span class="key">2</span> Decisions <span class="count">4</span></button>
+            <button class="angle" aria-pressed="false"><span class="key">3</span> Claims <span class="count">11/12</span></button>
+            <button class="angle" aria-pressed="false"><span class="key">4</span> Subtraction <span class="count">−214</span></button>
+            <button class="angle" aria-pressed="false"><span class="key">5</span> Blast <span class="flagn">2</span></button>
+          </div>
+          <div class="spacer"></div>
+          <div class="coverage"><div class="cells" aria-hidden="true"><i class="read"></i><i class="now"></i><i></i><i></i><i></i><i class="read"></i></div><em>2 of 6 · private</em></div>
+        </div>
+        <div class="peek">
+          <h2><span class="n">2</span>The token bucket</h2>
+          <p class="meta">118 lines · 2 files · builds on the limit schema</p>
+        </div>
+      </div>
+    </figure>
+
+    <!-- 2 · masthead · rennet -->
+    <figure>
+      <figcaption><b>Rennet</b> · masthead <span class="tag">capitalised SF semibold · cleave glyph</span></figcaption>
+      <div class="pane mast" role="img" aria-label="Review surface masthead wearing the Rennet wordmark">
+        <div class="titlebar">
+          <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
+          <span class="wm" aria-label="Rennet">
+            <svg class="glyph" width="17" height="17" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+              <path d="M2.6 9a6.4 6.4 0 0 1 6.4-6.4V15.4A6.4 6.4 0 0 1 2.6 9Z" fill="#23211C"/>
+              <path d="M11.4 2.9a6.4 6.4 0 0 1 0 12.2" stroke="#23211C" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+            <span class="wm-rennet">Rennet</span>
+          </span>
+          <div class="doc"><strong>atlas/api</strong> · #482 Per-org rate limiting <span class="sha">a3f9c21</span></div>
+          <div class="right">Snapshot</div>
+        </div>
+        <div class="toolbar">
+          <div class="angles" role="group" aria-label="Angles">
+            <button class="angle" aria-pressed="true"><span class="key">1</span> Sequence</button>
+            <button class="angle" aria-pressed="false"><span class="key">2</span> Decisions <span class="count">4</span></button>
+            <button class="angle" aria-pressed="false"><span class="key">3</span> Claims <span class="count">11/12</span></button>
+            <button class="angle" aria-pressed="false"><span class="key">4</span> Subtraction <span class="count">−214</span></button>
+            <button class="angle" aria-pressed="false"><span class="key">5</span> Blast <span class="flagn">2</span></button>
+          </div>
+          <div class="spacer"></div>
+          <div class="coverage"><div class="cells" aria-hidden="true"><i class="read"></i><i class="now"></i><i></i><i></i><i></i><i class="read"></i></div><em>2 of 6 · private</em></div>
+        </div>
+        <div class="peek">
+          <h2><span class="n">2</span>The token bucket</h2>
+          <p class="meta">118 lines · 2 files · builds on the limit schema</p>
+        </div>
+      </div>
+    </figure>
+
+    <!-- 3 · hero · digestif -->
+    <figure>
+      <figcaption><b>Digestif</b> · landing hero <span class="tag">amber warmth allowed to reach the ground</span></figcaption>
+      <div class="pane hero hero-digestif">
+        <div class="nav">
+          <span class="wm" aria-label="Digestif">
+            <svg class="glyph" width="19" height="19" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+              <circle cx="9" cy="9" r="7.4" stroke="#23211C" stroke-width="1.4"/>
+              <path d="M3.4 11.2h11.2" stroke="#B06E1F" stroke-width="1.6" stroke-linecap="round"/>
+            </svg>
+            <span class="wm-digestif" style="font-size:1.1875rem">digest<span class="tittle">i</span>f</span>
+          </span>
+          <nav class="links" aria-label="Site">
+            <a href="#">How it reads</a><a href="#">Source</a><a href="#">Companion</a>
+          </nav>
+        </div>
+        <div class="body">
+          <h2>You stopped writing the code. You still have to answer for it.</h2>
+          <p class="oneliner">A coding harness points a model at your codebase so it can write. <b>Digestif is a review harness:</b> it points your models at a change so you can read it, decide on it, and sign your name to it.</p>
+          <div class="cta-row">
+            <a class="cta" href="#">
+              Download for Mac
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 1.5v6M3.5 5 6 7.5 8.5 5M2 10.5h8"/></svg>
+            </a>
+            <span class="cta-sub">Open source · runs on the harnesses<br>already on your machine</span>
+          </div>
+        </div>
+        <p class="foot">Reviews land on GitHub as reviews. <span class="pv">Your pace and coverage never leave this Mac.</span></p>
+      </div>
+    </figure>
+
+    <!-- 4 · hero · rennet -->
+    <figure>
+      <figcaption><b>Rennet</b> · landing hero <span class="tag">the separation rule as the only flourish</span></figcaption>
+      <div class="pane hero hero-rennet">
+        <div class="nav">
+          <span class="wm" aria-label="Rennet">
+            <svg class="glyph" width="19" height="19" viewBox="0 0 18 18" fill="none" aria-hidden="true">
+              <path d="M2.6 9a6.4 6.4 0 0 1 6.4-6.4V15.4A6.4 6.4 0 0 1 2.6 9Z" fill="#23211C"/>
+              <path d="M11.4 2.9a6.4 6.4 0 0 1 0 12.2" stroke="#23211C" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+            <span class="wm-rennet" style="font-size:1.125rem">Rennet</span>
+          </span>
+          <nav class="links" aria-label="Site">
+            <a href="#">How it reads</a><a href="#">Source</a><a href="#">Companion</a>
+          </nav>
+        </div>
+        <div class="body">
+          <h2>You stopped writing the code. You still have to answer for it.</h2>
+          <p class="oneliner">A coding harness points a model at your codebase so it can write. <b>Rennet is a review harness:</b> it separates a 3,000-line change into the parts you can hold, and keeps you the one who signs.</p>
+          <div class="split-rule" aria-hidden="true"></div>
+          <div class="split-cap" aria-hidden="true"><span>what the models sort</span><span>what only you decide</span></div>
+          <div class="cta-row">
+            <a class="cta" href="#">
+              Download for Mac
+              <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 1.5v6M3.5 5 6 7.5 8.5 5M2 10.5h8"/></svg>
+            </a>
+            <span class="cta-sub">Open source · runs on the harnesses<br>already on your machine</span>
+          </div>
+        </div>
+        <p class="foot">Reviews land on GitHub as reviews. <span class="pv">Your pace and coverage never leave this Mac.</span></p>
+      </div>
+    </figure>
+  </div>
+
+  <p class="verdict-note">Wordmark calls, stated: Digestif is set lowercase in New York semibold with one amber tittle and a level-line glyph (a measure, not a bottle); the name belongs to the reading-room register, so the mark borrows the narrative voice. Rennet is set capitalised in SF semibold with a cleave glyph (one round split into a solid half and an open half); it is a working agent's name, so the mark takes the tool voice and its hero earns exactly one flourish, the separation rule.</p>
+</div>

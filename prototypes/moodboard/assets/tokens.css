@@ -1,0 +1,310 @@
+/* Rennet prototype · design-system tokens.
+   One structural stylesheet (screens.css) renders every direction;
+   these tokens are the entire difference between worlds. */
+
+:root {
+  --serif: "New York", ui-serif, Georgia, serif;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+}
+
+/* ————— Direction A · The Reading Room ————— */
+:root, [data-dir="reading"] {
+  --wallpaper: #E9E6DE;
+  --wallpaper-img: none;
+  --win-bg: #FAF9F5;
+  --win-border: rgba(0, 0, 0, .09);
+  --win-shadow: 0 18px 60px rgba(42,37,26,.22), 0 2px 8px rgba(42,37,26,.10);
+  --win-radius: 11px;
+
+  --side-bg: #F5F3EC;
+  --side-blur: none;
+  --side-border: #E5E1D6;
+
+  --surface: #FAF9F5;
+  --surface-2: #F3F1EA;
+  --raised: #FFFFFF;
+  --raised-border: #E5E1D6;
+  --raised-shadow: 0 1px 3px rgba(42,37,26,.06);
+
+  --text: #23211C;
+  --text-soft: #57534A;
+  --text-faint: #7D7869;
+  --hairline: #E5E1D6;
+  --hairline-strong: #D6D1C3;
+
+  --accent: #2F5FA3;
+  --accent-contrast: #FFFFFF;
+  --accent-soft: #EBF1F8;
+  --accent-soft-line: #CFDCEE;
+
+  --private: #33617F;
+  --private-fill: #EDF4F8;
+  --private-line: #C9DEEA;
+
+  --amber: #8A4B0A;
+  --amber-fill: #F9EFDD;
+  --amber-line: #EAD9B8;
+
+  --green: #2E6B45;
+  --green-fill: #E9F2E9;
+  --green-line: #CBE0CC;
+
+  --add-fill: #EAF2E6;
+  --add-glyph: #3E7A4E;
+  --del-fill: #F7ECE7;
+  --del-glyph: #A14434;
+  --code-bg: #FFFFFF;
+  --code-ln: #A8A292;
+  --kw-weight: 600;
+  --kw-color: inherit;
+  --str-color: #5F6E33;
+  --cmt-color: #8D8776;
+
+  --display: var(--serif);
+  --display-weight: 600;
+  --display-track: -0.012em;
+  --label-transform: none;
+  --label-track: 0.01em;
+
+  --density: 1;
+  --radius: 9px;
+  --chip-radius: 7px;
+  --mark-ink: #23211C;
+  --mark-accent: #B06E1F;
+  --btn-bg: #23211C;
+  --btn-border: #14120E;
+  --btn-text: #FFFFFF;
+
+  /* the signable document: paper in every world */
+  --sheet-bg: #FFFFFF;
+  --sheet-text: #23211C;
+  --sheet-soft: #57534A;
+  --sheet-faint: #7D7869;
+  --sheet-hairline: #E5E1D6;
+  --sheet-hairline-strong: #D6D1C3;
+  --sheet-green: #2E6B45;
+  --sheet-amber: #8A4B0A;
+  --sheet-glow: none;
+  --private-glow: none;
+}
+
+/* ————— Direction B · Glass (dark vibrancy; glass chrome, opaque code) ————— */
+[data-dir="glass"] {
+  --wallpaper: #0C0F14;
+  --wallpaper-img:
+    radial-gradient(52% 44% at 18% 6%, rgba(80,150,178,.60), transparent 70%),
+    radial-gradient(40% 36% at 86% 16%, rgba(196,134,56,.44), transparent 70%),
+    radial-gradient(60% 52% at 66% 96%, rgba(56,104,166,.55), transparent 72%),
+    radial-gradient(34% 30% at 8% 88%, rgba(128,80,42,.34), transparent 75%);
+  --win-bg: rgba(15, 17, 22, .46);
+  --win-border: rgba(255,255,255,.14);
+  --win-shadow: 0 28px 90px rgba(0,0,0,.6), 0 2px 10px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.10);
+  --win-radius: 16px;
+
+  --side-bg: rgba(20, 23, 29, .34);
+  --side-blur: blur(26px) saturate(1.5);
+  --side-border: rgba(255,255,255,.10);
+
+  --surface: rgba(15, 17, 21, .62);
+  --surface-2: rgba(255,255,255,.05);
+  --raised: rgba(255,255,255,.065);
+  --raised-border: rgba(255,255,255,.11);
+  --raised-shadow: 0 2px 10px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.07);
+
+  --text: #EDEFF2;
+  --text-soft: #AEB4BD;
+  --text-faint: #7E8590;
+  --hairline: rgba(255,255,255,.09);
+  --hairline-strong: rgba(255,255,255,.17);
+
+  --accent: #8CC0E8;
+  --accent-contrast: #0C1218;
+  --accent-soft: rgba(120,175,215,.16);
+  --accent-soft-line: rgba(140,192,232,.35);
+
+  --private: #85C4DC;
+  --private-fill: rgba(111,178,201,.14);
+  --private-line: rgba(111,178,201,.35);
+
+  --amber: #E2B266;
+  --amber-fill: rgba(214,167,91,.14);
+  --amber-line: rgba(214,167,91,.38);
+
+  --green: #8CC79E;
+  --green-fill: rgba(102,169,124,.16);
+  --green-line: rgba(102,169,124,.38);
+
+  /* code stays fully opaque: legibility never rides on the wallpaper */
+  --add-fill: #1A2A20;
+  --add-glyph: #79B98D;
+  --del-fill: #2E211E;
+  --del-glyph: #D08A76;
+  --code-bg: #14161B;
+  --code-ln: #5E646E;
+  --kw-weight: 600;
+  --kw-color: #8CC0E8;
+  --str-color: #AFBC86;
+  --cmt-color: #7C8272;
+
+  --display: var(--sans);
+  --display-weight: 700;
+  --display-track: -0.02em;
+  --label-transform: none;
+  --label-track: 0.01em;
+
+  --density: 1;
+  --radius: 12px;
+  --chip-radius: 9px;
+  --mark-ink: #EDEFF2;
+  --mark-accent: #E2B266;
+  --btn-bg: #EDEFF2;
+  --btn-border: rgba(255,255,255,.5);
+  --btn-text: #101318;
+
+  /* materiality inversion: in a translucent world, the signable document
+     is the one solid object. Paper is what leaves the machine. */
+  --sheet-bg: #F7F5EF;
+  --sheet-text: #23211C;
+  --sheet-soft: #57534A;
+  --sheet-faint: #7D7869;
+  --sheet-hairline: #E3DFD4;
+  --sheet-hairline-strong: #D2CDBF;
+  --sheet-green: #2E6B45;
+  --sheet-amber: #8A4B0A;
+  --sheet-glow: 0 0 90px 8px rgba(190, 210, 232, .18), 0 36px 90px rgba(0,0,0,.6);
+  /* the backlight: private things glow faintly from within, because the
+     light source is you */
+  --private-glow: inset 0 0 18px rgba(111,178,201,.12);
+}
+
+/* ————— Glass · bright-room scheme (light environments exist) ————— */
+[data-dir="glass"][data-scheme="light"] {
+  --wallpaper: #DFE3E8;
+  --wallpaper-img:
+    radial-gradient(52% 44% at 18% 6%, rgba(120,180,205,.55), transparent 70%),
+    radial-gradient(40% 36% at 86% 16%, rgba(226,178,110,.42), transparent 70%),
+    radial-gradient(60% 52% at 66% 96%, rgba(110,150,205,.48), transparent 72%);
+  --win-bg: rgba(246, 248, 250, .52);
+  --win-border: rgba(255,255,255,.65);
+  --win-shadow: 0 24px 70px rgba(46,58,72,.30), 0 2px 8px rgba(46,58,72,.14), inset 0 1px 0 rgba(255,255,255,.8);
+
+  --side-bg: rgba(250, 251, 253, .40);
+  --side-border: rgba(30,40,52,.10);
+
+  --surface: rgba(248, 249, 251, .55);
+  --surface-2: rgba(30,40,52,.05);
+  --raised: rgba(255,255,255,.62);
+  --raised-border: rgba(30,40,52,.10);
+  --raised-shadow: 0 2px 10px rgba(46,58,72,.10), inset 0 1px 0 rgba(255,255,255,.85);
+
+  --text: #1E2126;
+  --text-soft: #4C525B;
+  --text-faint: #6E757F;
+  --hairline: rgba(30,40,52,.09);
+  --hairline-strong: rgba(30,40,52,.18);
+
+  --accent: #2A6FAE;
+  --accent-contrast: #FFFFFF;
+  --accent-soft: rgba(42,111,174,.10);
+  --accent-soft-line: rgba(42,111,174,.30);
+
+  --private: #24657F;
+  --private-fill: rgba(60,140,168,.12);
+  --private-line: rgba(60,140,168,.32);
+
+  --amber: #96590F;
+  --amber-fill: rgba(178,110,31,.12);
+  --amber-line: rgba(178,110,31,.32);
+
+  --green: #2E6B45;
+  --green-fill: rgba(62,122,78,.12);
+  --green-line: rgba(62,122,78,.30);
+
+  --add-fill: #EAF3E8;
+  --add-glyph: #3E7A4E;
+  --del-fill: #F8ECE8;
+  --del-glyph: #A14434;
+  --code-bg: #FFFFFF;
+  --code-ln: #9BA1A9;
+  --kw-color: #2A6FAE;
+  --str-color: #5F6E33;
+  --cmt-color: #8A8E82;
+
+  --mark-ink: #1E2126;
+  --btn-bg: #1E2126;
+  --btn-border: #0F1115;
+  --btn-text: #FFFFFF;
+
+  --sheet-glow: 0 0 80px 6px rgba(255,255,255,.5), 0 28px 70px rgba(46,58,72,.30);
+  --private-glow: inset 0 0 18px rgba(60,140,168,.10);
+}
+
+/* ————— Direction C · The Instrument ————— */
+[data-dir="instrument"] {
+  --wallpaper: #0B0C0E;
+  --wallpaper-img: none;
+  --win-bg: #131417;
+  --win-border: #000000;
+  --win-shadow: 0 20px 64px rgba(0,0,0,.6), 0 2px 8px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.05);
+  --win-radius: 11px;
+
+  --side-bg: #191B1F;
+  --side-blur: none;
+  --side-border: #2A2D33;
+
+  --surface: #131417;
+  --surface-2: #1F2226;
+  --raised: #1F2226;
+  --raised-border: #2A2D33;
+  --raised-shadow: 0 1px 4px rgba(0,0,0,.35), inset 0 1px 0 rgba(255,255,255,.04);
+
+  --text: #E9EAEC;
+  --text-soft: #A9ADB4;
+  --text-faint: #7C8189;
+  --hairline: #2A2D33;
+  --hairline-strong: #383C43;
+
+  --accent: #6FA3DC;
+  --accent-contrast: #0E1319;
+  --accent-soft: #24303F;
+  --accent-soft-line: #35485C;
+
+  --private: #6FB2C9;
+  --private-fill: #1E2E33;
+  --private-line: #2C4750;
+
+  --amber: #D6A75B;
+  --amber-fill: #322A1C;
+  --amber-line: #4A3D26;
+
+  --green: #7FB891;
+  --green-fill: #1C2921;
+  --green-line: #2E4436;
+
+  --add-fill: #1C2921;
+  --add-glyph: #66A97C;
+  --del-fill: #2E211E;
+  --del-glyph: #C77B67;
+  --code-bg: #191B1F;
+  --code-ln: #5A5F67;
+  --kw-weight: 600;
+  --kw-color: #6FA3DC;
+  --str-color: #A4B080;
+  --cmt-color: #767B70;
+
+  --display: var(--sans);
+  --display-weight: 600;
+  --display-track: -0.01em;
+  --label-transform: uppercase;
+  --label-track: 0.06em;
+
+  --density: 0.92;
+  --radius: 8px;
+  --chip-radius: 6px;
+  --mark-ink: #E9EAEC;
+  --mark-accent: #D6A75B;
+  --btn-bg: #E9EAEC;
+  --btn-border: #383C43;
+  --btn-text: #131417;
+}

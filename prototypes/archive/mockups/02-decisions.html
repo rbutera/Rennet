@@ -1,0 +1,347 @@
+<!--
+THESIS: the decisions angle. Four calls only the human can make, each with a reconstructed why and everything needed to discharge it in place. The count IS the product.
+OWN-WORLD: Reading Room paper, ink, serif narrative, non-photo blue private, amber blast. Same world as 01.
+FINISH: unreviewed and undocumented is unfinished.
+-->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wingman · Decisions angle · Reading Room</title>
+<style>
+  :root {
+    --paper: #FAF9F5; --paper-deep: #F3F1EA; --raised: #FFFFFF;
+    --ink: #23211C; --ink-soft: #57534A; --ink-faint: #7D7869;
+    --hairline: #E5E1D6; --hairline-strong: #D6D1C3;
+    --accent: #2F5FA3; --accent-soft: #EBF1F8;
+    --private: #33617F; --private-fill: #EDF4F8; --private-line: #C9DEEA;
+    --amber: #8A4B0A; --amber-fill: #F9EFDD; --amber-line: #EAD9B8;
+    --add-fill: #EAF2E6; --add-glyph: #3E7A4E;
+    --del-fill: #F7ECE7; --del-glyph: #A14434;
+    --string: #5F6E33; --comment: #8D8776;
+    --green: #2E6B45; --green-fill: #E9F2E9; --green-line: #CBE0CC;
+    --serif: "New York", ui-serif, Georgia, serif;
+    --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html { font-size: 16px; }
+  body {
+    background: #E9E6DE; font-family: var(--sans); color: var(--ink);
+    display: grid; place-items: center; min-height: 100vh; padding: 28px 20px;
+  }
+  .window {
+    width: min(1400px, 100%); background: var(--paper); border-radius: 11px;
+    border: 1px solid rgba(0,0,0,.09);
+    box-shadow: 0 18px 60px rgba(42,37,26,.22), 0 2px 8px rgba(42,37,26,.10);
+    overflow: hidden; display: flex; flex-direction: column; min-height: 880px;
+  }
+  .titlebar {
+    display: grid; grid-template-columns: 1fr auto 1fr; align-items: center;
+    padding: 11px 16px 10px; border-bottom: 1px solid var(--hairline);
+  }
+  .lights { display: flex; gap: 8px; }
+  .lights span { width: 12px; height: 12px; border-radius: 50%; }
+  .lights span:nth-child(1) { background: #F26057; }
+  .lights span:nth-child(2) { background: #F5BE4F; }
+  .lights span:nth-child(3) { background: #58C43B; }
+  .doc { font-size: .8125rem; color: var(--ink-soft); display: flex; align-items: baseline; gap: 8px; }
+  .doc strong { color: var(--ink); font-weight: 600; }
+  .doc .sha { font-family: var(--mono); font-size: .75rem; color: var(--ink-faint); }
+  .titlebar .right { justify-self: end; font-size: .75rem; color: var(--ink-faint); }
+  .toolbar { display: flex; align-items: center; gap: 20px; padding: 10px 20px; border-bottom: 1px solid var(--hairline); }
+  .angles { display: flex; background: var(--paper-deep); border: 1px solid var(--hairline); border-radius: 8px; padding: 3px; gap: 2px; }
+  .angle {
+    appearance: none; border: 0; background: transparent;
+    font: 500 .8125rem/1 var(--sans); color: var(--ink-soft);
+    padding: 7px 13px; border-radius: 6px; cursor: pointer;
+    display: flex; align-items: center; gap: 7px;
+  }
+  .angle .key { font-family: var(--mono); font-size: .6875rem; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+  .angle .count { font-variant-numeric: tabular-nums; font-size: .6875rem; color: var(--ink-faint); }
+  .angle[aria-pressed="true"] { background: var(--raised); color: var(--ink); box-shadow: 0 1px 3px rgba(42,37,26,.14); }
+  .angle[aria-pressed="true"] .key { color: var(--accent); }
+  .angle .flag { color: var(--amber); font-size: .6875rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+  button:focus-visible, [tabindex]:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .toolbar .spacer { flex: 1; }
+  .coverage {
+    display: flex; align-items: center; gap: 10px; padding: 6px 12px;
+    background: var(--private-fill); border: 1px solid var(--private-line); border-radius: 7px;
+  }
+  .coverage .cells { display: flex; gap: 3px; }
+  .coverage .cells i { width: 14px; height: 8px; border-radius: 2px; background: var(--private-line); }
+  .coverage .cells i.read { background: var(--private); }
+  .coverage .cells i.now { background: var(--private); opacity: .45; }
+  .coverage em { font-style: normal; font-size: .71875rem; color: var(--private); }
+  .publish {
+    appearance: none; cursor: pointer; font: 600 .8125rem/1 var(--sans);
+    color: var(--ink-soft); background: var(--raised);
+    border: 1px solid var(--hairline-strong); border-radius: 7px; padding: 9px 16px;
+    box-shadow: 0 1px 2px rgba(42,37,26,.08);
+  }
+  .publish small { display: block; font-weight: 400; font-size: .6875rem; color: var(--ink-faint); margin-top: 3px; }
+
+  .queue {
+    flex: 1; overflow-y: auto;
+    padding: 44px 0 72px;
+  }
+  .queue-inner { max-width: 860px; margin: 0 auto; padding: 0 32px; }
+  .queue h1 { font: 600 1.75rem/1.25 var(--serif); letter-spacing: -0.01em; }
+  .lede {
+    margin-top: 10px; font: 400 .9375rem/1.6 var(--serif); color: var(--ink-soft);
+    max-width: 62ch;
+  }
+  .lede b { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .progress {
+    margin-top: 20px; display: flex; align-items: center; gap: 12px;
+    font-size: .75rem; color: var(--ink-soft);
+  }
+  .progress .track { flex: 0 0 220px; height: 5px; border-radius: 3px; background: var(--paper-deep); border: 1px solid var(--hairline); overflow: hidden; }
+  .progress .fill { width: 25%; height: 100%; background: var(--accent); }
+  .progress em { font-style: normal; font-variant-numeric: tabular-nums; }
+
+  .decision {
+    margin-top: 28px;
+    border: 1px solid var(--hairline); border-radius: 10px;
+    background: var(--raised); overflow: hidden;
+    box-shadow: 0 1px 4px rgba(42,37,26,.07);
+  }
+  .decision.done { opacity: .92; }
+  .d-head { padding: 20px 24px 0; display: flex; gap: 14px; align-items: baseline; }
+  .d-head .n { font: 400 1.125rem/1 var(--serif); color: var(--ink-faint); }
+  .d-head h2 { font: 600 1.1875rem/1.35 var(--serif); flex: 1; }
+  .d-head .badge {
+    flex: none; font-size: .6875rem; font-weight: 600;
+    border-radius: 6px; padding: 4px 9px; letter-spacing: .01em;
+  }
+  .badge.open { color: var(--accent); background: var(--accent-soft); border: 1px solid #CFDCEE; }
+  .badge.blast { color: var(--amber); background: var(--amber-fill); border: 1px solid var(--amber-line); }
+  .badge.agreed { color: var(--green); background: var(--green-fill); border: 1px solid var(--green-line); }
+  .why { padding: 12px 24px 0 54px; max-width: 74ch; }
+  .why p { font-size: .875rem; line-height: 1.6; color: var(--ink); }
+  .why .src {
+    margin-top: 7px; font-size: .71875rem; color: var(--ink-faint);
+    display: flex; gap: 6px; align-items: center;
+  }
+  .why .src code { font-family: var(--mono); font-size: .6875rem; color: var(--ink-soft); }
+  .evidence {
+    margin: 16px 24px 0 54px;
+    border: 1px solid var(--hairline); border-radius: 8px; overflow: hidden;
+    background: var(--paper);
+  }
+  .evidence .path {
+    font-family: var(--mono); font-size: .6875rem; color: var(--ink-soft);
+    padding: 7px 12px; border-bottom: 1px solid var(--hairline);
+    display: flex; justify-content: space-between;
+  }
+  .evidence .path a { color: var(--accent); text-decoration: none; font-family: var(--sans); font-weight: 500; }
+  .code { font-family: var(--mono); font-size: .75rem; line-height: 1.6; overflow-x: auto; }
+  .row { display: grid; grid-template-columns: 40px 20px 1fr; min-width: fit-content; }
+  .row .ln { text-align: right; padding-right: 9px; color: #A8A292; font-size: .6875rem; font-variant-numeric: tabular-nums; user-select: none; }
+  .row .g { text-align: center; user-select: none; }
+  .row .src2 { white-space: pre; padding-right: 16px; }
+  .row.add { background: var(--add-fill); } .row.add .g { color: var(--add-glyph); font-weight: 600; }
+  .row.del { background: var(--del-fill); } .row.del .g { color: var(--del-glyph); font-weight: 600; }
+  .row.ctx .src2, .row.ctx .ln { color: var(--ink-soft); }
+  .k { font-weight: 600; } .s { color: var(--string); } .c { color: var(--comment); font-style: italic; }
+  .d-acts {
+    display: flex; gap: 10px; align-items: center;
+    padding: 16px 24px 20px 54px;
+  }
+  .d-acts .primary, .d-acts .quiet {
+    appearance: none; cursor: pointer; border-radius: 7px;
+    font: 600 .8125rem/1 var(--sans); padding: 9px 14px;
+    display: inline-flex; gap: 8px; align-items: center;
+  }
+  .d-acts .primary { color: #fff; background: var(--accent); border: 1px solid #27508B; box-shadow: 0 1px 2px rgba(42,37,26,.15); }
+  .d-acts .quiet { color: var(--ink-soft); background: var(--raised); border: 1px solid var(--hairline-strong); }
+  .d-acts kbd { font-family: var(--mono); font-weight: 400; font-size: .65625rem; opacity: .75; }
+  .d-acts .hint { font-size: .71875rem; color: var(--ink-faint); margin-left: auto; }
+  .disagree {
+    margin: 14px 24px 0 54px;
+    border: 1px solid var(--amber-line); background: var(--amber-fill);
+    border-radius: 8px; padding: 11px 14px;
+    display: flex; gap: 10px; align-items: flex-start;
+    font-size: .78125rem; line-height: 1.5; color: var(--ink);
+  }
+  .disagree svg { flex: none; margin-top: 2px; color: var(--amber); }
+  .disagree b { color: var(--amber); }
+  .resolved {
+    margin: 12px 24px 0 54px; padding: 11px 14px;
+    background: var(--green-fill); border: 1px solid var(--green-line); border-radius: 8px;
+    font-size: .78125rem; line-height: 1.5; color: var(--ink);
+    display: flex; gap: 10px;
+  }
+  .resolved svg { flex: none; margin-top: 2px; color: var(--green); }
+  .decision.done .d-acts { padding-top: 12px; }
+  .decision.done .d-acts .note-line { font-size: .71875rem; color: var(--ink-faint); }
+  .cap {
+    margin-top: 36px; padding-top: 20px; border-top: 1px solid var(--hairline);
+    font: 400 .875rem/1.6 var(--serif); color: var(--ink-soft); max-width: 62ch;
+  }
+  .footer {
+    display: flex; gap: 22px; align-items: center; border-top: 1px solid var(--hairline);
+    padding: 8px 20px; font-size: .71875rem; color: var(--ink-faint);
+  }
+  .footer kbd {
+    font-family: var(--mono); font-size: .65625rem; background: var(--paper-deep);
+    border: 1px solid var(--hairline); border-bottom-width: 2px; border-radius: 4px;
+    padding: 1px 5px; color: var(--ink-soft);
+  }
+  .footer .grow { flex: 1; }
+  @media (max-width: 760px) {
+    .toolbar { flex-wrap: wrap; }
+    .why, .evidence, .d-acts, .disagree, .resolved { margin-left: 24px; padding-left: 0; }
+    .why { padding-left: 24px; }
+  }
+</style>
+
+<div class="window" role="application" aria-label="Wingman decisions angle">
+  <header class="titlebar">
+    <div class="lights" aria-hidden="true"><span></span><span></span><span></span></div>
+    <div class="doc"><strong>atlas/api</strong> · #482 Per-org rate limiting for the public API <span class="sha">a3f9c21</span></div>
+    <div class="right">Snapshot · nothing changed since you started</div>
+  </header>
+
+  <div class="toolbar">
+    <div class="angles" role="group" aria-label="Angles">
+      <button class="angle" aria-pressed="false"><span class="key">1</span> Sequence</button>
+      <button class="angle" aria-pressed="true"><span class="key">2</span> Decisions <span class="count">4</span></button>
+      <button class="angle" aria-pressed="false"><span class="key">3</span> Claims <span class="count">11/12</span></button>
+      <button class="angle" aria-pressed="false"><span class="key">4</span> Subtraction <span class="count">−214</span></button>
+      <button class="angle" aria-pressed="false"><span class="key">5</span> Blast radius <span class="flag">2</span></button>
+    </div>
+    <div class="spacer"></div>
+    <div class="coverage" title="Private to you. Never published.">
+      <div class="cells" aria-hidden="true"><i class="read"></i><i class="now"></i><i></i><i></i><i></i><i class="read"></i></div>
+      <em>2 of 6 read · private</em>
+    </div>
+    <button class="publish" disabled aria-disabled="true">Publish route<small>3 obligations remain</small></button>
+  </div>
+
+  <main class="queue">
+    <div class="queue-inner">
+      <h1>Four decisions</h1>
+      <p class="lede">Everything else in this changeset is mechanical or evidenced. These are the calls the harness cannot make for you, and there are only <b>four</b>. When they are decided, the judging is done.</p>
+      <div class="progress" aria-label="1 of 4 decided">
+        <div class="track"><div class="fill"></div></div>
+        <em>1 of 4 decided</em>
+      </div>
+
+      <!-- D1: open, harnesses disagree -->
+      <article class="decision" aria-label="Decision 1">
+        <div class="d-head">
+          <span class="n">1</span>
+          <h2>Fail open when the rate store is down</h2>
+          <span class="badge open">Undecided</span>
+        </div>
+        <div class="why">
+          <p>A Redis outage lets every request through unmetered rather than turning the API away. The plan traded enforcement for availability: a limiter outage must never become an API outage.</p>
+          <div class="src">Reconstructed from <code>docs/plan.md · Failure modes</code> · the diff itself carries no explanation</div>
+        </div>
+        <div class="evidence">
+          <div class="path">src/http/middleware/rate-limit.ts · L45–49 <a href="#">Open in the diff</a></div>
+          <div class="code">
+            <div class="row add"><span class="ln">45</span><span class="g">+</span><span class="src2">    } <span class="k">catch</span> (err) {</span></div>
+            <div class="row add"><span class="ln">46</span><span class="g">+</span><span class="src2">      metrics.count(<span class="s">'rate.store_error'</span>)</span></div>
+            <div class="row add"><span class="ln">47</span><span class="g">+</span><span class="src2">      <span class="k">return</span> next()  <span class="c">// fail open</span></span></div>
+            <div class="row add"><span class="ln">48</span><span class="g">+</span><span class="src2">    }</span></div>
+          </div>
+        </div>
+        <div class="disagree">
+          <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 1.5 11 10.5H1z"/><path d="M6 5v2.4"/><circle cx="6" cy="9" r=".2"/></svg>
+          <span><b>Your harnesses disagree here.</b> Claude Code accepts the trade; codex argues an outage plus per-org keying means unlimited scraping. Consistency check ran 3×3: the split is substantive, not stochastic. The thread is one keystroke away.</span>
+        </div>
+        <div class="d-acts">
+          <button class="primary">Decide: accept fail-open <kbd>A</kbd></button>
+          <button class="quiet">Raise with the author <kbd>F</kbd></button>
+          <button class="quiet">Read the disagreement <kbd>C</kbd></button>
+          <span class="hint">Deciding records your note with the route</span>
+        </div>
+      </article>
+
+      <!-- D2: decided -->
+      <article class="decision done" aria-label="Decision 2, decided">
+        <div class="d-head">
+          <span class="n">2</span>
+          <h2>Limits are keyed per organisation, not per API key</h2>
+          <span class="badge agreed">Decided · agreed</span>
+        </div>
+        <div class="why">
+          <p>API keys are free to mint, so a per-key limit is a polite suggestion. Per-org keying makes the limit real and makes a 429 mean the same thing for every key an org owns.</p>
+          <div class="src">Reconstructed from <code>AT-1291</code> · comment by the product owner, 12 June</div>
+        </div>
+        <div class="resolved">
+          <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M2 6.5 5 9.5 10 3"/></svg>
+          <span>Your note, travelling with the route: "Right call. Mint-a-key was the first workaround support saw last quarter."</span>
+        </div>
+        <div class="d-acts">
+          <span class="note-line">Decided 14:31 · reopen with <kbd style="font-family:var(--mono)">U</kbd></span>
+        </div>
+      </article>
+
+      <!-- D3 -->
+      <article class="decision" aria-label="Decision 3">
+        <div class="d-head">
+          <span class="n">3</span>
+          <h2>Breaches answer 429 with Retry-After, requests are never queued</h2>
+          <span class="badge open">Undecided</span>
+        </div>
+        <div class="why">
+          <p>The alternative was holding requests at the edge until tokens refill. The plan rejects it: queueing hides the limit from clients and turns back-pressure into latency nobody can see.</p>
+          <div class="src">Reconstructed from <code>docs/plan.md · API behaviour</code></div>
+        </div>
+        <div class="evidence">
+          <div class="path">src/http/middleware/rate-limit.ts · L51–55 <a href="#">Open in the diff</a></div>
+          <div class="code">
+            <div class="row add"><span class="ln">51</span><span class="g">+</span><span class="src2">    <span class="k">if</span> (!result.allowed) {</span></div>
+            <div class="row add"><span class="ln">52</span><span class="g">+</span><span class="src2">      ctx.set(<span class="s">'Retry-After'</span>, String(Math.ceil(result.retryAfterMs / 1000)))</span></div>
+            <div class="row add"><span class="ln">53</span><span class="g">+</span><span class="src2">      ctx.throw(429, <span class="s">'rate_limited'</span>)</span></div>
+            <div class="row add"><span class="ln">54</span><span class="g">+</span><span class="src2">    }</span></div>
+          </div>
+        </div>
+        <div class="d-acts">
+          <button class="primary">Decide: accept 429 contract <kbd>A</kbd></button>
+          <button class="quiet">Raise with the author <kbd>F</kbd></button>
+          <span class="hint">Public contract · lands in the route as a named call</span>
+        </div>
+      </article>
+
+      <!-- D4 -->
+      <article class="decision" aria-label="Decision 4">
+        <div class="d-head">
+          <span class="n">4</span>
+          <h2>The migration backfills a default limit for every existing org</h2>
+          <span class="badge blast">Undecided · irreversible</span>
+        </div>
+        <div class="why">
+          <p>Deploying this writes a 600 req/min default into 4,112 org rows in one transaction. There is no down migration: rolling back the code leaves the rows behind. The author chose backfill-at-deploy over lazy defaults to keep the read path branch-free.</p>
+          <div class="src">Reconstructed from <code>migrations/0042_org_limits.sql</code> · no plan entry found, flagged as inferred</div>
+        </div>
+        <div class="evidence">
+          <div class="path">migrations/0042_org_limits.sql · L12–14 <a href="#">Open in the diff</a></div>
+          <div class="code">
+            <div class="row add"><span class="ln">12</span><span class="g">+</span><span class="src2"><span class="k">UPDATE</span> orgs <span class="k">SET</span> rate_limit_per_min = 600</span></div>
+            <div class="row add"><span class="ln">13</span><span class="g">+</span><span class="src2"><span class="k">WHERE</span> rate_limit_per_min <span class="k">IS NULL</span>;</span></div>
+            <div class="row add"><span class="ln">14</span><span class="g">+</span><span class="src2"><span class="c">-- no down migration: default is permanent once written</span></span></div>
+          </div>
+        </div>
+        <div class="d-acts">
+          <button class="primary">Decide: accept backfill <kbd>A</kbd></button>
+          <button class="quiet">Raise with the author <kbd>F</kbd></button>
+          <span class="hint">Also counted in blast radius · angle 5</span>
+        </div>
+      </article>
+
+      <p class="cap">That is the whole queue. The ceiling is hard: if the harness finds a fifth call worth your judgment, something above gets demoted and you see the swap.</p>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <span><kbd>J</kbd> <kbd>K</kbd> decisions</span>
+    <span><kbd>A</kbd> decide</span>
+    <span><kbd>F</kbd> raise with author</span>
+    <span><kbd>O</kbd> open in diff</span>
+    <span><kbd>1</kbd>–<kbd>5</kbd> angles</span>
+    <span class="grow"></span>
+    <span><kbd>⌘K</kbd> commands</span>
+  </footer>
+</div>

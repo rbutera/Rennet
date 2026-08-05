@@ -1,0 +1,25 @@
+{
+  "name": "pierre-diffs-virtualization-spike",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "measure": "node bench/measure.mjs"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "6.0.4",
+    "playwright": "1.62.0",
+    "vite": "8.1.5"
+  },
+  "dependencies": {
+    "@pierre/diffs": "1.3.0-rc.1",
+    "@pierre/theme": "2.0.0",
+    "@tanstack/react-virtual": "3.14.8",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "shiki": "4.3.1"
+  }
+}
