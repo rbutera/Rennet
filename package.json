@@ -10,18 +10,82 @@
     "pnpm": "10.32.1"
   },
   "nx": {
-    "includedScripts": []
+    "includedScripts": [],
+    "targets": {
+      "architecture": {
+        "cache": true,
+        "command": "node scripts/check-boundaries.mjs",
+        "inputs": [
+          "{workspaceRoot}/packages/**/package.json",
+          "{workspaceRoot}/packages/**/src/**/*",
+          "{workspaceRoot}/apps/**/package.json",
+          "{workspaceRoot}/apps/**/src/**/*",
+          "{workspaceRoot}/eslint.config.mjs",
+          "{workspaceRoot}/scripts/check-boundaries.mjs"
+        ]
+      },
+      "audit": {
+        "cache": false,
+        "command": "pnpm audit --audit-level high"
+      },
+      "format": {
+        "cache": true,
+        "command": "pnpm exec biome check packages/*/src apps/desktop/src apps/desktop/e2e apps/desktop/*.ts apps/desktop/*.cjs apps/desktop/*.json scripts/*.mjs package.json biome.json"
+      },
+      "licenses": {
+        "cache": true,
+        "command": "node scripts/check-licenses.mjs",
+        "inputs": [
+          "{workspaceRoot}/package.json",
+          "{workspaceRoot}/packages/**/package.json",
+          "{workspaceRoot}/apps/**/package.json",
+          "{workspaceRoot}/pnpm-lock.yaml",
+          "{workspaceRoot}/scripts/check-licenses.mjs"
+        ]
+      }
+    }
   },
   "scripts": {
     "affected": "nx affected -t lint,typecheck,test,build",
-    "check": "nx run-many -t check --projects=rennet-prototype,event-store-publish-failure",
-    "check:affected": "nx affected -t check",
+    "architecture": "nx run rennet:architecture",
+    "audit": "nx run rennet:audit",
+    "build": "nx run-many -t build",
+    "check": "nx run-many -t format,architecture,licenses,lint,typecheck,test,build",
+    "check:affected": "nx affected -t lint,typecheck,test,build",
     "check:event-store": "nx run event-store-publish-failure:check",
     "check:prototype": "nx run rennet-prototype:check",
+    "dev": "nx run rennet-desktop:dev",
+    "e2e": "nx run rennet-desktop:e2e",
     "graph": "nx graph"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.6",
+    "@electron/node-gyp": "git+https://github.com/electron/node-gyp.git#06b29aafb7708acef8b3669835c8a7857ebc92d2",
+    "@emnapi/core": "2.0.0-alpha.3",
+    "@emnapi/runtime": "2.0.0-alpha.3",
+    "@eslint/js": "10.0.1",
+    "@nx/eslint": "23.1.0",
+    "@nx/eslint-plugin": "23.1.0",
+    "@nx/js": "23.1.0",
+    "@nx/playwright": "23.1.0",
+    "@nx/react": "23.1.0",
+    "@nx/vite": "23.1.0",
+    "@nx/vitest": "23.1.0",
     "@nx/workspace": "23.1.0",
-    "nx": "23.1.0"
+    "@playwright/test": "1.62.0",
+    "@types/node": "24.12.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@typescript-eslint/parser": "8.65.0",
+    "@typescript/native": "npm:typescript@7.0.2",
+    "@vitejs/plugin-react": "6.0.4",
+    "@vitest/coverage-v8": "4.1.10",
+    "eslint": "10.8.0",
+    "eslint-config-prettier": "10.1.8",
+    "nx": "23.1.0",
+    "typescript": "npm:@typescript/typescript6@6.0.2",
+    "typescript-eslint": "8.65.0",
+    "vite": "8.1.5",
+    "vitest": "4.1.10"
   }
 }

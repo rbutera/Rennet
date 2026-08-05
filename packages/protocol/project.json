@@ -1,0 +1,13 @@
+{
+  "name": "rennet-protocol",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/protocol/src",
+  "projectType": "library",
+  "tags": ["scope:rennet", "layer:protocol"],
+  "targets": {
+    "build": { "command": "pnpm exec tsc -p packages/protocol/tsconfig.json" },
+    "lint": { "command": "pnpm exec eslint packages/protocol/src --max-warnings=0 && pnpm exec biome check packages/protocol/src" },
+    "typecheck": { "command": "pnpm exec tsc -p packages/protocol/tsconfig.json" },
+    "test": { "command": "pnpm exec vitest run packages/protocol/src" }
+  }
+}

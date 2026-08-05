@@ -1,0 +1,14 @@
+{
+  "name": "@rennet/adapters",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@rennet/core": "workspace:*",
+    "@rennet/protocol": "workspace:*",
+    "@rennet/types": "workspace:*",
+    "chokidar": "5.0.0",
+    "execa": "10.0.0"
+  }
+}

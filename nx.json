@@ -50,5 +50,6 @@
       "dependsOn": ["build"],
       "inputs": ["default", "^production"]
     }
-  }
+  },
+  "plugins": []
 }

@@ -1,0 +1,13 @@
+{
+  "name": "rennet-core",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/core/src",
+  "projectType": "library",
+  "tags": ["scope:rennet", "layer:core"],
+  "targets": {
+    "build": { "command": "pnpm exec tsc -p packages/core/tsconfig.json" },
+    "lint": { "command": "pnpm exec eslint packages/core/src --max-warnings=0 && pnpm exec biome check packages/core/src" },
+    "typecheck": { "command": "pnpm exec tsc -p packages/core/tsconfig.json" },
+    "test": { "command": "pnpm exec vitest run packages/core/src" }
+  }
+}

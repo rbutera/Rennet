@@ -21,6 +21,11 @@ Navi: this is your build handoff for **Rennet**, Rai's personal product. Everyth
 > 4. ⛔ **Decisions are NEVER capped.** They are grouped into cohorts, ordered, and collapsible. A cap can hide the one decision you must answer for.
 > 5. ⭐ **New core feature: the review→agent handoff loop** (Master Plan §2.1). Dispositions batch to a coding harness on your own branch, producing a new patchset, and Rennet re-reviews only the **delta**. This makes R8's matcher-precision gate doubly load-bearing — it now protects read state *and* gates this loop.
 
+## 0. Current implementation checkpoint
+
+The OpenSpec change `build-local-review-mvp` has landed the first executable slice; read [[Rennet Local Review MVP]] before taking a backlog item. Production Nx projects now exist for `types`, `protocol`, `core`, `adapters`, `ui`, and `desktop`. Local Git capture, SQLite replay and receipts, file-read state, invalidation, explicit regeneration, secured Electron IPC, the desktop review surface, real Electron E2E, Forge packaging, and current Electron fuses are implemented.
+
+Do not mistake this for the full review harness. `.rennet` project snapshots, lineage, generated angles, RSP documents, harness adapters, LSP, GitHub, physical purge, diagnostics, signing, updates, and releases remain unimplemented. Backlog items 12 and 22 now have an MVP foundation but retain their broader hardening and release work; use the executable slice instead of rebuilding their foundations.
 ## 1. Who / what / why
 
 **What it is.** Rennet is an MIT-licensed, local-first Electron desktop **code review harness**: it points the coding harnesses already on the user's machine (Claude Code first; codex, omp later) at a changeset, decomposes it into sub-400-LOC chunks read through **six angles** — **spec, the sequence, decisions, claims-and-evidence, blast radius, noise** — keeps review state that survives a force-push, and lands results as normal GitHub PR reviews. LLMs propose structure via a validated document format (the RSP DSL); the human disposes. Zero-config is the North Star; BYOK; no Rennet backend; no telemetry. Selected context may leave the machine through the user's chosen harness/provider and is disclosed per run. Both review modes are product scope: reviewing a diff an LLM just generated locally, and reviewing someone else's PR.

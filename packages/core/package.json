@@ -1,0 +1,12 @@
+{
+  "name": "@rennet/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@rennet/protocol": "workspace:*",
+    "@rennet/types": "workspace:*",
+    "uuid": "14.0.1"
+  }
+}

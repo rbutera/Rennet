@@ -1,0 +1,13 @@
+{
+  "name": "rennet-adapters",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "packages/adapters/src",
+  "projectType": "library",
+  "tags": ["scope:rennet", "layer:adapter"],
+  "targets": {
+    "build": { "command": "pnpm exec tsc -p packages/adapters/tsconfig.json" },
+    "lint": { "command": "pnpm exec eslint packages/adapters/src --max-warnings=0 && pnpm exec biome check packages/adapters/src" },
+    "typecheck": { "command": "pnpm exec tsc -p packages/adapters/tsconfig.json" },
+    "test": { "command": "pnpm exec vitest run packages/adapters/src" }
+  }
+}

@@ -17,6 +17,8 @@ The single authoritative reconciliation of the 2026-08-04 planning sprint for [[
 
 The original R1–R33 reconciliation introduced no uncited architecture. R34 records the later dependency and Nx decision. Every ruling cites its authority. Rulings marked **synthesis call** had no settling authority and may be overridden by Rai.
 
+**Implementation checkpoint, 2026-08-05.** [[Rennet Local Review MVP]] is the first executable vertical slice. It implements local immutable capture, append-only SQLite review state, patchset-scoped read progress, conservative invalidation, explicit regeneration, a typed IPC boundary, a sandboxed Electron shell, and Forge packaging with audited fuses. It deliberately stops before project snapshots, harness/model execution, the six generated angles, LSP, GitHub ingestion/publication, deletion/purge, signing, updating, and telemetry. The OpenSpec source of truth is `openspec/changes/build-local-review-mvp/`.
+
 ---
 
 ## 1. The product in one page

@@ -2,6 +2,8 @@ packages:
   - "apps/*"
   - "packages/*"
 
+nodeLinker: hoisted
+
 # Evidence spikes are intentionally isolated from the product workspace.
 
 minimumReleaseAge: 10080
@@ -9,12 +11,24 @@ minimumReleaseAgeStrict: true
 minimumReleaseAgeIgnoreMissingTime: false
 minimumReleaseAgeExclude:
   - "brace-expansion@5.0.9"
+  - "fast-uri@3.1.5"
 trustPolicy: no-downgrade
+trustPolicyExclude:
+  - "semver@5.7.2 || 6.3.1"
+trustPolicyIgnoreAfter: 525600
 trustLockfile: false
-blockExoticSubdeps: true
+# Electron Forge's native rebuild chain pins Electron's node-gyp fork by commit SHA.
+# Keep the source explicit in root package.json and audit the lockfile in CI.
+blockExoticSubdeps: false
 strictPeerDependencies: true
 saveExact: true
 
 overrides:
+  "@emnapi/core": "2.0.0-alpha.3"
+  "@emnapi/runtime": "2.0.0-alpha.3"
   axios: "1.18.0"
   brace-expansion: "5.0.9"
+  fast-uri: "3.1.5"
+  tar: "7.5.22"
+  tmp: "0.2.7"
+  unicorn-magic: "0.4.0"

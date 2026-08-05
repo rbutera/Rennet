@@ -35,14 +35,17 @@ Rennet's planned public split is Apache-2.0 for `packages/types` and `packages/p
 The package-manager policy is:
 
 - exact versions and a committed lockfile;
-- `minimumReleaseAge: 10080`, strict, with no permanent package exemptions;
-- no trust downgrade, no lockfile trust shortcut, and no exotic transitive sources;
+- `minimumReleaseAge: 10080`, strict, with no package-wide exemptions and only reviewed exact-version exceptions;
+- no recent trust downgrade and no lockfile trust shortcut; trust checks older than one year are ignored because historical packages commonly lack comparable provenance;
+- exotic transitive sources are normally blocked; Electron Forge's native rebuild chain is the documented exception and pins Electron's `node-gyp` fork to commit `06b29aafb7708acef8b3669835c8a7857ebc92d2`;
 - `pnpm licenses list --json` plus an SPDX allowlist before distribution;
 - OSV Scanner against `pnpm-lock.yaml`, using offline mode where dependency metadata egress is unacceptable;
 - CycloneDX or SPDX SBOMs with release artifacts, using native `pnpm sbom` after the pnpm 11 upgrade;
 - every scanner has a synthetic positive control so a silent clean result cannot pass.
 
-Current security convergence overrides are `axios@1.18.0` and `brace-expansion@5.0.9`, both required to remove high-severity advisories in the Nx 23.1.0 transitive graph. `brace-expansion@5.0.9` was six days old when adopted, so it has an exact-version maturity exception, not a package-wide exemption. Remove each override when `nx migrate` resolves to an equal or newer patched version and the audit stays clean.
+Current security overrides additionally converge Electron's pinned `node-gyp` fork on `tar@7.5.22`, Forge's prompt chain on `tmp@0.2.7`, and Nx's schema chain on `fast-uri@3.1.5`. They remove the critical/high advisories exposed by the full development-graph audit. `fast-uri@3.1.5` was five days old when adopted, so it has a reviewed exact-version maturity exception. Other current convergence overrides are `axios@1.18.0`, `brace-expansion@5.0.9`, `unicorn-magic@0.4.0`, and the two `@emnapi/*@2.0.0-alpha.3` WASI peers required by Vite 8's Rolldown graph. `brace-expansion@5.0.9` also has an exact-version maturity exception. Remove an override when the owning upstream graph resolves to an equal or newer compatible version and the audit, build, and package gates stay clean.
+
+Electron Forge requires pnpm's hoisted node linker for packaging. Rennet uses `nodeLinker: hoisted`; this is a packaging constraint, not permission for undeclared imports. Nx/ESLint boundaries and manifest checks remain authoritative.
 
 Primary sources: [pnpm settings](https://pnpm.io/settings), [pnpm SBOM](https://pnpm.io/cli/sbom), [OSV lockfile support](https://google.github.io/osv-scanner/supported-languages-and-lockfiles/).
 
@@ -98,7 +101,7 @@ Local `.nx/cache` is the default. Nx Cloud and any other remote cache are **DEFE
 |---|---|---:|---|---|
 | Desktop runtime | `electron` | `43.2.0` | MIT | **MUST.** Proven by the `node:sqlite` spike. `43.3.0` is held by the age gate. |
 | Package and make | `@electron-forge/cli` | `7.11.2` | MIT | **MUST.** One packaging architecture. |
-| Hardened fuses | `@electron-forge/plugin-fuses`, `@electron/fuses` | `7.11.2`, `2.1.3` | MIT | **MUST.** Disable RunAsNode, NODE_OPTIONS, and CLI inspect; load production only from ASAR. |
+| Hardened fuses | `@electron/fuses` | `2.1.3` | MIT | **MUST.** Run from Forge's post-package hook. Forge's plugin still peers on fuse v1 and cannot name Electron 43's complete fuse wire. Disable RunAsNode, NODE_OPTIONS, CLI inspect, and file-protocol privilege; load production only from ASAR. |
 | macOS artifacts | `@electron-forge/maker-dmg`, `@electron-forge/maker-zip` | `7.11.2` | MIT | **MUST for public macOS release.** ZIP is required by the update path; DMG is the user installer. |
 | Public release updater | Electron `autoUpdater` through `update-electron-app` | `3.3.0` | MIT | **DEFER, then SHOULD.** Enable only for signed public GitHub releases. Private releases do not justify a Rennet backend. |
 | GitHub release publishing | `@electron-forge/publisher-github` | `7.11.2` | MIT | **DEFER.** Add only when publishing is explicitly authorized. |
@@ -120,7 +123,7 @@ Use Electron built-ins for `utilityProcess`, `MessageChannelMain`, `safeStorage`
 | Canonical JSON | `canonicalize` | `3.0.0` | Apache-2.0 | **MUST.** RFC 8785 before SHA-256 for document, config, and provenance digests. |
 | JSONC config | `jsonc-parser` | `3.3.1` | MIT | **MUST.** Parse and edit `.rennet/project.jsonc` while preserving human comments. |
 | Atomic config replacement | `write-file-atomic` | `8.0.0` | ISC | **SHOULD.** Non-SQLite durable config writes only. |
-| Child processes | `execa` | `10.0.1` | MIT | **MUST.** Resolved executable plus argv, `shell: false`, binary streams, AbortSignal, bounded output, and graceful termination. GitPort still owns exact command and output contracts. |
+| Child processes | `execa` | `10.0.0` | MIT | **MUST.** `10.0.1` was held by the seven-day age gate. Resolved executable plus argv, `shell: false`, binary streams, AbortSignal, bounded output, and graceful termination. GitPort still owns exact command and output contracts. |
 | Change hints | `chokidar` | `5.0.0` | MIT | **MUST.** Debounced recapture trigger only; Git decides patchset truth. |
 | Context exclusions | `ignore` | `7.0.6` | MIT | **MUST.** `.rennetignore` semantics only; Git decides tracked and ignored source state. |
 | Async scheduling | `p-queue` | `9.3.3` | MIT | **MUST.** Bounded harness, LSP, Forge, and I/O queues. Native AbortSignal owns cancellation. |
