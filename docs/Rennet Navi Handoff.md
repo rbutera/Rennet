@@ -28,10 +28,11 @@ Navi: this is your build handoff for **Rennet**, Rai's personal product. Everyth
 **Whose it is.** Rai's personal product. **NOT the enterprise client work. Never use the enterprise client client time, resources, or repos for development, fixtures, calibration, or model-backed dogfood without explicit written approval.** Client mode never mutates the source checkout or its Git metadata. Rai is sole copyright holder; that must stay simple and true (dual licensing depends on it).
 
 **Where truth lives.** In order of authority:
-1. [[Rennet Master Plan]] — the spine. Its §2 conflict rulings (R1–R33) override anything in the plans. Its §3 frozen list is what you may never change without asking Rai.
+1. [[Rennet Master Plan]] — the spine. Its §2 conflict rulings (R1–R34) override anything in the plans. Its §3 frozen list is what you may never change without asking Rai.
 2. [[Rennet Architecture Contracts]] — authoritative within its named scope.
-3. [[Code Review Harness App]] — the hub; its Decisions section is supreme product authority.
-4. The eight plans: [[Wingman Architecture Plan]], [[Wingman Harness Adapter Protocol]], [[Wingman GitHub Integration Plan]], [[Wingman Distribution and Licensing Plan]], [[Wingman Repo Bootstrap Plan]], [[Wingman Settings and Setup Plan]], [[Wingman LSP Integration Plan]], [[Wingman Surfacing DSL and Model Routing Plan]] — plus [[reviews/wingman-architecture-codex-critique]], [[reviews/wingman-adapter-licensing-codex-adjudication]], [[Wingman Spike – Pierre Diff Virtualization]], [[Wingman Branding Plan]].
+3. [[Rennet Dependency Standard]] — authoritative for package selection, versions, licensing, toolchain ownership, and overlap.
+4. [[Code Review Harness App]] — the hub; its Decisions section is supreme product authority.
+5. The eight plans: [[Wingman Architecture Plan]], [[Wingman Harness Adapter Protocol]], [[Wingman GitHub Integration Plan]], [[Wingman Distribution and Licensing Plan]], [[Wingman Repo Bootstrap Plan]], [[Wingman Settings and Setup Plan]], [[Wingman LSP Integration Plan]], [[Wingman Surfacing DSL and Model Routing Plan]] — plus [[reviews/wingman-architecture-codex-critique]], [[reviews/wingman-adapter-licensing-codex-adjudication]], [[Wingman Spike – Pierre Diff Virtualization]], [[Wingman Branding Plan]].
 
 **Ratified essentials you must not lose** (all frozen; detail in Master Plan §1/§3):
 - **Six angles, lens set v4.** Spec is the 0th angle (committed Kiro/OpenSpec/superpowers spec + PR body + ticket; derived-and-marked when absent; the only angle that exists on a zero-hunk changeset). Noise is the 6th: the totality/residue guarantee as a surface, with **verified** (deterministic checkers are the ONLY admission authority) and **suspected** (LLM-proposed, visually distinct, skim-required) tiers; the LLM's three roles over noise are narrator, pattern-proposer, anomaly-spotter; one deviating line ejects a hunk from verified noise. Subtraction is retired as a surface; its content lives in `finding.ruleFamily` + noise categories with the propose-deletion affordance on the finding.
@@ -112,12 +113,12 @@ Done: verdict note with hit rate.
 
 ### B. Repo bootstrap
 
-**12. Bootstrap commits 1–6: toolchain to green gate** — P0 — deps: none.
-Local repo, neutral name (`review-harness`), per the deferred-rename rule. LICENSE = **MIT** (© 2026 Rai Butera; ⛔ **Superseded 2026-08-06: MIT throughout.** R5 is moot — MIT has no `-only`/`-or-later` axis), pnpm workspace (`save-exact`, `strict-peer-dependencies`), Biome, shared tsconfig bases (`portable.json` with `"types": []` + `"lib": ["ES2022"]`), `packages/protocol` + `packages/types` skeletons, turbo graph, root `gate` script. Layout per Master Plan R21: `packages/{types, protocol, core, adapters, ui, instructions, tsconfig}` + `apps/{desktop, mobile}` placeholder + `scripts/` + non-workspace `spikes/`. [[Wingman Repo Bootstrap Plan]] §1–§3, §6 commits 1–6.
+**12. Nx bootstrap and toolchain to green gate** — P0 — deps: none.
+The private `rennet` repo already has a pnpm workspace, Nx graph, local cache, exact Nx pin, root checks, and agent instructions. Complete the production package scaffold with the exact eligible versions and ownership rules in [[Rennet Dependency Standard]]: Nx plus official plugins in lockstep, TS7 compiler plus TS6 tool-API alias, Vite 8, Biome, narrow ESLint/Nx architecture rules, and shared tsconfig bases (`portable.json` with `"types": []` + `"lib": ["ES2022"]`). LICENSE = **MIT** throughout (© 2026 Rai Butera; R5 moot — MIT has no `-only`/`-or-later` axis). Layout per Master Plan R21: `packages/{types, protocol, core, adapters, ui, instructions, tsconfig}` + `apps/{desktop, mobile-placeholder}` + `scripts/` + non-workspace `spikes/`.
 Done: `pnpm gate` green on empty packages, output pasted; a scratch `node:fs` import under portable.json fails typecheck (error pasted).
 
 **13. Boundary gates, four layers, with failing fixtures** — P0 — deps: 12.
-Biome `noRestrictedImports` overrides per package; `scripts/check-boundaries.mjs` (~80 lines: declared-deps vs allowed arrows + dynamic-escape grep) with `--self-test` against `scripts/fixtures/` violations. Arrows: types ← protocol ← core ← adapters ← desktop; **ui imports protocol+types only, never core** (R20); mobile imports protocol+types only; instructions never imported by protocol/types/mobile (R4). [[Wingman Repo Bootstrap Plan]] §3.
+Nx project tags plus `@nx/enforce-module-boundaries` and `@nx/dependency-checks` own graph and manifest boundaries; Biome and `scripts/check-boundaries.mjs` cover source restrictions and dynamic escapes. Arrows: types ← protocol ← core ← adapters ← desktop; **ui imports protocol+types only, never core** (R20); mobile imports protocol+types only; instructions never imported by protocol/types/mobile (R4). Every layer has a failing fixture and positive control. [[Rennet Dependency Standard]] §3; [[Wingman Repo Bootstrap Plan]] §3 as amended.
 Done: self-test fails when a fixture rule is deleted (both directions proven, pasted).
 
 **14. State-keying gate + branded IDs** — P0 — deps: 12.
@@ -137,12 +138,12 @@ Drop in the bootstrap plan's §4 CLAUDE.md corrected per Master Plan: **MIT**; t
 Done: an agent handed only the repo can state the three load-bearing rules back.
 
 **18. CI gate workflow + branch protection** — P0 — deps: 17; blocked on RAI-ONLY private remote (§4 item 2).
-`gate.yml` (gate + e2e on macos-15 + package-smoke asserting the artifact on disk + `gate-required` aggregation with `if: always()`), turbo cache, `pull_request_target` banned, protection: require `gate-required`, linear history, no force-push, include admins. [[Wingman Repo Bootstrap Plan]] §3 CI; [[Wingman Distribution and Licensing Plan]] §3.
+`gate.yml` (gate + e2e on macos-15 + package-smoke asserting the artifact on disk + `gate-required` aggregation with `if: always()`), Nx local cache persisted only within the trusted GitHub Actions boundary, `pull_request_target` banned, protection: require `gate-required`, linear history, no force-push, include admins. Nx Cloud remains off pending the privacy decision. [[Rennet Dependency Standard]] §3; [[Wingman Repo Bootstrap Plan]] §3 CI as amended; [[Wingman Distribution and Licensing Plan]] §3.
 Done: a throwaway PR with a deliberate lint error is blocked from merging (proven).
 
 **19. Protocol + types: domain types and zod schemas** — P0 — deps: 12.
-Implement the canonical `Project`, `ProjectSnapshot`, `Review`, immutable `Patchset`, `WorkingTreeSnapshot`, `Occurrence`, lineage, artifact-provenance, finding, obligation, discussion, command, and event schemas from [[Rennet Architecture Contracts]] §2–§6. `packages/types` = domain types only; `packages/protocol` = wire/commands/events/DSL, depends on types. Subordinate type sketches are illustrative only.
-Done: round-trip + rejection tests pass; types package has zero deps beyond zod.
+Implement the canonical `Project`, `ProjectSnapshot`, `Review`, immutable `Patchset`, `WorkingTreeSnapshot`, `Occurrence`, lineage, artifact-provenance, finding, obligation, discussion, command, and event schemas from [[Rennet Architecture Contracts]] §2–§6. `packages/types` = dependency-free domain types. `packages/protocol` = normative RSP JSON Schemas plus generated types and validators, and private Zod command/event boundaries; it depends on types. Subordinate type sketches are illustrative only.
+Done: round-trip + rejection tests pass; generated RSP types have no drift; types package has zero runtime dependencies.
 
 **20. The command map (typed IPC contract)** — P0 — deps: 19.
 `commands.ts` name → `{input, output}` zod map (~200-line budget), transport-neutral per R19: JSON Schema generated from the zod maps, wire fixtures tested both sides; version negotiation, structured errors, and reconnect/replay slots reserved in the envelope now. Every mutating command carries `commandId`, actor, payload digest, optional `reviewId`, and optional `expectedSeq`; receipts make replay return the recorded result and reject command-ID reuse with different bytes. [[Rennet Architecture Contracts]] §6.
@@ -153,7 +154,7 @@ Done: type-level test makes an unknown command name a compile error; generated J
 Done: fakes satisfy interfaces; core has zero runtime deps beyond protocol/types/zod.
 
 **22. Electron shell, secure defaults, fuses** — P0 — deps: 12.
-Forge + Vite, main/preload/renderer, `contextIsolation`, `sandbox`, no `nodeIntegration`, strict CSP, deny-by-default permission handler, `@electron/fuses` in `afterPack` (before signing, when signing exists). [[Wingman Repo Bootstrap Plan]] commit 15.
+Electron 43.2 + plain Vite 8 + Forge 7, main/preload/renderer, `contextIsolation`, `sandbox`, no `nodeIntegration`, strict CSP, custom app protocol, sender validation, deny-by-default permissions/navigation/windows, and Forge's fuses plugin before signing. Do not add electron-builder, electron-updater, electron-vite, or Forge's experimental Vite plugin. [[Rennet Dependency Standard]] §4.
 Done: dev window renders `data-testid=app-root`; fuses verified in the packaged app.
 
 **23. Typed IPC end to end + Playwright smoke** — P0 — deps: 20, 22.

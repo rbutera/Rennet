@@ -10,6 +10,9 @@ created: 2026-08-04
 
 # Desktop and Mobile Stack 2026
 
+> [!IMPORTANT] Historical research, superseded 2026-08-05
+> [[Rennet Dependency Standard]] is the current authority for package selection, exact versions, licensing, and tool ownership. In particular it replaces Turbo with Nx, selects one packaging architecture (Electron Forge), defers Vite+, retires the Kysely bridge after the Electron SQLite spike, and resolves logging, UI primitives, LSP framing, and supply-chain policy. Tables below are evidence only.
+
 Library and tooling recommendations for [[Code Review Harness App]]: an open-source-core macOS-first Electron review app with a portable `core/`, plus a paid Expo remote-control companion.
 
 All versions and dates below were pulled from the npm registry and the GitHub API on **2026-08-04**. Anything I could not confirm is marked **unverified** rather than asserted.

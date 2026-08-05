@@ -1,0 +1,18 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "event-store-publish-failure",
+  "projectType": "library",
+  "sourceRoot": "spikes/event-store-publish-failure",
+  "tags": ["scope:spike", "type:evidence"],
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": ["{projectRoot}/**/*"],
+      "options": {
+        "command": "node --test spikes/event-store-publish-failure/spike.test.mjs",
+        "cwd": "{workspaceRoot}"
+      }
+    }
+  }
+}

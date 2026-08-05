@@ -8,6 +8,7 @@ The repository is currently in pre-build architecture and evidence-gathering. It
 
 - [Master plan](./docs/Rennet%20Master%20Plan.md): authoritative product and architecture reconciliation.
 - [Architecture contracts](./docs/Rennet%20Architecture%20Contracts.md): project context, immutable patchsets, invalidation, persistence, privacy, and publication.
+- [Dependency standard](./docs/Rennet%20Dependency%20Standard.md): authoritative package, licence, toolchain, and ownership decisions.
 - [Evidence gates](./docs/Rennet%20Evidence%20Gate%20Status.md): what is proven, open, or approval-blocked before implementation.
 - [Build handoff](./docs/Rennet%20Navi%20Handoff.md): dependency-ordered implementation plan.
 - [Interactive prototype](./prototypes/moodboard/index.html): current product-state prototype.
@@ -29,7 +30,7 @@ spikes/        Isolated evidence probes, never workspace packages
 pnpm check
 ```
 
-This currently validates the executable event-store proof and prototype JavaScript. Package-level build, lint, typecheck, and test gates will replace it when the first production packages land.
+Nx runs and locally caches the executable event-store proof and prototype JavaScript checks. Use `pnpm check:affected` while iterating. Package-level build, lint, typecheck, and test targets will join the graph when the first production packages land.
 
 ## Privacy boundary
 

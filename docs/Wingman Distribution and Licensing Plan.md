@@ -21,13 +21,13 @@ updated: 2026-08-05
 >
 > **What is still live and useful here:** the dependency-licence inventory in §5 (as a *compatibility* record — under MIT the inbound question is permissiveness and attribution, not copyleft direction), the notarization/signing/distribution material, and the Apple-enrolment timing (required before first public release, not before local dogfood).
 >
-> Product name is **Rennet**. [[Rennet Master Plan]] overrides this plan wherever they differ. Historical Wingman artefact names below are illustrative only.
+> Product name is **Rennet**. [[Rennet Master Plan]] and [[Rennet Dependency Standard]] override this plan wherever they differ. Historical Wingman artefact names and package inventories below are illustrative only.
 
 Distribution, deployment, and licensing for [[Code Review Harness App]]. The product name is **Rennet**; the filename is retained only to preserve existing Obsidian links. Personal product, sole author Rai. Not the enterprise client work.
 
 ~~Ratified inputs I am building on, not relitigating: OSS core plus desktop app, paid mobile companion later; **AGPL-3.0-only** for core and desktop with Rai as sole author retaining dual-licensing rights; mobile app proprietary.~~ ⛔ **Superseded 2026-08-06: MIT throughout.** The OSS-core-plus-desktop and paid-mobile-companion shape survives; the licence structure under it does not.
 
-Stack facts come from [[References/Desktop and Mobile Stack 2026]]. Licence verdicts on lifted code come from [[References/Orca and Paseo Pairing]]. Everything asserted here was verified on **2026-08-04** against the primary source cited inline; anything I could not verify is labelled **unverified** rather than asserted.
+Current stack facts come from [[Rennet Dependency Standard]]; the 2026-08-04 stack note is historical evidence. Licence verdicts on lifted code come from [[References/Orca and Paseo Pairing]]. Everything asserted here was verified on **2026-08-04** against the primary source cited inline; anything I could not verify is labelled **unverified** rather than asserted.
 
 ---
 

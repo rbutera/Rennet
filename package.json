@@ -6,12 +6,22 @@
   "license": "MIT",
   "packageManager": "pnpm@10.32.1",
   "engines": {
-    "node": "24.16.0",
+    "node": "24.18.0",
     "pnpm": "10.32.1"
   },
+  "nx": {
+    "includedScripts": []
+  },
   "scripts": {
-    "check": "pnpm check:prototype && pnpm check:event-store",
-    "check:event-store": "node --test spikes/event-store-publish-failure/spike.test.mjs",
-    "check:prototype": "node --check prototypes/moodboard/assets/app.js"
+    "affected": "nx affected -t lint,typecheck,test,build",
+    "check": "nx run-many -t check --projects=rennet-prototype,event-store-publish-failure",
+    "check:affected": "nx affected -t check",
+    "check:event-store": "nx run event-store-publish-failure:check",
+    "check:prototype": "nx run rennet-prototype:check",
+    "graph": "nx graph"
+  },
+  "devDependencies": {
+    "@nx/workspace": "23.1.0",
+    "nx": "23.1.0"
   }
 }
