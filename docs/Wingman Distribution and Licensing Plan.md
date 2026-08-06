@@ -47,7 +47,7 @@ A proprietary Expo app that imports an AGPL package is a single combined work. T
 
 Rai can paper over this today because he is sole copyright holder and can licence his own code to himself on any terms. But it is a paper-over that depends on him never forgetting, which is exactly the failure mode the Brita filter rule exists to prevent. One accepted drive-by PR touching `core/protocol` and the mobile app is in breach of a licence Rai no longer solely controls.
 
-**Decision: split the licence at the package boundary, not at the repo boundary.** `packages/protocol/` and `packages/types/` ship **Apache-2.0**; everything else in `core/`, plus `shell/` and `ui/`, ships **AGPL-3.0-only**. The proprietary mobile app then consumes two permissively licensed packages like any third party would, and the question stops being a question.
+⛔ **SUPERSEDED 2026-08-06 — MIT throughout; there is no split** (Master Plan R3). *The original decision, retained as the record:* **Decision: split the licence at the package boundary, not at the repo boundary.** `packages/protocol/` and `packages/types/` ship **Apache-2.0**; everything else in `core/`, plus `shell/` and `ui/`, ships **AGPL-3.0-only**. The proprietary mobile app then consumes two permissively licensed packages like any third party would, and the question stops being a question.
 
 Second-order benefit, and it is a real one: a permissively licensed wire protocol invites third-party clients (a Neovim plugin, a CLI, someone's Raycast extension) without any of them having to open-source their work. That is a positioning asset, not a concession. It is also the honest shape: a protocol that nobody else may implement is not a protocol, it is an internal calling convention.
 
@@ -438,7 +438,7 @@ additionally require a signed contributor licence agreement by email.
 
 ## Licence of contributions
 
-Contributions to `packages/protocol` and `packages/types` are Apache-2.0.
+Contributions to `packages/protocol` and `packages/types` are Apache-2.0. [⛔ SUPERSEDED 2026-08-06 — everything is MIT. **Do not copy this draft into `CONTRIBUTING.md` as written**; rewrite the licence sentences for MIT first.]
 Everything else is AGPL-3.0-only. Add the SPDX header matching the package your
 file lives in; `reuse lint` runs in CI and will tell you if you got it wrong.
 ```
@@ -550,7 +550,7 @@ Brief, because at one user this is a cheap decision that should not consume a da
 
 | # | Title | Description | Priority | Depends on |
 |---|---|---|---|---|
-| B1 | Split the licence boundary: Apache-2.0 protocol+types, AGPL everything else | Restructure the planned monorepo so `packages/protocol` and `packages/types` are Apache-2.0 and everything else AGPL-3.0-only. Add `REUSE.toml` at root and per-package, `LICENSES/`, SPDX headers, `reuse lint` in CI, plus a CI rule that protocol/types may not import from any in-repo package. Blocks the mobile app from ever contaminating. See §0.1, §4.1. | **P0** | — |
+| B1 | ⛔ **DROPPED 2026-08-06 — do not action.** MIT throughout means there is no boundary to split and no REUSE/SPDX machinery to build (Master Plan R3). ⭐ **One line survives and should be kept as its own task:** the CI rule that `protocol`/`types` import nothing in-repo, now an architectural boundary. *Original row:* Split the licence boundary: Apache-2.0 protocol+types, AGPL everything else | Restructure the planned monorepo so `packages/protocol` and `packages/types` are Apache-2.0 and everything else AGPL-3.0-only. Add `REUSE.toml` at root and per-package, `LICENSES/`, SPDX headers, `reuse lint` in CI, plus a CI rule that protocol/types may not import from any in-repo package. Blocks the mobile app from ever contaminating. See §0.1, §4.1. | **P0** | — |
 | B2 | Never link `@anthropic-ai/claude-agent-sdk`; write the stdio harness adapter | The SDK is "© Anthropic PBC. All rights reserved." and is AGPL-incompatible. Build the Claude adapter as a clean-room child-process wrapper over `claude -p --output-format stream-json --input-format stream-json`, auto-detected on PATH, never bundled. Deletes the asarUnpack/notarize-nested-binary work item entirely. See §0.2. | **P0** | — |
 | B3 | Contribution policy live before the repo goes public | `CONTRIBUTING.md` (§4.5 draft), `CONTRIBUTORS.md`, `COPYRIGHT.md`, `.github/PULL_REQUEST_TEMPLATE.md` stating code PRs are not yet accepted, `dcoapp/app` installed, and the ~12-line Action asserting the author is in `CONTRIBUTORS.md`. **Must land in the same commit that makes the repo public.** One merged PR without this permanently damages dual licensing. See §4.3. | **P0** | — |
 | B4 | Apple Developer Program enrolment: decide individual vs Ltd, then enrol | RAI-ONLY before the first public release, not local dogfood. Decide before enrolling because migration is painful-to-impossible. Produces Team ID, Developer ID Application cert, App Store Connect API key. | **P2** | public-release phase |
