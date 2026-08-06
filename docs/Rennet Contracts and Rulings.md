@@ -105,7 +105,7 @@ This is a **core feature**. It is what turns Rennet from a reading tool into a *
 ```
 disposition = {
   anchor: line | hunk | symbol,
-  type:   approve | change-request | comment | question,
+  type:   approve | request-change | comment | question,
   body:   text,                  // the RAW draft — what the user actually typed/said
   // §2.5 additive extension (comment-refinement loop):
   refined?:   text,              // the agent's cleaned, investigated, properly-processed form
@@ -113,6 +113,8 @@ disposition = {
   thread?:    InlineThread       // the per-diff clarification conversation on this disposition
 }
 ```
+
+⭐ **Disposition verb-ordering is verb-first: the canonical form is `request-change`** (Rai, 2026-08-06). The specific name is not load-bearing; the ONLY requirement is that the ordering is CONSISTENT across the whole app, so the noun-first spelling is retired everywhere. The enum ships `request-change` (code block above), matching the verb-first shape of its siblings `approve` / `comment` / `question`; every doc, prose derivative, and count form follows it (`request-changed`, `request-changes`).
 
 ⭐ **One model, two destinations — the mode decides where it goes, never what it is:**
 

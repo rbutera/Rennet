@@ -39,7 +39,7 @@ interface Disposition {
   reviewId: ReviewId
   patchsetId: PatchsetId
   anchor: Anchor                        // line | hunk | symbol — unchanged
-  type: 'approve' | 'change-request' | 'comment' | 'question'   // unchanged
+  type: 'approve' | 'request-change' | 'comment' | 'question'   // unchanged
 
   draft: {
     body: string                        // the user's raw text, VERBATIM, immutable forever
@@ -191,7 +191,7 @@ Validator rules worth stating: `refinedBody` must not be byte-identical to the d
 | Disposition | Refinement |
 |---|---|
 | `approve`, empty body | never — skips the machinery (§1.4) |
-| `approve` with body, `comment`, `question`, `change-request` | **always**, background, light tier |
+| `approve` with body, `comment`, `question`, `request-change` | **always**, background, light tier |
 | Clarification question to the user | **only** on a `needs-clarification` verdict — the exception path, because a question spends the user's attention and the governing principle is minimising exactly that |
 
 **Recommendation: the behaviour is hard-baked** (one opinionated flow, correction-7 family), with the per-disposition "post as written" bypass as the only lever. Not a per-project setting, not a confidence slider. The product essence Rai stated — the user is *allowed* to be lazy and messy because the agent cleans up — argues the loop is identity, not option. Flagged as OQ1 because a global kill-switch is defensible and cheap.

@@ -83,7 +83,7 @@ Four actors, partitioned **structurally**: the engine (project/invalidate/carry/
 
 ### 4.3 The disposition model and the review→agent handoff loop
 
-The **disposition** is the one data model of review action: `{anchor, type: approve | change-request | comment | question, body}` — extended by the refinement loop (§4.4) with `refined`, `published`, and an inline `thread`. One model, two destinations — the mode decides where it goes, never what it is:
+The **disposition** is the one data model of review action: `{anchor, type: approve | request-change | comment | question, body}` — extended by the refinement loop (§4.4) with `refined`, `published`, and an inline `thread`. One model, two destinations — the mode decides where it goes, never what it is:
 
 - Reviewing **someone else's PR** → dispositions publish as one batched GitHub review.
 - Reviewing **your own branch** → dispositions batch into a **task bundle handed to a coding harness**, which addresses them on the branch → produces a **new patchset** → Rennet **re-reviews only the DELTA**. An approved hunk that did not change stays approved.
