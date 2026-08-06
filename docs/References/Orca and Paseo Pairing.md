@@ -265,6 +265,8 @@ Secrets stay on the desktop. The phone is a viewer; switching agent accounts fro
 
 ### Copyability
 
+⭐ **NOTE 2026-08-06: Rennet is now MIT throughout, which makes lifting Orca's MIT code simpler than assumed here** (no cross-licence SPDX quarantine needed for an MIT-into-MIT lift — the two licences are compatible in the direction we'd use them). The attribution/NOTICE obligation below still applies regardless: MIT requires the licence and copyright notice to travel with the copied code, and that doesn't go away just because both sides are MIT.
+
 - **All client code is MIT (Lovecast Inc.).** The entire `mobile/src/transport` layer is liftable with attribution: e2ee, pairing race, credential rotation, endpoint supervisor, reconnect controller.
 - **The relay is not.** Only the clients are open. The director and cell services are closed vendor infrastructure gated on an Orca cloud token. `ORCA_RELAY_URL` and `ORCA_CLOUD_RELAY_TOKEN_URL` env overrides exist, so you could point at your own, but you would be reimplementing an undocumented protocol.
 - **Conflict with no-cloud-backend: yes, for the relay path.** Relay requires an Orca account and Orca-run servers. The direct path (LAN, Tailscale, WebSocket, NaCl box) has zero vendor dependency and is fully copyable.

@@ -17,7 +17,7 @@ Three legs, one contract: **what agents may say** (the DSL), **which model says 
 
 Written against **lens set v4** (spec, the sequence, decisions, claims-and-evidence, blast radius, noise). Subtraction is retired as a dedicated angle and survives as finding types and noise categories; spec enters as the 0th angle and brings with it a changeset that may legitimately contain zero hunks.
 
-This is the contract layer. It lives in Apache-2.0 `packages/protocol` ([[Wingman Repo Bootstrap Plan]], "the ONLY thing mobile imports… also the thing you want third parties to implement against"), which makes it publishable as an open spec.
+This is the contract layer. It lives in Apache-2.0 `packages/protocol` ([[Wingman Repo Bootstrap Plan]], "the ONLY thing mobile imports… also the thing you want third parties to implement against"), which makes it publishable as an open spec. ⛔ **SUPERSEDED 2026-08-06: `packages/protocol` is MIT, not Apache-2.0 — Rennet is MIT throughout. Still publishable as an open spec, just under MIT.**
 
 **Evidence rule.** Every inherited constraint cites its source. Everything invented here is marked **PROPOSAL**. No API shape is asserted: the structured-output mechanics below use only surfaces verified in [[Wingman Harness Adapter Protocol]] and ratified in [[reviews/wingman-adapter-licensing-codex-adjudication|the adapter adjudication]]. Where a mechanic is unverified it says so and routes around it.
 
@@ -34,6 +34,8 @@ Three sentences, because everything below is a consequence of them.
 4. **Instructions are versioned product; the contract is not user-configurable, the voice is.** Guidance changes emphasis, priorities and house conventions. It cannot change a schema, weaken an admission rule, or route around the validator — enforced by giving the validator a settings projection that structurally cannot see guidance (§6.4), the same trick that makes pace data structurally unpublishable.
 
 The four of them compose into one property worth stating on its own: **a wrong model produces an invalid document, not a wrong review.** Fabricated line numbers fail anchor resolution. Fabricated coverage fails the totality check. Fabricated counts fail the cardinality check. Fabricated quotes fail byte comparison. The cheapest defence against a small model doing a big model's job is a gate the small model cannot bluff past — which is Rai's rule zero (a check that cannot fail has not passed) turned into a runtime component.
+
+⛔ **SUPERSEDED 2026-08-06: Rai has rejected "a wrong model produces an invalid document, not a wrong review" as the product's stated purpose/thesis** (he called this framing "AI slop"). **Rennet exists to make a large diff DIGESTIBLE, and the mechanism is ROLL-UP into logical cohorts.** Deterministic validation as described above survives only as a *mechanism* in service of that purpose — it must never be presented as the headline or the reason the product exists.
 
 ### 1.1 Concrete-syntax verdict: JSON documents against versioned JSON Schemas. No bespoke textual DSL.
 
@@ -377,7 +379,7 @@ Ratified shape from the conversation record: author-agent decisions reconstructe
 
 - `why.isReconstructed` and `why.reconstructedFrom` are required by the validation synthesis ("each decision must carry a reconstructed WHY… marked as reconstructed"). `reconstructedFrom: 'none'` is legal and means *the change asserts this with no recoverable rationale* — which is itself the most reviewable state, and must never be papered over with an invented reason. V301 enforces: any value other than `none` requires ≥1 source anchor.
 - `disposition` triage: `evidenced` (the code proves the reasoning), `mechanical` (forced by something upstream, no judgment involved), `contestable` (a human has to agree). Only `contestable` items consume queue slots.
-- **`salience` exists so the cap is a view.** The hub requires "a hard visible ceiling on the count, the count IS the product", and the conversation record settled it as a capped queue *view*. The agent emits everything it found with a salience score; `angles.decisions.maxItems` truncates the rendered queue and the surface says "12 more below the line" honestly. Rejecting over-cap emissions at the validator would destroy the information needed to rank.
+- **`salience` exists so decisions can be ORDERED and GROUPED.** ⛔ **Superseded 2026-08-06 (Master Plan, decisions row + OQ3): there is no cap and `angles.decisions.maxItems` does not exist.** *Was: "the hub requires 'a hard visible ceiling on the count, the count IS the product'… `angles.decisions.maxItems` truncates the rendered queue and the surface says '12 more below the line' honestly."* **A cap can hide the one decision you must answer for**, and "I did not see it" is not a defence you can offer about your own branch. The agent still emits everything it found with a salience score — ⭐ **and the reason given below is still exactly right, it just now applies to grouping instead of truncation: rejecting emissions at the validator would destroy the information needed to rank.** Salience now drives **cohort ordering and what the reviewer meets first**, never what survives; the "below the line" affordance becomes a **collapsed cohort** the reviewer can open.
 - `surveyed` is the denominator. A queue of 2 out of 7 candidates over 11 hunks is a different statement from 2 out of 2, and Rai's population rule ("state the POPULATION next to every stat") applies inside the product as much as outside it.
 
 ### 2.6 The remaining seven, in brief
@@ -754,7 +756,7 @@ Guidance changes emphasis, priorities, house conventions, and tone. It cannot ch
 
 ### 6.1 Base instructions ship with the app and are versioned like schemas
 
-Every task in the §5.2 matrix that touches a model has exactly one **base instruction**, shipped in `packages/protocol`'s sibling `packages/instructions` (AGPL, since it is product rather than interoperability surface). Naming and versioning mirror the document schemas, because the two co-evolve and a mismatched pair is the most likely cause of a sudden rejection-rate spike:
+Every task in the §5.2 matrix that touches a model has exactly one **base instruction**, shipped in `packages/protocol`'s sibling `packages/instructions` (AGPL, since it is product rather than interoperability surface). ⛔ SUPERSEDED 2026-08-06: `packages/instructions` is MIT, like the rest of the repo — the licence-based rationale here no longer applies (the package still exists; only its licence changed). Naming and versioning mirror the document schemas, because the two co-evolve and a mismatched pair is the most likely cause of a sudden rejection-rate spike:
 
 ```
 instructions/
@@ -901,7 +903,7 @@ The one bridge: when a shared layer *requests* a tier raise, Rennet surfaces it 
 
 ## 7. The open-spec play
 
-`packages/protocol` is Apache-2.0 and "the thing you want third parties to implement against" ([[Wingman Repo Bootstrap Plan]]). One section, not a standards process.
+`packages/protocol` is Apache-2.0 and "the thing you want third parties to implement against" ([[Wingman Repo Bootstrap Plan]]). One section, not a standards process. ⛔ SUPERSEDED 2026-08-06: MIT, not Apache-2.0.
 
 **What ships as the spec.** Name it the **Rennet Surfacing Protocol (RSP)**. Media type `application/vnd.rennet.<docType>+json;v=<n>`. Artefacts, all inside the package:
 
@@ -922,7 +924,7 @@ The one bridge: when a shared layer *requests* a tier raise, Rennet surfaces it 
 
 **The risk, named.** A competitor with distribution adopts RSP and out-executes on the app. Real, and acceptable: the market analysis puts the moat in state-across-force-push + PR interop + desktop + mobile, none of which the format confers. The failure mode that would actually hurt is the format fragmenting into vendor dialects — which is what the normative error codes and the invalid corpus exist to prevent.
 
-**What is deliberately NOT in the spec:** instructions, model names, routing, tier definitions, and budgets. Those are product, they change weekly, and freezing them into an interoperability artefact would make the spec wrong within a month. That is also the licence line: `packages/protocol` is Apache-2.0 and publishable, `packages/instructions` (§6.1) is AGPL and is not. A third party implementing RSP writes their own instructions and still interoperates, which is the correct amount of coupling — and it is what makes the conformance corpus meaningful, since it tests documents rather than the prompts that produced them.
+**What is deliberately NOT in the spec:** instructions, model names, routing, tier definitions, and budgets. Those are product, they change weekly, and freezing them into an interoperability artefact would make the spec wrong within a month. That is also the licence line: `packages/protocol` is Apache-2.0 and publishable, `packages/instructions` (§6.1) is AGPL and is not. A third party implementing RSP writes their own instructions and still interoperates, which is the correct amount of coupling — and it is what makes the conformance corpus meaningful, since it tests documents rather than the prompts that produced them. ⛔ **SUPERSEDED 2026-08-06: both packages are MIT now, so "the licence line" no longer separates them — the DELIBERATE-scope argument (instructions/model names/routing/budgets excluded from the spec) is architectural, not licence-driven, and still stands on its own.**
 
 ---
 
@@ -1049,7 +1051,7 @@ The asymmetry is deliberate and matches the settings plan's: **everything that s
 
 | # | Title | Description | P | Depends on |
 |---|---|---|---|---|
-| D26 | `packages/instructions`: one versioned base instruction per v1 task | AGPL (product, not interoperability surface). Fixed skeleton per file, `@version` in the filename, never restates the schema. The rejection log means nothing without versioning here | **P0** | D9 |
+| D26 | `packages/instructions`: one versioned base instruction per v1 task | AGPL (product, not interoperability surface). ⛔ SUPERSEDED 2026-08-06: MIT, like the rest of the repo. Fixed skeleton per file, `@version` in the filename, never restates the schema. The rejection log means nothing without versioning here | **P0** | D9 |
 | D27 | Instruction provenance block + `ContextManifest.instruction` + assembled-prompt inspection | Split base vs guidance digests so a quality change is attributable to a product change or a user change. Extends the settings plan's existing manifest and "what was sent" panel rather than adding a sibling | **P0** | D26, settings S13 |
 | D28 | `instructions.*` settings keys on the eight-layer ladder, under the existing trust gate, read at base ref | Global `instructions.general` is "general instructions across all workspaces". Repo guidance is untrusted input: inert until the diff is accepted, re-gated on every content-hash change, wrapped and layer-labelled in the assembled prompt, contributing zero bytes while `pending` | **P0** | D27, settings resolver |
 | D29 | Enforce guidance-only `append` in the settings registry | Ratified fourth strategy; a registry test asserts only guidance-prose keys may declare it and composition uses layer-labelled delimiters | **P0** | settings registry |
@@ -1066,4 +1068,4 @@ The asymmetry is deliberate and matches the settings plan's: **everything that s
 - [[reviews/wingman-adapter-licensing-codex-adjudication]] — CLI adapter, utility batching budget, three-layer capabilities, disagreement redesign
 - [[reviews/wingman-architecture-codex-critique]] — hybrid chunking, atomic versioned proposals, occurrence-ID lineage, residue totality
 - [[Wingman Settings and Setup Plan]] — the eight-layer ladder, trust gate, and ContextManifest that `routing.*` and `instructions.*` slot into
-- [[Wingman Repo Bootstrap Plan]] — `packages/protocol` as Apache-2.0
+- [[Wingman Repo Bootstrap Plan]] — `packages/protocol` as Apache-2.0 ⛔ SUPERSEDED 2026-08-06: MIT, not Apache-2.0

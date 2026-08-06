@@ -8,8 +8,9 @@ updated: 2026-08-05
 
 # Rennet Architecture Plan
 
-> [!IMPORTANT] Current implementation authority, 2026-08-05
-> This is a detailed historical plan for **Rennet**. [[Rennet Master Plan]], [[Rennet Architecture Contracts]], and [[Rennet Navi Handoff]] override every conflicting recipe below. In particular: use `@rennet/*`; use the final package tree in Master Plan R21; `ui` imports only `protocol` and `types`; licence open packages as `AGPL-3.0-only`; never link the Claude Agent SDK; use occurrence IDs plus a lineage graph; use validated hybrid decomposition; never invoke a harness per hunk; the six angles exclude Subtraction; route handoff is removed; and use `ForgePort`, not `GithubPort`. Sections and backlog rows that retain the old design are evidence and rationale only, not build instructions.
+> [!IMPORTANT] Current implementation authority, 2026-08-06
+> ⛔ **SUPERSEDED 2026-08-06: the banner below (originally 2026-08-05) restated two rules that are now reversed. Rennet is MIT throughout (no AGPL-3.0-only, no Apache-2.0 split), and the Claude Agent SDK is ADOPTED, not banned — see Master Plan R2/R3. The rest of the banner's rulings still stand.**
+> This is a detailed historical plan for **Rennet**. [[Rennet Master Plan]], [[Rennet Architecture Contracts]], and [[Rennet Navi Handoff]] override every conflicting recipe below. In particular: use `@rennet/*`; use the final package tree in Master Plan R21; `ui` imports only `protocol` and `types`; ~~licence open packages as `AGPL-3.0-only`; never link the Claude Agent SDK~~ (both superseded 2026-08-06, see note above); use occurrence IDs plus a lineage graph; use validated hybrid decomposition; never invoke a harness per hunk; the six angles exclude Subtraction; route handoff is removed; and use `ForgePort`, not `GithubPort`. Sections and backlog rows that retain the old design are evidence and rationale only, not build instructions.
 
 Implementation architecture for [[Code Review Harness App]]. The product name is Rennet; the filename is retained only to preserve existing Obsidian links. Built on the verified stack in [[References/Desktop and Mobile Stack 2026]].
 
@@ -102,7 +103,7 @@ Each decision states the call, why, and what was rejected. **Frozen** decisions 
 ### D1 — SUPERSEDED: original five-package sketch
 
 > [!IMPORTANT] Current package tree
-> Use `packages/{types, protocol, core, adapters, ui, instructions, tsconfig}` plus `apps/{desktop, mobile-placeholder}`, `scripts/`, and non-workspace `spikes/`. Packages use `@rennet/*`. `protocol` and `types` are Apache-2.0 and import no other in-repo packages. `ui` imports only those two packages. The old tree below is historical.
+> Use `packages/{types, protocol, core, adapters, ui, instructions, tsconfig}` plus `apps/{desktop, mobile-placeholder}`, `scripts/`, and non-workspace `spikes/`. Packages use `@rennet/*`. `protocol` and `types` are Apache-2.0 and import no other in-repo packages. `ui` imports only those two packages. The old tree below is historical. ⛔ **SUPERSEDED 2026-08-06: the Apache-2.0 designation on `protocol`/`types` is gone — every package is MIT.**
 
 The hub note proposes `core/` + `shell/` + `ui/`. Concretely:
 
@@ -126,7 +127,7 @@ Rejected: a single package with folders (boundaries become vibes); `core` split 
 
 ### D2 — AMENDED: dependency rules
 
-The current dependency matrix is the package tree above plus Master Plan R3/R4/R20/R21. In particular, `ui → core` and mobile importing core subpaths are prohibited; `protocol` may import `types`, and neither Apache package may import anything else in-repo.
+The current dependency matrix is the package tree above plus Master Plan R3/R4/R20/R21. In particular, `ui → core` and mobile importing core subpaths are prohibited; `protocol` may import `types`, and neither Apache package may import anything else in-repo. ⛔ **SUPERSEDED 2026-08-06: there is no "Apache package" distinction any more — `protocol` and `types` are MIT, same as the rest of the repo. The import-boundary rule itself (architecture, not licensing) still stands.**
 
 | Package | May import | Must never import |
 |---|---|---|
@@ -351,13 +352,14 @@ The core rule this encodes: **the renderer never holds domain logic.** The comma
 ### D12 — AMENDED: main routes, engine owns state, adapters own harness lifecycle
 
 > [!IMPORTANT] Claude process rule
+> ⛔ **SUPERSEDED 2026-08-06: the ban on the Claude Agent SDK below is reversed — the SDK is now adopted; see Master Plan R2.** The clean-room process-per-turn CLI wrapper this rule prescribes is no longer the mandated design.
 > Never import or bundle `@anthropic-ai/claude-agent-sdk`. The Claude adapter starts a clean `claude -p` child process for each turn, using `--resume <id> --fork-session` when continuing a logical Rennet thread. Rennet persists the logical thread and the minimum harness session identifier needed to continue it, not a long-lived SDK process. Other adapters may be long-lived only where their verified protocol requires it. Process ownership follows the adapter capability, not a universal one-process-per-session rule.
 
 Per the stack note §1: heavy work goes in `utilityProcess`, not the main process and not `child_process.fork`.
 
 - **main** — windows, menus, IPC dispatch, `safeStorage`, updates. No domain work, ever. It must never block.
 - **engine** (one `utilityProcess`) — `GitPort`, diff parse, tree-sitter, chunking, angles, **and the SQLite event store**. Single writer. The store lives here rather than in main specifically because `node-sqlite3-wasm` is synchronous, and synchronous SQLite on the main process is a jank source on exactly the frames the product is judged by.
-- **harness adapter host** — supervises child processes according to the verified adapter contract. Claude is process-per-turn over the installed CLI; Codex uses its app-server protocol. No proprietary SDK or harness binary is linked or bundled.
+- **harness adapter host** — supervises child processes according to the verified adapter contract. Claude is process-per-turn over the installed CLI; Codex uses its app-server protocol. No proprietary SDK or harness binary is linked or bundled. ⛔ **SUPERSEDED 2026-08-06: the Claude Agent SDK is adopted; the "no proprietary SDK" posture no longer applies to Claude.**
 - **renderer** — React, `@pierre/diffs`, and Pierre's worker pool for highlighting.
 
 ### D13 — Two streaming channels: ephemeral deltas bypass the store, durable events do not. FROZEN
@@ -754,7 +756,7 @@ Both review modes are in the dogfood cut. Local review is the first vertical sli
 | Private-event structural exclusion + its test | **MUST** | D9. Without the test it is not a guarantee |
 | Typed IPC + command registry + cancellation | **MUST** | D11 |
 | Engine utility process | **MUST** | D12 |
-| Claude Code CLI adapter | **MUST** | Clean-room `claude -p`, process-per-turn; nothing bundled |
+| Claude Code CLI adapter | **MUST** | Clean-room `claude -p`, process-per-turn; nothing bundled. ⛔ SUPERSEDED 2026-08-06: SDK adopted, no clean-room mandate — see Master Plan R2 |
 | Angle: the sequence | **MUST** | The primary rail |
 | Angle: decisions | **MUST** | Strongest validated positioning fit |
 | Angle: blast radius | **MUST** | Cheap explainable signals only, no churn-heat |
@@ -828,10 +830,10 @@ Sized for autonomous agent execution. Dependencies are hard unless marked soft.
 
 | # | Title | P | Depends on | Description |
 |---|---|---|---|---|
-| B1 | Scaffold the Rennet monorepo (pnpm + turbo + Biome + TS 7 + Vitest) | P0 | — | Create the final package layout from Master Plan R21 with `@rennet/*` names and the Apache/AGPL boundary from R3/R4. No app code, just a green build/test/boundary gate. |
+| B1 | Scaffold the Rennet monorepo (pnpm + turbo + Biome + TS 7 + Vitest) | P0 | — | Create the final package layout from Master Plan R21 with `@rennet/*` names and the Apache/AGPL boundary from R3/R4. No app code, just a green build/test/boundary gate. ⛔ SUPERSEDED 2026-08-06: no Apache/AGPL boundary — everything is MIT. |
 | B2 | Implement and prove the four-layer boundary enforcement | P0 | B1 | Wire Biome `noRestrictedImports` per D3, write `tooling/check-boundaries.ts`, and add fixture files that violate each rule. CI must assert the checker *fails* on the fixtures — a boundary check that cannot fail has not passed. |
 | B3 | Spike: measure `@pierre/diffs` against a real 5,000-line diff | P0 | B1 | Render a genuine large the enterprise client PR diff through `CodeView` with the worker pool on, profile with Chrome DevTools, record frame times. Confirm 1.3.2 still exports `Virtualizer`/`useWorkerPool`. Outcome decides D14. Highest information value in the list. |
-| B4 | Spikes: `node:sqlite` in Electron and direct Claude CLI fidelity/isolation | P0 | B1 | The store check may delete a dependency. The CLI spike verifies process-per-turn resume/fork/schema/partial frames/cancellation/context isolation. No SDK binary is linked or bundled. |
+| B4 | Spikes: `node:sqlite` in Electron and direct Claude CLI fidelity/isolation | P0 | B1 | The store check may delete a dependency. The CLI spike verifies process-per-turn resume/fork/schema/partial frames/cancellation/context isolation. No SDK binary is linked or bundled. ⛔ SUPERSEDED 2026-08-06: SDK adopted — see Master Plan R2. |
 | B5 | `GitPort`: spawn wrapper with streaming, cancellation, and shell:false hardening | P0 | B1 | ~250 lines per the stack note. Plumbing commands only, NUL-delimited parsing, `AbortSignal` per call, streamed stdout never buffered. Resolve an absolute git path and assert output shape defensively (§0.4). |
 | B6 | Workspace / repo / worktree discovery (the four nouns) | P0 | B5 | Implement `RepoId` = realpath of `--git-common-dir`, worktree enumeration via `--porcelain`, nested-repo and foreign-worktree detection. Golden test against Rai's actual layout: `/workspace`, nested `product-repo`, worktrees at `/workspace/wt/*` and `product-repo/.claude/worktrees/*`. |
 | B7 | Own the unified-diff parser | P0 | B5 | Replace parse-diff with a parser carrying byte offsets, per-line old/new numbers, rename and mode detection, binary and submodule cases. Fixture-driven, including malformed and truncated input. |
@@ -845,7 +847,7 @@ Sized for autonomous agent execution. Dependencies are hard unless marked soft.
 | B15 | Angle framework + the sequence angle + residue check | P0 | B14 | Implement `AngleView` as a pure total function with the `inputDigest` cache and the totality assertion emitting `residue.detected`. Ship the sequence angle over B14's chunks. |
 | B16 | Typed IPC layer and command registry | P0 | B9 | ~200 lines per D11/2.4: command map in `core/protocol`, single validating `ipcMain.handle` dispatcher, `MessageChannelMain` streaming, `requestId` cancellation. Reject unknown command names loudly. |
 | B17 | Engine utility process and process supervision | P0 | B16, B8 | Stand up the engine `utilityProcess` owning git, diff, and the store (D12). Main becomes a pure router. Include crash detection and restart with in-flight request rejection. |
-| B18 | Claude Code CLI adapter behind the normalized protocol | P0 | B17 | Implement the clean-room process-per-turn `claude -p` wrapper with tolerant decoders, resume/fork identifiers, isolation disclosure, and no SDK/credential access. Cancellation kills only the owned turn process. |
+| B18 | Claude Code CLI adapter behind the normalized protocol | P0 | B17 | Implement the clean-room process-per-turn `claude -p` wrapper with tolerant decoders, resume/fork identifiers, isolation disclosure, and no SDK/credential access. Cancellation kills only the owned turn process. ⛔ SUPERSEDED 2026-08-06: the SDK is adopted; this is no longer the mandated design — see Master Plan R2. |
 | B19 | Two-channel streaming (durable events vs ephemeral deltas) | P1 | B18, B16 | Implement D13: coalesce token deltas at ~16ms straight to the renderer without persisting; append one `thread.messageAdded` on completion. Verify a mid-stream crash loses only the partial answer. |
 | B20 | GitHub ingestion: `gh auth token` + GraphQL PR/threads/checks | P0 | B1 | Read the token from `gh`, never store a copy. One GraphQL round trip for PR, files, threads, comments, check runs. Device-flow fallback is LATER; stub the seam. |
 | B21 | Renderer: `CodeView` integration with domain annotations | P0 | B3, B15, B16 | Map `FileDiffIR` + raw patch slices to `CodeViewItem[]` per D10, with `DiffLineAnnotation<WingmanAnnotation>`. One scroll owner (D14). Wire `updateItemId`/`version` for patchset changes. |

@@ -8,8 +8,9 @@ updated: 2026-08-05
 
 # Rennet Harness Adapter Protocol
 
-> [!IMPORTANT] Current implementation authority, 2026-08-05
-> This note preserves the 2026-08-04 protocol research, but [[Rennet Master Plan]] and [[Rennet Architecture Contracts]] override its transport recipes. Build **Rennet**. Never import or bundle the proprietary Claude Agent SDK; drive the user's installed `claude` CLI through a clean-room process-per-turn adapter. Never read or persist harness credentials. Deterministic work stays local; semantic utility work is batched by meaningful unit, never process-per-hunk or per item. Capability flags start false and are earned by conformance.
+> [!IMPORTANT] Current implementation authority, 2026-08-06
+> ⛔ **SUPERSEDED 2026-08-06: the Claude Agent SDK is now ADOPTED, not banned — see Master Plan R2.** The Claude adapter is an SDK integration, not the clean-room process-per-turn CLI wrapper §0.2 mandates below. The *non-SDK* guidance elsewhere in this file still stands regardless of that reversal: discover harnesses via login-shell PATH harvest (never `which`), earn capability flags through a conformance suite, keep a read-only sandbox posture, and never read or persist a harness credential.
+> This note preserves the 2026-08-04 protocol research, but [[Rennet Master Plan]] and [[Rennet Architecture Contracts]] override its transport recipes. Build **Rennet**. ~~Never import or bundle the proprietary Claude Agent SDK; drive the user's installed `claude` CLI through a clean-room process-per-turn adapter.~~ (superseded, see note above — SDK adopted). Never read or persist harness credentials. Deterministic work stays local; semantic utility work is batched by meaningful unit, never process-per-hunk or per item. Capability flags start false and are earned by conformance.
 
 The normalized event protocol and adapter layer for [[Code Review Harness App]]. The product name is Rennet; the filename is retained only to preserve existing Obsidian links.
 
@@ -63,6 +64,18 @@ app-server is one long-lived process: JSON-RPC 2.0 over newline-delimited stdio,
 This revises the stack note's "use the official SDK rather than hand-rolling a JSON-RPC client". The SDK is not a client for this protocol; it is a client for a different, poorer one.
 
 ### 0.2 AMENDED: ship no harness binaries or proprietary harness SDKs
+
+> [!IMPORTANT] ⭐ Design note, 2026-08-06 — **assert `apiKeySource === 'oauth'` and warn loudly if it is not**
+> The SDK reports **`apiKeySource`** on the `system/init` frame at the start of every session (see the event-mapping table below; `sdk.d.ts:4434`), typed as
+> `ApiKeySource = 'user' | 'project' | 'org' | 'temporary' | 'oauth'`. **`'oauth'` is the user's Claude subscription** — the free-at-point-of-use path that the whole SDK decision rests on. Any other value means a **metered API key** is paying for the run.
+>
+> ⛔ **The adapter MUST read that field every session, assert it is `'oauth'`, and surface a visible warning in the UI when it is not.** It must not fail the turn closed — the user may legitimately be on an API key, or routing through OpenRouter or a local router — but it must never let a metered key take over **silently**, because the failure mode is money leaving Rai's account with no signal.
+>
+> ⭐ **Why this belongs here rather than in the licence discussion:** it is a *positive* guarantee the clean-room CLI wrapper could not have offered. Spawning `claude` ourselves gives no structured statement of which credential answered — we would have had to infer it. **The SDK hands it over as typed data, per session.** So the option we chose is the one that can *prove* the property the other one merely assumed, and that is a real argument for the SDK independent of build cost.
+>
+> ⚠️ **Known limit, do not over-claim:** the spawned CLI inherits `process.env`, so an ambient `ANTHROPIC_API_KEY` in the launching shell can still take precedence — that is Claude Code's own precedence rule and identical under any wrapper. **This assertion is exactly what makes that case visible instead of silent.** Treat it as detection, never as prevention. It fits the capability model below: earn it with a conformance test that proves the warning fires, or it is a claim rather than a capability.
+
+⛔ **SUPERSEDED 2026-08-06: this whole subsection is reversed.** The Claude Agent SDK is adopted (Master Plan R2). Rennet DOES link the SDK for the Claude adapter; it spawns the user's own installed `claude` binary and authenticates on their subscription, so the "must not link" premise below no longer holds, and the "zero compiled artifacts" framing is retired — the SDK's prebuilt per-platform binary is an accepted, budgeted packaging cost (see [[References/Desktop and Mobile Stack 2026]]).
 
 The historical SDK audit below established why the binary must not be bundled. The later licensing adjudication goes further: **do not link the SDK at all**. Invoke the user's installed `claude` executable directly through its documented CLI surface.
 
@@ -339,6 +352,7 @@ export type ApprovalDecision =
 ```
 
 > [!WARNING] Historical SDK approval finding
+> ⛔ **SUPERSEDED 2026-08-06: the SDK is no longer "retired" — it is adopted (Master Plan R2).** The shipping Claude adapter is expected to be SDK-based, so `onApproval`/`CanUseTool` are back in scope rather than forbidden; re-derive the approval-arbitration design against the adopted SDK rather than against this CLI-only note.
 > The `onApproval` rule below applied only to the retired Claude Agent SDK. The shipping CLI adapter has no SDK callback: it launches with an explicit read-only tool allowlist, refuses bypass modes, and treats any unexpected write/exec request as a denied turn. Do not implement `CanUseTool` or import SDK types.
 
 ---
@@ -348,9 +362,10 @@ export type ApprovalDecision =
 ### 2.1 Claude Code (v1)
 
 > [!DANGER] The SDK mapping below is research, not an implementation recipe
+> ⛔ **SUPERSEDED 2026-08-06: this whole "clean-room CLI, never import SDK types" posture is reversed — the Claude Agent SDK is adopted, see Master Plan R2.** The credential/context-disclosure discipline (never persist a harness credential, disclose inherited project context) still applies to the SDK integration.
 > Current transport is a fresh `claude -p --output-format stream-json --include-partial-messages --resume <id> --fork-session --json-schema ...` child process for each turn. Decode the CLI JSONL with tolerant runtime schemas and preserve unknown native frames for diagnostics. Rennet owns the logical thread and normalized transcript; the harness owns authentication and its native session. Never import SDK types, never set/read credentials, and never inherit unbounded project hooks/MCP/tool context without explicit disclosure.
 
-Historical transport studied here: `@anthropic-ai/claude-agent-sdk`. It is superseded by the clean-room CLI wrapper above.
+Historical transport studied here: `@anthropic-ai/claude-agent-sdk`. ~~It is superseded by the clean-room CLI wrapper above.~~ ⛔ SUPERSEDED 2026-08-06 (reversal of the reversal): the SDK is adopted; it is no longer "historical", it is the current design.
 
 The streaming-input SDK prescription is retired. Continuity is implemented by CLI resume/fork identifiers plus Rennet's own transcript. Cancellation kills the owned turn process; regeneration starts a new turn against immutable inputs.
 
@@ -755,7 +770,7 @@ Review state keys on immutable occurrences and explicit lineage. Exact, unambigu
 
 ### 6.4 Crash and orphan cleanup
 
-Adapters own every process they start. Record owned child identity at spawn, reap only processes Rennet can prove it created, and never inspect or kill an unrelated harness process. Claude's process-per-turn child should normally exit with the turn; Codex app-server needs explicit lifecycle supervision.
+⛔ **SUPERSEDED 2026-08-06 (partial): Claude's process is now the adopted SDK's, not a bare `claude -p` process-per-turn child (Master Plan R2) — apply the "own only what you spawned" discipline to the SDK's process instead.** Adapters own every process they start. Record owned child identity at spawn, reap only processes Rennet can prove it created, and never inspect or kill an unrelated harness process. Claude's process-per-turn child should normally exit with the turn; Codex app-server needs explicit lifecycle supervision.
 
 ---
 
@@ -763,13 +778,13 @@ Adapters own every process they start. Record owned child identity at spawn, rea
 
 | | Harness | Interface | Status |
 |---|---|---|---|
-| **v1** | Claude Code | clean-room `claude -p` process-per-turn CLI wrapper | Dogfood daily-driver; direct CLI fidelity/isolation spike gates it |
+| **v1** | Claude Code | clean-room `claude -p` process-per-turn CLI wrapper ⛔ SUPERSEDED 2026-08-06: SDK adopted, not a clean-room CLI wrapper — see Master Plan R2 | Dogfood daily-driver; direct CLI fidelity/isolation spike gates it |
 | **v2** | Codex | `codex app-server --stdio`, JSON-RPC, bindings generated in CI | Fully specified above; needs a live turn to confirm steer and approval round trips |
 | **v3** | omp (+ pi subset) | `omp --mode rpc` NDJSON, or `omp acp` | Slot only. Capability flags start `false` and are earned by the conformance suite |
 
 Also in v1, because the v1 adapter is not usable without them:
 
-- The normalized protocol types in Apache `packages/protocol`, with shared domain types in `packages/types`.
+- The normalized protocol types in Apache `packages/protocol`, with shared domain types in `packages/types`. ⛔ SUPERSEDED 2026-08-06: `packages/protocol` is MIT, not Apache-2.0.
 - Discovery with the login-shell PATH harvest (§3.1). Without it, zero-config fails on exactly the machines it must work on.
 - The conformance suite (§2.3), built against Claude alone. It is what makes v2 and v3 cheap.
 - The utility tier with `harness-degenerate` as default (§4.1).
@@ -785,9 +800,9 @@ Line-count reality check against the stack note's ~800: protocol types ~250, Cla
 | # | Decision | Alternative rejected | Why |
 |---|---|---|---|
 | D1 | Codex adapter targets `app-server`, not `@openai/codex-sdk` | Official SDK (the stack note's recommendation) | The SDK has no approval channel at all, flattens `codexErrorInfo` to a string, drops `willRetry`, and omits `totalTokens`/`modelContextWindow`. It is a wrapper around a hidden `codex exec --experimental-json` flag |
-| D2 | Ship no harness binaries; discover the user's | Bundle the Agent SDK's platform binary | 270 MB, asarUnpack, nested-binary hardened-runtime signing, notarization. BYOK means the user has it already. Deletes the last compiled artifact from the stack |
+| D2 | **Ship no harness binaries; discover and spawn the user's.** ✅ **STILL STANDS after the 2026-08-06 SDK adoption — do not misread R2 as reversing this one.** Adopting the SDK changes *how we talk to* `claude`, not *whose `claude` runs*: we pass the user's installed binary via `pathToClaudeCodeExecutable` and **strip the SDK's bundled per-platform executables at packaging** (`pingdotgg/t3code`'s `DESKTOP_FILE_EXCLUSIONS` is the worked precedent). | Bundle the Agent SDK's platform binary | 270 MB, asarUnpack, nested-binary hardened-runtime signing, notarization. BYOK means the user has it already. ⭐ **All of this reasoning survives verbatim** — it is precisely why we strip the bundled binaries rather than ship them. |
 | D3 | Third slot targets `omp`, not npm `oh-my-pi` | The package named in the brief | That package is an abandoned namesake: repo 404s, bin throws `SyntaxError`, and it is a Pi *extension* with no drivable surface. **Needs ratification** |
-| D4 | **Superseded:** Claude uses a clean-room process-per-turn CLI wrapper | Linked Agent SDK streaming mode | Proprietary SDK linkage is incompatible with the licence and unnecessary for CLI resume/fork continuity |
+| D4 | **Superseded:** Claude uses a clean-room process-per-turn CLI wrapper ⛔ SUPERSEDED AGAIN 2026-08-06: this ruling is reversed — the "alternative rejected" (linked Agent SDK) is now the adopted design, see Master Plan R2 | Linked Agent SDK streaming mode | Proprietary SDK linkage is incompatible with the licence and unnecessary for CLI resume/fork continuity |
 | D5 | Utility tier defaults to `harness-degenerate`, not direct API | Direct OpenAI-compatible endpoint as default (the stack note's assumption) | Neither harness on this machine has an API key; both are subscription OAuth. A key requirement violates the zero-config North Star |
 | D6 | The adapter never reads a credential | Read `~/.codex/auth.json` and the Claude Keychain item in place | Reading the Keychain item from a differently-signed binary triggers an ACL prompt on first launch; parsing codex's `auth.json` yields a token that expires under live rotation. Spawning a process that authenticates itself is both safer and easier |
 | D7 | Read-only sandbox posture by default across all harnesses | Inherit each harness's default | A review tool must not write to the tree. Makes `tool.denied` a normal event, not an error |
@@ -803,7 +818,7 @@ Line-count reality check against the stack note's ~800: protocol types ~250, Cla
 
 **Blocking, cheap, do these first**
 
-1. **Direct Claude CLI fidelity and isolation.** Verify resume/fork, schema output, partial frames, cancellation, prompt-cache behaviour, and whether inherited project context can be excluded and disclosed. This replaces the retired Agent SDK packaging spike.
+1. **Direct Claude CLI fidelity and isolation.** ⛔ SUPERSEDED 2026-08-06: the SDK is adopted, not retired (Master Plan R2) — this spike's premise (CLI-only, no SDK) needs re-deriving against the SDK. Verify resume/fork, schema output, partial frames, cancellation, prompt-cache behaviour, and whether inherited project context can be excluded and disclosed. This replaces the retired Agent SDK packaging spike.
 2. **Do forked Claude sessions hit the prompt cache?** Measure `cacheReadInputTokens` across a fork. Decides whether N=3 self-consistency (§5.3) is cheap or is the product's dominant cost line.
 3. **Live codex turn**: confirm the approval round trip (`item/commandExecution/requestApproval` → `{decision}` → `serverRequest/resolved` → `item/completed`) and whether `turn/steer` is reliable enough to expose. `canSteer` stays `false` until then.
 
@@ -830,14 +845,14 @@ Line-count reality check against the stack note's ~800: protocol types ~250, Cla
 - `DirectConnectTransport` / `DirectConnectError` / `parseDirectConnectUrl` are exported at runtime by the Agent SDK with **zero type declarations**. Undocumented; do not use.
 - Deltas between codex CLI 0.144.1 (the protocol dumped here) and 0.146.0 (what the SDK pins).
 
-**Historical verification note only:** the SDK tarball was fetched directly during the licence audit because the npm client had a date cutoff. It is evidence for the prohibition above, not a dependency-install instruction.
+**Historical verification note only:** ⛔ SUPERSEDED 2026-08-06: there is no "prohibition" any more — the SDK is adopted, see Master Plan R2. the SDK tarball was fetched directly during the licence audit because the npm client had a date cutoff. It is evidence for the prohibition above, not a dependency-install instruction.
 
 ---
 
 ## 10. Bead candidates
 
 > [!DANGER] Use [[Rennet Navi Handoff]] instead
-> Rows below that mention the Agent SDK, SDK streaming mode, SDK peer dependencies, or unbatched `harness-degenerate` calls are retired.
+> Rows below that mention the Agent SDK, SDK streaming mode, SDK peer dependencies, or unbatched `harness-degenerate` calls are retired. ⛔ **SUPERSEDED 2026-08-06: re-check this "retired" judgment for anything Agent-SDK-specific — the SDK is adopted (Master Plan R2), so an SDK-related row may now be MORE relevant, not less. The clean-room CLI wrapper rows (e.g. B6 below) are the ones actually superseded.**
 
 | # | Title | Description | Priority | Depends on |
 |---|---|---|---|---|
@@ -846,7 +861,7 @@ Line-count reality check against the stack note's ~800: protocol types ~250, Cla
 | B3 | Spike: live codex app-server turn, approvals and steer | Execute a real turn; confirm the approval round trip and whether `turn/steer` is reliable. Sets `canSteer` and `canGateToolCalls` for codex | P0 | none |
 | B4 | Implement `core/protocol`: normalized event types + capability flags | §1 verbatim, zero `node:*` imports so the phone can import it | P0 | none |
 | B5 | Implement harness discovery with login-shell PATH harvest | §3.1-3.3. Login-shell PATH, known locations, our own resolution, execute-to-health-check, three-state health. Test against this machine, where a bare login shell finds neither harness | P0 | B4 |
-| B6 | Implement the Claude Code adapter | Clean-room process-per-turn CLI wrapper, tolerant decoders, read-only posture, explicit isolation disclosure | P0 | B1, B4, B5 |
+| B6 | Implement the Claude Code adapter | Clean-room process-per-turn CLI wrapper, tolerant decoders, read-only posture, explicit isolation disclosure. ⛔ SUPERSEDED 2026-08-06: SDK-based adapter, not a clean-room CLI wrapper — see Master Plan R2. | P0 | B1, B4, B5 |
 | B7 | Build the harness conformance suite | One suite run against every adapter; each passing test earns one capability flag. Built against Claude first | P1 | B6 |
 | B8 | Implement the utility tier with `harness-degenerate` default | `UtilityPort`, both implementations, the router, batch scheduling, unit cancellation | P1 | B4, B5 |
 | B9 | Ratify the oh-my-pi correction | The package named in the brief is an abandoned namesake; the real target is `omp` (`can1357/oh-my-pi`), with `pi` as a subset. Confirm the third slot's meaning before any code | P1 | none |

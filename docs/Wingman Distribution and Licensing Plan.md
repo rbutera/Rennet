@@ -8,12 +8,24 @@ updated: 2026-08-05
 
 # Rennet Distribution and Licensing Plan
 
-> [!IMPORTANT] Current implementation authority, 2026-08-05
-> Product name is **Rennet**. [[Rennet Master Plan]] and [[Rennet Architecture Contracts]] override this plan where they differ. The live licence boundary is Apache-2.0 for `packages/types` and `packages/protocol`, and `AGPL-3.0-only` for core, adapters, instructions, UI, and desktop. Never import or bundle the proprietary Claude Agent SDK. Apple enrolment is required before the first public release, not before local dogfood. Historical Wingman artefact names below are illustrative only.
+> [!CAUTION] ⛔ THE LICENSING ARCHITECTURE IN THIS DOCUMENT IS SUPERSEDED — Rai's decision, 2026-08-06
+> **Rennet is MIT licensed throughout, one licence for every package.** The top-level `LICENSE` is MIT, © 2026 Rai Butera.
+>
+> **Almost everything below is now historical.** This plan is built end to end on an AGPL-3.0-only core with an Apache-2.0 carve-out for `packages/protocol` and `packages/types`, and that entire structure is gone. Specifically:
+> - **§0.1 (the package-boundary licence split) is MOOT.** It existed to keep the interoperability surface permissive while the application was copyleft. Under MIT there is nothing to keep it permissive *from*. The packages survive; the licence rationale does not. (Master Plan R3.)
+> - ⛔ **§0.2 is REVERSED. The Claude Agent SDK is ADOPTED and wanted.** Its reasoning was correct *given AGPL* and is void without it — see the note at §0.2 for why the pricing objection was never real either. (Master Plan R2.)
+> - **§4 "AGPL mechanics" in its entirety — §13 source-offer obligations, the REUSE/SPDX per-package layout, `AGPL-3.0-only` vs `-or-later`, the mobile-app combined-work analysis — does not apply to an MIT project.** MIT has no §13, no copyleft reach into the mobile app, and no `-only`/`-or-later` axis. A single top-level `LICENSE` plus a `NOTICE` for vendored third-party content is the whole obligation.
+> - **§4.3 dual licensing is moot as a *defence*** — MIT already permits commercial use by anyone, so there is no proprietary-licence product to protect. ⭐ **The contribution hygiene it prescribes is still worth keeping** (DCO, `CONTRIBUTORS.md`, no unattributed inbound code), now for provenance and clean copyright rather than for relicensing rights.
+> - **§4.4 (vendoring MIT into AGPL) simplifies to MIT-into-MIT.** No quarantine directory or REUSE override is needed; **attribution and a NOTICE entry are still required**, and are still owed for the vendored Nx agent-skill content and for anything mined from `pingdotgg/t3code`.
+> - **§6 trademark** survives unchanged — MIT grants rights in the code, not the name.
+>
+> **What is still live and useful here:** the dependency-licence inventory in §5 (as a *compatibility* record — under MIT the inbound question is permissiveness and attribution, not copyleft direction), the notarization/signing/distribution material, and the Apple-enrolment timing (required before first public release, not before local dogfood).
+>
+> Product name is **Rennet**. [[Rennet Master Plan]] overrides this plan wherever they differ. Historical Wingman artefact names below are illustrative only.
 
 Distribution, deployment, and licensing for [[Code Review Harness App]]. The product name is **Rennet**; the filename is retained only to preserve existing Obsidian links. Personal product, sole author Rai. Not the enterprise client work.
 
-Ratified inputs I am building on, not relitigating: OSS core plus desktop app, paid mobile companion later; **AGPL-3.0-only** for core and desktop with Rai as sole author retaining dual-licensing rights; mobile app proprietary.
+~~Ratified inputs I am building on, not relitigating: OSS core plus desktop app, paid mobile companion later; **AGPL-3.0-only** for core and desktop with Rai as sole author retaining dual-licensing rights; mobile app proprietary.~~ ⛔ **Superseded 2026-08-06: MIT throughout.** The OSS-core-plus-desktop and paid-mobile-companion shape survives; the licence structure under it does not.
 
 Stack facts come from [[References/Desktop and Mobile Stack 2026]]. Licence verdicts on lifted code come from [[References/Orca and Paseo Pairing]]. Everything asserted here was verified on **2026-08-04** against the primary source cited inline; anything I could not verify is labelled **unverified** rather than asserted.
 
@@ -35,11 +47,18 @@ A proprietary Expo app that imports an AGPL package is a single combined work. T
 
 Rai can paper over this today because he is sole copyright holder and can licence his own code to himself on any terms. But it is a paper-over that depends on him never forgetting, which is exactly the failure mode the Brita filter rule exists to prevent. One accepted drive-by PR touching `core/protocol` and the mobile app is in breach of a licence Rai no longer solely controls.
 
-**Decision: split the licence at the package boundary, not at the repo boundary.** `packages/protocol/` and `packages/types/` ship **Apache-2.0**; everything else in `core/`, plus `shell/` and `ui/`, ships **AGPL-3.0-only**. The proprietary mobile app then consumes two permissively licensed packages like any third party would, and the question stops being a question.
+⛔ **SUPERSEDED 2026-08-06 — MIT throughout; there is no split** (Master Plan R3). *The original decision, retained as the record:* **Decision: split the licence at the package boundary, not at the repo boundary.** `packages/protocol/` and `packages/types/` ship **Apache-2.0**; everything else in `core/`, plus `shell/` and `ui/`, ships **AGPL-3.0-only**. The proprietary mobile app then consumes two permissively licensed packages like any third party would, and the question stops being a question.
 
 Second-order benefit, and it is a real one: a permissively licensed wire protocol invites third-party clients (a Neovim plugin, a CLI, someone's Raycast extension) without any of them having to open-source their work. That is a positioning asset, not a concession. It is also the honest shape: a protocol that nobody else may implement is not a protocol, it is an internal calling convention.
 
 ### 0.2 `@anthropic-ai/claude-agent-sdk` is proprietary and must not be linked into an AGPL binary
+
+> [!CAUTION] ⛔ **REVERSED 2026-08-06 — the SDK is ADOPTED.** (Master Plan R2.)
+> **The licence half of this section is void because its premise is gone**: there is no AGPL binary to link into. MIT places no restriction on combining with a proprietary dependency, so the "textbook GPL-incompatible-library problem" described below simply does not arise. The facts it establishes about the SDK's licence remain **accurate and worth keeping** — the npm field really does read `SEE LICENSE IN README.md`, there is no `LICENSE` file in the repo, and use is governed by Anthropic's Commercial Terms of Service. Under MIT that is a dependency-hygiene note, not a blocker.
+>
+> ⭐ **And the unstated second objection — that the SDK might mean metered API billing — was measured and is false.** `query()` **spawns the user's own installed `claude` binary**: the SDK's own types document `pathToClaudeCodeExecutable` as *"Path to the Claude Code executable. Uses the built-in executable if not specified"*, and *"the subprocess inherits `process.env`"*. It ships eight per-platform bundled Claude Code executables precisely because it is a process wrapper, and `ApiKeySource` includes `'oauth'` as a first-class value reported back per turn. So the SDK authenticates on the user's **Claude subscription**, exactly as the clean-room wrapper below would, and **per-token cost is identical between the two options**.
+>
+> ⭐ **The clean-room wrapper described below is therefore no longer required — but the discipline around it survives**: pass the user's installed binary explicitly rather than relying on the bundled one, **strip the SDK's bundled per-platform executables at packaging** (`pingdotgg/t3code`'s `DESKTOP_FILE_EXCLUSIONS` is the worked precedent), never bundle a harness binary of our own, and **never read a credential**. The adapter can assert `apiKeySource === 'oauth'` and warn if a metered key ever takes over — a guarantee the clean-room path would not have given for free.
 
 The stack note treats this package purely as a packaging problem (asarUnpack, notarize the nested binary, "budget a day"). It is also a licence problem, and the licence problem is the bigger one.
 
@@ -419,7 +438,7 @@ additionally require a signed contributor licence agreement by email.
 
 ## Licence of contributions
 
-Contributions to `packages/protocol` and `packages/types` are Apache-2.0.
+Contributions to `packages/protocol` and `packages/types` are Apache-2.0. [⛔ SUPERSEDED 2026-08-06 — everything is MIT. **Do not copy this draft into `CONTRIBUTING.md` as written**; rewrite the licence sentences for MIT first.]
 Everything else is AGPL-3.0-only. Add the SPDX header matching the package your
 file lives in; `reuse lint` runs in CI and will tell you if you got it wrong.
 ```
@@ -438,7 +457,7 @@ Every licence below read from the npm registry `latest` metadata on **2026-08-04
 
 | Package | Version | Licence | AGPL-3.0-only compatible? |
 |---|---|---|---|
-| **@anthropic-ai/claude-agent-sdk** | 0.3.221 | **`SEE LICENSE IN README.md` → "© Anthropic PBC. All rights reserved."** | **NO. Do not link. Do not bundle.** §0.2 |
+| **@anthropic-ai/claude-agent-sdk** | 0.3.221 | **`SEE LICENSE IN README.md`** → governed by Anthropic's Commercial Terms of Service; no `LICENSE` file in the repo | ⛔ **Row superseded 2026-08-06: PERMITTED and adopted.** The AGPL objection died with the licence flip; MIT places no restriction on combining with a proprietary dependency. Ship it, pass the user's installed `claude` binary, and strip the bundled per-platform executables at packaging. ⚠️ **It will still fail a naive dependency-licence gate**, because `pnpm licenses list` buckets it as `Unknown` — allow it by **package name**, never by allowlisting the `Unknown` bucket. |
 | @anthropic-ai/sdk | 0.115.0 | MIT | Yes |
 | @openai/codex-sdk / @openai/codex | 0.146.0 | Apache-2.0 | Yes, one-way in |
 | **@pierre/diffs** | 1.3.2 | Apache-2.0 | Yes, one-way in |
@@ -531,7 +550,7 @@ Brief, because at one user this is a cheap decision that should not consume a da
 
 | # | Title | Description | Priority | Depends on |
 |---|---|---|---|---|
-| B1 | Split the licence boundary: Apache-2.0 protocol+types, AGPL everything else | Restructure the planned monorepo so `packages/protocol` and `packages/types` are Apache-2.0 and everything else AGPL-3.0-only. Add `REUSE.toml` at root and per-package, `LICENSES/`, SPDX headers, `reuse lint` in CI, plus a CI rule that protocol/types may not import from any in-repo package. Blocks the mobile app from ever contaminating. See §0.1, §4.1. | **P0** | — |
+| B1 | ⛔ **DROPPED 2026-08-06 — do not action.** MIT throughout means there is no boundary to split and no REUSE/SPDX machinery to build (Master Plan R3). ⭐ **One line survives and should be kept as its own task:** the CI rule that `protocol`/`types` import nothing in-repo, now an architectural boundary. *Original row:* Split the licence boundary: Apache-2.0 protocol+types, AGPL everything else | Restructure the planned monorepo so `packages/protocol` and `packages/types` are Apache-2.0 and everything else AGPL-3.0-only. Add `REUSE.toml` at root and per-package, `LICENSES/`, SPDX headers, `reuse lint` in CI, plus a CI rule that protocol/types may not import from any in-repo package. Blocks the mobile app from ever contaminating. See §0.1, §4.1. | **P0** | — |
 | B2 | Never link `@anthropic-ai/claude-agent-sdk`; write the stdio harness adapter | The SDK is "© Anthropic PBC. All rights reserved." and is AGPL-incompatible. Build the Claude adapter as a clean-room child-process wrapper over `claude -p --output-format stream-json --input-format stream-json`, auto-detected on PATH, never bundled. Deletes the asarUnpack/notarize-nested-binary work item entirely. See §0.2. | **P0** | — |
 | B3 | Contribution policy live before the repo goes public | `CONTRIBUTING.md` (§4.5 draft), `CONTRIBUTORS.md`, `COPYRIGHT.md`, `.github/PULL_REQUEST_TEMPLATE.md` stating code PRs are not yet accepted, `dcoapp/app` installed, and the ~12-line Action asserting the author is in `CONTRIBUTORS.md`. **Must land in the same commit that makes the repo public.** One merged PR without this permanently damages dual licensing. See §4.3. | **P0** | — |
 | B4 | Apple Developer Program enrolment: decide individual vs Ltd, then enrol | RAI-ONLY before the first public release, not local dogfood. Decide before enrolling because migration is painful-to-impossible. Produces Team ID, Developer ID Application cert, App Store Connect API key. | **P2** | public-release phase |

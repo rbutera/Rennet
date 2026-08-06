@@ -15,7 +15,8 @@ The Master Plan wins on general product and architecture conflicts. The Architec
 
 - Never use easyJet or other client repositories, code, pull requests, screenshots, data, time, or infrastructure for development, fixtures, calibration, or model-backed dogfood without written authorization.
 - Never add AI attribution or co-author trailers. Rai is the sole author.
-- Never import or bundle the Claude Agent SDK. Harness adapters wrap user-installed tools through verified public process protocols.
+- Rennet is **MIT** licensed throughout, one licence for every package (Rai's decision, 2026-08-06). There is no AGPL boundary and no Apache-2.0 carve-out for `protocol`/`types`; any document still describing that split is superseded.
+- The Claude adapter **uses `@anthropic-ai/claude-agent-sdk`** (Rai's decision, 2026-08-06, superseding Master Plan R2). The SDK spawns the user's own installed `claude` binary via `pathToClaudeCodeExecutable`, so it authenticates with the user's Claude subscription and costs nothing per token. Strip the SDK's bundled per-platform executables at packaging time. Never bundle a harness binary of our own, and never read a credential.
 - Never auto-approve, auto-comment, push source branches, or publish anything another human can see without an explicit human action.
 - Say "no Rennet backend" and disclose harness/provider egress. Never claim universally that nothing leaves the machine.
 - `.rennet/` is local and ignored by default. Rennet never stages or commits a user's project context.
