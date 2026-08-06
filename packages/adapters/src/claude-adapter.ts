@@ -70,6 +70,13 @@ export interface ClaudeQueryOptions {
   /** The SDK REPLACES the child env, so this is always the full env, never a patch. */
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly abortController?: AbortController;
+  /**
+   * The raw JSON schema to constrain output. The composition root
+   * (`createClaudeQueryFn`) translates this into the SDK's
+   * `outputFormat: { type: 'json_schema', schema }`, so the adapter's contract
+   * stays stable across SDK versions. The result frame's `structured_output` is
+   * read back by `normalizeClaudeFrame`.
+   */
   readonly outputSchema?: unknown;
   readonly appendSystemPrompt?: string;
 }

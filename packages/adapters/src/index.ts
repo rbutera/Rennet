@@ -9,6 +9,14 @@ export {
   mapClaudeError,
   normalizeClaudeFrame,
 } from "./claude-adapter";
+export {
+  type ClaudeHarnessDeps,
+  type ClaudeHarnessResult,
+  createClaudeHarness,
+  createClaudeQueryFn,
+  type LoadClaudeQuery,
+  toSdkOptions,
+} from "./claude-query";
 export { GitCaptureAdapter } from "./git-capture";
 export {
   compareVersions,

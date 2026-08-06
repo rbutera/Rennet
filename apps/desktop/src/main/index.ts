@@ -1,6 +1,12 @@
 import { join, normalize, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
-import { GitCaptureAdapter, RepoWatcher, SqliteReviewStore } from "@rennet/adapters";
+import {
+  type ClaudeHarnessResult,
+  createClaudeHarness,
+  GitCaptureAdapter,
+  RepoWatcher,
+  SqliteReviewStore,
+} from "@rennet/adapters";
 import { ReviewService } from "@rennet/core";
 import {
   type CommandName,
@@ -24,6 +30,21 @@ if (process.env.RENNET_USER_DATA) app.setPath("userData", process.env.RENNET_USE
 
 const capture = new GitCaptureAdapter();
 const watcher = new RepoWatcher();
+
+// Composition root for the Claude harness. This binds the REAL
+// @anthropic-ai/claude-agent-sdk query() (via createClaudeHarness) to the
+// ClaudeAdapter, passing the user's own discovered `claude` binary so auth stays
+// on their subscription OAuth (Master Plan R2). It is composed LAZILY and
+// memoized: discovery spawns the user's login shell, so it runs on first use
+// rather than at launch, and passes the full process env so the spawned harness
+// inherits PATH/HOME. Consumers that need the harness (angle generation, the
+// review-to-agent handoff loop) call getClaudeHarness(); it is not yet wired to
+// a review command, so it has no launch-time side effect.
+let claudeHarness: Promise<ClaudeHarnessResult> | null = null;
+export function getClaudeHarness(): Promise<ClaudeHarnessResult> {
+  claudeHarness ??= createClaudeHarness({ env: process.env });
+  return claudeHarness;
+}
 let store: SqliteReviewStore;
 let service: ReviewService;
 let repositoryDirty = false;

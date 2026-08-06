@@ -12,6 +12,24 @@ minimumReleaseAgeIgnoreMissingTime: false
 minimumReleaseAgeExclude:
   - "brace-expansion@5.0.9"
   - "fast-uri@3.1.5"
+  # Rai's decision 2026-08-06 (Master Plan R2): the Claude Agent SDK is adopted.
+  # It releases daily, so the current version is always younger than the 7-day
+  # floor; this is Rai's own harness SDK, deliberately fast-tracked. Scoped by
+  # name (all versions) to exactly the SDK package plus its eight per-platform
+  # binary packages, so a version bump does not silently re-arm the gate for a
+  # different package. All eight platform packages are listed because pnpm records
+  # every optionalDependency in the lockfile regardless of the current platform,
+  # and the age gate evaluates each of them. The binaries are stripped at
+  # packaging (apps/desktop/forge.config.cjs); Rennet spawns the user's own claude.
+  - "@anthropic-ai/claude-agent-sdk"
+  - "@anthropic-ai/claude-agent-sdk-darwin-arm64"
+  - "@anthropic-ai/claude-agent-sdk-darwin-x64"
+  - "@anthropic-ai/claude-agent-sdk-linux-arm64"
+  - "@anthropic-ai/claude-agent-sdk-linux-arm64-musl"
+  - "@anthropic-ai/claude-agent-sdk-linux-x64"
+  - "@anthropic-ai/claude-agent-sdk-linux-x64-musl"
+  - "@anthropic-ai/claude-agent-sdk-win32-arm64"
+  - "@anthropic-ai/claude-agent-sdk-win32-x64"
 trustPolicy: no-downgrade
 trustPolicyExclude:
   - "semver@5.7.2 || 6.3.1"
@@ -22,6 +40,23 @@ trustLockfile: false
 blockExoticSubdeps: false
 strictPeerDependencies: true
 saveExact: true
+
+# @anthropic-ai/claude-agent-sdk declares three NON-optional peers
+# (zod, @anthropic-ai/sdk, @modelcontextprotocol/sdk). Its main entry (sdk.mjs,
+# which exports query()) imports NONE of them at module scope — verified by
+# grepping the 0.3.223 bundle: they are only used by other entry points
+# (./bridge, ./browser, ./sdk-tools) and the in-process tool()/MCP helpers that
+# Rennet never uses. The Claude adapter spawns the user's own installed `claude`
+# via pathToClaudeCodeExecutable, so it needs none of them at runtime; the gated
+# real-turn integration check (scripts/real-turn.mjs) proves this end to end.
+# Ignoring only these three specific missing peers keeps strict-peer-dependencies
+# on for everything else and avoids pulling three heavy dependency trees into a
+# review harness that does not use them.
+peerDependencyRules:
+  ignoreMissing:
+    - "zod"
+    - "@anthropic-ai/sdk"
+    - "@modelcontextprotocol/sdk"
 
 overrides:
   "@emnapi/core": "2.0.0-alpha.3"
