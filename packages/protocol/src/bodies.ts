@@ -19,7 +19,7 @@
  * V104 code rather than a generic shape error.
  */
 
-import type { RspDocType, ValidationError } from "@rennet/types";
+import type { AnchorKind, OfferedManifest, RspDocType, ValidationError } from "@rennet/types";
 import { z } from "zod";
 
 /**
@@ -77,9 +77,22 @@ const proposalBodySchema = z
   })
   .loose();
 
+/**
+ * The `ordering` body (issue #9): a comprehension reading order over chunk ids
+ * plus a required rationale. `rationale` is any string here (empty passes the
+ * shape); V113 enforces non-empty so the rejection carries V113's code.
+ */
+const orderingBodySchema = z
+  .object({
+    readingOrder: z.array(z.string().min(1)),
+    rationale: z.string(),
+  })
+  .loose();
+
 const BODY_SCHEMAS: Readonly<Partial<Record<RspDocType, z.ZodType>>> = {
   "decomposition.skeleton": skeletonBodySchema,
   "decomposition.proposal": proposalBodySchema,
+  ordering: orderingBodySchema,
 };
 
 /**
@@ -129,16 +142,25 @@ function viewOf(docType: RspDocType, parsed: unknown): DecompositionBodyView {
 
 // ── The rule catalogue ───────────────────────────────────────────────────────
 
+/** The immutable ids the manifest offers for one occurrence kind. */
+function offeredIdsOfKind(manifest: OfferedManifest, kind: AnchorKind): Set<string> {
+  return new Set(
+    manifest.occurrences.filter((occurrence) => occurrence.kind === kind).map((o) => o.id),
+  );
+}
+
 /**
- * Validate a decomposition document's body against its schema (V108) and the
- * semantic rules (V100/V101/V103/V104/V105/V106). Returns every error; an empty
- * array means the body is admitted. Returns `[]` for a docType with no per-body
- * validator, so the caller can dispatch unconditionally.
+ * Validate a document's body against its schema (V108) and its family's semantic
+ * rules. The decomposition family (V100/V101/V103/V104/V105/V106) is checked
+ * against the offered `hunk` occurrences; the ordering document (#9,
+ * V111/V112/V113) against the offered `chunk` occurrences. Returns every error;
+ * an empty array means the body is admitted. Returns `[]` for a docType with no
+ * per-body validator, so the caller can dispatch unconditionally.
  */
 export function validateBodyRules(
   docType: RspDocType,
   body: unknown,
-  offeredHunkIds: ReadonlySet<string>,
+  manifest: OfferedManifest,
 ): ValidationError[] {
   const schema = BODY_SCHEMAS[docType];
   if (!schema) return [];
@@ -152,6 +174,12 @@ export function validateBodyRules(
     }));
   }
 
+  // The ordering document (#9) orders the CHUNK set the decomposition declared.
+  if (docType === "ordering") {
+    return validateOrderingRules(parsed.data, offeredIdsOfKind(manifest, "chunk"));
+  }
+
+  const offeredHunkIds = offeredIdsOfKind(manifest, "hunk");
   const view = viewOf(docType, parsed.data);
   const errors: ValidationError[] = [];
   const declared = declaredChunkIds(view, errors); // V106 duplicate-id
@@ -160,6 +188,69 @@ export function validateBodyRules(
   if (docType === "decomposition.proposal") checkRationale(view, errors); // V105
   checkCompleteness(view, declared, errors); // V106 dangling refs
   checkReadingOrder(view, declared, errors); // V103
+  return errors;
+}
+
+// ── The ordering rule catalogue (issue #9) ───────────────────────────────────
+
+/**
+ * Validate an `ordering` body against the offered chunk set: V112 (no minted
+ * identity — every ordered id was offered), V111 (totality/cover — every offered
+ * chunk appears exactly once), V113 (a non-empty rationale is required). All
+ * atomic. The order is a flat cover of the chunk set; there is no edge graph
+ * here (the dependency constraints live in the decomposition the pass reads
+ * through and are enforced there), so this document only asserts the cover.
+ */
+function validateOrderingRules(
+  parsed: unknown,
+  offeredChunkIds: ReadonlySet<string>,
+): ValidationError[] {
+  const body = parsed as { readingOrder: string[]; rationale: string };
+  const errors: ValidationError[] = [];
+
+  // V112 — every ordered id is an offered chunk (agents never mint identity).
+  body.readingOrder.forEach((id, index) => {
+    if (!offeredChunkIds.has(id)) {
+      errors.push({
+        code: "V112",
+        pointer: `/body/readingOrder/${index}`,
+        message: `reading order references a chunk not in the offered set (minted identity): ${id}`,
+      });
+    }
+  });
+
+  // V111 — the order is a cover of the offered set: each offered chunk exactly
+  // once. A duplicate and a missing chunk both reject, with distinct messages.
+  const counts = new Map<string, number>();
+  for (const id of body.readingOrder) counts.set(id, (counts.get(id) ?? 0) + 1);
+  for (const [id, count] of counts) {
+    if (count > 1 && offeredChunkIds.has(id)) {
+      errors.push({
+        code: "V111",
+        pointer: "/body/readingOrder",
+        message: `chunk is ordered more than once: ${id}`,
+      });
+    }
+  }
+  for (const offeredId of offeredChunkIds) {
+    if (!counts.has(offeredId)) {
+      errors.push({
+        code: "V111",
+        pointer: "/body/readingOrder",
+        message: `offered chunk is missing from the reading order (not totally ordered): ${offeredId}`,
+      });
+    }
+  }
+
+  // V113 — a rationale is required (the "why this order aids comprehension").
+  if (body.rationale.trim().length === 0) {
+    errors.push({
+      code: "V113",
+      pointer: "/body/rationale",
+      message: "ordering rationale is empty",
+    });
+  }
+
   return errors;
 }
 

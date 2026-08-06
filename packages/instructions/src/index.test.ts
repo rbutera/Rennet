@@ -6,6 +6,7 @@ import {
   DECOMPOSITION_SKELETON_CONTRACT,
   FORBIDDEN_ORDERING_TERMS,
   LOGICAL_ORDERING_TERMS,
+  ORDERING_CONTRACT,
   PROMPT_LAYER_ORDER,
   type PromptLayers,
   renderBaseInstruction,
@@ -69,6 +70,44 @@ describe("the ordering slot enforces correction 8", () => {
         expect(logicalDirective).toBeLessThan(prohibitionStart);
       }
     }
+  });
+});
+
+describe("the ordering contract (issue #9)", () => {
+  it("renders ordering@1 with all seven slots", () => {
+    const rendered = renderBaseInstruction(ORDERING_CONTRACT);
+    expect(rendered).toContain("ordering@1");
+    expect(rendered).toContain("ordering version 1");
+    for (const slot of [
+      ORDERING_CONTRACT.role,
+      ORDERING_CONTRACT.emit,
+      ORDERING_CONTRACT.input,
+      ORDERING_CONTRACT.discipline,
+      ORDERING_CONTRACT.failureValve,
+      ORDERING_CONTRACT.ordering,
+      ORDERING_CONTRACT.guidanceSlot,
+    ]) {
+      expect(rendered).toContain(slot);
+    }
+  });
+
+  it("names logical/first-principles ordering and forbids salience/danger/blast radius", () => {
+    const ordering = ORDERING_CONTRACT.ordering.toLowerCase();
+    for (const term of LOGICAL_ORDERING_TERMS) {
+      expect(ordering).toContain(term);
+    }
+    expect(ordering).toContain("do not order by");
+    const prohibitionStart = ordering.indexOf("do not order by");
+    const logicalDirective = ordering.indexOf("logical");
+    expect(logicalDirective).toBeLessThan(prohibitionStart);
+    for (const forbidden of FORBIDDEN_ORDERING_TERMS) {
+      expect(ordering).toContain(forbidden);
+      expect(ordering.indexOf(forbidden)).toBeGreaterThan(prohibitionStart);
+    }
+  });
+
+  it("its failure valve emits the baseline rather than dropping a chunk", () => {
+    expect(ORDERING_CONTRACT.failureValve.toLowerCase()).toContain("baseline");
   });
 });
 

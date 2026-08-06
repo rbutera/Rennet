@@ -12,6 +12,7 @@ import { v7 as uuidv7 } from "uuid";
 export * from "./angle-generation";
 export * from "./decomposition";
 export * from "./harness";
+export * from "./ordering-pass";
 export * from "./route-plan";
 
 export type ReviewEvent =

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCommandInput } from "./index";
+import { commandDefinitions, isCommandName, parseCommandInput } from "./index";
 
 describe("command protocol", () => {
   it("rejects malformed command payloads", () => {
@@ -44,5 +44,18 @@ describe("command protocol", () => {
         body: "",
       }),
     ).toThrow();
+  });
+});
+
+describe("ordering is agent-owned: no user-approval command exists (issue #9)", () => {
+  it("has no command that approves an ordering (structural, not a prompt)", () => {
+    // The user does NOT approve the comprehension ordering (Q2, 2026-08-06).
+    // "The human does not approve ordering" is a property of the wiring: the
+    // command registry simply contains no such operation.
+    expect(isCommandName("ordering.approve")).toBe(false);
+    const orderingApproval = Object.keys(commandDefinitions).filter(
+      (name) => /order/i.test(name) && /(approve|accept|confirm|dispose)/i.test(name),
+    );
+    expect(orderingApproval).toEqual([]);
   });
 });

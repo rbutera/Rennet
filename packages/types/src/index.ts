@@ -92,11 +92,18 @@ export type CommandResult<T> = { ok: true; value: T } | { ok: false; error: Comm
 // there is no `maxItems` anywhere in this schema, by design.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/** The eleven document types named by the Surfacing DSL plan (§2). */
+/**
+ * The document types named by the Surfacing DSL plan (§2), plus `ordering`: the
+ * agent-owned comprehension reading order over an admitted decomposition's chunks
+ * (issue #9). `ordering` is a distinct type rather than an extension of
+ * `decomposition.proposal` because it declares no chunks and mints no ids — it
+ * orders a set it was handed.
+ */
 export type RspDocType =
   | "spec.model"
   | "decomposition.skeleton"
   | "decomposition.proposal"
+  | "ordering"
   | "decision.record"
   | "claim"
   | "adjudication"
@@ -569,3 +576,30 @@ export type RoutePlanResult =
       maxHarnessInvocations: number;
       reason: string;
     };
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Comprehension ordering (issue #9)
+//
+// The agent-owned comprehension reading order over an admitted decomposition's
+// chunk set. The deterministic dependency-DAG order (#7) is the baseline; an
+// agent is asked whether that is the clearest way to understand the change or
+// whether a better high-level-then-ground-up structure exists, and PRODUCES the
+// final order as this document. The user does NOT approve it (2026-08-06, Q2):
+// ordering is an agent-owned comprehension task, and the deterministic baseline
+// remains the fallback whenever the agent order is rejected or absent (the floor
+// doctrine). Ordering is LOGICAL, never danger/blast-radius/salience.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The `ordering` body: a comprehension reading order over the chunk ids of an
+ * admitted decomposition, plus a required rationale. `readingOrder` references
+ * ONLY chunk ids the decomposition declared (no minted identity — V112) and
+ * orders every one of them exactly once (totality — V111). Admitted atomically;
+ * the rationale is required (V113). This is a flat order over the chunk set; the
+ * richer within-cohort element ordering for the decisions lens is a later slice
+ * and is an additive extension of this shape.
+ */
+export interface OrderingBody {
+  readingOrder: string[];
+  rationale: string;
+}

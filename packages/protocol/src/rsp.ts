@@ -64,6 +64,7 @@ export const RSP_DOC_TYPES = [
   "spec.model",
   "decomposition.skeleton",
   "decomposition.proposal",
+  "ordering",
   "decision.record",
   "claim",
   "adjudication",
@@ -96,6 +97,9 @@ export const DOC_TYPE_REGISTRY: Readonly<Record<RspDocType, DocTypeSpec>> = {
   "spec.model": { admission: "atomic", supportedSchemaVersions: [1] },
   "decomposition.skeleton": { admission: "atomic", supportedSchemaVersions: [1] },
   "decomposition.proposal": { admission: "atomic", supportedSchemaVersions: [1] },
+  // The comprehension ordering (#9) is admitted whole: a broken order is not a
+  // set of independently-droppable items.
+  ordering: { admission: "atomic", supportedSchemaVersions: [1] },
   "decision.record": {
     admission: "itemwise",
     supportedSchemaVersions: [1],
@@ -453,10 +457,10 @@ export function validateDocument(input: ValidatorInput): ValidationReport {
   // for docTypes that have a body schema (the decomposition documents) and are
   // `[]` for every other type, so the merge is unconditional.
   const genericErrors = validateSubtree(doc.body, "/body", input.manifest, settings);
-  const offeredHunkIds = new Set(
-    input.manifest.occurrences.filter((o) => o.kind === "hunk").map((o) => o.id),
-  );
-  const perBodyErrors = validateBodyRules(docType, doc.body, offeredHunkIds);
+  // The per-body validator receives the whole manifest so each document family
+  // derives the occurrence kind it constrains: decomposition over `hunk`
+  // occurrences, ordering (#9) over `chunk` occurrences.
+  const perBodyErrors = validateBodyRules(docType, doc.body, input.manifest);
   const bodyErrors = [...genericErrors, ...perBodyErrors];
   if (bodyErrors.length > 0) return atomicReject(docType, spec.admission, bodyErrors);
   return {
