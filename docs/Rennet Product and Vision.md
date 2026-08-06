@@ -137,7 +137,7 @@ Everything else in §4 is designed and **queued as GitHub issues** labelled `ope
 
 | I want… | Read |
 |---|---|
-| The ruling register (R1–R34), frozen core, open questions, M0 cut, spikes, the execution pipeline | [[Rennet Contracts and Rulings]] |
+| The ruling register (R1–R35), frozen core, open questions, M0 cut, spikes, the execution pipeline | [[Rennet Contracts and Rulings]] |
 | The frozen engineering contracts (project context, patchsets, invalidation, persistence, privacy, publication) | [[Rennet Architecture Contracts]] |
 | Dependencies, versions, toolchain ownership | [[Rennet Dependency Standard]] |
 | The interaction model in depth (canvases, layers, actors, ops) | [[Rennet Canvas Paradigm]] |

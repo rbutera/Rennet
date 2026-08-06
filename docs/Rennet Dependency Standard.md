@@ -138,6 +138,8 @@ The public RSP is JSON-Schema-first. Internal application protocols remain Zod-f
 
 **AVOID generic event-sourcing frameworks, XState, Immer, BullMQ, and Redis.** They duplicate or obscure the event log, projections, idempotency, and outcome-unknown publication contract.
 
+**AVOID RxJS and reactive-streams libraries (rxjs, xstream, most, Effect Stream) everywhere** (R35; full analysis in [[Rennet Reactive Streams (RxJS)]]). The same hazard as the previous paragraph in a different costume: an Observable layer over the event log is a second, non-replayable dataflow truth. The ratified primitives already occupy every candidate site: **`AsyncIterable` is the streaming primitive at harness ports** (pull-based backpressure, single consumer, dependency-free at the node-free protocol seam); fan-out of committed state goes through the **post-commit change feed** (typed emitter in core, store commit order, per-key conflation carrying covered seq ranges, recipient-specific projections per R19); time-based coalescing is hand-rolled batchers under injected clocks; concurrency stays with `p-queue` and the RoutePlan budget gate. The reactive *discipline* (subscription lifecycle, stated backpressure policy per push seam, seq-ordered delivery, one named feed) is adopted as contract language without the library.
+
 ## 6. Git, diff, code intelligence, and LSP
 
 | Capability | Package / API | Pin now | Licence | Verdict and boundary |
@@ -185,7 +187,7 @@ System `rg` may be detected as an accelerator, but `@vscode/ripgrep` is **DEFERR
 | Markdown | `react-markdown`, `remark-gfm`, `rehype-sanitize` | `10.1.0`, `4.0.1`, `6.0.0` | MIT | **MUST.** Raw HTML off; sanitize after any unsafe transform. |
 | Icons | `lucide-react` | `1.28.0` | ISC | **SHOULD.** One icon family. |
 
-React Aria owns interaction primitives. **AVOID parallel Radix, cmdk, Sonner, and headless dialog/menu stacks.** Pierre owns syntax highlighting, so do not add direct Shiki for the diff surface. **AVOID Monaco, CodeMirror, and xterm** because Rennet is a reader and review surface, not an editor or terminal.
+React Aria owns interaction primitives. **AVOID RxJS in the renderer** (R35): live updates are change-feed events over typed IPC driving targeted TanStack Query invalidation, `zustand` for ephemeral view state, and `useSyncExternalStore` for push subscriptions — an Observable layer would end up bridged through `useSyncExternalStore` anyway, making the bridge the real interface and the Observables scaffolding. **AVOID parallel Radix, cmdk, Sonner, and headless dialog/menu stacks.** Pierre owns syntax highlighting, so do not add direct Shiki for the diff surface. **AVOID Monaco, CodeMirror, and xterm** because Rennet is a reader and review surface, not an editor or terminal.
 
 Motion is **DEFERRED** until CSS cannot express a measured interaction. React Hook Form is **DEFERRED** until settings forms become complex. `node-pty` is **DEFERRED** until a harness conformance test proves a real TTY is required.
 

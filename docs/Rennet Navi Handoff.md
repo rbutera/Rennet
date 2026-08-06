@@ -9,7 +9,7 @@ related: ["[[Rennet Product and Vision]]", "[[Rennet Contracts and Rulings]]", "
 
 # Rennet Navi Handoff
 
-Navi: this is your orientation for **Rennet**, Rai's personal product. Everything you need to start is here or one link away. [[Rennet Product and Vision]] is what the product is; [[Rennet Contracts and Rulings]] is the authority register (rulings R1–R34, the frozen core, the execution pipeline); [[Rennet Architecture Contracts]] is authoritative for project context, immutable patchsets, invalidation/regeneration, persistence, privacy, and publication. Spike state lives in [[Rennet Evidence Gate Status]].
+Navi: this is your orientation for **Rennet**, Rai's personal product. Everything you need to start is here or one link away. [[Rennet Product and Vision]] is what the product is; [[Rennet Contracts and Rulings]] is the authority register (rulings R1–R35, the frozen core, the execution pipeline); [[Rennet Architecture Contracts]] is authoritative for project context, immutable patchsets, invalidation/regeneration, persistence, privacy, and publication. Spike state lives in [[Rennet Evidence Gate Status]].
 
 > [!NOTE] Reworked 2026-08-06 (docs consolidation)
 > The 2026-08-06 decisions (MIT throughout; the Claude Agent SDK adopted; roll-up/zoom/lenses as the purpose; decisions never capped; action-defined read state; the handoff loop; the comment-refinement loop; canvas paradigm + orchestrator context access adopted; grouping hard-baked; logical agent-owned ordering; ship-to-main) are now **integrated into the current doc set** rather than flagged as deltas here. The numbered 147-bead backlog this document used to carry is superseded by the **GitHub issue queue** (§3) and preserved verbatim in [[Rennet Backlog Archive]].
@@ -27,7 +27,7 @@ Do not mistake this for the full review harness. Generated angles, RSP documents
 **Whose it is.** Rai's personal product. **NOT the enterprise client work. Never use the enterprise client's time, resources, or repos for development, fixtures, calibration, or model-backed dogfood without explicit written approval.** Client mode never mutates the source checkout or its Git metadata. Rai is sole copyright holder.
 
 **Where truth lives.** In order of authority:
-1. [[Rennet Contracts and Rulings]] — the authority register. Its §2 conflict rulings (R1–R34) override anything in the plans. Its §3 frozen list is what you may never change without asking Rai. Its §7 is how work gets picked and shipped.
+1. [[Rennet Contracts and Rulings]] — the authority register. Its §2 conflict rulings (R1–R35) override anything in the plans. Its §3 frozen list is what you may never change without asking Rai. Its §7 is how work gets picked and shipped.
 2. [[Rennet Architecture Contracts]] — authoritative within its named scope.
 3. [[Rennet Canvas Paradigm]] + [[Rennet Orchestrator Context Access]] — authoritative for the interaction model and orchestrator context architecture (adopted 2026-08-06, as amended by Contracts and Rulings §2.3–§2.4).
 4. [[Rennet Dependency Standard]] — authoritative for package selection, versions, licensing, toolchain ownership, and overlap.
