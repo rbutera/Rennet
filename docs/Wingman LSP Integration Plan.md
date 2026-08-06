@@ -144,7 +144,7 @@ Three reasons, and the third is the one that decides it:
 
 Detection ladder per language: user-configured path (the settings workstream owns storage) → repo-local (`node_modules/.bin`) → `PATH` → known install locations. Absent at every rung: Tier 0, plus **one** non-modal line offering the install command as copyable text. Never a nag, never a spinner, never an automatic run.
 
-Licensing note, since it interacts with the AGPL core / proprietary mobile split: every candidate server is spawned as a **child process**, never linked. `typescript-go` Apache-2.0, `typescript-language-server` Apache-2.0, `vtsls` MIT, `Microsoft.CodeAnalysis.LanguageServer` MIT (**[cited]** verified from the `.nuspec` inside the actual nupkg). Same clean-room posture already decided for the Claude adapter.
+Licensing note, since it interacts with the AGPL core / proprietary mobile split: every candidate server is spawned as a **child process**, never linked. `typescript-go` Apache-2.0, `typescript-language-server` Apache-2.0, `vtsls` MIT, `Microsoft.CodeAnalysis.LanguageServer` MIT (**[cited]** verified from the `.nuspec` inside the actual nupkg). Same clean-room posture already decided for the Claude adapter. ⛔ **SUPERSEDED 2026-08-06: Rennet is MIT throughout, so there is no AGPL core / proprietary mobile split for this to interact with, and "the clean-room posture already decided for the Claude adapter" is itself reversed — the Claude Agent SDK is adopted (Master Plan R2). The spawn-as-child-process design for LSP servers is otherwise unaffected: it was never about the Claude adapter's SDK question, just the third-party licences named above.**
 
 ### L5 — Mutation policy: cache-owned trees may be writable, source repos are read-only. FROZEN
 

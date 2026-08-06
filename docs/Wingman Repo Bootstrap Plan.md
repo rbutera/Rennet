@@ -8,8 +8,9 @@ updated: 2026-08-05
 
 # Rennet Repo Bootstrap Plan
 
-> [!IMPORTANT] Current implementation authority, 2026-08-05
-> Bootstrap **Rennet** from [[Rennet Master Plan]], [[Rennet Architecture Contracts]], and [[Rennet Navi Handoff]], not from stale recipes retained below. The final layout is `packages/{types, protocol, core, adapters, ui, instructions, tsconfig}` plus `apps/{desktop, mobile-placeholder}`, `scripts/`, and non-workspace `spikes/`. `types` and `protocol` are Apache-2.0; the rest of the open app is `AGPL-3.0-only`. `ui` imports only `types` and `protocol`. Use `ForgePort`, never `GithubPort`. Never import or bundle the Claude Agent SDK. Use occurrence/lineage identity, validated hybrid decomposition, and the six-angle set without Subtraction.
+> [!IMPORTANT] Current implementation authority, 2026-08-06
+> ⛔ **SUPERSEDED 2026-08-06: the banner below (originally 2026-08-05) restated two rules that are now reversed. Rennet is MIT throughout — there is no Apache-2.0 / AGPL-3.0-only split any more, every package is MIT. And the Claude Agent SDK is ADOPTED, not banned. See Master Plan R2/R3.**
+> Bootstrap **Rennet** from [[Rennet Master Plan]], [[Rennet Architecture Contracts]], and [[Rennet Navi Handoff]], not from stale recipes retained below. The final layout is `packages/{types, protocol, core, adapters, ui, instructions, tsconfig}` plus `apps/{desktop, mobile-placeholder}`, `scripts/`, and non-workspace `spikes/`. ~~`types` and `protocol` are Apache-2.0; the rest of the open app is `AGPL-3.0-only`~~ (superseded, see note above — all MIT). `ui` imports only `types` and `protocol`. Use `ForgePort`, never `GithubPort`. ~~Never import or bundle the Claude Agent SDK~~ (superseded, see note above — SDK adopted). Use occurrence/lineage identity, validated hybrid decomposition, and the six-angle set without Subtraction.
 > The private monorepo now exists at `github.com/rbutera/rennet`. Historical neutral-name and “do not create the GitHub repo” steps below are superseded; public namespace and release registration remain deferred.
 
 Repository bootstrap and engineering principles for [[Code Review Harness App]]. The product name is Rennet; the filename is retained only to preserve existing Obsidian links. Personal product owned by Rai, not the enterprise client work. Built largely by autonomous agents, so the repo itself has to be the control system: the layout makes wrong imports impossible, the gates make wrong claims impossible, and `CLAUDE.md` makes the doctrine legible without a human in the loop.
@@ -21,6 +22,8 @@ Toolchain and version facts come from [[References/Desktop and Mobile Stack 2026
 ---
 
 ## 0. The licence problem, first, because it moves a package
+
+⛔ **SUPERSEDED 2026-08-06: this entire section is historical.** Rennet is MIT throughout — every package, including `core`, `adapters`, `instructions`, `ui`, and `apps/desktop` — so the AGPL-viral-linking problem this section analyses no longer applies, and the Apache-2.0/AGPL-3.0-only package split below was never built. The section is kept as the record of the reasoning that led to (and was later reversed from) that split; do not build from it.
 
 This is the highest-consequence finding in the plan and it changes the repo layout, so it goes before the tree.
 
@@ -43,6 +46,8 @@ The plan of record is: open-source core and desktop app, **paid** mobile compani
 | `apps/desktop` | AGPL-3.0-only | The open desktop app. |
 | `apps/mobile-placeholder` | Proprietary, separate `LICENSE` | Future companion placeholder. Imports published `@rennet/types` and `@rennet/protocol` only. |
 
+⛔ **SUPERSEDED 2026-08-06: this table was never built. Every package is MIT; there is no Apache-2.0/AGPL-3.0-only split.**
+
 [[References/Desktop and Mobile Stack 2026]] section 10 already concluded that the shared surface is "the wire protocol and the domain types, which is maybe 15% of `core/`". Splitting that 15% into its own package makes **the licence boundary and the import boundary the same line**, which means the boundary lint that stops mobile importing the engine is simultaneously the thing that keeps the paid app legally clean. One check, two jobs.
 
 **Contribution policy:** DCO (`Signed-off-by:` on every commit, checked in CI) as the baseline, plus a lightweight CLA granting Rai the right to relicense, required before any outside PR merges. The CLA is not ideology; without it the App Store mitigation in point 3 above is unavailable forever. Documented in `CONTRIBUTING.md`, pointed at from `CLAUDE.md`.
@@ -50,6 +55,8 @@ The plan of record is: open-source core and desktop app, **paid** mobile compani
 ---
 
 ## 1. Repo layout
+
+⛔ **SUPERSEDED 2026-08-06: the `(AGPL)` / `(Apache-2.0)` annotations in the tree below are historical — every package is MIT.**
 
 ```
 rennet/                                   # repo root (name TBD, see branding note)
@@ -260,7 +267,7 @@ TS 7.0.2 is the Go-native compiler with **no stable programmatic API until 7.1**
 {
   "name": "@rennet/protocol",
   "type": "module",
-  "license": "Apache-2.0",
+  "license": "Apache-2.0", // ⛔ SUPERSEDED 2026-08-06: MIT, not Apache-2.0 — see note in section 0
   "exports": {
     ".":          { "types": "./dist/index.d.ts", "react-native": "./dist/index.native.js", "node": "./dist/index.node.js", "default": "./dist/index.js" },
     "./commands": { "types": "./dist/commands.d.ts", "default": "./dist/commands.js" },
@@ -383,7 +390,7 @@ Notes on the graph, since the brief asked for a real one:
       "includes": ["apps/mobile/**"],
       "linter": { "rules": { "style": { "noRestrictedImports": { "level": "error", "options": { "patterns": [
         { "group": ["@rennet/core", "@rennet/core/*", "@rennet/adapters", "@rennet/adapters/*", "@rennet/ui", "@rennet/ui/*"],
-          "message": "mobile imports @rennet/protocol only. This is an AGPL boundary as well as an architectural one. See CLAUDE.md section on licensing." }
+          "message": "mobile imports @rennet/protocol only. This is an AGPL boundary as well as an architectural one. See CLAUDE.md section on licensing." /* ⛔ SUPERSEDED 2026-08-06: no AGPL boundary exists — everything is MIT; the import restriction is architectural only now */ }
       ] } } } } }
     }
   ]
@@ -628,8 +635,8 @@ check is not calibrated and neither is your conclusion.
 ## Evidence discipline
 
 - **Verify against docs, not memory.** Library versions and APIs in this stack move weekly.
-  Use primary documentation or the actual installed types. Never add the proprietary Claude
-  Agent SDK; `@pierre/diffs` still requires exact pinning and measured verification.
+  Use primary documentation or the actual installed types. ~~Never add the proprietary Claude
+  Agent SDK~~ ⛔ SUPERSEDED 2026-08-06: the SDK is adopted, see Master Plan R2; `@pierre/diffs` still requires exact pinning and measured verification.
 - **Cite `file:line` for every factual claim about this codebase**, and open the file before
   citing it. A `file:line` nobody opened is prose with a colon in it.
 - **Never assert a dependency's behaviour that you have not run.** If the question is "does
@@ -680,6 +687,8 @@ Design tokens live in `packages/ui/src/tokens`. Do not hardcode a colour anywher
 
 ## Licensing
 
+⛔ **SUPERSEDED 2026-08-06: this whole subsection is historical.** Rennet is MIT throughout, mobile included — there is no Apache-2.0/AGPL-3.0-only split and no AGPL-contamination boundary to enforce.
+
 - `packages/types` and `packages/protocol` are **Apache-2.0**. Everything else open in
   `packages/` and `apps/desktop` is **AGPL-3.0-only**. Mobile is proprietary.
 - **Mobile imports published `@rennet/types` and `@rennet/protocol` and nothing else.** This is a
@@ -700,7 +709,7 @@ Design tokens live in `packages/ui/src/tokens`. Do not hardcode a colour anywher
   Electron ships a major every 8 weeks and supports three, so a compiled module is a
   scheduled breakage forever. Prebuilt N-API and WASM require explicit architectural review.
   No harness binary or proprietary SDK is linked or bundled; the normal stack has zero
-  compiled artifacts beyond Electron itself.
+  compiled artifacts beyond Electron itself. ⛔ **SUPERSEDED 2026-08-06: the Claude Agent SDK is adopted, so this line's SDK exclusion no longer applies to Claude** (its prebuilt platform binary is now an accepted compiled artifact — see [[References/Desktop and Mobile Stack 2026]] on packaging it). The no-`node-gyp`/no-native-compiled-deps rule for everything else still stands.
 - **No `better-sqlite3`.** It is excellent and it is exactly the dependency class the
   constraint exists to exclude. We use `node-sqlite3-wasm` (or `node:sqlite` if the spike
   confirms Electron 43 exposes it). This is settled; do not reopen it in a PR.
@@ -813,7 +822,7 @@ Each sized for one agent session. Every commit leaves `pnpm gate` green, from co
 
 | # | Commit | What lands | Done when |
 |---|---|---|---|
-| 1 | `chore(repo): initialise` | `LICENSE` (AGPL-3.0-only), `README.md`, `.gitignore`, `.editorconfig`, `.nvmrc`, `.tool-versions` | `git log` has one commit; LICENSE is the real AGPL text, not a stub |
+| 1 | `chore(repo): initialise` | `LICENSE` (AGPL-3.0-only), `README.md`, `.gitignore`, `.editorconfig`, `.nvmrc`, `.tool-versions` | `git log` has one commit; LICENSE is the real AGPL text, not a stub. ⛔ SUPERSEDED 2026-08-06: LICENSE is MIT, not AGPL. |
 | 2 | `chore(repo): pnpm workspace and root manifest` | `package.json` (private, packageManager pnpm@10), `pnpm-workspace.yaml`, `.npmrc` with `save-exact` and `strict-peer-dependencies` | `pnpm install` succeeds on an empty workspace |
 | 3 | `chore(repo): biome` | `biome.json` with the base config, formatting applied to the tree | `pnpm lint` exits 0 and reformats nothing on a second run |
 | 4 | `chore(repo): shared tsconfig bases` | `packages/tsconfig/{base,portable,node,dom}.json` | Each base parses; a scratch file using `node:fs` under `portable.json` fails to compile (do this and paste the error) |
@@ -844,7 +853,7 @@ Commit 21 onward, out of scope for this plan but named so the shape is visible: 
 > Use [[Rennet Navi Handoff]] for execution. Rows below mentioning the old package tree, content-hash identity, Claude Agent SDK packaging, or `GithubPort` are superseded.
 
 1. **The name.** Everything here says `rennet` / `@rennet/*`. Digestif vs Rennet is unresolved ([[Code Review App Branding Questions]]). **Do not create the GitHub repo or reserve the npm scope until the name is settled**; renaming a scope after publish is permanent noise. Bootstrap can start on a local repo named `review-harness` and get renamed at commit 11, before CI or any publish. Cost of deferring: near zero. Cost of guessing: a dead npm scope forever.
-2. **AGPL vs the paid mobile companion.** Section 0 recommends the protocol split plus a CLA. This needs a solicitor's eye before money changes hands, and probably before the repo goes public, because the licence headers are hard to change once contributors exist.
+2. **AGPL vs the paid mobile companion.** ⛔ SUPERSEDED 2026-08-06: moot — Rennet is MIT throughout, no protocol split, no AGPL-contamination question. Section 0 recommends the protocol split plus a CLA. This needs a solicitor's eye before money changes hands, and probably before the repo goes public, because the licence headers are hard to change once contributors exist.
 3. **`typecheck` depending on `^build`** costs a build on every typecheck. If that gets slow, the refinement is TS project references with `composite: true`. Not adopted on day one because it doubles the config surface for four packages. Revisit at eight.
 4. **`@pierre/diffs` has no locatable public source repository** (npm declares Apache-2.0 with an empty `repository` field). If spike 17 says it works, the fork question becomes urgent: a critical rendering dependency you cannot fork is a single point of failure. Consider vendoring the published artifact and recording its integrity hash.
 5. **Windows and Linux CI.** Deliberately absent from day-one CI. The moment the portability claim is public it needs a matrix entry, and Electron on Linux CI needs `xvfb-run`. Bead, not a day-one cost.
@@ -864,7 +873,7 @@ Priority uses the beads scale in this workspace. Dependencies reference other ca
 | Title | Description | Priority | Depends on |
 |---|---|---|---|
 | Settle the name before creating the repo | Digestif vs Rennet. Blocks GitHub repo creation, npm scope, domain purchase. Bootstrap commits 1-10 can run on a local repo named `review-harness`. | P0 | none |
-| Legal read on AGPL core plus paid mobile companion | Confirm the protocol-split plus CLA structure in section 0 of this plan. Specifically: does an Apache-2.0 `protocol` package cleanly free `apps/mobile` from AGPL, and does the App Store GPL-incompatibility precedent apply to AGPL as expected. | P0 | name |
+| Legal read on AGPL core plus paid mobile companion | ⛔ SUPERSEDED 2026-08-06: moot, Rennet is MIT throughout, no protocol split. Confirm the protocol-split plus CLA structure in section 0 of this plan. Specifically: does an Apache-2.0 `protocol` package cleanly free `apps/mobile` from AGPL, and does the App Store GPL-incompatibility precedent apply to AGPL as expected. | P0 | name |
 | Bootstrap commits 1-6: toolchain to green gate | pnpm workspace, Biome, tsconfig bases, protocol skeleton, turbo graph, `pnpm gate` green on empty packages. | P0 | name |
 | Bootstrap commits 7-9: the three gates plus pre-push hook | Boundary check with self-test fixtures, state-keying check with brands, pre-push hook installer, DCO check. Each gate must be proven to fail before it is trusted. | P0 | commits 1-6 |
 | Bootstrap commits 10-11: CLAUDE.md and CI | Drop in the CLAUDE.md draft, AGENTS.md symlink, PR template with the DoD block, gate workflow, `gate-required` branch protection. Prove protection works with a throwaway failing PR. | P0 | commits 7-9 |
@@ -875,7 +884,7 @@ Priority uses the beads scale in this workspace. Dependencies reference other ca
 | GitPort wrapper (~250 lines) | `spawn` plumbing, NUL-delimited parser, streamed stdout, per-call `AbortSignal`. Tests against a temp repo under plain Node, including a cancellation test proving the child dies. | P1 | typed IPC |
 | Event store and occurrence-lineage model | Append-only events, fail-safe projections, immutable occurrence IDs, explicit lineage edges, and a matcher-precision gate. Similarity never silently carries read state. | P1 | `node:sqlite` spike, GitPort |
 | macOS packaging smoke | Package the zero-harness-binary Electron app and prove signing/notarisation only in the public-release phase. | P2 | typed IPC |
-| Harness adapter layer and normalized event protocol | `HarnessPort` plus clean-room Claude CLI and codex-app-server implementations, tolerant JSONL decoders, capability conformance, and no credentials in core/state. | P1 | direct CLI fidelity spike |
+| Harness adapter layer and normalized event protocol | `HarnessPort` plus clean-room Claude CLI and codex-app-server implementations, tolerant JSONL decoders, capability conformance, and no credentials in core/state. ⛔ SUPERSEDED 2026-08-06: Claude adapter is SDK-based now, not clean-room CLI — see Master Plan R2. | P1 | direct CLI fidelity spike |
 | Command registry (~300 lines) | Named remappable commands feeding both the command palette and the menu bar from one source, `tinykeys` as the sequence matcher, JSON user keymap, conflict detection. | P2 | typed IPC |
 | Design tokens package from the ratified glass system | Port the mood board's glass system into `packages/ui/src/tokens` as Tailwind v4 `@theme`, with the compressed density scale applied before any component is copied in. Enforce no hardcoded colours. | P2 | commits 10-11 |
 | Windows and Linux CI matrix | Add OS matrix entries plus `xvfb-run` for Electron on Linux. Required before the cross-platform claim goes public. | P2 | commits 10-11 |

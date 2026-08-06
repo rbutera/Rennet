@@ -10,6 +10,8 @@ created: 2026-08-04
 
 # Wingman Architecture Plan — Codex adversarial critique (2026-08-04)
 
+⛔ **EDITORIAL NOTE, added 2026-08-06: the licensing/SDK conclusions referenced in this critique are SUPERSEDED.** Rennet is now MIT throughout (the "protocol/types inside AGPL `core`" framing and the "Apache-2.0 `packages/protocol` + `packages/types`" ratification it cites are both gone — everything is MIT), and the Claude Agent SDK is adopted rather than banned (see Master Plan R2/R3), so "bundled proprietary Claude Agent SDK" is no longer a stop-ship finding. The document is preserved unedited below; its non-licensing findings (hunk identity, event sourcing, diff pipeline, chunking, portability) are unaffected by this note.
+
 Independent cross-model review of [[Wingman Architecture Plan]] against [[Code Review Harness App]] and [[References/Desktop and Mobile Stack 2026]]. Codex read all three files directly (provenance log confirmed full reads). Verdict: **not safe to hand to an autonomous builder yet.** Findings feed the Fable synthesis pass that produces the single authoritative Rennet architecture doc.
 
 Context note from the synthesis owner: Codex read the hub mid-evening; Rai's latest calls (route handoff DESCOPED, both modes v1, omp ratified, name = Rennet) partially supersede the hub line Codex cites for "author-side fronts v1". The reconciliation must take Rai's 2026-08-04-evening decisions as the top of the stack.

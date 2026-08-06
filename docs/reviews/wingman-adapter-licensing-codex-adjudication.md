@@ -11,6 +11,8 @@ created: 2026-08-04
 
 # Wingman Claude-adapter conflict — Codex adjudication + protocol critique (2026-08-04)
 
+⛔ **EDITORIAL NOTE, added 2026-08-06: the licensing/SDK conclusions in this adjudication are SUPERSEDED.** Rennet is now MIT throughout (no AGPL combination problem), and the Claude Agent SDK is adopted rather than banned — see Master Plan R2/R3. This document is preserved unedited below as the historical record of the argument that led to (and was later reversed from) "Plan A wins; Plan B (linked SDK) is retired." The protocol-critique section (capability flags, `harness-degenerate`, N=3 disagreement, etc.) is independent of the licensing question and is not affected by this note.
+
 Independent cross-model adjudication of the conflict between [[Wingman Harness Adapter Protocol]] (linked Agent SDK pointed at discovered binary) and [[Wingman Distribution and Licensing Plan]] (clean-room stdio wrapper). Codex read all three vault files directly and verified Anthropic licence/CLI claims against live sources.
 
 ## Verdict
