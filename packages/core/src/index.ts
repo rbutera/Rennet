@@ -1,17 +1,30 @@
 import { createHash } from "node:crypto";
-import type { Patchset, Review } from "@rennet/types";
+import type {
+  Disposition,
+  DispositionAnchor,
+  DispositionType,
+  PatchFile,
+  Patchset,
+  Review,
+} from "@rennet/types";
 import { v7 as uuidv7 } from "uuid";
 
 export type ReviewEvent =
   | { type: "ReviewCreated"; version: 1; reviewId: string; patchset: Patchset }
   | { type: "PatchsetActivated"; version: 1; reviewId: string; patchset: Patchset }
   | {
-      type: "FileReadSet";
+      type: "DispositionSet";
+      version: 1;
+      reviewId: string;
+      patchsetId: string;
+      disposition: Disposition;
+    }
+  | {
+      type: "DispositionCleared";
       version: 1;
       reviewId: string;
       patchsetId: string;
       path: string;
-      read: boolean;
     }
   | { type: "ReviewInvalidated"; version: 1; reviewId: string; candidate: Patchset };
 
@@ -20,13 +33,53 @@ export interface PatchsetCapturePort {
 }
 
 export interface ReviewStorePort {
-  latestReview(): Review | null;
+  /**
+   * The most recent review. Scoped to a single repository when a root is given
+   * (create-vs-activate for a capture), or globally for bootstrap restore.
+   */
+  latestReview(repositoryRoot?: string): Review | null;
+  /** A specific review by id, independent of which repository is most recent. */
+  reviewById(reviewId: string): Review | null;
   receipt(commandId: string, digest: string): Review | null;
   commit(commandId: string, digest: string, events: ReviewEvent[], result: Review): Review;
 }
 
 function exhaustive(value: never): never {
   throw new Error(`Unknown review event: ${JSON.stringify(value)}`);
+}
+
+/**
+ * The exact-match content key for a changed file: a hash of its patch text.
+ * Two anchors are "the same file, unchanged" iff their `path` and this digest
+ * both match. This is the sole matcher for slice 1 (no fuzzy lineage).
+ */
+export function fileContentDigest(file: PatchFile): string {
+  return createHash("sha256").update(file.patch).digest("hex");
+}
+
+/**
+ * Carry dispositions across a re-capture, CONSERVATIVELY. A disposition
+ * survives only where the new patchset still has a file at the same path whose
+ * patch content is byte-identical. Any change, rename, or removal fails closed
+ * (the disposition is dropped, so the reviewer must re-read). No fuzzy matching.
+ */
+function carryDispositions(previous: Disposition[], next: Patchset): Disposition[] {
+  const digestByPath = new Map<string, string>();
+  for (const file of next.files) digestByPath.set(file.path, fileContentDigest(file));
+  return previous.filter((disposition) => {
+    const nextDigest = digestByPath.get(disposition.anchor.path);
+    return nextDigest !== undefined && nextDigest === disposition.anchor.contentDigest;
+  });
+}
+
+function requireActivePatchset(
+  current: Review | null,
+  event: { reviewId: string; patchsetId: string },
+): Review {
+  if (!current || current.id !== event.reviewId || current.activePatchsetId !== event.patchsetId) {
+    throw new Error("A disposition must target the active patchset");
+  }
+  return current;
 }
 
 export function foldReview(current: Review | null, event: ReviewEvent): Review {
@@ -37,7 +90,7 @@ export function foldReview(current: Review | null, event: ReviewEvent): Review {
         repositoryRoot: event.patchset.repository.root,
         patchsets: [event.patchset],
         activePatchsetId: event.patchset.id,
-        readPaths: [],
+        dispositions: [],
         status: "current",
       };
     case "PatchsetActivated": {
@@ -52,22 +105,27 @@ export function foldReview(current: Review | null, event: ReviewEvent): Review {
         patchsets,
         activePatchsetId: event.patchset.id,
         pendingPatchsetId: undefined,
-        readPaths: [],
+        // Conservative carry: keep dispositions only on byte-identical anchors,
+        // never a blanket wipe.
+        dispositions: carryDispositions(current.dispositions, event.patchset),
         status: "current",
       };
     }
-    case "FileReadSet": {
-      if (
-        !current ||
-        current.id !== event.reviewId ||
-        current.activePatchsetId !== event.patchsetId
-      ) {
-        throw new Error("Read state must target the active patchset");
-      }
-      const readPaths = new Set(current.readPaths);
-      if (event.read) readPaths.add(event.path);
-      else readPaths.delete(event.path);
-      return { ...current, readPaths: [...readPaths].sort() };
+    case "DispositionSet": {
+      const review = requireActivePatchset(current, event);
+      const dispositions = review.dispositions.filter(
+        (existing) => existing.anchor.path !== event.disposition.anchor.path,
+      );
+      dispositions.push(event.disposition);
+      dispositions.sort((left, right) => left.anchor.path.localeCompare(right.anchor.path));
+      return { ...review, dispositions };
+    }
+    case "DispositionCleared": {
+      const review = requireActivePatchset(current, event);
+      return {
+        ...review,
+        dispositions: review.dispositions.filter((existing) => existing.anchor.path !== event.path),
+      };
     }
     case "ReviewInvalidated": {
       if (!current || current.id !== event.reviewId) {
@@ -119,7 +177,7 @@ export class ReviewService {
     if (receipt) return receipt;
 
     const patchset = await this.capturePort.capture(repositoryPath);
-    const current = this.store.latestReview();
+    const current = this.store.latestReview(repositoryPath);
     const event: ReviewEvent =
       current && current.id === reviewId
         ? { type: "PatchsetActivated", version: 1, reviewId: current.id, patchset }
@@ -128,25 +186,42 @@ export class ReviewService {
     return this.store.commit(commandId, digest, [event], review);
   }
 
-  setFileRead(
+  /**
+   * Record or clear a disposition against a file in the active patchset.
+   * A `disposition` type sets/replaces it; `null` clears it (the "mark unread"
+   * path). Setting resolves the anchor's content digest from the active
+   * patchset so the disposition can be carried across a later re-capture.
+   */
+  setDisposition(
     commandId: string,
     reviewId: string,
     patchsetId: string,
     path: string,
-    read: boolean,
+    disposition: DispositionType | null,
+    body: string,
   ): Review {
-    const digest = payloadDigest({ reviewId, patchsetId, path, read });
+    const digest = payloadDigest({ reviewId, patchsetId, path, disposition, body });
     const receipt = this.store.receipt(commandId, digest);
     if (receipt) return receipt;
     const current = this.requireReview(reviewId);
-    const event: ReviewEvent = {
-      type: "FileReadSet",
-      version: 1,
-      reviewId,
-      patchsetId,
-      path,
-      read,
-    };
+    let event: ReviewEvent;
+    if (disposition === null) {
+      event = { type: "DispositionCleared", version: 1, reviewId, patchsetId, path };
+    } else {
+      const active = current.patchsets.find((patchset) => patchset.id === current.activePatchsetId);
+      const file = active?.files.find((candidate) => candidate.path === path);
+      if (!file) {
+        throw new Error("Cannot set a disposition on a path outside the active patchset");
+      }
+      const anchor: DispositionAnchor = { path, contentDigest: fileContentDigest(file) };
+      event = {
+        type: "DispositionSet",
+        version: 1,
+        reviewId,
+        patchsetId,
+        disposition: { anchor, type: disposition, body },
+      };
+    }
     return this.store.commit(commandId, digest, [event], foldReview(current, event));
   }
 
@@ -177,7 +252,7 @@ export class ReviewService {
   }
 
   private requireReview(reviewId: string): Review {
-    const review = this.store.latestReview();
+    const review = this.store.reviewById(reviewId);
     if (!review || review.id !== reviewId) throw new Error("Review not found");
     return review;
   }

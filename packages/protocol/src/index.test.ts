@@ -19,4 +19,30 @@ describe("command protocol", () => {
       repoPath: "/repo",
     });
   });
+
+  it("accepts a disposition command with a null (clear) disposition", () => {
+    expect(
+      parseCommandInput("review.setDisposition", {
+        commandId: "92e8f263-a7ee-4fd8-9c11-40c9f6682661",
+        reviewId: "review",
+        patchsetId: "patch",
+        path: "a.ts",
+        disposition: null,
+        body: "",
+      }).disposition,
+    ).toBeNull();
+  });
+
+  it("rejects an unknown disposition type", () => {
+    expect(() =>
+      parseCommandInput("review.setDisposition", {
+        commandId: "92e8f263-a7ee-4fd8-9c11-40c9f6682661",
+        reviewId: "review",
+        patchsetId: "patch",
+        path: "a.ts",
+        disposition: "merge",
+        body: "",
+      }),
+    ).toThrow();
+  });
 });

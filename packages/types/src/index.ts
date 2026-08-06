@@ -29,13 +29,44 @@ export interface Patchset {
   truncated: boolean;
 }
 
+/**
+ * The unit a disposition is attached to.
+ *
+ * Slice 1 anchors at FILE granularity, reusing the MVP's file-level read
+ * identity: `path` names the changed file and `contentDigest` is a hash of that
+ * file's patch text at authoring time. The digest is the exact-match key that
+ * lets a disposition survive a re-capture only when the file is byte-identical.
+ * Hunk / line / symbol anchoring and fuzzy lineage matching are a later slice
+ * (Spike 1); this shape is deliberately the minimal reuse of what exists.
+ */
+export interface DispositionAnchor {
+  path: string;
+  contentDigest: string;
+}
+
+export type DispositionType = "approve" | "request-change" | "comment" | "question";
+
+/**
+ * A reviewer action taken against an anchor. In this model a file/chunk is
+ * "read" iff it carries a disposition: reading is an action, never scroll/dwell.
+ */
+export interface Disposition {
+  anchor: DispositionAnchor;
+  type: DispositionType;
+  body: string;
+}
+
 export interface Review {
   id: string;
   repositoryRoot: string;
   patchsets: Patchset[];
   activePatchsetId: string;
   pendingPatchsetId?: string;
-  readPaths: string[];
+  /**
+   * The reviewer's dispositions against the active patchset. This is the
+   * canonical read-state: the derived read-set is the distinct anchor paths.
+   */
+  dispositions: Disposition[];
   status: "current" | "invalid";
 }
 

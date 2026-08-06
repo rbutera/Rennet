@@ -1,4 +1,4 @@
-import type { Patchset, Review } from "@rennet/types";
+import type { Disposition, DispositionAnchor, Patchset, Review } from "@rennet/types";
 import { z } from "zod";
 
 const fileChangeStatusSchema = z.enum(["added", "modified", "deleted", "renamed"]);
@@ -32,13 +32,26 @@ export const patchsetSchema: z.ZodType<Patchset> = z.object({
   truncated: z.boolean(),
 });
 
+export const dispositionTypeSchema = z.enum(["approve", "request-change", "comment", "question"]);
+
+const dispositionAnchorSchema: z.ZodType<DispositionAnchor> = z.object({
+  path: z.string(),
+  contentDigest: z.string().min(1),
+});
+
+export const dispositionSchema: z.ZodType<Disposition> = z.object({
+  anchor: dispositionAnchorSchema,
+  type: dispositionTypeSchema,
+  body: z.string(),
+});
+
 export const reviewSchema: z.ZodType<Review> = z.object({
   id: z.string().min(1),
   repositoryRoot: z.string().min(1),
   patchsets: z.array(patchsetSchema).min(1),
   activePatchsetId: z.string().min(1),
   pendingPatchsetId: z.string().optional(),
-  readPaths: z.array(z.string()),
+  dispositions: z.array(dispositionSchema),
   status: z.enum(["current", "invalid"]),
 });
 
@@ -61,13 +74,15 @@ export const commandDefinitions = {
     }),
     output: z.object({ review: reviewSchema }),
   },
-  "review.setFileRead": {
+  "review.setDisposition": {
     input: z.object({
       commandId: commandIdSchema,
       reviewId: z.string().min(1),
       patchsetId: z.string().min(1),
       path: z.string(),
-      read: z.boolean(),
+      /** A disposition type sets/replaces the disposition; `null` clears it. */
+      disposition: dispositionTypeSchema.nullable(),
+      body: z.string(),
     }),
     output: z.object({ review: reviewSchema }),
   },

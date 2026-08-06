@@ -25,8 +25,10 @@ export function ReviewWorkspace({
 }) {
   const patchset = activePatchset(review);
   const selected = patchset.files.find((file) => file.path === selectedPath) ?? patchset.files[0];
+  // Read-state is derived: a file is "read" iff it carries a disposition.
+  const readPaths = new Set(review.dispositions.map((disposition) => disposition.anchor.path));
   const percentage = patchset.files.length
-    ? Math.round((review.readPaths.length / patchset.files.length) * 100)
+    ? Math.round((readPaths.size / patchset.files.length) * 100)
     : 100;
 
   return (
@@ -57,7 +59,7 @@ export function ReviewWorkspace({
       ) : null}
 
       <section className="progress-row" aria-label={`${percentage}% of changed files read`}>
-        <span>{review.readPaths.length} read</span>
+        <span>{readPaths.size} read</span>
         <div className="progress-track">
           <span style={{ width: `${percentage}%` }} />
         </div>
@@ -71,7 +73,7 @@ export function ReviewWorkspace({
             <p className="muted">No changes against {patchset.repository.baseRef}.</p>
           ) : (
             patchset.files.map((file) => {
-              const read = review.readPaths.includes(file.path);
+              const read = readPaths.has(file.path);
               return (
                 <button
                   type="button"
@@ -104,9 +106,9 @@ export function ReviewWorkspace({
               <button
                 type="button"
                 className="secondary"
-                onClick={() => onSetRead(selected.path, !review.readPaths.includes(selected.path))}
+                onClick={() => onSetRead(selected.path, !readPaths.has(selected.path))}
               >
-                {review.readPaths.includes(selected.path) ? "Mark unread" : "Mark read"}
+                {readPaths.has(selected.path) ? "Mark unread" : "Mark read"}
               </button>
             ) : null}
           </div>
@@ -203,12 +205,15 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
 
   async function setFileRead(path: string, read: boolean): Promise<void> {
     if (!review) return;
-    const result = await bridge.invoke("review.setFileRead", {
+    // Mark-read sets a neutral "comment" disposition; mark-unread clears it.
+    // The full disposition UI (approve / request-change / question) is a later slice.
+    const result = await bridge.invoke("review.setDisposition", {
       commandId: crypto.randomUUID(),
       reviewId: review.id,
       patchsetId: review.activePatchsetId,
       path,
-      read,
+      disposition: read ? "comment" : null,
+      body: "",
     });
     setReview(result.review);
   }

@@ -7,7 +7,9 @@ const review: Review = {
   id: "review",
   repositoryRoot: "/code/rennet",
   activePatchsetId: "patch-one",
-  readPaths: ["src/read.ts"],
+  dispositions: [
+    { anchor: { path: "src/read.ts", contentDigest: "digest" }, type: "comment", body: "" },
+  ],
   status: "current",
   patchsets: [
     {

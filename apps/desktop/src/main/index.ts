@@ -83,14 +83,15 @@ async function dispatch(name: CommandName, rawInput: unknown): Promise<unknown> 
       });
       return parseCommandOutput(name, { review });
     }
-    case "review.setFileRead": {
+    case "review.setDisposition": {
       const input = parseCommandInput(name, rawInput);
-      const review = service.setFileRead(
+      const review = service.setDisposition(
         input.commandId,
         input.reviewId,
         input.patchsetId,
         input.path,
-        input.read,
+        input.disposition,
+        input.body,
       );
       return parseCommandOutput(name, { review });
     }
