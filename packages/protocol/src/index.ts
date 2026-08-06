@@ -1,6 +1,7 @@
 import type { Disposition, DispositionAnchor, Patchset, Review } from "@rennet/types";
 import { z } from "zod";
 
+export * from "./bodies";
 export * from "./rsp";
 export * from "./sha256";
 

@@ -150,6 +150,9 @@ importers:
       '@rennet/core':
         specifier: workspace:*
         version: link:../core
+      '@rennet/instructions':
+        specifier: workspace:*
+        version: link:../instructions
       '@rennet/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -165,6 +168,9 @@ importers:
 
   packages/core:
     dependencies:
+      '@rennet/instructions':
+        specifier: workspace:*
+        version: link:../instructions
       '@rennet/protocol':
         specifier: workspace:*
         version: link:../protocol
@@ -174,6 +180,12 @@ importers:
       uuid:
         specifier: 14.0.1
         version: 14.0.1
+
+  packages/instructions:
+    dependencies:
+      '@rennet/types':
+        specifier: workspace:*
+        version: link:../types
 
   packages/protocol:
     dependencies:

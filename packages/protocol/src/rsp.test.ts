@@ -54,12 +54,15 @@ function provenance(inputDigest = DIGEST): Record<string, unknown> {
   };
 }
 
-/** A valid ATOMIC document (decomposition.proposal) with one resolvable
- *  anchor+quote in its opaque body. Admits by default. */
+/** A valid ATOMIC document with one resolvable anchor+quote in its opaque body.
+ *  Uses `adjudication` — an atomic docType with no per-body schema in this slice —
+ *  so these tests exercise ONLY the generic envelope/anchor/quote machinery.
+ *  The decomposition body schemas are tested against real bodies in bodies.test.ts.
+ *  Admits by default. */
 function baseDoc(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
     rsp: 1,
-    docType: "decomposition.proposal",
+    docType: "adjudication",
     schemaVersion: 1,
     patchsetId: "ps_1",
     provenance: provenance(),

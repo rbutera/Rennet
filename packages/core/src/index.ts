@@ -9,8 +9,10 @@ import type {
 } from "@rennet/types";
 import { v7 as uuidv7 } from "uuid";
 
+export * from "./angle-generation";
 export * from "./decomposition";
 export * from "./harness";
+export * from "./route-plan";
 
 export type ReviewEvent =
   | { type: "ReviewCreated"; version: 1; reviewId: string; patchset: Patchset }

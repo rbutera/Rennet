@@ -6,8 +6,12 @@ const workspaceRoot = resolve(import.meta.dirname, "..");
 const allowed = new Map([
   ["@rennet/types", new Set()],
   ["@rennet/protocol", new Set(["@rennet/types"])],
-  ["@rennet/core", new Set(["@rennet/types", "@rennet/protocol"])],
-  ["@rennet/adapters", new Set(["@rennet/types", "@rennet/protocol", "@rennet/core"])],
+  ["@rennet/instructions", new Set(["@rennet/types"])],
+  ["@rennet/core", new Set(["@rennet/types", "@rennet/protocol", "@rennet/instructions"])],
+  [
+    "@rennet/adapters",
+    new Set(["@rennet/types", "@rennet/protocol", "@rennet/instructions", "@rennet/core"]),
+  ],
   ["@rennet/ui", new Set(["@rennet/types", "@rennet/protocol"])],
 ]);
 

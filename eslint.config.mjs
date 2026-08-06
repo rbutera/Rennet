@@ -20,14 +20,24 @@ export default [
               onlyDependOnLibsWithTags: ["layer:types", "layer:protocol"],
             },
             {
+              sourceTag: "layer:instructions",
+              onlyDependOnLibsWithTags: ["layer:types", "layer:instructions"],
+            },
+            {
               sourceTag: "layer:core",
-              onlyDependOnLibsWithTags: ["layer:types", "layer:protocol", "layer:core"],
+              onlyDependOnLibsWithTags: [
+                "layer:types",
+                "layer:protocol",
+                "layer:instructions",
+                "layer:core",
+              ],
             },
             {
               sourceTag: "layer:adapter",
               onlyDependOnLibsWithTags: [
                 "layer:types",
                 "layer:protocol",
+                "layer:instructions",
                 "layer:core",
                 "layer:adapter",
               ],
@@ -41,6 +51,7 @@ export default [
               onlyDependOnLibsWithTags: [
                 "layer:types",
                 "layer:protocol",
+                "layer:instructions",
                 "layer:core",
                 "layer:adapter",
                 "layer:ui",

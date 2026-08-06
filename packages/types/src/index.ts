@@ -477,3 +477,95 @@ export interface Decomposition {
   readingOrder: string[];
   residue: DecompositionResidueItem[];
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Decomposition angle generation (issue #8)
+//
+// The document bodies a fleet emits for the decomposition angle, plus the shapes
+// of the route-plan budget gate that bounds the transformation. Ordering emitted
+// here is the floor's provisional dependency order; the final comprehension
+// ordering is #9's job. Nothing here caps a chunk or a decision.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The angles a chunk may be assigned to. Deliberately a CLOSED set that excludes
+ * `noise` (verified only by deterministic checkers, never chunk membership) and
+ * `spec` (a queue over requirements, joined to code through claim documents).
+ * Enforced by validator rule V104.
+ */
+export type ChunkAngle = "sequence" | "decisions" | "claims" | "blast-radius";
+
+/** A chunk in a `decomposition.skeleton` body: boundaries + angle assignment only. */
+export interface SkeletonChunk {
+  chunkId: string;
+  hunkIds: string[];
+  angles: ChunkAngle[];
+}
+
+/** A chunk in a `decomposition.proposal` body: the complete graph node. */
+export interface ProposalChunk {
+  chunkId: string;
+  title: string;
+  hunkIds: string[];
+  angles: ChunkAngle[];
+  rationale: string;
+}
+
+/**
+ * The `decomposition.skeleton` body: chunk boundaries + a reading order, no
+ * rationale and no edges. Exists to beat the <15s first-paint budget.
+ */
+export interface DecompositionSkeletonBody {
+  chunks: SkeletonChunk[];
+  readingOrder: string[];
+  residue: DecompositionResidueItem[];
+}
+
+/**
+ * The `decomposition.proposal` body: the complete versioned graph — chunks with
+ * rationale, the dependency `edges`, the topological `readingOrder`, and the
+ * residue. Admitted atomically; the validator rejects on totality/DAG/angle/
+ * completeness violations (V100/V103/V104/V106).
+ */
+export interface DecompositionProposalBody {
+  chunks: ProposalChunk[];
+  edges: DecompositionEdge[];
+  readingOrder: string[];
+  residue: DecompositionResidueItem[];
+}
+
+/** The tier a planned harness invocation runs at. Deterministic steps are not invocations. */
+export type PlannedInvocationTier = "heavy" | "light";
+
+/** The purpose of a planned invocation in the initial-decomposition plan. */
+export type PlannedInvocationPurpose = "skeleton" | "proposal" | "rationale";
+
+/**
+ * One planned harness invocation. `chunkBatch` is present only for `rationale`
+ * (light, batched ≤10 chunks/call — never process-per-hunk).
+ */
+export interface PlannedInvocation {
+  purpose: PlannedInvocationPurpose;
+  tier: PlannedInvocationTier;
+  label: string;
+  chunkBatch?: string[];
+}
+
+/**
+ * The result of planning the initial decomposition. Either a plan whose
+ * harness-invocation count is within budget, or a refusal computed BEFORE any
+ * model runs (R10: the budget is a mechanical gate, not a guideline).
+ */
+export type RoutePlanResult =
+  | {
+      refused: false;
+      invocations: PlannedInvocation[];
+      harnessInvocationCount: number;
+      maxHarnessInvocations: number;
+    }
+  | {
+      refused: true;
+      harnessInvocationCount: number;
+      maxHarnessInvocations: number;
+      reason: string;
+    };

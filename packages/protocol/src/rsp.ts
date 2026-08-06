@@ -33,6 +33,7 @@ import type {
   ValidationReport,
 } from "@rennet/types";
 import { z } from "zod";
+import { validateBodyRules } from "./bodies";
 import { sha256Hex } from "./sha256";
 
 // ── Constants ────────────────────────────────────────────────────────────────
@@ -447,8 +448,16 @@ export function validateDocument(input: ValidatorInput): ValidationReport {
     return validateItemwise(doc, docType, spec.itemsPointer, input.manifest, settings);
   }
   // Atomic (or an item-wise type whose body pointer is a #8 deliverable):
-  // validate the whole body; any error rejects the whole document.
-  const bodyErrors = validateSubtree(doc.body, "/body", input.manifest, settings);
+  // validate the whole body; any error rejects the whole document. The generic
+  // anchor/quote walk runs for every docType; per-body semantic rules (#8) run
+  // for docTypes that have a body schema (the decomposition documents) and are
+  // `[]` for every other type, so the merge is unconditional.
+  const genericErrors = validateSubtree(doc.body, "/body", input.manifest, settings);
+  const offeredHunkIds = new Set(
+    input.manifest.occurrences.filter((o) => o.kind === "hunk").map((o) => o.id),
+  );
+  const perBodyErrors = validateBodyRules(docType, doc.body, offeredHunkIds);
+  const bodyErrors = [...genericErrors, ...perBodyErrors];
   if (bodyErrors.length > 0) return atomicReject(docType, spec.admission, bodyErrors);
   return {
     docType,
