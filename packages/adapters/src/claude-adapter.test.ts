@@ -1,0 +1,260 @@
+import { createSeqCounter, type EnvelopeContext, type HarnessEvent } from "@rennet/core";
+import { describe, expect, it } from "vitest";
+import {
+  ClaudeAdapter,
+  type ClaudeQueryArgs,
+  type ClaudeQueryOptions,
+  classifyToolKind,
+  mapClaudeError,
+  normalizeClaudeFrame,
+} from "./claude-adapter";
+
+function context(): EnvelopeContext {
+  return {
+    harness: "claude-code",
+    sessionId: "session-1",
+    turnId: "turn-1",
+    seq: createSeqCounter(),
+    now: () => 1000,
+  };
+}
+
+function initFrame(apiKeySource: string): Record<string, unknown> {
+  return {
+    type: "system",
+    subtype: "init",
+    session_id: "abc",
+    model: "claude-sonnet",
+    cwd: "/repo",
+    tools: ["Read", "Grep"],
+    apiKeySource,
+  };
+}
+
+describe("normalizeClaudeFrame: oauth assertion", () => {
+  it("produces a metered-key warning when a metered key takes over", () => {
+    const events = normalizeClaudeFrame(initFrame("user"), context());
+    const started = events.find((event) => event.kind === "session.started");
+    const warning = events.find((event) => event.kind === "auth.metered-key-warning");
+    expect(started).toBeDefined();
+    expect(started?.kind === "session.started" && started.apiKeySource).toBe("user");
+    expect(warning).toBeDefined();
+    expect(warning?.kind === "auth.metered-key-warning" && warning.apiKeySource).toBe("user");
+  });
+
+  it("produces NO warning on subscription oauth", () => {
+    const events = normalizeClaudeFrame(initFrame("oauth"), context());
+    expect(events.some((event) => event.kind === "session.started")).toBe(true);
+    expect(events.some((event) => event.kind === "auth.metered-key-warning")).toBe(false);
+    const started = events[0];
+    expect(started?.kind === "session.started" && started.apiKeySource).toBe("oauth");
+  });
+
+  it("treats the live 'none' source as safe: recognized, no warning", () => {
+    // The installed CLI reports apiKeySource="none" for a subscription session
+    // (verified live 2026-08-06). It is not metered, so it must not warn.
+    const events = normalizeClaudeFrame(initFrame("none"), context());
+    const started = events.find((event) => event.kind === "session.started");
+    expect(started?.kind === "session.started" && started.apiKeySource).toBe("none");
+    expect(events.some((event) => event.kind === "auth.metered-key-warning")).toBe(false);
+  });
+
+  it("carries a null apiKeySource without warning when the source is unknown", () => {
+    const frame = { type: "system", subtype: "init", model: "m", cwd: "/r", tools: [] };
+    const events = normalizeClaudeFrame(frame, context());
+    expect(events).toHaveLength(1);
+    expect(events[0]?.kind === "session.started" && events[0].apiKeySource).toBeNull();
+  });
+});
+
+describe("normalizeClaudeFrame: denials and errors", () => {
+  it("renders a denied write as tool.denied, never as error", () => {
+    const frame = {
+      type: "system",
+      subtype: "permission_denied",
+      tool_use_id: "t1",
+      tool_name: "Write",
+      reason: "read-only review posture",
+    };
+    const events = normalizeClaudeFrame(frame, context());
+    expect(events).toHaveLength(1);
+    const denial = events[0];
+    expect(denial?.kind).toBe("tool.denied");
+    expect(denial?.kind === "tool.denied" && denial.toolName).toBe("Write");
+    expect(denial?.kind === "tool.denied" && denial.by).toBe("policy");
+    expect(events.some((event) => event.kind === "error")).toBe(false);
+  });
+
+  it("maps a result error to the taxonomy with an origin and ends failed", () => {
+    const frame = {
+      type: "result",
+      subtype: "error_max_budget_usd",
+      is_error: true,
+      result: "budget exceeded",
+    };
+    const events = normalizeClaudeFrame(frame, context());
+    const error = events.find((event) => event.kind === "error");
+    const ended = events.find((event) => event.kind === "session.ended");
+    expect(error?.kind === "error" && error.error.class).toBe("quota-exhausted");
+    expect(error?.kind === "error" && error.error.origin).toBe("provider");
+    expect(error?.kind === "error" && error.error.retryableSource).toBe("inferred");
+    expect(ended?.kind === "session.ended" && ended.outcome.status).toBe("failed");
+  });
+});
+
+describe("normalizeClaudeFrame: passthrough and content", () => {
+  it("surfaces an unmodelled frame as passthrough with its native payload", () => {
+    const frame = { type: "some_future_frame", detail: 7 };
+    const events = normalizeClaudeFrame(frame, context());
+    expect(events).toHaveLength(1);
+    expect(events[0]?.kind === "passthrough" && events[0].nativeKind).toBe("some_future_frame");
+    expect(events[0]?.native).toEqual(frame);
+  });
+
+  it("marks a non-object frame as passthrough", () => {
+    const events = normalizeClaudeFrame(42, context());
+    expect(events[0]?.kind === "passthrough" && events[0].nativeKind).toBe("non-object");
+  });
+
+  it("splits assistant content into text.message and tool.started", () => {
+    const frame = {
+      type: "assistant",
+      message: {
+        content: [
+          { type: "text", text: "looking" },
+          { type: "tool_use", id: "u1", name: "Read", input: { path: "a.ts" } },
+        ],
+      },
+    };
+    const events = normalizeClaudeFrame(frame, context());
+    const text = events.find((event) => event.kind === "text.message");
+    const tool = events.find((event) => event.kind === "tool.started");
+    expect(text?.kind === "text.message" && text.text).toBe("looking");
+    expect(tool?.kind === "tool.started" && tool.call.name).toBe("Read");
+    expect(tool?.kind === "tool.started" && tool.call.kind).toBe("read");
+  });
+});
+
+describe("classifyToolKind", () => {
+  it("classifies by tool name", () => {
+    expect(classifyToolKind("Read")).toBe("read");
+    expect(classifyToolKind("Write")).toBe("write");
+    expect(classifyToolKind("Bash")).toBe("exec");
+    expect(classifyToolKind("Grep")).toBe("search");
+    expect(classifyToolKind("mcp__server__tool")).toBe("mcp");
+    expect(classifyToolKind("Task")).toBe("subagent");
+  });
+});
+
+describe("mapClaudeError", () => {
+  it("assigns class, origin, and an inferred retryable", () => {
+    expect(mapClaudeError("rate_limit", "slow down")).toMatchObject({
+      class: "rate-limit",
+      origin: "provider",
+      retryable: true,
+      retryableSource: "inferred",
+    });
+    expect(mapClaudeError("totally_new_code", "?")).toMatchObject({
+      class: "unknown",
+      origin: "harness",
+    });
+  });
+});
+
+function fakeQuery(
+  frames: readonly unknown[],
+  sink?: (args: ClaudeQueryArgs) => void,
+): (args: ClaudeQueryArgs) => AsyncIterable<unknown> {
+  return (args: ClaudeQueryArgs): AsyncIterable<unknown> => {
+    sink?.(args);
+    return {
+      async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
+        for (const frame of frames) yield frame;
+      },
+    };
+  };
+}
+
+async function drain(session: { events: AsyncIterable<HarnessEvent> }): Promise<HarnessEvent[]> {
+  const collected: HarnessEvent[] = [];
+  for await (const event of session.events) collected.push(event);
+  return collected;
+}
+
+describe("ClaudeAdapter session", () => {
+  it("round-trips a turn end to end with adapter-assigned monotonic seq", async () => {
+    const frames = [
+      initFrame("oauth"),
+      { type: "assistant", message: { content: [{ type: "text", text: "ok" }] } },
+      { type: "result", subtype: "success", result: '{"ok":true}', structuredOutput: { ok: true } },
+    ];
+    const adapter = new ClaudeAdapter({
+      binaryPath: "/home/rai/.local/bin/claude",
+      queryFn: fakeQuery(frames),
+      version: "2.1.220",
+      now: () => 1,
+    });
+    const session = await adapter.createSession({ cwd: "/repo", readOnly: true });
+    await session.send({ prompt: "hi" });
+    const events = await drain(session);
+    expect(events.map((event) => event.kind)).toEqual([
+      "session.started",
+      "text.message",
+      "session.ended",
+    ]);
+    expect(events.map((event) => event.seq)).toEqual([1, 2, 3]);
+    const ended = events[2];
+    expect(ended?.kind === "session.ended" && ended.outcome.status).toBe("completed");
+    expect(
+      ended?.kind === "session.ended" &&
+        ended.outcome.status === "completed" &&
+        ended.outcome.structuredOutput,
+    ).toEqual({ ok: true });
+  });
+
+  it("builds a read-only posture, sets the session env marker, and injects no key", async () => {
+    const capturedArgs: ClaudeQueryArgs[] = [];
+    const adapter = new ClaudeAdapter({
+      binaryPath: "/bin/claude",
+      queryFn: fakeQuery([], (args) => {
+        capturedArgs.push(args);
+      }),
+      env: { PATH: "/usr/bin", HOME: "/home/rai" },
+    });
+    const session = await adapter.createSession({
+      cwd: "/repo",
+      readOnly: true,
+      model: "haiku",
+      outputSchema: { type: "object" },
+    });
+    await session.send({ prompt: "review" });
+    const options: ClaudeQueryOptions | undefined = capturedArgs[0]?.options;
+    if (!options) throw new Error("queryFn was not invoked with options");
+    expect(options.pathToClaudeCodeExecutable).toBe("/bin/claude");
+    expect(options.permissionMode).toBe("default");
+    expect(options.allowedTools).toEqual(["Read", "Grep", "Glob", "LS"]);
+    expect(options.disallowedTools).toContain("Write");
+    expect(options.disallowedTools).toContain("Bash");
+    expect(options.model).toBe("haiku");
+    expect(options.outputSchema).toEqual({ type: "object" });
+    // Full env spread (the SDK replaces the child env), plus the scoped marker.
+    expect(options.env.PATH).toBe("/usr/bin");
+    expect(options.env.RENNET_HARNESS_SESSION).toBeDefined();
+    // No API key was injected: a metered key is detected, never forced.
+    expect(options.env.ANTHROPIC_API_KEY).toBeUndefined();
+  });
+
+  it("derives descriptor capability flags from passing checks, not declaration", () => {
+    const adapter = new ClaudeAdapter({ binaryPath: "/bin/claude", queryFn: fakeQuery([]) });
+    const caps = adapter.descriptor.capabilities;
+    // Implemented by the adapter (mapping code exists and is tested).
+    expect(caps.structuredOutput.implementedByAdapter).toBe(true);
+    expect(caps.interrupt.implementedByAdapter).toBe(true);
+    // Not implemented in this slice: resume/fork stay false at every layer.
+    expect(caps.resume.implementedByAdapter).toBe(false);
+    expect(caps.fork.implementedByAdapter).toBe(false);
+    // No conformance run and no live session yet, so these layers are all false.
+    expect(caps.structuredOutput.advertisedByHarness).toBe(false);
+    expect(caps.structuredOutput.availableInSession).toBe(false);
+  });
+});

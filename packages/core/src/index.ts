@@ -9,6 +9,8 @@ import type {
 } from "@rennet/types";
 import { v7 as uuidv7 } from "uuid";
 
+export * from "./harness";
+
 export type ReviewEvent =
   | { type: "ReviewCreated"; version: 1; reviewId: string; patchset: Patchset }
   | { type: "PatchsetActivated"; version: 1; reviewId: string; patchset: Patchset }
