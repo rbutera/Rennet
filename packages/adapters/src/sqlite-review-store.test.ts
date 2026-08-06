@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { foldReview, ReviewService } from "@rennet/core";
 import type { PatchFile, Patchset, Review } from "@rennet/types";
 import { describe, expect, it } from "vitest";
@@ -63,6 +64,54 @@ describe("SqliteReviewStore", () => {
     const reopened = new SqliteReviewStore(path);
     expect(reopened.latestReview()).toEqual(review);
     reopened.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  it("forward-migrates a real schema_version 1 database file (adds, backfills, and indexes repository_root)", () => {
+    const directory = mkdtempSync(join(tmpdir(), "rennet-store-v1-"));
+    const path = join(directory, "review.sqlite");
+    // Seed a genuine v1 database by hand: the v1 `events` table has NO
+    // repository_root column — exactly the shape the MVP persisted before this
+    // slice. A fresh `:memory:` store always gets the v2 table, so it can never
+    // exercise the ALTER path; this is the only test that opens a real v1 file.
+    const v1 = new DatabaseSync(path);
+    v1.exec(`
+      CREATE TABLE metadata (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+      CREATE TABLE commands (
+        command_id TEXT PRIMARY KEY,
+        payload_digest TEXT NOT NULL,
+        result_json TEXT NOT NULL
+      );
+      CREATE TABLE events (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT,
+        review_id TEXT NOT NULL,
+        type TEXT NOT NULL,
+        version INTEGER NOT NULL,
+        private INTEGER NOT NULL CHECK (private IN (0, 1)),
+        payload_json TEXT NOT NULL
+      );
+      CREATE INDEX events_review_seq ON events (review_id, seq);
+      INSERT INTO metadata (key, value) VALUES ('schema_version', '1');
+    `);
+    v1.prepare(
+      "INSERT INTO events (review_id, type, version, private, payload_json) VALUES (?, ?, ?, 0, ?)",
+    ).run(
+      review.id,
+      "ReviewCreated",
+      1,
+      JSON.stringify({ type: "ReviewCreated", version: 1, reviewId: review.id, patchset }),
+    );
+    v1.close();
+
+    // Opening through the store forward-migrates v1 -> v2 in the constructor.
+    // Before the ordering fix this threw `no such column: repository_root`
+    // because the index was created before the ALTER added the column.
+    const store = new SqliteReviewStore(path);
+    // The backfill populated repository_root from the ReviewCreated payload, so
+    // the per-repo query resolves the review by its root (not just the no-arg
+    // global lookup).
+    expect(store.latestReview("/repo")).toEqual(review);
+    store.close();
     rmSync(directory, { recursive: true, force: true });
   });
 

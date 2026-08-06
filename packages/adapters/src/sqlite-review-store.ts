@@ -131,17 +131,34 @@ export class SqliteReviewStore implements ReviewStorePort {
         payload_json TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS events_review_seq ON events (review_id, seq);
-      CREATE INDEX IF NOT EXISTS events_repository_root ON events (repository_root);
       INSERT OR IGNORE INTO metadata (key, value) VALUES ('schema_version', '2');
     `);
-    // Forward-migrate a schema_version 1 database: add the per-repo key column
-    // and backfill it from the ReviewCreated payloads.
-    this.ensureRepositoryRootColumn();
-    const version = this.database
-      .prepare("SELECT value FROM metadata WHERE key = 'schema_version'")
-      .get() as { value: string } | undefined;
-    if (version?.value === "1") {
-      this.database.prepare("UPDATE metadata SET value = '2' WHERE key = 'schema_version'").run();
+    // Forward-migrate a schema_version 1 database atomically: add the per-repo
+    // key column, backfill it from the ReviewCreated payloads, index it, and
+    // advance the version in ONE transaction so a crash mid-migration rolls back
+    // cleanly and the next open re-runs the whole thing (no half-applied state
+    // that skips the backfill on the next launch).
+    //
+    // The repository_root INDEX must come AFTER ensureRepositoryRootColumn: on an
+    // existing v1 `events` table the CREATE TABLE above is a no-op, so the column
+    // is absent until the ALTER runs, and indexing it any earlier throws
+    // `no such column: repository_root` in the constructor for every real v1 DB.
+    this.database.exec("BEGIN");
+    try {
+      this.ensureRepositoryRootColumn();
+      this.database.exec(
+        "CREATE INDEX IF NOT EXISTS events_repository_root ON events (repository_root)",
+      );
+      const version = this.database
+        .prepare("SELECT value FROM metadata WHERE key = 'schema_version'")
+        .get() as { value: string } | undefined;
+      if (version?.value === "1") {
+        this.database.prepare("UPDATE metadata SET value = '2' WHERE key = 'schema_version'").run();
+      }
+      this.database.exec("COMMIT");
+    } catch (error) {
+      this.database.exec("ROLLBACK");
+      throw error;
     }
     const migrated = this.database
       .prepare("SELECT value FROM metadata WHERE key = 'schema_version'")
