@@ -9,7 +9,7 @@ updated: 2026-08-05
 # Rennet LSP Integration Plan
 
 > [!IMPORTANT] Current implementation authority, 2026-08-05
-> Build **Rennet** under [[Rennet Master Plan]] and [[Rennet Architecture Contracts]]. Persistent project context belongs in the repo's `.rennet/`; temporary staging and materialisations belong in Rennet's application cache. Opening or reviewing a repo must never mutate the source checkout or its Git metadata. Therefore the measured `git worktree add` mechanism below is evidence only and cannot ship unchanged for client repos. The replacement materialisation mechanism must be selected by a pre-build spike and prove zero source-repo mutation.
+> Build **Rennet** under [[Rennet Contracts and Rulings]] and [[Rennet Architecture Contracts]]. Persistent project context belongs in the repo's `.rennet/`; temporary staging and materialisations belong in Rennet's application cache. Opening or reviewing a repo must never mutate the source checkout or its Git metadata. Therefore the measured `git worktree add` mechanism below is evidence only and cannot ship unchanged for client repos. The replacement materialisation mechanism must be selected by a pre-build spike and prove zero source-repo mutation.
 
 Code intelligence for [[Code Review Harness App]] (name decided: Rennet). Ratified by Rai 2026-08-04 late evening as **essential**: "being able to view the definition of any symbol in a diff."
 

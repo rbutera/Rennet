@@ -21,7 +21,7 @@ updated: 2026-08-05
 >
 > **What is still live and useful here:** the dependency-licence inventory in §5 (as a *compatibility* record — under MIT the inbound question is permissiveness and attribution, not copyleft direction), the notarization/signing/distribution material, and the Apple-enrolment timing (required before first public release, not before local dogfood).
 >
-> Product name is **Rennet**. [[Rennet Master Plan]] and [[Rennet Dependency Standard]] override this plan wherever they differ. Historical Wingman artefact names and package inventories below are illustrative only.
+> Product name is **Rennet**. [[Rennet Contracts and Rulings]] and [[Rennet Dependency Standard]] override this plan wherever they differ. Historical Wingman artefact names and package inventories below are illustrative only.
 
 Distribution, deployment, and licensing for [[Code Review Harness App]]. The product name is **Rennet**; the filename is retained only to preserve existing Obsidian links. Personal product, sole author Rai. Not the enterprise client work.
 

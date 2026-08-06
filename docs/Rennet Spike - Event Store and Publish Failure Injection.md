@@ -4,7 +4,7 @@ categories: [project]
 status: active
 created: 2026-08-05
 updated: 2026-08-05
-related: ["[[Rennet Master Plan]]", "[[Rennet Architecture Contracts]]"]
+related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Architecture Contracts]]"]
 source: codex
 ---
 

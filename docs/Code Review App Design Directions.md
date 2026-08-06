@@ -11,7 +11,7 @@ updated: 2026-08-05
 # Code Review App Design Directions
 
 > [!IMPORTANT] Current design authority, 2026-08-05
-> Product is **Rennet** and Glass is the selected direction. [[Rennet Master Plan]] and [[Rennet Architecture Contracts]] override the exploratory screens and language below. The refreshed prototype must show all six angles, author-side-first entry, immutable patchsets, local invalid/potentially-invalid/regenerating states, affected-only regeneration, the two publish variants, and truthful “no Rennet backend” disclosure. Subtraction is not an angle and route handoff is removed.
+> Product is **Rennet** and Glass is the selected direction. [[Rennet Contracts and Rulings]] and [[Rennet Architecture Contracts]] override the exploratory screens and language below. The refreshed prototype must show all six angles, author-side-first entry, immutable patchsets, local invalid/potentially-invalid/regenerating states, affected-only regeneration, the two publish variants, and truthful “no Rennet backend” disclosure. Subtraction is not an angle and route handoff is removed.
 
 Visual design ideation for [[Code Review Harness App|Rennet]]. Builds on [[Code Review App UX Research]] and [[Code Review App UX Concepts]]. The current state is six angles (Spec, Sequence, Decisions, Claims and Evidence, Blast Radius, Noise), ANGLES and CHUNKS vocabulary, context reach, immutable patchsets, explicit publication, and strictly private pace/coverage.
 

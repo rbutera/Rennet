@@ -4,7 +4,7 @@ categories: [research]
 status: active
 created: 2026-08-06
 updated: 2026-08-06
-related: ["[[Rennet Master Plan]]", "[[Wingman Harness Adapter Protocol]]", "[[Wingman Distribution and Licensing Plan]]"]
+related: ["[[Rennet Contracts and Rulings]]", "[[Wingman Harness Adapter Protocol]]", "[[Wingman Distribution and Licensing Plan]]"]
 ---
 
 # T3 Code Integration Research

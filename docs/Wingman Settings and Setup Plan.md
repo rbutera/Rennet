@@ -9,7 +9,7 @@ updated: 2026-08-05
 # Rennet Settings and Setup Plan
 
 > [!IMPORTANT] Current implementation authority, 2026-08-05
-> Build **Rennet** under [[Rennet Master Plan]] and [[Rennet Architecture Contracts]]. Persistent project config, deterministic snapshots, and learned codebase knowledge live under the repo's `.rennet/`. Temporary staging, model frames, materialised trees, and caches live in Rennet's application cache. Rennet incrementally refreshes the project snapshot as the default branch advances and never consumes derived context whose input fingerprints are stale. `projectContext.visibility` is `local` by default or `git-visible`; Rennet never stages or commits context.
+> Build **Rennet** under [[Rennet Contracts and Rulings]] and [[Rennet Architecture Contracts]]. Persistent project config, deterministic snapshots, and learned codebase knowledge live under the repo's `.rennet/`. Temporary staging, model frames, materialised trees, and caches live in Rennet's application cache. Rennet incrementally refreshes the project snapshot as the default branch advances and never consumes derived context whose input fingerprints are stale. `projectContext.visibility` is `local` by default or `git-visible`; Rennet never stages or commits context.
 
 Per-repository and per-project/workspace preferences, plus the setup flows that must never ask a question they can answer themselves. The product name is Rennet; the filename is retained only to preserve existing Obsidian links. Sits on the canonical contracts in [[Rennet Architecture Contracts]], the event-sourced state design in [[Wingman Architecture Plan]], the discovery subsystem in [[Wingman Harness Adapter Protocol]], and the repo doctrine in [[Wingman Repo Bootstrap Plan]].
 

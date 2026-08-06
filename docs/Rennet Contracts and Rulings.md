@@ -1,0 +1,355 @@
+---
+tags: [rennet, architecture, contracts, rulings]
+categories: [project]
+status: active
+created: 2026-08-04
+updated: 2026-08-06
+related: ["[[Rennet Product and Vision]]", "[[Code Review Harness App]]", "[[Rennet Architecture Contracts]]", "[[Rennet Dependency Standard]]", "[[Rennet Navi Handoff]]", "[[Rennet Canvas Paradigm]]", "[[Rennet Orchestrator Context Access]]", "[[Rennet Comment Refinement Loop]]"]
+---
+
+# Rennet Contracts and Rulings
+
+> **Formerly titled *Rennet Master Plan*** (renamed 2026-08-06 on Rai's instruction: the document "really has turned into a data model contract reference"). Citations of the form "Master Plan R8" or "Master Plan §2.1" in older documents, issue bodies, and commit messages refer to **this document**; the R-numbers and §-numbers are unchanged. What the product *is* now lives in [[Rennet Product and Vision]]; this document is the **authority register**: every conflict ruling, the frozen core, the open questions, the M0 cut, the spike gates, and the execution pipeline.
+
+[[Rennet Architecture Contracts]] freezes the project-context, patchset, persistence, privacy, and publication contracts. It wins within that scope. [[Rennet Dependency Standard]] wins on dependencies, versions, licence compatibility, toolchain ownership, and overlap. **[[Rennet Canvas Paradigm]] and [[Rennet Orchestrator Context Access]] are ADOPTED as of 2026-08-06** (Rai's voice Q&A + autonomy mandate) and are authoritative for the interaction model and the orchestrator's context architecture respectively, as amended by §2.3–§2.4 below. Where this document and any plan disagree, **this document wins**, and where this document is silent, the supersede stack in §2 decides.
+
+The private product monorepo is `/Users/rai/dev/rennet`, published to `github.com/rbutera/rennet`. This records source privately; it does not claim the future public GitHub organization, npm scope, domains, social accounts, or release channels. The MVP (PR #1), the MIT/SDK reconciliation (PR #2), and the canvas + orchestrator design docs are **merged to main**. From 2026-08-06 ~13:49 Rai's standing instruction for this repo is **"don't do PRs, just ship"**: commit directly to main, with quality gated *internally* (openspec proposal → /wave dual-agent review → full gate green) before every push. "Just ship" removes PR ceremony, never quality gates.
+
+The original R1–R33 reconciliation introduced no uncited architecture. R34 records the later dependency and Nx decision. Every ruling cites its authority. Rulings marked **synthesis call** had no settling authority and may be overridden by Rai.
+
+---
+
+## 1. The product and its principles (summary — the canonical narrative is [[Rennet Product and Vision]])
+
+**Rennet** (rennet.dev) is an MIT-licensed, local-first Electron desktop **review harness**: a coding harness points a model at your codebase so it can write; a review harness points the coding harnesses already on your machine at a change so you can read. It decomposes changesets into sub-400-LOC chunks read through six angles (lens set v4: spec, sequence, decisions, claims-and-evidence, blast radius, noise — the ratified table lives in [[Rennet Product and Vision]] §4.1), keeps review state that survives a force-push, and lands the result as a normal GitHub PR review or an agent handoff bundle. The LLM proposes structure and findings; the human disposes — structurally, via the actor-partitioned canvas contract. No auto-approve, no auto-comment, no Rennet backend, no telemetry, BYOK via the user's own installed harnesses, zero-config as the North Star. Both review modes are v1. Material sent through a selected harness may leave the machine for that harness's provider; every run discloses and records its assembled context.
+
+**Positioning headline (settled):** *You stopped writing the code. You still have to answer for it.*
+
+**The purpose (Rai, 2026-08-06, voice — the thesis; everything else serves it):** Rennet exists to make a large diff **digestible**, and the mechanism is **roll-up + zoom + lenses**:
+
+> ⭐ "Anything that can be rolled up and grouped SHOULD be rolled up and grouped, and you should be able to approve the whole group / the whole roll-up at a time, OR partials of it. You should be able to ZOOM IN AND OUT of the diff at any point. The whole purpose of Rennet is to help you zoom in and out and put on different lenses."
+
+The four load-bearing product principles (frozen — §3):
+
+1. **Aggressive roll-up is the default, not an option.** Logical cohorts; grouping behaviour **hard-baked**, never project-configurable (OQ17 closed by Rai, 2026-08-06).
+2. **Approve at ANY granularity.** Decisions are **never capped or truncated**; every decision stays reachable; bulk adjudication is one user act.
+3. **Free zoom, in and out, anywhere** — user surface and orchestrator retrieval surface alike.
+4. **Smooth and quick.** The user may be lazy and messy; the machine does the cleanup (§2.5). Anything that adds user ceremony without adding user judgment is wrong.
+
+**Ordering is the product, and it is LOGICAL, agent-optimised for comprehension.** Rai, verbatim: *"stop basing things around safety. base things about logic... ordered logically so that a human reading a PR can understand the PR from base principles."* The deterministic code-dependency order (the decomposition DAG) is the **baseline/compilation step**; an **agent produces the final ordering** (high-level then bottom-up). ⛔ The user does **not** approve the ordering ("too much effort from the user") — ordering is an agent-owned comprehension task. Any remaining "danger-ordered / blast-radius-ordered / salience-ordered" language anywhere in the corpus is SUPERSEDED (strip list: §8). `salience` survives only as an *open question about a within-cohort tiebreak* ([[Rennet Canvas Paradigm]] OQ2), never as the ordering signal.
+
+Everything else previously in this section — the lens table, subtraction-is-not-an-angle, both-modes-v1, route-handoff descoped + the author-side alibi, the supporting-engineering thesis (DSL + model-tier routing + instruction layer as means; deterministic validation as mechanism-never-headline), LSP / open-in-editor / impl↔tests / glass identity — is stated canonically in [[Rennet Product and Vision]] §4 and remains ratified exactly as before. The interaction model is the canvas paradigm (§2.3); the handoff loop (§2.1) and comment-refinement loop (§2.5) are core features.
+
+---
+
+## 2. The supersede stack and conflict rulings
+
+Authority order, top outranks bottom (amended 2026-08-06 — inserts the two adopted design docs and the day's voice decisions):
+
+1. **Rai's 2026-08-06 decisions** (voice Q&A + corrections + autonomy mandate, recorded in this document and in the hub's Decisions ledger): MIT throughout; SDK adopted; roll-up/zoom/lenses as purpose; decisions never capped; action-defined read state; the handoff loop; grouping hard-baked (OQ17 closed); logical agent-owned ordering; the comment-refinement loop; canvas paradigm adopted; orchestrator context access adopted (map-not-container); ship-to-main workflow.
+2. **Rai's 2026-08-04 late-evening ratifications** in the hub Decisions ([[Code Review Harness App]]): Rennet on rennet.dev; lens set v4; route handoff descoped; both modes v1; publish-as-preview; DSL/routing/instruction thesis; LSP + inline definitions + open-in-editor; impl↔tests toggle; omp as third harness; decisions-angle refinement.
+3. **[[Rennet Architecture Contracts]]**, within project context, review snapshots, persistence, harness access, and publication.
+4. **[[Rennet Canvas Paradigm]]** and **[[Rennet Orchestrator Context Access]]**, for the interaction model and orchestrator context architecture, as amended by §2.3–§2.4.
+5. **[[Rennet Dependency Standard]]**, for dependency selection, versions, licensing, toolchain ownership, and overlap.
+6. **The two ratified Codex critiques**: [[reviews/wingman-architecture-codex-critique]] and [[reviews/wingman-adapter-licensing-codex-adjudication]].
+7. **The eight plans** (Architecture, Harness Adapter Protocol, GitHub Integration, Distribution and Licensing, Repo Bootstrap, Settings and Setup, LSP Integration, Surfacing DSL and Model Routing), later-written and more-verified beats earlier where they conflict among themselves.
+8. **Measured spike verdicts** recorded in [[Rennet Evidence Gate Status]], including [[Wingman Spike – Pierre Diff Virtualization]].
+9. [[Wingman Branding Plan]] for naming mechanics and the RAI-ONLY registration checklist.
+
+### Conflict rulings
+
+| # | Conflict | Ruling | Authority |
+|---|---|---|---|
+| R1 | Architecture plan's `@wingman/*` naming | Name is **Rennet**; packages are `@rennet/*` in-workspace from day one. Rai explicitly authorised the private personal monorepo `rbutera/rennet` on 2026-08-05. That is the working source remote, not a public namespace claim. The future GitHub organisation, npm scope, domains, socials, and releases remain deferred and RAI-ONLY; no npm publish before the scope is hand-verified and claimed. | Rai, 2026-08-05; hub decision (name); branding plan (remaining registrations) |
+| R2 | Bundled/linked `@anthropic-ai/claude-agent-sdk` (arch D12/B4/B18, adapter plan §2.1) | ⛔ **SUPERSEDED by Rai's decision, 2026-08-06 — the SDK is ADOPTED.** *The original ruling (retained for the record): "Retired. The SDK is proprietary and AGPL-incompatible; the Claude adapter is a clean-room process-per-turn wrapper… never importing the SDK or its types."* Both of its premises are gone. The AGPL incompatibility died with the MIT flip (R3). And the pricing worry was never real: **`query()` spawns the user's own installed `claude` binary** via `pathToClaudeCodeExecutable` — the SDK's own types document the option as *"Path to the Claude Code executable. Uses the built-in executable if not specified"*, and *"the subprocess inherits `process.env`"* — so it authenticates through the user's **Claude subscription OAuth**, exactly as a clean-room wrapper spawning the same binary would. `ApiKeySource` includes `'oauth'` as a first-class value and is reported back per turn, so the adapter can assert subscription auth and warn if a metered key ever takes over. **Per-token cost is identical either way; build cost is not.** The Claude adapter is therefore an SDK integration. Pass the user's installed binary explicitly, and **strip the SDK's bundled per-platform executables at packaging time** (T3 Code's `DESKTOP_FILE_EXCLUSIONS` is the worked precedent), which keeps the notarization surface manageable. The "zero compiled artifacts" line is retired with the rest of the ruling. | Rai, 2026-08-06; auth trace in [[T3 Code Integration Research]] |
+| R3 | Protocol/types inside AGPL `core` (arch D1 subpath exports) | ⛔ **MOOT — superseded by Rai's decision, 2026-08-06: everything is MIT.** *The original ruling split `packages/protocol` and `packages/types` to Apache-2.0 while core/adapters/ui/desktop stayed AGPL-3.0-only.* **That split existed solely to keep the interoperability surface permissive while the application was copyleft. With MIT everywhere there is nothing to keep permissive from, so the split has no remaining purpose and is collapsed.** ⭐ **The packages themselves survive unchanged** — `types` and `protocol` remain separate packages for architectural reasons (a mobile or third-party client is a peer of the renderer, per R19/R20), and the **dependency-direction rule is retained on its own merits**: protocol may depend on types, and neither imports anything else in-repo, CI-enforced. Only the *licence* rationale is dropped. | Rai, 2026-08-06 |
+| R4 | Instructions licensing: DSL plan §6.1 puts `packages/instructions` **AGPL** while the DSL itself is Apache | ⛔ **MOOT — superseded by Rai's decision, 2026-08-06: everything is MIT**, so there is no AGPL/Apache seam for `packages/instructions` to sit across. ⭐ **The non-licence half of the ruling survives and still matters:** base instructions are product voice, change weekly, and are deliberately **not part of the RSP spec** (DSL plan §7 — a third party implementing RSP writes their own instructions and still interoperates). Keep the CI rule that `instructions` is never a dependency of `protocol`, `types`, or mobile; it is now an architectural boundary rather than a licensing one. | Rai, 2026-08-06; DSL plan §7 for the surviving half |
+| R5 | AGPL-3.0-**or-later** (bootstrap plan §0, CLAUDE.md draft) vs AGPL-3.0-**only** (distribution plan) | ⛔ **MOOT — superseded by Rai's decision, 2026-08-06.** The question only existed inside the AGPL family; **the licence is MIT**, which has no `-only`/`-or-later` axis. Nothing replaces this ruling. | Rai, 2026-08-06 |
+| R6 | Arch plan defers disagreement (v1 table LATER) vs hub "disagreement ships in v1" | **Both true, reconciled**: "ships in v1" means the first public release, not the first adapter. The **shape** ships now (claim polarity, `adjudication` docType with no `rejectedBy`, `notEmittedBy` for silence, provenance `sampleGroupId`/`sampleIndex`); **emission** waits for a second adapter by construction. N=3 is a **trigger**, never a default; disagreement flares only after explicit evidence-based adjudication. | Adapter plan §7; adjudication pt 3 |
+| R7 | Arch plan's post-PR-only dogfood cut (§3, contested call 1) | **Overridden: both modes are v1 MUST** (working-tree + GitHub PR changeset sources). The settings and DSL plans are already written against both; the arch v1 table row flips. | Hub decision 2026-08-04 evening |
+| R8 | Arch D4 three-tier content-addressed hunk identity | **Superseded by the lineage-graph direction**: immutable occurrence IDs + lineage graph (exact/one-to-one/split/merge/move/ambiguous/rejected), path/symbol/content hashes demoted to weighted evidence, max-weight bipartite matching, **read state never auto-carries through similarity** (possible-continuation → require reread), **ambiguity fails closed**, contextual disambiguator for duplicate bodies. The matcher-precision spike is pre-build spike #1; auto-carry requires ~100% measured precision. `hunkKey`-style content hashes survive as matcher features and as the `dismissalKey` basis, not as identity. | Architecture critique (a) |
+| R9 | Arch D7 deterministic-**authoritative** chunking | **Hybrid ratified**: deterministic pass owns totality, classification, limits, and the always-present offline fallback (the floor, not the authority); the harness proposes a **complete versioned decomposition graph** with rationale (never per-hunk regroup events); a deterministic validator rejects omissions/duplication/oversize/invalid anchors; the user accepts/edits. Quality is tested by invariants + labelled dependency pairs + blinded preference, not golden text. The DSL plan's `decomposition.proposal` + V100–V110 is the implementation. | Architecture critique (d); DSL plan §2.4, §4 |
+| R10 | Adapter plan's `harness-degenerate` as utility default | **Rejected → batching + budget ratified**: deterministic local code for non-semantic work → **batched** utility prompts per meaningful unit → optional direct-API port → **never process-per-hunk**. Hard product budget: **<15s to first useful chunk, <5 harness invocations for initial decomposition**, enforced by the `RoutePlan` budget gate with a CI test. `decomposition.skeleton` exists to beat the 15s. | Adjudication pt 2; DSL plan §5.3 |
+| R11 | Subtraction-angle artifacts (arch `AngleId`, arch v1 table, branding site §5 and voice vocabulary) | **Absorbed**: `AngleId` becomes `spec \| sequence \| decisions \| claims \| blast-radius \| noise`; subtraction content lives in `finding.ruleFamily` (`over-engineering`, `defensive-scaffolding`, `redundancy`) and noise categories, propose-deletion affordance preserved on the finding. Branding copy (site section 5, protected-vocabulary list) is corrected at build time. | Hub lens set v4; DSL plan D25 |
+| R12 | DSL plan's request: `append` as a fourth merge strategy (settings plan §1.3 says "three, no fourth") | **RATIFIED.** `append` joins the settings registry as a fourth strategy, **scoped to guidance-prose keys** (`instructions.general/task/angle`): concatenation in ladder order with layer-labelled delimiters. The settings plan's "no fourth" sentence is amended; the registry test asserts `append` is only used by instruction keys. | This synthesis, per dispatch brief; DSL plan §6.2/D29 |
+| R13 | DSL plan's two new capability flags (`supportsPerCallModelSelection`, `advertisedModels`) | **RATIFIED into the adapter protocol** (§1.1), under the three-layer capability model, starting `false`, earned by the conformance suite. | This synthesis, per dispatch brief; DSL plan §5.4/D16 |
+| R14 | Apple Developer timing: licensing plan pins individual-vs-Ltd to "before the first signed build" | **Restaged: before first public release.** Dogfood runs unsigned local dev builds (arch v1 table already says so), so nothing blocks on Apple. The individual-vs-Ltd decision + enrolment remain RAI-ONLY with the migrating-is-painful warning intact. | Rai, 2026-08-04 discussion |
+| R15 | Route-handoff residue: arch v1 row "self-review route handoff (the keystone)", `route.drafted` event, GitHub plan's "makes the route handoff work", branding's "the route handoff is the alibi" | **All deleted/re-anchored.** The event type is removed from the taxonomy; the review body remains the carrier for structural degradations (that rationale stands on its own); the alibi is the author-side mode itself (see [[Rennet Product and Vision]] §2). | Hub decision 2026-08-04 evening |
+| R16 | `@tanstack/react-virtual` on the diff surface (stack note must-use; arch D14 fallback) | **Retired as plan B.** Measured verdict: **`CodeView` as-is, never bare `FileDiff`/`PatchDiff`** (virtualization is opt-in and silently absent otherwise; 899 vs 97,139 DOM nodes, 15.4ms vs 493ms worst frame at 5k lines). react-virtual survives only for non-diff lists (rails, queues, inbox). Pin `@pierre/diffs` exactly; depend on `@pierre/theme` directly. | Pierre spike verdict |
+| R17 | Event sourcing/publish underspecification (arch D8/D15/2.3) | **Codex prescriptions ratified**: missing event types added (patch failed/cancelled/truncated; match ambiguous/confirmed/rejected/split/merged; review abandoned/superseded/attached; decomposition proposed/accepted/rejected atomically; external GitHub changes; publish cancelled/superseded/retry/**outcome-unknown**/reconciled; command dedup). Upcasts chain v1→v2→v3 with golden event streams; unknown future types fail safe. **Telemetry split from state** with property-tested noninterference (vary/insert/delete/reorder private events → byte-identical outbound payload). Publish gets `outcome: unknown` + deterministic marker in the pending review + query-before-retry, tested with failure injection at every remote boundary. | Architecture critique (b) |
+| R18 | Diff-pipeline cliffs (arch D10/2.2) | **Ratified**: keep bytes as bytes (Uint8Array/spool, never byte ranges into JS strings); binary/submodule/mode-only/truncated inputs are first-class and **done/publish block on incomplete ingestion**; oversize hunks must be splittable to honour the 400-LOC thesis; tree-sitter parse-once-dispose; O(k²) similarity guarded on generated files. | Architecture critique (c) |
+| R19 | Portable boundary assumes Electron (arch D11/2.4) | **Ratified**: the frozen portable contract is **transport-neutral**. Public RSP schemas are normative JSON Schema validated by Ajv with TypeScript generated one way; private commands/events/settings are Zod-first. Wire fixtures are tested on both sides. MessageChannelMain topology belongs to the Electron host; protocol gains version negotiation, capabilities, structured errors, reconnect/replay, flow control before mobile; `RepoId = realpath(git-common-dir)` is machine-local → durable identity is the **RepoRecord** (uuidv7 + aliases: common-dir, forge identity, root-commit hint) per settings plan §2.3; path-bearing models never go to remote clients; subscriptions send recipient-specific projections, never raw `EventEnvelope`s; `SecretStorePort` exists. | Architecture critique (f); settings plan §2.3; [[Rennet Dependency Standard]] §5 |
+| R20 | `ui` imports `core` (arch D2) vs `ui` imports protocol+React only (bootstrap plan) | **Bootstrap wins**: `ui` imports `protocol` + `types` only, never `core` — the renderer reaches the engine exclusively through the IPC command map, making the mobile client a peer of the renderer. With R3's split there is nothing in `core` the renderer legitimately needs. **Synthesis call — Rai may override.** | Bootstrap plan §1 (stricter, consistent with D11) |
+| R21 | Repo layout variants (arch 5 packages / bootstrap 6 / distribution 3+apps) | **Bootstrap layout adopted** (it carries the gates, tsconfig bases, and commit sequence), **plus** `packages/types` split out of protocol (R3) and `packages/instructions` added (R4). Final: `packages/{types, protocol, core, adapters, ui, instructions, tsconfig}` + `apps/{desktop, mobile-placeholder}` + `scripts/`, `spikes/` (non-workspace). **Synthesis call** on the exact merge; the dependency arrows and gates are frozen regardless. | Bootstrap plan §1; distribution plan §4.1 |
+| R22 | Contribution policy: bootstrap's generic "lightweight CLA" vs distribution's concrete mechanism | **Distribution plan wins**: DCO (`dcoapp/app`) + `CONTRIBUTORS.md` explicit grant line in the first PR + ~12-line CI action + ICLA-derived email grant for >50-line or core contributions; cla-assistant is dead tooling, do not use. **Policy files land before the repo is ever public; until then code PRs are not accepted at all.** | Distribution plan §4.3 |
+| R23 | Third harness slot: brief's npm `oh-my-pi` | **omp ratified**: `@oh-my-pi/pi-coding-agent` (bin `omp`, can1357/oh-my-pi, MIT), `pi` as compatible subset; npm `oh-my-pi` is an abandoned namesake, never target it. Capability flags start `false`, earned by conformance. | Hub decision (adapter plan D3 ratified) |
+| R24 | `GithubPort` (bootstrap CLAUDE.md) vs `ForgePort` (arch/GitHub plans) | **`ForgePort`**, forge-neutral with capability flags, degradation written against capabilities, never `if (forge === 'github')`. | GitHub plan §5 |
+| R25 | Arch B3 "spike: measure Pierre" | **Done and measured** (spike doc). Residual work: re-measure on 1.3.2 (npm cooldown forced 1.3.0-rc.1), CPU-throttled/low-end run, annotations-survive-recycling prototype, Shiki bundle trim, AST-LRU pinning. | Pierre spike |
+| R26 | Glass identity LATER (arch v1 table) vs dispatch cut including glass UI | **Tokens and chrome ship in v1** (the token file exists in the mood board; cheap), visual polish stays LATER. Rough edges allowed; doctrine (glass=chrome, code=opaque, paper=publish) absolute from the first screen. **Synthesis call.** | Hub ratified identity; dispatch brief |
+| R27 | Repository-local context vs app-owned staging | Durable project configuration, deterministic snapshots, and evidence-backed learned knowledge live under `.rennet/`; temporary source materialisations, prompt staging, review state, provider frames, and LSP caches live in Rennet-owned application storage. `projectContext.visibility` is `local` by default or `git-visible`; Rennet never stages or commits. | Rai, 2026-08-05; [[Rennet Architecture Contracts]] §2 |
+| R28 | Live working-tree and mutable PR-head review models | Every review targets an immutable `Patchset`. Local capture includes committed branch changes, index, unstaged tracked changes, and non-ignored untracked files. A local edit or remote head/base update creates a new patchset; it never rewrites the active one. | Rai, 2026-08-05; [[Rennet Architecture Contracts]] §3 |
+| R29 | Analysis after local edits or a remote PR update | Exact unaffected analysis remains current. Directly affected analysis becomes `invalid`; dependency-, context-, or ambiguity-affected analysis becomes `potentially-invalid`. Old output remains visible until explicit affected-only, angle, or item regeneration succeeds; model-backed regeneration is never automatic. | Rai, 2026-08-05; [[Rennet Architecture Contracts]] §4 |
+| R30 | Stale project-map reuse | Project snapshots are deterministic and pinned to the resolved default-branch OID plus config, generator, schema, and toolchain fingerprints. Default-branch movement incrementally rebuilds affected shards, with full-build byte equivalence. A non-current artifact is refreshed, visibly omitted, or blocks the dependent operation; it is never silently trusted. | Rai, 2026-08-05; [[Rennet Architecture Contracts]] §2.3–2.4 |
+| R31 | Ambient harness authority and universal no-cloud copy | Harnesses receive an app-owned immutable materialisation plus explicitly assembled current context by default. Unproven ambient sources make the manifest non-exhaustive. Product copy says **no Rennet backend** and discloses provider egress, authority, model source, and spend; it never promises universally that nothing leaves the machine. | Rai, 2026-08-05; [[Rennet Architecture Contracts]] §7.2 |
+| R32 | Append-only history vs erasure and unknown-event skipping | Append-only applies within a retained review. Delete-review physically purges every Rennet-controlled event, projection, receipt, artifact, blob, prompt, backup, WAL, and cache copy. Unknown events are preserved byte-for-byte but block projection, completion, regeneration, and publish; skip-and-continue is forbidden. | Rai, 2026-08-05; [[Rennet Architecture Contracts]] §7.3–7.4 |
+| R33 | Author-side self-review publication | Local completion creates a pure PR title/body/draft/base/head preview and performs zero Git or GitHub mutation. Any create/update operation is separate and explicit; Rennet never pushes source code. Reviewer publication remains inspect, sign, and one idempotent submit pinned to the reviewed head. | Rai, 2026-08-05; [[Rennet Architecture Contracts]] §9 |
+| R34 | Turbo, Vite+, overlapping Electron packagers, and ad hoc dependency choice | **Nx is the monorepo graph and local cache; pnpm owns packages; Vite 8 owns renderer builds; Electron Forge owns package/make/release.** Vite+ is deferred at beta, Forge's Vite plugin is deferred, electron-builder/electron-updater are excluded, and remote cache requires a privacy decision. Exact pins obey a seven-day registry-age gate. [[Rennet Dependency Standard]] is the implementation authority for the complete dependency matrix and overlap boundaries. | Rai, 2026-08-05; [[Rennet Dependency Standard]] |
+
+### 2.1 The review→agent handoff loop (core feature — Rai 2026-08-06; expanded same day)
+
+This is a **core feature**. It is what turns Rennet from a reading tool into a **review-driven coding loop**.
+
+**The disposition is the one data model.** Slice 1 (merged to main, 2026-08-06) lands the base type; the refinement extension (§2.5) is additive:
+
+```
+disposition = {
+  anchor: line | hunk | symbol,
+  type:   approve | change-request | comment | question,
+  body:   text,                  // the RAW draft — what the user actually typed/said
+  // §2.5 additive extension (comment-refinement loop):
+  refined?:   text,              // the agent's cleaned, investigated, properly-processed form
+  published?: text,              // what actually left the machine (== refined at publish time)
+  thread?:    InlineThread       // the per-diff clarification conversation on this disposition
+}
+```
+
+⭐ **One model, two destinations — the mode decides where it goes, never what it is:**
+
+| Mode | Where dispositions land |
+|---|---|
+| Reviewing **someone else's PR** | GitHub review comments, published as one batched review (R33). What posts is the **refined** form, previewed on the sheet (§2.5) |
+| Reviewing **your own branch** | A **batched task bundle handed to a coding harness**, which addresses them on the branch → produces a **new patchset** → Rennet **re-reviews only the DELTA** (approved unchanged hunks stay approved) |
+
+⭐⭐ **The delta re-review is cheap because the existing architecture already pays for it.** Immutable patchsets (R28), occurrence-ID + lineage identity (R8), and force-push survival mean an approved hunk that did not change stays approved — the second pass presents only what actually moved. R8's matcher-precision gate is therefore doubly load-bearing: it protects read state *and* gates this loop. In canvas terms ([[Rennet Canvas Paradigm]] §2.2 L2): a new patchset opens the **successor canvas**, whose lineage-carried approved elements arrive pre-settled; ambiguity fails closed and arrives unread.
+
+⛔ **The safety properties do not relax inside the loop.** The human still disposes (structurally — L2 is user-sovereign). The agent addresses dispositions and nothing else. Rennet still never pushes source code (R33). A new patchset never rewrites the active one (R28). The delta re-review is subject to the same totality/residue guarantee as a first pass. Read state is action-defined (OQ4 closed), so an agent-authored change is never "already read" because a human once read the code it replaced.
+
+**Read state is ACTION-defined** (Rai, 2026-08-06, closing OQ4): a chunk is READ when the reviewer takes an action on it — approve, request-change, or ask-question. Never scroll position, never dwell time. Expand/collapse is navigation, not reading.
+
+**Implementation leads:** mine T3 Code's checkpointing (`CheckpointStore.ts`, `CheckpointDiffQuery.ts`, `CheckpointReactor.ts` in `pingdotgg/t3code`, MIT) for the bracket-the-turn/extract-the-diff mechanism — read it before designing, per [[T3 Code Integration Research]].
+
+### 2.2 T3 Code: adopt-partial (2026-08-06; status amended same day)
+
+Full analysis in [[T3 Code Integration Research]]. The short version, because it bears on several rulings above:
+
+- **Adopt-partial, not a core.** T3 Code is a control surface for *writing* code; Rennet is a harness for *reading* it. Angles, review state, lineage identity, decomposition, findings, and publish have no counterpart there.
+- **Mine two things:** the checkpointing family above (for §2.1), and `DrainableWorker` (a transactional queue paired with a transactional outstanding-count, so tests await a real drain instead of sleeping) as a **vendoring candidate** — MIT, small, self-contained.
+- **Its event-sourced spine corroborates R17.** Command → durable receipt → pure decider → one SQL transaction → projector → post-commit read-model swap, running under 100,000 users. Independent convergence on our design is evidence R17 is right; read it, do not import it.
+- **It does not do orchestration.** See OQ9 — T3 multiplexes providers and hides which one is behind a thread. The orchestrator model is ours to build.
+
+**Status note (2026-08-06):** T3-as-core was formally REOPENED earlier that day (the fatal blocker — its Claude adapter importing the proprietary SDK — died with the MIT flip and R2's reversal). However, **the MVP has since merged to main** (PR #1) and the disposition, canvas, and orchestrator work all build on its event-sourced core, so the *practical* posture is: **own core, mine T3's parts.** Replacing the core with T3 is no longer live unless Rai explicitly reopens it; the reopened question is recorded here so the provenance is honest rather than quietly re-closed.
+
+### 2.3 The canvas paradigm (adopted 2026-08-06)
+
+[[Rennet Canvas Paradigm]] is adopted in full, as refined by Rai's answers to its seven open questions (2026-08-06 voice). Summary of what is now settled; the doc carries the detail:
+
+- **Vocabulary (Q1):** *angle* = the lens; *canvas* = the stateful per-review surface instance, scoped `(reviewId, patchsetId, angle)`. **Five canvases + the blast-radius OVERLAY** — the overlay paints amber onto the other canvases and owns no surface of its own.
+- **Layers:** L0 substrate (deterministic, read-only) / L1 analysis (validator-admitted RSP docs, deterministically placed — **fleet agents never touch a canvas**; placement is a pure function; the canvas adds zero fabrication surface) / L2 dispositions (**user-sovereign**; no agent writes it; it is simultaneously read state, publish payload, and handoff bundle) / L3 annotations (orchestrator's marks, visually distinct glass).
+- **Ordering on the decisions canvas (Q2):** deterministic dependency-DAG order is the **baseline**; an **agent produces the final comprehension ordering** (high-level then bottom-up); the user does not approve it. Salience-as-tiebreak stays open.
+- **Annotation lifetime (Q3):** ephemeral but **session-scoped** — L3 marks persist for the whole ongoing review session, vanish at session end; pin promotes keepers.
+- **Bulk proposals (Q4):** ALLOWED. The orchestrator may draft one proposal covering many anchors (e.g. approve all verified-noise groups); the user accepts the bundle in one act. Accepting is a user act and only then does anything become L2 — bulk changes the batch size, never the sovereignty.
+- **View context (Q5):** not a privacy issue. The user's current canvas/lens/viewport/selection is **injected at request time** as disambiguation ("requested a change while on the decisions lens"), so the user never restates context. Never dwell/pace metrics — those remain not-a-setting.
+- **Four-actor interaction contract:** engine (project/invalidate/carry/order, internal) · fleet (emit RSP docs, nothing else) · orchestrator (describe/view/focus/annotate/propose/recompute via MCP tools, `visibility: model`) · user (disposition/adjudicate/expand/select/pin, direct UI). Enforced **structurally** — the orchestrator's tool surface simply does not contain user-only or engine-only operations. "The human still disposes" is a property of the wiring.
+- **Hybrid implementation:** bespoke event-sourced canvas state inside `core` (R17/R28/R29/R8 govern it; renderer reaches it via the IPC command map only); orchestrator-facing surface as an **in-process MCP server** — same contract for claude/codex/omp slots, no `if (harness === X)`. MCP-Apps-wholesale rejected; its grammar (visibility split, context-update notifications) borrowed deliberately. Canvases-as-MCP-Apps in third-party hosts stays a LATER option the design keeps open.
+
+### 2.4 Orchestrator context access (adopted 2026-08-06)
+
+[[Rennet Orchestrator Context Access]] is adopted. It supersedes the fat-primer sketch in [[Rennet Canvas Paradigm]] §4.3 and answers OQ6's cap question with **neither cap nor scale — retrieve**. Rai's superseding direction (voice, ~13:00): capping the primer is wrong, dumping the whole context is wrong; **arm the orchestrator with tools + on-demand retrieval + possibly a background knowledge agent**, and make sure it knows (a) it CAN ask, (b) HOW, (c) WHAT comes back. Settled design:
+
+- **The primer is a MAP of the context, not a container** (~2–4 KB, deterministic, versioned, digest-in-provenance): review identity, freshness verdicts, count-level canvas state, the protocol card, tool index, run-ledger headline.
+- **`canvasOps@2`** — one versioned surface: the §2.3 interaction ops plus the retrieval family (`canvas.read/thread`, `diff.read/search/structure`, `context.map/file/knowledge`, `run.ledger/provenance`), all read-only, uniform envelope `{data, evidence, freshness, total/cursor, truncated}` — no silent caps (never-cap applied to the machine reader), staleness on every reply (R30 at the reply, not just boot), "nothing found" distinguishable from a failed search.
+- **`context.ask`** — the background knowledge agent lives **behind one tool**. v1 may implement it as deterministic composition + light-tier summarise; upgrading to a real warm sub-agent changes nothing on the orchestrator's side. It emits a validated `answer` document (`{answer, evidence, confidence, unanswered?}`); honest refusal is a first-class success. Sync in v1 with a hard latency budget; async-ticket path only if the measurement (E3) demands it.
+- **The tool surface IS zoom for the orchestrator** — the product thesis pointed inward: describe-at-counts → cohorts → elements → read-one-thing is the same altitude ladder the user has.
+- **Five experiments (E1–E5)** settle the empirical unknowns (primer ablation, ask quality, latency, does-it-actually-ask, cache economics). "Answer this empirically and figure it out" — Rai's words; E1–E5 are the plan.
+
+### 2.5 The comment-refinement loop (core feature — Rai, 2026-08-06 voice; "needs to be recorded everywhere relevant")
+
+When the user comments / requests a change / disapproves, **the raw input is NOT what gets posted or handed off.** The agent interprets and translates it:
+
+1. **Write it messy** — the user's disposition body is a raw draft; being lazy/vague/half-formed is the supported path ("smooth and quick").
+2. **Agent interprets inline** — if unclear, the agent replies **inline to that disposition** (a per-diff back-and-forth around that little piece of the diff): clarifies, suggests different approaches, or interprets and asks "is this what you mean?" — the user approves.
+3. **The cleaned version is what lands** — on PR-review publish, what posts is the **refined, investigated, properly-processed form**, never the messy raw text. The publish-as-preview sheet shows the cleaned artifact before signing. On the own-branch path, the handoff bundle (§2.1) carries the refined form to the coding harness.
+
+Mechanism: the per-diff inline conversation is the disposition's `thread`; the disposition carries `raw` + `refined` + `published` forms (§2.1 model). This **extends the handoff loop to the comment-authoring side** and ties directly into publish-as-preview. ⛔ Recorded, per Rai's instruction, in: this section; the disposition data model (§2.1); [[Rennet Canvas Paradigm]] L2 (`canvas.thread` already reads the clarification thread); and the publish-sheet slice. **The detailed design is [[Rennet Comment Refinement Loop]]**; the build issue (#19) is gated on it.
+
+---
+
+## 3. Frozen core, adjustable, open
+
+### Frozen — no agent may change these without escalating to Rai
+
+**Identity and licence**
+- Name **Rennet**. Private source lives in `rbutera/rennet`; public organisation, npm, domain, social, and release registrations remain RAI-ONLY. No public publishing or announcing.
+- **MIT throughout, one licence for every package** (Rai, 2026-08-06). No AGPL, no Apache-2.0 carve-out, no per-package licence variation. The `protocol`/`types` **import-nothing rule survives as an architectural boundary**, not a licensing one. SPDX headers and REUSE lint are no longer required by the licence structure; a single top-level `LICENSE` plus a `NOTICE` for vendored third-party content is sufficient.
+- Rai is sole copyright holder: **no outside code contributions before the policy lands (R22), no AI-attribution trailers, ever.**
+- The Claude adapter **uses `@anthropic-ai/claude-agent-sdk`**, passing the user's installed `claude` binary so auth stays on their subscription (R2, superseded 2026-08-06). Still frozen: **never read a credential** (adapter plan D6) and **never bundle a harness binary of our own** — the SDK's bundled per-platform executables are stripped at packaging, and the user's installed harness is always the one that runs. ⭐ **The adapter asserts `apiKeySource === 'oauth'` on every session's init frame and surfaces a visible warning if a metered API key has taken over** — detection, not prevention, and a guarantee the clean-room path could not have given for free. Design note in [[Wingman Harness Adapter Protocol]] §0.2.
+- This is Rai's personal product. **Never the enterprise client time/resources/repos for development, fixtures, calibration, or model-backed dogfood without explicit written approval.** Client mode never mutates the source checkout or its Git metadata.
+
+**Product doctrine (added 2026-08-06)**
+- **The four product principles of §1** (aggressive roll-up default; approve at any granularity; free zoom; smooth-and-quick) are frozen product doctrine. Canonical statement: [[Rennet Product and Vision]] §3.
+- **Grouping is HARD-BAKED** — one opinionated roll-up behaviour, never project-configurable (OQ17 closed by Rai, 2026-08-06).
+- **Ordering is logical and agent-owned**: deterministic DAG baseline, agent-produced comprehension ordering, no user approval step for ordering, never danger/blast-radius/salience as the ordering signal.
+- **Decisions are never capped or truncated.**
+- **Read state is action-defined** (approve / request-change / ask-question; never scroll/dwell).
+- **L2 is user-sovereign**: no agent, including the orchestrator, may write a disposition; proposals become real only through user adjudication. The actor partition is enforced structurally (tool-surface composition), never by prompt.
+- **The published form of a user's comment is the refined form** (§2.5), previewed before signing; raw drafts never leave the machine unreviewed.
+
+**Data model and state**
+- Four nouns (repo/worktree/workspace/changeset); state keys on repo identity + changeset, never a path; durable identity is the RepoRecord (R19).
+- Occurrence-ID + lineage-graph hunk identity; read state never auto-carries; ambiguity fails closed (R8).
+- Reviews contain append-only immutable patchsets. Local capture includes branch, index, unstaged, and non-ignored untracked state; a local edit or remote PR update creates a new patchset (R28).
+- Exact unaffected analysis may remain current. Direct changes invalidate it; dependency/context changes make it potentially invalid. Prior output remains visible until explicit model-backed regeneration succeeds (R29).
+- `.rennet/` owns durable project config, deterministic default-branch snapshots, and evidence-backed learned knowledge only. Freshness is input-fingerprint based and stale context is never consumed (R27/R30).
+- Events append-only; upcasts at read; projections disposable; schema-version gate + downgrade refusal on boot; pre-migration backups.
+- Delete-review physically purges every Rennet-controlled copy. Unknown event types preserve their bytes but block projection, completion, regeneration, and publishing (R32).
+- Private events structurally excluded from publish, proven by noninterference property tests (R17). Pace/coverage privacy is not a setting.
+- Publish is a three-phase explicit human act, idempotent, with outcome-unknown reconciliation; one batched GitHub review event; degradations visible in the sheet before signing.
+- Done/publish block on incomplete ingestion; totality/residue guarantee; the noise angle is the floor.
+
+**Engine and protocol**
+- Hybrid chunking (R9); deterministic floor always present and offline-capable.
+- The DSL: agents surface, the validator decides; **agents never mint identity**; quotes verified byte-for-byte; closed vocabularies; validator is a pure function that structurally cannot see guidance.
+- Utility batching + the <15s / <5-invocation budget as a mechanical gate (R10). Never process-per-hunk.
+- Three-layer capability flags, earned by conformance, never declared from docs. No `if (harness === X)` above the adapter boundary.
+- Harnesses run against app-owned immutable materialisations with explicit current context; writes, execution, ambient MCP/hooks/settings, and reads outside the offered roots are denied where enforceable. Any unproven ambient authority is disclosed and makes the context manifest non-exhaustive (R31).
+- Instruction layer: the contract is not user-configurable, the voice is; shared layers may assert facts and reduce work, never raise spend; repo files are untrusted input behind the trust gate; context and guidance read at base ref for others' PRs.
+- Zero-config North Star: discovery never requires config to be correct; no key ceremony; login-shell PATH harvest, never `which`.
+
+**LSP**
+- Materialisation is the mechanism; two refs → two app-cache-owned source trees → two servers. Never use `git worktree add` against the source repository or link writable server paths into user-owned dependencies. Every answer is tier-labelled; degraded-result detector + positive-control readiness probe are load-bearing; detect-never-install; definitions are context, never coverage; open-in-editor discloses the copy before the click.
+
+**UI doctrine**
+- Glass is chrome; code is opaque; paper is what leaves the machine. Backlight blue = private-to-reviewer only; amber = blast radius/disagreement; no fourth hue. Serif only on paper. `CodeView`, never bare `FileDiff`/`PatchDiff` (R16).
+
+**Process**
+- **Ship to main** (Rai, 2026-08-06 ~13:49): no GitHub PR ceremony for this repo. Quality gates are internal and mandatory before every push: openspec proposal for non-trivial slices, /wave dual-agent review, the FULL gate suite green, never `--no-verify`. *(This supersedes the earlier protected-`main`/PR-per-bead process to that extent; everything else stands:)* gates run the FULL suite before every push; spikes produce verdicts, never merged code; a check that cannot fail has not passed — every gate ships with failing fixtures and a self-test.
+- Nx owns task ordering and deterministic local caching. Vite+ and remote cache are deferred; packaging has one owner, Electron Forge (R34).
+
+### Adjustable — defaults Navi may revise with recorded evidence
+
+Similarity/matcher thresholds and features (post-spike); chunk budget (400) and order strategies; discovery caps (depth 4 / nodes / wall-clock); context budgets (96KB/32KB); the 8KB instruction budget for *fleet base instructions* (⛔ struck *as applied to the orchestrator primer* — the primer is a map, not a budgeted dump, §2.4); validator size limits; batch sizes in the routing matrix (post-spike); LSP idle/server/RSS/disk budgets, band cap (40 lines), breadcrumb depth (3); app-cache dependency materialisation policy; ephemeral-delta coalescing (16ms); projection table set; backup rotation (5); Tier-0 ranking heuristic; `--find-renames` threshold. **Added 2026-08-06:** cohort-size / roll-up-aggressiveness tuning parameters (evidence-based, from the uncapped-distribution measurement); `context.ask` latency budgets and default tier; canvas L3 annotation session-scoping details; per-response byte caps on `canvasOps@2` envelopes. ⛔ Struck: "decisions-cap number (measure first, S17)" — there is no cap; the measurement survives only as cohort-size tuning input.
+
+### Open questions (consolidated; each is a bead/issue or lives inside one)
+
+1. JSON Schema subset accepted by `claude -p --json-schema` / codex `outputSchema` (spike; flattening fallback pre-designed) — OPEN.
+2. Occurrence-manifest fit in a heavy turn's budget; two-phase file→hunk offering vs last-resort provisional anchors — OPEN.
+3. ✅ **CLOSED (Rai, 2026-08-06): `angles.decisions.maxItems` does not exist.** Decisions are never capped or truncated — rolled into cohorts, ordered, collapsible. The measurement this question asked for survives only as *cohort*-size tuning input.
+4. ✅ **CLOSED (Rai, 2026-08-06): a chunk is READ when the reviewer takes an ACTION on it** — approve, request-change, or ask-question. Never scroll position or dwell time.
+5. Quote-match rejection rate on real diffs; normalisation width — OPEN.
+6. ✅ **CLOSED (Rai, 2026-08-06, superseding the earlier reframe):** ordering is **agent-owned comprehension ordering over the deterministic DAG baseline** (§1). The former "salience versus deterministic blast-radius as the ordering signal" question is dead — neither is the signal. **Residual open sliver:** does `salience` survive as a *within-cohort tiebreak* only ([[Rennet Canvas Paradigm]] OQ2)? Low stakes; agent-ordering makes it mostly moot.
+7. Spec-derivation reach — ⚠️ **LEADING RECOMMENDATION, PENDING RAI'S FINAL PICK, not a decision**: *derive-and-mark, falsifiably*. Where no committed spec, PR body, or ticket exists, infer intent from the diff, **label it `reconstructed / unconfirmed` wherever it is shown**, and ⛔ **never silently feed a derived requirement into the scope-creep detector** — an inferred requirement that quietly marks real code as UNCLAIMED manufactures a finding out of a guess. Rai to confirm or reject.
+8. Claim identity: does semantic matching need a model call at all — OPEN.
+9. ✅ **CLOSED as a design (Rai, 2026-08-06 + the adopted context-access doc).** The user always talks to **ONE orchestrator harness and session, which the user picks**; fresh sessions default; the orchestrator synthesises findings across the other harnesses and roles. Its full subsystem now exists: tool surface (`canvasOps@2`), primer-as-map, context-update stream, `context.ask` (§2.3–§2.4). Remaining unknowns are the E1–E5 experiments, not design questions. ⚠️ This is the one place Rennet must build for itself — [[T3 Code Integration Research]] measured that T3 Code *multiplexes* providers and never makes them collaborate.
+10. ✅ **CLOSED (Rai, 2026-08-06): nearest-ancestor first.** Monorepo sub-package settings resolve from the nearest ancestor outward; nested repo files are consulted only where that is insufficient.
+11. Config schema versioning detail (needed before the first key rename) — OPEN.
+12. ✅ **CLOSED (Rai, 2026-08-06): redetect on every launch.** Editor `auto` re-resolves per launch; running-bundle precedence remains a detail of that resolution.
+13. Trust-gate per-key granularity — watch, do not build.
+14. Home query composition (`involves:@me` is probably wrong alone); draft-PR APPROVE; multi-line anchor validity rules (GitHub spike answers most) — OPEN.
+15. Whether `exhaustive` context manifests can ever be true per harness (isolation spike) — OPEN.
+16. Windows/Linux signing cost (research only); docs/ licence choice — OPEN. *(Commercial-licence trigger wording is moot under MIT.)*
+17. ✅ **CLOSED (Rai, 2026-08-06): grouping is HARD-BAKED.** One opinionated roll-up behaviour; not project-configurable. The zero-config North Star wins the tension outright. ("close grouping out as hard-baked.")
+18. **NEW:** `context.ask` spend visibility — ledger-only vs. visible per-review ask-budget ([[Rennet Orchestrator Context Access]] OQ1; recommendation: ledger-only in v1). Rai's call, low urgency.
+19. **NEW:** the protocol card's voice ([[Rennet Orchestrator Context Access]] OQ3) — one read from Rai wanted; it is the closest thing the orchestrator has to a constitution.
+
+---
+
+## 4. M0 Dogfood cut (reconciled; amended 2026-08-06)
+
+Target: Rai daily-driving his own local diffs and permitted personal/public pull requests. Client repositories are excluded unless separately authorised in writing. Rough edges allowed, nothing public. This milestone is **M0 Dogfood**, not the six-angle public 1.0 promise.
+
+**Amendments, 2026-08-06:**
+- **The MVP is merged** (PR #1): local immutable capture, append-only SQLite review state, patchset-scoped read progress, conservative invalidation, explicit regeneration, typed IPC, sandboxed Electron shell, Forge packaging. M0 items land as increments on main, not as a rebuild.
+- **The canvas objects are named into the cut** (per [[Rennet Canvas Paradigm]] §5.3 — a re-description of scheduled work, not new scope): canvas state model + deterministic placement over the M0 angles; L2 dispositions (slice 1 merged); L3 annotations + proposals; the in-process canvas MCP server (`canvasOps@2`, the one genuinely new M0-adjacent object); the priming manifest + protocol card; the context-update stream (`selected`, `disposed`).
+- **The decisions angle ships uncapped**: cohorts in logical comprehension order, collapsible, bulk-adjudicable.
+- **The comment-refinement loop** joins M0 at the disposition/publish seam ([[Rennet Comment Refinement Loop]]; issue #19).
+
+**In (MUST):** both changeset sources; Claude adapter — **an `@anthropic-ai/claude-agent-sdk` integration** passing the user's installed `claude` binary (was "clean-room CLI wrapper (process-per-turn)" until R2 was reversed 2026-08-06) + discovery + conformance suite + utility tier (batched) + RoutePlan budget gate; GitHub rung 0 + rung 2 auth with SSO partial-results detection, home surface, deep fetch, local-diff-first, REST-conditional polling, force-push snapshot + auto-reopen, publish batch→sign→submit with degradation ledger and the two sheet variants; occurrence/lineage identity engine; hybrid chunking with deterministic floor; event store with schema versioning, upcasts, privacy property tests, publish idempotency; angles: **spec (incl. derivation), sequence, decisions, blast radius, noise** — claims-and-evidence and adjudication ship **schemas only**; DSL v1 set (envelope, provenance, anchors, validator, skeleton/proposal/decision/finding/test.mapping/noise.patternProposal/spec.model, zero-hunk support, validation.report + retry, conformance corpus); instruction layer (versioned bases, guidance on the ladder, trust gate, manifest + open-assembled-prompt, hostile fixture); settings v1 per settings plan §7 (registry, resolver with `append`, records, trust gate, context pipeline, first-run zero-config + fresh-HOME test, discovery golden test); impl↔tests toggle; findings queue with severity floor + sticky dismissal; LSP Tier 0 everywhere + TS Tier 1 (materialization, degraded detector, readiness probe, inline bands, hover, alsoInChangeset) + open-in-editor with disclosure; `CodeView` surface + coverage UI + anchored threads + diff chat (one harness); command registry/palette; glass tokens + chrome (R26); unsigned local dev build.
+
+Also mandatory from [[Rennet Architecture Contracts]]: `.rennet` deterministic project snapshots and learned knowledge with freshness gating; app-cache-owned staging/materialisations; immutable patchsets; automatic current/invalid/potentially-invalid classification after local or remote updates; explicit affected-only regeneration with stale output retained; canonical artifact provenance; command receipts; physical review purge; unknown-event blocking; honest harness egress/spend disclosure; pure author-side PR preview.
+
+**Later:** codex + omp adapters (interfaces and conformance ready); disagreement emission; claims emission; anomaly docs; references (`gr`), C# Tier 1, docked definitions, promoteToWorktree; signing/notarization/updater/release CI (pre-public-release phase); GitHub App device flow; bot-comment ingestion; mobile everything; watch mode; CI comparator; repo-file **write** ceremony; pin UI; presets; export/import; RSP publication (launch act).
+
+**Never in v1 (by doctrine):** auto-approve/auto-comment; telemetry; diagnostics stream (LSP L12); textual DSL; canvas/Monaco renderer *(the diff surface stays `CodeView`; "canvas" in §2.3 names the state model, not a `<canvas>` renderer)*; harness-degenerate per item.
+
+---
+
+## 5. Pre-build spikes, ranked by information value
+
+The entry gate: **no dependent build work before the relevant spike lands; independent work (toolchain bootstrap, protocol skeletons, gates) may proceed in parallel.** Every spike closes with a written verdict under `docs/`; throwaway spike code is never promoted directly into production packages.
+
+1. **Matcher precision (lineage graph) — OPEN.** Build the matcher alone; mutation fixtures (rename/move/dup/split/merge/ambiguous) + 10–20 permitted public, personal, or synthetic patchset pairs; measure auto-match precision and recall separately; auto-carry requires ~100% precision; ambiguity fails closed. Client PRs are prohibited as fixtures. Wrong = state silently carried to wrong code, the product's worst failure. (Critique risk 1.) ⭐ **Re-weighted 2026-08-06: this spike now gates three things** — read-state carry, the §2.1 delta re-review, **and fuzzy-match disposition carry** (issue #16). It was already ranked first; it is now first by a wider margin.
+2. **DSL schema subset (D1).** ~1 hour: which JSON Schema features `claude -p --json-schema` and codex `outputSchema` accept (unions, `$ref`, `minItems`). Gates the entire document shape; flattening fallback pre-designed.
+3. **Event-store + publish failure injection — CLOSED.** [[Rennet Spike - Event Store and Publish Failure Injection]] proves replay, upcasts, private-event noninterference, command deduplication, before/after-acceptance failure, query-before-retry reconciliation, and unknown-event fail-safe behaviour. Reuse the harness as the seed for production tests. (Critique risk 2.)
+4. **Decomposition quality comparison.** 8–12 representative large PRs; deterministic vs harness-first vs validated-hybrid; blind comparison on regroups, missed dependency pairs, time-to-explain, preference. Decomposition quality IS the product. (Critique risk 3.)
+5. **Capability-gating stress + live codex turn.** `canGateToolCalls` across permission modes, org ask-rules, cancel-while-pending, unsupported binary; codex approval round trip and `turn/steer` reliability. (Adjudication pt 1; adapter B3.)
+6. **L-B13 LSP ladder — CLOSED for the TS7 promotion decision.** [[Rennet Spike - TypeScript LSP Ladder]] measured three fresh native-TS7 server runs over an 81,397-file public checkout: 37.45ms median initialize, 75.47ms first hover, 345.95MB RSS, with positive definition, reference, and prepare-rename controls. Promote native `tsgo --lsp --stdio` for TS7 repos; keep fallbacks and omit rename from v1 UI.
+7. **Claude CLI probe** (subsumes retired SDK spikes): `-p --resume --fork-session --json-schema` fidelity, prompt-cache across resume/fork (decides N=3 affordability), context-isolation proof per harness (gates `exhaustive`), batching curve per-request/10/50/whole-diff (adjudication pt 2 spike; sets the §5.2 batch numbers).
+8. **GitHub publish batch + read-back** on a throwaway repo: threads-batch error shapes, partial failure, `startLine>line`, out-of-diff anchors, thread-ID matching after batch. Every publish-path decision is currently introspection-only.
+
+Second rank: Pierre 1.3.2 re-measure + CPU throttling remains blocked by the npm cooldown; the refreshed prototype covers the product invalidation state but not Pierre annotation recycling. **Electron 43 `node:sqlite` is CLOSED** by [[Rennet Spike - Electron 43 node sqlite]]; use the built-in store and retire the WASM/Kysely bridge. Outdated-thread re-anchor remains P2. See [[Rennet Evidence Gate Status]].
+
+---
+
+## 6. Pointers for depth
+
+| Topic | Document | Read for |
+|---|---|---|
+| What the product is — the canonical narrative, principles, feature set | [[Rennet Product and Vision]] | Read first |
+| Product decision ledger (supreme), market, lens validation | [[Code Review Harness App]] | The append-only Decisions section outranks all plans |
+| Canvas paradigm: layers, actors, ops, placement | [[Rennet Canvas Paradigm]] | §2 data model, §3 interaction contract, §5 hybrid decision |
+| Orchestrator context: primer-as-map, `canvasOps@2`, `context.ask`, protocol card, E1–E5 | [[Rennet Orchestrator Context Access]] | The whole doc; §4 card draft for Rai's read |
+| Comment-refinement: lifecycle, refiner contract, inline thread, slices | [[Rennet Comment Refinement Loop]] | Gates issue #19 |
+| Packages, ports, IPC, event store, process model, v1 table | [[Wingman Architecture Plan]] | D1–D15 as amended by R1–R26; type sketches |
+| Adversarial corrections to the architecture | [[reviews/wingman-architecture-codex-critique]] | R8, R9, R17–R19 detail |
+| Harness protocol, per-harness mappings, discovery, auth posture, two-tier LLM | [[Wingman Harness Adapter Protocol]] | §1 protocol, §3 discovery, §5 disagreement (as amended), §6 persistence |
+| Claude adapter verdict, capability layers, batching budget, N=3 redesign | [[reviews/wingman-adapter-licensing-codex-adjudication]] | R2, R10, R6, R13 detail |
+| Auth ladder, GraphQL/REST split, publish pipeline, polling, SSO | [[Wingman GitHub Integration Plan]] | All of it stands as written (minus route-handoff line, R15) |
+| Licence mechanics, signing/notarization, updater, CI/CD, contribution policy | [[Wingman Distribution and Licensing Plan]] | R3–R5, R14, R22 detail; §5 dependency audit |
+| Repo layout, gates, tsconfig strategy, CLAUDE.md draft, first 20 commits | [[Wingman Repo Bootstrap Plan]] | The build sequence; CLAUDE.md regenerated per R2/R5/R22 |
+| Packages, exact pins, licences, overlap, Nx/Vite/Electron/tooling policy | [[Rennet Dependency Standard]] | Current dependency authority; supersedes historical stack tables |
+| Settings ladder, records, trust gate, discovery, context pipeline, first run | [[Wingman Settings and Setup Plan]] | §1–§6 stand; §1.3 amended by R12 |
+| Materialization, tiers, degraded detector, position mapping, editor launch | [[Wingman LSP Integration Plan]] | L1–L16 stand as written |
+| DSL documents, anchors, validator, routing matrix, instruction layer | [[Wingman Surfacing DSL and Model Routing Plan]] | §1–§7 stand; R12/R13 ratify its two requests; §2.5 D11 salience-cap framing superseded (§8) |
+| Rendering verdict and numbers | [[Wingman Spike – Pierre Diff Virtualization]] | R16, R25 |
+| Identity package, voice, namespace checklist, launch motions, RAI-ONLY list | [[Wingman Branding Plan]] | Registration mechanics; §4 alibi line amended by R15 |
+| Orientation + working agreement for the building agent | [[Rennet Navi Handoff]] | The working agreement and RAI-ONLY list; the backlog is the issue queue (§7) |
+| The issue-seeded autonomous pipeline | this document §7 + the `openspec-seed` issue queue on `rbutera/rennet` | How ticks pick work |
+
+---
+
+## 7. Execution model: the issue-seeded openspec pipeline (2026-08-06)
+
+Rai's design, verbatim intent: *"break it down into tasks, create GitHub issues which contain the seeds for openspec proposals, and then impulse-continue ticks can just check which issue next needs to be implemented and do an openspec proposal and wave on that."*
+
+**The queue.** Every implementable slice is a GitHub issue on `rbutera/rennet` labelled **`openspec-seed`**, plus one priority label (`P0`–`P3`), plus **`blocked`** when a dependency is not yet satisfiable. Each issue is a **self-contained seed for an openspec proposal**: what to build, the governing decisions (so a context-free implementer can start), acceptance criteria, and explicit dependencies (`Depends on: #N…` — all must be CLOSED; external blockers are stated as a checkable condition).
+
+**The tick loop** (impulse-continue, autonomous):
+
+1. `gh issue list -R rbutera/rennet --label openspec-seed --state open` → pick the **highest-priority open issue with no `blocked` label whose `Depends on:` issues are all closed** (ties: lowest issue number).
+2. Run **`/opsx:propose`** (openspec proposal) seeded from the issue body; the proposal names the issue (`seeds #N`).
+3. Implement with **`/wave`** (dual-agent review gates), full gate green, **commit directly to main** (the ship-to-main rule, §3 process; never `--no-verify`).
+4. Close the issue with a comment carrying the commit SHA(s), what was verified, and "What I could not verify:". Un-`blocked` any issue whose last dependency just closed.
+5. New scope discovered mid-slice → a **new issue**, never scope creep.
+
+**Invariants:** frozen-core changes still escalate to Rai regardless of what an issue says; RAI-ONLY actions (registrations, publishing, spend, anything external-facing) never ride an issue; a spike-shaped issue produces a verdict doc, never merged production code.
+
+---
+
+## 8. Stale-spot strip list (the salience/danger-ordering sweep, 2026-08-06)
+
+Superseded by correction 8 + Rai's Q2 refinement (§1 ordering). Spots in **this document** are fixed by the 2026-08-06 rework; spots in **other docs** are the subject of issue #27:
+
+| # | Location | Stale text | Fix |
+|---|---|---|---|
+| 1 | §1 lens table, Decisions row | "ordered by salience" | ✅ fixed (logical comprehension order; the table now lives in [[Rennet Product and Vision]] §4.1) |
+| 2 | OQ6 | "salience versus deterministic blast-radius as the ordering signal" | ✅ fixed (closed; agent-owned ordering; tiebreak sliver only) |
+| 3 | Navi Handoff §1 "Ratified essentials", Decisions bullet | "ordered by salience" | ✅ fixed by the 2026-08-06 Handoff rework |
+| 4 | Backlog Archive bead 76 title + body *(formerly Navi Handoff bead 76)* | "salience-ranked capped-queue view"; "`salience` mandatory (V302 — the cap is a view)" | edit pass (issue #27): no cap, no view-cap; `salience` demoted to optional tiebreak metadata pending OQ2-sliver |
+| 5 | Backlog Archive bead 104 title + body | "salience-ordered COHORTS"; "ordered by salience, and collapsible" | edit pass (issue #27): logical comprehension order |
+| 6 | Backlog Archive bead 105 | "Decide `angles.decisions.maxItems`" | edit pass (issue #27): repurpose as cohort-size tuning measurement; no maxItems |
+| 7 | DSL plan §2.5 D11 (`decision.record`) | salience-mandatory V302 + capped-queue framing | edit pass (issue #27); schema slice (issue #8) carries the corrected shape |
+| 8 | Blast-radius framing anywhere presented as an ordering input (arch B26 consumers, settings S17) | danger/blast-radius as ordering | edit pass (issue #27): blast radius is an OVERLAY (paint), never an ordering signal |
+
+---
+
+*Consolidated 2026-08-06: the 2026-08-05 Master Plan (as amended through PR #2) merged with the 2026-08-06 rework (canvas paradigm + orchestrator + refinement loop + issue-seeded pipeline, authored on Rai's instruction) and renamed on Rai's instruction. Provenance preserved throughout; nothing deleted, everything superseded is marked. R-numbers and §-numbers are stable across the rename.*

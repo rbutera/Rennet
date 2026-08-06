@@ -9,7 +9,7 @@ updated: 2026-08-05
 # Rennet Branding Plan
 
 > [!IMPORTANT] Current implementation authority, 2026-08-05
-> The name is settled: **Rennet**. Digestif and Wingman material below is naming history only. Current product copy follows [[Rennet Master Plan]] and [[Rennet Architecture Contracts]]: six angles (Spec, Sequence, Decisions, Claims and Evidence, Blast Radius, Noise), no Subtraction angle, no route handoff, and author-side review first. Privacy copy must say **“no Rennet backend”** and disclose that selected local harnesses/providers may receive code and context; never claim universally that nothing leaves the machine.
+> The name is settled: **Rennet**. Digestif and Wingman material below is naming history only. Current product copy follows [[Rennet Contracts and Rulings]] and [[Rennet Architecture Contracts]]: six angles (Spec, Sequence, Decisions, Claims and Evidence, Blast Radius, Noise), no Subtraction angle, no route handoff, and author-side review first. Privacy copy must say **“no Rennet backend”** and disclose that selected local harnesses/providers may receive code and context; never claim universally that nothing leaves the machine.
 > The private personal source repository `github.com/rbutera/rennet` now exists by Rai's explicit decision. Historical “do not create the repo” rows below are superseded. Public organisation, npm, domain, social, and release registrations remain RAI-ONLY.
 
 The execution plan for the brand, the launch surface, and the namespace, for [[Code Review Harness App]]. Discovery, positioning and naming history live in [[Code Review App Branding Questions]]; the visual system lives in [[Code Review App Design Directions]].

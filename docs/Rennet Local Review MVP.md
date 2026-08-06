@@ -4,7 +4,7 @@ categories: [project]
 status: implemented
 created: 2026-08-05
 updated: 2026-08-05
-related: ["[[Rennet Master Plan]]", "[[Rennet Architecture Contracts]]", "[[Rennet Dependency Standard]]", "[[Rennet Evidence Gate Status]]"]
+related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Architecture Contracts]]", "[[Rennet Dependency Standard]]", "[[Rennet Evidence Gate Status]]"]
 ---
 
 # Rennet Local Review MVP

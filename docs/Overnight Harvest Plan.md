@@ -4,7 +4,7 @@ categories: [project]
 status: active
 created: 2026-08-06
 updated: 2026-08-06
-related: ["[[Rennet Master Plan]]", "[[Rennet Dependency Standard]]", "[[T3 Code Integration Research]]"]
+related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Dependency Standard]]", "[[T3 Code Integration Research]]"]
 ---
 
 # Overnight Harvest Plan

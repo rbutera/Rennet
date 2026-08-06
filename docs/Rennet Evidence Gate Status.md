@@ -4,13 +4,13 @@ categories: [project]
 status: active
 created: 2026-08-05
 updated: 2026-08-05
-related: ["[[Rennet Master Plan]]", "[[Rennet Decision Integration Tasks]]"]
+related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Decision Integration Tasks]]"]
 source: codex
 ---
 
 # Rennet Evidence Gate Status
 
-This is the current evidence ledger for [[Rennet Master Plan]] entry gates. A gate is closed only by a reproducible verdict, never by architectural confidence.
+This is the current evidence ledger for [[Rennet Contracts and Rulings]] entry gates. A gate is closed only by a reproducible verdict, never by architectural confidence.
 
 | Gate | Status | Evidence or blocker |
 |---|---|---|

@@ -12,7 +12,7 @@ updated: 2026-08-05
 # Code Review App UX Concepts
 
 > [!IMPORTANT] Exploration, not current specification
-> Use [[Rennet Master Plan]] and [[Rennet Architecture Contracts]] for implementation. Current product is Rennet with six angles and immutable occurrences/patchsets. Subtraction and route handoff are removed. Local edits create a new draft patchset, mark affected analysis invalid or potentially invalid, and offer explicit affected-only regeneration; the live tree never silently mutates an active review.
+> Use [[Rennet Contracts and Rulings]] and [[Rennet Architecture Contracts]] for implementation. Current product is Rennet with six angles and immutable occurrences/patchsets. Subtraction and route handoff are removed. Local edits create a new draft patchset, mark affected analysis invalid or potentially invalid, and offer explicit affected-only regeneration; the live tree never silently mutates an active review.
 
 Round-two discovery for [[Code Review Harness App]]: interaction concepts for the decisions made 2026-08-04 (multi-lens decomposition, diff chat, mobile as remote control, zero-config North Star). Builds on [[Code Review App UX Research]]. Thinking on paper, not specification.
 

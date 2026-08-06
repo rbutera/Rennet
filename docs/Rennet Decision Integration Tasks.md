@@ -4,13 +4,13 @@ categories: [project]
 status: active
 created: 2026-08-05
 updated: 2026-08-05
-related: ["[[Rennet Master Plan]]", "[[Rennet Architecture Contracts]]", "[[Rennet Evidence Gate Status]]"]
+related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Architecture Contracts]]", "[[Rennet Evidence Gate Status]]"]
 source: codex
 ---
 
 # Rennet Decision Integration Tasks
 
-Small documentation pass required before feature implementation. [[Rennet Master Plan]] remains authoritative.
+Small documentation pass required before feature implementation. [[Rennet Contracts and Rulings]] remains authoritative.
 
 - [x] **Write the canonical project-context contract.** Defined in [[Rennet Architecture Contracts]] §2 and integrated into the Master Plan and Handoff.
 

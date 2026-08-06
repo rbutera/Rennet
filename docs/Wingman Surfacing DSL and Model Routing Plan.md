@@ -9,7 +9,7 @@ updated: 2026-08-05
 # Rennet Surfacing DSL and Model Routing Plan
 
 > [!IMPORTANT] Current implementation authority, 2026-08-05
-> This is the Rennet protocol/routing plan under [[Rennet Master Plan]] and [[Rennet Architecture Contracts]]. Every admitted artifact binds to an immutable patchset and a valid project snapshot, records its complete input fingerprint and generator provenance, and explicitly supersedes prior output. Stale project context is not an allowed input. `append` is ratified as the fourth, guidance-only settings merge strategy. Subtraction remains retired; no separate queue or angle may be built for it.
+> This is the Rennet protocol/routing plan under [[Rennet Contracts and Rulings]] and [[Rennet Architecture Contracts]]. Every admitted artifact binds to an immutable patchset and a valid project snapshot, records its complete input fingerprint and generator provenance, and explicitly supersedes prior output. Stale project context is not an allowed input. `append` is ratified as the fourth, guidance-only settings merge strategy. Subtraction remains retired; no separate queue or angle may be built for it.
 
 The design for the things Rai named as the novel engineering in [[Code Review Harness App]] (2026-08-04 late evening, ratified verbatim): **a format/DSL a coding agent uses to surface the right areas**, and **model-tier routing** — heavy models where they reason, light models where they fetch. A later addendum, also ratified, completes the set with **the instruction layer** (§6): what we tell the models at each step, what context they get out of the box, and how a user customises that per repo, per workspace, or everywhere.
 

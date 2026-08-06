@@ -5,7 +5,7 @@ status: active
 created: 2026-08-05
 updated: 2026-08-05
 related:
-  - "[[Rennet Master Plan]]"
+  - "[[Rennet Contracts and Rulings]]"
   - "[[Rennet Navi Handoff]]"
   - "[[Rennet Decision Integration Tasks]]"
 source: codex
@@ -15,7 +15,7 @@ source: codex
 
 This note is the authoritative contract for project context, review snapshots, persistence, harness access, and publication in [[Code Review Harness App|Rennet]]. It records Rai's decisions from 2026-08-05 and resolves the relevant contradictions in [[Wingman Architecture Plan]], [[Wingman Settings and Setup Plan]], [[Wingman LSP Integration Plan]], [[Wingman Harness Adapter Protocol]], [[Wingman GitHub Integration Plan]], [[Wingman Surfacing DSL and Model Routing Plan]], and [[Wingman Repo Bootstrap Plan]].
 
-Where this note conflicts with those subordinate plans, **this note wins**. [[Rennet Master Plan]] remains authoritative outside this note's scope.
+Where this note conflicts with those subordinate plans, **this note wins**. [[Rennet Contracts and Rulings]] remains authoritative outside this note's scope.
 
 ## 1. Invariants
 
@@ -388,7 +388,7 @@ The contract is implemented only when all of these can fail and have been demons
 
 ## Related
 
-- [[Rennet Master Plan]]
+- [[Rennet Contracts and Rulings]]
 - [[Rennet Navi Handoff]]
 - [[Rennet Decision Integration Tasks]]
 - [[Wingman Architecture Plan]]

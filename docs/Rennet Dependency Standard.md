@@ -4,13 +4,13 @@ categories: [project]
 status: active
 created: 2026-08-05
 updated: 2026-08-05
-related: ["[[Rennet Master Plan]]", "[[Rennet Architecture Contracts]]", "[[Rennet Navi Handoff]]"]
+related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Architecture Contracts]]", "[[Rennet Navi Handoff]]"]
 ---
 
 # Rennet Dependency Standard
 
 > [!IMPORTANT] Implementation authority, verified 2026-08-05
-> This is the authority for dependency selection, package ownership, toolchain integration, and version policy. It supersedes package recommendations in [[References/Desktop and Mobile Stack 2026]], [[Wingman Architecture Plan]], [[Wingman Distribution and Licensing Plan]], and [[Wingman Repo Bootstrap Plan]]. Product and data contracts still come from [[Rennet Master Plan]] and [[Rennet Architecture Contracts]].
+> This is the authority for dependency selection, package ownership, toolchain integration, and version policy. It supersedes package recommendations in [[References/Desktop and Mobile Stack 2026]], [[Wingman Architecture Plan]], [[Wingman Distribution and Licensing Plan]], and [[Wingman Repo Bootstrap Plan]]. Product and data contracts still come from [[Rennet Contracts and Rulings]] and [[Rennet Architecture Contracts]].
 
 Rennet should use mature plumbing and own only the behavior that is its product. A package is not adopted because it is fashionable or saves a small function. It is adopted when it removes a maintained subsystem, has a healthy primary source, has a compatible licence, and can satisfy Rennet's privacy, determinism, and fail-closed contracts.
 

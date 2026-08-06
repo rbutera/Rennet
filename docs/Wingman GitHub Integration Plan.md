@@ -9,7 +9,7 @@ updated: 2026-08-05
 # Rennet GitHub Integration Plan
 
 > [!IMPORTANT] Current implementation authority, 2026-08-05
-> Product name is **Rennet** and the forge-neutral boundary is `ForgePort`. [[Rennet Master Plan]] and [[Rennet Architecture Contracts]] override stale terminology below. Local author-side review produces a PR title/body preview and never pushes. Every GitHub mutation is a separate explicit, idempotent human action. Remote-head movement creates a new immutable patchset; Rennet updates only affected analyses and never mutates the prior synthesis in place. Route handoff is removed, Subtraction is not an angle, and content hashes are lineage evidence rather than identity.
+> Product name is **Rennet** and the forge-neutral boundary is `ForgePort`. [[Rennet Contracts and Rulings]] and [[Rennet Architecture Contracts]] override stale terminology below. Local author-side review produces a PR title/body preview and never pushes. Every GitHub mutation is a separate explicit, idempotent human action. Remote-head movement creates a new immutable patchset; Rennet updates only affected analyses and never mutates the prior synthesis in place. Route handoff is removed, Subtraction is not an angle, and content hashes are lineage evidence rather than identity.
 
 The GitHub layer for [[Code Review Harness App]]. The product name is Rennet; the filename is retained only to preserve existing Obsidian links. Personal product, not the enterprise client work.
 

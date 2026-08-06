@@ -10,7 +10,7 @@ updated: 2026-08-05
 
 > [!IMPORTANT] Current implementation authority, 2026-08-06
 > ⛔ **SUPERSEDED 2026-08-06: the banner below (originally 2026-08-05) restated two rules that are now reversed. Rennet is MIT throughout — there is no Apache-2.0 / AGPL-3.0-only split any more, every package is MIT. And the Claude Agent SDK is ADOPTED, not banned. See Master Plan R2/R3.**
-> Bootstrap **Rennet** from [[Rennet Master Plan]], [[Rennet Architecture Contracts]], and [[Rennet Navi Handoff]], not from stale recipes retained below. The final layout is `packages/{types, protocol, core, adapters, ui, instructions, tsconfig}` plus `apps/{desktop, mobile-placeholder}`, `scripts/`, and non-workspace `spikes/`. ~~`types` and `protocol` are Apache-2.0; the rest of the open app is `AGPL-3.0-only`~~ (superseded, see note above — all MIT). `ui` imports only `types` and `protocol`. Use `ForgePort`, never `GithubPort`. ~~Never import or bundle the Claude Agent SDK~~ (superseded, see note above — SDK adopted). Use occurrence/lineage identity, validated hybrid decomposition, and the six-angle set without Subtraction.
+> Bootstrap **Rennet** from [[Rennet Contracts and Rulings]], [[Rennet Architecture Contracts]], and [[Rennet Navi Handoff]], not from stale recipes retained below. The final layout is `packages/{types, protocol, core, adapters, ui, instructions, tsconfig}` plus `apps/{desktop, mobile-placeholder}`, `scripts/`, and non-workspace `spikes/`. ~~`types` and `protocol` are Apache-2.0; the rest of the open app is `AGPL-3.0-only`~~ (superseded, see note above — all MIT). `ui` imports only `types` and `protocol`. Use `ForgePort`, never `GithubPort`. ~~Never import or bundle the Claude Agent SDK~~ (superseded, see note above — SDK adopted). Use occurrence/lineage identity, validated hybrid decomposition, and the six-angle set without Subtraction.
 > The private monorepo now exists at `github.com/rbutera/rennet`. Historical neutral-name and “do not create the GitHub repo” steps below are superseded; public namespace and release registration remain deferred.
 > [[Rennet Dependency Standard]] also supersedes every Turbo, mixed Forge/electron-builder, direct package-version, and tool-overlap recipe below. The live toolchain is Nx + pnpm + Vite 8 + Electron Forge with local-only Nx caching.
 
@@ -530,7 +530,7 @@ readable chunks through several concurrent angles, keeps review state that survi
 force-push and a night's sleep, and lands the result as a normal GitHub PR review. The LLM
 proposes structure, the human disposes. No auto-approve, ever.
 
-Product thinking lives in this repository under `docs/`, led by `docs/Rennet Master Plan.md` and `docs/Rennet Architecture Contracts.md`.
+Product thinking lives in this repository under `docs/`, led by `docs/Rennet Contracts and Rulings.md` and `docs/Rennet Architecture Contracts.md`.
 Stack decisions and version facts: `/workspace/vault/References/Desktop and Mobile Stack 2026.md`.
 Design doctrine: `/workspace/vault/Code Review App Design Directions.md`.
 

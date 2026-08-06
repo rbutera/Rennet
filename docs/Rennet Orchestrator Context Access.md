@@ -4,7 +4,7 @@ tags: [rennet, architecture, orchestrator, retrieval, canvases]
 categories: [project]
 status: draft-for-rai
 created: 2026-08-06
-related: ["[[Rennet Canvas Paradigm]]", "[[Rennet Master Plan]]", "[[Rennet Architecture Contracts]]", "[[Wingman Surfacing DSL and Model Routing Plan]]"]
+related: ["[[Rennet Canvas Paradigm]]", "[[Rennet Contracts and Rulings]]", "[[Rennet Architecture Contracts]]", "[[Wingman Surfacing DSL and Model Routing Plan]]"]
 ---
 
 # Rennet Orchestrator Context Access
@@ -203,7 +203,7 @@ And the enforcement note that keeps this honest: the card is teaching, not secur
 
 1. **[[Rennet Canvas Paradigm]] §4.3**: the primer's role changes from container to map; the knowledge digest and inlined interaction contract leave the primer. Its OQ6 ("cap like an instruction budget?") is answered: neither cap nor scale — retrieve. Deterministic assembly + provenance digest survive unchanged.
 2. **`canvasOps@1` → `canvasOps@2`**: adds `canvas.read`, `canvas.thread`, the diff bucket, the context bucket (including `context.ask`, replacing §3.1c's thinner `context.query`), and the run bucket. One versioned surface, published under MIT alongside RSP as before.
-3. **[[Rennet Master Plan]] OQ9** gains its missing half: the orchestrator model now has a designed context-access subsystem, not just a session-shape ruling.
+3. **[[Rennet Contracts and Rulings]] OQ9** gains its missing half: the orchestrator model now has a designed context-access subsystem, not just a session-shape ruling.
 4. **The routing matrix** (DSL §5.2) gains one row: `answer` (the knowledge agent's doc type), light tier default, heavy behind budget gate.
 5. **The validator/doc-type family** gains the `answer` schema — smallest doc type in the system, same envelope + provenance rules.
 

@@ -4,7 +4,7 @@ tags: [rennet, architecture, canvases, orchestrator]
 categories: [project]
 status: draft-for-rai
 created: 2026-08-06
-related: ["[[Rennet Master Plan]]", "[[Wingman Surfacing DSL and Model Routing Plan]]", "[[Rennet Architecture Contracts]]"]
+related: ["[[Rennet Contracts and Rulings]]", "[[Wingman Surfacing DSL and Model Routing Plan]]", "[[Rennet Architecture Contracts]]"]
 ---
 
 # Rennet Canvas Paradigm
