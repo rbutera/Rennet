@@ -9,6 +9,22 @@ related: ["[[Rennet Master Plan]]", "[[Wingman Harness Adapter Protocol]]", "[[W
 
 # T3 Code Integration Research
 
+> [!IMPORTANT] ✅ This investigation triggered a decision, and the decision has been MADE
+> **Rai decided on 2026-08-06: Rennet goes MIT and ADOPTS the Anthropic Agent SDK.**
+> This document is preserved as the analysis that produced that decision, so ⚠️ **§3a, §3b and §3d
+> below reason about an AGPL-3.0-only Rennet that no longer exists.** Read them as the argument, not
+> as current rules.
+>
+> **What changed as a result:** §3d identified the blocking finding — T3 Code's Claude adapter links
+> the proprietary Anthropic SDK, which AGPL could not permit. ⭐ **That blocker is gone**, not because
+> the SDK's licence changed but because Rennet's did. And the auth trace gathered here is now the
+> **evidence Master Plan R2's reversal rests on**: `query()` spawns the user's own installed `claude`,
+> so it authenticates on their Claude subscription and costs nothing per token.
+>
+> ⭐ **The core verdict is unaffected and still stands: adopt-partial, not a T3 core.** Every reason in
+> §7 except the licence one was architectural — no cross-harness orchestration, no structured output,
+> none of the review product — and none of those changed. See Master Plan §2.2.
+
 Investigation into whether **T3 Code** can serve as the basis of Rennet's harness-orchestration core, and whether it can shortcut planned Rennet features.
 
 **Every claim below is pinned to a source.** All repository reads were taken against commit
