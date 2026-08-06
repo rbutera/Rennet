@@ -9,6 +9,7 @@ import type {
 } from "@rennet/types";
 import { v7 as uuidv7 } from "uuid";
 
+export * from "./decomposition";
 export * from "./harness";
 
 export type ReviewEvent =

@@ -346,3 +346,134 @@ export interface ValidationReport {
   rejectedItemCount: number;
   rejectedItems: RejectedItem[];
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Deterministic decomposition floor (issue #7)
+//
+// The always-present, offline, zero-model floor over a captured Patchset: it
+// classifies every hunk mechanical-vs-substantive, groups file→symbol, chunks to
+// a ≤400 changed-LOC budget (splitting an oversize hunk — R18), and computes the
+// code-dependency DAG plus its topological reading order. This is the floor under
+// the hybrid (Contracts R9), not the semantic authority, and it is the ordering
+// BASELINE the agent comprehension-ordering pass (#9) reads through. Ordering here
+// is LOGICAL/dependency-based, never danger/blast-radius/salience (Contracts §1,
+// correction 8).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The mechanical (non-substantive) classification of a hunk (Architecture Plan
+ * D7). A mechanical hunk is VERIFIED noise; this deterministic pass is the ONLY
+ * admission authority for it (R9). Closed vocabulary.
+ */
+export type MechanicalClass =
+  | "lockfile"
+  | "generated"
+  | "pure-rename"
+  | "formatting-only"
+  | "vendored"
+  | "mode-only";
+
+/** Whether a hunk carries reviewable meaning or is mechanical noise. */
+export type HunkKind = "substantive" | "mechanical";
+
+/**
+ * A contiguous change region within one file's patch — the atomic unit of the
+ * floor. `oldStart`/`newStart` are 1-based file line numbers from the hunk
+ * header; `changedLoc` is `addedLines.length + deletedLines.length`. `splitOf` is
+ * present only on a fragment produced by splitting an oversize hunk (R18).
+ */
+export interface Hunk {
+  id: string;
+  filePath: string;
+  previousPath?: string;
+  fileStatus: FileChangeStatus;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+  addedLines: string[];
+  deletedLines: string[];
+  contextLines: string[];
+  changedLoc: number;
+  /** Fragment `index` of `total` when this hunk is a piece of an oversize split. */
+  splitOf?: { index: number; total: number };
+}
+
+/**
+ * The per-hunk classification. `mechanical` is non-null iff `kind` is
+ * `"mechanical"`. `enclosingSymbol` is the tree-sitter enrichment where a grammar
+ * is available and degrades to `""` (never blocks the floor).
+ */
+export interface HunkClassification {
+  hunkId: string;
+  kind: HunkKind;
+  mechanical: MechanicalClass | null;
+  enclosingSymbol: string;
+}
+
+/** A substantive chunk carries reviewable change; an appendix chunk collects a
+ *  file's mechanical hunks, pre-collapsed and eligible to be skimmed. */
+export type ChunkKind = "substantive" | "appendix";
+
+/**
+ * A greedily-merged group of hunks. `changedLoc` is `≤ maxChunkLoc` for a
+ * substantive chunk (every hunk is `≤` the budget after oversize splitting);
+ * appendix chunks are not budget-bounded because they are skimmed, not read.
+ * `layer` is the logical reading layer (schema→types→core→ui→tests→config→
+ * appendix), used as a deterministic ordering tiebreak.
+ */
+export interface DecompositionChunk {
+  chunkId: string;
+  kind: ChunkKind;
+  title: string;
+  layer: number;
+  filePaths: string[];
+  hunkIds: string[];
+  changedLoc: number;
+}
+
+/**
+ * The DAG edge vocabulary (DSL §2.4). The deterministic floor emits only
+ * `"enables"` (dependency → dependent, derived from import resolution); the richer
+ * kinds are agent-proposed (#8).
+ */
+export type DecompositionEdgeKind =
+  | "enables"
+  | "evidenced-by"
+  | "contradicts"
+  | "duplicates"
+  | "refactor-of";
+
+/** A directed dependency edge between two chunk ids. */
+export interface DecompositionEdge {
+  from: string;
+  to: string;
+  kind: DecompositionEdgeKind;
+}
+
+/**
+ * A hunk the floor could not place in a chunk. Always empty from the
+ * deterministic floor (it places every hunk); present so totality is provable —
+ * `⋃chunks.hunkIds ∪ residue == the offered hunk set` (V100).
+ */
+export interface DecompositionResidueItem {
+  hunkId: string;
+  reason: string;
+}
+
+/**
+ * The deterministic decomposition of one patchset: every hunk classified, every
+ * substantive hunk chunked to the budget, the dependency DAG, and its topological
+ * reading order. Byte-stable across two runs on the same patchset; zero model
+ * calls, no network (R9). `readingOrder` is a topological linearisation of `edges`
+ * that covers every chunk exactly once.
+ */
+export interface Decomposition {
+  patchsetId: string;
+  hunks: Hunk[];
+  classifications: HunkClassification[];
+  chunks: DecompositionChunk[];
+  edges: DecompositionEdge[];
+  readingOrder: string[];
+  residue: DecompositionResidueItem[];
+}
