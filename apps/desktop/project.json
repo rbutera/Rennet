@@ -1,0 +1,32 @@
+{
+  "name": "rennet-desktop",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/desktop/src",
+  "projectType": "application",
+  "tags": ["scope:rennet", "layer:app", "platform:desktop"],
+  "targets": {
+    "build": {
+      "command": "pnpm exec vite build -c apps/desktop/vite.main.config.ts && pnpm exec vite build -c apps/desktop/vite.preload.config.ts && pnpm exec vite build -c apps/desktop/vite.renderer.config.ts"
+    },
+    "dev": {
+      "cache": false,
+      "command": "nx run rennet-desktop:build && pnpm --dir apps/desktop exec electron ."
+    },
+    "lint": {
+      "command": "pnpm exec eslint apps/desktop/src apps/desktop/e2e --max-warnings=0 && pnpm exec biome check apps/desktop/src apps/desktop/e2e apps/desktop/*.ts apps/desktop/*.cjs apps/desktop/*.json"
+    },
+    "typecheck": { "command": "pnpm exec tsc -p apps/desktop/tsconfig.json" },
+    "test": { "command": "pnpm exec vitest run --passWithNoTests apps/desktop/src" },
+    "e2e": { "command": "pnpm exec playwright test -c apps/desktop/playwright.config.ts" },
+    "package": {
+      "cache": false,
+      "dependsOn": ["build"],
+      "command": "pnpm --dir apps/desktop exec electron-forge package"
+    },
+    "package-smoke": {
+      "cache": false,
+      "dependsOn": ["package"],
+      "command": "node scripts/smoke-packaged-app.mjs apps/desktop/out/Rennet-darwin-arm64/Rennet.app"
+    }
+  }
+}

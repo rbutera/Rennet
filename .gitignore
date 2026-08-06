@@ -16,7 +16,6 @@ build/
 out/
 release/
 .vite/
-.turbo/
 .nx/
 coverage/
 playwright-report/
@@ -43,3 +42,6 @@ logs/
 .tmp/
 tmp/
 *.tmp
+
+.claude/worktrees
+.claude/settings.local.json

@@ -14,6 +14,7 @@ This is the current evidence ledger for [[Rennet Master Plan]] entry gates. A ga
 
 | Gate | Status | Evidence or blocker |
 |---|---|---|
+| Local review desktop vertical slice | Closed for MVP scope | [[Rennet Local Review MVP]]. Real Electron E2E proves repository capture, renderer isolation, edit invalidation, preservation of the old patchset, and explicit regeneration. Forge packaging and the emitted Electron fuse wire are checked locally. |
 | Lineage matcher precision | Open | Synthetic matcher and a permitted 10–20-pair corpus do not yet exist. Client PRs are prohibited as fixtures; use public, personal, or synthetic history. |
 | Cross-harness JSON Schema subset | Blocked | A real Claude and Codex call could incur provider spend. Requires Rai's explicit spend approval before probing. |
 | Event store and publish failure injection | Closed | [[Rennet Spike - Event Store and Publish Failure Injection]]. |
@@ -28,4 +29,4 @@ This is the current evidence ledger for [[Rennet Master Plan]] entry gates. A ga
 | Electron 43 `node:sqlite` | Closed | [[Rennet Spike - Electron 43 node sqlite]]. |
 | Outdated GitHub thread re-anchor | Open | Needs a permitted real force-pushed PR fixture; safe to defer because it is P2. |
 
-Closed gates may unblock only their dependent subsystem. The overall product build remains gated by the open P0 rows.
+Closed gates may unblock only their dependent subsystem. Foundational work may proceed inside closed or ungated slices; the affected product subsystems and any public release remain gated by their open P0 rows.

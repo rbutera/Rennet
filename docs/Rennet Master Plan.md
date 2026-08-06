@@ -4,18 +4,20 @@ categories: [project]
 status: active
 created: 2026-08-04
 updated: 2026-08-05
-related: ["[[Code Review Harness App]]", "[[Rennet Architecture Contracts]]", "[[Rennet Navi Handoff]]"]
+related: ["[[Code Review Harness App]]", "[[Rennet Architecture Contracts]]", "[[Rennet Dependency Standard]]", "[[Rennet Navi Handoff]]"]
 ---
 
 # Rennet Master Plan
 
-[[Rennet Architecture Contracts]] freezes the project-context, patchset, persistence, privacy, and publication contracts decided after this reconciliation. It wins within that scope. Remaining integration work is tracked in [[Rennet Decision Integration Tasks]], and empirical gate state in [[Rennet Evidence Gate Status]].
+[[Rennet Architecture Contracts]] freezes the project-context, patchset, persistence, privacy, and publication contracts decided after this reconciliation. It wins within that scope. [[Rennet Dependency Standard]] wins on dependencies, versions, licence compatibility, toolchain ownership, and overlap. Remaining integration work is tracked in [[Rennet Decision Integration Tasks]], and empirical gate state in [[Rennet Evidence Gate Status]].
 
 The private product monorepo is `/Users/rai/dev/rennet`, published to `github.com/rbutera/rennet`. This records source privately; it does not claim the future public GitHub organization, npm scope, domains, social accounts, or release channels.
 
 The single authoritative reconciliation of the 2026-08-04 planning sprint for [[Code Review Harness App]]. This is a **spine, not an encyclopedia**: it states the product, rules on every known conflict between the eight plans and two Codex critiques, freezes what may not be relitigated, and points into the plans for depth. An autonomous agent builds from this document plus [[Rennet Navi Handoff]]; where this document and any plan disagree, **this document wins**, and where this document is silent, the supersede stack in §2 decides.
 
-Zero new architecture is invented here. Every ruling cites its authority. Rulings marked **synthesis call** had no settling authority and may be overridden by Rai.
+The original R1–R33 reconciliation introduced no uncited architecture. R34 records the later dependency and Nx decision. Every ruling cites its authority. Rulings marked **synthesis call** had no settling authority and may be overridden by Rai.
+
+**Implementation checkpoint, 2026-08-05.** [[Rennet Local Review MVP]] is the first executable vertical slice. It implements local immutable capture, append-only SQLite review state, patchset-scoped read progress, conservative invalidation, explicit regeneration, a typed IPC boundary, a sandboxed Electron shell, and Forge packaging with audited fuses. It deliberately stops before project snapshots, harness/model execution, the six generated angles, LSP, GitHub ingestion/publication, deletion/purge, signing, updating, and telemetry. The OpenSpec source of truth is `openspec/changes/build-local-review-mvp/`.
 
 ---
 
@@ -56,10 +58,11 @@ Authority order, top outranks bottom:
 
 1. **Rai's 2026-08-04 late-evening ratifications** in the hub Decisions ([[Code Review Harness App]]): Rennet on rennet.dev; lens set v4; route handoff descoped; both modes v1; publish-as-preview; DSL/routing/instruction thesis; LSP + inline definitions + open-in-editor; impl↔tests toggle; omp as third harness; decisions-angle refinement (ratified in principle).
 2. **[[Rennet Architecture Contracts]]**, within project context, review snapshots, persistence, harness access, and publication.
-3. **The two ratified Codex critiques**: [[reviews/wingman-architecture-codex-critique]] and [[reviews/wingman-adapter-licensing-codex-adjudication]].
-4. **The eight plans** (Architecture, Harness Adapter Protocol, GitHub Integration, Distribution and Licensing, Repo Bootstrap, Settings and Setup, LSP Integration, Surfacing DSL and Model Routing), later-written and more-verified beats earlier where they conflict among themselves.
-5. **Measured spike verdicts** recorded in [[Rennet Evidence Gate Status]], including [[Wingman Spike – Pierre Diff Virtualization]].
-6. [[Wingman Branding Plan]] for naming mechanics and the RAI-ONLY registration checklist.
+3. **[[Rennet Dependency Standard]]**, for dependency selection, versions, licensing, toolchain ownership, and overlap.
+4. **The two ratified Codex critiques**: [[reviews/wingman-architecture-codex-critique]] and [[reviews/wingman-adapter-licensing-codex-adjudication]].
+5. **The eight plans** (Architecture, Harness Adapter Protocol, GitHub Integration, Distribution and Licensing, Repo Bootstrap, Settings and Setup, LSP Integration, Surfacing DSL and Model Routing), later-written and more-verified beats earlier where they conflict among themselves.
+6. **Measured spike verdicts** recorded in [[Rennet Evidence Gate Status]], including [[Wingman Spike – Pierre Diff Virtualization]].
+7. [[Wingman Branding Plan]] for naming mechanics and the RAI-ONLY registration checklist.
 
 ### Conflict rulings
 
@@ -83,7 +86,7 @@ Authority order, top outranks bottom:
 | R16 | `@tanstack/react-virtual` on the diff surface (stack note must-use; arch D14 fallback) | **Retired as plan B.** Measured verdict: **`CodeView` as-is, never bare `FileDiff`/`PatchDiff`** (virtualization is opt-in and silently absent otherwise; 899 vs 97,139 DOM nodes, 15.4ms vs 493ms worst frame at 5k lines). react-virtual survives only for non-diff lists (rails, queues, inbox). Pin `@pierre/diffs` exactly; depend on `@pierre/theme` directly. | Pierre spike verdict |
 | R17 | Event sourcing/publish underspecification (arch D8/D15/2.3) | **Codex prescriptions ratified**: missing event types added (patch failed/cancelled/truncated; match ambiguous/confirmed/rejected/split/merged; review abandoned/superseded/attached; decomposition proposed/accepted/rejected atomically; external GitHub changes; publish cancelled/superseded/retry/**outcome-unknown**/reconciled; command dedup). Upcasts chain v1→v2→v3 with golden event streams; unknown future types fail safe. **Telemetry split from state** with property-tested noninterference (vary/insert/delete/reorder private events → byte-identical outbound payload). Publish gets `outcome: unknown` + deterministic marker in the pending review + query-before-retry, tested with failure injection at every remote boundary. | Architecture critique (b) |
 | R18 | Diff-pipeline cliffs (arch D10/2.2) | **Ratified**: keep bytes as bytes (Uint8Array/spool, never byte ranges into JS strings); binary/submodule/mode-only/truncated inputs are first-class and **done/publish block on incomplete ingestion**; oversize hunks must be splittable to honour the 400-LOC thesis; tree-sitter parse-once-dispose; O(k²) similarity guarded on generated files. | Architecture critique (c) |
-| R19 | Portable boundary assumes Electron (arch D11/2.4) | **Ratified**: the frozen portable contract is **transport-neutral** (JSON Schema/IDL generated from the zod maps, wire fixtures tested both sides); MessageChannelMain topology belongs to the Electron host; protocol gains version negotiation, capabilities, structured errors, reconnect/replay, flow control before mobile; `RepoId = realpath(git-common-dir)` is machine-local → durable identity is the **RepoRecord** (uuidv7 + aliases: common-dir, forge identity, root-commit hint) per settings plan §2.3; path-bearing models never go to remote clients; subscriptions send recipient-specific projections, never raw `EventEnvelope`s; `SecretStorePort` exists. | Architecture critique (f); settings plan §2.3 |
+| R19 | Portable boundary assumes Electron (arch D11/2.4) | **Ratified**: the frozen portable contract is **transport-neutral**. Public RSP schemas are normative JSON Schema validated by Ajv with TypeScript generated one way; private commands/events/settings are Zod-first. Wire fixtures are tested on both sides. MessageChannelMain topology belongs to the Electron host; protocol gains version negotiation, capabilities, structured errors, reconnect/replay, flow control before mobile; `RepoId = realpath(git-common-dir)` is machine-local → durable identity is the **RepoRecord** (uuidv7 + aliases: common-dir, forge identity, root-commit hint) per settings plan §2.3; path-bearing models never go to remote clients; subscriptions send recipient-specific projections, never raw `EventEnvelope`s; `SecretStorePort` exists. | Architecture critique (f); settings plan §2.3; [[Rennet Dependency Standard]] §5 |
 | R20 | `ui` imports `core` (arch D2) vs `ui` imports protocol+React only (bootstrap plan) | **Bootstrap wins**: `ui` imports `protocol` + `types` only, never `core` — the renderer reaches the engine exclusively through the IPC command map, making the mobile client a peer of the renderer. With R3's split there is nothing in `core` the renderer legitimately needs. **Synthesis call — Rai may override.** | Bootstrap plan §1 (stricter, consistent with D11) |
 | R21 | Repo layout variants (arch 5 packages / bootstrap 6 / distribution 3+apps) | **Bootstrap layout adopted** (it carries the gates, tsconfig bases, and commit sequence), **plus** `packages/types` split out of protocol (R3) and `packages/instructions` added (R4). Final: `packages/{types, protocol, core, adapters, ui, instructions, tsconfig}` + `apps/{desktop, mobile-placeholder}` + `scripts/`, `spikes/` (non-workspace). **Synthesis call** on the exact merge; the dependency arrows and gates are frozen regardless. | Bootstrap plan §1; distribution plan §4.1 |
 | R22 | Contribution policy: bootstrap's generic "lightweight CLA" vs distribution's concrete mechanism | **Distribution plan wins**: DCO (`dcoapp/app`) + `CONTRIBUTORS.md` explicit grant line in the first PR + ~12-line CI action + ICLA-derived email grant for >50-line or core contributions; cla-assistant is dead tooling, do not use. **Policy files land before the repo is ever public; until then code PRs are not accepted at all.** | Distribution plan §4.3 |
@@ -98,6 +101,7 @@ Authority order, top outranks bottom:
 | R31 | Ambient harness authority and universal no-cloud copy | Harnesses receive an app-owned immutable materialisation plus explicitly assembled current context by default. Unproven ambient sources make the manifest non-exhaustive. Product copy says **no Rennet backend** and discloses provider egress, authority, model source, and spend; it never promises universally that nothing leaves the machine. | Rai, 2026-08-05; [[Rennet Architecture Contracts]] §7.2 |
 | R32 | Append-only history vs erasure and unknown-event skipping | Append-only applies within a retained review. Delete-review physically purges every Rennet-controlled event, projection, receipt, artifact, blob, prompt, backup, WAL, and cache copy. Unknown events are preserved byte-for-byte but block projection, completion, regeneration, and publish; skip-and-continue is forbidden. | Rai, 2026-08-05; [[Rennet Architecture Contracts]] §7.3–7.4 |
 | R33 | Author-side self-review publication | Local completion creates a pure PR title/body/draft/base/head preview and performs zero Git or GitHub mutation. Any create/update operation is separate and explicit; Rennet never pushes source code. Reviewer publication remains inspect, sign, and one idempotent submit pinned to the reviewed head. | Rai, 2026-08-05; [[Rennet Architecture Contracts]] §9 |
+| R34 | Turbo, Vite+, overlapping Electron packagers, and ad hoc dependency choice | **Nx is the monorepo graph and local cache; pnpm owns packages; Vite 8 owns renderer builds; Electron Forge owns package/make/release.** Vite+ is deferred at beta, Forge's Vite plugin is deferred, electron-builder/electron-updater are excluded, and remote cache requires a privacy decision. Exact pins obey a seven-day registry-age gate. [[Rennet Dependency Standard]] is the implementation authority for the complete dependency matrix and overlap boundaries. | Rai, 2026-08-05; [[Rennet Dependency Standard]] |
 
 ### 2.1 The review→agent handoff loop (NEW, Rai 2026-08-06)
 
@@ -198,6 +202,7 @@ rulings above:
 
 **Process**
 - Protected `main`, PR-per-bead, gates run the FULL suite before every push, never `--no-verify`, Rai merges. Spikes produce verdicts, never merged code. A check that cannot fail has not passed: every gate ships with failing fixtures and a self-test.
+- Nx owns task ordering and deterministic local caching. Vite+ and remote cache are deferred; packaging has one owner, Electron Forge (R34).
 
 ### Adjustable — defaults Navi may revise with recorded evidence
 
@@ -268,6 +273,7 @@ Second rank: Pierre 1.3.2 re-measure + CPU throttling remains blocked by the npm
 | Auth ladder, GraphQL/REST split, publish pipeline, polling, SSO | [[Wingman GitHub Integration Plan]] | All of it stands as written (minus route-handoff line, R15) |
 | Licence mechanics, signing/notarization, updater, CI/CD, contribution policy | [[Wingman Distribution and Licensing Plan]] | R3–R5, R14, R22 detail; §5 dependency audit |
 | Repo layout, gates, tsconfig strategy, CLAUDE.md draft, first 20 commits | [[Wingman Repo Bootstrap Plan]] | The build sequence; CLAUDE.md regenerated per R2/R5/R22 |
+| Packages, exact pins, licences, overlap, Nx/Vite/Electron/tooling policy | [[Rennet Dependency Standard]] | Current dependency authority; supersedes historical stack tables |
 | Settings ladder, records, trust gate, discovery, context pipeline, first run | [[Wingman Settings and Setup Plan]] | §1–§6 stand; §1.3 amended by R12 |
 | Materialization, tiers, degraded detector, position mapping, editor launch | [[Wingman LSP Integration Plan]] | L1–L16 stand as written |
 | DSL documents, anchors, validator, routing matrix, instruction layer | [[Wingman Surfacing DSL and Model Routing Plan]] | §1–§7 stand; R12/R13 ratify its two requests |

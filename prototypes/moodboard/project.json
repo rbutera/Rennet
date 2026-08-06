@@ -1,0 +1,18 @@
+{
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "name": "rennet-prototype",
+  "projectType": "application",
+  "sourceRoot": "prototypes/moodboard",
+  "tags": ["scope:prototype", "type:application"],
+  "targets": {
+    "check": {
+      "executor": "nx:run-commands",
+      "cache": true,
+      "inputs": ["{projectRoot}/**/*"],
+      "options": {
+        "command": "node --check prototypes/moodboard/assets/app.js",
+        "cwd": "{workspaceRoot}"
+      }
+    }
+  }
+}
