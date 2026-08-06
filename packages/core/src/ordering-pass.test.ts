@@ -111,6 +111,26 @@ describe("runOrderingPass — the agent produces the order (no user approval)", 
     expect(result.attempts[0]?.outcome).toBe("admitted");
   });
 
+  it("never places a forbidden ordering signal (blast-radius) in the model prompt", async () => {
+    // Correction 8: danger/blast-radius/salience must never reach the ordering
+    // prompt as a signal. The contract's prohibition prose names "blast radius"
+    // (spaced) legitimately; the hyphenated angle token "blast-radius" only ever
+    // came from the chunk payload, and must not be there.
+    const withBlastRadius: DecompositionProposalBody = {
+      ...PROPOSAL,
+      chunks: PROPOSAL.chunks.map((chunk, index) =>
+        index === 0 ? { ...chunk, angles: ["sequence", "blast-radius"] } : chunk,
+      ),
+    };
+    let capturedPrompt = "";
+    const capturing = (prompt: string, attempt: number): Promise<OrderingTurnResult> => {
+      capturedPrompt = prompt;
+      return scriptedTurn([AGENT_ORDER])(prompt, attempt);
+    };
+    await runOrderingPass(base({ proposal: withBlastRadius, runTurn: capturing }));
+    expect(capturedPrompt).not.toContain("blast-radius");
+  });
+
   it("feeds a rejection back and admits on the retry", async () => {
     const missingChunk: OrderingBody = {
       readingOrder: ["c1", "c2"],

@@ -150,12 +150,17 @@ const ZERO_TOKENS: RspTokenUsage = {
 };
 
 /** A compact, model-facing serialisation of the chunk set, the dependency edges
- *  (the hard floor), and the baseline order the agent is asked to improve on. */
+ *  (the hard floor), and the baseline order the agent is asked to improve on.
+ *
+ *  Deliberately omits each chunk's `angles`: the angle set includes
+ *  `blast-radius`, and correction 8 forbids danger/blast-radius/salience as an
+ *  ordering signal. The prohibition lives in the ORDERING_CONTRACT slot, but the
+ *  cleanest guarantee is to never place the forbidden token in the ordering
+ *  prompt at all. The chunk id, title, edges, and baseline carry the task. */
 function renderPayload(proposal: DecompositionProposalBody, patchsetId: string): string {
   const chunks = proposal.chunks.map((chunk) => ({
     chunkId: chunk.chunkId,
     title: chunk.title,
-    angles: chunk.angles,
   }));
   return JSON.stringify(
     { patchsetId, chunks, edges: proposal.edges, baselineOrder: proposal.readingOrder },
