@@ -244,6 +244,29 @@ describe("ClaudeAdapter session", () => {
     expect(options.env.ANTHROPIC_API_KEY).toBeUndefined();
   });
 
+  it("propagates a signal already aborted at creation (no un-cancellable live turn)", async () => {
+    const capturedArgs: ClaudeQueryArgs[] = [];
+    const adapter = new ClaudeAdapter({
+      binaryPath: "/bin/claude",
+      queryFn: fakeQuery([], (args) => {
+        capturedArgs.push(args);
+      }),
+    });
+    const controller = new AbortController();
+    controller.abort(); // aborted BEFORE the session exists — a future-only listener would miss it
+    const session = await adapter.createSession({
+      cwd: "/repo",
+      readOnly: true,
+      signal: controller.signal,
+    });
+    await session.send({ prompt: "hi" });
+    const options: ClaudeQueryOptions | undefined = capturedArgs[0]?.options;
+    if (!options) throw new Error("queryFn was not invoked with options");
+    const { abortController } = options;
+    if (!abortController) throw new Error("options carried no abortController");
+    expect(abortController.signal.aborted).toBe(true);
+  });
+
   it("derives descriptor capability flags from passing checks, not declaration", () => {
     const adapter = new ClaudeAdapter({ binaryPath: "/bin/claude", queryFn: fakeQuery([]) });
     const caps = adapter.descriptor.capabilities;

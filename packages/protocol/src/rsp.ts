@@ -123,12 +123,17 @@ export const DOC_TYPE_REGISTRY: Readonly<Record<RspDocType, DocTypeSpec>> = {
  * There is no item-count limit: decisions are never capped. `documentBytes` is a
  * whole-document DoS guard on total serialized size, not a cap on item count.
  */
-export const DEFAULT_SIZE_LIMITS: SizeLimits = {
+// Frozen so a consumer cannot mutate the shared default and change the result of
+// the "pure function" validator for identical arguments (its purity is a frozen
+// principle: no network, no model, no clock, and no hidden mutable state).
+export const DEFAULT_SIZE_LIMITS: SizeLimits = Object.freeze({
   documentBytes: 512 * 1024,
   quoteBytes: 2 * 1024,
-};
+});
 
-export const DEFAULT_SETTINGS: SettingsProjection = { sizeLimits: DEFAULT_SIZE_LIMITS };
+export const DEFAULT_SETTINGS: SettingsProjection = Object.freeze({
+  sizeLimits: DEFAULT_SIZE_LIMITS,
+});
 
 // ── Zod schemas (V002) ───────────────────────────────────────────────────────
 

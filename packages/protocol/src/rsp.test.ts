@@ -320,6 +320,33 @@ describe("admission granularity", () => {
     expect(report.rejectedItemCount).toBe(0);
     expect(report.admittedItemCount).toBe(1);
   });
+
+  // Decisions are NEVER capped or truncated (frozen doctrine #1: a cap can hide
+  // the one decision the user must answer for). Absence of `maxItems` in the
+  // schema is not enough — a future `maxItems`, `.slice()`, or a paginating
+  // change would pass every other test green. These two feed a LARGE collection
+  // and assert every item is processed, so the guarantee can actually go red.
+  it("never caps a large decision collection — all 500 valid items are admitted", () => {
+    const decisions = Array.from({ length: 500 }, (_, index) => ({
+      decisionId: `d${index}`,
+      evidence: [{ anchor: "rennet:hunk/h1#L1@additions", quote: "line one" }],
+    }));
+    const report = validate(baseDoc({ docType: "decision.record", body: { decisions } }));
+    expect(report.admission).toBe("itemwise");
+    expect(report.admitted).toBe(true);
+    expect(report.admittedItemCount).toBe(500);
+    expect(report.rejectedItemCount).toBe(0);
+  });
+
+  it("never caps the rejected count — all 500 invalid items are reported", () => {
+    const decisions = Array.from({ length: 500 }, (_, index) => ({
+      decisionId: `d${index}`,
+      evidence: [{ anchor: "rennet:hunk/hNOPE", quote: "x" }],
+    }));
+    const report = validate(baseDoc({ docType: "decision.record", body: { decisions } }));
+    expect(report.rejectedItemCount).toBe(500);
+    expect(report.rejectedItems.length).toBe(500);
+  });
 });
 
 // ── The resolution function: four outcomes, ambiguity fails closed ───────────

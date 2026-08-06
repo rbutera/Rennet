@@ -446,7 +446,12 @@ export class ClaudeAdapter implements HarnessPort {
   createSession(spec: SessionSpec): Promise<HarnessSession> {
     const abort = new AbortController();
     if (spec.signal) {
-      spec.signal.addEventListener("abort", () => abort.abort(), { once: true });
+      // A signal already aborted at session-creation time must propagate too:
+      // addEventListener only fires on a FUTURE abort, so a caller that passes an
+      // already-aborted signal would otherwise spawn a live turn that never
+      // cancels. Check the current state before attaching the future listener.
+      if (spec.signal.aborted) abort.abort();
+      else spec.signal.addEventListener("abort", () => abort.abort(), { once: true });
     }
     const sessionId = randomUUID();
     const options = this.#buildOptions(spec, sessionId, abort);
