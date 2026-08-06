@@ -9,6 +9,12 @@ related: ["[[Rennet Master Plan]]", "[[Rennet Dependency Standard]]", "[[T3 Code
 
 # Overnight Harvest Plan
 
+> [!IMPORTANT] ✅ The licence decision this plan was written *against* has since been MADE
+> Rai decided on **2026-08-06**: **Rennet goes MIT and adopts the Anthropic Agent SDK.** The doc-side
+> work is done on branch `chore/relicense-mit-fold-design-2026-08-06`. This plan is unchanged below —
+> it is the assessment that informed the decision — but two of its items are now **actionable
+> follow-ups against PR #1 rather than open questions**, and they are written out in §6.
+
 What to keep, rework, and drop from the two overnight branches, judged against the direction as it
 stands on **2026-08-06** — which changed after that work was written.
 
@@ -263,3 +269,89 @@ out of scope.
 
 **Drop exactly one thing:** the decorative Angles panel, which is unwired *and* lists the wrong six
 angles.
+
+---
+
+## 6. Follow-ups that must be applied to PR #1, not to `main`
+
+⚠️ **Why these could not be done on the relicence branch.** The relicence work was done on a branch off
+`main`, and **`main` does not contain the files these changes target** — `scripts/check-licenses.mjs`
+and the six workspace `package.json` files exist only on `feat/local-review-mvp` (`8622e98`).
+Creating them on the relicence branch would have manufactured a merge conflict with PR #1, which is
+exactly what we are trying to avoid. So they are written out here, ready to apply.
+
+### 6.1 ⛔ `scripts/check-licenses.mjs` — will reject the SDK on its first run
+
+The gate currently allows `0BSD, Apache-2.0, BSD-2-Clause, BSD-3-Clause, BlueOak-1.0.0, ISC, MIT`
+(`check-licenses.mjs:3-11`). **Measured** against a real install of `@anthropic-ai/claude-agent-sdk`:
+
+```
+licence keys reported: ['BSD-2-Clause','BSD-3-Clause','ISC','MIT','Unknown','Unlicense']
+BLOCKED -> ['Unknown', 'Unlicense']
+   @anthropic-ai/claude-agent-sdk
+   @anthropic-ai/claude-agent-sdk-darwin-arm64
+   fast-sha256
+VERDICT: check-licenses.mjs WOULD THROW
+```
+
+⛔ **Do NOT fix this by adding `Unknown` to the allowlist.** `Unknown` is the bucket pnpm assigns to
+*every* dependency whose licence it cannot read, so allowlisting it silently disables the gate for all
+future unreadable-licence packages — the exact class it exists to catch. The gate would stay green and
+be blind.
+
+**Fix as a named package exception plus one genuine licence addition:**
+
+```js
+const allowed = new Set([
+  "0BSD", "Apache-2.0", "BSD-2-Clause", "BSD-3-Clause",
+  "BlueOak-1.0.0", "ISC", "MIT",
+  "Unlicense",           // public-domain equivalent; transitive via fast-sha256
+]);
+
+// Deliberate exception, Rai's decision 2026-08-06 (Master Plan R2).
+// The Claude Agent SDK is proprietary (Anthropic Commercial Terms) and pnpm
+// reports it in the "Unknown" bucket. We ship it knowingly. Allow it BY NAME:
+// allowlisting the "Unknown" bucket itself would disable this gate for every
+// future package with an unreadable licence.
+const allowedUnknownPackages = new Set([
+  "@anthropic-ai/claude-agent-sdk",
+  // plus the per-platform binaries, which are stripped at packaging anyway
+]);
+```
+
+…and filter the `Unknown` bucket's *members* against `allowedUnknownPackages` rather than dropping the
+bucket check. ⭐ **Keep a positive control**: the gate must still throw for a fabricated package placed
+in the `Unknown` bucket, or it has not been proven able to fail.
+
+### 6.2 Licence fields on the six workspace packages
+
+None of `packages/{types,protocol,core,adapters,ui}` or `apps/desktop` declares a `license` field at
+all. Set `"license": "MIT"` on each. (The root `package.json` was already flipped from `UNLICENSED` to
+`MIT` on the relicence branch.) No SPDX headers and no REUSE config are needed under MIT-throughout.
+
+### 6.3 Drop the Angles panel
+
+`packages/ui/src/app.tsx:5` hardcodes `["Logic","Security","Tests","Performance","Maintainability","Product"]`
+and `:122` renders each as the literal string `"Not run"`, wired to nothing. ⚠️ It is **not the ratified
+angle set** (lens set v4 is spec / sequence / decisions / claims-and-evidence / blast-radius / noise),
+so leaving it invites someone to build against the wrong six. Delete it, or make it the real hook point
+for harness output.
+
+### 6.4 ⛔ `foldReview` must be replaced, not extended — CODE follow-up, deliberately not done here
+
+`packages/core/src/index.ts:40,55` resets `readPaths: []` unconditionally on both `PatchsetActivated`
+and `ReviewInvalidated`, so **all read state is wiped on every re-capture**. That is the exact inverse
+of the delta-only re-review the handoff loop now depends on (Master Plan §2.1), and a flat
+`readPaths: string[]` of booleans has nowhere to store a **disposition**
+`{anchor, type, body}` — which is the loop's one data model.
+
+⛔ **This is a code change and is out of scope for the documentation branch. It is recorded, not
+implemented.** The event-sourcing machinery around it (`payloadDigest` idempotency, the fail-closed
+`exhaustive()` on unknown events, the single-transaction commit) is good and should survive the
+replacement. `packages/adapters/src/sqlite-review-store.ts` needs the matching change: `latestReview()`
+currently supports only one global review with no per-repository keying.
+
+### 6.5 Still true from §0a — the branches are stacked
+
+`a66d84e` is the parent of `8622e98`. Merging PR #1 merges both; there is no conflict to resolve and
+no merge-order question.
