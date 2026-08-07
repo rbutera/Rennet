@@ -27,10 +27,15 @@ import { type BudgetGrant, type InvocationBudget, R10_BUDGET_EXHAUSTED } from "@
  *
  * A `max` below zero is clamped to zero (a non-positive ceiling refuses every
  * invocation, which is the honest reading of "no budget"). `max` is floored to
- * an integer so a fractional ceiling cannot smuggle a partial invocation.
+ * an integer so a fractional ceiling cannot smuggle a partial invocation. A
+ * non-finite `max` (`NaN`/`Infinity`) FAILS CLOSED to zero: money is a vital
+ * circuit (R10, Rule 75), and `consumed >= NaN`/`consumed >= Infinity` is always
+ * false, so an unvalidated non-finite ceiling would grant unlimited turns — the
+ * exact wrong-side failure a vital gate must never take. "No valid budget" reads
+ * as "no spend": every turn is refused and the runner falls to the floor.
  */
 export function createInvocationBudget(max: number): InvocationBudget {
-  const ceiling = Math.max(0, Math.floor(max));
+  const ceiling = Number.isFinite(max) ? Math.max(0, Math.floor(max)) : 0;
   let consumed = 0;
 
   return {

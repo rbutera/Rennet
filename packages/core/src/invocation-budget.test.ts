@@ -57,4 +57,21 @@ describe("createInvocationBudget — the live R10 ceiling", () => {
     expect(fractional.tryConsume("x").granted).toBe(true);
     expect(fractional.tryConsume("y").granted).toBe(false);
   });
+
+  it("a non-finite ceiling fails CLOSED (money vital circuit): NaN/Infinity refuse every invocation", () => {
+    // Rule 75 (railway): a single fault must never make a vital circuit more
+    // permissive. `Math.max(0, Math.floor(NaN))` is NaN and `Math.floor(Infinity)`
+    // is Infinity, and `consumed >= NaN`/`consumed >= Infinity` is always false —
+    // so an unvalidated non-finite ceiling would grant UNLIMITED turns. The honest
+    // reading of "no valid budget" is "no spend": fail closed to zero.
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY]) {
+      const budget = createInvocationBudget(bad);
+      expect(budget.max).toBe(0);
+      let grants = 0;
+      for (let i = 0; i < 10; i += 1) {
+        if (budget.tryConsume(`turn-${i}`).granted) grants += 1;
+      }
+      expect(grants, `non-finite ceiling ${bad} must refuse every turn`).toBe(0);
+    }
+  });
 });
