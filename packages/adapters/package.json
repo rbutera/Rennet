@@ -11,6 +11,7 @@
     "@rennet/protocol": "workspace:*",
     "@rennet/types": "workspace:*",
     "chokidar": "5.0.0",
-    "execa": "10.0.0"
+    "execa": "10.0.0",
+    "zod": "4.4.3"
   }
 }

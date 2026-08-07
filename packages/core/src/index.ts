@@ -12,6 +12,7 @@ import { v7 as uuidv7 } from "uuid";
 export * from "./angle-generation";
 export * from "./canvas";
 export * from "./canvas-change-feed";
+export * from "./canvas-ops";
 export * from "./decomposition";
 export * from "./forge-port";
 export * from "./harness";

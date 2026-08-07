@@ -1,4 +1,11 @@
 export {
+  buildCanvasOpsTools,
+  CANVAS_OPS_INSTRUCTIONS,
+  CANVAS_OPS_SERVER_NAME,
+  CANVAS_OPS_SERVER_VERSION,
+  createCanvasOpsServer,
+} from "./canvas-ops-server";
+export {
   CLAUDE_TESTED_RANGE,
   ClaudeAdapter,
   type ClaudeAdapterConfig,
