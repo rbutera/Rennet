@@ -1,11 +1,10 @@
 import type { RennetBridge } from "@rennet/protocol";
-import type { Canvas, CanvasAngle, Patchset, Review } from "@rennet/types";
-import { useEffect, useMemo, useState } from "react";
+import type { CanvasAngle, Patchset, Review } from "@rennet/types";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { demoCanvases, demoDiff } from "./canvas/fixtures";
+import { type CanvasSet, loadCanvases } from "./canvas/load";
 import { type DispositionWrite, withoutProposal } from "./canvas/logic";
 import { CanvasWorkspace } from "./components/workspace";
-
-type CanvasSet = Record<CanvasAngle, Canvas>;
 
 /**
  * Apply the fan-out writes from an approve act to the local canvases (the demo
@@ -197,6 +196,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // the untouched real end-to-end path.
   const [view, setView] = useState<"review" | "canvases">("review");
   const [canvases, setCanvases] = useState<CanvasSet>(() => demoCanvases());
+  const fetchedForReview = useRef<string | null>(null);
 
   useEffect(() => {
     bridge
@@ -237,6 +237,23 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       setSelectedPath(patchset?.files[0]?.path);
     }
   }, [patchset, selectedPath]);
+
+  // Live canvases (issue #54): when a real review is open and the Canvases view
+  // is shown, fetch the engine-produced canvas set once and render it in place of
+  // the fixtures. A failure (no harness, pipeline error) returns null and leaves
+  // the clickable demo untouched, so the demo never regresses.
+  useEffect(() => {
+    if (view !== "canvases" || !review) return;
+    if (fetchedForReview.current === review.id) return;
+    fetchedForReview.current = review.id;
+    let cancelled = false;
+    void loadCanvases(bridge, review).then((live) => {
+      if (!cancelled && live) setCanvases(live);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [view, review, bridge]);
 
   async function chooseRepository(): Promise<void> {
     setBusy(true);

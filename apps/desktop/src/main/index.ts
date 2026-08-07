@@ -7,14 +7,11 @@ import {
   RepoWatcher,
   SqliteReviewStore,
 } from "@rennet/adapters";
-import { ReviewService } from "@rennet/core";
-import {
-  type CommandName,
-  isCommandName,
-  parseCommandInput,
-  parseCommandOutput,
-} from "@rennet/protocol";
+import { buildReviewCanvases, createHarnessRunTurn, ReviewService } from "@rennet/core";
+import { type CommandName, isCommandName } from "@rennet/protocol";
+import type { Canvas, CanvasAngle, Patchset, Review } from "@rennet/types";
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session } from "electron";
+import { createDispatch } from "./dispatch";
 
 const IPC_CHANNEL = "rennet:invoke";
 const APP_ORIGIN = "app://rennet";
@@ -36,19 +33,19 @@ const watcher = new RepoWatcher();
 // ClaudeAdapter, passing the user's own discovered `claude` binary so auth stays
 // on their subscription OAuth (Master Plan R2). It is composed LAZILY and
 // memoized: discovery spawns the user's login shell, so it runs on first use
-// rather than at launch, and passes the full process env so the spawned harness
-// inherits PATH/HOME. Consumers that need the harness (angle generation, the
-// review-to-agent handoff loop) call getClaudeHarness(); it is not yet wired to
-// a review command, so it has no launch-time side effect.
+// (the first `review.canvases`) rather than at launch, and passes the full
+// process env so the spawned harness inherits PATH/HOME.
 let claudeHarness: Promise<ClaudeHarnessResult> | null = null;
-export function getClaudeHarness(): Promise<ClaudeHarnessResult> {
+function getClaudeHarness(): Promise<ClaudeHarnessResult> {
   claudeHarness ??= createClaudeHarness({ env: process.env });
   return claudeHarness;
 }
+
 let store: SqliteReviewStore;
 let service: ReviewService;
 let repositoryDirty = false;
 const allowedRoots = new Set<string>();
+let dispatch: ((name: CommandName, input: unknown) => Promise<unknown>) | null = null;
 
 function isTrustedAppUrl(value: string): boolean {
   const url = new URL(value);
@@ -61,79 +58,55 @@ function isTrustedAppUrl(value: string): boolean {
   );
 }
 
-function assertAllowedRepository(repositoryPath: string): void {
-  if (!allowedRoots.has(repositoryPath)) throw new Error("Repository access was not granted");
+function activePatchset(review: Review): Patchset {
+  const patchset = review.patchsets.find((candidate) => candidate.id === review.activePatchsetId);
+  if (!patchset) throw new Error("The active patchset is missing");
+  return patchset;
 }
 
-async function dispatch(name: CommandName, rawInput: unknown): Promise<unknown> {
-  switch (name) {
-    case "app.bootstrap": {
-      parseCommandInput(name, rawInput);
-      const review = service.bootstrap();
-      if (review) {
-        allowedRoots.add(review.repositoryRoot);
-        watcher.start(review.repositoryRoot, () => {
-          repositoryDirty = true;
-        });
-      }
-      return parseCommandOutput(name, { review });
-    }
-    case "repository.choose": {
-      parseCommandInput(name, rawInput);
-      const testPath = process.env.RENNET_TEST_REPO;
-      if (testPath) {
-        allowedRoots.add(testPath);
-        return parseCommandOutput(name, { path: testPath });
-      }
-      const result = await dialog.showOpenDialog({
-        title: "Choose a repository to review",
-        properties: ["openDirectory"],
-      });
-      const path = result.canceled ? null : (result.filePaths[0] ?? null);
-      if (path) allowedRoots.add(path);
-      return parseCommandOutput(name, { path });
-    }
-    case "review.capture": {
-      const input = parseCommandInput(name, rawInput);
-      assertAllowedRepository(input.repoPath);
-      const review = await service.capture(input.commandId, input.repoPath, input.reviewId);
-      allowedRoots.add(review.repositoryRoot);
-      repositoryDirty = false;
-      watcher.start(review.repositoryRoot, () => {
-        repositoryDirty = true;
-      });
-      return parseCommandOutput(name, { review });
-    }
-    case "review.setDisposition": {
-      const input = parseCommandInput(name, rawInput);
-      const review = service.setDisposition(
-        input.commandId,
-        input.reviewId,
-        input.patchsetId,
-        input.path,
-        input.disposition,
-        input.body,
-      );
-      return parseCommandOutput(name, { review });
-    }
-    case "review.checkFreshness": {
-      const input = parseCommandInput(name, rawInput);
-      assertAllowedRepository(input.repoPath);
-      const current = service.bootstrap();
-      if (!current || current.id !== input.reviewId) throw new Error("Review not found");
-      if (!repositoryDirty) return parseCommandOutput(name, { review: current });
-      const review = await service.checkFreshness(input.commandId, input.reviewId, input.repoPath);
-      repositoryDirty = false;
-      return parseCommandOutput(name, { review });
-    }
-    case "review.regenerate": {
-      const input = parseCommandInput(name, rawInput);
-      assertAllowedRepository(input.repoPath);
-      const review = await service.regenerate(input.commandId, input.reviewId, input.repoPath);
-      repositoryDirty = false;
-      return parseCommandOutput(name, { review });
-    }
-  }
+/** The repository picker: the test-repo env (e2e) or the Electron directory dialog. */
+async function chooseRepository(): Promise<string | null> {
+  const testPath = process.env.RENNET_TEST_REPO;
+  if (testPath) return testPath;
+  const result = await dialog.showOpenDialog({
+    title: "Choose a repository to review",
+    properties: ["openDirectory"],
+  });
+  return result.canceled ? null : (result.filePaths[0] ?? null);
+}
+
+/**
+ * The harness-backed live pipeline: decompose the review's active patchset,
+ * gate on the Brita budget, and (when the user's `claude` is discoverable) drive
+ * the decomposition angle + ordering pass on their subscription OAuth. With no
+ * harness the deterministic floor still populates real canvases from the diff.
+ */
+async function buildCanvasesForReview(review: Review): Promise<Record<CanvasAngle, Canvas>> {
+  const patchset = activePatchset(review);
+  const { adapter } = await getClaudeHarness();
+  // KNOWN §7 DEVIATION (documented in the openspec change's design.md): the
+  // read-only harness runs with `cwd` on the live mutable checkout rather than
+  // an immutable materialisation, because that layer is not built yet and the
+  // "Claude CLI isolation" evidence gate is openly Blocked. Follow-up: materialise
+  // the active patchset to an app-owned cache and point `cwd` there. Do NOT read
+  // this as a satisfied contract.
+  const runDecompositionTurn = adapter
+    ? createHarnessRunTurn(adapter, {
+        docType: "decomposition.proposal",
+        cwd: review.repositoryRoot,
+      })
+    : undefined;
+  const runOrderingTurn = adapter
+    ? createHarnessRunTurn(adapter, { docType: "ordering", cwd: review.repositoryRoot })
+    : undefined;
+  const result = await buildReviewCanvases({
+    reviewId: review.id,
+    patchset,
+    dispositions: review.dispositions,
+    ...(runDecompositionTurn ? { runDecompositionTurn } : {}),
+    ...(runOrderingTurn ? { runOrderingTurn } : {}),
+  });
+  return result.canvases;
 }
 
 function registerCommandHandler(): void {
@@ -143,6 +116,7 @@ function registerCommandHandler(): void {
     if (!request || typeof request !== "object") throw new Error("Invalid command envelope");
     const { name, input } = request as { name?: unknown; input?: unknown };
     if (typeof name !== "string" || !isCommandName(name)) throw new Error("Unknown command");
+    if (!dispatch) throw new Error("The command router is not ready");
     return dispatch(name, input);
   });
 }
@@ -187,6 +161,20 @@ async function createWindow(): Promise<void> {
 app.whenReady().then(async () => {
   store = new SqliteReviewStore(join(app.getPath("userData"), "rennet.sqlite"));
   service = new ReviewService(capture, store);
+  dispatch = createDispatch({
+    service,
+    allowedRoots,
+    chooseRepository,
+    startWatching: (root: string) =>
+      watcher.start(root, () => {
+        repositoryDirty = true;
+      }),
+    isRepositoryDirty: () => repositoryDirty,
+    setRepositoryDirty: (value: boolean) => {
+      repositoryDirty = value;
+    },
+    buildCanvases: buildCanvasesForReview,
+  });
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);
   });

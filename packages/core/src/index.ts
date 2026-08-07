@@ -16,7 +16,9 @@ export * from "./canvas-ops";
 export * from "./decomposition";
 export * from "./forge-port";
 export * from "./harness";
+export * from "./harness-run-turn";
 export * from "./ordering-pass";
+export * from "./pipeline";
 export * from "./route-plan";
 
 export type ReviewEvent =
