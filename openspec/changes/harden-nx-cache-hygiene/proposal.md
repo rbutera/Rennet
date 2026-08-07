@@ -12,6 +12,8 @@ The `FOREIGN KEY` / exit-1-while-green crash is a known Nx-internal SQLite task-
 
 - Give `format` explicit workspace-rooted `inputs` covering exactly the globs Biome checks, plus `sharedGlobals`, so any change to a checked file invalidates the cache. This fixes the stale-pass.
 - Add `biome.json`, `eslint.config.mjs`, and `tsconfig.base.json` to `sharedGlobals` so a shared-config change busts every dependent cache. Correctness over a rare cache miss on config edits.
+- Close a second stale-pass class found in review on `build`: the per-package `build` targets run `tsc` over `src/**/*.ts` (test files included, `noEmit`), yet declared `production` inputs which EXCLUDE `*.test.*`. A type error in a compiled test file therefore cache-hit and exited 0. `build` now inputs `default` (like `typecheck`), so any source or test change invalidates it. Reproduced (cache-hit exit 0 before, `--skip-nx-cache` exit 1) and re-verified fixed.
+- Close a third stale-pass class found in review on `architecture`: its boundary positive control runs ESLint's `@nx/enforce-module-boundaries`, whose verdict depends on the `layer:` tags in every `project.json` and on the Nx graph, but `project.json` files and `nx.json` were not inputs. Flipping a project's `layer:` tag cache-hit and passed. `architecture` now inputs `packages/**/project.json`, `apps/**/project.json`, and `sharedGlobals`. Reproduced and re-verified fixed.
 - Bring the last ad-hoc gate-adjacent command (`real-turn`, the gated live-Claude integration test) into the task graph as an uncached Nx target so nothing routinely runs outside Nx.
 - Refresh agent guidance: make `AGENTS.md` the real source of truth and `CLAUDE.md` a symlink to it (Nx's own convention, and what issue #45 asks). Document the nx-targets, the trust-the-cache rule, the *narrow* legitimate `--skip-nx-cache` / `nx reset` cases (the task-history DB crash), and the shell/env gotchas agents keep hitting on nimbus.
 
@@ -29,5 +31,5 @@ None.
 
 ## Impact
 
-- `nx.json` (`sharedGlobals`), root `package.json` (`nx.targets.format.inputs`, `real-turn` script), `packages/adapters/project.json` (`real-turn` target), `AGENTS.md` (now the real file), `CLAUDE.md` (now a symlink).
-- No production dependency change. No change to what `pnpm check` runs or to any pass/fail verdict on a clean tree; the only behavioural change is that a *dirty* tree can no longer stale-pass `format`, and shared-config edits now invalidate dependent caches.
+- `nx.json` (`sharedGlobals`, `build` targetDefault inputs), root `package.json` (`nx.targets.format.inputs`, `nx.targets.architecture.inputs`, `real-turn` script), `packages/adapters/project.json` (`real-turn` target), `AGENTS.md` (now the real file), `CLAUDE.md` (now a symlink).
+- No production dependency change. No change to what `pnpm check` runs or to any pass/fail verdict on a clean tree; the only behavioural change is that a *dirty* tree can no longer stale-pass `format`, `build`, or `architecture`, and shared-config edits now invalidate dependent caches.

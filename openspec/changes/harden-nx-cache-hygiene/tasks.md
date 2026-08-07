@@ -22,3 +22,8 @@
 
 - [x] 5.1 Repeat `pnpm check` on an unchanged tree shows cache hits (no full re-run)
 - [x] 5.2 Full `pnpm check` exits 0 across all projects (zero errors AND "Successfully ran target(s)")
+
+## 6. Close the remaining stale-pass holes (found in review)
+
+- [x] 6.1 `build`: reproduce a test-file type error stale-passing on a warm cache (cache-hit exit 0, `--skip-nx-cache` exit 1); change `build` targetDefault inputs from `production` to `default`; re-verify it now cache-misses and exits 1
+- [x] 6.2 `architecture`: reproduce a `project.json` `layer:` tag change stale-passing (cache-hit exit 0, `--skip-nx-cache` exit 1); add `packages/**/project.json`, `apps/**/project.json`, `sharedGlobals` to its inputs; re-verify it now cache-misses and exits 1

@@ -17,11 +17,14 @@
         "command": "node scripts/check-boundaries.mjs",
         "inputs": [
           "{workspaceRoot}/packages/**/package.json",
+          "{workspaceRoot}/packages/**/project.json",
           "{workspaceRoot}/packages/**/src/**/*",
           "{workspaceRoot}/apps/**/package.json",
+          "{workspaceRoot}/apps/**/project.json",
           "{workspaceRoot}/apps/**/src/**/*",
           "{workspaceRoot}/eslint.config.mjs",
-          "{workspaceRoot}/scripts/check-boundaries.mjs"
+          "{workspaceRoot}/scripts/check-boundaries.mjs",
+          "sharedGlobals"
         ]
       },
       "audit": {

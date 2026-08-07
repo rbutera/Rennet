@@ -11,6 +11,14 @@ Every cacheable gate target (`format`, `architecture`, `licenses`, `lint`, `type
 - **WHEN** a shared config file (`biome.json`, `eslint.config.mjs`, or `tsconfig.base.json`) changes
 - **THEN** the cacheable targets that consume it are treated as changed on the next run rather than served from cache
 
+#### Scenario: A type error in a compiled test file cannot survive a warm cache
+- **WHEN** the `build` cache is warm and a type error is then introduced into a test file the package's tsconfig compiles (for example `packages/core/src/index.test.ts`)
+- **THEN** `nx run rennet-core:build` re-runs (cache miss) and exits non-zero, matching the `--skip-nx-cache` verdict
+
+#### Scenario: A module-boundary tag change cannot survive a warm cache
+- **WHEN** the `architecture` cache is warm and a project's `layer:` tag in its `project.json` is then changed so a previously-forbidden import becomes allowed
+- **THEN** `nx run rennet:architecture` re-runs (cache miss) and exits non-zero, matching the `--skip-nx-cache` verdict
+
 ### Requirement: An unchanged tree serves from cache
 Running the full gate twice on a byte-identical tree SHALL serve every cacheable task from the cache on the second run.
 
