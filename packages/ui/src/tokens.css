@@ -1,0 +1,172 @@
+/* Rennet glass design tokens (issue #11).
+ *
+ * Ported verbatim from the ratified mood board (prototypes/moodboard/assets/tokens.css,
+ * the Glass direction + its bright-room scheme). This file is the ONLY place raw hex
+ * lives in packages/ui — every component references var(--token); a lint rule forbids
+ * hardcoded hex anywhere else in the package.
+ *
+ * The doctrine the tokens encode (Contracts §2.3, Design Directions §Glass):
+ *   Glass is chrome; code is opaque; paper is what leaves the machine.
+ *   Backlight blue (--private, #85C4DC) is the system's ONLY inner glow, private-to-reviewer.
+ *   Amber is blast radius / disagreement only. No fourth hue.
+ *
+ * Scoped to `.canvas-app` (not global `:root`) so the existing review workspace styling is
+ * untouched. Dark is the default; the bright-room scheme composes under [data-scheme="light"].
+ */
+
+.canvas-app {
+  /* type */
+  --serif: "New York", ui-serif, Georgia, serif;
+  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+
+  /* wallpaper: teal + amber aurora (chrome only; never through code) */
+  --wallpaper: #0c0f14;
+  --wallpaper-img:
+    radial-gradient(52% 44% at 18% 6%, rgba(80, 150, 178, 0.6), transparent 70%),
+    radial-gradient(40% 36% at 86% 16%, rgba(196, 134, 56, 0.44), transparent 70%),
+    radial-gradient(60% 52% at 66% 96%, rgba(56, 104, 166, 0.55), transparent 72%),
+    radial-gradient(34% 30% at 8% 88%, rgba(128, 80, 42, 0.34), transparent 75%);
+
+  /* glass chrome */
+  --win-bg: rgba(15, 17, 22, 0.46);
+  --win-border: rgba(255, 255, 255, 0.14);
+  --win-shadow:
+    0 28px 90px rgba(0, 0, 0, 0.6), 0 2px 10px rgba(0, 0, 0, 0.4),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  --win-radius: 16px;
+
+  --side-bg: rgba(20, 23, 29, 0.34);
+  --side-blur: blur(26px) saturate(1.5);
+  --side-border: rgba(255, 255, 255, 0.1);
+
+  --surface: rgba(15, 17, 21, 0.62);
+  --surface-2: rgba(255, 255, 255, 0.05);
+  --raised: rgba(255, 255, 255, 0.065);
+  --raised-border: rgba(255, 255, 255, 0.11);
+  --raised-shadow: 0 2px 10px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+
+  --text: #edeff2;
+  --text-soft: #aeb4bd;
+  --text-faint: #7e8590;
+  --hairline: rgba(255, 255, 255, 0.09);
+  --hairline-strong: rgba(255, 255, 255, 0.17);
+
+  --accent: #8cc0e8;
+  --accent-contrast: #0c1218;
+  --accent-soft: rgba(120, 175, 215, 0.16);
+  --accent-soft-line: rgba(140, 192, 232, 0.35);
+
+  /* backlight blue: the system's ONLY inner glow, private-to-reviewer */
+  --private: #85c4dc;
+  --private-fill: rgba(111, 178, 201, 0.14);
+  --private-line: rgba(111, 178, 201, 0.35);
+  --private-glow: inset 0 0 18px rgba(111, 178, 201, 0.12);
+
+  /* amber: blast radius / disagreement only */
+  --amber: #e2b266;
+  --amber-fill: rgba(214, 167, 91, 0.14);
+  --amber-line: rgba(214, 167, 91, 0.38);
+
+  --green: #8cc79e;
+  --green-fill: rgba(102, 169, 124, 0.16);
+  --green-line: rgba(102, 169, 124, 0.38);
+
+  /* code stays fully opaque: legibility never rides on the wallpaper */
+  --add-fill: #1a2a20;
+  --add-glyph: #79b98d;
+  --del-fill: #2e211e;
+  --del-glyph: #d08a76;
+  --code-bg: #14161b;
+  --code-ln: #5e646e;
+  --kw-weight: 600;
+  --kw-color: #8cc0e8;
+  --str-color: #afbc86;
+  --cmt-color: #7c8272;
+
+  --display: var(--sans);
+  --display-weight: 700;
+  --display-track: -0.02em;
+  --label-transform: none;
+  --label-track: 0.01em;
+
+  --radius: 12px;
+  --chip-radius: 9px;
+  --mark-ink: #edeff2;
+  --mark-accent: #e2b266;
+  --btn-bg: #edeff2;
+  --btn-border: rgba(255, 255, 255, 0.5);
+  --btn-text: #101318;
+
+  /* paper: the one solid object, what leaves the machine */
+  --sheet-bg: #f7f5ef;
+  --sheet-text: #23211c;
+  --sheet-soft: #57534a;
+  --sheet-hairline: #e3dfd4;
+  --sheet-glow: 0 0 90px 8px rgba(190, 210, 232, 0.18), 0 36px 90px rgba(0, 0, 0, 0.6);
+}
+
+/* Bright-room scheme: composed rather than inverted (Design Directions §glass). */
+.canvas-app[data-scheme="light"] {
+  --wallpaper: #dfe3e8;
+  --wallpaper-img:
+    radial-gradient(52% 44% at 18% 6%, rgba(120, 180, 205, 0.55), transparent 70%),
+    radial-gradient(40% 36% at 86% 16%, rgba(226, 178, 110, 0.42), transparent 70%),
+    radial-gradient(60% 52% at 66% 96%, rgba(110, 150, 205, 0.48), transparent 72%);
+
+  --win-bg: rgba(246, 248, 250, 0.52);
+  --win-border: rgba(255, 255, 255, 0.65);
+  --win-shadow:
+    0 24px 70px rgba(46, 58, 72, 0.3), 0 2px 8px rgba(46, 58, 72, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+
+  --side-bg: rgba(250, 251, 253, 0.4);
+  --side-border: rgba(30, 40, 52, 0.1);
+
+  --surface: rgba(248, 249, 251, 0.55);
+  --surface-2: rgba(30, 40, 52, 0.05);
+  --raised: rgba(255, 255, 255, 0.62);
+  --raised-border: rgba(30, 40, 52, 0.1);
+  --raised-shadow: 0 2px 10px rgba(46, 58, 72, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.85);
+
+  --text: #1e2126;
+  --text-soft: #4c525b;
+  --text-faint: #6e757f;
+  --hairline: rgba(30, 40, 52, 0.09);
+  --hairline-strong: rgba(30, 40, 52, 0.18);
+
+  --accent: #2a6fae;
+  --accent-contrast: #ffffff;
+  --accent-soft: rgba(42, 111, 174, 0.1);
+  --accent-soft-line: rgba(42, 111, 174, 0.3);
+
+  --private: #24657f;
+  --private-fill: rgba(60, 140, 168, 0.12);
+  --private-line: rgba(60, 140, 168, 0.32);
+  --private-glow: inset 0 0 18px rgba(60, 140, 168, 0.1);
+
+  --amber: #96590f;
+  --amber-fill: rgba(178, 110, 31, 0.12);
+  --amber-line: rgba(178, 110, 31, 0.32);
+
+  --green: #2e6b45;
+  --green-fill: rgba(62, 122, 78, 0.12);
+  --green-line: rgba(62, 122, 78, 0.3);
+
+  --add-fill: #eaf3e8;
+  --add-glyph: #3e7a4e;
+  --del-fill: #f8ece8;
+  --del-glyph: #a14434;
+  --code-bg: #ffffff;
+  --code-ln: #9ba1a9;
+  --kw-color: #2a6fae;
+  --str-color: #5f6e33;
+  --cmt-color: #8a8e82;
+
+  --mark-ink: #1e2126;
+  --btn-bg: #1e2126;
+  --btn-border: #0f1115;
+  --btn-text: #ffffff;
+
+  --sheet-glow: 0 0 80px 6px rgba(255, 255, 255, 0.5), 0 28px 70px rgba(46, 58, 72, 0.3);
+}

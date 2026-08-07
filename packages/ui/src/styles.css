@@ -387,3 +387,31 @@ button {
     transform: translateX(185%);
   }
 }
+
+/* Additive view toggle between the file/review surface and the canvas surface (#11). */
+.view-toggle {
+  position: fixed;
+  z-index: 12;
+  top: 12px;
+  right: 16px;
+  display: flex;
+  gap: 4px;
+  padding: 3px;
+  border: 1px solid #292d35;
+  border-radius: 9px;
+  background: #15181e;
+}
+.view-toggle button {
+  border: 0;
+  border-radius: 6px;
+  padding: 5px 12px;
+  color: #8d96a8;
+  background: transparent;
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.view-toggle button.is-active {
+  color: #13170a;
+  background: #d8ff4f;
+}
