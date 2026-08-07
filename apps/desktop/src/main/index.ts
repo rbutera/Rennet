@@ -84,6 +84,12 @@ async function chooseRepository(): Promise<string | null> {
 async function buildCanvasesForReview(review: Review): Promise<Record<CanvasAngle, Canvas>> {
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
+  // KNOWN §7 DEVIATION (documented in the openspec change's design.md): the
+  // read-only harness runs with `cwd` on the live mutable checkout rather than
+  // an immutable materialisation, because that layer is not built yet and the
+  // "Claude CLI isolation" evidence gate is openly Blocked. Follow-up: materialise
+  // the active patchset to an app-owned cache and point `cwd` there. Do NOT read
+  // this as a satisfied contract.
   const runDecompositionTurn = adapter
     ? createHarnessRunTurn(adapter, {
         docType: "decomposition.proposal",

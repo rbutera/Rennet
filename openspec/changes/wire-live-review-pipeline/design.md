@@ -32,9 +32,33 @@ The existing desktop `dispatch()` switch is moved verbatim into an electron-free
 
 `demoCanvases()` stays the instant default so the demo is always clickable. When a real review exists and the Canvases view is open, `RennetApp` invokes `review.canvases`; on success it renders the real five-angle set, on failure (harness unavailable, pipeline error) it keeps the fixtures. The optimistic `applyWrites`/`resolveProposal` logic operates on whichever set is active; a real `canvas.disposition` round-trips through the bridge to the engine. A full re-query on the change feed is #13/#31 and out of scope; the invalidation seam is already present in the workspace.
 
+## Known deviation from Architecture Contracts §7 (documented, not silent)
+
+Architecture Contracts §7 states: "A harness receives only an immutable review
+materialisation and explicitly assembled context by default. It does not run
+against the live source checkout." This slice's composition root
+(`apps/desktop/src/main/index.ts`) passes `cwd: review.repositoryRoot` — the
+**live mutable checkout** — to the read-only harness session, so the model's
+`Read`/`Grep`/`Glob` can see material outside the captured patchset. This is a
+deliberate, temporary deviation, recorded here rather than left as silent drift:
+
+- The immutable-materialisation layer does not exist yet, and the
+  "Claude CLI isolation" evidence gate is openly **Blocked** in
+  `docs/Rennet Evidence Gate Status.md` — nothing that was proven has regressed.
+- The session is `readOnly: true`, so the deviation is an *information-boundary*
+  concern (the harness can read the wider tree), not a data-corruption one.
+- The real fix — materialise the active patchset into an app-owned cache and
+  point `cwd` there — is a follow-up (its own slice/bead), not this wiring slice.
+
+Merging this slice does not close the §7 isolation gate; it lights up the first
+real-harness path, and the deviation is called out so the next reader does not
+mistake `cwd: review.repositoryRoot` for a satisfied contract.
+
 ## Deferred
 
 - L3 canvas-op persistence (adjudicate/pin/clear/cohort/select durability) — #13.
 - The canvasOps@2 registry-subset structural assertion (#49 item 3) — needs #13's real MCP registry.
 - Token-usage reporting on the harness outcome (the SDK outcome does not surface tokens in slice 1) — the pipeline records `ZERO_TOKENS`.
 - Change-feed-driven re-query of live canvases after a write — #31.
+- Materialise the active patchset to an app-owned cache and run the harness with
+  `cwd` pointed there, closing the §7 deviation above (isolation evidence gate).

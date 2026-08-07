@@ -136,6 +136,14 @@ export function createDispatch(
         parseCommandInput(name, rawInput);
         return parseCommandOutput(name, { ok: true });
       }
+      default: {
+        // Exhaustiveness guard: every CommandName is routed above, so `name` is
+        // `never` here. If a future command is added to the protocol without a
+        // route, this fails at compile time rather than silently returning
+        // `undefined` to the renderer.
+        const unreachable: never = name;
+        throw new Error(`Unhandled command: ${String(unreachable)}`);
+      }
     }
   };
 }

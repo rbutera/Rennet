@@ -116,17 +116,28 @@ describe("buildReviewCanvases", () => {
     const runDecompositionTurn = vi.fn(
       async (): Promise<DecompositionTurnResult> => ({ status: "emitted", body: {} }),
     );
+    const runOrderingTurn = vi.fn(
+      async (): Promise<OrderingTurnResult> => ({
+        status: "emitted",
+        body: { readingOrder: [], rationale: "" } satisfies OrderingBody,
+      }),
+    );
 
     const result = await buildReviewCanvases({
       reviewId: "review-1",
       patchset: edgedPatchset,
       dispositions: [],
       runDecompositionTurn,
+      runOrderingTurn,
       routePlanOptions: { maxHarnessInvocations: 1 },
     });
 
-    // The gate fired before any spend: the turn was never called.
+    // The gate fired before any spend: NEITHER model phase ran. Asserting the
+    // ordering spy independently (not just the decomposition one) proves the
+    // whole model phase — decomposition AND ordering — is skipped on a refusal,
+    // so a future refactor that lifts ordering out of the budget guard is caught.
     expect(runDecompositionTurn).not.toHaveBeenCalled();
+    expect(runOrderingTurn).not.toHaveBeenCalled();
     expect(result.budgetRefused).toBe(true);
     // Canvases are still populated, from the deterministic floor.
     for (const angle of CANVAS_ANGLES) expect(result.canvases[angle]).toBeDefined();
