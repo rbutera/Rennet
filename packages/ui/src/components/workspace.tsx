@@ -7,6 +7,12 @@ import type {
   Proposal,
 } from "@rennet/types";
 import { useEffect, useMemo, useState } from "react";
+import {
+  type AuthoringAct,
+  authorDisposition,
+  type DispositionBatch,
+  type OrphanedDisposition,
+} from "../canvas/authoring";
 import type { CanvasFeedSource } from "../canvas/feed";
 import { useCanvasFeed } from "../canvas/feed";
 import {
@@ -20,12 +26,17 @@ import {
   viewAfterRotate,
   zoomReducer,
 } from "../canvas/logic";
+import type { CoverageMosaic } from "../canvas/read-state";
 import { createViewStore, useViewStore, type ViewStore } from "../canvas/store";
+import { BatchView } from "./batch-view";
 import { CodeView } from "./code-view";
+import { CoverageMosaicView } from "./coverage";
 import { DecisionsCanvas } from "./decisions";
 import { FlatCanvas } from "./flat";
+import { GranularityAuthor, type GranularityContext } from "./granularity-author";
 import { AnnotationMark, ProposalMark } from "./l3";
 import { LensSwitcher } from "./lens";
+import { OrphanTray } from "./orphan-tray";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CanvasWorkspace — the container. It holds the ephemeral view store, binds the
@@ -50,6 +61,26 @@ export interface CanvasWorkspaceProps {
   /** Change-feed invalidation hint — where a re-query (TanStack invalidation) slots in. */
   onInvalidate?: (notification: CanvasChangeNotification) => void;
   diffFor?: DiffResolver;
+
+  // ── Authoring depth (issue #17), additive and optional ──────────────────────
+  // The dock renders only the sections whose props are supplied, so a host that
+  // passes none (like the #11 demo and its tests) gets the surface unchanged.
+  /** The current target at each altitude, for the granularity author. */
+  granularityContext?: GranularityContext;
+  /** An authoring act was raised at some altitude; the workspace fans it out to L2. */
+  onAuthor?: (act: AuthoringAct, writes: DispositionWrite[]) => void;
+  /** The staged batch — exactly what will publish or hand off. */
+  batch?: DispositionBatch;
+  onEditDraftBody?: (path: string, raw: string) => void;
+  onEditDraftType?: (path: string, type: DispositionType) => void;
+  onWithdrawDraft?: (path: string) => void;
+  onPublishBatch?: () => void;
+  /** Dispositions the last patchset advance dropped (surfaced, never lost). */
+  orphans?: OrphanedDisposition[];
+  onReauthorOrphan?: (path: string) => void;
+  /** The read/skimmed/unread coverage mosaic over the whole changeset. */
+  mosaic?: CoverageMosaic;
+  onGotoNextUnread?: (fromIndex: number) => void;
 }
 
 function FeedBinder({
@@ -109,6 +140,20 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   function approveScope(scope: ApprovalScope, type: DispositionType): void {
     emit(fanOutApproval(canvas, scope, type));
   }
+
+  // Resolve an authoring act at any altitude to its per-anchor L2 writes and fan
+  // them out through the same sink as #11's approve affordance.
+  function author(act: AuthoringAct): void {
+    const { writes } = authorDisposition(canvas, act);
+    emit(writes);
+    props.onAuthor?.(act, writes);
+  }
+
+  const hasAuthoringDock =
+    props.onAuthor !== undefined ||
+    props.batch !== undefined ||
+    (props.orphans !== undefined && props.orphans.length > 0) ||
+    props.mosaic !== undefined;
 
   function selectElement(elementKey: string): void {
     const element = canvas.layers.analysis.elements.find((el) => el.elementKey === elementKey);
@@ -279,6 +324,29 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         <div className="diff-zoom">
           <CodeView path={diff.path} diff={diff.diff} />
         </div>
+      ) : null}
+
+      {hasAuthoringDock ? (
+        <aside className="authoring-dock" aria-label="Disposition authoring">
+          {props.mosaic ? (
+            <CoverageMosaicView mosaic={props.mosaic} onGotoNextUnread={props.onGotoNextUnread} />
+          ) : null}
+          {props.orphans && props.orphans.length > 0 ? (
+            <OrphanTray orphans={props.orphans} onReauthor={props.onReauthorOrphan} />
+          ) : null}
+          {props.onAuthor ? (
+            <GranularityAuthor context={props.granularityContext} onAuthor={author} />
+          ) : null}
+          {props.batch ? (
+            <BatchView
+              batch={props.batch}
+              onEditBody={props.onEditDraftBody}
+              onEditType={props.onEditDraftType}
+              onWithdraw={props.onWithdrawDraft}
+              onPublish={props.onPublishBatch}
+            />
+          ) : null}
+        </aside>
       ) : null}
     </div>
   );
