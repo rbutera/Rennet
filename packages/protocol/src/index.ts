@@ -1,4 +1,4 @@
-import type { Disposition, DispositionAnchor, Patchset, Review } from "@rennet/types";
+import type { Canvas, Disposition, DispositionAnchor, Patchset, Review } from "@rennet/types";
 import { z } from "zod";
 
 export * from "./bodies";
@@ -59,6 +59,82 @@ export const reviewSchema: z.ZodType<Review> = z.object({
   status: z.enum(["current", "invalid"]),
 });
 
+// ── Canvas output schema (issue #54) ─────────────────────────────────────────
+// The engine produces canvases from the durable log; this schema validates the
+// live canvas set delivered to the renderer over `review.canvases`. It is a full,
+// failing-capable schema (not a passthrough) so the IPC output surface has a real
+// positive control, mirroring the `Canvas` shape in `@rennet/types`.
+
+const canvasAngleSchema = z.enum(["spec", "sequence", "decisions", "claims", "noise"]);
+
+const substrateChunkRefSchema = z.object({
+  chunkId: z.string(),
+  hunkIds: z.array(z.string()),
+  filePaths: z.array(z.string()),
+});
+
+const analysisElementSchema = z.object({
+  elementKey: z.string(),
+  docId: z.string(),
+  anchor: z.string(),
+  kind: z.string(),
+  title: z.string(),
+});
+
+const analysisCohortSchema = z.object({
+  cohortKey: z.string(),
+  title: z.string(),
+  elementKeys: z.array(z.string()),
+});
+
+const annotationSchema = z.object({
+  annotationId: z.string(),
+  target: z.string(),
+  kind: z.enum(["highlight", "callout", "link"]),
+  body: z.string(),
+  pinned: z.boolean(),
+});
+
+const proposalSchema = z.object({
+  proposalId: z.string(),
+  kind: z.enum(["disposition", "regroup", "split"]),
+  target: z.string(),
+  payload: z.string(),
+  status: z.enum(["pending", "accepted", "dismissed"]),
+});
+
+const blastRadiusPaintSchema = z.object({ target: z.string(), docId: z.string() });
+
+export const canvasSchema: z.ZodType<Canvas> = z.object({
+  canvasId: z.string(),
+  reviewId: z.string(),
+  patchsetId: z.string(),
+  angle: canvasAngleSchema,
+  layers: z.object({
+    substrate: z.object({ chunks: z.array(substrateChunkRefSchema) }),
+    analysis: z.object({
+      elements: z.array(analysisElementSchema),
+      cohorts: z.array(analysisCohortSchema),
+      readingOrder: z.array(z.string()),
+    }),
+    disposition: z.object({ dispositions: z.array(dispositionSchema) }),
+    annotation: z.object({
+      annotations: z.array(annotationSchema),
+      proposals: z.array(proposalSchema),
+    }),
+  }),
+  overlay: z.array(blastRadiusPaintSchema),
+});
+
+/** The five-angle canvas set the live pipeline produces (`Record<CanvasAngle, Canvas>`). */
+const canvasSetSchema = z.object({
+  spec: canvasSchema,
+  sequence: canvasSchema,
+  decisions: canvasSchema,
+  claims: canvasSchema,
+  noise: canvasSchema,
+});
+
 const commandIdSchema = z.uuid();
 
 export const commandDefinitions = {
@@ -105,6 +181,18 @@ export const commandDefinitions = {
       repoPath: z.string().min(1),
     }),
     output: z.object({ review: reviewSchema }),
+  },
+  // ── Live canvases (issue #54) ──────────────────────────────────────────────
+  // Runs the live pipeline (decompose → budget-gated angle → ordering → place)
+  // for the review's active patchset and returns the five-angle canvas set the
+  // renderer reads. On-demand (opened Canvases view), not on every capture.
+  "review.canvases": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+      repoPath: z.string().min(1),
+    }),
+    output: z.object({ canvases: canvasSetSchema }),
   },
   // ── Canvas user ops (issue #10) ────────────────────────────────────────────
   // The renderer reaches the canvas engine ONLY through this command map (R20).
