@@ -235,8 +235,13 @@ describe("CodeView — syntax highlighting rides UNDER the diff colouring (issue
       <CodeView path="src/x.ts" diff={diff} occurrenceIds="H" viewportHeight={480} />,
     );
     // The add row carries BOTH the diff class (dominant, full-row) AND the syntax
-    // highlight for `return` — the highlight composes under the diff semantic.
-    expect(html).toMatch(/class="code-view-row cv-add"[\s\S]*?rtok-keyword">return<\/span>/);
+    // highlight for `return` — the highlight composes under the diff semantic. The
+    // match is scoped to a SINGLE row (no intervening code-view-row opens between the
+    // cv-add class and the keyword span), so it cannot pass via a keyword on a
+    // different row.
+    expect(html).toMatch(
+      /class="code-view-row cv-add"(?:(?!code-view-row)[\s\S])*?rtok-keyword">return<\/span>/,
+    );
   });
 
   it("fails closed for an unknown extension: plain text, no fabricated colouring", () => {
@@ -253,9 +258,10 @@ describe("CodeView — syntax highlighting rides UNDER the diff colouring (issue
     const html = renderToStaticMarkup(
       <CodeView path="src/x.ts" diff={ONE_HUNK} occurrenceIds="H" viewportHeight={480} />,
     );
-    // The header text is emitted whole (not split into operator/number spans); if
-    // it were tokenized, "@@ -10,3 +10,4 @@" would be shredded across spans.
-    expect(html).toContain("@@ -10,3 +10,4 @@");
+    // The header text is emitted whole INSIDE its <code> element, with NO token
+    // spans — if it were tokenized, the raw string would be shredded across
+    // rtok spans and this contiguous-inside-<code> assertion would fail.
+    expect(html).toContain('<code class="code-view-code">@@ -10,3 +10,4 @@</code>');
   });
 
   it("keeps the R16 node envelope WITH highlighting on (5000-line windowed render)", () => {
@@ -275,5 +281,28 @@ describe("CodeView — syntax highlighting rides UNDER the diff colouring (issue
     // token spans did not break windowing. A regression that tokenized the whole
     // file (not just the window) would blow this.
     expect(nodeCount(windowed)).toBeLessThanOrEqual(MAX_RENDERED_NODES);
+  });
+
+  it("token-dense rows degrade to plain so highlighting cannot blow the R16 node envelope", () => {
+    // Per-token spans are DOM nodes. A demoDiff row is a handful of tokens, so the
+    // envelope test above has huge headroom — it does NOT exercise the case where a
+    // few pathologically dense rows (minified-ish, alternating single-char tokens)
+    // shatter into hundreds of spans each. Uncapped, three ~1900-char rows produce
+    // ~6000 nodes and blow MAX_RENDERED_NODES; the per-line token cap degrades each
+    // to a single plain token instead. Red-able: remove the cap and both the node
+    // count AND the "no rtok on the dense rows" assertion fail.
+    const denseLine = `+ ${"a+".repeat(950)}`; // ~1900 chars, ~1900 tokens if uncapped
+    const diff = [denseLine, denseLine, denseLine].join("\n");
+    const html = renderToStaticMarkup(
+      <CodeView path="src/x.ts" diff={diff} viewportHeight={480} />,
+    );
+    // All three dense rows are in the (tiny) window and painted…
+    expect((html.match(/class="code-view-row/g) ?? []).length).toBe(3);
+    // …each collapsed to exactly ONE plain token span (not hundreds): three rows →
+    // three token spans total. Uncapped, this render emits ~5700 spans. That is the
+    // degradation the cap guarantees, and it is what keeps the node budget bounded.
+    expect((html.match(/class="rtok /g) ?? []).length).toBe(3);
+    expect(html).not.toContain("rtok-operator"); // no per-token hues on the degraded rows
+    expect(nodeCount(html)).toBeLessThanOrEqual(MAX_RENDERED_NODES);
   });
 });

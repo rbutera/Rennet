@@ -29,6 +29,19 @@ export { detectLanguage } from "./languages";
  */
 export const MAX_HIGHLIGHT_LINE_LENGTH = 2000;
 
+/**
+ * Lines that tokenize into more than this many tokens render as one plain token.
+ * Every token becomes a DOM span, and the CodeView's R16 envelope budgets only a
+ * few nodes per row (`NODES_PER_ROW`); a pathological dense line (minified-ish, or
+ * long runs of alternating single-char tokens) can produce hundreds of spans and
+ * blow that budget even though it is under the length cap. Such a line has no
+ * useful token structure, so it degrades to plain — the same graceful-degradation
+ * contract as the length cap, keyed on the real cost driver (token/node count)
+ * rather than the character-length proxy. A full viewport-independent window-node
+ * budget is a follow-up; this bounds the realistic dense-line case.
+ */
+export const MAX_HIGHLIGHT_LINE_TOKENS = 128;
+
 function isWhitespace(c: string): boolean {
   return c === " " || c === "\t" || c === "\r" || c === "\f" || c === "\v";
 }
@@ -191,7 +204,9 @@ function scan(code: string, grammar: Grammar): Token[] {
     let matchedString = false;
     for (const delim of grammar.strings) {
       const end = readString(code, i, delim);
-      if (end !== null) {
+      // `end > i` guards the loop-advance invariant: a (future) zero-width delim
+      // must never match without consuming input, or `scan` would not terminate.
+      if (end !== null && end > i) {
         const text = code.slice(i, end);
         // A JSON/YAML/CSS key ("name":) reads as a property, not a bare string.
         const asProperty = grammar.propertyBeforeColon && peekNonSpace(code, end) === ":";
@@ -257,5 +272,9 @@ export function tokenizeLine(code: string, languageId: LanguageId | null): Token
   if (languageId === null) return [{ text: code, type: "plain" }];
   if (code.length > MAX_HIGHLIGHT_LINE_LENGTH) return [{ text: code, type: "plain" }];
   const grammar = GRAMMARS[languageId];
-  return scan(code, grammar);
+  const tokens = scan(code, grammar);
+  // A line that shatters into more spans than the row-node budget can hold has no
+  // useful token structure — degrade it to plain rather than blow the R16 envelope.
+  if (tokens.length > MAX_HIGHLIGHT_LINE_TOKENS) return [{ text: code, type: "plain" }];
+  return tokens;
 }

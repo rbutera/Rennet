@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { detectLanguage, MAX_HIGHLIGHT_LINE_LENGTH, type Token, tokenizeLine } from "./highlight";
+import {
+  detectLanguage,
+  MAX_HIGHLIGHT_LINE_LENGTH,
+  MAX_HIGHLIGHT_LINE_TOKENS,
+  type Token,
+  tokenizeLine,
+} from "./highlight";
 
 function reassemble(tokens: readonly Token[]): string {
   return tokens.map((t) => t.text).join("");
@@ -141,6 +147,28 @@ describe("tokenizeLine — fail-closed and graceful degradation", () => {
     const long = `const x = ${"a".repeat(MAX_HIGHLIGHT_LINE_LENGTH)};`;
     const tokens = tokenizeLine(long, "typescript");
     expect(tokens).toEqual([{ text: long, type: "plain" }]);
+  });
+
+  it("a token-dense line UNDER the length cap still degrades to a single plain token (R16 node budget)", () => {
+    // A line of alternating single-char tokens is short in characters but explodes
+    // into one DOM span per token — enough to blow the CodeView's node envelope.
+    // It has no useful structure, so it degrades to plain (the same contract as the
+    // length cap, keyed on token count). Red-able: remove MAX_HIGHLIGHT_LINE_TOKENS
+    // and this line tokenizes into hundreds of spans instead of one.
+    const dense = `${"a ".repeat(MAX_HIGHLIGHT_LINE_TOKENS)}a`;
+    expect(dense.length).toBeLessThanOrEqual(MAX_HIGHLIGHT_LINE_LENGTH); // NOT caught by length
+    const tokens = tokenizeLine(dense, "typescript");
+    expect(tokens).toEqual([{ text: dense, type: "plain" }]);
+  });
+
+  it("a line at or under the token cap keeps its highlighting (the cap does not touch real code)", () => {
+    // A normal dense-ish source line stays fully tokenized — the cap only fires for
+    // pathological lines, never ordinary code.
+    const normal = "export const value = compute(41 + 1) + other(2) - third(3);";
+    const tokens = tokenizeLine(normal, "typescript");
+    expect(tokens.length).toBeGreaterThan(1);
+    expect(tokens.length).toBeLessThanOrEqual(MAX_HIGHLIGHT_LINE_TOKENS);
+    expect(hasToken(tokens, "keyword", "const")).toBe(true);
   });
 
   it("never fabricates colour: a line of only whitespace/punctuation has no semantic hue", () => {
