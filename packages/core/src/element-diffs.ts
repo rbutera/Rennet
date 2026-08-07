@@ -24,12 +24,12 @@ import type {
   Canvas,
   CanvasAngle,
   Decomposition,
-  DecompositionChunk,
   ElementDiff,
   ElementDiffs,
   Hunk,
   Patchset,
 } from "@rennet/types";
+import { type AdmittedDocument, isProposalBody } from "./canvas";
 
 /** A verbatim `@@` hunk sliced from a file patch: its line ranges + exact text. */
 interface RawHunk {
@@ -108,25 +108,58 @@ interface ResolvedElement {
 }
 
 /**
+ * Precompute every chunk id's resolution (path + real hunks). TWO id spaces are
+ * merged, because a chunk anchor can name either:
+ *   - a deterministic floor chunk (`decomposition.chunks`) — the no-model path; or
+ *   - an admitted `decomposition.proposal` chunk — the AGENTIC path, where the
+ *     sequence canvas anchors its elements to the AGENT's regrouped chunk ids
+ *     (canvas.ts `projectSequence`). Those ids are agent-authored and absent from
+ *     the floor, so resolving against the floor alone leaves every agentic
+ *     sequence element with no diff (zoom shows nothing in production).
+ * A proposal chunk's `hunkIds` are real occurrence ids (agents reference, never
+ * mint), so they resolve through the same `hunkById`. The floor grouping wins any
+ * id collision — it is the canonical decomposition.
+ */
+function buildChunkResolutions(
+  decomposition: Decomposition,
+  admittedDocs: readonly AdmittedDocument[],
+  hunkById: ReadonlyMap<string, Hunk>,
+): Map<string, ResolvedElement> {
+  const resolutions = new Map<string, ResolvedElement>();
+  const resolve = (hunkIds: readonly string[], preferredPath: string): ResolvedElement => {
+    const hunks = hunkIds
+      .map((id) => hunkById.get(id))
+      .filter((hunk): hunk is Hunk => hunk !== undefined);
+    return { path: preferredPath || hunks[0]?.filePath || "", hunks };
+  };
+  for (const chunk of decomposition.chunks) {
+    resolutions.set(chunk.chunkId, resolve(chunk.hunkIds, chunk.filePaths[0] ?? ""));
+  }
+  for (const doc of admittedDocs) {
+    if (!isProposalBody(doc.body)) continue;
+    for (const chunk of doc.body.chunks) {
+      if (resolutions.has(chunk.chunkId)) continue; // the floor grouping is canonical
+      resolutions.set(chunk.chunkId, resolve(chunk.hunkIds, ""));
+    }
+  }
+  return resolutions;
+}
+
+/**
  * Resolve an element anchor to its file + decomposition hunks. `rennet:chunk/<id>`
- * → the chunk's hunks; `rennet:hunk/<id>` → that one hunk. Any other anchor kind
- * (a flat-angle `doc`/`spec`/… element) has no code diff and resolves to null.
+ * → the chunk's hunks (floor or admitted-proposal); `rennet:hunk/<id>` → that one
+ * hunk. Any other anchor kind (a flat-angle `doc`/`spec`/… element) has no code
+ * diff and resolves to null.
  */
 function resolveElement(
   anchor: string,
-  chunkById: ReadonlyMap<string, DecompositionChunk>,
+  chunkResolutions: ReadonlyMap<string, ResolvedElement>,
   hunkById: ReadonlyMap<string, Hunk>,
 ): ResolvedElement | null {
   const parsed = parseAnchor(anchor);
   if (!parsed.ok) return null;
   if (parsed.anchor.kind === "chunk") {
-    const chunk = chunkById.get(parsed.anchor.id);
-    if (!chunk) return null;
-    const hunks = chunk.hunkIds
-      .map((id) => hunkById.get(id))
-      .filter((hunk): hunk is Hunk => hunk !== undefined);
-    const path = chunk.filePaths[0] ?? hunks[0]?.filePath ?? "";
-    return { path, hunks };
+    return chunkResolutions.get(parsed.anchor.id) ?? null;
   }
   if (parsed.anchor.kind === "hunk") {
     const hunk = hunkById.get(parsed.anchor.id);
@@ -182,6 +215,7 @@ export function buildElementDiffs(
   canvases: Record<CanvasAngle, Canvas>,
   decomposition: Decomposition,
   patchset: Patchset,
+  admittedDocs: readonly AdmittedDocument[] = [],
 ): ElementDiffs {
   const rawByFile = new Map<string, RawHunk[]>();
   const patchByFile = new Map<string, string>();
@@ -190,13 +224,13 @@ export function buildElementDiffs(
     patchByFile.set(file.path, file.patch);
   }
   const hunkById = new Map(decomposition.hunks.map((hunk) => [hunk.id, hunk]));
-  const chunkById = new Map(decomposition.chunks.map((chunk) => [chunk.chunkId, chunk]));
+  const chunkResolutions = buildChunkResolutions(decomposition, admittedDocs, hunkById);
 
   const diffs: ElementDiffs = {};
   for (const canvas of Object.values(canvases)) {
     for (const element of canvas.layers.analysis.elements) {
       if (diffs[element.elementKey]) continue;
-      const resolved = resolveElement(element.anchor, chunkById, hunkById);
+      const resolved = resolveElement(element.anchor, chunkResolutions, hunkById);
       if (!resolved) continue;
       const diff = renderDiff(resolved, rawByFile, patchByFile);
       if (diff) diffs[element.elementKey] = diff;

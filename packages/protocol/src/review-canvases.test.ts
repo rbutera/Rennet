@@ -73,9 +73,14 @@ describe("review.canvases command", () => {
 
   it("rejects a malformed canvas (positive control)", () => {
     const broken = canvasSet();
-    // Drop a required layer so the schema must fail.
+    // Drop a required layer so the schema must fail. `elementDiffs` is supplied
+    // (valid) so the throw is attributable to CANVAS validation specifically —
+    // otherwise this control fires for the missing-elementDiffs reason (already
+    // covered above) and never exercises the canvas schema at all.
     (broken.sequence.layers as { substrate?: unknown }).substrate = undefined;
-    expect(() => parseCommandOutput("review.canvases", { canvases: broken })).toThrow();
+    expect(() =>
+      parseCommandOutput("review.canvases", { canvases: broken, elementDiffs: {} }),
+    ).toThrow();
   });
 
   it("canvasSchema accepts a valid canvas and rejects a non-object", () => {

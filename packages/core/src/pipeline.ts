@@ -218,7 +218,7 @@ export async function buildReviewCanvases(
     }),
   ]);
   const canvases = Object.fromEntries(entries) as Record<CanvasAngle, Canvas>;
-  const elementDiffs = buildElementDiffs(canvases, decomposition, input.patchset);
+  const elementDiffs = buildElementDiffs(canvases, decomposition, input.patchset, admittedDocs);
 
   return {
     canvases,
