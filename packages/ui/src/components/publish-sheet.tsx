@@ -3,6 +3,7 @@ import type { DispositionBatch } from "../canvas/authoring";
 import {
   canSign,
   type DestinationVariant,
+  resolveSign,
   stagedItems,
   stagedPayload,
 } from "../canvas/destination";
@@ -58,14 +59,13 @@ export function PublishSheet({
   function endHold(): void {
     const started = holdStart.current;
     holdStart.current = null;
+    setArmed(false);
     if (started === null) return;
-    const elapsed = Date.now() - started;
-    if (canSign(elapsed, holdToSignMs)) {
-      setArmed(false);
-      onSign?.(payload);
-    } else {
-      setArmed(false);
-    }
+    // The single gate: only a hold that clears the bar emits, and it emits exactly
+    // the previewed bytes (never a transform). Below the bar, `resolveSign` is null
+    // and nothing leaves — the sign never defaults to APPROVE.
+    const outbound = resolveSign(Date.now() - started, holdToSignMs, payload);
+    if (outbound !== null) onSign?.(outbound);
   }
 
   return (
@@ -141,11 +141,14 @@ export function PublishSheet({
               setArmed(false);
             }}
             onKeyDown={(event) => {
-              // Keyboard accessibility: Enter/Space performs the sign, honouring
-              // the floor-0 gate. A non-zero hold is a pointer affordance.
-              if ((event.key === "Enter" || event.key === " ") && canSign(0, holdToSignMs)) {
+              // Keyboard accessibility: Enter/Space performs the sign through the
+              // same gate, honouring the floor-0 rule. A non-zero hold is a pointer
+              // affordance (keyboard hold is a documented follow-up).
+              if (event.key !== "Enter" && event.key !== " ") return;
+              const outbound = resolveSign(0, holdToSignMs, payload);
+              if (outbound !== null) {
                 event.preventDefault();
-                onSign?.(payload);
+                onSign?.(outbound);
               }
             }}
           >

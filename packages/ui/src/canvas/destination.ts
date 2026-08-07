@@ -114,3 +114,24 @@ export function canSign(elapsedMs: number, holdToSignMs: number): boolean {
   const bar = Math.max(0, holdToSignMs);
   return elapsedMs >= bar;
 }
+
+/**
+ * The publish decision: the exact outbound bytes to emit for a completed hold, or
+ * `null` when the hold has not cleared the bar (nothing leaves). This is the ONE
+ * gate the sheet's sign paths (pointer hold + keyboard) route through, so the two
+ * load-bearing publish invariants are guarded by a red-able test rather than only
+ * holding by construction:
+ *   • never auto-approves — a hold below `holdToSignMs` returns `null`, so a
+ *     too-short (or zero-elapsed, non-floor) hold cannot sign.
+ *   • what you see is what leaves — the returned string is the SAME `payload` the
+ *     sheet previews, byte-for-byte, never a transform; if it emits at all it emits
+ *     exactly the previewed bytes.
+ * The accessibility floor is 0 (a `holdToSignMs` of 0 signs on an explicit act).
+ */
+export function resolveSign(
+  elapsedMs: number,
+  holdToSignMs: number,
+  payload: string,
+): string | null {
+  return canSign(elapsedMs, holdToSignMs) ? payload : null;
+}

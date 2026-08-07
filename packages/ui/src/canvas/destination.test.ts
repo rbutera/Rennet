@@ -4,6 +4,7 @@ import {
   canSign,
   destinationVariant,
   draftsFromWrites,
+  resolveSign,
   stagedItems,
   stagedPayload,
 } from "./destination";
@@ -67,5 +68,36 @@ describe("canSign — hold-to-confirm gate, never defaults to approve", () => {
   it("accessibility floor 0 permits an immediate sign, and a negative budget clamps to 0", () => {
     expect(canSign(0, 0)).toBe(true);
     expect(canSign(0, -50)).toBe(true);
+  });
+});
+
+describe("resolveSign — the one publish gate the sheet routes through", () => {
+  const payload = '[{"path":"src/a.ts","type":"comment","body":"has \\"quotes\\" & <tags>"}]';
+
+  it("never auto-approves: a hold below the bar emits NOTHING (null)", () => {
+    // If this returned the payload instead of null, a too-short (or non-floor
+    // zero-elapsed) hold would publish. That must be impossible.
+    expect(resolveSign(0, 800, payload)).toBe(null);
+    expect(resolveSign(799, 800, payload)).toBe(null);
+  });
+
+  it("what you see is what leaves: a cleared hold emits the payload BYTE-for-byte, never a transform", () => {
+    // The emit side of "preview bytes == published bytes": whatever it emits, it
+    // emits exactly the previewed bytes. Any transform (trim/normalise/re-encode)
+    // makes this red.
+    expect(resolveSign(800, 800, payload)).toBe(payload);
+    expect(resolveSign(1200, 800, payload)).toBe(payload);
+  });
+
+  it("accessibility floor 0 emits the payload on an explicit act; a negative budget clamps to 0", () => {
+    expect(resolveSign(0, 0, payload)).toBe(payload);
+    expect(resolveSign(0, -50, payload)).toBe(payload);
+  });
+
+  it("emits the SAME bytes the sheet previews (stagedPayload), not a re-serialisation", () => {
+    const batch = stage(...writes);
+    // Ties the emitted bytes to the exact preview source: publish emits what the
+    // <pre> shows. A divergent serialisation on either side makes this red.
+    expect(resolveSign(800, 800, stagedPayload(batch))).toBe(stagedPayload(batch));
   });
 });

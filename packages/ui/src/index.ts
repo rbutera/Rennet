@@ -33,6 +33,7 @@ export {
   canSign,
   destinationVariant,
   draftsFromWrites,
+  resolveSign,
   stagedItems,
   stagedPayload,
 } from "./canvas/destination";
