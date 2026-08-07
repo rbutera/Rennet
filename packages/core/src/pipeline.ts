@@ -29,11 +29,14 @@ import {
 import type {
   Canvas,
   CanvasAngle,
+  CouncilJobId,
+  CouncilResolveContext,
   Decomposition,
   DecompositionProposalBody,
   Disposition,
   ElementDiffs,
   Patchset,
+  ResolutionTrace,
   RoutePlanResult,
   RspCapabilitySnapshot,
   RspModelReportedBy,
@@ -48,13 +51,19 @@ import {
 import { type AdmittedDocument, buildCanvas, type CanvasEvent } from "./canvas";
 import { type DecomposeOptions, decompose } from "./decomposition";
 import { buildElementDiffs } from "./element-diffs";
+import { createInvocationBudget } from "./invocation-budget";
+import { resolveAssignment } from "./model-council";
 import {
   type OrderingTurnResult,
   type RunOrderingPassResult,
   resolveLiveOrder,
   runOrderingPass,
 } from "./ordering-pass";
-import { buildRoutePlan, type RoutePlanOptions } from "./route-plan";
+import {
+  buildRoutePlan,
+  DEFAULT_MAX_HARNESS_INVOCATIONS,
+  type RoutePlanOptions,
+} from "./route-plan";
 
 /** The provenance a caller knows before the run; the rest is stamped per attempt. */
 export interface PipelineProvenanceSeed {
@@ -64,6 +73,10 @@ export interface PipelineProvenanceSeed {
   readonly model: string;
   readonly modelReportedBy: RspModelReportedBy;
   readonly capability: RspCapabilitySnapshot;
+  /** The Model Council effort for this seat, when the council resolved it (#69). */
+  readonly effort?: string;
+  /** The Model Council resolution trace, when the council resolved this seat (#69). */
+  readonly resolutionTrace?: ResolutionTrace;
 }
 
 const NO_CAPABILITY: RspCapabilitySnapshot = {
@@ -103,6 +116,15 @@ export interface ReviewPipelineInput {
   readonly decomposeOptions?: DecomposeOptions;
   readonly routePlanOptions?: RoutePlanOptions;
   readonly provenance?: PipelineProvenanceSeed;
+  /**
+   * The Model Council context (installed harnesses + user overrides). When
+   * present, the pipeline resolves the model for the `decomposition-proposal`
+   * and `comprehension-ordering` seats and stamps `{ model, effort,
+   * resolutionTrace }` into each phase's provenance — so every model invocation
+   * records which mind ran it and why. Absent, the caller-supplied provenance
+   * model stands (prior behaviour).
+   */
+  readonly council?: CouncilResolveContext;
   /**
    * Drives the decomposition angle's model turn. Absent (or a budget refusal)
    * means the deterministic floor stands — no model runs.
@@ -149,6 +171,33 @@ export async function buildReviewCanvases(
   const routePlan = buildRoutePlan(decomposition, input.routePlanOptions ?? {});
   const seed = input.provenance ?? DEFAULT_PROVENANCE_SEED;
 
+  // ONE shared live invocation budget for the whole model phase (issue #69, bead
+  // p0wwp). Seeded from the same ceiling the pre-flight route plan uses, threaded
+  // through BOTH runners, consumed once per actual turn — so the proposal's
+  // retries AND the ordering pass draw from a single ceiling and a turn over it
+  // is refused at runtime, not merely counted once in a static pre-flight plan.
+  const maxInvocations =
+    input.routePlanOptions?.maxHarnessInvocations ?? DEFAULT_MAX_HARNESS_INVOCATIONS;
+  const budget = createInvocationBudget(maxInvocations);
+
+  // The Model Council resolves the model for a seat and stamps it into the seed;
+  // absent a council context the caller-supplied seed model stands.
+  const councilSeed = (
+    base: PipelineProvenanceSeed,
+    jobId: CouncilJobId,
+  ): PipelineProvenanceSeed => {
+    if (input.council === undefined) return base;
+    const resolution = resolveAssignment(jobId, input.council);
+    if (resolution.kind !== "model") return base;
+    return {
+      ...base,
+      model: resolution.model,
+      modelReportedBy: "config",
+      effort: resolution.effort,
+      resolutionTrace: resolution.trace,
+    };
+  };
+
   let admittedDocs: AdmittedDocument[] = [];
   let decompositionResult: RunDecompositionAngleResult | undefined;
   let orderingResult: RunOrderingPassResult | undefined;
@@ -162,8 +211,9 @@ export async function buildReviewCanvases(
       decomposition,
       contract: input.decompositionContract ?? DECOMPOSITION_PROPOSAL_CONTRACT,
       manifest,
-      provenance: seed,
+      provenance: councilSeed(seed, "decomposition-proposal"),
       runTurn: input.runDecompositionTurn,
+      budget,
       ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
       ...(input.newRunId ? { newRunId: input.newRunId } : {}),
     });
@@ -187,8 +237,9 @@ export async function buildReviewCanvases(
         proposal: proposalBody,
         patchsetId: decomposition.patchsetId,
         contract: input.orderingContract ?? ORDERING_CONTRACT,
-        provenance: seed,
+        provenance: councilSeed(seed, "comprehension-ordering"),
         runTurn: input.runOrderingTurn,
+        budget,
         ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
         ...(input.newRunId ? { newRunId: input.newRunId } : {}),
       });

@@ -29,11 +29,14 @@ import {
 } from "@rennet/instructions";
 import { computeInputDigest, validateDocument } from "@rennet/protocol";
 import type {
+  BudgetGrant,
   DecompositionEdge,
   DecompositionProposalBody,
+  InvocationBudget,
   ManifestOccurrence,
   OfferedManifest,
   OrderingBody,
+  ResolutionTrace,
   RspCapabilitySnapshot,
   RspEnvelope,
   RspModelReportedBy,
@@ -87,6 +90,10 @@ export interface OrderingProvenanceSeed {
   readonly model: string;
   readonly modelReportedBy: RspModelReportedBy;
   readonly capability: RspCapabilitySnapshot;
+  /** The Model Council effort for this seat, when the council resolved it (#69). */
+  readonly effort?: string;
+  /** The Model Council resolution trace, when the council resolved this seat (#69). */
+  readonly resolutionTrace?: ResolutionTrace;
 }
 
 export interface RunOrderingPassInput {
@@ -102,6 +109,14 @@ export interface RunOrderingPassInput {
   readonly guidance?: { readonly general?: string; readonly files?: string };
   /** Retries after the first attempt. Default 2 (three attempts total). */
   readonly maxRetries?: number;
+  /**
+   * The shared live invocation budget (issue #69, fixes bead p0wwp). Same
+   * semantics as the decomposition runner: consulted before EVERY turn; a
+   * refusal is fail-closed and falls to the deterministic baseline. When one
+   * budget is threaded through both runners, the whole decomposition-plus-
+   * ordering phase draws from a single ceiling.
+   */
+  readonly budget?: InvocationBudget;
   readonly assembleOptions?: AssembleOptions;
   readonly mintDocId?: () => string;
   readonly newRunId?: () => string;
@@ -109,10 +124,12 @@ export interface RunOrderingPassInput {
 
 export interface OrderingAttempt {
   readonly attempt: number;
-  readonly outcome: "admitted" | "rejected" | "turn-failed";
+  readonly outcome: "admitted" | "rejected" | "turn-failed" | "budget-refused";
   /** The validation report for an attempt that produced a body; absent on a turn failure. */
   readonly report?: ValidationReport;
   readonly turnError?: string;
+  /** The typed refusal when the budget refused this attempt at runtime (R10). */
+  readonly budgetRefusal?: Extract<BudgetGrant, { granted: false }>;
 }
 
 export interface RunOrderingPassResult {
@@ -123,6 +140,8 @@ export interface RunOrderingPassResult {
   readonly attempts: OrderingAttempt[];
   /** The deterministic baseline order, always exposed so a consumer can switch. */
   readonly baselineOrder: string[];
+  /** True when the live invocation budget refused a turn at runtime (R10 ceiling hit). */
+  readonly budgetRefused: boolean;
 }
 
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -232,6 +251,8 @@ function buildProvenance(
     tokens,
     reportedUsd: null,
     derivedUsd: null,
+    ...(seed.effort === undefined ? {} : { effort: seed.effort }),
+    ...(seed.resolutionTrace === undefined ? {} : { resolutionTrace: seed.resolutionTrace }),
   };
 }
 
@@ -271,6 +292,7 @@ export async function runOrderingPass(input: RunOrderingPassInput): Promise<RunO
     guidance,
     assembleOptions,
     maxRetries = 2,
+    budget,
   } = input;
   const mintDocId = input.mintDocId ?? defaultMintDocId;
   const newRunId = input.newRunId ?? defaultRunId;
@@ -284,8 +306,20 @@ export async function runOrderingPass(input: RunOrderingPassInput): Promise<RunO
 
   const attempts: OrderingAttempt[] = [];
   let lastReportText: string | undefined;
+  let budgetRefused = false;
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    // The live budget gate (R10): consult the shared budget before spending a
+    // turn. A refusal is terminal — fall to the deterministic baseline.
+    if (budget !== undefined) {
+      const grant = budget.tryConsume(`ordering:attempt-${attempt}`);
+      if (!grant.granted) {
+        attempts.push({ attempt, outcome: "budget-refused", budgetRefusal: grant });
+        budgetRefused = true;
+        break;
+      }
+    }
+
     const assembled = assemblePrompt(
       {
         base,
@@ -319,7 +353,15 @@ export async function runOrderingPass(input: RunOrderingPassInput): Promise<RunO
       const dependencyErrors = orderDependencyViolations(turn.body, proposal.edges);
       if (dependencyErrors.length === 0) {
         attempts.push({ attempt, outcome: "admitted", report });
-        return { admitted: true, usedFallback: false, document, report, attempts, baselineOrder };
+        return {
+          admitted: true,
+          usedFallback: false,
+          document,
+          report,
+          attempts,
+          baselineOrder,
+          budgetRefused,
+        };
       }
       const dependencyReport: ValidationReport = {
         ...report,
@@ -334,7 +376,8 @@ export async function runOrderingPass(input: RunOrderingPassInput): Promise<RunO
     lastReportText = renderReport(report);
   }
 
-  // Terminal failure: the deterministic baseline stands, admitted, route recorded.
+  // Terminal failure (rejected out, turn failed, or budget refused): the
+  // deterministic baseline stands, admitted, route recorded.
   const fallbackBody = deterministicOrderingBody(proposal);
   const provenance = buildProvenance(seed, "deterministic", inputDigest, newRunId(), ZERO_TOKENS);
   const document = buildEnvelope(fallbackBody, patchsetId, provenance, mintDocId());
@@ -346,6 +389,7 @@ export async function runOrderingPass(input: RunOrderingPassInput): Promise<RunO
     report,
     attempts,
     baselineOrder,
+    budgetRefused,
   };
 }
 
