@@ -92,7 +92,12 @@ function harness(): {
   const service = new ReviewService(capture, new InMemoryStore());
   const allowedRoots = new Set<string>();
   let dirty = false;
-  const buildCanvases = vi.fn(() => Promise.resolve(canvasSet()));
+  const buildCanvases = vi.fn(() =>
+    Promise.resolve({
+      canvases: canvasSet(),
+      elementDiffs: { e1: { path: "src/a.ts", diff: "@@ -1,1 +1,2 @@\n+x" } },
+    }),
+  );
   const deps: DispatchDeps = {
     service,
     allowedRoots,
@@ -185,10 +190,15 @@ describe("createDispatch — canvas.* routing (issue #54)", () => {
       commandId: randomUUID(),
       reviewId: review.id,
       repoPath: REPO,
-    })) as { canvases: Record<CanvasAngle, Canvas> };
+    })) as {
+      canvases: Record<CanvasAngle, Canvas>;
+      elementDiffs: Record<string, { path: string; diff: string }>;
+    };
 
     expect(buildCanvases).toHaveBeenCalledTimes(1);
     expect(Object.keys(result.canvases).sort()).toEqual([...CANVAS_ANGLES].sort());
+    // The per-element real diff map (#60) is delivered with the canvas set.
+    expect(result.elementDiffs.e1?.diff).toContain("+x");
   });
 
   it("still serves the preserved MVP commands (app.bootstrap, review.setDisposition)", async () => {

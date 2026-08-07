@@ -126,7 +126,7 @@ function isDecisionRecordBody(body: unknown): body is DecisionRecordBody {
   );
 }
 
-function isProposalBody(body: unknown): body is DecompositionProposalBody {
+export function isProposalBody(body: unknown): body is DecompositionProposalBody {
   return (
     typeof body === "object" &&
     body !== null &&

@@ -37,10 +37,29 @@ describe("review.canvases command", () => {
     expect(isCommandName("review.canvases")).toBe(true);
   });
 
-  it("round-trips a five-angle canvas set through the output schema", () => {
-    const output = parseCommandOutput("review.canvases", { canvases: canvasSet() });
+  it("round-trips a five-angle canvas set + the element diff map through the output schema", () => {
+    const output = parseCommandOutput("review.canvases", {
+      canvases: canvasSet(),
+      elementDiffs: { e1: { path: "src/a.ts", diff: "@@ -1,1 +1,2 @@\n+added" } },
+    });
     expect(Object.keys(output.canvases).sort()).toEqual([...CANVAS_ANGLES].sort());
     expect(output.canvases.sequence.layers.analysis.elements[0]?.title).toBe("A");
+    expect(output.elementDiffs.e1?.path).toBe("src/a.ts");
+    expect(output.elementDiffs.e1?.diff).toContain("+added");
+  });
+
+  it("rejects a malformed element diff entry (positive control)", () => {
+    expect(() =>
+      parseCommandOutput("review.canvases", {
+        canvases: canvasSet(),
+        // `diff` missing → the elementDiffs schema must fail.
+        elementDiffs: { e1: { path: "src/a.ts" } },
+      }),
+    ).toThrow();
+  });
+
+  it("requires the elementDiffs field (positive control)", () => {
+    expect(() => parseCommandOutput("review.canvases", { canvases: canvasSet() })).toThrow();
   });
 
   it("parses a valid input", () => {
@@ -54,9 +73,14 @@ describe("review.canvases command", () => {
 
   it("rejects a malformed canvas (positive control)", () => {
     const broken = canvasSet();
-    // Drop a required layer so the schema must fail.
+    // Drop a required layer so the schema must fail. `elementDiffs` is supplied
+    // (valid) so the throw is attributable to CANVAS validation specifically —
+    // otherwise this control fires for the missing-elementDiffs reason (already
+    // covered above) and never exercises the canvas schema at all.
     (broken.sequence.layers as { substrate?: unknown }).substrate = undefined;
-    expect(() => parseCommandOutput("review.canvases", { canvases: broken })).toThrow();
+    expect(() =>
+      parseCommandOutput("review.canvases", { canvases: broken, elementDiffs: {} }),
+    ).toThrow();
   });
 
   it("canvasSchema accepts a valid canvas and rejects a non-object", () => {

@@ -791,6 +791,21 @@ export interface Canvas {
 }
 
 /**
+ * The real diff material for one canvas element (issue #60). Delivered ALONGSIDE
+ * the canvas set (never embedded on the `Canvas`, so the canvas projection stays
+ * byte-identical for replay). `diff` is sliced VERBATIM from the captured
+ * patchset — the exact hunk text git produced — so zooming into an element shows
+ * the real code, not a fixture.
+ */
+export interface ElementDiff {
+  path: string;
+  diff: string;
+}
+
+/** The per-element real diff map, keyed by `AnalysisElement.elementKey` (issue #60). */
+export type ElementDiffs = Record<string, ElementDiff>;
+
+/**
  * A canvas-scoped post-commit change notification (R35's ONE change feed, canvas
  * half). Keyed `(reviewId, canvasId, elementKey)` with the covering `seqRange`;
  * a conflated notification names the seq range it covers. This is an

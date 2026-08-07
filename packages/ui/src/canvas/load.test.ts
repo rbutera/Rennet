@@ -46,17 +46,20 @@ function bridgeReturning(
 }
 
 describe("loadCanvases", () => {
-  it("returns the live canvas set the engine produced", async () => {
+  it("returns the live canvas set + real element diffs the engine produced", async () => {
     const canvases = liveSet();
+    const elementDiffs = { e: { path: "src/a.ts", diff: "@@ -1,1 +1,2 @@\n+real" } };
     const bridge = bridgeReturning((name) => {
       expect(name).toBe("review.canvases");
-      return Promise.resolve({ canvases } as never);
+      return Promise.resolve({ canvases, elementDiffs } as never);
     });
 
     const result = await loadCanvases(bridge, review);
 
     expect(result).not.toBeNull();
-    expect(result?.sequence.layers.analysis.elements[0]?.title).toBe("LIVE");
+    expect(result?.canvases.sequence.layers.analysis.elements[0]?.title).toBe("LIVE");
+    // The real per-element diff map rides along, so zoom shows real code (#60).
+    expect(result?.elementDiffs.e?.diff).toContain("+real");
   });
 
   it("returns null when the pipeline errors, so the caller keeps the demo", async () => {

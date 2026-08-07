@@ -9,7 +9,7 @@ import {
 } from "@rennet/adapters";
 import { buildReviewCanvases, createHarnessRunTurn, ReviewService } from "@rennet/core";
 import { type CommandName, isCommandName } from "@rennet/protocol";
-import type { Canvas, CanvasAngle, Patchset, Review } from "@rennet/types";
+import type { Canvas, CanvasAngle, ElementDiffs, Patchset, Review } from "@rennet/types";
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session } from "electron";
 import { createDispatch } from "./dispatch";
 
@@ -81,7 +81,9 @@ async function chooseRepository(): Promise<string | null> {
  * the decomposition angle + ordering pass on their subscription OAuth. With no
  * harness the deterministic floor still populates real canvases from the diff.
  */
-async function buildCanvasesForReview(review: Review): Promise<Record<CanvasAngle, Canvas>> {
+async function buildCanvasesForReview(
+  review: Review,
+): Promise<{ canvases: Record<CanvasAngle, Canvas>; elementDiffs: ElementDiffs }> {
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
   // KNOWN §7 DEVIATION (documented in the openspec change's design.md): the
@@ -106,7 +108,7 @@ async function buildCanvasesForReview(review: Review): Promise<Record<CanvasAngl
     ...(runDecompositionTurn ? { runDecompositionTurn } : {}),
     ...(runOrderingTurn ? { runOrderingTurn } : {}),
   });
-  return result.canvases;
+  return { canvases: result.canvases, elementDiffs: result.elementDiffs };
 }
 
 function registerCommandHandler(): void {
