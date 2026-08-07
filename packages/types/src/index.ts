@@ -603,3 +603,188 @@ export interface OrderingBody {
   readingOrder: string[];
   rationale: string;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Canvas state model (issue #10)
+//
+// A canvas is a named, addressable, LAYERED projection over the event store,
+// scoped to (reviewId, patchsetId, angle). Every element on a canvas is anchored
+// to code or to an admitted RSP document; the canvas is a pure projection and is
+// rebuildable from the store at any time (projections are disposable, R17).
+//
+// Four layers encode the actor partition STRUCTURALLY:
+//   L0 substrate   — deterministic ingest owns it; read-only above.
+//   L1 analysis    — validator-admitted RSP documents, deterministically placed.
+//                    Fleet agents never touch a canvas; the layer adds zero
+//                    fabrication surface. Elements reference admitted docs by
+//                    docId + anchor and MINT NO IDENTITY.
+//   L2 disposition — USER-SOVEREIGN. No agent, including the orchestrator, may
+//                    write it (enforced by command-surface composition in core).
+//   L3 annotation  — the orchestrator's marks, session-scoped ephemeral,
+//                    user-pinnable; can never alter L1/L2/cohorts/ordering.
+// The blast-radius OVERLAY paints amber onto the other canvases and owns no
+// surface of its own; it is never a layer anyone writes.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The five canvas angles. `blast-radius` is deliberately NOT here: it is an
+ * overlay, not a canvas (Canvas Paradigm §1 — promoting it to a sixth canvas
+ * would silently turn the overlay into a writable queue).
+ */
+export type CanvasAngle = "spec" | "sequence" | "decisions" | "claims" | "noise";
+
+/** The canvas angles as a frozen list, in a stable order. */
+export const CANVAS_ANGLES: readonly CanvasAngle[] = [
+  "spec",
+  "sequence",
+  "decisions",
+  "claims",
+  "noise",
+] as const;
+
+/**
+ * The minimal canvas-facing shape of a decision, as the decisions canvas needs
+ * it: an id, the anchor it is about, and a title. The richer `decision.record`
+ * body (issue #26) is an ADDITIVE superset of this; the canvas placement only
+ * needs the id + anchor + title, so this stays deliberately small and stable.
+ */
+export interface DecisionRecordElement {
+  decisionId: string;
+  anchor: string;
+  title: string;
+}
+
+/** The `decision.record` body as consumed by the decisions-canvas projector. */
+export interface DecisionRecordBody {
+  decisions: DecisionRecordElement[];
+}
+
+/** L0 — a slice of the substrate a canvas is about: the chunks it covers. */
+export interface SubstrateChunkRef {
+  chunkId: string;
+  hunkIds: string[];
+  filePaths: string[];
+}
+
+/** L0 substrate layer: read-only, owned entirely by deterministic ingest. */
+export interface SubstrateLayer {
+  chunks: SubstrateChunkRef[];
+}
+
+/**
+ * L1 — one placed analysis element. `elementKey` is DERIVED from `docId` + anchor
+ * (never minted). `kind` is the element species label; `title` is display text.
+ */
+export interface AnalysisElement {
+  elementKey: string;
+  docId: string;
+  anchor: string;
+  kind: string;
+  title: string;
+}
+
+/**
+ * L1 — a cohort: a deterministically grouped set of element keys (the decisions
+ * canvas groups into cohorts; hard-baked grouping, OQ17 closed). Collapsible in
+ * the UI; never capped.
+ */
+export interface AnalysisCohort {
+  cohortKey: string;
+  title: string;
+  elementKeys: string[];
+}
+
+/**
+ * L1 analysis layer. `elements` are in canvas order; `cohorts` group them for the
+ * decisions canvas (empty for the flat canvases); `readingOrder` is the ordered
+ * list of cohort keys (decisions) or element keys (flat) the canvas presents.
+ */
+export interface AnalysisLayer {
+  elements: AnalysisElement[];
+  cohorts: AnalysisCohort[];
+  readingOrder: string[];
+}
+
+/** L2 disposition layer: the user's dispositions relevant to this canvas. */
+export interface DispositionLayer {
+  dispositions: Disposition[];
+}
+
+/** The orchestrator's L3 mark kinds (glass — chrome, visually distinct). */
+export type AnnotationKind = "highlight" | "callout" | "link";
+
+/**
+ * An L3 annotation: an orchestrator mark on an element or anchor. Ephemeral by
+ * default (`pinned: false`), promoted to persistent only by the user pinning it.
+ */
+export interface Annotation {
+  annotationId: string;
+  target: string;
+  kind: AnnotationKind;
+  body: string;
+  pinned: boolean;
+}
+
+/** The kinds of proposal the orchestrator may raise (a suggestion — user decides). */
+export type ProposalKind = "disposition" | "regroup" | "split";
+
+/** A proposal's lifecycle: pending until the user accepts or dismisses it. */
+export type ProposalStatus = "pending" | "accepted" | "dismissed";
+
+/**
+ * An orchestrator PROPOSAL, rendered on L3 next to its target. A disposition
+ * proposal becomes L2 ONLY when the user accepts it — accepting is a user act
+ * (L2 sovereignty). `payload` carries the proposed content opaquely.
+ */
+export interface Proposal {
+  proposalId: string;
+  kind: ProposalKind;
+  target: string;
+  payload: string;
+  status: ProposalStatus;
+}
+
+/** L3 annotation layer: the orchestrator's marks and proposals. */
+export interface AnnotationLayer {
+  annotations: Annotation[];
+  proposals: Proposal[];
+}
+
+/** A single amber blast-radius paint, targeting an element or anchor. */
+export interface BlastRadiusPaint {
+  target: string;
+  docId: string;
+}
+
+/**
+ * A canvas: the layered projection scoped to `(reviewId, patchsetId, angle)`.
+ * `canvasId` is deterministic (hash of the key). The overlay is the amber
+ * blast-radius paint, never a writable layer.
+ */
+export interface Canvas {
+  canvasId: string;
+  reviewId: string;
+  patchsetId: string;
+  angle: CanvasAngle;
+  layers: {
+    substrate: SubstrateLayer;
+    analysis: AnalysisLayer;
+    disposition: DispositionLayer;
+    annotation: AnnotationLayer;
+  };
+  overlay: BlastRadiusPaint[];
+}
+
+/**
+ * A canvas-scoped post-commit change notification (R35's ONE change feed, canvas
+ * half). Keyed `(reviewId, canvasId, elementKey)` with the covering `seqRange`;
+ * a conflated notification names the seq range it covers. This is an
+ * INVALIDATION HINT — truth stays the store; a consumer that misses one
+ * re-queries the projection. Never a raw event; never a private row.
+ */
+export interface CanvasChangeNotification {
+  reviewId: string;
+  canvasId: string;
+  elementKey: string;
+  seqRange: { from: number; to: number };
+}
