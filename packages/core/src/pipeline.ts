@@ -35,10 +35,12 @@ import type {
   DecompositionProposalBody,
   Disposition,
   ElementDiffs,
+  OfferedManifest,
   Patchset,
   ResolutionTrace,
   RoutePlanResult,
   RspCapabilitySnapshot,
+  RspDocType,
   RspModelReportedBy,
 } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
@@ -49,11 +51,15 @@ import {
   runDecompositionAngle,
 } from "./angle-generation";
 import { type AdmittedDocument, buildCanvas, type CanvasEvent } from "./canvas";
+import { createCodexRunTurn } from "./codex-run-turn";
+import type { CodexUtilityPort } from "./codex-utility-port";
 import { type DecomposeOptions, decompose } from "./decomposition";
 import { buildElementDiffs } from "./element-diffs";
+import type { HarnessTurnResult } from "./harness-run-turn";
 import { createInvocationBudget } from "./invocation-budget";
-import { resolveAssignment } from "./model-council";
+import { providerHarness, resolveAssignment } from "./model-council";
 import {
+  buildChunkManifest,
   type OrderingTurnResult,
   type RunOrderingPassResult,
   resolveLiveOrder,
@@ -126,6 +132,16 @@ export interface ReviewPipelineInput {
    */
   readonly council?: CouncilResolveContext;
   /**
+   * The Codex seat executor (#66). When a seat resolves to a Codex model (R39,
+   * cross-harness), the pipeline routes that seat's turn through this port
+   * instead of the injected Claude turn — so the council's Codex routing is
+   * EXECUTED, not merely stamped. The runner still owns the shared budget and
+   * retry loop (the port runs one attempt per turn). Absent, a Codex-resolved
+   * seat has no executor and stands on the deterministic floor (the composition
+   * root provides the port iff `codex` is in `council.availability.installed`).
+   */
+  readonly codexPort?: CodexUtilityPort;
+  /**
    * Drives the decomposition angle's model turn. Absent (or a budget refusal)
    * means the deterministic floor stands — no model runs.
    */
@@ -179,40 +195,86 @@ export async function buildReviewCanvases(
   const maxInvocations =
     input.routePlanOptions?.maxHarnessInvocations ?? DEFAULT_MAX_HARNESS_INVOCATIONS;
   const budget = createInvocationBudget(maxInvocations);
+  const manifest = buildOfferedManifest(decomposition);
 
-  // The Model Council resolves the model for a seat and stamps it into the seed;
-  // absent a council context the caller-supplied seed model stands.
-  const councilSeed = (
-    base: PipelineProvenanceSeed,
+  type RunTurn = (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
+  interface ResolvedSeat {
+    readonly seed: PipelineProvenanceSeed;
+    readonly runTurn: RunTurn | undefined;
+  }
+
+  /**
+   * Resolve one model-facing seat: the Model Council's assignment (or none), the
+   * provenance seed with the resolved model AND harness (so `harness` follows the
+   * model — no `model=codex`/`harness=claude` contradiction), and the executor
+   * for the resolved harness — the injected Claude turn for a `claude-code` seat,
+   * a port-backed turn for a `codex` seat. A Codex seat with no port has no
+   * executor and stands on the deterministic floor (never a dishonest Claude run).
+   */
+  const resolveSeat = (
     jobId: CouncilJobId,
-  ): PipelineProvenanceSeed => {
-    if (input.council === undefined) return base;
+    docType: RspDocType,
+    seatManifest: OfferedManifest,
+    claudeTurn: RunTurn | undefined,
+  ): ResolvedSeat => {
+    if (input.council === undefined) return { seed, runTurn: claudeTurn };
     const resolution = resolveAssignment(jobId, input.council);
-    if (resolution.kind !== "model") return base;
-    return {
-      ...base,
+    if (resolution.kind !== "model") return { seed, runTurn: claudeTurn };
+    // The EXECUTING harness follows the resolved MODEL, structurally: a council
+    // model maps to exactly one provider → harness, so model and harness cannot
+    // diverge at execution or in provenance. This double-switches the honesty
+    // circuit (Rule 75): even if an incoherent override pinned `harness=claude`
+    // onto a Codex model (`resolution.harness` can be overridden independently of
+    // the model in the resolver), the pipeline still runs that model on ITS harness
+    // and stamps THAT harness — never a Codex model on the Claude turn, never a
+    // `model=codex`/`harness=claude` provenance lie.
+    const execHarness = providerHarness(resolution.model);
+    const seatSeed: PipelineProvenanceSeed = {
+      ...seed,
+      harness: execHarness,
       model: resolution.model,
       modelReportedBy: "config",
       effort: resolution.effort,
       resolutionTrace: resolution.trace,
     };
+    if (execHarness === "codex") {
+      const runTurn =
+        input.codexPort === undefined
+          ? undefined
+          : createCodexRunTurn(input.codexPort, {
+              docType,
+              patchset: { id: decomposition.patchsetId },
+              manifest: seatManifest,
+              model: resolution.model,
+              effort: resolution.effort,
+            });
+      return { seed: seatSeed, runTurn };
+    }
+    return { seed: seatSeed, runTurn: claudeTurn };
   };
 
   let admittedDocs: AdmittedDocument[] = [];
   let decompositionResult: RunDecompositionAngleResult | undefined;
   let orderingResult: RunOrderingPassResult | undefined;
 
-  // The Brita gate: run a model turn ONLY when a turn is injected AND the budget
+  const decompositionSeat = resolveSeat(
+    "decomposition-proposal",
+    "decomposition.proposal",
+    manifest,
+    input.runDecompositionTurn,
+  );
+
+  // The Brita gate: run the model phase ONLY when the decomposition seat has an
+  // executor for its resolved harness (Claude turn OR Codex port) AND the budget
   // permits it. A refusal skips the whole model phase — no spend, floor stands.
   const budgetRefused = routePlan.refused;
-  if (input.runDecompositionTurn && !budgetRefused) {
-    const manifest = buildOfferedManifest(decomposition);
+  if (decompositionSeat.runTurn && !budgetRefused) {
     decompositionResult = await runDecompositionAngle({
       decomposition,
       contract: input.decompositionContract ?? DECOMPOSITION_PROPOSAL_CONTRACT,
       manifest,
-      provenance: councilSeed(seed, "decomposition-proposal"),
-      runTurn: input.runDecompositionTurn,
+      provenance: decompositionSeat.seed,
+      runTurn: decompositionSeat.runTurn,
       budget,
       ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
       ...(input.newRunId ? { newRunId: input.newRunId } : {}),
@@ -231,14 +293,23 @@ export async function buildReviewCanvases(
     // Ordering → canvas: the comprehension pass refines the reading order the
     // sequence canvas presents. It covers exactly the proposal's chunk set (the
     // validator guarantees it), so applying its live order to the placed proposal
-    // is safe. Absent or fallen-back, the #8 baseline order stands.
-    if (input.runOrderingTurn) {
+    // is safe. The ordering seat resolves independently — under `both` it lands on
+    // the Codex port while the proposal stayed on Claude (R39, live). Absent or
+    // fallen-back, the #8 baseline order stands.
+    const orderingManifest = buildChunkManifest(proposalBody);
+    const orderingSeat = resolveSeat(
+      "comprehension-ordering",
+      "ordering",
+      orderingManifest,
+      input.runOrderingTurn,
+    );
+    if (orderingSeat.runTurn) {
       orderingResult = await runOrderingPass({
         proposal: proposalBody,
         patchsetId: decomposition.patchsetId,
         contract: input.orderingContract ?? ORDERING_CONTRACT,
-        provenance: councilSeed(seed, "comprehension-ordering"),
-        runTurn: input.runOrderingTurn,
+        provenance: orderingSeat.seed,
+        runTurn: orderingSeat.runTurn,
         budget,
         ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
         ...(input.newRunId ? { newRunId: input.newRunId } : {}),

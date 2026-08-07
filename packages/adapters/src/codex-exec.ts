@@ -194,3 +194,56 @@ export function createCodexUtilityAdapter(deps: CodexUtilityAdapterDeps = {}): C
     ...(deps.newRunId === undefined ? {} : { newRunId: deps.newRunId }),
   });
 }
+
+// ── Codex availability probe (issue #69, bead workspace-sglle) ─────────────────
+
+/** The result of a `codex --version` availability probe. */
+export interface CodexAvailability {
+  /** True when the `codex` binary is installed and answered `--version` cleanly. */
+  readonly available: boolean;
+  /** The parsed version, or `null` when unavailable or unparseable. */
+  readonly version: string | null;
+}
+
+/** One `codex --version` probe: exit code + stdout (where `--version` prints). */
+export type CodexVersionProbe = (bin: string) => Promise<{
+  readonly exitCode: number;
+  readonly stdout: string;
+}>;
+
+/** The real probe: one `codex --version` spawn with closed stdin, never throwing
+ *  on a non-zero exit (a missing binary throws ENOENT, caught by the caller). */
+export const defaultCodexVersionProbe: CodexVersionProbe = async (bin) => {
+  const result = await execa(bin, ["--version"], { reject: false, stdin: "ignore" });
+  return {
+    exitCode: result.exitCode ?? 1,
+    stdout: result.stdout == null ? "" : String(result.stdout),
+  };
+};
+
+/** Extract the first semver-shaped token from `codex --version` output. */
+function parseCodexVersion(stdout: string): string | null {
+  const match = stdout.match(/(\d+\.\d+\.\d+[^\s]*)/);
+  return match?.[1] ?? null;
+}
+
+/**
+ * Determine whether `codex` is installed by running `codex --version` through an
+ * injected probe seam, returning `{ available, version }`. This is the Codex
+ * counterpart of the Claude harness discovery: the composition root uses it to
+ * gate `codex` availability for the Model Council WITHOUT a real spawn in tests
+ * (the probe is injected). A non-zero exit or a throw (no `codex` on PATH) is
+ * `available: false` — fail-closed toward "no Codex seat" rather than a crash.
+ */
+export async function discoverCodexAvailability(
+  probe: CodexVersionProbe = defaultCodexVersionProbe,
+  bin: string = CODEX_EXEC_BIN,
+): Promise<CodexAvailability> {
+  try {
+    const { exitCode, stdout } = await probe(bin);
+    if (exitCode !== 0) return { available: false, version: null };
+    return { available: true, version: parseCodexVersion(stdout) };
+  } catch {
+    return { available: false, version: null };
+  }
+}

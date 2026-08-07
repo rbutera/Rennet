@@ -13,6 +13,7 @@ export * from "./angle-generation";
 export * from "./canvas";
 export * from "./canvas-change-feed";
 export * from "./canvas-ops";
+export * from "./codex-run-turn";
 export * from "./codex-utility-port";
 export * from "./context-update-stream";
 export * from "./decomposition";
