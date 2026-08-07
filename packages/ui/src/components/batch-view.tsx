@@ -1,13 +1,15 @@
 import type { DispositionType } from "@rennet/types";
 import { batchViewModel, type DispositionBatch, type DispositionDraft } from "../canvas/authoring";
+import type { BatchDestination } from "../canvas/destination";
 
-// The batch view: EXACTLY what will publish (someone else's PR) or hand off (own
-// branch). It renders `batchViewModel(batch)` — the same derived list `batchPayload`
+// The STAGED view (issue #17; renamed per Rai's ruling 2026-08-07 — withdraw ==
+// unstage): EXACTLY what will publish (someone else's PR) or hand off (own branch).
+// It renders `batchViewModel(batch)` — the same derived list `batchPayload`
 // serialises — so the reviewer sees the precise payload before it leaves. Edit the
-// raw body / type in place; withdraw removes an entry entirely (zero residue).
+// raw body / type in place; withdraw (unstage) removes an entry entirely (zero
+// residue). `BatchDestination` now lives in `canvas/destination.ts` (the #64 north).
 
-/** Whether this batch will publish onto a PR or hand off on the reviewer's own branch. */
-export type BatchDestination = "publish" | "handoff";
+export type { BatchDestination } from "../canvas/destination";
 
 const DESTINATION_COPY: Record<BatchDestination, string> = {
   publish: "Will publish to the pull request",
@@ -38,15 +40,14 @@ export function BatchView({
     batch.find((draft) => draft.path === path);
 
   return (
-    <section className="batch-view" aria-label="Disposition batch">
+    <section className="batch-view" aria-label="Staged dispositions">
       <header className="batch-header">
+        <span className="batch-title">Staged</span>
         <span className="batch-destination">{DESTINATION_COPY[destination]}</span>
-        <span className="batch-count">
-          {entries.length} disposition{entries.length === 1 ? "" : "s"}
-        </span>
+        <span className="batch-count">{entries.length} staged</span>
       </header>
       {entries.length === 0 ? (
-        <p className="batch-empty">Nothing staged. Author a disposition to add it here.</p>
+        <p className="batch-empty">Nothing staged. Dispose something and it stages here.</p>
       ) : (
         <ol className="batch-entries">
           {entries.map((entry) => (
