@@ -13,6 +13,7 @@ export * from "./angle-generation";
 export * from "./canvas";
 export * from "./canvas-change-feed";
 export * from "./decomposition";
+export * from "./forge-port";
 export * from "./harness";
 export * from "./ordering-pass";
 export * from "./route-plan";

@@ -19,6 +19,39 @@ export {
 } from "./claude-query";
 export { GitCaptureAdapter } from "./git-capture";
 export {
+  type Counts,
+  captureRangePatchset,
+  DEFAULT_VISIBLE_BYTE_LIMIT,
+  execaGit,
+  FILE_VISIBLE_BYTE_LIMIT,
+  type GitExec,
+  parseChangedPaths,
+  parseCounts,
+  parseUnifiedDiffFiles,
+  type RangeCaptureInput,
+  visible,
+} from "./git-range-diff";
+export {
+  type AuthRung,
+  type GhRunner,
+  type GitHubAuthState,
+  type HttpFetch,
+  type HttpResponse,
+  type ResolveAuthDeps,
+  resolveGitHubAuth,
+  type SecretStore,
+} from "./github-auth";
+export {
+  type GitHubChangesetResult,
+  GitHubChangesetSource,
+  type GitHubChangesetSourceDeps,
+  type GitObjectPinner,
+  type ReviewedHeadPin,
+  type WorktreeProvider,
+} from "./github-changeset-source";
+export { GitHubForgeAdapter, type GitHubForgeConfig } from "./github-forge";
+export { parseGitHubSso } from "./github-sso";
+export {
   compareVersions,
   type DiscoveredCandidate,
   type DiscoveryDeps,
@@ -29,3 +62,10 @@ export {
 } from "./harness-discovery";
 export { RepoWatcher } from "./repo-watcher";
 export { SqliteReviewStore } from "./sqlite-review-store";
+export {
+  discoverWorktreeIdentities,
+  type LocalWorktree,
+  matchWorktree,
+  parseRemoteIdentity,
+  type RemoteIdentity,
+} from "./worktree-discovery";

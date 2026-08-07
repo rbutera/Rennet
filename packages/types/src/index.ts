@@ -19,6 +19,15 @@ export interface PatchFile {
   patch: string;
 }
 
+/**
+ * Where a patchset's content came from. `local` is the working-tree capture
+ * (`GitCaptureAdapter`); `github-local` is a GitHub PR diffed from the on-disk
+ * clone (full context, the angles can run); `github-rest` is the degraded REST
+ * diff fallback used when the clone is not on disk or its SHAs are unfetchable.
+ * Absent means `local` (additive: the existing local-capture identity is unchanged).
+ */
+export type PatchsetSource = "local" | "github-local" | "github-rest";
+
 export interface Patchset {
   id: string;
   createdAt: string;
@@ -27,6 +36,12 @@ export interface Patchset {
   rawDiff: string;
   byteLength: number;
   truncated: boolean;
+  /** Provenance of the content. Absent ⇒ `local` (additive; identity ignores it). */
+  source?: PatchsetSource;
+  /** True when this changeset was produced by a degraded path (the REST fallback). */
+  degraded?: boolean;
+  /** Human-facing reason a degraded changeset is degraded (the badge copy). */
+  degradationReason?: string;
 }
 
 /**
