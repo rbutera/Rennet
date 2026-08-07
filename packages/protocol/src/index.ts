@@ -106,6 +106,66 @@ export const commandDefinitions = {
     }),
     output: z.object({ review: reviewSchema }),
   },
+  // ── Canvas user ops (issue #10) ────────────────────────────────────────────
+  // The renderer reaches the canvas engine ONLY through this command map (R20).
+  // These are the USER surface: `canvas.disposition` is the sovereign L2 write;
+  // the orchestrator's ops are MCP tools (canvasOps@2), NOT commands here, so no
+  // agent-reachable path can write L2 by construction (structural, see the test).
+  "canvas.disposition": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+      patchsetId: z.string().min(1),
+      path: z.string(),
+      /** A disposition type sets/replaces the disposition; `null` clears it. */
+      disposition: dispositionTypeSchema.nullable(),
+      body: z.string(),
+    }),
+    output: z.object({ review: reviewSchema }),
+  },
+  "canvas.adjudicateProposal": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+      canvasId: z.string().min(1),
+      proposalId: z.string().min(1),
+      outcome: z.enum(["accepted", "dismissed"]),
+    }),
+    output: z.object({ review: reviewSchema }),
+  },
+  "canvas.setCohortExpansion": {
+    input: z.object({
+      commandId: commandIdSchema,
+      canvasId: z.string().min(1),
+      cohortKey: z.string().min(1),
+      expanded: z.boolean(),
+    }),
+    output: z.object({ ok: z.boolean() }),
+  },
+  "canvas.select": {
+    input: z.object({
+      commandId: commandIdSchema,
+      canvasId: z.string().min(1),
+      elementKey: z.string().min(1),
+    }),
+    output: z.object({ ok: z.boolean() }),
+  },
+  "canvas.pinAnnotation": {
+    input: z.object({
+      commandId: commandIdSchema,
+      canvasId: z.string().min(1),
+      annotationId: z.string().min(1),
+    }),
+    output: z.object({ ok: z.boolean() }),
+  },
+  "canvas.clearAnnotation": {
+    input: z.object({
+      commandId: commandIdSchema,
+      canvasId: z.string().min(1),
+      annotationId: z.string().min(1),
+    }),
+    output: z.object({ ok: z.boolean() }),
+  },
 } as const;
 
 export type CommandName = keyof typeof commandDefinitions;

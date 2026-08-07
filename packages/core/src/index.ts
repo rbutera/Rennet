@@ -10,6 +10,8 @@ import type {
 import { v7 as uuidv7 } from "uuid";
 
 export * from "./angle-generation";
+export * from "./canvas";
+export * from "./canvas-change-feed";
 export * from "./decomposition";
 export * from "./harness";
 export * from "./ordering-pass";
