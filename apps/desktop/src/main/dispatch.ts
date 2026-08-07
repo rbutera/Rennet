@@ -1,6 +1,6 @@
 import type { ReviewService } from "@rennet/core";
 import { type CommandName, parseCommandInput, parseCommandOutput } from "@rennet/protocol";
-import type { Canvas, CanvasAngle, Review } from "@rennet/types";
+import type { Canvas, CanvasAngle, ElementDiffs, Review } from "@rennet/types";
 
 /**
  * The command router (issue #54), extracted from the electron main so it can be
@@ -19,8 +19,13 @@ export interface DispatchDeps {
   startWatching(root: string): void;
   isRepositoryDirty(): boolean;
   setRepositoryDirty(dirty: boolean): void;
-  /** Build the live five-angle canvas set for a review (harness-backed pipeline). */
-  buildCanvases(review: Review): Promise<Record<CanvasAngle, Canvas>>;
+  /**
+   * Build the live five-angle canvas set for a review (harness-backed pipeline),
+   * plus the per-element real diff map (#60) delivered with it.
+   */
+  buildCanvases(
+    review: Review,
+  ): Promise<{ canvases: Record<CanvasAngle, Canvas>; elementDiffs: ElementDiffs }>;
 }
 
 export function createDispatch(
@@ -101,8 +106,8 @@ export function createDispatch(
         const input = parseCommandInput(name, rawInput);
         assertAllowedRepository(input.repoPath);
         const review = requireLatestReview(input.reviewId);
-        const canvases = await deps.buildCanvases(review);
-        return parseCommandOutput(name, { canvases });
+        const { canvases, elementDiffs } = await deps.buildCanvases(review);
+        return parseCommandOutput(name, { canvases, elementDiffs });
       }
       // ── Canvas user ops (issue #54 wires #10's command surface into dispatch) ──
       case "canvas.disposition": {

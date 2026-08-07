@@ -15,6 +15,7 @@ export * from "./canvas-change-feed";
 export * from "./canvas-ops";
 export * from "./context-update-stream";
 export * from "./decomposition";
+export * from "./element-diffs";
 export * from "./forge-port";
 export * from "./harness";
 export * from "./harness-run-turn";

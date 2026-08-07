@@ -32,6 +32,7 @@ import type {
   Decomposition,
   DecompositionProposalBody,
   Disposition,
+  ElementDiffs,
   Patchset,
   RoutePlanResult,
   RspCapabilitySnapshot,
@@ -46,6 +47,7 @@ import {
 } from "./angle-generation";
 import { type AdmittedDocument, buildCanvas, type CanvasEvent } from "./canvas";
 import { type DecomposeOptions, decompose } from "./decomposition";
+import { buildElementDiffs } from "./element-diffs";
 import {
   type OrderingTurnResult,
   type RunOrderingPassResult,
@@ -120,6 +122,12 @@ export interface ReviewPipelineInput {
 
 export interface ReviewPipelineResult {
   readonly canvases: Record<CanvasAngle, Canvas>;
+  /**
+   * The real per-element diff map (issue #60), keyed by `elementKey`. Sliced
+   * verbatim from the captured patch, delivered alongside the canvas set so the
+   * zoom surface renders real code instead of the `demoDiff` fixture.
+   */
+  readonly elementDiffs: ElementDiffs;
   readonly decomposition: Decomposition;
   readonly routePlan: RoutePlanResult;
   /** True when the Brita budget refused and no model turn ran. */
@@ -210,9 +218,11 @@ export async function buildReviewCanvases(
     }),
   ]);
   const canvases = Object.fromEntries(entries) as Record<CanvasAngle, Canvas>;
+  const elementDiffs = buildElementDiffs(canvases, decomposition, input.patchset);
 
   return {
     canvases,
+    elementDiffs,
     decomposition,
     routePlan,
     budgetRefused,

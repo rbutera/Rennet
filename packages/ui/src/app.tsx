@@ -1,5 +1,5 @@
 import type { RennetBridge } from "@rennet/protocol";
-import type { CanvasAngle, Patchset, Review } from "@rennet/types";
+import type { CanvasAngle, ElementDiffs, Patchset, Review } from "@rennet/types";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { demoCanvases, demoDiff } from "./canvas/fixtures";
 import { type CanvasSet, loadCanvases } from "./canvas/load";
@@ -196,6 +196,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // the untouched real end-to-end path.
   const [view, setView] = useState<"review" | "canvases">("review");
   const [canvases, setCanvases] = useState<CanvasSet>(() => demoCanvases());
+  // The real per-element diff map (issue #60) and whether the on-screen canvases
+  // are the real set. While `liveLoaded` is false the fixtures demo is up and the
+  // zoom surface uses `demoDiff`; once a real set loads, zoom reads real code.
+  const [elementDiffs, setElementDiffs] = useState<ElementDiffs>({});
+  const [liveLoaded, setLiveLoaded] = useState(false);
   const fetchedForReview = useRef<string | null>(null);
 
   useEffect(() => {
@@ -248,7 +253,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     fetchedForReview.current = review.id;
     let cancelled = false;
     void loadCanvases(bridge, review).then((live) => {
-      if (!cancelled && live) setCanvases(live);
+      if (cancelled || !live) return;
+      setCanvases(live.canvases);
+      setElementDiffs(live.elementDiffs);
+      setLiveLoaded(true);
     });
     return () => {
       cancelled = true;
@@ -355,7 +363,13 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           onAdjudicate={(adjudication) =>
             setCanvases((current) => resolveProposal(current, adjudication.proposalId))
           }
-          diffFor={(elementKey) => ({ path: elementKey, diff: demoDiff(400) })}
+          // Real code on the real path (issue #60): once a live canvas set has
+          // loaded, zoom reads the real per-element diff (a doc-anchored element
+          // has no entry → the zoom surface renders nothing, not a fixture). While
+          // the fixtures demo is up, the demo `demoDiff` is unchanged.
+          diffFor={(elementKey) =>
+            liveLoaded ? elementDiffs[elementKey] : { path: elementKey, diff: demoDiff(400) }
+          }
         />
       ) : (
         <ReviewWorkspace

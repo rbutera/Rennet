@@ -1,4 +1,11 @@
-import type { Canvas, Disposition, DispositionAnchor, Patchset, Review } from "@rennet/types";
+import type {
+  Canvas,
+  Disposition,
+  DispositionAnchor,
+  ElementDiffs,
+  Patchset,
+  Review,
+} from "@rennet/types";
 import { z } from "zod";
 
 export * from "./bodies";
@@ -135,6 +142,15 @@ const canvasSetSchema = z.object({
   noise: canvasSchema,
 });
 
+// ── Per-element real diff map (issue #60) ────────────────────────────────────
+// Delivered ALONGSIDE the canvas set so the zoom surface renders the real
+// captured hunk text instead of the `demoDiff` fixture. Keyed by `elementKey`; a
+// doc-anchored element (flat angle, no code diff) simply has no entry. A full,
+// failing-capable schema (path + diff both required) so the IPC surface keeps a
+// real positive control.
+const elementDiffSchema = z.object({ path: z.string(), diff: z.string() });
+const elementDiffsSchema: z.ZodType<ElementDiffs> = z.record(z.string(), elementDiffSchema);
+
 const commandIdSchema = z.uuid();
 
 export const commandDefinitions = {
@@ -192,7 +208,9 @@ export const commandDefinitions = {
       reviewId: z.string().min(1),
       repoPath: z.string().min(1),
     }),
-    output: z.object({ canvases: canvasSetSchema }),
+    // `elementDiffs` (issue #60): the real per-element diff map delivered with the
+    // canvas set so zooming into an element shows real code, not the fixture.
+    output: z.object({ canvases: canvasSetSchema, elementDiffs: elementDiffsSchema }),
   },
   // ── Canvas user ops (issue #10) ────────────────────────────────────────────
   // The renderer reaches the canvas engine ONLY through this command map (R20).
