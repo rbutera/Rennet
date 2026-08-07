@@ -24,6 +24,19 @@ export {
   type LoadClaudeQuery,
   toSdkOptions,
 } from "./claude-query";
+export {
+  buildCodexExecArgs,
+  CODEX_EXEC_BIN,
+  type CodexExecEffects,
+  type CodexRun,
+  type CodexRunResult,
+  type CodexRunSpec,
+  type CodexUtilityAdapterDeps,
+  type CreateCodexExecutorOptions,
+  createCodexExecutor,
+  createCodexUtilityAdapter,
+  defaultCodexExecEffects,
+} from "./codex-exec";
 export { GitCaptureAdapter } from "./git-capture";
 export {
   type Counts,
