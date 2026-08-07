@@ -365,22 +365,35 @@ describe("canvasOps@2 tool surface", () => {
 
   it("never produces an L2 disposition effect from any handler", () => {
     const { backend, applied } = makeFixture();
-    // Exercise every tool with harmless args; none may push an L2 write.
-    run(canvasOpsTool("canvas.annotate"), { target: "rennet:chunk/c1", body: "mark" }, backend);
-    run(
-      canvasOpsTool("canvas.propose"),
-      { kind: "disposition", targets: ["rennet:chunk/c1"], payload: "approve" },
-      backend,
-    );
-    run(canvasOpsTool("canvas.focus"), { target: "rennet:chunk/c1" }, backend);
-    run(canvasOpsTool("canvas.recompute"), { scope: "rennet:chunk/c1" }, backend);
-    // Apply the effects each write op returned, then inspect what was applied.
-    for (const kind of applied.map((e) => e.kind)) {
-      expect(["annotate", "propose", "focus", "recompute"]).toContain(kind);
+    // Exercise every write op with harmless args; none may push an L2 write.
+    const outcomes = [
+      run(canvasOpsTool("canvas.annotate"), { target: "rennet:chunk/c1", body: "mark" }, backend),
+      run(
+        canvasOpsTool("canvas.propose"),
+        { kind: "disposition", targets: ["rennet:chunk/c1"], payload: "approve" },
+        backend,
+      ),
+      run(canvasOpsTool("canvas.focus"), { target: "rennet:chunk/c1" }, backend),
+      run(canvasOpsTool("canvas.recompute"), { scope: "rennet:chunk/c1" }, backend),
+    ];
+    // APPLY the effects each write op returned (the host's job) — this is what
+    // populates `applied`. Without this the assertions below run over an empty
+    // array and cannot go red.
+    for (const outcome of outcomes) {
+      if (!outcome.ok) throw new Error(`expected ok, got ${JSON.stringify(outcome.error)}`);
+      backend.applyEffects(outcome.effects);
     }
-    // Structurally: no CanvasOpsEffect variant is a disposition write.
-    const effectKinds = applied.map((e) => e.kind);
-    expect(effectKinds).not.toContain("disposition");
+    // Each of the four write ops emitted exactly its one legal effect — the
+    // assertion goes red if any handler silently emits nothing, an extra effect,
+    // or (the invariant) an L2 disposition write.
+    expect(applied.map((e) => e.kind).sort()).toEqual([
+      "annotate",
+      "focus",
+      "propose",
+      "recompute",
+    ]);
+    // Structurally reinforced: no CanvasOpsEffect variant is a disposition write.
+    expect(applied.map((e) => e.kind)).not.toContain("disposition");
   });
 
   // Acceptance criterion 2 ──────────────────────────────────────────────────

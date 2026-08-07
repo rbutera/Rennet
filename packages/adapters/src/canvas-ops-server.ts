@@ -127,7 +127,7 @@ function toSdkHandler(descriptor: CanvasOpsTool, backend: CanvasOpsBackend) {
 export async function buildCanvasOpsTools(
   backend: CanvasOpsBackend,
   loadSdk: LoadCanvasOpsSdk = loadRealSdk,
-): Promise<SdkMcpToolDefinition[]> {
+): Promise<SdkMcpToolDefinition<ZodRawShape>[]> {
   const { tool } = await loadSdk();
   return CANVAS_OPS_TOOLS.map((descriptor) =>
     tool(
