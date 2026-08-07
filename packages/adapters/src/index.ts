@@ -68,6 +68,10 @@ export {
   discoverClaude,
   type VersionRange,
 } from "./harness-discovery";
+export {
+  type AttachedOrchestratorSession,
+  attachOrchestratorSession,
+} from "./orchestrator-session-server";
 export { RepoWatcher } from "./repo-watcher";
 export { SqliteReviewStore } from "./sqlite-review-store";
 export {

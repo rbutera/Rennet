@@ -74,7 +74,7 @@ function elementKeyFor(docId: string, discriminator: string): string {
  * byte-identical across machines and ICU versions, so canvas ordering never uses
  * `localeCompare`, whose collation is locale- and ICU-version-sensitive.
  */
-function compareCodeUnits(left: string, right: string): number {
+export function compareCodeUnits(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0;
 }
 
@@ -243,7 +243,7 @@ function projectSequence(docs: AdmittedDocument[], decomposition: Decomposition)
  * the matching angle, ordered by derived key. `claim` renders empty-but-honest
  * when there are no admitted claim documents.
  */
-function projectFlat(angle: CanvasAngle, docs: AdmittedDocument[]): AnalysisLayer {
+function projectFlat(_angle: CanvasAngle, docs: AdmittedDocument[]): AnalysisLayer {
   const elements = docs
     .map((doc) => analysisElement(doc.docId, `rennet:doc/${doc.docId}`, doc.docType, doc.docType))
     .sort((left, right) => compareCodeUnits(left.elementKey, right.elementKey));
