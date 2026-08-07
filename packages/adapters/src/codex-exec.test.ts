@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   buildCodexExecArgs,
   CODEX_EXEC_BIN,
@@ -6,6 +6,7 @@ import {
   type CodexRunResult,
   type CodexRunSpec,
   createCodexExecutor,
+  discoverCodexAvailability,
 } from "./codex-exec";
 
 // ── buildCodexExecArgs — the four load-bearing gotchas live in the argv ────────
@@ -148,5 +149,37 @@ describe("createCodexExecutor", () => {
     const executor = createCodexExecutor(effects, { harnessVersion: "0.146.0" });
     const result = await executor({ model: "gpt-5.6-luna", effort: "low", prompt: "p" });
     expect(result.harnessVersion).toBe("0.146.0");
+  });
+});
+
+// ── discoverCodexAvailability — the composition root's honest codex probe ──────
+
+describe("discoverCodexAvailability", () => {
+  it("reports available with the parsed version when the probe exits 0", async () => {
+    const probe = vi.fn(async () => ({ exitCode: 0, stdout: "codex-cli 0.3.5\n" }));
+    const result = await discoverCodexAvailability(probe);
+    expect(result).toEqual({ available: true, version: "0.3.5" });
+    // Probed the codex binary by name.
+    expect(probe).toHaveBeenCalledWith(CODEX_EXEC_BIN);
+  });
+
+  it("reports unavailable when the probe exits non-zero", async () => {
+    const probe = vi.fn(async () => ({ exitCode: 127, stdout: "" }));
+    const result = await discoverCodexAvailability(probe);
+    expect(result).toEqual({ available: false, version: null });
+  });
+
+  it("reports unavailable when the probe throws (no codex on PATH)", async () => {
+    const probe = vi.fn(async () => {
+      throw new Error("spawn codex ENOENT");
+    });
+    const result = await discoverCodexAvailability(probe);
+    expect(result).toEqual({ available: false, version: null });
+  });
+
+  it("reports available with a null version when stdout has no parseable version", async () => {
+    const probe = vi.fn(async () => ({ exitCode: 0, stdout: "codex\n" }));
+    const result = await discoverCodexAvailability(probe);
+    expect(result).toEqual({ available: true, version: null });
   });
 });

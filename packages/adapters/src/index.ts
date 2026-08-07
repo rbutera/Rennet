@@ -27,15 +27,19 @@ export {
 export {
   buildCodexExecArgs,
   CODEX_EXEC_BIN,
+  type CodexAvailability,
   type CodexExecEffects,
   type CodexRun,
   type CodexRunResult,
   type CodexRunSpec,
   type CodexUtilityAdapterDeps,
+  type CodexVersionProbe,
   type CreateCodexExecutorOptions,
   createCodexExecutor,
   createCodexUtilityAdapter,
   defaultCodexExecEffects,
+  defaultCodexVersionProbe,
+  discoverCodexAvailability,
 } from "./codex-exec";
 export { GitCaptureAdapter } from "./git-capture";
 export {

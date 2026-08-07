@@ -2,14 +2,29 @@ import { join, normalize, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import {
   type ClaudeHarnessResult,
+  type CodexAvailability,
   createClaudeHarness,
+  createCodexUtilityAdapter,
+  discoverCodexAvailability,
   GitCaptureAdapter,
   RepoWatcher,
   SqliteReviewStore,
 } from "@rennet/adapters";
-import { buildReviewCanvases, createHarnessRunTurn, ReviewService } from "@rennet/core";
+import {
+  buildReviewCanvases,
+  type CodexUtilityPort,
+  createHarnessRunTurn,
+  ReviewService,
+} from "@rennet/core";
 import { type CommandName, isCommandName } from "@rennet/protocol";
-import type { Canvas, CanvasAngle, ElementDiffs, Patchset, Review } from "@rennet/types";
+import type {
+  Canvas,
+  CanvasAngle,
+  CouncilHarnessId,
+  ElementDiffs,
+  Patchset,
+  Review,
+} from "@rennet/types";
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session } from "electron";
 import { createDispatch } from "./dispatch";
 
@@ -39,6 +54,24 @@ let claudeHarness: Promise<ClaudeHarnessResult> | null = null;
 function getClaudeHarness(): Promise<ClaudeHarnessResult> {
   claudeHarness ??= createClaudeHarness({ env: process.env });
   return claudeHarness;
+}
+
+// The Codex seat, wired to the real `codex exec` executor (#66) and consulted by
+// the Model Council when a seat resolves to a Codex model (#69, R39). Composed
+// LAZILY and memoized like the Claude harness: the availability probe spawns
+// `codex --version`, so it runs on first use, not at launch. The INVARIANT the
+// composition root maintains — `codex` is in `installed` iff the port is passed
+// to the pipeline — is what makes a Codex resolution always executable live.
+let codexPort: CodexUtilityPort | null = null;
+function getCodexPort(): CodexUtilityPort {
+  codexPort ??= createCodexUtilityAdapter();
+  return codexPort;
+}
+
+let codexAvailability: Promise<CodexAvailability> | null = null;
+function getCodexAvailability(): Promise<CodexAvailability> {
+  codexAvailability ??= discoverCodexAvailability();
+  return codexAvailability;
 }
 
 let store: SqliteReviewStore;
@@ -86,6 +119,7 @@ async function buildCanvasesForReview(
 ): Promise<{ canvases: Record<CanvasAngle, Canvas>; elementDiffs: ElementDiffs }> {
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
+  const codex = await getCodexAvailability();
   // KNOWN §7 DEVIATION (documented in the openspec change's design.md): the
   // read-only harness runs with `cwd` on the live mutable checkout rather than
   // an immutable materialisation, because that layer is not built yet and the
@@ -101,10 +135,21 @@ async function buildCanvasesForReview(
   const runOrderingTurn = adapter
     ? createHarnessRunTurn(adapter, { docType: "ordering", cwd: review.repositoryRoot })
     : undefined;
+
+  // The Model Council availability is the honestly-probed installed set: Claude
+  // iff its binary was discovered, Codex iff `codex --version` answered. The
+  // Codex port is passed IFF codex is installed — so a Codex resolution is always
+  // executable (the invariant the pipeline's fail-closed floor relies on).
+  const installed: CouncilHarnessId[] = [];
+  if (adapter) installed.push("claude-code");
+  if (codex.available) installed.push("codex");
+
   const result = await buildReviewCanvases({
     reviewId: review.id,
     patchset,
     dispositions: review.dispositions,
+    council: { availability: { installed } },
+    ...(codex.available ? { codexPort: getCodexPort() } : {}),
     ...(runDecompositionTurn ? { runDecompositionTurn } : {}),
     ...(runOrderingTurn ? { runOrderingTurn } : {}),
   });

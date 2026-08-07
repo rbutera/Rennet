@@ -1,11 +1,127 @@
-import type { OrderingBody, PatchFile, Patchset } from "@rennet/types";
+import type {
+  CouncilModel,
+  OrderingBody,
+  PatchFile,
+  Patchset,
+  RspEnvelope,
+  RspProvenance,
+  RspTokenUsage,
+  ValidationReport,
+} from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
 import type { DecompositionTurnResult } from "./angle-generation";
 import { deterministicProposalBody } from "./angle-generation";
+import type {
+  CodexUtilityCompleteRequest,
+  CodexUtilityPort,
+  CodexUtilityResult,
+} from "./codex-utility-port";
 import { decompose } from "./decomposition";
 import type { OrderingTurnResult } from "./ordering-pass";
 import { buildReviewCanvases } from "./pipeline";
+
+// ── Fake Codex port helpers (model calls are mocked in CI) ────────────────────
+
+const CODEX_MODELS: ReadonlySet<CouncilModel> = new Set<CouncilModel>([
+  "gpt-5.5",
+  "gpt-5.6-sol",
+  "gpt-5.6-terra",
+  "gpt-5.6-luna",
+]);
+
+const ZERO_TOKENS: RspTokenUsage = {
+  input: 0,
+  output: 0,
+  cacheRead: 0,
+  cacheWrite: 0,
+  reasoning: null,
+  total: 0,
+};
+
+function fakeReport(admitted: boolean): ValidationReport {
+  return {
+    docType: null,
+    admission: "atomic",
+    admitted,
+    errors: admitted ? [] : [{ code: "V000", pointer: "/body", message: "codex rejected" }],
+    admittedItemCount: null,
+    rejectedItemCount: 0,
+    rejectedItems: [],
+  };
+}
+
+const CODEX_PROVENANCE: RspProvenance = {
+  harness: "codex",
+  harnessVersion: "unknown",
+  adapterVersion: "0.1.0",
+  model: "gpt-5.6-terra",
+  modelReportedBy: "config",
+  tier: "light",
+  route: "utility",
+  runId: "codex-run",
+  inputDigest: "digest",
+  capability: {
+    structuredOutput: {
+      implementedByAdapter: true,
+      advertisedByHarness: true,
+      availableInSession: true,
+    },
+    perCallModelSelection: {
+      implementedByAdapter: true,
+      advertisedByHarness: true,
+      availableInSession: true,
+    },
+  },
+  tokens: ZERO_TOKENS,
+  reportedUsd: null,
+  derivedUsd: null,
+};
+
+function codexEnvelope(req: CodexUtilityCompleteRequest, body: unknown): RspEnvelope {
+  return {
+    rsp: 1,
+    docType: req.docType,
+    schemaVersion: 1,
+    docId: "CODEXDOC",
+    patchsetId: req.patchset.id,
+    provenance: CODEX_PROVENANCE,
+    body,
+    x: {},
+  };
+}
+
+/** A fake CodexUtilityPort that admits a per-request body, recording every call. */
+function admittingCodexPort(bodyFor: (req: CodexUtilityCompleteRequest) => unknown): {
+  port: CodexUtilityPort;
+  complete: ReturnType<typeof vi.fn>;
+} {
+  const complete = vi.fn(
+    async (req: CodexUtilityCompleteRequest): Promise<CodexUtilityResult> => ({
+      status: "admitted",
+      document: codexEnvelope(req, bodyFor(req)),
+      report: fakeReport(true),
+      tokens: ZERO_TOKENS,
+      attempts: [],
+    }),
+  );
+  return { port: { complete }, complete };
+}
+
+/** A fake CodexUtilityPort that always rejects, recording every call. */
+function rejectingCodexPort(): {
+  port: CodexUtilityPort;
+  complete: ReturnType<typeof vi.fn>;
+} {
+  const complete = vi.fn(
+    async (): Promise<CodexUtilityResult> => ({
+      status: "rejected",
+      report: fakeReport(false),
+      attempts: [],
+    }),
+  );
+  return { port: { complete }, complete };
+}
 
 const repository = {
   id: "repo",
@@ -253,21 +369,22 @@ describe("buildReviewCanvases — one shared budget across the model phase (acce
 });
 
 describe("buildReviewCanvases — the council selects the model and stamps provenance (acceptance 3)", () => {
-  it("stamps the resolved model, effort, and trace, on different harnesses per phase", async () => {
+  it("executes each seat on the resolved harness and stamps honest per-phase provenance", async () => {
     const decomposition = decompose(edgedPatchset);
     const proposal = deterministicProposalBody(decomposition);
+    const orderingBody: OrderingBody = {
+      readingOrder: [...proposal.readingOrder],
+      rationale: "codex says the baseline is clearest",
+    };
     const runDecompositionTurn = vi.fn(
       async (): Promise<DecompositionTurnResult> => ({ status: "emitted", body: proposal }),
     );
+    // A Claude ordering turn is injected too, purely to PROVE it is NOT used: under
+    // `both` the ordering seat resolves to a Codex model and must go to the port.
     const runOrderingTurn = vi.fn(
-      async (): Promise<OrderingTurnResult> => ({
-        status: "emitted",
-        body: {
-          readingOrder: [...proposal.readingOrder],
-          rationale: "baseline is clearest",
-        } satisfies OrderingBody,
-      }),
+      async (): Promise<OrderingTurnResult> => ({ status: "emitted", body: orderingBody }),
     );
+    const { port: codexPort, complete: codexComplete } = admittingCodexPort(() => orderingBody);
 
     const result = await buildReviewCanvases({
       reviewId: "review-1",
@@ -275,22 +392,38 @@ describe("buildReviewCanvases — the council selects the model and stamps prove
       dispositions: [],
       runDecompositionTurn,
       runOrderingTurn,
+      codexPort,
       council: { availability: { installed: ["claude-code", "codex"] } },
     });
 
-    // The decomposition proposal was resolved to Opus 4.8 high on claude-code.
+    // The decomposition proposal ran on the Claude turn; the ordering seat resolved
+    // to Codex, so it ran on the port and the Claude ordering turn was untouched.
+    expect(runDecompositionTurn).toHaveBeenCalledTimes(1);
+    expect(runOrderingTurn).not.toHaveBeenCalled();
+    expect(codexComplete).toHaveBeenCalledTimes(1);
+    const codexReq = codexComplete.mock.calls[0]?.[0] as CodexUtilityCompleteRequest;
+    expect(codexReq.docType).toBe("ordering");
+    expect(codexReq.model).toBe("gpt-5.6-terra");
+    expect(codexReq.effort).toBe("medium");
+
+    // The decomposition proposal was resolved to Opus 4.8 high on claude-code —
+    // model AND harness agree.
     const proposalProvenance = result.decompositionResult?.document.provenance;
     expect(proposalProvenance?.model).toBe("opus-4.8");
+    expect(proposalProvenance?.harness).toBe("claude-code");
     expect(proposalProvenance?.effort).toBe("high");
     expect(proposalProvenance?.resolutionTrace?.source).toBe("council-table");
     expect(proposalProvenance?.resolutionTrace?.summary).toContain("opus-4.8");
 
-    // The ordering pass was resolved to a Codex model (Terra medium) — a DIFFERENT
-    // harness than the reviewer, under `both` (R39 cross-harness, at the pipeline).
+    // The ordering pass was resolved to a Codex model (Terra medium) and EXECUTED on
+    // the Codex harness — a DIFFERENT harness than the reviewer, under `both` (R39
+    // cross-harness, live at the pipeline). No model=codex/harness=claude contradiction.
     const orderingProvenance = result.orderingResult?.document.provenance;
     expect(orderingProvenance?.model).toBe("gpt-5.6-terra");
+    expect(orderingProvenance?.harness).toBe("codex");
     expect(orderingProvenance?.effort).toBe("medium");
     expect(orderingProvenance?.resolutionTrace).toBeDefined();
+    expect(result.orderingResult?.usedFallback).toBe(false);
     // Different providers => the council placed the two phases on two harnesses.
     expect(proposalProvenance?.model).not.toBe(orderingProvenance?.model);
   });
@@ -330,5 +463,179 @@ describe("buildReviewCanvases — the council selects the model and stamps prove
     });
     expect(result.decompositionResult?.document.provenance.model).toBe("caller-supplied-model");
     expect(result.decompositionResult?.document.provenance.resolutionTrace).toBeUndefined();
+  });
+});
+
+describe("buildReviewCanvases — the council executes the resolved harness live (acceptance 1)", () => {
+  it("claude-only: every seat resolves to Claude and the Codex port is never called", async () => {
+    const decomposition = decompose(edgedPatchset);
+    const proposal = deterministicProposalBody(decomposition);
+    const orderingBody: OrderingBody = {
+      readingOrder: [...proposal.readingOrder],
+      rationale: "baseline",
+    };
+    const runDecompositionTurn = vi.fn(
+      async (): Promise<DecompositionTurnResult> => ({ status: "emitted", body: proposal }),
+    );
+    const runOrderingTurn = vi.fn(
+      async (): Promise<OrderingTurnResult> => ({ status: "emitted", body: orderingBody }),
+    );
+    const { port: codexPort, complete: codexComplete } = admittingCodexPort(() => orderingBody);
+
+    const result = await buildReviewCanvases({
+      reviewId: "review-1",
+      patchset: edgedPatchset,
+      dispositions: [],
+      runDecompositionTurn,
+      runOrderingTurn,
+      codexPort,
+      council: { availability: { installed: ["claude-code"] } },
+    });
+
+    // Both seats ran on the injected Claude turns; the Codex port was untouched.
+    expect(runDecompositionTurn).toHaveBeenCalledTimes(1);
+    expect(runOrderingTurn).toHaveBeenCalledTimes(1);
+    expect(codexComplete).not.toHaveBeenCalled();
+    expect(result.decompositionResult?.document.provenance.harness).toBe("claude-code");
+    expect(result.orderingResult?.document.provenance.harness).toBe("claude-code");
+    // Under claude-only, ordering resolves to a Claude model (Sonnet 5 low).
+    expect(result.orderingResult?.document.provenance.model).toBe("sonnet-5");
+  });
+
+  it("codex-only: both the heavy proposal seat and the ordering seat run on the Codex port", async () => {
+    const decomposition = decompose(edgedPatchset);
+    const proposal = deterministicProposalBody(decomposition);
+    const orderingBody: OrderingBody = {
+      readingOrder: [...proposal.readingOrder],
+      rationale: "baseline",
+    };
+    // A Claude turn for each seat, injected only to prove neither is used.
+    const runDecompositionTurn = vi.fn(
+      async (): Promise<DecompositionTurnResult> => ({ status: "emitted", body: proposal }),
+    );
+    const runOrderingTurn = vi.fn(
+      async (): Promise<OrderingTurnResult> => ({ status: "emitted", body: orderingBody }),
+    );
+    const { port: codexPort, complete: codexComplete } = admittingCodexPort((req) =>
+      req.docType === "ordering" ? orderingBody : proposal,
+    );
+
+    const result = await buildReviewCanvases({
+      reviewId: "review-1",
+      patchset: edgedPatchset,
+      dispositions: [],
+      runDecompositionTurn,
+      runOrderingTurn,
+      codexPort,
+      council: { availability: { installed: ["codex"] } },
+    });
+
+    // Neither Claude turn ran; both seats went to the Codex port.
+    expect(runDecompositionTurn).not.toHaveBeenCalled();
+    expect(runOrderingTurn).not.toHaveBeenCalled();
+    expect(codexComplete).toHaveBeenCalledTimes(2);
+    const docTypes = codexComplete.mock.calls.map(
+      (call) => (call[0] as CodexUtilityCompleteRequest).docType,
+    );
+    expect(new Set(docTypes)).toEqual(new Set(["decomposition.proposal", "ordering"]));
+
+    // The heavy proposal seat resolved to Sol high; ordering to Luna medium — both Codex.
+    const proposalProvenance = result.decompositionResult?.document.provenance;
+    expect(proposalProvenance?.model).toBe("gpt-5.6-sol");
+    expect(proposalProvenance?.harness).toBe("codex");
+    const orderingProvenance = result.orderingResult?.document.provenance;
+    expect(orderingProvenance?.model).toBe("gpt-5.6-luna");
+    expect(orderingProvenance?.harness).toBe("codex");
+  });
+});
+
+describe("buildReviewCanvases — provenance is honest across harnesses (acceptance 2)", () => {
+  it("never pairs a Codex model with a Claude harness (regression guard)", async () => {
+    const decomposition = decompose(edgedPatchset);
+    const proposal = deterministicProposalBody(decomposition);
+    const orderingBody: OrderingBody = {
+      readingOrder: [...proposal.readingOrder],
+      rationale: "baseline",
+    };
+    const runDecompositionTurn = vi.fn(
+      async (): Promise<DecompositionTurnResult> => ({ status: "emitted", body: proposal }),
+    );
+    const runOrderingTurn = vi.fn(
+      async (): Promise<OrderingTurnResult> => ({ status: "emitted", body: orderingBody }),
+    );
+    const { port: codexPort } = admittingCodexPort((req) =>
+      req.docType === "ordering" ? orderingBody : proposal,
+    );
+
+    const result = await buildReviewCanvases({
+      reviewId: "review-1",
+      patchset: edgedPatchset,
+      dispositions: [],
+      runDecompositionTurn,
+      runOrderingTurn,
+      codexPort,
+      council: { availability: { installed: ["claude-code", "codex"] } },
+    });
+
+    const provenances: (RspProvenance | undefined)[] = [
+      result.decompositionResult?.document.provenance,
+      result.orderingResult?.document.provenance,
+    ];
+    for (const provenance of provenances) {
+      expect(provenance).toBeDefined();
+      if (provenance === undefined) continue;
+      const isCodexModel = CODEX_MODELS.has(provenance.model as CouncilModel);
+      // model and harness must AGREE: a codex model implies the codex harness.
+      expect(isCodexModel).toBe(provenance.harness === "codex");
+    }
+  });
+});
+
+describe("buildReviewCanvases — one shared budget across a Claude seat and a Codex seat (acceptance 3)", () => {
+  it("refuses the sixth turn across the two harnesses (proof it can go red)", async () => {
+    // Budget of five; the pre-flight plan passes (small diff). The Claude proposal
+    // seat always emits an invalid body (rejected → three attempts wanted) and the
+    // Codex ordering seat always rejects (three attempts wanted): six turns total.
+    // The single shared budget permits exactly five, refusing the sixth.
+    const rejectDecomposition = vi.fn(
+      async (): Promise<DecompositionTurnResult> => ({ status: "emitted", body: {} }),
+    );
+    // Injected purely to prove ordering went to the Codex port, not this Claude turn.
+    const rejectOrderingClaude = vi.fn(
+      async (): Promise<OrderingTurnResult> => ({
+        status: "emitted",
+        body: { readingOrder: [], rationale: "" } satisfies OrderingBody,
+      }),
+    );
+    const { port: codexPort, complete: codexComplete } = rejectingCodexPort();
+
+    const result = await buildReviewCanvases({
+      reviewId: "review-1",
+      patchset: edgedPatchset,
+      dispositions: [],
+      runDecompositionTurn: rejectDecomposition,
+      runOrderingTurn: rejectOrderingClaude,
+      codexPort,
+      council: { availability: { installed: ["claude-code", "codex"] } },
+      routePlanOptions: { maxHarnessInvocations: 5 },
+    });
+
+    // Decomposition (Claude) burned three attempts; ordering (Codex port) got the
+    // remaining two, then the sixth was refused BEFORE a third — one shared ceiling
+    // across two harnesses.
+    expect(rejectDecomposition).toHaveBeenCalledTimes(3);
+    expect(rejectOrderingClaude).not.toHaveBeenCalled();
+    expect(codexComplete).toHaveBeenCalledTimes(2);
+    const combined = rejectDecomposition.mock.calls.length + codexComplete.mock.calls.length;
+    expect(combined).toBe(5);
+
+    // Both seats fell to the deterministic floor — the review still renders.
+    expect(result.decompositionResult?.usedFallback).toBe(true);
+    expect(result.orderingResult?.usedFallback).toBe(true);
+    expect(result.orderingResult?.budgetRefused).toBe(true);
+    // The floored ordering still stamps the honest resolved codex seat.
+    expect(result.orderingResult?.document.provenance.harness).toBe("codex");
+    expect(result.orderingResult?.document.provenance.model).toBe("gpt-5.6-terra");
+    for (const angle of CANVAS_ANGLES) expect(result.canvases[angle]).toBeDefined();
   });
 });
