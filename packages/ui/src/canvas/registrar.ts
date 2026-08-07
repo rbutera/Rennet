@@ -178,28 +178,47 @@ export function buildRowRegistry(input: BuildRegistryInput): RowRegistry {
       continue;
     }
 
-    if (isFileHeader(text)) {
-      rows.push({
-        rawIndex,
-        text,
-        kind: "file-header",
-        hunkIndex: hunk?.hunkIndex ?? -1,
-        occurrenceId: hunk?.occurrenceId ?? null,
-        side: null,
-        fileLine: null,
-        sideOrdinal: null,
-      });
-      continue;
-    }
+    // A body line is content ONLY when its first char is `+`, `-`, or a space —
+    // exactly the substrate's rule (decomposition.ts addedOf/deletedOf/contextOf
+    // filter on the first char). Everything else — a stray `""` (the trailing
+    // element of `diff.split("\n")` on a newline-terminated diff), a `\ No newline`
+    // marker, inter-file `diff --git`/`index` lines — is metadata that must NOT
+    // enter a side array, or an ordinal would shift and a mark land on the wrong
+    // row. `isFileHeader` runs ONLY in the preamble (before the first hunk): once
+    // a hunk is open, a body line reading `--- x` / `+++ x` is a real deletion /
+    // addition (its content happens to start with `--`/`++`), never a header —
+    // classifying it by first char is what keeps the UI's side arrays identical
+    // to the substrate's `occurrence.sides[side]`.
+    const first = text.charAt(0);
+    const isContentPrefix = first === "+" || first === "-" || first === " ";
 
-    if (text.startsWith("\\")) {
-      // "\ No newline at end of file" and kin — metadata, not content.
+    if (hunk === null) {
+      // Preamble. Real file headers (`diff --git`, `index`, `+++`/`--- ` path
+      // lines) live here; a content-prefixed line with no `@@` yet is the header-
+      // less fixture/demo shape and opens one implicit hunk seeded at line 1/1.
+      if (isFileHeader(text) || !isContentPrefix) {
+        rows.push({
+          rawIndex,
+          text,
+          kind: isFileHeader(text) ? "file-header" : "meta",
+          hunkIndex: -1,
+          occurrenceId: null,
+          side: null,
+          fileLine: null,
+          sideOrdinal: null,
+        });
+        continue;
+      }
+      hunk = openHunk(null, null);
+    } else if (!isContentPrefix) {
+      // Inside a hunk, a non-body line: metadata the substrate ignores. Rendered
+      // (so the surface is faithful) but carries no side, ordinal, or file line.
       rows.push({
         rawIndex,
         text,
         kind: "meta",
-        hunkIndex: hunk?.hunkIndex ?? -1,
-        occurrenceId: hunk?.occurrenceId ?? null,
+        hunkIndex: hunk.hunkIndex,
+        occurrenceId: hunk.occurrenceId,
         side: null,
         fileLine: null,
         sideOrdinal: null,
@@ -207,11 +226,7 @@ export function buildRowRegistry(input: BuildRegistryInput): RowRegistry {
       continue;
     }
 
-    // Content. A diff with no `@@` header (the fixture/demo shape) still has real
-    // content rows — open one implicit hunk seeded at line 1/1 so they get identity.
-    if (hunk === null) hunk = openHunk(null, null);
-
-    const first = text.charAt(0);
+    // Content (hunk is non-null and `first` is one of `+`/`-`/space).
     const side: AnchorSide = first === "+" ? "additions" : first === "-" ? "deletions" : "context";
     const fileLine = side === "deletions" ? oldLine : newLine;
     const sideOrdinal = pushSide(hunk, side, rawIndex);
@@ -260,10 +275,13 @@ export function resolveAnchorToRows(registry: RowRegistry, anchor: ParsedAnchor)
   if (!hunk) return { outcome: "orphan", reason: "no-occurrence" };
 
   if (anchor.span) {
-    // Spans are always side-qualified (§3.2) — a span without a side cannot land.
+    // Spans are always side-qualified (§3.2) — a span without a side cannot land;
+    // this mirrors the substrate resolver, whose `no-such-side` fires exactly when
+    // `parsed.side` is absent. An occurrence's side that merely has no rows is an
+    // EMPTY side (the substrate builds all three side arrays, empty or not), so an
+    // out-of-range span there is `out-of-bounds`, never `no-such-side`.
     if (!anchor.side) return { outcome: "orphan", reason: "no-such-side" };
-    const sideRows = hunk.sides[anchor.side];
-    if (!sideRows) return { outcome: "orphan", reason: "no-such-side" };
+    const sideRows = hunk.sides[anchor.side] ?? [];
     const start = anchor.span.startLine;
     const end = anchor.span.endLine ?? start;
     if (start > sideRows.length || end > sideRows.length) {
@@ -279,16 +297,15 @@ export function resolveAnchorToRows(registry: RowRegistry, anchor: ParsedAnchor)
     };
   }
 
-  // Spanless. A side-only anchor glows that whole side; a bare occurrence anchor
-  // marks all the hunk's content rows.
+  // Spanless. A side-only anchor glows that whole side (an empty side resolves to
+  // no rows — placeMarks then routes such a mark to the tray, never silently); a
+  // bare occurrence anchor marks all the hunk's content rows.
   if (anchor.side) {
-    const sideRows = hunk.sides[anchor.side];
-    if (!sideRows) return { outcome: "orphan", reason: "no-such-side" };
     return {
       outcome: "resolved",
       hunkIndex: hunk.hunkIndex,
       side: anchor.side,
-      rawIndices: [...sideRows],
+      rawIndices: [...(hunk.sides[anchor.side] ?? [])],
       startOrdinal: null,
       endOrdinal: null,
     };

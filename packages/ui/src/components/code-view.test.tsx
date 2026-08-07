@@ -169,39 +169,39 @@ describe("CodeView — L3 marks render AT their anchors, never in a strip", () =
     expect(html).not.toContain('data-gutter-marks="orphan1"');
   });
 
-  it("recycle-safe: a mark's rows carry the same identity whether windowed or fully rendered", () => {
+  it("recycle-safe: a mark windowed OUT does not glow anywhere; scrolled back IN it re-attaches to its own row", () => {
+    // A long single hunk so the mark's row genuinely leaves the window (real
+    // recycling, not the 6-row case where every row is always rendered). The 150th
+    // addition is raw index 150 (raw 0 is the @@ header), fileLine 150.
+    const bigDiff = [
+      "@@ -1,1 +1,200 @@",
+      ...Array.from({ length: 200 }, (_unused, i) => `+  line ${i + 1}`),
+    ].join("\n");
     const marks: Mark[] = [
       {
         markId: "ann1",
         markKind: "annotation",
-        anchor: "rennet:hunk/H#L2@additions",
-        body: "the second add",
+        anchor: "rennet:hunk/H#L150@additions",
+        body: "deep mark",
       },
     ];
-    const full = renderToStaticMarkup(
-      <CodeView
-        path="foo.ts"
-        diff={ONE_HUNK}
-        occurrenceIds="H"
-        marks={marks}
-        renderAll
-        viewportHeight={480}
-      />,
-    );
-    const windowed = renderToStaticMarkup(
-      <CodeView
-        path="foo.ts"
-        diff={ONE_HUNK}
-        occurrenceIds="H"
-        marks={marks}
-        viewportHeight={480}
-      />,
-    );
-    // The mark lands on the second addition row (raw index 4) in BOTH renders — the
-    // placement is computed over the whole diff, so the window never moves it.
-    expect(full).toContain('data-raw-index="4" data-side="additions" data-file-line="12"');
-    expect(full).toContain('data-mark="ann1"');
-    expect(windowed).toContain('data-mark="ann1"');
+    const props = { path: "big.ts", diff: bigDiff, occurrenceIds: "H", marks, viewportHeight: 480 };
+
+    // Scrolled to the top: raw 150 is far below the window, so it is NOT rendered —
+    // and crucially the mark glows on NO other (visible) row.
+    const atTop = renderToStaticMarkup(<CodeView {...props} scrollTop={0} />);
+    expect(atTop).toContain('data-raw-index="1"'); // the window is real (top rows painted)
+    expect(atTop).not.toContain('data-raw-index="150"'); // the mark's row is windowed out
+    expect(atTop).not.toContain('data-mark="ann1"'); // no phantom glow on a visible row
+    expect(atTop).not.toContain('data-gutter-marks="ann1"');
+
+    // Scrolled down so raw 150 enters the window: the mark re-attaches to THAT SAME
+    // row (data-mark on the same element as data-raw-index="150"), keyed by rawIndex,
+    // never by window position — the recycle-safety guarantee, at the render level.
+    const atMark = renderToStaticMarkup(<CodeView {...props} scrollTop={150 * 18} />);
+    expect(atMark).toMatch(/data-raw-index="150"[^>]*data-file-line="150"[^>]*data-mark="ann1"/);
+    expect(atMark).toContain('data-gutter-marks="ann1"');
+    expect(atMark).not.toContain('data-raw-index="1"'); // and the top has recycled away
   });
 
   it("focusAnchor pulses the pointed-at span (agent-points deixis)", () => {

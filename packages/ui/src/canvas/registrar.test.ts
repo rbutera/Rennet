@@ -104,6 +104,38 @@ describe("buildRowRegistry — rows carry real file line + side + occurrence ide
     expect(reg.rows).toHaveLength(0);
     expect(reg.hunks).toHaveLength(0);
   });
+
+  it("the trailing '' of a newline-terminated diff is metadata, never a phantom context row", () => {
+    // Real git diffs end in a newline, so `diff.split("\n")` yields a trailing "".
+    // The substrate never counts it (its body filter needs first char +/-/space),
+    // so it must NOT enter sides.context or an ordinal would shift and #Ln@context
+    // resolve one row too far.
+    const reg = buildRowRegistry({
+      diff: "@@ -1,1 +1,1 @@\n context\n-old\n+new\n",
+      occurrenceIds: "H",
+    });
+    const trailing = reg.rows.at(-1);
+    expect(trailing).toMatchObject({ text: "", kind: "meta", side: null, sideOrdinal: null });
+    // Exactly one context row (the ' context' line); the '' is not among them.
+    expect(reg.hunks[0]?.sides.context).toHaveLength(1);
+  });
+
+  it("an in-hunk line reading '--- x' / '+++ x' is a real deletion / addition, not a header", () => {
+    // A deleted source line `-- x` renders as diff line `--- x`; an added `++ y` as
+    // `+++ y`. Only the PREAMBLE `--- `/`+++ ` path lines are headers — inside a
+    // hunk these are content (first char -/+), exactly as the substrate counts them.
+    const reg = buildRowRegistry({
+      diff: "@@ -1,2 +1,2 @@\n--- x\n-keep\n+++ y\n+kept\n",
+      occurrenceIds: "H",
+    });
+    const byRaw = new Map(reg.rows.map((row) => [row.rawIndex, row]));
+    expect(byRaw.get(1)).toMatchObject({ kind: "content", side: "deletions", sideOrdinal: 1 });
+    expect(byRaw.get(2)).toMatchObject({ kind: "content", side: "deletions", sideOrdinal: 2 });
+    expect(byRaw.get(3)).toMatchObject({ kind: "content", side: "additions", sideOrdinal: 1 });
+    expect(byRaw.get(4)).toMatchObject({ kind: "content", side: "additions", sideOrdinal: 2 });
+    expect(reg.hunks[0]?.sides.deletions).toEqual([1, 2]);
+    expect(reg.hunks[0]?.sides.additions).toEqual([3, 4]);
+  });
 });
 
 describe("resolveAnchorToRows — an anchor-grammar span resolves to exactly the side-aware rows", () => {
@@ -136,15 +168,34 @@ describe("resolveAnchorToRows — an anchor-grammar span resolves to exactly the
     expect(res).toEqual({ outcome: "orphan", reason: "no-occurrence" });
   });
 
-  it("orphans a side that has no rows in the hunk", () => {
-    // H1 has no context rows.
+  it("a span on an existing-but-empty side is out-of-bounds, matching the substrate", () => {
+    // H1 has no context rows. The substrate builds all three side arrays (empty or
+    // not), so its resolver returns out-of-bounds — NOT no-such-side — here. Parity.
     const res = resolveAnchorToRows(reg, anchor("rennet:hunk/H1#L1@context"));
+    expect(res).toEqual({ outcome: "orphan", reason: "out-of-bounds" });
+  });
+
+  it("reserves no-such-side for a span with no side qualifier (mirrors the substrate)", () => {
+    // `#L1` (no @side) parses as a span with side undefined; the substrate's
+    // resolver hits no-such-side exactly when parsed.side is absent.
+    const res = resolveAnchorToRows(reg, anchor("rennet:hunk/H0#L1"));
     expect(res).toEqual({ outcome: "orphan", reason: "no-such-side" });
   });
 
   it("a spanless whole-occurrence anchor resolves to all the hunk's content rows", () => {
     const res = resolveAnchorToRows(reg, anchor("rennet:hunk/H0"));
     expect(res).toMatchObject({ outcome: "resolved", side: null, rawIndices: [3, 4, 5, 6, 7] });
+  });
+
+  it("does not resolve a context ordinal past the last real row into a newline artifact", () => {
+    // One real context row, then the trailing "" of a newline-terminated diff.
+    // #L2@context must orphan (out-of-bounds), never land on the "" phantom.
+    const nlReg = buildRowRegistry({
+      diff: "@@ -1,1 +1,1 @@\n context\n-old\n+new\n",
+      occurrenceIds: "H",
+    });
+    const res = resolveAnchorToRows(nlReg, anchor("rennet:hunk/H#L2@context"));
+    expect(res).toEqual({ outcome: "orphan", reason: "out-of-bounds" });
   });
 });
 

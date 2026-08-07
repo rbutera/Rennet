@@ -161,6 +161,15 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     return chunk ? [...chunk.hunkIds] : [parsed.anchor.id];
   }
 
+  // The index orphans a mark on a COARSE, global check: a malformed anchor, or an
+  // occurrence that is not in the changeset at all (its code is gone / its lineage
+  // dropped). The FINE cases — an occurrence that exists but whose span is out of
+  // bounds or whose side is empty — need that element's rendered diff to decide,
+  // and the CodeView already reports them via `onPlacement` (the registrar's
+  // authoritative `placeMarks`). Lifting that per-element placement into this global
+  // index/tray is the follow-up (issue: index built from onPlacement), tracked with
+  // the render-interaction wiring this slice defers; until then a span-orphan on a
+  // present occurrence shows here as placed and renders nothing at its anchor.
   const markEntries: MarkIndexEntry[] = marks.map((mark) => {
     const parsed = parseAnchor(mark.anchor);
     const orphan = !parsed.ok || !changesetHunkIds.has(parsed.anchor.id);
