@@ -212,3 +212,123 @@ describe("buildReviewCanvases", () => {
     expect(sequenceTitles(result.canvases.sequence)).toEqual(["src/omega.ts", "src/alpha.ts"]);
   });
 });
+
+describe("buildReviewCanvases — one shared budget across the model phase (acceptance 2)", () => {
+  it("refuses the sixth invocation at runtime across the two runners", async () => {
+    // Budget of five; the pre-flight plan passes (small diff). Both turns always
+    // reject, so each runner WANTS three attempts: decomposition 3 + ordering 3
+    // = six. The shared budget permits exactly five, refusing the sixth.
+    const rejectDecomposition = vi.fn(
+      async (): Promise<DecompositionTurnResult> => ({ status: "emitted", body: {} }),
+    );
+    const rejectOrdering = vi.fn(
+      async (): Promise<OrderingTurnResult> => ({
+        status: "emitted",
+        body: { readingOrder: [], rationale: "" } satisfies OrderingBody,
+      }),
+    );
+
+    const result = await buildReviewCanvases({
+      reviewId: "review-1",
+      patchset: edgedPatchset,
+      dispositions: [],
+      runDecompositionTurn: rejectDecomposition,
+      runOrderingTurn: rejectOrdering,
+      routePlanOptions: { maxHarnessInvocations: 5 },
+    });
+
+    // Exactly five turns combined; the sixth was refused at runtime.
+    const combined = rejectDecomposition.mock.calls.length + rejectOrdering.mock.calls.length;
+    expect(combined).toBe(5);
+    // Decomposition burned its three attempts; ordering got the remaining two
+    // then was refused before a third.
+    expect(rejectDecomposition).toHaveBeenCalledTimes(3);
+    expect(rejectOrdering).toHaveBeenCalledTimes(2);
+    // Both phases fell to the deterministic floor — the review still renders.
+    expect(result.decompositionResult?.usedFallback).toBe(true);
+    expect(result.orderingResult?.usedFallback).toBe(true);
+    expect(result.orderingResult?.budgetRefused).toBe(true);
+    for (const angle of CANVAS_ANGLES) expect(result.canvases[angle]).toBeDefined();
+  });
+});
+
+describe("buildReviewCanvases — the council selects the model and stamps provenance (acceptance 3)", () => {
+  it("stamps the resolved model, effort, and trace, on different harnesses per phase", async () => {
+    const decomposition = decompose(edgedPatchset);
+    const proposal = deterministicProposalBody(decomposition);
+    const runDecompositionTurn = vi.fn(
+      async (): Promise<DecompositionTurnResult> => ({ status: "emitted", body: proposal }),
+    );
+    const runOrderingTurn = vi.fn(
+      async (): Promise<OrderingTurnResult> => ({
+        status: "emitted",
+        body: {
+          readingOrder: [...proposal.readingOrder],
+          rationale: "baseline is clearest",
+        } satisfies OrderingBody,
+      }),
+    );
+
+    const result = await buildReviewCanvases({
+      reviewId: "review-1",
+      patchset: edgedPatchset,
+      dispositions: [],
+      runDecompositionTurn,
+      runOrderingTurn,
+      council: { availability: { installed: ["claude-code", "codex"] } },
+    });
+
+    // The decomposition proposal was resolved to Opus 4.8 high on claude-code.
+    const proposalProvenance = result.decompositionResult?.document.provenance;
+    expect(proposalProvenance?.model).toBe("opus-4.8");
+    expect(proposalProvenance?.effort).toBe("high");
+    expect(proposalProvenance?.resolutionTrace?.source).toBe("council-table");
+    expect(proposalProvenance?.resolutionTrace?.summary).toContain("opus-4.8");
+
+    // The ordering pass was resolved to a Codex model (Terra medium) — a DIFFERENT
+    // harness than the reviewer, under `both` (R39 cross-harness, at the pipeline).
+    const orderingProvenance = result.orderingResult?.document.provenance;
+    expect(orderingProvenance?.model).toBe("gpt-5.6-terra");
+    expect(orderingProvenance?.effort).toBe("medium");
+    expect(orderingProvenance?.resolutionTrace).toBeDefined();
+    // Different providers => the council placed the two phases on two harnesses.
+    expect(proposalProvenance?.model).not.toBe(orderingProvenance?.model);
+  });
+
+  it("without a council context, the caller-supplied provenance model stands", async () => {
+    const decomposition = decompose(edgedPatchset);
+    const runDecompositionTurn = vi.fn(
+      async (): Promise<DecompositionTurnResult> => ({
+        status: "emitted",
+        body: deterministicProposalBody(decomposition),
+      }),
+    );
+    const result = await buildReviewCanvases({
+      reviewId: "review-1",
+      patchset: edgedPatchset,
+      dispositions: [],
+      runDecompositionTurn,
+      provenance: {
+        harness: "claude-code",
+        harnessVersion: "2.1.220",
+        adapterVersion: "0.1.0",
+        model: "caller-supplied-model",
+        modelReportedBy: "config",
+        capability: {
+          structuredOutput: {
+            implementedByAdapter: true,
+            advertisedByHarness: true,
+            availableInSession: true,
+          },
+          perCallModelSelection: {
+            implementedByAdapter: false,
+            advertisedByHarness: false,
+            availableInSession: false,
+          },
+        },
+      },
+    });
+    expect(result.decompositionResult?.document.provenance.model).toBe("caller-supplied-model");
+    expect(result.decompositionResult?.document.provenance.resolutionTrace).toBeUndefined();
+  });
+});

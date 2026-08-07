@@ -24,12 +24,15 @@ import {
 } from "@rennet/instructions";
 import { computeInputDigest, validateDocument } from "@rennet/protocol";
 import type {
+  BudgetGrant,
   ChunkAngle,
   Decomposition,
   DecompositionProposalBody,
+  InvocationBudget,
   ManifestOccurrence,
   OfferedManifest,
   ProposalChunk,
+  ResolutionTrace,
   RspCapabilitySnapshot,
   RspEnvelope,
   RspModelReportedBy,
@@ -114,6 +117,10 @@ export interface DecompositionProvenanceSeed {
   readonly model: string;
   readonly modelReportedBy: RspModelReportedBy;
   readonly capability: RspCapabilitySnapshot;
+  /** The Model Council effort for this seat, when the council resolved it (#69). */
+  readonly effort?: string;
+  /** The Model Council resolution trace, when the council resolved this seat (#69). */
+  readonly resolutionTrace?: ResolutionTrace;
 }
 
 export interface RunDecompositionAngleInput {
@@ -128,6 +135,15 @@ export interface RunDecompositionAngleInput {
   readonly guidance?: { readonly general?: string; readonly files?: string };
   /** Retries after the first attempt. Default 2 (three attempts total). */
   readonly maxRetries?: number;
+  /**
+   * The shared live invocation budget (issue #69, fixes bead p0wwp). When
+   * present it is consulted before EVERY turn — the first attempt and every
+   * retry — so retries decrement the same budget and a turn over the ceiling is
+   * refused at runtime. A refusal is fail-closed: the runner records a
+   * `budget-refused` attempt and falls to the deterministic floor. Absent, the
+   * runner is unbounded by a budget (its isolated unit-test behaviour).
+   */
+  readonly budget?: InvocationBudget;
   readonly assembleOptions?: AssembleOptions;
   readonly now?: () => number;
   readonly mintDocId?: () => string;
@@ -136,10 +152,12 @@ export interface RunDecompositionAngleInput {
 
 export interface DecompositionAttempt {
   readonly attempt: number;
-  readonly outcome: "admitted" | "rejected" | "turn-failed";
+  readonly outcome: "admitted" | "rejected" | "turn-failed" | "budget-refused";
   /** The validation report for an attempt that produced a body; absent on a turn failure. */
   readonly report?: ValidationReport;
   readonly turnError?: string;
+  /** The typed refusal when the budget refused this attempt at runtime (R10). */
+  readonly budgetRefusal?: Extract<BudgetGrant, { granted: false }>;
 }
 
 export interface RunDecompositionAngleResult {
@@ -148,6 +166,8 @@ export interface RunDecompositionAngleResult {
   readonly document: RspEnvelope;
   readonly report: ValidationReport;
   readonly attempts: DecompositionAttempt[];
+  /** True when the live invocation budget refused a turn at runtime (R10 ceiling hit). */
+  readonly budgetRefused: boolean;
 }
 
 const CROCKFORD = "0123456789ABCDEFGHJKMNPQRSTVWXYZ";
@@ -216,6 +236,8 @@ function buildProvenance(
     tokens,
     reportedUsd: null,
     derivedUsd: null,
+    ...(seed.effort === undefined ? {} : { effort: seed.effort }),
+    ...(seed.resolutionTrace === undefined ? {} : { resolutionTrace: seed.resolutionTrace }),
   };
 }
 
@@ -255,6 +277,7 @@ export async function runDecompositionAngle(
     guidance,
     assembleOptions,
     maxRetries = 2,
+    budget,
   } = input;
   const mintDocId = input.mintDocId ?? defaultMintDocId;
   const newRunId = input.newRunId ?? defaultRunId;
@@ -266,8 +289,21 @@ export async function runDecompositionAngle(
 
   const attempts: DecompositionAttempt[] = [];
   let lastReportText: string | undefined;
+  let budgetRefused = false;
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+    // The live budget gate (R10): consult the shared budget before spending a
+    // turn. A refusal is terminal for this runner — every further attempt would
+    // also be refused — so we record it and break to the deterministic floor.
+    if (budget !== undefined) {
+      const grant = budget.tryConsume(`decomposition:attempt-${attempt}`);
+      if (!grant.granted) {
+        attempts.push({ attempt, outcome: "budget-refused", budgetRefusal: grant });
+        budgetRefused = true;
+        break;
+      }
+    }
+
     const assembled = assemblePrompt(
       {
         base,
@@ -296,16 +332,24 @@ export async function runDecompositionAngle(
     const report = validateDocument({ document, patchset: patchsetRef, manifest });
     if (report.admitted) {
       attempts.push({ attempt, outcome: "admitted", report });
-      return { admitted: true, usedFallback: false, document, report, attempts };
+      return { admitted: true, usedFallback: false, document, report, attempts, budgetRefused };
     }
     attempts.push({ attempt, outcome: "rejected", report });
     lastReportText = renderReport(report);
   }
 
-  // Terminal failure: the deterministic floor stands, admitted, route recorded.
+  // Terminal failure (rejected out, turn failed, or budget refused): the
+  // deterministic floor stands, admitted, route recorded.
   const fallbackBody = deterministicProposalBody(decomposition);
   const provenance = buildProvenance(seed, "deterministic", inputDigest, newRunId(), ZERO_TOKENS);
   const document = buildEnvelope(fallbackBody, decomposition.patchsetId, provenance, mintDocId());
   const report = validateDocument({ document, patchset: patchsetRef, manifest });
-  return { admitted: report.admitted, usedFallback: true, document, report, attempts };
+  return {
+    admitted: report.admitted,
+    usedFallback: true,
+    document,
+    report,
+    attempts,
+    budgetRefused,
+  };
 }

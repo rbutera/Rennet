@@ -192,6 +192,20 @@ export interface RspProvenance {
   sampleIndex?: number;
   startedAt?: number;
   completedAt?: number;
+  /**
+   * The effort/thinking level the Model Council assigned this invocation
+   * (low/medium/high/xhigh). Optional: absent on documents stamped before a
+   * council assignment was threaded (the provenance schema is `.loose()`, so
+   * absence validates and the input digest is unaffected — it is computed over
+   * the offered input, never over provenance).
+   */
+  effort?: string;
+  /**
+   * The Model Council resolution trace: why this job ran on this model. Optional
+   * for the same reason as `effort`. This is the string the UI can show so an
+   * override is only ever over something visible.
+   */
+  resolutionTrace?: ResolutionTrace;
 }
 
 /**
@@ -817,4 +831,203 @@ export interface CanvasChangeNotification {
   canvasId: string;
   elementKey: string;
   seqRange: { from: number; to: number };
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The Model Council (issue #69)
+//
+// The named subsystem that decides which mind does which job. This file carries
+// its VOCABULARY: the model set, the tiers, the availability scenarios, the
+// versioned job-catalogue entry shape, the user-override shape, the resolution
+// result and its inspectable trace, and the live invocation-budget contract. The
+// catalogue data, the three assignment tables, and the pure `resolveAssignment`
+// resolver live in `@rennet/core` (`model-council.ts`); the budget closure lives
+// in `@rennet/core` (`invocation-budget.ts`). Doc authority:
+// `docs/Rennet Model Council.md` (§2 catalogue, §3 tables, §4 resolver + gate).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The provider a council model belongs to. Determines the harness it runs on. */
+export type CouncilProvider = "claude" | "codex";
+
+/**
+ * The council model set (Model Council §3). Claude: Haiku / Sonnet 5 / Opus 4.8.
+ * Codex: GPT-5.5 / 5.6-Sol / 5.6-Terra / 5.6-Luna. Adding a model is a schema
+ * edit here plus a table edit in `@rennet/core`.
+ */
+export type CouncilModel =
+  | "haiku"
+  | "sonnet-5"
+  | "opus-4.8"
+  | "gpt-5.5"
+  | "gpt-5.6-sol"
+  | "gpt-5.6-terra"
+  | "gpt-5.6-luna";
+
+/**
+ * The effort knob. `low`/`medium`/`high`/`xhigh` is the Codex effort; thinking
+ * budget is the analogous Claude knob. `xhigh` is the divergence-triggered
+ * self-consistency ceiling only.
+ */
+export type CouncilEffort = "low" | "medium" | "high" | "xhigh";
+
+/**
+ * The tier test (Model Council §1): does this task need to look at code it was
+ * not given? Input fully enumerable -> `light`; the model must go find something
+ * -> `heavy`; a tool can be 100% right -> `deterministic` (no model at all).
+ */
+export type CouncilTier = "light" | "heavy" | "deterministic";
+
+/** The three canonical availability scenarios that key the assignment tables. */
+export type CouncilScenario = "both" | "claude-only" | "codex-only";
+
+/**
+ * The batching shape of a model-facing job. `session-rider` marks a heavy job
+ * that rides another job's session (its assignment granularity is the seat, not
+ * the call). `none` is the deterministic floor's shape.
+ */
+export type CouncilBatching = "per-call" | "batched" | "session-rider" | "none";
+
+/**
+ * The harness a council model runs on. Codex models run on `codex`; Claude
+ * models on `claude-code`. This is how the resolver NAMES a Codex seat (#66)
+ * without building it — a subset of the core `HarnessId`.
+ */
+export type CouncilHarnessId = "claude-code" | "codex";
+
+/** A single model+effort pick from an assignment table. */
+export interface CouncilPick {
+  readonly model: CouncilModel;
+  readonly effort: CouncilEffort;
+}
+
+/** A stable job id in the versioned catalogue. */
+export type CouncilJobId = string;
+
+/**
+ * One catalogue entry: WHAT the job is (its tier, batching shape, and whether it
+ * rides another session) — never WHICH model, which is the assignment table's
+ * job. Shipped versioned like a schema; job ids are stable.
+ */
+export interface CouncilJob {
+  readonly jobId: CouncilJobId;
+  readonly tier: CouncilTier;
+  readonly batching: CouncilBatching;
+  /** True when the job rides another job's session (granularity is the seat). */
+  readonly sessionRider: boolean;
+  /** Optional matrix row number, purely for the resolution-trace flavour. */
+  readonly row?: number;
+  readonly label: string;
+}
+
+/** Which harnesses are installed (the availability probe result). */
+export interface CouncilAvailability {
+  readonly installed: readonly CouncilHarnessId[];
+}
+
+/** A per-field override; any field may be set independently of the others. */
+export interface CouncilOverridePick {
+  readonly model?: CouncilModel;
+  readonly effort?: CouncilEffort;
+  readonly harness?: CouncilHarnessId;
+}
+
+/**
+ * User overrides (all personal, never shareable). `task` keys by jobId
+ * (routing.task.<jobId>); `tier` keys by tier (routing.tier.<tier>). The #28
+ * settings keys deserialise into exactly this shape — the override layer is
+ * supported by construction so #28 attaches without a core change.
+ */
+export interface CouncilOverrides {
+  readonly task?: Readonly<Record<CouncilJobId, CouncilOverridePick>>;
+  readonly tier?: Partial<Readonly<Record<CouncilTier, CouncilOverridePick>>>;
+}
+
+/** The ultimate fallback (resolution order step 4: the harness's own default). */
+export interface CouncilHarnessDefault {
+  readonly harness: CouncilHarnessId;
+  readonly model: CouncilModel;
+  readonly effort: CouncilEffort;
+}
+
+/** The context `resolveAssignment` resolves against. */
+export interface CouncilResolveContext {
+  readonly availability: CouncilAvailability;
+  readonly overrides?: CouncilOverrides;
+  readonly harnessDefault?: CouncilHarnessDefault;
+}
+
+/** Which layer of the resolution order won. */
+export type ResolutionSource =
+  | "task-override"
+  | "tier-override"
+  | "council-table"
+  | "harness-default"
+  | "degraded";
+
+/**
+ * The structured, inspectable trace of one resolution — "why did this job run on
+ * that model." The `summary` is the one-line string the UI can show; an override
+ * is only usable if the resolution it overrides is visible.
+ */
+export interface ResolutionTrace {
+  readonly jobId: CouncilJobId;
+  readonly tier: CouncilTier;
+  readonly scenario: CouncilScenario | "degraded";
+  readonly source: ResolutionSource;
+  /** True when a light job was placed on a different harness than the review (R39). */
+  readonly crossHarness?: boolean;
+  readonly row?: number;
+  readonly summary: string;
+}
+
+/**
+ * The result of resolving a job. A model-facing job resolves to a `model` result
+ * with its harness/model/effort; a deterministic-tier job resolves to a
+ * `deterministic` result with a trace and NO model, so reading a model off a
+ * deterministic resolution is a type error.
+ */
+export type CouncilResolution =
+  | {
+      readonly kind: "model";
+      readonly harness: CouncilHarnessId;
+      readonly model: CouncilModel;
+      readonly effort: CouncilEffort;
+      readonly trace: ResolutionTrace;
+    }
+  | { readonly kind: "deterministic"; readonly trace: ResolutionTrace };
+
+// ── The live invocation budget (issue #69, fixes bead p0wwp) ──────────────────
+
+/** The stable code for a runtime budget refusal (R10, the money ceiling). */
+export const R10_BUDGET_EXHAUSTED = "R10_BUDGET_EXHAUSTED" as const;
+
+/** The result of one `tryConsume` on the shared invocation budget. */
+export type BudgetGrant =
+  | {
+      readonly granted: true;
+      readonly purpose: string;
+      readonly consumed: number;
+      readonly remaining: number;
+    }
+  | {
+      readonly granted: false;
+      readonly code: typeof R10_BUDGET_EXHAUSTED;
+      readonly purpose: string;
+      readonly consumed: number;
+      readonly max: number;
+      readonly reason: string;
+    };
+
+/**
+ * A shared runtime budget for model invocations. One is created per review and
+ * threaded through every runner, so the first attempt AND every retry across
+ * decomposition and ordering draw from the same ceiling — the live enforcement
+ * of R10 the pre-flight route-plan count never provided (bead p0wwp). A refusal
+ * is fail-closed: the runner falls to its deterministic floor rather than crash.
+ */
+export interface InvocationBudget {
+  readonly max: number;
+  readonly consumed: number;
+  readonly remaining: number;
+  tryConsume(purpose: string): BudgetGrant;
 }

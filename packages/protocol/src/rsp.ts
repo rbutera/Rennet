@@ -174,6 +174,22 @@ const provenanceSchema = z
     sampleIndex: z.number().int().nonnegative().optional(),
     startedAt: z.number().optional(),
     completedAt: z.number().optional(),
+    // Model Council fields (issue #69). Optional and additive: documents stamped
+    // before a council assignment omit them and validate unchanged, and the
+    // input digest is computed over the offered input, never over provenance.
+    effort: z.string().min(1).optional(),
+    resolutionTrace: z
+      .object({
+        jobId: z.string(),
+        tier: z.string(),
+        scenario: z.string(),
+        source: z.string(),
+        crossHarness: z.boolean().optional(),
+        row: z.number().optional(),
+        summary: z.string(),
+      })
+      .loose()
+      .optional(),
   })
   .loose();
 
