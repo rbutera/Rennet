@@ -217,3 +217,63 @@ describe("CodeView — L3 marks render AT their anchors, never in a strip", () =
     expect(html).toContain("cv-focus");
   });
 });
+
+describe("CodeView — syntax highlighting rides UNDER the diff colouring (issue #68)", () => {
+  it("wraps code in token spans for a known language, on both context and diff rows", () => {
+    const html = renderToStaticMarkup(
+      <CodeView path="src/x.ts" diff={ONE_HUNK} occurrenceIds="H" viewportHeight={480} />,
+    );
+    // A keyword on the context row and on the changed rows is highlighted.
+    expect(html).toContain('rtok-keyword">const</span>');
+    // Numbers, too, so the diff is genuinely tokenized (not just the leading marker).
+    expect(html).toContain('rtok-number">3</span>');
+  });
+
+  it("a highlighted token on an added line STILL reads as added (diff colour dominant)", () => {
+    const diff = ["@@ -1,1 +1,2 @@", "   const a = 1;", "+  return a;"].join("\n");
+    const html = renderToStaticMarkup(
+      <CodeView path="src/x.ts" diff={diff} occurrenceIds="H" viewportHeight={480} />,
+    );
+    // The add row carries BOTH the diff class (dominant, full-row) AND the syntax
+    // highlight for `return` — the highlight composes under the diff semantic.
+    expect(html).toMatch(/class="code-view-row cv-add"[\s\S]*?rtok-keyword">return<\/span>/);
+  });
+
+  it("fails closed for an unknown extension: plain text, no fabricated colouring", () => {
+    const html = renderToStaticMarkup(
+      <CodeView path="Makefile" diff={ONE_HUNK} occurrenceIds="H" viewportHeight={480} />,
+    );
+    // No semantic token classes, and the code text stays contiguous (never split
+    // into keyword/number spans) — proof the tokenizer did not run.
+    expect(html).not.toContain("rtok-keyword");
+    expect(html).toContain("const a = 1;");
+  });
+
+  it("never tokenizes the @@ hunk header — it stays muted chrome, uncoloured", () => {
+    const html = renderToStaticMarkup(
+      <CodeView path="src/x.ts" diff={ONE_HUNK} occurrenceIds="H" viewportHeight={480} />,
+    );
+    // The header text is emitted whole (not split into operator/number spans); if
+    // it were tokenized, "@@ -10,3 +10,4 @@" would be shredded across spans.
+    expect(html).toContain("@@ -10,3 +10,4 @@");
+  });
+
+  it("keeps the R16 node envelope WITH highlighting on (5000-line windowed render)", () => {
+    const diff = demoDiff(5000);
+    const windowed = renderToStaticMarkup(
+      <CodeView
+        path="src/big.ts"
+        diff={diff}
+        rowHeight={18}
+        viewportHeight={480}
+        scrollTop={40000}
+      />,
+    );
+    // Highlighting is genuinely active on this render (token spans present)…
+    expect(windowed).toContain("rtok-keyword");
+    // …and the windowed node count is still inside the Pierre envelope — the added
+    // token spans did not break windowing. A regression that tokenized the whole
+    // file (not just the window) would blow this.
+    expect(nodeCount(windowed)).toBeLessThanOrEqual(MAX_RENDERED_NODES);
+  });
+});

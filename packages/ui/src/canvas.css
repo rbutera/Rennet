@@ -412,6 +412,46 @@
   color: var(--del-glyph);
 }
 
+/* ── Syntax highlighting (issue #68): token colour rides UNDER the diff colour ── */
+/* The diff semantic stays dominant: the row background fill (--add-fill/--del-fill)
+   is the full-row signal, and structural tokens (plain text, the +/- marker,
+   operators, punctuation) INHERIT the row's base colour — so on an add/del row
+   they stay green/red-tinted. Only semantic tokens take a syntax hue, which
+   composes over the diff fill without displacing it (a highlighted token in an
+   added line still reads as added). Context rows inherit --text, so they get full
+   highlighting. Header/meta rows are never tokenized (they stay muted chrome). */
+.rtok {
+  color: inherit;
+}
+.rtok-keyword {
+  color: var(--kw-color);
+  font-weight: var(--kw-weight);
+}
+.rtok-type {
+  color: var(--type-color);
+}
+.rtok-string {
+  color: var(--str-color);
+}
+.rtok-comment {
+  color: var(--cmt-color);
+  font-style: italic;
+}
+.rtok-number {
+  color: var(--num-color);
+}
+.rtok-function {
+  color: var(--fn-color);
+}
+.rtok-property {
+  color: var(--prop-color);
+}
+.rtok-variable {
+  color: var(--var-color);
+}
+/* .rtok-operator, .rtok-punctuation, .rtok-plain intentionally inherit the row
+   base colour — that is what keeps the diff tint dominant on changed lines. */
+
 /* ── The inhabited CodeView (issue #77): marks live at their anchors ─────────── */
 /* Header/meta rows are muted chrome, not content. */
 .code-view-row.cv-hunk-header .code-view-code,
