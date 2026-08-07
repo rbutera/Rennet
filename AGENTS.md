@@ -64,6 +64,17 @@ Prevention beats recovery here: run **one** `nx` invocation at a time within a w
 - `openspec/` is ignored by the user's global gitignore (`~/.gitignore`). Stage openspec changes with `git add -f openspec/...`.
 - After `git push`, verify it landed: `git rev-parse origin/<branch>` must equal local HEAD, and `git cat-file -e origin/<branch>:<a-changed-file>`. A local commit is not a pushed commit.
 
+## Worktree lifecycle & cleanup (MANDATORY after merge)
+
+Each agent works in its own worktree, and each worktree spawns its OWN persistent `nx` daemon + `nx-mcp` server (its own `.nx/`). **These processes SURVIVE `git worktree remove`** — the daemon keeps running rooted in the removed directory. Left uncleaned they accumulate fast: one day of ~16 build worktrees left ~128 stale node processes holding **~7.8 GB of swap** and pushed the 16 GB host into memory pressure. So cleanup is mandatory, not optional.
+
+**When your PR MERGES (you are the merging agent):**
+1. Shut down this workspace's nx daemon: `sh -c 'cd <your-worktree> && pnpm nx reset'` (stops the daemon + clears its cache).
+2. `cd` OUT of your worktree first (git refuses to remove a worktree you are standing in), then remove it: `sh -c 'cd <main-rennet-checkout> && git worktree remove <your-worktree> --force'`. If it fails with the "main is checked out in a sibling worktree" quirk, the remote merge still completed — just ensure step 1 ran and state the worktree path in your report so the orchestrator prunes it.
+
+**When your PR is SUBMITTED but not yet merged:** KEEP the worktree (the review teammate needs it for fixes). You may still run `pnpm nx reset` once your heavy nx work is done, to drop the idle daemon.
+
+(Wrap `git`/`pnpm`/`nx` in `sh -c '...'` — the host's RTK shell hook mangles those commands and can return corrupted output.)
 
 <!-- nx configuration start-->
 <!-- Leave the start & end comments to automatically receive updates. -->
