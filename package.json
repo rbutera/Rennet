@@ -53,7 +53,8 @@
           "{workspaceRoot}/packages/**/package.json",
           "{workspaceRoot}/apps/**/package.json",
           "{workspaceRoot}/pnpm-lock.yaml",
-          "{workspaceRoot}/scripts/check-licenses.mjs"
+          "{workspaceRoot}/scripts/check-licenses.mjs",
+          "sharedGlobals"
         ]
       }
     }
