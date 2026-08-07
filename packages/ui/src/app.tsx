@@ -1,6 +1,37 @@
 import type { RennetBridge } from "@rennet/protocol";
-import type { Patchset, Review } from "@rennet/types";
+import type { Canvas, CanvasAngle, Patchset, Review } from "@rennet/types";
 import { useEffect, useMemo, useState } from "react";
+import { demoCanvases, demoDiff } from "./canvas/fixtures";
+import type { DispositionWrite } from "./canvas/logic";
+import { CanvasWorkspace } from "./components/workspace";
+
+type CanvasSet = Record<CanvasAngle, Canvas>;
+
+/**
+ * Apply the fan-out writes from an approve act to the local canvases (the demo
+ * shell's optimistic L2). In the real product the engine returns the updated
+ * canvas over the change feed; here the local set stands in until that wiring
+ * lands. Dispositions are keyed by path, shared across the angles' substrate.
+ */
+function applyWrites(canvases: CanvasSet, writes: DispositionWrite[]): CanvasSet {
+  const next = { ...canvases };
+  for (const angle of Object.keys(next) as CanvasAngle[]) {
+    const canvas = next[angle];
+    const dispositions = [...canvas.layers.disposition.dispositions];
+    for (const write of writes) {
+      const disposition = {
+        anchor: { path: write.path, contentDigest: "local" },
+        type: write.type,
+        body: write.body,
+      };
+      const existing = dispositions.findIndex((d) => d.anchor.path === write.path);
+      if (existing >= 0) dispositions[existing] = disposition;
+      else dispositions.push(disposition);
+    }
+    next[angle] = { ...canvas, layers: { ...canvas.layers, disposition: { dispositions } } };
+  }
+  return next;
+}
 
 const angles = ["Logic", "Security", "Tests", "Performance", "Maintainability", "Product"];
 
@@ -144,6 +175,12 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const [selectedPath, setSelectedPath] = useState<string>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  // The canvas surface (issue #11) is an additive view. It is fixtures-backed
+  // until the engine's canvas.snapshot feed lands; approving fans out to local
+  // optimistic L2 so the demo is real and clickable. The review-capture flow is
+  // the untouched real end-to-end path.
+  const [view, setView] = useState<"review" | "canvases">("review");
+  const [canvases, setCanvases] = useState<CanvasSet>(() => demoCanvases());
 
   useEffect(() => {
     bridge
@@ -257,13 +294,42 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     <>
       {error ? <div className="error-toast">{error}</div> : null}
       {busy ? <div className="busy-bar" /> : null}
-      <ReviewWorkspace
-        review={review}
-        selectedPath={selectedPath}
-        onSelectPath={setSelectedPath}
-        onSetRead={(path, read) => void setFileRead(path, read)}
-        onRegenerate={() => void regenerate()}
-      />
+      <div className="view-toggle" role="tablist" aria-label="Workspace view">
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === "review"}
+          className={view === "review" ? "is-active" : ""}
+          onClick={() => setView("review")}
+        >
+          Files
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={view === "canvases"}
+          className={view === "canvases" ? "is-active" : ""}
+          onClick={() => setView("canvases")}
+        >
+          Canvases
+        </button>
+      </div>
+      {view === "canvases" ? (
+        <CanvasWorkspace
+          canvases={canvases}
+          bridge={bridge}
+          onDispositions={(writes) => setCanvases((current) => applyWrites(current, writes))}
+          diffFor={(elementKey) => ({ path: elementKey, diff: demoDiff(400) })}
+        />
+      ) : (
+        <ReviewWorkspace
+          review={review}
+          selectedPath={selectedPath}
+          onSelectPath={setSelectedPath}
+          onSetRead={(path, read) => void setFileRead(path, read)}
+          onRegenerate={() => void regenerate()}
+        />
+      )}
     </>
   );
 }

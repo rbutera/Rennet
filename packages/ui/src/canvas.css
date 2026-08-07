@@ -1,0 +1,413 @@
+/* Rennet canvas surface — glass chrome, opaque code, backlight-private, amber
+ * blast. Every colour is a var(--token); the raw values live only in tokens.css.
+ * Glass is chrome; code is opaque; the wallpaper aurora glows AROUND the diff,
+ * never through it. */
+
+.canvas-app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  color: var(--text);
+  background: var(--wallpaper);
+  background-image: var(--wallpaper-img);
+  background-attachment: fixed;
+  font-family: var(--sans);
+  outline: none;
+}
+
+/* ── Lens switcher (glass chrome) ─────────────────────────────────────────── */
+.lens-switcher {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 20px;
+  background: var(--side-bg);
+  backdrop-filter: var(--side-blur);
+  border-bottom: 1px solid var(--hairline);
+}
+.lens-tabs {
+  display: flex;
+  gap: 4px;
+}
+.lens-tab {
+  border: 1px solid transparent;
+  border-radius: var(--chip-radius);
+  padding: 7px 14px;
+  color: var(--text-soft);
+  background: transparent;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.lens-tab:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+.lens-tab.is-active {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-soft-line);
+}
+.lens-controls {
+  display: flex;
+  gap: 8px;
+}
+.lens-overlay,
+.lens-scheme {
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  padding: 7px 12px;
+  color: var(--text-soft);
+  background: var(--raised);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+/* The overlay toggle lit means blast-radius amber is painting the canvas. */
+.lens-overlay.is-on {
+  color: var(--amber);
+  background: var(--amber-fill);
+  border-color: var(--amber-line);
+}
+
+/* ── Zoom bar ─────────────────────────────────────────────────────────────── */
+.zoom-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 20px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.zoom-bar button {
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  padding: 4px 10px;
+  color: var(--text-soft);
+  background: var(--raised);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.zoom-level {
+  font-weight: 700;
+  color: var(--text);
+}
+.overlay-legend {
+  margin-left: auto;
+  color: var(--amber);
+}
+
+/* ── The canvas surface + toolbar ─────────────────────────────────────────── */
+.canvas-surface {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px 40px;
+}
+.canvas-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--hairline);
+}
+.canvas-coverage {
+  color: var(--private);
+  font-size: 12px;
+  font-weight: 600;
+}
+.canvas-empty {
+  color: var(--text-faint);
+  font-style: italic;
+  padding: 20px 4px;
+}
+
+/* ── Decisions: cohorts as raised glass cards ─────────────────────────────── */
+.cohort {
+  margin-bottom: 10px;
+  border: 1px solid var(--raised-border);
+  border-radius: var(--radius);
+  background: var(--raised);
+  box-shadow: var(--raised-shadow);
+  overflow: hidden;
+}
+.cohort.is-blast {
+  border-color: var(--amber-line);
+  background: var(--amber-fill);
+}
+.cohort-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+}
+.cohort-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: left;
+}
+.cohort-chevron {
+  color: var(--text-faint);
+  width: 14px;
+}
+.cohort-count {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 500;
+}
+.cohort-blast {
+  color: var(--amber);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.cohort-elements {
+  list-style: none;
+  margin: 0;
+  padding: 0 0 6px;
+  border-top: 1px solid var(--hairline);
+}
+.decision {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 7px 14px 7px 34px;
+  border-bottom: 1px solid var(--hairline);
+}
+.decision:last-child {
+  border-bottom: 0;
+}
+.decision-select {
+  border: 0;
+  background: transparent;
+  color: var(--text-soft);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-align: left;
+}
+.decision-select:hover {
+  color: var(--text);
+}
+
+/* ── Flat canvases ────────────────────────────────────────────────────────── */
+.flat-elements {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.flat-element {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 9px 14px;
+  border: 1px solid var(--raised-border);
+  border-radius: var(--radius);
+  background: var(--raised);
+  margin-bottom: 8px;
+}
+.flat-element.is-blast {
+  border-color: var(--amber-line);
+  background: var(--amber-fill);
+}
+.flat-element-select {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.flat-element-kind {
+  color: var(--text-faint);
+  font: 700 10px / 1.2 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* ── Disposition affordance ───────────────────────────────────────────────── */
+.disposition-bar {
+  display: flex;
+  gap: 6px;
+}
+.disposition-btn {
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  padding: 6px 11px;
+  color: var(--text-soft);
+  background: var(--surface-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.disposition-bar.is-compact .disposition-btn {
+  padding: 3px 8px;
+  font-size: 11px;
+}
+.disposition-btn.d-approve:hover {
+  color: var(--green);
+  border-color: var(--green-line);
+  background: var(--green-fill);
+}
+.disposition-btn.d-request:hover {
+  color: var(--amber);
+  border-color: var(--amber-line);
+  background: var(--amber-fill);
+}
+.disposition-btn.d-comment:hover,
+.disposition-btn.d-question:hover {
+  color: var(--private);
+  border-color: var(--private-line);
+  background: var(--private-fill);
+}
+
+/* ── L3: the orchestrator's hand (glass chrome, dashed, distinct) ─────────── */
+.l3-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--hairline);
+}
+.l3-annotation,
+.l3-proposal {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 12px;
+  /* dashed hairline = the agent's hand, never a solid human/analysis card */
+  border: 1px dashed var(--accent-soft-line);
+  border-radius: var(--radius);
+  background: var(--accent-soft);
+  color: var(--text-soft);
+  font-size: 13px;
+}
+.l3-annotation.is-pinned {
+  border-style: solid;
+  box-shadow: var(--private-glow);
+}
+.l3-hand {
+  color: var(--accent);
+  font-size: 14px;
+  line-height: 1.4;
+}
+.l3-body,
+.l3-proposal-body {
+  flex: 1;
+  min-width: 0;
+}
+.l3-proposal-target {
+  display: block;
+  color: var(--text-faint);
+  font: 11px / 1.4 var(--mono);
+}
+.l3-proposal-edit {
+  width: 100%;
+  margin-top: 6px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  padding: 6px 8px;
+  color: var(--text);
+  background: var(--surface);
+  font: inherit;
+}
+.l3-actions {
+  display: flex;
+  gap: 6px;
+}
+.l3-btn {
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  padding: 4px 9px;
+  color: var(--text-soft);
+  background: var(--raised);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.l3-btn.l3-accept:hover {
+  color: var(--green);
+  border-color: var(--green-line);
+  background: var(--green-fill);
+}
+
+/* ── CodeView: opaque code body, glass header ─────────────────────────────── */
+.diff-zoom {
+  padding: 0 20px 30px;
+}
+.code-view {
+  border: 1px solid var(--raised-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.code-view-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background: var(--side-bg);
+  backdrop-filter: var(--side-blur);
+  border-bottom: 1px solid var(--hairline);
+}
+.code-view-path {
+  font: 12px / 1.2 var(--mono);
+  color: var(--text);
+}
+.code-view-tier {
+  color: var(--text-faint);
+  font: 10px / 1.2 var(--mono);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+/* Fully opaque: legibility never rides on the wallpaper. */
+.code-view-scroll {
+  overflow: auto;
+  background: var(--code-bg);
+}
+.code-view-row {
+  display: grid;
+  grid-template-columns: 52px 1fr;
+  font: 12px / 1.5 var(--mono);
+}
+.code-view-ln {
+  padding: 0 10px;
+  text-align: right;
+  color: var(--code-ln);
+  user-select: none;
+}
+.code-view-code {
+  white-space: pre;
+  padding-right: 12px;
+  color: var(--text);
+}
+.code-view-row.cv-add {
+  background: var(--add-fill);
+}
+.code-view-row.cv-add .code-view-code {
+  color: var(--add-glyph);
+}
+.code-view-row.cv-del {
+  background: var(--del-fill);
+}
+.code-view-row.cv-del .code-view-code {
+  color: var(--del-glyph);
+}

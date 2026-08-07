@@ -63,4 +63,26 @@ export default [
       ],
     },
   },
+  {
+    // No hardcoded hex colours in the UI package: every colour is a glass token
+    // (var(--…)) defined in packages/ui/src/tokens.css, the ONLY place raw hex
+    // lives (issue #11). Test files and fixtures are exempt — the hex-lint test
+    // lints code strings through the ESLint API. Mirrored by hex-lint.test.ts.
+    files: ["packages/ui/src/**/*.ts", "packages/ui/src/**/*.tsx"],
+    ignores: [
+      "packages/ui/src/**/*.test.ts",
+      "packages/ui/src/**/*.test.tsx",
+      "packages/ui/src/canvas/fixtures.ts",
+    ],
+    rules: {
+      "no-restricted-syntax": [
+        "error",
+        {
+          selector: "Literal[value=/#[0-9a-fA-F]{3,8}/]",
+          message:
+            "No hardcoded hex colours in packages/ui — use a glass token from tokens.css, e.g. var(--code-bg).",
+        },
+      ],
+    },
+  },
 ];
