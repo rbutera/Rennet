@@ -411,3 +411,122 @@
 .code-view-row.cv-del .code-view-code {
   color: var(--del-glyph);
 }
+
+/* ── The inhabited CodeView (issue #77): marks live at their anchors ─────────── */
+/* Header/meta rows are muted chrome, not content. */
+.code-view-row.cv-hunk-header .code-view-code,
+.code-view-row.cv-file-header .code-view-code,
+.code-view-row.cv-meta .code-view-code {
+  color: var(--text-faint);
+}
+/* L3 presence: the orchestrator's hand is private-to-reviewer, so it carries the
+   system's only inner glow (backlight). The code body stays fully opaque — the
+   glow is a left bar + faint inset at the edge, never translucency THROUGH code. */
+.code-view-row {
+  position: relative;
+}
+.code-view-row.cv-glow {
+  box-shadow:
+    inset 3px 0 0 0 var(--private),
+    var(--private-glow);
+}
+/* Deixis: the pointed-at span pulses in the accent, distinct from the private glow. */
+.code-view-row.cv-focus {
+  box-shadow: inset 3px 0 0 0 var(--accent);
+}
+/* The ◇ hand in the gutter — overlaid on the line-number column so it never shifts
+   the code (no per-row node added to the windowed budget on unmarked rows). */
+.cv-gutter {
+  position: absolute;
+  left: 2px;
+  top: 0;
+  line-height: 1.5;
+  color: var(--private);
+  font-size: 12px;
+  pointer-events: none;
+}
+/* The mark's card renders inline AT its span — a new full-width grid row below the
+   code line, glass chrome (the ProposalMark/AnnotationMark bring their own dashed
+   agent-hand treatment). */
+.cv-mark-card {
+  grid-column: 1 / -1;
+  padding: 6px 12px 6px 52px;
+}
+
+/* ── The demoted l3-strip: a navigating INDEX, never the marks' home ─────────── */
+.l3-index {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 20px;
+  border-bottom: 1px solid var(--hairline);
+}
+.l3-index-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.l3-index-jump {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  width: 100%;
+  text-align: left;
+  padding: 6px 10px;
+  /* dashed hairline = the agent's hand; a jump-list, not a card that houses a mark */
+  border: 1px dashed var(--accent-soft-line);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 13px;
+  cursor: pointer;
+}
+.l3-index-jump:hover {
+  background: var(--accent-soft);
+}
+.l3-index-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.l3-index-anchor {
+  color: var(--text-faint);
+  font: 11px / 1.2 var(--mono);
+}
+/* The orphan tray: a mark whose anchor did not resolve to a place, surfaced
+   visibly (private backlight so it reads as reviewer-facing), never dropped. */
+.l3-orphan-tray {
+  border: 1px solid var(--private-line);
+  border-radius: var(--radius);
+  background: var(--private-fill);
+  padding: 8px 10px;
+}
+.l3-orphan-header {
+  color: var(--private);
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+.l3-orphan-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.l3-orphan-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+.l3-orphan-reason {
+  color: var(--text-faint);
+  font-size: 11px;
+}

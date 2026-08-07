@@ -1,4 +1,4 @@
-import type { RennetBridge } from "@rennet/protocol";
+import { parseAnchor, type RennetBridge } from "@rennet/protocol";
 import type {
   Canvas,
   CanvasAngle,
@@ -6,7 +6,7 @@ import type {
   DispositionType,
   Proposal,
 } from "@rennet/types";
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   type AuthoringAct,
   authorDisposition,
@@ -27,6 +27,7 @@ import {
   zoomReducer,
 } from "../canvas/logic";
 import type { CoverageMosaic } from "../canvas/read-state";
+import type { Mark } from "../canvas/registrar";
 import { createViewStore, useViewStore, type ViewStore } from "../canvas/store";
 import { BatchView } from "./batch-view";
 import { CodeView } from "./code-view";
@@ -36,6 +37,7 @@ import { FlatCanvas } from "./flat";
 import { GranularityAuthor, type GranularityContext } from "./granularity-author";
 import { AnnotationMark, ProposalMark } from "./l3";
 import { LensSwitcher } from "./lens";
+import { MarkIndex, type MarkIndexEntry } from "./mark-index";
 import { OrphanTray } from "./orphan-tray";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -117,6 +119,77 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
 
   const canvas = props.canvases[angle];
   const [editing, setEditing] = useState<{ id: string; draft: string } | null>(null);
+  // Deixis: the anchor the agent (or the index) is pointing at — the CodeView
+  // pulses its span. Cleared as the user moves on.
+  const [focusAnchor, setFocusAnchor] = useState<string | null>(null);
+
+  // The canvas's L3 marks, as anchor-addressed marks the CodeView can land in the
+  // code. An annotation's `target` and a proposal's `target` are already anchors.
+  const marks: Mark[] = [
+    ...canvas.layers.annotation.annotations.map((annotation) => ({
+      markId: annotation.annotationId,
+      markKind: "annotation" as const,
+      anchor: annotation.target,
+      body: annotation.body,
+    })),
+    ...canvas.layers.annotation.proposals.map((proposal) => ({
+      markId: proposal.proposalId,
+      markKind: "proposal" as const,
+      anchor: proposal.target,
+      body: proposal.payload,
+    })),
+  ];
+
+  // The hunk occurrences that HAVE a place in this changeset (the substrate's
+  // hunk ids). A mark whose occurrence is not among them cannot be placed — its
+  // anchored code is gone / its lineage was dropped — and routes to the tray.
+  const changesetHunkIds = new Set<string>();
+  for (const chunk of canvas.layers.substrate.chunks) {
+    for (const hunkId of chunk.hunkIds) changesetHunkIds.add(hunkId);
+  }
+
+  // The hunk occurrence ids the given element's diff renders (positional, in hunk
+  // order): a hunk-anchored element is its own single hunk; a chunk-anchored one
+  // maps to the substrate chunk's ordered hunk ids.
+  function occurrenceIdsForElement(elementAnchor: string): string[] {
+    const parsed = parseAnchor(elementAnchor);
+    if (!parsed.ok) return [];
+    if (parsed.anchor.kind === "hunk") return [parsed.anchor.id];
+    const chunk = canvas.layers.substrate.chunks.find(
+      (candidate) => candidate.chunkId === parsed.anchor.id,
+    );
+    return chunk ? [...chunk.hunkIds] : [parsed.anchor.id];
+  }
+
+  const markEntries: MarkIndexEntry[] = marks.map((mark) => {
+    const parsed = parseAnchor(mark.anchor);
+    const orphan = !parsed.ok || !changesetHunkIds.has(parsed.anchor.id);
+    return {
+      markId: mark.markId,
+      markKind: mark.markKind,
+      label: mark.body,
+      anchor: mark.anchor,
+      orphan,
+    };
+  });
+
+  // Navigate to a mark's in-code home: select its element, zoom to the diff, and
+  // point at its anchor. The index navigates TO the mark; it never houses it.
+  function navigateToMark(entry: MarkIndexEntry): void {
+    const parsed = parseAnchor(entry.anchor);
+    if (parsed.ok) {
+      const element = canvas.layers.analysis.elements.find((candidate) => {
+        const candidateAnchor = parseAnchor(candidate.anchor);
+        return candidateAnchor.ok && candidateAnchor.anchor.id === parsed.anchor.id;
+      });
+      if (element) {
+        store.getState().select(element.elementKey);
+        store.getState().setCursor(entry.anchor);
+        store.getState().setZoom({ level: "diff", elementKey: element.elementKey });
+      }
+    }
+    setFocusAnchor(entry.anchor);
+  }
 
   function emit(writes: DispositionWrite[]): void {
     props.onDispositions?.(writes);
@@ -232,6 +305,47 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
 
   const diff = zoom.level === "diff" && selection ? props.diffFor?.(selection) : undefined;
 
+  // The occurrence the shown diff renders, and the marks that belong to it. Marks
+  // for other elements are not this view's concern (they are not orphans — they
+  // live on their own element's diff); the CodeView only receives its occurrence's.
+  const selectedElement = selection
+    ? canvas.layers.analysis.elements.find((element) => element.elementKey === selection)
+    : undefined;
+  const shownOccurrenceIds = selectedElement ? occurrenceIdsForElement(selectedElement.anchor) : [];
+  const shownMarks = marks.filter((mark) => {
+    const parsed = parseAnchor(mark.anchor);
+    return parsed.ok && shownOccurrenceIds.includes(parsed.anchor.id);
+  });
+
+  // The card the CodeView renders inline at a mark's span — the SAME glass cards
+  // (◇ hand, accept/edit/dismiss, pin/clear), now at the anchor instead of a strip.
+  function renderMarkCard(mark: Mark): ReactNode {
+    if (mark.markKind === "proposal") {
+      const proposal = canvas.layers.annotation.proposals.find(
+        (candidate) => candidate.proposalId === mark.markId,
+      );
+      if (!proposal) return null;
+      return (
+        <ProposalMark
+          proposal={proposal}
+          editing={editing?.id === proposal.proposalId}
+          draft={editing?.id === proposal.proposalId ? editing.draft : ""}
+          onAccept={() => acceptProposal(proposal)}
+          onEdit={() => setEditing({ id: proposal.proposalId, draft: proposal.payload })}
+          onChangeDraft={(value) => setEditing({ id: proposal.proposalId, draft: value })}
+          onDismiss={() => dismissProposal(proposal)}
+        />
+      );
+    }
+    const annotation = canvas.layers.annotation.annotations.find(
+      (candidate) => candidate.annotationId === mark.markId,
+    );
+    if (!annotation) return null;
+    return (
+      <AnnotationMark annotation={annotation} onPin={pinAnnotation} onClear={clearAnnotation} />
+    );
+  }
+
   return (
     <div
       className="canvas-app"
@@ -276,31 +390,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         {overlayOn ? <span className="overlay-legend">Blast radius painted amber</span> : null}
       </div>
 
-      {canvas.layers.annotation.annotations.length > 0 ||
-      canvas.layers.annotation.proposals.length > 0 ? (
-        <section className="l3-strip" aria-label="Orchestrator marks">
-          {canvas.layers.annotation.annotations.map((annotation) => (
-            <AnnotationMark
-              key={annotation.annotationId}
-              annotation={annotation}
-              onPin={pinAnnotation}
-              onClear={clearAnnotation}
-            />
-          ))}
-          {canvas.layers.annotation.proposals.map((proposal) => (
-            <ProposalMark
-              key={proposal.proposalId}
-              proposal={proposal}
-              editing={editing?.id === proposal.proposalId}
-              draft={editing?.id === proposal.proposalId ? editing.draft : ""}
-              onAccept={() => acceptProposal(proposal)}
-              onEdit={() => setEditing({ id: proposal.proposalId, draft: proposal.payload })}
-              onChangeDraft={(value) => setEditing({ id: proposal.proposalId, draft: value })}
-              onDismiss={() => dismissProposal(proposal)}
-            />
-          ))}
-        </section>
-      ) : null}
+      {/* The demoted l3-strip: a navigating INDEX, not the marks' home. The marks
+          themselves render AT their anchors in the CodeView below; here they are
+          only a jump-list, and any unplaceable mark surfaces in the orphan tray. */}
+      {marks.length > 0 ? <MarkIndex entries={markEntries} onNavigate={navigateToMark} /> : null}
 
       <main className="canvas-surface">
         {angle === "decisions" ? (
@@ -322,7 +415,14 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
 
       {diff ? (
         <div className="diff-zoom">
-          <CodeView path={diff.path} diff={diff.diff} />
+          <CodeView
+            path={diff.path}
+            diff={diff.diff}
+            occurrenceIds={shownOccurrenceIds}
+            marks={shownMarks}
+            renderMarkCard={renderMarkCard}
+            focusAnchor={focusAnchor ?? undefined}
+          />
         </div>
       ) : null}
 
