@@ -42,6 +42,7 @@ export {
   type SecretStore,
 } from "./github-auth";
 export {
+  createRefPinner,
   type GitHubChangesetResult,
   GitHubChangesetSource,
   type GitHubChangesetSourceDeps,

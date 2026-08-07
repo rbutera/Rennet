@@ -7,6 +7,7 @@ import { decompose } from "@rennet/core";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { execaGit } from "./git-range-diff";
 import {
+  createRefPinner,
   GitHubChangesetSource,
   type GitObjectPinner,
   type WorktreeProvider,
@@ -190,5 +191,48 @@ describe("GitHubChangesetSource — force-push resilience (acceptance #5)", () =
     const second = await moved.open(ref);
     expect(second.patchset.id).not.toBe(first.patchset.id);
     expect(second.patchset.repository.headOid).toBe(movedHead);
+  });
+
+  it("survives a REAL force-push (divergent head + GC prune) via the ref pinner", async () => {
+    const { root, baseOid, headOid } = clonedRepo();
+    const source = new GitHubChangesetSource({
+      forge: forgeReturning(prFrom(baseOid, headOid)),
+      git: execaGit,
+      // The REAL pinner: writes a protective ref so GC cannot reap the reviewed head.
+      pin: createRefPinner(execaGit),
+      worktrees: worktreesOf(root),
+    });
+    const first = await source.open(ref);
+    if (!first.pin) throw new Error("unreachable");
+
+    // A REAL force-push: the feature branch is reset to a DIVERGENT commit, so the
+    // originally-reviewed head is no longer reachable from ANY branch (unlike a
+    // fast-forward, where the old head survives merely as an ancestor).
+    git(root, "checkout", "-q", "main");
+    git(root, "branch", "-qD", "feature");
+    git(root, "checkout", "-qb", "feature");
+    writeFileSync(join(root, "app.ts"), "export const a = 1;\nexport const divergent = 9;\n");
+    git(root, "add", "app.ts");
+    git(root, "commit", "-qm", "force-pushed divergent head");
+
+    // Prove the reviewed head is now off every branch — only the rennet pin ref
+    // points at it, so an unprotected object would be pruned below.
+    expect(git(root, "branch", "--contains", headOid).trim()).toBe("");
+    const refsPointingAt = git(root, "for-each-ref", "--points-at", headOid, "--format=%(refname)")
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
+    expect(refsPointingAt).toEqual([`refs/rennet/pins/${headOid}`]);
+
+    // Now GC everything unreachable. Without the pin ref, the reviewed head object
+    // would be gone and `reproduce` would throw "bad revision".
+    git(root, "reflog", "expire", "--expire=now", "--all");
+    git(root, "gc", "--prune=now", "--quiet");
+
+    // The protective ref kept the reviewed head alive: reproduce still yields the
+    // byte-identical originally-reviewed patchset.
+    const reproduced = await source.reproduce(first.pin);
+    expect(reproduced.id).toBe(first.patchset.id);
+    expect(reproduced.rawDiff).toBe(first.patchset.rawDiff);
   });
 });

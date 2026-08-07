@@ -25,7 +25,7 @@ export interface HttpResponse {
 
 export type HttpFetch = (
   url: string,
-  init?: { method?: string; headers?: Record<string, string> },
+  init?: { method?: string; headers?: Record<string, string>; body?: string },
 ) => Promise<HttpResponse>;
 
 /** Runs `gh auth token`. Rejects (ENOENT) when `gh` is absent; exit≠0 when logged out. */

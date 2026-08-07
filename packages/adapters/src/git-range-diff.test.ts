@@ -55,6 +55,50 @@ describe("captureRangePatchset", () => {
     expect(patchset.degraded).toBeUndefined();
   });
 
+  it("uses three-dot base...head semantics (an advanced base leaks no base-only changes)", async () => {
+    // A PR's diff is `git diff base...head` (three-dot): the change relative to the
+    // MERGE-BASE, exactly what GitHub renders — NOT `base..head` (two-dot), which
+    // would fold the base branch's own advancement in as spurious deletions.
+    const root = mkdtempSync(join(tmpdir(), "rennet-threedot-"));
+    directories.push(root);
+    git(root, "init", "-q", "-b", "main");
+    git(root, "config", "user.email", "rennet@example.test");
+    git(root, "config", "user.name", "Rennet Test");
+    writeFileSync(join(root, "app.ts"), "export const a = 1;\n");
+    git(root, "add", "app.ts");
+    git(root, "commit", "-qm", "merge-base");
+    // The PR head branches from the merge-base and adds `b`.
+    git(root, "checkout", "-qb", "feature");
+    writeFileSync(join(root, "app.ts"), "export const a = 1;\nexport const b = 2;\n");
+    git(root, "add", "app.ts");
+    git(root, "commit", "-qm", "feature: add b");
+    const headOid = git(root, "rev-parse", "HEAD").trim();
+    // Meanwhile the base branch ADVANCES past the merge-base with its own new file.
+    git(root, "checkout", "-q", "main");
+    writeFileSync(join(root, "base-only.ts"), "export const m = 1;\n");
+    git(root, "add", "base-only.ts");
+    git(root, "commit", "-qm", "main advances");
+    const baseOid = git(root, "rev-parse", "HEAD").trim();
+
+    const patchset = await captureRangePatchset(execaGit, {
+      root,
+      baseOid,
+      headOid,
+      baseRef: "main",
+    });
+
+    const threeDot = git(root, "diff", `${baseOid}...${headOid}`);
+    const twoDot = git(root, "diff", `${baseOid}..${headOid}`);
+    // The fixture genuinely distinguishes the two semantics (guards against a
+    // vacuous linear-history test where `..` == `...`).
+    expect(threeDot).not.toBe(twoDot);
+    // The adapter must produce the three-dot bytes...
+    expect(patchset.rawDiff).toBe(threeDot);
+    // ...so the base branch's own file never appears as a spurious deletion.
+    expect(patchset.files.map((file) => file.path)).toEqual(["app.ts"]);
+    expect(patchset.rawDiff).not.toContain("base-only.ts");
+  });
+
   it("captures the changed files with counts and status", async () => {
     const { root, baseOid, headOid } = repositoryWithRange();
     const patchset = await captureRangePatchset(execaGit, {

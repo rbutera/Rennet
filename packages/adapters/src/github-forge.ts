@@ -108,14 +108,13 @@ export class GitHubForgeAdapter implements ForgePort {
         ...this.authHeaders("application/vnd.github+json"),
         "Content-Type": "application/json",
       },
+      body: JSON.stringify({ query, variables }),
     });
     const sso = parseGitHubSso(res.headers.get("X-GitHub-SSO"));
     const parsed = JSON.parse(await res.text()) as { data?: T; errors?: unknown };
     if (!parsed.data) {
       throw new Error(`GraphQL returned no data: ${JSON.stringify(parsed.errors ?? {})}`);
     }
-    void query;
-    void variables;
     return { data: parsed.data, sso };
   }
 
@@ -138,9 +137,12 @@ export class GitHubForgeAdapter implements ForgePort {
       };
     });
     const truncatedOver1000 = data.search.issueCount > SEARCH_CEILING;
-    // A short/empty list is NEVER "complete" when SSO truncated it or the ceiling
-    // was hit — the UI must show a banner, not "you have no PRs".
-    const complete = sso.kind !== "partial-results" && !truncatedOver1000;
+    // A short/empty list is NEVER "complete" when SSO truncated it, the ceiling was
+    // hit, OR the page returned fewer nodes than the total match count (ordinary
+    // pagination past `first: 50`). The invariant is "never render a truncated list
+    // as complete", not just the >1000 case — the UI must show a banner.
+    const truncatedByPage = items.length < data.search.issueCount;
+    const complete = sso.kind !== "partial-results" && !truncatedOver1000 && !truncatedByPage;
     return { items, sso, complete, truncatedOver1000 };
   }
 

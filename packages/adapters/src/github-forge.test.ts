@@ -71,38 +71,43 @@ describe("GitHubForgeAdapter.fetchPullRequest", () => {
     expect(pr.sso.kind).toBe("partial-results");
   });
 
-  it("sends the token as a Bearer credential to the GraphQL endpoint", async () => {
-    let seen: { url?: string; auth?: string; method?: string } = {};
+  it("sends the token as a Bearer credential AND the query+variables in the body", async () => {
+    let seen: { url?: string; auth?: string; method?: string; body?: string } = {};
     const http: HttpFetch = (url, init) => {
-      seen = { url, auth: init?.headers?.Authorization, method: init?.method };
+      seen = {
+        url,
+        auth: init?.headers?.Authorization,
+        method: init?.method,
+        body: init?.body,
+      };
       return Promise.resolve(response(200, {}, prBody));
     };
     await new GitHubForgeAdapter({ http, token: "gho_secret" }).fetchPullRequest(ref);
     expect(seen.method).toBe("POST");
     expect(seen.url).toContain("/graphql");
     expect(seen.auth).toBe("Bearer gho_secret");
+    // The request body MUST carry the GraphQL document and the PR variables, or the
+    // adapter only ever works against a mock — a real GitHub GraphQL POST with no
+    // body returns an error and no PR ever opens (acceptance #1).
+    expect(seen.body, "GraphQL request must send a body").toBeDefined();
+    const payload = JSON.parse(seen.body ?? "{}") as { query?: string; variables?: unknown };
+    expect(payload.query).toContain("pullRequest(number:$number)");
+    expect(payload.variables).toEqual({ owner: "acme", name: "widget", number: 42 });
   });
 });
 
 describe("GitHubForgeAdapter.listOpenPullRequests — the SSO banner (acceptance #3)", () => {
-  const listBody = JSON.stringify({
-    data: {
-      search: {
-        issueCount: 2,
-        nodes: [
-          {
-            number: 42,
-            title: "Add the thing",
-            isDraft: false,
-            updatedAt: "2026-08-07T10:00:00Z",
-            headRefOid: "aaaa1111",
-            id: "PR_kwabc",
-            repository: { nameWithOwner: "acme/widget" },
-          },
-        ],
-      },
-    },
-  });
+  const node = {
+    number: 42,
+    title: "Add the thing",
+    isDraft: false,
+    updatedAt: "2026-08-07T10:00:00Z",
+    headRefOid: "aaaa1111",
+    id: "PR_kwabc",
+    repository: { nameWithOwner: "acme/widget" },
+  };
+  // A consistent clean response: issueCount matches the returned node count.
+  const listBody = JSON.stringify({ data: { search: { issueCount: 1, nodes: [node] } } });
 
   it("a partial-results response is INCOMPLETE (banner), never a bare empty/short list", async () => {
     const http: HttpFetch = () =>
@@ -136,6 +141,18 @@ describe("GitHubForgeAdapter.listOpenPullRequests — the SSO banner (acceptance
       repo: { forge: "github", owner: "acme", name: "widget" },
       number: 42,
     });
+  });
+
+  it("a page returning fewer nodes than issueCount is INCOMPLETE (never complete)", async () => {
+    // 60 involved PRs but the page (first: 50) returns fewer than issueCount: the
+    // set is truncated by pagination, well under the 1000 ceiling. It must NOT
+    // render as complete — the plan §2 invariant is "never render a truncated
+    // list as complete", not "never render >1000 as complete".
+    const paged = JSON.stringify({ data: { search: { issueCount: 60, nodes: [node] } } });
+    const http: HttpFetch = () => Promise.resolve(response(200, {}, paged));
+    const list = await new GitHubForgeAdapter({ http, token: "t" }).listOpenPullRequests();
+    expect(list.complete).toBe(false);
+    expect(list.truncatedOver1000).toBe(false);
   });
 
   it("issueCount over 1000 marks the set truncated and incomplete", async () => {

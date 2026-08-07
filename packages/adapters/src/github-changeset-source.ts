@@ -32,6 +32,30 @@ export interface GitObjectPinner {
   pin(root: string, oids: string[]): Promise<void>;
 }
 
+/** The ref namespace under which reviewed OIDs are kept alive. */
+const PIN_REF_PREFIX = "refs/rennet/pins/";
+
+/**
+ * A `GitObjectPinner` that writes a protective ref per reviewed OID, so a remote
+ * force-push followed by GC cannot make the reviewed head unreachable — the ref
+ * keeps the object alive locally, which is what makes acceptance #5's
+ * force-push-survival a real property rather than an accident of ancestry.
+ *
+ * The OIDs must already be present in the local object store; the host-side
+ * "fetch the OID first" step for a not-yet-local commit (e.g. a fork PR whose head
+ * was never fetched) is composition's concern. This is the keep-alive half of the
+ * pin, and it is the half acceptance #5 turns on.
+ */
+export function createRefPinner(git: GitExec): GitObjectPinner {
+  return {
+    async pin(root, oids) {
+      for (const oid of oids) {
+        await git(root, ["update-ref", `${PIN_REF_PREFIX}${oid}`, oid]);
+      }
+    },
+  };
+}
+
 /** Lists the local worktrees whose remotes are candidates for identity matching. */
 export interface WorktreeProvider {
   list(): Promise<LocalWorktree[]>;
