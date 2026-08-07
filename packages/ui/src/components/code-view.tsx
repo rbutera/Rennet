@@ -1,17 +1,35 @@
-import { useState } from "react";
+import { parseAnchor } from "@rennet/protocol";
+import { type ReactNode, useEffect, useState } from "react";
 import { type WindowRange, windowRows } from "../canvas/logic";
+import {
+  buildRowRegistry,
+  indexPlacements,
+  type Mark,
+  type MarkPlacement,
+  type PlacedMark,
+  placeMarks,
+  type RegistryRow,
+  resolveAnchorToRows,
+} from "../canvas/registrar";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// CodeView — the ONLY diff surface (R16). A windowed renderer: at any scroll
-// position it renders a slice around the viewport, so the DOM node count stays
-// inside MAX_RENDERED_NODES no matter how long the diff is. The Pierre spike
-// measured 97,139 nodes / 493ms for a naive full render; windowing is the
-// discipline that keeps a large diff cheap.
+// CodeView — the ONLY diff surface (R16), and now an INHABITED canvas (issue #77).
+// It is still a windowed renderer (a slice around the viewport keeps the DOM node
+// count inside MAX_RENDERED_NODES; the Pierre spike measured 97,139 nodes / 493ms
+// for a naive full render), but every row now carries real identity and the
+// agent's hand (L3 marks) renders AT its anchor, not in a strip beside the code.
 //
-// Doctrine: the code body is fully opaque (`--code-bg`, no wallpaper through it),
-// the header strip is glass chrome. Annotation-hosted state lives OUTSIDE the
-// recycled rows (in the canvas L3 layer / view store), so nothing is lost when a
-// row scrolls out and back (the Pierre annotation-recycling caveat).
+// Two things make this a canvas rather than a pane:
+//   • Rows carry identity — real file line + side + occurrence + per-side ordinal
+//     (from the anchor↔row registrar), not diff-row indices.
+//   • Marks land at their anchors — an annotation glows ON its span, a proposal
+//     card renders inline at its span, the ◇ gutter glyph marks the agent's hand.
+//     Placement is computed over the FULL diff and keyed by rawIndex, so a row
+//     scrolling out and back never loses its mark (the Pierre recycling caveat,
+//     answered: mark state lives outside the recycled rows).
+//
+// Doctrine: the code body is fully opaque (`--code-bg`); L3 marks are glass chrome
+// (the ◇ hand, dashed), visually distinct from L1 analysis and L2 human judgment.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface CodeViewProps {
@@ -24,12 +42,25 @@ export interface CodeViewProps {
   overscan?: number;
   /** Escape hatch for the node-count control test only: render every row. */
   renderAll?: boolean;
+
+  // ── The inhabited canvas (issue #77), additive and optional ─────────────────
+  /** Occurrence id(s) for the diff's hunks; a single-occurrence element view passes one. */
+  occurrenceIds?: readonly string[] | string;
+  /** L3 marks to render AT their anchors (annotations glow; proposals get a card). */
+  marks?: readonly Mark[];
+  /** Renders a mark's interactive card inline at its span (the host owns adjudication/pinning). */
+  renderMarkCard?: (mark: Mark, placed: PlacedMark) => ReactNode;
+  /** Deixis: the agent points — the focused anchor's span is pulsed. */
+  focusAnchor?: string;
+  /** Reports placement (placed + orphans) up, so the host routes orphans + builds the index. */
+  onPlacement?: (placement: MarkPlacement) => void;
 }
 
-function lineKind(text: string): "add" | "del" | "ctx" {
-  if (text.startsWith("+")) return "add";
-  if (text.startsWith("-")) return "del";
-  return "ctx";
+const SIDE_CLASS = { additions: "cv-add", deletions: "cv-del", context: "cv-ctx" } as const;
+
+function rowClass(row: RegistryRow): string {
+  if (row.side) return SIDE_CLASS[row.side];
+  return `cv-${row.kind}`;
 }
 
 export function CodeView({
@@ -41,22 +72,53 @@ export function CodeView({
   scrollTop = 0,
   overscan = 8,
   renderAll = false,
+  occurrenceIds,
+  marks,
+  renderMarkCard,
+  focusAnchor,
+  onPlacement,
 }: CodeViewProps) {
   // The live scroll position: seeded from the prop (which the node-count control
   // test and any programmatic positioning inject), then advanced by the user's
   // own scrolling so the window tracks the viewport instead of freezing at row 0.
   const [scroll, setScroll] = useState(scrollTop);
-  const lines = diff.length === 0 ? [] : diff.split("\n");
+
+  // The registry + placement are computed over the FULL diff, never the window —
+  // so a mark's home row is a fixed function of (diff, occurrenceIds, marks) and
+  // cannot move when a row recycles. Windowing only chooses which rows to paint.
+  const registry = buildRowRegistry({ diff, occurrenceIds });
+  const placement = marks && marks.length > 0 ? placeMarks(registry, marks) : null;
+  const { glow, gutter } = placement
+    ? indexPlacements(placement)
+    : { glow: new Map<number, PlacedMark[]>(), gutter: new Map<number, PlacedMark[]>() };
+
+  // Deixis: resolve the focused anchor to its rows so the surface can pulse them.
+  const focusRows = new Set<number>();
+  if (focusAnchor) {
+    const parsed = parseAnchor(focusAnchor);
+    if (parsed.ok) {
+      const res = resolveAnchorToRows(registry, parsed.anchor);
+      if (res.outcome === "resolved")
+        for (const rawIndex of res.rawIndices) focusRows.add(rawIndex);
+    }
+  }
+
+  // Report placement up (orphans → tray, marks → index) exactly when it changes.
+  const placementKey = placement
+    ? placement.placed.map((p) => `${p.mark.markId}@${p.gutterRawIndex}`).join(",") +
+      "|" +
+      placement.orphans.map((o) => `${o.mark.markId}:${o.reason}`).join(",")
+    : "";
+  // biome-ignore lint/correctness/useExhaustiveDependencies: placementKey is the stable digest of `placement`; depending on the object identity would fire every render.
+  useEffect(() => {
+    if (placement && onPlacement) onPlacement(placement);
+  }, [placementKey, onPlacement]);
+
+  const total = registry.rows.length;
   const range: WindowRange = renderAll
-    ? { start: 0, end: lines.length }
-    : windowRows({
-        total: lines.length,
-        rowHeight,
-        viewportHeight,
-        scrollTop: scroll,
-        overscan,
-      });
-  const visible = lines.slice(range.start, range.end);
+    ? { start: 0, end: total }
+    : windowRows({ total, rowHeight, viewportHeight, scrollTop: scroll, overscan });
+  const visible = registry.rows.slice(range.start, range.end);
 
   return (
     <section className="code-view" aria-label={`Diff of ${path}`}>
@@ -70,23 +132,67 @@ export function CodeView({
         className="code-view-scroll"
         style={{ height: `${viewportHeight}px` }}
         onScroll={(event) => setScroll(event.currentTarget.scrollTop)}
-        data-total-rows={lines.length}
+        data-total-rows={total}
         data-rendered-rows={visible.length}
+        data-window-start={range.start}
       >
         {/* A spacer preserves scroll height for the rows above the window. */}
         <div className="code-view-spacer" style={{ height: `${range.start * rowHeight}px` }} />
-        {visible.map((text, index) => {
-          const lineNumber = range.start + index + 1;
+        {visible.map((row) => {
+          const glowMarks = glow.get(row.rawIndex);
+          const gutterMarks = gutter.get(row.rawIndex);
+          const isGlow = glowMarks !== undefined && glowMarks.length > 0;
+          const isFocus = focusRows.has(row.rawIndex);
+          const className = [
+            "code-view-row",
+            rowClass(row),
+            isGlow ? "cv-glow" : "",
+            isFocus ? "cv-focus" : "",
+          ]
+            .filter(Boolean)
+            .join(" ");
           return (
-            <div className={`code-view-row cv-${lineKind(text)}`} key={lineNumber}>
-              <span className="code-view-ln">{lineNumber}</span>
-              <code className="code-view-code">{text}</code>
+            <div
+              className={className}
+              key={row.rawIndex}
+              data-raw-index={row.rawIndex}
+              data-side={row.side ?? undefined}
+              data-file-line={row.fileLine ?? undefined}
+              data-side-ordinal={row.sideOrdinal ?? undefined}
+              data-occurrence={row.occurrenceId ?? undefined}
+              data-mark={isGlow ? glowMarks.map((m) => m.mark.markId).join(" ") : undefined}
+            >
+              {gutterMarks && gutterMarks.length > 0 ? (
+                <span
+                  className="cv-gutter l3-hand"
+                  data-l3="mark"
+                  data-gutter-marks={gutterMarks.map((m) => m.mark.markId).join(" ")}
+                  aria-hidden="true"
+                  title="Orchestrator mark"
+                >
+                  ◇
+                </span>
+              ) : null}
+              <span className="code-view-ln">{row.fileLine ?? ""}</span>
+              <code className="code-view-code">{row.text}</code>
+              {/* The mark's card renders inline AT its span (its home row), not in a strip. */}
+              {gutterMarks && renderMarkCard
+                ? gutterMarks.map((placed) => (
+                    <div
+                      className="cv-mark-card"
+                      data-mark-card={placed.mark.markId}
+                      key={placed.mark.markId}
+                    >
+                      {renderMarkCard(placed.mark, placed)}
+                    </div>
+                  ))
+                : null}
             </div>
           );
         })}
         <div
           className="code-view-spacer"
-          style={{ height: `${(lines.length - range.end) * rowHeight}px` }}
+          style={{ height: `${(total - range.end) * rowHeight}px` }}
         />
       </div>
     </section>

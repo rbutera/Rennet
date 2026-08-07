@@ -160,3 +160,21 @@ describe("CanvasWorkspace — the five canvases, on screen", () => {
     expect(html).not.toContain("decisions-canvas");
   });
 });
+
+describe("CanvasWorkspace — the l3-strip is demoted to a navigating index (issue #77)", () => {
+  it("renders marks as an index (jump-list), never the old strip; orphans surface in the tray", () => {
+    const html = renderToStaticMarkup(
+      <CanvasWorkspace canvases={demoCanvases()} store={createViewStore()} />,
+    );
+    // The strip that HOUSED marks is gone; the index that NAVIGATES to them is present.
+    expect(html).not.toContain('class="l3-strip"');
+    expect(html).toContain('class="l3-index"');
+    // A placeable mark (the demo annotation on a real hunk c6-h1) is a jump button.
+    expect(html).toContain("l3-index-jump");
+    expect(html).toContain('data-jump="ann-1"');
+    // An unplaceable mark (the demo proposal targets a bare path, not an anchor)
+    // surfaces in the orphan tray, visibly — never silently dropped into a list.
+    expect(html).toContain("l3-orphan-tray");
+    expect(html).toContain('data-orphan-mark="prop-1"');
+  });
+});

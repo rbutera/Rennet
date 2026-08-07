@@ -47,11 +47,38 @@ export {
   foldReadState,
   nextUnread,
 } from "./canvas/read-state";
+// The inhabited CodeView (issue #77): the anchor↔row registrar (real file lines,
+// sides, occurrence identity, span→row resolution) and L3 mark placement.
+export type {
+  BuildRegistryInput,
+  HunkHeader,
+  Mark,
+  MarkIndexItem,
+  MarkPlacement,
+  OrphanMark,
+  OrphanReason,
+  PlacedMark,
+  PlacementIndex,
+  RegistryHunk,
+  RegistryRow,
+  RowKind,
+  RowRegistry,
+  RowResolution,
+} from "./canvas/registrar";
+export {
+  buildRowRegistry,
+  indexPlacements,
+  markIndexItems,
+  placeMarks,
+  resolveAnchorToRows,
+} from "./canvas/registrar";
 export { BatchView } from "./components/batch-view";
 export { CoverageMosaicView } from "./components/coverage";
 export { DestinationFrame } from "./components/destination-frame";
 export type { GranularityContext } from "./components/granularity-author";
 export { GranularityAuthor } from "./components/granularity-author";
+export type { MarkIndexEntry } from "./components/mark-index";
+export { MarkIndex } from "./components/mark-index";
 export { OrphanTray } from "./components/orphan-tray";
 export { PublishSheet } from "./components/publish-sheet";
 export type { CanvasWorkspaceProps, DiffResolver } from "./components/workspace";
