@@ -144,24 +144,32 @@ export const DEFAULT_CODEX_UTILITY_EFFORT = "low";
 export const CODEX_ADAPTER_VERSION = "0.1.0";
 
 /**
- * The capability snapshot every codex-exec utility call earns. V003 requires
- * both `structuredOutput` and `perCallModelSelection`, each with three layers.
- * Each layer is honest for a call that reaches envelope-stamping (which only
- * happens after the executor returns): the output is constrained via
- * `--output-schema`, and the model is selected via `-m`, per call.
+ * The capability snapshot a codex-exec utility call earns, stamped HONESTLY per
+ * call. V003 requires both `structuredOutput` and `perCallModelSelection`, each
+ * with three layers. The adapter implements `--output-schema` and codex advertises
+ * it (static facts, always true), and the model is always selected via `-m` (so
+ * `perCallModelSelection` is always available). But structured output is only
+ * `availableInSession` when THIS call actually passed a schema: a docType with no
+ * body schema (`bodyJsonSchema` → null) constrains nothing, so claiming it was
+ * available would be dishonest provenance. This is exactly the three-layer
+ * doctrine (`RspCapabilityLayers`): a CI-proven flag can still be unavailable in a
+ * given session, and a document produced under a degraded capability is labelled
+ * rather than silently trusted.
  */
-const CODEX_UTILITY_CAPABILITY: RspCapabilitySnapshot = {
-  structuredOutput: {
-    implementedByAdapter: true,
-    advertisedByHarness: true,
-    availableInSession: true,
-  },
-  perCallModelSelection: {
-    implementedByAdapter: true,
-    advertisedByHarness: true,
-    availableInSession: true,
-  },
-};
+function codexUtilityCapability(structuredOutputExercised: boolean): RspCapabilitySnapshot {
+  return {
+    structuredOutput: {
+      implementedByAdapter: true,
+      advertisedByHarness: true,
+      availableInSession: structuredOutputExercised,
+    },
+    perCallModelSelection: {
+      implementedByAdapter: true,
+      advertisedByHarness: true,
+      availableInSession: true,
+    },
+  };
+}
 
 const ZERO_TOKENS: RspTokenUsage = {
   input: 0,
@@ -225,6 +233,8 @@ function buildProvenance(args: {
   runId: string;
   tokens: RspTokenUsage;
   harnessVersion: string | undefined;
+  /** Whether this call actually passed an `--output-schema` (honest capability). */
+  structuredOutputExercised: boolean;
 }): RspProvenance {
   return {
     harness: args.seed?.harness ?? "codex",
@@ -239,7 +249,7 @@ function buildProvenance(args: {
     route: "utility",
     runId: args.runId,
     inputDigest: args.inputDigest,
-    capability: CODEX_UTILITY_CAPABILITY,
+    capability: codexUtilityCapability(args.structuredOutputExercised),
     tokens: args.tokens,
     // Codex exposes no per-call USD (moot on subscription); never substituted.
     reportedUsd: null,
@@ -270,6 +280,11 @@ export function createCodexUtilityPort(deps: CreateCodexUtilityPortDeps): CodexU
       let lastReportText: string | undefined;
 
       for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
+        // Fail fast on cancellation: never spend a (subscription-quota) executor
+        // call for a request that has already been aborted, and never retry one.
+        // This covers both a pre-aborted signal (0 calls) and an abort mid-flight
+        // (the rejected call lands in the catch, then this guard stops the retry).
+        if (req.signal?.aborted) break;
         const prompt = assemblePrompt(req.system, req.prompt, lastReportText);
 
         let exec: CodexExecResult;
@@ -297,6 +312,7 @@ export function createCodexUtilityPort(deps: CreateCodexUtilityPortDeps): CodexU
           runId: newRunId(),
           tokens,
           harnessVersion: exec.harnessVersion,
+          structuredOutputExercised: outputSchema !== null,
         });
         const document: RspEnvelope = {
           rsp: 1,
@@ -332,6 +348,15 @@ export function createCodexUtilityPort(deps: CreateCodexUtilityPortDeps): CodexU
         );
       if (lastRejection !== undefined) {
         return { status: "rejected", report: lastRejection.report, attempts };
+      }
+      // A cancelled request that never produced a rejection is distinguishable
+      // from an ordinary executor crash: the caller can tell "cancelled" apart.
+      if (req.signal?.aborted) {
+        return {
+          status: "exec-failed",
+          message: "codex utility port aborted before completion",
+          attempts,
+        };
       }
       const lastError =
         [...attempts].reverse().find((entry) => entry.outcome === "exec-failed")?.execError ??

@@ -28,6 +28,10 @@ const VALID_ORDERING = {
 };
 // cX is not an offered chunk (V112) and c2 is missing from the cover (V111): rejected.
 const INVALID_ORDERING = { readingOrder: ["c1", "cX"], rationale: "broken" };
+// SHAPE-invalid: readingOrder must be an array of strings; a bare string fails the
+// projected body schema itself (not just the semantic ordering rules), so this
+// proves fail-closed at the SCHEMA layer, not only the semantic layer.
+const SHAPE_INVALID_ORDERING = { readingOrder: "c1", rationale: "broken shape" };
 
 // A valid 26-char Crockford base32 docId (excludes I/L/O/U) so V002's docId regex passes.
 const DOC_ID = "0123456789ABCDEFGHJKMNPQRS";
@@ -196,6 +200,77 @@ describe("CodexUtilityPort", () => {
     }
     // It still exhausted its attempts before giving up.
     expect(calls).toHaveLength(3);
+  });
+
+  it("fails closed on a SCHEMA-invalid body (not merely a semantic violation)", async () => {
+    const exec = fakeExecutor([SHAPE_INVALID_ORDERING]);
+    const result = await portWith(exec).complete({
+      docType: "ordering",
+      prompt: "Order these chunks.",
+      patchset: PATCHSET,
+      manifest: MANIFEST,
+      maxRetries: 0,
+    });
+    // A body that violates the projected schema shape must never be admitted.
+    expect(result.status).toBe("rejected");
+    if (result.status === "rejected") {
+      expect(result.report.admitted).toBe(false);
+    }
+  });
+
+  it("stamps structuredOutput.availableInSession HONESTLY: false when no schema was exercised", async () => {
+    // `finding` has no body schema (bodyJsonSchema returns null), so NO
+    // --output-schema is passed and structured output is NOT exercised this call.
+    // The capability snapshot must not claim it was available in session.
+    const exec = fakeExecutor([{}]);
+    const result = await portWith(exec).complete({
+      docType: "finding",
+      prompt: "Report a finding.",
+      patchset: PATCHSET,
+      manifest: MANIFEST,
+    });
+    expect(result.status).toBe("admitted");
+    if (result.status !== "admitted") return;
+    const cap = result.document.provenance.capability;
+    // Honest: structured output was neither passed nor exercised for this call.
+    expect(cap.structuredOutput.availableInSession).toBe(false);
+    // The adapter still IMPLEMENTS and the harness still ADVERTISES it (static facts).
+    expect(cap.structuredOutput.implementedByAdapter).toBe(true);
+    expect(cap.structuredOutput.advertisedByHarness).toBe(true);
+    // `-m` IS always passed, so per-call model selection is genuinely available.
+    expect(cap.perCallModelSelection.availableInSession).toBe(true);
+
+    // The exec call carried no schema, corroborating the honest stamp.
+    expect(exec.calls[0]?.outputSchema).toBeUndefined();
+  });
+
+  it("still stamps structuredOutput available when a schema IS exercised (ordering)", async () => {
+    const exec = fakeExecutor([VALID_ORDERING]);
+    const result = await portWith(exec).complete({
+      docType: "ordering",
+      prompt: "Order these chunks.",
+      patchset: PATCHSET,
+      manifest: MANIFEST,
+    });
+    expect(result.status).toBe("admitted");
+    if (result.status !== "admitted") return;
+    expect(result.document.provenance.capability.structuredOutput.availableInSession).toBe(true);
+  });
+
+  it("short-circuits an already-aborted signal without spending any executor call", async () => {
+    const controller = new AbortController();
+    controller.abort();
+    const exec = fakeExecutor([VALID_ORDERING]);
+    const result = await portWith(exec).complete({
+      docType: "ordering",
+      prompt: "Order these chunks.",
+      patchset: PATCHSET,
+      manifest: MANIFEST,
+      signal: controller.signal,
+    });
+    // No metered/quota spend after cancellation, and never an admit.
+    expect(exec.calls).toHaveLength(0);
+    expect(result.status).not.toBe("admitted");
   });
 
   it("prefers a rejection report over an exec failure when both occurred", async () => {

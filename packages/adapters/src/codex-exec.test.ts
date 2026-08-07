@@ -96,10 +96,20 @@ describe("createCodexExecutor", () => {
     // The schema was written to disk for --output-schema.
     expect(state.writes).toHaveLength(1);
     expect(JSON.parse(state.writes[0]?.data ?? "null")).toEqual({ type: "object" });
+    // All four load-bearing gotchas are asserted on the ACTUALLY-SPAWNED argv,
+    // not just the pure helper — so a refactor that stops routing through
+    // buildCodexExecArgs (or drops a flag) is caught here too.
     // gotcha 2: stdin closed (the execa equivalent of `< /dev/null`).
     expect(state.spec?.stdin).toBe("ignore");
     expect(state.spec?.bin).toBe(CODEX_EXEC_BIN);
+    // gotcha 1: skip the heavy ~/.codex config that otherwise stalls.
     expect(state.spec?.args).toContain("--ignore-user-config");
+    // gotcha 3: utility calls run in a scratch (non-repo) cwd.
+    expect(state.spec?.args).toContain("--skip-git-repo-check");
+    // gotcha 4: capture the final structured message to a file.
+    const spawnedArgs = state.spec?.args ?? [];
+    expect(spawnedArgs).toContain("-o");
+    expect(spawnedArgs[spawnedArgs.indexOf("-o") + 1]).toMatch(/out\.json$/);
     expect(state.spec?.args).toContain("--output-schema");
     // the scratch dir was cleaned up.
     expect(state.dirsRemoved).toHaveLength(1);
