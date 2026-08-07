@@ -581,13 +581,67 @@ describe("buildReviewCanvases — provenance is honest across harnesses (accepta
       result.decompositionResult?.document.provenance,
       result.orderingResult?.document.provenance,
     ];
+    const harnessesSeen = new Set<string>();
     for (const provenance of provenances) {
       expect(provenance).toBeDefined();
       if (provenance === undefined) continue;
       const isCodexModel = CODEX_MODELS.has(provenance.model as CouncilModel);
       // model and harness must AGREE: a codex model implies the codex harness.
       expect(isCodexModel).toBe(provenance.harness === "codex");
+      harnessesSeen.add(provenance.harness);
     }
+    // Guard against a vacuous pass: under `both` this fixture MUST actually place
+    // the two seats on two different harnesses (proposal→Claude, ordering→Codex).
+    // Without this, a regression where every seat collapsed to Claude would leave
+    // the loop asserting `false === false` twice and pass silently.
+    expect(harnessesSeen).toEqual(new Set(["claude-code", "codex"]));
+  });
+
+  it("an incoherent harness override never runs a Codex model on the Claude turn", async () => {
+    // A user (task) override pins a Codex model but the CLAUDE harness onto the
+    // ordering seat — a self-contradictory pin the resolver permits. The pipeline
+    // MUST derive the executing harness from the MODEL (Codex), so the seat runs on
+    // the Codex port and stamps a Codex harness, never a Codex-model/Claude-turn
+    // mispair. Red against a pipeline that trusts `resolution.harness`: that path
+    // would call the Claude ordering turn and stamp harness=claude-code.
+    const decomposition = decompose(edgedPatchset);
+    const proposal = deterministicProposalBody(decomposition);
+    const orderingBody: OrderingBody = {
+      readingOrder: [...proposal.readingOrder],
+      rationale: "baseline",
+    };
+    const runDecompositionTurn = vi.fn(
+      async (): Promise<DecompositionTurnResult> => ({ status: "emitted", body: proposal }),
+    );
+    const runOrderingTurn = vi.fn(
+      async (): Promise<OrderingTurnResult> => ({ status: "emitted", body: orderingBody }),
+    );
+    const { port: codexPort, complete: codexComplete } = admittingCodexPort(() => orderingBody);
+
+    const result = await buildReviewCanvases({
+      reviewId: "review-1",
+      patchset: edgedPatchset,
+      dispositions: [],
+      runDecompositionTurn,
+      runOrderingTurn,
+      codexPort,
+      council: {
+        availability: { installed: ["claude-code", "codex"] },
+        overrides: {
+          task: {
+            "comprehension-ordering": { model: "gpt-5.6-terra", harness: "claude-code" },
+          },
+        },
+      },
+    });
+
+    // The ordering seat ran on the Codex port (model's true harness), NOT the
+    // injected Claude ordering turn, and its provenance stamps the Codex harness.
+    expect(codexComplete).toHaveBeenCalledTimes(1);
+    expect(runOrderingTurn).not.toHaveBeenCalled();
+    const orderingProvenance = result.orderingResult?.document.provenance;
+    expect(orderingProvenance?.model).toBe("gpt-5.6-terra");
+    expect(orderingProvenance?.harness).toBe("codex");
   });
 });
 

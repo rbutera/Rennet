@@ -57,7 +57,7 @@ import { type DecomposeOptions, decompose } from "./decomposition";
 import { buildElementDiffs } from "./element-diffs";
 import type { HarnessTurnResult } from "./harness-run-turn";
 import { createInvocationBudget } from "./invocation-budget";
-import { resolveAssignment } from "./model-council";
+import { providerHarness, resolveAssignment } from "./model-council";
 import {
   buildChunkManifest,
   type OrderingTurnResult,
@@ -220,15 +220,24 @@ export async function buildReviewCanvases(
     if (input.council === undefined) return { seed, runTurn: claudeTurn };
     const resolution = resolveAssignment(jobId, input.council);
     if (resolution.kind !== "model") return { seed, runTurn: claudeTurn };
+    // The EXECUTING harness follows the resolved MODEL, structurally: a council
+    // model maps to exactly one provider → harness, so model and harness cannot
+    // diverge at execution or in provenance. This double-switches the honesty
+    // circuit (Rule 75): even if an incoherent override pinned `harness=claude`
+    // onto a Codex model (`resolution.harness` can be overridden independently of
+    // the model in the resolver), the pipeline still runs that model on ITS harness
+    // and stamps THAT harness — never a Codex model on the Claude turn, never a
+    // `model=codex`/`harness=claude` provenance lie.
+    const execHarness = providerHarness(resolution.model);
     const seatSeed: PipelineProvenanceSeed = {
       ...seed,
-      harness: resolution.harness,
+      harness: execHarness,
       model: resolution.model,
       modelReportedBy: "config",
       effort: resolution.effort,
       resolutionTrace: resolution.trace,
     };
-    if (resolution.harness === "codex") {
+    if (execHarness === "codex") {
       const runTurn =
         input.codexPort === undefined
           ? undefined
