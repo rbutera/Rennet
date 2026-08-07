@@ -79,10 +79,17 @@
   --del-glyph: #d08a76;
   --code-bg: #14161b;
   --code-ln: #5e646e;
+  /* syntax tokens (issue #68): highlighting rides UNDER the diff add/removed
+     colouring — semantic tokens take a hue; structure inherits the row base. */
   --kw-weight: 600;
   --kw-color: #8cc0e8;
   --str-color: #afbc86;
   --cmt-color: #7c8272;
+  --num-color: #d0a978;
+  --type-color: #9fd0c0;
+  --fn-color: #c8b6e8;
+  --prop-color: #a9c7e0;
+  --var-color: #d9a77a;
 
   --display: var(--sans);
   --display-weight: 700;
@@ -162,6 +169,11 @@
   --kw-color: #2a6fae;
   --str-color: #5f6e33;
   --cmt-color: #8a8e82;
+  --num-color: #8a5a1e;
+  --type-color: #2b7d6e;
+  --fn-color: #6b4b9e;
+  --prop-color: #2f5f88;
+  --var-color: #8a5a1e;
 
   --mark-ink: #1e2126;
   --btn-bg: #1e2126;

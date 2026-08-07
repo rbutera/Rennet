@@ -11,6 +11,7 @@ import {
   type RegistryRow,
   resolveAnchorToRows,
 } from "../canvas/registrar";
+import { detectLanguage, type LanguageId, tokenizeLine } from "../syntax/highlight";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CodeView — the ONLY diff surface (R16), and now an INHABITED canvas (issue #77).
@@ -63,6 +64,28 @@ function rowClass(row: RegistryRow): string {
   return `cv-${row.kind}`;
 }
 
+// Syntax highlighting (issue #68). Only CONTENT rows are tokenized; the highlight
+// rides UNDER the diff add/removed colouring, never over it — the row background
+// carries the diff semantic (dominant), structural tokens (whitespace, the diff
+// marker, punctuation, operators) inherit the row's diff-tinted base colour, and
+// only semantic tokens (keyword/string/comment/number/type/function/…) take a
+// syntax hue. Header/meta rows stay muted chrome, untouched. Tokenization runs
+// only on the windowed rows the CodeView paints, so R16's node/perf envelope holds.
+function renderCode(row: RegistryRow, language: LanguageId | null): ReactNode {
+  if (row.kind !== "content") return row.text;
+  const nodes: ReactNode[] = [];
+  let column = 0; // the token's start column — a stable, data-derived key (not an array index).
+  for (const tok of tokenizeLine(row.text, language)) {
+    nodes.push(
+      <span className={`rtok rtok-${tok.type}`} key={column}>
+        {tok.text}
+      </span>,
+    );
+    column += tok.text.length;
+  }
+  return nodes;
+}
+
 export function CodeView({
   path,
   diff,
@@ -82,6 +105,10 @@ export function CodeView({
   // test and any programmatic positioning inject), then advanced by the user's
   // own scrolling so the window tracks the viewport instead of freezing at row 0.
   const [scroll, setScroll] = useState(scrollTop);
+
+  // Language for syntax highlighting, inferred once from the path extension.
+  // Unknown/absent extension → null → plain text (fail-closed, no fabricated colour).
+  const language: LanguageId | null = detectLanguage(path);
 
   // The registry + placement are computed over the FULL diff, never the window —
   // so a mark's home row is a fixed function of (diff, occurrenceIds, marks) and
@@ -174,7 +201,7 @@ export function CodeView({
                 </span>
               ) : null}
               <span className="code-view-ln">{row.fileLine ?? ""}</span>
-              <code className="code-view-code">{row.text}</code>
+              <code className="code-view-code">{renderCode(row, language)}</code>
               {/* The mark's card renders inline AT its span (its home row), not in a strip. */}
               {gutterMarks && renderMarkCard
                 ? gutterMarks.map((placed) => (
