@@ -89,24 +89,32 @@ export interface OrchestratorSession {
   openAssembledPrompt(): string;
 }
 
-/** The user-only and engine-only op names that must NEVER appear on the surface. */
-const ENGINE_ONLY_OPS: readonly string[] = ["project", "invalidate", "carry", "order"];
-
 /**
- * Assert the attached surface is a valid orchestrator surface: it contains no
- * user-only op (L2 sovereignty) and no engine-only op. Thrown at boot rather than
- * discovered at runtime — a mis-composed surface is a programming error.
+ * Assert the attached surface IS the canvasOps@2 registry — the same tool names,
+ * in the same order (spec: "a tool index equal to the live canvasOps@2
+ * registry"). Equality is the whole guarantee: the registry contains no user-only
+ * op (L2 sovereignty) and no engine-only op, so a surface that equals it cannot
+ * leak one — and it also cannot silently OMIT, ADD, or REORDER an op, which a
+ * per-op denylist misses (a bare-name denylist never matches a namespaced
+ * `canvas.project`, and an empty surface trips nothing). A mis-composed surface
+ * is a programming error, thrown at boot rather than discovered when the model
+ * calls a tool the in-process server (built from the same registry) never
+ * registered — so the session's tool index and the attached MCP server cannot
+ * diverge.
  */
-function assertActorPartition(tools: readonly CanvasOpsTool[]): void {
-  const names = new Set(tools.map((t) => t.name));
-  for (const userOp of USER_CANVAS_COMMANDS) {
-    if (names.has(userOp))
-      throw new Error(`orchestrator surface exposes a user-only op: ${userOp}`);
-  }
-  for (const engineOp of ENGINE_ONLY_OPS) {
-    if (names.has(engineOp))
-      throw new Error(`orchestrator surface exposes an engine-only op: ${engineOp}`);
-  }
+function assertRegistrySurface(tools: readonly CanvasOpsTool[]): void {
+  const got = tools.map((t) => t.name);
+  const want = CANVAS_OPS_TOOLS.map((t) => t.name);
+  if (got.length === want.length && got.every((name, index) => name === want[index])) return;
+  const wanted = new Set(want);
+  const extras = got.filter((name) => !wanted.has(name));
+  const userLeak = extras.find((name) =>
+    (USER_CANVAS_COMMANDS as readonly string[]).includes(name),
+  );
+  if (userLeak) throw new Error(`orchestrator surface exposes a user-only op: ${userLeak}`);
+  throw new Error(
+    `orchestrator surface must equal the canvasOps@2 registry; got [${got.join(", ")}]`,
+  );
 }
 
 /**
@@ -116,11 +124,15 @@ function assertActorPartition(tools: readonly CanvasOpsTool[]): void {
  */
 export function bootOrchestratorSession(config: OrchestratorSessionConfig): OrchestratorSession {
   const tools = config.tools ?? CANVAS_OPS_TOOLS;
-  assertActorPartition(tools);
+  assertRegistrySurface(tools);
   const harness = config.harness ?? "claude";
   const fresh = config.fresh ?? true;
 
-  const toolIndex = toolIndexFromSurface(tools);
+  // The index (and thus the primer's B5 menu) is derived from the canonical
+  // registry, not from `config.tools`: `assertRegistrySurface` has already proven
+  // they are equal, and the in-process MCP server is built from the same
+  // `CANVAS_OPS_TOOLS`, so index == menu == attached server by construction.
+  const toolIndex = toolIndexFromSurface(CANVAS_OPS_TOOLS);
   const primer = assemblePrimer({ ...config.primer, toolIndex });
 
   const batcher = new ViewingBatcher({
@@ -149,8 +161,16 @@ export function bootOrchestratorSession(config: OrchestratorSessionConfig): Orch
     provenance,
     stream,
     toolIndex,
-    attachedToolNames: () => tools.map((t) => t.name),
-    buildRequest: (question, view) => buildOrchestratorRequest(question, view, stream.startTurn()),
+    attachedToolNames: () => CANVAS_OPS_TOOLS.map((t) => t.name),
+    buildRequest: (question, view) => {
+      // Ask time IS the deixis boundary: drain any buffered `{viewing}` into the
+      // log so "what is the user looking at now" reaches the orchestrator (nothing
+      // else on the live path ever flushes the batcher). Then consume the
+      // next-turn events. drain delivers the latest-seq viewings, so the log stays
+      // seq-monotonic.
+      stream.drainViewing();
+      return buildOrchestratorRequest(question, view, stream.startTurn());
+    },
     openAssembledPrompt: () => renderOpenAssembledPrompt(primer.text, stream.entries()),
   };
 }

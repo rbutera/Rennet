@@ -69,6 +69,42 @@ describe("bootOrchestratorSession", () => {
     );
   });
 
+  it("refuses to boot a surface that leaks a namespaced engine op (canvas.project)", () => {
+    const leaked = [
+      ...CANVAS_OPS_TOOLS,
+      {
+        name: "canvas.project",
+        description: "engine leak",
+        kind: "interaction" as const,
+        readOnly: false,
+        alwaysLoad: false,
+        params: [],
+        handle: () => ({
+          ok: false as const,
+          error: { code: "unknown-tool" as const, message: "x" },
+        }),
+      },
+    ];
+    expect(() => bootOrchestratorSession({ primer: primerState(), tools: leaked })).toThrow(
+      /registry/,
+    );
+  });
+
+  it("refuses to boot an empty (non-registry) surface", () => {
+    expect(() => bootOrchestratorSession({ primer: primerState(), tools: [] })).toThrow(/registry/);
+  });
+
+  it("buildRequest drains buffered viewing deixis into the request and the open panel", () => {
+    const session = bootOrchestratorSession({ primer: primerState() });
+    // A {viewing} is batched — nothing else on the live path flushes it. buildRequest
+    // must drain it so "what is the user looking at now" reaches the orchestrator.
+    session.stream.push({ kind: "viewing", canvasId: "cv_decisions", angle: "decisions", seq: 1 });
+    const request = session.buildRequest("what am I looking at?", { expandedCohorts: [] });
+    const viewings = request.contextEvents.filter((e) => e.event === "viewing");
+    expect(viewings).toHaveLength(1);
+    expect(session.openAssembledPrompt()).toContain('"event":"viewing"');
+  });
+
   it("answers 'where are we / what have I not looked at' from the primer with no tool call", () => {
     const session = bootOrchestratorSession({ primer: primerState() });
     // The unread + coverage counts are IN the primer text — orientation needs no call.

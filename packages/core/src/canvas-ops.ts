@@ -97,6 +97,10 @@ export type CanvasOpsEffect =
 
 /** B1 review identity — the addressing scheme every call needs. */
 export interface ReviewIdentity {
+  /** The workspace this review belongs to (B1, Orchestrator Context Access §1.1). */
+  workspace?: string;
+  /** The primary repo under review (B1). Per-repo freshness is B2; this is the anchor. */
+  repo?: string;
   reviewId: string;
   patchsetId: string;
   lineage?: string;

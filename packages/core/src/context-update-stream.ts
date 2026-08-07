@@ -145,6 +145,25 @@ export class ViewingBatcher {
     return evicted;
   }
 
+  /**
+   * Flush every buffered viewing whose covered range STARTS before `seq`,
+   * oldest-first. An ordered (non-deixis) event at `seq` must not land in the log
+   * ahead of a viewing that preceded it — this is how the stream keeps the merged
+   * log seq-monotonic (R35: coalesce, never reorder) while still letting a burst
+   * of viewings with no intervening ordered event coalesce.
+   */
+  flushBefore(seq: number): DeliveredEvent[] {
+    const due: BufferedViewing[] = [];
+    for (const [key, buffered] of this.buffer) {
+      if (buffered.from < seq) {
+        due.push(buffered);
+        this.buffer.delete(key);
+      }
+    }
+    due.sort((left, right) => left.from - right.from);
+    return due.map(toViewingEvent);
+  }
+
   /** Deliver each canvas whose window has elapsed as of `now`, oldest-first. */
   flushDue(now: number): DeliveredEvent[] {
     const due: BufferedViewing[] = [];
@@ -227,6 +246,9 @@ export class ContextUpdateStream {
       for (const event of forced) this.deliver(event);
       return;
     }
+    // An ordered event: flush any earlier-seq buffered viewing first so it cannot
+    // land in the log AFTER this event (R35 — never reorder).
+    this.flushViewingBefore(act.seq);
     if (act.kind === "selected") {
       this.deliver({
         event: "selected",
@@ -268,6 +290,9 @@ export class ContextUpdateStream {
   }
 
   private onChange(notification: CanvasChangeNotification): void {
+    // A change-feed event is ordered too: flush earlier-seq buffered viewings
+    // before it so the merged log stays seq-monotonic (R35).
+    this.flushViewingBefore(notification.seqRange.from);
     this.deliver({
       event: "changed",
       canvasId: notification.canvasId,
@@ -275,6 +300,11 @@ export class ContextUpdateStream {
       seq: notification.seqRange.from,
       covers: notification.seqRange,
     });
+  }
+
+  /** Deliver every buffered viewing that precedes `seq` (keeps the log ordered). */
+  private flushViewingBefore(seq: number): void {
+    for (const event of this.batcher.flushBefore(seq)) this.deliver(event);
   }
 
   private deliver(event: DeliveredEvent): void {
@@ -300,6 +330,9 @@ export class ContextUpdateStream {
 
   /** Release every change-feed subscription (session end). */
   dispose(): void {
+    // Never lose buffered deixis silently: drain it into the log before releasing
+    // so the open-assembled-prompt record is complete at session end.
+    this.drainViewing();
     for (const unsubscribe of this.unsubscribers) unsubscribe();
     this.unsubscribers.length = 0;
   }
@@ -335,7 +368,9 @@ export function buildOrchestratorRequest(
   contextEvents: readonly DeliveredEvent[] = [],
 ): OrchestratorRequest {
   const viewContext: OrchestratorViewContext = {
-    expandedCohorts: view.expandedCohorts,
+    // Copy, don't alias: the request is a SNAPSHOT of the view at ask time, so a
+    // later mutation of the caller's array must not rewrite an already-built request.
+    expandedCohorts: [...view.expandedCohorts],
   };
   if (view.openCanvasId !== undefined) viewContext.canvasId = view.openCanvasId;
   if (view.angle !== undefined) viewContext.angle = view.angle;

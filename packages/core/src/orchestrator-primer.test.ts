@@ -125,4 +125,80 @@ describe("assemblePrimer", () => {
       expect(entry.whenToUse.length).toBeGreaterThan(0);
     }
   });
+
+  it("ENFORCES the ≤4 KB ceiling: an oversized state throws rather than assembling a fat primer", () => {
+    // Enough canvases + repos that the map overruns 4 KB (counts-only or not, the
+    // ceiling is a hard boundary). Before enforcement this assembled a ~13 KB
+    // "lean" primer silently.
+    const oversized: PrimerInputs = {
+      identity: { reviewId: "rv_big", patchsetId: "ps_big" },
+      freshness: Array.from({ length: 40 }, (_, i) => ({
+        repoId: `repo_with_a_fairly_long_identifier_${i}`,
+        snapshotId: `snapshot_${i}`,
+        verdict: "current" as const,
+      })),
+      canvasState: Array.from({ length: 16 }, (_, r) => r).flatMap((r) =>
+        CANVAS_ANGLES.map((angle, i) => ({
+          angle,
+          canvasId: `cv_long_canvas_identifier_number_${r}_${i}`,
+          elements: 999,
+          cohorts: 88,
+          residue: 7,
+          coverage: {
+            paths: 400,
+            dispositioned: 250,
+            unread: 150,
+            approved: 200,
+            requestChanged: 50,
+          },
+        })),
+      ),
+      toolIndex: toolIndexFromSurface(),
+      runLedger: { fleetTasks: 9, admitted: 41, rejected: 3 },
+    };
+    expect(() => assemblePrimer(oversized)).toThrow(/ceiling|4096/);
+  });
+
+  it("renders B1 workspace/repo when the identity carries them", () => {
+    const base = fullReviewInputs();
+    const manifest = assemblePrimer({
+      ...base,
+      identity: { ...base.identity, workspace: "acme-monorepo", repo: "app" },
+    });
+    expect(manifest.text).toContain("workspace acme-monorepo");
+    expect(manifest.text).toContain("repo app");
+    // workspace/repo lead the B1 identity line, ahead of the reviewId.
+    const b1 = manifest.text.slice(0, manifest.text.indexOf("review rv_1"));
+    expect(b1).toContain("workspace acme-monorepo");
+    expect(b1).toContain("repo app");
+  });
+
+  it("orders freshness by CODE UNITS, not locale (determinism across ICU versions)", () => {
+    // localeCompare('a','B') is negative in en (a first); code-unit puts 'B'(66)
+    // before 'a'(97). The digest is provenance, so ordering must be code-unit.
+    const base = fullReviewInputs();
+    const manifest = assemblePrimer({
+      ...base,
+      freshness: [
+        { repoId: "a", snapshotId: "snap_a", verdict: "current" },
+        { repoId: "B", snapshotId: "snap_B", verdict: "current" },
+      ],
+    });
+    const lines = manifest.text.split("\n");
+    const iB = lines.findIndex((l) => l.startsWith("- B:"));
+    const iA = lines.findIndex((l) => l.startsWith("- a:"));
+    expect(iB).toBeGreaterThanOrEqual(0);
+    expect(iA).toBeGreaterThanOrEqual(0);
+    expect(iB).toBeLessThan(iA); // 'B' before 'a' — code-unit order, not locale
+  });
+
+  it("keeps B3 STRICTLY count-shaped: the decisions line is counts only, no inlined body", () => {
+    const manifest = assemblePrimer(fullReviewInputs());
+    const decisionsLine = manifest.text.split("\n").find((l) => l.startsWith("- decisions ("));
+    expect(decisionsLine).toBeDefined();
+    // A body/title inlined into B3 would break this counts-only line shape.
+    expect(decisionsLine).toMatch(
+      /^- decisions \(cv_decisions\): \d+ elements, \d+ cohorts, \d+ residue; coverage \d+\/\d+ dispositioned, \d+ unread, \d+ approved, \d+ request-change$/,
+    );
+  });
 });

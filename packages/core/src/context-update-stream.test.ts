@@ -67,6 +67,53 @@ describe("ContextUpdateStream — user acts", () => {
     stream.push({ kind: "selected", anchor: "c", elementSummary: "C", seq: 3 });
     expect(stream.entries().map((e) => e.seq)).toEqual([1, 2, 3]);
   });
+
+  it("R35: a buffered viewing lands BEFORE a later ordered point event (never reorder)", () => {
+    const c = clock();
+    const stream = newStream(c.now, 250);
+    stream.push({ kind: "viewing", canvasId: "cv_1", seq: 1 }); // buffered, not yet due
+    stream.push({ kind: "disposed", anchor: "a", type: "approve", body: "ok", seq: 2 }); // ordered
+    // The ordered event forced the earlier viewing out FIRST: the merged log is
+    // seq-monotonic, not [2, 1].
+    expect(stream.entries().map((e) => e.seq)).toEqual([1, 2]);
+    expect(stream.entries().map((e) => e.event)).toEqual(["viewing", "disposed"]);
+  });
+
+  it("R35: a buffered viewing lands BEFORE a later change-feed event (never reorder)", () => {
+    const c = clock();
+    const feed = new CanvasChangeFeed();
+    const batcher = new ViewingBatcher({ now: c.now, windowMs: 250 });
+    const stream = new ContextUpdateStream({ batcher, changeFeed: feed, canvasIds: ["cv_1"] });
+    stream.push({ kind: "viewing", canvasId: "cv_2", seq: 1 }); // buffered (a different canvas)
+    feed.publish({ reviewId: "rv", canvasId: "cv_1", elementKey: "el", seq: 2 });
+    feed.flush();
+    expect(stream.entries().map((e) => e.seq)).toEqual([1, 2]);
+    expect(stream.entries().map((e) => e.event)).toEqual(["viewing", "changed"]);
+    stream.dispose();
+  });
+
+  it("does NOT coalesce two viewings of one canvas across an intervening ordered event", () => {
+    const c = clock();
+    const stream = newStream(c.now, 250);
+    stream.push({ kind: "viewing", canvasId: "cv_1", seq: 1 });
+    stream.push({ kind: "disposed", anchor: "a", type: "approve", body: "ok", seq: 2 }); // flushes viewing@1
+    stream.push({ kind: "viewing", canvasId: "cv_1", seq: 3 }); // a FRESH buffer, not coalesced with @1
+    stream.drainViewing();
+    const viewings = stream.entries().filter((e) => e.event === "viewing");
+    expect(viewings).toHaveLength(2); // NOT one coalesced 1..3 — that would reorder past seq 2
+    expect(stream.entries().map((e) => e.seq)).toEqual([1, 2, 3]);
+  });
+
+  it("dispose drains buffered deixis into the log (never silent)", () => {
+    const c = clock();
+    const feed = new CanvasChangeFeed();
+    const batcher = new ViewingBatcher({ now: c.now });
+    const stream = new ContextUpdateStream({ batcher, changeFeed: feed, canvasIds: ["cv_1"] });
+    stream.push({ kind: "viewing", canvasId: "cv_1", seq: 1 });
+    expect(stream.entries()).toHaveLength(0); // buffered, window not elapsed
+    stream.dispose();
+    expect(stream.entries().filter((e) => e.event === "viewing")).toHaveLength(1); // drained, not lost
+  });
 });
 
 describe("ContextUpdateStream — request-time view injection (Q5)", () => {
@@ -93,6 +140,13 @@ describe("ContextUpdateStream — request-time view injection (Q5)", () => {
     const request = buildOrchestratorRequest("what is this?", view, stream.startTurn());
     expect(request.contextEvents).toHaveLength(1);
     expect(request.contextEvents[0]).toMatchObject({ event: "selected", anchor: "x" });
+  });
+
+  it("snapshots expandedCohorts — a later mutation of the caller array does not rewrite the request", () => {
+    const cohorts = ["coh_a"];
+    const request = buildOrchestratorRequest("q", { expandedCohorts: cohorts });
+    cohorts.push("coh_b"); // mutate the source array AFTER building the request
+    expect(request.viewContext.expandedCohorts).toEqual(["coh_a"]); // snapshot is unaffected
   });
 });
 

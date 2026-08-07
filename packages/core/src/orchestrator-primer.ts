@@ -1,6 +1,7 @@
 import { sha256Hex } from "@rennet/protocol";
 import type { Canvas, CanvasAngle, DispositionType } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
+import { compareCodeUnits } from "./canvas";
 import {
   CANVAS_OPS_TOOLS,
   CANVAS_OPS_VERSION,
@@ -221,19 +222,25 @@ const ANGLE_ORDER: ReadonlyMap<CanvasAngle, number> = new Map(
   CANVAS_ANGLES.map((angle, index) => [angle, index]),
 );
 
+// Ordering is code-unit, never `localeCompare`: the primer digest is provenance
+// and must be byte-identical across machines and ICU versions (the same
+// determinism doctrine `canvas.ts` applies to canvas ordering).
 function stableFreshness(rows: readonly RepoFreshness[]): RepoFreshness[] {
-  return [...rows].sort((left, right) => left.repoId.localeCompare(right.repoId));
+  return [...rows].sort((left, right) => compareCodeUnits(left.repoId, right.repoId));
 }
 
 function stableCanvasState(rows: readonly CanvasStateSummary[]): CanvasStateSummary[] {
   return [...rows].sort((left, right) => {
     const byAngle = (ANGLE_ORDER.get(left.angle) ?? 99) - (ANGLE_ORDER.get(right.angle) ?? 99);
-    return byAngle !== 0 ? byAngle : left.canvasId.localeCompare(right.canvasId);
+    return byAngle !== 0 ? byAngle : compareCodeUnits(left.canvasId, right.canvasId);
   });
 }
 
 function identityLine(identity: ReviewIdentity): string {
-  const parts = [`review ${identity.reviewId}`, `patchset ${identity.patchsetId}`];
+  const parts: string[] = [];
+  if (identity.workspace) parts.push(`workspace ${identity.workspace}`);
+  if (identity.repo) parts.push(`repo ${identity.repo}`);
+  parts.push(`review ${identity.reviewId}`, `patchset ${identity.patchsetId}`);
   if (identity.lineage) parts.push(identity.lineage);
   if (identity.mode) parts.push(`mode ${identity.mode}`);
   return parts.join("; ");
@@ -297,13 +304,24 @@ export function assemblePrimer(inputs: PrimerInputs): PrimerManifest {
     runLedgerLine(inputs.runLedger),
   ].join("\n");
 
+  // The ≤ 4 KB ceiling is enforced on the live assembly path, not merely asserted
+  // in a fixture: a primer that overruns is a fail-closed programming error (the
+  // map is meant to stay bounded). Without this the constant is decoration — the
+  // boot path would ship a silently over-budget "lean" primer.
+  const bytes = new TextEncoder().encode(text).length;
+  if (bytes > PRIMER_MAX_BYTES) {
+    throw new Error(
+      `orchestrator primer overruns the ${PRIMER_MAX_BYTES}-byte ceiling (assembled ${bytes} bytes)`,
+    );
+  }
+
   return {
     version: PRIMER_VERSION,
     cardVersion: PROTOCOL_CARD_VERSION,
     surfaceVersion: CANVAS_OPS_VERSION,
     text,
     digest: sha256Hex(text),
-    bytes: new TextEncoder().encode(text).length,
+    bytes,
     sections: {
       identity: inputs.identity,
       freshness,
