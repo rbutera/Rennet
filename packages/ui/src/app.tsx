@@ -1,9 +1,13 @@
 import type { RennetBridge } from "@rennet/protocol";
 import type { CanvasAngle, ElementDiffs, Patchset, Review } from "@rennet/types";
 import { useEffect, useMemo, useRef, useState } from "react";
+import { addToBatch, type DispositionBatch, withdrawDraft } from "./canvas/authoring";
+import { type DestinationMode, destinationVariant, draftsFromWrites } from "./canvas/destination";
 import { demoCanvases, demoDiff } from "./canvas/fixtures";
 import { type CanvasSet, loadCanvases } from "./canvas/load";
 import { type DispositionWrite, withoutProposal } from "./canvas/logic";
+import { DestinationFrame } from "./components/destination-frame";
+import { PublishSheet } from "./components/publish-sheet";
 import { CanvasWorkspace } from "./components/workspace";
 
 /**
@@ -202,6 +206,15 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const [elementDiffs, setElementDiffs] = useState<ElementDiffs>({});
   const [liveLoaded, setLiveLoaded] = useState(false);
   const fetchedForReview = useRef<string | null>(null);
+  // The DESTINATION (issue #64): the staged set is the north the review builds
+  // toward. dispose == staged (a disposition stages in the same act it is made);
+  // withdraw == unstage. The mode frames the same staged data as the own-branch
+  // handoff bundle or the review to post on someone else's PR. `own-branch` is the
+  // honest default for a local capture; the real mode arrives with the #20/#21
+  // GitHub source. The publish sheet (#22 shell) is opened from the frame.
+  const [staged, setStaged] = useState<DispositionBatch>([]);
+  const [destinationMode, setDestinationMode] = useState<DestinationMode>("own-branch");
+  const [publishOpen, setPublishOpen] = useState(false);
 
   useEffect(() => {
     bridge
@@ -285,6 +298,13 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     if (!review) return;
     // Mark-read sets a neutral "comment" disposition; mark-unread clears it.
     // The full disposition UI (approve / request-change / question) is a later slice.
+    // dispose == staged / withdraw == unstage: the same act stages (or unstages) it
+    // toward the destination, so the north fills as the review is worked.
+    setStaged((current) =>
+      read
+        ? addToBatch(current, draftsFromWrites([{ path, type: "comment", body: "" }]))
+        : withdrawDraft(current, path),
+    );
     const result = await bridge.invoke("review.setDisposition", {
       commandId: crypto.randomUUID(),
       reviewId: review.id,
@@ -295,6 +315,33 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     });
     setReview(result.review);
   }
+
+  // The always-present destination chrome + the publish sheet it opens. dispose ==
+  // staged flows through here; signing this shell performs NO Git/GitHub mutation
+  // (the #21 pipeline is a later slice) — it clears the staged paper to demonstrate
+  // the full journey ending somewhere.
+  const destinationChrome = (
+    <>
+      <DestinationFrame
+        batch={staged}
+        mode={destinationMode}
+        onSelectMode={setDestinationMode}
+        onOpenPublish={() => setPublishOpen(true)}
+      />
+      {publishOpen ? (
+        <PublishSheet
+          batch={staged}
+          variant={destinationVariant(destinationMode)}
+          onWithdraw={(path) => setStaged((current) => withdrawDraft(current, path))}
+          onSign={() => {
+            setStaged([]);
+            setPublishOpen(false);
+          }}
+          onClose={() => setPublishOpen(false)}
+        />
+      ) : null}
+    </>
+  );
 
   async function regenerate(): Promise<void> {
     if (!review) return;
@@ -359,7 +406,13 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         <CanvasWorkspace
           canvases={canvases}
           bridge={bridge}
-          onDispositions={(writes) => setCanvases((current) => applyWrites(current, writes))}
+          onDispositions={(writes) => {
+            setCanvases((current) => applyWrites(current, writes));
+            // dispose == staged: authoring a disposition stages it toward the
+            // destination in the same act (upsert-by-path, one act stages all its
+            // fan-out writes).
+            setStaged((current) => addToBatch(current, draftsFromWrites(writes)));
+          }}
           onAdjudicate={(adjudication) =>
             setCanvases((current) => resolveProposal(current, adjudication.proposalId))
           }
@@ -380,6 +433,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           onRegenerate={() => void regenerate()}
         />
       )}
+      {/* The destination is always-present chrome: the north is visible in both the
+          Files and Canvases views, present from review-open even when empty. */}
+      {destinationChrome}
     </>
   );
 }

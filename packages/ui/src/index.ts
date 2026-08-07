@@ -26,6 +26,17 @@ export {
   orphanedDispositions,
   withdrawDraft,
 } from "./canvas/authoring";
+// The destination (issue #64): the persistent north the review stages toward, the
+// two variants by mode, the staged vocabulary over #17's batch, and the sign gate.
+export type { BatchDestination, DestinationMode, DestinationVariant } from "./canvas/destination";
+export {
+  canSign,
+  destinationVariant,
+  draftsFromWrites,
+  resolveSign,
+  stagedItems,
+  stagedPayload,
+} from "./canvas/destination";
 export type { CanvasFeedSource } from "./canvas/feed";
 export { demoCanvases, demoDiff } from "./canvas/fixtures";
 export type { ApprovalScope, DispositionWrite } from "./canvas/logic";
@@ -36,11 +47,12 @@ export {
   foldReadState,
   nextUnread,
 } from "./canvas/read-state";
-export type { BatchDestination } from "./components/batch-view";
 export { BatchView } from "./components/batch-view";
 export { CoverageMosaicView } from "./components/coverage";
+export { DestinationFrame } from "./components/destination-frame";
 export type { GranularityContext } from "./components/granularity-author";
 export { GranularityAuthor } from "./components/granularity-author";
 export { OrphanTray } from "./components/orphan-tray";
+export { PublishSheet } from "./components/publish-sheet";
 export type { CanvasWorkspaceProps, DiffResolver } from "./components/workspace";
 export { CanvasWorkspace } from "./components/workspace";
