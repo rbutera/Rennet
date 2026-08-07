@@ -1,0 +1,30 @@
+## 1. Reproduce the cache-correctness bug
+
+- [x] 1.1 Warm the `format` cache, inject a Biome violation into `packages/core/src/index.ts`, show `nx run rennet:format` cache-hits and exits 0 (stale pass)
+- [x] 1.2 Show the same tree with `--skip-nx-cache` exits 1 ("Formatter would have… Found 1 error"), proving the cache masks it; restore the file
+
+## 2. Fix the cache config
+
+- [x] 2.1 Add explicit workspace-rooted `inputs` to `format` (every Biome-checked glob + `sharedGlobals`)
+- [x] 2.2 Add `biome.json`, `eslint.config.mjs`, `tsconfig.base.json` to `sharedGlobals`
+- [x] 2.3 Verify: warm the cache, inject the same violation, `nx run rennet:format` now RE-RUNS and exits 1; unchanged tree still cache-hits
+
+## 3. Target completeness
+
+- [x] 3.1 Add an uncached `real-turn` target to `packages/adapters/project.json` and route the root `real-turn` script through `nx run rennet-adapters:real-turn`
+
+## 4. Agent guidance single-source
+
+- [x] 4.1 Make `AGENTS.md` the real file (refresh the Nx section: targets, trust-the-cache, narrow `--skip-nx-cache`/`nx reset` cases, env gotchas), preserving the nx-managed block
+- [x] 4.2 Make `CLAUDE.md` a symlink to `AGENTS.md`; verify `git ls-files -s CLAUDE.md` shows mode 120000
+
+## 5. Verify
+
+- [x] 5.1 Repeat `pnpm check` on an unchanged tree shows cache hits (no full re-run)
+- [x] 5.2 Full `pnpm check` exits 0 across all projects (zero errors AND "Successfully ran target(s)")
+
+## 6. Close the remaining stale-pass holes (found in review)
+
+- [x] 6.1 `build`: reproduce a test-file type error stale-passing on a warm cache (cache-hit exit 0, `--skip-nx-cache` exit 1); change `build` targetDefault inputs from `production` to `default`; re-verify it now cache-misses and exits 1
+- [x] 6.2 `architecture`: reproduce a `project.json` `layer:` tag change stale-passing (cache-hit exit 0, `--skip-nx-cache` exit 1); add `packages/**/project.json`, `apps/**/project.json`, `sharedGlobals` to its inputs; re-verify it now cache-misses and exits 1
+- [x] 6.3 `licenses`: add `sharedGlobals` to inputs (defense-in-depth; `pnpm-workspace.yaml`/`.npmrc` were unhashed but lockfile-backstopped, not exploitable); verify a `pnpm-workspace.yaml` change now invalidates the cache

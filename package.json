@@ -17,11 +17,14 @@
         "command": "node scripts/check-boundaries.mjs",
         "inputs": [
           "{workspaceRoot}/packages/**/package.json",
+          "{workspaceRoot}/packages/**/project.json",
           "{workspaceRoot}/packages/**/src/**/*",
           "{workspaceRoot}/apps/**/package.json",
+          "{workspaceRoot}/apps/**/project.json",
           "{workspaceRoot}/apps/**/src/**/*",
           "{workspaceRoot}/eslint.config.mjs",
-          "{workspaceRoot}/scripts/check-boundaries.mjs"
+          "{workspaceRoot}/scripts/check-boundaries.mjs",
+          "sharedGlobals"
         ]
       },
       "audit": {
@@ -30,7 +33,17 @@
       },
       "format": {
         "cache": true,
-        "command": "pnpm exec biome check packages/*/src apps/desktop/src apps/desktop/e2e apps/desktop/*.ts apps/desktop/*.cjs apps/desktop/*.json scripts/*.mjs package.json biome.json"
+        "command": "pnpm exec biome check packages/*/src apps/desktop/src apps/desktop/e2e apps/desktop/*.ts apps/desktop/*.cjs apps/desktop/*.json scripts/*.mjs package.json biome.json",
+        "inputs": [
+          "{workspaceRoot}/packages/*/src/**/*",
+          "{workspaceRoot}/apps/desktop/src/**/*",
+          "{workspaceRoot}/apps/desktop/e2e/**/*",
+          "{workspaceRoot}/apps/desktop/*.ts",
+          "{workspaceRoot}/apps/desktop/*.cjs",
+          "{workspaceRoot}/apps/desktop/*.json",
+          "{workspaceRoot}/scripts/*.mjs",
+          "sharedGlobals"
+        ]
       },
       "licenses": {
         "cache": true,
@@ -40,7 +53,8 @@
           "{workspaceRoot}/packages/**/package.json",
           "{workspaceRoot}/apps/**/package.json",
           "{workspaceRoot}/pnpm-lock.yaml",
-          "{workspaceRoot}/scripts/check-licenses.mjs"
+          "{workspaceRoot}/scripts/check-licenses.mjs",
+          "sharedGlobals"
         ]
       }
     }
@@ -57,7 +71,7 @@
     "dev": "nx run rennet-desktop:dev",
     "e2e": "nx run rennet-desktop:e2e",
     "graph": "nx graph",
-    "real-turn": "RENNET_LIVE_CLAUDE=1 pnpm exec vitest run packages/adapters/integration"
+    "real-turn": "nx run rennet-adapters:real-turn"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.6",

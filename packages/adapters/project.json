@@ -8,6 +8,10 @@
     "build": { "command": "pnpm exec tsc -p packages/adapters/tsconfig.json" },
     "lint": { "command": "pnpm exec eslint packages/adapters/src --max-warnings=0 && pnpm exec biome check packages/adapters/src" },
     "typecheck": { "command": "pnpm exec tsc -p packages/adapters/tsconfig.json" },
-    "test": { "command": "pnpm exec vitest run packages/adapters/src" }
+    "test": { "command": "pnpm exec vitest run packages/adapters/src" },
+    "real-turn": {
+      "cache": false,
+      "command": "RENNET_LIVE_CLAUDE=1 pnpm exec vitest run packages/adapters/integration"
+    }
   }
 }
