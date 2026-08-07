@@ -3,8 +3,8 @@ tags: [rennet, products, visions]
 categories: [project]
 status: active
 created: 2026-08-06
-updated: 2026-08-06
-related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Architecture Contracts]]", "[[Rennet Canvas Paradigm]]", "[[Rennet Orchestrator Context Access]]", "[[Rennet Comment Refinement Loop]]", "[[Code Review Harness App]]"]
+updated: 2026-08-07
+related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Architecture Contracts]]", "[[Rennet Canvas Paradigm]]", "[[Rennet Orchestrator Context Access]]", "[[Rennet Comment Refinement Loop]]", "[[Rennet Model Council]]", "[[Rennet User Journey]]", "[[Rennet Design Doctrine]]", "[[Code Review Harness App]]"]
 ---
 
 # Rennet Product and Vision
@@ -123,9 +123,20 @@ GitHub is one changeset source and one publish destination, behind a forge-neutr
 ### 4.10 The supporting engineering (means, not purpose)
 
 - **The RSP surfacing DSL** — structured JSON documents against versioned schemas in `packages/protocol`; agents surface, the deterministic validator decides; agents never mint identity; quotes verified byte-for-byte. Publishable as an open spec.
-- **Model-tier routing** — deterministic code wherever a tool can be 100% right; light models where they fetch; heavy models where they reason. Utility work batched, never process-per-hunk; the <15s / <5-invocation budget is a CI-tested mechanical gate.
 - **The instruction layer** — versioned base instructions shipped with the app; user guidance layered through the settings ladder; the exact assembled prompt always inspectable. The contract is not configurable; the voice is.
-- **Glass identity** — glass is chrome, code is opaque, paper is what leaves the machine; backlight blue = private-to-reviewer; amber = blast radius/disagreement only.
+- **Glass identity** — glass is chrome, code is opaque, paper is what leaves the machine; backlight blue = private-to-reviewer; amber = blast radius/disagreement only. Ratified as required reading: [[Rennet Design Doctrine]].
+
+### 4.11 The Model Council
+
+Rennet runs ~45 discrete jobs per review, and **being intelligent about which mind does which job is a product capability, not cost plumbing** — promoted here from a §4.10 footnote after the Luna spike proved the cheap end of the model market produces validator-admitted documents at $0. The **Model Council** ([[Rennet Model Council]]) is the named subsystem that owns it:
+
+- A **versioned job catalogue** — ~24 deterministic jobs (no model, ever) + ~21 model-facing jobs, of which ~13 are light-tier bulk and only ~4 seats genuinely need a flagship.
+- A **deterministic resolver**: `(job, availability, overrides) → (harness, model, effort)`, resolved before anything runs, with a **resolution trace** the UI can show ("ordering ran on Luna-low because: tier=light, codex available, council row 9, no override").
+- **Cross-harness routing** (R39): light-tier work may run on a different installed harness than the review — Claude reviews while cheap Codex models do the light thinking. Default-on when both are installed; user-pinnable.
+- The **budget gate on the live path**: the <15s / <5-invocation ceiling refused at runtime, retries counted — a mechanical gate, not a CI-only test.
+- **Static forever, measured always**: the only feedback loop is a surfaced rejection-rate table a human reads and answers with a table edit. Never adaptive routing.
+
+The user's day through the product, in order — from first run to signing the paper — is [[Rennet User Journey]].
 
 ## 5. Where it stands (2026-08-06)
 
@@ -137,7 +148,10 @@ Everything else in §4 is designed and **queued as GitHub issues** labelled `ope
 
 | I want… | Read |
 |---|---|
-| The ruling register (R1–R35), frozen core, open questions, M0 cut, spikes, the execution pipeline | [[Rennet Contracts and Rulings]] |
+| The ruling register (R1–R39), frozen core, open questions, M0 cut, spikes, the execution pipeline | [[Rennet Contracts and Rulings]] |
+| The ordered user journey (first run → sign), stage ownership, built-vs-open | [[Rennet User Journey]] |
+| The model council: job catalogue, assignment tables, resolver, budget gate, ledger | [[Rennet Model Council]] |
+| The design register: materials, colour law, interaction laws | [[Rennet Design Doctrine]] |
 | The frozen engineering contracts (project context, patchsets, invalidation, persistence, privacy, publication) | [[Rennet Architecture Contracts]] |
 | Dependencies, versions, toolchain ownership | [[Rennet Dependency Standard]] |
 | The interaction model in depth (canvases, layers, actors, ops) | [[Rennet Canvas Paradigm]] |

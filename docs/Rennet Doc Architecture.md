@@ -3,7 +3,7 @@ tags: [rennet, documentation, architecture]
 categories: [reference]
 status: active
 created: 2026-08-06
-updated: 2026-08-06
+updated: 2026-08-07
 related: ["[[Rennet Product and Vision]]", "[[Rennet Contracts and Rulings]]", "[[Rennet Navi Handoff]]"]
 ---
 
@@ -26,7 +26,7 @@ The map of every document in `docs/`: which role each plays, how they cross-link
 | Document | Role | Notes |
 |---|---|---|
 | [[Rennet Product and Vision]] | **Canonical** | What Rennet is: vision, the four principles, ordering-is-the-product, the full feature set. The one-read entry point. |
-| [[Rennet Contracts and Rulings]] | **Authority register** | *Formerly "Rennet Master Plan" (renamed 2026-08-06).* Supersede stack, rulings R1–R35, feature contracts §2.1–§2.5, frozen core, open questions, M0 cut, spikes, the issue-seeded execution pipeline (§7), strip list (§8). Older "Master Plan Rn/§n" citations resolve here; numbering unchanged. |
+| [[Rennet Contracts and Rulings]] | **Authority register** | *Formerly "Rennet Master Plan" (renamed 2026-08-06).* Supersede stack, rulings R1–R39, feature contracts §2.1–§2.5, frozen core, open questions, M0 cut, spikes, the issue-seeded execution pipeline (§7), strip list (§8). Older "Master Plan Rn/§n" citations resolve here; numbering unchanged. |
 | [[Code Review Harness App]] | **Authority register** (Decisions) + historical (rest) | The hub. Its **Decisions** section is the append-only ledger of Rai's product decisions and supreme product authority — new Rai decisions continue to be appended there, then reconciled into Contracts and Rulings + Product and Vision. Its narrative sections (Feature Inventory, market check, lens validation) are 2026-08-04 snapshots: historical. |
 | [[Rennet Architecture Contracts]] | **Authority register / deep spec** | Frozen engineering contracts: project context + `.rennet`, immutable patchsets, invalidation, persistence, privacy, publication. Wins within that scope. |
 | [[Rennet Dependency Standard]] | **Authority register / deep spec** | Wins on dependencies, versions, licensing of packages, toolchain ownership, overlap. |
@@ -34,6 +34,9 @@ The map of every document in `docs/`: which role each plays, how they cross-link
 | [[Rennet Orchestrator Context Access]] | **Deep spec** | Primer-as-map, `canvasOps@2`, `context.ask`, protocol card, experiments E1–E5. Adopted 2026-08-06, amended by §2.4. Supersedes the fat-primer sketch in Canvas Paradigm §4.3. |
 | [[Rennet Comment Refinement Loop]] | **Deep spec** | The raw→refined disposition lifecycle, refiner contract, inline clarification thread, slices. Gates issue #19. |
 | [[Rennet Reactive Streams (RxJS)]] | **Deep spec** | The reactive-streams analysis behind R35: RxJS refused at every site, `AsyncIterable` codified at harness ports, the post-commit change feed specified, the reactive discipline adopted as contract language. Rides issues #10/#31 for the feed build. |
+| [[Rennet Model Council]] | **Deep spec** | The named model-assignment subsystem (added 2026-08-07): the versioned job catalogue (~24 deterministic + ~21 model-facing + 6 newly named), the three availability-scenario assignment tables, `resolveAssignment()` + resolution order, the live budget gate (fixes bead p0wwp), the resolution-trace ledger, calibration read. Ratified extraction of the DSL/routing plan §5; its §5.4 ladder amended by R39 (cross-harness routing). |
+| [[Rennet User Journey]] | **Canonical** (journey) | The ordered eight-stage journey (added 2026-08-07): first run → home → open → capture/live feed → angles → dispose=stage → destination/paper → delta loop. Owns the ordering constraint; each stage maps its owning issues and built-vs-open. Staging semantics ruled as R36–R38. Carries the standing journey-fit acceptance-criteria convention. |
+| [[Rennet Design Doctrine]] | **Deep spec** (doctrine, required reading for UI work) | The design register promoted from the prototype docs (added 2026-08-07): three materials (glass/code/paper), colour law (backlight `#85C4DC`, amber, no fourth hue), fixed-point rule, progressive-disclosure floor, never-a-spinner, smooth-and-quick. Prototype docs remain the full reasoning; this is the ratified floor. |
 | [[Rennet Navi Handoff]] | **Canonical** (orientation) | Who/what/why, never-do list, the issue-queue pointer, RAI-ONLY actions, working agreement (ship-to-main). The backlog it once carried is archived (below). |
 | [[Rennet Backlog Archive]] | **Historical** | The 2026-08-04 147-bead dependency-ordered backlog, verbatim (extracted from the Handoff 2026-08-06). Design rationale only; issues cite its bead numbers (e.g. #16, #27). The GitHub `openspec-seed` issue queue is the live backlog; where they disagree, the issue wins. |
 | [[Rennet Evidence Gate Status]] | **Status ledger** | What is proven vs. assumed; spike gates open/closed/blocked. |
