@@ -9,7 +9,10 @@
       "{workspaceRoot}/pnpm-workspace.yaml",
       "{workspaceRoot}/.npmrc",
       "{workspaceRoot}/.nvmrc",
-      "{workspaceRoot}/.tool-versions"
+      "{workspaceRoot}/.tool-versions",
+      "{workspaceRoot}/biome.json",
+      "{workspaceRoot}/eslint.config.mjs",
+      "{workspaceRoot}/tsconfig.base.json"
     ],
     "default": ["{projectRoot}/**/*", "sharedGlobals"],
     "production": [

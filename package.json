@@ -30,7 +30,17 @@
       },
       "format": {
         "cache": true,
-        "command": "pnpm exec biome check packages/*/src apps/desktop/src apps/desktop/e2e apps/desktop/*.ts apps/desktop/*.cjs apps/desktop/*.json scripts/*.mjs package.json biome.json"
+        "command": "pnpm exec biome check packages/*/src apps/desktop/src apps/desktop/e2e apps/desktop/*.ts apps/desktop/*.cjs apps/desktop/*.json scripts/*.mjs package.json biome.json",
+        "inputs": [
+          "{workspaceRoot}/packages/*/src/**/*",
+          "{workspaceRoot}/apps/desktop/src/**/*",
+          "{workspaceRoot}/apps/desktop/e2e/**/*",
+          "{workspaceRoot}/apps/desktop/*.ts",
+          "{workspaceRoot}/apps/desktop/*.cjs",
+          "{workspaceRoot}/apps/desktop/*.json",
+          "{workspaceRoot}/scripts/*.mjs",
+          "sharedGlobals"
+        ]
       },
       "licenses": {
         "cache": true,
@@ -57,7 +67,7 @@
     "dev": "nx run rennet-desktop:dev",
     "e2e": "nx run rennet-desktop:e2e",
     "graph": "nx graph",
-    "real-turn": "RENNET_LIVE_CLAUDE=1 pnpm exec vitest run packages/adapters/integration"
+    "real-turn": "nx run rennet-adapters:real-turn"
   },
   "devDependencies": {
     "@biomejs/biome": "2.5.6",
