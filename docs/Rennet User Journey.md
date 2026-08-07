@@ -45,7 +45,7 @@ One engine, two sources (both v1, R7): **your own branch** (local working-tree c
 
 The fleet decomposes the changeset while the surface shows a **live narrative feed** — "reading the changeset… 214 hunks… chapter 3 looks like the risky one" — **never a spinner** ([[Rennet Design Doctrine]]; UX Concepts §C). The deterministic floor paints ≤15s to first useful chunk; each feed line becomes tappable as its artifact lands; the wait converts into a head start.
 
-- **Owned by:** #54 (live pipeline wire-up — ✅ merged), decomposition floor (✅ merged), the live narrative feed issue (filed 2026-08-07; no prior owner), #59 (render race).
+- **Owned by:** #54 (live pipeline wire-up — ✅ merged), decomposition floor (✅ merged), #71 (live narrative feed — filed 2026-08-07; no prior owner), #59 (render race).
 - **Status: MIXED** — the pipeline is real; the narrated feed is OPEN.
 
 ### Stage 4 — Read through the angles
@@ -69,14 +69,14 @@ The one solid object in a translucent product. Context decides the variant, neve
 - **Someone else's PR** → the paper previews the **review it will post**: every line item in its refined form, the degradation ledger, the two-column travels-vs-stays split, hold-to-sign, ONE batched review event (R33). **Publish is all-or-nothing per signing act in v1 (R38)** — to ship a subset, withdraw first, then sign.
 - **Your own branch** → the paper previews the **PR submission** (title/body/draft, zero Git mutation, R33) or the **handoff bundle** — N refined dispositions composed into one coherent task narrative handed to a coding harness.
 
-- **Owned by:** #22 (publish sheet), #21 (publish pipeline), #18 (handoff loop), #64 (the frame), the PR-drafting and handoff-composition jobs (filed 2026-08-07).
+- **Owned by:** #22 (publish sheet), #21 (publish pipeline), #18 (handoff loop), #64 (the frame), #74 (PR title/body drafting) and #72 (handoff-bundle composition).
 - **Status: OPEN** — the destination is designed everywhere and built nowhere. This is the build's current center of gravity.
 
 ### Stage 7 — The delta re-review loop (own-branch mode)
 
 The coding harness addresses the bundle on the branch → a new patchset arrives → Rennet presents **only what moved**. Approvals carry by lineage (byte-identical now; fuzzy matcher #16 later, fail-closed); an agent-authored change is never "already read"; the delta summary narrates what the agent did — including anything beyond your asks. The loop returns to Stage 4 on the successor canvas.
 
-- **Owned by:** #18 (handoff loop), #16 (fuzzy carry), #48 (successor carry rule — RAI DECISION), the delta-summarisation job (filed 2026-08-07).
+- **Owned by:** #18 (handoff loop), #16 (fuzzy carry), #48 (successor carry rule — RAI DECISION), #73 (delta re-review summarisation).
 - **Status: OPEN.**
 
 ## Where the build stands against the journey (2026-08-07)

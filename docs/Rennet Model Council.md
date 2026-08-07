@@ -82,7 +82,7 @@ The full per-job batching shapes, capability gates, and v1 flags remain as speci
 | M26 | **PR title/body drafting** | light, human-editable | The own-branch destination's paper (#22) previews a PR submission; someone has to write the draft. |
 | M27 | **Council calibration read** | deterministic aggregation | Reading `dsl.documentRejected` per model per doc-type — the council's own instrument (§5). |
 
-Each has a filed issue (see §7).
+Filed as issues: M22 → #70, M23 → #71, M24 → #72, M25 → #73, M26 → #74, M27 → #75.
 
 ## 3. The three assignment tables
 
@@ -190,9 +190,9 @@ The commitments:
 
 ## 7. The build
 
-Owner issue: **Model Council v1** (catalogue + resolver + live budget gate + ledger) — with #66 (CodexUtilityPort, proven), #25 (Codex adapter), and #28's routing keys as its limbs, and the p0wwp live-gate fix in scope. Minimal buildable slice: one module in `packages/core` holding the versioned job table + `resolveAssignment()`; wire `buildRoutePlan` into the two existing live runners; thread `{model, effort, trace}` into the provenance seed both runners already require; land `CodexUtilityPort` as the first alternate seat.
+Owner issue: **#69 — Model Council v1** (catalogue + resolver + live budget gate + ledger) — with #66 (CodexUtilityPort, proven), #25 (Codex adapter), and #28's routing keys as its limbs, and the p0wwp live-gate fix in scope. Minimal buildable slice: one module in `packages/core` holding the versioned job table + `resolveAssignment()`; wire `buildRoutePlan` into the two existing live runners; thread `{model, effort, trace}` into the provenance seed both runners already require; land `CodexUtilityPort` as the first alternate seat.
 
-The six newly named jobs (§2.3) are filed as their own issues; M22 (roll-up narration) is the priority — it is the product thesis's own prose.
+The six newly named jobs (§2.3) are filed as #70–#75; M22 (roll-up narration, #70) is the priority — it is the product thesis's own prose.
 
 ---
 
