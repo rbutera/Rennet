@@ -6,12 +6,15 @@ import {
   CANVAS_LENSES,
   canvasCoverage,
   fanOutApproval,
+  isEditableTarget,
   isPainted,
   MAX_RENDERED_NODES,
   NODES_PER_ROW,
   refocusCursor,
   rotateLens,
+  viewAfterRotate,
   windowRows,
+  withoutProposal,
   zoomReducer,
 } from "./logic";
 
@@ -26,7 +29,11 @@ function decisionsCanvas(overrides: Partial<Canvas> = {}): Canvas {
     layers: {
       substrate: {
         chunks: [
-          { chunkId: "c1", hunkIds: ["h1", "h2"], filePaths: ["a.ts", "b.ts", "c.ts"] },
+          {
+            chunkId: "c1",
+            hunkIds: ["h1", "h2"],
+            filePaths: ["a.ts", "b.ts", "c.ts"],
+          },
           { chunkId: "c2", hunkIds: ["h3"], filePaths: ["d.ts"] },
         ],
       },
@@ -55,8 +62,16 @@ function decisionsCanvas(overrides: Partial<Canvas> = {}): Canvas {
           },
         ],
         cohorts: [
-          { cohortKey: "cohort:c1", title: "First cohort", elementKeys: ["e1", "e2"] },
-          { cohortKey: "cohort:c2", title: "Second cohort", elementKeys: ["e3"] },
+          {
+            cohortKey: "cohort:c1",
+            title: "First cohort",
+            elementKeys: ["e1", "e2"],
+          },
+          {
+            cohortKey: "cohort:c2",
+            title: "Second cohort",
+            elementKeys: ["e3"],
+          },
         ],
         readingOrder: ["cohort:c1", "cohort:c2"],
       },
@@ -118,7 +133,11 @@ describe("canvasCoverage — collapse is not read", () => {
   it("only an action (a disposition) marks a path read — control that it is not vacuous", () => {
     const canvas = decisionsCanvas();
     canvas.layers.disposition.dispositions = [
-      { anchor: { path: "a.ts", contentDigest: "x" }, type: "approve", body: "" },
+      {
+        anchor: { path: "a.ts", contentDigest: "x" },
+        type: "approve",
+        body: "",
+      },
     ];
     expect(canvasCoverage(canvas)).toEqual({ total: 4, read: 1, unread: 3 });
   });
@@ -130,7 +149,11 @@ describe("zoomReducer — roll-up → cohort → element → diff, both directio
     state = zoomReducer(state, { type: "enterCohort", cohortKey: "cohort:c1" });
     expect(state).toEqual({ level: "cohort", cohortKey: "cohort:c1" });
     state = zoomReducer(state, { type: "enterElement", elementKey: "e1" });
-    expect(state).toMatchObject({ level: "element", cohortKey: "cohort:c1", elementKey: "e1" });
+    expect(state).toMatchObject({
+      level: "element",
+      cohortKey: "cohort:c1",
+      elementKey: "e1",
+    });
     state = zoomReducer(state, { type: "openDiff" });
     expect(state.level).toBe("diff");
     // …and back out, both directions reachable.
@@ -143,9 +166,11 @@ describe("zoomReducer — roll-up → cohort → element → diff, both directio
   });
 
   it("zoomIn from a focused cohort advances to element then diff", () => {
-    const atCohort = { level: "cohort", cohortKey: "cohort:c1", elementKey: "e1" } as ReturnType<
-      typeof zoomReducer
-    >;
+    const atCohort = {
+      level: "cohort",
+      cohortKey: "cohort:c1",
+      elementKey: "e1",
+    } as ReturnType<typeof zoomReducer>;
     expect(zoomReducer(atCohort, { type: "zoomIn" }).level).toBe("element");
   });
 });
@@ -243,7 +268,12 @@ describe("windowRows — the Pierre node-count envelope", () => {
   });
 
   it("clamps the window to the file bounds at the top and bottom", () => {
-    const top = windowRows({ total: 5000, rowHeight: 20, viewportHeight: 600, scrollTop: 0 });
+    const top = windowRows({
+      total: 5000,
+      rowHeight: 20,
+      viewportHeight: 600,
+      scrollTop: 0,
+    });
     expect(top.start).toBe(0);
     const bottom = windowRows({
       total: 100,
@@ -252,5 +282,76 @@ describe("windowRows — the Pierre node-count envelope", () => {
       scrollTop: 100000,
     });
     expect(bottom.end).toBe(100);
+  });
+});
+
+describe("viewAfterRotate — the fixed point: rotation lands on the cursor hunk", () => {
+  it("refocuses the cursor element on the new canvas rather than resetting to roll-up", () => {
+    // The cursor sits on hunk h2 (element e2). After rotating to a canvas that
+    // carries the same anchor, the view lands ON that element, not back at roll-up.
+    expect(viewAfterRotate(decisionsCanvas(), "rennet:hunk/h2")).toEqual({
+      selection: "e2",
+      zoom: { level: "element", elementKey: "e2" },
+    });
+  });
+
+  it("falls back to roll-up only when the cursor anchor is absent on the new canvas", () => {
+    expect(viewAfterRotate(decisionsCanvas(), "rennet:hunk/absent")).toEqual({
+      zoom: { level: "rollup" },
+    });
+    // Control: no cursor at all is roll-up too (nothing to refocus on).
+    expect(viewAfterRotate(decisionsCanvas(), undefined)).toEqual({
+      zoom: { level: "rollup" },
+    });
+  });
+});
+
+describe("isEditableTarget — canvas keys must not hijack text editing", () => {
+  it("treats form fields and contenteditable as editable (keystrokes pass through)", () => {
+    expect(isEditableTarget({ tagName: "TEXTAREA" })).toBe(true);
+    expect(isEditableTarget({ tagName: "INPUT" })).toBe(true);
+    expect(isEditableTarget({ tagName: "SELECT" })).toBe(true);
+    expect(isEditableTarget({ isContentEditable: true })).toBe(true);
+  });
+
+  it("treats the canvas surface itself (a div) and null as non-editable", () => {
+    expect(isEditableTarget({ tagName: "DIV" })).toBe(false);
+    expect(isEditableTarget(null)).toBe(false);
+    expect(isEditableTarget(undefined)).toBe(false);
+  });
+});
+
+describe("withoutProposal — adjudicating a proposal resolves it off the canvas", () => {
+  it("drops the named proposal and leaves the rest", () => {
+    const base = decisionsCanvas();
+    const canvas: Canvas = {
+      ...base,
+      layers: {
+        ...base.layers,
+        annotation: {
+          annotations: [],
+          proposals: [
+            {
+              proposalId: "p1",
+              kind: "disposition",
+              target: "a.ts",
+              payload: "x",
+              status: "pending",
+            },
+            {
+              proposalId: "p2",
+              kind: "regroup",
+              target: "b.ts",
+              payload: "y",
+              status: "pending",
+            },
+          ],
+        },
+      },
+    };
+    const after = withoutProposal(canvas, "p1");
+    expect(after.layers.annotation.proposals.map((p) => p.proposalId)).toEqual(["p2"]);
+    // Control: an unknown id is a no-op, not an accidental wipe.
+    expect(withoutProposal(canvas, "nope").layers.annotation.proposals).toHaveLength(2);
   });
 });

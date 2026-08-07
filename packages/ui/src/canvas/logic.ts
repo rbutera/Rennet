@@ -209,6 +209,39 @@ export function refocusCursor(
   return canvas.layers.analysis.elements.find((el) => el.anchor === cursorAnchor)?.elementKey;
 }
 
+/**
+ * The view state to land on after a lens rotation. The fixed-point rule: if the
+ * hunk under the cursor exists on the new canvas, re-center on that element (zoom
+ * to element); otherwise fall back to the roll-up. Preserving the cursor anchor
+ * itself is the store's job (rotation never clears it) — this resolves WHERE the
+ * rotated view lands so the hunk under the cursor does not move off screen.
+ */
+export function viewAfterRotate(
+  canvas: Canvas,
+  cursorAnchor: string | undefined,
+): { selection?: string; zoom: ZoomState } {
+  const elementKey = refocusCursor(canvas, cursorAnchor);
+  if (elementKey) return { selection: elementKey, zoom: { level: "element", elementKey } };
+  return { zoom: { level: "rollup" } };
+}
+
+// ── Keyboard region: canvas shortcuts must yield to text editing ──────────────
+
+/**
+ * Whether an event target is a text-editing surface (a form field or a
+ * contenteditable node). The canvas keyboard region ([ ] rotate, l/h zoom) must
+ * yield to editing: a keydown that originates in the proposal-edit textarea is
+ * the user typing, not a canvas command, and must pass through untouched.
+ */
+export function isEditableTarget(
+  target: { tagName?: string; isContentEditable?: boolean } | null | undefined,
+): boolean {
+  if (!target) return false;
+  if (target.isContentEditable) return true;
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
 // ── Proposal adjudication: only acceptance creates L2 ─────────────────────────
 
 /** The outcome of adjudicating an orchestrator proposal. */
@@ -246,6 +279,26 @@ export function adjudicateProposal(
     };
   }
   return { kind: "accept-structural", proposalId: proposal.proposalId };
+}
+
+/**
+ * Resolve an adjudicated proposal off the canvas. Once accepted or dismissed, an
+ * orchestrator proposal leaves L3 (accept has already produced its L2 write via
+ * the disposition fan-out, if any). A no-op for an unknown id — never a wipe.
+ */
+export function withoutProposal(canvas: Canvas, proposalId: string): Canvas {
+  return {
+    ...canvas,
+    layers: {
+      ...canvas.layers,
+      annotation: {
+        ...canvas.layers.annotation,
+        proposals: canvas.layers.annotation.proposals.filter(
+          (proposal) => proposal.proposalId !== proposalId,
+        ),
+      },
+    },
+  };
 }
 
 // ── The amber blast-radius overlay: paint, never a queue ──────────────────────

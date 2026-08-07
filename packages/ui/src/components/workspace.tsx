@@ -15,6 +15,9 @@ import {
   adjudicateProposal,
   type DispositionWrite,
   fanOutApproval,
+  isEditableTarget,
+  rotateLens,
+  viewAfterRotate,
   zoomReducer,
 } from "../canvas/logic";
 import { createViewStore, useViewStore, type ViewStore } from "../canvas/store";
@@ -118,7 +121,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     const draft = editing?.id === proposal.proposalId ? editing.draft : undefined;
     const adjudication = adjudicateProposal(proposal, "accepted", draft);
     if (adjudication.kind === "accept-disposition") {
-      emit([{ path: adjudication.path, type: adjudication.type, body: adjudication.body }]);
+      emit([
+        {
+          path: adjudication.path,
+          type: adjudication.type,
+          body: adjudication.body,
+        },
+      ]);
     }
     props.onAdjudicate?.(adjudication);
     setEditing(null);
@@ -148,9 +157,26 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
       .catch(() => undefined);
   }
 
+  // Land on a lens, honouring the fixed-point rule: if the hunk under the cursor
+  // exists on the new canvas, re-center on it (zoom to element); otherwise fall
+  // back to the roll-up. The cursor anchor itself is preserved across the change.
+  function goToAngle(nextAngle: CanvasAngle): void {
+    const view = viewAfterRotate(props.canvases[nextAngle], store.getState().cursorAnchor);
+    store.getState().setAngle(nextAngle);
+    store.getState().select(view.selection);
+    store.getState().setZoom(view.zoom);
+  }
+
+  function rotateAndRefocus(dir: 1 | -1): void {
+    goToAngle(rotateLens(store.getState().angle, dir));
+  }
+
   function onKeyDown(event: React.KeyboardEvent<HTMLDivElement>): void {
-    if (event.key === "]") store.getState().rotate(1);
-    else if (event.key === "[") store.getState().rotate(-1);
+    // Canvas shortcuts must never hijack text editing: a keydown from the
+    // proposal-edit textarea (or any field) is the user typing, not a command.
+    if (isEditableTarget(event.target as HTMLElement)) return;
+    if (event.key === "]") rotateAndRefocus(1);
+    else if (event.key === "[") rotateAndRefocus(-1);
     else if (event.key === "l" || event.key === "ArrowRight")
       store.getState().setZoom(zoomReducer(zoom, { type: "zoomIn" }));
     else if (event.key === "h" || event.key === "ArrowLeft" || event.key === "Escape")
@@ -183,7 +209,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         angle={angle}
         overlayOn={overlayOn}
         scheme={scheme}
-        onSelectAngle={(next) => store.getState().setAngle(next)}
+        onSelectAngle={(next) => goToAngle(next)}
         onToggleOverlay={() => store.getState().toggleOverlay()}
         onToggleScheme={() => store.getState().setScheme(scheme === "dark" ? "light" : "dark")}
       />

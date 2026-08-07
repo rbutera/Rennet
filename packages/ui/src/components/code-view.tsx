@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { type WindowRange, windowRows } from "../canvas/logic";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -41,10 +42,20 @@ export function CodeView({
   overscan = 8,
   renderAll = false,
 }: CodeViewProps) {
+  // The live scroll position: seeded from the prop (which the node-count control
+  // test and any programmatic positioning inject), then advanced by the user's
+  // own scrolling so the window tracks the viewport instead of freezing at row 0.
+  const [scroll, setScroll] = useState(scrollTop);
   const lines = diff.length === 0 ? [] : diff.split("\n");
   const range: WindowRange = renderAll
     ? { start: 0, end: lines.length }
-    : windowRows({ total: lines.length, rowHeight, viewportHeight, scrollTop, overscan });
+    : windowRows({
+        total: lines.length,
+        rowHeight,
+        viewportHeight,
+        scrollTop: scroll,
+        overscan,
+      });
   const visible = lines.slice(range.start, range.end);
 
   return (
@@ -58,6 +69,7 @@ export function CodeView({
       <div
         className="code-view-scroll"
         style={{ height: `${viewportHeight}px` }}
+        onScroll={(event) => setScroll(event.currentTarget.scrollTop)}
         data-total-rows={lines.length}
         data-rendered-rows={visible.length}
       >

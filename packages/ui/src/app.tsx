@@ -2,7 +2,7 @@ import type { RennetBridge } from "@rennet/protocol";
 import type { Canvas, CanvasAngle, Patchset, Review } from "@rennet/types";
 import { useEffect, useMemo, useState } from "react";
 import { demoCanvases, demoDiff } from "./canvas/fixtures";
-import type { DispositionWrite } from "./canvas/logic";
+import { type DispositionWrite, withoutProposal } from "./canvas/logic";
 import { CanvasWorkspace } from "./components/workspace";
 
 type CanvasSet = Record<CanvasAngle, Canvas>;
@@ -28,7 +28,23 @@ function applyWrites(canvases: CanvasSet, writes: DispositionWrite[]): CanvasSet
       if (existing >= 0) dispositions[existing] = disposition;
       else dispositions.push(disposition);
     }
-    next[angle] = { ...canvas, layers: { ...canvas.layers, disposition: { dispositions } } };
+    next[angle] = {
+      ...canvas,
+      layers: { ...canvas.layers, disposition: { dispositions } },
+    };
+  }
+  return next;
+}
+
+/**
+ * Resolve an adjudicated proposal off every canvas (the demo shell's optimistic
+ * L3). Accept has already produced its L2 via `onDispositions`; both accept and
+ * dismiss then remove the proposal so it does not linger or get re-adjudicated.
+ */
+function resolveProposal(canvases: CanvasSet, proposalId: string): CanvasSet {
+  const next = { ...canvases };
+  for (const angle of Object.keys(next) as CanvasAngle[]) {
+    next[angle] = withoutProposal(next[angle], proposalId);
   }
   return next;
 }
@@ -319,6 +335,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           canvases={canvases}
           bridge={bridge}
           onDispositions={(writes) => setCanvases((current) => applyWrites(current, writes))}
+          onAdjudicate={(adjudication) =>
+            setCanvases((current) => resolveProposal(current, adjudication.proposalId))
+          }
           diffFor={(elementKey) => ({ path: elementKey, diff: demoDiff(400) })}
         />
       ) : (
