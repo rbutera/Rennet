@@ -53,7 +53,7 @@ export function isSeqGap(lastSeenSeq: number, notification: CanvasChangeNotifica
 export class CanvasChangeFeed {
   private readonly maxBufferedKeys: number;
   private readonly subscribers = new Map<string, Set<CanvasChangeListener>>();
-  /** Insertion-ordered pending changes, keyed `canvasId\0elementKey`. */
+  /** Insertion-ordered pending changes, keyed `reviewId\0canvasId\0elementKey`. */
   private readonly buffer = new Map<string, BufferedChange>();
 
   constructor(options: CanvasChangeFeedOptions = {}) {
@@ -81,7 +81,10 @@ export class CanvasChangeFeed {
    */
   publish(change: CanvasChange): void {
     if (change.private) return;
-    const key = `${change.canvasId}\0${change.elementKey}`;
+    // Keyed by the full (reviewId, canvasId, elementKey) triple per R35. canvasId
+    // already encodes reviewId today, but keying on the stated triple keeps the
+    // conflation contract self-evident and robust to any future canvasId change.
+    const key = `${change.reviewId}\0${change.canvasId}\0${change.elementKey}`;
     const existing = this.buffer.get(key);
     if (existing) {
       existing.from = Math.min(existing.from, change.seq);

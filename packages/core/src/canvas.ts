@@ -13,13 +13,12 @@ import type {
   DecompositionProposalBody,
   Disposition,
   DispositionType,
-  Patchset,
   Proposal,
   RspDocType,
   SubstrateChunkRef,
   SubstrateLayer,
 } from "@rennet/types";
-import { fileContentDigest, payloadDigest } from "./index";
+import { payloadDigest } from "./index";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Canvas state model (issue #10)
@@ -66,8 +65,17 @@ export function canvasId(reviewId: string, patchsetId: string, angle: CanvasAngl
  * admitted document it references. Two projections of the same admitted content
  * produce the same key.
  */
-function elementKeyFor(docId: string, anchor: string): string {
-  return createHash("sha256").update(`${docId}\0${anchor}`).digest("hex");
+function elementKeyFor(docId: string, discriminator: string): string {
+  return createHash("sha256").update(`${docId}\0${discriminator}`).digest("hex");
+}
+
+/**
+ * A total, locale-INDEPENDENT string order (UTF-16 code units). Placement must be
+ * byte-identical across machines and ICU versions, so canvas ordering never uses
+ * `localeCompare`, whose collation is locale- and ICU-version-sensitive.
+ */
+function compareCodeUnits(left: string, right: string): number {
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 function analysisElement(
@@ -141,7 +149,17 @@ function projectDecisions(docs: AdmittedDocument[], decomposition: Decomposition
   for (const doc of docs) {
     if (!isDecisionRecordBody(doc.body)) continue;
     for (const decision of doc.body.decisions) {
-      const element = analysisElement(doc.docId, decision.anchor, "decision", decision.title);
+      // A decision's identity is its unique `decisionId` within the admitted
+      // document — NEVER its anchor, which several decisions in one cohort
+      // legitimately share (the decisions projector groups a cohort BY shared
+      // anchored chunk). Keying on docId+anchor would collapse them to one key.
+      const element: AnalysisElement = {
+        elementKey: elementKeyFor(doc.docId, `decision/${decision.decisionId}`),
+        docId: doc.docId,
+        anchor: decision.anchor,
+        kind: "decision",
+        title: decision.title,
+      };
       const chunkId = anchoredChunk(decision.anchor, decomposition, hunkChunk);
       const list = cohortElements.get(chunkId) ?? [];
       list.push(element);
@@ -157,14 +175,14 @@ function projectDecisions(docs: AdmittedDocument[], decomposition: Decomposition
     decomposition.chunks.find((chunk) => chunk.chunkId === chunkId)?.title ?? "unplaced decisions";
 
   const orderedChunkIds = [...cohortElements.keys()].sort(
-    (left, right) => orderIndex(left) - orderIndex(right) || left.localeCompare(right),
+    (left, right) => orderIndex(left) - orderIndex(right) || compareCodeUnits(left, right),
   );
 
   const cohorts: AnalysisCohort[] = [];
   const elements: AnalysisElement[] = [];
   for (const chunkId of orderedChunkIds) {
     const cohortEls = (cohortElements.get(chunkId) ?? []).sort((left, right) =>
-      left.elementKey.localeCompare(right.elementKey),
+      compareCodeUnits(left.elementKey, right.elementKey),
     );
     elements.push(...cohortEls);
     cohorts.push({
@@ -184,7 +202,11 @@ function projectDecisions(docs: AdmittedDocument[], decomposition: Decomposition
  * offline) — its chunks in its topological reading order.
  */
 function projectSequence(docs: AdmittedDocument[], decomposition: Decomposition): AnalysisLayer {
-  const proposal = docs.find((doc) => isProposalBody(doc.body));
+  // Deterministic selection: pick the lowest docId among admitted proposals so
+  // the sequence canvas is a pure function of the doc SET, never of input order.
+  const proposal = docs
+    .filter((doc) => isProposalBody(doc.body))
+    .sort((left, right) => compareCodeUnits(left.docId, right.docId))[0];
   if (proposal && isProposalBody(proposal.body)) {
     const byId = new Map(
       proposal.body.chunks.map((chunk) => [
@@ -224,7 +246,7 @@ function projectSequence(docs: AdmittedDocument[], decomposition: Decomposition)
 function projectFlat(angle: CanvasAngle, docs: AdmittedDocument[]): AnalysisLayer {
   const elements = docs
     .map((doc) => analysisElement(doc.docId, `rennet:doc/${doc.docId}`, doc.docType, doc.docType))
-    .sort((left, right) => left.elementKey.localeCompare(right.elementKey));
+    .sort((left, right) => compareCodeUnits(left.elementKey, right.elementKey));
   return { elements, cohorts: [], readingOrder: elements.map((element) => element.elementKey) };
 }
 
@@ -259,7 +281,7 @@ export function projectBlastRadius(admittedDocs: AdmittedDocument[]): BlastRadiu
       }
     }
   }
-  return paint.sort((left, right) => left.target.localeCompare(right.target));
+  return paint.sort((left, right) => compareCodeUnits(left.target, right.target));
 }
 
 /** The L0 substrate: the decomposition chunks the canvas is about (read-only). */
@@ -306,10 +328,13 @@ export interface CanvasOpState {
  * are cleared. Annotations added after a `SessionEnded` belong to the next
  * session.
  */
-export function foldCanvas(events: CanvasEvent[]): CanvasOpState {
+export function foldCanvas(canvasId: string, events: CanvasEvent[]): CanvasOpState {
   let annotations: Annotation[] = [];
   let proposals: Proposal[] = [];
   for (const event of events) {
+    // Canvas-scoped: an op addressed to another canvas never touches this one —
+    // no cross-canvas annotation leak, no cross-canvas SessionEnded clear.
+    if (event.canvasId !== canvasId) continue;
     switch (event.type) {
       case "CanvasAnnotated":
         annotations = [
@@ -365,12 +390,13 @@ export interface BuildCanvasInput {
  * contributes to L2.
  */
 export function buildCanvas(input: BuildCanvasInput): Canvas {
+  const id = canvasId(input.reviewId, input.patchsetId, input.angle);
   const substrate = projectSubstrate(input.decomposition);
   const canvasPaths = new Set(substrate.chunks.flatMap((chunk) => chunk.filePaths));
   const analysis = projectAnalysis(input.angle, input.admittedDocs, input.decomposition);
-  const { annotations, proposals } = foldCanvas(input.canvasEvents);
+  const { annotations, proposals } = foldCanvas(id, input.canvasEvents);
   return {
-    canvasId: canvasId(input.reviewId, input.patchsetId, input.angle),
+    canvasId: id,
     reviewId: input.reviewId,
     patchsetId: input.patchsetId,
     angle: input.angle,
@@ -391,27 +417,12 @@ export function canvasDigest(canvas: Canvas): string {
   return payloadDigest(canvas);
 }
 
-// ── Successor-canvas carry (exact-lineage only) ──────────────────────────────
-
-/**
- * Carry dispositions onto a successor patchset, EXACT-LINEAGE ONLY: a disposition
- * survives only where the successor still has a file at the same path whose patch
- * is byte-identical. A changed file (a changed hunk within it) yields a different
- * content digest and its approval does NOT carry; ambiguity fails closed and the
- * element arrives unread. The calibrated fuzzy matcher (Spike 1) upgrades this
- * seam later.
- */
-export function carrySuccessorDispositions(
-  previous: Disposition[],
-  nextPatchset: Patchset,
-): Disposition[] {
-  const digestByPath = new Map<string, string>();
-  for (const file of nextPatchset.files) digestByPath.set(file.path, fileContentDigest(file));
-  return previous.filter((disposition) => {
-    const nextDigest = digestByPath.get(disposition.anchor.path);
-    return nextDigest !== undefined && nextDigest === disposition.anchor.contentDigest;
-  });
-}
+// ── Successor-canvas carry ───────────────────────────────────────────────────
+// The successor canvas has NO carry logic of its own: it reads the review's
+// dispositions, which the live review fold (PatchsetActivated → carryDispositions,
+// exact-lineage byte-identical, fails closed on any change) has already narrowed.
+// A second copy here would be a byte-identical duplicate of the live path that the
+// canvas is never the source of truth for, so it is deliberately absent.
 
 // ── Actor-partitioned command vocabularies (structural L2 sovereignty) ────────
 

@@ -78,6 +78,26 @@ describe("a consumer that misses notifications re-queries the projection (AC6)",
     expect(isSeqGap(lastSeen, seen[0] as CanvasChangeNotification)).toBe(true);
   });
 
+  it("drives recovery: a consumer that observes a gap re-queries the projection store", () => {
+    // The feed is an invalidation HINT — truth stays the store. This proves the
+    // gap rule actually DRIVES a re-query, not merely that a predicate returns
+    // true: a consumer wired to the feed reloads the projection on a gap. If the
+    // gap never fired, `reloads` would stay 0 and this test would go red.
+    const feed = new CanvasChangeFeed({ maxBufferedKeys: 1 });
+    let lastSeen = 0;
+    let reloads = 0;
+    feed.subscribe("cv", (notification) => {
+      if (isSeqGap(lastSeen, notification)) reloads += 1; // re-query the store
+      lastSeen = notification.seqRange.to;
+    });
+    feed.publish({ reviewId: "r", canvasId: "cv", elementKey: "a", seq: 1 }); // evicted
+    feed.publish({ reviewId: "r", canvasId: "cv", elementKey: "b", seq: 2 }); // evicted
+    feed.publish({ reviewId: "r", canvasId: "cv", elementKey: "c", seq: 3 }); // survives
+    feed.flush();
+    expect(reloads).toBe(1);
+    expect(lastSeen).toBe(3);
+  });
+
   it("does not signal a gap when the consumer is caught up", () => {
     const feed = new CanvasChangeFeed();
     const seen = collect(feed, "cv");

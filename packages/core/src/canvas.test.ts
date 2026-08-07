@@ -12,11 +12,12 @@ import {
   buildCanvas,
   type CanvasEvent,
   canvasDigest,
-  carrySuccessorDispositions,
+  canvasId,
   dispatchOrchestratorCanvasOp,
   dispatchUserCanvasCommand,
   fileContentDigest,
   foldCanvas,
+  foldReview,
   ORCHESTRATOR_CANVAS_OPS,
   ORCHESTRATOR_EMITTABLE_EVENT_TYPES,
   projectAnalysis,
@@ -124,11 +125,14 @@ const patchset = (id: string, files: PatchFile[]): Patchset => ({
 // ── AC1: byte-identical replay ───────────────────────────────────────────────
 
 describe("buildCanvas rebuilds byte-identically from event replay (AC1)", () => {
+  // Events are addressed to THIS canvas's real (hashed) id, not a placeholder —
+  // otherwise the canvas-scoped fold drops them and the replay test proves nothing.
+  const cid = canvasId("rev1", "ps_1", "decisions");
   const events: CanvasEvent[] = [
     {
       type: "CanvasAnnotated",
       version: 1,
-      canvasId: "x",
+      canvasId: cid,
       annotation: {
         annotationId: "an1",
         target: "e",
@@ -137,7 +141,7 @@ describe("buildCanvas rebuilds byte-identically from event replay (AC1)", () => 
         pinned: false,
       },
     },
-    { type: "AnnotationPinned", version: 1, canvasId: "x", annotationId: "an1" },
+    { type: "AnnotationPinned", version: 1, canvasId: cid, annotationId: "an1" },
   ];
   const input = {
     reviewId: "rev1",
@@ -150,6 +154,12 @@ describe("buildCanvas rebuilds byte-identically from event replay (AC1)", () => 
     dispositions: [] as Disposition[],
     canvasEvents: events,
   };
+
+  it("actually places the replayed annotation (guards against a vacuous replay)", () => {
+    const canvas = buildCanvas(input);
+    expect(canvas.layers.annotation.annotations.map((a) => a.annotationId)).toEqual(["an1"]);
+    expect(canvas.layers.annotation.annotations[0]?.pinned).toBe(true);
+  });
 
   it("produces an equal canonical digest on replay", () => {
     const first = canvasDigest(buildCanvas(input));
@@ -168,9 +178,21 @@ describe("L1 placement is a deterministic pure function (AC2)", () => {
     ]),
   ];
 
-  it("projects the same admitted docs to a deep-equal analysis layer", () => {
-    expect(projectAnalysis("decisions", docs, DECOMP)).toEqual(
-      projectAnalysis("decisions", docs, DECOMP),
+  it("is a pure function of the admitted-doc SET: permuted, independently-built inputs project identically", () => {
+    // Two INDEPENDENT doc lists (not the same reference), one the reverse of the
+    // other, including two decisions in the SAME cohort so within-cohort order is
+    // exercised. A pure placement gives byte-identical output regardless of input
+    // order; input-order dependence or element-key collisions make these diverge.
+    const build = (reversed: boolean): AdmittedDocument[] => {
+      const decisions = [
+        { decisionId: "d1", anchor: "rennet:chunk/c1", title: "one" },
+        { decisionId: "d2", anchor: "rennet:chunk/c1", title: "two" },
+        { decisionId: "d3", anchor: "rennet:chunk/c2", title: "three" },
+      ];
+      return [decisionsDoc(reversed ? [...decisions].reverse() : decisions)];
+    };
+    expect(projectAnalysis("decisions", build(true), DECOMP)).toEqual(
+      projectAnalysis("decisions", build(false), DECOMP),
     );
   });
 
@@ -187,7 +209,10 @@ describe("L1 placement is a deterministic pure function (AC2)", () => {
     }
   });
 
-  it("never caps a cohort (500 decisions all placed)", () => {
+  it("never caps a cohort and mints a UNIQUE key per decision (500 placed, 500 distinct)", () => {
+    // All 500 decisions share one anchor — the normal cohort case. Keying on
+    // docId+anchor alone would collapse them to ONE key; a length check would
+    // still pass. Uniqueness is what proves each decision is separately placed.
     const many = Array.from({ length: 500 }, (_, index) => ({
       decisionId: `d${index}`,
       anchor: "rennet:chunk/c1",
@@ -196,7 +221,9 @@ describe("L1 placement is a deterministic pure function (AC2)", () => {
     const layer = projectAnalysis("decisions", [decisionsDoc(many)], DECOMP);
     const cohort = layer.cohorts.find((c) => c.cohortKey === "cohort:c1");
     expect(cohort?.elementKeys).toHaveLength(500);
+    expect(new Set(cohort?.elementKeys).size).toBe(500);
     expect(layer.elements).toHaveLength(500);
+    expect(new Set(layer.elements.map((element) => element.elementKey)).size).toBe(500);
   });
 
   it("places the sequence canvas in the admitted reading order and paints the overlay", () => {
@@ -276,7 +303,7 @@ describe("L3 annotations are session-scoped (AC4)", () => {
       {
         type: "CanvasAnnotated",
         version: 1,
-        canvasId: "x",
+        canvasId: "cv-a",
         annotation: {
           annotationId: "keep",
           target: "e1",
@@ -288,7 +315,7 @@ describe("L3 annotations are session-scoped (AC4)", () => {
       {
         type: "CanvasAnnotated",
         version: 1,
-        canvasId: "x",
+        canvasId: "cv-a",
         annotation: {
           annotationId: "drop",
           target: "e2",
@@ -297,46 +324,97 @@ describe("L3 annotations are session-scoped (AC4)", () => {
           pinned: false,
         },
       },
-      { type: "AnnotationPinned", version: 1, canvasId: "x", annotationId: "keep" },
-      { type: "SessionEnded", version: 1, canvasId: "x" },
+      { type: "AnnotationPinned", version: 1, canvasId: "cv-a", annotationId: "keep" },
+      { type: "SessionEnded", version: 1, canvasId: "cv-a" },
     ];
-    const state = foldCanvas(events);
+    const state = foldCanvas("cv-a", events);
     expect(state.annotations.map((a) => a.annotationId)).toEqual(["keep"]);
     expect(state.annotations[0]?.pinned).toBe(true);
+  });
+
+  it("is canvas-scoped: an annotation on one canvas never appears on another, and a SessionEnded for canvas A leaves canvas B untouched", () => {
+    const events: CanvasEvent[] = [
+      {
+        type: "CanvasAnnotated",
+        version: 1,
+        canvasId: "cv-a",
+        annotation: {
+          annotationId: "a-note",
+          target: "e1",
+          kind: "highlight",
+          body: "",
+          pinned: false,
+        },
+      },
+      {
+        type: "CanvasAnnotated",
+        version: 1,
+        canvasId: "cv-b",
+        annotation: {
+          annotationId: "b-note",
+          target: "e2",
+          kind: "highlight",
+          body: "",
+          pinned: false,
+        },
+      },
+      // A's session ends. It must clear only A's unpinned note, never touch B's.
+      { type: "SessionEnded", version: 1, canvasId: "cv-a" },
+    ];
+    expect(foldCanvas("cv-a", events).annotations.map((a) => a.annotationId)).toEqual([]);
+    expect(foldCanvas("cv-b", events).annotations.map((a) => a.annotationId)).toEqual(["b-note"]);
   });
 });
 
 // ── AC5: successor-canvas carry is exact-lineage only ────────────────────────
 
-describe("successor-canvas carry is exact-lineage only (AC5)", () => {
-  it("carries an unchanged file's approval and drops a changed file's", () => {
-    const unchangedPatch = "@@ -1 +1 @@\n-old\n+new-a";
-    const changedNext = "@@ -1 +2 @@\n-old\n+new-b-CHANGED";
-    const next = patchset("ps_2", [
-      patchFile("a.ts", unchangedPatch),
-      patchFile("b.ts", changedNext),
-    ]);
-
-    const previous: Disposition[] = [
-      {
-        anchor: {
-          path: "a.ts",
-          contentDigest: fileContentDigest(patchFile("a.ts", unchangedPatch)),
+describe("successor-canvas carry is exact-lineage only, on the LIVE path (AC5)", () => {
+  it("a changed hunk's approval does NOT appear in the successor canvas L2; the unchanged one does", () => {
+    // The successor canvas has no carry logic of its own — it reads the review's
+    // dispositions, which the LIVE review fold (PatchsetActivated → carry) has
+    // already narrowed to byte-identical anchors. Drive that live path, then build
+    // the successor canvas and assert what its L2 layer shows.
+    const p1 = patchset("ps_1", [patchFile("a.ts", "AAA"), patchFile("b.ts", "BBB")]);
+    let review = foldReview(null, {
+      type: "ReviewCreated",
+      version: 1,
+      reviewId: "rev1",
+      patchset: p1,
+    });
+    for (const [path, patch] of [
+      ["a.ts", "AAA"],
+      ["b.ts", "BBB"],
+    ] as const) {
+      review = foldReview(review, {
+        type: "DispositionSet",
+        version: 1,
+        reviewId: "rev1",
+        patchsetId: "ps_1",
+        disposition: {
+          anchor: { path, contentDigest: fileContentDigest(patchFile(path, patch)) },
+          type: "approve",
+          body: "",
         },
-        type: "approve",
-        body: "",
-      },
-      {
-        anchor: {
-          path: "b.ts",
-          contentDigest: fileContentDigest(patchFile("b.ts", "@@ -1 +1 @@\n-old\n+new-b-ORIGINAL")),
-        },
-        type: "approve",
-        body: "",
-      },
-    ];
+      });
+    }
+    // Successor patchset: a.ts byte-identical, b.ts changed.
+    const p2 = patchset("ps_2", [patchFile("a.ts", "AAA"), patchFile("b.ts", "BBB-CHANGED")]);
+    review = foldReview(review, {
+      type: "PatchsetActivated",
+      version: 1,
+      reviewId: "rev1",
+      patchset: p2,
+    });
 
-    const carried = carrySuccessorDispositions(previous, next);
-    expect(carried.map((d) => d.anchor.path)).toEqual(["a.ts"]);
+    const canvas = buildCanvas({
+      reviewId: "rev1",
+      patchsetId: "ps_2",
+      angle: "spec",
+      admittedDocs: [],
+      decomposition: { ...DECOMP, patchsetId: "ps_2" },
+      dispositions: review.dispositions,
+      canvasEvents: [],
+    });
+    expect(canvas.layers.disposition.dispositions.map((d) => d.anchor.path)).toEqual(["a.ts"]);
   });
 });
