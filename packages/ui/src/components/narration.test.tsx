@@ -70,13 +70,20 @@ describe("CanvasWorkspace — narration at the matching altitude", () => {
     expect(html).toContain("Narration pending");
   });
 
-  it("falls back to an honest pending line when no narration is delivered at all", () => {
+  it("renders nothing (never a permanent-pending lie) when the narration subsystem is entirely absent", () => {
     const empty: ReviewNarration | undefined = undefined;
     const html = renderToStaticMarkup(
       <CanvasWorkspace canvases={demoCanvases()} narration={empty} />,
     );
-    // Roll-up zoom with no narration prop → the panel is absent (nothing to show),
-    // so the surface never crashes; the narration panel simply does not render.
+    // An ABSENT narration prop is not a per-node gap — it means the narration
+    // subsystem was never wired for this render (version skew / demo shell). The
+    // live pipeline ALWAYS delivers a ReviewNarration (buildReviewNarration returns
+    // one for every outcome), so on the real path a node gap resolves to an honest
+    // `pending` (see narration-logic.test.ts). But when the WHOLE object is absent,
+    // a permanent "Narration pending" panel would be a lie — nothing is pending
+    // because nothing is coming. The honest surface renders no panel and never
+    // crashes. (The never-blank floor is a promise about a DELIVERED narration.)
     expect(html).not.toContain("narration-panel");
+    expect(html).not.toContain("Narration pending");
   });
 });
