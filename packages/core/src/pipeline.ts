@@ -25,6 +25,7 @@ import {
   DECOMPOSITION_PROPOSAL_CONTRACT,
   ORDERING_CONTRACT,
   type PromptContract,
+  ROLLUP_NARRATION_CONTRACT,
 } from "@rennet/instructions";
 import type {
   Canvas,
@@ -38,6 +39,7 @@ import type {
   OfferedManifest,
   Patchset,
   ResolutionTrace,
+  ReviewNarration,
   RoutePlanResult,
   RspCapabilitySnapshot,
   RspDocType,
@@ -65,6 +67,12 @@ import {
   resolveLiveOrder,
   runOrderingPass,
 } from "./ordering-pass";
+import {
+  buildReviewNarration,
+  offeredNarrationNodes,
+  type RunRollupNarrationResult,
+  runRollupNarration,
+} from "./rollup-narration";
 import {
   buildRoutePlan,
   DEFAULT_MAX_HARNESS_INVOCATIONS,
@@ -153,6 +161,14 @@ export interface ReviewPipelineInput {
   /** Drives the comprehension-ordering pass. Absent means the #8 baseline order stands. */
   readonly runOrderingTurn?: (prompt: string, attempt: number) => Promise<OrderingTurnResult>;
   readonly orderingContract?: PromptContract;
+  /**
+   * Drives the roll-up narration pass (#70). Absent (or a Codex resolution with no
+   * port, or a budget refusal) means every node's narration is the honest
+   * `pending` state — never a fabricated account. Narration draws from the SAME
+   * shared budget, so its turns count toward the <5 ceiling.
+   */
+  readonly runNarrationTurn?: (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
+  readonly narrationContract?: PromptContract;
   /** Deterministic id hooks (tests); default to the random minters. */
   readonly mintDocId?: () => string;
   readonly newRunId?: () => string;
@@ -174,6 +190,15 @@ export interface ReviewPipelineResult {
   readonly orderingResult?: RunOrderingPassResult;
   /** The admitted documents placed onto the canvases (empty on the floor path). */
   readonly admittedDocs: AdmittedDocument[];
+  /**
+   * The roll-up narration placed onto the canvases (issue #70), delivered
+   * ALONGSIDE the canvas set (never embedded on a `Canvas`, so the projection
+   * stays byte-identical for replay). Every node above a chunk resolves to a
+   * narrated account or an honest pending/failed state — never a silent blank.
+   */
+  readonly narration: ReviewNarration;
+  /** The narration run result (for provenance / telemetry); absent when it did not run. */
+  readonly narrationResult?: RunRollupNarrationResult;
 }
 
 /**
@@ -342,6 +367,36 @@ export async function buildReviewCanvases(
   const canvases = Object.fromEntries(entries) as Record<CanvasAngle, Canvas>;
   const elementDiffs = buildElementDiffs(canvases, decomposition, input.patchset, admittedDocs);
 
+  // Roll-up narration (#70): the zoom ladder's own voice, produced AFTER the
+  // canvases exist (it accounts for their nodes). It is a council-routed light-tier
+  // seat drawing from the SAME shared budget — so its turns count toward the <5
+  // ceiling, and a budget refusal (route plan OR the shared counter exhausted by
+  // the decomposition/ordering phase) leaves every node's narration `pending`,
+  // never a fabricated account. The offered node set is always ≥1 (the rollup).
+  const narrationNodes = offeredNarrationNodes(canvases);
+  const narrationManifest = buildOfferedManifest(decomposition);
+  const narrationSeat = resolveSeat(
+    "rollup-narration",
+    "rollup-narration",
+    narrationManifest,
+    input.runNarrationTurn,
+  );
+  let narrationResult: RunRollupNarrationResult | undefined;
+  if (narrationSeat.runTurn && !budgetRefused) {
+    narrationResult = await runRollupNarration({
+      nodes: narrationNodes,
+      decomposition,
+      patchsetId: decomposition.patchsetId,
+      contract: input.narrationContract ?? ROLLUP_NARRATION_CONTRACT,
+      provenance: narrationSeat.seed,
+      runTurn: narrationSeat.runTurn,
+      budget,
+      ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
+      ...(input.newRunId ? { newRunId: input.newRunId } : {}),
+    });
+  }
+  const narration = buildReviewNarration(narrationNodes, narrationResult);
+
   return {
     canvases,
     elementDiffs,
@@ -351,5 +406,7 @@ export async function buildReviewCanvases(
     ...(decompositionResult ? { decompositionResult } : {}),
     ...(orderingResult ? { orderingResult } : {}),
     admittedDocs,
+    narration,
+    ...(narrationResult ? { narrationResult } : {}),
   };
 }

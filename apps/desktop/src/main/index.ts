@@ -24,6 +24,7 @@ import type {
   ElementDiffs,
   Patchset,
   Review,
+  ReviewNarration,
 } from "@rennet/types";
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session } from "electron";
 import { createDispatch } from "./dispatch";
@@ -114,9 +115,11 @@ async function chooseRepository(): Promise<string | null> {
  * the decomposition angle + ordering pass on their subscription OAuth. With no
  * harness the deterministic floor still populates real canvases from the diff.
  */
-async function buildCanvasesForReview(
-  review: Review,
-): Promise<{ canvases: Record<CanvasAngle, Canvas>; elementDiffs: ElementDiffs }> {
+async function buildCanvasesForReview(review: Review): Promise<{
+  canvases: Record<CanvasAngle, Canvas>;
+  elementDiffs: ElementDiffs;
+  narration?: ReviewNarration;
+}> {
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
   const codex = await getCodexAvailability();
@@ -135,6 +138,12 @@ async function buildCanvasesForReview(
   const runOrderingTurn = adapter
     ? createHarnessRunTurn(adapter, { docType: "ordering", cwd: review.repositoryRoot })
     : undefined;
+  // Roll-up narration (#70) is a light-tier council-routed seat. Under `both` the
+  // council routes it to cheap Codex ($0) via the port; under claude-only it uses
+  // this injected Claude turn. Absent an adapter it stays pending (never faked).
+  const runNarrationTurn = adapter
+    ? createHarnessRunTurn(adapter, { docType: "rollup-narration", cwd: review.repositoryRoot })
+    : undefined;
 
   // The Model Council availability is the honestly-probed installed set: Claude
   // iff its binary was discovered, Codex iff `codex --version` answered. The
@@ -152,8 +161,13 @@ async function buildCanvasesForReview(
     ...(codex.available ? { codexPort: getCodexPort() } : {}),
     ...(runDecompositionTurn ? { runDecompositionTurn } : {}),
     ...(runOrderingTurn ? { runOrderingTurn } : {}),
+    ...(runNarrationTurn ? { runNarrationTurn } : {}),
   });
-  return { canvases: result.canvases, elementDiffs: result.elementDiffs };
+  return {
+    canvases: result.canvases,
+    elementDiffs: result.elementDiffs,
+    narration: result.narration,
+  };
 }
 
 function registerCommandHandler(): void {

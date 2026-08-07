@@ -5,6 +5,7 @@ import type {
   CanvasChangeNotification,
   DispositionType,
   Proposal,
+  ReviewNarration,
 } from "@rennet/types";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
@@ -22,6 +23,7 @@ import {
   type DispositionWrite,
   fanOutApproval,
   isEditableTarget,
+  narrationForZoom,
   rotateLens,
   viewAfterRotate,
   zoomReducer,
@@ -38,6 +40,7 @@ import { GranularityAuthor, type GranularityContext } from "./granularity-author
 import { AnnotationMark, ProposalMark } from "./l3";
 import { LensSwitcher } from "./lens";
 import { MarkIndex, type MarkIndexEntry } from "./mark-index";
+import { NarrationPanel } from "./narration";
 import { OrphanTray } from "./orphan-tray";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -63,6 +66,13 @@ export interface CanvasWorkspaceProps {
   /** Change-feed invalidation hint — where a re-query (TanStack invalidation) slots in. */
   onInvalidate?: (notification: CanvasChangeNotification) => void;
   diffFor?: DiffResolver;
+  /**
+   * The roll-up narration placed onto the canvases (issue #70), delivered
+   * alongside the canvas set. Rendered at the matching zoom altitude (roll-up /
+   * cohort). Absent means the pipeline produced no narration — every altitude then
+   * shows an honest "narration pending" line, never a silent blank.
+   */
+  narration?: ReviewNarration;
 
   // ── Authoring depth (issue #17), additive and optional ──────────────────────
   // The dock renders only the sections whose props are supplied, so a host that
@@ -314,6 +324,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
 
   const diff = zoom.level === "diff" && selection ? props.diffFor?.(selection) : undefined;
 
+  // The narrated account for the altitude in view (#70): the whole-changeset
+  // roll-up at roll-up zoom, the cohort's account at cohort zoom, nothing below.
+  const narrationPlacement = narrationForZoom(props.narration, zoom);
+
   // The occurrence the shown diff renders, and the marks that belong to it. Marks
   // for other elements are not this view's concern (they are not orphans — they
   // live on their own element's diff); the CodeView only receives its occurrence's.
@@ -405,6 +419,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
       {marks.length > 0 ? <MarkIndex entries={markEntries} onNavigate={navigateToMark} /> : null}
 
       <main className="canvas-surface">
+        {/* Narrative first (Design Doctrine R2): the zoom ladder's own voice for
+            the altitude in view, above the grouped summary. Shown at the roll-up
+            and cohort altitudes; never a spinner, never a silent blank. */}
+        {narrationPlacement ? (
+          <NarrationPanel altitude={ZOOM_LABELS[zoom.level]} placement={narrationPlacement} />
+        ) : null}
         {angle === "decisions" ? (
           <DecisionsCanvas
             canvas={canvas}

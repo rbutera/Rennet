@@ -89,10 +89,36 @@ const orderingBodySchema = z
   })
   .loose();
 
+/**
+ * The `rollup-narration` body (issue #70): a batch of per-altitude narrated
+ * accounts. `oneLine`/`paragraph` are any string here (empty passes the shape);
+ * V120/V121 enforce non-empty so the rejection carries the precise code. The
+ * entry `anchor` is a canvas-node key (NOT a `rennet:` code anchor), so the
+ * generic anchor walk ignores it; node coverage is the runner's floor. The
+ * optional `evidence` pairs carry `rennet:` code anchors that the generic quote
+ * walk (V006) byte-verifies against the offered manifest.
+ */
+const narrationEvidenceSchema = z
+  .object({ anchor: z.string().min(1), quote: z.string().min(1) })
+  .loose();
+
+const narrationEntrySchema = z
+  .object({
+    altitude: z.enum(["rollup", "group", "cohort"]),
+    anchor: z.string().min(1),
+    oneLine: z.string(),
+    paragraph: z.string(),
+    evidence: z.array(narrationEvidenceSchema).optional(),
+  })
+  .loose();
+
+const rollupNarrationBodySchema = z.object({ narrations: z.array(narrationEntrySchema) }).loose();
+
 const BODY_SCHEMAS: Readonly<Partial<Record<RspDocType, z.ZodType>>> = {
   "decomposition.skeleton": skeletonBodySchema,
   "decomposition.proposal": proposalBodySchema,
   ordering: orderingBodySchema,
+  "rollup-narration": rollupNarrationBodySchema,
 };
 
 /**
@@ -179,6 +205,13 @@ export function validateBodyRules(
     return validateOrderingRules(parsed.data, offeredIdsOfKind(manifest, "chunk"));
   }
 
+  // The roll-up narration (#70): only per-entry prose non-emptiness lives here;
+  // node coverage/no-minted/altitude consistency is the runner's floor (the
+  // validator has no canvas-node set — the manifest offers code occurrences).
+  if (docType === "rollup-narration") {
+    return validateNarrationRules(parsed.data);
+  }
+
   const offeredHunkIds = offeredIdsOfKind(manifest, "hunk");
   const view = viewOf(docType, parsed.data);
   const errors: ValidationError[] = [];
@@ -251,6 +284,39 @@ function validateOrderingRules(
     });
   }
 
+  return errors;
+}
+
+// ── The narration rule catalogue (issue #70) ─────────────────────────────────
+
+/**
+ * Validate a `rollup-narration` body's per-entry prose: V120 (a non-empty
+ * one-line account) and V121 (a non-empty paragraph account). Both atomic. The
+ * altitude enum is enforced by the shape schema (V108); the code citations, when
+ * present, are byte-verified by the generic `{anchor, quote}` walk (V006). Node
+ * coverage/no-minted/altitude consistency is NOT here: the validator has no
+ * canvas-node set, so the runner enforces it against the live nodes (the ordering
+ * pass's own dependency-floor precedent).
+ */
+function validateNarrationRules(parsed: unknown): ValidationError[] {
+  const body = parsed as { narrations: { oneLine: string; paragraph: string }[] };
+  const errors: ValidationError[] = [];
+  body.narrations.forEach((entry, index) => {
+    if (entry.oneLine.trim().length === 0) {
+      errors.push({
+        code: "V120",
+        pointer: `/body/narrations/${index}/oneLine`,
+        message: "narration one-line account is empty",
+      });
+    }
+    if (entry.paragraph.trim().length === 0) {
+      errors.push({
+        code: "V121",
+        pointer: `/body/narrations/${index}/paragraph`,
+        message: "narration paragraph account is empty",
+      });
+    }
+  });
   return errors;
 }
 

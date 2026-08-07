@@ -27,6 +27,7 @@ export * from "./orchestrator-primer";
 export * from "./orchestrator-session";
 export * from "./ordering-pass";
 export * from "./pipeline";
+export * from "./rollup-narration";
 export * from "./route-plan";
 
 export type ReviewEvent =

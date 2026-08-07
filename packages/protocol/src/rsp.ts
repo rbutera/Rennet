@@ -65,6 +65,7 @@ export const RSP_DOC_TYPES = [
   "decomposition.skeleton",
   "decomposition.proposal",
   "ordering",
+  "rollup-narration",
   "decision.record",
   "claim",
   "adjudication",
@@ -100,6 +101,11 @@ export const DOC_TYPE_REGISTRY: Readonly<Record<RspDocType, DocTypeSpec>> = {
   // The comprehension ordering (#9) is admitted whole: a broken order is not a
   // set of independently-droppable items.
   ordering: { admission: "atomic", supportedSchemaVersions: [1] },
+  // Roll-up narration (#70) is admitted whole: the batch fails closed to an honest
+  // "narration pending/failed" state rather than half-narrating the zoom ladder, so
+  // one bad account (e.g. a fabricated quote) rejects the whole batch and the runner
+  // retries, falling to the honest never-blank state on terminal failure.
+  "rollup-narration": { admission: "atomic", supportedSchemaVersions: [1] },
   "decision.record": {
     admission: "itemwise",
     supportedSchemaVersions: [1],

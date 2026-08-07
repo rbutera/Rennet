@@ -1,9 +1,9 @@
 import type { RennetBridge } from "@rennet/protocol";
-import type { CanvasAngle, ElementDiffs, Patchset, Review } from "@rennet/types";
+import type { CanvasAngle, ElementDiffs, Patchset, Review, ReviewNarration } from "@rennet/types";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { addToBatch, type DispositionBatch, withdrawDraft } from "./canvas/authoring";
 import { type DestinationMode, destinationVariant, draftsFromWrites } from "./canvas/destination";
-import { demoCanvases, demoDiff } from "./canvas/fixtures";
+import { demoCanvases, demoDiff, demoNarration } from "./canvas/fixtures";
 import { type CanvasSet, loadCanvases } from "./canvas/load";
 import { type DispositionWrite, withoutProposal } from "./canvas/logic";
 import { DestinationFrame } from "./components/destination-frame";
@@ -204,6 +204,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // are the real set. While `liveLoaded` is false the fixtures demo is up and the
   // zoom surface uses `demoDiff`; once a real set loads, zoom reads real code.
   const [elementDiffs, setElementDiffs] = useState<ElementDiffs>({});
+  // The roll-up narration (issue #70): the zoom ladder's own voice, delivered
+  // alongside the canvas set. The demo seeds narrated accounts; a live load sets
+  // whatever the engine produced (undefined → the honest pending state).
+  const [narration, setNarration] = useState<ReviewNarration | undefined>(() => demoNarration());
   const [liveLoaded, setLiveLoaded] = useState(false);
   const fetchedForReview = useRef<string | null>(null);
   // The DESTINATION (issue #64): the staged set is the north the review builds
@@ -269,6 +273,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       if (cancelled || !live) return;
       setCanvases(live.canvases);
       setElementDiffs(live.elementDiffs);
+      setNarration(live.narration);
       setLiveLoaded(true);
     });
     return () => {
@@ -406,6 +411,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         <CanvasWorkspace
           canvases={canvases}
           bridge={bridge}
+          narration={narration}
           onDispositions={(writes) => {
             setCanvases((current) => applyWrites(current, writes));
             // dispose == staged: authoring a disposition stages it toward the

@@ -1,17 +1,20 @@
 import type { RennetBridge } from "@rennet/protocol";
-import type { Canvas, CanvasAngle, ElementDiffs, Review } from "@rennet/types";
+import type { Canvas, CanvasAngle, ElementDiffs, Review, ReviewNarration } from "@rennet/types";
 
 /** The five-angle canvas set the canvas workspace renders. */
 export type CanvasSet = Record<CanvasAngle, Canvas>;
 
 /**
- * The live canvas set plus its real per-element diff map (issue #60). The diffs
- * are delivered ALONGSIDE the canvases so zooming into an element shows real code
- * (sliced verbatim from the captured patch), not the `demoDiff` fixture.
+ * The live canvas set plus its real per-element diff map (issue #60) and the
+ * roll-up narration (issue #70). Both are delivered ALONGSIDE the canvases: the
+ * diffs so zooming into an element shows real code, the narration so each altitude
+ * above a chunk carries the agent's account. `narration` is optional (a desktop
+ * build that predates it omits it — the UI then shows the honest pending state).
  */
 export interface LoadedCanvases {
   canvases: CanvasSet;
   elementDiffs: ElementDiffs;
+  narration?: ReviewNarration;
 }
 
 /**
@@ -27,12 +30,12 @@ export async function loadCanvases(
   review: Review,
 ): Promise<LoadedCanvases | null> {
   try {
-    const { canvases, elementDiffs } = await bridge.invoke("review.canvases", {
+    const { canvases, elementDiffs, narration } = await bridge.invoke("review.canvases", {
       commandId: crypto.randomUUID(),
       reviewId: review.id,
       repoPath: review.repositoryRoot,
     });
-    return { canvases, elementDiffs };
+    return { canvases, elementDiffs, ...(narration ? { narration } : {}) };
   } catch {
     return null;
   }

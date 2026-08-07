@@ -4,6 +4,7 @@ import type {
   CanvasAngle,
   Disposition,
   Proposal,
+  ReviewNarration,
   SubstrateChunkRef,
 } from "@rennet/types";
 
@@ -206,6 +207,38 @@ export function demoCanvases(): Record<CanvasAngle, Canvas> {
       "Formatting-only churn in three files",
       "Import reordering across the module",
     ]),
+  };
+}
+
+/**
+ * Demo roll-up narration (issue #70): a narrated account at every altitude the
+ * demo canvases expose — the whole-changeset roll-up plus each of the ten
+ * decisions cohorts (`cohort:c1`…`cohort:c10`). The one demo cohort left as
+ * `pending` shows the honest never-blank state on screen (a cohort whose account
+ * has not landed), so the demo proves both the narrated and the pending paths.
+ */
+export function demoNarration(): ReviewNarration {
+  const cohorts: ReviewNarration["cohorts"] = {};
+  CHUNK_TITLES.forEach((title, index) => {
+    const chunkId = chunkForCohort(index);
+    // Leave the last cohort pending to demonstrate the honest never-blank state.
+    cohorts[`cohort:${chunkId}`] =
+      index === CHUNK_TITLES.length - 1
+        ? { status: "pending" }
+        : {
+            status: "narrated",
+            oneLine: `${title} — a self-contained group you can approve as one.`,
+            paragraph: `These ${12} decisions all land in the same chunk, so they read as one move: ${title.toLowerCase()}. Approving the cohort approves the group; zoom in to disposition any decision on its own.`,
+          };
+  });
+  return {
+    rollup: {
+      status: "narrated",
+      oneLine: "A ten-part change that builds the canvas review loop from the store upward.",
+      paragraph:
+        "The change establishes the review store, wires capture and dispositions, folds read-state from actions, and projects the layered canvases — then orders and carries them. Read it top-down: each cohort is a chapter, and you can approve the whole change, a chapter, or a single line.",
+    },
+    cohorts,
   };
 }
 
