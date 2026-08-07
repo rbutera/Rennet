@@ -2,23 +2,21 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { PatchsetCapturePort } from "@rennet/core";
-import type { FileChangeStatus, PatchFile, Patchset } from "@rennet/types";
+import type { PatchFile, Patchset } from "@rennet/types";
 import { execa } from "execa";
+import {
+  type Counts,
+  DEFAULT_VISIBLE_BYTE_LIMIT,
+  FILE_VISIBLE_BYTE_LIMIT,
+  parseChangedPaths,
+  parseCounts,
+  visible,
+} from "./git-range-diff";
 
-interface ChangedPath {
-  path: string;
-  previousPath?: string;
-  status: FileChangeStatus;
-}
-
-interface Counts {
-  additions: number | null;
-  deletions: number | null;
-  binary: boolean;
-}
-
-const DEFAULT_VISIBLE_BYTE_LIMIT = 2 * 1024 * 1024;
-const FILE_VISIBLE_BYTE_LIMIT = 256 * 1024;
+// The changed-path / numstat / truncation parsing lives in `git-range-diff` so
+// the working-tree capture here and the commit-range capture there parse a diff
+// identically. This adapter keeps the working-tree-specific pieces: base
+// resolution, untracked-file synthesis, and the index+unstaged+untracked union.
 
 async function git(repositoryPath: string, arguments_: string[], reject = true): Promise<string> {
   const result = await execa("git", arguments_, {
@@ -37,61 +35,6 @@ async function succeeds(repositoryPath: string, arguments_: string[]): Promise<b
     shell: false,
   });
   return result.exitCode === 0;
-}
-
-function parseChangedPaths(output: string): ChangedPath[] {
-  const fields = output.split("\0");
-  const paths: ChangedPath[] = [];
-  let index = 0;
-  while (index < fields.length && fields[index]) {
-    const statusToken = fields[index++];
-    if (!statusToken) break;
-    const code = statusToken[0];
-    if (code === "R" || code === "C") {
-      const previousPath = fields[index++];
-      const path = fields[index++];
-      if (previousPath !== undefined && path !== undefined) {
-        paths.push({ path, previousPath, status: "renamed" });
-      }
-      continue;
-    }
-    const path = fields[index++];
-    if (path === undefined) break;
-    const status: FileChangeStatus = code === "A" ? "added" : code === "D" ? "deleted" : "modified";
-    paths.push({ path, status });
-  }
-  return paths;
-}
-
-function parseCounts(output: string): Map<string, Counts> {
-  const counts = new Map<string, Counts>();
-  const fields = output.split("\0");
-  let index = 0;
-  while (index < fields.length && fields[index]) {
-    const record = fields[index++];
-    if (!record) break;
-    const [additionsText, deletionsText, pathInRecord] = record.split("\t");
-    let path = pathInRecord;
-    if (!path) {
-      const previousPath = fields[index++];
-      const renamedPath = fields[index++];
-      path = renamedPath ?? previousPath;
-    }
-    if (!path) continue;
-    const binary = additionsText === "-" || deletionsText === "-";
-    counts.set(path, {
-      additions: binary ? null : Number(additionsText),
-      deletions: binary ? null : Number(deletionsText),
-      binary,
-    });
-  }
-  return counts;
-}
-
-function visible(value: string, maximumBytes: number): string {
-  const bytes = Buffer.from(value);
-  if (bytes.length <= maximumBytes) return value;
-  return `${bytes.subarray(0, maximumBytes).toString("utf8")}\n\n[diff truncated by Rennet]`;
 }
 
 function quotedGitPath(path: string): string {
