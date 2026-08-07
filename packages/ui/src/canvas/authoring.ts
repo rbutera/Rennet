@@ -205,7 +205,7 @@ export function batchPayloadDigest(batch: DispositionBatch): string {
 export type OrphanedDisposition = Disposition;
 
 function anchorKey(disposition: Disposition): string {
-  return `${disposition.anchor.path} ${disposition.anchor.contentDigest}`;
+  return JSON.stringify([disposition.anchor.path, disposition.anchor.contentDigest]);
 }
 
 /**

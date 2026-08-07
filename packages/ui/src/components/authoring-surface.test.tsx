@@ -3,8 +3,11 @@ import { describe, expect, it } from "vitest";
 import {
   addToBatch,
   authorDisposition,
+  batchPayload,
   type DispositionBatch,
   draftsFromAuthored,
+  editDraftBody,
+  editDraftType,
   type OrphanedDisposition,
   withdrawDraft,
 } from "../canvas/authoring";
@@ -49,6 +52,27 @@ describe("BatchView — renders exactly the publish/handoff payload", () => {
     }
     const html = renderToStaticMarkup(<BatchView batch={batch} />);
     expect(html).not.toContain(sentinel);
+  });
+
+  it("renders bytes equal to batchPayload (reconstructed from the view, not eyeballed)", () => {
+    // Two entries made distinct in path, type AND body so order + per-entry
+    // pairing are all load-bearing. Reconstruct the payload from what <BatchView>
+    // actually RENDERS and assert it is byte-identical to batchPayload(batch).
+    // Goes red if the component renders the raw/unsorted batch, a different body,
+    // or a different order than the canonical payload.
+    let batch = seededBatch("body-one");
+    batch = editDraftBody(batch, "src/module-2/file-2.ts", "body-two");
+    batch = editDraftType(batch, "src/module-2/file-2.ts", "request-change");
+    const html = renderToStaticMarkup(<BatchView batch={batch} />);
+    const entryRe =
+      /<li[^>]*\bdata-path="([^"]*)"[^>]*\bdata-type="([^"]*)"[^>]*>.*?<textarea[^>]*>([^<]*)<\/textarea>/gs;
+    const reconstructed = [...html.matchAll(entryRe)].map(([, path, type, body]) => ({
+      path,
+      type,
+      body,
+    }));
+    expect(reconstructed).toHaveLength(2);
+    expect(JSON.stringify(reconstructed)).toBe(batchPayload(batch));
   });
 });
 

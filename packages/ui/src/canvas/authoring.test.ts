@@ -136,9 +136,23 @@ describe("the raw-draft batch — the sovereign payload that will publish or han
     expect(second.find((d) => d.path === "src/module-2/file-1.ts")?.raw).toBe("changed my mind");
   });
 
-  it("renders the batch view byte-identically to the publish/handoff payload", () => {
-    const batch = seededBatch();
-    expect(JSON.stringify(batchViewModel(batch))).toBe(batchPayload(batch));
+  it("payload is the sorted raw→body transform, not the raw batch (byte-stable)", () => {
+    // An intentionally UNSORTED batch carrying a `raw` field: the payload must
+    // reorder by path AND rename raw→body. This can go red if `batchViewModel`
+    // stops sorting or stops projecting `raw`→`body`. (The view==payload identity
+    // is asserted against the RENDERED <BatchView> in authoring-surface.test.tsx.)
+    const batch: DispositionBatch = [
+      { path: "z/last.ts", type: "comment", raw: "note-z" },
+      { path: "a/first.ts", type: "approve", raw: "note-a" },
+    ];
+    expect(batchPayload(batch)).toBe(
+      JSON.stringify([
+        { path: "a/first.ts", type: "approve", body: "note-a" },
+        { path: "z/last.ts", type: "comment", body: "note-z" },
+      ]),
+    );
+    // Proof the transform is load-bearing: the payload is NOT the raw serialisation.
+    expect(batchPayload(batch)).not.toBe(JSON.stringify(batch));
   });
 
   it("edit-body and edit-type flow through to the payload", () => {
@@ -150,21 +164,25 @@ describe("the raw-draft batch — the sovereign payload that will publish or han
     expect(entry?.type).toBe("request-change");
   });
 
-  it("withdraw-before-publish leaves ZERO residue in the payload", () => {
+  it("withdraw-before-publish leaves ZERO residue, and removes ONLY the withdrawn paths", () => {
     const sentinel = "SENTINEL-Z9Q";
+    const survivor = "SURVIVOR-K3P";
     const authored = authorDisposition(canvases.decisions, {
       granularity: "element",
       elementKey: "dec-2-1",
       type: "comment",
       body: sentinel,
     });
-    // Add both files, then withdraw the one carrying the sentinel body on both.
-    const batch = addToBatch([], draftsFromAuthored(authored));
+    // The element's two files PLUS an unrelated survivor draft, so a clear-all
+    // (over-broad) withdraw would drop the survivor too and go red here.
+    let batch = addToBatch([], draftsFromAuthored(authored));
+    batch = addToBatch(batch, [{ path: "src/other.ts", type: "approve", raw: survivor }]);
     expect(batchPayload(batch)).toContain(sentinel);
     let after: DispositionBatch = batch;
     for (const path of C2_PATHS) after = withdrawDraft(after, path);
     expect(batchPayload(after)).not.toContain(sentinel);
-    expect(after.length).toBe(0);
+    expect(batchPayload(after)).toContain(survivor); // surgical, not a clear-all
+    expect(after.map((draft) => draft.path)).toEqual(["src/other.ts"]);
   });
 
   it("payload digest is a pure function of batch content (order-independent)", () => {

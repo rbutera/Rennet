@@ -74,10 +74,22 @@ describe("coverageMosaic — the totality/residue surface over the whole changes
     expect(mosaic.cells.map((c) => c.state)).toEqual(["read", "skimmed", "unread", "unread"]);
   });
 
-  it("rebuilds identically from event replay in any order", () => {
-    const forward = coverageMosaic(paths, events);
-    const reversed = coverageMosaic(paths, [...events].reverse());
+  it("rebuilds identically from event replay in any order (conflicting same-path events)", () => {
+    // a.ts gets THREE conflicting events on the SAME path. A last-write-wins,
+    // order-dependent fold would resolve a.ts to whatever event is last —
+    // Collapsed→unread forward vs ScrolledPast→skimmed reversed — so the two
+    // mosaics would diverge. Max-rank is order-independent and must not.
+    const conflicting: ViewEvent[] = [
+      { type: "ScrolledPast", path: "a.ts" },
+      { type: "Actioned", path: "a.ts" },
+      { type: "Collapsed", path: "a.ts" },
+      { type: "ScrolledPast", path: "b.ts" },
+    ];
+    const forward = coverageMosaic(paths, conflicting);
+    const reversed = coverageMosaic(paths, [...conflicting].reverse());
     expect(reversed).toEqual(forward);
+    // Action wins over the scroll+collapse regardless of position.
+    expect(forward.cells.find((cell) => cell.path === "a.ts")?.state).toBe("read");
   });
 
   it("keeps cell order as the reading order it was given", () => {
