@@ -119,6 +119,7 @@ export type RspDocType =
   | "decomposition.skeleton"
   | "decomposition.proposal"
   | "ordering"
+  | "rollup-narration"
   | "decision.record"
   | "claim"
   | "adjudication"
@@ -634,6 +635,57 @@ export interface OrderingBody {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Roll-up narration (issue #70, Model Council job M22)
+//
+// The zoom ladder's own voice: every altitude above a single chunk — the whole
+// changeset (rollup), each grouping (group), each cohort — gets a one-line + one-
+// paragraph narrated account so "approve at ANY granularity" is an INFORMED act at
+// every granularity. Narration is a light-tier, batched, council-routed model job
+// (rollup-narration); its document is validator-admitted like any other, and its
+// optional code citations are byte-verified by the generic `{anchor, quote}` walk
+// (V006), where the anchor is a real `rennet:` code anchor in the offered manifest.
+//
+// The `anchor` on a narration ENTRY is a canvas-node key (a cohortKey, a group
+// key, or the rollup key), NOT a `rennet:` code anchor — the code-anchor walk
+// ignores it, and node coverage (every offered node narrated once, only offered
+// nodes, altitude consistent) is enforced by the RUNNER against the live node set,
+// exactly as the ordering pass enforces its dependency floor outside the validator.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The altitude a narration entry accounts for. `rollup` is the whole changeset. */
+export type NarrationAltitude = "rollup" | "group" | "cohort";
+
+/**
+ * An optional code citation on a narration entry: a `rennet:` code anchor plus the
+ * byte-exact quote it stands on. The generic validator walk (V006) byte-verifies
+ * every `{anchor, quote}` pair against the resolved span, so a fabricated quote is
+ * rejected. Absent when a narration cites no specific code.
+ */
+export interface NarrationEvidence {
+  anchor: string;
+  quote: string;
+}
+
+/**
+ * One narrated account at one altitude. `anchor` is the canvas-node key it is
+ * about (the rollup key, a group key, or a cohortKey — a plain node key, never a
+ * `rennet:` code anchor). `oneLine` is the collapsed-view sentence; `paragraph`
+ * is the expanded account. `evidence` optionally cites code, byte-verified.
+ */
+export interface NarrationEntry {
+  altitude: NarrationAltitude;
+  anchor: string;
+  oneLine: string;
+  paragraph: string;
+  evidence?: NarrationEvidence[];
+}
+
+/** The `rollup-narration` body: the batch of per-altitude narrated accounts. */
+export interface RollupNarrationBody {
+  narrations: NarrationEntry[];
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Canvas state model (issue #10)
 //
 // A canvas is a named, addressable, LAYERED projection over the event store,
@@ -818,6 +870,33 @@ export interface ElementDiff {
 
 /** The per-element real diff map, keyed by `AnalysisElement.elementKey` (issue #60). */
 export type ElementDiffs = Record<string, ElementDiff>;
+
+/**
+ * The placement of narration at ONE canvas node (issue #70). Delivered ALONGSIDE
+ * the canvas set (like `ElementDiffs`), never embedded on the `Canvas`, so the
+ * canvas projection stays byte-identical for replay. Every visible node above a
+ * chunk resolves to a placement — `narrated` when an account was admitted, else an
+ * HONEST `pending`/`failed` state, NEVER a silent blank (the acceptance floor).
+ *
+ *   - `narrated`: an admitted account is present (oneLine + paragraph).
+ *   - `pending`:  no model turn ran (budget refused, no executor, or not enabled).
+ *   - `failed`:   a turn ran but its narration was terminally rejected.
+ */
+export type NarrationPlacement =
+  | { status: "narrated"; oneLine: string; paragraph: string; evidence?: NarrationEvidence[] }
+  | { status: "pending" }
+  | { status: "failed" };
+
+/**
+ * The narration placed onto a review's canvases, keyed by the node the reader is
+ * looking at (issue #70). `rollup` is the whole-changeset account; `cohorts` maps
+ * each cohortKey to its account. Consumed by the renderer at the matching zoom
+ * level (rollup zoom → `rollup`; cohort zoom → `cohorts[cohortKey]`).
+ */
+export interface ReviewNarration {
+  rollup: NarrationPlacement;
+  cohorts: Record<string, NarrationPlacement>;
+}
 
 /**
  * A canvas-scoped post-commit change notification (R35's ONE change feed, canvas

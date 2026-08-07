@@ -5,6 +5,7 @@ import type {
   ElementDiffs,
   Patchset,
   Review,
+  ReviewNarration,
 } from "@rennet/types";
 import { z } from "zod";
 
@@ -151,6 +152,27 @@ const canvasSetSchema = z.object({
 const elementDiffSchema = z.object({ path: z.string(), diff: z.string() });
 const elementDiffsSchema: z.ZodType<ElementDiffs> = z.record(z.string(), elementDiffSchema);
 
+// ── Roll-up narration placement (issue #70) ──────────────────────────────────
+// Delivered ALONGSIDE the canvas set (like `elementDiffs`) so the zoom ladder
+// renders the agent's account at each altitude. A discriminated union keeps the
+// never-blank contract honest at the IPC boundary: a placement is a narrated
+// account or an explicit pending/failed state — there is no shape for "blank".
+const narrationEvidenceSchema = z.object({ anchor: z.string(), quote: z.string() });
+const narrationPlacementSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("narrated"),
+    oneLine: z.string(),
+    paragraph: z.string(),
+    evidence: z.array(narrationEvidenceSchema).optional(),
+  }),
+  z.object({ status: z.literal("pending") }),
+  z.object({ status: z.literal("failed") }),
+]);
+const reviewNarrationSchema: z.ZodType<ReviewNarration> = z.object({
+  rollup: narrationPlacementSchema,
+  cohorts: z.record(z.string(), narrationPlacementSchema),
+});
+
 const commandIdSchema = z.uuid();
 
 export const commandDefinitions = {
@@ -210,7 +232,14 @@ export const commandDefinitions = {
     }),
     // `elementDiffs` (issue #60): the real per-element diff map delivered with the
     // canvas set so zooming into an element shows real code, not the fixture.
-    output: z.object({ canvases: canvasSetSchema, elementDiffs: elementDiffsSchema }),
+    // `narration` (issue #70): the per-altitude narrated accounts, optional so a
+    // desktop build that predates narration still validates (absence → the UI
+    // shows the honest pending state, never a crash).
+    output: z.object({
+      canvases: canvasSetSchema,
+      elementDiffs: elementDiffsSchema,
+      narration: reviewNarrationSchema.optional(),
+    }),
   },
   // ── Canvas user ops (issue #10) ────────────────────────────────────────────
   // The renderer reaches the canvas engine ONLY through this command map (R20).

@@ -1,5 +1,12 @@
 import { parseAnchor } from "@rennet/protocol";
-import type { Canvas, CanvasAngle, DispositionType, Proposal } from "@rennet/types";
+import type {
+  Canvas,
+  CanvasAngle,
+  DispositionType,
+  NarrationPlacement,
+  Proposal,
+  ReviewNarration,
+} from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -179,6 +186,31 @@ export function zoomReducer(state: ZoomState, action: ZoomAction): ZoomState {
       return { ...state, level: previous ?? state.level };
     }
   }
+}
+
+// ── Roll-up narration: the zoom ladder's own voice at the matching altitude ───
+
+/**
+ * Resolve the narration placement for the CURRENT zoom level (issue #70). The
+ * narrated account is shown at the altitude it accounts for: the whole-changeset
+ * roll-up at `rollup` zoom, the cohort's account at `cohort` zoom. Below a cohort
+ * (`element`/`diff`) narration is not the surface's concern (the CodeView and its
+ * inhabited marks are), so this returns `undefined` there.
+ *
+ * A cohort with no placement resolves to `pending` rather than `undefined`, so a
+ * visible cohort node is NEVER silently blank — the acceptance floor holds even if
+ * the delivered map is missing a key.
+ */
+export function narrationForZoom(
+  narration: ReviewNarration | undefined,
+  zoom: ZoomState,
+): NarrationPlacement | undefined {
+  if (!narration) return undefined;
+  if (zoom.level === "rollup") return narration.rollup;
+  if (zoom.level === "cohort" && zoom.cohortKey) {
+    return narration.cohorts[zoom.cohortKey] ?? { status: "pending" };
+  }
+  return undefined;
 }
 
 // ── The fixed-point lens: five angles, cursor hunk survives rotation ──────────

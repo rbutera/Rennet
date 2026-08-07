@@ -400,8 +400,14 @@ describe("buildReviewCanvases — the council selects the model and stamps prove
     // to Codex, so it ran on the port and the Claude ordering turn was untouched.
     expect(runDecompositionTurn).toHaveBeenCalledTimes(1);
     expect(runOrderingTurn).not.toHaveBeenCalled();
-    expect(codexComplete).toHaveBeenCalledTimes(1);
-    const codexReq = codexComplete.mock.calls[0]?.[0] as CodexUtilityCompleteRequest;
+    // The ordering seat ran on the port exactly once. (The roll-up narration seat
+    // #70 also resolves to Codex under `both` and calls the port; this test is
+    // about the ordering seat, so it looks at the ordering call specifically.)
+    const orderingCalls = codexComplete.mock.calls.filter(
+      (call) => (call[0] as CodexUtilityCompleteRequest).docType === "ordering",
+    );
+    expect(orderingCalls).toHaveLength(1);
+    const codexReq = orderingCalls[0]?.[0] as CodexUtilityCompleteRequest;
     expect(codexReq.docType).toBe("ordering");
     expect(codexReq.model).toBe("gpt-5.6-terra");
     expect(codexReq.effort).toBe("medium");
@@ -530,13 +536,16 @@ describe("buildReviewCanvases — the council executes the resolved harness live
       council: { availability: { installed: ["codex"] } },
     });
 
-    // Neither Claude turn ran; both seats went to the Codex port.
+    // Neither Claude turn ran; both review seats went to the Codex port. (The
+    // roll-up narration seat #70 also resolves to Codex here; this test is about
+    // the two REVIEW seats, so it excludes the narration calls.)
     expect(runDecompositionTurn).not.toHaveBeenCalled();
     expect(runOrderingTurn).not.toHaveBeenCalled();
-    expect(codexComplete).toHaveBeenCalledTimes(2);
-    const docTypes = codexComplete.mock.calls.map(
-      (call) => (call[0] as CodexUtilityCompleteRequest).docType,
+    const reviewCalls = codexComplete.mock.calls.filter(
+      (call) => (call[0] as CodexUtilityCompleteRequest).docType !== "rollup-narration",
     );
+    expect(reviewCalls).toHaveLength(2);
+    const docTypes = reviewCalls.map((call) => (call[0] as CodexUtilityCompleteRequest).docType);
     expect(new Set(docTypes)).toEqual(new Set(["decomposition.proposal", "ordering"]));
 
     // The heavy proposal seat resolved to Sol high; ordering to Luna medium — both Codex.
@@ -637,7 +646,11 @@ describe("buildReviewCanvases — provenance is honest across harnesses (accepta
 
     // The ordering seat ran on the Codex port (model's true harness), NOT the
     // injected Claude ordering turn, and its provenance stamps the Codex harness.
-    expect(codexComplete).toHaveBeenCalledTimes(1);
+    // (The roll-up narration seat #70 also uses the port; assert the ordering call.)
+    const orderingCalls = codexComplete.mock.calls.filter(
+      (call) => (call[0] as CodexUtilityCompleteRequest).docType === "ordering",
+    );
+    expect(orderingCalls).toHaveLength(1);
     expect(runOrderingTurn).not.toHaveBeenCalled();
     const orderingProvenance = result.orderingResult?.document.provenance;
     expect(orderingProvenance?.model).toBe("gpt-5.6-terra");
@@ -691,5 +704,100 @@ describe("buildReviewCanvases — one shared budget across a Claude seat and a C
     expect(result.orderingResult?.document.provenance.harness).toBe("codex");
     expect(result.orderingResult?.document.provenance.model).toBe("gpt-5.6-terra");
     for (const angle of CANVAS_ANGLES) expect(result.canvases[angle]).toBeDefined();
+  });
+});
+
+describe("buildReviewCanvases — roll-up narration threads through (issue #70)", () => {
+  it("returns a narrated roll-up account when the narration seat runs within budget", async () => {
+    const decomposition = decompose(edgedPatchset);
+    const proposal = deterministicProposalBody(decomposition);
+    const runDecompositionTurn = vi.fn(
+      async (): Promise<DecompositionTurnResult> => ({ status: "emitted", body: proposal }),
+    );
+    // A narration turn covering the offered nodes. With only a proposal admitted
+    // (no decision.record docs), the decisions canvas has no cohorts, so the sole
+    // offered node is the roll-up — this body covers it exactly.
+    const runNarrationTurn = vi.fn(async () => ({
+      status: "emitted" as const,
+      body: {
+        narrations: [
+          {
+            altitude: "rollup",
+            anchor: "rollup",
+            oneLine: "A small change to alpha and gamma.",
+            paragraph: "The change touches two files; read alpha first, then gamma.",
+          },
+        ],
+      },
+    }));
+
+    const result = await buildReviewCanvases({
+      reviewId: "review-1",
+      patchset: edgedPatchset,
+      dispositions: [],
+      runDecompositionTurn,
+      runNarrationTurn,
+    });
+
+    expect(runNarrationTurn).toHaveBeenCalledTimes(1);
+    expect(result.narration.rollup.status).toBe("narrated");
+    expect(result.narrationResult?.outcome).toBe("narrated");
+  });
+
+  it("leaves narration PENDING and never spends a turn when the budget refused (the money circuit)", async () => {
+    const runDecompositionTurn = vi.fn(
+      async (): Promise<DecompositionTurnResult> => ({ status: "emitted", body: {} }),
+    );
+    const runNarrationTurn = vi.fn(async () => ({
+      status: "emitted" as const,
+      body: { narrations: [] },
+    }));
+
+    const result = await buildReviewCanvases({
+      reviewId: "review-1",
+      patchset: edgedPatchset,
+      dispositions: [],
+      runDecompositionTurn,
+      runNarrationTurn,
+      // The Brita gate refuses before any spend — narration must NOT run either.
+      routePlanOptions: { maxHarnessInvocations: 1 },
+    });
+
+    expect(result.budgetRefused).toBe(true);
+    expect(runNarrationTurn).not.toHaveBeenCalled();
+    expect(result.narration.rollup.status).toBe("pending");
+    // Every canvas still renders from the floor — the ceiling stops spend, not the review.
+    for (const angle of CANVAS_ANGLES) expect(result.canvases[angle]).toBeDefined();
+  });
+
+  it("draws narration from the SAME shared budget as the review seats", async () => {
+    // The decomposition turn emits an INVALID body, so it retries and burns the
+    // whole shared ceiling (3 attempts at maxRetries=2) before falling to the
+    // floor. Narration — the last seat — is then refused at runtime and never
+    // spends a turn. A SEPARATE budget would let narration run; that it does not
+    // is the proof the seats share one ceiling. Narration falls to honest pending.
+    const runDecompositionTurn = vi.fn(
+      async (): Promise<DecompositionTurnResult> => ({ status: "emitted", body: {} }),
+    );
+    const runNarrationTurn = vi.fn(async () => ({
+      status: "emitted" as const,
+      body: { narrations: [] },
+    }));
+
+    const result = await buildReviewCanvases({
+      reviewId: "review-1",
+      patchset: edgedPatchset,
+      dispositions: [],
+      runDecompositionTurn,
+      runNarrationTurn,
+      routePlanOptions: { maxHarnessInvocations: 3 },
+    });
+
+    // The route plan did NOT refuse (3 is within the diff's plan), so the
+    // decomposition seat ran and exhausted the shared budget across its retries.
+    expect(result.budgetRefused).toBe(false);
+    expect(runDecompositionTurn).toHaveBeenCalledTimes(3);
+    expect(runNarrationTurn).not.toHaveBeenCalled();
+    expect(result.narration.rollup.status).toBe("pending");
   });
 });
