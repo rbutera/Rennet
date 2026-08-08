@@ -10,20 +10,36 @@
  *   Backlight blue (--private, #85C4DC) is the system's ONLY inner glow, private-to-reviewer.
  *   Amber is blast radius / disagreement only. No fourth hue.
  *
- * Scoped to `.canvas-app` (not global `:root`) so the existing review workspace styling is
- * untouched. Dark is the default; the bright-room scheme composes under [data-scheme="light"].
+ * Exposed at `:root` so the original review workspace and the canvas share one visual system.
+ * Dark is the default; the bright-room scheme composes under [data-scheme="light"].
  *
  * The `.rennet-glass` scope carries the SAME tokens without `.canvas-app`'s full-screen
  * layout (canvas.css), so the destination chrome (frame → collation draft → paper, issue
  * #101) themes with the one palette rather than a parallel one. One source, two mount points.
  */
 
+:root,
 .canvas-app,
 .rennet-glass {
   /* type */
   --serif: "New York", ui-serif, Georgia, serif;
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --type-caption: 11px;
+  --type-ui: 13px;
+  --type-title: 19px;
+  --type-display: 30px;
+
+  /* rhythm + interaction */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+  --control-compact: 32px;
+  --control-default: 40px;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 
   /* Frosted-chrome material (issue #61). Glass is the CHROME and the app backdrop,
    * NEVER the content. The real desktop shows through here — a transparent Electron

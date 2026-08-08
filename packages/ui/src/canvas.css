@@ -17,6 +17,7 @@
   -webkit-backdrop-filter: var(--side-blur);
   backdrop-filter: var(--side-blur);
   font-family: var(--sans);
+  font-size: var(--type-ui);
   outline: none;
 }
 
@@ -37,14 +38,19 @@
   gap: 4px;
 }
 .lens-tab {
+  min-height: var(--control-default);
   border: 1px solid transparent;
   border-radius: var(--chip-radius);
-  padding: 7px 14px;
+  padding: 0 14px;
   color: var(--text-soft);
   background: transparent;
   font: inherit;
   font-weight: 600;
   cursor: pointer;
+  transition:
+    color 140ms var(--ease-out),
+    background-color 140ms var(--ease-out),
+    border-color 140ms var(--ease-out);
 }
 .lens-tab:hover {
   background: var(--surface-2);
@@ -61,9 +67,10 @@
 }
 .lens-overlay,
 .lens-scheme {
+  min-height: var(--control-default);
   border: 1px solid var(--hairline-strong);
   border-radius: var(--chip-radius);
-  padding: 7px 12px;
+  padding: 0 12px;
   color: var(--text-soft);
   background: var(--raised);
   font: inherit;
@@ -88,9 +95,10 @@
   font-size: 12px;
 }
 .zoom-bar button {
+  min-height: var(--control-compact);
   border: 1px solid var(--hairline-strong);
   border-radius: var(--chip-radius);
-  padding: 4px 10px;
+  padding: 0 10px;
   color: var(--text-soft);
   background: var(--raised);
   font: inherit;
@@ -114,8 +122,8 @@
   border: 1px solid var(--hairline);
   border-radius: var(--chip-radius);
   background: var(--raised);
-  padding: 12px 16px;
-  margin-bottom: 16px;
+  padding: 14px 16px;
+  margin-bottom: var(--space-5);
 }
 .narration-altitude {
   margin: 0 0 6px;
@@ -126,13 +134,15 @@
 }
 .narration-one-line {
   margin: 0 0 8px;
+  font-size: 15px;
   font-weight: 700;
   color: var(--text);
 }
 .narration-paragraph {
   margin: 0;
   color: var(--text-soft);
-  line-height: 1.5;
+  max-width: 72ch;
+  line-height: 1.6;
 }
 .narration-state {
   margin: 0;
@@ -145,15 +155,15 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 16px 20px 40px;
+  padding: var(--space-5) var(--space-5) 48px;
 }
 .canvas-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 14px;
-  padding-bottom: 10px;
+  margin-bottom: var(--space-5);
+  padding-bottom: var(--space-3);
   border-bottom: 1px solid var(--hairline);
 }
 .canvas-coverage {
@@ -169,15 +179,16 @@
 
 /* ── Decisions: cohorts as raised glass cards ─────────────────────────────── */
 .cohort {
-  margin-bottom: 10px;
-  border: 1px solid var(--raised-border);
+  margin-bottom: var(--space-3);
+  border: 0;
   border-radius: var(--radius);
   background: var(--raised);
   box-shadow: var(--raised-shadow);
   overflow: hidden;
 }
 .cohort.is-blast {
-  border-color: var(--amber-line);
+  outline: 1px solid var(--amber-line);
+  outline-offset: -1px;
   background: var(--amber-surface);
 }
 .cohort-head {
@@ -185,7 +196,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 14px;
+  min-height: 48px;
+  padding: 10px 16px;
 }
 .cohort-toggle {
   display: flex;
@@ -198,6 +210,7 @@
   font-weight: 600;
   cursor: pointer;
   text-align: left;
+  min-height: var(--control-compact);
 }
 .cohort-chevron {
   color: var(--text-faint);
@@ -226,7 +239,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 7px 14px 7px 34px;
+  min-height: 48px;
+  padding: 8px 16px 8px 38px;
   border-bottom: 1px solid var(--hairline);
 }
 .decision:last-child {
@@ -240,6 +254,7 @@
   font-size: 13px;
   cursor: pointer;
   text-align: left;
+  line-height: 1.45;
 }
 .decision-select:hover {
   color: var(--text);
@@ -256,7 +271,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 9px 14px;
+  min-height: 52px;
+  padding: 10px 14px;
   border: 1px solid var(--raised-border);
   border-radius: var(--radius);
   background: var(--raised);
@@ -290,9 +306,10 @@
   gap: 6px;
 }
 .disposition-btn {
+  min-height: var(--control-compact);
   border: 1px solid var(--hairline-strong);
   border-radius: var(--chip-radius);
-  padding: 6px 11px;
+  padding: 0 11px;
   color: var(--text-soft);
   background: var(--surface-2);
   font: inherit;
@@ -300,7 +317,8 @@
   cursor: pointer;
 }
 .disposition-bar.is-compact .disposition-btn {
-  padding: 3px 8px;
+  min-height: 28px;
+  padding: 0 8px;
   font-size: 11px;
 }
 .disposition-btn.d-approve:hover {
@@ -368,7 +386,8 @@
   margin-top: 6px;
   border: 1px solid var(--hairline-strong);
   border-radius: var(--chip-radius);
-  padding: 6px 8px;
+  min-height: var(--control-default);
+  padding: 8px 10px;
   color: var(--text);
   background: var(--surface);
   font: inherit;
@@ -378,9 +397,10 @@
   gap: 6px;
 }
 .l3-btn {
+  min-height: var(--control-compact);
   border: 1px solid var(--hairline-strong);
   border-radius: var(--chip-radius);
-  padding: 4px 9px;
+  padding: 0 9px;
   color: var(--text-soft);
   background: var(--raised);
   font: inherit;
@@ -406,7 +426,8 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 8px 12px;
+  min-height: 40px;
+  padding: 8px 14px;
   background: var(--side-bg);
   -webkit-backdrop-filter: var(--side-blur);
   backdrop-filter: var(--side-blur);
@@ -430,7 +451,7 @@
 .code-view-row {
   display: grid;
   grid-template-columns: 52px 1fr;
-  font: 12px / 1.5 var(--mono);
+  font: 12.5px / 1.6 var(--mono);
 }
 .code-view-ln {
   padding: 0 10px;
@@ -514,9 +535,12 @@
     inset 3px 0 0 0 var(--private),
     var(--private-glow);
 }
-/* Deixis: the pointed-at span pulses in the accent, distinct from the private glow. */
+/* Deixis: the pointed-at span gets a complete accent ring, distinct from the
+   private backlight and from the detector's side-tab anti-pattern. */
 .code-view-row.cv-focus {
-  box-shadow: inset 3px 0 0 0 var(--accent);
+  z-index: 1;
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
 }
 /* The ◇ hand in the gutter — overlaid on the line-number column so it never shifts
    the code (no per-row node added to the windowed budget on unmarked rows). */
@@ -559,7 +583,8 @@
   gap: 8px;
   width: 100%;
   text-align: left;
-  padding: 6px 10px;
+  min-height: 36px;
+  padding: 7px 10px;
   /* dashed hairline = the agent's hand; a jump-list, not a card that houses a mark */
   border: 1px dashed var(--accent-soft-line);
   border-radius: var(--radius);
@@ -636,8 +661,8 @@
   max-height: calc(100vh - 64px);
   display: flex;
   flex-direction: column;
-  gap: 14px;
-  padding: 22px;
+  gap: var(--space-4);
+  padding: var(--space-5);
   color: var(--text);
   border: 1px solid var(--win-border);
   border-radius: var(--win-radius);
@@ -661,17 +686,17 @@
   color: var(--text-faint);
 }
 .collation-title {
-  margin: 3px 0 0;
-  font-size: 19px;
+  margin: var(--space-1) 0 0;
+  font-size: 22px;
   font-weight: 700;
   letter-spacing: var(--display-track);
   color: var(--text);
 }
 .collation-framing {
-  margin: 6px 0 0;
-  max-width: 46ch;
-  font-size: 12px;
-  line-height: 1.45;
+  margin: var(--space-2) 0 0;
+  max-width: 58ch;
+  font-size: 13px;
+  line-height: 1.55;
   color: var(--text-soft);
 }
 .collation-head-actions {
@@ -689,9 +714,10 @@
   color: var(--accent);
 }
 .collation-back {
+  min-height: var(--control-compact);
   border: 1px solid var(--hairline-strong);
   border-radius: var(--chip-radius);
-  padding: 6px 12px;
+  padding: 0 12px;
   font-size: 12px;
   color: var(--text-soft);
   background: transparent;
@@ -701,7 +727,7 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 10px 12px;
   border: 1px solid var(--private-line);
   border-radius: var(--chip-radius);
   /* Solid private surface so this reviewer note stays legible on the glass frame. */
@@ -728,15 +754,15 @@
   padding: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: var(--space-3);
   overflow-y: auto;
 }
 .collation-item {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  padding: 12px;
-  border: 1px solid var(--raised-border);
+  gap: 10px;
+  padding: 14px;
+  border: 0;
   border-radius: var(--radius);
   background: var(--raised);
   box-shadow: var(--raised-shadow);
@@ -767,9 +793,10 @@
   white-space: nowrap;
 }
 .collation-item-type {
+  min-height: var(--control-compact);
   border: 1px solid var(--hairline-strong);
   border-radius: 7px;
-  padding: 5px 8px;
+  padding: 0 8px;
   font: inherit;
   font-size: 11px;
   color: var(--text);
@@ -778,19 +805,20 @@
 }
 .collation-item-body {
   width: 100%;
-  min-height: 52px;
+  min-height: 68px;
   resize: vertical;
   border: 1px solid var(--hairline);
   border-radius: 8px;
-  padding: 8px 10px;
+  padding: 10px 12px;
   font: inherit;
   font-size: 13px;
-  line-height: 1.4;
+  line-height: 1.55;
   color: var(--text);
   background: var(--code-bg);
 }
 .collation-item-body:focus {
-  outline: none;
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
   border-color: var(--accent-soft-line);
 }
 .collation-item-refine {
@@ -807,9 +835,10 @@
   gap: 6px;
 }
 .collation-act {
+  min-height: var(--control-compact);
   border: 1px solid var(--hairline-strong);
   border-radius: 7px;
-  padding: 5px 10px;
+  padding: 0 10px;
   font-size: 11px;
   font-weight: 650;
   color: var(--text-soft);
@@ -831,7 +860,7 @@
 }
 .collation-residue {
   margin: 0;
-  padding: 8px 12px;
+  padding: 10px 12px;
   border-radius: var(--chip-radius);
   border: 1px dashed var(--hairline-strong);
   font-size: 11px;
@@ -851,9 +880,10 @@
   color: var(--text-soft);
 }
 .collation-sign {
+  min-height: var(--control-default);
   border: 0;
   border-radius: 9px;
-  padding: 11px 20px;
+  padding: 0 20px;
   font-size: 14px;
   font-weight: 750;
   color: var(--btn-text);
@@ -863,4 +893,35 @@
 .collation-sign:disabled {
   opacity: 0.45;
   cursor: not-allowed;
+}
+
+@media (max-width: 720px) {
+  .lens-switcher,
+  .collation-head,
+  .collation-foot {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .lens-tabs {
+    overflow-x: auto;
+  }
+
+  .lens-tab {
+    flex: 0 0 auto;
+  }
+
+  .lens-controls,
+  .collation-head-actions {
+    align-items: stretch;
+  }
+
+  .collation-backdrop {
+    padding: var(--space-3);
+  }
+
+  .collation-canvas {
+    max-height: calc(100vh - 24px);
+    padding: var(--space-4);
+  }
 }

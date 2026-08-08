@@ -24,6 +24,7 @@ test-results/
 
 # Runtime state and local project context
 .rennet/
+.impeccable/
 *.db
 *.db-*
 *.sqlite
