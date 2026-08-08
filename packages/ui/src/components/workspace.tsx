@@ -429,6 +429,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
           <DecisionsCanvas
             canvas={canvas}
             expandedCohorts={expandedCohorts}
+            selectedElementKey={selection ?? undefined}
             onToggleCohort={(cohortKey) => store.getState().toggleCohort(cohortKey)}
             onApproveScope={approveScope}
             onSelectElement={selectElement}
@@ -436,6 +437,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         ) : (
           <FlatCanvas
             canvas={canvas}
+            selectedElementKey={selection ?? undefined}
             onApproveScope={approveScope}
             onSelectElement={selectElement}
           />

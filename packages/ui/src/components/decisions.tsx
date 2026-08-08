@@ -21,6 +21,7 @@ function Cohort({
   elements,
   expanded,
   painted,
+  selectedElementKey,
   onToggle,
   onApproveScope,
   onSelectElement,
@@ -29,12 +30,13 @@ function Cohort({
   elements: AnalysisElement[];
   expanded: boolean;
   painted: boolean;
+  selectedElementKey?: string;
   onToggle(cohortKey: string): void;
   onApproveScope(scope: ApprovalScope, type: DispositionType): void;
   onSelectElement(elementKey: string): void;
 }) {
   return (
-    <section className={`cohort ${painted ? "is-blast" : ""}`}>
+    <section className={painted ? "cohort is-blast" : "cohort"}>
       <header className="cohort-head">
         <button
           type="button"
@@ -65,7 +67,12 @@ function Cohort({
       {expanded ? (
         <ol className="cohort-elements">
           {elements.map((element) => (
-            <li className="decision" key={element.elementKey}>
+            <li
+              className={
+                selectedElementKey === element.elementKey ? "decision is-selected" : "decision"
+              }
+              key={element.elementKey}
+            >
               <button
                 type="button"
                 className="decision-select"
@@ -91,12 +98,14 @@ function Cohort({
 export function DecisionsCanvas({
   canvas,
   expandedCohorts,
+  selectedElementKey,
   onToggleCohort,
   onApproveScope,
   onSelectElement,
 }: {
   canvas: Canvas;
   expandedCohorts: Record<string, boolean>;
+  selectedElementKey?: string;
   onToggleCohort(cohortKey: string): void;
   onApproveScope(scope: ApprovalScope, type: DispositionType): void;
   onSelectElement(elementKey: string): void;
@@ -129,6 +138,7 @@ export function DecisionsCanvas({
             elements={elements}
             expanded={Boolean(expandedCohorts[cohortKey])}
             painted={painted.has(chunkId)}
+            selectedElementKey={selectedElementKey}
             onToggle={onToggleCohort}
             onApproveScope={onApproveScope}
             onSelectElement={onSelectElement}

@@ -98,6 +98,21 @@ describe("FlatCanvas — empty-but-honest", () => {
     );
     expect(html).toContain("The review survives a force-push");
   });
+
+  it("retains the selected row as an action target", () => {
+    const canvas = demoCanvases().spec;
+    const selectedElementKey = canvas.layers.analysis.elements[0]?.elementKey;
+    const html = renderToStaticMarkup(
+      <FlatCanvas
+        canvas={canvas}
+        selectedElementKey={selectedElementKey}
+        onApproveScope={noop}
+        onSelectElement={noop}
+      />,
+    );
+    expect(html).toContain("flat-element");
+    expect(html).toContain("is-selected");
+  });
 });
 
 describe("L3 marks — visually distinct as the agent's hand", () => {

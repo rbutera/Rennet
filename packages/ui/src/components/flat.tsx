@@ -12,10 +12,12 @@ const EMPTY_COPY: Partial<Record<string, string>> = {
 
 export function FlatCanvas({
   canvas,
+  selectedElementKey,
   onApproveScope,
   onSelectElement,
 }: {
   canvas: Canvas;
+  selectedElementKey?: string;
   onApproveScope(scope: ApprovalScope, type: DispositionType): void;
   onSelectElement(elementKey: string): void;
 }) {
@@ -36,7 +38,13 @@ export function FlatCanvas({
         <ol className="flat-elements">
           {elements.map((element) => (
             <li
-              className={`flat-element ${painted.has(element.anchor) ? "is-blast" : ""}`}
+              className={[
+                "flat-element",
+                painted.has(element.anchor) ? "is-blast" : "",
+                selectedElementKey === element.elementKey ? "is-selected" : "",
+              ]
+                .filter(Boolean)
+                .join(" ")}
               key={element.elementKey}
             >
               <button

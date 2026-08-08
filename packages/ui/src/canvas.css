@@ -139,15 +139,19 @@
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 16px 20px 40px;
+  padding: 24px 30px 56px;
+}
+.decisions-canvas,
+.flat-canvas {
+  max-width: 920px;
 }
 .canvas-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  margin-bottom: 14px;
-  padding-bottom: 10px;
+  margin-bottom: 20px;
+  padding-bottom: 12px;
   border-bottom: 1px solid var(--hairline);
 }
 .canvas-coverage {
@@ -163,7 +167,7 @@
 
 /* ── Decisions: cohorts as raised glass cards ─────────────────────────────── */
 .cohort {
-  margin-bottom: 10px;
+  margin-bottom: 12px;
   border: 1px solid var(--raised-border);
   border-radius: var(--radius);
   background: var(--raised);
@@ -179,7 +183,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 10px 14px;
+  min-height: 58px;
+  padding: 14px 16px;
 }
 .cohort-toggle {
   display: flex;
@@ -212,7 +217,7 @@
 .cohort-elements {
   list-style: none;
   margin: 0;
-  padding: 0 0 6px;
+  padding: 4px 0 8px;
   border-top: 1px solid var(--hairline);
 }
 .decision {
@@ -220,7 +225,8 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 7px 14px 7px 34px;
+  min-height: 46px;
+  padding: 10px 16px 10px 38px;
   border-bottom: 1px solid var(--hairline);
 }
 .decision:last-child {
@@ -234,6 +240,7 @@
   font-size: 13px;
   cursor: pointer;
   text-align: left;
+  line-height: 1.45;
 }
 .decision-select:hover {
   color: var(--text);
@@ -250,11 +257,12 @@
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 9px 14px;
+  min-height: 56px;
+  padding: 12px 16px;
   border: 1px solid var(--raised-border);
   border-radius: var(--radius);
   background: var(--raised);
-  margin-bottom: 8px;
+  margin-bottom: 10px;
 }
 .flat-element.is-blast {
   border-color: var(--amber-line);
@@ -270,6 +278,7 @@
   font: inherit;
   cursor: pointer;
   text-align: left;
+  line-height: 1.45;
 }
 .flat-element-kind {
   color: var(--text-faint);
@@ -296,6 +305,63 @@
 .disposition-bar.is-compact .disposition-btn {
   padding: 3px 8px;
   font-size: 11px;
+}
+/* Row dispositions are available when the row is in the user's attention, not
+ * repeated as a wall of four controls. Focus-within makes the same path work
+ * with a keyboard: focus the row title, then tab into its revealed toolbar. */
+.cohort-head > .disposition-bar.is-compact,
+.decision > .disposition-bar.is-compact,
+.flat-element > .disposition-bar.is-compact {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateX(4px);
+  transition:
+    opacity 120ms ease,
+    transform 120ms ease,
+    visibility 0s linear 120ms;
+}
+.cohort-head:hover > .disposition-bar.is-compact,
+.cohort-head:focus-within > .disposition-bar.is-compact,
+.decision:hover > .disposition-bar.is-compact,
+.decision:focus-within > .disposition-bar.is-compact,
+.decision.is-selected > .disposition-bar.is-compact,
+.flat-element:hover > .disposition-bar.is-compact,
+.flat-element:focus-within > .disposition-bar.is-compact,
+.flat-element.is-selected > .disposition-bar.is-compact {
+  visibility: visible;
+  pointer-events: auto;
+  opacity: 1;
+  transform: translateX(0);
+  transition-delay: 0s;
+}
+.cohort-toggle:focus-visible,
+.decision-select:focus-visible,
+.flat-element-select:focus-visible,
+.disposition-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* Coarse-pointer users cannot hover a row before selecting it, so keep the
+ * actions immediately reachable on touch while preserving the calmer desktop
+ * roll-up. */
+@media (hover: none), (pointer: coarse) {
+  .cohort-head > .disposition-bar.is-compact,
+  .decision > .disposition-bar.is-compact,
+  .flat-element > .disposition-bar.is-compact {
+    visibility: visible;
+    pointer-events: auto;
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cohort-head > .disposition-bar.is-compact,
+  .decision > .disposition-bar.is-compact,
+  .flat-element > .disposition-bar.is-compact {
+    transition: none;
+  }
 }
 .disposition-btn.d-approve:hover {
   color: var(--green);
