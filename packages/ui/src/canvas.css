@@ -134,6 +134,105 @@
   color: var(--text-faint);
 }
 
+/* ── Live narrative feed (#71): stage three has a voice, never a spinner ──── */
+/* Glass is chrome; this text is opaque and the landed lines use the same
+   anchored-prose affordance as the review/chat mood-board screens. */
+.narrative-feed {
+  border: 1px solid var(--win-border);
+  border-radius: var(--radius);
+  margin-bottom: 16px;
+  padding: 14px 16px 12px;
+  background: var(--raised);
+  box-shadow: var(--win-shadow);
+}
+.narrative-stage {
+  align-items: center;
+  justify-content: center;
+  padding: 100px 24px 40px;
+}
+.narrative-stage .narrative-feed {
+  width: min(680px, 100%);
+  background: var(--win-bg);
+  backdrop-filter: var(--side-blur);
+}
+.narrative-feed-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.narrative-feed-heading p {
+  margin: 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+}
+.narrative-feed-heading span {
+  color: var(--private);
+  font-size: 12px;
+}
+.narrative-feed-lines {
+  display: grid;
+  gap: 4px;
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+}
+.narrative-feed-lines li {
+  position: relative;
+  padding-left: 14px;
+  color: var(--text-soft);
+  font-family: var(--serif);
+  line-height: 1.45;
+}
+.narrative-feed-lines li::before {
+  position: absolute;
+  top: 0.62em;
+  left: 1px;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--text-faint);
+  content: "";
+}
+.narrative-feed-lines li[data-status="landed"]::before,
+.narrative-feed-lines li[data-status="complete"]::before {
+  background: var(--private);
+  box-shadow: 0 0 10px var(--private);
+}
+.narrative-feed-lines li[data-status="degraded"]::before {
+  background: var(--amber);
+}
+.narrative-feed-lines p,
+.narrative-feed-lines button {
+  margin: 0;
+  color: inherit;
+  font: inherit;
+}
+.narrative-feed-lines button {
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+  text-decoration: underline;
+  text-decoration-color: var(--hairline);
+  text-underline-offset: 3px;
+}
+.narrative-feed-lines button:hover,
+.narrative-feed-lines button:focus-visible {
+  color: var(--text);
+  text-decoration-color: var(--private);
+  outline: none;
+}
+.narrative-feed-summary {
+  margin: 10px 0 0;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
 /* ── The canvas surface + toolbar ─────────────────────────────────────────── */
 .canvas-surface {
   flex: 1;

@@ -1,5 +1,5 @@
 import type { CommandInput, CommandName, CommandOutput, RennetBridge } from "@rennet/protocol";
-import type { Canvas, CanvasAngle, Review } from "@rennet/types";
+import type { Canvas, CanvasAngle, NarrativeProgressEvent, Review } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
 import { loadCanvases } from "./load";
@@ -49,9 +49,21 @@ describe("loadCanvases", () => {
   it("returns the live canvas set + real element diffs the engine produced", async () => {
     const canvases = liveSet();
     const elementDiffs = { e: { path: "src/a.ts", diff: "@@ -1,1 +1,2 @@\n+real" } };
+    const progress: NarrativeProgressEvent[] = [
+      {
+        reviewId: "review-1",
+        patchsetId: "patch-1",
+        key: "floor",
+        seq: 1,
+        phase: "floor",
+        status: "landed",
+        text: "The local floor found 1 chapter.",
+        artifact: { angle: "sequence" },
+      },
+    ];
     const bridge = bridgeReturning((name) => {
       expect(name).toBe("review.canvases");
-      return Promise.resolve({ canvases, elementDiffs } as never);
+      return Promise.resolve({ canvases, elementDiffs, progress } as never);
     });
 
     const result = await loadCanvases(bridge, review, "auth-token-1");
@@ -60,6 +72,7 @@ describe("loadCanvases", () => {
     expect(result?.canvases.sequence.layers.analysis.elements[0]?.title).toBe("LIVE");
     // The real per-element diff map rides along, so zoom shows real code (#60).
     expect(result?.elementDiffs.e?.diff).toContain("+real");
+    expect(result?.progress).toEqual(progress);
   });
 
   it("returns null when the pipeline errors, so the caller keeps the demo", async () => {

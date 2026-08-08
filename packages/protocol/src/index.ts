@@ -3,6 +3,7 @@ import type {
   Disposition,
   DispositionAnchor,
   ElementDiffs,
+  NarrativeProgressEvent,
   Patchset,
   Review,
   ReviewNarration,
@@ -201,6 +202,25 @@ const reviewNarrationSchema: z.ZodType<ReviewNarration> = z.object({
   cohorts: z.record(z.string(), narrationPlacementSchema),
 });
 
+// ── Deterministic live narrative progress (issue #71) ─────────────────────────
+// The return value is the resumable summary; live delivery uses the optional
+// typed bridge subscription. Both carry the exact same recipient-safe projection.
+const narrativeArtifactSchema = z.object({
+  angle: canvasAngleSchema,
+  cohortKey: z.string().optional(),
+  elementKey: z.string().optional(),
+});
+const narrativeProgressEventSchema: z.ZodType<NarrativeProgressEvent> = z.object({
+  reviewId: z.string().min(1),
+  patchsetId: z.string().min(1),
+  key: z.string().min(1),
+  seq: z.number().int().positive(),
+  phase: z.enum(["starting", "capture", "floor", "structure", "angle", "complete"]),
+  status: z.enum(["working", "landed", "degraded", "complete"]),
+  text: z.string().min(1),
+  artifact: narrativeArtifactSchema.optional(),
+});
+
 const commandIdSchema = z.uuid();
 
 export const commandDefinitions = {
@@ -311,10 +331,13 @@ export const commandDefinitions = {
     // `narration` (issue #70): the per-altitude narrated accounts, optional so a
     // desktop build that predates narration still validates (absence → the UI
     // shows the honest pending state, never a crash).
+    // `progress` (issue #71): deterministic milestones, complete without a model
+    // call and retained so a reader can leave the live stage and return to it.
     output: z.object({
       canvases: canvasSetSchema,
       elementDiffs: elementDiffsSchema,
       narration: reviewNarrationSchema.optional(),
+      progress: z.array(narrativeProgressEventSchema).optional(),
     }),
   },
   // ── Canvas user ops (issue #10) ────────────────────────────────────────────
@@ -402,4 +425,13 @@ export function parseCommandOutput<K extends CommandName>(
 
 export interface RennetBridge {
   invoke<K extends CommandName>(name: K, input: CommandInput<K>): Promise<CommandOutput<K>>;
+  /**
+   * R35 progress projections emitted after each committed pipeline phase. This is
+   * intentionally a typed subscription, not an Observable: the caller owns and
+   * disposes the returned subscription when the review surface closes.
+   */
+  subscribeNarrativeProgress?(
+    reviewId: string,
+    listener: (event: NarrativeProgressEvent) => void,
+  ): () => void;
 }

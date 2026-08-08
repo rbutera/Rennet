@@ -294,6 +294,41 @@ describe("buildReviewCanvases", () => {
     expect(sequenceTitles(result.canvases.sequence)).toEqual(["src/alpha.ts", "src/gamma.ts"]);
   });
 
+  it("emits a complete live narrative with the utility port stubbed and zero model calls", async () => {
+    // The feed is built from pipeline milestones, not a light-tier garnish. A
+    // passed-but-unused utility port makes the zero-model-call guarantee
+    // red-provable: if a future feed implementation reaches for garnish, this
+    // assertion fails while the deterministic events remain expected.
+    const complete = vi.fn();
+    const utilityPort = { complete } as unknown as CodexUtilityPort;
+    const events = [] as import("@rennet/types").NarrativeProgressEvent[];
+
+    const result = await buildReviewCanvases({
+      reviewId: "review-1",
+      patchset: edgedPatchset,
+      dispositions: [],
+      codexPort: utilityPort,
+      onProgress: (event) => events.push(event),
+    });
+
+    expect(complete).not.toHaveBeenCalled();
+    expect(events.map((event) => event.key)).toEqual([
+      "starting",
+      "capture",
+      "floor",
+      "structure",
+      "angle:spec",
+      "angle:sequence",
+      "angle:decisions",
+      "angle:claims",
+      "angle:noise",
+      "complete",
+    ]);
+    expect(events.find((event) => event.key === "floor")?.artifact).toEqual({ angle: "sequence" });
+    expect(events.at(-1)?.status).toBe("complete");
+    expect(result.progress).toEqual(events);
+  });
+
   it("applies the ordering pass's comprehension order to the sequence canvas", async () => {
     const decomposition = decompose(independentPatchset);
     // Independent files → no dependency edges → a reorder is admissible.

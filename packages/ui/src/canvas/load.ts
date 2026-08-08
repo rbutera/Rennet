@@ -1,5 +1,12 @@
 import type { RennetBridge } from "@rennet/protocol";
-import type { Canvas, CanvasAngle, ElementDiffs, Review, ReviewNarration } from "@rennet/types";
+import type {
+  Canvas,
+  CanvasAngle,
+  ElementDiffs,
+  NarrativeProgressEvent,
+  Review,
+  ReviewNarration,
+} from "@rennet/types";
 
 /** The five-angle canvas set the canvas workspace renders. */
 export type CanvasSet = Record<CanvasAngle, Canvas>;
@@ -15,6 +22,8 @@ export interface LoadedCanvases {
   canvases: CanvasSet;
   elementDiffs: ElementDiffs;
   narration?: ReviewNarration;
+  /** Resumable deterministic stage-three summary (issue #71). */
+  progress?: NarrativeProgressEvent[];
 }
 
 /**
@@ -31,7 +40,7 @@ export async function loadCanvases(
   authorization: string | null,
 ): Promise<LoadedCanvases | null> {
   try {
-    const { canvases, elementDiffs, narration } = await bridge.invoke("review.canvases", {
+    const { canvases, elementDiffs, narration, progress } = await bridge.invoke("review.canvases", {
       commandId: crypto.randomUUID(),
       reviewId: review.id,
       repoPath: review.repositoryRoot,
@@ -42,7 +51,12 @@ export async function loadCanvases(
       // included when the caller holds one, never asserted as a bare boolean.
       ...(authorization ? { authorization } : {}),
     });
-    return { canvases, elementDiffs, ...(narration ? { narration } : {}) };
+    return {
+      canvases,
+      elementDiffs,
+      ...(narration ? { narration } : {}),
+      ...(progress ? { progress } : {}),
+    };
   } catch {
     return null;
   }

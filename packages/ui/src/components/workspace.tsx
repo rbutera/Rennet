@@ -4,6 +4,8 @@ import type {
   CanvasAngle,
   CanvasChangeNotification,
   DispositionType,
+  NarrativeArtifact,
+  NarrativeProgressEvent,
   Proposal,
   ReviewNarration,
 } from "@rennet/types";
@@ -41,6 +43,7 @@ import { AnnotationMark, ProposalMark } from "./l3";
 import { LensSwitcher } from "./lens";
 import { MarkIndex, type MarkIndexEntry } from "./mark-index";
 import { NarrationPanel } from "./narration";
+import { NarrativeFeed } from "./narrative-feed";
 import { OrphanTray } from "./orphan-tray";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -73,6 +76,11 @@ export interface CanvasWorkspaceProps {
    * shows an honest "narration pending" line, never a silent blank.
    */
   narration?: ReviewNarration;
+  /**
+   * Stage-three deterministic progress projections. The parent retains these,
+   * so navigating away and back resumes the same honest summary.
+   */
+  narrativeProgress?: readonly NarrativeProgressEvent[];
 
   // ── Authoring depth (issue #17), additive and optional ──────────────────────
   // The dock renders only the sections whose props are supplied, so a host that
@@ -304,6 +312,20 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     store.getState().setZoom(view.zoom);
   }
 
+  function navigateNarrativeArtifact(artifact: NarrativeArtifact): void {
+    // A feed line becomes actionable only when its projection has landed. The
+    // smallest truthful destination is the named angle's roll-up; richer
+    // artifact kinds can add cohort/element focus without changing the feed API.
+    goToAngle(artifact.angle);
+    if (artifact.cohortKey) {
+      store.getState().setZoom({ level: "cohort", cohortKey: artifact.cohortKey });
+    } else if (artifact.elementKey) {
+      selectElement(artifact.elementKey);
+    } else {
+      store.getState().setZoom({ level: "rollup" });
+    }
+  }
+
   function rotateAndRefocus(dir: 1 | -1): void {
     goToAngle(rotateLens(store.getState().angle, dir));
   }
@@ -419,6 +441,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
       {marks.length > 0 ? <MarkIndex entries={markEntries} onNavigate={navigateToMark} /> : null}
 
       <main className="canvas-surface">
+        <NarrativeFeed
+          events={props.narrativeProgress}
+          onNavigate={navigateNarrativeArtifact}
+          compact
+        />
         {/* Narrative first (Design Doctrine R2): the zoom ladder's own voice for
             the altitude in view, above the grouped summary. Shown at the roll-up
             and cohort altitudes; never a spinner, never a silent blank. */}

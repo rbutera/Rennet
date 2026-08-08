@@ -15,6 +15,7 @@ import {
   buildReviewCanvases,
   type CodexUtilityPort,
   createHarnessRunTurn,
+  NarrativeProgressFeed,
   ReviewService,
 } from "@rennet/core";
 import { type CommandName, isCommandName } from "@rennet/protocol";
@@ -23,6 +24,7 @@ import type {
   CanvasAngle,
   CouncilHarnessId,
   ElementDiffs,
+  NarrativeProgressEvent,
   Patchset,
   Review,
   ReviewNarration,
@@ -82,7 +84,14 @@ let settings: FileSettingsStore;
 let service: ReviewService;
 let repositoryDirty = false;
 const allowedRoots = new Set<string>();
-let dispatch: ((name: CommandName, input: unknown) => Promise<unknown>) | null = null;
+let dispatch:
+  | ((
+      name: CommandName,
+      input: unknown,
+      onProgress?: (event: NarrativeProgressEvent) => void,
+    ) => Promise<unknown>)
+  | null = null;
+const narrativeProgress = new NarrativeProgressFeed();
 
 function isTrustedAppUrl(value: string): boolean {
   const url = new URL(value);
@@ -118,10 +127,14 @@ async function chooseRepository(): Promise<string | null> {
  * the decomposition angle + ordering pass on their subscription OAuth. With no
  * harness the deterministic floor still populates real canvases from the diff.
  */
-async function buildCanvasesForReview(review: Review): Promise<{
+async function buildCanvasesForReview(
+  review: Review,
+  onProgress?: (event: NarrativeProgressEvent) => void,
+): Promise<{
   canvases: Record<CanvasAngle, Canvas>;
   elementDiffs: ElementDiffs;
   narration?: ReviewNarration;
+  progress: NarrativeProgressEvent[];
 }> {
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
@@ -165,11 +178,13 @@ async function buildCanvasesForReview(review: Review): Promise<{
     ...(runDecompositionTurn ? { runDecompositionTurn } : {}),
     ...(runOrderingTurn ? { runOrderingTurn } : {}),
     ...(runNarrationTurn ? { runNarrationTurn } : {}),
+    ...(onProgress ? { onProgress } : {}),
   });
   return {
     canvases: result.canvases,
     elementDiffs: result.elementDiffs,
     narration: result.narration,
+    progress: result.progress,
   };
 }
 
@@ -181,8 +196,44 @@ function registerCommandHandler(): void {
     const { name, input } = request as { name?: unknown; input?: unknown };
     if (typeof name !== "string" || !isCommandName(name)) throw new Error("Unknown command");
     if (!dispatch) throw new Error("The command router is not ready");
-    return dispatch(name, input);
+    return dispatch(name, input, (progress) => {
+      narrativeProgress.publish(progress);
+      narrativeProgress.flush();
+    });
   });
+}
+
+const NARRATIVE_PROGRESS_CHANNEL = "rennet:narrative-progress";
+const NARRATIVE_PROGRESS_SUBSCRIBE = "rennet:narrative-progress:subscribe";
+const NARRATIVE_PROGRESS_UNSUBSCRIBE = "rennet:narrative-progress:unsubscribe";
+
+/**
+ * Renderer progress subscriptions are explicitly owned by one webContents
+ * process and disposed on unsubscribe/destroy. The core feed replays its
+ * recipient-safe summary on a new subscription, which is what lets the stage be
+ * left and resumed without manufacturing a new model call.
+ */
+function registerNarrativeProgressHandler(): void {
+  const subscriptions = new Map<number, () => void>();
+  const clear = (senderId: number) => {
+    subscriptions.get(senderId)?.();
+    subscriptions.delete(senderId);
+  };
+  ipcMain.on(NARRATIVE_PROGRESS_SUBSCRIBE, (event, raw: unknown) => {
+    if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) return;
+    const reviewId =
+      raw && typeof raw === "object" && typeof (raw as { reviewId?: unknown }).reviewId === "string"
+        ? (raw as { reviewId: string }).reviewId
+        : undefined;
+    if (!reviewId) return;
+    clear(event.sender.id);
+    const dispose = narrativeProgress.subscribe(reviewId, (progress) => {
+      if (!event.sender.isDestroyed()) event.sender.send(NARRATIVE_PROGRESS_CHANNEL, progress);
+    });
+    subscriptions.set(event.sender.id, dispose);
+    event.sender.once("destroyed", () => clear(event.sender.id));
+  });
+  ipcMain.on(NARRATIVE_PROGRESS_UNSUBSCRIBE, (event) => clear(event.sender.id));
 }
 
 function registerAppProtocol(): void {
@@ -252,6 +303,7 @@ app.whenReady().then(async () => {
   });
   registerAppProtocol();
   registerCommandHandler();
+  registerNarrativeProgressHandler();
   await createWindow();
 });
 

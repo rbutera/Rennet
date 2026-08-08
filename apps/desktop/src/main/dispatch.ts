@@ -7,7 +7,14 @@ import {
   requiresConsent,
   resolvePermissionMode,
 } from "@rennet/protocol";
-import type { Canvas, CanvasAngle, ElementDiffs, Review, ReviewNarration } from "@rennet/types";
+import type {
+  Canvas,
+  CanvasAngle,
+  ElementDiffs,
+  NarrativeProgressEvent,
+  Review,
+  ReviewNarration,
+} from "@rennet/types";
 
 /**
  * The command router (issue #54), extracted from the electron main so it can be
@@ -30,11 +37,16 @@ export interface DispatchDeps {
    * Build the live five-angle canvas set for a review (harness-backed pipeline),
    * plus the per-element real diff map (#60) delivered with it.
    */
-  buildCanvases(review: Review): Promise<{
+  buildCanvases(
+    review: Review,
+    onProgress?: (event: NarrativeProgressEvent) => void,
+  ): Promise<{
     canvases: Record<CanvasAngle, Canvas>;
     elementDiffs: ElementDiffs;
     /** The roll-up narration placed onto the canvases (issue #70), when produced. */
     narration?: ReviewNarration;
+    /** The deterministic, resumable live-narrative summary (issue #71). */
+    progress?: NarrativeProgressEvent[];
   }>;
   /**
    * The workspace permission-mode store (issue #103). Reads the persisted
@@ -59,7 +71,11 @@ export interface DispatchDeps {
 
 export function createDispatch(
   deps: DispatchDeps,
-): (name: CommandName, rawInput: unknown) => Promise<unknown> {
+): (
+  name: CommandName,
+  rawInput: unknown,
+  onProgress?: (event: NarrativeProgressEvent) => void,
+) => Promise<unknown> {
   const { service, allowedRoots } = deps;
 
   function assertAllowedRepository(repositoryPath: string): void {
@@ -73,7 +89,11 @@ export function createDispatch(
     return current;
   }
 
-  return async function dispatch(name: CommandName, rawInput: unknown): Promise<unknown> {
+  return async function dispatch(
+    name: CommandName,
+    rawInput: unknown,
+    onProgress?: (event: NarrativeProgressEvent) => void,
+  ): Promise<unknown> {
     switch (name) {
       case "app.bootstrap": {
         parseCommandInput(name, rawInput);
@@ -178,11 +198,15 @@ export function createDispatch(
             throw new Error("The harness run was not authorized under the current permission mode");
           }
         }
-        const { canvases, elementDiffs, narration } = await deps.buildCanvases(review);
+        const { canvases, elementDiffs, narration, progress } = await deps.buildCanvases(
+          review,
+          onProgress,
+        );
         return parseCommandOutput(name, {
           canvases,
           elementDiffs,
           ...(narration ? { narration } : {}),
+          ...(progress ? { progress } : {}),
         });
       }
       // ── Canvas user ops (issue #54 wires #10's command surface into dispatch) ──

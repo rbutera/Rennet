@@ -4,7 +4,14 @@ import {
   requiresConsent,
   resolvePermissionMode,
 } from "@rennet/protocol";
-import type { CanvasAngle, ElementDiffs, Patchset, Review, ReviewNarration } from "@rennet/types";
+import type {
+  CanvasAngle,
+  ElementDiffs,
+  NarrativeProgressEvent,
+  Patchset,
+  Review,
+  ReviewNarration,
+} from "@rennet/types";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type CollationDraft, ingestWrites, withdrawPath } from "./canvas/collation";
 import { type DestinationMode, destinationVariant, type PublishLedger } from "./canvas/destination";
@@ -15,6 +22,7 @@ import { type PublishContext, publishTarget, publishTargetPayload } from "./canv
 import { CollationDraftCanvas } from "./components/collation-draft-canvas";
 import { DestinationFrame } from "./components/destination-frame";
 import { HarnessConsent } from "./components/harness-consent";
+import { NarrativeFeed } from "./components/narrative-feed";
 import { PublishSheet } from "./components/publish-sheet";
 import { CanvasWorkspace } from "./components/workspace";
 
@@ -66,6 +74,16 @@ function activePatchset(review: Review): Patchset {
   const patchset = review.patchsets.find((candidate) => candidate.id === review.activePatchsetId);
   if (!patchset) throw new Error("The active patchset is missing");
   return patchset;
+}
+
+/** Merge R35-conflated live updates with a returned resumable snapshot by key. */
+function mergeNarrativeProgress(
+  current: readonly NarrativeProgressEvent[],
+  incoming: readonly NarrativeProgressEvent[],
+): NarrativeProgressEvent[] {
+  const byKey = new Map(current.map((event) => [event.key, event]));
+  for (const event of incoming) byKey.set(event.key, event);
+  return [...byKey.values()].sort((left, right) => left.seq - right.seq);
 }
 
 export function ReviewWorkspace({
@@ -216,6 +234,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // alongside the canvas set. The demo seeds narrated accounts; a live load sets
   // whatever the engine produced (undefined → the honest pending state).
   const [narration, setNarration] = useState<ReviewNarration | undefined>(() => demoNarration());
+  // Parent-owned, review-keyed progress makes the long-running stage resumable:
+  // switching back to Files does not discard what the local pipeline already
+  // made legible, and re-opening Canvases reads the same summary.
+  const [narrativeProgress, setNarrativeProgress] = useState<NarrativeProgressEvent[]>([]);
+  const reviewId = review?.id;
   const [liveLoaded, setLiveLoaded] = useState(false);
   const fetchedForReview = useRef<string | null>(null);
   // Permission mode (issue #103). The persisted workspace default governs the
@@ -264,6 +287,17 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   }, [bridge]);
 
   const patchset = useMemo(() => (review ? activePatchset(review) : undefined), [review]);
+
+  useEffect(() => {
+    if (!reviewId) {
+      setNarrativeProgress([]);
+      return;
+    }
+    setNarrativeProgress([]);
+    return bridge.subscribeNarrativeProgress?.(reviewId, (event) => {
+      setNarrativeProgress((current) => mergeNarrativeProgress(current, [event]));
+    });
+  }, [bridge, reviewId]);
 
   useEffect(() => {
     if (!review || review.status === "invalid") return;
@@ -331,6 +365,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       setCanvases(live.canvases);
       setElementDiffs(live.elementDiffs);
       setNarration(live.narration);
+      if (live.progress) {
+        setNarrativeProgress((current) => mergeNarrativeProgress(current, live.progress ?? []));
+      }
       setLiveLoaded(true);
     });
     return () => {
@@ -552,27 +589,34 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         />
       ) : null}
       {view === "canvases" ? (
-        <CanvasWorkspace
-          canvases={canvases}
-          bridge={bridge}
-          narration={narration}
-          onDispositions={(writes) => {
-            setCanvases((current) => applyWrites(current, writes));
-            // dispose == staged: authoring a disposition collates it into the draft
-            // in the same act (upsert-by-path, one act ingests all its fan-out writes).
-            setDraft((current) => ingestWrites(current, writes));
-          }}
-          onAdjudicate={(adjudication) =>
-            setCanvases((current) => resolveProposal(current, adjudication.proposalId))
-          }
-          // Real code on the real path (issue #60): once a live canvas set has
-          // loaded, zoom reads the real per-element diff (a doc-anchored element
-          // has no entry → the zoom surface renders nothing, not a fixture). While
-          // the fixtures demo is up, the demo `demoDiff` is unchanged.
-          diffFor={(elementKey) =>
-            liveLoaded ? elementDiffs[elementKey] : { path: elementKey, diff: demoDiff(400) }
-          }
-        />
+        liveLoaded ? (
+          <CanvasWorkspace
+            canvases={canvases}
+            bridge={bridge}
+            narration={narration}
+            narrativeProgress={narrativeProgress}
+            onDispositions={(writes) => {
+              setCanvases((current) => applyWrites(current, writes));
+              // dispose == staged: authoring a disposition collates it into the draft
+              // in the same act (upsert-by-path, one act ingests all its fan-out writes).
+              setDraft((current) => ingestWrites(current, writes));
+            }}
+            onAdjudicate={(adjudication) =>
+              setCanvases((current) => resolveProposal(current, adjudication.proposalId))
+            }
+            // Real code on the real path (issue #60): once a live canvas set has
+            // loaded, zoom reads the real per-element diff (a doc-anchored element
+            // has no entry → the zoom surface renders nothing, not a fixture). While
+            // the fixtures demo is up, the demo `demoDiff` is unchanged.
+            diffFor={(elementKey) =>
+              liveLoaded ? elementDiffs[elementKey] : { path: elementKey, diff: demoDiff(400) }
+            }
+          />
+        ) : (
+          <main className="narrative-stage canvas-app" data-scheme="dark">
+            <NarrativeFeed events={narrativeProgress} />
+          </main>
+        )
       ) : (
         <ReviewWorkspace
           review={review}

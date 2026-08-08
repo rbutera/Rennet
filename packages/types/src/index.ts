@@ -990,6 +990,37 @@ export interface CanvasChangeNotification {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Live narrative feed (issue #71)
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Where a landed live-narrative line takes the reader. The progress feed never
+ * invents an anchor: only a projection that is now available may name one.
+ */
+export interface NarrativeArtifact {
+  angle: CanvasAngle;
+  cohortKey?: string;
+  elementKey?: string;
+}
+
+/**
+ * A deterministic, recipient-safe projection of one pipeline milestone. These
+ * are the payloads carried by the R35-style progress change feed, not raw
+ * pipeline internals. `key` is stable within a run for per-key conflation;
+ * `seq` preserves phase order for consumers that reconnect or resume.
+ */
+export interface NarrativeProgressEvent {
+  reviewId: string;
+  patchsetId: string;
+  key: string;
+  seq: number;
+  phase: "starting" | "capture" | "floor" | "structure" | "angle" | "complete";
+  status: "working" | "landed" | "degraded" | "complete";
+  text: string;
+  artifact?: NarrativeArtifact;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // The Model Council (issue #69)
 //
 // The named subsystem that decides which mind does which job. This file carries

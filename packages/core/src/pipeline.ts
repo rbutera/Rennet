@@ -36,6 +36,7 @@ import type {
   DecompositionProposalBody,
   Disposition,
   ElementDiffs,
+  NarrativeProgressEvent,
   OfferedManifest,
   Patchset,
   ResolutionTrace,
@@ -169,6 +170,12 @@ export interface ReviewPipelineInput {
    */
   readonly runNarrationTurn?: (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
   readonly narrationContract?: PromptContract;
+  /**
+   * Stage-three deterministic milestones. This is deliberately independent of
+   * every model turn: consumers always receive a complete account of the floor,
+   * even when no harness or utility port is available.
+   */
+  readonly onProgress?: (event: NarrativeProgressEvent) => void;
   /** Deterministic id hooks (tests); default to the random minters. */
   readonly mintDocId?: () => string;
   readonly newRunId?: () => string;
@@ -199,6 +206,8 @@ export interface ReviewPipelineResult {
   readonly narration: ReviewNarration;
   /** The narration run result (for provenance / telemetry); absent when it did not run. */
   readonly narrationResult?: RunRollupNarrationResult;
+  /** The resumable deterministic progress summary, in pipeline order. */
+  readonly progress: NarrativeProgressEvent[];
 }
 
 /**
@@ -208,7 +217,46 @@ export interface ReviewPipelineResult {
 export async function buildReviewCanvases(
   input: ReviewPipelineInput,
 ): Promise<ReviewPipelineResult> {
+  const progress: NarrativeProgressEvent[] = [];
+  let progressSeq = 0;
+  const report = (
+    key: string,
+    phase: NarrativeProgressEvent["phase"],
+    status: NarrativeProgressEvent["status"],
+    text: string,
+    artifact?: NarrativeProgressEvent["artifact"],
+  ): void => {
+    const event: NarrativeProgressEvent = {
+      reviewId: input.reviewId,
+      patchsetId: input.patchset.id,
+      key,
+      seq: ++progressSeq,
+      phase,
+      status,
+      text,
+      ...(artifact ? { artifact } : {}),
+    };
+    progress.push(event);
+    input.onProgress?.(event);
+  };
+
+  // The first line is emitted before any synchronous work. A renderer that opens
+  // the stage gets prose immediately, not a spinner or an empty surface.
+  report("starting", "starting", "working", "Starting a local reading of this changeset…");
   const decomposition = decompose(input.patchset, input.decomposeOptions ?? {});
+  report(
+    "capture",
+    "capture",
+    "landed",
+    `Reading the changeset… ${decomposition.hunks.length} ${decomposition.hunks.length === 1 ? "hunk" : "hunks"} found.`,
+  );
+  report(
+    "floor",
+    "floor",
+    "landed",
+    `The local floor found ${decomposition.chunks.length} ${decomposition.chunks.length === 1 ? "chapter" : "chapters"}.`,
+    { angle: "sequence" },
+  );
   const routePlan = buildRoutePlan(decomposition, input.routePlanOptions ?? {});
   const seed = input.provenance ?? DEFAULT_PROVENANCE_SEED;
 
@@ -293,6 +341,14 @@ export async function buildReviewCanvases(
   // executor for its resolved harness (Claude turn OR Codex port) AND the budget
   // permits it. A refusal skips the whole model phase — no spend, floor stands.
   const budgetRefused = routePlan.refused;
+  report(
+    "structure",
+    "structure",
+    decompositionSeat.runTurn && !budgetRefused ? "working" : "degraded",
+    decompositionSeat.runTurn && !budgetRefused
+      ? "Finding the chapter structure…"
+      : "The deterministic chapter structure is carrying this review.",
+  );
   if (decompositionSeat.runTurn && !budgetRefused) {
     decompositionResult = await runDecompositionAngle({
       decomposition,
@@ -367,6 +423,19 @@ export async function buildReviewCanvases(
   const canvases = Object.fromEntries(entries) as Record<CanvasAngle, Canvas>;
   const elementDiffs = buildElementDiffs(canvases, decomposition, input.patchset, admittedDocs);
 
+  // Each angle is a real projection from the deterministic floor or an admitted
+  // document. These landed lines name only artifacts the reader can now open.
+  const angleNames: Record<CanvasAngle, string> = {
+    spec: "Specification",
+    sequence: "Reading sequence",
+    decisions: "Decisions",
+    claims: "Claims",
+    noise: "Noise",
+  };
+  for (const angle of CANVAS_ANGLES) {
+    report(`angle:${angle}`, "angle", "landed", `${angleNames[angle]} is ready.`, { angle });
+  }
+
   // Roll-up narration (#70): the zoom ladder's own voice, produced AFTER the
   // canvases exist (it accounts for their nodes). It is a council-routed light-tier
   // seat drawing from the SAME shared budget — so its turns count toward the <5
@@ -396,6 +465,9 @@ export async function buildReviewCanvases(
     });
   }
   const narration = buildReviewNarration(narrationNodes, narrationResult);
+  report("complete", "complete", "complete", "The review is ready to read.", {
+    angle: "sequence",
+  });
 
   return {
     canvases,
@@ -408,5 +480,6 @@ export async function buildReviewCanvases(
     admittedDocs,
     narration,
     ...(narrationResult ? { narrationResult } : {}),
+    progress,
   };
 }

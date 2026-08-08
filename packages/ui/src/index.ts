@@ -135,6 +135,8 @@ export type { GranularityContext } from "./components/granularity-author";
 export { GranularityAuthor } from "./components/granularity-author";
 export type { MarkIndexEntry } from "./components/mark-index";
 export { MarkIndex } from "./components/mark-index";
+export type { NarrativeFeedProps } from "./components/narrative-feed";
+export { NarrativeFeed } from "./components/narrative-feed";
 export { OrphanTray } from "./components/orphan-tray";
 export { PublishSheet } from "./components/publish-sheet";
 export type { CanvasWorkspaceProps, DiffResolver } from "./components/workspace";
