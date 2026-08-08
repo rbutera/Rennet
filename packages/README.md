@@ -1,11 +1,14 @@
-# Packages
+# Rennet packages
 
-The planned dependency order is:
+The monorepo is intentionally layered:
 
 ```text
-types <- protocol <- core <- adapters <- desktop
-  ^         ^
-  +---------+------------------------- ui
+types  ← imports nothing in-repo
+protocol ← types
+core ← protocol
+adapters ← core + Node/Electron host capabilities
+ui ← types + protocol + browser-safe dependencies
+desktop ← the only Electron composition root
 ```
 
-The package and licensing contracts are frozen in [Rennet Master Plan](../docs/Rennet%20Master%20Plan.md) and [Rennet Architecture Contracts](../docs/Rennet%20Architecture%20Contracts.md). Package selection and dependency overlap are governed by [Rennet Dependency Standard](../docs/Rennet%20Dependency%20Standard.md).
+The current product and package contracts are in [the product vision](../docs/PRODUCT_VISION.md), [the rulings ledger](../docs/RULINGS_LEDGER.md), and [the architecture guide](../docs/ARCHITECTURE.md). The architecture guide also owns package selection, dependency overlap, toolchain, and licensing policy.

@@ -2,17 +2,17 @@
 
 Rennet is a local-first code review harness. It helps a reviewer understand large local changes and pull requests through six complementary angles while keeping the human responsible for every published outcome.
 
-The repository now contains the first runnable desktop MVP alongside the architecture and evidence work. It captures a local repository into an immutable patchset, persists review events locally, preserves the old review when code changes, and regenerates only after an explicit action. It does not call a model, mutate Git, or publish anything.
+The repository contains a runnable desktop review foundation: immutable local and PR patchsets, evented review state, canvases and dispositions, an editable collation draft, publication previews, and explicit invalidation/regeneration. It does not auto-publish, push source branches, or treat provider use as local-only processing.
 
 ## Start here
 
-- [Master plan](./docs/Rennet%20Master%20Plan.md): authoritative product and architecture reconciliation.
-- [Architecture contracts](./docs/Rennet%20Architecture%20Contracts.md): project context, immutable patchsets, invalidation, persistence, privacy, and publication.
-- [Dependency standard](./docs/Rennet%20Dependency%20Standard.md): authoritative package, licence, toolchain, and ownership decisions.
-- [Local review MVP](./docs/Rennet%20Local%20Review%20MVP.md): what is implemented, how to run it, and the deliberately missing product layers.
-- [Evidence gates](./docs/Rennet%20Evidence%20Gate%20Status.md): what is proven, open, or approval-blocked before implementation.
-- [Build handoff](./docs/Rennet%20Navi%20Handoff.md): dependency-ordered implementation plan.
-- [Interactive prototype](./prototypes/moodboard/index.html): current product-state prototype.
+- [Product vision](./docs/PRODUCT_VISION.md): the canonical product intent, the six angles, and the required prototype-alignment rule.
+- [Rulings ledger](./docs/RULINGS_LEDGER.md): concise currently binding decisions with stable R-IDs.
+- [Architecture](./docs/ARCHITECTURE.md): immutable patchsets, project context, storage, privacy, publication, dependencies, and package boundaries.
+- [MVP status](./docs/MVP_STATUS.md): verified implementation, evidence gates, and deliberate gaps.
+- [Design doctrine](./docs/DESIGN_DOCTRINE.md): the mandatory visual and interaction rules.
+- [Interactive prototype](./prototypes/moodboard/index.html): approved product-state target for UI work.
+- [Documentation index](./docs/README.md): secondary guides and the historical archive.
 
 ## Repository shape
 
@@ -20,8 +20,8 @@ The repository now contains the first runnable desktop MVP alongside the archite
 apps/          Electron desktop app and future clients
 packages/      Portable types, protocol, core, adapters, UI, and instructions
 scripts/       Repository gates and maintenance tooling
-docs/          Architecture, product research, decisions, and evidence verdicts
-prototypes/    Current moodboard and archived exploratory screens
+docs/          Current implementation guidance and archived historical material
+prototypes/    Approved moodboard and exploratory screens
 spikes/        Isolated evidence probes, never workspace packages
 ```
 
@@ -32,8 +32,6 @@ pnpm install --frozen-lockfile
 pnpm dev
 ```
 
-Choose a Git repository in the desktop app. Rennet captures committed feature-branch changes, staged and unstaged changes, and nonignored untracked files without writing to the source repository.
-
 ## Current checks
 
 ```sh
@@ -43,10 +41,8 @@ pnpm e2e
 pnpm exec nx run rennet-desktop:package-smoke
 ```
 
-Nx runs and locally caches lint, TypeScript 7 typechecking, unit tests, and Vite builds across the production package graph. The architecture target includes a forbidden-import positive control. Electron E2E and Forge packaging remain uncached because they exercise real process and artifact boundaries.
+Nx runs and locally caches deterministic lint, TypeScript, unit-test, and build work across the production graph. Electron E2E and Forge packaging remain uncached because they exercise real process and artifact boundaries.
 
 ## Privacy boundary
 
-There is no Rennet backend. Selected harnesses or model providers may receive explicitly assembled code and context, and the app must disclose that before a run. Never use easyJet or other client repositories, data, screenshots, or pull requests as fixtures without written authorization.
-
-This private repository does not currently grant a licence. The planned public licensing split is recorded in the master plan and must be implemented before the repository becomes public.
+There is no Rennet backend. Selected harnesses or model providers may receive explicitly assembled code and context; Rennet must disclose that before a run. Rennet is MIT licensed throughout. Never use easyJet or another client repository, data, screenshot, pull request, or infrastructure as a fixture without written authorization.

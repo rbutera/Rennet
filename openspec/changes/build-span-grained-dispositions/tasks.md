@@ -34,7 +34,7 @@
 
 - [ ] 6.1 `disposition-relevance-judge` → `JOB_CATALOGUE` (light tier, batched, sibling to `disposition-triage`); entries in all three assignment tables (Table 1 `gpt-5.6-luna medium`, Table 2 `haiku low`, Table 3 `gpt-5.6-luna medium`).
 - [ ] 6.2 The existing council test (every model-facing job has all three table entries; tier ∈ {light,heavy}) stays green with the new job — add an explicit assertion the job resolves via `resolveAssignment` in the `both` scenario.
-- [ ] 6.3 `docs/Rennet Model Council.md`: add to §2.2 light-tier list + the three assignment tables + a §2.3-style note reconciling "medium model (effort), light tier (bounded inference)"; note the live budget gate covers it via `resolveAssignment` (no new gate).
+- [ ] 6.3 `docs/MODEL_COUNCIL.md`: add to §2.2 light-tier list + the three assignment tables + a §2.3-style note reconciling "medium model (effort), light tier (bounded inference)"; note the live budget gate covers it via `resolveAssignment` (no new gate).
 
 ## 7. The publish payload contract (#22/#21 build on this once)
 

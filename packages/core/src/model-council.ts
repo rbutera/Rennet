@@ -6,7 +6,7 @@
  * three availability-default assignment tables (Model Council §3, tables 1-3),
  * and `resolveAssignment` — a pure, deterministic function returning
  * `{ harness, model, effort, trace }` for a model-facing job (and `deterministic`
- * for a floor job). Doc authority: `docs/Rennet Model Council.md`.
+ * for a floor job). Doc authority: `docs/MODEL_COUNCIL.md`.
  *
  * Two doctrines are load-bearing here:
  *   - The tables are the council's DEFAULTS, shipped versioned like a schema.

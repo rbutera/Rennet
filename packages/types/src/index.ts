@@ -999,7 +999,7 @@ export interface CanvasChangeNotification {
 // catalogue data, the three assignment tables, and the pure `resolveAssignment`
 // resolver live in `@rennet/core` (`model-council.ts`); the budget closure lives
 // in `@rennet/core` (`invocation-budget.ts`). Doc authority:
-// `docs/Rennet Model Council.md` (§2 catalogue, §3 tables, §4 resolver + gate).
+// `docs/MODEL_COUNCIL.md` (§2 catalogue, §3 tables, §4 resolver + gate).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The provider a council model belongs to. Determines the harness it runs on. */

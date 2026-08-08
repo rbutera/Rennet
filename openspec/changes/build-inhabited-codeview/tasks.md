@@ -22,6 +22,6 @@
 
 ## 4. Doctrine + wiring
 
-- [ ] 4.1 Add to `docs/Rennet Design Doctrine.md`: "marks live at their anchors, never in a list" (a strip/panel may index marks but never house them; an unresolvable-anchor mark renders in the orphan tray, visibly)
+- [ ] 4.1 Add to `docs/DESIGN_DOCTRINE.md`: "marks live at their anchors, never in a list" (a strip/panel may index marks but never house them; an unresolvable-anchor mark renders in the orphan tray, visibly)
 - [ ] 4.2 Export the registrar API from `packages/ui/src/index.ts`
 - [ ] 4.3 Gate green (`nx run <p>:typecheck` real checker + `nx run <p>:test`); open PR (no merge); prove origin==sha

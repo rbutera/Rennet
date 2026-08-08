@@ -1,23 +1,15 @@
 # Rennet documentation
 
-Read these in order:
+Read the smallest document that governs the work:
 
-1. [Rennet Product and Vision](./Rennet%20Product%20and%20Vision.md) — what the product is. Start here.
-2. [Rennet Contracts and Rulings](./Rennet%20Contracts%20and%20Rulings.md) — the authority register (formerly *Rennet Master Plan*): rulings R1–R39, frozen core, open questions, M0 cut, spikes, the execution pipeline.
-3. [Rennet Architecture Contracts](./Rennet%20Architecture%20Contracts.md) — frozen engineering contracts.
-4. [Rennet Dependency Standard](./Rennet%20Dependency%20Standard.md) — dependencies and toolchain.
-5. [Rennet Canvas Paradigm](./Rennet%20Canvas%20Paradigm.md) — the interaction model.
-6. [Rennet Orchestrator Context Access](./Rennet%20Orchestrator%20Context%20Access.md) — the orchestrator's context architecture.
-7. [Rennet Comment Refinement Loop](./Rennet%20Comment%20Refinement%20Loop.md) — the raw→refined disposition lifecycle.
-8. [Rennet Reactive Streams (RxJS)](./Rennet%20Reactive%20Streams%20(RxJS).md) — why RxJS is refused everywhere, and the change-feed / `AsyncIterable` primitives that stand in its place (R35).
-9. [Rennet User Journey](./Rennet%20User%20Journey.md) — the ordered eight-stage journey (first run → sign), stage ownership, built-vs-open, the journey-fit convention.
-10. [Rennet Model Council](./Rennet%20Model%20Council.md) — the job catalogue, the three assignment tables, the resolver, the live budget gate, the ledger (R39).
-11. [Rennet Design Doctrine](./Rennet%20Design%20Doctrine.md) — the ratified design register: materials, colour law, interaction laws. Required reading for UI work.
-12. [Rennet Evidence Gate Status](./Rennet%20Evidence%20Gate%20Status.md) — what is proven vs. assumed.
-13. [Rennet Navi Handoff](./Rennet%20Navi%20Handoff.md) — orientation and working agreement for the building agent.
+1. [PRODUCT_VISION.md](./PRODUCT_VISION.md) — product intent, six angles, lifecycle, and the mandatory prototype-alignment rule.
+2. [RULINGS_LEDGER.md](./RULINGS_LEDGER.md) — concise binding rulings with stable R-IDs.
+3. [ARCHITECTURE.md](./ARCHITECTURE.md) — immutable reviews, storage, privacy, publication, package boundaries, dependencies, and gates.
+4. [MVP_STATUS.md](./MVP_STATUS.md) — verified implementation, evidence gates, and deliberate gaps.
+5. [DESIGN_DOCTRINE.md](./DESIGN_DOCTRINE.md) — materials, colours, interaction laws, and screen-by-screen prototype references.
+6. [CANVAS_PARADIGM.md](./CANVAS_PARADIGM.md) — layered canvas model and actor/tool contract.
+7. [ORCHESTRATOR_CONTEXT.md](./ORCHESTRATOR_CONTEXT.md) — primer-as-map, `canvasOps@2`, retrieval, and `context.ask`.
+8. [MODEL_COUNCIL.md](./MODEL_COUNCIL.md) — deterministic model assignment, cross-harness routing, budget, and calibration.
+9. [USER_JOURNEY.md](./USER_JOURNEY.md) — ordered user flow and journey-fit convention for UI work.
 
-[Rennet Doc Architecture](./Rennet%20Doc%20Architecture.md) maps every document and its role.
-
-The backlog is the **GitHub issue queue** (`gh issue list -R rbutera/rennet --label openspec-seed`); the pipeline is Contracts and Rulings §7. The historical 147-bead backlog lives in [Rennet Backlog Archive](./Rennet%20Backlog%20Archive.md).
-
-Files retaining the historical Wingman name, and the Code Review App discovery documents, contain research and rationale. Their authority notices explain which current documents supersede their old recipes.
+The approved visual target is [`prototypes/moodboard/`](../prototypes/moodboard/). `docs/archive/` holds superseded plans, source research, spikes, and historical decision records; it is retained for provenance, not as the primary implementation path.

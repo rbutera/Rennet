@@ -44,7 +44,7 @@ deliberate, temporary deviation, recorded here rather than left as silent drift:
 
 - The immutable-materialisation layer does not exist yet, and the
   "Claude CLI isolation" evidence gate is openly **Blocked** in
-  `docs/Rennet Evidence Gate Status.md` — nothing that was proven has regressed.
+  `docs/MVP_STATUS.md` — nothing that was proven has regressed.
 - The session is `readOnly: true`, so the deviation is an *information-boundary*
   concern (the harness can read the wider tree), not a data-corruption one.
 - The real fix — materialise the active patchset into an app-owned cache and

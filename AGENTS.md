@@ -4,21 +4,22 @@ Rennet is Rai Butera's personal product. This is the product monorepo and the pr
 
 ## Read before changing the product
 
-1. `docs/Rennet Product and Vision.md`
-2. `docs/Rennet Contracts and Rulings.md`
-3. `docs/Rennet Architecture Contracts.md`
-4. `docs/Rennet Dependency Standard.md`
-5. `docs/Rennet Evidence Gate Status.md`
-6. `docs/Rennet Navi Handoff.md`
+1. `docs/PRODUCT_VISION.md`
+2. `docs/RULINGS_LEDGER.md`
+3. `docs/ARCHITECTURE.md`
+4. `docs/MVP_STATUS.md`
+5. `docs/DESIGN_DOCTRINE.md` for any UI work
+6. The matching screen in `prototypes/moodboard/` for any UI work
+7. The relevant secondary guide in `docs/README.md` when the issue touches canvases, orchestrator context, model routing, or journey flow
 
-The Contracts and Rulings document (formerly titled the Master Plan; ruling numbers unchanged) wins on general product and architecture conflicts, and the Product and Vision document is the canonical statement of intent. The Architecture Contracts win within project context, immutable patchsets, invalidation, persistence, privacy, and publication. The Dependency Standard wins on package selection, versions, toolchain ownership, package licensing, and dependency overlap. Historical Wingman documents are evidence and rationale only where a current authority supersedes them.
+`RULINGS_LEDGER.md` resolves cross-cutting product decisions; `ARCHITECTURE.md` wins for review identity, project context, invalidation, persistence, privacy, publication, packages, and dependencies. `PRODUCT_VISION.md` is the canonical statement of intent. The prototype is the approved UI target: **No UI-touching issue closes without a side-by-side comparison against the matching prototype screen in `prototypes/moodboard/`.** Historical material under `docs/archive/` is evidence and rationale only, never the primary implementation authority.
 
 ## Fixed boundaries
 
 - Never use easyJet or other client repositories, code, pull requests, screenshots, data, time, or infrastructure for development, fixtures, calibration, or model-backed dogfood without written authorization.
 - Never add AI attribution or co-author trailers. Rai is the sole author.
 - Rennet is **MIT** licensed throughout, one licence for every package (Rai's decision, 2026-08-06). There is no AGPL boundary and no Apache-2.0 carve-out for `protocol`/`types`; any document still describing that split is superseded.
-- The Claude adapter **uses `@anthropic-ai/claude-agent-sdk`** (Rai's decision, 2026-08-06, superseding the original R2 ruling in docs/Rennet Contracts and Rulings.md). The SDK spawns the user's own installed `claude` binary via `pathToClaudeCodeExecutable`, so it authenticates with the user's Claude subscription and costs nothing per token. Strip the SDK's bundled per-platform executables at packaging time. Never bundle a harness binary of our own, and never read a credential.
+- The Claude adapter **uses `@anthropic-ai/claude-agent-sdk`** (Rai's decision, 2026-08-06, superseding the original R2 ruling in docs/RULINGS_LEDGER.md). The SDK spawns the user's own installed `claude` binary via `pathToClaudeCodeExecutable`, so it authenticates with the user's Claude subscription and costs nothing per token. Strip the SDK's bundled per-platform executables at packaging time. Never bundle a harness binary of our own, and never read a credential.
 - Never auto-approve, auto-comment, push source branches, or publish anything another human can see without an explicit human action.
 - Say "no Rennet backend" and disclose harness/provider egress. Never claim universally that nothing leaves the machine.
 - `.rennet/` is local and ignored by default. Rennet never stages or commits a user's project context.
