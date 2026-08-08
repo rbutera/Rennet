@@ -101,6 +101,19 @@ describe("moveItem — reorder is a real output-order edit", () => {
     ]);
   });
 
+  it("moves exactly one adjacent position on a three-item draft (not to the boundary)", () => {
+    const draft: CollationDraft = [
+      { id: "a", path: "src/a.ts", type: "comment", raw: "a" },
+      { id: "b", path: "src/b.ts", type: "comment", raw: "b" },
+      { id: "c", path: "src/c.ts", type: "comment", raw: "c" },
+    ];
+    // Move the FIRST item down by one: [a,b,c] → [b,a,c]. A "shove to the end" bug
+    // would give [b,c,a] → red. This is the discrimination a two-item draft cannot make.
+    expect(moveItem(draft, "a", "down").map((item) => item.id)).toEqual(["b", "a", "c"]);
+    // Move the LAST item up by one: [a,b,c] → [a,c,b]. A "shove to the top" bug → red.
+    expect(moveItem(draft, "c", "up").map((item) => item.id)).toEqual(["a", "c", "b"]);
+  });
+
   it("changes the outbound payload — order is semantic", () => {
     const draft = draftFromBatch(batch);
     const reordered = moveItem(draft, "src/alpha.ts", "down");
@@ -124,6 +137,11 @@ describe("mergeItems — two dispositions collapse into one", () => {
     expect(merged[0]?.id).toBe("src/alpha.ts");
     // Both bodies joined, target first, blank halves dropped.
     expect(merged[0]?.raw).toBe("first note\nrename x");
+    // The result keeps the TARGET's type by design (here alpha's "approve"), even
+    // though the source was "request-change". This locks that documented behaviour;
+    // whether an unlike-type merge should be restricted or surfaced is a design
+    // question tracked in a follow-up bead, not a silent side effect.
+    expect(merged[0]?.type).toBe("approve");
   });
 
   it("is a no-op merging an item into itself or with an unknown id", () => {

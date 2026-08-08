@@ -94,6 +94,53 @@ describe("emit fidelity (MUT A): a completed sign emits exactly the previewed by
   });
 });
 
+describe("emit fidelity (MUT A′): the sheet signs the HANDED payload, never a re-derivation from items", () => {
+  // The R40 migration hands the paper TWO inputs: the ordered `items` (for the
+  // legible list) and the exact `payload` (the bytes it signs). Every OTHER fidelity
+  // test supplies mutually-derived inputs (payload === JSON.stringify(items) via
+  // `paper()`), so none can distinguish "signs the handed payload" from "re-derives
+  // JSON.stringify(items)". This uses a SENTINEL payload NOT derivable from the
+  // items, so a re-derivation from `items` reddens on preview, pointer, and keyboard.
+  const sentinel = "SENTINEL-PAYLOAD::not-json-stringify-of-items::7f3a";
+  const unrelatedItems: DispositionWrite[] = [
+    { path: "src/unrelated.ts", type: "comment", body: "these items are NOT the payload" },
+  ];
+
+  it("previews and pointer-signs the sentinel payload verbatim, not JSON.stringify(items)", () => {
+    const signed: string[] = [];
+    const { container } = mount(
+      <PublishSheet
+        items={unrelatedItems}
+        payload={sentinel}
+        variant={destinationVariant("other-pr")}
+        onSign={(payload) => signed.push(payload)}
+      />,
+    );
+    // Preview renders the handed payload verbatim (not the item list).
+    expect(container.querySelector('[data-testid="publish-preview"]')?.textContent).toBe(sentinel);
+    // A completed hold emits the handed payload, byte-equal. If `endHold` signed
+    // `JSON.stringify(items)` (or any re-derivation from items), this reddens.
+    pointerHold(signButton(container), 850);
+    expect(signed).toEqual([sentinel]);
+  });
+
+  it("keyboard-signs the sentinel payload verbatim", () => {
+    const signed: string[] = [];
+    const { container } = mount(
+      <PublishSheet
+        items={unrelatedItems}
+        payload={sentinel}
+        variant={destinationVariant("own-branch")}
+        onSign={(payload) => signed.push(payload)}
+      />,
+    );
+    const button = signButton(container);
+    button.focus();
+    fireEvent.keyDown(button, { key: "Enter" });
+    expect(signed).toEqual([sentinel]);
+  });
+});
+
 describe("hold-gate wiring (MUT C): a hold below the budget never signs", () => {
   it("a too-short hold does NOT sign; a second sufficient hold does", () => {
     const draft = stagedDraft(...writes);
@@ -293,10 +340,62 @@ describe("ledger swap fail-closed: a changed ledger re-blocks a prior acknowledg
     expect(signed[1]).toBe(collationPayload(draft));
     expect(signed[2]).toBe(collationPayload(draft));
   });
+
+  it("re-blocks when the SUMMARY changes under a STABLE id (a council re-run's new reason)", () => {
+    const draft = stagedDraft(...writes);
+    const signed: string[] = [];
+    const sameId = "sec-skipped";
+    const before: PublishLedger = {
+      entries: [{ id: sameId, summary: "Security angle skipped — budget exhausted" }],
+    };
+    const after: PublishLedger = {
+      entries: [{ id: sameId, summary: "Security angle skipped — harness error" }],
+    };
+    const { container, rerender } = mount(
+      <PublishSheet
+        {...paper(draft)}
+        variant={destinationVariant("other-pr")}
+        ledger={before}
+        onSign={(payload) => signed.push(payload)}
+      />,
+    );
+
+    // Acknowledge the first reason and sign once.
+    const ack = container.querySelector<HTMLInputElement>(".publish-sheet-ack-box");
+    if (!ack) throw new Error("the acknowledge control did not render for the first ledger");
+    fireEvent.click(ack);
+    pointerHold(signButton(container), 850);
+    expect(signed).toHaveLength(1);
+
+    // The degradation TEXT changes under the SAME id — a genuinely different
+    // degradation the reviewer has NOT acknowledged. An id-only signature would
+    // carry the stale ack over and sign the new reason; the id+summary signature
+    // re-blocks. Without summary in the signature, this reddens.
+    rerender(
+      <PublishSheet
+        {...paper(draft)}
+        variant={destinationVariant("other-pr")}
+        ledger={after}
+        onSign={(payload) => signed.push(payload)}
+      />,
+    );
+    pointerHold(signButton(container), 850);
+    expect(signed).toHaveLength(1); // still blocked — no new sign
+
+    // Acknowledging the NEW reason reopens signing.
+    const ack2 = container.querySelector<HTMLInputElement>(".publish-sheet-ack-box");
+    if (!ack2) throw new Error("the acknowledge control did not render for the changed ledger");
+    fireEvent.click(ack2);
+    pointerHold(signButton(container), 850);
+    expect(signed).toHaveLength(2);
+  });
 });
 
 describe("keyboard auto-repeat: a held sign key fires onSign only once", () => {
-  it("a repeat keydown does not re-fire onSign", () => {
+  // Both sign keys, since the repeat guard is key-agnostic (`if (event.repeat)`): if
+  // it were ever narrowed to Enter only, a HELD Space would double-fire and only the
+  // Space row reddens.
+  it.each([["Enter"], [" "]])("a repeat %s keydown does not re-fire onSign", (key) => {
     const draft = stagedDraft(...writes);
     const signed: string[] = [];
     const { container } = mount(
@@ -312,8 +411,8 @@ describe("keyboard auto-repeat: a held sign key fires onSign only once", () => {
     // First activation signs; the auto-repeat keydown (repeat:true) from a HELD key
     // must be ignored, or #21's real publish double-fires. Without the event.repeat
     // guard this is length 2 → red.
-    fireEvent.keyDown(button, { key: "Enter" });
-    fireEvent.keyDown(button, { key: "Enter", repeat: true });
+    fireEvent.keyDown(button, { key });
+    fireEvent.keyDown(button, { key, repeat: true });
 
     expect(signed).toHaveLength(1);
     expect(signed[0]).toBe(collationPayload(draft));
