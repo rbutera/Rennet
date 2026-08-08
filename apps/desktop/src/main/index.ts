@@ -6,6 +6,7 @@ import {
   createClaudeHarness,
   createCodexUtilityAdapter,
   discoverCodexAvailability,
+  FileSettingsStore,
   GitCaptureAdapter,
   RepoWatcher,
   SqliteReviewStore,
@@ -76,6 +77,7 @@ function getCodexAvailability(): Promise<CodexAvailability> {
 }
 
 let store: SqliteReviewStore;
+let settings: FileSettingsStore;
 let service: ReviewService;
 let repositoryDirty = false;
 const allowedRoots = new Set<string>();
@@ -221,10 +223,12 @@ async function createWindow(): Promise<void> {
 
 app.whenReady().then(async () => {
   store = new SqliteReviewStore(join(app.getPath("userData"), "rennet.sqlite"));
+  settings = new FileSettingsStore(join(app.getPath("userData"), "settings.json"));
   service = new ReviewService(capture, store);
   dispatch = createDispatch({
     service,
     allowedRoots,
+    settings,
     chooseRepository,
     startWatching: (root: string) =>
       watcher.start(root, () => {

@@ -1,5 +1,10 @@
 import type { ReviewService } from "@rennet/core";
-import { type CommandName, parseCommandInput, parseCommandOutput } from "@rennet/protocol";
+import {
+  type CommandName,
+  type PermissionMode,
+  parseCommandInput,
+  parseCommandOutput,
+} from "@rennet/protocol";
 import type { Canvas, CanvasAngle, ElementDiffs, Review, ReviewNarration } from "@rennet/types";
 
 /**
@@ -29,6 +34,15 @@ export interface DispatchDeps {
     /** The roll-up narration placed onto the canvases (issue #70), when produced. */
     narration?: ReviewNarration;
   }>;
+  /**
+   * The workspace permission-mode store (issue #103). Reads the persisted
+   * workspace default; writes it. The renderer layers a per-run override over
+   * the value this returns.
+   */
+  readonly settings: {
+    permissionMode(): PermissionMode;
+    setPermissionMode(mode: PermissionMode): void;
+  };
 }
 
 export function createDispatch(
@@ -72,6 +86,15 @@ export function createDispatch(
         deps.setRepositoryDirty(false);
         deps.startWatching(review.repositoryRoot);
         return parseCommandOutput(name, { review });
+      }
+      case "settings.permissionMode": {
+        parseCommandInput(name, rawInput);
+        return parseCommandOutput(name, { mode: deps.settings.permissionMode() });
+      }
+      case "settings.setPermissionMode": {
+        const input = parseCommandInput(name, rawInput);
+        deps.settings.setPermissionMode(input.mode);
+        return parseCommandOutput(name, { mode: deps.settings.permissionMode() });
       }
       case "review.setDisposition": {
         const input = parseCommandInput(name, rawInput);

@@ -1,4 +1,9 @@
-import type { RennetBridge } from "@rennet/protocol";
+import {
+  type PermissionMode,
+  type RennetBridge,
+  requiresConsent,
+  resolvePermissionMode,
+} from "@rennet/protocol";
 import type { CanvasAngle, ElementDiffs, Patchset, Review, ReviewNarration } from "@rennet/types";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type CollationDraft, ingestWrites, withdrawPath } from "./canvas/collation";
@@ -9,6 +14,7 @@ import { type DispositionWrite, withoutProposal } from "./canvas/logic";
 import { type PublishContext, publishTarget, publishTargetPayload } from "./canvas/publish";
 import { CollationDraftCanvas } from "./components/collation-draft-canvas";
 import { DestinationFrame } from "./components/destination-frame";
+import { HarnessConsent } from "./components/harness-consent";
 import { PublishSheet } from "./components/publish-sheet";
 import { CanvasWorkspace } from "./components/workspace";
 
@@ -212,6 +218,14 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const [narration, setNarration] = useState<ReviewNarration | undefined>(() => demoNarration());
   const [liveLoaded, setLiveLoaded] = useState(false);
   const fetchedForReview = useRef<string | null>(null);
+  // Permission mode (issue #103). The persisted workspace default governs the
+  // gated harness run (#58); `undefined` until bootstrap resolves it, which
+  // `resolvePermissionMode` treats as the safe `manual` default. `consentedReviewId`
+  // records the review whose harness run the user has explicitly allowed (a per-run
+  // allow that does NOT change the persisted workspace mode).
+  const [workspaceMode, setWorkspaceMode] = useState<PermissionMode | undefined>(undefined);
+  const [consentedReviewId, setConsentedReviewId] = useState<string | null>(null);
+  const effectiveMode = resolvePermissionMode({ workspace: workspaceMode });
   // The DESTINATION (issue #64): the staged set is the north the review builds
   // toward. dispose == staged (a disposition stages in the same act it is made);
   // withdraw == unstage. The mode frames the same staged data as the own-branch
@@ -232,6 +246,16 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       .catch((reason: unknown) =>
         setError(reason instanceof Error ? reason.message : String(reason)),
       );
+  }, [bridge]);
+
+  // Load the persisted workspace permission mode (issue #103). A failure (older
+  // bridge, missing command) leaves it undefined, which resolves to the safe
+  // `manual` default — the harness stays gated rather than silently auto-running.
+  useEffect(() => {
+    bridge
+      .invoke("settings.permissionMode", {})
+      .then(({ mode }) => setWorkspaceMode(mode))
+      .catch(() => undefined);
   }, [bridge]);
 
   const patchset = useMemo(() => (review ? activePatchset(review) : undefined), [review]);
@@ -265,13 +289,26 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     }
   }, [patchset, selectedPath]);
 
-  // Live canvases (issue #54): when a real review is open and the Canvases view
-  // is shown, fetch the engine-produced canvas set once and render it in place of
-  // the fixtures. A failure (no harness, pipeline error) returns null and leaves
-  // the clickable demo untouched, so the demo never regresses.
+  // The harness run for opening Canvases is a gated action (issue #58), governed
+  // by the permission mode (issue #103). In a mode that ASKS (manual), the
+  // harness does not run until the user consents for THIS review; `auto`/`bypass`
+  // proceed with no prompt. The floor/demo canvases are already on screen either
+  // way — only the model-enrichment turns gate here.
+  const awaitingHarnessConsent =
+    view === "canvases" &&
+    !!review &&
+    requiresConsent(effectiveMode, "harness.run") &&
+    consentedReviewId !== review.id;
+
+  // Live canvases (issue #54): when a real review is open, the Canvases view is
+  // shown, and the harness run is permitted (auto/bypass, or the user has
+  // consented under manual), fetch the engine-produced canvas set once and render
+  // it in place of the fixtures. A failure (no harness, pipeline error) returns
+  // null and leaves the clickable demo untouched, so the demo never regresses.
   useEffect(() => {
     if (view !== "canvases" || !review) return;
     if (fetchedForReview.current === review.id) return;
+    if (awaitingHarnessConsent) return; // #58 gate: await consent before any harness turn
     fetchedForReview.current = review.id;
     let cancelled = false;
     void loadCanvases(bridge, review).then((live) => {
@@ -284,7 +321,19 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     return () => {
       cancelled = true;
     };
-  }, [view, review, bridge]);
+  }, [view, review, bridge, awaitingHarnessConsent]);
+
+  // Opt the workspace default up to `auto` (persisted) and allow this run. A
+  // persistence failure still allows the current run so the click is never inert.
+  function alwaysRunAutomatically(): void {
+    if (!review) return;
+    setWorkspaceMode("auto");
+    setConsentedReviewId(review.id);
+    bridge
+      .invoke("settings.setPermissionMode", { mode: "auto" })
+      .then(({ mode }) => setWorkspaceMode(mode))
+      .catch(() => undefined);
+  }
 
   async function chooseRepository(): Promise<void> {
     setBusy(true);
@@ -460,6 +509,14 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           Canvases
         </button>
       </div>
+      {view === "canvases" && awaitingHarnessConsent && review ? (
+        <HarnessConsent
+          repositoryRoot={review.repositoryRoot}
+          mode={effectiveMode}
+          onConsent={() => setConsentedReviewId(review.id)}
+          onAlwaysAuto={alwaysRunAutomatically}
+        />
+      ) : null}
       {view === "canvases" ? (
         <CanvasWorkspace
           canvases={canvases}

@@ -41,6 +41,7 @@ export {
   defaultCodexVersionProbe,
   discoverCodexAvailability,
 } from "./codex-exec";
+export { FileSettingsStore } from "./file-settings-store";
 export { GitCaptureAdapter } from "./git-capture";
 export {
   type Counts,
