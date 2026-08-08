@@ -57,6 +57,25 @@ export interface Patchset {
 export interface DispositionAnchor {
   path: string;
   contentDigest: string;
+  /**
+   * OPTIONAL span anchor (issue #78). A 1-based FILE-LINE range on `side`.
+   * `span`/`side`/`spanDigest` travel together: all three present ⟺ the
+   * disposition is span-grained; all three absent ⟺ path-grained (today's
+   * shape, unchanged). A partial presence is invalid (enforced by the protocol
+   * schema).
+   *
+   * These are ABSOLUTE file lines, side-qualified — NOT the RSP grammar's
+   * within-occurrence `AnchorSpan` ordinal. Anchoring by file line + side makes
+   * carry and the publish payload read `Patchset.files[].patch` directly and
+   * registrar-independently, so #78 sidesteps #84 (the CodeView's positional
+   * occurrence map) at the data model. `side` selects the image the span reads:
+   * `additions`/`context` → the post-image (new-file) lines; `deletions` → the
+   * pre-image (old-file) lines.
+   */
+  span?: AnchorSpan;
+  side?: AnchorSide;
+  /** Digest of the span's side-text at authoring time — the span carry key. */
+  spanDigest?: string;
 }
 
 export type DispositionType = "approve" | "request-change" | "comment" | "question";
@@ -69,6 +88,52 @@ export interface Disposition {
   anchor: DispositionAnchor;
   type: DispositionType;
   body: string;
+}
+
+/**
+ * A disposition the deterministic floor DROPPED on a re-capture, offered to the
+ * relevance judge (issue #78, Rai's #48 ruling). `successorPatch` is the new
+ * file's patch text when the file survives; absent when the file is gone.
+ */
+export interface RelevanceCandidate {
+  disposition: Disposition;
+  successorPatch?: string;
+}
+
+/**
+ * The judge's verdict for one candidate (positional to the candidates array).
+ * `carry: true` re-attaches the disposition; a `reAnchor` re-points it to a new
+ * span/path (validated + re-digested against the successor before it attaches).
+ */
+export interface RelevanceVerdict {
+  carry: boolean;
+  reAnchor?: DispositionAnchor;
+}
+
+/**
+ * The model layer ABOVE the byte-identical carry floor. A port (never a live
+ * model in the pure core / CI): given the dropped candidates and the successor
+ * patchset, it judges whether each prior disposition is still relevant. The
+ * `disposition-relevance-judge` Model Council job routes the real call.
+ */
+export interface DispositionRelevanceJudge {
+  judge(candidates: RelevanceCandidate[], patchset: Patchset): Promise<RelevanceVerdict[]>;
+}
+
+/**
+ * The GitHub review-thread publish payload (issue #78 — the single line/side
+ * contract #22 and #21 build on once). A span disposition carries the end file
+ * `line`, a `startLine` for a multi-line span, and a `side` (deletions → LEFT /
+ * old file; additions and context → RIGHT / new file). A path-grained
+ * disposition carries neither line nor side (a file-level comment).
+ */
+export interface PublishThread {
+  path: string;
+  line?: number;
+  startLine?: number;
+  side?: "LEFT" | "RIGHT";
+  body: string;
+  type: DispositionType;
 }
 
 export interface Review {

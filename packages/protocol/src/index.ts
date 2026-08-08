@@ -46,10 +46,36 @@ export const patchsetSchema: z.ZodType<Patchset> = z.object({
 
 export const dispositionTypeSchema = z.enum(["approve", "request-change", "comment", "question"]);
 
-const dispositionAnchorSchema: z.ZodType<DispositionAnchor> = z.object({
-  path: z.string(),
-  contentDigest: z.string().min(1),
-});
+const dispositionAnchorSchema: z.ZodType<DispositionAnchor> = z
+  .object({
+    path: z.string(),
+    contentDigest: z.string().min(1),
+    // Optional span anchor (issue #78): a 1-based file-line range on `side`.
+    span: z
+      .object({
+        startLine: z.number().int().min(1),
+        endLine: z.number().int().min(1).optional(),
+      })
+      .optional(),
+    side: z.enum(["additions", "deletions", "context"]).optional(),
+    spanDigest: z.string().min(1).optional(),
+  })
+  // span/side/spanDigest are all-or-none: a span anchor needs all three; a
+  // path-grained anchor has none. A partial presence is rejected.
+  .refine(
+    (anchor) =>
+      [anchor.span, anchor.side, anchor.spanDigest].filter((field) => field !== undefined).length %
+        3 ===
+      0,
+    { message: "span, side, and spanDigest must all be present (span anchor) or all absent" },
+  )
+  .refine(
+    (anchor) =>
+      anchor.span === undefined ||
+      anchor.span.endLine === undefined ||
+      anchor.span.endLine >= anchor.span.startLine,
+    { message: "span.endLine must be >= span.startLine" },
+  );
 
 export const dispositionSchema: z.ZodType<Disposition> = z.object({
   anchor: dispositionAnchorSchema,

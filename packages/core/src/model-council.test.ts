@@ -101,6 +101,28 @@ describe("resolveAssignment — the three availability scenarios (acceptance 1)"
     });
   });
 
+  it("resolves the disposition-relevance-judge (#78) via resolveAssignment in every scenario", () => {
+    // A model-facing light-tier job routed through the existing council path, so
+    // the live budget gate (p0wwp fix, #81) already covers it — no new gate.
+    expect(JOB_CATALOGUE["disposition-relevance-judge"]?.tier).toBe("light");
+    expect(resolveAssignment("disposition-relevance-judge", ctx(BOTH))).toMatchObject({
+      kind: "model",
+      harness: "codex",
+      model: "gpt-5.6-luna",
+      effort: "medium",
+    });
+    expect(resolveAssignment("disposition-relevance-judge", ctx(CLAUDE_ONLY))).toMatchObject({
+      harness: "claude-code",
+      model: "haiku",
+      effort: "low",
+    });
+    expect(resolveAssignment("disposition-relevance-judge", ctx(CODEX_ONLY))).toMatchObject({
+      harness: "codex",
+      model: "gpt-5.6-luna",
+      effort: "medium",
+    });
+  });
+
   it("every table pick's harness matches the model's provider", () => {
     for (const scenario of ["both", "claude-only", "codex-only"] as const) {
       for (const [jobId, tablePick] of Object.entries(ASSIGNMENT_TABLES[scenario])) {

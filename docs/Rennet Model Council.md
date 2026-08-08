@@ -65,7 +65,7 @@ Versioned like a schema. Job IDs are stable; status is as of 2026-08-07.
 
 ### 2.2 The model-facing jobs (21 named)
 
-**Light tier (13):** committed-spec requirement extraction · chunk titles · disposition triage · claim extraction · inferred test mapping · noise narration · noise pattern proposal · finding dedupe · claim canonicalisation · publish comment prose · comment refinement · `context.ask` (fetch/quick) · roll-up narration (M22, §2.3).
+**Light tier (14):** committed-spec requirement extraction · chunk titles · disposition triage · **disposition relevance judge (#78, §2.4)** · claim extraction · inferred test mapping · noise narration · noise pattern proposal · finding dedupe · claim canonicalisation · publish comment prose · comment refinement · `context.ask` (fetch/quick) · roll-up narration (M22, §2.3).
 
 **Heavy tier (~8 seats):** spec derivation · decomposition (skeleton + proposal + riders: decision-WHY, claim↔requirement mapping, derived-spec extraction) · finding generation per angle · anomaly spotting · comprehension ordering (cheap heavy — the deterministic floor is its fail-closed net) · orchestrator + diff chat · `context.ask` (thorough) · adjudication / second opinion / self-consistency (LATER).
 
@@ -84,6 +84,10 @@ The full per-job batching shapes, capability gates, and v1 flags remain as speci
 
 Filed as issues: M22 → #70, M23 → #71, M24 → #72, M25 → #73, M26 → #74, M27 → #75.
 
+### 2.4 Disposition relevance judge (#78, added 2026-08-08)
+
+The span-grained-dispositions keystone (#78) adds one model-facing job: **disposition relevance judge**. On a patchset re-capture, the deterministic byte-identical carry FLOOR drops any disposition whose side-text at its file-line span changed or shifted; the dropped set is offered to this judge, which decides whether each prior disposition is still relevant to the re-captured code (and may re-anchor it). Rai's #48 ruling names a **medium-tier model** — reconciled here as **light tier (bounded inference), medium effort**: the job is handed the prior disposition and the successor patch and never fetches code it was not given, so by §1's tier test it is *light* (sibling to disposition triage); the ruling's "medium model" is the **effort** knob, exactly how disposition triage is Luna-medium. It is batched (across all dropped candidates on a re-capture) and **routed through `resolveAssignment` like every council job, so the live budget gate (p0wwp fix, #81) already covers it — no new gate**. The floor stays pure and deterministically red-provable; the judge is a port, mocked in CI, so the model never runs there.
+
 ## 3. The three assignment tables
 
 Model set: **Claude Haiku / Sonnet 5 / Opus 4.8** · **GPT-5.5 / GPT-5.6-Sol / GPT-5.6-Terra / GPT-5.6-Luna**. Effort (low/med/high/xhigh) is the Codex knob; thinking budget is the analogous Claude knob. These tables are the council's availability-default layer (§4): versioned, shipped with the app, human-edited only.
@@ -95,7 +99,7 @@ The review/decomposition sessions stay on **Claude** (first-class adapter, shipp
 | Job | Assignment | Why |
 |---|---|---|
 | Chunk titles · claim extraction · noise narration · pattern proposal · publish prose · roll-up narration · live-feed garnish · PR-body draft | **Luna low** | Pure formatting/labelling; schema-out, validator-in; the volume lives here |
-| Disposition triage · inferred test mapping · committed-spec requirement extraction · delta summary | **Luna medium** | Bounded inference, still one-shot |
+| Disposition triage · disposition relevance judge (#78) · inferred test mapping · committed-spec requirement extraction · delta summary | **Luna medium** | Bounded inference, still one-shot |
 | Finding dedupe · claim canonicalisation | **Terra low** | Identity judgment; slightly more model, still cheap |
 | Comment refinement · handoff bundle composition | **Terra medium** | These words publish under the user's name — the quality floor of the light tier |
 | `context.ask` — fetch/quick | **Luna low–med** | Never pay a flagship to grep |
@@ -115,7 +119,7 @@ The review/decomposition sessions stay on **Claude** (first-class adapter, shipp
 | Job | Assignment | Why |
 |---|---|---|
 | All Luna-low rows above | **Haiku (min thinking)** | Haiku is the Luna of this house; batched utility calls |
-| Luna-medium rows (triage, test mapping, req extraction, delta summary) | **Haiku (low)** | Still bounded; the validator catches failures, retry escalates to Sonnet |
+| Luna-medium rows (triage, relevance judge #78, test mapping, req extraction, delta summary) | **Haiku (low)** | Still bounded; the validator catches failures, retry escalates to Sonnet |
 | Dedupe · canonicalisation · refinement · handoff bundle | **Sonnet 5 (low–med)** | Publishing-quality words and identity judgment sit above Haiku's comfort |
 | `context.ask` fetch / thorough | **Haiku** / **Sonnet 5 (med)** | Split unchanged |
 | Skeleton | **Sonnet 5 (low)** | Speed |
@@ -129,7 +133,7 @@ The review/decomposition sessions stay on **Claude** (first-class adapter, shipp
 
 | Job | Assignment | Why |
 |---|---|---|
-| All light-tier rows | **Luna low/med · Terra low/med** exactly as Table 1 | The light tier was Codex-native already |
+| All light-tier rows (incl. disposition relevance judge #78 — Luna med) | **Luna low/med · Terra low/med** exactly as Table 1 | The light tier was Codex-native already |
 | Skeleton | **Terra (medium)** | Speed for the 15s budget |
 | Proposal + riders · spec derivation | **Sol (high)** | The flagship takes the hard seat |
 | Finding generation | **GPT-5.5 (med)**; **Sol (high)** on decisions + claims | 5.5 is strong at code reading and cheaper than Sol-high per session; the judgment-dense angles still get the flagship |
