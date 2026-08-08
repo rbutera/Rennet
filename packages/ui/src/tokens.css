@@ -22,7 +22,7 @@
 .rennet-glass {
   /* type */
   --serif: "New York", ui-serif, Georgia, serif;
-  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --sans: "Avenir Next", Avenir, "Helvetica Neue", sans-serif;
   --mono: ui-monospace, "SF Mono", Menlo, monospace;
 
   /* Frosted-chrome material (issue #61). Glass is the CHROME and the app backdrop,
@@ -40,7 +40,7 @@
   --win-bg: rgba(19, 23, 30, 0.7);
   --win-border: rgba(255, 255, 255, 0.14);
   --win-shadow:
-    0 28px 90px rgba(0, 0, 0, 0.6), 0 2px 10px rgba(0, 0, 0, 0.4),
+    0 28px 90px rgba(4, 9, 15, 0.6), 0 2px 10px rgba(4, 9, 15, 0.4),
     inset 0 1px 0 rgba(255, 255, 255, 0.1);
   --win-radius: 16px;
 
@@ -56,7 +56,7 @@
   --surface-2: rgba(255, 255, 255, 0.05);
   --raised: #1b1f28;
   --raised-border: rgba(255, 255, 255, 0.11);
-  --raised-shadow: 0 2px 10px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.07);
+  --raised-shadow: 0 2px 10px rgba(4, 9, 15, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.07);
 
   /* Solid state-card surfaces: when a WHOLE content card takes a state colour
    * (blast cohort, private orphan tray / ask, agent proposal card) it uses a solid
@@ -108,18 +108,28 @@
   --cmt-color: #7c8272;
   --num-color: #d0a978;
   --type-color: #9fd0c0;
-  --fn-color: #c8b6e8;
+  --fn-color: #9fcad9;
   --prop-color: #a9c7e0;
   --var-color: #d9a77a;
 
-  --display: var(--sans);
+  --display: "Avenir Next Condensed", var(--sans);
   --display-weight: 700;
   --display-track: -0.02em;
   --label-transform: none;
   --label-track: 0.01em;
 
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --control-height: 36px;
+  --radius-sm: 8px;
   --radius: 12px;
-  --chip-radius: 9px;
+  --chip-radius: 8px;
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --duration-fast: 140ms;
   --mark-ink: #edeff2;
   --mark-accent: #e2b266;
   --btn-bg: #edeff2;
@@ -136,7 +146,7 @@
   --sheet-text: #efe7db;
   --sheet-soft: #b6ab99;
   --sheet-hairline: #322a20;
-  --sheet-glow: 0 0 90px 8px rgba(120, 96, 60, 0.16), 0 36px 90px rgba(0, 0, 0, 0.62);
+  --sheet-glow: 0 0 90px 8px rgba(120, 96, 60, 0.16), 0 36px 90px rgba(22, 14, 8, 0.62);
 }
 
 /* Bright-room scheme: composed rather than inverted (Design Directions §glass). */
@@ -155,7 +165,7 @@
 
   --surface: #f3f5f8;
   --surface-2: rgba(30, 40, 52, 0.05);
-  --raised: #ffffff;
+  --raised: #fbfcfe;
   --raised-border: rgba(30, 40, 52, 0.1);
   --raised-shadow: 0 2px 10px rgba(46, 58, 72, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.85);
 
@@ -170,7 +180,7 @@
   --hairline-strong: rgba(30, 40, 52, 0.18);
 
   --accent: #2a6fae;
-  --accent-contrast: #ffffff;
+  --accent-contrast: #f8fbfe;
   --accent-soft: rgba(42, 111, 174, 0.1);
   --accent-soft-line: rgba(42, 111, 174, 0.3);
 
@@ -198,14 +208,14 @@
   --cmt-color: #8a8e82;
   --num-color: #8a5a1e;
   --type-color: #2b7d6e;
-  --fn-color: #6b4b9e;
+  --fn-color: #306f86;
   --prop-color: #2f5f88;
   --var-color: #8a5a1e;
 
   --mark-ink: #1e2126;
   --btn-bg: #1e2126;
   --btn-border: #0f1115;
-  --btn-text: #ffffff;
+  --btn-text: #f8fbfe;
 
   /* Bright-room paper: warm cream, the material that reads as paper in a light room
    * (R40 / issue #101). The dark base is warm-dark espresso; here the cream returns. */
