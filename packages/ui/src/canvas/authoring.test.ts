@@ -222,4 +222,36 @@ describe("orphanedDispositions — a disposition that failed to carry surfaces, 
   it("is empty when everything carried", () => {
     expect(orphanedDispositions([carried], [carried])).toEqual([]);
   });
+
+  it("surfaces a dropped span even when a sibling span on the SAME file carried (issue #78 span-aware key)", () => {
+    // Two span-grained dispositions on ONE file: identical `path` AND `contentDigest`
+    // (the whole-file digest), differing only in their span/side. Pre-#78 the key was
+    // [path, contentDigest], so both spans shared a key — the dropped span collided with
+    // the carried one and vanished from the tray. The span-aware key distinguishes them.
+    const carriedSpan: Disposition = {
+      anchor: {
+        path: "src/multi.ts",
+        contentDigest: "file-digest",
+        span: { startLine: 5, endLine: 10 },
+        side: "additions",
+        spanDigest: "span-a",
+      },
+      type: "approve",
+      body: "top span ok",
+    };
+    const droppedSpan: Disposition = {
+      anchor: {
+        path: "src/multi.ts",
+        contentDigest: "file-digest",
+        span: { startLine: 20, endLine: 25 },
+        side: "additions",
+        spanDigest: "span-b",
+      },
+      type: "request-change",
+      body: "bottom span needs work",
+    };
+    const before = [carriedSpan, droppedSpan];
+    const after = [carriedSpan]; // only the top span carried onto the new patchset
+    expect(orphanedDispositions(before, after)).toEqual([droppedSpan]);
+  });
 });
