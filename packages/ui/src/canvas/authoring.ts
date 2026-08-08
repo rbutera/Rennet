@@ -205,7 +205,26 @@ export function batchPayloadDigest(batch: DispositionBatch): string {
 export type OrphanedDisposition = Disposition;
 
 function anchorKey(disposition: Disposition): string {
-  return JSON.stringify([disposition.anchor.path, disposition.anchor.contentDigest]);
+  const { anchor } = disposition;
+  // Span-grained identity (issue #78). Two spans on the SAME file share `path` AND the
+  // whole-file `contentDigest`, so keying on those alone collides: if one span carries
+  // and a sibling span on the same file drops, the dropped one matches the carried one's
+  // key and is treated as "carried", so it silently vanishes from the orphan tray, which
+  // violates this module's own contract ("a failed carry surfaces, never vanishes"). Key
+  // a span-grained disposition on its side-qualified line range instead. `span`/`side`
+  // travel together (all present ⟺ span-grained), so `anchor.span` is the discriminator;
+  // the literal "span" tag keeps a span key from ever colliding with a path-grained one.
+  if (anchor.span !== undefined) {
+    return JSON.stringify([
+      anchor.path,
+      "span",
+      anchor.span.startLine,
+      anchor.span.endLine ?? null,
+      anchor.side ?? null,
+    ]);
+  }
+  // Path-grained (no span): the file-level content-digest identity, unchanged.
+  return JSON.stringify([anchor.path, anchor.contentDigest]);
 }
 
 /**
