@@ -79,7 +79,16 @@ const ACTION_POLICY: Partial<Record<GatedAction, (mode: PermissionMode) => GateR
 
 /** Resolve how `action` is gated under `mode` (mode-driven, per-action extensible). */
 export function gateResolution(mode: PermissionMode, action: GatedAction): GateResolution {
-  return (ACTION_POLICY[action] ?? modeGate)(mode);
+  // Fail SAFE (Rule 75, wrong-side): a mode value that defeated the type at
+  // runtime (a corrupt persisted string, a garbled per-run override, a future
+  // consumer calling this with a raw value) resolves to the safe default before
+  // gating. This is the SECOND, independent guard on the vital circuit —
+  // `resolvePermissionMode` sanitises inputs, and this defends the gate for any
+  // caller that reaches it directly. An unrecognised mode therefore ASKS; it can
+  // never fall through to `allow`/`bypass`.
+  const safe = permissionModeSchema.safeParse(mode);
+  const resolved = safe.success ? safe.data : DEFAULT_PERMISSION_MODE;
+  return (ACTION_POLICY[action] ?? modeGate)(resolved);
 }
 
 /** Whether `action` requires an explicit user act (consent) under `mode`. */
@@ -98,7 +107,20 @@ export interface PermissionModeSelection {
   run?: PermissionMode;
 }
 
-/** The effective mode: per-run override ← workspace default ← the safe default. */
+/**
+ * The effective mode: per-run override ← workspace default ← the safe default.
+ *
+ * Fail SAFE (Rule 75, wrong-side): a layer that is ABSENT (`undefined`) simply
+ * defers to the next, but a layer that is PRESENT yet unrecognised is corruption
+ * — it resolves to {@link DEFAULT_PERMISSION_MODE} (`manual`) rather than passing
+ * a garbled string downstream or silently falling through to a possibly-less-safe
+ * lower layer. The returned value is ALWAYS a valid {@link PermissionMode}.
+ */
 export function resolvePermissionMode(selection: PermissionModeSelection): PermissionMode {
-  return selection.run ?? selection.workspace ?? DEFAULT_PERMISSION_MODE;
+  for (const layer of [selection.run, selection.workspace]) {
+    if (layer === undefined) continue;
+    const parsed = permissionModeSchema.safeParse(layer);
+    return parsed.success ? parsed.data : DEFAULT_PERMISSION_MODE;
+  }
+  return DEFAULT_PERMISSION_MODE;
 }

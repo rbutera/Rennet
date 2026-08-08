@@ -4,6 +4,7 @@ import {
   GATED_ACTIONS,
   gateResolution,
   PERMISSION_MODES,
+  type PermissionMode,
   permissionModeSchema,
   requiresConsent,
   resolvePermissionMode,
@@ -78,6 +79,41 @@ describe("permission mode — the harness-style modes (issue #103)", () => {
       for (const mode of PERMISSION_MODES) expect(permissionModeSchema.parse(mode)).toBe(mode);
       expect(permissionModeSchema.safeParse("yolo").success).toBe(false);
       expect(permissionModeSchema.safeParse(undefined).success).toBe(false);
+    });
+  });
+
+  // The pure decision core is exported from `protocol` and reused by BOTH the
+  // renderer and (future #21) the main process. A value that defeats the type at
+  // runtime — a corrupt persisted string, a garbled per-run override, a raw value
+  // from a future consumer — must NEVER open the gate. These are the second,
+  // independent guard on the vital circuit (Rule 75, wrong-side).
+  describe("fails SAFE on a corrupt / unrecognised mode value (never opens the gate)", () => {
+    // Values that are typed PermissionMode but are invalid at runtime.
+    const corrupt = ["corrupt", "bypasss", "AUTO", "", "ask"] as unknown as PermissionMode[];
+
+    it("resolvePermissionMode coerces a corrupt workspace layer to manual", () => {
+      // RED: drop the safeParse guard → the corrupt string passes straight through.
+      for (const bad of corrupt) expect(resolvePermissionMode({ workspace: bad })).toBe("manual");
+    });
+
+    it("resolvePermissionMode coerces a corrupt per-run override to manual, not the workspace default", () => {
+      // A garbled explicit override must not silently defer to a possibly-less-safe
+      // workspace mode. RED: fall through to workspace → this returns "bypass".
+      for (const bad of corrupt)
+        expect(resolvePermissionMode({ run: bad, workspace: "bypass" })).toBe("manual");
+    });
+
+    it("gateResolution ASKS for a corrupt mode (never allow/bypass)", () => {
+      // RED: remove the safeParse in gateResolution → modeGate falls through the
+      // switch to undefined and the harness gate stops asking.
+      for (const bad of corrupt)
+        for (const action of GATED_ACTIONS) expect(gateResolution(bad, action)).toBe("ask");
+    });
+
+    it("requiresConsent is TRUE for a corrupt mode (the #58 gate stays closed)", () => {
+      // The exact wrong-side fault this feature exists to prevent: a corrupt mode
+      // must not make requiresConsent false. RED: any guard removed → this reddens.
+      for (const bad of corrupt) expect(requiresConsent(bad, "harness.run")).toBe(true);
     });
   });
 });
