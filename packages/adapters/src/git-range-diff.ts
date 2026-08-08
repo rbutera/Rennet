@@ -1,6 +1,12 @@
 import { createHash } from "node:crypto";
 import { dirname, isAbsolute, resolve } from "node:path";
-import type { FileChangeStatus, PatchFile, Patchset, PatchsetSource } from "@rennet/types";
+import {
+  DIFF_TRUNCATION_MARKER,
+  type FileChangeStatus,
+  type PatchFile,
+  type Patchset,
+  type PatchsetSource,
+} from "@rennet/types";
 import { execa } from "execa";
 
 /**
@@ -99,7 +105,7 @@ export function parseCounts(output: string): Map<string, Counts> {
 export function visible(value: string, maximumBytes: number): string {
   const bytes = Buffer.from(value);
   if (bytes.length <= maximumBytes) return value;
-  return `${bytes.subarray(0, maximumBytes).toString("utf8")}\n\n[diff truncated by Rennet]`;
+  return `${bytes.subarray(0, maximumBytes).toString("utf8")}\n\n${DIFF_TRUNCATION_MARKER}`;
 }
 
 /** Strip a leading `a/` or `b/` diff prefix and unwrap a `"..."`-quoted git path. */

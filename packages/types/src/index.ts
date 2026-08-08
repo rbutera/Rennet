@@ -20,6 +20,18 @@ export interface PatchFile {
 }
 
 /**
+ * The sentinel `visible()` (`@rennet/adapters`) appends when it truncates a diff
+ * past its byte cap. A `PatchFile.patch` containing this marker is content-lossy:
+ * hashing it yields an identity for only the first N bytes, so two files that
+ * differ only BEYOND the cap share a `fileContentDigest`. The path-grained
+ * disposition carry in `@rennet/core` must therefore refuse to carry over a
+ * patch that carries this marker (fail closed). Declared here — the one module
+ * both the producer (`visible`) and the consumer (`fileContentDigest`'s carry
+ * check) depend on — so the two cannot drift apart and silently reopen the hole.
+ */
+export const DIFF_TRUNCATION_MARKER = "[diff truncated by Rennet]";
+
+/**
  * Where a patchset's content came from. `local` is the working-tree capture
  * (`GitCaptureAdapter`); `github-local` is a GitHub PR diffed from the on-disk
  * clone (full context, the angles can run); `github-rest` is the degraded REST
