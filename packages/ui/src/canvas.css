@@ -1,16 +1,21 @@
 /* Rennet canvas surface — glass chrome, opaque code, backlight-private, amber
  * blast. Every colour is a var(--token); the raw values live only in tokens.css.
- * Glass is chrome; code is opaque; the wallpaper aurora glows AROUND the diff,
- * never through it. */
+ * Glass is the CHROME and the app backdrop (frosted over the REAL desktop, issue
+ * #61); code and every content card are opaque and solid. The frost blurs the
+ * actual desktop behind the transparent window — solid cards float on top, so no
+ * text the user reads is ever translucent over the wallpaper (the #115 fix). */
 
 .canvas-app {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
   color: var(--text);
-  background: var(--wallpaper);
-  background-image: var(--wallpaper-img);
-  background-attachment: fixed;
+  /* The frosted-chrome backdrop: translucent tint over the transparent window,
+   * blurring the real desktop. Content surfaces below paint their own solid
+   * backgrounds on top of this. */
+  background: var(--chrome-bg);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
   font-family: var(--sans);
   outline: none;
 }
@@ -23,6 +28,7 @@
   gap: 16px;
   padding: 12px 20px;
   background: var(--side-bg);
+  -webkit-backdrop-filter: var(--side-blur);
   backdrop-filter: var(--side-blur);
   border-bottom: 1px solid var(--hairline);
 }
@@ -172,7 +178,7 @@
 }
 .cohort.is-blast {
   border-color: var(--amber-line);
-  background: var(--amber-fill);
+  background: var(--amber-surface);
 }
 .cohort-head {
   display: flex;
@@ -258,7 +264,7 @@
 }
 .flat-element.is-blast {
   border-color: var(--amber-line);
-  background: var(--amber-fill);
+  background: var(--amber-surface);
 }
 .flat-element-select {
   display: flex;
@@ -331,7 +337,10 @@
   /* dashed hairline = the agent's hand, never a solid human/analysis card */
   border: 1px dashed var(--accent-soft-line);
   border-radius: var(--radius);
-  background: var(--accent-soft);
+  /* Solid: this card holds the agent's proposal text, so it never rides the
+   * wallpaper. The accent identity is carried by the dashed line + a solid
+   * accent-tinted surface, not a translucent wash (#61 legibility). */
+  background: var(--accent-surface);
   color: var(--text-soft);
   font-size: 13px;
 }
@@ -399,6 +408,7 @@
   justify-content: space-between;
   padding: 8px 12px;
   background: var(--side-bg);
+  -webkit-backdrop-filter: var(--side-blur);
   backdrop-filter: var(--side-blur);
   border-bottom: 1px solid var(--hairline);
 }
@@ -577,7 +587,9 @@
 .l3-orphan-tray {
   border: 1px solid var(--private-line);
   border-radius: var(--radius);
-  background: var(--private-fill);
+  /* Solid private surface: the tray lists orphaned marks (text), so it is opaque;
+   * the backlight identity lives in the border + solid teal-dark fill (#61). */
+  background: var(--private-surface);
   padding: 8px 10px;
 }
 .l3-orphan-header {
@@ -630,6 +642,7 @@
   border: 1px solid var(--win-border);
   border-radius: var(--win-radius);
   background: var(--win-bg);
+  -webkit-backdrop-filter: var(--side-blur);
   backdrop-filter: var(--side-blur);
   box-shadow: var(--win-shadow);
   font-family: var(--sans);
@@ -691,7 +704,8 @@
   padding: 8px 12px;
   border: 1px solid var(--private-line);
   border-radius: var(--chip-radius);
-  background: var(--private-fill);
+  /* Solid private surface so this reviewer note stays legible on the glass frame. */
+  background: var(--private-surface);
   box-shadow: var(--private-glow);
   font-size: 12px;
   color: var(--text-soft);

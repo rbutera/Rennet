@@ -1,6 +1,9 @@
 :root {
   color: #e8e9ec;
-  background: #111318;
+  /* Real glass (issue #61): the window is transparent so the frosted CHROME
+   * composites over the actual desktop. The app-shell paints the frosted backdrop;
+   * content panels below paint their own SOLID backgrounds. */
+  background: transparent;
   font-family:
     Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-synthesis: none;
@@ -13,7 +16,7 @@ body {
   margin: 0;
   min-width: 980px;
   min-height: 100vh;
-  background: #111318;
+  background: transparent;
 }
 button {
   font: inherit;
@@ -23,6 +26,11 @@ button {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  /* Frosted-chrome backdrop over the real desktop. Content panels (file/diff/angle)
+   * paint solid backgrounds on top of this, so their text never rides the wallpaper. */
+  background: rgba(16, 19, 25, 0.55);
+  -webkit-backdrop-filter: blur(30px) saturate(1.5);
+  backdrop-filter: blur(30px) saturate(1.5);
 }
 .topbar {
   height: 76px;
@@ -31,7 +39,11 @@ button {
   justify-content: space-between;
   padding: 0 24px;
   border-bottom: 1px solid #292d35;
-  background: #15181e;
+  /* Frosted chrome strip: translucent tint strong enough that the title + provenance
+   * stay legible over any desktop, blurring what is behind the transparent window. */
+  background: rgba(21, 24, 30, 0.72);
+  -webkit-backdrop-filter: blur(30px) saturate(1.5);
+  backdrop-filter: blur(30px) saturate(1.5);
 }
 .topbar h1 {
   margin: 1px 0 0;
@@ -97,6 +109,10 @@ button {
   color: #798294;
   font-size: 11px;
   border-bottom: 1px solid #252932;
+  /* Frosted chrome strip (matches the topbar). */
+  background: rgba(19, 22, 28, 0.66);
+  -webkit-backdrop-filter: blur(30px) saturate(1.5);
+  backdrop-filter: blur(30px) saturate(1.5);
 }
 .progress-track {
   height: 3px;
