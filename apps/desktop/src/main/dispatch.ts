@@ -175,9 +175,7 @@ export function createDispatch(
             typeof authorization !== "string" ||
             !deps.consent.consume(review.id, authorization)
           ) {
-            throw new Error(
-              "The harness run was not authorized under the current permission mode",
-            );
+            throw new Error("The harness run was not authorized under the current permission mode");
           }
         }
         const { canvases, elementDiffs, narration } = await deps.buildCanvases(review);

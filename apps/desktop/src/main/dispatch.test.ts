@@ -90,7 +90,10 @@ function harness(): {
   allowedRoots: Set<string>;
   buildCanvases: ReturnType<typeof vi.fn>;
   settings: { permissionMode(): PermissionMode; setPermissionMode(mode: PermissionMode): void };
-  consent: { grant(reviewId: string): string; consume(reviewId: string, authorization: string): boolean };
+  consent: {
+    grant(reviewId: string): string;
+    consume(reviewId: string, authorization: string): boolean;
+  };
 } {
   const capture: PatchsetCapturePort = { capture: () => Promise.resolve(patchset()) };
   const service = new ReviewService(capture, new InMemoryStore());
