@@ -328,7 +328,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     return () => {
       cancelled = true;
     };
-  }, [view, review, bridge, awaitingHarnessConsent]);
+  }, [view, review, bridge, awaitingHarnessConsent, effectiveMode, consentedReviewId]);
 
   // Opt the workspace default up to `auto` (persisted) and allow this run. A
   // persistence failure still allows the current run so the click is never inert.

@@ -147,9 +147,7 @@ export function createDispatch(
         // clears it — the renderer gate and this one are independent).
         const effectiveMode = resolvePermissionMode({ workspace: deps.settings.permissionMode() });
         if (requiresConsent(effectiveMode, "harness.run") && input.consent !== true) {
-          throw new Error(
-            "The harness run was not consented to under the current permission mode",
-          );
+          throw new Error("The harness run was not consented to under the current permission mode");
         }
         const { canvases, elementDiffs, narration } = await deps.buildCanvases(review);
         return parseCommandOutput(name, {
