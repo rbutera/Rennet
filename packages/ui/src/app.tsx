@@ -311,7 +311,14 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     if (awaitingHarnessConsent) return; // #58 gate: await consent before any harness turn
     fetchedForReview.current = review.id;
     let cancelled = false;
-    void loadCanvases(bridge, review).then((live) => {
+    // The one-shot harness-run consent carried to the main gate (bead
+    // workspace-j98dt): the run is permitted iff the user has consented for THIS
+    // review or the mode does not ask. The `awaitingHarnessConsent` guard above
+    // already ensures this is true here; passing it makes the renderer's consent
+    // explicit at the boundary the main independently enforces.
+    const harnessConsent =
+      !requiresConsent(effectiveMode, "harness.run") || consentedReviewId === review.id;
+    void loadCanvases(bridge, review, harnessConsent).then((live) => {
       if (cancelled || !live) return;
       setCanvases(live.canvases);
       setElementDiffs(live.elementDiffs);
@@ -321,7 +328,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     return () => {
       cancelled = true;
     };
-  }, [view, review, bridge, awaitingHarnessConsent]);
+  }, [view, review, bridge, awaitingHarnessConsent, effectiveMode, consentedReviewId]);
 
   // Opt the workspace default up to `auto` (persisted) and allow this run. A
   // persistence failure still allows the current run so the click is never inert.

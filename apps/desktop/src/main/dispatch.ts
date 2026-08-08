@@ -4,6 +4,8 @@ import {
   type PermissionMode,
   parseCommandInput,
   parseCommandOutput,
+  requiresConsent,
+  resolvePermissionMode,
 } from "@rennet/protocol";
 import type { Canvas, CanvasAngle, ElementDiffs, Review, ReviewNarration } from "@rennet/types";
 
@@ -132,6 +134,21 @@ export function createDispatch(
         const input = parseCommandInput(name, rawInput);
         assertAllowedRepository(input.repoPath);
         const review = requireLatestReview(input.reviewId);
+        // #58/#103 harness-run consent gate, enforced at the MAIN boundary (bead
+        // workspace-j98dt). The renderer already gates this, but enforcement must
+        // live where the model SPEND happens, not only where the UI DECIDES —
+        // otherwise an alternate/future caller of `review.canvases`, or an IPC
+        // message crafted outside the React flow, would run the real harness
+        // under the default `manual` mode with no consent. The effective mode is
+        // resolved from the persisted workspace default (the authority); a
+        // renderer-supplied mode is deliberately NOT trusted here. Under a mode
+        // that ASKS (manual), the harness does not run without an explicit
+        // per-run `consent` for this run (Rule 75, vital circuit: no single fault
+        // clears it — the renderer gate and this one are independent).
+        const effectiveMode = resolvePermissionMode({ workspace: deps.settings.permissionMode() });
+        if (requiresConsent(effectiveMode, "harness.run") && input.consent !== true) {
+          throw new Error("The harness run was not consented to under the current permission mode");
+        }
         const { canvases, elementDiffs, narration } = await deps.buildCanvases(review);
         return parseCommandOutput(name, {
           canvases,
