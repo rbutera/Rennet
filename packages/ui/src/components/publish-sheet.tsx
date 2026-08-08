@@ -12,6 +12,7 @@ import type { DispositionWrite } from "../canvas/logic";
 import {
   type PrSubmission,
   type PublishTarget,
+  publishTargetAgrees,
   type ReviewComment,
   targetItemCount,
 } from "../canvas/publish";
@@ -125,6 +126,22 @@ export function PublishSheet({
   // target when present (the true outbound count for the variant), else the list.
   const itemCount = target ? targetItemCount(target) : items.length;
 
+  // Fail-closed on a payload/variant/target DISAGREEMENT (issue #106; defense in
+  // depth for R33 "what you see is what leaves"). The paper renders the structured
+  // card from `target` yet signs the INDEPENDENT `payload` and frames the sheet with
+  // the INDEPENDENT `variant`. Nothing structurally forces `payload ===
+  // publishTargetPayload(target)` or `variant.mode === target.mode`, so a caller
+  // whose props diverged would show ONE artifact (the card) while signing ANOTHER
+  // (the bytes) under a mislabelling frame — the exact disagreement R33 forbids.
+  // When a `target` is present and it disagrees, the sheet BLOCKS signing (both
+  // paths) and marks the paper as blocked, rather than emitting a mismatched
+  // payload. With no `target` (the legacy `items` path) there is nothing to
+  // disagree with, so this never blocks that path. The live caller derives both
+  // props from the one `publishTargetForMode`, so this never fires in production —
+  // it is a fail-closed backstop, not a live gate.
+  const targetBlocksSign =
+    target !== undefined && !publishTargetAgrees(target, payload, variant.mode);
+
   function beginHold(): void {
     holdStart.current = Date.now();
     // A zero (or negative) budget is an immediate sign; arm synchronously so the
@@ -137,6 +154,10 @@ export function PublishSheet({
     holdStart.current = null;
     setArmed(false);
     if (started === null) return;
+    // The target-disagreement gate is checked FIRST (issue #106): if the signed
+    // `payload`/`variant` disagree with the rendered `target`, no sign path emits —
+    // the paper fails closed rather than publish a mismatched artifact.
+    if (targetBlocksSign) return;
     // The degradation gate is checked BEFORE the hold gate: an unacknowledged,
     // non-empty ledger blocks every sign path regardless of hold duration.
     if (ledgerBlocksSign(ledger, acknowledged)) return;
@@ -161,6 +182,9 @@ export function PublishSheet({
     // non-repeat activation is the deliberate act.
     if (event.repeat) return;
     event.preventDefault();
+    // Fail closed on a payload/variant/target disagreement (issue #106), same as
+    // the pointer path — the keyboard sign is no exception.
+    if (targetBlocksSign) return;
     if (ledgerBlocksSign(ledger, acknowledged)) return;
     onSign?.(payload);
   }
@@ -262,6 +286,17 @@ export function PublishSheet({
           </fieldset>
         ) : null}
 
+        {/* Fail-closed notice (issue #106): when the signed `payload`/`variant`
+            disagree with the rendered `target`, the paper cannot present as ready —
+            signing is blocked so no mismatched artifact leaves. aria-legible
+            (role="alert") so the blocked state is announced, not merely visual. */}
+        {targetBlocksSign ? (
+          <p className="publish-sheet-mismatch-notice" role="alert" data-testid="publish-mismatch">
+            This paper is blocked: the artifact shown and the bytes to sign disagree. Nothing can be
+            signed until they match — go back to the draft.
+          </p>
+        ) : null}
+
         {/* Honesty affordance (issue #80): under the paper/glass doctrine, a shell
             sign clears the staged paper while publishing NOTHING. This persistent,
             aria-legible notice ensures a shell sign can never read as a real
@@ -290,7 +325,7 @@ export function PublishSheet({
               // Space on the focused control signs. Announce that additively so the
               // "Hold to …" visible label does not mislead AT, without changing it.
               aria-keyshortcuts="Enter Space"
-              disabled={itemCount === 0}
+              disabled={itemCount === 0 || targetBlocksSign}
               onMouseDown={beginHold}
               onMouseUp={endHold}
               onMouseLeave={() => {

@@ -242,6 +242,29 @@ export function publishTargetPayload(target: PublishTarget): string {
     : reviewCommentsPayload(target.comments);
 }
 
+/**
+ * Whether the sheet's INDEPENDENT `payload` and `variantMode` props AGREE with the
+ * structured `target` it renders (issue #106, defense-in-depth for R33 "what you
+ * see is what leaves"). The paper renders the human-legible card from `target` but
+ * signs the independent `payload`, and frames the sheet with the independent
+ * `variant` — so a caller that hands a `payload` NOT equal to
+ * `publishTargetPayload(target)`, or a `variant.mode` not equal to `target.mode`,
+ * would present ONE artifact (the card, from `target`) while signing ANOTHER (the
+ * bytes, from `payload`) under a mislabelling frame. That is precisely the
+ * disagreement R33 forbids, so the sheet must fail CLOSED (block signing) on it
+ * rather than emit a mismatched payload. Agreement holds when BOTH the variant
+ * framing matches the target's mode AND the signed bytes equal the target's
+ * canonical bytes. Pure — no React, no DOM — so the fail-closed decision is guarded
+ * by a red-able test rather than only holding by construction in the live caller.
+ */
+export function publishTargetAgrees(
+  target: PublishTarget,
+  payload: string,
+  variantMode: DestinationMode,
+): boolean {
+  return variantMode === target.mode && payload === publishTargetPayload(target);
+}
+
 /** How many dispositions the target carries, for the sheet's disable/empty state. */
 export function targetItemCount(target: PublishTarget): number {
   return target.mode === "own-branch" ? draftBodyCount(target.submission) : target.comments.length;
