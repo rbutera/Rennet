@@ -5,6 +5,7 @@ import {
   ReviewService,
   type ReviewStorePort,
 } from "@rennet/core";
+import type { PermissionMode } from "@rennet/protocol";
 import type { Canvas, CanvasAngle, Patchset, Review } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
@@ -87,6 +88,7 @@ function harness(): {
   service: ReviewService;
   allowedRoots: Set<string>;
   buildCanvases: ReturnType<typeof vi.fn>;
+  settings: { permissionMode(): PermissionMode; setPermissionMode(mode: PermissionMode): void };
 } {
   const capture: PatchsetCapturePort = { capture: () => Promise.resolve(patchset()) };
   const service = new ReviewService(capture, new InMemoryStore());
@@ -98,6 +100,14 @@ function harness(): {
       elementDiffs: { e1: { path: "src/a.ts", diff: "@@ -1,1 +1,2 @@\n+x" } },
     }),
   );
+  // An in-memory permission-mode store defaulting to the safe `manual`.
+  let mode: PermissionMode = "manual";
+  const settings = {
+    permissionMode: () => mode,
+    setPermissionMode: (next: PermissionMode) => {
+      mode = next;
+    },
+  };
   const deps: DispatchDeps = {
     service,
     allowedRoots,
@@ -108,8 +118,9 @@ function harness(): {
       dirty = value;
     },
     buildCanvases,
+    settings,
   };
-  return { dispatch: createDispatch(deps), service, allowedRoots, buildCanvases };
+  return { dispatch: createDispatch(deps), service, allowedRoots, buildCanvases, settings };
 }
 
 async function capturedReview(dispatch: ReturnType<typeof createDispatch>): Promise<Review> {
@@ -229,5 +240,32 @@ describe("createDispatch — canvas.* routing (issue #54)", () => {
         repoPath: "/not-granted",
       }),
     ).rejects.toThrow(/access was not granted/);
+  });
+});
+
+describe("createDispatch — permission-mode settings (issue #103)", () => {
+  it("reads the persisted workspace permission mode", async () => {
+    const { dispatch } = harness();
+    const out = (await dispatch("settings.permissionMode", {})) as { mode: PermissionMode };
+    expect(out.mode).toBe("manual"); // the safe default the store starts at
+  });
+
+  it("writes the workspace permission mode and reads it back", async () => {
+    const { dispatch, settings } = harness();
+    const written = (await dispatch("settings.setPermissionMode", { mode: "auto" })) as {
+      mode: PermissionMode;
+    };
+    expect(written.mode).toBe("auto");
+    // The store actually changed (not just the echoed output).
+    expect(settings.permissionMode()).toBe("auto");
+    const read = (await dispatch("settings.permissionMode", {})) as { mode: PermissionMode };
+    expect(read.mode).toBe("auto");
+  });
+
+  it("rejects an unrecognised mode at the command boundary", async () => {
+    const { dispatch, settings } = harness();
+    await expect(dispatch("settings.setPermissionMode", { mode: "yolo" })).rejects.toThrow();
+    // A rejected write must not mutate the store.
+    expect(settings.permissionMode()).toBe("manual");
   });
 });

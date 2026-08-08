@@ -913,3 +913,74 @@ button {
   font-size: 11px;
   color: var(--sheet-soft);
 }
+
+/* ── The harness-run consent affordance (issue #58, gated by the #103 mode) ── */
+.harness-consent {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 32px;
+  background: rgba(6, 7, 10, 0.72);
+}
+.harness-consent-body {
+  width: min(560px, 100%);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 26px;
+  border: 1px solid #292d35;
+  border-radius: 14px;
+  background: #15181e;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+.harness-consent-body .eyebrow {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  color: #8d96a8;
+}
+.harness-consent-body h2 {
+  margin: 0;
+  font-size: 19px;
+  font-weight: 600;
+  color: #eef1f6;
+}
+.harness-consent-body p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: #b3bccd;
+}
+.harness-consent-body code {
+  color: #d8ff4f;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+.harness-consent-actions {
+  display: flex;
+  gap: 10px;
+  margin-top: 4px;
+}
+.harness-consent-run {
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 16px;
+  color: #13170a;
+  background: #d8ff4f;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.harness-consent-auto {
+  border: 1px solid #292d35;
+  border-radius: 8px;
+  padding: 9px 16px;
+  color: #b3bccd;
+  background: transparent;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}

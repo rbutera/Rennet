@@ -8,8 +8,10 @@ import type {
   ReviewNarration,
 } from "@rennet/types";
 import { z } from "zod";
+import { permissionModeSchema } from "./permission-mode";
 
 export * from "./bodies";
+export * from "./permission-mode";
 export * from "./rsp";
 export * from "./sha256";
 
@@ -245,6 +247,20 @@ export const commandDefinitions = {
       repoPath: z.string().min(1),
     }),
     output: z.object({ review: reviewSchema }),
+  },
+  // ── Settings: permission modes (issue #103) ────────────────────────────────
+  // The workspace-level permission MODE (manual / auto / bypass) that governs
+  // gated actions. `settings.permissionMode` reads the persisted default;
+  // `settings.setPermissionMode` writes it. The renderer layers a per-run
+  // override over this (resolvePermissionMode); the persisted value is the
+  // workspace default. First consumer: the #58 Canvases harness-run gate.
+  "settings.permissionMode": {
+    input: z.object({}),
+    output: z.object({ mode: permissionModeSchema }),
+  },
+  "settings.setPermissionMode": {
+    input: z.object({ mode: permissionModeSchema }),
+    output: z.object({ mode: permissionModeSchema }),
   },
   // ── Live canvases (issue #54) ──────────────────────────────────────────────
   // Runs the live pipeline (decompose → budget-gated angle → ordering → place)
