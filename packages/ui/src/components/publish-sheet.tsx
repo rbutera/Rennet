@@ -3,6 +3,8 @@ import type { DispositionBatch } from "../canvas/authoring";
 import {
   canSign,
   type DestinationVariant,
+  ledgerBlocksSign,
+  type PublishLedger,
   resolveSign,
   stagedItems,
   stagedPayload,
@@ -29,6 +31,7 @@ export function PublishSheet({
   batch,
   variant,
   holdToSignMs = 800,
+  ledger,
   onSign,
   onWithdraw,
   onClose,
@@ -37,6 +40,13 @@ export function PublishSheet({
   variant: DestinationVariant;
   /** Hold budget before a sign is permitted; accessibility floor 0 signs immediately. */
   holdToSignMs?: number;
+  /**
+   * The run-degradation ledger (issue #80 / bead idwba). When present with ≥1
+   * entry, EVERY sign path is blocked until the reviewer acknowledges it. Absent
+   * or empty → no gate, so the shipped shell (which passes no ledger) is unchanged.
+   * #22/council maps real run degradation into this thin UI-local view-model.
+   */
+  ledger?: PublishLedger;
   onSign?: (payload: string) => void;
   onWithdraw?: (path: string) => void;
   onClose?: () => void;
@@ -48,6 +58,27 @@ export function PublishSheet({
 
   const holdStart = useRef<number | null>(null);
   const [armed, setArmed] = useState(false);
+  // The degradation-ledger acknowledgement, owned locally. A gate that clears the
+  // instant the ledger renders is no gate — signing a degraded review requires an
+  // explicit acknowledging act.
+  const [acknowledged, setAcknowledged] = useState(false);
+  const ledgerEntries = ledger?.entries ?? [];
+  const hasLedger = ledgerEntries.length > 0;
+  // Fail-closed on a ledger swap. `acknowledged` is component-lifetime state, so if
+  // the run degradations change while the sheet stays mounted (a #22/council re-run
+  // maps a NEW degradation set into `ledger`), a prior acknowledgement would carry
+  // over and authorize signing the new, UNacknowledged set — the exact bypass the
+  // gate exists to stop. Track the stable entry-id SIGNATURE (not object identity,
+  // which an un-memoized host would change every render, resetting the ack on every
+  // keystroke and defeating the gate the other way) and reset the ack the render a
+  // genuinely-new entry set arrives. This is React's "adjust state when a prop
+  // changes" pattern: synchronous during render, so the gate re-arms with no flash.
+  const ledgerSignature = ledgerEntries.map((entry) => entry.id).join(" ");
+  const [ackSignature, setAckSignature] = useState(ledgerSignature);
+  if (ledgerSignature !== ackSignature) {
+    setAckSignature(ledgerSignature);
+    setAcknowledged(false);
+  }
 
   function beginHold(): void {
     holdStart.current = Date.now();
@@ -61,11 +92,33 @@ export function PublishSheet({
     holdStart.current = null;
     setArmed(false);
     if (started === null) return;
-    // The single gate: only a hold that clears the bar emits, and it emits exactly
-    // the previewed bytes (never a transform). Below the bar, `resolveSign` is null
-    // and nothing leaves — the sign never defaults to APPROVE.
+    // The degradation gate is checked BEFORE the hold gate: an unacknowledged,
+    // non-empty ledger blocks every sign path regardless of hold duration.
+    if (ledgerBlocksSign(ledger, acknowledged)) return;
+    // The single hold gate: only a hold that clears the bar emits, and it emits
+    // exactly the previewed bytes (never a transform). Below the bar, `resolveSign`
+    // is null and nothing leaves — the sign never defaults to APPROVE.
     const outbound = resolveSign(Date.now() - started, holdToSignMs, payload);
     if (outbound !== null) onSign?.(outbound);
+  }
+
+  function signByKeyboard(event: { key: string; repeat?: boolean; preventDefault(): void }): void {
+    // Keyboard accessibility (issue #80): an explicit Enter/Space activation of the
+    // focused sign control IS the deliberate act — the keyboard equivalent of
+    // clearing the pointer hold — so it signs at ANY hold budget, resolving the
+    // barrier where the default non-zero hold left a keyboard/AT user unable to
+    // publish at all. It can never auto-approve: nothing signs without an
+    // intentional keypress on the focused control. It routes through the SAME
+    // degradation gate and emits EXACTLY the previewed bytes (never a transform).
+    if (event.key !== "Enter" && event.key !== " ") return;
+    // Ignore keyboard auto-repeat: a HELD Enter/Space emits a stream of repeat
+    // keydowns, and without this guard each one calls onSign again — a repeated
+    // publish once #21 makes the sign a real Git/GitHub mutation. Only the first,
+    // non-repeat activation is the deliberate act.
+    if (event.repeat) return;
+    event.preventDefault();
+    if (ledgerBlocksSign(ledger, acknowledged)) return;
+    onSign?.(payload);
   }
 
   return (
@@ -124,6 +177,47 @@ export function PublishSheet({
           {payload}
         </pre>
 
+        {/* The degradation-ledger sign-gate (issue #80). When the run degraded, the
+            reviewer cannot sign until they acknowledge what degraded — the honesty
+            the paper/glass doctrine demands. Absent/empty ledger → not rendered,
+            no gate, shell behaviour unchanged. */}
+        {hasLedger ? (
+          <fieldset className="publish-sheet-ledger">
+            <legend className="publish-sheet-ledger-legend">Run degradations to acknowledge</legend>
+            <p className="publish-sheet-ledger-lede">
+              This run degraded. Signing is blocked until you acknowledge what happened.
+            </p>
+            <ul className="publish-sheet-ledger-entries">
+              {ledgerEntries.map((entry) => (
+                <li className="publish-sheet-ledger-entry" data-ledger-id={entry.id} key={entry.id}>
+                  {entry.summary}
+                </li>
+              ))}
+            </ul>
+            <label className="publish-sheet-ack">
+              <input
+                type="checkbox"
+                className="publish-sheet-ack-box"
+                checked={acknowledged}
+                onChange={(event) => setAcknowledged(event.target.checked)}
+              />
+              <span>
+                Acknowledge {ledgerEntries.length} run degradation
+                {ledgerEntries.length === 1 ? "" : "s"} to sign
+              </span>
+            </label>
+          </fieldset>
+        ) : null}
+
+        {/* Honesty affordance (issue #80): under the paper/glass doctrine, a shell
+            sign clears the staged paper while publishing NOTHING. This persistent,
+            aria-legible notice ensures a shell sign can never read as a real
+            publish. Real publishing lands in #21. */}
+        <p className="publish-sheet-shell-notice" role="note">
+          This shell publishes nothing — signing clears the staged paper. Real publishing lands in
+          #21.
+        </p>
+
         <footer className="publish-sheet-foot">
           <p className="publish-sheet-note">
             All-or-nothing: signing publishes the whole staged set. To leave something out, withdraw
@@ -133,6 +227,10 @@ export function PublishSheet({
             type="button"
             className={`publish-sheet-sign ${armed ? "is-arming" : ""}`}
             data-hold-ms={holdToSignMs}
+            // A pointer user holds; a keyboard/AT user does not — a single Enter or
+            // Space on the focused control signs. Announce that additively so the
+            // "Hold to …" visible label does not mislead AT, without changing it.
+            aria-keyshortcuts="Enter Space"
             disabled={items.length === 0}
             onMouseDown={beginHold}
             onMouseUp={endHold}
@@ -140,17 +238,7 @@ export function PublishSheet({
               holdStart.current = null;
               setArmed(false);
             }}
-            onKeyDown={(event) => {
-              // Keyboard accessibility: Enter/Space performs the sign through the
-              // same gate, honouring the floor-0 rule. A non-zero hold is a pointer
-              // affordance (keyboard hold is a documented follow-up).
-              if (event.key !== "Enter" && event.key !== " ") return;
-              const outbound = resolveSign(0, holdToSignMs, payload);
-              if (outbound !== null) {
-                event.preventDefault();
-                onSign?.(outbound);
-              }
-            }}
+            onKeyDown={signByKeyboard}
           >
             Hold to {variant.signLabel.toLowerCase()}
           </button>

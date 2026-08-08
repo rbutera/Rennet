@@ -707,3 +707,56 @@ button {
   background: #23272f;
   cursor: not-allowed;
 }
+.publish-sheet-ledger {
+  margin: 0;
+  min-inline-size: 0;
+  padding: 12px;
+  border: 1px solid #4a3a12;
+  border-radius: 8px;
+  background: #1a1509;
+}
+.publish-sheet-ledger-legend {
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #e6c14f;
+}
+.publish-sheet-ledger-lede {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-weight: 650;
+  color: #e6c14f;
+}
+.publish-sheet-ledger-entries {
+  margin: 0 0 10px;
+  padding-left: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.publish-sheet-ledger-entry {
+  font-size: 12px;
+  color: #c8b17a;
+}
+.publish-sheet-ack {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  font-size: 12px;
+  color: #d8ff4f;
+  cursor: pointer;
+}
+.publish-sheet-ack-box {
+  margin-top: 1px;
+}
+.publish-sheet-shell-notice {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px dashed #2c313a;
+  font-size: 11px;
+  color: #8d96a8;
+  background: #0c0e12;
+}
