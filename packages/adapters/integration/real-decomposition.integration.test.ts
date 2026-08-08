@@ -1,6 +1,7 @@
 import { DECOMPOSITION_PROPOSAL_CONTRACT } from "@rennet/instructions";
 import {
   buildOfferedManifest,
+  createInvocationBudget,
   decompose,
   type DecompositionTurnResult,
   type HarnessEvent,
@@ -125,6 +126,7 @@ describe.skipIf(!LIVE)("live decomposition angle (opt-in; spends the subscriptio
         },
         runTurn,
         maxRetries: 0,
+        budget: createInvocationBudget(10), // explicit budget: absent now fails closed (#95)
       });
 
       // eslint-disable-next-line no-console

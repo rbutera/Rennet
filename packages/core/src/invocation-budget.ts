@@ -62,3 +62,28 @@ export function createInvocationBudget(max: number): InvocationBudget {
     },
   };
 }
+
+/**
+ * The fail-closed refusal for an ABSENT invocation budget (issue #95, #70
+ * follow-up). A money-critical runner (decomposition, ordering, narration) that
+ * is handed no budget has NO authorization to spend: an absent budget is treated
+ * exactly like an exhausted one (a zero ceiling), refusing every turn.
+ *
+ * Rule 75, the vital money circuit: a single fault must fail toward LESS spend,
+ * never more. A future caller that omits the budget — a JS caller, an `as any`,
+ * a deserialized options object the type system never saw — must spend NOTHING,
+ * not run ungated. The type marking `budget` optional is a test ergonomic; this
+ * runtime refusal is the switch that actually closes the circuit, so no caller,
+ * typed or not, can spend without a budget in hand. Shape mirrors a zero-ceiling
+ * refusal (`consumed: 0`, `max: 0`) so downstream refusal handling is uniform.
+ */
+export function budgetAbsentRefusal(purpose: string): Extract<BudgetGrant, { granted: false }> {
+  return {
+    granted: false,
+    code: R10_BUDGET_EXHAUSTED,
+    purpose,
+    consumed: 0,
+    max: 0,
+    reason: `no invocation budget provided; refusing "${purpose}" — an absent budget is not authorization to spend (R10, fail-closed #95)`,
+  };
+}

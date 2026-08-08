@@ -14,6 +14,7 @@ import {
   runDecompositionAngle,
 } from "./angle-generation";
 import { decompose } from "./decomposition";
+import { createInvocationBudget } from "./invocation-budget";
 
 // ── A tiny real changeset: b.ts imports a.ts, plus one lockfile (mechanical) ─
 
@@ -120,6 +121,7 @@ describe("deterministicProposalBody", () => {
       provenance: SEED,
       runTurn: scriptedTurn([body]),
       maxRetries: 0,
+      budget: createInvocationBudget(10), // explicit budget: absent now fails closed (#95)
     });
     expect(result.admitted).toBe(true);
     expect(result.usedFallback).toBe(false);
@@ -137,6 +139,7 @@ describe("runDecompositionAngle", () => {
       manifest,
       provenance: SEED,
       runTurn: scriptedTurn([body]),
+      budget: createInvocationBudget(10), // explicit budget: absent now fails closed (#95)
       mintDocId: () => "0123456789ABCDEFGHJKMNPQRS",
       newRunId: () => "run_fixed",
     });
@@ -163,6 +166,7 @@ describe("runDecompositionAngle", () => {
       provenance: SEED,
       runTurn: scriptedTurn([invalid, valid]),
       maxRetries: 2,
+      budget: createInvocationBudget(10), // explicit budget: absent now fails closed (#95)
     });
     expect(result.admitted).toBe(true);
     expect(result.usedFallback).toBe(false);
@@ -184,6 +188,7 @@ describe("runDecompositionAngle", () => {
       provenance: SEED,
       runTurn: scriptedTurn([invalid, invalid, invalid]),
       maxRetries: 2,
+      budget: createInvocationBudget(10), // explicit budget: absent now fails closed (#95)
     });
     expect(result.usedFallback).toBe(true);
     expect(result.admitted).toBe(true);
@@ -202,6 +207,7 @@ describe("runDecompositionAngle", () => {
       provenance: SEED,
       runTurn: () => Promise.resolve({ status: "failed", message: "harness overloaded" }),
       maxRetries: 1,
+      budget: createInvocationBudget(10), // explicit budget: absent now fails closed (#95)
     });
     expect(result.usedFallback).toBe(true);
     expect(result.admitted).toBe(true);

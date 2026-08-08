@@ -23,6 +23,7 @@ import {
   renderBaseInstruction,
 } from "@rennet/instructions";
 import { computeInputDigest, validateDocument } from "@rennet/protocol";
+import { budgetAbsentRefusal } from "./invocation-budget";
 import type {
   BudgetGrant,
   ChunkAngle,
@@ -292,16 +293,18 @@ export async function runDecompositionAngle(
   let budgetRefused = false;
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-    // The live budget gate (R10): consult the shared budget before spending a
-    // turn. A refusal is terminal for this runner — every further attempt would
-    // also be refused — so we record it and break to the deterministic floor.
-    if (budget !== undefined) {
-      const grant = budget.tryConsume(`decomposition:attempt-${attempt}`);
-      if (!grant.granted) {
-        attempts.push({ attempt, outcome: "budget-refused", budgetRefusal: grant });
-        budgetRefused = true;
-        break;
-      }
+    // The live budget gate (R10, fail-closed #95): consult the shared budget
+    // before spending a turn. An ABSENT budget is not authorization to spend —
+    // it is a refusal, exactly like an exhausted one (Rule 75, vital money
+    // circuit: a single fault fails toward LESS spend). A refusal is terminal
+    // for this runner — every further attempt would also be refused — so we
+    // record it and break to the deterministic floor.
+    const purpose = `decomposition:attempt-${attempt}`;
+    const grant = budget?.tryConsume(purpose) ?? budgetAbsentRefusal(purpose);
+    if (!grant.granted) {
+      attempts.push({ attempt, outcome: "budget-refused", budgetRefusal: grant });
+      budgetRefused = true;
+      break;
     }
 
     const assembled = assemblePrompt(
