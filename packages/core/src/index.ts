@@ -1,10 +1,16 @@
 import { createHash } from "node:crypto";
 import type {
+  AnchorSide,
+  AnchorSpan,
   Disposition,
   DispositionAnchor,
+  DispositionRelevanceJudge,
   DispositionType,
   PatchFile,
   Patchset,
+  PublishThread,
+  RelevanceCandidate,
+  RelevanceVerdict,
   Review,
 } from "@rennet/types";
 import { v7 as uuidv7 } from "uuid";
@@ -46,6 +52,20 @@ export type ReviewEvent =
       reviewId: string;
       patchsetId: string;
       path: string;
+      // Span identity for a span-grained clear (issue #78). Absent ⇒ a
+      // path-grained clear (clears the file-level disposition, unchanged).
+      span?: AnchorSpan;
+      side?: AnchorSide;
+    }
+  | {
+      // The relevance-judge re-attach (issue #78). Emitted by
+      // `recaptureWithRelevance` after the floor fold, carrying the
+      // judge-approved (validated, re-anchored) dispositions.
+      type: "DispositionsCarried";
+      version: 1;
+      reviewId: string;
+      patchsetId: string;
+      carried: Disposition[];
     }
   | { type: "ReviewInvalidated"; version: 1; reviewId: string; candidate: Patchset };
 
@@ -72,25 +92,262 @@ function exhaustive(value: never): never {
 /**
  * The exact-match content key for a changed file: a hash of its patch text.
  * Two anchors are "the same file, unchanged" iff their `path` and this digest
- * both match. This is the sole matcher for slice 1 (no fuzzy lineage).
+ * both match. This is the whole-file (path-grained) carry key.
  */
 export function fileContentDigest(file: PatchFile): string {
   return createHash("sha256").update(file.patch).digest("hex");
 }
 
+function sha256Hex(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
+
 /**
- * Carry dispositions across a re-capture, CONSERVATIVELY. A disposition
- * survives only where the new patchset still has a file at the same path whose
- * patch content is byte-identical. Any change, rename, or removal fails closed
- * (the disposition is dropped, so the reviewer must re-read). No fuzzy matching.
+ * A stable identity string for a disposition anchor (issue #78). Path-grained
+ * anchors key on `path` (unchanged); span-grained anchors key on
+ * `path#L<start>-L<end>@<side>`, so two spans on one file — and a path-grained +
+ * a span disposition on the same file — coexist and clear independently. Only
+ * `path`/`span`/`side` participate; the content/span digests do not.
+ */
+export function anchorKey(anchor: Pick<DispositionAnchor, "path" | "span" | "side">): string {
+  if (anchor.span && anchor.side) {
+    const end = anchor.span.endLine ?? anchor.span.startLine;
+    return `${anchor.path}#L${anchor.span.startLine}-L${end}@${anchor.side}`;
+  }
+  return anchor.path;
+}
+
+const HUNK_HEADER = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+
+/**
+ * The exact side-text at a 1-based FILE-LINE span (issue #78). `side` selects
+ * the image the span reads: `additions`/`context` → the post-image (new-file)
+ * lines; `deletions` → the pre-image (old-file) lines. Walks the unified
+ * `@@ -a,b +c,d @@` hunks of `file.patch`, mapping each body line to its file
+ * line number on the chosen image, and returns the joined source text of the
+ * span's lines (prefix stripped), or `undefined` when any requested line is out
+ * of bounds / the side has no such line / the file has no such image. Registrar-
+ * independent — it never consults a CodeView occurrence ordinal (#84-clean).
+ */
+export function extractSpanText(
+  file: PatchFile,
+  span: AnchorSpan,
+  side: AnchorSide,
+): string | undefined {
+  const start = span.startLine;
+  const end = span.endLine ?? start;
+  if (start < 1 || end < start) return undefined;
+  // Post-image (additions/context) is keyed by new-file line; pre-image
+  // (deletions) by old-file line. Both accumulate context lines, which live in
+  // both images.
+  const post = side !== "deletions";
+  const byLine = new Map<number, string>();
+  const lines = file.patch.split("\n");
+  let newLine = 0;
+  let oldLine = 0;
+  let inHunk = false;
+  for (const line of lines) {
+    const header = HUNK_HEADER.exec(line);
+    if (header) {
+      oldLine = Number(header[1]);
+      newLine = Number(header[2]);
+      inHunk = true;
+      continue;
+    }
+    if (!inHunk) continue;
+    const marker = line.charAt(0);
+    if (marker === "+") {
+      if (post) byLine.set(newLine, line.slice(1));
+      newLine += 1;
+    } else if (marker === "-") {
+      if (!post) byLine.set(oldLine, line.slice(1));
+      oldLine += 1;
+    } else if (marker === " ") {
+      byLine.set(post ? newLine : oldLine, line.slice(1));
+      newLine += 1;
+      oldLine += 1;
+    }
+    // Any other line (e.g. "\ No newline at end of file") advances nothing.
+  }
+  const out: string[] = [];
+  for (let n = start; n <= end; n += 1) {
+    const text = byLine.get(n);
+    if (text === undefined) return undefined; // out of bounds / side has no such line
+    out.push(text);
+  }
+  return out.join("\n");
+}
+
+/**
+ * Whether one anchor carries forward onto `file` (the successor at its path) by
+ * the deterministic FLOOR (issue #78). Span-grained: the successor's side-text
+ * at the SAME file-line span is defined and byte-identical to `spanDigest` — so
+ * an unchanged span carries even when the file changed elsewhere, and a shifted
+ * or edited span drops (the judge's job, not the floor's). Path-grained: the
+ * whole file is byte-identical. `undefined` file (path gone) never carries.
+ */
+function anchorCarries(anchor: DispositionAnchor, file: PatchFile | undefined): boolean {
+  if (!file) return false;
+  if (anchor.span && anchor.side && anchor.spanDigest) {
+    const text = extractSpanText(file, anchor.span, anchor.side);
+    return text !== undefined && sha256Hex(text) === anchor.spanDigest;
+  }
+  return fileContentDigest(file) === anchor.contentDigest;
+}
+
+/**
+ * Carry dispositions across a re-capture, CONSERVATIVELY — the deterministic
+ * FLOOR. A path-grained disposition survives only where the successor file is
+ * byte-identical; a span-grained disposition survives only where its side-text
+ * at the same file-line span is byte-identical. Any change, shift, out-of-bounds
+ * span, missing side, rename, or removal fails closed (dropped, so the reviewer
+ * re-reads). No fuzzy matching — that is the relevance judge's job (Tier 2).
  */
 function carryDispositions(previous: Disposition[], next: Patchset): Disposition[] {
-  const digestByPath = new Map<string, string>();
-  for (const file of next.files) digestByPath.set(file.path, fileContentDigest(file));
-  return previous.filter((disposition) => {
-    const nextDigest = digestByPath.get(disposition.anchor.path);
-    return nextDigest !== undefined && nextDigest === disposition.anchor.contentDigest;
-  });
+  const fileByPath = new Map(next.files.map((file) => [file.path, file] as const));
+  return previous.filter((disposition) =>
+    anchorCarries(disposition.anchor, fileByPath.get(disposition.anchor.path)),
+  );
+}
+
+/**
+ * Split the prior dispositions into the floor-carried set and the dropped set
+ * (offered to the relevance judge as candidates). Pure. Each candidate carries
+ * the successor patch text when its file survives (absent when the file is
+ * gone). Verdicts returned by the judge are positional to `candidates`.
+ */
+export function partitionCarry(
+  previous: Disposition[],
+  next: Patchset,
+): { carried: Disposition[]; candidates: RelevanceCandidate[] } {
+  const fileByPath = new Map(next.files.map((file) => [file.path, file] as const));
+  const carried: Disposition[] = [];
+  const candidates: RelevanceCandidate[] = [];
+  for (const disposition of previous) {
+    const file = fileByPath.get(disposition.anchor.path);
+    if (anchorCarries(disposition.anchor, file)) carried.push(disposition);
+    else candidates.push({ disposition, ...(file ? { successorPatch: file.patch } : {}) });
+  }
+  return { carried, candidates };
+}
+
+/**
+ * Re-anchor a dropped disposition onto `next` per the judge's re-anchor, or
+ * return null (fail-closed) when the target file is gone or the re-anchor span
+ * is out of bounds. A re-anchored span recomputes `spanDigest` from `next` so
+ * the carried disposition is self-consistent for the NEXT re-capture.
+ */
+function reanchor(
+  original: Disposition,
+  reAnchor: DispositionAnchor,
+  fileByPath: ReadonlyMap<string, PatchFile>,
+): Disposition | null {
+  const file = fileByPath.get(reAnchor.path);
+  if (!file) return null;
+  if (reAnchor.span && reAnchor.side) {
+    const text = extractSpanText(file, reAnchor.span, reAnchor.side);
+    if (text === undefined) return null; // out of bounds → fail-closed
+    return {
+      ...original,
+      anchor: {
+        path: reAnchor.path,
+        contentDigest: fileContentDigest(file),
+        span: reAnchor.span,
+        side: reAnchor.side,
+        spanDigest: sha256Hex(text),
+      },
+    };
+  }
+  return { ...original, anchor: { path: reAnchor.path, contentDigest: fileContentDigest(file) } };
+}
+
+/**
+ * Internal: apply verdicts, returning both the carried dispositions and the set
+ * of candidate indices that were carried — so `carryWithRelevance` computes the
+ * orphaned remainder without re-deriving the fail-closed logic.
+ */
+function applyVerdicts(
+  candidates: RelevanceCandidate[],
+  verdicts: RelevanceVerdict[],
+  next: Patchset,
+): { carried: Disposition[]; carriedIndices: Set<number> } {
+  const fileByPath = new Map(next.files.map((file) => [file.path, file] as const));
+  const carried: Disposition[] = [];
+  const carriedIndices = new Set<number>();
+  for (let index = 0; index < candidates.length; index += 1) {
+    const candidate = candidates[index];
+    const verdict = verdicts[index];
+    if (!candidate || !verdict?.carry) continue;
+    const original = candidate.disposition;
+    if (verdict.reAnchor) {
+      const reAnchored = reanchor(original, verdict.reAnchor, fileByPath);
+      if (reAnchored === null) continue; // fail-closed: a bad re-anchor is dropped
+      carried.push(reAnchored);
+    } else {
+      carried.push(original);
+    }
+    carriedIndices.add(index);
+  }
+  return { carried, carriedIndices };
+}
+
+/**
+ * Apply the judge's verdicts to the dropped candidates (issue #78). Pure. A
+ * `carry: true` verdict re-attaches the disposition, re-anchored to the
+ * verdict's span/path when supplied (with `spanDigest` recomputed from `next`);
+ * an out-of-bounds re-anchor is DROPPED, never attached (fail-closed).
+ */
+export function applyRelevanceVerdicts(
+  candidates: RelevanceCandidate[],
+  verdicts: RelevanceVerdict[],
+  next: Patchset,
+): Disposition[] {
+  return applyVerdicts(candidates, verdicts, next).carried;
+}
+
+/**
+ * Carry above the floor (issue #78): floor → judge(candidates) → apply. The
+ * carried set is the floor-carried plus the judge-approved; everything the floor
+ * dropped and the judge declined (or re-anchored out of bounds) is orphaned (the
+ * tray). The judge is a port — inject a stub in CI; the model never runs here.
+ */
+export async function carryWithRelevance(
+  previous: Disposition[],
+  next: Patchset,
+  judge: DispositionRelevanceJudge,
+): Promise<{ carried: Disposition[]; orphaned: Disposition[] }> {
+  const { carried: floorCarried, candidates } = partitionCarry(previous, next);
+  const verdicts = candidates.length ? await judge.judge(candidates, next) : [];
+  const { carried: judgeCarried, carriedIndices } = applyVerdicts(candidates, verdicts, next);
+  const orphaned = candidates
+    .filter((_, index) => !carriedIndices.has(index))
+    .map((candidate) => candidate.disposition);
+  return { carried: [...floorCarried, ...judgeCarried], orphaned };
+}
+
+/**
+ * Map a disposition to the GitHub review-thread publish payload (issue #78 — the
+ * single line/side contract #22 and #21 build on once). A span disposition →
+ * `line` (span end) + `startLine` (only when multi-line) + `side` (deletions →
+ * LEFT / old file; additions and context → RIGHT / new file). A path-grained
+ * disposition → a file-level payload (no line/side).
+ */
+export function toPublishThread(disposition: Disposition): PublishThread {
+  const { anchor, type, body } = disposition;
+  if (anchor.span && anchor.side) {
+    const start = anchor.span.startLine;
+    const end = anchor.span.endLine ?? start;
+    const publishSide: "LEFT" | "RIGHT" = anchor.side === "deletions" ? "LEFT" : "RIGHT";
+    return {
+      path: anchor.path,
+      line: end,
+      ...(end > start ? { startLine: start } : {}),
+      side: publishSide,
+      body,
+      type,
+    };
+  }
+  return { path: anchor.path, body, type };
 }
 
 function requireActivePatchset(
@@ -134,19 +391,44 @@ export function foldReview(current: Review | null, event: ReviewEvent): Review {
     }
     case "DispositionSet": {
       const review = requireActivePatchset(current, event);
+      // Fold identity is the FULL anchor (issue #78): dedup + sort by anchorKey,
+      // so two spans on one file (and a path-grained + a span disposition on the
+      // same file) coexist; a re-set on the same span replaces.
+      const key = anchorKey(event.disposition.anchor);
       const dispositions = review.dispositions.filter(
-        (existing) => existing.anchor.path !== event.disposition.anchor.path,
+        (existing) => anchorKey(existing.anchor) !== key,
       );
       dispositions.push(event.disposition);
-      dispositions.sort((left, right) => left.anchor.path.localeCompare(right.anchor.path));
+      dispositions.sort((left, right) =>
+        anchorKey(left.anchor).localeCompare(anchorKey(right.anchor)),
+      );
       return { ...review, dispositions };
     }
     case "DispositionCleared": {
       const review = requireActivePatchset(current, event);
+      // Clear by anchorKey: a bare-path clear (span/side absent) still clears the
+      // file-level disposition; a span clear names its span/side.
+      const key = anchorKey({ path: event.path, span: event.span, side: event.side });
       return {
         ...review,
-        dispositions: review.dispositions.filter((existing) => existing.anchor.path !== event.path),
+        dispositions: review.dispositions.filter((existing) => anchorKey(existing.anchor) !== key),
       };
+    }
+    case "DispositionsCarried": {
+      const review = requireActivePatchset(current, event);
+      // Union the judge-approved dispositions into the set (they target the new
+      // active patchset), replacing any existing entry at the same anchor key.
+      const dispositions = [...review.dispositions];
+      for (const carried of event.carried) {
+        const key = anchorKey(carried.anchor);
+        const index = dispositions.findIndex((existing) => anchorKey(existing.anchor) === key);
+        if (index >= 0) dispositions[index] = carried;
+        else dispositions.push(carried);
+      }
+      dispositions.sort((left, right) =>
+        anchorKey(left.anchor).localeCompare(anchorKey(right.anchor)),
+      );
+      return { ...review, dispositions };
     }
     case "ReviewInvalidated": {
       if (!current || current.id !== event.reviewId) {
@@ -220,21 +502,43 @@ export class ReviewService {
     path: string,
     disposition: DispositionType | null,
     body: string,
+    span?: AnchorSpan,
+    side?: AnchorSide,
   ): Review {
-    const digest = payloadDigest({ reviewId, patchsetId, path, disposition, body });
+    // A span anchor (issue #78) needs both the span and its side; supplying one
+    // without the other is a caller error (mirrors the protocol all-or-none rule).
+    if ((span === undefined) !== (side === undefined)) {
+      throw new Error("A span disposition needs both a span and a side");
+    }
+    const digest = payloadDigest({ reviewId, patchsetId, path, disposition, body, span, side });
     const receipt = this.store.receipt(commandId, digest);
     if (receipt) return receipt;
     const current = this.requireReview(reviewId);
     let event: ReviewEvent;
     if (disposition === null) {
-      event = { type: "DispositionCleared", version: 1, reviewId, patchsetId, path };
+      event = { type: "DispositionCleared", version: 1, reviewId, patchsetId, path, span, side };
     } else {
       const active = current.patchsets.find((patchset) => patchset.id === current.activePatchsetId);
       const file = active?.files.find((candidate) => candidate.path === path);
       if (!file) {
         throw new Error("Cannot set a disposition on a path outside the active patchset");
       }
-      const anchor: DispositionAnchor = { path, contentDigest: fileContentDigest(file) };
+      let anchor: DispositionAnchor;
+      if (span && side) {
+        const spanText = extractSpanText(file, span, side);
+        if (spanText === undefined) {
+          throw new Error("Cannot set a span disposition: the span is out of bounds for the file");
+        }
+        anchor = {
+          path,
+          contentDigest: fileContentDigest(file),
+          span,
+          side,
+          spanDigest: sha256Hex(spanText),
+        };
+      } else {
+        anchor = { path, contentDigest: fileContentDigest(file) };
+      }
       event = {
         type: "DispositionSet",
         version: 1,
@@ -244,6 +548,52 @@ export class ReviewService {
       };
     }
     return this.store.commit(commandId, digest, [event], foldReview(current, event));
+  }
+
+  /**
+   * The relevance-judged re-capture (issue #78, Rai's #48 ruling): capture →
+   * PatchsetActivated (the deterministic floor via the fold) → run the judge on
+   * the dropped candidates → commit a `DispositionsCarried` event re-attaching
+   * the judge-approved (validated, re-anchored) dispositions. The default
+   * `capture()` path stays floor-only. The judge is a PORT: CI injects a stub;
+   * the model never runs here.
+   */
+  async recaptureWithRelevance(
+    commandId: string,
+    repositoryPath: string,
+    reviewId: string,
+    judge: DispositionRelevanceJudge,
+  ): Promise<Review> {
+    const digest = payloadDigest({ repositoryPath, reviewId, mode: "relevance" });
+    const receipt = this.store.receipt(commandId, digest);
+    if (receipt) return receipt;
+    const current = this.requireReview(reviewId);
+    const previous = current.dispositions;
+    const patchset = await this.capturePort.capture(repositoryPath);
+    const activated: ReviewEvent = {
+      type: "PatchsetActivated",
+      version: 1,
+      reviewId: current.id,
+      patchset,
+    };
+    const afterFloor = foldReview(current, activated);
+    const { candidates } = partitionCarry(previous, patchset);
+    const verdicts = candidates.length ? await judge.judge(candidates, patchset) : [];
+    const judgeCarried = applyRelevanceVerdicts(candidates, verdicts, patchset);
+    const events: ReviewEvent[] = [activated];
+    let result = afterFloor;
+    if (judgeCarried.length) {
+      const carriedEvent: ReviewEvent = {
+        type: "DispositionsCarried",
+        version: 1,
+        reviewId: current.id,
+        patchsetId: patchset.id,
+        carried: judgeCarried,
+      };
+      events.push(carriedEvent);
+      result = foldReview(afterFloor, carriedEvent);
+    }
+    return this.store.commit(commandId, digest, events, result);
   }
 
   async checkFreshness(

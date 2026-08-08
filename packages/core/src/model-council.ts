@@ -94,6 +94,18 @@ export const JOB_CATALOGUE: Readonly<Record<CouncilJobId, CouncilJob>> = Object.
         job("rollup-narration", "light", "batched", false, "Roll-up narration (M22)", 6),
         job("pr-body-draft", "light", "batched", false, "PR title/body draft (M26)", 7),
         job("disposition-triage", "light", "batched", false, "Disposition triage", 8),
+        // Issue #78: bounded inference (handed the prior disposition + the
+        // successor patch, never fetches code it was not given) — light tier,
+        // sibling to disposition-triage; the ruling's "medium model" is the
+        // effort knob, not the tier. Budget gate covered by resolveAssignment.
+        job(
+          "disposition-relevance-judge",
+          "light",
+          "batched",
+          false,
+          "Disposition relevance judge (#78)",
+          27,
+        ),
         job("inferred-test-mapping", "light", "batched", false, "Inferred test mapping", 9),
         job(
           "committed-spec-requirement-extraction",
@@ -276,6 +288,7 @@ const TABLE_BOTH: AssignmentTable = {
   "rollup-narration": pick("gpt-5.6-luna", "low"),
   "pr-body-draft": pick("gpt-5.6-luna", "low"),
   "disposition-triage": pick("gpt-5.6-luna", "medium"),
+  "disposition-relevance-judge": pick("gpt-5.6-luna", "medium"),
   "inferred-test-mapping": pick("gpt-5.6-luna", "medium"),
   "committed-spec-requirement-extraction": pick("gpt-5.6-luna", "medium"),
   "delta-rereview-summary": pick("gpt-5.6-luna", "medium"),
@@ -311,6 +324,7 @@ const TABLE_CLAUDE_ONLY: AssignmentTable = {
   "rollup-narration": pick("haiku", "low"),
   "pr-body-draft": pick("haiku", "low"),
   "disposition-triage": pick("haiku", "low"),
+  "disposition-relevance-judge": pick("haiku", "low"),
   "inferred-test-mapping": pick("haiku", "low"),
   "committed-spec-requirement-extraction": pick("haiku", "low"),
   "delta-rereview-summary": pick("haiku", "low"),
@@ -345,6 +359,7 @@ const TABLE_CODEX_ONLY: AssignmentTable = {
   "rollup-narration": pick("gpt-5.6-luna", "low"),
   "pr-body-draft": pick("gpt-5.6-luna", "low"),
   "disposition-triage": pick("gpt-5.6-luna", "medium"),
+  "disposition-relevance-judge": pick("gpt-5.6-luna", "medium"),
   "inferred-test-mapping": pick("gpt-5.6-luna", "medium"),
   "committed-spec-requirement-extraction": pick("gpt-5.6-luna", "medium"),
   "delta-rereview-summary": pick("gpt-5.6-luna", "medium"),

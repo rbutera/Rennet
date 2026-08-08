@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { commandDefinitions, isCommandName, parseCommandInput } from "./index";
+import { commandDefinitions, dispositionSchema, isCommandName, parseCommandInput } from "./index";
 
 describe("command protocol", () => {
   it("rejects malformed command payloads", () => {
@@ -44,6 +44,55 @@ describe("command protocol", () => {
         body: "",
       }),
     ).toThrow();
+  });
+});
+
+describe("span-grained disposition anchor schema (issue #78)", () => {
+  const base = { type: "comment", body: "" } as const;
+
+  it("accepts a path-grained anchor", () => {
+    const result = dispositionSchema.safeParse({
+      ...base,
+      anchor: { path: "a.ts", contentDigest: "d" },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a full span anchor", () => {
+    const result = dispositionSchema.safeParse({
+      ...base,
+      anchor: {
+        path: "a.ts",
+        contentDigest: "d",
+        span: { startLine: 3, endLine: 5 },
+        side: "additions",
+        spanDigest: "sd",
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  // Reddening: drop the all-or-none refine → this partial-anchor test reddens.
+  it("rejects a partial span anchor (span without side/spanDigest)", () => {
+    const result = dispositionSchema.safeParse({
+      ...base,
+      anchor: { path: "a.ts", contentDigest: "d", span: { startLine: 3 } },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects a span with endLine < startLine", () => {
+    const result = dispositionSchema.safeParse({
+      ...base,
+      anchor: {
+        path: "a.ts",
+        contentDigest: "d",
+        span: { startLine: 5, endLine: 3 },
+        side: "context",
+        spanDigest: "sd",
+      },
+    });
+    expect(result.success).toBe(false);
   });
 });
 
