@@ -204,7 +204,19 @@ async function createWindow(): Promise<void> {
     height: 900,
     minWidth: 980,
     minHeight: 640,
-    backgroundColor: "#111318",
+    // Real glass (issue #61): the CHROME is genuinely translucent over the actual
+    // desktop, not a painted in-app gradient. A transparent window lets the
+    // compositor supply the material behind the frosted chrome. On macOS that is
+    // native window vibrancy (the real desktop, blurred by the OS); other platforms
+    // fall back to the renderer's own backdrop-filter over the transparent backing.
+    // Content surfaces (panels, cards, code, paper) paint their own SOLID
+    // backgrounds on top, so legibility never rides on the wallpaper (the #115
+    // correction: glass is the frame, not the content).
+    transparent: true,
+    backgroundColor: "#00000000",
+    ...(process.platform === "darwin"
+      ? { vibrancy: "under-window" as const, visualEffectState: "active" as const }
+      : {}),
     title: "Rennet",
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),

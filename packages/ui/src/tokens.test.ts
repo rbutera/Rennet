@@ -41,6 +41,34 @@ describe("glass tokens — both schemes render, faithfully ported", () => {
   });
 });
 
+describe("real desktop glass + solid content (issue #61, the #115 correction)", () => {
+  const canvas = readFileSync(fileURLToPath(new URL("./canvas.css", import.meta.url)), "utf8");
+
+  it("drops the synthetic wallpaper gradient the glass now composites over the real desktop", () => {
+    // #115's over-transparency and the earlier synthetic aurora are both gone: the
+    // app backdrop is a frosted-chrome material, not a painted in-app gradient.
+    expect(tokens).not.toContain("--wallpaper-img");
+    expect(tokens).not.toContain("--wallpaper:");
+    expect(tokens).toContain("--chrome-bg:");
+    // The canvas root frosts the real desktop rather than painting a wallpaper.
+    expect(canvas).toContain("background: var(--chrome-bg)");
+    expect(canvas).not.toContain("background-image: var(--wallpaper-img)");
+  });
+
+  it("makes content-card surfaces SOLID/opaque so text never rides the wallpaper", () => {
+    const dark = block(".rennet-glass {");
+    // --raised and --surface are the solid content fills (cards, cohorts, panels).
+    // A solid 6-digit hex is opaque; an rgba wash (the #115 failure) is not.
+    expect(dark).toMatch(/--raised:\s*#[0-9a-f]{6};/i);
+    expect(dark).toMatch(/--surface:\s*#[0-9a-f]{6};/i);
+    // Whole-card state surfaces are solid too (blast cohort, private tray/ask).
+    expect(dark).toMatch(/--amber-surface:\s*#[0-9a-f]{6};/i);
+    expect(dark).toMatch(/--private-surface:\s*#[0-9a-f]{6};/i);
+    // Positive control: the opaque code body is still present and solid.
+    expect(dark).toContain("--code-bg: #14161b");
+  });
+});
+
 describe("dark paper — the R40 fix: paper is materiality (warmth + opacity), not a fixed light colour", () => {
   it("makes the dark (default) paper WARM-DARK espresso, not cream", () => {
     const dark = block(".rennet-glass {");
