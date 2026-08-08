@@ -3,8 +3,8 @@ tags: [rennet, design, ux]
 categories: [reference]
 status: active
 created: 2026-08-07
-updated: 2026-08-07
-related: ["[[Rennet Product and Vision]]", "[[Rennet User Journey]]", "[[Code Review App Design Directions]]", "[[Code Review App UX Concepts]]", "[[Code Review App UX Research]]"]
+updated: 2026-08-08
+related: ["[[Rennet Product and Vision]]", "[[Rennet User Journey]]", "[[Rennet Collation Draft Canvas]]", "[[Code Review App Design Directions]]", "[[Code Review App UX Concepts]]", "[[Code Review App UX Research]]"]
 source: ratified extraction from the prototype design/UX docs (glass ratified by Rai — "definitely glass is the way")
 ---
 
@@ -20,6 +20,8 @@ The whole public/private semantics of the product is carried as *material*:
 
 1. **Glass is chrome, never code.** Sidebars, titlebars, toolbars, cards, and thread panels may be translucent and blurred; **every code surface, diff tint, and reading column is fully opaque.** The aurora glows *around* the diff, never through it. (Translucency degrades code contrast — this is a hard rule baked into the tokens, not a taste call.)
 2. **Paper is what leaves the machine.** Anything that becomes a GitHub artifact renders as opaque warm paper (`--sheet-*` tokens): the publish sheet above all, and any preview of a comment about to land. Working state lives on glass; the committed account lives on paper. In a fully translucent product, **the thing you sign is the only solid object** — the materiality inversion is the publish ceremony's integrity mechanism (hold-to-sign, the serif document voice reserved for paper alone, the travels ledger on the paper and the stays-on-this-Mac list floating beside it on glass, never touching it).
+   - **Signing is a phase transition: glass crystallises into paper (R40).** The forming destination — the collation draft canvas ([[Rennet Collation Draft Canvas]]) — is translucent working **glass** you are still forming; the **sign** act is what freezes it into the one opaque solid object. The draft is deliberately not-yet-solid, and solidity is what signing confers; editing lives on the glass draft, and the paper's only actions are **sign** and **back**. This *sharpens* the materiality inversion rather than bending it: the collation draft stays glass (it will publish once signed, so it is ink-in-formation, never backlight), and only signing makes it paper.
+   - **Paper is the one opaque solid object in every scheme — warm-dark in dark, cream in bright; it is materiality (warmth + opacity), never a fixed light colour.** What makes a surface read as *paper* is **warmth** (a material tone against the cool teal/blue glass); what makes it belong in dark mode is **darkness**; what makes it solid is **opacity**. So the dark (bioluminescent-twilight) scheme gets **warm-dark paper** — deep espresso/umber with warm off-white ink — never a light cream sheet on a near-black app and never an inverted "dark panel"; the bright-room scheme keeps the **cream**. The `--sheet-*` tokens must theme per scheme (the dark values are the base default; the cream values move into `[data-scheme="light"]`); only the base material colours theme — the serif document voice, hold-to-sign, and the sheet-glow are unchanged.
 3. **Private things glow from within.** Surfaces private to the reviewer carry the backlight treatment — **the only inner glow in the system.**
 
 ## 2. The colour law
@@ -46,4 +48,4 @@ Full reasoning, schemes (dark default + composed bright-room), wallpaper/aurora 
 
 ---
 
-*Ratified 2026-08-07 as part of the journey/steering pass — the design register promoted from historical prototype docs into doctrine implementers are required to read.*
+*Ratified 2026-08-07 as part of the journey/steering pass — the design register promoted from historical prototype docs into doctrine implementers are required to read. Amended 2026-08-08 (R40, Rai blessed): §1.2 gains the glass→paper phase-transition rule and the dark-paper (per-scheme materiality) rule. See [[Rennet Collation Draft Canvas]] §5.*
