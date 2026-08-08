@@ -139,21 +139,93 @@ export function resolveSign(
 // ── The degradation-ledger sign-gate (issue #80 / bead idwba) ────────────────
 
 /**
+ * The class of degradation an entry records, so the sheet can bucket entries
+ * rather than show one flat list (issue #22 ledger content):
+ *  • skipped-angle → a review angle the run never ran (budget/harness).
+ *  • orphaned      → a disposition a patchset advance dropped (a failed carry).
+ *  • excluded      → a path deliberately left out of the outbound artifact.
+ *  • flattened     → richer structure collapsed to a flatter form on publish
+ *                    ("published, but flattened") — the third ink state.
+ * Absent → the entry is shown ungrouped, so #80's existing thin entries (id +
+ * summary only) render unchanged.
+ */
+export type DegradationKind = "skipped-angle" | "orphaned" | "excluded" | "flattened";
+
+/**
  * One run degradation the reviewer must acknowledge before signing. A UI-local
  * view-model over primitives: `id` identifies the entry, `summary` is the
- * human-legible line (e.g. "Security angle skipped — budget exhausted"). The
- * CONTENT and its source (real run/council degradation) belong to #22/council;
- * #80 defines only the thin prop the sheet needs to enforce the gate. This stays
+ * human-legible line (e.g. "Security angle skipped — budget exhausted"). `kind`
+ * and `detail` are the #22 ledger CONTENT the sheet displays — the bucket and an
+ * optional second line (e.g. the orphaned path); both optional so a bare #80 entry
+ * still renders. The gate keys ONLY on `id` + `summary` (see the sheet's
+ * signature), so adding these fields changes the DISPLAY, never the gate. The
+ * CONTENT source (real run/council degradation) belongs to #22/council. This stays
  * inside the `layer:ui` boundary — nothing imports `@rennet/core`.
  */
 export interface LedgerEntry {
   readonly id: string;
   readonly summary: string;
+  readonly kind?: DegradationKind;
+  readonly detail?: string;
+}
+
+/**
+ * The honest read-vs-attested counts (issue #22): how many elements the reviewer
+ * SAW versus how many they actually DISPOSITIONED, over the review's total. Stated
+ * so a signer knows how much of the change they are attesting to unread. Optional
+ * — absent → not shown, so #80's thin ledger renders unchanged.
+ */
+export interface AttestationCounts {
+  readonly total: number;
+  readonly read: number;
+  readonly attested: number;
 }
 
 /** The degradations a run carried, mapped by #22/council into the sheet's gate prop. */
 export interface PublishLedger {
   readonly entries: readonly LedgerEntry[];
+  readonly counts?: AttestationCounts;
+}
+
+/** The buckets an entry set groups into, in a stable display order. */
+export const LEDGER_BUCKET_ORDER: DegradationKind[] = [
+  "skipped-angle",
+  "orphaned",
+  "excluded",
+  "flattened",
+];
+
+/** Human labels for each degradation bucket. */
+export const LEDGER_BUCKET_LABEL: Record<DegradationKind, string> = {
+  "skipped-angle": "Angles skipped",
+  orphaned: "Orphaned dispositions",
+  excluded: "Excluded from this artifact",
+  flattened: "Published, but flattened",
+};
+
+/**
+ * Group ledger entries into their display buckets, preserving entry order within a
+ * bucket. Entries with no `kind` collect under `undefined`, so a bare #80 entry set
+ * (no kinds) yields exactly one ungrouped bucket and renders as it always has.
+ * Returns buckets in `LEDGER_BUCKET_ORDER`, with the ungrouped bucket last.
+ */
+export function bucketLedgerEntries(
+  entries: readonly LedgerEntry[],
+): { kind: DegradationKind | undefined; entries: LedgerEntry[] }[] {
+  const byKind = new Map<DegradationKind | undefined, LedgerEntry[]>();
+  for (const entry of entries) {
+    const list = byKind.get(entry.kind) ?? [];
+    list.push(entry);
+    byKind.set(entry.kind, list);
+  }
+  const ordered: { kind: DegradationKind | undefined; entries: LedgerEntry[] }[] = [];
+  for (const kind of LEDGER_BUCKET_ORDER) {
+    const list = byKind.get(kind);
+    if (list) ordered.push({ kind, entries: list });
+  }
+  const ungrouped = byKind.get(undefined);
+  if (ungrouped) ordered.push({ kind: undefined, entries: ungrouped });
+  return ordered;
 }
 
 /**

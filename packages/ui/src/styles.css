@@ -781,3 +781,135 @@ button {
   font-size: 11px;
   color: var(--sheet-soft);
 }
+
+/* ── #22 own-branch: the PR submission preview ─────────────────────────────── */
+.publish-sheet-pr {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--sheet-hairline);
+  border-radius: 10px;
+}
+.publish-sheet-pr-head {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+}
+.publish-sheet-pr-state {
+  flex: none;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border-radius: 5px;
+  color: var(--sheet-bg);
+  background: var(--sheet-soft);
+}
+.publish-sheet-pr-state[data-draft="false"] {
+  background: var(--sheet-text);
+}
+.publish-sheet-pr-title {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 650;
+  font-family: var(--serif, "Iowan Old Style", Georgia, "Times New Roman", serif);
+  color: var(--sheet-text);
+}
+.publish-sheet-pr-branches {
+  margin: 0;
+  font-size: 12px;
+  color: var(--sheet-soft);
+}
+.publish-sheet-pr-branches code {
+  font-family: var(--mono, ui-monospace, monospace);
+  color: var(--sheet-text);
+}
+.publish-sheet-pr-body {
+  margin: 0;
+  max-height: 180px;
+  overflow: auto;
+  padding: 10px;
+  border-radius: 8px;
+  border: 1px dashed var(--sheet-hairline);
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--sheet-text);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.publish-sheet-pr-note {
+  margin: 0;
+  font-size: 11px;
+  color: var(--sheet-soft);
+}
+
+/* ── #22 other-pr: the line-anchored review comments ──────────────────────── */
+.publish-sheet-comments {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+}
+.publish-sheet-comment {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 11px;
+  border: 1px solid var(--sheet-hairline);
+  border-radius: 8px;
+}
+.publish-sheet-comment-anchor {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--sheet-text);
+}
+.publish-sheet-comment-file,
+.publish-sheet-comment-side {
+  color: var(--sheet-soft);
+  font-size: 11px;
+}
+.publish-sheet-comment-raw {
+  justify-self: end;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 2px 5px;
+  border-radius: 4px;
+  color: var(--sheet-soft);
+  border: 1px solid var(--sheet-hairline);
+}
+.publish-sheet-comment .publish-sheet-item-body {
+  grid-column: 1 / -1;
+}
+
+/* ── #22 ledger: buckets + honest counts ──────────────────────────────────── */
+.publish-sheet-ledger-counts {
+  margin: 0 0 10px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--sheet-text);
+}
+.publish-sheet-ledger-bucket {
+  margin-bottom: 8px;
+}
+.publish-sheet-ledger-bucket-label {
+  margin: 0 0 4px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+.publish-sheet-ledger-detail {
+  display: block;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--sheet-soft);
+}
