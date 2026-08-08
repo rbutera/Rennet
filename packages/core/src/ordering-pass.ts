@@ -28,7 +28,6 @@ import {
   renderBaseInstruction,
 } from "@rennet/instructions";
 import { computeInputDigest, validateDocument } from "@rennet/protocol";
-import { budgetAbsentRefusal } from "./invocation-budget";
 import type {
   BudgetGrant,
   DecompositionEdge,
@@ -47,6 +46,7 @@ import type {
   ValidationError,
   ValidationReport,
 } from "@rennet/types";
+import { budgetAbsentRefusal } from "./invocation-budget";
 
 /**
  * The offered manifest for the ordering pass: the chunk ids the admitted

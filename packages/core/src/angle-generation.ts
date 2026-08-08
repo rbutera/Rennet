@@ -23,7 +23,6 @@ import {
   renderBaseInstruction,
 } from "@rennet/instructions";
 import { computeInputDigest, validateDocument } from "@rennet/protocol";
-import { budgetAbsentRefusal } from "./invocation-budget";
 import type {
   BudgetGrant,
   ChunkAngle,
@@ -41,6 +40,7 @@ import type {
   RspTokenUsage,
   ValidationReport,
 } from "@rennet/types";
+import { budgetAbsentRefusal } from "./invocation-budget";
 
 /**
  * The offered manifest for the decomposition angle: the SUBSTANTIVE hunks only.
@@ -137,12 +137,14 @@ export interface RunDecompositionAngleInput {
   /** Retries after the first attempt. Default 2 (three attempts total). */
   readonly maxRetries?: number;
   /**
-   * The shared live invocation budget (issue #69, fixes bead p0wwp). When
-   * present it is consulted before EVERY turn — the first attempt and every
-   * retry — so retries decrement the same budget and a turn over the ceiling is
-   * refused at runtime. A refusal is fail-closed: the runner records a
-   * `budget-refused` attempt and falls to the deterministic floor. Absent, the
-   * runner is unbounded by a budget (its isolated unit-test behaviour).
+   * The shared live invocation budget (issue #69, fixes bead p0wwp). Consulted
+   * before EVERY turn — the first attempt and every retry — so retries decrement
+   * the same budget and a turn over the ceiling is refused at runtime. A refusal
+   * is fail-closed: the runner records a `budget-refused` attempt and falls to
+   * the deterministic floor. An ABSENT budget is ALSO refused (fail-closed #95):
+   * it is not authorization to spend, so it is treated exactly like an exhausted
+   * ceiling and no turn runs. Optional only as a test ergonomic; a real caller
+   * must thread one to run turns.
    */
   readonly budget?: InvocationBudget;
   readonly assembleOptions?: AssembleOptions;

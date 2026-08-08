@@ -1,6 +1,6 @@
 import { R10_BUDGET_EXHAUSTED } from "@rennet/types";
 import { describe, expect, it } from "vitest";
-import { createInvocationBudget } from "./invocation-budget";
+import { budgetAbsentRefusal, createInvocationBudget } from "./invocation-budget";
 
 describe("createInvocationBudget — the live R10 ceiling", () => {
   it("grants up to the ceiling then refuses, tracking consumed/remaining", () => {
@@ -73,5 +73,31 @@ describe("createInvocationBudget — the live R10 ceiling", () => {
       }
       expect(grants, `non-finite ceiling ${bad} must refuse every turn`).toBe(0);
     }
+  });
+});
+
+describe("budgetAbsentRefusal — the fail-closed grant for an ABSENT budget (#95)", () => {
+  it("mints a typed R10 refusal that is byte-identical (bar reason) to a zero-ceiling refusal", () => {
+    // The money-critical shape lock (#95): an absent budget must refuse exactly
+    // like an exhausted/zero one so downstream `budget-refused` handling stays
+    // uniform. This test reds directly if `granted`, `code`, `purpose`, `consumed`
+    // or `max` regress — the seat tests only catch it indirectly.
+    const refusal = budgetAbsentRefusal("narration:attempt-0");
+    const zeroCeiling = createInvocationBudget(0).tryConsume("narration:attempt-0");
+
+    expect(refusal.granted).toBe(false);
+    expect(zeroCeiling.granted).toBe(false);
+    expect(refusal.code).toBe(R10_BUDGET_EXHAUSTED);
+    expect(refusal.purpose).toBe("narration:attempt-0");
+    expect(refusal.consumed).toBe(0);
+    expect(refusal.max).toBe(0);
+    if (!zeroCeiling.granted) {
+      // Structural parity with a genuine zero-ceiling exhaustion (reason aside).
+      expect(refusal.code).toBe(zeroCeiling.code);
+      expect(refusal.consumed).toBe(zeroCeiling.consumed);
+      expect(refusal.max).toBe(zeroCeiling.max);
+    }
+    // The reason names the absent-budget cause, not a fabricated exhaustion count.
+    expect(refusal.reason).toContain("no invocation budget");
   });
 });
