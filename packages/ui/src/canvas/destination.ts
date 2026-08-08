@@ -135,3 +135,41 @@ export function resolveSign(
 ): string | null {
   return canSign(elapsedMs, holdToSignMs) ? payload : null;
 }
+
+// ── The degradation-ledger sign-gate (issue #80 / bead idwba) ────────────────
+
+/**
+ * One run degradation the reviewer must acknowledge before signing. A UI-local
+ * view-model over primitives: `id` identifies the entry, `summary` is the
+ * human-legible line (e.g. "Security angle skipped — budget exhausted"). The
+ * CONTENT and its source (real run/council degradation) belong to #22/council;
+ * #80 defines only the thin prop the sheet needs to enforce the gate. This stays
+ * inside the `layer:ui` boundary — nothing imports `@rennet/core`.
+ */
+export interface LedgerEntry {
+  readonly id: string;
+  readonly summary: string;
+}
+
+/** The degradations a run carried, mapped by #22/council into the sheet's gate prop. */
+export interface PublishLedger {
+  readonly entries: readonly LedgerEntry[];
+}
+
+/**
+ * The gate: an unacknowledged, non-empty ledger blocks EVERY sign path (pointer
+ * hold and keyboard), regardless of hold duration. It is open — signing proceeds
+ * normally — when the ledger is absent, carries zero entries, or has been
+ * acknowledged. So the shipped shell (which passes no ledger) is unchanged, and
+ * this change is additive.
+ *
+ * "Acknowledged", not merely "visible": a gate that clears the instant the ledger
+ * renders is not a gate. The safety property is that the reviewer cannot publish a
+ * degraded review WITHOUT an explicit act acknowledging the degradation.
+ */
+export function ledgerBlocksSign(
+  ledger: PublishLedger | undefined,
+  acknowledged: boolean,
+): boolean {
+  return ledger !== undefined && ledger.entries.length > 0 && !acknowledged;
+}

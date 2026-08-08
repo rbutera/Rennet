@@ -87,13 +87,18 @@ describe("PublishSheet — the paper: preview bytes == staged payload bytes", ()
     expect(html).toContain("Exactly what will leave the machine: 2 dispositions");
   });
 
-  it("hold-to-confirm carries the hold budget and never defaults to approve", () => {
+  it("renders the hold affordance and the all-or-nothing note (rendering coverage only)", () => {
+    // RENDERING COVERAGE, NOT THE SAFETY GATE. This asserts the sign affordance is
+    // presented as a hold and the v1 all-or-nothing note is shown — nothing about
+    // what actually leaves the machine. The SAFETY properties ("a too-short hold
+    // never signs", "a sign emits exactly the previewed bytes", the ledger gate,
+    // and the resolved keyboard path) are proven by red-provable, mounted-DOM
+    // observations of `onSign` in `publish-safety.dom.test.tsx` (issue #80). An SSR
+    // string like `data-hold-ms="800"` can never prove the wiring honours the gate.
     const batch = stage(...writes);
     const html = renderToStaticMarkup(
       <PublishSheet batch={batch} variant={destinationVariant("other-pr")} holdToSignMs={800} />,
     );
-    // The sign control is a hold, not a one-click approve.
-    expect(html).toContain('data-hold-ms="800"');
     expect(html).toContain("Hold to publish review");
     // v1 all-or-nothing note is present (subset => withdraw first).
     expect(html).toContain("All-or-nothing");

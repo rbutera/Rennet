@@ -4,6 +4,8 @@ import {
   canSign,
   destinationVariant,
   draftsFromWrites,
+  ledgerBlocksSign,
+  type PublishLedger,
   resolveSign,
   stagedItems,
   stagedPayload,
@@ -99,5 +101,43 @@ describe("resolveSign — the one publish gate the sheet routes through", () => 
     // Ties the emitted bytes to the exact preview source: publish emits what the
     // <pre> shows. A divergent serialisation on either side makes this red.
     expect(resolveSign(800, 800, stagedPayload(batch))).toBe(stagedPayload(batch));
+  });
+});
+
+describe("ledgerBlocksSign — signing is blocked until run degradations are acknowledged", () => {
+  const oneEntry: PublishLedger = {
+    entries: [{ id: "sec-skipped", summary: "Security angle skipped — budget exhausted" }],
+  };
+
+  it("blocks when a non-empty ledger is present and NOT acknowledged", () => {
+    // The load-bearing case: a degraded run cannot publish silently. If this
+    // returned false, a degraded review would sign with no acknowledgement.
+    expect(ledgerBlocksSign(oneEntry, false)).toBe(true);
+  });
+
+  it("opens once the degradations are acknowledged", () => {
+    expect(ledgerBlocksSign(oneEntry, true)).toBe(false);
+  });
+
+  it("imposes no gate for an empty ledger (regardless of acknowledgement)", () => {
+    const empty: PublishLedger = { entries: [] };
+    expect(ledgerBlocksSign(empty, false)).toBe(false);
+    expect(ledgerBlocksSign(empty, true)).toBe(false);
+  });
+
+  it("imposes no gate when no ledger is supplied — the shipped shell is unchanged", () => {
+    expect(ledgerBlocksSign(undefined, false)).toBe(false);
+    expect(ledgerBlocksSign(undefined, true)).toBe(false);
+  });
+
+  it("blocks on any non-empty ledger, not only single-entry ones", () => {
+    const many: PublishLedger = {
+      entries: [
+        { id: "a", summary: "one" },
+        { id: "b", summary: "two" },
+      ],
+    };
+    expect(ledgerBlocksSign(many, false)).toBe(true);
+    expect(ledgerBlocksSign(many, true)).toBe(false);
   });
 });

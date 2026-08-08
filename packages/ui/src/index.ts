@@ -28,11 +28,18 @@ export {
 } from "./canvas/authoring";
 // The destination (issue #64): the persistent north the review stages toward, the
 // two variants by mode, the staged vocabulary over #17's batch, and the sign gate.
-export type { BatchDestination, DestinationMode, DestinationVariant } from "./canvas/destination";
+export type {
+  BatchDestination,
+  DestinationMode,
+  DestinationVariant,
+  LedgerEntry,
+  PublishLedger,
+} from "./canvas/destination";
 export {
   canSign,
   destinationVariant,
   draftsFromWrites,
+  ledgerBlocksSign,
   resolveSign,
   stagedItems,
   stagedPayload,
