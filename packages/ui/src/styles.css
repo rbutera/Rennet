@@ -544,7 +544,7 @@ button {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.destination-open-publish {
+.destination-open-draft {
   width: 100%;
   border: 0;
   border-radius: 8px;
@@ -555,13 +555,27 @@ button {
   background: #d8ff4f;
   cursor: pointer;
 }
-.destination-open-publish:disabled {
+.destination-open-draft:disabled {
   color: #6f7891;
   background: #23272f;
   cursor: not-allowed;
 }
 
-/* ── The publish sheet (issue #22 shell): the paper, the only solid object ── */
+/* The glass-token mount for the destination chrome (issue #101). It carries the
+ * glass + paper CSS custom properties (scoped alongside .canvas-app in tokens.css)
+ * and its data-scheme, but contributes NO box — the fixed frame and the overlays
+ * position against the viewport. Custom properties inherit through display:contents
+ * to the children, so the collation draft (glass) and the paper (--sheet-*) theme
+ * from the one palette. */
+.rennet-glass {
+  display: contents;
+}
+
+/* ── The PAPER (issue #22 shell; narrowed by R40, issue #101): the ONE opaque solid
+ * object. It is materiality — warmth + opacity — and it themes per scheme via the
+ * --sheet-* tokens: warm-dark espresso in the dark default, cream in the bright
+ * room. It renders inside .rennet-glass, so the tokens resolve. Signing is the
+ * glass→paper phase transition; the paper's only actions are sign + back. */
 .publish-sheet-backdrop {
   position: fixed;
   inset: 0;
@@ -569,7 +583,7 @@ button {
   display: grid;
   place-items: center;
   padding: 32px;
-  background: rgba(6, 7, 10, 0.66);
+  background: rgba(6, 7, 10, 0.72);
 }
 .publish-sheet {
   width: min(720px, 100%);
@@ -577,11 +591,12 @@ button {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  padding: 22px;
-  border: 1px solid #33383f;
+  padding: 26px;
+  border: 1px solid var(--sheet-hairline);
   border-radius: 14px;
-  background: #14171d;
-  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.6);
+  color: var(--sheet-text);
+  background: var(--sheet-bg);
+  box-shadow: var(--sheet-glow);
 }
 .publish-sheet-head {
   display: flex;
@@ -594,19 +609,20 @@ button {
   font-size: 11px;
   letter-spacing: 0.1em;
   font-weight: 700;
-  color: #6f7891;
+  text-transform: uppercase;
+  color: var(--sheet-soft);
 }
 .publish-sheet-head h2 {
   margin: 4px 0 0;
-  font-size: 17px;
-  font-weight: 700;
-  font-family: "Iowan Old Style", Georgia, "Times New Roman", serif;
-  color: #e8e9ec;
+  font-size: 19px;
+  font-weight: 600;
+  font-family: var(--serif, "Iowan Old Style", Georgia, "Times New Roman", serif);
+  color: var(--sheet-text);
 }
 .publish-sheet-close {
   border: 0;
   background: transparent;
-  color: #8d96a8;
+  color: var(--sheet-soft);
   font-size: 22px;
   line-height: 1;
   cursor: pointer;
@@ -614,7 +630,7 @@ button {
 .publish-sheet-lede {
   margin: 0;
   font-size: 13px;
-  color: #a7aebd;
+  color: var(--sheet-soft);
 }
 .publish-sheet-items {
   list-style: none;
@@ -627,13 +643,12 @@ button {
 }
 .publish-sheet-item {
   display: grid;
-  grid-template-columns: auto 1fr auto;
+  grid-template-columns: auto 1fr;
   align-items: center;
   gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid #23272f;
+  padding: 9px 11px;
+  border: 1px solid var(--sheet-hairline);
   border-radius: 8px;
-  background: #0f1116;
 }
 .publish-sheet-item-type {
   font-size: 10px;
@@ -641,79 +656,85 @@ button {
   letter-spacing: 0.04em;
   padding: 3px 6px;
   border-radius: 5px;
-  color: #13170a;
-  background: #7f8aa3;
+  color: var(--sheet-bg);
+  background: var(--sheet-soft);
   text-transform: uppercase;
 }
 .publish-sheet-item-path {
+  font-family: var(--mono, ui-monospace, monospace);
   font-size: 12px;
-  color: #d3d8e2;
+  color: var(--sheet-text);
 }
 .publish-sheet-item-body {
   grid-column: 2 / -1;
   font-size: 12px;
-  color: #8d96a8;
-}
-.publish-sheet-item-withdraw {
-  grid-row: 1;
-  grid-column: 3;
-  border: 1px solid #33383f;
-  border-radius: 6px;
-  padding: 4px 9px;
-  font-size: 11px;
-  color: #c3c9d6;
-  background: transparent;
-  cursor: pointer;
+  color: var(--sheet-soft);
 }
 .publish-sheet-preview {
   margin: 0;
   max-height: 120px;
   overflow: auto;
   padding: 10px;
-  border: 1px dashed #2c313a;
+  border: 1px dashed var(--sheet-hairline);
   border-radius: 8px;
+  font-family: var(--mono, ui-monospace, monospace);
   font-size: 11px;
-  color: #6f7891;
-  background: #0c0e12;
+  color: var(--sheet-soft);
   white-space: pre-wrap;
   word-break: break-all;
 }
 .publish-sheet-foot {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
 }
 .publish-sheet-note {
   margin: 0;
   font-size: 12px;
-  color: #8d96a8;
+  color: var(--sheet-soft);
+}
+.publish-sheet-foot-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.publish-sheet-back {
+  border: 1px solid var(--sheet-hairline);
+  border-radius: 9px;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--sheet-soft);
+  background: transparent;
+  cursor: pointer;
 }
 .publish-sheet-sign {
-  align-self: flex-start;
   border: 0;
   border-radius: 9px;
-  padding: 11px 20px;
+  padding: 11px 22px;
   font-size: 14px;
-  font-weight: 750;
-  color: #13170a;
-  background: #d8ff4f;
+  font-weight: 700;
+  color: var(--sheet-bg);
+  background: var(--sheet-text);
   cursor: pointer;
 }
 .publish-sheet-sign.is-arming {
-  background: #b6e038;
+  opacity: 0.72;
 }
 .publish-sheet-sign:disabled {
-  color: #6f7891;
-  background: #23272f;
+  color: var(--sheet-soft);
+  background: transparent;
+  border: 1px solid var(--sheet-hairline);
   cursor: not-allowed;
 }
 .publish-sheet-ledger {
   margin: 0;
   min-inline-size: 0;
   padding: 12px;
-  border: 1px solid #4a3a12;
+  border: 1px solid var(--amber-line);
   border-radius: 8px;
-  background: #1a1509;
+  background: var(--amber-fill);
 }
 .publish-sheet-ledger-legend {
   padding: 0 6px;
@@ -721,13 +742,13 @@ button {
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: #e6c14f;
+  color: var(--amber);
 }
 .publish-sheet-ledger-lede {
   margin: 0 0 8px;
   font-size: 12px;
   font-weight: 650;
-  color: #e6c14f;
+  color: var(--amber);
 }
 .publish-sheet-ledger-entries {
   margin: 0 0 10px;
@@ -738,14 +759,15 @@ button {
 }
 .publish-sheet-ledger-entry {
   font-size: 12px;
-  color: #c8b17a;
+  color: var(--sheet-text);
 }
 .publish-sheet-ack {
   display: flex;
   align-items: flex-start;
   gap: 8px;
   font-size: 12px;
-  color: #d8ff4f;
+  font-weight: 650;
+  color: var(--sheet-text);
   cursor: pointer;
 }
 .publish-sheet-ack-box {
@@ -755,8 +777,7 @@ button {
   margin: 0;
   padding: 8px 10px;
   border-radius: 8px;
-  border: 1px dashed #2c313a;
+  border: 1px dashed var(--sheet-hairline);
   font-size: 11px;
-  color: #8d96a8;
-  background: #0c0e12;
+  color: var(--sheet-soft);
 }

@@ -26,6 +26,25 @@ export {
   orphanedDispositions,
   withdrawDraft,
 } from "./canvas/authoring";
+// The collation draft (issue #101 / R40): the ordered, id-keyed editable draft —
+// the forming destination. Reorder / merge / split need a list, not #17's
+// path-keyed map, so this is a new model that lifts FROM the batch. `collationItems`
+// / `collationPayload` are the ordered outbound artifact the paper previews + signs.
+export type { CollationDraft, CollationItem } from "./canvas/collation";
+export {
+  collationItems,
+  collationPayload,
+  draftFromBatch,
+  effectiveBody,
+  ingestWrites,
+  mergeItems,
+  moveItem,
+  retypeItem,
+  rewordItem,
+  splitItem,
+  withdrawItem,
+  withdrawPath,
+} from "./canvas/collation";
 // The destination (issue #64): the persistent north the review stages toward, the
 // two variants by mode, the staged vocabulary over #17's batch, and the sign gate.
 export type {
@@ -80,6 +99,7 @@ export {
   resolveAnchorToRows,
 } from "./canvas/registrar";
 export { BatchView } from "./components/batch-view";
+export { CollationDraftCanvas } from "./components/collation-draft-canvas";
 export { CoverageMosaicView } from "./components/coverage";
 export { DestinationFrame } from "./components/destination-frame";
 export type { GranularityContext } from "./components/granularity-author";

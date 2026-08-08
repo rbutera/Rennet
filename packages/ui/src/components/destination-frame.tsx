@@ -1,39 +1,44 @@
-import type { DispositionBatch } from "../canvas/authoring";
+import { type CollationDraft, collationItems } from "../canvas/collation";
 import {
   type DestinationMode,
   type DestinationVariant,
   destinationVariant,
-  stagedItems,
 } from "../canvas/destination";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The DESTINATION FRAME (issue #64) — the persistent north the review stages
-// toward. Always-present chrome, top-right, rendered from review-open even with
-// nothing staged (an empty forming paper). It names WHAT the user is staging
-// toward (the variant by mode) and fills visibly as dispositions are made
-// (dispose == staged). Clicking through opens the publish sheet (#22).
+// The DESTINATION FRAME (issue #64; re-pointed by R40, issue #101) — the
+// persistent north the review stages toward. Always-present chrome, top-right,
+// rendered from review-open even with nothing collated (an empty forming draft).
+// It names WHAT the user is staging toward (the variant by mode) and fills visibly
+// as dispositions are made (dispose == staged).
 //
-// The staged DATA is identical across modes; only the framing changes. This
-// component is presentational: the staged set and the mode are owned by the host.
+// R40 re-point: the frame stops BEING the paper. Clicking through now opens the
+// COLLATION DRAFT CANVAS (issue #101) — the editable forming destination — NOT the
+// publish sheet. The flow is frame → draft → paper (two surfaces), not frame →
+// paper. The empty-state copy "The paper is blank" was wrong (the frame is not the
+// paper) and is now "The draft is empty."
+//
+// The collated DATA is identical across modes; only the framing changes. This
+// component is presentational: the draft and the mode are owned by the host.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const MODES: DestinationMode[] = ["own-branch", "other-pr"];
 
 export function DestinationFrame({
-  batch,
+  draft,
   mode,
   onSelectMode,
-  onOpenPublish,
+  onOpenDraft,
 }: {
-  batch: DispositionBatch;
+  draft: CollationDraft;
   mode: DestinationMode;
-  /** Flip the framing (own-branch handoff bundle / other-PR review). Same staged data. */
+  /** Flip the framing (own-branch handoff bundle / other-PR review). Same data. */
   onSelectMode?: (mode: DestinationMode) => void;
-  /** Open the publish sheet (#22) — review & sign the staged set. */
-  onOpenPublish?: () => void;
+  /** Open the collation draft canvas (#101) — collate, edit, then sign. */
+  onOpenDraft?: () => void;
 }) {
   const variant: DestinationVariant = destinationVariant(mode);
-  const items = stagedItems(batch);
+  const items = collationItems(draft);
   const empty = items.length === 0;
 
   return (
@@ -72,17 +77,17 @@ export function DestinationFrame({
       <div className="destination-body">
         <div className="destination-count">
           <strong>{items.length}</strong>
-          <span>staged</span>
+          <span>collated</span>
         </div>
         {empty ? (
           <p className="destination-empty">
-            The paper is blank. Dispose something and it stages here toward{" "}
+            The draft is empty. Dispose something and it collates here toward{" "}
             {variant.signLabel.toLowerCase()}.
           </p>
         ) : (
-          <ol className="destination-staged" aria-label="Staged dispositions">
-            {items.map((entry) => (
-              <li className="destination-staged-item" data-path={entry.path} key={entry.path}>
+          <ol className="destination-staged" aria-label="Collated dispositions">
+            {draft.map((entry) => (
+              <li className="destination-staged-item" data-path={entry.path} key={entry.id}>
                 <span className="destination-staged-type" data-type={entry.type}>
                   {entry.type[0]?.toUpperCase()}
                 </span>
@@ -96,11 +101,11 @@ export function DestinationFrame({
       <footer className="destination-foot">
         <button
           type="button"
-          className="destination-open-publish"
+          className="destination-open-draft"
           disabled={empty}
-          onClick={() => onOpenPublish?.()}
+          onClick={() => onOpenDraft?.()}
         >
-          Review &amp; {variant.signLabel.toLowerCase()}
+          Open the draft
         </button>
       </footer>
     </aside>

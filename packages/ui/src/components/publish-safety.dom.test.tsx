@@ -1,14 +1,15 @@
 // @vitest-environment happy-dom
 //
-// The PUBLISH SAFETY GATE (issue #80). Mounted-DOM interaction tests that OBSERVE
-// what the publish sheet emits — the red-provable replacement for the vacuous SSR
-// presence check (`destination.test.tsx`'s old `data-hold-ms="800"` assertion).
+// The PUBLISH SAFETY GATE (issue #80), re-proven against the R40-narrowed paper
+// (issue #101). Mounted-DOM interaction tests that OBSERVE what the paper emits.
 //
-// PR #76's adversarial review proved the exposure: mutations that made the sheet
-// emit different bytes than the preview (MUT A) or sign on ANY pointer release
-// (MUT C) passed all green SSR tests, because nothing observed the callback. These
-// tests close that gap ahead of #21 wiring real publishing. Every assertion here
-// mounts a live tree, drives a real DOM event, and observes `onSign` directly.
+// R40 narrowed the paper: it no longer re-derives its payload from a batch it is
+// given; it is handed the EXACT outbound bytes (`payload`) and the ordered item
+// list (`items`). The #80 gate MECHANICS are unchanged — resolveSign, the ledger
+// gate, the hold budget, the keyboard path, the auto-repeat guard, the ledger-swap
+// fail-closed — so every safety property below is the same property, now proven
+// over the collation payload the sheet actually signs. Each test still mounts a
+// live tree, drives a real DOM event, and observes `onSign` directly.
 //
 // The pointer path reads `Date.now()` for the hold duration, so a completed hold
 // needs a controlled clock: `vi.useFakeTimers()` + `vi.setSystemTime()` bracket the
@@ -16,11 +17,12 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addToBatch, type DispositionBatch } from "../canvas/authoring";
 import {
-  destinationVariant,
-  draftsFromWrites,
-  type PublishLedger,
-  stagedPayload,
-} from "../canvas/destination";
+  type CollationDraft,
+  collationItems,
+  collationPayload,
+  draftFromBatch,
+} from "../canvas/collation";
+import { destinationVariant, draftsFromWrites, type PublishLedger } from "../canvas/destination";
 import type { DispositionWrite } from "../canvas/logic";
 import { fireEvent, mount } from "../test/dom";
 import { PublishSheet } from "./publish-sheet";
@@ -30,8 +32,14 @@ const writes: DispositionWrite[] = [
   { path: "src/beta.ts", type: "request-change", body: 'rename "x" to "y"' },
 ];
 
-function stage(...ws: DispositionWrite[]): DispositionBatch {
-  return addToBatch([], draftsFromWrites(ws));
+function stagedDraft(...ws: DispositionWrite[]): CollationDraft {
+  const batch: DispositionBatch = addToBatch([], draftsFromWrites(ws));
+  return draftFromBatch(batch);
+}
+
+/** The paper's two inputs: the ordered list and the exact bytes it signs. */
+function paper(draft: CollationDraft): { items: DispositionWrite[]; payload: string } {
+  return { items: collationItems(draft), payload: collationPayload(draft) };
 }
 
 const ledger: PublishLedger = {
@@ -66,12 +74,12 @@ afterEach(() => {
 });
 
 describe("emit fidelity (MUT A): a completed sign emits exactly the previewed bytes", () => {
-  it("a sufficient hold calls onSign once with a string byte-equal to stagedPayload(batch)", () => {
-    const batch = stage(...writes);
+  it("a sufficient hold calls onSign once with the exact payload it was handed", () => {
+    const draft = stagedDraft(...writes);
     const signed: string[] = [];
     const { container } = mount(
       <PublishSheet
-        batch={batch}
+        {...paper(draft)}
         variant={destinationVariant("other-pr")}
         onSign={(payload) => signed.push(payload)}
       />,
@@ -79,20 +87,67 @@ describe("emit fidelity (MUT A): a completed sign emits exactly the previewed by
 
     pointerHold(signButton(container), 850);
 
-    // Byte-equal to the preview source — never a transform. If `endHold` emitted
-    // `payload + "\n"` or `payload.toUpperCase()`, this `.toBe` goes red.
+    // Byte-equal to the payload prop (== the preview source) — never a transform.
+    // If `endHold` emitted `payload + "\n"` or `payload.toUpperCase()`, this reddens.
     expect(signed).toHaveLength(1);
-    expect(signed[0]).toBe(stagedPayload(batch));
+    expect(signed[0]).toBe(collationPayload(draft));
+  });
+});
+
+describe("emit fidelity (MUT A′): the sheet signs the HANDED payload, never a re-derivation from items", () => {
+  // The R40 migration hands the paper TWO inputs: the ordered `items` (for the
+  // legible list) and the exact `payload` (the bytes it signs). Every OTHER fidelity
+  // test supplies mutually-derived inputs (payload === JSON.stringify(items) via
+  // `paper()`), so none can distinguish "signs the handed payload" from "re-derives
+  // JSON.stringify(items)". This uses a SENTINEL payload NOT derivable from the
+  // items, so a re-derivation from `items` reddens on preview, pointer, and keyboard.
+  const sentinel = "SENTINEL-PAYLOAD::not-json-stringify-of-items::7f3a";
+  const unrelatedItems: DispositionWrite[] = [
+    { path: "src/unrelated.ts", type: "comment", body: "these items are NOT the payload" },
+  ];
+
+  it("previews and pointer-signs the sentinel payload verbatim, not JSON.stringify(items)", () => {
+    const signed: string[] = [];
+    const { container } = mount(
+      <PublishSheet
+        items={unrelatedItems}
+        payload={sentinel}
+        variant={destinationVariant("other-pr")}
+        onSign={(payload) => signed.push(payload)}
+      />,
+    );
+    // Preview renders the handed payload verbatim (not the item list).
+    expect(container.querySelector('[data-testid="publish-preview"]')?.textContent).toBe(sentinel);
+    // A completed hold emits the handed payload, byte-equal. If `endHold` signed
+    // `JSON.stringify(items)` (or any re-derivation from items), this reddens.
+    pointerHold(signButton(container), 850);
+    expect(signed).toEqual([sentinel]);
+  });
+
+  it("keyboard-signs the sentinel payload verbatim", () => {
+    const signed: string[] = [];
+    const { container } = mount(
+      <PublishSheet
+        items={unrelatedItems}
+        payload={sentinel}
+        variant={destinationVariant("own-branch")}
+        onSign={(payload) => signed.push(payload)}
+      />,
+    );
+    const button = signButton(container);
+    button.focus();
+    fireEvent.keyDown(button, { key: "Enter" });
+    expect(signed).toEqual([sentinel]);
   });
 });
 
 describe("hold-gate wiring (MUT C): a hold below the budget never signs", () => {
   it("a too-short hold does NOT sign; a second sufficient hold does", () => {
-    const batch = stage(...writes);
+    const draft = stagedDraft(...writes);
     const signed: string[] = [];
     const { container } = mount(
       <PublishSheet
-        batch={batch}
+        {...paper(draft)}
         variant={destinationVariant("other-pr")}
         onSign={(payload) => signed.push(payload)}
       />,
@@ -107,17 +162,17 @@ describe("hold-gate wiring (MUT C): a hold below the budget never signs", () => 
     // At/above the bar: it signs, byte-equal.
     pointerHold(button, 850);
     expect(signed).toHaveLength(1);
-    expect(signed[0]).toBe(stagedPayload(batch));
+    expect(signed[0]).toBe(collationPayload(draft));
   });
 });
 
 describe("ledger gate: unacknowledged degradations block signing", () => {
   it("an unacknowledged ledger blocks a sufficient hold; acknowledging unblocks it", () => {
-    const batch = stage(...writes);
+    const draft = stagedDraft(...writes);
     const signed: string[] = [];
     const { container } = mount(
       <PublishSheet
-        batch={batch}
+        {...paper(draft)}
         variant={destinationVariant("other-pr")}
         ledger={ledger}
         onSign={(payload) => signed.push(payload)}
@@ -136,34 +191,31 @@ describe("ledger gate: unacknowledged degradations block signing", () => {
 
     pointerHold(button, 850);
     expect(signed).toHaveLength(1);
-    expect(signed[0]).toBe(stagedPayload(batch));
+    expect(signed[0]).toBe(collationPayload(draft));
   });
 
   it("renders each entry's human-readable summary so the reviewer SEES what degraded", () => {
     const { container } = mount(
       <PublishSheet
-        batch={stage(...writes)}
+        {...paper(stagedDraft(...writes))}
         variant={destinationVariant("other-pr")}
         ledger={ledger}
       />,
     );
     const entry = ledger.entries[0];
     if (!entry) throw new Error("the ledger fixture must carry at least one entry");
-    // Structure alone (the id attribute) is not the safety property — the reviewer
-    // must SEE the degradation before acknowledging it. Removing the visible
-    // `{entry.summary}` from the render (leaving the id) reddens the text assertion.
     expect(container.querySelector(`[data-ledger-id="${entry.id}"]`)).not.toBeNull();
     expect(container.textContent).toContain(entry.summary);
   });
 });
 
 describe("keyboard sign (a11y): Enter/Space on the focused control signs deliberately", () => {
-  it("Enter signs with byte-equal stagedPayload at the default non-zero hold", () => {
-    const batch = stage(...writes);
+  it("Enter signs with the byte-equal payload at the default non-zero hold", () => {
+    const draft = stagedDraft(...writes);
     const signed: string[] = [];
     const { container } = mount(
       <PublishSheet
-        batch={batch}
+        {...paper(draft)}
         variant={destinationVariant("own-branch")}
         onSign={(payload) => signed.push(payload)}
       />,
@@ -171,20 +223,18 @@ describe("keyboard sign (a11y): Enter/Space on the focused control signs deliber
     const button = signButton(container);
     button.focus();
 
-    // At the default holdToSignMs=800 the OLD onKeyDown (resolveSign(0, 800)) would
-    // return null and never sign — the a11y barrier. A deliberate keypress now signs.
     fireEvent.keyDown(button, { key: "Enter" });
 
     expect(signed).toHaveLength(1);
-    expect(signed[0]).toBe(stagedPayload(batch));
+    expect(signed[0]).toBe(collationPayload(draft));
   });
 
   it("Space also signs, byte-equal", () => {
-    const batch = stage(...writes);
+    const draft = stagedDraft(...writes);
     const signed: string[] = [];
     const { container } = mount(
       <PublishSheet
-        batch={batch}
+        {...paper(draft)}
         variant={destinationVariant("own-branch")}
         onSign={(payload) => signed.push(payload)}
       />,
@@ -194,14 +244,14 @@ describe("keyboard sign (a11y): Enter/Space on the focused control signs deliber
     fireEvent.keyDown(button, { key: " " });
 
     expect(signed).toHaveLength(1);
-    expect(signed[0]).toBe(stagedPayload(batch));
+    expect(signed[0]).toBe(collationPayload(draft));
   });
 
   it("a non-sign key does nothing", () => {
     const signed: string[] = [];
     const { container } = mount(
       <PublishSheet
-        batch={stage(...writes)}
+        {...paper(stagedDraft(...writes))}
         variant={destinationVariant("own-branch")}
         onSign={(payload) => signed.push(payload)}
       />,
@@ -213,11 +263,11 @@ describe("keyboard sign (a11y): Enter/Space on the focused control signs deliber
   });
 
   it("keyboard ledger gate: Enter is blocked unacknowledged, then signs once acknowledged", () => {
-    const batch = stage(...writes);
+    const draft = stagedDraft(...writes);
     const signed: string[] = [];
     const { container } = mount(
       <PublishSheet
-        batch={batch}
+        {...paper(draft)}
         variant={destinationVariant("own-branch")}
         ledger={ledger}
         onSign={(payload) => signed.push(payload)}
@@ -226,32 +276,28 @@ describe("keyboard sign (a11y): Enter/Space on the focused control signs deliber
     const button = signButton(container);
     button.focus();
 
-    // Unacknowledged: Enter is blocked.
     fireEvent.keyDown(button, { key: "Enter" });
     expect(signed).toHaveLength(0);
 
-    // Acknowledge, then Enter signs exactly once, byte-equal. Proves the gate
-    // REOPENS — a mutation that permanently blocked keyboard signing whenever any
-    // ledger exists would pass the block-only assertion but fail this one.
     const ack = container.querySelector<HTMLInputElement>(".publish-sheet-ack-box");
     if (!ack) throw new Error("the acknowledge control did not render for a non-empty ledger");
     fireEvent.click(ack);
 
     fireEvent.keyDown(button, { key: "Enter" });
     expect(signed).toHaveLength(1);
-    expect(signed[0]).toBe(stagedPayload(batch));
+    expect(signed[0]).toBe(collationPayload(draft));
   });
 });
 
 describe("ledger swap fail-closed: a changed ledger re-blocks a prior acknowledgement", () => {
   it("acknowledging ledger A does NOT authorize signing a different ledger B", () => {
-    const batch = stage(...writes);
+    const draft = stagedDraft(...writes);
     const signed: string[] = [];
     const ledgerA: PublishLedger = { entries: [{ id: "a-skipped", summary: "Angle A skipped" }] };
     const ledgerB: PublishLedger = { entries: [{ id: "b-skipped", summary: "Angle B skipped" }] };
     const { container, rerender } = mount(
       <PublishSheet
-        batch={batch}
+        {...paper(draft)}
         variant={destinationVariant("other-pr")}
         ledger={ledgerA}
         onSign={(payload) => signed.push(payload)}
@@ -269,7 +315,7 @@ describe("ledger swap fail-closed: a changed ledger re-blocks a prior acknowledg
     // (a #22/council re-run). The prior acknowledgement must NOT carry over.
     rerender(
       <PublishSheet
-        batch={batch}
+        {...paper(draft)}
         variant={destinationVariant("other-pr")}
         ledger={ledgerB}
         onSign={(payload) => signed.push(payload)}
@@ -291,18 +337,70 @@ describe("ledger swap fail-closed: a changed ledger re-blocks a prior acknowledg
     pointerHold(button, 850);
     fireEvent.keyDown(button, { key: "Enter" });
     expect(signed).toHaveLength(3);
-    expect(signed[1]).toBe(stagedPayload(batch));
-    expect(signed[2]).toBe(stagedPayload(batch));
+    expect(signed[1]).toBe(collationPayload(draft));
+    expect(signed[2]).toBe(collationPayload(draft));
+  });
+
+  it("re-blocks when the SUMMARY changes under a STABLE id (a council re-run's new reason)", () => {
+    const draft = stagedDraft(...writes);
+    const signed: string[] = [];
+    const sameId = "sec-skipped";
+    const before: PublishLedger = {
+      entries: [{ id: sameId, summary: "Security angle skipped — budget exhausted" }],
+    };
+    const after: PublishLedger = {
+      entries: [{ id: sameId, summary: "Security angle skipped — harness error" }],
+    };
+    const { container, rerender } = mount(
+      <PublishSheet
+        {...paper(draft)}
+        variant={destinationVariant("other-pr")}
+        ledger={before}
+        onSign={(payload) => signed.push(payload)}
+      />,
+    );
+
+    // Acknowledge the first reason and sign once.
+    const ack = container.querySelector<HTMLInputElement>(".publish-sheet-ack-box");
+    if (!ack) throw new Error("the acknowledge control did not render for the first ledger");
+    fireEvent.click(ack);
+    pointerHold(signButton(container), 850);
+    expect(signed).toHaveLength(1);
+
+    // The degradation TEXT changes under the SAME id — a genuinely different
+    // degradation the reviewer has NOT acknowledged. An id-only signature would
+    // carry the stale ack over and sign the new reason; the id+summary signature
+    // re-blocks. Without summary in the signature, this reddens.
+    rerender(
+      <PublishSheet
+        {...paper(draft)}
+        variant={destinationVariant("other-pr")}
+        ledger={after}
+        onSign={(payload) => signed.push(payload)}
+      />,
+    );
+    pointerHold(signButton(container), 850);
+    expect(signed).toHaveLength(1); // still blocked — no new sign
+
+    // Acknowledging the NEW reason reopens signing.
+    const ack2 = container.querySelector<HTMLInputElement>(".publish-sheet-ack-box");
+    if (!ack2) throw new Error("the acknowledge control did not render for the changed ledger");
+    fireEvent.click(ack2);
+    pointerHold(signButton(container), 850);
+    expect(signed).toHaveLength(2);
   });
 });
 
 describe("keyboard auto-repeat: a held sign key fires onSign only once", () => {
-  it("a repeat keydown does not re-fire onSign", () => {
-    const batch = stage(...writes);
+  // Both sign keys, since the repeat guard is key-agnostic (`if (event.repeat)`): if
+  // it were ever narrowed to Enter only, a HELD Space would double-fire and only the
+  // Space row reddens.
+  it.each([["Enter"], [" "]])("a repeat %s keydown does not re-fire onSign", (key) => {
+    const draft = stagedDraft(...writes);
     const signed: string[] = [];
     const { container } = mount(
       <PublishSheet
-        batch={batch}
+        {...paper(draft)}
         variant={destinationVariant("own-branch")}
         onSign={(payload) => signed.push(payload)}
       />,
@@ -313,18 +411,21 @@ describe("keyboard auto-repeat: a held sign key fires onSign only once", () => {
     // First activation signs; the auto-repeat keydown (repeat:true) from a HELD key
     // must be ignored, or #21's real publish double-fires. Without the event.repeat
     // guard this is length 2 → red.
-    fireEvent.keyDown(button, { key: "Enter" });
-    fireEvent.keyDown(button, { key: "Enter", repeat: true });
+    fireEvent.keyDown(button, { key });
+    fireEvent.keyDown(button, { key, repeat: true });
 
     expect(signed).toHaveLength(1);
-    expect(signed[0]).toBe(stagedPayload(batch));
+    expect(signed[0]).toBe(collationPayload(draft));
   });
 });
 
 describe("honesty affordance: the shell discloses that nothing is published", () => {
   it("carries a persistent, aria-legible notice that the shell publishes nothing", () => {
     const { container } = mount(
-      <PublishSheet batch={stage(...writes)} variant={destinationVariant("own-branch")} />,
+      <PublishSheet
+        {...paper(stagedDraft(...writes))}
+        variant={destinationVariant("own-branch")}
+      />,
     );
     const notice = container.querySelector(".publish-sheet-shell-notice");
     expect(notice).not.toBeNull();

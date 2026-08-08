@@ -1,61 +1,72 @@
 import { useRef, useState } from "react";
-import type { DispositionBatch } from "../canvas/authoring";
 import {
   canSign,
   type DestinationVariant,
   ledgerBlocksSign,
   type PublishLedger,
   resolveSign,
-  stagedItems,
-  stagedPayload,
 } from "../canvas/destination";
+import type { DispositionWrite } from "../canvas/logic";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The publish sheet SHELL (issue #22 core). The paper: the ONLY solid object in
-// the glass system, showing the ACTUAL outbound artifact. It lists the staged
-// items as exactly what will leave the machine — the previewed bytes ARE the
-// staged payload bytes (`stagedPayload`, the #17 `batchPayload`) — and signs the
-// WHOLE staged set behind a hold-to-confirm gate.
+// The PAPER (issue #22 core; NARROWED by R40, issue #101). The ONLY solid object
+// in the glass system, showing the ACTUAL outbound artifact — exactly what leaves
+// the machine. It signs the WHOLE set behind a hold-to-confirm gate.
+//
+// R40 narrowing: the paper's ONLY actions are SIGN and BACK. Editing (reword,
+// retype, reorder, merge, split, WITHDRAW) has moved OFF the paper and ONTO the
+// collation draft canvas (issue #101). The old inline `onWithdraw` is GONE — a
+// subset is shipped by withdrawing on the DRAFT first, then signing. Signing is a
+// phase transition: the glass draft crystallises into this paper.
+//
+// The paper is handed the EXACT outbound bytes (`payload`) and the ordered item
+// list (`items`) it renders — it never re-derives or re-sorts them. So "what you
+// see is what leaves" holds by construction: the previewed `<pre>` and the signed
+// bytes are the SAME `payload` prop, and the ordered list reflects the draft order
+// the user composed (not a path-sort).
 //
 // Ratified rulings encoded: publish is all-or-nothing per signing act for v1 (no
-// partial selection here; a subset means withdraw first, then sign); the sign
-// gate never defaults to APPROVE.
+// partial selection here); the sign gate never defaults to APPROVE.
 //
-// Deferred seams (documented, not built here): the degradation ledger + read-vs-
-// attested honesty (#22), three-phase idempotent publish (#22/R17), the refined-
-// comment preview forms (#19 — raw is shown until it lands), and the actual
-// GitHub publish pipeline (#21). This slice performs ZERO Git/GitHub mutation.
+// The #80 sign-gate mechanics (`resolveSign`, `ledgerBlocksSign`, hold budget,
+// keyboard sign, auto-repeat guard, ledger-swap fail-closed, honesty affordance)
+// are reused UNCHANGED — only the payload SOURCE moved from a batch it re-derived
+// to bytes it is handed. Deferred seams: the real degradation ledger's content
+// (#22/council), three-phase idempotent publish (#22/R17), and the GitHub publish
+// pipeline (#21). This slice performs ZERO Git/GitHub mutation.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function PublishSheet({
-  batch,
+  items,
+  payload,
   variant,
   holdToSignMs = 800,
   ledger,
   onSign,
-  onWithdraw,
+  onBack,
   onClose,
 }: {
-  batch: DispositionBatch;
+  /** The ordered outbound list, for legibility. Rendered as-given (draft order). */
+  items: DispositionWrite[];
+  /**
+   * The EXACT outbound bytes. Previewed verbatim and signed verbatim — the paper
+   * never transforms them, so preview == outbound holds by construction.
+   */
+  payload: string;
   variant: DestinationVariant;
   /** Hold budget before a sign is permitted; accessibility floor 0 signs immediately. */
   holdToSignMs?: number;
   /**
    * The run-degradation ledger (issue #80 / bead idwba). When present with ≥1
    * entry, EVERY sign path is blocked until the reviewer acknowledges it. Absent
-   * or empty → no gate, so the shipped shell (which passes no ledger) is unchanged.
-   * #22/council maps real run degradation into this thin UI-local view-model.
+   * or empty → no gate. #22/council maps real run degradation into this view-model.
    */
   ledger?: PublishLedger;
   onSign?: (payload: string) => void;
-  onWithdraw?: (path: string) => void;
+  /** Back to the collation draft — editing lives there, never here (R40). */
+  onBack?: () => void;
   onClose?: () => void;
 }) {
-  const items = stagedItems(batch);
-  // The previewed bytes ARE the outbound bytes: `stagedPayload` is the #17
-  // `batchPayload`, so what the reviewer signs is exactly what is shown.
-  const payload = stagedPayload(batch);
-
   const holdStart = useRef<number | null>(null);
   const [armed, setArmed] = useState(false);
   // The degradation-ledger acknowledgement, owned locally. A gate that clears the
@@ -68,12 +79,16 @@ export function PublishSheet({
   // the run degradations change while the sheet stays mounted (a #22/council re-run
   // maps a NEW degradation set into `ledger`), a prior acknowledgement would carry
   // over and authorize signing the new, UNacknowledged set — the exact bypass the
-  // gate exists to stop. Track the stable entry-id SIGNATURE (not object identity,
-  // which an un-memoized host would change every render, resetting the ack on every
-  // keystroke and defeating the gate the other way) and reset the ack the render a
-  // genuinely-new entry set arrives. This is React's "adjust state when a prop
+  // gate exists to stop. Track the stable entry SIGNATURE over id AND summary
+  // content: a council may reuse an entry id while its degradation TEXT changes (a
+  // different reason under "sec-skipped"), which is a new, unacknowledged degradation
+  // — an id-only signature would carry the stale ack across it and fail OPEN. Using
+  // the content (not object identity, which an un-memoized host would change every
+  // render, resetting the ack on every keystroke and defeating the gate the other
+  // way) keeps the signature stable across re-renders yet re-arms the render a
+  // genuinely-new degradation set arrives. This is React's "adjust state when a prop
   // changes" pattern: synchronous during render, so the gate re-arms with no flash.
-  const ledgerSignature = ledgerEntries.map((entry) => entry.id).join(" ");
+  const ledgerSignature = JSON.stringify(ledgerEntries.map((entry) => [entry.id, entry.summary]));
   const [ackSignature, setAckSignature] = useState(ledgerSignature);
   if (ledgerSignature !== ackSignature) {
     setAckSignature(ledgerSignature);
@@ -105,11 +120,10 @@ export function PublishSheet({
   function signByKeyboard(event: { key: string; repeat?: boolean; preventDefault(): void }): void {
     // Keyboard accessibility (issue #80): an explicit Enter/Space activation of the
     // focused sign control IS the deliberate act — the keyboard equivalent of
-    // clearing the pointer hold — so it signs at ANY hold budget, resolving the
-    // barrier where the default non-zero hold left a keyboard/AT user unable to
-    // publish at all. It can never auto-approve: nothing signs without an
-    // intentional keypress on the focused control. It routes through the SAME
-    // degradation gate and emits EXACTLY the previewed bytes (never a transform).
+    // clearing the pointer hold — so it signs at ANY hold budget. It can never
+    // auto-approve: nothing signs without an intentional keypress on the focused
+    // control. It routes through the SAME degradation gate and emits EXACTLY the
+    // previewed bytes (never a transform).
     if (event.key !== "Enter" && event.key !== " ") return;
     // Ignore keyboard auto-repeat: a HELD Enter/Space emits a stream of repeat
     // keydowns, and without this guard each one calls onSign again — a repeated
@@ -120,6 +134,17 @@ export function PublishSheet({
     if (ledgerBlocksSign(ledger, acknowledged)) return;
     onSign?.(payload);
   }
+
+  // Stable React keys for a positional, id-less outbound list where two items may
+  // legitimately share a path (a split on the draft). We disambiguate by a per-path
+  // OCCURRENCE counter rather than the array index, so a duplicate-path pair gets
+  // distinct, order-stable keys without leaning on the index the lint rule guards.
+  const seenByPath = new Map<string, number>();
+  const itemKeys = items.map((entry) => {
+    const occurrence = seenByPath.get(entry.path) ?? 0;
+    seenByPath.set(entry.path, occurrence + 1);
+    return { entry, key: `${entry.path}#${occurrence}` };
+  });
 
   return (
     <div className="publish-sheet-backdrop" role="dialog" aria-modal="true" aria-label="Publish">
@@ -141,15 +166,15 @@ export function PublishSheet({
 
         <p className="publish-sheet-lede">
           {items.length === 0
-            ? "Nothing staged. Dispose something first — this paper is what leaves the machine."
+            ? "Nothing collated. Go back to the draft and dispose something first — this paper is what leaves the machine."
             : `Exactly what will leave the machine: ${items.length} disposition${
                 items.length === 1 ? "" : "s"
-              }.`}
+              }, in the order you composed.`}
         </p>
 
         <ol className="publish-sheet-items" aria-label="Outbound artifact">
-          {items.map((entry) => (
-            <li className="publish-sheet-item" data-path={entry.path} key={entry.path}>
+          {itemKeys.map(({ entry, key }) => (
+            <li className="publish-sheet-item" data-path={entry.path} key={key}>
               <span className="publish-sheet-item-type" data-type={entry.type}>
                 {entry.type}
               </span>
@@ -157,30 +182,20 @@ export function PublishSheet({
               <span className="publish-sheet-item-body">
                 {entry.body.trim() === "" ? "(no note)" : entry.body}
               </span>
-              {onWithdraw ? (
-                <button
-                  type="button"
-                  className="publish-sheet-item-withdraw"
-                  onClick={() => onWithdraw(entry.path)}
-                >
-                  Withdraw
-                </button>
-              ) : null}
             </li>
           ))}
         </ol>
 
-        {/* The exact outbound bytes, machine-readable: previewed bytes == staged
-            payload bytes. Rendered so a reviewer (and a test) can verify what will
-            leave against `stagedPayload(batch)`, not eyeball it. */}
+        {/* The exact outbound bytes, machine-readable: previewed bytes == the
+            `payload` prop == what `onSign` emits. Rendered so a reviewer (and a
+            test) can verify what will leave, not eyeball it. */}
         <pre className="publish-sheet-preview" data-testid="publish-preview">
           {payload}
         </pre>
 
         {/* The degradation-ledger sign-gate (issue #80). When the run degraded, the
             reviewer cannot sign until they acknowledge what degraded — the honesty
-            the paper/glass doctrine demands. Absent/empty ledger → not rendered,
-            no gate, shell behaviour unchanged. */}
+            the paper/glass doctrine demands. Absent/empty ledger → not rendered. */}
         {hasLedger ? (
           <fieldset className="publish-sheet-ledger">
             <legend className="publish-sheet-ledger-legend">Run degradations to acknowledge</legend>
@@ -220,28 +235,35 @@ export function PublishSheet({
 
         <footer className="publish-sheet-foot">
           <p className="publish-sheet-note">
-            All-or-nothing: signing publishes the whole staged set. To leave something out, withdraw
-            it first.
+            All-or-nothing: signing publishes the whole set. To leave something out, go back and
+            withdraw it on the draft.
           </p>
-          <button
-            type="button"
-            className={`publish-sheet-sign ${armed ? "is-arming" : ""}`}
-            data-hold-ms={holdToSignMs}
-            // A pointer user holds; a keyboard/AT user does not — a single Enter or
-            // Space on the focused control signs. Announce that additively so the
-            // "Hold to …" visible label does not mislead AT, without changing it.
-            aria-keyshortcuts="Enter Space"
-            disabled={items.length === 0}
-            onMouseDown={beginHold}
-            onMouseUp={endHold}
-            onMouseLeave={() => {
-              holdStart.current = null;
-              setArmed(false);
-            }}
-            onKeyDown={signByKeyboard}
-          >
-            Hold to {variant.signLabel.toLowerCase()}
-          </button>
+          <div className="publish-sheet-foot-actions">
+            {/* The paper's OTHER action (R40): back to the draft, where editing
+                lives. The paper itself is sign-only. */}
+            <button type="button" className="publish-sheet-back" onClick={() => onBack?.()}>
+              ← Back to the draft
+            </button>
+            <button
+              type="button"
+              className={`publish-sheet-sign ${armed ? "is-arming" : ""}`}
+              data-hold-ms={holdToSignMs}
+              // A pointer user holds; a keyboard/AT user does not — a single Enter or
+              // Space on the focused control signs. Announce that additively so the
+              // "Hold to …" visible label does not mislead AT, without changing it.
+              aria-keyshortcuts="Enter Space"
+              disabled={items.length === 0}
+              onMouseDown={beginHold}
+              onMouseUp={endHold}
+              onMouseLeave={() => {
+                holdStart.current = null;
+                setArmed(false);
+              }}
+              onKeyDown={signByKeyboard}
+            >
+              Hold to {variant.signLabel.toLowerCase()}
+            </button>
+          </div>
         </footer>
       </section>
     </div>

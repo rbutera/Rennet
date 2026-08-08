@@ -12,9 +12,14 @@
  *
  * Scoped to `.canvas-app` (not global `:root`) so the existing review workspace styling is
  * untouched. Dark is the default; the bright-room scheme composes under [data-scheme="light"].
+ *
+ * The `.rennet-glass` scope carries the SAME tokens without `.canvas-app`'s full-screen
+ * layout (canvas.css), so the destination chrome (frame → collation draft → paper, issue
+ * #101) themes with the one palette rather than a parallel one. One source, two mount points.
  */
 
-.canvas-app {
+.canvas-app,
+.rennet-glass {
   /* type */
   --serif: "New York", ui-serif, Georgia, serif;
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
@@ -105,16 +110,22 @@
   --btn-border: rgba(255, 255, 255, 0.5);
   --btn-text: #101318;
 
-  /* paper: the one solid object, what leaves the machine */
-  --sheet-bg: #f7f5ef;
-  --sheet-text: #23211c;
-  --sheet-soft: #57534a;
-  --sheet-hairline: #e3dfd4;
-  --sheet-glow: 0 0 90px 8px rgba(190, 210, 232, 0.18), 0 36px 90px rgba(0, 0, 0, 0.6);
+  /* paper: the one OPAQUE SOLID object, what leaves the machine (R40 / issue #101).
+   * Paper is materiality — WARMTH (against the cool teal/blue glass) + OPACITY —
+   * never a fixed light colour. The dark (bioluminescent-twilight) default gets
+   * WARM-DARK paper: deep espresso with warm off-white ink, so it belongs in dark
+   * mode without becoming a light cream sheet on a near-black app. The cream lives
+   * under [data-scheme="light"] (the bright room). Design Doctrine §1.2. */
+  --sheet-bg: #1c1712;
+  --sheet-text: #efe7db;
+  --sheet-soft: #b6ab99;
+  --sheet-hairline: #322a20;
+  --sheet-glow: 0 0 90px 8px rgba(120, 96, 60, 0.16), 0 36px 90px rgba(0, 0, 0, 0.62);
 }
 
 /* Bright-room scheme: composed rather than inverted (Design Directions §glass). */
-.canvas-app[data-scheme="light"] {
+.canvas-app[data-scheme="light"],
+.rennet-glass[data-scheme="light"] {
   --wallpaper: #dfe3e8;
   --wallpaper-img:
     radial-gradient(52% 44% at 18% 6%, rgba(120, 180, 205, 0.55), transparent 70%),
@@ -180,5 +191,11 @@
   --btn-border: #0f1115;
   --btn-text: #ffffff;
 
+  /* Bright-room paper: warm cream, the material that reads as paper in a light room
+   * (R40 / issue #101). The dark base is warm-dark espresso; here the cream returns. */
+  --sheet-bg: #f7f5ef;
+  --sheet-text: #23211c;
+  --sheet-soft: #57534a;
+  --sheet-hairline: #e3dfd4;
   --sheet-glow: 0 0 80px 6px rgba(255, 255, 255, 0.5), 0 28px 70px rgba(46, 58, 72, 0.3);
 }
