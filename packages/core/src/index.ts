@@ -603,6 +603,19 @@ export class ReviewService {
       }
       let anchor: DispositionAnchor;
       if (span && side) {
+        // A truncated active patch (visible() caps at 256 KiB, possibly cutting
+        // mid-line) cannot certify the span's side-text: extractSpanText reads the
+        // truncated prefix as a COMPLETE line, so a spanDigest minted here could
+        // later match a complete, shortened successor whose real line equals that
+        // prefix — a stale disposition would carry (fail-open). Refuse to author a
+        // span digest over content past the cut, the authoring-side twin of the
+        // carry-path gate (issue workspace-u0zoc; workspace-girqg Finding A;
+        // patchTruncated is the single source of truth for the truncation signal).
+        if (patchTruncated(file)) {
+          throw new Error(
+            "Cannot set a span disposition: the file's patch is truncated (256 KiB cap), so the span content cannot be certified",
+          );
+        }
         const spanText = extractSpanText(file, span, side);
         if (spanText === undefined) {
           throw new Error("Cannot set a span disposition: the span is out of bounds for the file");
