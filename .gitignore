@@ -45,3 +45,7 @@ tmp/
 
 .claude/worktrees
 .claude/settings.local.json
+
+# impeccable design skill (vendored tooling + ephemeral output; re-install via: npx impeccable install)
+.agents/skills/impeccable/
+.impeccable/
