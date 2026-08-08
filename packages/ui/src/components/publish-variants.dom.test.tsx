@@ -336,3 +336,81 @@ describe("own-branch performs ZERO Git/GitHub mutation", () => {
     );
   });
 });
+
+describe("target disagreement fails closed (issue #106): a payload/variant that disagrees with the target blocks signing", () => {
+  // Defense-in-depth for R33 "what you see is what leaves". The paper renders the
+  // structured card from `target` yet signs the INDEPENDENT `payload` under the
+  // INDEPENDENT `variant`. When those diverge, the reviewer would see ONE artifact
+  // (the card) while signing ANOTHER (the bytes) under a mislabelling frame — so the
+  // sheet must fail CLOSED, emitting nothing on either sign path. Neutralising the
+  // `targetBlocksSign` guard (or making `publishTargetAgrees` always return true)
+  // reds every "blocked" assertion below; the positive control keeps a MATCHING
+  // pair signing so the gate is not merely over-blocking.
+  it("a payload that differs from publishTargetPayload(target) blocks BOTH sign paths", () => {
+    const target = publishTarget("own-branch", draft, context);
+    const signed: string[] = [];
+    const { container } = mount(
+      <PublishSheet
+        target={target}
+        // A payload NOT equal to the target's canonical bytes — the disagreement.
+        payload="TAMPERED::not-the-target-bytes::9c1"
+        variant={destinationVariant("own-branch")}
+        onSign={(bytes) => signed.push(bytes)}
+      />,
+    );
+    // A completed pointer hold emits nothing.
+    pointerHold(signButton(container), 850);
+    expect(signed).toHaveLength(0);
+    // The keyboard path is blocked too.
+    const button = signButton(container);
+    button.focus();
+    fireEvent.keyDown(button, { key: "Enter" });
+    expect(signed).toHaveLength(0);
+    // The sign control is disabled and the blocked state is announced (aria-legible).
+    expect(button.disabled).toBe(true);
+    expect(container.querySelector('[data-testid="publish-mismatch"]')).not.toBeNull();
+    expect(container.querySelector('[data-testid="publish-mismatch"]')?.getAttribute("role")).toBe(
+      "alert",
+    );
+  });
+
+  it("a variant.mode that disagrees with target.mode blocks signing (right bytes, wrong frame)", () => {
+    const target = publishTarget("own-branch", draft, context);
+    const signed: string[] = [];
+    const { container } = mount(
+      <PublishSheet
+        target={target}
+        // The bytes are correct for the own-branch target...
+        payload={publishTargetPayload(target)}
+        // ...but the sheet is framed as other-pr: a mislabelling disagreement.
+        variant={destinationVariant("other-pr")}
+        onSign={(bytes) => signed.push(bytes)}
+      />,
+    );
+    pointerHold(signButton(container), 850);
+    const button = signButton(container);
+    button.focus();
+    fireEvent.keyDown(button, { key: "Enter" });
+    expect(signed).toHaveLength(0);
+    expect(button.disabled).toBe(true);
+  });
+
+  it("positive control: a MATCHING payload+variant+target still signs (not over-blocking)", () => {
+    const target = publishTarget("own-branch", draft, context);
+    const payload = publishTargetPayload(target);
+    const signed: string[] = [];
+    const { container } = mount(
+      <PublishSheet
+        target={target}
+        payload={payload}
+        variant={destinationVariant("own-branch")}
+        onSign={(bytes) => signed.push(bytes)}
+      />,
+    );
+    // No mismatch notice, button enabled, and a hold signs the exact bytes.
+    expect(container.querySelector('[data-testid="publish-mismatch"]')).toBeNull();
+    expect(signButton(container).disabled).toBe(false);
+    pointerHold(signButton(container), 850);
+    expect(signed).toEqual([payload]);
+  });
+});
