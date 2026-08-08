@@ -54,7 +54,7 @@ describe("loadCanvases", () => {
       return Promise.resolve({ canvases, elementDiffs } as never);
     });
 
-    const result = await loadCanvases(bridge, review, true);
+    const result = await loadCanvases(bridge, review, "auth-token-1");
 
     expect(result).not.toBeNull();
     expect(result?.canvases.sequence.layers.analysis.elements[0]?.title).toBe("LIVE");
@@ -65,7 +65,7 @@ describe("loadCanvases", () => {
   it("returns null when the pipeline errors, so the caller keeps the demo", async () => {
     const bridge = bridgeReturning(() => Promise.reject(new Error("harness exploded")));
 
-    const result = await loadCanvases(bridge, review, true);
+    const result = await loadCanvases(bridge, review, "auth-token-1");
 
     expect(result).toBeNull();
   });

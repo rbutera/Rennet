@@ -262,6 +262,27 @@ export const commandDefinitions = {
     input: z.object({ mode: permissionModeSchema }),
     output: z.object({ mode: permissionModeSchema }),
   },
+  // ── Harness-run consent, main-issued (issue #58 / #103, bead workspace-fyvxb) ─
+  // The renderer REQUESTS approval for a review's harness run; MAIN mints the
+  // authorization. This is the whole point of the fyvxb hardening: the per-run
+  // consent signal carried on `review.canvases` is no longer a renderer-supplied
+  // boolean (forgeable + replayable), but a single-use, review-BOUND token that
+  // only MAIN can issue and that MAIN consumes before the model spend. The
+  // renderer's role shrinks to asking; it can no longer ASSERT consent, only
+  // relay a token it obtained here. Minting is harmless under auto/bypass (the
+  // token is simply never checked); the enforcement lives entirely at consume
+  // time in `review.canvases`.
+  "harness.requestConsent": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+    }),
+    output: z.object({
+      // The opaque, single-use authorization bound to `reviewId`. Present it once
+      // on `review.canvases`; MAIN consumes it and a replay is rejected.
+      authorization: z.string().min(1),
+    }),
+  },
   // ── Live canvases (issue #54) ──────────────────────────────────────────────
   // Runs the live pipeline (decompose → budget-gated angle → ordering → place)
   // for the review's active patchset and returns the five-angle canvas set the
@@ -271,15 +292,19 @@ export const commandDefinitions = {
       commandId: commandIdSchema,
       reviewId: z.string().min(1),
       repoPath: z.string().min(1),
-      // The #58/#103 one-shot harness-run consent (bead workspace-j98dt). The
-      // renderer sets this `true` when the harness run is permitted for THIS run
-      // (the user consented under `manual`, or the mode does not ask). Absent or
-      // `false` ⇒ no consent. The MAIN process resolves the effective mode from
-      // the persisted workspace default (the authority) and refuses to invoke the
-      // harness when that mode asks and this signal is not `true` — so the vital
-      // model-spend circuit is enforced at the boundary where the spend happens,
-      // not only in the renderer (Rule 75: no single fault clears it).
-      consent: z.boolean().optional(),
+      // The #58/#103 harness-run authorization (bead workspace-fyvxb). Under a
+      // consent-requiring mode (`manual`) MAIN requires a single-use token that it
+      // ITSELF minted for THIS review via `harness.requestConsent`, verifies it
+      // matches the review and has not been used, and CONSUMES it before invoking
+      // the harness. Absent / forged / already-consumed ⇒ refused, no build. This
+      // REPLACES the old renderer-supplied `consent: boolean`, which was forgeable
+      // (any caller could assert `true`) and replayable (reusable across runs).
+      // Under `auto`/`bypass` no authorization is required. The effective mode is
+      // still resolved from the persisted WORKSPACE store (the j98dt authority),
+      // so the vital model-spend circuit has two independent guards (Rule 75: no
+      // single fault clears it — a laxer mode can't be smuggled, and the consent
+      // signal can no longer be forged or replayed).
+      authorization: z.string().min(1).optional(),
     }),
     // `elementDiffs` (issue #60): the real per-element diff map delivered with the
     // canvas set so zooming into an element shows real code, not the fixture.

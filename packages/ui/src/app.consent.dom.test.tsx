@@ -57,6 +57,9 @@ function recordingBridge(mode: PermissionMode): { bridge: RennetBridge; calls: s
     calls.push(name);
     if (name === "settings.permissionMode") return { mode };
     if (name === "settings.setPermissionMode") return { mode: "auto" };
+    // The renderer requests approval; MAIN mints the single-use token (bead
+    // workspace-fyvxb). The fake returns one so the consent click can relay it.
+    if (name === "harness.requestConsent") return { authorization: "auth-token-under-test" };
     if (name === "review.canvases") return { canvases: demoCanvases(), elementDiffs: {} };
     return { review };
   };

@@ -28,18 +28,19 @@ export interface LoadedCanvases {
 export async function loadCanvases(
   bridge: RennetBridge,
   review: Review,
-  consent: boolean,
+  authorization: string | null,
 ): Promise<LoadedCanvases | null> {
   try {
     const { canvases, elementDiffs, narration } = await bridge.invoke("review.canvases", {
       commandId: crypto.randomUUID(),
       reviewId: review.id,
       repoPath: review.repositoryRoot,
-      // The #58/#103 one-shot harness-run consent (bead workspace-j98dt): the
-      // caller passes whether the run is permitted for THIS review. The main
-      // process independently enforces the gate; this signal carries the user's
-      // per-run allow (or "the mode does not ask") across the IPC boundary.
-      consent,
+      // The #58/#103 harness-run authorization (bead workspace-fyvxb): under a
+      // mode that asks, the caller relays the single-use token MAIN minted for
+      // THIS review via `harness.requestConsent`; MAIN consumes it before the
+      // spend. Omitted under auto/bypass (no token required) — the field is only
+      // included when the caller holds one, never asserted as a bare boolean.
+      ...(authorization ? { authorization } : {}),
     });
     return { canvases, elementDiffs, ...(narration ? { narration } : {}) };
   } catch {
