@@ -29,6 +29,7 @@ import type {
 } from "@rennet/types";
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session } from "electron";
 import { createDispatch } from "./dispatch";
+import { createHarnessConsentAuthority } from "./harness-consent-authority";
 
 const IPC_CHANNEL = "rennet:invoke";
 const APP_ORIGIN = "app://rennet";
@@ -225,10 +226,16 @@ app.whenReady().then(async () => {
   store = new SqliteReviewStore(join(app.getPath("userData"), "rennet.sqlite"));
   settings = new FileSettingsStore(join(app.getPath("userData"), "settings.json"));
   service = new ReviewService(capture, store);
+  // The main-owned harness-run consent authority (bead workspace-fyvxb): mints a
+  // single-use, review-bound token on the user's approval and consumes it before
+  // the harness runs. In-process only — a restart must re-ask, never inherit a
+  // stale authorization.
+  const consent = createHarnessConsentAuthority();
   dispatch = createDispatch({
     service,
     allowedRoots,
     settings,
+    consent,
     chooseRepository,
     startWatching: (root: string) =>
       watcher.start(root, () => {

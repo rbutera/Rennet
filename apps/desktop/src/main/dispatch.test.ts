@@ -10,6 +10,7 @@ import type { Canvas, CanvasAngle, Patchset, Review } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
 import { createDispatch, type DispatchDeps } from "./dispatch";
+import { createHarnessConsentAuthority } from "./harness-consent-authority";
 
 const REPO = "/repo";
 
@@ -89,6 +90,7 @@ function harness(): {
   allowedRoots: Set<string>;
   buildCanvases: ReturnType<typeof vi.fn>;
   settings: { permissionMode(): PermissionMode; setPermissionMode(mode: PermissionMode): void };
+  consent: { grant(reviewId: string): string; consume(reviewId: string, authorization: string): boolean };
 } {
   const capture: PatchsetCapturePort = { capture: () => Promise.resolve(patchset()) };
   const service = new ReviewService(capture, new InMemoryStore());
@@ -108,6 +110,9 @@ function harness(): {
       mode = next;
     },
   };
+  // The REAL main-owned consent authority (bead workspace-fyvxb): main mints a
+  // single-use, review-bound token and consumes it before the harness runs.
+  const consent = createHarnessConsentAuthority();
   const deps: DispatchDeps = {
     service,
     allowedRoots,
@@ -119,8 +124,32 @@ function harness(): {
     },
     buildCanvases,
     settings,
+    consent,
   };
-  return { dispatch: createDispatch(deps), service, allowedRoots, buildCanvases, settings };
+  return {
+    dispatch: createDispatch(deps),
+    service,
+    allowedRoots,
+    buildCanvases,
+    settings,
+    consent,
+  };
+}
+
+/**
+ * Mint a single-use harness-run authorization the way the renderer does — via the
+ * `harness.requestConsent` command MAIN owns. Returns the opaque token to relay on
+ * `review.canvases`.
+ */
+async function requestConsent(
+  dispatch: ReturnType<typeof createDispatch>,
+  reviewId: string,
+): Promise<string> {
+  const out = (await dispatch("harness.requestConsent", {
+    commandId: randomUUID(),
+    reviewId,
+  })) as { authorization: string };
+  return out.authorization;
 }
 
 async function capturedReview(dispatch: ReturnType<typeof createDispatch>): Promise<Review> {
@@ -197,13 +226,14 @@ describe("createDispatch — canvas.* routing (issue #54)", () => {
     const { dispatch, buildCanvases } = harness();
     const review = await capturedReview(dispatch);
 
+    // The default mode is `manual`, which asks: the renderer requests approval
+    // (#58/#103, bead workspace-fyvxb) and relays the single-use token MAIN minted.
+    const authorization = await requestConsent(dispatch, review.id);
     const result = (await dispatch("review.canvases", {
       commandId: randomUUID(),
       reviewId: review.id,
       repoPath: REPO,
-      // The default mode is `manual`, which asks: the renderer carries the
-      // one-shot consent (#58/#103, bead workspace-j98dt) for a permitted run.
-      consent: true,
+      authorization,
     })) as {
       canvases: Record<CanvasAngle, Canvas>;
       elementDiffs: Record<string, { path: string; diff: string }>;
@@ -273,15 +303,16 @@ describe("createDispatch — permission-mode settings (issue #103)", () => {
   });
 });
 
-describe("createDispatch — review.canvases harness-run consent gate (#58/#103, bead workspace-j98dt)", () => {
-  // The vital circuit: the harness run (model spend) must be gated at the MAIN
-  // boundary, resolving the effective mode from the persisted WORKSPACE store —
-  // not only in the renderer. These tests pin the gate to exactly
-  // manual-without-consent: they go RED if the guard is removed (manual + no
-  // consent would then invoke the harness) AND if the gate over-blocks
-  // (auto/bypass would then be refused).
+describe("createDispatch — review.canvases harness-run consent gate (#58/#103)", () => {
+  // The vital circuit: the harness run (model spend) is gated at the MAIN
+  // boundary, resolving the effective mode from the persisted WORKSPACE store
+  // (the j98dt authority) AND, under a mode that asks, requiring a single-use,
+  // review-bound authorization MAIN itself minted (the fyvxb hardening). These
+  // tests pin the gate: they go RED if the mode guard is removed, if the single-
+  // use check is removed (a replay/forged boolean would then run the harness),
+  // AND if the gate over-blocks (auto/bypass would then be refused).
 
-  it("refuses the harness run under manual mode with NO consent (buildCanvases never called)", async () => {
+  it("refuses the harness run under manual mode with NO authorization (buildCanvases never called)", async () => {
     const { dispatch, buildCanvases, settings } = harness();
     settings.setPermissionMode("manual"); // explicit; also the safe default
     const review = await capturedReview(dispatch);
@@ -292,12 +323,12 @@ describe("createDispatch — review.canvases harness-run consent gate (#58/#103,
         reviewId: review.id,
         repoPath: REPO,
       }),
-    ).rejects.toThrow(/consent/i);
+    ).rejects.toThrow(/authoriz/i);
     // The model turn must not have run: the gate lives BEFORE buildCanvases.
     expect(buildCanvases).not.toHaveBeenCalled();
   });
 
-  it("also refuses when consent is explicitly false under manual mode", async () => {
+  it("refuses a FORGED authorization under manual mode (a token MAIN never minted)", async () => {
     const { dispatch, buildCanvases } = harness();
     const review = await capturedReview(dispatch);
 
@@ -306,28 +337,76 @@ describe("createDispatch — review.canvases harness-run consent gate (#58/#103,
         commandId: randomUUID(),
         reviewId: review.id,
         repoPath: REPO,
-        consent: false,
+        // A caller-fabricated token — the exact attack the fyvxb hardening closes
+        // (the old `consent: true` boolean was forgeable this way).
+        authorization: "forged-not-minted-by-main",
       }),
-    ).rejects.toThrow(/consent/i);
+    ).rejects.toThrow(/authoriz/i);
     expect(buildCanvases).not.toHaveBeenCalled();
   });
 
-  it("runs the harness under manual mode WITH a one-shot consent", async () => {
+  it("(1) legit single-use flow: approve review X → build X invokes the harness exactly once", async () => {
     const { dispatch, buildCanvases } = harness();
     const review = await capturedReview(dispatch);
 
+    const authorization = await requestConsent(dispatch, review.id);
     const result = (await dispatch("review.canvases", {
       commandId: randomUUID(),
       reviewId: review.id,
       repoPath: REPO,
-      consent: true,
+      authorization,
     })) as { canvases: Record<CanvasAngle, Canvas> };
 
     expect(buildCanvases).toHaveBeenCalledTimes(1);
     expect(Object.keys(result.canvases).sort()).toEqual([...CANVAS_ANGLES].sort());
   });
 
-  it("runs the harness under auto mode without consent (the mode allows)", async () => {
+  it("(2) REPLAY rejected: reusing the same authorization for a second build is refused, harness NOT re-invoked", async () => {
+    const { dispatch, buildCanvases } = harness();
+    const review = await capturedReview(dispatch);
+
+    const authorization = await requestConsent(dispatch, review.id);
+    // First build consumes the token → runs once.
+    await dispatch("review.canvases", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      repoPath: REPO,
+      authorization,
+    });
+    expect(buildCanvases).toHaveBeenCalledTimes(1);
+
+    // Replaying the SAME (now-consumed) token must be refused, and the harness
+    // must NOT run again. This is the property a plain boolean could never have.
+    await expect(
+      dispatch("review.canvases", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        repoPath: REPO,
+        authorization,
+      }),
+    ).rejects.toThrow(/authoriz/i);
+    expect(buildCanvases).toHaveBeenCalledTimes(1);
+  });
+
+  it("REPLAY across a different review is refused too (the token is review-BOUND)", async () => {
+    const { dispatch, buildCanvases } = harness();
+    const review = await capturedReview(dispatch);
+
+    const authorization = await requestConsent(dispatch, review.id);
+    // A token minted for THIS review cannot authorize a build claiming a different
+    // review id — the consume side keys on the review the token was bound to.
+    await expect(
+      dispatch("review.canvases", {
+        commandId: randomUUID(),
+        reviewId: "some-other-review",
+        repoPath: REPO,
+        authorization,
+      }),
+    ).rejects.toThrow(); // rejected (unknown review and/or unbound token)
+    expect(buildCanvases).not.toHaveBeenCalled();
+  });
+
+  it("(4) runs the harness under auto mode without any authorization (the mode allows)", async () => {
     const { dispatch, buildCanvases, settings } = harness();
     settings.setPermissionMode("auto");
     const review = await capturedReview(dispatch);
@@ -340,7 +419,7 @@ describe("createDispatch — review.canvases harness-run consent gate (#58/#103,
     expect(buildCanvases).toHaveBeenCalledTimes(1);
   });
 
-  it("runs the harness under bypass mode without consent", async () => {
+  it("(4) runs the harness under bypass mode without any authorization", async () => {
     const { dispatch, buildCanvases, settings } = harness();
     settings.setPermissionMode("bypass");
     const review = await capturedReview(dispatch);
@@ -353,11 +432,38 @@ describe("createDispatch — review.canvases harness-run consent gate (#58/#103,
     expect(buildCanvases).toHaveBeenCalledTimes(1);
   });
 
-  it("resolves the effective mode from the WORKSPACE store, not a renderer-supplied value", async () => {
+  it("does NOT consume a token under auto mode (no spend of an unrelated grant)", async () => {
+    // A token minted while a prior manual approval happened must not be silently
+    // burned by an auto-mode run — the consume path is reached ONLY when the mode
+    // asks. So the token survives auto and still works if the mode flips back.
+    const { dispatch, buildCanvases, settings } = harness();
+    const review = await capturedReview(dispatch);
+    const authorization = await requestConsent(dispatch, review.id);
+
+    settings.setPermissionMode("auto");
+    await dispatch("review.canvases", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      repoPath: REPO,
+    });
+    expect(buildCanvases).toHaveBeenCalledTimes(1);
+
+    // Flip back to manual: the earlier token is still unspent and authorizes once.
+    settings.setPermissionMode("manual");
+    await dispatch("review.canvases", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      repoPath: REPO,
+      authorization,
+    });
+    expect(buildCanvases).toHaveBeenCalledTimes(2);
+  });
+
+  it("(3) resolves the effective mode from the WORKSPACE store, not a renderer-supplied value", async () => {
     // Enforcement authority is the persisted workspace mode. Even though the
     // input carries no mode field, flipping the store to `manual` (ask) blocks a
     // run that `auto` would have allowed — proving the main reads the store, so a
-    // crafted IPC cannot smuggle a laxer mode.
+    // crafted IPC cannot smuggle a laxer mode. (j98dt authority, preserved.)
     const { dispatch, buildCanvases, settings } = harness();
     settings.setPermissionMode("manual");
     const review = await capturedReview(dispatch);
@@ -368,7 +474,7 @@ describe("createDispatch — review.canvases harness-run consent gate (#58/#103,
         reviewId: review.id,
         repoPath: REPO,
       }),
-    ).rejects.toThrow(/consent/i);
+    ).rejects.toThrow(/authoriz/i);
     expect(buildCanvases).not.toHaveBeenCalled();
   });
 });

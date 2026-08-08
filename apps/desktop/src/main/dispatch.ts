@@ -45,6 +45,16 @@ export interface DispatchDeps {
     permissionMode(): PermissionMode;
     setPermissionMode(mode: PermissionMode): void;
   };
+  /**
+   * The main-owned harness-run consent authority (bead workspace-fyvxb). MAIN
+   * mints a single-use, review-bound authorization on the user's approval act
+   * (`harness.requestConsent`) and consumes it before the harness runs, instead
+   * of trusting a renderer-supplied replayable boolean.
+   */
+  readonly consent: {
+    grant(reviewId: string): string;
+    consume(reviewId: string, authorization: string): boolean;
+  };
 }
 
 export function createDispatch(
@@ -130,24 +140,45 @@ export function createDispatch(
         deps.setRepositoryDirty(false);
         return parseCommandOutput(name, { review });
       }
+      case "harness.requestConsent": {
+        // The renderer REQUESTS approval for this review's harness run (bead
+        // workspace-fyvxb). MAIN is the sole issuer: it binds a fresh single-use
+        // token to the CURRENT review and returns it. Requiring the latest review
+        // keeps a token from being minted for a stale/unknown id. Minting is
+        // independent of the mode (harmless under auto/bypass, where the token is
+        // never checked); the enforcement lives at consume time below.
+        const input = parseCommandInput(name, rawInput);
+        const review = requireLatestReview(input.reviewId);
+        return parseCommandOutput(name, { authorization: deps.consent.grant(review.id) });
+      }
       case "review.canvases": {
         const input = parseCommandInput(name, rawInput);
         assertAllowedRepository(input.repoPath);
         const review = requireLatestReview(input.reviewId);
-        // #58/#103 harness-run consent gate, enforced at the MAIN boundary (bead
-        // workspace-j98dt). The renderer already gates this, but enforcement must
-        // live where the model SPEND happens, not only where the UI DECIDES —
-        // otherwise an alternate/future caller of `review.canvases`, or an IPC
-        // message crafted outside the React flow, would run the real harness
-        // under the default `manual` mode with no consent. The effective mode is
-        // resolved from the persisted workspace default (the authority); a
-        // renderer-supplied mode is deliberately NOT trusted here. Under a mode
-        // that ASKS (manual), the harness does not run without an explicit
-        // per-run `consent` for this run (Rule 75, vital circuit: no single fault
-        // clears it — the renderer gate and this one are independent).
+        // #58/#103 harness-run gate, enforced at the MAIN boundary. Two
+        // independent guards on the vital model-spend circuit (Rule 75: no single
+        // fault clears it):
+        //   1. The effective MODE is resolved from the persisted WORKSPACE store
+        //      (the j98dt authority — a renderer-supplied mode is NOT trusted;
+        //      corrupt/unknown still ASKS). Unchanged here.
+        //   2. Under a mode that ASKS (manual), the per-run CONSENT is no longer a
+        //      renderer-supplied boolean (forgeable + replayable). MAIN requires a
+        //      single-use token that IT minted for THIS review (bead
+        //      workspace-fyvxb), verifies + CONSUMES it here, and only then runs
+        //      the harness. Absent / forged / already-consumed ⇒ refused, and the
+        //      model turn never composes. `consume` is called ONLY when the mode
+        //      asks, so an auto/bypass run neither needs nor spends a token.
         const effectiveMode = resolvePermissionMode({ workspace: deps.settings.permissionMode() });
-        if (requiresConsent(effectiveMode, "harness.run") && input.consent !== true) {
-          throw new Error("The harness run was not consented to under the current permission mode");
+        if (requiresConsent(effectiveMode, "harness.run")) {
+          const authorization = input.authorization;
+          if (
+            typeof authorization !== "string" ||
+            !deps.consent.consume(review.id, authorization)
+          ) {
+            throw new Error(
+              "The harness run was not authorized under the current permission mode",
+            );
+          }
         }
         const { canvases, elementDiffs, narration } = await deps.buildCanvases(review);
         return parseCommandOutput(name, {

@@ -220,11 +220,16 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const fetchedForReview = useRef<string | null>(null);
   // Permission mode (issue #103). The persisted workspace default governs the
   // gated harness run (#58); `undefined` until bootstrap resolves it, which
-  // `resolvePermissionMode` treats as the safe `manual` default. `consentedReviewId`
-  // records the review whose harness run the user has explicitly allowed (a per-run
-  // allow that does NOT change the persisted workspace mode).
+  // `resolvePermissionMode` treats as the safe `manual` default. `harnessAuthorization`
+  // holds the single-use, review-bound token MAIN minted when the user approved
+  // THIS review's harness run (bead workspace-fyvxb) — the renderer relays it, it
+  // never asserts consent itself. It is a per-run allow that does NOT change the
+  // persisted workspace mode.
   const [workspaceMode, setWorkspaceMode] = useState<PermissionMode | undefined>(undefined);
-  const [consentedReviewId, setConsentedReviewId] = useState<string | null>(null);
+  const [harnessAuthorization, setHarnessAuthorization] = useState<{
+    reviewId: string;
+    token: string;
+  } | null>(null);
   const effectiveMode = resolvePermissionMode({ workspace: workspaceMode });
   // The DESTINATION (issue #64): the staged set is the north the review builds
   // toward. dispose == staged (a disposition stages in the same act it is made);
@@ -298,7 +303,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     view === "canvases" &&
     !!review &&
     requiresConsent(effectiveMode, "harness.run") &&
-    consentedReviewId !== review.id;
+    harnessAuthorization?.reviewId !== review.id;
 
   // Live canvases (issue #54): when a real review is open, the Canvases view is
   // shown, and the harness run is permitted (auto/bypass, or the user has
@@ -311,14 +316,17 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     if (awaitingHarnessConsent) return; // #58 gate: await consent before any harness turn
     fetchedForReview.current = review.id;
     let cancelled = false;
-    // The one-shot harness-run consent carried to the main gate (bead
-    // workspace-j98dt): the run is permitted iff the user has consented for THIS
-    // review or the mode does not ask. The `awaitingHarnessConsent` guard above
-    // already ensures this is true here; passing it makes the renderer's consent
-    // explicit at the boundary the main independently enforces.
-    const harnessConsent =
-      !requiresConsent(effectiveMode, "harness.run") || consentedReviewId === review.id;
-    void loadCanvases(bridge, review, harnessConsent).then((live) => {
+    // The single-use harness-run authorization relayed to the main gate (bead
+    // workspace-fyvxb): under a mode that ASKS, pass the token MAIN minted for
+    // THIS review (the `awaitingHarnessConsent` guard above guarantees it is
+    // present here); under auto/bypass no token is needed, so pass `null` and
+    // main requires none. Main verifies + consumes the token — the renderer no
+    // longer asserts a boolean it could forge or replay.
+    const authorization =
+      requiresConsent(effectiveMode, "harness.run") && harnessAuthorization?.reviewId === review.id
+        ? harnessAuthorization.token
+        : null;
+    void loadCanvases(bridge, review, authorization).then((live) => {
       if (cancelled || !live) return;
       setCanvases(live.canvases);
       setElementDiffs(live.elementDiffs);
@@ -328,18 +336,37 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     return () => {
       cancelled = true;
     };
-  }, [view, review, bridge, awaitingHarnessConsent, effectiveMode, consentedReviewId]);
+  }, [view, review, bridge, awaitingHarnessConsent, effectiveMode, harnessAuthorization]);
 
-  // Opt the workspace default up to `auto` (persisted) and allow this run. A
-  // persistence failure still allows the current run so the click is never inert.
+  // Opt the workspace default up to `auto` (persisted). Under `auto` the mode no
+  // longer asks, so no per-run token is needed — the canvases effect fires with
+  // `authorization: null` and main requires none. A persistence failure still
+  // flips the local mode so the current run proceeds and the click is never inert.
   function alwaysRunAutomatically(): void {
     if (!review) return;
     setWorkspaceMode("auto");
-    setConsentedReviewId(review.id);
     bridge
       .invoke("settings.setPermissionMode", { mode: "auto" })
       .then(({ mode }) => setWorkspaceMode(mode))
       .catch(() => undefined);
+  }
+
+  // Approve THIS review's harness run (bead workspace-fyvxb). The renderer only
+  // REQUESTS approval: MAIN mints the single-use, review-bound token and returns
+  // it here, and the canvases effect then relays that token on `review.canvases`.
+  // The renderer never fabricates or asserts consent — it holds a token main
+  // issued, which main consumes once.
+  async function consentThisRun(): Promise<void> {
+    if (!review) return;
+    try {
+      const { authorization } = await bridge.invoke("harness.requestConsent", {
+        commandId: crypto.randomUUID(),
+        reviewId: review.id,
+      });
+      setHarnessAuthorization({ reviewId: review.id, token: authorization });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
   }
 
   async function chooseRepository(): Promise<void> {
@@ -520,7 +547,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         <HarnessConsent
           repositoryRoot={review.repositoryRoot}
           mode={effectiveMode}
-          onConsent={() => setConsentedReviewId(review.id)}
+          onConsent={() => void consentThisRun()}
           onAlwaysAuto={alwaysRunAutomatically}
         />
       ) : null}
