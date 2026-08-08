@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 const tokens = readFileSync(fileURLToPath(new URL("./tokens.css", import.meta.url)), "utf8");
+const canvas = readFileSync(fileURLToPath(new URL("./canvas.css", import.meta.url)), "utf8");
 
 function block(selector: string): string {
   const start = tokens.indexOf(selector);
@@ -38,6 +39,22 @@ describe("glass tokens — both schemes render, faithfully ported", () => {
     expect(tokens).not.toContain("--decorative-hue");
     expect(tokens).toContain("--amber:");
     expect(tokens).toContain("--private:");
+  });
+});
+
+describe("real desktop glass (issue #61)", () => {
+  it("does not retain a synthetic wallpaper behind the chrome", () => {
+    expect(tokens).not.toContain("--wallpaper-img");
+    expect(canvas).toContain(".canvas-app");
+    expect(canvas).toContain("background: transparent");
+    expect(canvas).not.toContain("background-image:");
+  });
+
+  it("keeps the transparent chrome legible with a compositor fallback", () => {
+    expect(canvas).toContain("-webkit-backdrop-filter: var(--side-blur)");
+    expect(canvas).toContain("backdrop-filter: var(--side-blur)");
+    // Positive control: the opaque code surface is intentionally still present.
+    expect(canvas).toContain("background: var(--code-bg)");
   });
 });
 

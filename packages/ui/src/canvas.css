@@ -1,16 +1,14 @@
 /* Rennet canvas surface — glass chrome, opaque code, backlight-private, amber
  * blast. Every colour is a var(--token); the raw values live only in tokens.css.
- * Glass is chrome; code is opaque; the wallpaper aurora glows AROUND the diff,
- * never through it. */
+ * Glass is chrome; code is opaque; the Electron window compositor supplies the
+ * real desktop backdrop rather than an in-app wallpaper. */
 
 .canvas-app {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
   color: var(--text);
-  background: var(--wallpaper);
-  background-image: var(--wallpaper-img);
-  background-attachment: fixed;
+  background: transparent;
   font-family: var(--sans);
   outline: none;
 }
@@ -23,6 +21,7 @@
   gap: 16px;
   padding: 12px 20px;
   background: var(--side-bg);
+  -webkit-backdrop-filter: var(--side-blur);
   backdrop-filter: var(--side-blur);
   border-bottom: 1px solid var(--hairline);
 }
@@ -77,6 +76,9 @@
   align-items: center;
   gap: 12px;
   padding: 8px 20px;
+  background: var(--side-bg);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
   border-bottom: 1px solid var(--hairline);
   color: var(--text-faint);
   font-size: 12px;
@@ -108,6 +110,8 @@
   border: 1px solid var(--hairline);
   border-radius: var(--chip-radius);
   background: var(--raised);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
   padding: 12px 16px;
   margin-bottom: 16px;
 }
@@ -148,6 +152,9 @@
   gap: 16px;
   margin-bottom: 14px;
   padding-bottom: 10px;
+  background: var(--side-bg);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
   border-bottom: 1px solid var(--hairline);
 }
 .canvas-coverage {
@@ -167,6 +174,8 @@
   border: 1px solid var(--raised-border);
   border-radius: var(--radius);
   background: var(--raised);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
   box-shadow: var(--raised-shadow);
   overflow: hidden;
 }
@@ -254,6 +263,8 @@
   border: 1px solid var(--raised-border);
   border-radius: var(--radius);
   background: var(--raised);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
   margin-bottom: 8px;
 }
 .flat-element.is-blast {
@@ -332,6 +343,8 @@
   border: 1px dashed var(--accent-soft-line);
   border-radius: var(--radius);
   background: var(--accent-soft);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
   color: var(--text-soft);
   font-size: 13px;
 }
@@ -399,6 +412,7 @@
   justify-content: space-between;
   padding: 8px 12px;
   background: var(--side-bg);
+  -webkit-backdrop-filter: var(--side-blur);
   backdrop-filter: var(--side-blur);
   border-bottom: 1px solid var(--hairline);
 }
@@ -630,6 +644,7 @@
   border: 1px solid var(--win-border);
   border-radius: var(--win-radius);
   background: var(--win-bg);
+  -webkit-backdrop-filter: var(--side-blur);
   backdrop-filter: var(--side-blur);
   box-shadow: var(--win-shadow);
   font-family: var(--sans);

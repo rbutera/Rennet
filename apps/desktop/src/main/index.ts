@@ -204,7 +204,18 @@ async function createWindow(): Promise<void> {
     height: 900,
     minWidth: 980,
     minHeight: 640,
-    backgroundColor: "#111318",
+    // The renderer's chrome is deliberately translucent. Let the compositor supply
+    // the material behind it instead of painting an in-app wallpaper: macOS uses
+    // its native vibrancy; other platforms retain a transparent backing store for
+    // the renderer's backdrop-filter fallback.
+    transparent: true,
+    backgroundColor: "#00000000",
+    ...(process.platform === "darwin"
+      ? {
+          vibrancy: "under-window" as const,
+          visualEffectState: "active" as const,
+        }
+      : {}),
     title: "Rennet",
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
