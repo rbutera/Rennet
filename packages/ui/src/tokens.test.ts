@@ -14,7 +14,10 @@ function block(selector: string): string {
 
 describe("glass tokens — both schemes render, faithfully ported", () => {
   it("defines the dark (default) scheme with the ratified backlight and opaque code body", () => {
-    const dark = block(".canvas-app {");
+    // The base block now opens after `.rennet-glass {` (the token scope is
+    // `.canvas-app, .rennet-glass` per issue #101, so both mount points share one
+    // palette); the base custom-property block is the same.
+    const dark = block(".rennet-glass {");
     // Backlight blue is the system's ONLY inner glow, private-to-reviewer.
     expect(dark).toContain("--private: #85c4dc");
     // Code stays fully opaque (never rides on the wallpaper).
@@ -24,7 +27,7 @@ describe("glass tokens — both schemes render, faithfully ported", () => {
   });
 
   it("composes the bright-room (light) scheme rather than inverting it", () => {
-    const light = block('.canvas-app[data-scheme="light"] {');
+    const light = block('.rennet-glass[data-scheme="light"] {');
     // Bright-room deepens backlight blue for contrast (#24657f), opaque white code.
     expect(light).toContain("--private: #24657f");
     expect(light).toContain("--code-bg: #ffffff");
@@ -35,5 +38,36 @@ describe("glass tokens — both schemes render, faithfully ported", () => {
     expect(tokens).not.toContain("--decorative-hue");
     expect(tokens).toContain("--amber:");
     expect(tokens).toContain("--private:");
+  });
+});
+
+describe("dark paper — the R40 fix: paper is materiality (warmth + opacity), not a fixed light colour", () => {
+  it("makes the dark (default) paper WARM-DARK espresso, not cream", () => {
+    const dark = block(".rennet-glass {");
+    // The bug #99 named: cream paper on a near-black app. The dark default paper is
+    // now warm-dark espresso with warm off-white ink. If the base still carried the
+    // cream `#f7f5ef`, this reddens.
+    expect(dark).toContain("--sheet-bg: #1c1712");
+    expect(dark).toContain("--sheet-text: #efe7db");
+    expect(dark).not.toContain("--sheet-bg: #f7f5ef");
+  });
+
+  it("keeps the bright-room paper CREAM (warmth returns in a light room)", () => {
+    const light = block('.rennet-glass[data-scheme="light"] {');
+    // The cream moved here (from the base) — the bright room keeps warm cream.
+    expect(light).toContain("--sheet-bg: #f7f5ef");
+    expect(light).toContain("--sheet-text: #23211c");
+  });
+
+  it("themes the paper PER SCHEME — the two --sheet-bg values differ", () => {
+    // The whole point: paper themes rather than being one fixed colour. If both
+    // scopes carried the same --sheet-bg (the pre-R40 bug), this reddens.
+    const darkBg = block(".rennet-glass {").match(/--sheet-bg:\s*(#[0-9a-f]+)/i)?.[1];
+    const lightBg = block('.rennet-glass[data-scheme="light"] {').match(
+      /--sheet-bg:\s*(#[0-9a-f]+)/i,
+    )?.[1];
+    expect(darkBg).toBeDefined();
+    expect(lightBg).toBeDefined();
+    expect(darkBg).not.toBe(lightBg);
   });
 });

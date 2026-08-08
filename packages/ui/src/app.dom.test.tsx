@@ -1,14 +1,14 @@
 // @vitest-environment happy-dom
 //
-// App-level clear-on-sign (issue #80, MUT I). PR #76's review proved the dispose==
-// staged journey ending — `onSign={() => { setStaged([]); setPublishOpen(false); }}`
-// in `RennetApp` — is untested: the existing app test only exercises the
-// presentational `ReviewWorkspace`. This mounts the WHOLE `RennetApp` over a
-// minimal fake `RennetBridge`, stages a disposition, opens the sheet, completes a
-// sign, and asserts the destination's staged count returns to zero and the sheet
-// closes. The assertion is behavioural (data-staged-count → 0), never a presence
-// check. Uses real timers + a keyboard sign so no clock control is needed and
-// `waitFor` (which polls on real timers) works.
+// App-level clear-on-sign (issue #80 MUT I; re-pointed for the R40 frame → draft →
+// paper journey, issue #101). The dispose == staged journey ending — signing the
+// paper clears the draft and closes the surfaces — is exercised end-to-end. This
+// mounts the WHOLE `RennetApp` over a minimal fake `RennetBridge`, stages a
+// disposition, opens the COLLATION DRAFT (frame → draft), signs the draft into the
+// PAPER (draft → paper), completes a sign, and asserts the destination's collated
+// count returns to zero and both surfaces close. The assertion is behavioural
+// (data-staged-count → 0), never a presence check. Uses real timers + a keyboard
+// sign so no clock control is needed and `waitFor` (real-timer polling) works.
 import type { RennetBridge } from "@rennet/protocol";
 import type { Review } from "@rennet/types";
 import { describe, expect, it } from "vitest";
@@ -75,10 +75,17 @@ describe("RennetApp — signing clears the staged paper at the app level (MUT I)
     fireEvent.click(getByRole("button", { name: "Mark read" }));
     await waitFor(() => expect(destination()?.getAttribute("data-staged-count")).toBe("1"));
 
-    // Open the publish sheet from the destination frame.
-    const openPublish = container.querySelector<HTMLButtonElement>(".destination-open-publish");
-    if (!openPublish) throw new Error("the open-publish control did not render");
-    fireEvent.click(openPublish);
+    // Frame → DRAFT: the frame opens the collation draft canvas (not the paper).
+    const openDraft = container.querySelector<HTMLButtonElement>(".destination-open-draft");
+    if (!openDraft) throw new Error("the open-draft control did not render");
+    fireEvent.click(openDraft);
+    await waitFor(() => expect(container.querySelector(".collation-canvas")).not.toBeNull());
+
+    // Draft → PAPER: signing the draft freezes it into the paper (the phase
+    // transition). The paper renders; the draft is behind it.
+    const signDraft = container.querySelector<HTMLButtonElement>(".collation-sign");
+    if (!signDraft) throw new Error("the draft sign control did not render");
+    fireEvent.click(signDraft);
     await waitFor(() => expect(container.querySelector(".publish-sheet")).not.toBeNull());
 
     // Complete a sign via the keyboard (deliberate Enter on the focused control).
@@ -87,12 +94,13 @@ describe("RennetApp — signing clears the staged paper at the app level (MUT I)
     sign.focus();
     fireEvent.keyDown(sign, { key: "Enter" });
 
-    // dispose == staged journey ending: the staged paper is cleared and the sheet
-    // closes. RED-proof: delete `setStaged([])` from the onSign handler → the count
+    // dispose == staged journey ending: the draft is cleared and BOTH surfaces
+    // close. RED-proof: delete `setDraft([])` from the onSign handler → the count
     // stays "1" → this waitFor never satisfies.
     await waitFor(() => {
       expect(destination()?.getAttribute("data-staged-count")).toBe("0");
       expect(container.querySelector(".publish-sheet")).toBeNull();
+      expect(container.querySelector(".collation-canvas")).toBeNull();
     });
   });
 });
