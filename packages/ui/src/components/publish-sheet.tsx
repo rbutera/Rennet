@@ -100,16 +100,21 @@ export function PublishSheet({
   // the run degradations change while the sheet stays mounted (a #22/council re-run
   // maps a NEW degradation set into `ledger`), a prior acknowledgement would carry
   // over and authorize signing the new, UNacknowledged set — the exact bypass the
-  // gate exists to stop. Track the stable entry SIGNATURE over id AND summary
-  // content: a council may reuse an entry id while its degradation TEXT changes (a
-  // different reason under "sec-skipped"), which is a new, unacknowledged degradation
-  // — an id-only signature would carry the stale ack across it and fail OPEN. Using
+  // gate exists to stop. Track the stable SIGNATURE over EVERY acknowledgement-
+  // relevant field the reviewer inspects: each entry's id, summary, kind, and detail,
+  // PLUS the read-vs-attested counts (#22 content). A council may reuse an entry id
+  // while its degradation TEXT, bucket kind, orphaned-path detail, or attestation
+  // counts change — each a new, unacknowledged degradation — and a signature that
+  // omitted any of them would carry the stale ack across it and fail OPEN. Using
   // the content (not object identity, which an un-memoized host would change every
   // render, resetting the ack on every keystroke and defeating the gate the other
   // way) keeps the signature stable across re-renders yet re-arms the render a
   // genuinely-new degradation set arrives. This is React's "adjust state when a prop
   // changes" pattern: synchronous during render, so the gate re-arms with no flash.
-  const ledgerSignature = JSON.stringify(ledgerEntries.map((entry) => [entry.id, entry.summary]));
+  const ledgerSignature = JSON.stringify({
+    entries: ledgerEntries.map((entry) => [entry.id, entry.summary, entry.kind, entry.detail]),
+    counts: ledger?.counts ?? null,
+  });
   const [ackSignature, setAckSignature] = useState(ledgerSignature);
   if (ledgerSignature !== ackSignature) {
     setAckSignature(ledgerSignature);

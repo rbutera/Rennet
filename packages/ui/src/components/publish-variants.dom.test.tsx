@@ -234,6 +234,80 @@ describe("the #22 ledger CONTENT: buckets + honest counts", () => {
   });
 });
 
+describe("ledger-swap fail-closed extends to the #22 content (counts / detail / kind)", () => {
+  // #80 proves the ack resets when a degradation's id or summary changes. #22 added
+  // counts, detail, and kind as content the reviewer inspects BEFORE acknowledging,
+  // so a council re-run that changes any of them under a STABLE id+summary is a
+  // genuinely different degradation the reviewer has NOT acknowledged. If the ack
+  // signature omits these, the stale ack carries over and signs an unacknowledged
+  // set — a fail-OPEN on the exact content #22 introduced.
+  const swapDraft: CollationDraft = [
+    { id: "src/beta.ts", path: "src/beta.ts", type: "request-change", raw: "x" },
+  ];
+  const ctx: PublishContext = {
+    submission: { base: "main", head: "feat/x", draftDefault: true },
+  };
+
+  const cases: [string, PublishLedger, PublishLedger][] = [
+    [
+      "the attested count drops",
+      { entries: [{ id: "x", summary: "s" }], counts: { total: 20, read: 14, attested: 9 } },
+      { entries: [{ id: "x", summary: "s" }], counts: { total: 20, read: 14, attested: 3 } },
+    ],
+    [
+      "the orphaned detail path changes",
+      { entries: [{ id: "x", summary: "s", kind: "orphaned", detail: "src/old.ts" }] },
+      { entries: [{ id: "x", summary: "s", kind: "orphaned", detail: "src/other.ts" }] },
+    ],
+    [
+      "the degradation kind changes",
+      { entries: [{ id: "x", summary: "s", kind: "skipped-angle" }] },
+      { entries: [{ id: "x", summary: "s", kind: "flattened" }] },
+    ],
+  ];
+
+  it.each(cases)("re-blocks when %s under a stable id+summary", (_label, before, after) => {
+    const target = publishTarget("other-pr", swapDraft, ctx);
+    const payload = publishTargetPayload(target);
+    const signed: string[] = [];
+    const { container, rerender } = mount(
+      <PublishSheet
+        target={target}
+        payload={payload}
+        variant={destinationVariant("other-pr")}
+        ledger={before}
+        onSign={(bytes) => signed.push(bytes)}
+      />,
+    );
+    // Acknowledge + sign once under the first content.
+    const ack = container.querySelector<HTMLInputElement>(".publish-sheet-ack-box");
+    if (!ack) throw new Error("the acknowledge control did not render");
+    fireEvent.click(ack);
+    pointerHold(signButton(container), 850);
+    expect(signed).toHaveLength(1);
+
+    // The #22 content changes under a stable id+summary — a new, unacknowledged set.
+    rerender(
+      <PublishSheet
+        target={target}
+        payload={payload}
+        variant={destinationVariant("other-pr")}
+        ledger={after}
+        onSign={(bytes) => signed.push(bytes)}
+      />,
+    );
+    pointerHold(signButton(container), 850);
+    expect(signed).toHaveLength(1); // still blocked — the stale ack must NOT carry over
+
+    // Acknowledging the new content reopens signing.
+    const ack2 = container.querySelector<HTMLInputElement>(".publish-sheet-ack-box");
+    if (!ack2) throw new Error("the acknowledge control did not render after the swap");
+    fireEvent.click(ack2);
+    pointerHold(signButton(container), 850);
+    expect(signed).toHaveLength(2);
+  });
+});
+
 describe("own-branch performs ZERO Git/GitHub mutation", () => {
   it("signing own-branch only emits the submission bytes — it never creates a PR", () => {
     // The sheet has no Git/GitHub channel at all: its sole output is `onSign`. So a
