@@ -1,15 +1,16 @@
 import { createHash } from "node:crypto";
-import type {
-  AnchorSide,
-  AnchorSpan,
-  Disposition,
-  DispositionAnchor,
-  DispositionRelevanceJudge,
-  PatchFile,
-  Patchset,
-  RelevanceCandidate,
-  RelevanceVerdict,
-  Review,
+import {
+  type AnchorSide,
+  type AnchorSpan,
+  DIFF_TRUNCATION_MARKER,
+  type Disposition,
+  type DispositionAnchor,
+  type DispositionRelevanceJudge,
+  type PatchFile,
+  type Patchset,
+  type RelevanceCandidate,
+  type RelevanceVerdict,
+  type Review,
 } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import {
@@ -322,6 +323,32 @@ describe("span-aware carry — the deterministic floor (issue #78)", () => {
     );
     const next = activate(review, patchsetOf("p2", [file("a.ts", PATCH_A)]));
     expect(next.dispositions.map((d) => anchorKey(d.anchor))).toEqual(["a.ts"]);
+  });
+
+  // ── issue workspace-girqg, Finding A ──────────────────────────────────────────
+  // `visible()` caps a patch at 256 KiB and can cut mid-line; `extractSpanText`
+  // then reads the truncated prefix as a complete line. Two contents identical up
+  // to the cut but differing past it share a `spanDigest`, so a stale span would
+  // carry. The span branch must fail closed on a truncated successor, exactly as the
+  // path branch does for a lossy patch (workspace-ndyv4 item 2). Reddening: removing
+  // the `patchTruncated(file)` gate in `anchorCarries`'s span branch carries it.
+  it("fails closed: drops a span whose covered line sits at a mid-line 256 KiB truncation", () => {
+    // A truncated successor: identical visible head (so the span text and spanDigest
+    // match, and the pre-guard code carries), but the tail past the cut is unknowable.
+    const truncated = `@@ -1,3 +1,3 @@\n keep1\n+span2\n+tail line whose real content differs past the cut\n\n${DIFF_TRUNCATION_MARKER}`;
+    const review = withSpan(truncated, { startLine: 3 }, "additions");
+    const next = activate(review, patchsetOf("p2", [file("a.ts", truncated)]));
+    expect(next.dispositions).toEqual([]);
+  });
+
+  it("does not over-drop: a span whose body merely CONTAINS the marker text (complete patch) still carries", () => {
+    // The gate matches the producer's terminal `\n\n<marker>` (via `endsWith`), never
+    // a bare substring — so a COMPLETE patch that only mentions the marker inside a
+    // line must still carry (mirrors the path-branch structural test).
+    const markerInBody = `@@ -1,1 +1,2 @@\n keep1\n+const M = "${DIFF_TRUNCATION_MARKER}";`;
+    const review = withSpan(markerInBody, { startLine: 2 }, "additions");
+    const next = activate(review, patchsetOf("p2", [file("a.ts", markerInBody)]));
+    expect(next.dispositions.map((d) => anchorKey(d.anchor))).toEqual(["a.ts#L2-L2@additions"]);
   });
 });
 

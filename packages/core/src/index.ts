@@ -133,8 +133,22 @@ export function fileContentDigest(file: PatchFile): string {
  */
 const DIFF_TRUNCATION_SUFFIX = `\n\n${DIFF_TRUNCATION_MARKER}`;
 const GIT_BINARY_PATCH_HEADER = "\nGIT binary patch\n";
+
+/**
+ * Whether `visible()` truncated this patch at the 256 KiB cap. It appends the
+ * marker as the patch's terminal `\n\n<marker>`, so we test `endsWith`, never a
+ * bare `includes` — a source line that merely contains the marker text (e.g. this
+ * repo's own declaration of it) is a COMPLETE patch and must not read as truncated.
+ * The single source of truth for the truncation signal, shared by the path-grained
+ * certification (`patchCertifiesContent`) and the span-grained carry (issue
+ * workspace-girqg, Finding A).
+ */
+function patchTruncated(file: PatchFile): boolean {
+  return file.patch.endsWith(DIFF_TRUNCATION_SUFFIX);
+}
+
 function patchCertifiesContent(file: PatchFile): boolean {
-  if (file.patch.endsWith(DIFF_TRUNCATION_SUFFIX)) return false;
+  if (patchTruncated(file)) return false;
   if (file.binary && !file.patch.includes(GIT_BINARY_PATCH_HEADER)) return false;
   return true;
 }
@@ -224,12 +238,24 @@ export function extractSpanText(
  * the deterministic FLOOR (issue #78). Span-grained: the successor's side-text
  * at the SAME file-line span is defined and byte-identical to `spanDigest` — so
  * an unchanged span carries even when the file changed elsewhere, and a shifted
- * or edited span drops (the judge's job, not the floor's). Path-grained: the
- * whole file is byte-identical. `undefined` file (path gone) never carries.
+ * or edited span drops (the judge's job, not the floor's). A TRUNCATED successor
+ * patch (256 KiB cap) cannot certify a span's side-text — the cut may fall
+ * mid-line — so the span fails closed (issue workspace-girqg, Finding A).
+ * Path-grained: the whole file is byte-identical. `undefined` file (path gone)
+ * never carries.
  */
 function anchorCarries(anchor: DispositionAnchor, file: PatchFile | undefined): boolean {
   if (!file) return false;
   if (anchor.span && anchor.side && anchor.spanDigest) {
+    // A span carry certifies the successor's side-text at this file-line span is
+    // byte-identical. A truncated patch cannot certify that: `visible()` caps at
+    // 256 KiB, possibly cutting mid-line, and `extractSpanText` reads the truncated
+    // prefix as a complete line — so two contents identical up to the cut but
+    // differing past it share a `spanDigest`, and a stale span would carry. Fail
+    // closed on any truncated successor, exactly as the path branch does for a lossy
+    // patch (issue workspace-girqg, Finding A; same lossiness class as
+    // workspace-ndyv4 item 2, on the span path — issue #78 lineage).
+    if (patchTruncated(file)) return false;
     const text = extractSpanText(file, anchor.span, anchor.side);
     return text !== undefined && sha256Hex(text) === anchor.spanDigest;
   }
