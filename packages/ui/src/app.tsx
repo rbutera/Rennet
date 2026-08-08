@@ -1,17 +1,12 @@
 import type { RennetBridge } from "@rennet/protocol";
 import type { CanvasAngle, ElementDiffs, Patchset, Review, ReviewNarration } from "@rennet/types";
 import { useEffect, useMemo, useRef, useState } from "react";
-import {
-  type CollationDraft,
-  collationItems,
-  collationPayload,
-  ingestWrites,
-  withdrawPath,
-} from "./canvas/collation";
-import { type DestinationMode, destinationVariant } from "./canvas/destination";
+import { type CollationDraft, ingestWrites, withdrawPath } from "./canvas/collation";
+import { type DestinationMode, destinationVariant, type PublishLedger } from "./canvas/destination";
 import { demoCanvases, demoDiff, demoNarration } from "./canvas/fixtures";
 import { type CanvasSet, loadCanvases } from "./canvas/load";
 import { type DispositionWrite, withoutProposal } from "./canvas/logic";
+import { type PublishContext, publishTarget, publishTargetPayload } from "./canvas/publish";
 import { CollationDraftCanvas } from "./components/collation-draft-canvas";
 import { DestinationFrame } from "./components/destination-frame";
 import { PublishSheet } from "./components/publish-sheet";
@@ -341,6 +336,37 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // correctly. `data-scheme="dark"` gives the warm-dark paper (the R40 fix); the
   // bright-room cream lives under `[data-scheme="light"]`.
   const destinationVariantForMode = destinationVariant(destinationMode);
+  // The variant-specific outbound target (issue #22), derived from the ONE draft.
+  // The branch context comes from the active patchset's provenance — an honest
+  // local-capture head (the head SHA short form) toward its base ref; the #20/#21
+  // GitHub source supplies real branch names later. No span anchors yet on the
+  // local-capture path (#78 feeds them), so other-pr comments post file-level —
+  // honest, because a path-grained disposition genuinely has no single line.
+  const publishContext: PublishContext = {
+    submission: {
+      base: patchset?.repository.baseRef ?? "main",
+      head: patchset ? patchset.repository.headOid.slice(0, 7) : "(working tree)",
+      draftDefault: true,
+    },
+  };
+  const publishTargetForMode = publishTarget(destinationMode, draft, publishContext);
+  // The degradation ledger, sourced HONESTLY from the active patchset: a degraded
+  // (REST-fallback) changeset really did flatten, so it gates the sign. A clean
+  // local capture carries no degradation → no ledger, no gate. #22/council maps the
+  // full run-degradation set here later.
+  const publishLedger: PublishLedger | undefined = patchset?.degraded
+    ? {
+        entries: [
+          {
+            id: "changeset-degraded",
+            summary:
+              patchset.degradationReason ??
+              "This changeset was captured via a degraded path; some structure was flattened.",
+            kind: "flattened",
+          },
+        ],
+      }
+    : undefined;
   const destinationChrome = (
     <div className="rennet-glass" data-scheme="dark">
       <DestinationFrame
@@ -360,9 +386,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       ) : null}
       {destinationView === "paper" ? (
         <PublishSheet
-          items={collationItems(draft)}
-          payload={collationPayload(draft)}
+          target={publishTargetForMode}
+          payload={publishTargetPayload(publishTargetForMode)}
           variant={destinationVariantForMode}
+          ledger={publishLedger}
           onBack={() => setDestinationView("draft")}
           onSign={() => {
             setDraft([]);

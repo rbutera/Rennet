@@ -48,16 +48,21 @@ export {
 // The destination (issue #64): the persistent north the review stages toward, the
 // two variants by mode, the staged vocabulary over #17's batch, and the sign gate.
 export type {
+  AttestationCounts,
   BatchDestination,
+  DegradationKind,
   DestinationMode,
   DestinationVariant,
   LedgerEntry,
   PublishLedger,
 } from "./canvas/destination";
 export {
+  bucketLedgerEntries,
   canSign,
   destinationVariant,
   draftsFromWrites,
+  LEDGER_BUCKET_LABEL,
+  LEDGER_BUCKET_ORDER,
   ledgerBlocksSign,
   resolveSign,
   stagedItems,
@@ -66,6 +71,30 @@ export {
 export type { CanvasFeedSource } from "./canvas/feed";
 export { demoCanvases, demoDiff } from "./canvas/fixtures";
 export type { ApprovalScope, DispositionWrite } from "./canvas/logic";
+// The publish target (issue #22): the two context-dependent outbound artifacts a
+// review produces — the own-branch PR submission and the other-pr line-anchored
+// review — both derived from the ONE collation draft. `publishTargetPayload` is the
+// exact bytes the paper previews and signs ("what you see is what leaves", R33).
+export type {
+  LineAnchor,
+  LineAnchors,
+  PrSubmission,
+  PrSubmissionContext,
+  PublishContext,
+  PublishTarget,
+  ReviewComment,
+} from "./canvas/publish";
+export {
+  composePrSubmission,
+  composePrSubmissionBody,
+  prSubmissionPayload,
+  publishTarget,
+  publishTargetPayload,
+  refinedCount,
+  reviewComments,
+  reviewCommentsPayload,
+  targetItemCount,
+} from "./canvas/publish";
 export type { CoverageMosaic, MosaicCell, ReadState, ViewEvent } from "./canvas/read-state";
 export {
   coverageMosaic,

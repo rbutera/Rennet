@@ -1,12 +1,20 @@
 import { useRef, useState } from "react";
 import {
+  bucketLedgerEntries,
   canSign,
   type DestinationVariant,
+  LEDGER_BUCKET_LABEL,
   ledgerBlocksSign,
   type PublishLedger,
   resolveSign,
 } from "../canvas/destination";
 import type { DispositionWrite } from "../canvas/logic";
+import {
+  type PrSubmission,
+  type PublishTarget,
+  type ReviewComment,
+  targetItemCount,
+} from "../canvas/publish";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The PAPER (issue #22 core; NARROWED by R40, issue #101). The ONLY solid object
@@ -15,51 +23,64 @@ import type { DispositionWrite } from "../canvas/logic";
 //
 // R40 narrowing: the paper's ONLY actions are SIGN and BACK. Editing (reword,
 // retype, reorder, merge, split, WITHDRAW) has moved OFF the paper and ONTO the
-// collation draft canvas (issue #101). The old inline `onWithdraw` is GONE — a
-// subset is shipped by withdrawing on the DRAFT first, then signing. Signing is a
-// phase transition: the glass draft crystallises into this paper.
+// collation draft canvas (issue #101). Signing is a phase transition: the glass
+// draft crystallises into this paper.
 //
-// The paper is handed the EXACT outbound bytes (`payload`) and the ordered item
-// list (`items`) it renders — it never re-derives or re-sorts them. So "what you
-// see is what leaves" holds by construction: the previewed `<pre>` and the signed
-// bytes are the SAME `payload` prop, and the ordered list reflects the draft order
-// the user composed (not a path-sort).
+// #22 content: the paper is CONTEXT-DEPENDENT. Handed a `target`, it previews the
+// variant-specific outbound artifact — the PR SUBMISSION (own-branch) or the
+// line-anchored REVIEW (other-pr) — both derived from the one collation draft. The
+// bytes it previews and signs are `payload` == `publishTargetPayload(target)`, so
+// "what you see is what leaves" (R33) holds by construction across BOTH variants.
+// With no `target` it renders the legacy ordered `items` list (the #80 gate tests'
+// path), so the safety mechanics are exercised unchanged.
 //
-// Ratified rulings encoded: publish is all-or-nothing per signing act for v1 (no
-// partial selection here); the sign gate never defaults to APPROVE.
-//
-// The #80 sign-gate mechanics (`resolveSign`, `ledgerBlocksSign`, hold budget,
-// keyboard sign, auto-repeat guard, ledger-swap fail-closed, honesty affordance)
-// are reused UNCHANGED — only the payload SOURCE moved from a batch it re-derived
-// to bytes it is handed. Deferred seams: the real degradation ledger's content
-// (#22/council), three-phase idempotent publish (#22/R17), and the GitHub publish
-// pipeline (#21). This slice performs ZERO Git/GitHub mutation.
+// The paper is handed the EXACT outbound bytes (`payload`) it renders and signs —
+// it never re-derives or re-sorts them. The #80 sign-gate mechanics (`resolveSign`,
+// `ledgerBlocksSign`, hold budget, keyboard sign, auto-repeat guard, ledger-swap
+// fail-closed, honesty affordance) are reused UNCHANGED — only the CONTENT above
+// the gate grew. This slice performs ZERO Git/GitHub mutation: the own-branch PR
+// submission is a PREVIEW; creation is a separate explicit act (#21), and Rennet
+// never pushes source.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function PublishSheet({
-  items,
+  items = [],
   payload,
   variant,
+  target,
   holdToSignMs = 800,
   ledger,
   onSign,
   onBack,
   onClose,
 }: {
-  /** The ordered outbound list, for legibility. Rendered as-given (draft order). */
-  items: DispositionWrite[];
+  /**
+   * The ordered outbound list, for the legacy (no-`target`) render. Rendered
+   * as-given (draft order). When a `target` is present this is ignored — the
+   * variant-specific preview renders instead.
+   */
+  items?: DispositionWrite[];
   /**
    * The EXACT outbound bytes. Previewed verbatim and signed verbatim — the paper
-   * never transforms them, so preview == outbound holds by construction.
+   * never transforms them, so preview == outbound holds by construction. When a
+   * `target` is present this MUST equal `publishTargetPayload(target)`.
    */
   payload: string;
   variant: DestinationVariant;
+  /**
+   * The variant-specific outbound artifact (issue #22): the PR submission
+   * (own-branch) or the line-anchored review (other-pr). Both are derived from the
+   * one collation draft, so the two variants are two framings of one review state.
+   * Absent → the legacy `items` list renders (the #80 gate-test path).
+   */
+  target?: PublishTarget;
   /** Hold budget before a sign is permitted; accessibility floor 0 signs immediately. */
   holdToSignMs?: number;
   /**
-   * The run-degradation ledger (issue #80 / bead idwba). When present with ≥1
-   * entry, EVERY sign path is blocked until the reviewer acknowledges it. Absent
-   * or empty → no gate. #22/council maps real run degradation into this view-model.
+   * The run-degradation ledger (issue #80 gate / #22 content). When present with ≥1
+   * entry, EVERY sign path is blocked until the reviewer acknowledges it. Absent or
+   * empty → no gate. The entries carry #22 `kind`/`detail`/`counts` the sheet
+   * DISPLAYS in buckets; the gate keys only on id + summary (see `ledgerSignature`).
    */
   ledger?: PublishLedger;
   onSign?: (payload: string) => void;
@@ -94,6 +115,10 @@ export function PublishSheet({
     setAckSignature(ledgerSignature);
     setAcknowledged(false);
   }
+
+  // How many dispositions are outbound, for the empty/disabled state. From the
+  // target when present (the true outbound count for the variant), else the list.
+  const itemCount = target ? targetItemCount(target) : items.length;
 
   function beginHold(): void {
     holdStart.current = Date.now();
@@ -135,17 +160,6 @@ export function PublishSheet({
     onSign?.(payload);
   }
 
-  // Stable React keys for a positional, id-less outbound list where two items may
-  // legitimately share a path (a split on the draft). We disambiguate by a per-path
-  // OCCURRENCE counter rather than the array index, so a duplicate-path pair gets
-  // distinct, order-stable keys without leaning on the index the lint rule guards.
-  const seenByPath = new Map<string, number>();
-  const itemKeys = items.map((entry) => {
-    const occurrence = seenByPath.get(entry.path) ?? 0;
-    seenByPath.set(entry.path, occurrence + 1);
-    return { entry, key: `${entry.path}#${occurrence}` };
-  });
-
   return (
     <div className="publish-sheet-backdrop" role="dialog" aria-modal="true" aria-label="Publish">
       <section className="publish-sheet" data-mode={variant.mode}>
@@ -165,26 +179,18 @@ export function PublishSheet({
         </header>
 
         <p className="publish-sheet-lede">
-          {items.length === 0
+          {itemCount === 0
             ? "Nothing collated. Go back to the draft and dispose something first — this paper is what leaves the machine."
-            : `Exactly what will leave the machine: ${items.length} disposition${
-                items.length === 1 ? "" : "s"
-              }, in the order you composed.`}
+            : target?.mode === "own-branch"
+              ? "Exactly what will leave the machine: the pull request this branch submits. Creating it is a separate act — nothing is pushed from here."
+              : `Exactly what will leave the machine: ${itemCount} ${
+                  target ? "review comment" : "disposition"
+                }${itemCount === 1 ? "" : "s"}, in the order you composed.`}
         </p>
 
-        <ol className="publish-sheet-items" aria-label="Outbound artifact">
-          {itemKeys.map(({ entry, key }) => (
-            <li className="publish-sheet-item" data-path={entry.path} key={key}>
-              <span className="publish-sheet-item-type" data-type={entry.type}>
-                {entry.type}
-              </span>
-              <span className="publish-sheet-item-path">{entry.path}</span>
-              <span className="publish-sheet-item-body">
-                {entry.body.trim() === "" ? "(no note)" : entry.body}
-              </span>
-            </li>
-          ))}
-        </ol>
+        {/* The variant-specific outbound preview (issue #22). Both variants are
+            rendered from the one collation draft the `target` was derived from. */}
+        {target ? renderTarget(target) : renderItems(items)}
 
         {/* The exact outbound bytes, machine-readable: previewed bytes == the
             `payload` prop == what `onSign` emits. Rendered so a reviewer (and a
@@ -193,22 +199,49 @@ export function PublishSheet({
           {payload}
         </pre>
 
-        {/* The degradation-ledger sign-gate (issue #80). When the run degraded, the
-            reviewer cannot sign until they acknowledge what degraded — the honesty
-            the paper/glass doctrine demands. Absent/empty ledger → not rendered. */}
+        {/* The degradation-ledger sign-gate (issue #80) + its #22 content. When the
+            run degraded, the reviewer cannot sign until they acknowledge what
+            degraded. Entries are bucketed by kind and the read-vs-attested counts
+            are stated honestly. Absent/empty ledger → not rendered. */}
         {hasLedger ? (
           <fieldset className="publish-sheet-ledger">
             <legend className="publish-sheet-ledger-legend">Run degradations to acknowledge</legend>
             <p className="publish-sheet-ledger-lede">
               This run degraded. Signing is blocked until you acknowledge what happened.
             </p>
-            <ul className="publish-sheet-ledger-entries">
-              {ledgerEntries.map((entry) => (
-                <li className="publish-sheet-ledger-entry" data-ledger-id={entry.id} key={entry.id}>
-                  {entry.summary}
-                </li>
-              ))}
-            </ul>
+            {ledger?.counts ? (
+              <p className="publish-sheet-ledger-counts" data-testid="ledger-counts">
+                {ledger.counts.attested} of {ledger.counts.total} attested · {ledger.counts.read}{" "}
+                read
+              </p>
+            ) : null}
+            {bucketLedgerEntries(ledgerEntries).map((bucket) => (
+              <div
+                className="publish-sheet-ledger-bucket"
+                data-bucket={bucket.kind ?? "other"}
+                key={bucket.kind ?? "other"}
+              >
+                {bucket.kind ? (
+                  <p className="publish-sheet-ledger-bucket-label">
+                    {LEDGER_BUCKET_LABEL[bucket.kind]}
+                  </p>
+                ) : null}
+                <ul className="publish-sheet-ledger-entries">
+                  {bucket.entries.map((entry) => (
+                    <li
+                      className="publish-sheet-ledger-entry"
+                      data-ledger-id={entry.id}
+                      key={entry.id}
+                    >
+                      {entry.summary}
+                      {entry.detail ? (
+                        <span className="publish-sheet-ledger-detail">{entry.detail}</span>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ))}
             <label className="publish-sheet-ack">
               <input
                 type="checkbox"
@@ -252,7 +285,7 @@ export function PublishSheet({
               // Space on the focused control signs. Announce that additively so the
               // "Hold to …" visible label does not mislead AT, without changing it.
               aria-keyshortcuts="Enter Space"
-              disabled={items.length === 0}
+              disabled={itemCount === 0}
               onMouseDown={beginHold}
               onMouseUp={endHold}
               onMouseLeave={() => {
@@ -267,5 +300,129 @@ export function PublishSheet({
         </footer>
       </section>
     </div>
+  );
+}
+
+// ── The legacy ordered list (no `target`) — the #80 gate-test render ─────────
+
+function renderItems(items: DispositionWrite[]) {
+  // Stable React keys for a positional, id-less outbound list where two items may
+  // legitimately share a path (a split on the draft). We disambiguate by a per-path
+  // OCCURRENCE counter rather than the array index.
+  const seenByPath = new Map<string, number>();
+  return (
+    <ol className="publish-sheet-items" aria-label="Outbound artifact">
+      {items.map((entry) => {
+        const occurrence = seenByPath.get(entry.path) ?? 0;
+        seenByPath.set(entry.path, occurrence + 1);
+        return (
+          <li
+            className="publish-sheet-item"
+            data-path={entry.path}
+            key={`${entry.path}#${occurrence}`}
+          >
+            <span className="publish-sheet-item-type" data-type={entry.type}>
+              {entry.type}
+            </span>
+            <span className="publish-sheet-item-path">{entry.path}</span>
+            <span className="publish-sheet-item-body">
+              {entry.body.trim() === "" ? "(no note)" : entry.body}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
+
+// ── The variant-specific outbound preview (issue #22) ────────────────────────
+
+function renderTarget(target: PublishTarget) {
+  return target.mode === "own-branch"
+    ? renderPrSubmission(target.submission)
+    : renderReviewComments(target.comments);
+}
+
+/**
+ * The own-branch PR submission preview: title, base←head, draft state, and the
+ * composed body. This is a PREVIEW of what a later explicit act (#21) would create
+ * — the sheet performs NO Git/GitHub mutation, which is why the composition is a
+ * pure derivation of the draft.
+ */
+function renderPrSubmission(submission: PrSubmission) {
+  return (
+    <div className="publish-sheet-pr" data-testid="pr-submission">
+      <div className="publish-sheet-pr-head">
+        <span className="publish-sheet-pr-state" data-draft={submission.draft}>
+          {submission.draft ? "Draft" : "Ready"}
+        </span>
+        <h3 className="publish-sheet-pr-title">{submission.title}</h3>
+      </div>
+      <p className="publish-sheet-pr-branches" data-testid="pr-branches">
+        <code className="publish-sheet-pr-base">{submission.base}</code>
+        <span aria-hidden="true"> ← </span>
+        <code className="publish-sheet-pr-head-ref">{submission.head}</code>
+      </p>
+      <div className="publish-sheet-pr-body" data-testid="pr-body">
+        {submission.body.trim() === "" ? "(no description)" : submission.body}
+      </div>
+      <p className="publish-sheet-pr-note" role="note">
+        Signing previews the submission. Creating the pull request is a separate act — nothing is
+        pushed from here.
+      </p>
+    </div>
+  );
+}
+
+/**
+ * The other-pr review comments preview: every disposition as a line-anchored
+ * comment (path:line side), in draft order. A comment with no span anchor shows as
+ * a file-level comment, honestly. An unrefined body carries a "raw" marker until
+ * #19's refinement loop lands.
+ */
+function renderReviewComments(comments: readonly ReviewComment[]) {
+  const seenByPath = new Map<string, number>();
+  return (
+    <ol className="publish-sheet-comments" aria-label="Review comments to post">
+      {comments.map((comment) => {
+        const occurrence = seenByPath.get(comment.path) ?? 0;
+        seenByPath.set(comment.path, occurrence + 1);
+        const anchorLabel =
+          comment.line !== undefined ? `${comment.path}:${comment.line}` : `${comment.path}`;
+        return (
+          <li
+            className="publish-sheet-comment"
+            data-path={comment.path}
+            data-line={comment.line ?? "file"}
+            data-side={comment.side}
+            key={`${comment.path}#${occurrence}`}
+          >
+            <span className="publish-sheet-item-type" data-type={comment.type}>
+              {comment.type}
+            </span>
+            <span className="publish-sheet-comment-anchor">
+              {anchorLabel}
+              {comment.line === undefined ? (
+                <span className="publish-sheet-comment-file"> (file)</span>
+              ) : (
+                <span className="publish-sheet-comment-side"> {comment.side}</span>
+              )}
+            </span>
+            {comment.refined ? null : (
+              <span
+                className="publish-sheet-comment-raw"
+                data-testid="comment-raw"
+                title="Raw — the refined form lands with #19"
+              >
+                raw
+              </span>
+            )}
+            <span className="publish-sheet-item-body">
+              {comment.body.trim() === "" ? "(no note)" : comment.body}
+            </span>
+          </li>
+        );
+      })}
+    </ol>
   );
 }
