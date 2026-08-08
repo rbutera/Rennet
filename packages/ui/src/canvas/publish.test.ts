@@ -181,6 +181,24 @@ describe("publishTargetAgrees — the #106 fail-closed check (what you see is wh
     expect(publishTargetAgrees(own, publishTargetPayload(other), "own-branch")).toBe(false);
   });
 
+  it("requires EXACT bytes: a near-match payload (trailing byte, truncation, single-byte flip) DISAGREES", () => {
+    const own = publishTarget("own-branch", draft, context);
+    const canonical = publishTargetPayload(own);
+    // Guards the strict `===` against a SUFFIX-tolerant regression (e.g. a
+    // `canonical.startsWith(payload)` compare): one extra trailing byte is a
+    // different artifact, so it must still fail closed.
+    expect(publishTargetAgrees(own, `${canonical}\n`, "own-branch")).toBe(false);
+    // Guards against a PREFIX-tolerant regression (e.g. `payload.startsWith(canonical)`
+    // or a `.includes(...)`): dropping the final byte is a different artifact even
+    // though it is a prefix of the canonical bytes.
+    expect(publishTargetAgrees(own, canonical.slice(0, -1), "own-branch")).toBe(false);
+    // Guards against a substring/loose compare: a single-byte substitution at the
+    // end (same length, one byte different) is a different artifact.
+    const flipped = `${canonical.slice(0, -1)}${canonical.at(-1) === "X" ? "Y" : "X"}`;
+    expect(flipped).not.toBe(canonical);
+    expect(publishTargetAgrees(own, flipped, "own-branch")).toBe(false);
+  });
+
   it("DISAGREES when the variant mode does not match the target's mode", () => {
     const own = publishTarget("own-branch", draft, context);
     // Right bytes, wrong frame: the sheet is labelled other-pr while rendering an
