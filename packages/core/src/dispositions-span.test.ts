@@ -428,6 +428,53 @@ describe("ReviewService.setDisposition authors span anchors (issue #78)", () => 
     ).toThrow("out of bounds");
   });
 
+  // A span disposition authored over a TRUNCATED active patch is the authoring-side
+  // twin of workspace-girqg Finding A: visible() caps the patch at 256 KiB and may
+  // cut mid-line, so extractSpanText reads the truncated prefix as a COMPLETE line.
+  // A spanDigest minted here could later match a complete, shortened successor whose
+  // real line equals that prefix — a stale disposition would carry (fail-open). The
+  // gate refuses to author over content past the cut; neutralizing it (removing the
+  // patchTruncated check) reds this test, because extractSpanText happily returns the
+  // truncated-prefix line and the disposition is authored (issue workspace-u0zoc).
+  it("fails closed: refuses a span disposition authored over a truncated patch (issue workspace-u0zoc)", async () => {
+    const truncated = `@@ -1,3 +1,3 @@\n keep1\n+span2\n+tail line whose real content is unknowable past the cut\n\n${DIFF_TRUNCATION_MARKER}`;
+    const { service, review } = await seed(truncated);
+    expect(() =>
+      service.setDisposition(
+        "66666666-6666-6666-6666-666666666666",
+        review.id,
+        review.activePatchsetId,
+        "a.ts",
+        "comment",
+        "",
+        { startLine: 3 },
+        "additions",
+      ),
+    ).toThrow("truncated");
+  });
+
+  // The gate is truncation-SPECIFIC (endsWith the terminal `\n\n<marker>`, never a
+  // bare includes): a COMPLETE patch whose body merely mentions the marker text is
+  // not truncated and must still author normally — the authoring-side mirror of the
+  // carry path's "does not over-drop" guard (issue workspace-u0zoc / workspace-girqg).
+  it("does not over-throw: a complete patch whose body merely CONTAINS the marker text still authors a span", async () => {
+    const markerInBody = `@@ -1,1 +1,2 @@\n keep1\n+const M = "${DIFF_TRUNCATION_MARKER}";`;
+    const { service, review } = await seed(markerInBody);
+    const after = service.setDisposition(
+      "77777777-7777-7777-7777-777777777777",
+      review.id,
+      review.activePatchsetId,
+      "a.ts",
+      "comment",
+      "note",
+      { startLine: 2 },
+      "additions",
+    );
+    const anchor = after.dispositions[0]?.anchor;
+    expect(anchor?.span).toEqual({ startLine: 2 });
+    expect(anchor?.spanDigest).toBe(digest(`const M = "${DIFF_TRUNCATION_MARKER}";`));
+  });
+
   it("errors when a span is supplied without a side", async () => {
     const { service, review } = await seed(PATCH_A);
     expect(() =>
