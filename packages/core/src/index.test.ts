@@ -1,4 +1,10 @@
-import type { Disposition, PatchFile, Patchset, Review } from "@rennet/types";
+import {
+  DIFF_TRUNCATION_MARKER,
+  type Disposition,
+  type PatchFile,
+  type Patchset,
+  type Review,
+} from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { fileContentDigest, foldReview, payloadDigest, type ReviewEvent } from "./index";
 
@@ -164,6 +170,162 @@ describe("review fold", () => {
       patchset: patchsetOf("patch-2", [file("a.ts", "X"), file("b.ts", "Y")]),
     });
     expect(activated.dispositions).toHaveLength(2);
+  });
+
+  // --- issue workspace-ndyv4 item 2: the fail-closed carry over a LOSSY patch ---
+  // The capture layer caps a per-file patch at 256 KiB (visible()) and renders
+  // untracked binaries content-free. `fileContentDigest` hashes that lossy patch,
+  // so two files identical in their first 256 KiB (or two different binary
+  // contents at one path) share a digest and a stale disposition wrongly carries.
+  // A lossy successor patch must fail closed: drop → re-review.
+
+  // A patch truncated by visible(): identical visible head, but the tail beyond
+  // the cap is unknowable, so the trailing marker is present.
+  const truncatedPatch = `diff --git a/big.bin b/big.bin\n@@ -1 +1 @@\n+identical first 256 KiB of a very large file\n\n${DIFF_TRUNCATION_MARKER}`;
+
+  // A content-free binary diff (untracked binary): git emits no bytes and no
+  // `GIT binary patch` body, so the patch text is the same for ANY content.
+  function binaryFile(path: string, patch: string): PatchFile {
+    return { path, status: "added", additions: null, deletions: null, binary: true, patch };
+  }
+  function withDispositionOn(review: Review, target: PatchFile, type: Disposition["type"]): Review {
+    const disposition: Disposition = {
+      anchor: { path: target.path, contentDigest: fileContentDigest(target) },
+      type,
+      body: "",
+    };
+    return foldReview(review, {
+      type: "DispositionSet",
+      version: 1,
+      reviewId: review.id,
+      patchsetId: review.activePatchsetId,
+      disposition,
+    });
+  }
+
+  it("fails closed: drops a path-grained disposition when the successor patch is truncated past the 256 KiB cap", () => {
+    // Byte-identical truncated patch in both patchsets → hashes match, so the OLD
+    // (hash-the-truncated-patch) code carries. The real file may differ beyond the
+    // cap; the digest cannot prove otherwise, so fail closed and re-review.
+    const review = withDisposition(
+      created(patchsetOf("patch-1", [file("big.bin", truncatedPatch)])),
+      "big.bin",
+      truncatedPatch,
+      "approve",
+    );
+    const activated = foldReview(review, {
+      type: "PatchsetActivated",
+      version: 1,
+      reviewId: review.id,
+      patchset: patchsetOf("patch-2", [file("big.bin", truncatedPatch)]),
+    });
+    expect(activated.dispositions).toEqual([]);
+  });
+
+  it("fails closed: drops a path-grained disposition on a content-free binary diff (no obtainable content hash)", () => {
+    const contentFreeBinary = binaryFile(
+      "logo.png",
+      'diff --git "a/logo.png" "b/logo.png"\nnew file mode 100644\nBinary files /dev/null and "b/logo.png" differ\n',
+    );
+    const authored = withDispositionOn(
+      created(patchsetOf("patch-1", [contentFreeBinary])),
+      contentFreeBinary,
+      "approve",
+    );
+    // Same content-free patch text again (a DIFFERENT image would render identically):
+    // the OLD code carries; the digest verifies nothing, so fail closed.
+    const activated = foldReview(authored, {
+      type: "PatchsetActivated",
+      version: 1,
+      reviewId: authored.id,
+      patchset: patchsetOf("patch-2", [contentFreeBinary]),
+    });
+    expect(activated.dispositions).toEqual([]);
+  });
+
+  it("does not over-drop: a small unchanged file (untruncated patch) still carries", () => {
+    const review = withDisposition(
+      created(patchsetOf("patch-1", [file("small.ts", "unchanged body")])),
+      "small.ts",
+      "unchanged body",
+      "approve",
+    );
+    const activated = foldReview(review, {
+      type: "PatchsetActivated",
+      version: 1,
+      reviewId: review.id,
+      patchset: patchsetOf("patch-2", [file("small.ts", "unchanged body")]),
+    });
+    expect(activated.dispositions.map((disposition) => disposition.anchor.path)).toEqual([
+      "small.ts",
+    ]);
+  });
+
+  it("does not over-drop: a small complete patch whose CONTENT contains the marker text still carries", () => {
+    // The certification test matches the producer's terminal `\n\n<marker>`, not
+    // a bare substring — so a legitimate small patch that merely mentions the
+    // marker in its body (e.g. this repo's own declaration of it) must carry.
+    const patchWithMarkerInBody = `diff --git a/marker.ts b/marker.ts\n@@ -1 +1 @@\n+export const M = "${DIFF_TRUNCATION_MARKER}";\n`;
+    const review = withDisposition(
+      created(patchsetOf("patch-1", [file("marker.ts", patchWithMarkerInBody)])),
+      "marker.ts",
+      patchWithMarkerInBody,
+      "approve",
+    );
+    const activated = foldReview(review, {
+      type: "PatchsetActivated",
+      version: 1,
+      reviewId: review.id,
+      patchset: patchsetOf("patch-2", [file("marker.ts", patchWithMarkerInBody)]),
+    });
+    expect(activated.dispositions.map((disposition) => disposition.anchor.path)).toEqual([
+      "marker.ts",
+    ]);
+  });
+
+  it("fails closed: a content-free binary whose FILENAME contains 'GIT binary patch' does not spoof certification", () => {
+    // The phrase appears in the content-free `diff --git`/`Binary files` header
+    // lines, but never as a standalone `\nGIT binary patch\n` body — so the patch
+    // certifies nothing and a byte-identical successor must still drop.
+    const spoofBinary = binaryFile(
+      "GIT binary patch.png",
+      'diff --git "a/GIT binary patch.png" "b/GIT binary patch.png"\nnew file mode 100644\nBinary files /dev/null and "b/GIT binary patch.png" differ\n',
+    );
+    const authored = withDispositionOn(
+      created(patchsetOf("patch-1", [spoofBinary])),
+      spoofBinary,
+      "approve",
+    );
+    const activated = foldReview(authored, {
+      type: "PatchsetActivated",
+      version: 1,
+      reviewId: authored.id,
+      patchset: patchsetOf("patch-2", [spoofBinary]),
+    });
+    expect(activated.dispositions).toEqual([]);
+  });
+
+  it("does not over-drop: a tracked binary with an embedded GIT binary patch body carries", () => {
+    // A real `GIT binary patch` body (header on its own line + encoded bytes) DOES
+    // certify content — an unchanged tracked binary must carry as before.
+    const trackedBinary = binaryFile(
+      "icon.png",
+      "diff --git a/icon.png b/icon.png\nindex 0000000..1111111 100644\nGIT binary patch\nliteral 8\nzcmZQ$0000\n\n",
+    );
+    const authored = withDispositionOn(
+      created(patchsetOf("patch-1", [trackedBinary])),
+      trackedBinary,
+      "approve",
+    );
+    const activated = foldReview(authored, {
+      type: "PatchsetActivated",
+      version: 1,
+      reviewId: authored.id,
+      patchset: patchsetOf("patch-2", [trackedBinary]),
+    });
+    expect(activated.dispositions.map((disposition) => disposition.anchor.path)).toEqual([
+      "icon.png",
+    ]);
   });
 
   it("preserves the visible patchset and dispositions when a review is invalidated", () => {

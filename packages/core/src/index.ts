@@ -1,17 +1,18 @@
 import { createHash } from "node:crypto";
-import type {
-  AnchorSide,
-  AnchorSpan,
-  Disposition,
-  DispositionAnchor,
-  DispositionRelevanceJudge,
-  DispositionType,
-  PatchFile,
-  Patchset,
-  PublishThread,
-  RelevanceCandidate,
-  RelevanceVerdict,
-  Review,
+import {
+  type AnchorSide,
+  type AnchorSpan,
+  DIFF_TRUNCATION_MARKER,
+  type Disposition,
+  type DispositionAnchor,
+  type DispositionRelevanceJudge,
+  type DispositionType,
+  type PatchFile,
+  type Patchset,
+  type PublishThread,
+  type RelevanceCandidate,
+  type RelevanceVerdict,
+  type Review,
 } from "@rennet/types";
 import { v7 as uuidv7 } from "uuid";
 
@@ -96,6 +97,46 @@ function exhaustive(value: never): never {
  */
 export function fileContentDigest(file: PatchFile): string {
   return createHash("sha256").update(file.patch).digest("hex");
+}
+
+/**
+ * Whether `file.patch` fully certifies the file's content, so that hashing it
+ * (`fileContentDigest`) yields a trustworthy content identity. The capture layer
+ * makes `patch` LOSSY in two ways, and in both a `fileContentDigest` match no
+ * longer proves the file is unchanged (issue workspace-ndyv4, item 2):
+ *
+ *  - TRUNCATED: `visible()` caps a patch at 256 KiB and appends
+ *    `DIFF_TRUNCATION_MARKER`. Two files identical in their first 256 KiB but
+ *    differing beyond it produce the same truncated patch, hence the same
+ *    digest — a real change past the cap would wrongly carry.
+ *  - CONTENT-FREE BINARY: an untracked binary (and any binary in a range diff
+ *    captured without `--binary`) renders as `Binary files … differ` with no
+ *    embedded bytes and no `GIT binary patch` body, so ANY two binary contents
+ *    at that path share a digest.
+ *
+ * Returning false here makes the path-grained carry fail closed: the disposition
+ * drops and the file is re-reviewed (or offered to the relevance judge), rather
+ * than a stale review silently surviving a content change we cannot verify. A
+ * complete patch (a small unchanged file, or a tracked binary whose bytes ARE
+ * embedded) returns true and carries as before — no over-drop.
+ *
+ * Both tests match the producer's exact STRUCTURAL framing, never a loose
+ * substring, so ordinary patch content cannot spoof either signal:
+ *  - `visible()` appends the marker as the patch's terminal `\n\n<marker>`, so
+ *    we test `endsWith`, not `includes` — a source line that merely contains the
+ *    marker text (e.g. this repo's own declaration of it) is a complete patch and
+ *    must still carry.
+ *  - a real `GIT binary patch` body is a header on its OWN line, so we test for
+ *    `\nGIT binary patch\n` — a filename such as `GIT binary patch.png` puts the
+ *    phrase in the content-free `diff --git`/`Binary files` lines but never as a
+ *    standalone header line, so it stays (correctly) uncertified.
+ */
+const DIFF_TRUNCATION_SUFFIX = `\n\n${DIFF_TRUNCATION_MARKER}`;
+const GIT_BINARY_PATCH_HEADER = "\nGIT binary patch\n";
+function patchCertifiesContent(file: PatchFile): boolean {
+  if (file.patch.endsWith(DIFF_TRUNCATION_SUFFIX)) return false;
+  if (file.binary && !file.patch.includes(GIT_BINARY_PATCH_HEADER)) return false;
+  return true;
 }
 
 function sha256Hex(text: string): string {
@@ -192,6 +233,12 @@ function anchorCarries(anchor: DispositionAnchor, file: PatchFile | undefined): 
     const text = extractSpanText(file, anchor.span, anchor.side);
     return text !== undefined && sha256Hex(text) === anchor.spanDigest;
   }
+  // Path-grained: a byte-identical whole file carries — but only when the patch
+  // fully certifies the content. A lossy patch (truncated past 256 KiB, or a
+  // content-free binary diff) has a digest that cannot prove the tail is
+  // unchanged, so it fails closed and re-reviews rather than carrying a stale
+  // disposition over content we cannot see (issue workspace-ndyv4, item 2).
+  if (!patchCertifiesContent(file)) return false;
   return fileContentDigest(file) === anchor.contentDigest;
 }
 
