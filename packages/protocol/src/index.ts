@@ -271,6 +271,15 @@ export const commandDefinitions = {
       commandId: commandIdSchema,
       reviewId: z.string().min(1),
       repoPath: z.string().min(1),
+      // The #58/#103 one-shot harness-run consent (bead workspace-j98dt). The
+      // renderer sets this `true` when the harness run is permitted for THIS run
+      // (the user consented under `manual`, or the mode does not ask). Absent or
+      // `false` ⇒ no consent. The MAIN process resolves the effective mode from
+      // the persisted workspace default (the authority) and refuses to invoke the
+      // harness when that mode asks and this signal is not `true` — so the vital
+      // model-spend circuit is enforced at the boundary where the spend happens,
+      // not only in the renderer (Rule 75: no single fault clears it).
+      consent: z.boolean().optional(),
     }),
     // `elementDiffs` (issue #60): the real per-element diff map delivered with the
     // canvas set so zooming into an element shows real code, not the fixture.

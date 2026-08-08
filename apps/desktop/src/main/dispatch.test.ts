@@ -201,6 +201,9 @@ describe("createDispatch — canvas.* routing (issue #54)", () => {
       commandId: randomUUID(),
       reviewId: review.id,
       repoPath: REPO,
+      // The default mode is `manual`, which asks: the renderer carries the
+      // one-shot consent (#58/#103, bead workspace-j98dt) for a permitted run.
+      consent: true,
     })) as {
       canvases: Record<CanvasAngle, Canvas>;
       elementDiffs: Record<string, { path: string; diff: string }>;
@@ -267,5 +270,105 @@ describe("createDispatch — permission-mode settings (issue #103)", () => {
     await expect(dispatch("settings.setPermissionMode", { mode: "yolo" })).rejects.toThrow();
     // A rejected write must not mutate the store.
     expect(settings.permissionMode()).toBe("manual");
+  });
+});
+
+describe("createDispatch — review.canvases harness-run consent gate (#58/#103, bead workspace-j98dt)", () => {
+  // The vital circuit: the harness run (model spend) must be gated at the MAIN
+  // boundary, resolving the effective mode from the persisted WORKSPACE store —
+  // not only in the renderer. These tests pin the gate to exactly
+  // manual-without-consent: they go RED if the guard is removed (manual + no
+  // consent would then invoke the harness) AND if the gate over-blocks
+  // (auto/bypass would then be refused).
+
+  it("refuses the harness run under manual mode with NO consent (buildCanvases never called)", async () => {
+    const { dispatch, buildCanvases, settings } = harness();
+    settings.setPermissionMode("manual"); // explicit; also the safe default
+    const review = await capturedReview(dispatch);
+
+    await expect(
+      dispatch("review.canvases", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        repoPath: REPO,
+      }),
+    ).rejects.toThrow(/consent/i);
+    // The model turn must not have run: the gate lives BEFORE buildCanvases.
+    expect(buildCanvases).not.toHaveBeenCalled();
+  });
+
+  it("also refuses when consent is explicitly false under manual mode", async () => {
+    const { dispatch, buildCanvases } = harness();
+    const review = await capturedReview(dispatch);
+
+    await expect(
+      dispatch("review.canvases", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        repoPath: REPO,
+        consent: false,
+      }),
+    ).rejects.toThrow(/consent/i);
+    expect(buildCanvases).not.toHaveBeenCalled();
+  });
+
+  it("runs the harness under manual mode WITH a one-shot consent", async () => {
+    const { dispatch, buildCanvases } = harness();
+    const review = await capturedReview(dispatch);
+
+    const result = (await dispatch("review.canvases", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      repoPath: REPO,
+      consent: true,
+    })) as { canvases: Record<CanvasAngle, Canvas> };
+
+    expect(buildCanvases).toHaveBeenCalledTimes(1);
+    expect(Object.keys(result.canvases).sort()).toEqual([...CANVAS_ANGLES].sort());
+  });
+
+  it("runs the harness under auto mode without consent (the mode allows)", async () => {
+    const { dispatch, buildCanvases, settings } = harness();
+    settings.setPermissionMode("auto");
+    const review = await capturedReview(dispatch);
+
+    await dispatch("review.canvases", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      repoPath: REPO,
+    });
+    expect(buildCanvases).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs the harness under bypass mode without consent", async () => {
+    const { dispatch, buildCanvases, settings } = harness();
+    settings.setPermissionMode("bypass");
+    const review = await capturedReview(dispatch);
+
+    await dispatch("review.canvases", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      repoPath: REPO,
+    });
+    expect(buildCanvases).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves the effective mode from the WORKSPACE store, not a renderer-supplied value", async () => {
+    // Enforcement authority is the persisted workspace mode. Even though the
+    // input carries no mode field, flipping the store to `manual` (ask) blocks a
+    // run that `auto` would have allowed — proving the main reads the store, so a
+    // crafted IPC cannot smuggle a laxer mode.
+    const { dispatch, buildCanvases, settings } = harness();
+    settings.setPermissionMode("manual");
+    const review = await capturedReview(dispatch);
+
+    await expect(
+      dispatch("review.canvases", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        repoPath: REPO,
+      }),
+    ).rejects.toThrow(/consent/i);
+    expect(buildCanvases).not.toHaveBeenCalled();
   });
 });
