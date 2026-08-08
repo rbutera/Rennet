@@ -64,6 +64,21 @@ export function PublishSheet({
   const [acknowledged, setAcknowledged] = useState(false);
   const ledgerEntries = ledger?.entries ?? [];
   const hasLedger = ledgerEntries.length > 0;
+  // Fail-closed on a ledger swap. `acknowledged` is component-lifetime state, so if
+  // the run degradations change while the sheet stays mounted (a #22/council re-run
+  // maps a NEW degradation set into `ledger`), a prior acknowledgement would carry
+  // over and authorize signing the new, UNacknowledged set — the exact bypass the
+  // gate exists to stop. Track the stable entry-id SIGNATURE (not object identity,
+  // which an un-memoized host would change every render, resetting the ack on every
+  // keystroke and defeating the gate the other way) and reset the ack the render a
+  // genuinely-new entry set arrives. This is React's "adjust state when a prop
+  // changes" pattern: synchronous during render, so the gate re-arms with no flash.
+  const ledgerSignature = ledgerEntries.map((entry) => entry.id).join(" ");
+  const [ackSignature, setAckSignature] = useState(ledgerSignature);
+  if (ledgerSignature !== ackSignature) {
+    setAckSignature(ledgerSignature);
+    setAcknowledged(false);
+  }
 
   function beginHold(): void {
     holdStart.current = Date.now();
@@ -87,7 +102,7 @@ export function PublishSheet({
     if (outbound !== null) onSign?.(outbound);
   }
 
-  function signByKeyboard(event: { key: string; preventDefault(): void }): void {
+  function signByKeyboard(event: { key: string; repeat?: boolean; preventDefault(): void }): void {
     // Keyboard accessibility (issue #80): an explicit Enter/Space activation of the
     // focused sign control IS the deliberate act — the keyboard equivalent of
     // clearing the pointer hold — so it signs at ANY hold budget, resolving the
@@ -96,6 +111,11 @@ export function PublishSheet({
     // intentional keypress on the focused control. It routes through the SAME
     // degradation gate and emits EXACTLY the previewed bytes (never a transform).
     if (event.key !== "Enter" && event.key !== " ") return;
+    // Ignore keyboard auto-repeat: a HELD Enter/Space emits a stream of repeat
+    // keydowns, and without this guard each one calls onSign again — a repeated
+    // publish once #21 makes the sign a real Git/GitHub mutation. Only the first,
+    // non-repeat activation is the deliberate act.
+    if (event.repeat) return;
     event.preventDefault();
     if (ledgerBlocksSign(ledger, acknowledged)) return;
     onSign?.(payload);
@@ -207,6 +227,10 @@ export function PublishSheet({
             type="button"
             className={`publish-sheet-sign ${armed ? "is-arming" : ""}`}
             data-hold-ms={holdToSignMs}
+            // A pointer user holds; a keyboard/AT user does not — a single Enter or
+            // Space on the focused control signs. Announce that additively so the
+            // "Hold to …" visible label does not mislead AT, without changing it.
+            aria-keyshortcuts="Enter Space"
             disabled={items.length === 0}
             onMouseDown={beginHold}
             onMouseUp={endHold}

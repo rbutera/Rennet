@@ -139,7 +139,7 @@ describe("ledger gate: unacknowledged degradations block signing", () => {
     expect(signed[0]).toBe(stagedPayload(batch));
   });
 
-  it("lists the ledger entries so the reviewer sees what degraded", () => {
+  it("renders each entry's human-readable summary so the reviewer SEES what degraded", () => {
     const { container } = mount(
       <PublishSheet
         batch={stage(...writes)}
@@ -147,7 +147,13 @@ describe("ledger gate: unacknowledged degradations block signing", () => {
         ledger={ledger}
       />,
     );
-    expect(container.querySelector('[data-ledger-id="sec-skipped"]')).not.toBeNull();
+    const entry = ledger.entries[0];
+    if (!entry) throw new Error("the ledger fixture must carry at least one entry");
+    // Structure alone (the id attribute) is not the safety property — the reviewer
+    // must SEE the degradation before acknowledging it. Removing the visible
+    // `{entry.summary}` from the render (leaving the id) reddens the text assertion.
+    expect(container.querySelector(`[data-ledger-id="${entry.id}"]`)).not.toBeNull();
+    expect(container.textContent).toContain(entry.summary);
   });
 });
 
@@ -206,11 +212,12 @@ describe("keyboard sign (a11y): Enter/Space on the focused control signs deliber
     expect(signed).toHaveLength(0);
   });
 
-  it("keyboard sign respects the ledger gate: Enter does NOT sign with an unacknowledged ledger", () => {
+  it("keyboard ledger gate: Enter is blocked unacknowledged, then signs once acknowledged", () => {
+    const batch = stage(...writes);
     const signed: string[] = [];
     const { container } = mount(
       <PublishSheet
-        batch={stage(...writes)}
+        batch={batch}
         variant={destinationVariant("own-branch")}
         ledger={ledger}
         onSign={(payload) => signed.push(payload)}
@@ -218,8 +225,99 @@ describe("keyboard sign (a11y): Enter/Space on the focused control signs deliber
     );
     const button = signButton(container);
     button.focus();
+
+    // Unacknowledged: Enter is blocked.
     fireEvent.keyDown(button, { key: "Enter" });
     expect(signed).toHaveLength(0);
+
+    // Acknowledge, then Enter signs exactly once, byte-equal. Proves the gate
+    // REOPENS — a mutation that permanently blocked keyboard signing whenever any
+    // ledger exists would pass the block-only assertion but fail this one.
+    const ack = container.querySelector<HTMLInputElement>(".publish-sheet-ack-box");
+    if (!ack) throw new Error("the acknowledge control did not render for a non-empty ledger");
+    fireEvent.click(ack);
+
+    fireEvent.keyDown(button, { key: "Enter" });
+    expect(signed).toHaveLength(1);
+    expect(signed[0]).toBe(stagedPayload(batch));
+  });
+});
+
+describe("ledger swap fail-closed: a changed ledger re-blocks a prior acknowledgement", () => {
+  it("acknowledging ledger A does NOT authorize signing a different ledger B", () => {
+    const batch = stage(...writes);
+    const signed: string[] = [];
+    const ledgerA: PublishLedger = { entries: [{ id: "a-skipped", summary: "Angle A skipped" }] };
+    const ledgerB: PublishLedger = { entries: [{ id: "b-skipped", summary: "Angle B skipped" }] };
+    const { container, rerender } = mount(
+      <PublishSheet
+        batch={batch}
+        variant={destinationVariant("other-pr")}
+        ledger={ledgerA}
+        onSign={(payload) => signed.push(payload)}
+      />,
+    );
+
+    // Acknowledge A, then a sufficient hold signs.
+    const ackA = container.querySelector<HTMLInputElement>(".publish-sheet-ack-box");
+    if (!ackA) throw new Error("the acknowledge control did not render for ledger A");
+    fireEvent.click(ackA);
+    pointerHold(signButton(container), 850);
+    expect(signed).toHaveLength(1);
+
+    // The ledger swaps to a DIFFERENT degradation set while the sheet stays mounted
+    // (a #22/council re-run). The prior acknowledgement must NOT carry over.
+    rerender(
+      <PublishSheet
+        batch={batch}
+        variant={destinationVariant("other-pr")}
+        ledger={ledgerB}
+        onSign={(payload) => signed.push(payload)}
+      />,
+    );
+
+    // Re-blocked on BOTH sign paths — no new sign. Without the ledger-signature
+    // reset, `acknowledged` carries over from A and the hold signs → red here.
+    const button = signButton(container);
+    pointerHold(button, 850);
+    button.focus();
+    fireEvent.keyDown(button, { key: "Enter" });
+    expect(signed).toHaveLength(1);
+
+    // Acknowledging B reopens both paths, byte-equal.
+    const ackB = container.querySelector<HTMLInputElement>(".publish-sheet-ack-box");
+    if (!ackB) throw new Error("the acknowledge control did not render for ledger B");
+    fireEvent.click(ackB);
+    pointerHold(button, 850);
+    fireEvent.keyDown(button, { key: "Enter" });
+    expect(signed).toHaveLength(3);
+    expect(signed[1]).toBe(stagedPayload(batch));
+    expect(signed[2]).toBe(stagedPayload(batch));
+  });
+});
+
+describe("keyboard auto-repeat: a held sign key fires onSign only once", () => {
+  it("a repeat keydown does not re-fire onSign", () => {
+    const batch = stage(...writes);
+    const signed: string[] = [];
+    const { container } = mount(
+      <PublishSheet
+        batch={batch}
+        variant={destinationVariant("own-branch")}
+        onSign={(payload) => signed.push(payload)}
+      />,
+    );
+    const button = signButton(container);
+    button.focus();
+
+    // First activation signs; the auto-repeat keydown (repeat:true) from a HELD key
+    // must be ignored, or #21's real publish double-fires. Without the event.repeat
+    // guard this is length 2 → red.
+    fireEvent.keyDown(button, { key: "Enter" });
+    fireEvent.keyDown(button, { key: "Enter", repeat: true });
+
+    expect(signed).toHaveLength(1);
+    expect(signed[0]).toBe(stagedPayload(batch));
   });
 });
 

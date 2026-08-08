@@ -26,3 +26,11 @@
 - [x] 5.1 `pnpm check` green (typecheck via nx/real tsc, NOT bare `tsc`/tsgo; lint; all UI tests)
 - [x] 5.2 Hand-prove EACH safety test red (neuter invariant → named test reddens → restore byte-identical → full GREEN pass); record the mutation used per test in the PR body
 - [x] 5.3 Confirm `layer:ui` boundary intact (no `@rennet/core` import); no new dependency; `architecture`/`licenses` gates untouched
+
+## 6. Dual-review fix loop (Codex + Opus findings)
+
+- [x] 6.1 **Stale-ack bypass (P1, both reviewers):** `acknowledged` is component-lifetime state, so swapping `ledger` to a new degradation set while mounted carried the prior ack over and authorized signing the un-acknowledged set. Reset `acknowledged` to false on the stable entry-id signature via `useEffect` (fail-closed; not object identity). New mounted `rerender` test proves BOTH pointer-hold and Enter re-block after the swap and reopen on re-ack. RED-proof: remove the reset → the swap test signs through.
+- [x] 6.2 **Vacuous "sees what degraded" test (Codex P1):** the entries test asserted only `data-ledger-id`, so dropping the visible `{entry.summary}` stayed green. Test now asserts the exact `entry.summary` text is rendered. RED-proof: remove `{entry.summary}` → reddens.
+- [x] 6.3 **Keyboard ledger coverage proved blocking, never REOPENING (Codex P2):** extended the keyboard ledger test to acknowledge-then-Enter and assert one byte-equal `onSign`. A permanent keyboard block would now fail.
+- [x] 6.4 **Keyboard auto-repeat double-fire (Opus LOW):** a held Enter/Space emitted repeat keydowns, each calling `onSign` (a double-publish once #21 is real). Early-return on `event.repeat`. New test: two Enter keydowns, second `repeat:true`, asserts `onSign` fires once. RED-proof: remove the guard → two calls.
+- [x] 6.5 **Label a11y hint (Opus NIT):** added `aria-keyshortcuts="Enter Space"` to the sign button — additive, no visible-label change, no existing assertion touched.
