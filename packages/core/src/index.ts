@@ -242,6 +242,9 @@ function reanchor(
   reAnchor: DispositionAnchor,
   fileByPath: ReadonlyMap<string, PatchFile>,
 ): Disposition | null {
+  // A partial span/side re-anchor is malformed → fail-closed (never silently
+  // degrade a span re-anchor to a file-level anchor).
+  if ((reAnchor.span === undefined) !== (reAnchor.side === undefined)) return null;
   const file = fileByPath.get(reAnchor.path);
   if (!file) return null;
   if (reAnchor.span && reAnchor.side) {
@@ -279,13 +282,14 @@ function applyVerdicts(
     const verdict = verdicts[index];
     if (!candidate || !verdict?.carry) continue;
     const original = candidate.disposition;
-    if (verdict.reAnchor) {
-      const reAnchored = reanchor(original, verdict.reAnchor, fileByPath);
-      if (reAnchored === null) continue; // fail-closed: a bad re-anchor is dropped
-      carried.push(reAnchored);
-    } else {
-      carried.push(original);
-    }
+    // A carry-true verdict ALWAYS re-validates against `next` (fail-closed):
+    // re-anchor to the verdict's target when supplied, else re-validate the
+    // ORIGINAL anchor in place (re-digested from `next`). A gone file or an
+    // out-of-bounds span drops — never keep a stale anchor pointing at content
+    // that no longer exists.
+    const reAnchored = reanchor(original, verdict.reAnchor ?? original.anchor, fileByPath);
+    if (reAnchored === null) continue; // fail-closed: a bad re-anchor is dropped
+    carried.push(reAnchored);
     carriedIndices.add(index);
   }
   return { carried, carriedIndices };
@@ -294,8 +298,9 @@ function applyVerdicts(
 /**
  * Apply the judge's verdicts to the dropped candidates (issue #78). Pure. A
  * `carry: true` verdict re-attaches the disposition, re-anchored to the
- * verdict's span/path when supplied (with `spanDigest` recomputed from `next`);
- * an out-of-bounds re-anchor is DROPPED, never attached (fail-closed).
+ * verdict's span/path when supplied, else re-validated at its ORIGINAL anchor;
+ * in both cases `spanDigest` is recomputed from `next` and a gone file, an
+ * out-of-bounds span, or a malformed re-anchor is DROPPED (fail-closed).
  */
 export function applyRelevanceVerdicts(
   candidates: RelevanceCandidate[],

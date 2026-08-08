@@ -97,7 +97,12 @@ export const JOB_CATALOGUE: Readonly<Record<CouncilJobId, CouncilJob>> = Object.
         // Issue #78: bounded inference (handed the prior disposition + the
         // successor patch, never fetches code it was not given) — light tier,
         // sibling to disposition-triage; the ruling's "medium model" is the
-        // effort knob, not the tier. Budget gate covered by resolveAssignment.
+        // effort knob, not the tier. This table only ROUTES the job: the live
+        // budget gate is enforced by the caller consuming the shared
+        // InvocationBudget before each turn (as the decomposition/ordering
+        // runners do), NOT by resolveAssignment. The concrete relevance judge is
+        // a dormant port today (no live caller); wiring it to consume the budget
+        // is follow-on work.
         job(
           "disposition-relevance-judge",
           "light",

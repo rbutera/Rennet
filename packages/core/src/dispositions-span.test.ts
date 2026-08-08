@@ -137,6 +137,23 @@ describe("extractSpanText (issue #78)", () => {
     // pre-image at all (the pre-image is keep1/keep4 at old lines 1/2).
     expect(extractSpanText(file("a.ts", PATCH_A), { startLine: 3 }, "deletions")).toBeUndefined();
   });
+
+  // Reddening (counter independence): all other fixtures start at `-1 +1`, so a
+  // mutation initialising newLine from the OLD-file start would leave them green.
+  // A divergent hunk asserts the pre-image (old) and post-image (new) counters
+  // walk independently.
+  it("walks divergent hunk line numbers on independent old/new counters", () => {
+    // @@ -10,4 +20,5 @@  interleaved context/del/add. Post-image (new) lines:
+    // 20=ctxA 21=newB 22=newC 23=ctxD 24=newE. Pre-image (old): 10=ctxA 11=oldB
+    // 12=ctxD 13=oldE.
+    const f = file("a.ts", "@@ -10,4 +20,5 @@\n ctxA\n-oldB\n+newB\n+newC\n ctxD\n-oldE\n+newE");
+    expect(extractSpanText(f, { startLine: 21, endLine: 22 }, "additions")).toBe("newB\nnewC");
+    expect(extractSpanText(f, { startLine: 20, endLine: 24 }, "context")).toBe(
+      "ctxA\nnewB\nnewC\nctxD\nnewE",
+    );
+    expect(extractSpanText(f, { startLine: 11 }, "deletions")).toBe("oldB");
+    expect(extractSpanText(f, { startLine: 13 }, "deletions")).toBe("oldE");
+  });
 });
 
 // ── anchorKey + full-anchor fold identity (task 2) ────────────────────────────
@@ -504,6 +521,47 @@ describe("applyRelevanceVerdicts (issue #78)", () => {
   it("does not carry a carry-false verdict", () => {
     const candidates: RelevanceCandidate[] = [{ disposition: dropped }];
     expect(applyRelevanceVerdicts(candidates, [{ carry: false }], next)).toEqual([]);
+  });
+
+  // Reddening (carry-true with NO re-anchor must still fail closed): the blind
+  // `else { push(original) }` path keeps a stale anchor. These prove it drops on
+  // a gone file / out-of-bounds span and re-digests in place otherwise.
+  it("drops a carry-true verdict with NO re-anchor when the file is gone (fail-closed)", () => {
+    // `dropped` is anchored to a.ts; the successor changeset no longer contains it.
+    const gone = patchsetOf("p3", [file("b.ts", "@@ -1,1 +1,1 @@\n x")]);
+    expect(applyRelevanceVerdicts([{ disposition: dropped }], [{ carry: true }], gone)).toEqual([]);
+  });
+
+  it("drops a carry-true verdict with NO re-anchor when the original span is now out of bounds (fail-closed)", () => {
+    // a.ts survives but its post-image line 1 (the context span) is gone.
+    const shrunk = patchsetOf("p3", [file("a.ts", "@@ -1,1 +0,0 @@\n-keep1")]);
+    expect(applyRelevanceVerdicts([{ disposition: dropped }], [{ carry: true }], shrunk)).toEqual(
+      [],
+    );
+  });
+
+  it("re-digests a carry-true verdict with NO re-anchor in place against next (self-consistent)", () => {
+    // The context span at line 1 shifted content keep1 → keepZZZ (floor dropped
+    // it). carry-true with no re-anchor keeps the SAME location but MUST refresh
+    // spanDigest to the successor's text, never keep the stale keep1 digest.
+    const carried = applyRelevanceVerdicts(
+      [{ disposition: dropped, successorPatch: nextPatch }],
+      [{ carry: true }],
+      next,
+    );
+    expect(carried.map((d) => anchorKey(d.anchor))).toEqual(["a.ts#L1-L1@context"]);
+    expect(carried[0]?.anchor.spanDigest).toBe(digest("keepZZZ"));
+  });
+
+  // Reddening (malformed re-anchor must fail closed): a span WITHOUT a side used
+  // to silently degrade to a file-level anchor.
+  it("drops a carry-true verdict whose re-anchor has a span but no side (malformed, fail-closed)", () => {
+    const verdicts: RelevanceVerdict[] = [
+      { carry: true, reAnchor: { path: "a.ts", contentDigest: "x", span: { startLine: 2 } } },
+    ];
+    expect(
+      applyRelevanceVerdicts([{ disposition: dropped, successorPatch: nextPatch }], verdicts, next),
+    ).toEqual([]);
   });
 });
 
