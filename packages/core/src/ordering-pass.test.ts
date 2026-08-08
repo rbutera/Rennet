@@ -1,6 +1,7 @@
 import { ORDERING_CONTRACT } from "@rennet/instructions";
 import type { DecompositionProposalBody, OrderingBody, RspCapabilitySnapshot } from "@rennet/types";
 import { describe, expect, it } from "vitest";
+import { createInvocationBudget } from "./invocation-budget";
 import {
   buildChunkManifest,
   deterministicOrderingBody,
@@ -83,6 +84,9 @@ function base(input: Partial<Parameters<typeof runOrderingPass>[0]> = {}) {
     contract: ORDERING_CONTRACT,
     provenance: SEED,
     runTurn: scriptedTurn([AGENT_ORDER]),
+    // Explicit budget by default: an absent budget now fails closed (#95), so an
+    // ordering-logic test that omits it would refuse every turn. Overridable via input.
+    budget: createInvocationBudget(10),
     ...input,
   };
 }

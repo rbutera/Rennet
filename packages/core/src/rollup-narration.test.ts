@@ -166,6 +166,7 @@ describe("runRollupNarration — admission", () => {
       contract: ROLLUP_NARRATION_CONTRACT,
       provenance: SEED,
       runTurn: async () => emit(bodyFor(nodes)),
+      budget: createInvocationBudget(10), // explicit budget: absent now fails closed (#95)
     });
     expect(result.outcome).toBe("narrated");
     expect(result.document?.docType).toBe("rollup-narration");
@@ -217,6 +218,31 @@ describe("runRollupNarration — budget gate (Rule 75, the money circuit)", () =
     expect(budget.consumed).toBe(1); // exactly one turn drew from the shared ceiling
   });
 
+  it("ABSENT budget fails CLOSED — no turn runs (#95, the fail-open hole)", async () => {
+    // The #95 defect: when NO budget is threaded, the old gate (`if (budget !==
+    // undefined)`) skipped entirely and the turn ran UNGATED. An absent budget is
+    // not authorization to spend — it must be a refusal, exactly like a zero
+    // ceiling. This is the red-provable proof: restore the old skip and this reds.
+    const nodes = offeredNarrationNodes(canvases());
+    const turn = vi.fn(async () => emit(bodyFor(nodes)));
+    const result = await runRollupNarration({
+      nodes,
+      decomposition: decomposition(),
+      patchsetId: "ps_1",
+      contract: ROLLUP_NARRATION_CONTRACT,
+      provenance: SEED,
+      runTurn: turn,
+      // budget deliberately omitted — an absent budget must fail closed.
+    });
+    expect(turn).not.toHaveBeenCalled();
+    expect(result.budgetRefused).toBe(true);
+    expect(result.outcome).toBe("pending");
+    expect(result.document).toBeUndefined();
+    // The refusal carries the honest reason, not a fabricated exhaustion.
+    expect(result.attempts.at(-1)?.outcome).toBe("budget-refused");
+    expect(result.attempts.at(-1)?.budgetRefusal?.reason).toContain("no invocation budget");
+  });
+
   it("a non-finite ceiling fails CLOSED (no narration turn runs)", async () => {
     const nodes = offeredNarrationNodes(canvases());
     const turn = vi.fn(async () => emit(bodyFor(nodes)));
@@ -254,6 +280,7 @@ describe("runRollupNarration — node coverage floor", () => {
       provenance: SEED,
       runTurn: async () => emit(partial),
       maxRetries: 1,
+      budget: createInvocationBudget(10), // explicit budget: absent now fails closed (#95)
     });
     expect(result.outcome).toBe("failed");
     expect(result.document).toBeUndefined();
@@ -280,6 +307,7 @@ describe("runRollupNarration — node coverage floor", () => {
       provenance: SEED,
       runTurn: async () => emit(minted),
       maxRetries: 0,
+      budget: createInvocationBudget(10), // explicit budget: absent now fails closed (#95)
     });
     expect(result.outcome).toBe("failed");
     expect(
@@ -288,7 +316,7 @@ describe("runRollupNarration — node coverage floor", () => {
   });
 });
 
-// ── A turn failure with no budget yields the honest "failed" state ─────────────
+// ── A turn failure (budget threaded) yields the honest "failed" state ──────────
 
 describe("runRollupNarration — honest failure, never fabrication", () => {
   it("returns failed (not a fabricated account) when every turn fails", async () => {
@@ -301,6 +329,7 @@ describe("runRollupNarration — honest failure, never fabrication", () => {
       provenance: SEED,
       runTurn: async () => ({ status: "failed", message: "model unavailable" }),
       maxRetries: 1,
+      budget: createInvocationBudget(10), // explicit budget: absent now fails closed (#95)
     });
     expect(result.outcome).toBe("failed");
     expect(result.narrations.size).toBe(0);
@@ -319,6 +348,7 @@ describe("buildReviewNarration", () => {
       contract: ROLLUP_NARRATION_CONTRACT,
       provenance: SEED,
       runTurn: async () => emit(bodyFor(nodes)),
+      budget: createInvocationBudget(10), // explicit budget: absent now fails closed (#95)
     });
     const narration = buildReviewNarration(nodes, result);
     expect(narration.rollup.status).toBe("narrated");
@@ -344,6 +374,7 @@ describe("buildReviewNarration", () => {
       provenance: SEED,
       runTurn: async () => ({ status: "failed", message: "down" }),
       maxRetries: 0,
+      budget: createInvocationBudget(10), // explicit budget: absent now fails closed (#95)
     });
     const narration = buildReviewNarration(nodes, result);
     expect(narration.rollup.status).toBe("failed");

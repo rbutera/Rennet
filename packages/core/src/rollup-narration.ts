@@ -58,6 +58,7 @@ import type {
 } from "@rennet/types";
 import { buildOfferedManifest } from "./angle-generation";
 import type { HarnessTurnResult } from "./harness-run-turn";
+import { budgetAbsentRefusal } from "./invocation-budget";
 
 /** The stable node key of the whole-changeset roll-up altitude. */
 export const ROLLUP_NARRATION_ANCHOR = "rollup";
@@ -379,15 +380,17 @@ export async function runRollupNarration(
   let anyTurnRan = false;
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-    // The live budget gate (R10): consult the shared budget before spending a
-    // turn. A refusal is terminal — fall to the honest never-blank state.
-    if (budget !== undefined) {
-      const grant = budget.tryConsume(`narration:attempt-${attempt}`);
-      if (!grant.granted) {
-        attempts.push({ attempt, outcome: "budget-refused", budgetRefusal: grant });
-        budgetRefused = true;
-        break;
-      }
+    // The live budget gate (R10, fail-closed #95): consult the shared budget
+    // before spending a turn. An ABSENT budget is not authorization to spend —
+    // it is a refusal, exactly like an exhausted one (Rule 75, vital money
+    // circuit: a single fault fails toward LESS spend). A refusal is terminal —
+    // fall to the honest never-blank state.
+    const purpose = `narration:attempt-${attempt}`;
+    const grant = budget?.tryConsume(purpose) ?? budgetAbsentRefusal(purpose);
+    if (!grant.granted) {
+      attempts.push({ attempt, outcome: "budget-refused", budgetRefusal: grant });
+      budgetRefused = true;
+      break;
     }
 
     const assembled = assemblePrompt(

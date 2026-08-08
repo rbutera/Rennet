@@ -46,6 +46,7 @@ import type {
   ValidationError,
   ValidationReport,
 } from "@rennet/types";
+import { budgetAbsentRefusal } from "./invocation-budget";
 
 /**
  * The offered manifest for the ordering pass: the chunk ids the admitted
@@ -309,15 +310,17 @@ export async function runOrderingPass(input: RunOrderingPassInput): Promise<RunO
   let budgetRefused = false;
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-    // The live budget gate (R10): consult the shared budget before spending a
-    // turn. A refusal is terminal — fall to the deterministic baseline.
-    if (budget !== undefined) {
-      const grant = budget.tryConsume(`ordering:attempt-${attempt}`);
-      if (!grant.granted) {
-        attempts.push({ attempt, outcome: "budget-refused", budgetRefusal: grant });
-        budgetRefused = true;
-        break;
-      }
+    // The live budget gate (R10, fail-closed #95): consult the shared budget
+    // before spending a turn. An ABSENT budget is not authorization to spend —
+    // it is a refusal, exactly like an exhausted one (Rule 75, vital money
+    // circuit: a single fault fails toward LESS spend). A refusal is terminal —
+    // fall to the deterministic baseline.
+    const purpose = `ordering:attempt-${attempt}`;
+    const grant = budget?.tryConsume(purpose) ?? budgetAbsentRefusal(purpose);
+    if (!grant.granted) {
+      attempts.push({ attempt, outcome: "budget-refused", budgetRefusal: grant });
+      budgetRefused = true;
+      break;
     }
 
     const assembled = assemblePrompt(

@@ -136,7 +136,11 @@ describe("runDecompositionAngle — the live budget gate (acceptance 2)", () => 
     expect(result.usedFallback).toBe(true);
   });
 
-  it("without a budget, retries are unbounded (prior behaviour preserved)", async () => {
+  it("an ABSENT budget fails CLOSED — no turn runs at all (#95)", async () => {
+    // #95: an absent budget is NOT authorization to spend. The old gate skipped
+    // when `budget === undefined` and ran every turn ungated (fail-open); it now
+    // refuses exactly like a zero ceiling. Red-provable: restore the old skip and
+    // this reds (the turn would run three times, budgetRefused false).
     const alwaysReject = vi.fn(
       async (): Promise<DecompositionTurnResult> => ({
         status: "emitted",
@@ -150,10 +154,11 @@ describe("runDecompositionAngle — the live budget gate (acceptance 2)", () => 
       provenance: SEED,
       runTurn: alwaysReject,
       maxRetries: 2,
+      // budget deliberately omitted — must fail closed, not run ungated.
     });
-    // Three attempts (1 + 2 retries), no budget refusal.
-    expect(alwaysReject).toHaveBeenCalledTimes(3);
-    expect(result.budgetRefused).toBe(false);
+    // No turn ran; the runner fell straight to the deterministic floor.
+    expect(alwaysReject).not.toHaveBeenCalled();
+    expect(result.budgetRefused).toBe(true);
     expect(result.usedFallback).toBe(true);
   });
 });
@@ -182,6 +187,28 @@ describe("runOrderingPass — the live budget gate", () => {
     expect(result.usedFallback).toBe(true);
     expect(result.document.provenance.route).toBe("deterministic");
     // The baseline order is what stands.
+    expect((result.document.body as { readingOrder: string[] }).readingOrder).toEqual(["c1", "c2"]);
+  });
+
+  it("an ABSENT budget fails CLOSED — no ordering turn runs (#95)", async () => {
+    const turn = vi.fn(
+      async (): Promise<OrderingTurnResult> => ({
+        status: "emitted",
+        body: { readingOrder: ["c2", "c1"], rationale: "reorder" },
+      }),
+    );
+    const result = await runOrderingPass({
+      proposal: PROPOSAL,
+      patchsetId: "ps_1",
+      contract: ORDERING_CONTRACT,
+      provenance: SEED,
+      runTurn: turn,
+      // budget deliberately omitted — must fail closed, not run ungated.
+    });
+    expect(turn).not.toHaveBeenCalled();
+    expect(result.budgetRefused).toBe(true);
+    expect(result.usedFallback).toBe(true);
+    // The deterministic baseline stands.
     expect((result.document.body as { readingOrder: string[] }).readingOrder).toEqual(["c1", "c2"]);
   });
 
