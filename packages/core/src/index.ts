@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import {
-  DIFF_TRUNCATION_MARKER,
   type AnchorSide,
   type AnchorSpan,
+  DIFF_TRUNCATION_MARKER,
   type Disposition,
   type DispositionAnchor,
   type DispositionRelevanceJudge,
@@ -119,10 +119,23 @@ export function fileContentDigest(file: PatchFile): string {
  * than a stale review silently surviving a content change we cannot verify. A
  * complete patch (a small unchanged file, or a tracked binary whose bytes ARE
  * embedded) returns true and carries as before — no over-drop.
+ *
+ * Both tests match the producer's exact STRUCTURAL framing, never a loose
+ * substring, so ordinary patch content cannot spoof either signal:
+ *  - `visible()` appends the marker as the patch's terminal `\n\n<marker>`, so
+ *    we test `endsWith`, not `includes` — a source line that merely contains the
+ *    marker text (e.g. this repo's own declaration of it) is a complete patch and
+ *    must still carry.
+ *  - a real `GIT binary patch` body is a header on its OWN line, so we test for
+ *    `\nGIT binary patch\n` — a filename such as `GIT binary patch.png` puts the
+ *    phrase in the content-free `diff --git`/`Binary files` lines but never as a
+ *    standalone header line, so it stays (correctly) uncertified.
  */
+const DIFF_TRUNCATION_SUFFIX = `\n\n${DIFF_TRUNCATION_MARKER}`;
+const GIT_BINARY_PATCH_HEADER = "\nGIT binary patch\n";
 function patchCertifiesContent(file: PatchFile): boolean {
-  if (file.patch.includes(DIFF_TRUNCATION_MARKER)) return false;
-  if (file.binary && !file.patch.includes("GIT binary patch")) return false;
+  if (file.patch.endsWith(DIFF_TRUNCATION_SUFFIX)) return false;
+  if (file.binary && !file.patch.includes(GIT_BINARY_PATCH_HEADER)) return false;
   return true;
 }
 

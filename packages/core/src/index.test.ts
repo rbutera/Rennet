@@ -261,6 +261,73 @@ describe("review fold", () => {
     ]);
   });
 
+  it("does not over-drop: a small complete patch whose CONTENT contains the marker text still carries", () => {
+    // The certification test matches the producer's terminal `\n\n<marker>`, not
+    // a bare substring — so a legitimate small patch that merely mentions the
+    // marker in its body (e.g. this repo's own declaration of it) must carry.
+    const patchWithMarkerInBody = `diff --git a/marker.ts b/marker.ts\n@@ -1 +1 @@\n+export const M = "${DIFF_TRUNCATION_MARKER}";\n`;
+    const review = withDisposition(
+      created(patchsetOf("patch-1", [file("marker.ts", patchWithMarkerInBody)])),
+      "marker.ts",
+      patchWithMarkerInBody,
+      "approve",
+    );
+    const activated = foldReview(review, {
+      type: "PatchsetActivated",
+      version: 1,
+      reviewId: review.id,
+      patchset: patchsetOf("patch-2", [file("marker.ts", patchWithMarkerInBody)]),
+    });
+    expect(activated.dispositions.map((disposition) => disposition.anchor.path)).toEqual([
+      "marker.ts",
+    ]);
+  });
+
+  it("fails closed: a content-free binary whose FILENAME contains 'GIT binary patch' does not spoof certification", () => {
+    // The phrase appears in the content-free `diff --git`/`Binary files` header
+    // lines, but never as a standalone `\nGIT binary patch\n` body — so the patch
+    // certifies nothing and a byte-identical successor must still drop.
+    const spoofBinary = binaryFile(
+      "GIT binary patch.png",
+      'diff --git "a/GIT binary patch.png" "b/GIT binary patch.png"\nnew file mode 100644\nBinary files /dev/null and "b/GIT binary patch.png" differ\n',
+    );
+    const authored = withDispositionOn(
+      created(patchsetOf("patch-1", [spoofBinary])),
+      spoofBinary,
+      "approve",
+    );
+    const activated = foldReview(authored, {
+      type: "PatchsetActivated",
+      version: 1,
+      reviewId: authored.id,
+      patchset: patchsetOf("patch-2", [spoofBinary]),
+    });
+    expect(activated.dispositions).toEqual([]);
+  });
+
+  it("does not over-drop: a tracked binary with an embedded GIT binary patch body carries", () => {
+    // A real `GIT binary patch` body (header on its own line + encoded bytes) DOES
+    // certify content — an unchanged tracked binary must carry as before.
+    const trackedBinary = binaryFile(
+      "icon.png",
+      "diff --git a/icon.png b/icon.png\nindex 0000000..1111111 100644\nGIT binary patch\nliteral 8\nzcmZQ$0000\n\n",
+    );
+    const authored = withDispositionOn(
+      created(patchsetOf("patch-1", [trackedBinary])),
+      trackedBinary,
+      "approve",
+    );
+    const activated = foldReview(authored, {
+      type: "PatchsetActivated",
+      version: 1,
+      reviewId: authored.id,
+      patchset: patchsetOf("patch-2", [trackedBinary]),
+    });
+    expect(activated.dispositions.map((disposition) => disposition.anchor.path)).toEqual([
+      "icon.png",
+    ]);
+  });
+
   it("preserves the visible patchset and dispositions when a review is invalidated", () => {
     const review = withDisposition(
       created(patchsetOf("patch-1", [file("a.ts", "X")])),
