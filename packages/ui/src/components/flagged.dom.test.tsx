@@ -1,0 +1,115 @@
+// @vitest-environment happy-dom
+//
+// The Flagged lens (issue #138): this mounts the real `FlaggedLens` over derived
+// indices and drives the surface — severity chips render, a concur row shows the
+// vote count, a disagreement renders BOTH models' answers side by side and
+// labelled, a row jumps to its anchor, and the empty vs failed states render
+// LOUDLY differently. Assertions are behavioural (rendered text, recorded jumps),
+// not presence-only.
+import type { FlaggedReview } from "@rennet/types";
+import { describe, expect, it, vi } from "vitest";
+import { buildFlaggedIndex } from "../canvas/flagged";
+import { mount } from "../test/dom";
+import { FlaggedLens } from "./flagged";
+
+const REVIEW: FlaggedReview = {
+  status: "ok",
+  findings: [
+    {
+      findingId: "f-high",
+      anchor: "rennet:hunk/money-1",
+      summary: "Budget is not consumed before the model call",
+      severity: "high",
+      agreement: { kind: "concur", agree: 3, total: 3 },
+    },
+    {
+      findingId: "f-mid",
+      anchor: "rennet:hunk/carry-2",
+      summary: "Lossy-patch carry may slip a truncated span through",
+      severity: "medium",
+      agreement: {
+        kind: "disagree",
+        answers: [
+          { model: "Claude", answer: "The truncated span is carried, this is a real leak" },
+          { model: "Codex", answer: "The floor check catches it earlier, not a leak" },
+        ],
+      },
+    },
+    {
+      findingId: "f-low",
+      anchor: "rennet:hunk/style-3",
+      summary: "Import ordering churn in one file",
+      severity: "low",
+      agreement: { kind: "concur", agree: 2, total: 2 },
+    },
+  ],
+};
+
+describe("FlaggedLens — the flagged index surface", () => {
+  it("renders every flag with its severity chip, high first", () => {
+    const { container } = mount(
+      <FlaggedLens index={buildFlaggedIndex(REVIEW)} onJumpToAnchor={() => {}} />,
+    );
+    const severities = [...container.querySelectorAll(".flag")].map((el) =>
+      el.getAttribute("data-severity"),
+    );
+    expect(severities).toEqual(["high", "medium", "low"]);
+  });
+
+  it("shows the concur vote count for an agreed flag", () => {
+    const { getByText } = mount(
+      <FlaggedLens index={buildFlaggedIndex(REVIEW)} onJumpToAnchor={() => {}} />,
+    );
+    expect(getByText(/both models concur 3\/3/)).toBeTruthy();
+  });
+
+  it("renders a disagreement as BOTH models' answers side by side, labelled", () => {
+    const { container, getByText } = mount(
+      <FlaggedLens index={buildFlaggedIndex(REVIEW)} onJumpToAnchor={() => {}} />,
+    );
+    const disagree = container.querySelector('[data-agreement="disagree"]');
+    expect(disagree).toBeTruthy();
+    const models = [...(disagree?.querySelectorAll(".flag-answer-model") ?? [])].map(
+      (el) => el.textContent,
+    );
+    expect(models).toEqual(["Claude", "Codex"]);
+    expect(getByText(/models disagree/)).toBeTruthy();
+    expect(getByText(/real leak/)).toBeTruthy();
+    expect(getByText(/not a leak/)).toBeTruthy();
+  });
+
+  it("jumps to the mark at a flag's anchor when the row is clicked", async () => {
+    const onJump = vi.fn();
+    const { container, user } = mount(
+      <FlaggedLens index={buildFlaggedIndex(REVIEW)} onJumpToAnchor={onJump} />,
+    );
+    const jump = container.querySelector<HTMLButtonElement>(
+      '[data-jump-anchor="rennet:hunk/carry-2"]',
+    );
+    if (!jump) throw new Error("expected a jump button for the medium flag");
+    await user.click(jump);
+    expect(onJump).toHaveBeenCalledWith("rennet:hunk/carry-2");
+  });
+
+  it("renders an honest EMPTY state for a review that ran and flagged nothing", () => {
+    const { container, getByText } = mount(
+      <FlaggedLens index={buildFlaggedIndex({ status: "ok", findings: [] })} onJumpToAnchor={() => {}} />,
+    );
+    expect(container.querySelector(".flagged-empty")).toBeTruthy();
+    expect(container.querySelector(".flagged-failed")).toBeNull();
+    expect(getByText(/ran clean, it was not skipped/)).toBeTruthy();
+  });
+
+  it("renders a DISTINCT failed state for a runner that did not complete", () => {
+    const { container, getByText } = mount(
+      <FlaggedLens
+        index={buildFlaggedIndex({ status: "failed", reason: "harness timed out" })}
+        onJumpToAnchor={() => {}}
+      />,
+    );
+    expect(container.querySelector(".flagged-failed")).toBeTruthy();
+    expect(container.querySelector(".flagged-empty")).toBeNull();
+    expect(getByText(/Couldn't check/)).toBeTruthy();
+    expect(getByText(/harness timed out/)).toBeTruthy();
+  });
+});

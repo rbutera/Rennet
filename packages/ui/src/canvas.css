@@ -881,3 +881,160 @@
   opacity: 0.45;
   cursor: not-allowed;
 }
+
+/* ── Flagged lens (issue #138) ────────────────────────────────────────────── */
+/* One index over everything the automated review layer raised. Severity is coded
+   by WEIGHT within the neutral/accent palette (no fourth hue); concur is green,
+   disagreement is amber — the only two sanctioned semantic hues. */
+.flagged-canvas {
+  display: flex;
+  flex-direction: column;
+}
+.flags {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.flag {
+  border: 1px solid var(--raised-border);
+  border-radius: var(--radius);
+  background: var(--raised);
+  padding: 11px 14px;
+  margin-bottom: 8px;
+}
+.flag-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+}
+.flag-severity {
+  flex: none;
+  border-radius: var(--chip-radius);
+  padding: 3px 9px;
+  font: 700 10px / 1.2 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid var(--hairline);
+  background: var(--surface-2);
+  color: var(--text-faint);
+}
+.flag-severity-high {
+  border-color: var(--accent-soft-line);
+  color: var(--text);
+}
+.flag-severity-medium {
+  border-color: var(--hairline-strong);
+  color: var(--text-soft);
+}
+.flag-severity-low {
+  color: var(--text-faint);
+}
+.flag-jump {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+  text-align: left;
+  padding: 0;
+}
+.flag-summary {
+  color: var(--text);
+  font-weight: 600;
+}
+.flag-jump:hover .flag-summary {
+  color: var(--accent);
+}
+.flag-anchor {
+  color: var(--text-faint);
+  font: 500 11px / 1.2 var(--mono);
+}
+.flag-agreement {
+  display: block;
+  margin-top: 9px;
+}
+.flag-concur {
+  color: var(--green);
+  background: var(--green-fill);
+  border: 1px solid var(--green-line);
+  border-radius: var(--chip-radius);
+  padding: 3px 10px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.flag-disagree {
+  border: 1px solid var(--amber-line);
+  background: var(--amber-surface);
+  border-radius: var(--radius);
+  padding: 9px 11px;
+}
+.flag-disagree-flare {
+  display: block;
+  color: var(--amber);
+  font: 700 10px / 1.2 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  margin-bottom: 8px;
+}
+.flag-answers {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+.flag-answer {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 8px 10px;
+}
+.flag-answer-model {
+  color: var(--amber);
+  font: 700 10px / 1.2 var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.flag-answer-text {
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.flag-counts {
+  display: inline-flex;
+  gap: 8px;
+}
+.flag-count {
+  color: var(--text-faint);
+  font-size: 11px;
+  font-weight: 600;
+}
+.flagged-empty {
+  color: var(--text-faint);
+  font-style: italic;
+  padding: 20px 4px;
+}
+.flagged-failed {
+  border: 1px solid var(--amber-line);
+  background: var(--amber-surface);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+}
+.flagged-failed-head {
+  color: var(--amber);
+  font-weight: 700;
+  margin: 0 0 4px;
+}
+.flagged-failed-body {
+  color: var(--text-soft);
+  margin: 0 0 6px;
+}
+.flagged-failed-reason {
+  color: var(--text-faint);
+  font: 500 12px / 1.4 var(--mono);
+  margin: 0;
+}

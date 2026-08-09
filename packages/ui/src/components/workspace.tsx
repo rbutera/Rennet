@@ -4,9 +4,11 @@ import type {
   CanvasAngle,
   CanvasChangeNotification,
   DispositionType,
+  FlaggedReview,
   Proposal,
   ReviewNarration,
 } from "@rennet/types";
+import { buildFlaggedIndex } from "../canvas/flagged";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   type AuthoringAct,
@@ -35,6 +37,7 @@ import { BatchView } from "./batch-view";
 import { CodeView } from "./code-view";
 import { CoverageMosaicView } from "./coverage";
 import { DecisionsCanvas } from "./decisions";
+import { FlaggedLens } from "./flagged";
 import { FlatCanvas } from "./flat";
 import { GranularityAuthor, type GranularityContext } from "./granularity-author";
 import { AnnotationMark, ProposalMark } from "./l3";
@@ -73,6 +76,15 @@ export interface CanvasWorkspaceProps {
    * shows an honest "narration pending" line, never a silent blank.
    */
   narration?: ReviewNarration;
+
+  /**
+   * The Flagged lens's input (issue #138), behind the typed boundary. When the
+   * flagged angle is active the lens renders THIS (the automated review layer's
+   * findings + dual-review agreement), not the canvas analysis layer. Absent means
+   * the review produced no flagged input — the lens then shows the honest empty
+   * state, never a silent blank.
+   */
+  flaggedReview?: FlaggedReview;
 
   // ── Authoring depth (issue #17), additive and optional ──────────────────────
   // The dock renders only the sections whose props are supplied, so a host that
@@ -252,6 +264,26 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     store.getState().select(elementKey);
     if (element) store.getState().setCursor(element.anchor);
     store.getState().setZoom({ ...zoom, level: "element", elementKey });
+  }
+
+  // The Flagged lens is an INDEX: a row jumps to the mark at its anchor. The mark
+  // still renders at its anchor on the code surface — the lens points at it, it
+  // does not own it. Set the cursor + deixis focus so the span at the anchor
+  // pulses; if the anchor resolves to a placed element, zoom to its diff too.
+  function jumpToAnchor(anchor: string): void {
+    store.getState().setCursor(anchor);
+    const parsed = parseAnchor(anchor);
+    if (parsed.ok) {
+      const element = canvas.layers.analysis.elements.find((candidate) => {
+        const candidateAnchor = parseAnchor(candidate.anchor);
+        return candidateAnchor.ok && candidateAnchor.anchor.id === parsed.anchor.id;
+      });
+      if (element) {
+        store.getState().select(element.elementKey);
+        store.getState().setZoom({ level: "diff", elementKey: element.elementKey });
+      }
+    }
+    setFocusAnchor(anchor);
   }
 
   function acceptProposal(proposal: Proposal): void {
@@ -434,7 +466,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         {narrationPlacement ? (
           <NarrationPanel altitude={ZOOM_LABELS[zoom.level]} placement={narrationPlacement} />
         ) : null}
-        {angle === "decisions" ? (
+        {angle === "flagged" ? (
+          <FlaggedLens
+            index={buildFlaggedIndex(props.flaggedReview ?? { status: "ok", findings: [] })}
+            onJumpToAnchor={jumpToAnchor}
+          />
+        ) : angle === "decisions" ? (
           <DecisionsCanvas
             canvas={canvas}
             expandedCohorts={expandedCohorts}

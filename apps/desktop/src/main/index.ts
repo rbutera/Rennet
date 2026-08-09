@@ -7,6 +7,7 @@ import {
   type ClaudeHarnessResult,
   type CodexAvailability,
   cleanupWorktreeFixture,
+  flaggedReviewFixture,
   createClaudeHarness,
   createCodexUtilityAdapter,
   createRefPinner,
@@ -427,6 +428,11 @@ app.whenReady().then(async () => {
     // boundary so the surface comes alive now.
     projectDetail: () => Promise.resolve(projectDetailFixture()),
     cleanupWorktree: () => Promise.resolve(cleanupWorktreeFixture()),
+    // The Flagged lens (issue #138): the automated review layer's findings + dual-
+    // review agreement. Live finding-generation runner + aggregation are a follow-up
+    // (#32/#41); a fixture stands behind the real command boundary so the lens comes
+    // alive now.
+    flaggedReview: () => Promise.resolve(flaggedReviewFixture()),
   });
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);

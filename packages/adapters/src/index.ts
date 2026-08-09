@@ -102,6 +102,11 @@ export {
   type AttachedOrchestratorSession,
   attachOrchestratorSession,
 } from "./orchestrator-session-server";
+export {
+  emptyFlaggedReviewFixture,
+  failedFlaggedReviewFixture,
+  flaggedReviewFixture,
+} from "./flagged-fixture";
 export { cleanupWorktreeFixture, projectDetailFixture } from "./project-detail-fixture";
 export {
   defaultProjectDiscoveryDeps,

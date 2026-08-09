@@ -418,3 +418,75 @@ describe("successor-canvas carry is exact-lineage only, on the LIVE path (AC5)",
     expect(canvas.layers.disposition.dispositions.map((d) => d.anchor.path)).toEqual(["a.ts"]);
   });
 });
+
+// ── Flagged canvas (issue #138) ──────────────────────────────────────────────
+
+describe("projectAnalysis — flagged", () => {
+  const findingDoc = (findings: unknown[], docId = "doc-find"): AdmittedDocument => ({
+    docId,
+    docType: "finding",
+    body: { findings },
+  });
+
+  const concur = { kind: "concur", agree: 3, total: 3 };
+  const good = (findingId: string, severity: string, anchor = `rennet:hunk/${findingId}`) => ({
+    findingId,
+    anchor,
+    summary: `finding ${findingId}`,
+    severity,
+    agreement: concur,
+  });
+
+  it("routes admitted finding docs to the flagged angle, one element per finding", () => {
+    const layer = projectAnalysis("flagged", [findingDoc([good("f1", "high")])], DECOMP);
+    expect(layer.elements).toHaveLength(1);
+    expect(layer.elements[0]?.anchor).toBe("rennet:hunk/f1");
+    expect(layer.elements[0]?.kind).toBe("finding:high");
+    expect(layer.elements[0]?.title).toBe("finding f1");
+  });
+
+  it("orders by severity high → medium → low, input-order independent", () => {
+    const build = (reversed: boolean) => {
+      const findings = [good("a", "high"), good("m", "medium"), good("z", "low")];
+      return [findingDoc(reversed ? [...findings].reverse() : findings)];
+    };
+    const forward = projectAnalysis("flagged", build(false), DECOMP);
+    const reversed = projectAnalysis("flagged", build(true), DECOMP);
+    expect(forward).toEqual(reversed);
+    expect(forward.elements.map((element) => element.kind)).toEqual([
+      "finding:high",
+      "finding:medium",
+      "finding:low",
+    ]);
+  });
+
+  // Acceptance criterion: a validator rejection / malformed item is NEVER a flag.
+  it("NEVER places a malformed (rejected-item-shaped) finding as a flag", () => {
+    const rejected = { rejectionReason: "schema: missing 'severity'", raw: { anchor: "x" } };
+    const badAgreement = { ...good("bad", "high"), agreement: { kind: "maybe" } };
+    const layer = projectAnalysis(
+      "flagged",
+      [findingDoc([rejected, badAgreement, good("real", "high")])],
+      DECOMP,
+    );
+    expect(layer.elements).toHaveLength(1);
+    expect(layer.elements[0]?.title).toBe("finding real");
+  });
+
+  it("renders empty-but-honest when no finding docs are admitted", () => {
+    const layer = projectAnalysis("flagged", [], DECOMP);
+    expect(layer.elements).toEqual([]);
+    expect(layer.readingOrder).toEqual([]);
+  });
+
+  it("does not route non-finding docs into the flagged angle", () => {
+    const layer = projectAnalysis("flagged", [decisionsDoc([{ decisionId: "d1", anchor: "rennet:chunk/c1", title: "x" }])], DECOMP);
+    expect(layer.elements).toEqual([]);
+  });
+
+  it("mints a derived (sha256) key per finding, never an agent id", () => {
+    const layer = projectAnalysis("flagged", [findingDoc([good("f1", "high"), good("f2", "low")])], DECOMP);
+    expect(new Set(layer.elements.map((element) => element.elementKey)).size).toBe(2);
+    for (const element of layer.elements) expect(element.elementKey).toHaveLength(64);
+  });
+});

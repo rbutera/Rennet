@@ -214,6 +214,7 @@ function harness(
     projectDetail: () =>
       Promise.resolve({ viewer: { login: "rai" }, locals: [], prs: [], truncated: false }),
     cleanupWorktree: () => Promise.resolve({ ok: true }),
+    flaggedReview: () => Promise.resolve({ status: "ok", findings: [] }),
   };
   return {
     dispatch: createDispatch(deps),
@@ -981,6 +982,7 @@ function frontDoorHarness(seed: {
     projectDetail: () =>
       Promise.resolve({ viewer: { login: "rai" }, locals: [], prs: [], truncated: false }),
     cleanupWorktree: () => Promise.resolve({ ok: true }),
+    flaggedReview: () => Promise.resolve({ status: "ok", findings: [] }),
   };
   return { dispatch: createDispatch(deps), allowedRoots, addCalls, discoverCalls };
 }

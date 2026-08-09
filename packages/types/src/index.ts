@@ -789,7 +789,7 @@ export interface RollupNarrationBody {
  * overlay, not a canvas (Canvas Paradigm §1 — promoting it to a sixth canvas
  * would silently turn the overlay into a writable queue).
  */
-export type CanvasAngle = "spec" | "sequence" | "decisions" | "claims" | "noise";
+export type CanvasAngle = "spec" | "sequence" | "decisions" | "claims" | "noise" | "flagged";
 
 /** The canvas angles as a frozen list, in a stable order. */
 export const CANVAS_ANGLES: readonly CanvasAngle[] = [
@@ -798,6 +798,7 @@ export const CANVAS_ANGLES: readonly CanvasAngle[] = [
   "decisions",
   "claims",
   "noise",
+  "flagged",
 ] as const;
 
 /**
@@ -816,6 +817,65 @@ export interface DecisionRecordElement {
 export interface DecisionRecordBody {
   decisions: DecisionRecordElement[];
 }
+
+// ─── The `finding` doc family + the Flagged lens (issue #138) ─────────────────
+//
+// A `finding` is one thing the automated review layer raised: a model-council
+// finding, or a dual-review agreement/disagreement. It carries a severity, an
+// agreement state (both models concur, with vote counts; or they disagree, with
+// each model's answer shown side by side and labelled), and an anchor. The
+// Flagged lens is the INDEX over these — it points at the mark at its anchor, it
+// does not own it. This shape is deliberately small and stable (like
+// `DecisionRecordElement`); the richer #32 finding schema is an additive superset.
+
+/** A flag's severity. Three levels; ordered high → medium → low for the lens. */
+export type FindingSeverity = "high" | "medium" | "low";
+
+/** One model's answer in a disagreement, labelled by the model that gave it. */
+export interface FindingModelAnswer {
+  /** The model/harness label shown beside the answer (e.g. "Claude", "Codex"). */
+  model: string;
+  /** That model's verdict text, rendered side by side with the others. */
+  answer: string;
+}
+
+/**
+ * Whether the models agree on a flag. `concur` carries the vote counts (e.g. 3 of
+ * 3); `disagree` carries each model's answer, shown side by side and labelled. The
+ * disagreement flare lives HERE in the index, never as a chat interruption or a
+ * synthesis block.
+ */
+export type FindingAgreement =
+  | { kind: "concur"; agree: number; total: number }
+  | { kind: "disagree"; answers: FindingModelAnswer[] };
+
+/**
+ * The canvas-facing shape of one finding: an id, the anchor it is about, a short
+ * summary, its severity, and its agreement state. The `finding` doc body (issue
+ * #32) is an ADDITIVE superset — the lens placement only needs these fields.
+ */
+export interface FindingElement {
+  findingId: string;
+  anchor: string;
+  summary: string;
+  severity: FindingSeverity;
+  agreement: FindingAgreement;
+}
+
+/** The `finding` doc body as consumed by the flagged-canvas projector. */
+export interface FindingBody {
+  findings: FindingElement[];
+}
+
+/**
+ * The Flagged lens's per-review input, behind the typed boundary. A review that
+ * RAN and found nothing (`ok` with an empty `findings`) is honestly empty; a
+ * runner that FAILED (`failed`, with a reason) is a different state and must never
+ * be conflated with "no findings". This distinction is load-bearing for the lens.
+ */
+export type FlaggedReview =
+  | { status: "ok"; findings: FindingElement[] }
+  | { status: "failed"; reason: string };
 
 /** L0 — a slice of the substrate a canvas is about: the chunks it covers. */
 export interface SubstrateChunkRef {

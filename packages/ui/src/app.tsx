@@ -8,6 +8,7 @@ import {
 import type {
   CanvasAngle,
   ElementDiffs,
+  FlaggedReview,
   Patchset,
   Review,
   ReviewEngine,
@@ -289,6 +290,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // model installed) and the UI says so loudly, never passing it off as AI.
   const [engine, setEngine] = useState<ReviewEngine | undefined>(undefined);
   const [liveLoaded, setLiveLoaded] = useState(false);
+  // The Flagged lens's input (issue #138): the automated review layer's findings +
+  // dual-review agreement for the open review. Fetched over the real command
+  // boundary (a fixture stands behind it until the finding-generation runner lands);
+  // undefined until it loads, so the lens shows the honest empty state meanwhile.
+  const [flaggedReview, setFlaggedReview] = useState<FlaggedReview | undefined>(undefined);
   // The live load returned null (no harness / pipeline error) for THIS review, so
   // there is nothing real to show — the UI offers an honest error + retry rather
   // than silently standing on a demo.
@@ -418,8 +424,33 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setEngine(undefined);
     setLiveLoaded(false);
     setLoadFailed(false);
+    setFlaggedReview(undefined);
     fetchedForReview.current = null;
   }, [reviewId]);
+
+  // The Flagged lens (issue #138): fetch the automated review layer's findings for
+  // the open review over the real command boundary. It carries NO model spend and
+  // is independent of the harness-consent gate, so it loads on its own — and its
+  // own try/catch means a flagged fetch failure never disturbs the canvas load.
+  useEffect(() => {
+    if (!reviewId) return;
+    let cancelled = false;
+    void bridge
+      .invoke("flagged.review", { reviewId })
+      .then((result) => {
+        // Guard the shape: a host or test bridge that returns anything but a
+        // FlaggedReview (`{ status }`) leaves the lens on its honest empty state.
+        if (cancelled) return;
+        const review = result as Partial<FlaggedReview> | undefined;
+        if (review?.status === "ok" || review?.status === "failed") {
+          setFlaggedReview(review as FlaggedReview);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [reviewId, bridge]);
 
   // Live canvases (issue #54): when a real review is open, the Canvases view is
   // shown, and the harness run is permitted (auto/bypass, or the user has
@@ -919,6 +950,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
               canvases={canvases}
               bridge={bridge}
               narration={narration}
+              flaggedReview={flaggedReview}
               onDispositions={(writes) => {
                 setCanvases((current) => (current ? applyWrites(current, writes) : current));
                 // dispose == staged: authoring a disposition collates it into the draft
