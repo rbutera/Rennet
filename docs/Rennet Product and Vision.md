@@ -3,11 +3,13 @@ tags: [rennet, products, visions]
 categories: [project]
 status: active
 created: 2026-08-06
-updated: 2026-08-07
+updated: 2026-08-09
 related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Architecture Contracts]]", "[[Rennet Canvas Paradigm]]", "[[Rennet Orchestrator Context Access]]", "[[Rennet Comment Refinement Loop]]", "[[Rennet Model Council]]", "[[Rennet User Journey]]", "[[Rennet Design Doctrine]]", "[[Code Review Harness App]]"]
 ---
 
 # Rennet Product and Vision
+
+> **Resteer 2026-08-09:** see [[Rennet v3 Resteer 2026-08-09]] and the v3 prototype (gallery https://nimbus.piranha-wyvern.ts.net:9443/). A fuller content resteer of this doc is in progress.
 
 **This is the canonical statement of what Rennet is.** Read it first. Every other document in `docs/` plays a supporting role — the authority register for rulings is [[Rennet Contracts and Rulings]], the frozen engineering contracts are [[Rennet Architecture Contracts]], and [[Rennet Doc Architecture]] maps the whole set. Where this document and a deeper document disagree on *intent*, this document wins; where they disagree on a *ruling or contract*, the deeper authority wins and this document has a bug — file it.
 

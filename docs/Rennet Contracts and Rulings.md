@@ -9,6 +9,8 @@ related: ["[[Rennet Product and Vision]]", "[[Code Review Harness App]]", "[[Ren
 
 # Rennet Contracts and Rulings
 
+> **Resteer 2026-08-09:** see [[Rennet v3 Resteer 2026-08-09]] and the v3 prototype (gallery https://nimbus.piranha-wyvern.ts.net:9443/). A fuller content resteer of this doc is in progress.
+
 > **Formerly titled *Rennet Master Plan*** (renamed 2026-08-06 on Rai's instruction: the document "really has turned into a data model contract reference"). Citations of the form "Master Plan R8" or "Master Plan §2.1" in older documents, issue bodies, and commit messages refer to **this document**; the R-numbers and §-numbers are unchanged. What the product *is* now lives in [[Rennet Product and Vision]]; this document is the **authority register**: every conflict ruling, the frozen core, the open questions, the M0 cut, the spike gates, and the execution pipeline.
 
 [[Rennet Architecture Contracts]] freezes the project-context, patchset, persistence, privacy, and publication contracts. It wins within that scope. [[Rennet Dependency Standard]] wins on dependencies, versions, licence compatibility, toolchain ownership, and overlap. **[[Rennet Canvas Paradigm]] and [[Rennet Orchestrator Context Access]] are ADOPTED as of 2026-08-06** (Rai's voice Q&A + autonomy mandate) and are authoritative for the interaction model and the orchestrator's context architecture respectively, as amended by §2.3–§2.4 below. Where this document and any plan disagree, **this document wins**, and where this document is silent, the supersede stack in §2 decides.

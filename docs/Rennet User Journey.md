@@ -10,6 +10,8 @@ source: 2026-08-07 journey synthesis (dashboard report) over the prototype UX do
 
 # Rennet User Journey
 
+> **Resteer 2026-08-09:** see [[Rennet v3 Resteer 2026-08-09]] and the v3 prototype (gallery https://nimbus.piranha-wyvern.ts.net:9443/). A fuller content resteer of this doc is in progress.
+
 **The canonical, ordered account of the user's day in Rennet.** Every step below was already designed somewhere — the prototype docs, the plans, the issue queue — but no ratified document told the journey *in order*, and the ordering is itself a constraint no single issue owns: the product is a road from opening a changeset to **signing the paper**, and every UI slice must know where on that road it sits.
 
 Authority: this document is **authority-ranked with the other ratified docs** — it owns the journey's shape and ordering. Feature depth stays with the feature's own doc ([[Rennet Product and Vision]] §4 and the deep specs); rulings stay in [[Rennet Contracts and Rulings]] (the staging semantics are R36–R38). Where an issue and this journey disagree about *where a step sits*, this document wins; file the discrepancy.

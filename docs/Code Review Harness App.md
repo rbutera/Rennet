@@ -8,6 +8,8 @@ status: active
 
 # Rennet
 
+> **Resteer 2026-08-09:** see [[Rennet v3 Resteer 2026-08-09]] and the v3 prototype (gallery https://nimbus.piranha-wyvern.ts.net:9443/). A fuller content resteer of this doc is in progress.
+
 A desktop-native code review tool powered by an LLM coding harness. Rethinks the PR review experience while staying interoperable with the existing system (GitHub PRs and the review lifecycle other people see).
 
 The name is settled: Rennet. Branding history remains in [[Code Review App Branding Questions]].

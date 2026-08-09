@@ -10,6 +10,8 @@ source: ratified extraction from the prototype design/UX docs (glass ratified by
 
 # Rennet Design Doctrine
 
+> **Resteer 2026-08-09:** see [[Rennet v3 Resteer 2026-08-09]] and the v3 prototype (gallery https://nimbus.piranha-wyvern.ts.net:9443/). A fuller content resteer of this doc is in progress.
+
 **The design register, ratified.** The richest design thinking in the corpus lived in the prototype docs ([[Code Review App Design Directions]], [[Code Review App UX Concepts]], [[Code Review App UX Research]]), which the doc architecture marks historical — so an implementer following the rules ("read the ratified docs + your issue") would never encounter the register the product is supposed to have. This document promotes the system rules to ratified doctrine. It is short on purpose: these are the rules an implementer must not break, with the prototype docs cited for the full reasoning and the mood-board mockups (`prototypes/moodboard/`) as the visual reference.
 
 Glass is the ratified identity (Rai, verbatim: "definitely glass is the way"). Tokens and chrome ship in v1; visual polish may lag; **the doctrine is absolute from the first screen** (R26).
