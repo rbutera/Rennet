@@ -57,7 +57,7 @@ import { createCodexRunTurn } from "./codex-run-turn";
 import type { CodexUtilityPort } from "./codex-utility-port";
 import { type DecomposeOptions, decompose } from "./decomposition";
 import { buildElementDiffs } from "./element-diffs";
-import type { HarnessTurnResult } from "./harness-run-turn";
+import { guardSeatTurn, type HarnessTurnResult } from "./harness-run-turn";
 import { createInvocationBudget } from "./invocation-budget";
 import { providerHarness, resolveAssignment } from "./model-council";
 import {
@@ -299,7 +299,10 @@ export async function buildReviewCanvases(
       contract: input.decompositionContract ?? DECOMPOSITION_PROPOSAL_CONTRACT,
       manifest,
       provenance: decompositionSeat.seed,
-      runTurn: decompositionSeat.runTurn,
+      // A thrown/rejected turn (e.g. a session/transport construction exception,
+      // #96) is caught and degraded to a turn-failure, so a construction throw
+      // falls to the deterministic floor instead of crashing the whole run.
+      runTurn: guardSeatTurn(decompositionSeat.runTurn),
       budget,
       ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
       ...(input.newRunId ? { newRunId: input.newRunId } : {}),
@@ -334,7 +337,8 @@ export async function buildReviewCanvases(
         patchsetId: decomposition.patchsetId,
         contract: input.orderingContract ?? ORDERING_CONTRACT,
         provenance: orderingSeat.seed,
-        runTurn: orderingSeat.runTurn,
+        // A thrown ordering turn degrades to the #8 baseline order (#96).
+        runTurn: guardSeatTurn(orderingSeat.runTurn),
         budget,
         ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
         ...(input.newRunId ? { newRunId: input.newRunId } : {}),
@@ -389,7 +393,9 @@ export async function buildReviewCanvases(
       patchsetId: decomposition.patchsetId,
       contract: input.narrationContract ?? ROLLUP_NARRATION_CONTRACT,
       provenance: narrationSeat.seed,
-      runTurn: narrationSeat.runTurn,
+      // A thrown narration turn degrades every node to the honest pending/failed
+      // floor instead of crashing the run (#96).
+      runTurn: guardSeatTurn(narrationSeat.runTurn),
       budget,
       ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
       ...(input.newRunId ? { newRunId: input.newRunId } : {}),

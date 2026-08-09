@@ -10,7 +10,7 @@ import type {
   SessionSpec,
   TurnInput,
 } from "./harness";
-import { createHarnessRunTurn } from "./harness-run-turn";
+import { createHarnessRunTurn, guardSeatTurn, type HarnessTurnResult } from "./harness-run-turn";
 
 // ── A scripted fake harness over the HarnessPort interface (no adapters, no SDK) ──
 
@@ -184,5 +184,40 @@ describe("createHarnessRunTurn", () => {
 
     expect(result.status).toBe("failed");
     expect(state.closed).toBe(true);
+  });
+});
+
+describe("guardSeatTurn", () => {
+  it("maps a THROWN (rejected) turn to a returned turn-failure (#96)", async () => {
+    const throwing = async (): Promise<HarnessTurnResult> => {
+      throw new Error("session/transport construction failed");
+    };
+    const guarded = guardSeatTurn(throwing);
+
+    // The rejection does not escape — it becomes an honest turn-failure the seat
+    // runners already handle by falling to their floor.
+    const result = await guarded("prompt", 0);
+
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.message).toContain("session/transport construction failed");
+    }
+  });
+
+  it("maps a non-Error throw and passes an emitted turn through unchanged", async () => {
+    const body = { chunks: [] };
+    const passthrough = async (_prompt: string, attempt: number): Promise<HarnessTurnResult> =>
+      attempt === 0 ? Promise.reject("bare string boom") : { status: "emitted", body };
+    const guarded = guardSeatTurn(passthrough);
+
+    // Per-call: a throw on attempt 0 becomes a failure, and a later attempt still
+    // runs and passes its emitted body straight through (the retry loop survives).
+    const first = await guarded("p", 0);
+    const second = await guarded("p", 1);
+
+    expect(first.status).toBe("failed");
+    if (first.status === "failed") expect(first.message).toContain("bare string boom");
+    expect(second.status).toBe("emitted");
+    if (second.status === "emitted") expect(second.body).toEqual(body);
   });
 });
