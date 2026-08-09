@@ -1,4 +1,10 @@
-import type { ReviewService } from "@rennet/core";
+import {
+  buildForgeReviewPost,
+  canonicalReviewPayload,
+  type ForgePublishPort,
+  type ForgeReviewTarget,
+  type ReviewService,
+} from "@rennet/core";
 import {
   type CommandName,
   type PermissionMode,
@@ -8,6 +14,7 @@ import {
   resolvePermissionMode,
 } from "@rennet/protocol";
 import type { Canvas, CanvasAngle, ElementDiffs, Review, ReviewNarration } from "@rennet/types";
+import { type PublishConsentAuthority, publishConsentKey } from "./publish-consent-authority";
 
 /**
  * The command router (issue #54), extracted from the electron main so it can be
@@ -54,6 +61,33 @@ export interface DispatchDeps {
   readonly consent: {
     grant(reviewId: string): string;
     consume(reviewId: string, authorization: string): boolean;
+  };
+  /**
+   * The forge egress port (issue #21). `buildReviewRequest` is pure and network-free
+   * (the dry-run evidence, no credential); `publishReview` performs the real, gated
+   * post. Read/egress are separate ports, so only the publish command can egress.
+   */
+  readonly publishPort: ForgePublishPort;
+  /**
+   * The main-owned PUBLISH consent authority (issue #21). Mints a single-use token
+   * bound to (review, target, payload) on the user's approval act
+   * (`publish.requestConsent`) and consumes it before the real egress, so a real
+   * post under a consent-requiring mode cannot be forged or replayed.
+   */
+  readonly publishConsent: PublishConsentAuthority;
+}
+
+/** Lift the wire target shape into the core `ForgeReviewTarget` nouns. */
+function toForgeReviewTarget(target: {
+  repo: { forge: string; owner: string; name: string };
+  number: number;
+  forgeRef: string;
+  headOid: string;
+}): ForgeReviewTarget {
+  return {
+    ref: { repo: target.repo, number: target.number },
+    forgeRef: target.forgeRef,
+    headOid: target.headOid,
   };
 }
 
@@ -150,6 +184,93 @@ export function createDispatch(
         const input = parseCommandInput(name, rawInput);
         const review = requireLatestReview(input.reviewId);
         return parseCommandOutput(name, { authorization: deps.consent.grant(review.id) });
+      }
+      case "publish.requestConsent": {
+        // The renderer REQUESTS approval to POST to GitHub; MAIN mints the token. It
+        // is bound to (review, target, payload) via `publishConsentKey`, so the token
+        // authorises exactly one payload onto exactly one PR head — the renderer must
+        // present the SAME target + payload at egress or the token cannot consume.
+        const input = parseCommandInput(name, rawInput);
+        const key = publishConsentKey(
+          input.reviewId,
+          toForgeReviewTarget(input.target),
+          input.payload,
+        );
+        return parseCommandOutput(name, { authorization: deps.publishConsent.grant(key) });
+      }
+      case "publish.review": {
+        // The FIRST real egress: a decomposed review leaving the machine onto a PR AS
+        // THE USER. Every dangerous part is gated here; the pipeline has no other path
+        // to egress (this command is reachable only from the trusted renderer origin).
+        const input = parseCommandInput(name, rawInput);
+        const target = toForgeReviewTarget(input.target);
+
+        // (1) Egress-side "what you see is what leaves" (R33), the MAIN analogue of
+        // the #106 UI gate: the canonical bytes re-derived from `comments` must equal
+        // the signed `payload` EXACTLY (===, never prefix/substring). A disagreement
+        // fails CLOSED. This runs on dry-run TOO, so a corrupt payload surfaces as a
+        // refusal rather than a plausible-looking request.
+        if (canonicalReviewPayload(input.comments) !== input.payload) {
+          throw new Error("Publish refused: the review payload does not match its content");
+        }
+        // (2) An empty review is not a valid egress — refuse rather than post nothing.
+        if (input.comments.length === 0) {
+          throw new Error("Publish refused: the review has no content");
+        }
+
+        // (3) Assemble the forge-neutral post (event COMMENT — no APPROVE shape; every
+        // no-line fold ledgered, never a silent drop).
+        const post = buildForgeReviewPost(input.comments, {
+          reviewId: input.reviewId,
+          target,
+          payload: input.payload,
+          capabilities: deps.publishPort.capabilities,
+        });
+
+        if (input.dryRun === false) {
+          // (4) REAL egress. Two independent guards on this vital circuit (Rule 75:
+          // no single fault clears it):
+          //   a. the effective MODE resolved from the persisted WORKSPACE store (the
+          //      j98dt authority — a renderer-supplied mode is NOT trusted;
+          //      corrupt/unknown still ASKS);
+          //   b. under a mode that ASKS (manual), a single-use CONSENT token that MAIN
+          //      minted for THIS (review, target, payload) — verified + CONSUMED here.
+          //      Absent / forged / replayed / target-or-payload-mismatched ⇒ refused,
+          //      and NOTHING leaves.
+          const effectiveMode = resolvePermissionMode({
+            workspace: deps.settings.permissionMode(),
+          });
+          if (requiresConsent(effectiveMode, "publish.egress")) {
+            const key = publishConsentKey(input.reviewId, target, input.payload);
+            const authorization = input.authorization;
+            if (
+              typeof authorization !== "string" ||
+              !deps.publishConsent.consume(key, authorization)
+            ) {
+              throw new Error(
+                "Publish refused: not authorized to post under the current permission mode",
+              );
+            }
+          }
+          const outcome = await deps.publishPort.publishReview(post);
+          return parseCommandOutput(name, {
+            dryRun: false,
+            request: deps.publishPort.buildReviewRequest(post),
+            marker: post.marker,
+            ledger: post.ledger,
+            outcome,
+          });
+        }
+
+        // Dry-run (the default): construct + return the EXACT request, post NOTHING.
+        // No mode/consent check — nothing leaves — and the descriptor carries no token.
+        return parseCommandOutput(name, {
+          dryRun: true,
+          request: deps.publishPort.buildReviewRequest(post),
+          marker: post.marker,
+          ledger: post.ledger,
+          outcome: null,
+        });
       }
       case "review.canvases": {
         const input = parseCommandInput(name, rawInput);

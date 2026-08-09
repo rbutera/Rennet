@@ -1,16 +1,25 @@
 import { randomUUID } from "node:crypto";
 import {
+  canonicalReviewPayload,
+  type ForgePublishPort,
+  type ForgeReviewPost,
   type PatchsetCapturePort,
+  type ReviewCommentInput,
   type ReviewEvent,
   ReviewService,
   type ReviewStorePort,
 } from "@rennet/core";
+import { buildGitHubReviewRequest } from "@rennet/adapters";
 import type { PermissionMode } from "@rennet/protocol";
 import type { Canvas, CanvasAngle, Patchset, Review } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
 import { createDispatch, type DispatchDeps } from "./dispatch";
 import { createHarnessConsentAuthority } from "./harness-consent-authority";
+import {
+  createPublishConsentAuthority,
+  type PublishConsentAuthority,
+} from "./publish-consent-authority";
 
 const REPO = "/repo";
 
@@ -84,7 +93,31 @@ function canvasSet(): Record<CanvasAngle, Canvas> {
   >;
 }
 
-function harness(): {
+/** A fake egress port that records posts, so a test can assert exactly one review. */
+function fakePublishPort(
+  overrides: Partial<ForgePublishPort> = {},
+): ForgePublishPort & { posts: ForgeReviewPost[] } {
+  const posts: ForgeReviewPost[] = [];
+  return {
+    posts,
+    capabilities: {
+      supportsThreadResolution: true,
+      supportsBatchedReview: true,
+      supportsMultiLineAnchors: true,
+      supportsFileLevelThreads: true,
+    },
+    // The REAL pure request builder, so the dry-run shape assertion is meaningful.
+    buildReviewRequest: (post) => buildGitHubReviewRequest(post),
+    findExistingReview: () => Promise.resolve(null),
+    publishReview: (post) => {
+      posts.push(post);
+      return Promise.resolve({ reviewRef: "PRR_test", url: "https://x/1", reused: false });
+    },
+    ...overrides,
+  };
+}
+
+function harness(publishPort: ForgePublishPort & { posts: ForgeReviewPost[] } = fakePublishPort()): {
   dispatch: ReturnType<typeof createDispatch>;
   service: ReviewService;
   allowedRoots: Set<string>;
@@ -94,6 +127,8 @@ function harness(): {
     grant(reviewId: string): string;
     consume(reviewId: string, authorization: string): boolean;
   };
+  publishPort: ForgePublishPort & { posts: ForgeReviewPost[] };
+  publishConsent: PublishConsentAuthority;
 } {
   const capture: PatchsetCapturePort = { capture: () => Promise.resolve(patchset()) };
   const service = new ReviewService(capture, new InMemoryStore());
@@ -116,6 +151,7 @@ function harness(): {
   // The REAL main-owned consent authority (bead workspace-fyvxb): main mints a
   // single-use, review-bound token and consumes it before the harness runs.
   const consent = createHarnessConsentAuthority();
+  const publishConsent = createPublishConsentAuthority();
   const deps: DispatchDeps = {
     service,
     allowedRoots,
@@ -128,6 +164,8 @@ function harness(): {
     buildCanvases,
     settings,
     consent,
+    publishPort,
+    publishConsent,
   };
   return {
     dispatch: createDispatch(deps),
@@ -136,6 +174,8 @@ function harness(): {
     buildCanvases,
     settings,
     consent,
+    publishPort,
+    publishConsent,
   };
 }
 
@@ -479,5 +519,267 @@ describe("createDispatch — review.canvases harness-run consent gate (#58/#103)
       }),
     ).rejects.toThrow(/authoriz/i);
     expect(buildCanvases).not.toHaveBeenCalled();
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// publish.review — the FIRST real GitHub egress (issue #21).
+//
+// The egress is gated behind: (1) an egress-side "what you see is what leaves"
+// round-trip (payload/target fail-closed), (2) an explicit-target requirement,
+// (3) the effective mode resolved from the WORKSPACE store, and (4) a single-use,
+// (review+target+payload)-bound consent token consumed before ANY real post. The
+// dry-run posts nothing and needs no token. Every test names the gate it exercises
+// and is red-provable by neutralising exactly that gate.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const SANDBOX_TARGET = {
+  repo: { forge: "github", owner: "rbutera", name: "rennet-egress-sandbox" },
+  number: 1,
+  forgeRef: "PR_kwSANDBOX1",
+  headOid: "deadbeefcafe0001",
+};
+
+function publishComments(): ReviewCommentInput[] {
+  return [
+    { path: "src/a.ts", line: 2, side: "RIGHT", type: "request-change", body: "rename this" },
+    // A no-line disposition — folds into the review body, ledgered (never dropped).
+    { path: "README.md", side: "RIGHT", type: "comment", body: "a file-level note" },
+  ];
+}
+
+async function requestPublishConsent(
+  dispatch: ReturnType<typeof createDispatch>,
+  reviewId: string,
+  target: typeof SANDBOX_TARGET,
+  payload: string,
+): Promise<string> {
+  const out = (await dispatch("publish.requestConsent", {
+    commandId: randomUUID(),
+    reviewId,
+    target,
+    payload,
+  })) as { authorization: string };
+  return out.authorization;
+}
+
+interface PublishResult {
+  dryRun: boolean;
+  request: { endpoint: string; method: string; body: unknown };
+  marker: string;
+  ledger: { kind: string; path: string; detail: string }[];
+  outcome: { reviewRef: string; url: string | null; reused: boolean } | null;
+}
+
+describe("createDispatch — publish.review egress (issue #21)", () => {
+  it("(d) dry-run: builds the exact GitHub request, posts NOTHING, leaks no token", async () => {
+    const port = fakePublishPort();
+    const { dispatch } = harness(port);
+    const review = await capturedReview(dispatch);
+    const comments = publishComments();
+    const payload = canonicalReviewPayload(comments);
+
+    // dryRun omitted ⇒ defaults to TRUE (wrong-side-safe): nothing leaves.
+    const out = (await dispatch("publish.review", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      target: SANDBOX_TARGET,
+      comments,
+      payload,
+    })) as PublishResult;
+
+    expect(out.dryRun).toBe(true);
+    expect(out.outcome).toBeNull();
+    expect(port.posts).toHaveLength(0); // NOTHING posted
+    const body = out.request.body as {
+      query: string;
+      variables: { input: Record<string, unknown> };
+    };
+    expect(body.query).toContain("addPullRequestReview");
+    expect(body.query).not.toContain("comments:"); // never the deprecated field
+    expect(body.variables.input.event).toBe("COMMENT"); // never APPROVE
+    expect(body.variables.input.commitOID).toBe(SANDBOX_TARGET.headOid); // head pinned
+    expect(body.variables.input.pullRequestId).toBe(SANDBOX_TARGET.forgeRef);
+    const threads = body.variables.input.threads as { line: number }[];
+    expect(threads).toHaveLength(1); // line-anchored; the no-line note folded into body
+    expect(threads[0]?.line).toBe(2);
+    // The no-line disposition is visible on the ledger, never silently dropped.
+    expect(out.ledger).toEqual([
+      expect.objectContaining({ kind: "file-level-fold", path: "README.md" }),
+    ]);
+    // The descriptor carries NO secret — the bearer is a send-time header.
+    expect(JSON.stringify(out.request)).not.toMatch(/authorization|bearer|token/i);
+  });
+
+  it("(b) refuses a payload that disagrees with the content — byte-exact, even near-matches", async () => {
+    const { dispatch } = harness();
+    const review = await capturedReview(dispatch);
+    const comments = publishComments();
+    const canonical = canonicalReviewPayload(comments);
+
+    // A wholly-different payload, a trailing byte, and a truncation each fail CLOSED.
+    for (const payload of [
+      canonicalReviewPayload([]),
+      `${canonical} `,
+      canonical.slice(0, -1),
+    ]) {
+      await expect(
+        dispatch("publish.review", {
+          commandId: randomUUID(),
+          reviewId: review.id,
+          target: SANDBOX_TARGET,
+          comments,
+          payload,
+          dryRun: true,
+        }),
+      ).rejects.toThrow(/does not match/i);
+    }
+  });
+
+  it("(a) refuses a REAL post with no consent under manual mode", async () => {
+    const port = fakePublishPort();
+    const { dispatch, settings } = harness(port);
+    settings.setPermissionMode("manual"); // ASK
+    const review = await capturedReview(dispatch);
+    const comments = publishComments();
+    const payload = canonicalReviewPayload(comments);
+
+    await expect(
+      dispatch("publish.review", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        target: SANDBOX_TARGET,
+        comments,
+        payload,
+        dryRun: false, // REAL egress
+      }),
+    ).rejects.toThrow(/not authorized/i);
+    expect(port.posts).toHaveLength(0); // nothing left the machine
+  });
+
+  it("(c) refuses a REAL post whose consent token was minted for a different payload", async () => {
+    const port = fakePublishPort();
+    const { dispatch, settings } = harness(port);
+    settings.setPermissionMode("manual");
+    const review = await capturedReview(dispatch);
+    const comments = publishComments();
+    const payload = canonicalReviewPayload(comments);
+
+    // A token bound to a DIFFERENT payload (a single-comment review).
+    const otherComments: ReviewCommentInput[] = [
+      { path: "src/a.ts", line: 2, side: "RIGHT", type: "comment", body: "x" },
+    ];
+    const wrongToken = await requestPublishConsent(
+      dispatch,
+      review.id,
+      SANDBOX_TARGET,
+      canonicalReviewPayload(otherComments),
+    );
+
+    await expect(
+      dispatch("publish.review", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        target: SANDBOX_TARGET,
+        comments,
+        payload,
+        authorization: wrongToken,
+        dryRun: false,
+      }),
+    ).rejects.toThrow(/not authorized/i);
+    expect(port.posts).toHaveLength(0);
+  });
+
+  it("(e) happy path under manual: a matching single-use token authorizes exactly one post", async () => {
+    const port = fakePublishPort();
+    const { dispatch, settings } = harness(port);
+    settings.setPermissionMode("manual");
+    const review = await capturedReview(dispatch);
+    const comments = publishComments();
+    const payload = canonicalReviewPayload(comments);
+    const token = await requestPublishConsent(dispatch, review.id, SANDBOX_TARGET, payload);
+
+    const out = (await dispatch("publish.review", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      target: SANDBOX_TARGET,
+      comments,
+      payload,
+      authorization: token,
+      dryRun: false,
+    })) as PublishResult;
+
+    expect(out.dryRun).toBe(false);
+    expect(out.outcome).not.toBeNull();
+    expect(port.posts).toHaveLength(1); // exactly one review posted
+    expect(port.posts[0]?.event).toBe("COMMENT");
+    expect(port.posts[0]?.body).toContain(out.marker); // the idempotency marker is embedded
+
+    // The token is single-use: a replay of the same token is refused.
+    await expect(
+      dispatch("publish.review", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        target: SANDBOX_TARGET,
+        comments,
+        payload,
+        authorization: token,
+        dryRun: false,
+      }),
+    ).rejects.toThrow(/not authorized/i);
+    expect(port.posts).toHaveLength(1); // still exactly one
+  });
+
+  it("(e2) auto mode posts without a token; the request is byte-identical to the dry-run", async () => {
+    const port = fakePublishPort();
+    const { dispatch, settings } = harness(port);
+    const review = await capturedReview(dispatch);
+    const comments = publishComments();
+    const payload = canonicalReviewPayload(comments);
+
+    const dry = (await dispatch("publish.review", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      target: SANDBOX_TARGET,
+      comments,
+      payload,
+      dryRun: true,
+    })) as PublishResult;
+
+    settings.setPermissionMode("auto"); // no prompt, no token needed
+    const real = (await dispatch("publish.review", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      target: SANDBOX_TARGET,
+      comments,
+      payload,
+      dryRun: false,
+    })) as PublishResult;
+
+    expect(real.outcome).not.toBeNull();
+    expect(port.posts).toHaveLength(1);
+    // What the dry-run previewed equals what left the machine (R33), byte-for-byte.
+    expect(JSON.stringify(real.request)).toBe(JSON.stringify(dry.request));
+    expect(buildGitHubReviewRequest(port.posts[0] as ForgeReviewPost)).toEqual(real.request);
+  });
+
+  it("refuses an empty review (nothing to post is not a valid egress)", async () => {
+    const port = fakePublishPort();
+    const { dispatch, settings } = harness(port);
+    settings.setPermissionMode("auto");
+    const review = await capturedReview(dispatch);
+    const empty: ReviewCommentInput[] = [];
+
+    await expect(
+      dispatch("publish.review", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        target: SANDBOX_TARGET,
+        comments: empty,
+        payload: canonicalReviewPayload(empty),
+        dryRun: false,
+      }),
+    ).rejects.toThrow(/no content/i);
+    expect(port.posts).toHaveLength(0);
   });
 });

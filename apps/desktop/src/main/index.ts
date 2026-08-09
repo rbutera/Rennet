@@ -1,5 +1,7 @@
+import { execFile } from "node:child_process";
 import { join, normalize, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { promisify } from "node:util";
 import {
   type ClaudeHarnessResult,
   type CodexAvailability,
@@ -7,8 +9,12 @@ import {
   createCodexUtilityAdapter,
   discoverCodexAvailability,
   FileSettingsStore,
+  type GhRunner,
   GitCaptureAdapter,
+  GitHubPublishAdapter,
+  type HttpFetch,
   RepoWatcher,
+  resolveGitHubAuth,
   SqliteReviewStore,
 } from "@rennet/adapters";
 import {
@@ -30,6 +36,9 @@ import type {
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session } from "electron";
 import { createDispatch } from "./dispatch";
 import { createHarnessConsentAuthority } from "./harness-consent-authority";
+import { createPublishConsentAuthority } from "./publish-consent-authority";
+
+const execFileAsync = promisify(execFile);
 
 const IPC_CHANNEL = "rennet:invoke";
 const APP_ORIGIN = "app://rennet";
@@ -75,6 +84,41 @@ let codexAvailability: Promise<CodexAvailability> | null = null;
 function getCodexAvailability(): Promise<CodexAvailability> {
   codexAvailability ??= discoverCodexAvailability();
   return codexAvailability;
+}
+
+// ── The GitHub egress composition (issue #21) ────────────────────────────────
+// The outbound HTTP goes through electron `net.fetch`, so no code here holds a raw
+// socket; the bearer token is resolved LAZILY via the auth ladder (`gh auth token`,
+// rung 0) on the FIRST real publish, never at launch and never for a dry-run (which
+// constructs the request without a credential). The token is never persisted.
+const publishHttp: HttpFetch = async (url, init) => {
+  const res = await net.fetch(url, init);
+  return { status: res.status, headers: res.headers, text: () => res.text() };
+};
+
+const runGhAuthToken: GhRunner = async () => {
+  try {
+    const { stdout, stderr } = await execFileAsync("gh", ["auth", "token"], { env: process.env });
+    return { stdout, stderr, exitCode: 0 };
+  } catch (error) {
+    // A non-zero exit (logged out) resolves with its code; a spawn failure (`gh`
+    // absent, no `code`) rejects, which the auth ladder reads as gh-absent.
+    const err = error as { stdout?: string; stderr?: string; code?: unknown };
+    if (typeof err.code !== "number") throw error;
+    return { stdout: err.stdout ?? "", stderr: err.stderr ?? "", exitCode: err.code };
+  }
+};
+
+/** Resolve the GitHub bearer for a real egress; throws (never posts) when unavailable. */
+async function resolveGitHubToken(): Promise<string> {
+  const auth = await resolveGitHubAuth({
+    gh: runGhAuthToken,
+    http: publishHttp,
+    // No pasted-PAT store is wired yet; rung 0 (`gh auth token`) is the credential.
+    secretStore: { getGitHubToken: async () => null },
+  });
+  if (!auth.ok) throw new Error(`GitHub authentication is unavailable (${auth.reason})`);
+  return auth.token;
 }
 
 let store: SqliteReviewStore;
@@ -243,11 +287,20 @@ app.whenReady().then(async () => {
   // the harness runs. In-process only — a restart must re-ask, never inherit a
   // stale authorization.
   const consent = createHarnessConsentAuthority();
+  // The publish egress port + its consent authority (issue #21). The port constructs
+  // requests purely (dry-run) and posts only via the gated `publish.review` command.
+  const publishPort = new GitHubPublishAdapter({
+    http: publishHttp,
+    resolveToken: resolveGitHubToken,
+  });
+  const publishConsent = createPublishConsentAuthority();
   dispatch = createDispatch({
     service,
     allowedRoots,
     settings,
     consent,
+    publishPort,
+    publishConsent,
     chooseRepository,
     startWatching: (root: string) =>
       watcher.start(root, () => {
