@@ -43,10 +43,7 @@ function Cohort({
           aria-expanded={expanded}
           onClick={() => onToggle(cohort.cohortKey)}
         >
-          <span
-            className={`cohort-chevron ${expanded ? "is-open" : ""}`}
-            aria-hidden="true"
-          >
+          <span className={`cohort-chevron ${expanded ? "is-open" : ""}`} aria-hidden="true">
             <ChevronIcon size={13} />
           </span>
           <span className="cohort-title">{cohort.title}</span>
