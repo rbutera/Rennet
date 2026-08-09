@@ -4,7 +4,7 @@ categories: [reference]
 status: active
 created: 2026-08-08
 updated: 2026-08-08
-related: ["[[Rennet User Journey]]", "[[Rennet Design Doctrine]]", "[[Rennet Contracts and Rulings]]", "[[Rennet Product and Vision]]", "[[Rennet Canvas Paradigm]]"]
+related: ["[[Rennet User Journey]]", "[[Rennet Design Doctrine]]", "[[Rennet Contracts and Rulings]]", "[[Rennet Product and Vision]]", "[[Rennet Canvas Paradigm]]", "[[Rennet v3 Resteer 2026-08-09]]"]
 source: Rai correction, voice, 2026-08-08 (GitHub issue #99); Accepted 2026-08-08 (Rai blessed)
 ---
 
@@ -90,7 +90,7 @@ Both modes flow **lenses → collation draft → paper**. The collation-draft *m
 |---|---|---|
 | The collation draft collates dispositions into… | one coherent **task narrative** for a coding harness | one coherent **review to post** |
 | What editing earns its place | **compose N dispositions into ONE instruction bundle** — reorder / merge / reword into a coherent set of asks (this is where `#72` handoff-bundle composition lives) | **per-item refinement** — refine comment wording, group related comments, drop the ones you've decided against (this is where `#19` comment refinement lives) |
-| The paper (frozen) | the **handoff bundle** / PR-submission preview (title/body/draft, zero Git mutation, R33) | the **GitHub review** preview: line items in refined form, the degradation ledger, the travels-vs-stays split, ONE batched review event (R33) |
+| The paper (frozen) | the **handoff bundle** / PR-submission preview (title/body/draft, zero Git mutation, R33) | the **GitHub review** preview: line items in refined form, the degradation ledger, the travels-vs-stays split, ONE batched review event carrying the human's signed verdict (approve / request-change / comment, derived from the dispositions and user-overridable, R33) |
 | Sign = | hand off to the harness (or draft the PR) | post one batched review (R33) |
 
 The collation canvas is therefore the natural, single **home for both `#72` and `#19`** — they are the same surface doing mode-specific work, not two separate features. The own-branch mode leans composition-heavy (merge/reorder into a coherent bundle); the other-PR mode leans per-item-refinement-heavy. Same canvas, same machinery, mode-framed labels — the minimal-churn path the existing `DestinationVariant` already anticipates.

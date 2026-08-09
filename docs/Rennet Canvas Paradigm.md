@@ -4,7 +4,7 @@ tags: [rennet, architecture, canvases, orchestrator]
 categories: [project]
 status: draft-for-rai
 created: 2026-08-06
-related: ["[[Rennet Contracts and Rulings]]", "[[Wingman Surfacing DSL and Model Routing Plan]]", "[[Rennet Architecture Contracts]]"]
+related: ["[[Rennet Contracts and Rulings]]", "[[Wingman Surfacing DSL and Model Routing Plan]]", "[[Rennet Architecture Contracts]]", "[[Rennet v3 Resteer 2026-08-09]]"]
 ---
 
 # Rennet Canvas Paradigm
@@ -12,6 +12,8 @@ related: ["[[Rennet Contracts and Rulings]]", "[[Wingman Surfacing DSL and Model
 *Design doc, 2026-08-06. Responds to Rai's framing: "Rennet is, at its core, a bunch of **canvases** that the agent can fill and manipulate and the user can interact with." Designed against the two reference models he pointed at — the MCP Apps extension (SEP-1865, `io.modelcontextprotocol/ui`) and mcp_excalidraw — both read firsthand for this doc. Honours the 2026-08-06 corrections: MIT throughout, roll-up hard-baked, logical ordering, decisions never capped, action-defined read state, the review→agent handoff loop (Master Plan §2.1).*
 
 **Headline recommendation up front: adopt the canvas paradigm as the product's interaction model — it is ~70% the existing architecture renamed, and the remaining 30% (the interaction contract and the primed orchestrator) is exactly the part OQ9 already says Rennet must build for itself. Implement it as a hybrid: a bespoke event-sourced canvas state model inside `core`, exposed to the orchestrator through an MCP tool surface that borrows the MCP Apps interaction grammar (tool visibility, context-update notifications) without adopting its iframe/`ui://` rendering layer, which solves a problem Rennet does not have.**
+
+*Roster aligned to the [[Rennet v3 Resteer 2026-08-09]] (2026-08-09). The five review canvases are now **spec, sequence, decisions, flagged, noise** (the blast-radius overlay is unchanged, so still five canvases plus one overlay). The standalone **claims** lens is retired: its requirement-to-hunk coverage mapping folds into the spec canvas as coverage chips, and **flagged** takes the fifth slot as the index of the automated-review layer (model-council findings and dual-review disagreements), rendering its flags as marks at their anchors on the other canvases. The interaction contract, the layer model, the primer, and everything else below stand unchanged.*
 
 ---
 
@@ -37,7 +39,7 @@ Yes — closely enough that most of the vision's six steps are the ratified arch
 3. **The orchestrator priming manifest** — a deterministic assembly of "what has been done" that a fresh session can be handed. Provenance blocks (DSL §2.2) already record everything needed; nothing assembles them into a primer.
 4. **Workspace-level context composition** — multi-repo workspaces need an aggregation over per-repo snapshots that no contract currently describes.
 
-One vocabulary ruling this doc proposes (Rai to confirm): **"angle" and "canvas" are different words for different things and both survive.** An *angle* is the lens — the analysis dimension, the species, the document types that feed it. A *canvas* is the stateful surface instance of an angle for one review. Six angles; per review, **five canvases plus one overlay**, because the species table already says so: spec, sequence, decisions, claims, and noise each get a canvas; **blast radius stays an overlay** — it paints amber onto the other canvases and owns no surface of its own (Master Plan §1; DSL plan §5.2 row 5). Renaming it to "six canvases" would silently promote the overlay to a queue, which R11/lens-v4 deliberately did not do.
+One vocabulary ruling this doc proposes (Rai to confirm): **"angle" and "canvas" are different words for different things and both survive.** An *angle* is the lens — the analysis dimension, the species, the document types that feed it. A *canvas* is the stateful surface instance of an angle for one review. Six angles; per review, **five canvases plus one overlay**, because the species table already says so: spec, sequence, decisions, flagged, and noise each get a canvas; **blast radius stays an overlay** — it paints amber onto the other canvases and owns no surface of its own (Master Plan §1; DSL plan §5.2 row 5). Renaming it to "six canvases" would silently promote the overlay to a queue, which R11/lens-v4 deliberately did not do.
 
 ---
 
@@ -56,7 +58,7 @@ interface Canvas {
   patchsetId: PatchsetId             // canvases are per-patchset; the delta re-review
                                      // (Master Plan §2.1) produces a NEW canvas whose
                                      // unchanged-and-approved elements carry forward
-  angle: 'spec' | 'sequence' | 'decisions' | 'claims' | 'noise'
+  angle: 'spec' | 'sequence' | 'decisions' | 'flagged' | 'noise'
   layers: {
     substrate:  SubstrateLayer       // L0 — read-only
     analysis:   AnalysisLayer        // L1 — deterministically placed
@@ -81,7 +83,7 @@ Element shapes per canvas (all reference admitted docs by `docId` + anchor; canv
 | decisions | **cohort** elements containing decision elements | grouping + **logical-dependency order** (correction 8) computed deterministically from the decomposition DAG position of each decision's anchored chunk (candidate mechanism (c) of the C-report's OQ1 — see Open Questions); collapsible, **never capped** (correction 4) |
 | sequence | chunk elements in `readingOrder` (topological, V103) | the decomposition proposal *is* this canvas's L1 |
 | spec | requirement elements, coverage edges | from `spec.model`; derived requirements carry their `reconstructed/unconfirmed` marks |
-| claims | claim elements, UNCLAIMED bucket | from `claim` docs (schemas-only in M0; canvas renders empty-but-honest) |
+| flagged | finding elements: severity, agreement state (both concur / models disagree), anchor | from admitted `finding` docs; an index whose flags render as marks at their anchors on the other canvases (the automated-review layer's own lens, not a house) |
 | noise | verified groups, SUSPECTED groups, anomaly callouts | deterministic checkers admit VERIFIED; the floor renders the residue guarantee |
 
 **L2 Disposition** — the user's dispositions, in the one settled model: `{anchor, type: approve | request-change | comment | question, body}` (Master Plan §2.1). This layer is **user-sovereign**: no agent, including the orchestrator, may write to it. It is simultaneously (a) read state (OQ4: read is action-defined), (b) the publish payload on someone else's PR, and (c) the handoff bundle on your own branch. The canvas is therefore also *where the handoff loop lives*: batching L2 to a coding harness, receiving the new patchset, and opening the successor canvas whose lineage-carried approved elements arrive pre-settled is the loop of §2.1 expressed as canvas state.
