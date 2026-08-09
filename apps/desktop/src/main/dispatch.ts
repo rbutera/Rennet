@@ -188,14 +188,14 @@ export function createDispatch(
       case "publish.requestConsent": {
         // The renderer REQUESTS approval to POST to GitHub; MAIN mints the token. It
         // is bound to (review, target, payload) via `publishConsentKey`, so the token
-        // authorises exactly one payload onto exactly one PR head — the renderer must
-        // present the SAME target + payload at egress or the token cannot consume.
+        // authorises exactly one payload onto exactly one PR (coordinates + node id +
+        // head) — the renderer must present the SAME target + payload at egress or the
+        // token cannot consume.
         const input = parseCommandInput(name, rawInput);
-        const key = publishConsentKey(
-          input.reviewId,
-          toForgeReviewTarget(input.target),
-          input.payload,
-        );
+        // Parity with `harness.requestConsent`: refuse to mint a token for a stale or
+        // unknown review id; only the current review can be published from this session.
+        const review = requireLatestReview(input.reviewId);
+        const key = publishConsentKey(review.id, toForgeReviewTarget(input.target), input.payload);
         return parseCommandOutput(name, { authorization: deps.publishConsent.grant(key) });
       }
       case "publish.review": {

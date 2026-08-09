@@ -77,6 +77,18 @@ describe("buildGitHubReviewRequest (issue #21) — the dry-run evidence", () => 
     expect(thread).not.toHaveProperty("startSide");
   });
 
+  it("emits COMMENT even when handed a post forged with an APPROVE event (structural)", () => {
+    // A post carries no event field; the wire hardcodes COMMENT. Even a caller who
+    // casts an `event: "APPROVE"` onto a post-shaped object cannot make an APPROVE
+    // leave — the builder never reads it. Red-proof: if the builder copied the event,
+    // this output would be APPROVE.
+    const forged = { ...singleLine, event: "APPROVE" } as unknown as ForgeReviewPost;
+    const body = buildGitHubReviewRequest(forged).body as {
+      variables: { input: { event: string } };
+    };
+    expect(body.variables.input.event).toBe("COMMENT");
+  });
+
   it("carries NO secret — the descriptor has no Authorization/Bearer/token", () => {
     // The bearer is a send-time HEADER, never part of the constructed descriptor.
     expect(JSON.stringify(buildGitHubReviewRequest(singleLine))).not.toMatch(

@@ -93,16 +93,17 @@ describe("buildForgeReviewPost (issue #21)", () => {
     expect(post.threads[1]?.body).toContain("Question");
   });
 
-  it("the event is COMMENT and there is no shape for APPROVE (R33 / #80)", () => {
-    // The event is a one-member union: a call site literally cannot make it APPROVE.
-    expect(post.event).toBe("COMMENT");
+  it("carries NO event field — there is nothing on a post for an APPROVE to be read from", () => {
+    // The event is not post data; it is hardcoded at the wire (see the adapter test
+    // "emits COMMENT even when handed a forged APPROVE"). A post has no event field, so
+    // even an all-`approve` review has nowhere to carry an APPROVE toward the request.
     expect(FORGE_REVIEW_EVENT).toBe("COMMENT");
-    // Even when every disposition is `approve`, the review EVENT is a neutral comment.
+    expect("event" in post).toBe(false);
     const approvals = buildForgeReviewPost(
       [{ path: "a.ts", line: 1, side: "RIGHT", type: "approve", body: "lgtm" }],
       { reviewId: "rev-2", target: TARGET, payload: "p", capabilities: CAPS },
     );
-    expect(approvals.event).toBe("COMMENT");
+    expect("event" in approvals).toBe(false);
   });
 
   it("embeds the deterministic idempotency marker in the body", () => {
@@ -116,9 +117,16 @@ describe("buildForgeReviewPost (issue #21)", () => {
 });
 
 describe("forgeTargetKey (issue #21)", () => {
-  it("pins the head OID so a token cannot cross to a moved head", () => {
-    expect(forgeTargetKey(TARGET)).toBe("github/rbutera/rennet-egress-sandbox#7@deadbeef0007");
+  it("pins the head OID AND the forgeRef so a token cannot cross to a different PR", () => {
+    expect(forgeTargetKey(TARGET)).toBe(
+      "github/rbutera/rennet-egress-sandbox#7@deadbeef0007:PR_kwABC",
+    );
+    // A moved head yields a different key (a token cannot cross to a different head).
     const moved: ForgeReviewTarget = { ...TARGET, headOid: "feed0008" };
     expect(forgeTargetKey(moved)).not.toBe(forgeTargetKey(TARGET));
+    // A different node id yields a different key too, even with identical coordinates
+    // and head: the adapter POSTS by forgeRef, so the binding must include it.
+    const otherNode: ForgeReviewTarget = { ...TARGET, forgeRef: "PR_kwDIFFERENT" };
+    expect(forgeTargetKey(otherNode)).not.toBe(forgeTargetKey(TARGET));
   });
 });

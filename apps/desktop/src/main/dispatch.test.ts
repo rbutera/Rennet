@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { buildGitHubReviewRequest } from "@rennet/adapters";
 import {
   canonicalReviewPayload,
   type ForgePublishPort,
@@ -9,7 +10,6 @@ import {
   ReviewService,
   type ReviewStorePort,
 } from "@rennet/core";
-import { buildGitHubReviewRequest } from "@rennet/adapters";
 import type { PermissionMode } from "@rennet/protocol";
 import type { Canvas, CanvasAngle, Patchset, Review } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
@@ -117,7 +117,9 @@ function fakePublishPort(
   };
 }
 
-function harness(publishPort: ForgePublishPort & { posts: ForgeReviewPost[] } = fakePublishPort()): {
+function harness(
+  publishPort: ForgePublishPort & { posts: ForgeReviewPost[] } = fakePublishPort(),
+): {
   dispatch: ReturnType<typeof createDispatch>;
   service: ReviewService;
   allowedRoots: Set<string>;
@@ -618,11 +620,7 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     const canonical = canonicalReviewPayload(comments);
 
     // A wholly-different payload, a trailing byte, and a truncation each fail CLOSED.
-    for (const payload of [
-      canonicalReviewPayload([]),
-      `${canonical} `,
-      canonical.slice(0, -1),
-    ]) {
+    for (const payload of [canonicalReviewPayload([]), `${canonical} `, canonical.slice(0, -1)]) {
       await expect(
         dispatch("publish.review", {
           commandId: randomUUID(),
@@ -690,6 +688,38 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     expect(port.posts).toHaveLength(0);
   });
 
+  it("(f) refuses a REAL post whose consent token was minted for a different PR node id", async () => {
+    // The adapter POSTS by forgeRef (the node id) while findExistingReview READS by
+    // coordinates — independent renderer fields. A token bound to the coordinates but a
+    // DIFFERENT forgeRef must NOT authorise, or a post could land on a different PR than
+    // the one approved. Red-proof: dropping forgeRef from forgeTargetKey makes the two
+    // keys equal and this post would be authorised.
+    const port = fakePublishPort();
+    const { dispatch, settings } = harness(port);
+    settings.setPermissionMode("manual");
+    const review = await capturedReview(dispatch);
+    const comments = publishComments();
+    const payload = canonicalReviewPayload(comments);
+
+    // Token bound to SANDBOX_TARGET (its forgeRef). Same coordinates + head + payload,
+    // but a different node id at egress.
+    const token = await requestPublishConsent(dispatch, review.id, SANDBOX_TARGET, payload);
+    const differentNode = { ...SANDBOX_TARGET, forgeRef: "PR_kwFORGEDNODE" };
+
+    await expect(
+      dispatch("publish.review", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        target: differentNode,
+        comments,
+        payload,
+        authorization: token,
+        dryRun: false,
+      }),
+    ).rejects.toThrow(/not authorized/i);
+    expect(port.posts).toHaveLength(0);
+  });
+
   it("(e) happy path under manual: a matching single-use token authorizes exactly one post", async () => {
     const port = fakePublishPort();
     const { dispatch, settings } = harness(port);
@@ -712,7 +742,8 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     expect(out.dryRun).toBe(false);
     expect(out.outcome).not.toBeNull();
     expect(port.posts).toHaveLength(1); // exactly one review posted
-    expect(port.posts[0]?.event).toBe("COMMENT");
+    // The wire event is COMMENT (asserted on the constructed request in the dry-run
+    // test); a post carries no event field to check here.
     expect(port.posts[0]?.body).toContain(out.marker); // the idempotency marker is embedded
 
     // The token is single-use: a replay of the same token is refused.

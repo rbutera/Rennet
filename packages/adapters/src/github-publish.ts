@@ -6,7 +6,7 @@ import type {
   ForgeReviewPost,
   ForgeReviewTarget,
 } from "@rennet/core";
-import { extractMarker, ForgeRateLimited } from "@rennet/core";
+import { extractMarker, FORGE_REVIEW_EVENT, ForgeRateLimited } from "@rennet/core";
 import type { HttpFetch } from "./github-auth";
 
 /**
@@ -23,8 +23,9 @@ import type { HttpFetch } from "./github-auth";
  *   • `buildReviewRequest` is PURE and network-free (the primary dry-run evidence)
  *     and never touches the token: the bearer is an Authorization HEADER added only
  *     at real send, so a dry-run descriptor carries no secret.
- *   • The review `event` comes from `post.event`, which is the one-member union
- *     `COMMENT` — the request can never carry `APPROVE`/`REQUEST_CHANGES`.
+ *   • The review `event` is HARDCODED to `FORGE_REVIEW_EVENT` (COMMENT) at the wire,
+ *     never copied from the post (which carries no event field) — so the request can
+ *     never carry `APPROVE`/`REQUEST_CHANGES`, at runtime, not just in the type.
  *   • The token is resolved LAZILY (`resolveToken`), so constructing the adapter and
  *     building a dry-run request need no live credential; only `findExistingReview`
  *     and `publishReview` spend one.
@@ -106,7 +107,10 @@ export function buildGitHubReviewRequest(
   const input: AddReviewInput = {
     pullRequestId: post.target.forgeRef,
     commitOID: post.target.headOid,
-    event: post.event,
+    // HARDCODED at the wire, never copied from the post (which carries no event):
+    // Rennet never approves for the user, and this makes that a runtime guarantee,
+    // not merely a compile-time one. There is no path for an APPROVE to leave here.
+    event: FORGE_REVIEW_EVENT,
     body: post.body,
     threads,
   };
