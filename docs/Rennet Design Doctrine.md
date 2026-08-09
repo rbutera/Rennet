@@ -3,7 +3,7 @@ tags: [rennet, design, ux]
 categories: [reference]
 status: active
 created: 2026-08-07
-updated: 2026-08-08
+updated: 2026-08-09
 related: ["[[Rennet Product and Vision]]", "[[Rennet User Journey]]", "[[Rennet Collation Draft Canvas]]", "[[Code Review App Design Directions]]", "[[Code Review App UX Concepts]]", "[[Code Review App UX Research]]"]
 source: ratified extraction from the prototype design/UX docs (glass ratified by Rai — "definitely glass is the way")
 ---
@@ -40,7 +40,19 @@ The whole public/private semantics of the product is carried as *material*:
 4. **Smooth and quick — the machine does the cleanup.** The user may be lazy and messy; anything that adds user ceremony without adding user judgment is wrong. The comment-refinement loop exists so the user is *allowed* to be messy; bulk adjudication is one act; grouping is hard-baked, never a knob.
 5. **Marks live at their anchors, never in a list.** An agent mark (L3) renders *at the place it is about* — a highlight ON its lines, the ◇ hand in the gutter of its span, a proposal card inline at the span it concerns. A strip or panel may *index* marks (a jump-list that navigates to the in-code mark), but it must never *house* them: marks in a strip are an inbox, marks at anchors are presence, and presence is the difference between a document you look at and a room you are both in. A mark whose anchor does not resolve to a place renders in the orphan tray, visibly, never silently in a list. This is what makes the code surface a *canvas the agent inhabits with you* rather than a diff viewer beside a sidebar of the agent's notes.
 
-## 4. What this doctrine is for
+## 4. The chrome voice (terse, functional, zero editorial) [R41]
+
+**Rennet's own chrome is terse and functional. Zero colourful, editorial, or marketing copy.** Labels, empty states, tooltips, section headers, and button text are plain and sparse. Rennet is a **minimal harness** in the literal sense: it hosts canvases that two intelligences (the human and the LLM) converse over. The chrome is the frame around that conversation, not a voice in it. Rai's example of exactly what to kill: **"your code before it becomes someone else's problem."** No taglines, no jokes-in-the-UI, no personality copy, no cheese; a label says what the thing is and stops.
+
+⭐ **The critical exemption: LLM-generated content that fills the canvas is NOT bound by this rule.** The narration, roll-up summaries, decision WHYs, findings prose, refiner output, and every diff/conversation fragment are the **human↔LLM conversation and diff content**; that is the substance the harness exists to host, and it carries whatever voice the analysis needs. The terse rule governs **only Rennet's own chrome**, never the canvas content. When in doubt: did Rennet write it (chrome, terse) or did a model/the diff produce it (content, exempt)?
+
+## 5. Icon economy and the legend [R42]
+
+**Icons over words; extreme text economy in Rennet's own chrome.** The diffs are already text and the app is full of human↔LLM conversation fragments, so Rennet itself should barely use words: use an icon wherever it removes noise without removing meaning (statuses, actions, angle/lens identity, coverage/read state, disposition types, private-to-reviewer marks). This is the visual expression of §4: the chrome recedes so the content reads.
+
+⛔ **There MUST be an icon legend/key that defines every glyph.** Every icon the chrome uses is defined in one discoverable legend; an icon with no legend entry is a bug. Icon economy without the key is a puzzle, not a UI; the key is what makes silence legible. (The exemption of §4 applies here too: this governs chrome glyphs, not content.)
+
+## 6. What this doctrine is for
 
 #62-class bugs ("the UI feels intimidating", radius jank, a spinner someone added because loading needed *something*) are what happens when the register lives in historical docs nobody is required to read. An implementer touching any UI surface reads this document first; a review of any UI slice checks against it. Where a mockup and this doctrine disagree, the doctrine wins; where this doctrine and a ruling disagree, the ruling wins ([[Rennet Contracts and Rulings]]).
 
@@ -48,4 +60,4 @@ Full reasoning, schemes (dark default + composed bright-room), wallpaper/aurora 
 
 ---
 
-*Ratified 2026-08-07 as part of the journey/steering pass — the design register promoted from historical prototype docs into doctrine implementers are required to read. Amended 2026-08-08 (R40, Rai blessed): §1.2 gains the glass→paper phase-transition rule and the dark-paper (per-scheme materiality) rule. See [[Rennet Collation Draft Canvas]] §5.*
+*Ratified 2026-08-07 as part of the journey/steering pass — the design register promoted from historical prototype docs into doctrine implementers are required to read. Amended 2026-08-08 (R40, Rai blessed): §1.2 gains the glass→paper phase-transition rule and the dark-paper (per-scheme materiality) rule. See [[Rennet Collation Draft Canvas]] §5. Amended 2026-08-09 (R41/R42, Rai's wireframe markup): §4 (terse chrome voice + the LLM-content exemption) and §5 (icon economy + the required legend) added; the former §4 "What this doctrine is for" is now §6.*

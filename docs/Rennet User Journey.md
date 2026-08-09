@@ -3,7 +3,7 @@ tags: [rennet, ux, journeys]
 categories: [reference]
 status: active
 created: 2026-08-07
-updated: 2026-08-08
+updated: 2026-08-09
 related: ["[[Rennet Product and Vision]]", "[[Rennet Contracts and Rulings]]", "[[Rennet Design Doctrine]]", "[[Rennet Collation Draft Canvas]]", "[[Code Review App UX Concepts]]", "[[Code Review Harness App]]"]
 source: 2026-08-07 journey synthesis (dashboard report) over the prototype UX docs + issue queue
 ---
@@ -20,19 +20,19 @@ Authority: this document is **authority-ranked with the other ratified docs** �
 
 ## The nine stages
 
-### Stage 0 — First run
+### Stage 0 — First run (the onboarding wizard) [R43]
 
-One screen, asks nothing, reports. Harnesses already on the machine are auto-detected (zero-config North Star); the four-noun discovery (repos, worktrees, branches, PRs) runs; no API-key ceremony, no questions the app can answer itself.
+**First run and home are two distinct screens** (R43, Rai's 2026-08-09 wireframe markup). First run is a proper **stepped onboarding wizard / tutorial**, not a static reporting screen: it walks the first-time user through what Rennet is and how to read a review. It still asks nothing the app can answer itself (harnesses already on the machine are auto-detected per the zero-config North Star, and the four-noun discovery over repos, worktrees, branches, and PRs runs underneath), but the *screen* is a guided introduction, seen once, not the everyday landing. From the second run onward the user lands on Home (Stage 1).
 
-- **Owned by:** #29 (workspace discovery + first-run).
-- **Status: OPEN** — not built.
+- **Owned by:** #29 (first run, now the onboarding wizard; home is a separate screen, #37).
+- **Status: OPEN.** Not built.
 
-### Stage 1 — Home
+### Stage 1 — Home (the control center) [R43]
 
-Repos, worktrees, branches, and PRs with their review state. The two entry doors are both here: a working-tree changeset on your own branch, or someone's PR. Harness inventory shows as live status, private thread-count badges in backlight.
+**The everyday landing, second run onward**, a distinct screen from first run (R43). Home is the **control center / projects overview**: repos, worktrees, branches, and PRs with their review state. The two entry doors are both here: a working-tree changeset on your own branch, or someone's PR. Harness inventory shows as live status, private thread-count badges in backlight.
 
-- **Owned by:** #37 (home surface), #44 (command palette).
-- **Status: OPEN** — not built.
+- **Owned by:** #37 (home surface / control center), #44 (command palette).
+- **Status: OPEN.** Not built.
 
 ### Stage 2 — Open a review
 
@@ -52,7 +52,11 @@ The fleet decomposes the changeset while the surface shows a **live narrative fe
 
 Six angles, five canvases + the blast-radius overlay. Free zoom in and out; roll-up narration at every altitude; the comprehension ordering (agent over the DAG baseline); the **fixed-point rule** — the hunk under the cursor never moves on lens rotation. The residue/totality guarantee is always one keystroke away: trust dies the moment the summary is the only view.
 
-- **Owned by:** #11 (canvas UI — ✅ merged), #63 (make the code visible), #68 (syntax highlighting), #33/#34/#35 (spec/noise/blast canvases), #23 (LSP), #36 (threads + diff chat), #62 (approachability).
+**Diff/code-view affordances [R45].** Every diff/code view carries an **implementation↔test toggle** (on an implementation hunk, flip to the tests that exercise it; on a test, flip back; "no tests reference this" is an honest first-class state) and **open-in-editor** (VS Code / Cursor / $EDITOR, deep-linked to the exact line, with copy disclosure before the click when it opens a materialised ref copy). These were ratified 2026-08-04 and re-affirmed as diff-view requirements in Rai's 2026-08-09 wireframe markup.
+
+**Rich inline conversation [R46].** Reading is not a read-only act: the reviewer can **question, comment, request a change, or start a discussion inline**, anchored directly on a diff line, on a review-staged chunk, or on a conversation fragment, **not only in a separate chat surface**. The mark lives at its anchor (Design Doctrine §3.5); the per-diff back-and-forth is the disposition's inline `thread` (the comment-refinement loop, Contracts §2.5). This is the same interaction the reviewer carries into Stage 5 (dispose) and Stage 6 (the collation draft).
+
+- **Owned by:** #11 (canvas UI, ✅ merged), #63 (make the code visible; impl↔test toggle + open-in-editor), #68 (syntax highlighting), #33/#34/#35 (spec/noise/blast canvases), #23 (LSP), #36/#109 (inline conversation: question/comment/request-change/discuss on line, chunk, or fragment), #62 (approachability).
 - **Status: MIXED** — core canvases merged to demo quality; several canvases and the code-visibility work OPEN.
 
 ### Stage 5 — Dispose = stage
@@ -94,6 +98,10 @@ The coding harness addresses the bundle on the branch → a new patchset arrives
 
 **Every UI issue's acceptance criteria must include a journey-fit line**: one sentence stating which stage the work sits in and what the user sees of the destination while using it. An issue that cannot state its journey-fit is describing a widget, not a step on the road. (Convention adopted 2026-08-07; apply it to new issues at filing time and to existing UI issues as they are picked up.)
 
+## Standing convention: vertical scroll, screens are not one viewport [R44]
+
+**Screens are not constrained to a single viewport; use vertical scroll.** A screen may be tall; do not cram a stage into one fold or truncate its content to fit. Vertical scroll is the expected shape; the constraints are the doctrine (glass=chrome, code=opaque, terse chrome, icon economy) and the journey-fit, not a viewport height. (Rai's 2026-08-09 wireframe markup, R44.)
+
 ---
 
-*Written 2026-08-07 from the journey synthesis over [[Code Review App UX Concepts]] (§B staging semantics, §C live feed, the fixed-point rule), [[Code Review App Design Directions]] (the paper/glass register), [[Wingman GitHub Integration Plan]] (§3 the signing ceremony), [[Wingman Settings and Setup Plan]] (§5.1 first run), and the live issue queue. Nothing here is invented; the contribution is the order and the ownership map. Amended 2026-08-08 (R40, Rai blessed): stage 6 split into the collation draft canvas (editable) + the paper (sign); old stage 7 (delta) becomes stage 8. See [[Rennet Collation Draft Canvas]].*
+*Written 2026-08-07 from the journey synthesis over [[Code Review App UX Concepts]] (§B staging semantics, §C live feed, the fixed-point rule), [[Code Review App Design Directions]] (the paper/glass register), [[Wingman GitHub Integration Plan]] (§3 the signing ceremony), [[Wingman Settings and Setup Plan]] (§5.1 first run), and the live issue queue. Nothing here is invented; the contribution is the order and the ownership map. Amended 2026-08-08 (R40, Rai blessed): stage 6 split into the collation draft canvas (editable) + the paper (sign); old stage 7 (delta) becomes stage 8. See [[Rennet Collation Draft Canvas]]. Amended 2026-08-09 (R43-R46, Rai's wireframe markup): stage 0 first run is a stepped onboarding wizard distinct from stage 1 home/control-center (R43); vertical scroll is a standing convention (R44); stage 4 gains the impl↔test toggle + open-in-editor affordances (R45) and the rich inline conversation model, question/comment/request-change/discuss on line, staged chunk, or fragment (R46).*
