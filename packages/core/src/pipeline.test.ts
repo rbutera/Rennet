@@ -18,6 +18,7 @@ import type {
   CodexUtilityResult,
 } from "./codex-utility-port";
 import { decompose } from "./decomposition";
+import type { HarnessTurnResult } from "./harness-run-turn";
 import type { OrderingTurnResult } from "./ordering-pass";
 import { buildReviewCanvases } from "./pipeline";
 
@@ -799,5 +800,95 @@ describe("buildReviewCanvases — roll-up narration threads through (issue #70)"
     expect(runDecompositionTurn).toHaveBeenCalledTimes(3);
     expect(runNarrationTurn).not.toHaveBeenCalled();
     expect(result.narration.rollup.status).toBe("pending");
+  });
+});
+
+describe("buildReviewCanvases — a thrown seat turn degrades to the floor, never crashes the run (issue #96)", () => {
+  it("a decomposition turn that THROWS falls to the deterministic floor and the run survives", async () => {
+    // A construction exception (e.g. session/transport) surfaces as a rejected
+    // turn promise, not a returned { status: "failed" }. Before #96 this escaped
+    // uncaught and rejected buildReviewCanvases; now it degrades like any failure.
+    const runDecompositionTurn = vi.fn(async (): Promise<DecompositionTurnResult> => {
+      throw new Error("harness session construction failed");
+    });
+
+    // The run RESOLVES (no rejection) — the whole review still renders.
+    const result = await buildReviewCanvases({
+      reviewId: "review-1",
+      patchset: edgedPatchset,
+      dispositions: [],
+      runDecompositionTurn,
+    });
+
+    // The seat degraded to the deterministic floor rather than crashing.
+    expect(result.decompositionResult?.usedFallback).toBe(true);
+    // Every attempt was recorded as a turn-failure (the throw was mapped, not
+    // swallowed) and the retry loop still ran per attempt (3 = maxRetries + 1).
+    expect(runDecompositionTurn).toHaveBeenCalledTimes(3);
+    expect(result.decompositionResult?.attempts.map((a) => a.outcome)).toEqual([
+      "turn-failed",
+      "turn-failed",
+      "turn-failed",
+    ]);
+    // The review still renders all five canvases from the real diff.
+    for (const angle of CANVAS_ANGLES) expect(result.canvases[angle]).toBeDefined();
+    expect(sequenceTitles(result.canvases.sequence)).toEqual(["src/alpha.ts", "src/gamma.ts"]);
+  });
+
+  it("a narration turn that THROWS degrades every node to the honest failed floor and the run survives", async () => {
+    const decomposition = decompose(edgedPatchset);
+    const proposal = deterministicProposalBody(decomposition);
+    const runDecompositionTurn = vi.fn(
+      async (): Promise<DecompositionTurnResult> => ({ status: "emitted", body: proposal }),
+    );
+    const runNarrationTurn = vi.fn(async (): Promise<HarnessTurnResult> => {
+      throw new Error("narration session construction failed");
+    });
+
+    const result = await buildReviewCanvases({
+      reviewId: "review-1",
+      patchset: edgedPatchset,
+      dispositions: [],
+      runDecompositionTurn,
+      runNarrationTurn,
+    });
+
+    // Narration ran, threw on every attempt, and fell to the honest failed floor
+    // (never blank) instead of rejecting the run.
+    expect(runNarrationTurn).toHaveBeenCalled();
+    expect(result.narrationResult?.outcome).toBe("failed");
+    expect(result.narration.rollup.status).toBe("failed");
+    for (const angle of CANVAS_ANGLES) expect(result.canvases[angle]).toBeDefined();
+  });
+
+  it("an ordering turn that THROWS falls to the #8 baseline order and the run survives", async () => {
+    // Decomposition admits a real proposal (so the ordering seat runs), then the
+    // ordering turn throws on every attempt. It must degrade to the deterministic
+    // baseline, not crash the run — proving the ordering guard, not only the
+    // decomposition/narration ones, actually catches (all three seats covered).
+    const decomposition = decompose(independentPatchset);
+    const proposal = deterministicProposalBody(decomposition);
+    const runDecompositionTurn = vi.fn(
+      async (): Promise<DecompositionTurnResult> => ({ status: "emitted", body: proposal }),
+    );
+    const runOrderingTurn = vi.fn(async (): Promise<OrderingTurnResult> => {
+      throw new Error("ordering session construction failed");
+    });
+
+    const result = await buildReviewCanvases({
+      reviewId: "review-1",
+      patchset: independentPatchset,
+      dispositions: [],
+      runDecompositionTurn,
+      runOrderingTurn,
+    });
+
+    // Ordering degraded to the deterministic baseline (never crashed), and the
+    // retry loop still ran per attempt (3 = maxRetries + 1).
+    expect(runOrderingTurn).toHaveBeenCalledTimes(3);
+    expect(result.orderingResult?.usedFallback).toBe(true);
+    for (const angle of CANVAS_ANGLES) expect(result.canvases[angle]).toBeDefined();
+    // The baseline order stands (no reorder applied) — the review still renders.
+    expect(sequenceTitles(result.canvases.sequence)).toEqual(["src/alpha.ts", "src/omega.ts"]);
   });
 });

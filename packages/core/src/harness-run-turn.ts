@@ -26,6 +26,60 @@ export type HarnessTurnResult =
   | { readonly status: "emitted"; readonly body: unknown; readonly tokens?: RspTokenUsage }
   | { readonly status: "failed"; readonly message: string };
 
+/** Render a thrown value (Error, string, or anything) into a turn-failure message. */
+function describeTurnThrow(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return String(error);
+  } catch {
+    // A pathological throw value (a null-prototype object, or one whose
+    // Symbol.toPrimitive/toString throws) makes String() itself throw. Never let
+    // the guard's own error-rendering re-throw and reopen the crash path (#96).
+    return "an uncoercible non-Error value";
+  }
+}
+
+/**
+ * Wrap an injected seat turn so a THROWN (rejected) turn is caught and mapped to
+ * the returned turn-failure the seat runners already handle (issue #96).
+ *
+ * `createHarnessRunTurn` (and `createCodexRunTurn`) map EXPECTED failures — a
+ * failed/cancelled outcome, an error frame, missing structured output — to
+ * `{ status: "failed" }`, which the three seat runners
+ * (`runDecompositionAngle`/`runOrderingPass`/`runRollupNarration`) already treat
+ * as a turn failure and fall from to their honest never-blank floor. But a
+ * CONSTRUCTION exception — e.g. `port.createSession` rejecting on a
+ * session/transport error — is raised BEFORE that try/finally, so it escapes the
+ * turn as a rejected promise, propagates uncaught through the seat runner and
+ * `buildReviewCanvases`, and rejects the IPC handler — crashing the whole run
+ * instead of degrading that one seat.
+ *
+ * This guard closes that hole ONCE for every seat: a thrown turn becomes a
+ * `{ status: "failed" }` result, so the seat runner's existing turn-failure path
+ * takes over and the seat degrades exactly as it does for a returned failure. The
+ * map is PER CALL, so a throw on one attempt still lets the runner's retry loop
+ * try the next attempt — identical to a returned failure. Apply it to the runTurn
+ * a seat is handed, whichever harness produced it (Claude, Codex, or a mock).
+ */
+export function guardSeatTurn(
+  runTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
+): (prompt: string, attempt: number) => Promise<HarnessTurnResult> {
+  return async function guardedSeatTurn(
+    prompt: string,
+    attempt: number,
+  ): Promise<HarnessTurnResult> {
+    try {
+      return await runTurn(prompt, attempt);
+    } catch (error) {
+      return {
+        status: "failed",
+        message: `the seat turn threw before returning a result: ${describeTurnThrow(error)}`,
+      };
+    }
+  };
+}
+
 export interface HarnessRunTurnOptions {
   /** The document type the model emits; its schema constrains the session output. */
   readonly docType: RspDocType;
