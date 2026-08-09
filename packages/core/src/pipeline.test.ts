@@ -860,4 +860,35 @@ describe("buildReviewCanvases — a thrown seat turn degrades to the floor, neve
     expect(result.narration.rollup.status).toBe("failed");
     for (const angle of CANVAS_ANGLES) expect(result.canvases[angle]).toBeDefined();
   });
+
+  it("an ordering turn that THROWS falls to the #8 baseline order and the run survives", async () => {
+    // Decomposition admits a real proposal (so the ordering seat runs), then the
+    // ordering turn throws on every attempt. It must degrade to the deterministic
+    // baseline, not crash the run — proving the ordering guard, not only the
+    // decomposition/narration ones, actually catches (all three seats covered).
+    const decomposition = decompose(independentPatchset);
+    const proposal = deterministicProposalBody(decomposition);
+    const runDecompositionTurn = vi.fn(
+      async (): Promise<DecompositionTurnResult> => ({ status: "emitted", body: proposal }),
+    );
+    const runOrderingTurn = vi.fn(async (): Promise<OrderingTurnResult> => {
+      throw new Error("ordering session construction failed");
+    });
+
+    const result = await buildReviewCanvases({
+      reviewId: "review-1",
+      patchset: independentPatchset,
+      dispositions: [],
+      runDecompositionTurn,
+      runOrderingTurn,
+    });
+
+    // Ordering degraded to the deterministic baseline (never crashed), and the
+    // retry loop still ran per attempt (3 = maxRetries + 1).
+    expect(runOrderingTurn).toHaveBeenCalledTimes(3);
+    expect(result.orderingResult?.usedFallback).toBe(true);
+    for (const angle of CANVAS_ANGLES) expect(result.canvases[angle]).toBeDefined();
+    // The baseline order stands (no reorder applied) — the review still renders.
+    expect(sequenceTitles(result.canvases.sequence)).toEqual(["src/alpha.ts", "src/omega.ts"]);
+  });
 });

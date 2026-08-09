@@ -220,4 +220,21 @@ describe("guardSeatTurn", () => {
     expect(second.status).toBe("emitted");
     if (second.status === "emitted") expect(second.body).toEqual(body);
   });
+
+  it("does not re-throw when the thrown value is uncoercible to a string (#96)", async () => {
+    // A null-prototype object makes String(value) itself throw. The guard's own
+    // error-rendering must never re-throw and reopen the crash path it exists to
+    // close — the turn must still map to an honest returned failure.
+    const throwingUncoercible = async (): Promise<HarnessTurnResult> => {
+      throw Object.create(null);
+    };
+    const guarded = guardSeatTurn(throwingUncoercible);
+
+    const result = await guarded("prompt", 0);
+
+    expect(result.status).toBe("failed");
+    if (result.status === "failed") {
+      expect(result.message).toContain("an uncoercible non-Error value");
+    }
+  });
 });

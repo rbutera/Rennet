@@ -30,7 +30,14 @@ export type HarnessTurnResult =
 function describeTurnThrow(error: unknown): string {
   if (error instanceof Error) return error.message;
   if (typeof error === "string") return error;
-  return String(error);
+  try {
+    return String(error);
+  } catch {
+    // A pathological throw value (a null-prototype object, or one whose
+    // Symbol.toPrimitive/toString throws) makes String() itself throw. Never let
+    // the guard's own error-rendering re-throw and reopen the crash path (#96).
+    return "an uncoercible non-Error value";
+  }
 }
 
 /**
