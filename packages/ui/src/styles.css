@@ -1055,3 +1055,87 @@ button {
   font-weight: 600;
   cursor: pointer;
 }
+
+/* ── The mechanical-outline fallback banner (real-AI-default honesty) ──────── */
+/* Shown at the top of the Canvases view when no model ran and the set is the
+   deterministic outline of the diff, so the user is never misled into reading
+   structure as AI findings. Amber tokens adapt to the light/dark theme. */
+.engine-fallback {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  max-width: min(760px, calc(100% - 32px));
+  padding: 12px 16px;
+  border: 1px solid var(--amber-line);
+  border-radius: 12px;
+  background: var(--amber-surface);
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+}
+.engine-fallback-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-inline-size: 0;
+}
+.engine-fallback-copy strong {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--amber);
+}
+.engine-fallback-copy span {
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--amber);
+  opacity: 0.85;
+}
+.engine-fallback button {
+  flex: none;
+}
+
+/* ── The Canvases-view primer states (running / consent / failed) ─────────── */
+/* What stands where the demo canvases used to: an honest running/consent/failed
+   surface, never fixture data dressed as a review. */
+.canvas-primer {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  align-items: flex-start;
+  max-width: 540px;
+  margin: 72px auto;
+  padding: 28px;
+}
+.canvas-primer .eyebrow {
+  margin: 0;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  font-weight: 700;
+  color: var(--text-faint);
+}
+.canvas-primer h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text);
+}
+.canvas-primer p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--text-soft);
+}
+.canvas-primer button {
+  margin-top: 6px;
+  border: 0;
+  border-radius: 8px;
+  padding: 9px 16px;
+  color: #13170a;
+  background: #d8ff4f;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}

@@ -37,6 +37,7 @@ import type {
   ElementDiffs,
   Patchset,
   Review,
+  ReviewEngine,
   ReviewNarration,
 } from "@rennet/types";
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session } from "electron";
@@ -207,6 +208,7 @@ async function buildCanvasesForReview(review: Review): Promise<{
   canvases: Record<CanvasAngle, Canvas>;
   elementDiffs: ElementDiffs;
   narration?: ReviewNarration;
+  engine: ReviewEngine;
 }> {
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
@@ -251,10 +253,20 @@ async function buildCanvasesForReview(review: Review): Promise<{
     ...(runOrderingTurn ? { runOrderingTurn } : {}),
     ...(runNarrationTurn ? { runNarrationTurn } : {}),
   });
+  // The honesty signal for the renderer (real-AI-default): a review is a REAL AI
+  // review iff at least one model harness was installed AND the budget actually
+  // let a turn run. With neither claude nor codex — or a refused budget — the set
+  // is the deterministic mechanical outline of the diff, and the UI must say so.
+  const engine: ReviewEngine = {
+    claudeAvailable: adapter !== undefined,
+    codexAvailable: codex.available,
+    aiReview: installed.length > 0 && !result.budgetRefused,
+  };
   return {
     canvases: result.canvases,
     elementDiffs: result.elementDiffs,
     narration: result.narration,
+    engine,
   };
 }
 

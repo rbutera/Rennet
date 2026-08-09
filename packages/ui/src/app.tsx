@@ -4,11 +4,17 @@ import {
   requiresConsent,
   resolvePermissionMode,
 } from "@rennet/protocol";
-import type { CanvasAngle, ElementDiffs, Patchset, Review, ReviewNarration } from "@rennet/types";
+import type {
+  CanvasAngle,
+  ElementDiffs,
+  Patchset,
+  Review,
+  ReviewEngine,
+  ReviewNarration,
+} from "@rennet/types";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type CollationDraft, ingestWrites, withdrawPath } from "./canvas/collation";
 import { type DestinationMode, destinationVariant, type PublishLedger } from "./canvas/destination";
-import { demoCanvases, demoDiff, demoNarration } from "./canvas/fixtures";
 import { type CanvasSet, loadCanvases } from "./canvas/load";
 import { type DispositionWrite, withoutProposal } from "./canvas/logic";
 import {
@@ -206,6 +212,28 @@ export function ReviewWorkspace({
   );
 }
 
+/**
+ * The loud, honest copy for the mechanical-outline fallback (real-AI-default).
+ * `engine.aiReview` is false only when no model turn ran, so the title always says
+ * plainly that the user is NOT looking at an AI review; when the `claude` binary
+ * was the missing piece it names that, so the fix is obvious rather than a generic
+ * apology. The mechanical outline is real diff STRUCTURE, never AI findings.
+ */
+function mechanicalFallbackTitle(engine: ReviewEngine): string {
+  return engine.claudeAvailable
+    ? "The AI review didn't run — showing a basic structural outline."
+    : "Couldn't find your Claude CLI — this is a basic structural outline, not an AI review.";
+}
+
+function mechanicalFallbackDetail(engine: ReviewEngine): string {
+  if (!engine.claudeAvailable && !engine.codexAvailable) {
+    return "Install the Claude CLI (or Codex) and retry to get the real AI review of this diff.";
+  }
+  // A model was installed but no turn ran for this changeset (e.g. the review budget
+  // was exhausted before any spend), so what's on screen is structure, not findings.
+  return "No model turn ran for this changeset, so these are the diff's structure, not AI findings.";
+}
+
 export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const [review, setReview] = useState<Review | null | undefined>(undefined);
   const [selectedPath, setSelectedPath] = useState<string>();
@@ -215,21 +243,33 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // (`owner/repo#123` or a PR URL). Opening it picks the local clone, then lands
   // in the same review surface a working-tree capture does.
   const [prRef, setPrRef] = useState("");
-  // The canvas surface (issue #11) is an additive view. It is fixtures-backed
-  // until the engine's canvas.snapshot feed lands; approving fans out to local
-  // optimistic L2 so the demo is real and clickable. The review-capture flow is
-  // the untouched real end-to-end path.
-  const [view, setView] = useState<"review" | "canvases">("review");
-  const [canvases, setCanvases] = useState<CanvasSet>(() => demoCanvases());
-  // The real per-element diff map (issue #60) and whether the on-screen canvases
-  // are the real set. While `liveLoaded` is false the fixtures demo is up and the
-  // zoom surface uses `demoDiff`; once a real set loads, zoom reads real code.
+  // The Canvases view IS the AI review, and it is the default landing surface: a
+  // review opens straight onto the real AI review (running it, or the one-tap
+  // consent gate under `manual`), never onto canned demo data a first-time user
+  // could mistake for real output. The `Files` view (the raw diff) is one tab away.
+  const [view, setView] = useState<"review" | "canvases">("canvases");
+  // The live AI-produced canvas set. `null` until a real set loads — the UI shows
+  // the honest running / consent / failed states in the meantime, NEVER fixture
+  // canvases dressed up as a review. `liveLoaded` gates the workspace render.
+  const [canvases, setCanvases] = useState<CanvasSet | null>(null);
+  // The real per-element diff map (issue #60), delivered with the live set.
   const [elementDiffs, setElementDiffs] = useState<ElementDiffs>({});
   // The roll-up narration (issue #70): the zoom ladder's own voice, delivered
-  // alongside the canvas set. The demo seeds narrated accounts; a live load sets
-  // whatever the engine produced (undefined → the honest pending state).
-  const [narration, setNarration] = useState<ReviewNarration | undefined>(() => demoNarration());
+  // alongside the canvas set. Undefined until a live load sets whatever the engine
+  // produced (still undefined → the honest pending state).
+  const [narration, setNarration] = useState<ReviewNarration | undefined>(undefined);
+  // The engine provenance (real-AI-default): how the live set was produced. When
+  // `engine.aiReview` is false the set is the DETERMINISTIC mechanical outline (no
+  // model installed) and the UI says so loudly, never passing it off as AI.
+  const [engine, setEngine] = useState<ReviewEngine | undefined>(undefined);
   const [liveLoaded, setLiveLoaded] = useState(false);
+  // The live load returned null (no harness / pipeline error) for THIS review, so
+  // there is nothing real to show — the UI offers an honest error + retry rather
+  // than silently standing on a demo.
+  const [loadFailed, setLoadFailed] = useState(false);
+  // Bumped by the retry affordance to re-run the live load for the same review
+  // (e.g. after the user installs their Claude CLI and asks for the real review).
+  const [reloadNonce, setReloadNonce] = useState(0);
   const fetchedForReview = useRef<string | null>(null);
   // Permission mode (issue #103). The persisted workspace default governs the
   // gated harness run (#58); `undefined` until bootstrap resolves it, which
@@ -333,24 +373,40 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // The harness run for opening Canvases is a gated action (issue #58), governed
   // by the permission mode (issue #103). In a mode that ASKS (manual), the
   // harness does not run until the user consents for THIS review; `auto`/`bypass`
-  // proceed with no prompt. The floor/demo canvases are already on screen either
-  // way — only the model-enrichment turns gate here.
+  // proceed with no prompt. This is the one-tap gate to the REAL AI review — the
+  // Canvases view shows the running/consent/failed states, never demo canvases.
   const awaitingHarnessConsent =
     view === "canvases" &&
     !!review &&
     requiresConsent(effectiveMode, "harness.run") &&
     harnessAuthorization?.reviewId !== review.id;
 
+  // A new review starts with NO live canvases: clear any prior review's set (and
+  // its load-once guard) so the Canvases view never shows a stale AI review, or a
+  // stale fallback banner, while the new review's real review loads.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on review identity only.
+  useEffect(() => {
+    setCanvases(null);
+    setElementDiffs({});
+    setNarration(undefined);
+    setEngine(undefined);
+    setLiveLoaded(false);
+    setLoadFailed(false);
+    fetchedForReview.current = null;
+  }, [reviewId]);
+
   // Live canvases (issue #54): when a real review is open, the Canvases view is
   // shown, and the harness run is permitted (auto/bypass, or the user has
   // consented under manual), fetch the engine-produced canvas set once and render
-  // it in place of the fixtures. A failure (no harness, pipeline error) returns
-  // null and leaves the clickable demo untouched, so the demo never regresses.
+  // the REAL AI review. A failure (no harness, pipeline error) returns null and is
+  // surfaced as an honest error + retry — never a demo standing in for a review.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reloadNonce re-triggers the load on retry.
   useEffect(() => {
     if (view !== "canvases" || !review) return;
     if (fetchedForReview.current === review.id) return;
     if (awaitingHarnessConsent) return; // #58 gate: await consent before any harness turn
     fetchedForReview.current = review.id;
+    setLoadFailed(false);
     let cancelled = false;
     // The single-use harness-run authorization relayed to the main gate (bead
     // workspace-fyvxb): under a mode that ASKS, pass the token MAIN minted for
@@ -363,16 +419,41 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         ? harnessAuthorization.token
         : null;
     void loadCanvases(bridge, review, authorization).then((live) => {
-      if (cancelled || !live) return;
+      if (cancelled) return;
+      if (!live) {
+        // Nothing real came back — surface it honestly rather than standing on a demo.
+        setLoadFailed(true);
+        return;
+      }
       setCanvases(live.canvases);
       setElementDiffs(live.elementDiffs);
       setNarration(live.narration);
+      setEngine(live.engine);
       setLiveLoaded(true);
     });
     return () => {
       cancelled = true;
     };
-  }, [view, review, bridge, awaitingHarnessConsent, effectiveMode, harnessAuthorization]);
+  }, [
+    view,
+    review,
+    bridge,
+    awaitingHarnessConsent,
+    effectiveMode,
+    harnessAuthorization,
+    reloadNonce,
+  ]);
+
+  // Retry the live load for the current review (the honest-failure and mechanical-
+  // fallback surfaces both offer this). Clearing the load-once guard + bumping the
+  // nonce re-runs the effect above; e.g. the user installs their Claude CLI, then
+  // asks for the real AI review without reopening the app.
+  function retryLiveLoad(): void {
+    fetchedForReview.current = null;
+    setLoadFailed(false);
+    setLiveLoaded(false);
+    setReloadNonce((nonce) => nonce + 1);
+  }
 
   // Opt the workspace default up to `auto` (persisted). Under `auto` the mode no
   // longer asks, so no per-run token is needed — the canvases effect fires with
@@ -706,27 +787,67 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         />
       ) : null}
       {view === "canvases" ? (
-        <CanvasWorkspace
-          canvases={canvases}
-          bridge={bridge}
-          narration={narration}
-          onDispositions={(writes) => {
-            setCanvases((current) => applyWrites(current, writes));
-            // dispose == staged: authoring a disposition collates it into the draft
-            // in the same act (upsert-by-path, one act ingests all its fan-out writes).
-            setDraft((current) => ingestWrites(current, writes));
-          }}
-          onAdjudicate={(adjudication) =>
-            setCanvases((current) => resolveProposal(current, adjudication.proposalId))
-          }
-          // Real code on the real path (issue #60): once a live canvas set has
-          // loaded, zoom reads the real per-element diff (a doc-anchored element
-          // has no entry → the zoom surface renders nothing, not a fixture). While
-          // the fixtures demo is up, the demo `demoDiff` is unchanged.
-          diffFor={(elementKey) =>
-            liveLoaded ? elementDiffs[elementKey] : { path: elementKey, diff: demoDiff(400) }
-          }
-        />
+        liveLoaded && canvases ? (
+          <>
+            {/* The loud fallback (real-AI-default): when no model ran, say so at the
+                top of the review — never let the mechanical outline pass as AI. */}
+            {engine && !engine.aiReview ? (
+              <div className="engine-fallback" role="alert">
+                <div className="engine-fallback-copy">
+                  <strong>{mechanicalFallbackTitle(engine)}</strong>
+                  <span>{mechanicalFallbackDetail(engine)}</span>
+                </div>
+                <button type="button" className="secondary" onClick={retryLiveLoad}>
+                  Retry the AI review
+                </button>
+              </div>
+            ) : null}
+            <CanvasWorkspace
+              canvases={canvases}
+              bridge={bridge}
+              narration={narration}
+              onDispositions={(writes) => {
+                setCanvases((current) => (current ? applyWrites(current, writes) : current));
+                // dispose == staged: authoring a disposition collates it into the draft
+                // in the same act (upsert-by-path, one act ingests all its fan-out writes).
+                setDraft((current) => ingestWrites(current, writes));
+              }}
+              onAdjudicate={(adjudication) =>
+                setCanvases((current) =>
+                  current ? resolveProposal(current, adjudication.proposalId) : current,
+                )
+              }
+              // Real code on the real path (issue #60): the workspace only renders
+              // once a live set has loaded, so zoom reads the real per-element diff
+              // (a doc-anchored element with no entry → the zoom surface renders
+              // nothing, never a fixture).
+              diffFor={(elementKey) => elementDiffs[elementKey]}
+            />
+          </>
+        ) : awaitingHarnessConsent ? (
+          // The one-tap consent gate (the fixed overlay above) is the primary CTA;
+          // behind it a calm primer stands in — never demo canvases.
+          <section className="canvas-primer" aria-hidden="true">
+            <p className="eyebrow">AI REVIEW</p>
+            <h2>Your AI code review is one tap away.</h2>
+            <p>Grant permission above and Rennet runs the review over your captured diff.</p>
+          </section>
+        ) : loadFailed ? (
+          <section className="canvas-primer" role="alert">
+            <p className="eyebrow">AI REVIEW</p>
+            <h2>The AI review couldn't be produced.</h2>
+            <p>The review engine returned nothing for this changeset.</p>
+            <button type="button" onClick={retryLiveLoad}>
+              Try again
+            </button>
+          </section>
+        ) : (
+          <section className="canvas-primer" role="status">
+            <p className="eyebrow">AI REVIEW</p>
+            <h2>Running your AI review…</h2>
+            <p>Reading the diff and drafting the review angles over your own subscription.</p>
+          </section>
+        )
       ) : (
         <ReviewWorkspace
           review={review}

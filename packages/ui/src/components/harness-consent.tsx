@@ -6,9 +6,9 @@ import type { PermissionMode } from "@rennet/protocol";
  * mode ASKS (manual) and this review's harness run has not yet been consented.
  *
  * Per R31 (per-run context disclosure): it names WHAT will run and over WHICH
- * repository before any harness turn composes. The deterministic floor / demo
- * canvases are already on screen behind it — only the model-enrichment turns
- * gate here.
+ * repository before any harness turn composes. It IS the one-tap gate to the real
+ * AI review — behind it stands a calm primer, never demo canvases the user could
+ * mistake for real output.
  *
  *   - "Run this review" → consent for THIS review only (a per-run allow; the
  *     persisted workspace mode is unchanged).

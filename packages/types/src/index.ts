@@ -976,6 +976,26 @@ export interface ReviewNarration {
 }
 
 /**
+ * How the live canvas set was actually produced — the honesty signal the renderer
+ * needs so it never passes the mechanical outline off as an AI review.
+ *
+ *   - `aiReview: true`  — at least one real model harness (the user's Claude
+ *     and/or Codex) was installed and drove the enrichment turns. This is a real
+ *     AI review.
+ *   - `aiReview: false` — NO model was available (no `claude` binary, no `codex`),
+ *     so the canvases are the DETERMINISTIC mechanical outline of the diff: real
+ *     structure, but not AI findings. The UI must say so LOUDLY.
+ *
+ * `claudeAvailable` / `codexAvailable` let the UI name exactly what was missing
+ * ("Couldn't find your Claude CLI") rather than a generic apology.
+ */
+export interface ReviewEngine {
+  aiReview: boolean;
+  claudeAvailable: boolean;
+  codexAvailable: boolean;
+}
+
+/**
  * A canvas-scoped post-commit change notification (R35's ONE change feed, canvas
  * half). Keyed `(reviewId, canvasId, elementKey)` with the covering `seqRange`;
  * a conflated notification names the seq range it covers. This is an

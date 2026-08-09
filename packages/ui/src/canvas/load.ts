@@ -1,20 +1,31 @@
 import type { RennetBridge } from "@rennet/protocol";
-import type { Canvas, CanvasAngle, ElementDiffs, Review, ReviewNarration } from "@rennet/types";
+import type {
+  Canvas,
+  CanvasAngle,
+  ElementDiffs,
+  Review,
+  ReviewEngine,
+  ReviewNarration,
+} from "@rennet/types";
 
 /** The five-angle canvas set the canvas workspace renders. */
 export type CanvasSet = Record<CanvasAngle, Canvas>;
 
 /**
- * The live canvas set plus its real per-element diff map (issue #60) and the
- * roll-up narration (issue #70). Both are delivered ALONGSIDE the canvases: the
- * diffs so zooming into an element shows real code, the narration so each altitude
- * above a chunk carries the agent's account. `narration` is optional (a desktop
- * build that predates it omits it — the UI then shows the honest pending state).
+ * The live canvas set plus its real per-element diff map (issue #60), the roll-up
+ * narration (issue #70), and the engine provenance (real-AI-default). All are
+ * delivered ALONGSIDE the canvases: the diffs so zooming into an element shows real
+ * code, the narration so each altitude carries the agent's account, and `engine`
+ * so the UI can tell a real AI review from the deterministic mechanical outline and
+ * say so loudly. `narration` and `engine` are optional (a desktop build that
+ * predates either omits it — the UI then shows the honest pending state and makes
+ * no engine claim).
  */
 export interface LoadedCanvases {
   canvases: CanvasSet;
   elementDiffs: ElementDiffs;
   narration?: ReviewNarration;
+  engine?: ReviewEngine;
 }
 
 /**
@@ -31,7 +42,7 @@ export async function loadCanvases(
   authorization: string | null,
 ): Promise<LoadedCanvases | null> {
   try {
-    const { canvases, elementDiffs, narration } = await bridge.invoke("review.canvases", {
+    const { canvases, elementDiffs, narration, engine } = await bridge.invoke("review.canvases", {
       commandId: crypto.randomUUID(),
       reviewId: review.id,
       repoPath: review.repositoryRoot,
@@ -42,7 +53,12 @@ export async function loadCanvases(
       // included when the caller holds one, never asserted as a bare boolean.
       ...(authorization ? { authorization } : {}),
     });
-    return { canvases, elementDiffs, ...(narration ? { narration } : {}) };
+    return {
+      canvases,
+      elementDiffs,
+      ...(narration ? { narration } : {}),
+      ...(engine ? { engine } : {}),
+    };
   } catch {
     return null;
   }

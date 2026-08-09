@@ -5,6 +5,7 @@ import type {
   ElementDiffs,
   Patchset,
   Review,
+  ReviewEngine,
   ReviewNarration,
 } from "@rennet/types";
 import { z } from "zod";
@@ -210,6 +211,17 @@ const reviewNarrationSchema: z.ZodType<ReviewNarration> = z.object({
   cohorts: z.record(z.string(), narrationPlacementSchema),
 });
 
+// ── The engine provenance (real-AI-default honesty signal) ───────────────────
+// Delivered alongside the canvas set so the renderer can tell a real AI review
+// from the deterministic mechanical outline (no model installed) and say so
+// loudly. Optional on the wire so a desktop build that predates it still
+// validates (absence → the UI shows no engine claim, never a false "AI" badge).
+const reviewEngineSchema: z.ZodType<ReviewEngine> = z.object({
+  aiReview: z.boolean(),
+  claudeAvailable: z.boolean(),
+  codexAvailable: z.boolean(),
+});
+
 const commandIdSchema = z.uuid();
 
 // ── Publish egress schemas (issue #21) ───────────────────────────────────────
@@ -397,6 +409,10 @@ export const commandDefinitions = {
       canvases: canvasSetSchema,
       elementDiffs: elementDiffsSchema,
       narration: reviewNarrationSchema.optional(),
+      // How this set was produced (real-AI-default honesty signal). Optional so a
+      // desktop build that predates it still validates; absent ⇒ the UI makes no
+      // engine claim (it never shows a false "AI review" badge on an unknown set).
+      engine: reviewEngineSchema.optional(),
     }),
   },
   // ── Publish consent request, main-issued (issue #21, bead workspace-fyvxb lineage) ─
