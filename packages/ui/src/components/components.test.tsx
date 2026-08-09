@@ -14,8 +14,8 @@ function countOccurrences(html: string, needle: string): number {
   return html.split(needle).length - 1;
 }
 
-describe("LensSwitcher — five canvases, blast-radius is overlay only", () => {
-  it("renders exactly five selectable canvas tabs and a separate overlay toggle", () => {
+describe("LensSwitcher — six canvases, blast-radius is overlay only", () => {
+  it("renders exactly six selectable canvas tabs and a separate overlay toggle", () => {
     const html = renderToStaticMarkup(
       <LensSwitcher
         angle="decisions"
@@ -26,7 +26,7 @@ describe("LensSwitcher — five canvases, blast-radius is overlay only", () => {
         onToggleScheme={noop}
       />,
     );
-    expect(countOccurrences(html, 'role="tab"')).toBe(5);
+    expect(countOccurrences(html, 'role="tab"')).toBe(6);
     // Blast radius is a toggle (aria-pressed), never a sixth tab.
     expect(html).toContain("Blast radius");
     expect(html).toContain('aria-pressed="false"');
@@ -142,13 +142,13 @@ describe("L3 marks — visually distinct as the agent's hand", () => {
   });
 });
 
-describe("CanvasWorkspace — the five canvases, on screen", () => {
+describe("CanvasWorkspace — the six canvases, on screen", () => {
   it("renders the decisions canvas by default with its lens switcher", () => {
     const html = renderToStaticMarkup(
       <CanvasWorkspace canvases={demoCanvases()} store={createViewStore()} />,
     );
     expect(html).toContain("canvas-app");
-    expect(countOccurrences(html, 'role="tab"')).toBe(5);
+    expect(countOccurrences(html, 'role="tab"')).toBe(6);
     expect(html).toContain("decisions-canvas");
     expect(html).toContain('data-scheme="dark"');
   });

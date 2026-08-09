@@ -13,6 +13,9 @@ import type {
   DecompositionProposalBody,
   Disposition,
   DispositionType,
+  FindingBody,
+  FindingElement,
+  FindingSeverity,
   Proposal,
   RspDocType,
   SubstrateChunkRef,
@@ -52,6 +55,7 @@ const DOC_TYPE_ANGLE: Partial<Record<RspDocType, CanvasAngle>> = {
   claim: "claims",
   "noise.patternProposal": "noise",
   anomaly: "noise",
+  finding: "flagged",
 };
 
 /** Deterministic canvas identity: a hash of the `(reviewId, patchsetId, angle)` key. */
@@ -237,6 +241,96 @@ function projectSequence(docs: AdmittedDocument[], decomposition: Decomposition)
   return { elements, cohorts: [], readingOrder: elements.map((element) => element.elementKey) };
 }
 
+/** Severity ordering for the flagged index: high first, then medium, then low. */
+const SEVERITY_RANK: Record<FindingSeverity, number> = { high: 0, medium: 1, low: 2 };
+
+function isFindingSeverity(value: unknown): value is FindingSeverity {
+  return value === "high" || value === "medium" || value === "low";
+}
+
+/**
+ * A STRICT finding-element guard. It is the enforcement half of "never repurpose
+ * validator rejections as findings" (issue #138): a `rejectedItems` entry is a
+ * malformed RSP item the validator dropped, and it is shaped nothing like a
+ * finding, so it fails every check here and is never placed as a flag. A finding
+ * needs a string id/anchor/summary, a real severity, and a well-formed agreement
+ * (concur with numeric votes, or disagree with labelled model answers).
+ */
+function isFindingElement(value: unknown): value is FindingElement {
+  if (typeof value !== "object" || value === null) return false;
+  const finding = value as Record<string, unknown>;
+  if (
+    typeof finding.findingId !== "string" ||
+    typeof finding.anchor !== "string" ||
+    typeof finding.summary !== "string" ||
+    !isFindingSeverity(finding.severity)
+  ) {
+    return false;
+  }
+  const agreement = finding.agreement;
+  if (typeof agreement !== "object" || agreement === null) return false;
+  const ag = agreement as Record<string, unknown>;
+  if (ag.kind === "concur") return typeof ag.agree === "number" && typeof ag.total === "number";
+  if (ag.kind === "disagree") {
+    return (
+      Array.isArray(ag.answers) &&
+      ag.answers.every(
+        (answer) =>
+          typeof answer === "object" &&
+          answer !== null &&
+          typeof (answer as { model?: unknown }).model === "string" &&
+          typeof (answer as { answer?: unknown }).answer === "string",
+      )
+    );
+  }
+  return false;
+}
+
+function isFindingBody(body: unknown): body is FindingBody {
+  return (
+    typeof body === "object" &&
+    body !== null &&
+    Array.isArray((body as { findings?: unknown }).findings)
+  );
+}
+
+/**
+ * Place admitted `finding` documents onto the flagged canvas (issue #138). The
+ * Flagged lens is an INDEX: one element per well-formed finding, carrying the
+ * anchor it points at and its severity (encoded in `kind` as `finding:<severity>`
+ * for the M0 canvas element; the rich agreement/side-by-side data rides the
+ * `finding` body the lens surface reads). Elements are ordered by severity
+ * (high → medium → low) then by derived key, so placement is a pure function of
+ * the doc SET. Any finding that is not a well-formed finding element — a
+ * validator rejection can never legitimately reach here, but if a malformed body
+ * did, its bad entries — is dropped, never placed as a flag.
+ */
+function projectFlagged(docs: AdmittedDocument[]): AnalysisLayer {
+  const ranked: { element: AnalysisElement; rank: number }[] = [];
+  for (const doc of docs) {
+    if (!isFindingBody(doc.body)) continue;
+    for (const finding of doc.body.findings) {
+      if (!isFindingElement(finding)) continue;
+      ranked.push({
+        element: {
+          elementKey: elementKeyFor(doc.docId, `finding/${finding.findingId}`),
+          docId: doc.docId,
+          anchor: finding.anchor,
+          kind: `finding:${finding.severity}`,
+          title: finding.summary,
+        },
+        rank: SEVERITY_RANK[finding.severity],
+      });
+    }
+  }
+  ranked.sort(
+    (left, right) =>
+      left.rank - right.rank || compareCodeUnits(left.element.elementKey, right.element.elementKey),
+  );
+  const elements = ranked.map((entry) => entry.element);
+  return { elements, cohorts: [], readingOrder: elements.map((element) => element.elementKey) };
+}
+
 /**
  * Place the flat angles (spec/claims/noise). Rich per-element bodies are #26; the
  * M0 projection is honest and deterministic: one element per admitted document of
@@ -263,6 +357,7 @@ export function projectAnalysis(
   const docs = admittedDocs.filter((doc) => DOC_TYPE_ANGLE[doc.docType] === angle);
   if (angle === "decisions") return projectDecisions(docs, decomposition);
   if (angle === "sequence") return projectSequence(docs, decomposition);
+  if (angle === "flagged") return projectFlagged(docs);
   return projectFlat(angle, docs);
 }
 

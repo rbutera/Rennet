@@ -3,6 +3,7 @@ import type {
   Disposition,
   DispositionAnchor,
   ElementDiffs,
+  FlaggedReview,
   Patchset,
   Review,
   ReviewEngine,
@@ -111,7 +112,7 @@ export const reviewSchema: z.ZodType<Review> = z.object({
 // failing-capable schema (not a passthrough) so the IPC output surface has a real
 // positive control, mirroring the `Canvas` shape in `@rennet/types`.
 
-const canvasAngleSchema = z.enum(["spec", "sequence", "decisions", "claims", "noise"]);
+const canvasAngleSchema = z.enum(["spec", "sequence", "decisions", "claims", "noise", "flagged"]);
 
 const substrateChunkRefSchema = z.object({
   chunkId: z.string(),
@@ -172,13 +173,16 @@ export const canvasSchema: z.ZodType<Canvas> = z.object({
   overlay: z.array(blastRadiusPaintSchema),
 });
 
-/** The five-angle canvas set the live pipeline produces (`Record<CanvasAngle, Canvas>`). */
+/** The canvas set the live pipeline produces (`Record<CanvasAngle, Canvas>`). */
 const canvasSetSchema = z.object({
   spec: canvasSchema,
   sequence: canvasSchema,
   decisions: canvasSchema,
   claims: canvasSchema,
   noise: canvasSchema,
+  // The flagged angle (issue #138) — placed by `projectFlagged`; empty until the
+  // finding runner lands, but always present so the set stays exhaustive.
+  flagged: canvasSchema,
 });
 
 // ── Per-element real diff map (issue #60) ────────────────────────────────────
@@ -435,6 +439,33 @@ export const projectDetailSchema = z.object({
   truncated: z.boolean(),
 });
 export type ProjectDetail = z.infer<typeof projectDetailSchema>;
+
+// ── The Flagged lens: findings + dual-review agreement (issue #138) ───────────
+// The automated review layer's output for a review, delivered behind the typed
+// command boundary. A fixture stands behind it until the live finding-generation
+// runner + aggregation land (they sequence with #32/#41). The renderer folds this
+// into the flagged index; `status` keeps "ran clean" honestly apart from "the
+// runner did not complete".
+export const findingSeveritySchema = z.enum(["high", "medium", "low"]);
+export const findingModelAnswerSchema = z.object({
+  model: z.string().min(1),
+  answer: z.string(),
+});
+export const findingAgreementSchema = z.union([
+  z.object({ kind: z.literal("concur"), agree: z.number(), total: z.number() }),
+  z.object({ kind: z.literal("disagree"), answers: z.array(findingModelAnswerSchema) }),
+]);
+export const findingElementSchema = z.object({
+  findingId: z.string().min(1),
+  anchor: z.string().min(1),
+  summary: z.string(),
+  severity: findingSeveritySchema,
+  agreement: findingAgreementSchema,
+});
+export const flaggedReviewSchema: z.ZodType<FlaggedReview> = z.union([
+  z.object({ status: z.literal("ok"), findings: z.array(findingElementSchema) }),
+  z.object({ status: z.literal("failed"), reason: z.string() }),
+]);
 
 export const commandDefinitions = {
   "app.bootstrap": {
@@ -761,6 +792,15 @@ export const commandDefinitions = {
       worktreeId: z.string().min(1),
     }),
     output: z.object({ ok: z.boolean() }),
+  },
+  // ── The Flagged lens (issue #138) ──────────────────────────────────────────
+  // Everything the automated review layer raised for a review — model-council
+  // findings + dual-review agreement/disagreement — read-only. A fixture stands
+  // behind the real boundary until the finding-generation runner + aggregation
+  // land (deferred; they sequence with #32/#41). No model spend here.
+  "flagged.review": {
+    input: z.object({ reviewId: z.string().min(1) }),
+    output: flaggedReviewSchema,
   },
 } as const;
 

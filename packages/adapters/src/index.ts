@@ -48,6 +48,11 @@ export {
   type ProjectDraft,
 } from "./file-project-store";
 export { FileSettingsStore } from "./file-settings-store";
+export {
+  emptyFlaggedReviewFixture,
+  failedFlaggedReviewFixture,
+  flaggedReviewFixture,
+} from "./flagged-fixture";
 export { GitCaptureAdapter } from "./git-capture";
 export {
   type Counts,

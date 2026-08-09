@@ -22,6 +22,7 @@ import type {
   Canvas,
   CanvasAngle,
   ElementDiffs,
+  FlaggedReview,
   Review,
   ReviewEngine,
   ReviewNarration,
@@ -123,6 +124,12 @@ export interface DispatchDeps {
    * destructive local act; the host handler is a documented stub this wave.
    */
   cleanupWorktree(input: { projectId: string; worktreeId: string }): Promise<{ ok: boolean }>;
+  /**
+   * The Flagged lens's input (issue #138): the automated review layer's findings +
+   * dual-review agreement for a review. Read-only, no model spend. A fixture stands
+   * behind the real boundary until the finding-generation runner + aggregation land.
+   */
+  flaggedReview(reviewId: string): Promise<FlaggedReview>;
 }
 
 /** Lift the wire target shape into the core `ForgeReviewTarget` nouns. */
@@ -423,6 +430,14 @@ export function createDispatch(
           worktreeId: input.worktreeId,
         });
         return parseCommandOutput(name, result);
+      }
+      // ── The Flagged lens (issue #138) ─────────────────────────────────────────
+      case "flagged.review": {
+        // Read-only: the automated review layer's findings + dual-review agreement
+        // for the review. No model spend; a fixture stands behind the real boundary
+        // until the finding-generation runner + aggregation land (deferred, #32/#41).
+        const input = parseCommandInput(name, rawInput);
+        return parseCommandOutput(name, await deps.flaggedReview(input.reviewId));
       }
       // ── Canvas user ops (issue #54 wires #10's command surface into dispatch) ──
       case "canvas.disposition": {

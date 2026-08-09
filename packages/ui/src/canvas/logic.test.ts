@@ -176,15 +176,17 @@ describe("zoomReducer — roll-up → cohort → element → diff, both directio
 });
 
 describe("rotateLens + refocusCursor — five lenses, fixed cursor hunk", () => {
-  it("blast-radius is NOT one of the five selectable canvases", () => {
-    expect(CANVAS_LENSES).toHaveLength(5);
+  it("blast-radius is NOT one of the selectable canvases (flagged is, issue #138)", () => {
+    expect(CANVAS_LENSES).toHaveLength(6);
     expect(CANVAS_LENSES).not.toContain("blast-radius");
+    expect(CANVAS_LENSES).toContain("flagged");
   });
 
-  it("rotation cycles the five angles both directions", () => {
+  it("rotation cycles the angles both directions (flagged is the last, #138)", () => {
     expect(rotateLens("spec", 1)).toBe("sequence");
-    expect(rotateLens("noise", 1)).toBe("spec");
-    expect(rotateLens("spec", -1)).toBe("noise");
+    expect(rotateLens("noise", 1)).toBe("flagged");
+    expect(rotateLens("flagged", 1)).toBe("spec");
+    expect(rotateLens("spec", -1)).toBe("flagged");
   });
 
   it("keeps the hunk under the cursor fixed: the anchor re-centers on the new canvas", () => {

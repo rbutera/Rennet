@@ -192,7 +192,7 @@ function flatCanvas(angle: CanvasAngle, kind: string, titles: string[]): Canvas 
   };
 }
 
-/** The five demo canvases, keyed by angle. */
+/** The demo canvases, keyed by angle. */
 export function demoCanvases(): Record<CanvasAngle, Canvas> {
   return {
     decisions: decisionsCanvas(),
@@ -207,6 +207,9 @@ export function demoCanvases(): Record<CanvasAngle, Canvas> {
       "Formatting-only churn in three files",
       "Import reordering across the module",
     ]),
+    // The flagged angle's rich surface is fed by the `flaggedReview` prop, not the
+    // canvas analysis layer; this empty flagged canvas keeps the demo set exhaustive.
+    flagged: flatCanvas("flagged", "finding", []),
   };
 }
 
