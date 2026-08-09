@@ -203,6 +203,63 @@ const reviewNarrationSchema: z.ZodType<ReviewNarration> = z.object({
 
 const commandIdSchema = z.uuid();
 
+// ── Publish egress schemas (issue #21) ───────────────────────────────────────
+// The forge-neutral shapes the renderer sends to MAIN for the outbound GitHub
+// review post. The renderer supplies the pinned target, the canonical review
+// content, and the canonical payload bytes; MAIN independently re-derives the
+// bytes and fails CLOSED on any disagreement (the egress-side "what you see is what
+// leaves", R33), then gates the real egress on the effective mode + a single-use,
+// target-and-payload-bound consent token before anything leaves the machine.
+
+const forgeRepoSchema = z.object({
+  forge: z.string().min(1),
+  owner: z.string().min(1),
+  name: z.string().min(1),
+});
+
+/** The pinned publish target: which PR, which node id, which reviewed head. */
+const publishTargetSchema = z.object({
+  repo: forgeRepoSchema,
+  number: z.number().int().positive(),
+  /** The forge's opaque PR node id (carried, interpreted only in the adapter). */
+  forgeRef: z.string().min(1),
+  /** The reviewed head commit OID, pinned at review start (GraphQL `commitOID`). */
+  headOid: z.string().min(1),
+});
+
+/** The review verdict (the real GitHub review event). */
+const forgeReviewEventSchema = z.enum(["APPROVE", "REQUEST_CHANGES", "COMMENT"]);
+
+/** One review comment in the canonical `pr-review` shape (mirrors the ui preview). */
+const reviewCommentSchema = z.object({
+  path: z.string().min(1),
+  /** The file line, when a span anchor is known (#78). Absent ⇒ a file-level note. */
+  line: z.number().int().min(1).optional(),
+  side: z.enum(["LEFT", "RIGHT"]),
+  type: dispositionTypeSchema,
+  body: z.string(),
+});
+
+const forgeRequestSchema = z.object({
+  endpoint: z.string(),
+  method: z.string(),
+  // The GraphQL `{ query, variables }` document. Opaque here (validated by shape at
+  // the adapter): it carries NO secret — the bearer token is a send-time header.
+  body: z.unknown(),
+});
+
+const publishDegradationSchema = z.object({
+  kind: z.literal("file-level-fold"),
+  path: z.string(),
+  detail: z.string(),
+});
+
+const publishOutcomeSchema = z.object({
+  reviewRef: z.string(),
+  url: z.string().nullable(),
+  reused: z.boolean(),
+});
+
 export const commandDefinitions = {
   "app.bootstrap": {
     input: z.object({}),
@@ -315,6 +372,74 @@ export const commandDefinitions = {
       canvases: canvasSetSchema,
       elementDiffs: elementDiffsSchema,
       narration: reviewNarrationSchema.optional(),
+    }),
+  },
+  // ── Publish consent request, main-issued (issue #21, bead workspace-fyvxb lineage) ─
+  // The renderer REQUESTS approval to POST a review to GitHub; MAIN mints the
+  // authorization. Like `harness.requestConsent`, MAIN is the sole issuer — but the
+  // egress is MORE vital than a model run, so the token is bound to MORE than the
+  // review: it is bound to the exact TARGET (PR + head) AND the exact PAYLOAD bytes.
+  // A token minted to post payload P to PR#5@head-A cannot authorise a different
+  // payload, a different PR, or a different head. Single-use, consumed at egress.
+  "publish.requestConsent": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+      target: publishTargetSchema,
+      /** The canonical payload bytes the token authorises (bound by digest). */
+      payload: z.string(),
+    }),
+    output: z.object({
+      /** The opaque, single-use authorization bound to (review, target, payload). */
+      authorization: z.string().min(1),
+    }),
+  },
+  // ── Publish a review to GitHub (issue #21) — the FIRST real egress ──────────
+  // The pipeline NEVER autonomously posts to a real repo: egress exists ONLY behind
+  // this command, from the trusted renderer origin, and every real send is gated.
+  //   • `dryRun` defaults to TRUE (wrong-side-safe, Rule 75): an omitted flag NEVER
+  //     posts. The renderer's real-post path must EXPLICITLY send `dryRun: false`.
+  //   • MAIN re-derives the canonical payload from `comments` and refuses on any
+  //     disagreement with `payload` (byte-exact), and refuses an ill-formed target —
+  //     both on dry-run and real, so the dry-run surfaces integrity faults too.
+  //   • Under a consent-requiring mode (`manual`) a real send requires the
+  //     single-use token from `publish.requestConsent`, bound to THIS review, target,
+  //     and payload; absent / forged / replayed ⇒ refused, nothing leaves. Dry-run
+  //     needs no token (it posts nothing).
+  //   • The review event is always a neutral COMMENT — the outbound request has no
+  //     shape for APPROVE (R33/#80).
+  "publish.review": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+      target: publishTargetSchema,
+      /** The canonical review content (mirrors the ui `ReviewComment` preview). */
+      comments: z.array(reviewCommentSchema),
+      /** The canonical payload bytes the sheet previewed + signed (round-trip check). */
+      payload: z.string(),
+      /**
+       * The review verdict. Optional: absent ⇒ derived from the dispositions (any
+       * requested change ⇒ REQUEST_CHANGES; else approvals ⇒ APPROVE; else COMMENT).
+       * When set, this explicit verdict WINS ("derive first, overridable"). A sign-time
+       * verdict picker feeds this; until then it simply stays unset.
+       */
+      verdict: forgeReviewEventSchema.optional(),
+      /** The single-use consent token from `publish.requestConsent` (real send only). */
+      authorization: z.string().min(1).optional(),
+      /** Default TRUE: an omitted flag never posts. Real egress must opt in with false. */
+      dryRun: z.boolean().optional().default(true),
+    }),
+    output: z.object({
+      /** Echoes the resolved dry-run flag (true ⇒ nothing left the machine). */
+      dryRun: z.boolean(),
+      /** The exact GitHub request that was (dry-run) or would be constructed + sent. */
+      request: forgeRequestSchema,
+      /** The deterministic idempotency marker embedded in the review body. */
+      marker: z.string(),
+      /** Every flattening applied, surfaced for the sheet's ledger (never silent). */
+      ledger: z.array(publishDegradationSchema),
+      /** The real-post outcome, or `null` on a dry-run (nothing posted). */
+      outcome: publishOutcomeSchema.nullable(),
     }),
   },
   // ── Canvas user ops (issue #10) ────────────────────────────────────────────
