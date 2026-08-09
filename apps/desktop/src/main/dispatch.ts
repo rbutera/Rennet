@@ -225,6 +225,9 @@ export function createDispatch(
           target,
           payload: input.payload,
           capabilities: deps.publishPort.capabilities,
+          // Derive-first, overridable: an explicit verdict wins; else it derives from
+          // the dispositions. `undefined` simply defers to the derived verdict.
+          ...(input.verdict ? { verdict: input.verdict } : {}),
         });
 
         if (input.dryRun === false) {

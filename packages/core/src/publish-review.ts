@@ -33,17 +33,41 @@ import type { ForgeCapabilities, ForgePullRequestRef } from "./forge-port";
  */
 
 /**
- * The review event Rennet posts. STRUCTURALLY only `COMMENT`. Rennet never approves
- * or requests-changes for the user (R33 / publish safety #80). This is enforced at
- * the WIRE, not merely in the type: `ForgeReviewPost` carries NO event field, and the
- * forge request builder hardcodes {@link FORGE_REVIEW_EVENT} rather than copying an
- * upstream value — so even a caller who forges an `APPROVE` onto a post-shaped object
- * cannot make an APPROVE leave the machine, because there is nowhere for it to be read
- * from. A one-member union alone is a compile-time guarantee only (types vanish at
- * runtime); this makes it a runtime guarantee too.
+ * The review verdict Rennet posts — the real GitHub review event. A review tool must
+ * be able to post the actual verdict, so this is the full three-value set, not a lock.
+ * The VALUE is resolved from the signed review (see {@link resolveReviewEvent}):
+ * derived from the dispositions by default, overridable by an explicit verdict on the
+ * post descriptor. The human sign + the consent/forgeRef binding are the safety model;
+ * the event is the product.
  */
-export type ForgeReviewEvent = "COMMENT";
-export const FORGE_REVIEW_EVENT: ForgeReviewEvent = "COMMENT";
+export type ForgeReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+
+/** The default verdict when none is derived or specified (a neutral comment). */
+export const DEFAULT_REVIEW_EVENT: ForgeReviewEvent = "COMMENT";
+
+/**
+ * Derive the review verdict from the dispositions (the default when no explicit verdict
+ * is supplied): any requested change makes the whole review `REQUEST_CHANGES`; else, if
+ * there are approvals and nothing was requested-changed, `APPROVE`; else a neutral
+ * `COMMENT`. Questions and plain comments alone never escalate past `COMMENT`.
+ */
+export function deriveReviewEvent(comments: readonly ReviewCommentInput[]): ForgeReviewEvent {
+  if (comments.some((comment) => comment.type === "request-change")) return "REQUEST_CHANGES";
+  if (comments.some((comment) => comment.type === "approve")) return "APPROVE";
+  return "COMMENT";
+}
+
+/**
+ * Resolve the verdict for a post: an explicit `verdict` (from the signed descriptor)
+ * WINS when present; otherwise the verdict is derived from the dispositions. "Derive
+ * first, overridable" (Rai, 2026-08-09).
+ */
+export function resolveReviewEvent(
+  comments: readonly ReviewCommentInput[],
+  verdict?: ForgeReviewEvent,
+): ForgeReviewEvent {
+  return verdict ?? deriveReviewEvent(comments);
+}
 
 /**
  * One review comment in the canonical `pr-review` shape — the SAME logical fields
@@ -117,16 +141,11 @@ export interface PublishDegradation {
   readonly detail: string;
 }
 
-/**
- * The forge-neutral batched review post, assembled from the canonical comments.
- *
- * Note there is NO `event` field: the review event is not data that flows through a
- * post, it is hardcoded at the wire ({@link FORGE_REVIEW_EVENT}). This is deliberate —
- * carrying an event here would be a place for an `APPROVE` to be injected; omitting it
- * makes "never approve" structural rather than a value that must stay correct.
- */
+/** The forge-neutral batched review post, assembled from the canonical comments. */
 export interface ForgeReviewPost {
   readonly target: ForgeReviewTarget;
+  /** The resolved review verdict (derived from the dispositions, or an override). */
+  readonly event: ForgeReviewEvent;
   /** The review-level body: header + folded file-level notes + the idempotency marker. */
   readonly body: string;
   /** The line-anchored threads. A no-line comment is folded into `body`, never here. */
@@ -202,6 +221,13 @@ export interface BuildReviewPostOptions {
   readonly payload: string;
   /** The forge's advertised capabilities (degradation is written against these). */
   readonly capabilities: ForgeCapabilities;
+  /**
+   * An explicit review verdict that OVERRIDES the one derived from the dispositions.
+   * Absent ⇒ derive it ("derive first, overridable"). This is the seam a sign-time
+   * verdict picker feeds; until that UI exists the field simply stays unset and the
+   * derived verdict posts.
+   */
+  readonly verdict?: ForgeReviewEvent;
 }
 
 /**
@@ -260,8 +286,9 @@ export function buildForgeReviewPost(
 
   sections.push(markerComment(marker));
   const body = sections.join("\n\n");
+  const event = resolveReviewEvent(comments, options.verdict);
 
-  return { target: options.target, body, threads, marker, ledger };
+  return { target: options.target, event, body, threads, marker, ledger };
 }
 
 // ── The forge-neutral egress port (issue #21) ────────────────────────────────

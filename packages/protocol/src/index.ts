@@ -227,6 +227,9 @@ const publishTargetSchema = z.object({
   headOid: z.string().min(1),
 });
 
+/** The review verdict (the real GitHub review event). */
+const forgeReviewEventSchema = z.enum(["APPROVE", "REQUEST_CHANGES", "COMMENT"]);
+
 /** One review comment in the canonical `pr-review` shape (mirrors the ui preview). */
 const reviewCommentSchema = z.object({
   path: z.string().min(1),
@@ -414,6 +417,13 @@ export const commandDefinitions = {
       comments: z.array(reviewCommentSchema),
       /** The canonical payload bytes the sheet previewed + signed (round-trip check). */
       payload: z.string(),
+      /**
+       * The review verdict. Optional: absent ⇒ derived from the dispositions (any
+       * requested change ⇒ REQUEST_CHANGES; else approvals ⇒ APPROVE; else COMMENT).
+       * When set, this explicit verdict WINS ("derive first, overridable"). A sign-time
+       * verdict picker feeds this; until then it simply stays unset.
+       */
+      verdict: forgeReviewEventSchema.optional(),
       /** The single-use consent token from `publish.requestConsent` (real send only). */
       authorization: z.string().min(1).optional(),
       /** Default TRUE: an omitted flag never posts. Real egress must opt in with false. */

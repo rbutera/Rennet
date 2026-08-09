@@ -4,8 +4,9 @@ import {
   buildForgeReviewPost,
   buildReviewMarker,
   canonicalReviewPayload,
+  DEFAULT_REVIEW_EVENT,
+  deriveReviewEvent,
   extractMarker,
-  FORGE_REVIEW_EVENT,
   type ForgeReviewTarget,
   forgeTargetKey,
   markerComment,
@@ -93,17 +94,33 @@ describe("buildForgeReviewPost (issue #21)", () => {
     expect(post.threads[1]?.body).toContain("Question");
   });
 
-  it("carries NO event field — there is nothing on a post for an APPROVE to be read from", () => {
-    // The event is not post data; it is hardcoded at the wire (see the adapter test
-    // "emits COMMENT even when handed a forged APPROVE"). A post has no event field, so
-    // even an all-`approve` review has nowhere to carry an APPROVE toward the request.
-    expect(FORGE_REVIEW_EVENT).toBe("COMMENT");
-    expect("event" in post).toBe(false);
-    const approvals = buildForgeReviewPost(
-      [{ path: "a.ts", line: 1, side: "RIGHT", type: "approve", body: "lgtm" }],
-      { reviewId: "rev-2", target: TARGET, payload: "p", capabilities: CAPS },
-    );
-    expect("event" in approvals).toBe(false);
+  it("resolves the verdict: derived from the dispositions, an explicit verdict wins", () => {
+    expect(DEFAULT_REVIEW_EVENT).toBe("COMMENT");
+    // The describe's comments include a request-change ⇒ the whole review is a change request.
+    expect(post.event).toBe("REQUEST_CHANGES");
+    // Derivation rules.
+    const at = (type: ReviewCommentInput["type"]): ReviewCommentInput[] => [
+      { path: "a.ts", line: 1, side: "RIGHT", type, body: "x" },
+    ];
+    expect(deriveReviewEvent(at("approve"))).toBe("APPROVE");
+    expect(deriveReviewEvent(at("comment"))).toBe("COMMENT");
+    expect(deriveReviewEvent(at("question"))).toBe("COMMENT");
+    // A requested change dominates approvals.
+    expect(
+      deriveReviewEvent([
+        { path: "a.ts", line: 1, side: "RIGHT", type: "approve", body: "x" },
+        { path: "b.ts", line: 2, side: "RIGHT", type: "request-change", body: "y" },
+      ]),
+    ).toBe("REQUEST_CHANGES");
+    // An explicit verdict OVERRIDES the derived one.
+    const overridden = buildForgeReviewPost(at("comment"), {
+      reviewId: "rev-3",
+      target: TARGET,
+      payload: "p",
+      capabilities: CAPS,
+      verdict: "APPROVE",
+    });
+    expect(overridden.event).toBe("APPROVE");
   });
 
   it("embeds the deterministic idempotency marker in the body", () => {

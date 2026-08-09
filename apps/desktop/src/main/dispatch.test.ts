@@ -599,7 +599,8 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     };
     expect(body.query).toContain("addPullRequestReview");
     expect(body.query).not.toContain("comments:"); // never the deprecated field
-    expect(body.variables.input.event).toBe("COMMENT"); // never APPROVE
+    // publishComments carries a request-change ⇒ the derived verdict is REQUEST_CHANGES.
+    expect(body.variables.input.event).toBe("REQUEST_CHANGES");
     expect(body.variables.input.commitOID).toBe(SANDBOX_TARGET.headOid); // head pinned
     expect(body.variables.input.pullRequestId).toBe(SANDBOX_TARGET.forgeRef);
     const threads = body.variables.input.threads as { line: number }[];
@@ -611,6 +612,26 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     ]);
     // The descriptor carries NO secret — the bearer is a send-time header.
     expect(JSON.stringify(out.request)).not.toMatch(/authorization|bearer|token/i);
+  });
+
+  it("(d2) an explicit verdict override wins over the derived one", async () => {
+    const { dispatch } = harness();
+    const review = await capturedReview(dispatch);
+    const comments = publishComments(); // a request-change ⇒ derived REQUEST_CHANGES
+    const payload = canonicalReviewPayload(comments);
+
+    const out = (await dispatch("publish.review", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      target: SANDBOX_TARGET,
+      comments,
+      payload,
+      verdict: "APPROVE", // overrides the derived REQUEST_CHANGES
+      dryRun: true,
+    })) as PublishResult;
+
+    const body = out.request.body as { variables: { input: { event: string } } };
+    expect(body.variables.input.event).toBe("APPROVE");
   });
 
   it("(b) refuses a payload that disagrees with the content — byte-exact, even near-matches", async () => {

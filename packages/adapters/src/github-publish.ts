@@ -3,10 +3,11 @@ import type {
   ForgePublishOutcome,
   ForgePublishPort,
   ForgeRequestDescriptor,
+  ForgeReviewEvent,
   ForgeReviewPost,
   ForgeReviewTarget,
 } from "@rennet/core";
-import { extractMarker, FORGE_REVIEW_EVENT, ForgeRateLimited } from "@rennet/core";
+import { extractMarker, ForgeRateLimited } from "@rennet/core";
 import type { HttpFetch } from "./github-auth";
 
 /**
@@ -23,9 +24,9 @@ import type { HttpFetch } from "./github-auth";
  *   • `buildReviewRequest` is PURE and network-free (the primary dry-run evidence)
  *     and never touches the token: the bearer is an Authorization HEADER added only
  *     at real send, so a dry-run descriptor carries no secret.
- *   • The review `event` is HARDCODED to `FORGE_REVIEW_EVENT` (COMMENT) at the wire,
- *     never copied from the post (which carries no event field) — so the request can
- *     never carry `APPROVE`/`REQUEST_CHANGES`, at runtime, not just in the type.
+ *   • The review `event` is the resolved verdict from the signed review (derived from
+ *     the dispositions, or an explicit override) — a review tool posts the real
+ *     verdict; the safety model is the human sign + the consent/forgeRef binding.
  *   • The token is resolved LAZILY (`resolveToken`), so constructing the adapter and
  *     building a dry-run request need no live credential; only `findExistingReview`
  *     and `publishReview` spend one.
@@ -79,7 +80,7 @@ interface DraftThread {
 interface AddReviewInput {
   pullRequestId: string;
   commitOID: string;
-  event: "COMMENT";
+  event: ForgeReviewEvent;
   body: string;
   threads: DraftThread[];
 }
@@ -107,10 +108,10 @@ export function buildGitHubReviewRequest(
   const input: AddReviewInput = {
     pullRequestId: post.target.forgeRef,
     commitOID: post.target.headOid,
-    // HARDCODED at the wire, never copied from the post (which carries no event):
-    // Rennet never approves for the user, and this makes that a runtime guarantee,
-    // not merely a compile-time one. There is no path for an APPROVE to leave here.
-    event: FORGE_REVIEW_EVENT,
+    // The resolved verdict from the signed review (derived from the dispositions, or an
+    // explicit override). A review tool posts the actual verdict; the safety model is
+    // the human sign + the consent/forgeRef binding, not a forced event.
+    event: post.event,
     body: post.body,
     threads,
   };

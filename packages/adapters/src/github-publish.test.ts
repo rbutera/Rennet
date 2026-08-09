@@ -58,11 +58,12 @@ describe("buildGitHubReviewRequest (issue #21) — the dry-run evidence", () => 
     expect(body.query).not.toContain("comments:"); // NEVER the deprecated batched field
   });
 
-  it("pins the head as commitOID, posts as COMMENT, targets the PR node id", () => {
+  it("pins the head as commitOID, posts the derived verdict, targets the PR node id", () => {
     const body = buildGitHubReviewRequest(singleLine).body as {
       variables: { input: { event: string; commitOID: string; pullRequestId: string } };
     };
-    expect(body.variables.input.event).toBe("COMMENT");
+    // singleLine carries a request-change ⇒ the derived verdict is REQUEST_CHANGES.
+    expect(body.variables.input.event).toBe("REQUEST_CHANGES");
     expect(body.variables.input.commitOID).toBe("cafe0003");
     expect(body.variables.input.pullRequestId).toBe("PR_kwSANDBOX");
   });
@@ -77,16 +78,22 @@ describe("buildGitHubReviewRequest (issue #21) — the dry-run evidence", () => 
     expect(thread).not.toHaveProperty("startSide");
   });
 
-  it("emits COMMENT even when handed a post forged with an APPROVE event (structural)", () => {
-    // A post carries no event field; the wire hardcodes COMMENT. Even a caller who
-    // casts an `event: "APPROVE"` onto a post-shaped object cannot make an APPROVE
-    // leave — the builder never reads it. Red-proof: if the builder copied the event,
-    // this output would be APPROVE.
-    const forged = { ...singleLine, event: "APPROVE" } as unknown as ForgeReviewPost;
-    const body = buildGitHubReviewRequest(forged).body as {
-      variables: { input: { event: string } };
-    };
-    expect(body.variables.input.event).toBe("COMMENT");
+  it("passes the resolved verdict through to the wire (APPROVE / REQUEST_CHANGES / COMMENT)", () => {
+    // The wire posts the post's resolved verdict — a review tool must post the actual
+    // verdict. Derived from the dispositions here; an override is exercised in the core
+    // + dispatch tests.
+    const eventOf = (p: ForgeReviewPost): string =>
+      (buildGitHubReviewRequest(p).body as { variables: { input: { event: string } } }).variables
+        .input.event;
+    expect(
+      eventOf(post([{ path: "a.ts", line: 1, side: "RIGHT", type: "approve", body: "ok" }])),
+    ).toBe("APPROVE");
+    expect(
+      eventOf(post([{ path: "a.ts", line: 1, side: "RIGHT", type: "request-change", body: "no" }])),
+    ).toBe("REQUEST_CHANGES");
+    expect(
+      eventOf(post([{ path: "a.ts", line: 1, side: "RIGHT", type: "comment", body: "fyi" }])),
+    ).toBe("COMMENT");
   });
 
   it("carries NO secret — the descriptor has no Authorization/Bearer/token", () => {
