@@ -76,6 +76,7 @@ export {
   type WorktreeProvider,
 } from "./github-changeset-source";
 export { GitHubForgeAdapter, type GitHubForgeConfig } from "./github-forge";
+export { parseGitHubPrRef } from "./github-pr-ref";
 export {
   buildGitHubReviewRequest,
   GitHubPublishAdapter,

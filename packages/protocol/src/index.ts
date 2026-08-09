@@ -44,6 +44,15 @@ export const patchsetSchema: z.ZodType<Patchset> = z.object({
   rawDiff: z.string(),
   byteLength: z.number().int().nonnegative(),
   truncated: z.boolean(),
+  // Provenance of the content, so a GitHub-PR (github-local/github-rest) patchset
+  // survives the command round-trip intact — the renderer distinguishes a PR
+  // snapshot from a working-tree capture by this, and the degraded badge reads
+  // from `degraded`/`degradationReason`. Absent ⇒ `local` (additive; identity
+  // ignores it). Without these here, zod strips them and every PR review looks
+  // like a local capture.
+  source: z.enum(["local", "github-local", "github-rest"]).optional(),
+  degraded: z.boolean().optional(),
+  degradationReason: z.string().optional(),
 });
 
 export const dispositionTypeSchema = z.enum(["approve", "request-change", "comment", "question"]);
@@ -274,6 +283,22 @@ export const commandDefinitions = {
       commandId: commandIdSchema,
       repoPath: z.string().min(1),
       reviewId: z.string().optional(),
+    }),
+    output: z.object({ review: reviewSchema }),
+  },
+  // ── The GitHub PR front door (User Journey stage 2, second v1 source) ───────
+  // Point Rennet at a pull request (`owner/repo#123` or a GitHub PR URL) and land
+  // in the review surface with the PR's diff loaded. `repoPath` is the local clone
+  // the user picked: the diff is taken locally against the PR's pinned OIDs
+  // (full-fidelity, force-push-proof). One engine, two sources — this produces the
+  // same immutable patchset + review the local capture does.
+  "review.openPr": {
+    input: z.object({
+      commandId: commandIdSchema,
+      /** The PR reference: `owner/repo#123` or a `https://github.com/.../pull/N` URL. */
+      ref: z.string().min(1),
+      /** The local clone of the PR's repository (picked via the directory dialog). */
+      repoPath: z.string().min(1),
     }),
     output: z.object({ review: reviewSchema }),
   },
