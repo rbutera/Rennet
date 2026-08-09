@@ -170,7 +170,7 @@ Rai's step 2 is, almost clause for clause, Contracts §2 + R27/R30:
 
 ### 4.2 The genuine gap: workspace-level composition
 
-`.rennet/` is repository-local; a workspace spanning repos has no context object. **PROPOSAL:** a `WorkspaceContext` that is a thin deterministic composition — the member repos' current `ProjectSnapshot` ids plus cross-repo edges (dependency references between members, shared contract packages) — living in app-owned storage, not in any one repo. Freshness is the conjunction of member freshness; one stale member makes the workspace context `stale` with the member named. Knowledge stays per-repo (evidence anchors are repo-scoped); workspace-level learned statements are LATER.
+`.rennet/` is repository-local; a workspace spanning repos has no context object. **ADOPTED (2026-08-09, R54):** a `WorkspaceContext` that is a thin deterministic composition, the member repos' current `ProjectSnapshot` ids plus cross-repo edges (dependency references between members, shared contract packages), living in app-owned storage, not in any one repo. Freshness is the conjunction of member freshness; one stale member makes the workspace context `stale` with the member named. Knowledge stays per-repo (evidence anchors are repo-scoped); workspace-level learned statements are LATER. **Composition rule (folded from the repo-map advice, R54):** maps compose BY REFERENCE, never by inlining, every cross-map edge carrying (identity, pinned OID, content digest); the unit of a map is one git repository, with an internal scope tree derived from workspace tooling (pnpm/Nx/cargo/go.work) rather than folder heuristics, and a submodule is a separate `RepoRecord` pinned at the gitlink OID. One uniform recursion covers monorepo, submodule, and workspace-with-submodules. Design adopted here; build still sequenced later (§5.3).
 
 ### 4.3 The primer: how context reaches the canvases and the orchestrator
 
@@ -227,7 +227,7 @@ Assembly is deterministic, versioned like a base instruction, and inspectable in
 
 **Buildable in the near term** (mostly M0 objects rearranged): canvas state model + deterministic placement over the M0 angles; L2 dispositions (M0 already has the model); L3 annotations + proposals; the canvas MCP server with `describe / view / focus / annotate / propose`; the priming manifest v1; the context-update stream for `selected` and `disposed`.
 
-**Aspirational:** `canvas.recompute` (needs the affected-only regeneration UX, R29); regroup/split proposals (needs the decomposition-proposal edit flow); workspace-level context composition; canvases-as-MCP-Apps in third-party hosts; multi-orchestrator or N=3 disagreement rendered on-canvas.
+**Aspirational:** `canvas.recompute` (needs the affected-only regeneration UX, R29); regroup/split proposals (needs the decomposition-proposal edit flow); workspace-level context composition (design adopted 2026-08-09, R54; build still later); canvases-as-MCP-Apps in third-party hosts; multi-orchestrator or N=3 disagreement rendered on-canvas.
 
 ---
 
