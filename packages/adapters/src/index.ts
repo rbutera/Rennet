@@ -48,6 +48,11 @@ export {
   type ProjectDraft,
 } from "./file-project-store";
 export { FileSettingsStore } from "./file-settings-store";
+export {
+  emptyFlaggedReviewFixture,
+  failedFlaggedReviewFixture,
+  flaggedReviewFixture,
+} from "./flagged-fixture";
 export { GitCaptureAdapter } from "./git-capture";
 export {
   type Counts,
@@ -102,11 +107,6 @@ export {
   type AttachedOrchestratorSession,
   attachOrchestratorSession,
 } from "./orchestrator-session-server";
-export {
-  emptyFlaggedReviewFixture,
-  failedFlaggedReviewFixture,
-  flaggedReviewFixture,
-} from "./flagged-fixture";
 export { cleanupWorktreeFixture, projectDetailFixture } from "./project-detail-fixture";
 export {
   defaultProjectDiscoveryDeps,

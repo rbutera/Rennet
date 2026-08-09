@@ -2,7 +2,9 @@ import type { FindingElement, FlaggedReview } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { buildFlaggedIndex, isFinding } from "./flagged";
 
-function finding(over: Partial<FindingElement> & Pick<FindingElement, "findingId">): FindingElement {
+function finding(
+  over: Partial<FindingElement> & Pick<FindingElement, "findingId">,
+): FindingElement {
   return {
     anchor: `rennet:hunk/${over.findingId}`,
     summary: `Finding ${over.findingId}`,
@@ -144,6 +146,8 @@ describe("isFinding — the strict flag guard", () => {
   it("rejects null, non-objects, and partial findings", () => {
     expect(isFinding(null)).toBe(false);
     expect(isFinding("finding")).toBe(false);
-    expect(isFinding({ findingId: "x", anchor: "a", summary: "s", severity: "urgent" })).toBe(false);
+    expect(isFinding({ findingId: "x", anchor: "a", summary: "s", severity: "urgent" })).toBe(
+      false,
+    );
   });
 });

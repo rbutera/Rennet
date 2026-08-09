@@ -306,28 +306,29 @@ function isFindingBody(body: unknown): body is FindingBody {
  * did, its bad entries — is dropped, never placed as a flag.
  */
 function projectFlagged(docs: AdmittedDocument[]): AnalysisLayer {
-  const elements: (AnalysisElement & { severity: FindingSeverity })[] = [];
+  const ranked: { element: AnalysisElement; rank: number }[] = [];
   for (const doc of docs) {
     if (!isFindingBody(doc.body)) continue;
     for (const finding of doc.body.findings) {
       if (!isFindingElement(finding)) continue;
-      elements.push({
-        elementKey: elementKeyFor(doc.docId, `finding/${finding.findingId}`),
-        docId: doc.docId,
-        anchor: finding.anchor,
-        kind: `finding:${finding.severity}`,
-        title: finding.summary,
-        severity: finding.severity,
+      ranked.push({
+        element: {
+          elementKey: elementKeyFor(doc.docId, `finding/${finding.findingId}`),
+          docId: doc.docId,
+          anchor: finding.anchor,
+          kind: `finding:${finding.severity}`,
+          title: finding.summary,
+        },
+        rank: SEVERITY_RANK[finding.severity],
       });
     }
   }
-  elements.sort(
+  ranked.sort(
     (left, right) =>
-      SEVERITY_RANK[left.severity] - SEVERITY_RANK[right.severity] ||
-      compareCodeUnits(left.elementKey, right.elementKey),
+      left.rank - right.rank || compareCodeUnits(left.element.elementKey, right.element.elementKey),
   );
-  const placed: AnalysisElement[] = elements.map(({ severity: _severity, ...element }) => element);
-  return { elements: placed, cohorts: [], readingOrder: placed.map((element) => element.elementKey) };
+  const elements = ranked.map((entry) => entry.element);
+  return { elements, cohorts: [], readingOrder: elements.map((element) => element.elementKey) };
 }
 
 /**

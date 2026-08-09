@@ -480,12 +480,20 @@ describe("projectAnalysis — flagged", () => {
   });
 
   it("does not route non-finding docs into the flagged angle", () => {
-    const layer = projectAnalysis("flagged", [decisionsDoc([{ decisionId: "d1", anchor: "rennet:chunk/c1", title: "x" }])], DECOMP);
+    const layer = projectAnalysis(
+      "flagged",
+      [decisionsDoc([{ decisionId: "d1", anchor: "rennet:chunk/c1", title: "x" }])],
+      DECOMP,
+    );
     expect(layer.elements).toEqual([]);
   });
 
   it("mints a derived (sha256) key per finding, never an agent id", () => {
-    const layer = projectAnalysis("flagged", [findingDoc([good("f1", "high"), good("f2", "low")])], DECOMP);
+    const layer = projectAnalysis(
+      "flagged",
+      [findingDoc([good("f1", "high"), good("f2", "low")])],
+      DECOMP,
+    );
     expect(new Set(layer.elements.map((element) => element.elementKey)).size).toBe(2);
     for (const element of layer.elements) expect(element.elementKey).toHaveLength(64);
   });

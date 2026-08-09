@@ -8,7 +8,6 @@ import type {
   Proposal,
   ReviewNarration,
 } from "@rennet/types";
-import { buildFlaggedIndex } from "../canvas/flagged";
 import { type ReactNode, useEffect, useMemo, useState } from "react";
 import {
   type AuthoringAct,
@@ -18,6 +17,7 @@ import {
 } from "../canvas/authoring";
 import type { CanvasFeedSource } from "../canvas/feed";
 import { useCanvasFeed } from "../canvas/feed";
+import { buildFlaggedIndex } from "../canvas/flagged";
 import {
   type Adjudication,
   type ApprovalScope,

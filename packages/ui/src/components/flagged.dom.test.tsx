@@ -48,7 +48,7 @@ const REVIEW: FlaggedReview = {
 describe("FlaggedLens — the flagged index surface", () => {
   it("renders every flag with its severity chip, high first", () => {
     const { container } = mount(
-      <FlaggedLens index={buildFlaggedIndex(REVIEW)} onJumpToAnchor={() => {}} />,
+      <FlaggedLens index={buildFlaggedIndex(REVIEW)} onJumpToAnchor={vi.fn()} />,
     );
     const severities = [...container.querySelectorAll(".flag")].map((el) =>
       el.getAttribute("data-severity"),
@@ -58,14 +58,14 @@ describe("FlaggedLens — the flagged index surface", () => {
 
   it("shows the concur vote count for an agreed flag", () => {
     const { getByText } = mount(
-      <FlaggedLens index={buildFlaggedIndex(REVIEW)} onJumpToAnchor={() => {}} />,
+      <FlaggedLens index={buildFlaggedIndex(REVIEW)} onJumpToAnchor={vi.fn()} />,
     );
     expect(getByText(/both models concur 3\/3/)).toBeTruthy();
   });
 
   it("renders a disagreement as BOTH models' answers side by side, labelled", () => {
     const { container, getByText } = mount(
-      <FlaggedLens index={buildFlaggedIndex(REVIEW)} onJumpToAnchor={() => {}} />,
+      <FlaggedLens index={buildFlaggedIndex(REVIEW)} onJumpToAnchor={vi.fn()} />,
     );
     const disagree = container.querySelector('[data-agreement="disagree"]');
     expect(disagree).toBeTruthy();
@@ -93,7 +93,10 @@ describe("FlaggedLens — the flagged index surface", () => {
 
   it("renders an honest EMPTY state for a review that ran and flagged nothing", () => {
     const { container, getByText } = mount(
-      <FlaggedLens index={buildFlaggedIndex({ status: "ok", findings: [] })} onJumpToAnchor={() => {}} />,
+      <FlaggedLens
+        index={buildFlaggedIndex({ status: "ok", findings: [] })}
+        onJumpToAnchor={vi.fn()}
+      />,
     );
     expect(container.querySelector(".flagged-empty")).toBeTruthy();
     expect(container.querySelector(".flagged-failed")).toBeNull();
@@ -104,7 +107,7 @@ describe("FlaggedLens — the flagged index surface", () => {
     const { container, getByText } = mount(
       <FlaggedLens
         index={buildFlaggedIndex({ status: "failed", reason: "harness timed out" })}
-        onJumpToAnchor={() => {}}
+        onJumpToAnchor={vi.fn()}
       />,
     );
     expect(container.querySelector(".flagged-failed")).toBeTruthy();
