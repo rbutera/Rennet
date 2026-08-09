@@ -209,6 +209,11 @@ function harness(
     discoverProject: ({ path, kind }) =>
       Promise.resolve({ path, kind, repos: [], primaryBranch: "main" }),
     detectHarnesses: () => Promise.resolve([]),
+    // Project detail (issue #37): a trivial substrate stub; the dedicated smart-list
+    // tests exercise the derivation. The shared harness only needs the shape.
+    projectDetail: () =>
+      Promise.resolve({ viewer: { login: "rai" }, locals: [], prs: [], truncated: false }),
+    cleanupWorktree: () => Promise.resolve({ ok: true }),
   };
   return {
     dispatch: createDispatch(deps),
@@ -973,6 +978,9 @@ function frontDoorHarness(seed: {
       return Promise.resolve({ ...discovery, path: input.path, kind: input.kind });
     },
     detectHarnesses: () => Promise.resolve(seed.detected ?? []),
+    projectDetail: () =>
+      Promise.resolve({ viewer: { login: "rai" }, locals: [], prs: [], truncated: false }),
+    cleanupWorktree: () => Promise.resolve({ ok: true }),
   };
   return { dispatch: createDispatch(deps), allowedRoots, addCalls, discoverCalls };
 }

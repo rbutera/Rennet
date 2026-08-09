@@ -11,6 +11,7 @@ import {
   type DiscoveryResult,
   type PermissionMode,
   type Project,
+  type ProjectDetail,
   type ProjectKind,
   parseCommandInput,
   parseCommandOutput,
@@ -111,6 +112,17 @@ export interface DispatchDeps {
   discoverProject(input: { path: string; kind: ProjectKind }): Promise<DiscoveryResult>;
   /** The harnesses found on the machine, for the ambient first-run detection line. */
   detectHarnesses(): Promise<DetectedHarness[]>;
+  /**
+   * The project-detail substrate (issue #37): the raw local work + pull requests +
+   * viewer the unified smart list folds into rows. Read-only. A fixture stands behind
+   * this until the live git/GitHub loop lands.
+   */
+  projectDetail(projectId: string): Promise<ProjectDetail>;
+  /**
+   * Clean up a merged PR's local worktree/branch (the read-only row's action). A
+   * destructive local act; the host handler is a documented stub this wave.
+   */
+  cleanupWorktree(input: { projectId: string; worktreeId: string }): Promise<{ ok: boolean }>;
 }
 
 /** Lift the wire target shape into the core `ForgeReviewTarget` nouns. */
@@ -392,6 +404,25 @@ export function createDispatch(
         });
         allowedRoots.add(project.openPath);
         return parseCommandOutput(name, { project, projects });
+      }
+      // ── Project detail: the unified smart list (issue #37) ────────────────────
+      case "project.detail": {
+        // Read-only substrate for a project the user has added. No repository
+        // capture, no model spend: just the local work + PRs + viewer the renderer
+        // folds into one list. (Live wiring is a follow-up; a fixture stands in.)
+        const input = parseCommandInput(name, rawInput);
+        return parseCommandOutput(name, await deps.projectDetail(input.projectId));
+      }
+      case "project.cleanupWorktree": {
+        // The merged-PR read-only row's clean-up. A destructive local act, so it is a
+        // command rather than a renderer effect; the host handler is a documented stub
+        // this wave (nothing is deleted from disk yet).
+        const input = parseCommandInput(name, rawInput);
+        const result = await deps.cleanupWorktree({
+          projectId: input.projectId,
+          worktreeId: input.worktreeId,
+        });
+        return parseCommandOutput(name, result);
       }
       // ── Canvas user ops (issue #54 wires #10's command surface into dispatch) ──
       case "canvas.disposition": {

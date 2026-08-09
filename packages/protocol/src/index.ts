@@ -346,6 +346,96 @@ export const detectedHarnessSchema = z.object({
 });
 export type DetectedHarness = z.infer<typeof detectedHarnessSchema>;
 
+// ── Project detail: the unified smart list (issue #37) ───────────────────────
+// Clicking a project opens ONE scrolling surface: local work AND every pull
+// request in a single list, rows visually distinct by state, filterable, HOT-sorted
+// (recency of engagement) with a relevance boost that floats a row up when it needs
+// the viewer. MAIN supplies the raw substrate — local worktrees/branches, pull
+// requests, and the viewer login — and the renderer DERIVES the unified rows from
+// it: dedupe (a branch with a PR shows as the PR, the worktree an annotation on it),
+// ownership (row appearance + filter, not a hard wall), needs-you, and merged →
+// read-only. Live git + GitHub wiring (the home-surface GraphQL query set + the
+// REST-conditional polling loop) is a LATER slice; a fixture stands behind this
+// typed boundary now so the screen comes alive without an invented integration.
+
+/** Where a local piece of work sits in the local pipeline (captured > reviewed > prd). */
+export const smartListStageSchema = z.enum(["captured", "reviewed", "prd"]);
+export type SmartListStage = z.infer<typeof smartListStageSchema>;
+
+/** Continuous-integration state for a pull request (honest "none" when unknown). */
+export const smartListCiSchema = z.enum(["none", "passing", "failing", "pending"]);
+export type SmartListCi = z.infer<typeof smartListCiSchema>;
+
+/** A local worktree/branch detected for the project — private/local (backlight). */
+export const localWorkSchema = z.object({
+  /** A stable, unique worktree identifier — the clean-up target (unambiguous even
+   * across a workspace and across a reused branch name). */
+  id: z.string().min(1),
+  /**
+   * A stable identity for the repository this worktree belongs to. A workspace holds
+   * several repos, so a branch NAME is unique only within one repo; dedupe keys on the
+   * composite `(repository, branch)`, never the bare branch.
+   */
+  repository: z.string().min(1),
+  /** The branch/worktree name (half of the composite dedupe key). */
+  branch: z.string().min(1),
+  /** The login that owns this local work — matched against the viewer for ownership. */
+  author: z.string().min(1),
+  /** Uncommitted changes present in the worktree. */
+  dirty: z.boolean(),
+  /** Commits ahead of / behind the primary branch. */
+  ahead: z.number().int().nonnegative(),
+  behind: z.number().int().nonnegative(),
+  /** How far along the local pipeline this work sits. */
+  stage: smartListStageSchema,
+  /** Recency of engagement (ISO), the HOT-sort key. */
+  lastActivityAt: z.iso.datetime(),
+});
+export type LocalWork = z.infer<typeof localWorkSchema>;
+
+/** A pull request on the project — public/what-exists-in-the-world (ink). */
+export const pullRequestSchema = z.object({
+  id: z.string().min(1),
+  number: z.number().int().positive(),
+  title: z.string().min(1),
+  /**
+   * A stable identity for the repository this PR belongs to — the other half of the
+   * composite `(repository, branch)` dedupe key. A workspace PR for `repo-a/feat/x`
+   * must not match a local worktree `repo-b/feat/x`.
+   */
+  repository: z.string().min(1),
+  /** The PR's head branch (half of the composite dedupe key against a local worktree). */
+  branch: z.string().min(1),
+  author: z.string().min(1),
+  state: z.enum(["open", "merged", "closed"]),
+  /** The viewer has been asked to review this PR — the relevance boost's core signal. */
+  reviewRequestedFromViewer: z.boolean(),
+  ci: smartListCiSchema,
+  additions: z.number().int().nonnegative(),
+  deletions: z.number().int().nonnegative(),
+  changedFiles: z.number().int().nonnegative(),
+  lastActivityAt: z.iso.datetime(),
+});
+export type PullRequest = z.infer<typeof pullRequestSchema>;
+
+/** The signed-in GitHub user, so the renderer can tag ownership (mine vs theirs). */
+export const projectViewerSchema = z.object({ login: z.string().min(1) });
+export type ProjectViewer = z.infer<typeof projectViewerSchema>;
+
+/** The raw project-detail substrate MAIN delivers; the renderer derives the rows. */
+export const projectDetailSchema = z.object({
+  viewer: projectViewerSchema,
+  locals: z.array(localWorkSchema),
+  prs: z.array(pullRequestSchema),
+  /**
+   * A >1000 upstream truncation, surfaced so a partial surface never renders as
+   * complete (the SSO partial-results banner). The fixture sets it false today; the
+   * live GraphQL loop sets it from the explicit truncation state later.
+   */
+  truncated: z.boolean(),
+});
+export type ProjectDetail = z.infer<typeof projectDetailSchema>;
+
 export const commandDefinitions = {
   "app.bootstrap": {
     input: z.object({}),
@@ -645,6 +735,32 @@ export const commandDefinitions = {
       primaryBranch: z.string().min(1),
     }),
     output: z.object({ project: projectSchema, projects: z.array(projectSchema) }),
+  },
+  // ── Project detail: the unified smart list (issue #37) ─────────────────────
+  // The raw substrate a project row opens into: local work + pull requests +
+  // viewer, which the renderer folds into one deduped, sorted, filterable list.
+  // Read-only; a fixture stands behind it until the live git/GitHub loop lands.
+  "project.detail": {
+    input: z.object({ projectId: z.string().min(1) }),
+    output: projectDetailSchema,
+  },
+  // Merged PR → auto read-only, with a "clean up" that deletes the local worktree
+  // / branch left behind. A destructive local act, so it is a command (not a
+  // renderer-side effect); the host handler is a documented STUB this wave
+  // (acknowledges the request; real worktree deletion is a follow-up), so nothing
+  // is deleted from disk yet while the surface behaves correctly.
+  "project.cleanupWorktree": {
+    input: z.object({
+      commandId: commandIdSchema,
+      projectId: z.string().min(1),
+      /**
+       * The stable worktree identifier to remove (`LocalWork.id`). Targeting the
+       * worktree identity — not a bare branch name — keeps clean-up unambiguous across
+       * a workspace's repos and across a reused branch name.
+       */
+      worktreeId: z.string().min(1),
+    }),
+    output: z.object({ ok: z.boolean() }),
   },
 } as const;
 

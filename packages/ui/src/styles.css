@@ -1849,3 +1849,365 @@ button {
 .workspace-projects:hover {
   color: var(--text);
 }
+
+/* ── Project detail: the unified smart list (issue #37) ─────────────────────── */
+/* One scrolling surface: local work + every PR in a single list, rows visually
+ * distinct by state at a glance. Local = backlight (private-to-reviewer glow); a PR
+ * you own = accent stripe; a teammate PR = neutral raised; needs-you = amber accent;
+ * merged = read-only, green + dimmed. Every colour is a var(--token) — no fourth hue. */
+.project-detail {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  padding: 0 24px 96px;
+  background: var(--chrome-bg);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
+}
+.project-detail-bar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 22px 4px 18px;
+  border-bottom: 1px solid var(--hairline);
+}
+.project-detail-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: var(--surface-2);
+  color: var(--text-soft);
+  cursor: pointer;
+}
+.project-detail-back:hover {
+  color: var(--text);
+}
+.project-detail-heading {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.project-detail-name {
+  font-size: 18px;
+  font-weight: var(--display-weight);
+  letter-spacing: var(--display-track);
+  color: var(--text);
+}
+.project-detail-path {
+  font: 400 12px / 1.2 var(--mono);
+  color: var(--text-faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-detail-error {
+  margin: 16px 0 0;
+  color: var(--del-glyph);
+}
+.project-detail-loading {
+  margin: 24px 4px;
+  color: var(--text-faint);
+}
+.project-detail-truncated {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 14px 0 0;
+  padding: 10px 14px;
+  border: 1px solid var(--amber-line);
+  border-radius: var(--chip-radius);
+  background: var(--amber-surface);
+  color: var(--amber);
+  font-size: 13px;
+}
+
+.smart-filter-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 16px 0 14px;
+  flex-wrap: wrap;
+}
+.smart-filters {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.smart-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 12px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-soft);
+  font-size: 13px;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    color 0.15s ease;
+}
+.smart-filter:hover {
+  color: var(--text);
+}
+.smart-filter.is-active {
+  border-color: var(--accent-soft-line);
+  background: var(--accent-soft);
+  color: var(--text);
+}
+.smart-filter-count {
+  font: 700 11px / 1 var(--mono);
+  color: var(--text-faint);
+}
+.smart-filter.is-active .smart-filter-count {
+  color: var(--accent);
+}
+.smart-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.smart-sort-label {
+  font: 700 10px / 1.2 var(--mono);
+  letter-spacing: 0.14em;
+  color: var(--text-faint);
+  text-transform: uppercase;
+}
+.smart-sort-select {
+  padding: 6px 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.smart-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 4px;
+}
+.smart-list-empty {
+  margin: 24px 4px;
+  color: var(--text-faint);
+}
+
+/* One row. The base is a solid raised card; the left stripe + tint encode state. */
+.smart-row {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  border: 1px solid var(--raised-border);
+  border-radius: var(--radius);
+  background: var(--raised);
+  box-shadow: var(--raised-shadow);
+  overflow: hidden;
+}
+/* State law: local = backlight private glow; my PR = accent stripe; teammate PR =
+ * neutral; needs-you = amber stripe (attention); merged/read-only = green + dimmed. */
+.smart-row[data-kind="local"] {
+  border-color: var(--private-line);
+  background: var(--private-surface);
+  box-shadow: var(--raised-shadow), var(--private-glow);
+}
+.smart-row[data-kind="pr"][data-mine="true"] {
+  box-shadow:
+    var(--raised-shadow),
+    inset 3px 0 0 var(--accent-soft-line);
+}
+.smart-row[data-needs-you="true"] {
+  border-color: var(--amber-line);
+  box-shadow:
+    var(--raised-shadow),
+    inset 3px 0 0 var(--amber);
+}
+.smart-row[data-read-only="true"] {
+  border-color: var(--green-line);
+  background: var(--surface);
+  opacity: 0.82;
+  box-shadow:
+    var(--raised-shadow),
+    inset 3px 0 0 var(--green-line);
+}
+.smart-row-open {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 14px;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+.smart-row-lead {
+  flex: none;
+  display: grid;
+  place-items: center;
+  min-width: 42px;
+  color: var(--text-soft);
+}
+.smart-row-num {
+  font: 700 13px / 1 var(--mono);
+  color: var(--accent);
+}
+.smart-row[data-kind="local"] .smart-row-lead {
+  color: var(--private);
+}
+.smart-row-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+.smart-row-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.smart-row-sub {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.smart-row-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+  color: var(--text-soft);
+}
+.smart-row-author {
+  color: var(--text-faint);
+}
+.smart-row-diffstat {
+  font-family: var(--mono);
+  color: var(--text-faint);
+}
+.smart-row-checkout {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border: 1px solid var(--private-line);
+  border-radius: 999px;
+  background: var(--private-fill);
+  color: var(--private);
+  font-size: 11px;
+}
+.smart-row-trajectory {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.trajectory-step {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-faint);
+}
+.trajectory-step.is-done {
+  color: var(--private);
+}
+.smart-row-dirty {
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid var(--amber-line);
+  color: var(--amber);
+  font-size: 11px;
+}
+.smart-row-state {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding-left: 8px;
+}
+.smart-row-ci {
+  font: 700 11px / 1 var(--mono);
+}
+.smart-row-ci.is-passing {
+  color: var(--green);
+}
+.smart-row-ci.is-failing {
+  color: var(--del-glyph);
+}
+.smart-row-ci.is-pending {
+  color: var(--text-faint);
+}
+.smart-row-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.smart-row-badge.is-needs-you {
+  border: 1px solid var(--amber-line);
+  background: var(--amber-fill);
+  color: var(--amber);
+}
+.smart-row-badge.is-read-only {
+  border: 1px solid var(--green-line);
+  background: var(--green-fill);
+  color: var(--green);
+}
+.smart-row-statelabel {
+  font: 700 10px / 1.2 var(--mono);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.smart-row-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px 10px 0;
+}
+.smart-row-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 7px 12px;
+  border: 1px solid var(--accent-soft-line);
+  border-radius: var(--chip-radius);
+  background: var(--accent-soft);
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.smart-row-action:hover {
+  border-color: var(--accent);
+}
+.smart-row-cleanup {
+  padding: 7px 12px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: var(--surface-2);
+  color: var(--text-soft);
+  font-size: 13px;
+  cursor: pointer;
+}
+.smart-row-cleanup:hover {
+  color: var(--text);
+  border-color: var(--green-line);
+}
