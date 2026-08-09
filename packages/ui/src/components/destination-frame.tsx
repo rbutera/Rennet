@@ -4,6 +4,7 @@ import {
   type DestinationVariant,
   destinationVariant,
 } from "../canvas/destination";
+import { ArrowRightIcon, TargetIcon } from "./icons";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The DESTINATION FRAME (issue #64; re-pointed by R40, issue #101) — the
@@ -49,7 +50,10 @@ export function DestinationFrame({
       aria-label={`Destination: ${variant.title}`}
     >
       <header className="destination-head">
-        <p className="destination-eyebrow">STAGING TOWARD</p>
+        <p className="destination-eyebrow">
+          <TargetIcon size={11} />
+          STAGING TOWARD
+        </p>
         <h2 className="destination-title">{variant.title}</h2>
         <p className="destination-summary">{variant.summary}</p>
       </header>
@@ -106,6 +110,7 @@ export function DestinationFrame({
           onClick={() => onOpenDraft?.()}
         >
           Open the draft
+          <ArrowRightIcon size={14} />
         </button>
       </footer>
     </aside>

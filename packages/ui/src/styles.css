@@ -1,11 +1,18 @@
+/* Rennet app-shell styling (front door, Files view, view toggle, destination
+ * chrome, publish paper). Ported onto the ratified glass tokens (tokens.css) so
+ * the WHOLE app speaks one palette — soft ice-blue accent, near-white primary
+ * buttons, amber for blast/disagreement, backlight blue for private. The rogue
+ * lime accent this file used to carry was a colour-law violation (Design Doctrine
+ * §2: functional colour only, no fourth signal hue); every value here is now a
+ * var(--token). Glass is the CHROME; content surfaces paint their own solid fills. */
+
 :root {
-  color: #e8e9ec;
+  color: var(--text);
   /* Real glass (issue #61): the window is transparent so the frosted CHROME
    * composites over the actual desktop. The app-shell paints the frosted backdrop;
    * content panels below paint their own SOLID backgrounds. */
   background: transparent;
-  font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font-family: var(--sans);
   font-synthesis: none;
 }
 
@@ -22,15 +29,19 @@ button {
   font: inherit;
 }
 
+/* The destination rail (issue #64) is persistent chrome fixed to the right. The
+ * two working views reserve a gutter for it so nothing ever overlaps it. The
+ * front door / empty state carries no destination, so it takes no gutter. */
 .app-shell {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  padding-right: var(--destination-gutter, 300px);
   /* Frosted-chrome backdrop over the real desktop. Content panels (file/diff/angle)
    * paint solid backgrounds on top of this, so their text never rides the wallpaper. */
-  background: rgba(16, 19, 25, 0.55);
-  -webkit-backdrop-filter: blur(30px) saturate(1.5);
-  backdrop-filter: blur(30px) saturate(1.5);
+  background: var(--chrome-bg);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
 }
 .topbar {
   height: 76px;
@@ -38,40 +49,59 @@ button {
   align-items: center;
   justify-content: space-between;
   padding: 0 24px;
-  border-bottom: 1px solid #292d35;
+  border-bottom: 1px solid var(--hairline);
   /* Frosted chrome strip: translucent tint strong enough that the title + provenance
    * stay legible over any desktop, blurring what is behind the transparent window. */
-  background: rgba(21, 24, 30, 0.72);
-  -webkit-backdrop-filter: blur(30px) saturate(1.5);
-  backdrop-filter: blur(30px) saturate(1.5);
+  background: var(--side-bg);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
+}
+.topbar-title {
+  display: flex;
+  align-items: center;
+  gap: 12px;
 }
 .topbar h1 {
   margin: 1px 0 0;
   font-size: 19px;
-  letter-spacing: -0.02em;
+  font-weight: var(--display-weight);
+  letter-spacing: var(--display-track);
+  color: var(--text);
+}
+.topbar-mark {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--accent-soft-line);
+  border-radius: 9px;
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 .eyebrow {
   margin: 0;
-  color: #8d96a8;
-  font:
-    700 10px / 1.2 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    monospace;
+  color: var(--text-faint);
+  font: 700 10px / 1.2 var(--mono);
   letter-spacing: 0.16em;
 }
 .provenance {
   display: flex;
   gap: 10px;
   align-items: center;
-  color: #8d96a8;
+  color: var(--text-faint);
   font-size: 12px;
 }
+.provenance-arrow {
+  color: var(--text-faint);
+  opacity: 0.7;
+}
 .provenance code {
-  color: #ccd1da;
-  background: #21252d;
+  color: var(--text);
+  background: var(--surface-2);
   padding: 5px 8px;
   border-radius: 5px;
+  font-family: var(--mono);
 }
 
 .invalid-banner {
@@ -80,23 +110,27 @@ button {
   justify-content: space-between;
   gap: 20px;
   padding: 12px 24px;
-  background: #33270f;
-  border-bottom: 1px solid #70551d;
-  color: #f2d18a;
+  background: var(--amber-surface);
+  border-bottom: 1px solid var(--amber-line);
+  color: var(--amber);
 }
 .invalid-banner div {
   display: flex;
-  gap: 8px;
+  align-items: center;
+  gap: 10px;
   flex-wrap: wrap;
 }
 .invalid-banner button,
 .empty-state button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   border: 0;
-  border-radius: 7px;
+  border-radius: var(--chip-radius);
   padding: 9px 13px;
-  background: #d8ff4f;
-  color: #13170a;
-  font-weight: 750;
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  font-weight: 700;
   cursor: pointer;
 }
 .progress-row {
@@ -106,24 +140,24 @@ button {
   align-items: center;
   gap: 10px;
   padding: 0 24px;
-  color: #798294;
+  color: var(--text-faint);
   font-size: 11px;
-  border-bottom: 1px solid #252932;
+  border-bottom: 1px solid var(--hairline);
   /* Frosted chrome strip (matches the topbar). */
-  background: rgba(19, 22, 28, 0.66);
-  -webkit-backdrop-filter: blur(30px) saturate(1.5);
-  backdrop-filter: blur(30px) saturate(1.5);
+  background: var(--side-bg);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
 }
 .progress-track {
   height: 3px;
-  background: #2b3039;
+  background: var(--surface-2);
   border-radius: 9px;
   overflow: hidden;
 }
 .progress-track span {
   display: block;
   height: 100%;
-  background: #d8ff4f;
+  background: var(--accent);
 }
 
 .review-grid {
@@ -135,26 +169,29 @@ button {
 .file-panel,
 .angle-panel {
   min-width: 0;
-  background: #15181e;
+  background: var(--side-bg);
 }
 .file-panel {
-  border-right: 1px solid #292d35;
+  border-right: 1px solid var(--hairline);
 }
 .angle-panel {
-  border-left: 1px solid #292d35;
+  border-left: 1px solid var(--hairline);
   padding-bottom: 20px;
 }
 .panel-title {
   height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
   padding: 15px 16px 0;
-  color: #aab1be;
+  color: var(--text-soft);
   font-size: 11px;
-  font-weight: 750;
+  font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 .muted {
-  color: #788193;
+  color: var(--text-faint);
   font-size: 12px;
   line-height: 1.5;
   padding: 0 16px;
@@ -164,73 +201,70 @@ button {
   height: 39px;
   display: grid;
   grid-template-columns: 22px minmax(0, 1fr) 12px;
-  gap: 6px;
+  gap: 8px;
   align-items: center;
   border: 0;
   border-left: 2px solid transparent;
-  color: #b8bec9;
+  color: var(--text-soft);
   background: transparent;
   text-align: left;
   cursor: pointer;
 }
 .file-row:hover {
-  background: #1c2027;
+  background: var(--surface-2);
 }
 .file-row.selected {
-  background: #22272f;
-  border-left-color: #d8ff4f;
-  color: #f4f5f6;
+  background: var(--surface);
+  border-left-color: var(--accent);
+  color: var(--text);
 }
 .file-name {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font:
-    11px / 1.3 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    monospace;
+  font: 11px / 1.3 var(--mono);
 }
 .status {
-  width: 17px;
-  text-align: center;
-  font:
-    700 10px / 17px ui-monospace,
-    monospace;
-  border-radius: 3px;
+  width: 18px;
+  height: 17px;
+  display: grid;
+  place-items: center;
+  font: 700 10px / 1 var(--mono);
+  border-radius: 4px;
 }
 .status-added {
-  color: #92d6a1;
-  background: #193622;
+  color: var(--add-glyph);
+  background: var(--add-fill);
 }
 .status-modified {
-  color: #eac26b;
-  background: #3b3018;
+  color: var(--amber);
+  background: var(--amber-fill);
 }
 .status-deleted {
-  color: #ea8992;
-  background: #3d1d23;
+  color: var(--del-glyph);
+  background: var(--del-fill);
 }
 .status-renamed {
-  color: #9eb9f2;
-  background: #1e2c48;
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 .read-dot {
   width: 7px;
   height: 7px;
-  border: 1px solid #5d6677;
+  border: 1px solid var(--hairline-strong);
   border-radius: 50%;
 }
 .read-dot.is-read {
-  border-color: #d8ff4f;
-  background: #d8ff4f;
+  border-color: var(--accent);
+  background: var(--accent);
 }
 
 .diff-panel {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: #111318;
+  /* Opaque code surface: legibility never rides on the wallpaper (#61). */
+  background: var(--code-bg);
 }
 .diff-toolbar {
   height: 44px;
@@ -240,7 +274,10 @@ button {
   justify-content: space-between;
   gap: 15px;
   padding: 0 14px;
-  border-bottom: 1px solid #292d35;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--side-bg);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
 }
 .diff-toolbar div {
   min-width: 0;
@@ -252,38 +289,48 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  font:
-    600 11px / 1.2 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    monospace;
+  color: var(--text);
+  font: 600 11px / 1.2 var(--mono);
+}
+.diff-toolbar .delta {
+  display: inline-flex;
+  gap: 8px;
+  font: 600 11px / 1.2 var(--mono);
+}
+.diff-toolbar .delta .a {
+  color: var(--add-glyph);
+}
+.diff-toolbar .delta .d {
+  color: var(--del-glyph);
 }
 .diff-toolbar span {
-  color: #7e8798;
+  color: var(--text-faint);
   font-size: 11px;
   white-space: nowrap;
 }
 .secondary {
-  border: 1px solid #3a414e;
-  border-radius: 6px;
-  padding: 6px 9px;
-  color: #cad0da;
-  background: #1b1f26;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  padding: 6px 11px;
+  color: var(--text-soft);
+  background: var(--raised);
   cursor: pointer;
   font-size: 11px;
+}
+.secondary:hover {
+  color: var(--text);
+  border-color: var(--accent-soft-line);
 }
 .diff {
   flex: 1;
   margin: 0;
   padding: 16px 18px 40px;
   overflow: auto;
-  color: #cdd2da;
-  font:
-    11.5px / 1.55 ui-monospace,
-    SFMono-Regular,
-    Menlo,
-    Consolas,
-    monospace;
+  color: var(--text-soft);
+  font: 11.5px / 1.55 var(--mono);
   tab-size: 2;
   white-space: pre;
 }
@@ -293,38 +340,41 @@ button {
   align-items: center;
   height: 36px;
   margin: 0 12px;
-  border-bottom: 1px solid #242831;
-  color: #b5bbc5;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--text-soft);
   font-size: 12px;
 }
 .angle-state {
-  color: #687183;
+  color: var(--text-faint);
   font-size: 10px;
   text-transform: uppercase;
+  letter-spacing: 0.04em;
 }
 .snapshot-card {
   margin: 18px 12px;
   padding: 12px;
-  border: 1px solid #2b3039;
-  border-radius: 7px;
-  background: #12151a;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: var(--surface);
   display: grid;
   gap: 7px;
 }
 .snapshot-card span {
-  color: #717b8d;
+  color: var(--text-faint);
   font-size: 9px;
   letter-spacing: 0.12em;
 }
 .snapshot-card code {
-  color: #d8ff4f;
+  color: var(--accent);
+  font-family: var(--mono);
   font-size: 12px;
 }
 .snapshot-card small {
-  color: #798294;
+  color: var(--text-faint);
   line-height: 1.4;
 }
 
+/* ── The front door / empty state ─────────────────────────────────────────── */
 .empty-state,
 .loading {
   min-height: 100vh;
@@ -335,18 +385,24 @@ button {
   padding: 30px;
 }
 .empty-state {
-  background: radial-gradient(circle at 50% 35%, #222a22, #111318 46%);
+  /* Frosted glass over the real desktop — the transparent window shows the
+   * bioluminescent-twilight wallpaper through the frost (doctrine §1). */
+  background: var(--chrome-bg);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
 }
 .empty-state h1 {
   margin: 10px 0;
   max-width: 620px;
-  font-size: clamp(34px, 5vw, 58px);
-  line-height: 0.98;
-  letter-spacing: -0.055em;
+  font-size: clamp(34px, 5vw, 56px);
+  line-height: 1;
+  font-weight: var(--display-weight);
+  letter-spacing: -0.045em;
+  color: var(--text);
 }
 .empty-state > p:not(.eyebrow, .error) {
   max-width: 560px;
-  color: #969ead;
+  color: var(--text-soft);
   line-height: 1.6;
 }
 .empty-state button {
@@ -358,14 +414,14 @@ button {
   cursor: wait;
 }
 /* The second front door: open a pull request. Content surfaces stay solid and
-   readable (glass is the frame, not the content) — a dark card on the radial. */
+   readable (glass is the frame, not the content). */
 .entry-divider {
   display: flex;
   align-items: center;
   gap: 12px;
   width: min(440px, 82vw);
   margin: 26px 0 4px;
-  color: #7a8494;
+  color: var(--text-faint);
   font-size: 12px;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -375,7 +431,7 @@ button {
   content: "";
   flex: 1;
   height: 1px;
-  background: #2a3038;
+  background: var(--hairline);
 }
 .pr-door {
   display: flex;
@@ -387,21 +443,19 @@ button {
   flex: 1;
   min-width: 0;
   padding: 11px 13px;
-  border: 1px solid #363f49;
-  border-radius: 9px;
-  background: #14171d;
-  color: #e7ecf3;
-  font:
-    13px / 1.2 ui-monospace,
-    monospace;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font: 13px / 1.2 var(--mono);
 }
 .pr-input::placeholder {
-  color: #6a7480;
+  color: var(--text-faint);
 }
 .pr-input:focus {
   outline: none;
-  border-color: #d8ff4f;
-  box-shadow: 0 0 0 3px rgba(216, 255, 79, 0.14);
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
 }
 .pr-door button {
   margin-top: 0;
@@ -409,27 +463,28 @@ button {
 }
 .pr-hint {
   margin-top: 10px;
-  color: #6f7886;
+  color: var(--text-faint);
   font-size: 12px;
 }
 .mark {
-  width: 52px;
-  height: 52px;
+  width: 54px;
+  height: 54px;
   margin-bottom: 16px;
-  border: 1px solid #d8ff4f;
-  border-radius: 13px;
-  color: #d8ff4f;
-  font:
-    800 28px / 50px ui-monospace,
-    monospace;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--accent-soft-line);
+  border-radius: 15px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: var(--private-glow);
   transform: rotate(-4deg);
 }
 .loading {
-  color: #8d96a8;
+  color: var(--text-faint);
 }
 .error,
 .error-toast {
-  color: #ff9fa7;
+  color: var(--del-glyph);
 }
 .error-toast {
   position: fixed;
@@ -438,9 +493,9 @@ button {
   left: 50%;
   transform: translateX(-50%);
   padding: 9px 13px;
-  border: 1px solid #6c3038;
-  border-radius: 7px;
-  background: #2d171b;
+  border: 1px solid var(--del-glyph);
+  border-radius: var(--chip-radius);
+  background: var(--del-fill);
   font-size: 12px;
 }
 .busy-bar {
@@ -450,7 +505,7 @@ button {
   left: 0;
   width: 35%;
   height: 2px;
-  background: #d8ff4f;
+  background: var(--accent);
   animation: busy 1s ease-in-out infinite alternate;
 }
 @keyframes busy {
@@ -459,7 +514,8 @@ button {
   }
 }
 
-/* Additive view toggle between the file/review surface and the canvas surface (#11). */
+/* Additive view toggle between the file/review surface and the canvas surface (#11).
+ * Glass chrome pill (frosted), soft-blue active state. */
 .view-toggle {
   position: fixed;
   z-index: 12;
@@ -468,26 +524,36 @@ button {
   display: flex;
   gap: 4px;
   padding: 3px;
-  border: 1px solid #292d35;
-  border-radius: 9px;
-  background: #15181e;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--side-bg);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
 }
 .view-toggle button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--chip-radius);
   padding: 5px 12px;
-  color: #8d96a8;
+  color: var(--text-soft);
   background: transparent;
   font-size: 12px;
-  font-weight: 650;
+  font-weight: 600;
   cursor: pointer;
 }
+.view-toggle button:hover {
+  color: var(--text);
+}
 .view-toggle button.is-active {
-  color: #13170a;
-  background: #d8ff4f;
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 
-/* ── The DESTINATION (issue #64): the persistent north the review stages toward ── */
+/* ── The DESTINATION (issue #64): the persistent north the review stages toward ──
+ * Glass chrome rail, fixed to the right; the working views reserve a gutter for it. */
 .destination-frame {
   position: fixed;
   z-index: 11;
@@ -499,37 +565,42 @@ button {
   flex-direction: column;
   gap: 10px;
   padding: 14px;
-  border: 1px solid #292d35;
-  border-radius: 12px;
-  background: #15181e;
-  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.45);
+  border: 1px solid var(--win-border);
+  border-radius: var(--win-radius);
+  background: var(--side-bg);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
+  box-shadow: var(--win-shadow);
 }
 .destination-eyebrow {
   margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   font-size: 10px;
   letter-spacing: 0.14em;
   font-weight: 700;
-  color: #6f7891;
+  color: var(--text-faint);
 }
 .destination-title {
   margin: 2px 0 0;
   font-size: 15px;
   font-weight: 700;
-  color: #e8e9ec;
+  color: var(--text);
 }
 .destination-summary {
   margin: 4px 0 0;
   font-size: 12px;
   line-height: 1.4;
-  color: #8d96a8;
+  color: var(--text-soft);
 }
 .destination-modes {
   display: flex;
   gap: 4px;
   padding: 3px;
-  border: 1px solid #292d35;
+  border: 1px solid var(--hairline);
   border-radius: 8px;
-  background: #0f1116;
+  background: var(--surface-2);
 }
 .destination-modes button {
   flex: 1;
@@ -537,14 +608,14 @@ button {
   border-radius: 5px;
   padding: 5px 6px;
   font-size: 11px;
-  font-weight: 650;
-  color: #8d96a8;
+  font-weight: 600;
+  color: var(--text-soft);
   background: transparent;
   cursor: pointer;
 }
 .destination-modes button.is-active {
-  color: #13170a;
-  background: #d8ff4f;
+  color: var(--accent);
+  background: var(--accent-soft);
 }
 .destination-body {
   display: flex;
@@ -559,17 +630,17 @@ button {
 }
 .destination-count strong {
   font-size: 22px;
-  color: #d8ff4f;
+  color: var(--accent);
 }
 .destination-count span {
   font-size: 12px;
-  color: #8d96a8;
+  color: var(--text-soft);
 }
 .destination-empty {
   margin: 0;
   font-size: 12px;
   line-height: 1.45;
-  color: #6f7891;
+  color: var(--text-faint);
 }
 .destination-staged {
   list-style: none;
@@ -584,9 +655,9 @@ button {
   align-items: center;
   gap: 8px;
   padding: 5px 7px;
-  border: 1px solid #23272f;
+  border: 1px solid var(--hairline);
   border-radius: 7px;
-  background: #0f1116;
+  background: var(--surface);
 }
 .destination-staged-type {
   flex: 0 0 18px;
@@ -596,48 +667,47 @@ button {
   border-radius: 5px;
   font-size: 10px;
   font-weight: 800;
-  color: #13170a;
-  background: #7f8aa3;
+  color: var(--accent-contrast);
+  background: var(--text-faint);
 }
 .destination-staged-item[data-type="approve"] .destination-staged-type {
-  background: #86e08b;
+  background: var(--green);
 }
 .destination-staged-item[data-type="request-change"] .destination-staged-type {
-  background: #f2b45a;
+  background: var(--amber);
 }
 .destination-staged-item[data-type="question"] .destination-staged-type {
-  background: #7fb3f2;
+  background: var(--private);
 }
 .destination-staged-path {
   font-size: 11px;
-  color: #c3c9d6;
+  color: var(--text-soft);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .destination-open-draft {
   width: 100%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
   border: 0;
   border-radius: 8px;
   padding: 9px 12px;
   font-size: 13px;
   font-weight: 700;
-  color: #13170a;
-  background: #d8ff4f;
+  color: var(--btn-text);
+  background: var(--btn-bg);
   cursor: pointer;
 }
 .destination-open-draft:disabled {
-  color: #6f7891;
-  background: #23272f;
+  color: var(--text-faint);
+  background: var(--surface-2);
   cursor: not-allowed;
 }
 
-/* The glass-token mount for the destination chrome (issue #101). It carries the
- * glass + paper CSS custom properties (scoped alongside .canvas-app in tokens.css)
- * and its data-scheme, but contributes NO box — the fixed frame and the overlays
- * position against the viewport. Custom properties inherit through display:contents
- * to the children, so the collation draft (glass) and the paper (--sheet-*) theme
- * from the one palette. */
+/* The glass-token mount for the destination chrome (issue #101). */
 .rennet-glass {
   display: contents;
 }
@@ -677,6 +747,9 @@ button {
 }
 .publish-sheet-eyebrow {
   margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 7px;
   font-size: 11px;
   letter-spacing: 0.1em;
   font-weight: 700;
@@ -691,12 +764,18 @@ button {
   color: var(--sheet-text);
 }
 .publish-sheet-close {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
   border: 0;
+  border-radius: 8px;
   background: transparent;
   color: var(--sheet-soft);
-  font-size: 22px;
-  line-height: 1;
   cursor: pointer;
+}
+.publish-sheet-close:hover {
+  background: var(--sheet-hairline);
 }
 .publish-sheet-lede {
   margin: 0;
@@ -771,6 +850,9 @@ button {
   gap: 12px;
 }
 .publish-sheet-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   border: 1px solid var(--sheet-hairline);
   border-radius: 9px;
   padding: 10px 16px;
@@ -781,6 +863,9 @@ button {
   cursor: pointer;
 }
 .publish-sheet-sign {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   border: 0;
   border-radius: 9px;
   padding: 11px 22px;
@@ -1001,9 +1086,9 @@ button {
   flex-direction: column;
   gap: 12px;
   padding: 26px;
-  border: 1px solid #292d35;
+  border: 1px solid var(--hairline);
   border-radius: 14px;
-  background: #15181e;
+  background: var(--surface);
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
 }
 .harness-consent-body .eyebrow {
@@ -1011,22 +1096,23 @@ button {
   font-size: 11px;
   letter-spacing: 0.1em;
   font-weight: 700;
-  color: #8d96a8;
+  color: var(--text-faint);
 }
 .harness-consent-body h2 {
   margin: 0;
   font-size: 19px;
   font-weight: 600;
-  color: #eef1f6;
+  color: var(--text);
 }
 .harness-consent-body p {
   margin: 0;
   font-size: 13px;
   line-height: 1.5;
-  color: #b3bccd;
+  color: var(--text-soft);
 }
 .harness-consent-body code {
-  color: #d8ff4f;
+  color: var(--accent);
+  font-family: var(--mono);
   font-size: 12px;
   overflow-wrap: anywhere;
 }
@@ -1036,51 +1122,51 @@ button {
   margin-top: 4px;
 }
 .harness-consent-run {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   border: 0;
   border-radius: 8px;
   padding: 9px 16px;
-  color: #13170a;
-  background: #d8ff4f;
+  color: var(--btn-text);
+  background: var(--btn-bg);
   font-size: 13px;
   font-weight: 650;
   cursor: pointer;
 }
 .harness-consent-auto {
-  border: 1px solid #292d35;
+  border: 1px solid var(--hairline-strong);
   border-radius: 8px;
   padding: 9px 16px;
-  color: #b3bccd;
+  color: var(--text-soft);
   background: transparent;
   font-size: 13px;
   font-weight: 600;
   cursor: pointer;
 }
 
-/* ── The mechanical-outline fallback banner (real-AI-default honesty) ──────── */
-/* Shown at the top of the Canvases view when no model ran and the set is the
-   deterministic outline of the diff, so the user is never misled into reading
-   structure as AI findings. Amber tokens adapt to the light/dark theme. */
+/* ── The mechanical-outline fallback banner (real-AI-default honesty) ──────────
+ * In-flow at the top of the Canvases view so it reserves its OWN slot and never
+ * overlaps the lens/angle-tab row (the #85 overlap fix). Amber = disagreement /
+ * risk signal (doctrine §2). The right padding clears the destination rail. */
 .engine-fallback {
-  position: fixed;
-  top: 14px;
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 20;
   display: flex;
   align-items: center;
   gap: 16px;
-  max-width: min(760px, calc(100% - 32px));
-  padding: 12px 16px;
-  border: 1px solid var(--amber-line);
-  border-radius: 12px;
+  padding: 12px 300px 12px 20px;
+  border-bottom: 1px solid var(--amber-line);
   background: var(--amber-surface);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.35);
+}
+.engine-fallback-icon {
+  flex: none;
+  color: var(--amber);
 }
 .engine-fallback-copy {
   display: flex;
   flex-direction: column;
   gap: 3px;
   min-inline-size: 0;
+  flex: 1;
 }
 .engine-fallback-copy strong {
   font-size: 13px;
@@ -1098,8 +1184,6 @@ button {
 }
 
 /* ── The Canvases-view primer states (running / consent / failed) ─────────── */
-/* What stands where the demo canvases used to: an honest running/consent/failed
-   surface, never fixture data dressed as a review. */
 .canvas-primer {
   display: flex;
   flex-direction: column;
@@ -1129,12 +1213,15 @@ button {
   color: var(--text-soft);
 }
 .canvas-primer button {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   margin-top: 6px;
   border: 0;
   border-radius: 8px;
   padding: 9px 16px;
-  color: #13170a;
-  background: #d8ff4f;
+  color: var(--btn-text);
+  background: var(--btn-bg);
   font-size: 13px;
   font-weight: 650;
   cursor: pointer;

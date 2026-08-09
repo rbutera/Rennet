@@ -9,6 +9,9 @@
   min-height: 100vh;
   display: flex;
   flex-direction: column;
+  /* Reserve the gutter for the persistent destination rail (issue #64) so it
+   * never overlaps the lens/angle-tab row or the canvas content (the #85 fix). */
+  padding-right: var(--destination-gutter, 300px);
   color: var(--text);
   /* The frosted-chrome backdrop: translucent tint over the transparent window,
    * blurring the real desktop. Content surfaces below paint their own solid
@@ -200,8 +203,14 @@
   text-align: left;
 }
 .cohort-chevron {
+  display: inline-flex;
   color: var(--text-faint);
-  width: 14px;
+  /* collapsed → point right; expanded (.is-open) → point down */
+  transform: rotate(-90deg);
+  transition: transform 0.12s ease;
+}
+.cohort-chevron.is-open {
+  transform: rotate(0deg);
 }
 .cohort-count {
   color: var(--text-faint);
@@ -290,6 +299,9 @@
   gap: 6px;
 }
 .disposition-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 1px solid var(--hairline-strong);
   border-radius: var(--chip-radius);
   padding: 6px 11px;
@@ -299,7 +311,12 @@
   font-size: 12px;
   cursor: pointer;
 }
+.disposition-btn svg {
+  flex: none;
+  opacity: 0.85;
+}
 .disposition-bar.is-compact .disposition-btn {
+  gap: 5px;
   padding: 3px 8px;
   font-size: 11px;
 }
