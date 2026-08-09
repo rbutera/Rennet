@@ -1,5 +1,6 @@
 import {
   type PermissionMode,
+  type Project,
   type RennetBridge,
   requiresConsent,
   resolvePermissionMode,
@@ -29,7 +30,10 @@ import {
 } from "./canvas/publish";
 import { CollationDraftCanvas } from "./components/collation-draft-canvas";
 import { DestinationFrame } from "./components/destination-frame";
+import { FrontDoor } from "./components/front-door";
+import { HarnessConsent } from "./components/harness-consent";
 import {
+  ArrowLeftIcon,
   ArrowRightIcon,
   FileDiffIcon,
   FolderIcon,
@@ -37,7 +41,6 @@ import {
   RennetMark,
   TriangleIcon,
 } from "./components/icons";
-import { HarnessConsent } from "./components/harness-consent";
 import { type PublishReviewResult, PublishSheet } from "./components/publish-sheet";
 import { CanvasWorkspace } from "./components/workspace";
 
@@ -252,6 +255,12 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const [selectedPath, setSelectedPath] = useState<string>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  // The front door (issue #29) is the app's entry: launching Rennet lands on the
+  // Projects list. `atFrontDoor` returns there from an open review; `directEntry`
+  // reveals the legacy repo/PR entry so that capability is never orphaned while
+  // project-detail (the review's real home) is a later slice.
+  const [atFrontDoor, setAtFrontDoor] = useState(false);
+  const [directEntry, setDirectEntry] = useState(false);
   // The GitHub PR front door (the second v1 source): the ref the user typed
   // (`owner/repo#123` or a PR URL). Opening it picks the local clone, then lands
   // in the same review surface a working-tree capture does.
@@ -510,6 +519,31 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         repoPath: path,
       });
       setReview(result.review);
+      setAtFrontDoor(false);
+      setDirectEntry(false);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Open a project from the front door. Project-detail (its two-zone home) is a
+  // later slice; for now a row captures a review of the project's reviewable open
+  // target directly (MAIN granted the path when the project loaded/was added), so
+  // the front door reaches real work today. Workspace projects open their first
+  // included repo.
+  async function openProject(project: Project): Promise<void> {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const result = await bridge.invoke("review.capture", {
+        commandId: crypto.randomUUID(),
+        repoPath: project.openPath,
+      });
+      setReview(result.review);
+      setAtFrontDoor(false);
+      setDirectEntry(false);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -535,6 +569,8 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         repoPath: path,
       });
       setReview(result.review);
+      setAtFrontDoor(false);
+      setDirectEntry(false);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -719,9 +755,35 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
 
   if (review === undefined) return <div className="loading">Restoring local review…</div>;
 
-  if (!review) {
+  // The front door is the app's entry: shown on first run (no restored review) and
+  // whenever the user steps back to Projects from an open review. The legacy repo/PR
+  // entry is one terse disclosure away so no existing capability is orphaned.
+  if (atFrontDoor || !review) {
+    if (!directEntry) {
+      return (
+        <>
+          {error ? <div className="error-toast">{error}</div> : null}
+          {busy ? <div className="busy-bar" /> : null}
+          <FrontDoor bridge={bridge} onOpenProject={(project) => void openProject(project)} />
+          <button
+            type="button"
+            className="front-door-direct"
+            onClick={() => {
+              setDirectEntry(true);
+              setAtFrontDoor(true);
+            }}
+          >
+            Review a repo or PR directly
+          </button>
+        </>
+      );
+    }
     return (
       <main className="empty-state">
+        <button type="button" className="entry-back" onClick={() => setDirectEntry(false)}>
+          <ArrowLeftIcon size={13} />
+          Projects
+        </button>
         <div className="mark" aria-hidden="true">
           <RennetMark size={34} />
         </div>
@@ -774,6 +836,15 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     <>
       {error ? <div className="error-toast">{error}</div> : null}
       {busy ? <div className="busy-bar" /> : null}
+      <button
+        type="button"
+        className="workspace-projects"
+        onClick={() => setAtFrontDoor(true)}
+        aria-label="Back to projects"
+      >
+        <ArrowLeftIcon size={13} />
+        Projects
+      </button>
       <div className="view-toggle" role="tablist" aria-label="Workspace view">
         <button
           type="button"

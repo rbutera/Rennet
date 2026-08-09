@@ -41,6 +41,12 @@ export {
   defaultCodexVersionProbe,
   discoverCodexAvailability,
 } from "./codex-exec";
+export {
+  deriveProjectDraft,
+  FileProjectStore,
+  type FileProjectStoreDeps,
+  type ProjectDraft,
+} from "./file-project-store";
 export { FileSettingsStore } from "./file-settings-store";
 export { GitCaptureAdapter } from "./git-capture";
 export {
@@ -96,6 +102,11 @@ export {
   type AttachedOrchestratorSession,
   attachOrchestratorSession,
 } from "./orchestrator-session-server";
+export {
+  defaultProjectDiscoveryDeps,
+  discoverProject,
+  type ProjectDiscoveryDeps,
+} from "./project-discovery";
 export { RepoWatcher } from "./repo-watcher";
 export { SqliteReviewStore } from "./sqlite-review-store";
 export {

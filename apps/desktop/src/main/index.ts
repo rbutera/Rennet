@@ -3,14 +3,21 @@ import { join, normalize, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
+  CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
   type CodexAvailability,
   createClaudeHarness,
   createCodexUtilityAdapter,
   createRefPinner,
+  defaultDiscoveryDeps,
+  defaultProjectDiscoveryDeps,
+  deriveProjectDraft,
+  discoverClaude,
   discoverCodexAvailability,
+  discoverProject,
   discoverWorktreeIdentities,
   execaGit,
+  FileProjectStore,
   FileSettingsStore,
   type GhRunner,
   GitCaptureAdapter,
@@ -29,7 +36,7 @@ import {
   createHarnessRunTurn,
   ReviewService,
 } from "@rennet/core";
-import { type CommandName, isCommandName } from "@rennet/protocol";
+import { type CommandName, type DetectedHarness, isCommandName } from "@rennet/protocol";
 import type {
   Canvas,
   CanvasAngle,
@@ -93,6 +100,37 @@ function getCodexAvailability(): Promise<CodexAvailability> {
   return codexAvailability;
 }
 
+// The ambient first-run detection line (issue #29): which harnesses are on the
+// machine. Read-only, no repository, no model call — it is DISCLOSURE, felt not
+// ceremonial. Memoized like the harness/codex probes: the claude probe spawns the
+// login shell, so it runs once on the first front-door mount, not at launch. A
+// probe that finds nothing simply drops that harness; the line degrades to
+// whatever was found (or nothing), never an error.
+let harnessDetection: Promise<DetectedHarness[]> | null = null;
+async function probeGhVersion(): Promise<string | null> {
+  try {
+    const { stdout } = await execFileAsync("gh", ["--version"], { env: process.env });
+    return stdout.match(/\d+\.\d+\.\d+/)?.[0] ?? null;
+  } catch {
+    return null;
+  }
+}
+function detectHarnesses(): Promise<DetectedHarness[]> {
+  harnessDetection ??= (async (): Promise<DetectedHarness[]> => {
+    const [claude, codex, gh] = await Promise.all([
+      discoverClaude(defaultDiscoveryDeps(), CLAUDE_TESTED_RANGE).catch(() => null),
+      getCodexAvailability().catch(() => null),
+      probeGhVersion(),
+    ]);
+    const detected: DetectedHarness[] = [];
+    if (claude?.chosen) detected.push({ id: "claude", version: claude.chosen.version });
+    if (codex?.available) detected.push({ id: "codex", version: codex.version ?? null });
+    if (gh !== null) detected.push({ id: "gh", version: gh });
+    return detected;
+  })();
+  return harnessDetection;
+}
+
 // ── The GitHub egress composition (issue #21) ────────────────────────────────
 // The outbound HTTP goes through electron `net.fetch`, so no code here holds a raw
 // socket; the bearer token is resolved LAZILY via the auth ladder (`gh auth token`,
@@ -130,6 +168,7 @@ async function resolveGitHubToken(): Promise<string> {
 
 let store: SqliteReviewStore;
 let settings: FileSettingsStore;
+let projectStore: FileProjectStore;
 let service: ReviewService;
 let repositoryDirty = false;
 const allowedRoots = new Set<string>();
@@ -334,6 +373,7 @@ async function createWindow(): Promise<void> {
 app.whenReady().then(async () => {
   store = new SqliteReviewStore(join(app.getPath("userData"), "rennet.sqlite"));
   settings = new FileSettingsStore(join(app.getPath("userData"), "settings.json"));
+  projectStore = new FileProjectStore(join(app.getPath("userData"), "projects.json"));
   service = new ReviewService(capture, store);
   // The main-owned harness-run consent authority (bead workspace-fyvxb): mints a
   // single-use, review-bound token on the user's approval and consumes it before
@@ -365,6 +405,21 @@ app.whenReady().then(async () => {
       repositoryDirty = value;
     },
     buildCanvases: buildCanvasesForReview,
+    // The front door (issue #29): the persisted projects list, read-only discovery
+    // over the chosen path, and the ambient harness detection. MAIN derives the
+    // stored project shape from the confirmed discovery so the renderer cannot
+    // desync it.
+    projects: {
+      list: () => projectStore.list(),
+      add: (input) => {
+        const draft = deriveProjectDraft(input.discovery, input.includedRepos, input.primaryBranch);
+        const project = projectStore.add(draft);
+        return { project, projects: projectStore.list() };
+      },
+    },
+    discoverProject: ({ path, kind }) =>
+      discoverProject(defaultProjectDiscoveryDeps(execaGit), path, kind),
+    detectHarnesses,
   });
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);

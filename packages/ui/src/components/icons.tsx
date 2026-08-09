@@ -140,6 +140,38 @@ export const CloseIcon = (p: IconProps) => (
   </Icon>
 );
 
+/** Plus — the persistent add-a-project affordance. */
+export const PlusIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M8 3v10M3 8h10" />
+  </Icon>
+);
+
+/** Monitor / device — a workspace (a folder holding several repos). */
+export const MonitorIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="2" y="3" width="12" height="8.5" rx="1.3" />
+    <path d="M6 14h4M8 11.5V14" />
+  </Icon>
+);
+
+/** Git branch — a project repo (one repo). */
+export const GitBranchIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="4.5" cy="3.5" r="1.6" />
+    <circle cx="4.5" cy="12.5" r="1.6" />
+    <circle cx="11.5" cy="4.5" r="1.6" />
+    <path d="M4.5 5.1v5.8M4.5 8h4a3 3 0 0 0 3-3v-.4" />
+  </Icon>
+);
+
+/** Sparkle / asterisk — the ambient harness-detection glyph (backlight). */
+export const SparkleIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M8 2v12M2.8 5l10.4 6M13.2 5 2.8 11" />
+  </Icon>
+);
+
 /** The Rennet wordmark glyph — an R in a rounded square, used at the front door
  * and in the Files titlebar. Sized larger by default. */
 export const RennetMark = ({ size = 30, ...rest }: IconProps) => (

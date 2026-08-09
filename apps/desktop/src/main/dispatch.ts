@@ -7,7 +7,11 @@ import {
 } from "@rennet/core";
 import {
   type CommandName,
+  type DetectedHarness,
+  type DiscoveryResult,
   type PermissionMode,
+  type Project,
+  type ProjectKind,
   parseCommandInput,
   parseCommandOutput,
   requiresConsent,
@@ -91,6 +95,22 @@ export interface DispatchDeps {
    * post under a consent-requiring mode cannot be forged or replayed.
    */
   readonly publishConsent: PublishConsentAuthority;
+  /**
+   * The front door (issue #29): the persisted projects list and the read-only
+   * discovery + harness-detection that feed the add-a-project flow. `add` takes the
+   * confirmed discovery + toggle choices and MAIN derives the stored shape.
+   */
+  readonly projects: {
+    list(): Project[];
+    add(input: { discovery: DiscoveryResult; includedRepos: string[]; primaryBranch: string }): {
+      project: Project;
+      projects: Project[];
+    };
+  };
+  /** Read-only discovery over an already-granted path → editable defaults. */
+  discoverProject(input: { path: string; kind: ProjectKind }): Promise<DiscoveryResult>;
+  /** The harnesses found on the machine, for the ambient first-run detection line. */
+  detectHarnesses(): Promise<DetectedHarness[]>;
 }
 
 /** Lift the wire target shape into the core `ForgeReviewTarget` nouns. */
@@ -337,6 +357,41 @@ export function createDispatch(
           ...(narration ? { narration } : {}),
           engine,
         });
+      }
+      // ── The front door: projects + discovery (issue #29) ──────────────────────
+      case "harness.detect": {
+        // The ambient detection line. Read-only, no repository, no index touch.
+        parseCommandInput(name, rawInput);
+        return parseCommandOutput(name, { detected: await deps.detectHarnesses() });
+      }
+      case "projects.list": {
+        parseCommandInput(name, rawInput);
+        const projects = deps.projects.list();
+        // Re-grant every persisted project's open target so a project row opened
+        // after a relaunch reaches `review.capture` (the user added these paths).
+        for (const project of projects) allowedRoots.add(project.openPath);
+        return parseCommandOutput(name, { projects });
+      }
+      case "project.discover": {
+        // Read-only discovery over the path the user just chose (`repository.choose`
+        // granted it). The allowlist is the read-only discovery gate: only a chosen
+        // path is scanned, never an arbitrary renderer-supplied one.
+        const input = parseCommandInput(name, rawInput);
+        assertAllowedRepository(input.path);
+        const discovery = await deps.discoverProject({ path: input.path, kind: input.kind });
+        return parseCommandOutput(name, { discovery });
+      }
+      case "projects.add": {
+        // Confirm. MAIN derives the stored shape from the discovery + the toggle
+        // choices, then grants the new open target so the row is immediately openable.
+        const input = parseCommandInput(name, rawInput);
+        const { project, projects } = deps.projects.add({
+          discovery: input.discovery,
+          includedRepos: [...input.includedRepos],
+          primaryBranch: input.primaryBranch,
+        });
+        allowedRoots.add(project.openPath);
+        return parseCommandOutput(name, { project, projects });
       }
       // ── Canvas user ops (issue #54 wires #10's command surface into dispatch) ──
       case "canvas.disposition": {

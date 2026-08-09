@@ -1226,3 +1226,626 @@ button {
   font-weight: 650;
   cursor: pointer;
 }
+
+/* ── The front door: projects list + add-a-project flow (issue #29) ──────────
+ * The app's entry. Glass is the CHROME (the frosted backdrop + the bar); content
+ * cards paint solid surfaces so their text never rides the wallpaper. Chrome is
+ * terse; the harness line is ambient backlight (the private register). Every value
+ * is a var(--token) — no raw hex (colour law + the hex lint). */
+.front-door {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 24px 96px;
+  background: var(--chrome-bg);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
+}
+.front-door-bar {
+  width: 100%;
+  max-width: 760px;
+  height: 68px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.front-door-mark {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--accent-soft-line);
+  border-radius: 9px;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.front-door-bar h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: var(--display-weight);
+  letter-spacing: var(--display-track);
+  color: var(--text);
+}
+.front-door-step {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.front-door-error {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 0 12px;
+  padding: 9px 13px;
+  border: 1px solid var(--amber-line);
+  border-radius: var(--chip-radius);
+  background: var(--amber-surface);
+  color: var(--amber);
+  font-size: 13px;
+}
+.front-door-loading {
+  margin-top: 80px;
+  color: var(--text-faint);
+}
+
+/* The content column shared by the list and the add flow. */
+.projects,
+.add-flow {
+  width: 100%;
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+}
+.projects-eyebrow {
+  margin: 6px 0 20px;
+}
+
+/* Empty state: one large add-a-project affordance. */
+.add-card {
+  align-self: center;
+  width: min(420px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  margin-top: 24px;
+  padding: 40px 24px;
+  border: 1.5px dashed var(--hairline-strong);
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease;
+}
+.add-card:hover {
+  border-color: var(--accent-soft-line);
+  background: var(--accent-soft);
+}
+.add-card-plus {
+  width: 44px;
+  height: 44px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 11px;
+  color: var(--text-soft);
+}
+.add-card-title {
+  font-size: 18px;
+  font-weight: var(--display-weight);
+}
+.add-card-sub {
+  color: var(--text-soft);
+  font-size: 13px;
+}
+
+/* Populated state: project rows. */
+.project-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.project-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border: 1px solid var(--raised-border);
+  border-radius: var(--radius);
+  background: var(--raised);
+  box-shadow: var(--raised-shadow);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s ease;
+}
+.project-row:hover {
+  border-color: var(--accent-soft-line);
+}
+.project-row-icon {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  color: var(--accent);
+}
+.project-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.project-row-name {
+  font-size: 15px;
+  font-weight: 650;
+}
+.project-row-path {
+  color: var(--text-faint);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-row-meta {
+  margin-left: auto;
+  color: var(--text-soft);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.project-row-branch {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 9px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--chip-radius);
+  color: var(--text-soft);
+  font-size: 12px;
+}
+.add-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: flex-start;
+  margin-top: 4px;
+  padding: 9px 13px;
+  border: 1px dashed var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.add-row:hover {
+  color: var(--text);
+  border-color: var(--accent-soft-line);
+}
+
+/* The ambient harness-detection line — backlight, private register (felt, not
+ * ceremonial). It never leaves the machine, so it wears the only inner glow. */
+.harness-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  align-self: center;
+  margin-top: 28px;
+  padding: 9px 15px;
+  border: 1px solid var(--private-line);
+  border-radius: var(--chip-radius);
+  background: var(--private-fill);
+  box-shadow: var(--private-glow);
+  color: var(--private);
+  font-size: 13px;
+  font-weight: 600;
+}
+.harness-line-tail {
+  color: var(--text-faint);
+  font-weight: 500;
+}
+
+/* ── The add-a-project flow ─────────────────────────────────────────────────── */
+.add-flow .eyebrow {
+  margin: 18px 0 10px;
+}
+.add-flow .eyebrow:first-child {
+  margin-top: 8px;
+}
+.type-choice {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.type-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+  border: 1.5px solid var(--raised-border);
+  border-radius: var(--radius);
+  background: var(--raised);
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+.type-card.is-selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.type-card-icon {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  color: var(--accent);
+}
+.type-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.type-card-title {
+  font-size: 15px;
+  font-weight: 650;
+}
+.type-card-sub {
+  color: var(--text-soft);
+  font-size: 12px;
+}
+
+.path-row {
+  display: flex;
+  gap: 8px;
+}
+.path-field {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 11px 13px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.path-field[data-empty="true"] {
+  color: var(--text-faint);
+}
+.path-field svg {
+  flex: none;
+  color: var(--text-faint);
+}
+.path-browse {
+  flex: none;
+  padding: 0 16px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font-weight: 650;
+  cursor: pointer;
+}
+.path-browse:hover {
+  border-color: var(--accent-soft-line);
+}
+
+.recents {
+  margin-top: 4px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--surface);
+}
+.recents-eyebrow {
+  margin: 0;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface-2);
+}
+.recent-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 14px;
+  border: 0;
+  border-top: 1px solid var(--hairline);
+  background: transparent;
+  color: var(--text);
+  text-align: left;
+  font-size: 13px;
+  cursor: pointer;
+}
+.recent-row:first-of-type {
+  border-top: 0;
+}
+.recent-row:hover {
+  background: var(--surface-2);
+}
+.recent-icon {
+  flex: none;
+  color: var(--text-faint);
+  display: inline-flex;
+}
+.recent-path {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.recent-count {
+  margin-left: auto;
+  flex: none;
+  padding: 3px 9px;
+  border: 1px solid var(--private-line);
+  border-radius: var(--chip-radius);
+  background: var(--private-fill);
+  color: var(--private);
+  font-size: 12px;
+}
+
+.add-flow-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 24px;
+}
+.add-flow-actions .primary {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 11px 18px;
+  border: 0;
+  border-radius: var(--chip-radius);
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  font-weight: 700;
+  cursor: pointer;
+}
+.add-flow-actions .primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.add-flow-actions .ghost {
+  padding: 11px 15px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: transparent;
+  color: var(--text-soft);
+  font-weight: 600;
+  cursor: pointer;
+}
+.add-flow-actions .ghost:hover {
+  color: var(--text);
+}
+.included-count {
+  color: var(--text-faint);
+  font-size: 13px;
+}
+
+/* Step 2: worktree config (editable defaults, not questions). */
+.found-in {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 8px 0 14px;
+  color: var(--text);
+  font-size: 15px;
+  font-weight: 650;
+}
+.found-in-icon {
+  color: var(--text-soft);
+  display: inline-flex;
+}
+.found-in-path {
+  color: var(--text-soft);
+  font-weight: 500;
+}
+.worktree-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.worktree-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 16px;
+  border: 1px solid var(--raised-border);
+  border-radius: var(--radius);
+  background: var(--raised);
+  box-shadow: var(--raised-shadow);
+}
+.worktree-icon {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  color: var(--text-soft);
+}
+.worktree-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.worktree-name {
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--text);
+}
+.worktree-sub {
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.worktree-empty {
+  margin: 8px 0;
+  padding: 20px;
+  border: 1px dashed var(--hairline-strong);
+  border-radius: var(--radius);
+  color: var(--text-soft);
+  text-align: center;
+}
+
+/* The include toggle — private register (this repo is your local selection). */
+.toggle {
+  flex: none;
+  margin-left: auto;
+  width: 40px;
+  height: 23px;
+  padding: 2px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 999px;
+  background: var(--surface-2);
+  cursor: pointer;
+  transition:
+    background 0.15s ease,
+    border-color 0.15s ease;
+}
+.toggle.is-on {
+  border-color: var(--private-line);
+  background: var(--private-fill);
+  box-shadow: var(--private-glow);
+}
+.toggle-knob {
+  display: block;
+  width: 17px;
+  height: 17px;
+  border-radius: 999px;
+  background: var(--text-faint);
+  transition:
+    transform 0.15s ease,
+    background 0.15s ease;
+}
+.toggle.is-on .toggle-knob {
+  transform: translateX(17px);
+  background: var(--private);
+}
+
+.primary-branch {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+.primary-branch-label {
+  color: var(--text-soft);
+  font-size: 13px;
+}
+.primary-branch-value {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-weight: 650;
+  font-size: 13px;
+}
+.primary-branch-input {
+  padding: 6px 10px;
+  border: 1px solid var(--accent);
+  border-radius: var(--chip-radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font: 13px / 1.2 var(--sans);
+}
+.primary-branch-input:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.primary-branch-edit {
+  margin-left: auto;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.reconciliation {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 0 0;
+  padding: 10px 14px;
+  border: 1px solid var(--amber-line);
+  border-radius: var(--chip-radius);
+  background: var(--amber-surface);
+  color: var(--amber);
+  font-size: 13px;
+}
+.reconciliation-mark {
+  flex: none;
+  margin-top: 2px;
+}
+
+/* The terse escape hatch to the legacy repo/PR entry, and the back controls. */
+.front-door-direct {
+  position: fixed;
+  z-index: 12;
+  bottom: 18px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 7px 13px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--chip-radius);
+  background: var(--side-bg);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
+  color: var(--text-faint);
+  font-size: 12px;
+  cursor: pointer;
+}
+.front-door-direct:hover {
+  color: var(--text-soft);
+}
+.entry-back,
+.workspace-projects {
+  position: fixed;
+  z-index: 12;
+  top: 12px;
+  left: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--side-bg);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
+  color: var(--text-soft);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.entry-back:hover,
+.workspace-projects:hover {
+  color: var(--text);
+}

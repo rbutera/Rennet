@@ -10,7 +10,13 @@ import {
   ReviewService,
   type ReviewStorePort,
 } from "@rennet/core";
-import type { PermissionMode } from "@rennet/protocol";
+import type {
+  DetectedHarness,
+  DiscoveryResult,
+  PermissionMode,
+  Project,
+  ProjectKind,
+} from "@rennet/protocol";
 import type { Canvas, CanvasAngle, Patchset, Review } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
@@ -180,6 +186,29 @@ function harness(
     consent,
     publishPort,
     publishConsent,
+    // Front-door deps (issue #29): a trivial in-memory projects capability plus
+    // stub discovery/detection. The dedicated front-door tests exercise these
+    // handlers directly; the shared harness only needs them to satisfy the shape.
+    projects: {
+      list: () => [],
+      add: (input) => {
+        const project = {
+          id: "project-1",
+          name: "orbital",
+          path: input.discovery.path,
+          kind: input.discovery.kind,
+          repoCount: input.includedRepos.length,
+          branchCount: 0,
+          primaryBranch: input.primaryBranch,
+          openPath: input.discovery.repos[0]?.path ?? input.discovery.path,
+          addedAt: "2026-08-09T00:00:00.000Z",
+        };
+        return { project, projects: [project] };
+      },
+    },
+    discoverProject: ({ path, kind }) =>
+      Promise.resolve({ path, kind, repos: [], primaryBranch: "main" }),
+    detectHarnesses: () => Promise.resolve([]),
   };
   return {
     dispatch: createDispatch(deps),
@@ -874,5 +903,164 @@ describe("createDispatch — review.openPr (the GitHub PR front door)", () => {
         repoPath: "/not-granted",
       }),
     ).rejects.toThrow(/access was not granted/i);
+  });
+});
+
+/* ── The front door: projects + discovery routing (issue #29) ───────────────── */
+
+function frontDoorHarness(seed: {
+  projects?: Project[];
+  discovery?: DiscoveryResult;
+  detected?: DetectedHarness[];
+}): {
+  dispatch: ReturnType<typeof createDispatch>;
+  allowedRoots: Set<string>;
+  addCalls: { discovery: DiscoveryResult; includedRepos: string[]; primaryBranch: string }[];
+  discoverCalls: { path: string; kind: ProjectKind }[];
+} {
+  const capture: PatchsetCapturePort = { capture: () => Promise.resolve(patchset()) };
+  const service = new ReviewService(capture, new InMemoryStore());
+  const allowedRoots = new Set<string>();
+  const stored = [...(seed.projects ?? [])];
+  const addCalls: { discovery: DiscoveryResult; includedRepos: string[]; primaryBranch: string }[] =
+    [];
+  const discoverCalls: { path: string; kind: ProjectKind }[] = [];
+  const discovery: DiscoveryResult = seed.discovery ?? {
+    path: "/orbital",
+    kind: "workspace",
+    primaryBranch: "main",
+    repos: [{ name: "atlas", path: "/orbital/atlas", branches: 3 }],
+  };
+  const deps: DispatchDeps = {
+    service,
+    allowedRoots,
+    chooseRepository: () => Promise.resolve(REPO),
+    openPullRequest: (commandId) => service.createReviewFromPatchset(commandId, patchset()),
+    startWatching: () => undefined,
+    isRepositoryDirty: () => false,
+    setRepositoryDirty: () => undefined,
+    buildCanvases: () =>
+      Promise.resolve({
+        canvases: canvasSet(),
+        elementDiffs: {},
+        engine: { aiReview: false, claudeAvailable: false, codexAvailable: false },
+      }),
+    settings: { permissionMode: () => "manual", setPermissionMode: () => undefined },
+    consent: createHarnessConsentAuthority(),
+    publishPort: fakePublishPort(),
+    publishConsent: createPublishConsentAuthority(),
+    projects: {
+      list: () => stored,
+      add: (input) => {
+        addCalls.push({ ...input, includedRepos: [...input.includedRepos] });
+        const project: Project = {
+          id: "added-1",
+          name: "orbital",
+          path: input.discovery.path,
+          kind: input.discovery.kind,
+          repoCount: input.includedRepos.length,
+          branchCount: 3,
+          primaryBranch: input.primaryBranch,
+          openPath: input.discovery.repos[0]?.path ?? input.discovery.path,
+          addedAt: "2026-08-09T00:00:00.000Z",
+        };
+        stored.push(project);
+        return { project, projects: [...stored] };
+      },
+    },
+    discoverProject: (input) => {
+      discoverCalls.push(input);
+      return Promise.resolve({ ...discovery, path: input.path, kind: input.kind });
+    },
+    detectHarnesses: () => Promise.resolve(seed.detected ?? []),
+  };
+  return { dispatch: createDispatch(deps), allowedRoots, addCalls, discoverCalls };
+}
+
+function persistedProject(overrides: Partial<Project> = {}): Project {
+  return {
+    id: "p1",
+    name: "orbital",
+    path: "/orbital",
+    kind: "workspace",
+    repoCount: 2,
+    branchCount: 5,
+    primaryBranch: "main",
+    openPath: "/orbital/atlas",
+    addedAt: "2026-08-09T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+describe("createDispatch — front door (issue #29)", () => {
+  it("projects.list returns the stored projects and GRANTS each open target", async () => {
+    const project = persistedProject();
+    const { dispatch, allowedRoots } = frontDoorHarness({ projects: [project] });
+    // The open target is not pre-granted: listing is what makes a persisted row openable.
+    expect(allowedRoots.has(project.openPath)).toBe(false);
+
+    const out = (await dispatch("projects.list", {})) as { projects: Project[] };
+    expect(out.projects).toEqual([project]);
+    expect(allowedRoots.has(project.openPath)).toBe(true);
+  });
+
+  it("project.discover refuses a path that was never chosen (the read-only gate)", async () => {
+    const { dispatch } = frontDoorHarness({});
+    await expect(
+      dispatch("project.discover", {
+        commandId: randomUUID(),
+        path: "/never/chosen",
+        kind: "repo",
+      }),
+    ).rejects.toThrow(/Repository access was not granted/);
+  });
+
+  it("project.discover returns discovery for a chosen (granted) path", async () => {
+    const { dispatch, discoverCalls } = frontDoorHarness({});
+    // repository.choose grants REPO into allowedRoots.
+    await dispatch("repository.choose", {});
+    const out = (await dispatch("project.discover", {
+      commandId: randomUUID(),
+      path: REPO,
+      kind: "repo",
+    })) as { discovery: DiscoveryResult };
+    expect(out.discovery.path).toBe(REPO);
+    expect(discoverCalls).toEqual([{ path: REPO, kind: "repo" }]);
+  });
+
+  it("projects.add derives + persists from the confirmed discovery and grants the open target", async () => {
+    const { dispatch, allowedRoots, addCalls } = frontDoorHarness({});
+    const discovery: DiscoveryResult = {
+      path: "/orbital",
+      kind: "workspace",
+      primaryBranch: "main",
+      repos: [
+        { name: "atlas", path: "/orbital/atlas", branches: 3 },
+        { name: "docs", path: "/orbital/docs", branches: 2 },
+      ],
+    };
+    const out = (await dispatch("projects.add", {
+      commandId: randomUUID(),
+      discovery,
+      includedRepos: ["atlas"],
+      primaryBranch: "trunk",
+    })) as { project: Project; projects: Project[] };
+
+    expect(addCalls).toEqual([{ discovery, includedRepos: ["atlas"], primaryBranch: "trunk" }]);
+    expect(out.project.openPath).toBe("/orbital/atlas");
+    expect(out.projects).toHaveLength(1);
+    // The freshly added project is immediately openable.
+    expect(allowedRoots.has("/orbital/atlas")).toBe(true);
+  });
+
+  it("harness.detect returns the detected harnesses for the ambient line", async () => {
+    const { dispatch } = frontDoorHarness({
+      detected: [
+        { id: "claude", version: "2.1.0" },
+        { id: "gh", version: "2.55.0" },
+      ],
+    });
+    const out = (await dispatch("harness.detect", {})) as { detected: DetectedHarness[] };
+    expect(out.detected.map((harness) => harness.id)).toEqual(["claude", "gh"]);
   });
 });

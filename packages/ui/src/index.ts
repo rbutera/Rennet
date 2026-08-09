@@ -131,6 +131,7 @@ export { BatchView } from "./components/batch-view";
 export { CollationDraftCanvas } from "./components/collation-draft-canvas";
 export { CoverageMosaicView } from "./components/coverage";
 export { DestinationFrame } from "./components/destination-frame";
+export { FrontDoor } from "./components/front-door";
 export type { GranularityContext } from "./components/granularity-author";
 export { GranularityAuthor } from "./components/granularity-author";
 export type { MarkIndexEntry } from "./components/mark-index";
