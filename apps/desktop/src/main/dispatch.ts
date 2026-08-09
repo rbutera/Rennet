@@ -13,7 +13,14 @@ import {
   requiresConsent,
   resolvePermissionMode,
 } from "@rennet/protocol";
-import type { Canvas, CanvasAngle, ElementDiffs, Review, ReviewNarration } from "@rennet/types";
+import type {
+  Canvas,
+  CanvasAngle,
+  ElementDiffs,
+  Review,
+  ReviewEngine,
+  ReviewNarration,
+} from "@rennet/types";
 import { type PublishConsentAuthority, publishConsentKey } from "./publish-consent-authority";
 
 /**
@@ -49,6 +56,8 @@ export interface DispatchDeps {
     elementDiffs: ElementDiffs;
     /** The roll-up narration placed onto the canvases (issue #70), when produced. */
     narration?: ReviewNarration;
+    /** How the set was produced (real-AI-default): AI review vs mechanical outline. */
+    engine: ReviewEngine;
   }>;
   /**
    * The workspace permission-mode store (issue #103). Reads the persisted
@@ -321,11 +330,12 @@ export function createDispatch(
             throw new Error("The harness run was not authorized under the current permission mode");
           }
         }
-        const { canvases, elementDiffs, narration } = await deps.buildCanvases(review);
+        const { canvases, elementDiffs, narration, engine } = await deps.buildCanvases(review);
         return parseCommandOutput(name, {
           canvases,
           elementDiffs,
           ...(narration ? { narration } : {}),
+          engine,
         });
       }
       // ── Canvas user ops (issue #54 wires #10's command surface into dispatch) ──

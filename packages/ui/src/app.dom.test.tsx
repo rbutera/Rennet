@@ -93,6 +93,10 @@ describe("RennetApp — the Sign button runs the real publish engine (wire-sign-
     const destination = () => container.querySelector(".destination-frame");
     await waitFor(() => expect(destination()).not.toBeNull());
 
+    // The AI review (Canvases) is the default landing; the "Mark read" staging path
+    // lives in the Files view, one tab away. Switch to it.
+    fireEvent.click(getByRole("tab", { name: "Files" }));
+
     // Stage a disposition: Mark read stages a "comment" toward the destination.
     fireEvent.click(getByRole("button", { name: "Mark read" }));
     await waitFor(() => expect(destination()?.getAttribute("data-staged-count")).toBe("1"));
