@@ -752,7 +752,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
             className="pr-input"
             value={prRef}
             onChange={(inputEvent) => setPrRef(inputEvent.target.value)}
-            placeholder="owner/repo#123  or  a GitHub PR URL"
+            placeholder="owner/repo#42  or  a GitHub PR URL"
             aria-label="Pull request reference"
             spellCheck={false}
             autoCapitalize="off"
