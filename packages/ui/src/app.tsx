@@ -11,11 +11,20 @@ import { type DestinationMode, destinationVariant, type PublishLedger } from "./
 import { demoCanvases, demoDiff, demoNarration } from "./canvas/fixtures";
 import { type CanvasSet, loadCanvases } from "./canvas/load";
 import { type DispositionWrite, withoutProposal } from "./canvas/logic";
-import { type PublishContext, publishTarget, publishTargetPayload } from "./canvas/publish";
+import {
+  deriveReviewEvent,
+  type PublishContext,
+  previewPublishTarget,
+  previewTargetLabel,
+  publishTarget,
+  publishTargetPayload,
+  reviewComments,
+  reviewCommentsPayload,
+} from "./canvas/publish";
 import { CollationDraftCanvas } from "./components/collation-draft-canvas";
 import { DestinationFrame } from "./components/destination-frame";
 import { HarnessConsent } from "./components/harness-consent";
-import { PublishSheet } from "./components/publish-sheet";
+import { type PublishReviewResult, PublishSheet } from "./components/publish-sheet";
 import { CanvasWorkspace } from "./components/workspace";
 
 /**
@@ -247,6 +256,13 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // glass collation canvas); signing the draft opens the PAPER; the paper signs or
   // goes back to the draft. frame → draft → paper.
   const [destinationView, setDestinationView] = useState<"closed" | "draft" | "paper">("closed");
+  // The outcome of the last sign that ran the real `publish.review` engine (bead
+  // wire-sign-publish). Signing the paper no longer clears the draft and closes —
+  // it invokes the publish engine in DRY-RUN (builds the exact GitHub request,
+  // posts nothing) and this holds what came back, which the paper then shows. Reset
+  // whenever the paper is left or a fresh review loads, so a stale outcome never
+  // lingers over a new draft.
+  const [publishResult, setPublishResult] = useState<PublishReviewResult | undefined>(undefined);
 
   useEffect(() => {
     bridge
@@ -275,6 +291,15 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // correct even for a restored PR review. Absent source ⇒ local capture.
   const isSnapshotReview =
     patchset?.source === "github-local" || patchset?.source === "github-rest";
+
+  // A fresh (or regenerated) review invalidates any publish outcome shown on the
+  // paper — the outcome was built from the prior review's draft. Clear it so a
+  // stale dry-run summary never lingers over a different review.
+  const reviewId = review?.id;
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on review identity only.
+  useEffect(() => {
+    setPublishResult(undefined);
+  }, [reviewId]);
 
   useEffect(() => {
     if (!review || review.status === "invalid" || isSnapshotReview) return;
@@ -486,6 +511,60 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         ],
       }
     : undefined;
+  // Sign the paper by running the real publish engine (bead wire-sign-publish).
+  // Builds the review-comments outbound form from the collated draft, then invokes
+  // `publish.review` in DRY-RUN (the default): MAIN constructs the exact GitHub
+  // request, re-derives the canonical payload and fails CLOSED on any mismatch
+  // ("what you see is what leaves", R33), and posts NOTHING. The verdict is derived
+  // from the dispositions and passed explicitly, so what the paper SHOWS is exactly
+  // what the engine would post. The outcome is surfaced on the paper; the real,
+  // consented, non-dry-run send is a later, deliberately gated act (#21).
+  async function publishReview(): Promise<void> {
+    if (!review || !patchset) return;
+    const comments = reviewComments(draft, publishContext.anchors);
+    if (comments.length === 0) return; // the paper's sign is already disabled when empty
+    const payload = reviewCommentsPayload(comments);
+    const verdict = deriveReviewEvent(comments);
+    const target = previewPublishTarget(patchset.repository);
+    setBusy(true);
+    setError(undefined);
+    try {
+      const outcome = await bridge.invoke("publish.review", {
+        commandId: crypto.randomUUID(),
+        reviewId: review.id,
+        target,
+        // The canonical review-comment shape MAIN validates against `payload` (the
+        // ui `ReviewComment` carries a `refined` flag the command schema does not —
+        // drop it, and omit an absent line so `line ?? null` matches on both sides).
+        comments: comments.map((comment) => ({
+          path: comment.path,
+          ...(comment.line !== undefined ? { line: comment.line } : {}),
+          side: comment.side,
+          type: comment.type,
+          body: comment.body,
+        })),
+        payload,
+        verdict,
+        // Explicit true (the schema default). Real posting must opt in with false.
+        dryRun: true,
+      });
+      setPublishResult({
+        dryRun: outcome.dryRun,
+        verdict,
+        count: comments.length,
+        targetLabel: previewTargetLabel(target),
+        endpoint: outcome.request.endpoint,
+        method: outcome.request.method,
+        marker: outcome.marker,
+        ledgerCount: outcome.ledger.length,
+        preview: true,
+      });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
   const destinationChrome = (
     <div className="rennet-glass" data-scheme="dark">
       <DestinationFrame
@@ -499,7 +578,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           draft={draft}
           variant={destinationVariantForMode}
           onChange={setDraft}
-          onSign={() => setDestinationView("paper")}
+          onSign={() => {
+            // Freezing a fresh paper drops any stale outcome from a prior sign.
+            setPublishResult(undefined);
+            setDestinationView("paper");
+          }}
           onBack={() => setDestinationView("closed")}
         />
       ) : null}
@@ -509,12 +592,17 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           payload={publishTargetPayload(publishTargetForMode)}
           variant={destinationVariantForMode}
           ledger={publishLedger}
-          onBack={() => setDestinationView("draft")}
-          onSign={() => {
-            setDraft([]);
+          result={publishResult}
+          onBack={() => {
+            // Editing lives on the draft; a returned-to edit invalidates the outcome.
+            setPublishResult(undefined);
+            setDestinationView("draft");
+          }}
+          onSign={() => void publishReview()}
+          onClose={() => {
+            setPublishResult(undefined);
             setDestinationView("closed");
           }}
-          onClose={() => setDestinationView("closed")}
         />
       ) : null}
     </div>

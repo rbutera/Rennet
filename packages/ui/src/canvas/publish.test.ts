@@ -3,8 +3,11 @@ import type { CollationDraft } from "./collation";
 import {
   composePrSubmission,
   composePrSubmissionBody,
+  deriveReviewEvent,
   type LineAnchors,
   type PublishContext,
+  previewPublishTarget,
+  previewTargetLabel,
   prSubmissionPayload,
   publishTarget,
   publishTargetAgrees,
@@ -204,5 +207,66 @@ describe("publishTargetAgrees — the #106 fail-closed check (what you see is wh
     // Right bytes, wrong frame: the sheet is labelled other-pr while rendering an
     // own-branch target. Fail closed.
     expect(publishTargetAgrees(own, publishTargetPayload(own), "other-pr")).toBe(false);
+  });
+});
+
+describe("the review verdict twin (deriveReviewEvent) — mirrors @rennet/core", () => {
+  it("escalates to REQUEST_CHANGES when any comment requests a change", () => {
+    const comments = reviewComments([
+      { id: "a", path: "a.ts", type: "approve", raw: "" },
+      { id: "b", path: "b.ts", type: "request-change", raw: "" },
+    ]);
+    expect(deriveReviewEvent(comments)).toBe("REQUEST_CHANGES");
+  });
+
+  it("resolves APPROVE when there are approvals and nothing was requested-changed", () => {
+    const comments = reviewComments([
+      { id: "a", path: "a.ts", type: "approve", raw: "" },
+      { id: "c", path: "c.ts", type: "comment", raw: "" },
+      { id: "q", path: "q.ts", type: "question", raw: "" },
+    ]);
+    expect(deriveReviewEvent(comments)).toBe("APPROVE");
+  });
+
+  it("stays a neutral COMMENT for questions and plain comments alone", () => {
+    const comments = reviewComments([
+      { id: "c", path: "c.ts", type: "comment", raw: "" },
+      { id: "q", path: "q.ts", type: "question", raw: "" },
+    ]);
+    expect(deriveReviewEvent(comments)).toBe("COMMENT");
+    // An empty review has no verdict-bearing comment; neutral COMMENT.
+    expect(deriveReviewEvent([])).toBe("COMMENT");
+  });
+});
+
+describe("the local-preview publish target", () => {
+  it("carries the REAL reviewed head with labelled placeholder coordinates", () => {
+    const target = previewPublishTarget({
+      id: "repository",
+      root: "/home/rai/dev/rennet",
+      commonDir: "/home/rai/dev/rennet/.git",
+      baseRef: "main",
+      baseOid: "1111111111111111",
+      headOid: "abcdef1234567890",
+    });
+    // The head is real (the reviewed commit); the rest is a labelled local preview.
+    expect(target.headOid).toBe("abcdef1234567890");
+    expect(target.repo).toEqual({ forge: "github", owner: "local", name: "rennet" });
+    // Placeholder coordinates still satisfy the protocol schema (number >= 1, non-empty).
+    expect(target.number).toBeGreaterThanOrEqual(1);
+    expect(target.forgeRef.length).toBeGreaterThan(0);
+    expect(previewTargetLabel(target)).toBe("local/rennet#1");
+  });
+
+  it("falls back to a stable name when the repo root has no basename", () => {
+    const target = previewPublishTarget({
+      id: "repository",
+      root: "/",
+      commonDir: "/.git",
+      baseRef: "main",
+      baseOid: "1",
+      headOid: "2",
+    });
+    expect(target.repo.name).toBe("repository");
   });
 });

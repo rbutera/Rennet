@@ -44,6 +44,34 @@ import {
 // never pushes source.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * The outcome of a sign that ran the real `publish.review` engine (bead
+ * wire-sign-publish). The wire dry-runs by default: it builds the exact GitHub
+ * request, runs the "what you see is what leaves" integrity check, and posts
+ * NOTHING. This summary is what the paper shows the human once the engine returns,
+ * replacing the pre-sign notice.
+ */
+export interface PublishReviewResult {
+  /** True ⇒ nothing left the machine (the default). */
+  readonly dryRun: boolean;
+  /** The resolved review verdict the engine would post. */
+  readonly verdict: string;
+  /** How many comments the review carried. */
+  readonly count: number;
+  /** The human label for the target (`local/<name>#<number>` on a local preview). */
+  readonly targetLabel: string;
+  /** The constructed request endpoint (the forge GraphQL URL). */
+  readonly endpoint: string;
+  /** The request method (POST). */
+  readonly method: string;
+  /** The deterministic idempotency marker embedded in the review body. */
+  readonly marker: string;
+  /** How many degradations the run recorded (surfaced, never silent). */
+  readonly ledgerCount: number;
+  /** True when the target is a local-capture preview (no real PR bound yet). */
+  readonly preview: boolean;
+}
+
 export function PublishSheet({
   items = [],
   payload,
@@ -51,6 +79,7 @@ export function PublishSheet({
   target,
   holdToSignMs = 800,
   ledger,
+  result,
   onSign,
   onBack,
   onClose,
@@ -84,6 +113,12 @@ export function PublishSheet({
    * DISPLAYS in buckets; the gate keys only on id + summary (see `ledgerSignature`).
    */
   ledger?: PublishLedger;
+  /**
+   * The result of the last sign that ran the publish engine. Present ⇒ the paper
+   * shows the actual dry-run outcome (what would leave the machine) in place of the
+   * pre-sign notice. Absent ⇒ the pre-sign notice describes what a sign will do.
+   */
+  result?: PublishReviewResult;
   onSign?: (payload: string) => void;
   /** Back to the collation draft — editing lives there, never here (R40). */
   onBack?: () => void;
@@ -297,14 +332,45 @@ export function PublishSheet({
           </p>
         ) : null}
 
-        {/* Honesty affordance (issue #80): under the paper/glass doctrine, a shell
-            sign clears the staged paper while publishing NOTHING. This persistent,
-            aria-legible notice ensures a shell sign can never read as a real
-            publish. Real publishing lands in #21. */}
-        <p className="publish-sheet-shell-notice" role="note">
-          This shell publishes nothing — signing clears the staged paper. Real publishing lands in
-          #21.
-        </p>
+        {/* The sign OUTCOME (bead wire-sign-publish). Once a sign has run the real
+            `publish.review` engine, the paper shows what the engine built — the
+            resolved verdict, the comment count, and the exact GitHub request it
+            constructed — replacing the pre-sign notice. A dry run (the default)
+            posts NOTHING; the aria-legible copy keeps that unmistakable, so a
+            dry-run outcome can never read as a real publish. When no sign has run
+            yet, the pre-sign notice describes what Hold-to-sign will do. */}
+        {result ? (
+          <div
+            className="publish-sheet-result"
+            data-testid="publish-result"
+            data-dry-run={result.dryRun}
+            role="status"
+          >
+            <p className="publish-sheet-result-line">
+              {result.dryRun
+                ? `Dry run — nothing was posted. The publish engine built a ${result.verdict} review of ${result.count} comment${result.count === 1 ? "" : "s"} for ${result.targetLabel}.`
+                : `Posted a ${result.verdict} review of ${result.count} comment${result.count === 1 ? "" : "s"} to ${result.targetLabel}.`}
+            </p>
+            <p className="publish-sheet-result-detail">
+              {result.method} {result.endpoint} · marker {result.marker.slice(0, 12)}
+              {result.ledgerCount > 0
+                ? ` · ${result.ledgerCount} degradation${result.ledgerCount === 1 ? "" : "s"} recorded`
+                : ""}
+            </p>
+            {result.preview ? (
+              <p className="publish-sheet-result-note" role="note">
+                Local preview target — the review does not yet carry the GitHub PR coordinates the
+                publish engine binds to, so this dry run targets a placeholder. Persisting the real
+                target, and the explicit consented send, are the remaining #21 steps.
+              </p>
+            ) : null}
+          </div>
+        ) : (
+          <p className="publish-sheet-shell-notice" role="note">
+            Hold to sign runs the publish engine in dry run: it builds the exact GitHub request and
+            posts nothing. Real posting lands with #21.
+          </p>
+        )}
 
         <footer className="publish-sheet-foot">
           <p className="publish-sheet-note">

@@ -430,7 +430,7 @@ describe("honesty affordance: the shell discloses that nothing is published", ()
     const notice = container.querySelector(".publish-sheet-shell-notice");
     expect(notice).not.toBeNull();
     expect(notice?.getAttribute("role")).toBe("note");
-    expect(notice?.textContent).toContain("publishes nothing");
+    expect(notice?.textContent).toContain("posts nothing");
     expect(notice?.textContent).toContain("#21");
   });
 });

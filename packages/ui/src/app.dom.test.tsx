@@ -1,23 +1,24 @@
 // @vitest-environment happy-dom
 //
-// App-level clear-on-sign (issue #80 MUT I; re-pointed for the R40 frame → draft →
-// paper journey, issue #101). The dispose == staged journey ending — signing the
-// paper clears the draft and closes the surfaces — is exercised end-to-end. This
-// mounts the WHOLE `RennetApp` over a minimal fake `RennetBridge`, stages a
-// disposition, opens the COLLATION DRAFT (frame → draft), signs the draft into the
-// PAPER (draft → paper), completes a sign, and asserts the destination's collated
-// count returns to zero and both surfaces close. The assertion is behavioural
-// (data-staged-count → 0), never a presence check. Uses real timers + a keyboard
-// sign so no clock control is needed and `waitFor` (real-timer polling) works.
-import type { RennetBridge } from "@rennet/protocol";
+// App-level SIGN → PUBLISH ENGINE wire (bead wire-sign-publish). Signing the paper
+// no longer just clears the draft — it invokes the real `publish.review` command in
+// DRY-RUN, which constructs the exact GitHub request and posts nothing, and the
+// paper then shows the outcome. This mounts the WHOLE `RennetApp` over a fake
+// `RennetBridge` that RECORDS the `publish.review` invocation, stages a disposition,
+// walks frame → draft → paper, signs, and asserts the engine was called with the
+// canonical review payload + derived verdict and that the dry-run outcome renders.
+// The assertions are behavioural (the recorded command input; the rendered result),
+// never a presence check.
+import type { CommandInput, CommandOutput, RennetBridge } from "@rennet/protocol";
 import type { Review } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
+import { reviewComments, reviewCommentsPayload } from "./canvas/publish";
 import { fireEvent, mount, waitFor } from "./test/dom";
 
 // A ready review with one changed, not-yet-disposed file, so ReviewWorkspace shows
-// a "Mark read" button (the simplest staging path: `setFileRead` stages via
-// `setStaged` synchronously, before it awaits the bridge).
+// a "Mark read" button (the simplest staging path: `setFileRead` stages via the
+// draft synchronously, before it awaits the bridge).
 const review: Review = {
   id: "review",
   repositoryRoot: "/code/rennet",
@@ -53,54 +54,89 @@ const review: Review = {
   ],
 };
 
-// A minimal fake bridge: bootstrap returns the ready review; every command the app
-// invokes (setDisposition, checkFreshness) resolves the same review. The app never
-// opens the Canvases view in this test, so `review.canvases` is not exercised.
-function fakeBridge(ready: Review): RennetBridge {
-  const invoke = async (): Promise<{ review: Review }> => ({ review: ready });
-  return { invoke: invoke as unknown as RennetBridge["invoke"] };
+// A recording fake bridge: bootstrap / setDisposition / checkFreshness resolve the
+// ready review; `publish.review` records its input and returns a well-formed
+// dry-run output (nothing posted). The app never opens Canvases here.
+function recordingBridge(ready: Review): {
+  bridge: RennetBridge;
+  calls: CommandInput<"publish.review">[];
+} {
+  const calls: CommandInput<"publish.review">[] = [];
+  const invoke = async (name: string, input: unknown): Promise<unknown> => {
+    if (name === "publish.review") {
+      const publishInput = input as CommandInput<"publish.review">;
+      calls.push(publishInput);
+      const output: CommandOutput<"publish.review"> = {
+        dryRun: true,
+        request: {
+          endpoint: "https://api.github.com/graphql",
+          method: "POST",
+          body: { query: "mutation {}", variables: {} },
+        },
+        marker: "a".repeat(64),
+        ledger: [],
+        outcome: null,
+      };
+      return output;
+    }
+    return { review: ready };
+  };
+  return { bridge: { invoke: invoke as unknown as RennetBridge["invoke"] }, calls };
 }
 
-describe("RennetApp — signing clears the staged paper at the app level (MUT I)", () => {
-  it("stages a disposition, opens the sheet, and a sign empties the destination + closes the sheet", async () => {
-    const { container, getByRole } = mount(<RennetApp bridge={fakeBridge(review)} />);
+describe("RennetApp — the Sign button runs the real publish engine (wire-sign-publish)", () => {
+  it("signs the paper by invoking publish.review with the canonical payload + verdict, and shows the dry-run outcome", async () => {
+    const { bridge, calls } = recordingBridge(review);
+    const { container, getByRole } = mount(<RennetApp bridge={bridge} />);
 
-    // The review loads (app.bootstrap resolves) → the destination chrome renders,
-    // empty at review-open.
+    // The review loads (app.bootstrap resolves) → the destination chrome renders.
     const destination = () => container.querySelector(".destination-frame");
     await waitFor(() => expect(destination()).not.toBeNull());
-    expect(destination()?.getAttribute("data-staged-count")).toBe("0");
 
-    // Stage a disposition: Mark read stages toward the destination in the same act.
+    // Stage a disposition: Mark read stages a "comment" toward the destination.
     fireEvent.click(getByRole("button", { name: "Mark read" }));
     await waitFor(() => expect(destination()?.getAttribute("data-staged-count")).toBe("1"));
 
-    // Frame → DRAFT: the frame opens the collation draft canvas (not the paper).
+    // Frame → DRAFT → PAPER.
     const openDraft = container.querySelector<HTMLButtonElement>(".destination-open-draft");
     if (!openDraft) throw new Error("the open-draft control did not render");
     fireEvent.click(openDraft);
     await waitFor(() => expect(container.querySelector(".collation-canvas")).not.toBeNull());
-
-    // Draft → PAPER: signing the draft freezes it into the paper (the phase
-    // transition). The paper renders; the draft is behind it.
     const signDraft = container.querySelector<HTMLButtonElement>(".collation-sign");
     if (!signDraft) throw new Error("the draft sign control did not render");
     fireEvent.click(signDraft);
     await waitFor(() => expect(container.querySelector(".publish-sheet")).not.toBeNull());
 
-    // Complete a sign via the keyboard (deliberate Enter on the focused control).
+    // Sign the paper via the keyboard (a deliberate Enter on the focused control).
     const sign = container.querySelector<HTMLButtonElement>(".publish-sheet-sign");
     if (!sign) throw new Error("the sign control did not render");
     sign.focus();
     fireEvent.keyDown(sign, { key: "Enter" });
 
-    // dispose == staged journey ending: the draft is cleared and BOTH surfaces
-    // close. RED-proof: delete `setDraft([])` from the onSign handler → the count
-    // stays "1" → this waitFor never satisfies.
+    // The publish engine was invoked exactly once, in DRY-RUN, with the canonical
+    // review-comment payload and the derived verdict. RED-proof: point `onSign` back
+    // at the old clear-the-draft stub → no `publish.review` call → this never
+    // satisfies.
+    await waitFor(() => expect(calls).toHaveLength(1));
+    const staged = reviewComments([{ id: "src/x.ts", path: "src/x.ts", type: "comment", raw: "" }]);
+    const publishCall = calls[0];
+    if (!publishCall) throw new Error("publish.review was not invoked");
+    expect(publishCall.dryRun).not.toBe(false); // dry-run default: never posts
+    expect(publishCall.reviewId).toBe("review");
+    expect(publishCall.verdict).toBe("COMMENT"); // a lone comment derives COMMENT
+    expect(publishCall.payload).toBe(reviewCommentsPayload(staged));
+    expect(publishCall.comments).toEqual([
+      { path: "src/x.ts", side: "RIGHT", type: "comment", body: "" },
+    ]);
+    // The target is the local-capture preview carrying the REAL reviewed head.
+    expect(publishCall.target.headOid).toBe("2222222222222222");
+
+    // The paper shows the actual dry-run outcome, replacing the pre-sign notice.
     await waitFor(() => {
-      expect(destination()?.getAttribute("data-staged-count")).toBe("0");
-      expect(container.querySelector(".publish-sheet")).toBeNull();
-      expect(container.querySelector(".collation-canvas")).toBeNull();
+      const result = container.querySelector('[data-testid="publish-result"]');
+      expect(result).not.toBeNull();
+      expect(result?.getAttribute("data-dry-run")).toBe("true");
+      expect(result?.textContent).toContain("COMMENT");
     });
   });
 });
