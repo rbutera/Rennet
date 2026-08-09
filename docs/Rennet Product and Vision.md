@@ -3,11 +3,13 @@ tags: [rennet, products, visions]
 categories: [project]
 status: active
 created: 2026-08-06
-updated: 2026-08-07
+updated: 2026-08-09
 related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Architecture Contracts]]", "[[Rennet Canvas Paradigm]]", "[[Rennet Orchestrator Context Access]]", "[[Rennet Comment Refinement Loop]]", "[[Rennet Model Council]]", "[[Rennet User Journey]]", "[[Rennet Design Doctrine]]", "[[Code Review Harness App]]"]
 ---
 
 # Rennet Product and Vision
+
+> **Resteer 2026-08-09:** the v3 shell and lens set are folded into this document (§1 shape-of-the-app, §4.1 six angles incl. the new Flagged lens and purified Decisions, claims retired to infrastructure, §4.7 paper-and-sign, §4.8 peek-then-pin inspector). Full record: [[Rennet v3 Resteer 2026-08-09]] and the v3 prototype (gallery https://nimbus.piranha-wyvern.ts.net:9443/).
 
 **This is the canonical statement of what Rennet is.** Read it first. Every other document in `docs/` plays a supporting role — the authority register for rulings is [[Rennet Contracts and Rulings]], the frozen engineering contracts are [[Rennet Architecture Contracts]], and [[Rennet Doc Architecture]] maps the whole set. Where this document and a deeper document disagree on *intent*, this document wins; where they disagree on a *ruling or contract*, the deeper authority wins and this document has a bug — file it.
 
@@ -20,6 +22,8 @@ related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Architecture Contracts]]
 A changeset too big to hold in your head is rolled up into logical cohorts you can read from base principles up, its decisions surfaced — never hidden, never capped — and the result lands either as a normal GitHub PR review or, on your own branch, as a batched set of requests handed straight back to a coding agent, after which Rennet re-reviews only what changed.
 
 **Positioning headline (settled):** *You stopped writing the code. You still have to answer for it.*
+
+**The shape of the app (v3 shell, [[Rennet v3 Resteer 2026-08-09]]).** You land on a **Projects list**. You add a project by pointing Rennet at a **workspace** or a **project repo**, finding the path, and confirming its worktrees; then it **processes** the repo, a narrated context dump that says what it is reading in real time and then becomes the project. That processing moment is the app's identity moment (the delightful narrated animation is post-MVP; the MVP ships a plain spinner over the real narration feed). Clicking a project opens a **two-zone landing**: *Yours* (your local worktrees and branches, private to this machine) and *Team* (every PR, including your own). From either zone you enter the review surfaces, accumulate your dispositions into one editable draft, and **sign the paper**. Execution mode lives as one glyph in the title bar, defaulting to auto, present on every in-project screen. There is no consent banner and no onboarding wizard: first run is simply the empty state of the Projects list.
 
 The essentials, all settled and frozen:
 
@@ -57,18 +61,20 @@ Deterministic validation of model output, the surfacing DSL, and model-tier rout
 
 ### 4.1 Six angles, five canvases, one overlay
 
-Every changeset is decomposed into sub-400-LOC chunks and read through six concurrent **angles** (lens set v4, ratified):
+Every changeset is decomposed into sub-400-LOC chunks and read through six concurrent **angles** (the v4 lens set, revised by the 2026-08-09 v3 resteer: Spec becomes a structured artifact viewer, **Flagged** joins as a new lens, Decisions is purified, and the standalone claims lens is retired; its hunk-to-requirement mapping survives as infrastructure feeding the Spec view's coverage chips and the view-test wiring):
 
 | # | Angle | Species | One line |
 |---|---|---|---|
-| 0 | **Spec** | queue over requirements | What this change was *supposed* to be: committed spec (Kiro/OpenSpec/superpowers), PR body, ticket; derived-and-marked when nothing is committed. The only angle that exists on a zero-hunk (spec-only) changeset. Upstream source of requirements for claims-and-evidence and of the decisions angle's `evidenced` disposition. |
+| 0 | **Spec** | queue over requirements | What this change was *supposed* to be: committed spec (Kiro/OpenSpec/superpowers), PR body, ticket; derived-and-marked when nothing is committed. Rendered as a **structured artifact viewer** (header band, prose spine, capability grid, requirements and scenarios as first-class disposition anchors, coverage chips, honest `unimplemented` state), never raw markdown. The only angle that exists on a zero-hunk (spec-only) changeset. Its coverage chips are fed by the hunk-to-requirement claims mapping (infrastructure, no longer a lens of its own; the UNCLAIMED bucket surfaces here as the scope-creep detector, "would that test have failed"). |
 | 1 | **The sequence** | sequence | Post-hoc reading order, named switchable strategies (layered / tests-first / spine-first), prose collapsed. |
-| 2 | **Decisions** | queue | The calls only you can make. The decision log is the angle's spine: everything the author(-agent) decided, each with a reconstructed WHY marked as reconstructed; triage evidenced / mechanical / contestable. **Never capped or truncated** — rolled into cohorts, in logical comprehension order (agent-produced over the DAG baseline), collapsible. |
-| 3 | **Claims and evidence** | queue | Bidirectional hunk↔requirement and claim↔test mapping, explicit polarity, UNCLAIMED bucket as the scope-creep detector. "Would that test have failed." |
+| 2 | **Decisions** | queue | The calls only you can make: the grouped decisions the implementer (or their agent) made, discerned from the spec, the PR body, and the diff, each with **evidence chips** (the hunks and files it is read from, click-to-jump) and a reconstructed WHY marked as reconstructed. **Never capped or truncated**, rolled into cohorts, in logical comprehension order (agent-produced over the DAG baseline), collapsible. The evidenced / mechanical / contestable triage taxonomy is dropped from the UI (that classification layer was the mutation Rai flagged in the v3 resteer). |
+| 3 | **Flagged** | queue | The automated-review output: the findings the model council and dual review produced, each with severity, an agreement state (both models concur / models disagree), and an anchor. The flags still render as marks at their anchors on the code surfaces; this lens is the **index that jumps to them**, never the house that holds them. New in the v3 resteer. |
 | 4 | **Blast radius** | overlay | Cheap explainable signals only (irreversibility, contract surface, deletions, fan-in, CODEOWNERS, safety-net-weakening preset). Never churn-heat. **An overlay, never an ordering input.** |
 | 5 | **Noise** | floor | Everything that earned no place above, grouped, categorised, summarised. Deterministic checkers are the only admission authority for VERIFIED noise; the LLM narrates, proposes patterns (→ SUSPECTED tier, skim-required), and spots anomalies. The totality/residue guarantee made visible: at any moment the user can see exactly what they have not looked at. |
 
-An *angle* is the lens; a **canvas** is the stateful per-review surface instance of one. Per review there are **five canvases plus the blast-radius overlay** — the overlay paints amber onto the other canvases and owns no surface of its own. Subtraction is not an angle; its content (over-engineering, defensive scaffolding, redundancy) lives in `finding.ruleFamily` values and noise categories, with the propose-deletion affordance riding the finding.
+The bidirectional hunk-to-requirement and claim-to-test mapping (formerly the standalone claims-and-evidence lens) persists as **infrastructure**: it computes the Spec view's coverage chips, the `unimplemented` and UNCLAIMED states, and the `view test` / `view implementation` wiring. It no longer owns a surface.
+
+An *angle* is the lens; a **canvas** is the stateful per-review surface instance of one. Per review there are **five canvases (spec, sequence, decisions, flagged, noise) plus the blast-radius overlay**: the overlay paints amber onto the other canvases and owns no surface of its own. Subtraction is not an angle; its content (over-engineering, defensive scaffolding, redundancy) lives in `finding.ruleFamily` values and noise categories, with the propose-deletion affordance riding the finding.
 
 ### 4.2 The canvas paradigm — the interaction model
 
@@ -110,11 +116,11 @@ This loop is what turns Rennet from a reading tool into a **review-driven coding
 
 ### 4.7 Publish as preview
 
-The paper sheet previews **exactly what leaves the machine**, context-dependent: reviewing your own unpushed branch or your own PR → it previews the **PR submission**; someone else's PR → it previews the **review it will post**, every line item, with the degradation ledger. What posts is the **refined** form of each comment (§4.4). Publish is a three-phase explicit human act, idempotent, with outcome-unknown reconciliation. Rennet never pushes source code.
+The paper sheet previews **exactly what leaves the machine**, context-dependent: reviewing your own unpushed branch or your own PR → it previews the **PR submission**; someone else's PR → it previews the **review it will post**, every line item, with the degradation ledger. What posts is the **refined** form of each comment (§4.4). Publish is a three-phase explicit human act, idempotent, with outcome-unknown reconciliation. Rennet never pushes source code. This is the **paper-and-sign ceremony**: the paper is the one solid, signable object in an otherwise translucent product, and the review it posts to GitHub is the human's **signed verdict**, previewed line for line before it leaves the machine.
 
 ### 4.8 LSP code intelligence
 
-View the definition of any symbol in a diff, inline — Tier 0 tree-sitter index everywhere, Tier 1 TypeScript against ephemeral app-cache-owned materialisations, every answer tier-labelled, degraded-result detector load-bearing. Definitions are context, never coverage. **Open-in-editor** above every diff with copy disclosure before the click. **Impl↔tests toggle** on any diff, with "no tests reference this" as an honest first-class state.
+View the definition of any symbol through a **peek-then-pin inspector** (v3 resteer): a plain click opens a floating glass card near the symbol (signature, doc comment, first lines of the definition, origin path, tree-sitter-vs-TypeScript honesty label); pinning docks it into the right rail as a mini code browser whose navigation never moves the diff. Never inline, never reflowing. Tier 0 tree-sitter index everywhere, Tier 1 TypeScript against ephemeral app-cache-owned materialisations, every answer tier-labelled, degraded-result detector load-bearing. Definitions are context, never coverage. **Open-in-editor** on the card and above every diff, with copy disclosure before the click. A single context-labelled button reads `view test` on an implementation hunk and `view implementation` on a test, with "no tests reference this" as an honest first-class state.
 
 ### 4.9 GitHub interop
 

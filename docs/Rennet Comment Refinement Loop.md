@@ -4,7 +4,7 @@ tags: [rennet, architecture, dispositions, refinement, orchestrator]
 categories: [project]
 status: draft-for-rai
 created: 2026-08-06
-related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Canvas Paradigm]]", "[[Rennet Orchestrator Context Access]]", "[[Rennet Architecture Contracts]]"]
+related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Canvas Paradigm]]", "[[Rennet Collation Draft Canvas]]", "[[Rennet Orchestrator Context Access]]", "[[Rennet Architecture Contracts]]", "[[Rennet v3 Resteer 2026-08-09]]"]
 ---
 
 # Rennet Comment-Refinement Loop
@@ -38,7 +38,7 @@ interface Disposition {
   dispositionId: DispositionId          // minted at draft time (uuidv7, same as reviews)
   reviewId: ReviewId
   patchsetId: PatchsetId
-  anchor: Anchor                        // line | hunk | symbol — unchanged
+  anchor: Anchor                        // line | range | chunk | fragment (verbs x anchors)
   type: 'approve' | 'request-change' | 'comment' | 'question'   // unchanged
 
   draft: {
@@ -219,6 +219,8 @@ The thread is **per-disposition, anchored where the disposition is anchored** �
 ---
 
 ## 4. The sheet is the backstop: adjudication at any altitude
+
+> **v3 note ([[Rennet Collation Draft Canvas]], accepted 2026-08-08).** The editable adjudication surface called "the sheet" throughout this section is now the **collation draft canvas**: the raw-to-refined adjudication happens there, still yours and still editable, and the frozen **paper** downstream is sign-only (it carries the human's signed verdict, derived from the dispositions and user-overridable). Read "sheet" below as "collation draft canvas" for where you adjudicate; the §4.1 / §4.2 publish mechanics are unchanged.
 
 The publish sheet (someone-else's-PR mode) and the handoff sheet (own-branch mode) already exist as the inspect-before-anything-leaves surface (R33, Contracts §9). The refinement loop lands there naturally, and the roll-up/zoom principle dictates the form:
 

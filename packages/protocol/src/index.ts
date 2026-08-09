@@ -281,6 +281,71 @@ const publishOutcomeSchema = z.object({
   reused: z.boolean(),
 });
 
+// ── The front door: projects + discovery (issue #29 / #37) ───────────────────
+// The projects list is the app's entry; a project is a WORKSPACE (a folder of
+// repos) or a single PROJECT REPO. These are the only two nouns the user meets;
+// everything else is inferred by read-only discovery. The shapes are
+// protocol-local: the renderer, the discovery adapter, and the project store all
+// speak them, and they cross the command boundary intact.
+export const projectKindSchema = z.enum(["workspace", "repo"]);
+export type ProjectKind = z.infer<typeof projectKindSchema>;
+
+/** A git repo discovered at (repo kind) or under (workspace kind) the pointed-at path. */
+export const discoveredRepoSchema = z.object({
+  name: z.string().min(1),
+  /** Absolute path to the repo — the reviewable open target. */
+  path: z.string().min(1),
+  /** Local branch count (`for-each-ref refs/heads`). */
+  branches: z.number().int().nonnegative(),
+  /** `host/owner/name` parsed from the origin remote, when the repo has a forge remote. */
+  remote: z.string().optional(),
+  /** A terse, honest note surfaced by discovery (e.g. "docs only"); omitted when clean. */
+  note: z.string().optional(),
+});
+export type DiscoveredRepo = z.infer<typeof discoveredRepoSchema>;
+
+/**
+ * The read-only discovery result: what the worktree-config step renders as
+ * EDITABLE DEFAULTS, never questions (User Journey stage 1). `repos` are the
+ * toggle rows (all on in the UI); `primaryBranch` is confirmed and editable; a
+ * walk-vs-list disagreement is SURFACED in `reconciliation` rather than silently
+ * resolved.
+ */
+export const discoveryResultSchema = z.object({
+  path: z.string().min(1),
+  kind: projectKindSchema,
+  repos: z.array(discoveredRepoSchema),
+  /** origin/HEAD, else the current branch, else `main`. */
+  primaryBranch: z.string().min(1),
+  /** A walk-vs-list disagreement, surfaced (not resolved); omitted when the two agree. */
+  reconciliation: z.string().optional(),
+});
+export type DiscoveryResult = z.infer<typeof discoveryResultSchema>;
+
+/** A persisted, listed project — the front door's populated state. */
+export const projectSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  path: z.string().min(1),
+  kind: projectKindSchema,
+  /** The number of included repos (1 for a project repo). */
+  repoCount: z.number().int().nonnegative(),
+  /** The summed local-branch count across the included repos. */
+  branchCount: z.number().int().nonnegative(),
+  primaryBranch: z.string().min(1),
+  /** The reviewable path a project row opens (the repo, or the first included repo). */
+  openPath: z.string().min(1),
+  addedAt: z.iso.datetime(),
+});
+export type Project = z.infer<typeof projectSchema>;
+
+/** A harness detected on the machine, for the ambient first-run detection line. */
+export const detectedHarnessSchema = z.object({
+  id: z.string().min(1),
+  version: z.string().nullable(),
+});
+export type DetectedHarness = z.infer<typeof detectedHarnessSchema>;
+
 export const commandDefinitions = {
   "app.bootstrap": {
     input: z.object({}),
@@ -542,6 +607,44 @@ export const commandDefinitions = {
       annotationId: z.string().min(1),
     }),
     output: z.object({ ok: z.boolean() }),
+  },
+  // ── The front door: projects + discovery (issue #29 / #37) ─────────────────
+  // The empty projects list IS first run; the add-a-project flow that lives there
+  // forever is the whole onboarding. Discovery reads the pointed-at path read-only
+  // and never mutates the index or calls a model before harness disclosure.
+  "harness.detect": {
+    // The ambient detection line: which harnesses were found (felt, not ceremonial).
+    input: z.object({}),
+    output: z.object({ detected: z.array(detectedHarnessSchema) }),
+  },
+  "projects.list": {
+    // The populated state: the projects the user has added.
+    input: z.object({}),
+    output: z.object({ projects: z.array(projectSchema) }),
+  },
+  "project.discover": {
+    // Step 2 substrate: read-only discovery over the chosen path (already granted
+    // via `repository.choose`) → editable defaults for the worktree-config screen.
+    input: z.object({
+      commandId: commandIdSchema,
+      path: z.string().min(1),
+      kind: projectKindSchema,
+    }),
+    output: z.object({ discovery: discoveryResultSchema }),
+  },
+  "projects.add": {
+    // Confirm: persist the project from the discovery + the user's toggle choices.
+    // MAIN derives the stored shape (name, counts, open target) so the renderer
+    // cannot desync it; the confirmed primary branch rides through.
+    input: z.object({
+      commandId: commandIdSchema,
+      discovery: discoveryResultSchema,
+      /** The repo names the user kept enabled (a subset of `discovery.repos`). */
+      includedRepos: z.array(z.string().min(1)),
+      /** The confirmed, possibly edited primary branch. */
+      primaryBranch: z.string().min(1),
+    }),
+    output: z.object({ project: projectSchema, projects: z.array(projectSchema) }),
   },
 } as const;
 
