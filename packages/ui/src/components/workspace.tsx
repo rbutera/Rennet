@@ -322,7 +322,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     event.preventDefault();
   }
 
-  const diff = zoom.level === "diff" && selection ? props.diffFor?.(selection) : undefined;
+  // The code IS the reading surface (issue #63): a reviewer must be able to read the
+  // actual hunk, not just metadata cards about it. So the diff shows as soon as an
+  // element is SELECTED (element zoom), not only at the deepest diff zoom — selecting
+  // an element in Decisions/Flat is the natural "let me read this" gesture, and the
+  // real hunk (with its dispositions anchored) appears inline right there. The
+  // deepest diff zoom stays the code-only focus; element zoom shows code beneath the
+  // decision context. A doc-anchored element with no diff still renders nothing
+  // (honest empty), never a fixture.
+  const codeAltitude = zoom.level === "diff" || zoom.level === "element";
+  const diff = codeAltitude && selection ? props.diffFor?.(selection) : undefined;
 
   // The narrated account for the altitude in view (#70): the whole-changeset
   // roll-up at roll-up zoom, the cohort's account at cohort zoom, nothing below.
