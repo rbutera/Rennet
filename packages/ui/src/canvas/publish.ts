@@ -1,4 +1,4 @@
-import type { DispositionType } from "@rennet/types";
+import type { DispositionType, RepositoryProvenance } from "@rennet/types";
 import { type CollationDraft, type CollationItem, effectiveBody } from "./collation";
 import type { DestinationMode } from "./destination";
 
@@ -183,6 +183,64 @@ export function reviewComments(draft: CollationDraft, anchors: LineAnchors = {})
       refined: item.refined !== undefined,
     };
   });
+}
+
+/**
+ * The review verdict Rennet posts — the real GitHub review event. This mirrors
+ * `@rennet/core`'s `ForgeReviewEvent`; the `layer:ui` boundary forbids importing
+ * core, so the value is a legible twin (exactly as `reviewCommentsPayload` twins
+ * core's `canonicalReviewPayload` across the same boundary).
+ */
+export type ForgeReviewEvent = "APPROVE" | "REQUEST_CHANGES" | "COMMENT";
+
+/**
+ * Derive the review verdict from the collated comments — the twin of
+ * `@rennet/core`'s `deriveReviewEvent`, so the paper can DISPLAY the verdict the
+ * engine will post. Any requested change ⇒ `REQUEST_CHANGES`; else any approval ⇒
+ * `APPROVE`; else a neutral `COMMENT`. Questions and plain comments never escalate.
+ *
+ * ⚠️ Kept byte-for-byte equivalent to core's `deriveReviewEvent` (both key on
+ * `type`, same precedence). The sign wire passes this value as the explicit
+ * `verdict` so what the paper shows and what the engine posts are the SAME value —
+ * a `publish-review.test.ts`-style pin guards against drift.
+ */
+export function deriveReviewEvent(comments: readonly ReviewComment[]): ForgeReviewEvent {
+  if (comments.some((comment) => comment.type === "request-change")) return "REQUEST_CHANGES";
+  if (comments.some((comment) => comment.type === "approve")) return "APPROVE";
+  return "COMMENT";
+}
+
+/**
+ * The pinned publish target the sign wire hands to `publish.review` (the protocol
+ * `publishTargetSchema` shape). A LOCAL capture has no GitHub PR identity yet — the
+ * #20/#21 GitHub source supplies the real (owner, name, number, node id). Until
+ * then this builds an honest PREVIEW target from the review's provenance: the REAL
+ * reviewed `headOid`, with placeholder coordinates the UI labels as a local
+ * preview. Nothing is posted (the wire dry-runs), so the placeholder only needs to
+ * satisfy the schema and let the engine construct + integrity-check the real
+ * GitHub request end to end.
+ */
+export interface PreviewPublishTarget {
+  readonly repo: { readonly forge: string; readonly owner: string; readonly name: string };
+  readonly number: number;
+  readonly forgeRef: string;
+  readonly headOid: string;
+}
+
+/** Build the local-preview publish target from the active patchset's provenance. */
+export function previewPublishTarget(repository: RepositoryProvenance): PreviewPublishTarget {
+  const name = repository.root.split("/").filter(Boolean).at(-1) ?? "repository";
+  return {
+    repo: { forge: "github", owner: "local", name },
+    number: 1,
+    forgeRef: "local-preview",
+    headOid: repository.headOid,
+  };
+}
+
+/** A short, human label for a preview target: `local/<name>#<number>`. */
+export function previewTargetLabel(target: PreviewPublishTarget): string {
+  return `${target.repo.owner}/${target.repo.name}#${target.number}`;
 }
 
 /** The canonical outbound bytes for a posted review — the ordered comment list. */
