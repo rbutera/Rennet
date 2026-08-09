@@ -1,6 +1,7 @@
 import type { AnalysisCohort, AnalysisElement, Canvas, DispositionType } from "@rennet/types";
 import { type ApprovalScope, blastPaint, canvasCoverage } from "../canvas/logic";
 import { DispositionBar } from "./disposition";
+import { ChevronIcon } from "./icons";
 
 // The decisions canvas: cohorts collapsed by default with HONEST counts, uncapped
 // and untruncated. Expand/collapse is navigation only. Approve works at any
@@ -42,8 +43,11 @@ function Cohort({
           aria-expanded={expanded}
           onClick={() => onToggle(cohort.cohortKey)}
         >
-          <span className="cohort-chevron" aria-hidden="true">
-            {expanded ? "▾" : "▸"}
+          <span
+            className={`cohort-chevron ${expanded ? "is-open" : ""}`}
+            aria-hidden="true"
+          >
+            <ChevronIcon size={13} />
           </span>
           <span className="cohort-title">{cohort.title}</span>
           {/* Honest count: the true number of decisions, collapsed or not. */}

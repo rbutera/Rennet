@@ -29,6 +29,14 @@ import {
 } from "./canvas/publish";
 import { CollationDraftCanvas } from "./components/collation-draft-canvas";
 import { DestinationFrame } from "./components/destination-frame";
+import {
+  ArrowRightIcon,
+  FileDiffIcon,
+  FolderIcon,
+  LayersIcon,
+  RennetMark,
+  TriangleIcon,
+} from "./components/icons";
 import { HarnessConsent } from "./components/harness-consent";
 import { type PublishReviewResult, PublishSheet } from "./components/publish-sheet";
 import { CanvasWorkspace } from "./components/workspace";
@@ -107,14 +115,19 @@ export function ReviewWorkspace({
   return (
     <div className="app-shell">
       <header className="topbar">
-        <div>
-          <p className="eyebrow">LOCAL REVIEW</p>
-          <h1>{patchset.repository.root.split("/").at(-1)}</h1>
+        <div className="topbar-title">
+          <span className="topbar-mark" aria-hidden="true">
+            <RennetMark size={28} />
+          </span>
+          <div>
+            <p className="eyebrow">LOCAL REVIEW</p>
+            <h1>{patchset.repository.root.split("/").at(-1)}</h1>
+          </div>
         </div>
         <div className="provenance" title={patchset.id}>
           <span>{patchset.repository.baseRef}</span>
           <code>{patchset.repository.baseOid.slice(0, 8)}</code>
-          <span>→</span>
+          <ArrowRightIcon size={12} className="provenance-arrow" />
           <code>{patchset.repository.headOid.slice(0, 8)}</code>
         </div>
       </header>
@@ -709,7 +722,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   if (!review) {
     return (
       <main className="empty-state">
-        <div className="mark">R</div>
+        <div className="mark" aria-hidden="true">
+          <RennetMark size={34} />
+        </div>
         <p className="eyebrow">RENNET</p>
         <h1>Review the code you actually have.</h1>
         <p>
@@ -717,6 +732,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           one immutable local patchset.
         </p>
         <button type="button" disabled={busy} onClick={chooseRepository}>
+          <FolderIcon size={15} />
           {busy ? "Working…" : "Choose a repository"}
         </button>
 
@@ -766,6 +782,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           className={view === "review" ? "is-active" : ""}
           onClick={() => setView("review")}
         >
+          <FileDiffIcon size={13} />
           Files
         </button>
         <button
@@ -775,6 +792,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           className={view === "canvases" ? "is-active" : ""}
           onClick={() => setView("canvases")}
         >
+          <LayersIcon size={13} />
           Canvases
         </button>
       </div>
@@ -793,6 +811,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                 top of the review — never let the mechanical outline pass as AI. */}
             {engine && !engine.aiReview ? (
               <div className="engine-fallback" role="alert">
+                <TriangleIcon size={18} className="engine-fallback-icon" />
                 <div className="engine-fallback-copy">
                   <strong>{mechanicalFallbackTitle(engine)}</strong>
                   <span>{mechanicalFallbackDetail(engine)}</span>
