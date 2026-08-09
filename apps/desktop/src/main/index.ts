@@ -7,12 +7,18 @@ import {
   type CodexAvailability,
   createClaudeHarness,
   createCodexUtilityAdapter,
+  createRefPinner,
   discoverCodexAvailability,
+  discoverWorktreeIdentities,
+  execaGit,
   FileSettingsStore,
   type GhRunner,
   GitCaptureAdapter,
+  GitHubChangesetSource,
+  GitHubForgeAdapter,
   GitHubPublishAdapter,
   type HttpFetch,
+  parseGitHubPrRef,
   RepoWatcher,
   resolveGitHubAuth,
   SqliteReviewStore,
@@ -154,6 +160,41 @@ async function chooseRepository(): Promise<string | null> {
     properties: ["openDirectory"],
   });
   return result.canceled ? null : (result.filePaths[0] ?? null);
+}
+
+/**
+ * The GitHub PR front door (issue #37/#20 flow, User Journey stage 2). Parse the
+ * ref, deep-fetch the PR (GitHub owns identity), pin its OIDs in the local clone
+ * at `repoPath`, diff the range locally (git owns content), and persist a review.
+ * The token is resolved lazily from the auth ladder (`gh auth token`) — the
+ * zero-config North Star, the user's own `gh`. A PR whose clone is not at the
+ * chosen folder yields a null pin (only the degraded REST diff is available); this
+ * slice does not open the REST path yet, so it asks for the right local clone.
+ */
+async function openPullRequest(commandId: string, ref: string, repoPath: string): Promise<Review> {
+  const prRef = parseGitHubPrRef(ref);
+  if (!prRef) {
+    throw new Error(`"${ref}" is not a pull request. Use owner/repo#123 or a GitHub PR URL.`);
+  }
+  const token = await resolveGitHubToken();
+  const forge = new GitHubForgeAdapter({ http: publishHttp, token });
+  const source = new GitHubChangesetSource({
+    forge,
+    git: execaGit,
+    pin: createRefPinner(execaGit),
+    // The candidate set is the single local clone the user picked. Identity
+    // matching (owner/name vs the repo's remotes) decides whether it is the
+    // right clone; it never falls back to a path-name guess.
+    worktrees: { list: async () => [await discoverWorktreeIdentities(execaGit, repoPath)] },
+  });
+  const result = await source.open(prRef);
+  if (!result.pin) {
+    throw new Error(
+      `The folder you chose is not a local clone of ${prRef.repo.owner}/${prRef.repo.name}. ` +
+        "Open this PR from a local clone of that repository (REST-only review is not available yet).",
+    );
+  }
+  return service.createReviewFromPatchset(commandId, result.patchset);
 }
 
 /**
@@ -302,6 +343,7 @@ app.whenReady().then(async () => {
     publishPort,
     publishConsent,
     chooseRepository,
+    openPullRequest,
     startWatching: (root: string) =>
       watcher.start(root, () => {
         repositoryDirty = true;

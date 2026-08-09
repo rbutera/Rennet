@@ -202,6 +202,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const [selectedPath, setSelectedPath] = useState<string>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  // The GitHub PR front door (the second v1 source): the ref the user typed
+  // (`owner/repo#123` or a PR URL). Opening it picks the local clone, then lands
+  // in the same review surface a working-tree capture does.
+  const [prRef, setPrRef] = useState("");
   // The canvas surface (issue #11) is an additive view. It is fixtures-backed
   // until the engine's canvas.snapshot feed lands; approving fans out to local
   // optimistic L2 so the demo is real and clickable. The review-capture flow is
@@ -264,9 +268,16 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   }, [bridge]);
 
   const patchset = useMemo(() => (review ? activePatchset(review) : undefined), [review]);
+  // A GitHub-PR review is a SNAPSHOT of a pinned range, not the working tree, so
+  // the working-tree freshness watcher below must not run against it (it would
+  // capture the working tree, mint a different patchset, and wrongly invalidate
+  // the PR review every tick). Derived from the patchset's provenance so it is
+  // correct even for a restored PR review. Absent source ⇒ local capture.
+  const isSnapshotReview =
+    patchset?.source === "github-local" || patchset?.source === "github-rest";
 
   useEffect(() => {
-    if (!review || review.status === "invalid") return;
+    if (!review || review.status === "invalid" || isSnapshotReview) return;
     let checking = false;
     const timer = window.setInterval(() => {
       if (checking) return;
@@ -286,7 +297,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         });
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [bridge, review]);
+  }, [bridge, review, isSnapshotReview]);
 
   useEffect(() => {
     if (!patchset?.files.some((file) => file.path === selectedPath)) {
@@ -377,6 +388,31 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       if (!path) return;
       const result = await bridge.invoke("review.capture", {
         commandId: crypto.randomUUID(),
+        repoPath: path,
+      });
+      setReview(result.review);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Open a pull request into a review (the front door's second source). The user
+  // types the ref, then picks the local clone of that repo (reusing the same
+  // directory dialog as the working-tree door); the PR's diff is taken locally
+  // against its pinned OIDs and lands in the identical review surface.
+  async function openPullRequest(): Promise<void> {
+    const ref = prRef.trim();
+    if (!ref) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      const { path } = await bridge.invoke("repository.choose", {});
+      if (!path) return;
+      const result = await bridge.invoke("review.openPr", {
+        commandId: crypto.randomUUID(),
+        ref,
         repoPath: path,
       });
       setReview(result.review);
@@ -512,8 +548,38 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           one immutable local patchset.
         </p>
         <button type="button" disabled={busy} onClick={chooseRepository}>
-          {busy ? "Capturing…" : "Choose a repository"}
+          {busy ? "Working…" : "Choose a repository"}
         </button>
+
+        <div className="entry-divider" aria-hidden="true">
+          <span>or review a pull request</span>
+        </div>
+
+        <form
+          className="pr-door"
+          onSubmit={(submitEvent) => {
+            submitEvent.preventDefault();
+            void openPullRequest();
+          }}
+        >
+          <input
+            type="text"
+            className="pr-input"
+            value={prRef}
+            onChange={(inputEvent) => setPrRef(inputEvent.target.value)}
+            placeholder="owner/repo#123  or  a GitHub PR URL"
+            aria-label="Pull request reference"
+            spellCheck={false}
+            autoCapitalize="off"
+            autoCorrect="off"
+            disabled={busy}
+          />
+          <button type="submit" className="secondary" disabled={busy || prRef.trim().length === 0}>
+            {busy ? "Opening…" : "Open pull request"}
+          </button>
+        </form>
+        <p className="pr-hint">You will pick the local clone of the repository.</p>
+
         {error ? <p className="error">{error}</p> : null}
       </main>
     );

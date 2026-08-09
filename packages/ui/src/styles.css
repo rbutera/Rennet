@@ -357,6 +357,61 @@ button {
   opacity: 0.6;
   cursor: wait;
 }
+/* The second front door: open a pull request. Content surfaces stay solid and
+   readable (glass is the frame, not the content) — a dark card on the radial. */
+.entry-divider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: min(440px, 82vw);
+  margin: 26px 0 4px;
+  color: #7a8494;
+  font-size: 12px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.entry-divider::before,
+.entry-divider::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: #2a3038;
+}
+.pr-door {
+  display: flex;
+  gap: 8px;
+  width: min(440px, 82vw);
+  margin-top: 14px;
+}
+.pr-input {
+  flex: 1;
+  min-width: 0;
+  padding: 11px 13px;
+  border: 1px solid #363f49;
+  border-radius: 9px;
+  background: #14171d;
+  color: #e7ecf3;
+  font:
+    13px / 1.2 ui-monospace,
+    monospace;
+}
+.pr-input::placeholder {
+  color: #6a7480;
+}
+.pr-input:focus {
+  outline: none;
+  border-color: #d8ff4f;
+  box-shadow: 0 0 0 3px rgba(216, 255, 79, 0.14);
+}
+.pr-door button {
+  margin-top: 0;
+  white-space: nowrap;
+}
+.pr-hint {
+  margin-top: 10px;
+  color: #6f7886;
+  font-size: 12px;
+}
 .mark {
   width: 52px;
   height: 52px;

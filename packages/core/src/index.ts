@@ -569,6 +569,29 @@ export class ReviewService {
   }
 
   /**
+   * Open a review from a pre-built patchset — the GitHub PR front door (User
+   * Journey stage 2, the second v1 source). The local working-tree `capture()`
+   * path builds the patchset itself; here the GitHub changeset source has already
+   * produced the immutable patchset from a PR range, so this just mints the
+   * `ReviewCreated` event and persists it. The review then lands in the identical
+   * surface and decomposition pipeline the local source feeds — one engine, two
+   * sources. Idempotent on `commandId` like every other write.
+   */
+  async createReviewFromPatchset(commandId: string, patchset: Patchset): Promise<Review> {
+    const digest = payloadDigest({ patchsetId: patchset.id, mode: "open-pr" });
+    const receipt = this.store.receipt(commandId, digest);
+    if (receipt) return receipt;
+    const event: ReviewEvent = {
+      type: "ReviewCreated",
+      version: 1,
+      reviewId: uuidv7(),
+      patchset,
+    };
+    const review = foldReview(null, event);
+    return this.store.commit(commandId, digest, [event], review);
+  }
+
+  /**
    * Record or clear a disposition against a file in the active patchset.
    * A `disposition` type sets/replaces it; `null` clears it (the "mark unread"
    * path). Setting resolves the anchor's content digest from the active

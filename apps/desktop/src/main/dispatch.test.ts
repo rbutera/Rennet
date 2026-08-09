@@ -51,6 +51,16 @@ function patchset(): Patchset {
   };
 }
 
+/** A GitHub-PR patchset (the second source) — diffed from a local clone. */
+function prPatchset(): Patchset {
+  return {
+    ...patchset(),
+    id: "pr-patch-1",
+    source: "github-local",
+    repository: { ...patchset().repository, id: "clone", root: "/clone" },
+  };
+}
+
 class InMemoryStore implements ReviewStorePort {
   #latest: Review | null = null;
   readonly #byId = new Map<string, Review>();
@@ -158,6 +168,7 @@ function harness(
     service,
     allowedRoots,
     chooseRepository: () => Promise.resolve(REPO),
+    openPullRequest: (commandId) => service.createReviewFromPatchset(commandId, prPatchset()),
     startWatching: () => undefined,
     isRepositoryDirty: () => dirty,
     setRepositoryDirty: (value) => {
@@ -833,5 +844,34 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
       }),
     ).rejects.toThrow(/no content/i);
     expect(port.posts).toHaveLength(0);
+  });
+});
+
+describe("createDispatch — review.openPr (the GitHub PR front door)", () => {
+  it("opens a PR into a review and grants access to its root", async () => {
+    const { dispatch, allowedRoots } = harness();
+    // The renderer picks the local clone first, which grants access to it.
+    await dispatch("repository.choose", {});
+
+    const result = (await dispatch("review.openPr", {
+      commandId: randomUUID(),
+      ref: "rbutera/rennet#42",
+      repoPath: REPO,
+    })) as { review: Review };
+
+    // The review lands from the second source, in the identical shape + surface.
+    expect(result.review.patchsets[0]?.source).toBe("github-local");
+    expect(allowedRoots.has(result.review.repositoryRoot)).toBe(true);
+  });
+
+  it("refuses to open a PR against a repository access was not granted for", async () => {
+    const { dispatch } = harness();
+    await expect(
+      dispatch("review.openPr", {
+        commandId: randomUUID(),
+        ref: "rbutera/rennet#42",
+        repoPath: "/not-granted",
+      }),
+    ).rejects.toThrow(/access was not granted/i);
   });
 });

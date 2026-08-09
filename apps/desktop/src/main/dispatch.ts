@@ -29,6 +29,13 @@ export interface DispatchDeps {
   readonly allowedRoots: Set<string>;
   /** Resolve a repository to review (Electron dialog, or the test-repo env). `null` = cancelled. */
   chooseRepository(): Promise<string | null>;
+  /**
+   * Open a GitHub pull request into a review (the front door's second source):
+   * parse the ref (`owner/repo#123` or a PR URL), fetch + diff the PR against the
+   * local clone at `repoPath`, and persist a new review. Returns the created
+   * review, ready for the same surface the local capture lands in.
+   */
+  openPullRequest(commandId: string, ref: string, repoPath: string): Promise<Review>;
   /** Begin watching a captured repository root for on-disk changes. */
   startWatching(root: string): void;
   isRepositoryDirty(): boolean;
@@ -131,6 +138,18 @@ export function createDispatch(
         allowedRoots.add(review.repositoryRoot);
         deps.setRepositoryDirty(false);
         deps.startWatching(review.repositoryRoot);
+        return parseCommandOutput(name, { review });
+      }
+      case "review.openPr": {
+        // The GitHub PR front door. `repoPath` is the local clone the renderer just
+        // picked (so it is already in allowedRoots); the diff is taken locally
+        // against the PR's pinned OIDs. A PR review is a snapshot, so it is NOT
+        // wired into the working-tree freshness watcher (the renderer gates that off
+        // by patchset source) — nothing to watch, nothing to invalidate here.
+        const input = parseCommandInput(name, rawInput);
+        assertAllowedRepository(input.repoPath);
+        const review = await deps.openPullRequest(input.commandId, input.ref, input.repoPath);
+        allowedRoots.add(review.repositoryRoot);
         return parseCommandOutput(name, { review });
       }
       case "settings.permissionMode": {
