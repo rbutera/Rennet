@@ -22,10 +22,18 @@ const DISPOSITIONS: {
 export function DispositionBar({
   scopeLabel,
   compact = false,
+  active,
   onDisposition,
 }: {
   scopeLabel: string;
   compact?: boolean;
+  /**
+   * The currently-set disposition, when the bar is a VERDICT PICKER (per-line
+   * collation control) rather than a pure authoring bar. The matching button reads
+   * as pressed (`is-active` + `aria-pressed`), so a line's chosen verdict is
+   * visible at a glance. Omitted for the authoring bars, where nothing is selected.
+   */
+  active?: DispositionType;
   onDisposition(type: DispositionType): void;
 }) {
   return (
@@ -34,18 +42,22 @@ export function DispositionBar({
       role="toolbar"
       aria-label={`Dispose ${scopeLabel}`}
     >
-      {DISPOSITIONS.map(({ type, label, className, Icon }) => (
-        <button
-          type="button"
-          key={type}
-          className={`disposition-btn ${className}`}
-          title={`${label} — ${scopeLabel}`}
-          onClick={() => onDisposition(type)}
-        >
-          <Icon size={13} />
-          <span className="disposition-label">{label}</span>
-        </button>
-      ))}
+      {DISPOSITIONS.map(({ type, label, className, Icon }) => {
+        const isActive = active === type;
+        return (
+          <button
+            type="button"
+            key={type}
+            className={`disposition-btn ${className} ${isActive ? "is-active" : ""}`}
+            title={`${label} — ${scopeLabel}`}
+            aria-pressed={active === undefined ? undefined : isActive}
+            onClick={() => onDisposition(type)}
+          >
+            <Icon size={13} />
+            <span className="disposition-label">{label}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }

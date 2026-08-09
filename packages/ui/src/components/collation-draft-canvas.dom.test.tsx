@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { type CollationDraft, collationItems, collationPayload } from "../canvas/collation";
 import { destinationVariant } from "../canvas/destination";
+import { deriveReviewEvent, reviewComments } from "../canvas/publish";
 import { fireEvent, mount, within } from "../test/dom";
 import { CollationDraftCanvas } from "./collation-draft-canvas";
 
@@ -78,13 +79,42 @@ describe("reword — the body textarea edits the targeted item's raw", () => {
   });
 });
 
-describe("retype — the type select changes the targeted item's disposition", () => {
-  it("selecting a type emits a draft with that item retyped", () => {
+describe("retype — the per-line verdict buttons change the targeted item's disposition (issue #109)", () => {
+  it("clicking a verdict button emits a draft with that item retyped", () => {
     const draft = draftOf("src/a.ts");
     const { container, last } = mountCanvas(draft);
-    const select = within(itemAt(container, 0)).getByLabelText("Type for item 1");
-    fireEvent.change(select, { target: { value: "approve" } });
-    expect(last()?.[0]?.type).toBe("approve");
+    const request = within(itemAt(container, 0)).getByRole("button", { name: "Request change" });
+    fireEvent.click(request);
+    expect(last()?.[0]?.type).toBe("request-change");
+  });
+
+  it("the current verdict button reads as pressed (aria-pressed), others do not", () => {
+    // item starts as a comment (draftOf uses `comment`), so Comment is pressed.
+    const { container } = mountCanvas(draftOf("src/a.ts"));
+    const comment = within(itemAt(container, 0)).getByRole("button", { name: "Comment" });
+    const approve = within(itemAt(container, 0)).getByRole("button", { name: "Approve" });
+    expect(comment.getAttribute("aria-pressed")).toBe("true");
+    expect(approve.getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("setting a line to request-change flips the whole review's DERIVED verdict to REQUEST_CHANGES", () => {
+    // Every line is a comment ⇒ the review derives COMMENT. Set ONE line to
+    // request-change and the whole review's verdict escalates — the roll-up the
+    // sign wire posts (issue #109: any request-change block ⇒ the whole PR review
+    // requests changes). This is the real round-trip: the per-line control feeds
+    // collate → draft → the signed verdict, not a cosmetic toggle.
+    const draft = draftOf("src/a.ts", "src/b.ts");
+    expect(deriveReviewEvent(reviewComments(draft))).toBe("COMMENT");
+    const { container, last } = mountCanvas(draft);
+    fireEvent.click(within(itemAt(container, 1)).getByRole("button", { name: "Request change" }));
+    const next = last();
+    if (!next) throw new Error("no draft emitted");
+    expect(deriveReviewEvent(reviewComments(next))).toBe("REQUEST_CHANGES");
+    // And the live readout on the canvas shows the same escalated verdict.
+    const rerendered = mountCanvas(next);
+    expect(
+      rerendered.container.querySelector(".collation-verdict")?.getAttribute("data-verdict"),
+    ).toBe("REQUEST_CHANGES");
   });
 });
 

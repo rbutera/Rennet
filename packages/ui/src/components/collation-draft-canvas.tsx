@@ -1,4 +1,3 @@
-import type { DispositionType } from "@rennet/types";
 import {
   type CollationDraft,
   collationItems,
@@ -11,6 +10,9 @@ import {
   withdrawItem,
 } from "../canvas/collation";
 import type { DestinationVariant } from "../canvas/destination";
+import { deriveReviewEvent, type ForgeReviewEvent, reviewComments } from "../canvas/publish";
+import { DispositionBar } from "./disposition";
+import { CheckIcon, CommentIcon, TriangleIcon } from "./icons";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The COLLATION DRAFT CANVAS (issue #101; ruling R40) — the forming destination.
@@ -36,7 +38,56 @@ import type { DestinationVariant } from "../canvas/destination";
 // The `layer:ui` boundary allows only `@rennet/types` + this package.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const TYPES: DispositionType[] = ["approve", "request-change", "comment", "question"];
+/**
+ * How the live roll-up reads, per mode, for each verdict the draft derives. The
+ * verdict comes from `deriveReviewEvent` (the twin the sign wire posts), so what
+ * this readout shows is exactly what signing produces — "what you see is what
+ * leaves" (R33). request-change on ANY line escalates the whole review (issue #109:
+ * "if there is >= 1 request-changes block, the WHOLE PR review becomes request
+ * changes").
+ */
+const VERDICT_READOUT: Record<
+  ForgeReviewEvent,
+  {
+    label: string;
+    className: string;
+    Icon: typeof CheckIcon;
+    note: Record<DestinationVariant["mode"], string>;
+  }
+> = {
+  REQUEST_CHANGES: {
+    label: "Request changes",
+    className: "is-request",
+    Icon: TriangleIcon,
+    note: {
+      "own-branch": "A line requests changes — your agent is asked to go fix it before this lands.",
+      "other-pr": "A line requests changes — the whole review posts as REQUEST CHANGES.",
+    },
+  },
+  APPROVE: {
+    label: "Approve",
+    className: "is-approve",
+    Icon: CheckIcon,
+    note: {
+      "own-branch": "Nothing to change — every line is approved.",
+      "other-pr": "Every line is approved.",
+    },
+  },
+  COMMENT: {
+    label: "Comments",
+    className: "is-comment",
+    Icon: CommentIcon,
+    note: {
+      "own-branch": "Comments and questions for your agent — nothing is blocking.",
+      "other-pr": "No changes requested — the review posts as COMMENT.",
+    },
+  },
+};
+
+/** The verdict the current draft derives — the value the sign wire will post. */
+function draftVerdict(draft: CollationDraft): ForgeReviewEvent {
+  return deriveReviewEvent(reviewComments(draft));
+}
 
 /** The mode-specific line naming what editing earns its place on this draft. */
 const EDIT_FRAMING: Record<DestinationVariant["mode"], string> = {
@@ -66,6 +117,12 @@ export function CollationDraftCanvas({
 }) {
   const items = collationItems(draft);
   const empty = draft.length === 0;
+  // The live roll-up: the verdict the current per-line choices derive, which is the
+  // exact value the sign wire posts (deriveReviewEvent). Shown so the connection
+  // between a per-line "request change" and the whole review's verdict is visible as
+  // you work (issue #109), not a surprise at the sign.
+  const verdict = draftVerdict(draft);
+  const verdictReadout = VERDICT_READOUT[verdict];
 
   return (
     <div
@@ -134,21 +191,20 @@ export function CollationDraftCanvas({
                     <span className="collation-item-path" title={item.path}>
                       {item.path}
                     </span>
-                    <select
-                      className="collation-item-type"
-                      aria-label={`Type for item ${index + 1}`}
-                      value={item.type}
-                      onChange={(event) =>
-                        onChange(retypeItem(draft, item.id, event.target.value as DispositionType))
-                      }
-                    >
-                      {TYPES.map((type) => (
-                        <option key={type} value={type}>
-                          {type}
-                        </option>
-                      ))}
-                    </select>
                   </div>
+
+                  {/* The per-line verdict control (issue #109): approve / request
+                      change / comment / question on THIS block, as real icon
+                      buttons (not a dropdown), the current one pressed. Setting it
+                      retypes the item in the draft, so the collated draft, the
+                      derived verdict, and the sign all reflect the choice — a real
+                      round-trip into the draft, not a cosmetic toggle. */}
+                  <DispositionBar
+                    scopeLabel={`item ${index + 1} (${item.path})`}
+                    compact
+                    active={item.type}
+                    onDisposition={(type) => onChange(retypeItem(draft, item.id, type))}
+                  />
 
                   <textarea
                     className="collation-item-body"
@@ -227,6 +283,23 @@ export function CollationDraftCanvas({
           Everything you've staged is here. Sign still blocks on anything not yet ingested — the
           whole account, or nothing.
         </p>
+
+        {/* The live verdict roll-up (issue #109): what the current per-line choices
+            will post. request-change on any line ⇒ the whole review requests
+            changes. Derived from the SAME `deriveReviewEvent` the sign wire posts. */}
+        {empty ? null : (
+          <div
+            className={`collation-verdict ${verdictReadout.className}`}
+            role="status"
+            data-verdict={verdict}
+          >
+            <verdictReadout.Icon size={15} />
+            <span className="collation-verdict-label">
+              This review will <strong>{verdictReadout.label}</strong>
+            </span>
+            <span className="collation-verdict-note">{verdictReadout.note[variant.mode]}</span>
+          </div>
+        )}
 
         <footer className="collation-foot">
           <p className="collation-foot-note">

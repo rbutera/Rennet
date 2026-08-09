@@ -336,6 +336,28 @@
   border-color: var(--private-line);
   background: var(--private-fill);
 }
+/* The pressed/selected verdict on a per-line control (issue #109): the chosen
+   disposition stays lit in its type colour so the line's verdict reads at a glance,
+   using the same glass-palette accents as the hover states. */
+.disposition-btn.d-approve.is-active {
+  color: var(--green);
+  border-color: var(--green-line);
+  background: var(--green-fill);
+}
+.disposition-btn.d-request.is-active {
+  color: var(--amber);
+  border-color: var(--amber-line);
+  background: var(--amber-fill);
+}
+.disposition-btn.d-comment.is-active,
+.disposition-btn.d-question.is-active {
+  color: var(--private);
+  border-color: var(--private-line);
+  background: var(--private-fill);
+}
+.disposition-btn.is-active {
+  font-weight: 650;
+}
 
 /* ── L3: the orchestrator's hand (glass chrome, dashed, distinct) ─────────── */
 .l3-strip {
@@ -814,6 +836,55 @@
   margin: 0;
   font-size: 11px;
   color: var(--text-faint);
+}
+/* The live verdict roll-up readout (issue #109): what the current per-line choices
+   will post, coloured by the derived verdict, using the glass palette. */
+.collation-verdict {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 9px;
+  padding: 9px 12px;
+  background: var(--surface-2);
+  font-size: 12px;
+}
+.collation-verdict svg {
+  flex: none;
+  align-self: center;
+}
+.collation-verdict-label {
+  color: var(--text);
+}
+.collation-verdict-label strong {
+  font-weight: 700;
+}
+.collation-verdict-note {
+  color: var(--text-soft);
+}
+.collation-verdict.is-request {
+  color: var(--amber);
+  border-color: var(--amber-line);
+  background: var(--amber-fill);
+}
+.collation-verdict.is-approve {
+  color: var(--green);
+  border-color: var(--green-line);
+  background: var(--green-fill);
+}
+.collation-verdict.is-comment {
+  color: var(--private);
+  border-color: var(--private-line);
+  background: var(--private-fill);
+}
+.collation-verdict.is-request .collation-verdict-label,
+.collation-verdict.is-request .collation-verdict-note,
+.collation-verdict.is-approve .collation-verdict-label,
+.collation-verdict.is-approve .collation-verdict-note,
+.collation-verdict.is-comment .collation-verdict-label,
+.collation-verdict.is-comment .collation-verdict-note {
+  color: inherit;
 }
 .collation-item-refine[data-refining="false"] {
   color: var(--green);
