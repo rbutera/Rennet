@@ -41,6 +41,7 @@ import {
   RennetMark,
   TriangleIcon,
 } from "./components/icons";
+import { ProjectDetail } from "./components/project-detail";
 import { type PublishReviewResult, PublishSheet } from "./components/publish-sheet";
 import { CanvasWorkspace } from "./components/workspace";
 
@@ -261,6 +262,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // project-detail (the review's real home) is a later slice.
   const [atFrontDoor, setAtFrontDoor] = useState(false);
   const [directEntry, setDirectEntry] = useState(false);
+  // Project detail (issue #37): the unified smart list. Clicking a project row opens
+  // this surface (local work + every PR in one list); a row there opens the review.
+  const [projectDetail, setProjectDetail] = useState<Project | null>(null);
   // The GitHub PR front door (the second v1 source): the ref the user typed
   // (`owner/repo#123` or a PR URL). Opening it picks the local clone, then lands
   // in the same review surface a working-tree capture does.
@@ -528,11 +532,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     }
   }
 
-  // Open a project from the front door. Project-detail (its two-zone home) is a
-  // later slice; for now a row captures a review of the project's reviewable open
-  // target directly (MAIN granted the path when the project loaded/was added), so
-  // the front door reaches real work today. Workspace projects open their first
-  // included repo.
+  // Open a review from a project-detail row (issue #37). Per-row targeting (a
+  // specific PR by number, a specific local branch) needs the owner/repo the fixture
+  // does not carry yet, so a row captures a review of the project's reviewable open
+  // target (MAIN granted the path when the project loaded/was added) — the surface
+  // reaches real work today. Per-row PR/branch targeting is a follow-up.
   async function openProject(project: Project): Promise<void> {
     setBusy(true);
     setError(undefined);
@@ -542,6 +546,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         repoPath: project.openPath,
       });
       setReview(result.review);
+      setProjectDetail(null);
       setAtFrontDoor(false);
       setDirectEntry(false);
     } catch (reason) {
@@ -755,6 +760,24 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
 
   if (review === undefined) return <div className="loading">Restoring local review…</div>;
 
+  // Project detail (issue #37): clicking a project row opens its unified smart list —
+  // local work + every PR in one surface. It takes precedence over the front door and
+  // the review workspace; opening a row from here captures a review (and clears this).
+  if (projectDetail) {
+    return (
+      <>
+        {error ? <div className="error-toast">{error}</div> : null}
+        {busy ? <div className="busy-bar" /> : null}
+        <ProjectDetail
+          bridge={bridge}
+          project={projectDetail}
+          onOpenRow={() => void openProject(projectDetail)}
+          onBack={() => setProjectDetail(null)}
+        />
+      </>
+    );
+  }
+
   // The front door is the app's entry: shown on first run (no restored review) and
   // whenever the user steps back to Projects from an open review. The legacy repo/PR
   // entry is one terse disclosure away so no existing capability is orphaned.
@@ -764,7 +787,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         <>
           {error ? <div className="error-toast">{error}</div> : null}
           {busy ? <div className="busy-bar" /> : null}
-          <FrontDoor bridge={bridge} onOpenProject={(project) => void openProject(project)} />
+          <FrontDoor bridge={bridge} onOpenProject={(project) => setProjectDetail(project)} />
           <button
             type="button"
             className="front-door-direct"

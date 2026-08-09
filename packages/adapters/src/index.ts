@@ -102,6 +102,7 @@ export {
   type AttachedOrchestratorSession,
   attachOrchestratorSession,
 } from "./orchestrator-session-server";
+export { cleanupWorktreeFixture, projectDetailFixture } from "./project-detail-fixture";
 export {
   defaultProjectDiscoveryDeps,
   discoverProject,

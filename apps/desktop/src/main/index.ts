@@ -6,6 +6,7 @@ import {
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
   type CodexAvailability,
+  cleanupWorktreeFixture,
   createClaudeHarness,
   createCodexUtilityAdapter,
   createRefPinner,
@@ -26,6 +27,7 @@ import {
   GitHubPublishAdapter,
   type HttpFetch,
   parseGitHubPrRef,
+  projectDetailFixture,
   RepoWatcher,
   resolveGitHubAuth,
   SqliteReviewStore,
@@ -420,6 +422,11 @@ app.whenReady().then(async () => {
     discoverProject: ({ path, kind }) =>
       discoverProject(defaultProjectDiscoveryDeps(execaGit), path, kind),
     detectHarnesses,
+    // Project detail (issue #37): the unified smart list's substrate. Live git +
+    // GitHub wiring is a follow-up; a fixture stands behind the real command
+    // boundary so the surface comes alive now.
+    projectDetail: () => Promise.resolve(projectDetailFixture()),
+    cleanupWorktree: () => Promise.resolve(cleanupWorktreeFixture()),
   });
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);
