@@ -29,6 +29,8 @@ import {
 } from "./canvas/publish";
 import { CollationDraftCanvas } from "./components/collation-draft-canvas";
 import { DestinationFrame } from "./components/destination-frame";
+import { GenerationNarration } from "./components/generation-narration";
+import { HarnessConsent } from "./components/harness-consent";
 import {
   ArrowRightIcon,
   FileDiffIcon,
@@ -37,7 +39,6 @@ import {
   RennetMark,
   TriangleIcon,
 } from "./components/icons";
-import { HarnessConsent } from "./components/harness-consent";
 import { type PublishReviewResult, PublishSheet } from "./components/publish-sheet";
 import { CanvasWorkspace } from "./components/workspace";
 
@@ -861,11 +862,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
             </button>
           </section>
         ) : (
-          <section className="canvas-primer" role="status">
-            <p className="eyebrow">AI REVIEW</p>
-            <h2>Running your AI review…</h2>
-            <p>Reading the diff and drafting the review angles over your own subscription.</p>
-          </section>
+          // Issue #71: the running state is a LIVE narration of the real changeset
+          // shape + the deterministic pipeline stages, never a bare spinner (R26).
+          <GenerationNarration patchset={patchset} />
         )
       ) : (
         <ReviewWorkspace
