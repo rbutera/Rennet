@@ -4,6 +4,7 @@ export {
   CANVAS_OPS_SERVER_NAME,
   CANVAS_OPS_SERVER_VERSION,
   createCanvasOpsServer,
+  type LoadCanvasOpsSdk,
 } from "./canvas-ops-server";
 export {
   CLAUDE_TESTED_RANGE,
@@ -138,6 +139,14 @@ export {
   type AttachedOrchestratorSession,
   attachOrchestratorSession,
 } from "./orchestrator-session-server";
+export {
+  deriveOrchestratorPrimerState,
+  type LoadSdkQuery,
+  type OrchestratorToolCall,
+  type OrchestratorTurnDeps,
+  type OrchestratorTurnResult,
+  runOrchestratorTurn,
+} from "./orchestrator-turn";
 export {
   type ProjectContextBackendPart,
   projectContextBackend,

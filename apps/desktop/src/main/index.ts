@@ -65,6 +65,7 @@ import type {
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session } from "electron";
 import { createDispatch } from "./dispatch";
 import { createHarnessConsentAuthority } from "./harness-consent-authority";
+import { createOrchestratorTurnRunner } from "./orchestrator";
 import { createPublishConsentAuthority } from "./publish-consent-authority";
 
 const execFileAsync = promisify(execFile);
@@ -658,9 +659,21 @@ app.whenReady().then(async () => {
     resolveToken: resolveGitHubToken,
   });
   const publishConsent = createPublishConsentAuthority();
+  // The live orchestrator turn runner (issue #13, wave 2): composes the wave-1 live
+  // backend + the lean primer + a real `claude` turn over the in-process canvasOps@2
+  // MCP server. It reuses the SAME memoized `claude` discovery the review pipeline
+  // uses (R2 subscription OAuth) and the app-owned snapshot store under userData. It
+  // is wired into the command-router composition here; the conversational command
+  // that would drive a turn per user question is the DEFERRED UI loop.
+  const orchestratorTurn = createOrchestratorTurnRunner({
+    userDataDir: app.getPath("userData"),
+    resolveClaudePath: async () => (await getClaudeHarness()).discovery.chosen?.path ?? null,
+    env: process.env,
+  });
   dispatch = createDispatch({
     service,
     allowedRoots,
+    orchestratorTurn,
     settings,
     consent,
     publishPort,
