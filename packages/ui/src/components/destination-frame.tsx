@@ -4,6 +4,7 @@ import {
   type DestinationVariant,
   destinationVariant,
 } from "../canvas/destination";
+import { laneCounts } from "../canvas/staging";
 import { ArrowRightIcon, TargetIcon } from "./icons";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -41,12 +42,17 @@ export function DestinationFrame({
   const variant: DestinationVariant = destinationVariant(mode);
   const items = collationItems(draft);
   const empty = items.length === 0;
+  // The ink/blue split (issue #109): how many dispositions travel to the PR vs stay
+  // private on this machine (the wireframe's "N private" pill).
+  const lanes = laneCounts(draft);
 
   return (
     <aside
       className="destination-frame"
       data-mode={mode}
       data-staged-count={items.length}
+      data-publish-count={lanes.ink}
+      data-private-count={lanes.blue}
       aria-label={`Destination: ${variant.title}`}
     >
       <header className="destination-head">
@@ -82,6 +88,11 @@ export function DestinationFrame({
         <div className="destination-count">
           <strong>{items.length}</strong>
           <span>collated</span>
+          {lanes.blue > 0 ? (
+            <span className="destination-private-pill" data-private-count={lanes.blue}>
+              {lanes.blue} private
+            </span>
+          ) : null}
         </div>
         {empty ? (
           <p className="destination-empty">

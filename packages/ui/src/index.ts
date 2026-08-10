@@ -127,10 +127,32 @@ export {
   placeMarks,
   resolveAnchorToRows,
 } from "./canvas/registrar";
+// The staging semantics (issue #109 — the review heart): the ink/blue material law
+// (approve never publishes; request-change always does; comment/question default to
+// the orchestrator and stage only sometimes), and the sign-off roll-up over the
+// published (ink) subset.
+export type { LaneCounts, PublishReviewType, StagingLane } from "./canvas/staging";
+export {
+  defaultLane,
+  isPublished,
+  isStageable,
+  itemLane,
+  laneCounts,
+  localItems,
+  publishedItems,
+  publishReviewLabel,
+  publishReviewType,
+  stageItem,
+} from "./canvas/staging";
 export { BatchView } from "./components/batch-view";
 export { CollationDraftCanvas } from "./components/collation-draft-canvas";
 export { CoverageMosaicView } from "./components/coverage";
 export { DestinationFrame } from "./components/destination-frame";
+export type {
+  DispositionAnchorKind,
+  DispositionClusterAnchor,
+} from "./components/disposition-cluster";
+export { DispositionCluster } from "./components/disposition-cluster";
 export { FrontDoor } from "./components/front-door";
 export type { GranularityContext } from "./components/granularity-author";
 export { GranularityAuthor } from "./components/granularity-author";

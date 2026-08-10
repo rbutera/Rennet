@@ -48,6 +48,15 @@ export interface CollationItem {
   raw: string;
   /** §2.5 seam: the refined form. `effectiveBody` prefers it once present. */
   refined?: string;
+  /**
+   * The staging override for a stageable disposition (issue #109 — the ink/blue
+   * material law). Meaningful ONLY for `comment`/`question`, which default to the
+   * orchestrator (blue) and travel to the PR (ink) only when explicitly staged.
+   * Absent ⇒ the type's default lane (see `itemLane` in `./staging`), so every
+   * existing draft is unchanged: this is additive, and the two fixed types
+   * (`approve` never publishes, `request-change` always does) ignore it entirely.
+   */
+  staged?: boolean;
 }
 
 /** The collation draft: an ORDERED list. Array order is the draft/output order. */
