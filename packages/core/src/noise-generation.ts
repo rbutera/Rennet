@@ -54,6 +54,7 @@ import {
   NOISE_CONTRACT,
   type PromptContract,
   renderBaseInstruction,
+  renderHypothesisLayer,
 } from "@rennet/instructions";
 import { computeInputDigest, parseAnchor, resolveAnchor, validateDocument } from "@rennet/protocol";
 import type {
@@ -66,6 +67,7 @@ import type {
   NoiseJudgedBy,
   OfferedManifest,
   ResolutionTrace,
+  ReviewHypothesis,
   RspCapabilitySnapshot,
   RspEnvelope,
   RspModelReportedBy,
@@ -99,6 +101,12 @@ export interface RunNoiseAngleInput {
   readonly patchsetId: string;
   /** The offered occurrence manifest: the hunk ids + lines the model may cite. */
   readonly manifest: OfferedManifest;
+  /**
+   * The committed hypothesis (#178). When present, it is rendered as a labelled
+   * disconfirmation layer after the base instruction and before the payload.
+   * Absent, the runner assembles exactly as it does today.
+   */
+  readonly hypothesis?: ReviewHypothesis;
   /** The `noise` contract; defaults to the shipped `NOISE_CONTRACT` (#34). */
   readonly contract?: PromptContract;
   readonly provenance: NoiseProvenanceSeed;
@@ -415,6 +423,8 @@ export async function runNoiseAngle(input: RunNoiseAngleInput): Promise<RunNoise
   const inputDigest = computeInputDigest(patchsetRef, manifest);
   const base = renderBaseInstruction(contract);
   const payload = renderPayload(manifest, patchsetId);
+  const hypothesisLayer =
+    input.hypothesis === undefined ? undefined : renderHypothesisLayer(input.hypothesis);
 
   const attempts: NoiseAttempt[] = [];
   let lastReportText: string | undefined;
@@ -439,6 +449,7 @@ export async function runNoiseAngle(input: RunNoiseAngleInput): Promise<RunNoise
     const assembled = assemblePrompt(
       {
         base,
+        ...(hypothesisLayer === undefined ? {} : { hypothesis: hypothesisLayer }),
         ...(guidance?.general === undefined ? {} : { general: guidance.general }),
         ...(guidance?.files === undefined ? {} : { files: guidance.files }),
         ...(lastReportText === undefined ? {} : { task: lastReportText }),

@@ -225,6 +225,15 @@ export {
 } from "./review-ask-fixture";
 export { SqliteReviewStore } from "./sqlite-review-store";
 export {
+  type ClaudeTurnUsage,
+  createInstrumentedRunTurn,
+  createMetricsCollector,
+  extractClaudeUsage,
+  type InstrumentedRunTurnOptions,
+  type MetricsCollector,
+  type TurnMetric,
+} from "./turn-metrics";
+export {
   discoverWorktreeIdentities,
   type LocalWorktree,
   matchWorktree,

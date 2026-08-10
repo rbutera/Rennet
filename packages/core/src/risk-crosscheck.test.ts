@@ -1,0 +1,102 @@
+import type { FindingElement, ReviewHypothesis } from "@rennet/types";
+import { describe, expect, it } from "vitest";
+import { crossCheckRisks, salientTokens } from "./risk-crosscheck";
+
+function risk(
+  riskId: string,
+  statement: string,
+  disconfirmer: string,
+): ReviewHypothesis["risks"][number] {
+  return { riskId, statement, severity: "high", disconfirmer };
+}
+
+function finding(findingId: string, summary: string): FindingElement {
+  return {
+    findingId,
+    anchor: "rennet:hunk/h1",
+    summary,
+    severity: "high",
+    agreement: { kind: "concur", agree: 1, total: 1 },
+  };
+}
+
+const HYPOTHESIS = (risks: ReviewHypothesis["risks"]): ReviewHypothesis => ({
+  domain: "d",
+  scope: { inScope: [], outOfScope: [] },
+  designExpectation: "e",
+  risks,
+  repoContextPresent: true,
+});
+
+describe("crossCheckRisks — the predicted-risk cross-check (issue #181)", () => {
+  it("confirms a predicted-and-found risk and links the finding", () => {
+    const hypothesis = HYPOTHESIS([
+      risk(
+        "r1",
+        "the store key is computed per branch instead of per repository root",
+        "check keying",
+      ),
+    ]);
+    const findings = [
+      finding(
+        "f1",
+        "store key is derived per branch, so worktrees collide on the repository entry",
+      ),
+    ];
+    const result = crossCheckRisks(hypothesis, findings);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.status).toBe("confirmed");
+    expect(result[0]?.findingIds).toEqual(["f1"]);
+  });
+
+  it("marks a predicted-but-unflagged risk OPEN — surfaced, never dropped", () => {
+    const hypothesis = HYPOTHESIS([
+      risk(
+        "r1",
+        "a race between the watcher and the snapshot generator corrupts the shard",
+        "check locking",
+      ),
+    ]);
+    const findings = [finding("f1", "an unrelated concern about lockfile churn in the manifest")];
+    const result = crossCheckRisks(hypothesis, findings);
+    expect(result[0]?.status).toBe("open");
+    expect(result[0]?.findingIds).toEqual([]);
+  });
+
+  it("is conservative — an incidental single-word overlap is NOT a match (bias toward open)", () => {
+    const hypothesis = HYPOTHESIS([
+      risk(
+        "r1",
+        "the migration drops the projectSnapshotId column prematurely",
+        "check migration order",
+      ),
+    ]);
+    // Shares only "migration" (one salient token) → below the 2-token floor → open.
+    const findings = [finding("f1", "the migration comment has a typo")];
+    const result = crossCheckRisks(hypothesis, findings);
+    expect(result[0]?.status).toBe("open");
+  });
+
+  it("accounts for every risk exactly once, in order (totality — no risk dropped)", () => {
+    const hypothesis = HYPOTHESIS([
+      risk("r1", "alpha bravo charlie delta echo", "d1"),
+      risk("r2", "foxtrot golf hotel india juliet", "d2"),
+      risk("r3", "kilo lima mike november oscar", "d3"),
+    ]);
+    const result = crossCheckRisks(hypothesis, []);
+    expect(result.map((r) => r.riskId)).toEqual(["r1", "r2", "r3"]);
+    expect(result.every((r) => r.status === "open")).toBe(true);
+  });
+});
+
+describe("salientTokens", () => {
+  it("keeps meaningful words and drops stopwords + short fragments", () => {
+    const tokens = salientTokens("the change should verify the repository keying");
+    expect(tokens.has("repository")).toBe(true);
+    expect(tokens.has("keying")).toBe(true);
+    // stopwords / short tokens dropped
+    expect(tokens.has("the")).toBe(false);
+    expect(tokens.has("change")).toBe(false);
+    expect(tokens.has("should")).toBe(false);
+  });
+});

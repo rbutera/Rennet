@@ -267,6 +267,39 @@ const noiseGroupBodySchema = z
 
 const noiseBodySchema = z.object({ groups: z.array(noiseGroupBodySchema) }).loose();
 
+/**
+ * The `review.hypothesis` body (issue #178): the committed prior a lens runner
+ * disconfirms against. `domain`/`designExpectation` and each risk's
+ * `statement`/`disconfirmer` are any string here (empty passes the shape);
+ * V150/V152/V154/V155 enforce non-emptiness so the rejection carries the precise
+ * code. The risk `severity` reuses the closed finding vocabulary (shape-enforced,
+ * V108). `riskId` is stamped by the PASS after the turn (agents never mint
+ * identity), so it is deliberately NOT required here — the `.loose()` schema
+ * accepts the ON-DISK doc that carries it AND the model emission that does not.
+ * The 5-10 risk bound is V153. This is an atomic doc: any error rejects the whole.
+ */
+const hypothesisRiskBodySchema = z
+  .object({
+    statement: z.string(),
+    severity: findingSeverityBodySchema,
+    disconfirmer: z.string(),
+  })
+  .loose();
+
+const reviewHypothesisBodySchema = z
+  .object({
+    domain: z.string(),
+    scope: z
+      .object({
+        inScope: z.array(z.string()),
+        outOfScope: z.array(z.string()),
+      })
+      .loose(),
+    designExpectation: z.string(),
+    risks: z.array(hypothesisRiskBodySchema),
+  })
+  .loose();
+
 const BODY_SCHEMAS: Readonly<Partial<Record<RspDocType, z.ZodType>>> = {
   "decomposition.skeleton": skeletonBodySchema,
   "decomposition.proposal": proposalBodySchema,
@@ -275,6 +308,7 @@ const BODY_SCHEMAS: Readonly<Partial<Record<RspDocType, z.ZodType>>> = {
   finding: findingBodySchema,
   "decision.record": decisionRecordBodySchema,
   noise: noiseBodySchema,
+  "review.hypothesis": reviewHypothesisBodySchema,
 };
 
 /**
@@ -404,6 +438,14 @@ export function validateBodyRules(
   // decomposition fallthrough so a noise body is never fed to the `viewOf` path
   // (which assumes a `chunks` body and would throw).
   if (docType === "noise") return [];
+
+  // The hypothesis pass (#178): per-body semantic rules (non-emptiness + the
+  // 5-10 risk bound). The body carries no `rennet:` anchors (the risks are
+  // expectations, not code locations), so the generic anchor walk finds nothing
+  // and this is the whole body gate. This branch is BEFORE the decomposition
+  // fallthrough so a hypothesis body is never fed to the `viewOf` path (which
+  // assumes a `chunks` body and would throw).
+  if (docType === "review.hypothesis") return validateReviewHypothesisRules(parsed.data);
 
   const offeredHunkIds = offeredIdsOfKind(manifest, "hunk");
   const view = viewOf(docType, parsed.data);
@@ -560,6 +602,68 @@ function validateFindingRules(parsed: unknown): ValidationError[] {
       });
     }
   });
+  return errors;
+}
+
+// ── The hypothesis rule catalogue (issue #178) ───────────────────────────────
+
+/** The bound on how many risks a committed hypothesis must carry. Both inclusive. */
+export const HYPOTHESIS_RISK_MIN = 5;
+export const HYPOTHESIS_RISK_MAX = 10;
+
+/**
+ * Validate a `review.hypothesis` body's semantics: V150 (a non-empty domain — a
+ * hypothesis with no subject is not a hypothesis), V152 (a non-empty design
+ * expectation), V153 (the risk count is within the 5-10 bound — too few is a
+ * rubber stamp, too many is noise), V154 (each risk's statement is non-empty),
+ * V155 (each risk's disconfirmer is non-empty — a risk with no check cannot
+ * disconfirm anything). All atomic. The severity enum and the structural scope
+ * shape are enforced by the shape schema (V108). This is the gate that can go red
+ * on a model that emits a subject-less hypothesis, a bad risk count, or a
+ * word-less risk.
+ */
+function validateReviewHypothesisRules(parsed: unknown): ValidationError[] {
+  const body = parsed as {
+    domain: string;
+    designExpectation: string;
+    risks: { statement: string; disconfirmer: string }[];
+  };
+  const errors: ValidationError[] = [];
+
+  if (body.domain.trim().length === 0) {
+    errors.push({ code: "V150", pointer: "/body/domain", message: "hypothesis domain is empty" });
+  }
+  if (body.designExpectation.trim().length === 0) {
+    errors.push({
+      code: "V152",
+      pointer: "/body/designExpectation",
+      message: "hypothesis design expectation is empty",
+    });
+  }
+  if (body.risks.length < HYPOTHESIS_RISK_MIN || body.risks.length > HYPOTHESIS_RISK_MAX) {
+    errors.push({
+      code: "V153",
+      pointer: "/body/risks",
+      message: `hypothesis must carry between ${HYPOTHESIS_RISK_MIN} and ${HYPOTHESIS_RISK_MAX} risks, got ${body.risks.length}`,
+    });
+  }
+  body.risks.forEach((risk, index) => {
+    if (risk.statement.trim().length === 0) {
+      errors.push({
+        code: "V154",
+        pointer: `/body/risks/${index}/statement`,
+        message: "hypothesis risk statement is empty",
+      });
+    }
+    if (risk.disconfirmer.trim().length === 0) {
+      errors.push({
+        code: "V155",
+        pointer: `/body/risks/${index}/disconfirmer`,
+        message: "hypothesis risk disconfirmer is empty",
+      });
+    }
+  });
+
   return errors;
 }
 

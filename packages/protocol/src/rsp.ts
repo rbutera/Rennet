@@ -74,6 +74,7 @@ export const RSP_DOC_TYPES = [
   "noise",
   "anomaly",
   "finding",
+  "review.hypothesis",
   "validation.report",
 ] as const satisfies readonly RspDocType[];
 
@@ -129,6 +130,12 @@ export const DOC_TYPE_REGISTRY: Readonly<Record<RspDocType, DocTypeSpec>> = {
   noise: { admission: "atomic", supportedSchemaVersions: [1] },
   anomaly: { admission: "itemwise", supportedSchemaVersions: [1] },
   finding: { admission: "itemwise", supportedSchemaVersions: [1] },
+  // The hypothesis-first pre-read (#178): the committed prior. Admitted WHOLE
+  // (atomic) — a half-formed hypothesis is not a hypothesis, so any body error
+  // (a missing domain, a risk count outside 5-10, a word-less disconfirmer)
+  // rejects the whole document and the pass retries, falling to its honest failed
+  // state on terminal failure (a hypothesis is a judgement, so there is no floor).
+  "review.hypothesis": { admission: "atomic", supportedSchemaVersions: [1] },
   "validation.report": { admission: "atomic", supportedSchemaVersions: [1] },
 };
 

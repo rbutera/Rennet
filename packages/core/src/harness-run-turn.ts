@@ -124,7 +124,15 @@ export function createHarnessRunTurn(
                 message: "the harness completed the turn without structured output",
               };
             }
-            return { status: "emitted", body: outcome.structuredOutput };
+            // Thread the real token usage (issue #186): when the terminal frame
+            // carried a `usage` block, the runner stamps THOSE counts into
+            // provenance instead of ZERO_TOKENS. Absent usage carries no `tokens`
+            // (the runner then stamps its honest zero-usage default).
+            return {
+              status: "emitted",
+              body: outcome.structuredOutput,
+              ...(outcome.usage === undefined ? {} : { tokens: outcome.usage }),
+            };
           }
           if (outcome.status === "failed") {
             return { status: "failed", message: outcome.error.message };

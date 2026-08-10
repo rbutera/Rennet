@@ -12,6 +12,8 @@
  * deliberately out of this slice.
  */
 
+import type { RspTokenUsage } from "@rennet/types";
+
 export type HarnessId = "claude-code" | "codex" | "omp";
 
 /** Opaque identifiers. Kept as plain strings for slice 1 (no branding). */
@@ -178,6 +180,14 @@ export type SessionOutcome =
       readonly status: "completed";
       readonly finalText: string;
       readonly structuredOutput?: unknown;
+      /**
+       * The turn's token accounting, when the harness reported it on its terminal
+       * frame (issue #186). Threaded through so the runner that mints the RSP
+       * document stamps REAL token counts into provenance instead of ZERO_TOKENS.
+       * Absent when the harness reported no usage (a genuine null, never a
+       * substituted zero — a turn that carried no usage is not one that used none).
+       */
+      readonly usage?: RspTokenUsage;
     }
   | { readonly status: "cancelled"; readonly partial: boolean }
   | { readonly status: "failed"; readonly error: HarnessError };
