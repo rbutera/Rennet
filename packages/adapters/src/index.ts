@@ -124,8 +124,14 @@ export {
   attachOrchestratorSession,
 } from "./orchestrator-session-server";
 export {
+  type ProjectContextBackendPart,
+  projectContextBackend,
+  type ResolvedRepoContext,
+} from "./project-context-backend";
+export {
   type LoadFreshResult,
   ProjectContextReader,
+  type ProjectFileResult,
   type ProjectMapResult,
   type SnapshotGateFailure,
 } from "./project-context-reader";

@@ -1,15 +1,23 @@
 import {
-  type FileContextResult,
   isSnapshotFresh,
   type LoadedSnapshot,
   materializeSnapshot,
-  type ProjectMap,
+  type ProjectFileResult,
+  type ProjectMapResult,
   type ProjectMapScope,
   queryFileContext,
   queryProjectMap,
+  type SnapshotGateFailure,
   verifySnapshotIntegrity,
 } from "@rennet/core";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
+
+// The gate-failure taxonomy and the two gated result unions are CANONICAL in
+// `@rennet/core` (alongside `ProjectMap` / `FileContextResult`) so the pure
+// `canvasOps@2` context tools can speak them without a core → adapters edge.
+// Re-exported here for stability: existing importers (and the adapters barrel)
+// keep resolving them from this module.
+export type { ProjectFileResult, ProjectMapResult, SnapshotGateFailure } from "@rennet/core";
 
 /**
  * The composed, fail-closed ProjectSnapshot READ gate (#14, Part 3) — the single
@@ -36,25 +44,8 @@ import type { ProjectSnapshotStore } from "./project-snapshot-store";
  * refusal on the vital "never serve stale context" circuit).
  */
 
-/** Why the gate refused to produce a queryable snapshot. */
-export type SnapshotGateFailure =
-  /** No snapshot has been generated for this repo yet. */
-  | { readonly reason: "absent" }
-  /** A snapshot exists but was built at a different OID than the request pins to. */
-  | { readonly reason: "stale"; readonly storedBaseOid: string; readonly requestedBaseOid: string }
-  /** The stored snapshot failed the integrity gate (missing/corrupt shard or tampered manifest). */
-  | {
-      readonly reason: "corrupt";
-      readonly missing: readonly string[];
-      readonly mismatched: readonly string[];
-    };
-
 export type LoadFreshResult =
   | { readonly ok: true; readonly snapshot: LoadedSnapshot }
-  | { readonly ok: false; readonly failure: SnapshotGateFailure };
-
-export type ProjectMapResult =
-  | { readonly ok: true; readonly map: ProjectMap }
   | { readonly ok: false; readonly failure: SnapshotGateFailure };
 
 export class ProjectContextReader {
@@ -125,17 +116,7 @@ export class ProjectContextReader {
    * the gate first; a gate failure is surfaced as a `snapshot-unavailable`
    * {@link FileContextResult}-shaped refusal so a single call has one result type.
    */
-  readFileContext(
-    repoKey: string,
-    requestedBaseOid: string,
-    path: string,
-  ):
-    | FileContextResult
-    | {
-        readonly ok: false;
-        readonly reason: "snapshot-unavailable";
-        readonly failure: SnapshotGateFailure;
-      } {
+  readFileContext(repoKey: string, requestedBaseOid: string, path: string): ProjectFileResult {
     const gated = this.loadFresh(repoKey, requestedBaseOid);
     if (!gated.ok) return { ok: false, reason: "snapshot-unavailable", failure: gated.failure };
     return queryFileContext(gated.snapshot, path);

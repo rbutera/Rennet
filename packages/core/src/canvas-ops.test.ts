@@ -34,6 +34,12 @@ import {
   type ToolOutcome,
   type ViewState,
 } from "./canvas-ops";
+import type {
+  ProjectFileResult,
+  ProjectMap,
+  ProjectMapResult,
+  ProjectMapScope,
+} from "./project-context";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Fixtures: a small real decisions canvas built through buildCanvas, plus a
@@ -81,6 +87,32 @@ interface FixtureOptions {
   dispositions?: Disposition[];
   diffHits?: DiffHit[];
   overBudget?: boolean;
+  /** Override the deterministic project-map gate result (default: a fresh served map). */
+  projectMap?: ProjectMapResult;
+  /** Capture the scope the last `context.map` call passed the backend. */
+  onProjectMap?: (scope?: ProjectMapScope) => void;
+  /** Override the deterministic file-context gate result (default: a fresh served context). */
+  fileContext?: ProjectFileResult;
+}
+
+const FIXTURE_BASE_OID = "a".repeat(40);
+const FIXTURE_FINGERPRINT = "fp-fixture";
+
+/** A fresh, served project map (the deterministic reader's ok shape). */
+function freshProjectMap(): ProjectMap {
+  return {
+    baseRef: "refs/heads/main",
+    baseRefResolution: "explicit-setting",
+    baseOid: FIXTURE_BASE_OID,
+    fingerprint: FIXTURE_FINGERPRINT,
+    files: [{ path: "packages/a/src/index.ts", blobOid: "b".repeat(40), size: 12, mode: "100644" }],
+    scopes: [{ name: "@t/a", root: "packages/a", private: true, tags: [] }],
+    edges: [],
+    entryPoints: [],
+    tests: [],
+    ownership: [],
+    conventions: [],
+  };
 }
 
 interface Fixture {
@@ -205,6 +237,26 @@ function makeFixture(options: FixtureOptions = {}): Fixture {
             harnessInvocationCount: 1,
             maxHarnessInvocations: 5,
           },
+    projectMap: (scope?: ProjectMapScope): ProjectMapResult => {
+      options.onProjectMap?.(scope);
+      return options.projectMap ?? { ok: true, map: freshProjectMap() };
+    },
+    fileContext: (path: string): ProjectFileResult =>
+      options.fileContext ?? {
+        ok: true,
+        context: {
+          path,
+          blobOid: "b".repeat(40),
+          size: 12,
+          mode: "100644",
+          isSymlink: false,
+          scope: "@t/a",
+          hasSymbols: true,
+          extractor: "test",
+          symbols: [],
+          tests: [],
+        },
+      },
     applyEffects: (effects) => {
       for (const effect of effects) {
         applied.push(effect);
@@ -233,7 +285,7 @@ function expectOk<T>(outcome: ToolOutcome<T>): OpsEnvelope<T> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("canvasOps@2 tool surface", () => {
-  it("is versioned canvasOps@2 with the six interaction ops and seven retrieval ops", () => {
+  it("is versioned canvasOps@2 with the interaction ops, retrieval reads, and context reads", () => {
     expect(CANVAS_OPS_VERSION).toBe("canvasOps@2");
     const names = CANVAS_OPS_TOOLS.map((t) => t.name);
     expect(names).toEqual([
@@ -250,9 +302,14 @@ describe("canvasOps@2 tool surface", () => {
       "diff.structure",
       "run.ledger",
       "run.provenance",
+      "context.map",
+      "context.file",
     ]);
-    // context.* rides the base-branch context issue — NOT on this surface.
-    expect(names.some((n) => n.startsWith("context."))).toBe(false);
+    // The base-branch context reads (issue #14) now ride this surface; the LLM
+    // knowledge read (context.knowledge) is a later wave and is NOT here yet.
+    expect(names).toContain("context.map");
+    expect(names).toContain("context.file");
+    expect(names).not.toContain("context.knowledge");
   });
 
   it("marks the hot trio always-loaded and read tools read-only", () => {
@@ -271,6 +328,8 @@ describe("canvasOps@2 tool surface", () => {
       "diff.structure",
       "run.ledger",
       "run.provenance",
+      "context.map",
+      "context.file",
     ]) {
       expect(canvasOpsTool(name).readOnly).toBe(true);
     }
@@ -503,5 +562,146 @@ describe("canvasOps@2 tool surface", () => {
 
     const view = expectOk(run(canvasOpsTool("canvas.view"), {}, backend));
     expect((view.data as ViewState).angle).toBe("decisions");
+  });
+
+  // Issue #14: base-branch context reads (context.map / context.file) ─────────
+  describe("context.map — deterministic base-branch map through the fail-closed gate", () => {
+    it("serves a fresh map as `current`, with base OID + fingerprint as evidence", () => {
+      const { backend } = makeFixture();
+      const env = expectOk(run(canvasOpsTool("context.map"), {}, backend));
+      const map = env.data as ProjectMap;
+      expect(map.baseOid).toBe(FIXTURE_BASE_OID);
+      expect(map.scopes.map((s) => s.name)).toEqual(["@t/a"]);
+      expect(env.freshness).toBe("current");
+      expect(env.evidence).toEqual([FIXTURE_BASE_OID, FIXTURE_FINGERPRINT]);
+    });
+
+    it("passes path/scope narrowing through to the backend port", () => {
+      let seen: ProjectMapScope | undefined;
+      const { backend } = makeFixture({ onProjectMap: (scope) => (seen = scope) });
+      run(canvasOpsTool("context.map"), { path: "packages/a", scope: "@t/a" }, backend);
+      expect(seen).toEqual({ path: "packages/a", scope: "@t/a" });
+    });
+
+    it("passes NO scope object when neither path nor scope is given", () => {
+      let called = false;
+      let seen: ProjectMapScope | undefined = { path: "x" };
+      const { backend } = makeFixture({
+        onProjectMap: (scope) => {
+          called = true;
+          seen = scope;
+        },
+      });
+      run(canvasOpsTool("context.map"), {}, backend);
+      expect(called).toBe(true);
+      expect(seen).toBeUndefined();
+    });
+
+    it("rides a STALE snapshot back as freshness `stale` with an `unavailable` payload, not a served map (R30)", () => {
+      const { backend } = makeFixture({
+        projectMap: {
+          ok: false,
+          failure: { reason: "stale", storedBaseOid: "old", requestedBaseOid: "new" },
+        },
+      });
+      const env = expectOk(run(canvasOpsTool("context.map"), {}, backend));
+      expect(env.freshness).toBe("stale");
+      const data = env.data as { unavailable: { reason: string } };
+      expect(data.unavailable.reason).toBe("stale");
+      // The distinguished refusal never masquerades as a served map.
+      expect((env.data as { baseOid?: string }).baseOid).toBeUndefined();
+    });
+
+    it("maps an ABSENT snapshot to freshness `failed`", () => {
+      const { backend } = makeFixture({ projectMap: { ok: false, failure: { reason: "absent" } } });
+      const env = expectOk(run(canvasOpsTool("context.map"), {}, backend));
+      expect(env.freshness).toBe("failed");
+      expect((env.data as { unavailable: { reason: string } }).unavailable.reason).toBe("absent");
+    });
+
+    it("maps a CORRUPT snapshot to freshness `failed`", () => {
+      const { backend } = makeFixture({
+        projectMap: {
+          ok: false,
+          failure: { reason: "corrupt", missing: ["files"], mismatched: [] },
+        },
+      });
+      const env = expectOk(run(canvasOpsTool("context.map"), {}, backend));
+      expect(env.freshness).toBe("failed");
+      expect((env.data as { unavailable: { reason: string } }).unavailable.reason).toBe("corrupt");
+    });
+  });
+
+  describe("context.file — deterministic file context through the fail-closed gate", () => {
+    it("serves a fresh file context as `current`, with the blob OID as evidence", () => {
+      const { backend } = makeFixture();
+      const env = expectOk(
+        run(canvasOpsTool("context.file"), { path: "packages/a/src/index.ts" }, backend),
+      );
+      expect((env.data as { path: string }).path).toBe("packages/a/src/index.ts");
+      expect(env.freshness).toBe("current");
+      expect(env.evidence).toEqual(["b".repeat(40)]);
+    });
+
+    it("refuses a missing path arg as invalid-input", () => {
+      const { backend } = makeFixture();
+      const outcome = run(canvasOpsTool("context.file"), {}, backend);
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) return;
+      expect(outcome.error.code).toBe("invalid-input");
+    });
+
+    it("maps the reader's invalid-path refusal to an invalid-input call error", () => {
+      const { backend } = makeFixture({
+        fileContext: { ok: false, reason: "invalid-path", path: "../escape.ts" },
+      });
+      const outcome = run(canvasOpsTool("context.file"), { path: "../escape.ts" }, backend);
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) return;
+      expect(outcome.error.code).toBe("invalid-input");
+    });
+
+    it("maps a path absent from the tree to a not-found call error", () => {
+      const { backend } = makeFixture({
+        fileContext: { ok: false, reason: "not-found", path: "packages/a/ghost.ts" },
+      });
+      const outcome = run(canvasOpsTool("context.file"), { path: "packages/a/ghost.ts" }, backend);
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) return;
+      expect(outcome.error.code).toBe("not-found");
+    });
+
+    it("surfaces a corrupt symbol shard as a `failed` read with a uniform `unavailable` payload", () => {
+      const { backend } = makeFixture({
+        fileContext: {
+          ok: false,
+          reason: "shard-unavailable",
+          path: "packages/a/src/index.ts",
+          digest: "deadbeef",
+        },
+      });
+      const env = expectOk(
+        run(canvasOpsTool("context.file"), { path: "packages/a/src/index.ts" }, backend),
+      );
+      expect(env.freshness).toBe("failed");
+      const data = env.data as { unavailable: { reason: string; mismatched: string[] } };
+      expect(data.unavailable.reason).toBe("corrupt");
+      expect(data.unavailable.mismatched).toEqual(["deadbeef"]);
+    });
+
+    it("rides a whole-snapshot stale gate back as freshness `stale`", () => {
+      const { backend } = makeFixture({
+        fileContext: {
+          ok: false,
+          reason: "snapshot-unavailable",
+          failure: { reason: "stale", storedBaseOid: "old", requestedBaseOid: "new" },
+        },
+      });
+      const env = expectOk(
+        run(canvasOpsTool("context.file"), { path: "packages/a/src/index.ts" }, backend),
+      );
+      expect(env.freshness).toBe("stale");
+      expect((env.data as { unavailable: { reason: string } }).unavailable.reason).toBe("stale");
+    });
   });
 });

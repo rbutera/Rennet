@@ -166,6 +166,8 @@ const TOOL_WHEN_TO_USE: Readonly<Record<string, string>> = {
   "diff.structure": "the decomposition DAG / reading order as data",
   "run.ledger": "which fleet tasks ran, tiers, budgets, admitted/rejected",
   "run.provenance": "one admitted document's provenance block",
+  "context.map": "base-branch map (no model)",
+  "context.file": "one file's structural context",
 };
 
 /** First sentence of a description (fallback one-liner), trimmed. */

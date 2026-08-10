@@ -15,14 +15,21 @@ import type {
 } from "@rennet/types";
 import { v7 as uuidv7 } from "uuid";
 import { type CanvasEvent, dispatchOrchestratorCanvasOp } from "./canvas";
+import type {
+  ProjectFileResult,
+  ProjectMapResult,
+  ProjectMapScope,
+  SnapshotGateFailure,
+} from "./project-context";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // canvasOps@2 — the orchestrator's entire world (issue #12)
 //
-// One versioned in-process MCP tool surface: the six interaction ops plus the
-// seven read-only retrieval ops (Orchestrator Context Access §2). This module is
-// the PURE contract — tool descriptors with pure handlers over an injected
-// `CanvasOpsBackend` port. It carries NO harness dependency: the Claude slot
+// One versioned in-process MCP tool surface: the six interaction ops, the seven
+// read-only retrieval ops, and the two read-only base-branch context ops
+// (`context.map` / `context.file`, issue #14 — Orchestrator Context Access §2).
+// This module is the PURE contract — tool descriptors with pure handlers over
+// an injected `CanvasOpsBackend` port. It carries NO harness dependency: the Claude slot
 // reaches these descriptors as an in-process MCP server (the SDK wiring lives in
 // `@rennet/adapters`); codex/omp reach the SAME descriptors as external MCP
 // later. One contract, no `if (harness === X)`.
@@ -196,8 +203,38 @@ export interface CanvasOpsBackend {
   provenance(docId: string): RspProvenance | undefined;
   /** The RoutePlan budget gate for a recompute (R10: refuses before any model runs). */
   planRecompute(scope: string, angle?: CanvasAngle): RoutePlanResult;
+  /**
+   * `context.map` (issue #14): the deterministic, MODEL-FREE structural map of the
+   * base branch at the review's resolved base OID, optionally scoped. The backend
+   * owns the per-request `ReviewIdentity.repo → repoKey → resolved base-OID`
+   * resolution and passes it through the fail-closed reader gate, so this returns
+   * either a served map or a TYPED gate failure (absent | stale | corrupt) — never
+   * a stale/served-but-wrong map. No LLM anywhere in this path.
+   */
+  projectMap(scope?: ProjectMapScope): ProjectMapResult;
+  /**
+   * `context.file` (issue #14): what the deterministic snapshot knows about ONE
+   * repo-relative file at the resolved base OID (structural entry + symbols). The
+   * path is escape-checked by the reader; the same fail-closed gate applies, so a
+   * stale/absent/corrupt snapshot is a typed refusal, never a served answer.
+   */
+  fileContext(path: string): ProjectFileResult;
   /** Apply the effects a write op emitted. Never receives an L2 write. */
   applyEffects(effects: readonly CanvasOpsEffect[]): void;
+}
+
+/**
+ * Freshness reconciliation (issue #14 decision #2): map the snapshot gate's
+ * failure space (`absent | stale | corrupt`) onto the canvasOps@2 `OpsFreshness`
+ * verdict every reply carries. `stale` is exactly the surface's `stale` (R30 at
+ * the reply); `absent` and `corrupt` are both `failed` — the deterministic read
+ * gate could not produce a snapshot, so the read failed. The surface's fourth
+ * verdict `updating` is never produced here: it denotes a live rebuild in flight,
+ * which the fail-closed READ gate does not signal (a snapshot is either fresh at
+ * the requested OID, or it is one of these three refusals).
+ */
+function snapshotFreshness(failure: SnapshotGateFailure): OpsFreshness {
+  return failure.reason === "stale" ? "stale" : "failed";
 }
 
 // ── Tool descriptor + neutral param spec ─────────────────────────────────────
@@ -845,15 +882,135 @@ const runProvenanceTool: CanvasOpsTool = {
   },
 };
 
+// ── Base-branch context reads (issue #14) ────────────────────────────────────
+//
+// `context.map` / `context.file` are the base-branch/workspace context as a
+// first-class tool surface (Orchestrator Context Access §2.3) — the context #12
+// left riding this issue. They are DETERMINISTIC and MODEL-FREE: each wraps the
+// fail-closed `ProjectContextReader` gate through the backend port, so a stale /
+// absent / corrupt snapshot surfaces as an honest freshness verdict, never a
+// served-but-wrong map. The per-request base-OID (`ReviewIdentity.repo → repoKey
+// → resolved OID`) is resolved by the backend, off this pure surface.
+
+/** The uniform "the snapshot could not be served" payload — a distinguished value. */
+function unavailable(
+  failure: SnapshotGateFailure,
+  extra?: Record<string, unknown>,
+): { unavailable: SnapshotGateFailure } & Record<string, unknown> {
+  return { unavailable: failure, ...extra };
+}
+
+const contextMapTool: CanvasOpsTool = {
+  name: "context.map",
+  description:
+    "The deterministic structural MAP of the base branch at the review's pinned base OID: files, workspace scopes, dependency edges, entry points, tests, ownership, conventions. NO model in this path — it is the checkable shape of the project, not an interpretation, and it carries the base OID + fingerprint so you can prove which snapshot you read. Optionally narrow to a subtree (path) and/or a workspace scope. A stale/absent/corrupt snapshot rides back as a freshness verdict with an `unavailable` payload, never a served map.",
+  kind: "retrieval",
+  readOnly: true,
+  alwaysLoad: false,
+  params: [
+    {
+      name: "path",
+      type: "string",
+      optional: true,
+      description: "Repo-relative POSIX subtree prefix to scope the map to.",
+    },
+    {
+      name: "scope",
+      type: "string",
+      optional: true,
+      description: "A workspace scope name to scope the map to.",
+    },
+  ],
+  handle(args, backend) {
+    const path = optString(args, "path");
+    const scope = optString(args, "scope");
+    const query: ProjectMapScope | undefined =
+      path === undefined && scope === undefined
+        ? undefined
+        : {
+            ...(path !== undefined ? { path } : {}),
+            ...(scope !== undefined ? { scope } : {}),
+          };
+    const result = backend.projectMap(query);
+    if (result.ok) {
+      // The gate only serves a map that is FRESH at the requested OID, so a served
+      // map is always `current`; its own base OID + fingerprint are the evidence.
+      return ok(result.map, {
+        freshness: "current",
+        evidence: [result.map.baseOid, result.map.fingerprint],
+      });
+    }
+    // A refusal is a real, honest reply — the verdict rides on the answer (R30).
+    return ok(unavailable(result.failure, { scope: `context.map:${path ?? scope ?? "(all)"}` }), {
+      freshness: snapshotFreshness(result.failure),
+    });
+  },
+};
+
+const contextFileTool: CanvasOpsTool = {
+  name: "context.file",
+  description:
+    "What the deterministic snapshot knows about ONE file at the review's pinned base OID: its git blob OID, size, mode, workspace scope, and declared symbols (recovered structurally, no model). The path is repo-relative and escape-checked — `../`, absolute, and unsafe paths are refused as invalid input. A path absent from the tree is a not-found. A stale/absent/corrupt snapshot rides back as a freshness verdict with an `unavailable` payload, never a served-but-wrong answer.",
+  kind: "retrieval",
+  readOnly: true,
+  alwaysLoad: false,
+  params: [
+    {
+      name: "path",
+      type: "string",
+      optional: false,
+      description: "Repo-relative POSIX path of the file, escape-checked.",
+    },
+  ],
+  handle(args, backend) {
+    const path = requireString(args, "path");
+    if (!path) return fail("invalid-input", "context.file requires a path");
+    const result = backend.fileContext(path);
+    if (result.ok) {
+      return ok(result.context, {
+        freshness: "current",
+        evidence: [result.context.blobOid],
+      });
+    }
+    switch (result.reason) {
+      // A malformed address and a missing-but-well-formed address are call-level
+      // errors (matching diff.read / run.provenance direct-address misses).
+      case "invalid-path":
+        return fail("invalid-input", `context.file refuses unsafe path: ${result.path}`);
+      case "not-found":
+        return fail("not-found", `no file ${result.path} at the base OID`);
+      // A symbol shard the manifest references would not decode intact — a
+      // corruption of the file's own symbols. Surface it uniformly with the
+      // whole-snapshot corrupt case: a `failed` read with an `unavailable`
+      // payload, never a silent "no symbols".
+      case "shard-unavailable":
+        return ok(
+          unavailable(
+            { reason: "corrupt", missing: [], mismatched: [result.digest] },
+            { path: result.path },
+          ),
+          { freshness: "failed" },
+        );
+      case "snapshot-unavailable":
+        return ok(unavailable(result.failure, { path }), {
+          freshness: snapshotFreshness(result.failure),
+        });
+    }
+  },
+};
+
 // ── The surface ──────────────────────────────────────────────────────────────
 
 /**
- * The full canvasOps@2 tool surface, in a stable order: the six interaction ops
- * then the seven retrieval reads. `context.*` is deliberately absent — it rides
- * the base-branch context issue. This list IS the structural actor partition:
- * no user-only op (disposition/adjudicate/expand/select/pin) and no engine-only
- * op (project/invalidate/carry/order) appears here, so "the human still
- * disposes" is a property of the surface's composition.
+ * The full canvasOps@2 tool surface, in a stable order: the six interaction ops,
+ * the seven retrieval reads, then the two base-branch context reads (issue #14 —
+ * `context.map` / `context.file`, the context #12 left riding this issue;
+ * `context.knowledge` + the LLM knowledge layer are a later wave and are NOT here).
+ * This list IS the structural actor partition: no user-only op
+ * (disposition/adjudicate/expand/select/pin) and no engine-only op
+ * (project/invalidate/carry/order) appears here, so "the human still disposes" is
+ * a property of the surface's composition. `context.*` are read-only and
+ * model-free, so they add retrieval reach without touching L1/L2/L3 or ordering.
  */
 export const CANVAS_OPS_TOOLS: readonly CanvasOpsTool[] = [
   describeTool,
@@ -869,6 +1026,8 @@ export const CANVAS_OPS_TOOLS: readonly CanvasOpsTool[] = [
   diffStructureTool,
   runLedgerTool,
   runProvenanceTool,
+  contextMapTool,
+  contextFileTool,
 ] as const;
 
 const TOOLS_BY_NAME: ReadonlyMap<string, CanvasOpsTool> = new Map(
