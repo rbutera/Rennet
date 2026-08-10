@@ -157,12 +157,24 @@ function projectDecisions(docs: AdmittedDocument[], decomposition: Decomposition
       // document — NEVER its anchor, which several decisions in one cohort
       // legitimately share (the decisions projector groups a cohort BY shared
       // anchored chunk). Keying on docId+anchor would collapse them to one key.
+      // Carry the rich detail (issue #137) onto the placed element so the existing
+      // decisions surface renders evidence chips + a reconstructed why. Placement
+      // itself still uses ONLY id/anchor/title — the richer fields never affect
+      // grouping or element identity, so replay stays byte-identical. `evidence`
+      // and `alternatives` default to empty arrays (a decision with neither still
+      // renders); `why` is carried only when present (absent = no discernible
+      // rationale, which the lens shows honestly rather than inventing one).
       const element: AnalysisElement = {
         elementKey: elementKeyFor(doc.docId, `decision/${decision.decisionId}`),
         docId: doc.docId,
         anchor: decision.anchor,
         kind: "decision",
         title: decision.title,
+        decision: {
+          evidence: decision.evidence ?? [],
+          alternatives: decision.alternatives ?? [],
+          ...(decision.why ? { why: decision.why } : {}),
+        },
       };
       const chunkId = anchoredChunk(decision.anchor, decomposition, hunkChunk);
       const list = cohortElements.get(chunkId) ?? [];

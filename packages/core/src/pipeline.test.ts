@@ -892,3 +892,59 @@ describe("buildReviewCanvases — a thrown seat turn degrades to the floor, neve
     expect(sequenceTitles(result.canvases.sequence)).toEqual(["src/alpha.ts", "src/omega.ts"]);
   });
 });
+
+// ── The Decisions emission path (issue #137) ──────────────────────────────────
+
+describe("buildReviewCanvases admits decision.record docs onto the decisions canvas (issue #137)", () => {
+  it("places the runner's decisions, grouped, with the rich detail carried through", async () => {
+    const decomposition = decompose(edgedPatchset);
+    const chunkId = decomposition.chunks[0]?.chunkId ?? "";
+    const result = await buildReviewCanvases({
+      reviewId: "review-1",
+      patchset: edgedPatchset,
+      dispositions: [],
+      decisionDocs: [
+        {
+          docId: "doc-dec",
+          docType: "decision.record",
+          body: {
+            decisions: [
+              {
+                decisionId: "d1",
+                anchor: `rennet:chunk/${chunkId}`,
+                title: "Chose fail-closed carry on a truncated patch",
+                evidence: [
+                  { kind: "spec", label: "spec §4.3", detail: "never carry over truncation" },
+                ],
+                why: { reconstructed: true, text: "an incomplete patch risks a mis-carry" },
+                alternatives: ["best-effort re-anchor over the visible portion"],
+              },
+            ],
+          },
+        },
+      ],
+    });
+    const decisions = result.canvases.decisions.layers.analysis;
+    // The docs FLOWED in and projectDecisions grouped them: a cohort exists.
+    expect(decisions.cohorts.length).toBeGreaterThanOrEqual(1);
+    const el = decisions.elements.find((e) => e.kind === "decision");
+    expect(el?.title).toBe("Chose fail-closed carry on a truncated patch");
+    // The rich detail rode through the projector onto the placed element.
+    expect(el?.decision?.evidence[0]?.kind).toBe("spec");
+    expect(el?.decision?.why?.reconstructed).toBe(true);
+    // Every other angle still renders.
+    for (const angle of CANVAS_ANGLES) expect(result.canvases[angle]).toBeDefined();
+  });
+
+  it("leaves the decisions canvas honestly empty when no decision docs are supplied", async () => {
+    const result = await buildReviewCanvases({
+      reviewId: "review-1",
+      patchset: edgedPatchset,
+      dispositions: [],
+    });
+    // No decision.record docs ⇒ no cohorts: the surface distinguishes this honest
+    // empty state from a runner that failed (a separate signal on the surface).
+    expect(result.canvases.decisions.layers.analysis.cohorts).toEqual([]);
+    expect(result.canvases.decisions.layers.analysis.elements).toEqual([]);
+  });
+});

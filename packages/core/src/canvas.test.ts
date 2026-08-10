@@ -498,3 +498,59 @@ describe("projectAnalysis — flagged", () => {
     for (const element of layer.elements) expect(element.elementKey).toHaveLength(64);
   });
 });
+
+// ── Decisions carry rich detail: evidence chips + reconstructed why (issue #137) ──
+
+describe("projectDecisions carries the rich decision detail (issue #137)", () => {
+  const richDoc = decisionsDoc([
+    {
+      decisionId: "d-store",
+      anchor: "rennet:chunk/c1",
+      title: "Keyed the store per repo root",
+      evidence: [
+        { kind: "spec", label: "spec §2.1", detail: "survives a force-push" },
+        { kind: "hunk", label: "store.ts +18", detail: "key = commonDir" },
+      ],
+      why: { reconstructed: true, text: "branch-keying drops the review on rename" },
+      alternatives: ["key per branch ref"],
+    },
+    {
+      // A decision with NO discernible rationale: it must still render.
+      decisionId: "d-noreason",
+      anchor: "rennet:chunk/c2",
+      title: "Left the import reorder in place",
+    },
+  ]);
+
+  it("places evidence chips + a reconstructed why onto the decision element", () => {
+    const layer = projectAnalysis("decisions", [richDoc], DECOMP);
+    const el = layer.elements.find((e) => e.title === "Keyed the store per repo root");
+    expect(el?.decision?.evidence.map((c) => c.kind)).toEqual(["spec", "hunk"]);
+    // The literal-true marker is load-bearing: a why exists ONLY as reconstructed.
+    expect(el?.decision?.why?.reconstructed).toBe(true);
+    expect(el?.decision?.why?.text).toContain("branch-keying");
+    expect(el?.decision?.alternatives).toEqual(["key per branch ref"]);
+  });
+
+  it("renders a decision with NO discernible rationale rather than inventing one", () => {
+    const layer = projectAnalysis("decisions", [richDoc], DECOMP);
+    const el = layer.elements.find((e) => e.title === "Left the import reorder in place");
+    expect(el).toBeDefined(); // still placed on title + evidence alone
+    expect(el?.decision?.why).toBeUndefined(); // no fabricated rationale
+    expect(el?.decision?.evidence).toEqual([]);
+    expect(el?.decision?.alternatives).toEqual([]);
+  });
+
+  it("groups by anchored chunk — the chunk title IS the theme label", () => {
+    const layer = projectAnalysis("decisions", [richDoc], DECOMP);
+    expect(layer.cohorts.map((c) => c.title)).toEqual(["schema", "core"]);
+  });
+
+  it("emits NO evidenced / mechanical / contestable triage bucket in the data", () => {
+    const layer = projectAnalysis("decisions", [richDoc], DECOMP);
+    const serialized = JSON.stringify(layer).toLowerCase();
+    expect(serialized).not.toContain("evidenced");
+    expect(serialized).not.toContain("contestable");
+    expect(serialized).not.toContain("mechanical");
+  });
+});

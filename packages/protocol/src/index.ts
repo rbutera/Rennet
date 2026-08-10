@@ -120,12 +120,32 @@ const substrateChunkRefSchema = z.object({
   filePaths: z.array(z.string()),
 });
 
+// The rich decision detail (issue #137) carried on `kind:"decision"` elements.
+// A full, failing-capable schema so the IPC surface preserves (rather than
+// silently strips) the evidence chips + reconstructed why the decisions lens
+// renders. `reconstructed` is pinned to the literal `true` so a `why` can only
+// EXIST as reconstructed — the schema enforces the same guarantee as the type.
+const decisionEvidenceSchema = z.object({
+  kind: z.enum(["spec", "pr-body", "hunk"]),
+  label: z.string(),
+  detail: z.string(),
+});
+const decisionWhySchema = z.object({ reconstructed: z.literal(true), text: z.string() });
+const decisionDetailSchema = z.object({
+  evidence: z.array(decisionEvidenceSchema),
+  why: decisionWhySchema.optional(),
+  alternatives: z.array(z.string()),
+});
+
 const analysisElementSchema = z.object({
   elementKey: z.string(),
   docId: z.string(),
   anchor: z.string(),
   kind: z.string(),
   title: z.string(),
+  // Present only on decision elements (issue #137); optional so every other
+  // canvas's elements validate unchanged and the field is preserved when present.
+  decision: decisionDetailSchema.optional(),
 });
 
 const analysisCohortSchema = z.object({
