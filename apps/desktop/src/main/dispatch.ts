@@ -145,10 +145,13 @@ export interface DispatchDeps {
   flaggedReview(review: Review): Promise<FlaggedReview>;
   /**
    * The Noise lens's input (issue #34): the low-signal churn grouped away for a
-   * review, each group tagged rule vs noise job. Read-only, no model spend. A fixture
-   * stands behind the real boundary until the noise-classification runner lands.
+   * review, each group tagged rule vs noise job. The LIVE noise-classification runner
+   * (#34) is wired behind this — it decomposes the review's active patchset and runs a
+   * real model turn over the diff, so this DOES spend a budgeted model invocation.
+   * Dispatch resolves the addressed review (freshness-checked, like `flagged.review`)
+   * and passes it in.
    */
-  noiseReview(reviewId: string): Promise<NoiseReview>;
+  noiseReview(review: Review): Promise<NoiseReview>;
   /**
    * The review.ask ports (issue #139): the two model-facing sessions a review
    * question can reach. `askOrchestrator` is the one model the reviewer converses
@@ -498,11 +501,14 @@ export function createDispatch(
       }
       // ── The Noise lens (issue #34) ────────────────────────────────────────────
       case "noise.review": {
-        // Read-only: the low-signal churn grouped away for the review, tagged rule vs
-        // noise job. No model spend; a fixture stands behind the real boundary until
-        // the live noise-classification runner lands (deferred).
+        // The LIVE noise-classification runner (#34): the noise-generation runner turns
+        // the review's diff into real grouped churn. It spends a budgeted model
+        // invocation, so — as with `flagged.review` — we resolve the addressed review
+        // (a stale or unknown id is refused) and hand the runner the review, never a
+        // bare id.
         const input = parseCommandInput(name, rawInput);
-        return parseCommandOutput(name, await deps.noiseReview(input.reviewId));
+        const review = requireLatestReview(input.reviewId);
+        return parseCommandOutput(name, await deps.noiseReview(review));
       }
       // ── Canvas user ops (issue #54 wires #10's command surface into dispatch) ──
       case "canvas.disposition": {

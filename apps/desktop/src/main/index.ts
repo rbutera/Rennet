@@ -26,7 +26,6 @@ import {
   GitHubForgeAdapter,
   GitHubPublishAdapter,
   type HttpFetch,
-  noiseReviewFixture,
   parseGitHubPrRef,
   projectDetailFixture,
   RepoWatcher,
@@ -47,6 +46,7 @@ import {
   ReviewService,
   runDecisionAngle,
   runFindingAngle,
+  runNoiseAngle,
 } from "@rennet/core";
 import { type CommandName, type DetectedHarness, isCommandName } from "@rennet/protocol";
 import type {
@@ -56,6 +56,7 @@ import type {
   DecisionsRunStatus,
   ElementDiffs,
   FlaggedReview,
+  NoiseReview,
   Patchset,
   Review,
   ReviewEngine,
@@ -498,6 +499,87 @@ async function runFlaggedReview(review: Review): Promise<FlaggedReview> {
   };
 }
 
+// The provenance seed for a live noise run (issue #34), mirroring the finding seed.
+// Provenance is stamped on the RSP document but not read by the Noise lens (groups
+// map straight to the lens), so a placeholder model is honest for placement; the
+// capability layers are set true because this path DOES constrain structured output
+// through the adapter. The `noise-job` chip's model label is threaded separately as
+// `noiseJobModel` (the harness we actually ran), not read from this seed.
+const NOISE_PROVENANCE_SEED = {
+  harness: "claude-code",
+  harnessVersion: "unknown",
+  adapterVersion: "0.0.0",
+  model: "unknown",
+  modelReportedBy: "unknown" as const,
+  capability: {
+    structuredOutput: {
+      implementedByAdapter: true,
+      advertisedByHarness: true,
+      availableInSession: true,
+    },
+    perCallModelSelection: {
+      implementedByAdapter: true,
+      advertisedByHarness: true,
+      availableInSession: true,
+    },
+  },
+};
+
+/**
+ * The live Noise lens runner (issue #34), replacing `noiseReviewFixture`. Decomposes
+ * the review's active patchset into the offered hunk manifest and runs the noise
+ * angle on the user's `claude` (subscription OAuth), budget-gated. The emitted
+ * `noise` document's grounded groups become the lens's `NoiseReview` behind the SAME
+ * `noiseReview` boundary — the UI is unchanged. With no discoverable harness, or on a
+ * runner failure/budget refusal, the lens gets the LOUD `failed` state — "ran clean"
+ * is never faked from "did not run" (the empty-vs-failed distinction the lens draws).
+ *
+ * MVP scope (see the PR): a single Claude turn classifies the churn and TAGS each
+ * group `rule` (obvious mechanical churn, naming the rule) or `noise-job` (its own
+ * judgement over ambiguous churn). The full deterministic mechanical-rules engine —
+ * a separate admission authority that would settle the `rule` groups without a model
+ * turn — is DEFERRED; today both chip types render, and the `rule` tag is the model's
+ * "a mechanical certainty settles this" claim rather than a deterministic checker's.
+ */
+async function runNoiseReview(review: Review): Promise<NoiseReview> {
+  const patchset = activePatchset(review);
+  const { adapter } = await getClaudeHarness();
+  if (!adapter) {
+    return { status: "failed", reason: "no model harness is available to classify noise" };
+  }
+  const decomposition = decompose(patchset);
+  const manifest = buildOfferedManifest(decomposition);
+  // KNOWN §7 DEVIATION (as in runFlaggedReview): the read-only harness runs with
+  // `cwd` on the live mutable checkout rather than an immutable materialisation,
+  // because that layer is not built yet. Follow-up: materialise the active patchset
+  // to an app-owned cache and point `cwd` there. Do NOT read this as satisfied.
+  const runNoiseTurn = createHarnessRunTurn(adapter, {
+    docType: "noise",
+    cwd: review.repositoryRoot,
+  });
+  // A noise run is its own live-budget-gated user action, distinct from
+  // review.canvases; the ceiling stops spend, never the review (R10, fail-closed).
+  const budget = createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS);
+  const result = await runNoiseAngle({
+    patchsetId: patchset.id,
+    manifest,
+    provenance: NOISE_PROVENANCE_SEED,
+    // The runner OWNS the noise-job chip's model label; we ran the Claude harness.
+    noiseJobModel: "Claude",
+    // A thrown/rejected turn (a session/transport construction exception, #96)
+    // degrades to a turn-failure rather than crashing the command.
+    runTurn: guardSeatTurn(runNoiseTurn),
+    budget,
+  });
+  if (result.status === "ok") {
+    return { status: "ok", groups: result.groups };
+  }
+  return {
+    status: "failed",
+    reason: result.failureReason ?? "the noise runner did not complete",
+  };
+}
+
 function registerCommandHandler(): void {
   ipcMain.handle(IPC_CHANNEL, async (event, request: unknown) => {
     if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url))
@@ -620,10 +702,12 @@ app.whenReady().then(async () => {
     // (single-model MVP: agreement is concur 1/1). The boundary is unchanged.
     flaggedReview: runFlaggedReview,
     // The Noise lens (issue #34): the low-signal churn grouped away, each group tagged
-    // rule vs noise job. The live noise-classification runner is a follow-up; a fixture
-    // stands behind the real command boundary so the lens comes alive now — exactly as
-    // the flagged lens (#138) serves its fixture behind the `flagged.review` boundary.
-    noiseReview: () => Promise.resolve(noiseReviewFixture()),
+    // rule vs noise job. This is the LIVE noise-classification runner — a real model
+    // turn over the review's diff, replacing the fixture, behind the unchanged
+    // `noiseReview` boundary. The deterministic mechanical-rules engine (a separate
+    // admission authority for the `rule` groups) is a DEFERRED follow-up; the empty-
+    // vs-failed distinction and the totality-floor ejection are honoured today.
+    noiseReview: runNoiseReview,
     // review.ask (issue #139): the ports a review question reaches. The core
     // `askReview` router (invoked in dispatch) owns the orchestrator-once /
     // both-adds-codex / never-synthesize law; these ports are the deferred half —
