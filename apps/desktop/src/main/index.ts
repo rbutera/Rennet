@@ -230,8 +230,19 @@ async function chooseRepository(): Promise<string | null> {
  * zero-config North Star, the user's own `gh`. A PR whose clone is not at the
  * chosen folder yields a null pin (only the degraded REST diff is available); this
  * slice does not open the REST path yet, so it asks for the right local clone.
+ *
+ * `retrospective` opens the review read-only over an already-merged (or any) PR:
+ * the diff is still the git range base..head from history (a merged PR needs no
+ * "PR must be open" assumption), but the created review is flagged so MAIN refuses
+ * egress and the renderer hides the sign affordance. The open path is otherwise
+ * identical — one engine, one changeset source.
  */
-async function openPullRequest(commandId: string, ref: string, repoPath: string): Promise<Review> {
+async function openPullRequest(
+  commandId: string,
+  ref: string,
+  repoPath: string,
+  retrospective: boolean,
+): Promise<Review> {
   const prRef = parseGitHubPrRef(ref);
   if (!prRef) {
     throw new Error(`"${ref}" is not a pull request. Use owner/repo#123 or a GitHub PR URL.`);
@@ -254,7 +265,7 @@ async function openPullRequest(commandId: string, ref: string, repoPath: string)
         "Open this PR from a local clone of that repository (REST-only review is not available yet).",
     );
   }
-  return service.createReviewFromPatchset(commandId, result.patchset);
+  return service.createReviewFromPatchset(commandId, result.patchset, { retrospective });
 }
 
 /**

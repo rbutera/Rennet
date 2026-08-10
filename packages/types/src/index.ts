@@ -173,6 +173,15 @@ export interface Review {
    */
   dispositions: Disposition[];
   status: "current" | "invalid";
+  /**
+   * A RETROSPECTIVE review is opened to READ an already-merged (or any) pull
+   * request after the fact — the reviewer disposes locally, and NOTHING is posted
+   * back to the forge. When true, egress is structurally refused in MAIN
+   * (`publish.review` throws before any send) and the renderer hides the
+   * sign/publish affordance entirely. Omitted ⇒ a normal, postable review, so every
+   * existing snapshot and the live working-tree / open-PR paths validate unchanged.
+   */
+  retrospective?: boolean;
 }
 
 export interface CommandFailure {

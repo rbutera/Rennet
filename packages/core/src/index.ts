@@ -53,7 +53,14 @@ export * from "./rollup-narration";
 export * from "./route-plan";
 
 export type ReviewEvent =
-  | { type: "ReviewCreated"; version: 1; reviewId: string; patchset: Patchset }
+  | {
+      type: "ReviewCreated";
+      version: 1;
+      reviewId: string;
+      patchset: Patchset;
+      /** Opened read-only, over a merged/any PR: MAIN refuses egress (see `Review.retrospective`). */
+      retrospective?: boolean;
+    }
   | { type: "PatchsetActivated"; version: 1; reviewId: string; patchset: Patchset }
   | {
       type: "DispositionSet";
@@ -463,6 +470,9 @@ export function foldReview(current: Review | null, event: ReviewEvent): Review {
         activePatchsetId: event.patchset.id,
         dispositions: [],
         status: "current",
+        // Only stamp the flag when the review is retrospective, so a normal review's
+        // snapshot is byte-identical to before (back-compat with persisted state).
+        ...(event.retrospective ? { retrospective: true } : {}),
       };
     case "PatchsetActivated": {
       if (!current || current.id !== event.reviewId) {
@@ -590,9 +600,20 @@ export class ReviewService {
    * `ReviewCreated` event and persists it. The review then lands in the identical
    * surface and decomposition pipeline the local source feeds — one engine, two
    * sources. Idempotent on `commandId` like every other write.
+   *
+   * `options.retrospective` opens the review READ-ONLY (over an already-merged or
+   * any PR): the created review carries the flag through to MAIN, which structurally
+   * refuses egress, and to the renderer, which hides the sign/publish affordance. It
+   * is part of the idempotency digest, so a retrospective open and a live open of the
+   * same patchset are distinct writes rather than colliding on one receipt.
    */
-  async createReviewFromPatchset(commandId: string, patchset: Patchset): Promise<Review> {
-    const digest = payloadDigest({ patchsetId: patchset.id, mode: "open-pr" });
+  async createReviewFromPatchset(
+    commandId: string,
+    patchset: Patchset,
+    options?: { retrospective?: boolean },
+  ): Promise<Review> {
+    const retrospective = options?.retrospective ?? false;
+    const digest = payloadDigest({ patchsetId: patchset.id, mode: "open-pr", retrospective });
     const receipt = this.store.receipt(commandId, digest);
     if (receipt) return receipt;
     const event: ReviewEvent = {
@@ -600,6 +621,7 @@ export class ReviewService {
       version: 1,
       reviewId: uuidv7(),
       patchset,
+      ...(retrospective ? { retrospective: true } : {}),
     };
     const review = foldReview(null, event);
     return this.store.commit(commandId, digest, [event], review);

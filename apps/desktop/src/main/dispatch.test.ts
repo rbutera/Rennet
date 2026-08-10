@@ -191,7 +191,8 @@ function harness(
     service,
     allowedRoots,
     chooseRepository: () => Promise.resolve(REPO),
-    openPullRequest: (commandId) => service.createReviewFromPatchset(commandId, prPatchset()),
+    openPullRequest: (commandId, _ref, _repoPath, retrospective) =>
+      service.createReviewFromPatchset(commandId, prPatchset(), { retrospective }),
     startWatching: () => undefined,
     isRepositoryDirty: () => dirty,
     setRepositoryDirty: (value) => {
@@ -946,6 +947,64 @@ describe("createDispatch — review.openPr (the GitHub PR front door)", () => {
         repoPath: "/not-granted",
       }),
     ).rejects.toThrow(/access was not granted/i);
+  });
+
+  it("opens a merged PR RETROSPECTIVELY (read-only): the review is flagged", async () => {
+    const { dispatch } = harness();
+    await dispatch("repository.choose", {});
+
+    const result = (await dispatch("review.openPr", {
+      commandId: randomUUID(),
+      ref: "rbutera/rennet#42",
+      repoPath: REPO,
+      retrospective: true,
+    })) as { review: Review };
+
+    // The read-only intent is carried on the review, from the same second source.
+    expect(result.review.retrospective).toBe(true);
+    expect(result.review.patchsets[0]?.source).toBe("github-local");
+  });
+
+  it("a normal (omitted) open leaves the review postable — retrospective undefined", async () => {
+    const { dispatch } = harness();
+    await dispatch("repository.choose", {});
+
+    const result = (await dispatch("review.openPr", {
+      commandId: randomUUID(),
+      ref: "rbutera/rennet#42",
+      repoPath: REPO,
+    })) as { review: Review };
+
+    expect(result.review.retrospective).toBeUndefined();
+  });
+
+  it("a RETROSPECTIVE review STRUCTURALLY refuses publish — nothing egresses, even on dry-run", async () => {
+    const port = fakePublishPort();
+    const { dispatch } = harness(port);
+    await dispatch("repository.choose", {});
+    const opened = (await dispatch("review.openPr", {
+      commandId: randomUUID(),
+      ref: "rbutera/rennet#42",
+      repoPath: REPO,
+      retrospective: true,
+    })) as { review: Review };
+    const comments = publishComments();
+
+    // The refusal precedes the whole egress machinery: even a well-formed dry-run
+    // (which posts nothing anyway) and a real send are both refused, in one message.
+    for (const dryRun of [true, false]) {
+      await expect(
+        dispatch("publish.review", {
+          commandId: randomUUID(),
+          reviewId: opened.review.id,
+          target: SANDBOX_TARGET,
+          comments,
+          payload: canonicalReviewPayload(comments),
+          dryRun,
+        }),
+      ).rejects.toThrow(/retrospective review/i);
+    }
+    expect(port.posts).toHaveLength(0); // nothing ever left the machine
   });
 });
 

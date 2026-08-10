@@ -437,9 +437,26 @@ button {
 }
 .pr-door {
   display: flex;
+  flex-wrap: wrap;
   gap: 8px;
   width: min(440px, 82vw);
   margin-top: 14px;
+}
+.pr-retrospective {
+  flex-basis: 100%;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-top: 2px;
+  text-align: left;
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.35;
+  cursor: pointer;
+}
+.pr-retrospective input {
+  margin-top: 2px;
+  flex: none;
 }
 .pr-input {
   flex: 1;
@@ -467,6 +484,23 @@ button {
   margin-top: 10px;
   color: var(--text-faint);
   font-size: 12px;
+}
+.retrospective-notice {
+  padding: 16px 18px;
+  display: grid;
+  gap: 6px;
+}
+.retrospective-notice .eyebrow {
+  margin: 0;
+  letter-spacing: 0.08em;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.retrospective-notice p:not(.eyebrow) {
+  margin: 0;
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.45;
 }
 .mark {
   width: 54px;
