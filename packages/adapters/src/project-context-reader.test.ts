@@ -214,4 +214,27 @@ describe("ProjectContextReader — the fail-closed staleness/integrity gate", ()
     // A store that cannot produce a well-formed manifest degrades to "no snapshot".
     expect(result.failure.reason).toBe("absent");
   });
+
+  it("refuses a NESTED-malformed manifest (null shard value / non-tuple symbols) with a typed failure, never a throw", async () => {
+    const { store, manifest, storeDir } = await generate();
+    const reader = new ProjectContextReader(store);
+    const manifestPath = join(storeDir, sha256Hex(manifest.repoKey), "manifest.json");
+
+    // These pass the container-only shape check (`shards` is a non-null object,
+    // `symbols` is an array) but the INNER values are malformed. Without the
+    // deep-shape guard the gate reaches `manifest.shards[slot].digest` /
+    // `for (const [, digest] of manifest.symbols)` and THROWS — violating its own
+    // "never a throw" contract (Rule 75). Both must degrade to a typed refusal.
+    const nullShardValue = { ...manifest, shards: { ...manifest.shards, files: null } };
+    writeFileSync(manifestPath, JSON.stringify(nullShardValue));
+    expect(() => reader.readProjectMap(manifest.repoKey, manifest.baseOid)).not.toThrow();
+    const r1 = reader.readProjectMap(manifest.repoKey, manifest.baseOid);
+    expect(r1.ok).toBe(false);
+
+    const nonTupleSymbols = { ...manifest, symbols: [null] };
+    writeFileSync(manifestPath, JSON.stringify(nonTupleSymbols));
+    expect(() => reader.readFileContext(manifest.repoKey, manifest.baseOid, "packages/a/src/index.ts")).not.toThrow();
+    const r2 = reader.readProjectMap(manifest.repoKey, manifest.baseOid);
+    expect(r2.ok).toBe(false);
+  });
 });

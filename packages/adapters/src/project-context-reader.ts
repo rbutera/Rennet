@@ -70,29 +70,38 @@ export class ProjectContextReader {
 
     const load = (digest: string): string | undefined => this.store.loadShard(repoKey, digest);
 
-    const integrity = verifySnapshotIntegrity(manifest, load);
-    if (!integrity.ok) {
-      return {
-        ok: false,
-        failure: {
-          reason: "corrupt",
-          missing: integrity.missing,
-          mismatched: integrity.mismatched,
-        },
-      };
-    }
+    // Defense in depth for the "never a throw" contract (Rule 75, vital circuit):
+    // `loadManifest` already deep-validates the read shape, but should any
+    // malformed manifest still reach integrity/materialize (e.g. a future
+    // refactor), a throw here is coerced to a TYPED `corrupt` refusal rather than
+    // propagating out of the gate as an uncaught exception.
+    try {
+      const integrity = verifySnapshotIntegrity(manifest, load);
+      if (!integrity.ok) {
+        return {
+          ok: false,
+          failure: {
+            reason: "corrupt",
+            missing: integrity.missing,
+            mismatched: integrity.mismatched,
+          },
+        };
+      }
 
-    const materialized = materializeSnapshot(manifest, load);
-    if (!materialized.ok) {
-      // Integrity passed but a structural shard would not decode — treat as
-      // corruption (fail closed) rather than serving a partial map.
-      return {
-        ok: false,
-        failure: { reason: "corrupt", missing: materialized.slots, mismatched: [] },
-      };
-    }
+      const materialized = materializeSnapshot(manifest, load);
+      if (!materialized.ok) {
+        // Integrity passed but a structural shard would not decode — treat as
+        // corruption (fail closed) rather than serving a partial map.
+        return {
+          ok: false,
+          failure: { reason: "corrupt", missing: materialized.slots, mismatched: [] },
+        };
+      }
 
-    return { ok: true, snapshot: materialized.snapshot };
+      return { ok: true, snapshot: materialized.snapshot };
+    } catch {
+      return { ok: false, failure: { reason: "corrupt", missing: [], mismatched: [] } };
+    }
   }
 
   /**

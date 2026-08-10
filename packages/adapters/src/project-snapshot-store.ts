@@ -81,6 +81,24 @@ export class ProjectSnapshotStore {
       ) {
         return null;
       }
+      // Deep-validate the INNER shapes too, not just the top-level containers.
+      // The downstream gate does `manifest.shards[slot].digest` and destructures
+      // `for (const [, digest] of manifest.symbols)` — both THROW on a null shard
+      // value or a non-iterable symbol entry (e.g. `shards.files = null`,
+      // `symbols: [null]`), shapes the container-only check above still admits.
+      // A store that produced such a manifest is corrupt; degrade to "no
+      // snapshot" HERE so the contract stays literal ("malformed → null, never a
+      // throw", Rule 75) instead of throwing inside a later "never a throw" gate.
+      for (const ref of Object.values(parsed.shards)) {
+        if (!ref || typeof ref !== "object" || typeof (ref as { digest?: unknown }).digest !== "string") {
+          return null;
+        }
+      }
+      for (const entry of parsed.symbols) {
+        if (!Array.isArray(entry) || entry.length < 2 || typeof entry[1] !== "string") {
+          return null;
+        }
+      }
       return parsed;
     } catch {
       return null;
