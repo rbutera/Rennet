@@ -45,6 +45,8 @@ function stubBackend(): CanvasOpsBackend {
     runLedger: () => [],
     provenance: () => undefined,
     planRecompute: () => plan,
+    projectMap: () => ({ ok: false as const, failure: { reason: "absent" as const } }),
+    fileContext: () => ({ ok: false as const, reason: "not-found" as const, path: "x" }),
     applyEffects: (effects: readonly CanvasOpsEffect[]) => {
       void effects;
     },

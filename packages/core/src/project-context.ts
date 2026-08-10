@@ -407,6 +407,51 @@ export type FileContextResult =
       readonly digest: string;
     };
 
+// ── The fail-closed snapshot gate: shared result taxonomy ────────────────────
+//
+// These types are the CANONICAL shape of what the composed staleness+integrity
+// gate can return (the adapter `ProjectContextReader` implements the gate; the
+// pure `canvasOps@2` `context.map` / `context.file` handlers consume it). They
+// live here — alongside `ProjectMap` and `FileContextResult` — so the pure tool
+// port can speak them without the core → adapters dependency the reader would
+// otherwise force. `absent | stale | corrupt` is the whole failure space (R30 +
+// integrity), and every one is a TYPED reason, never a throw or a partial read.
+
+/** Why the fail-closed snapshot gate refused to produce a queryable snapshot. */
+export type SnapshotGateFailure =
+  /** No snapshot has been generated for this repo yet. */
+  | { readonly reason: "absent" }
+  /** A snapshot exists but was built at a different OID than the request pins to (R30). */
+  | { readonly reason: "stale"; readonly storedBaseOid: string; readonly requestedBaseOid: string }
+  /** The stored snapshot failed the integrity gate (missing/corrupt shard or tampered manifest). */
+  | {
+      readonly reason: "corrupt";
+      readonly missing: readonly string[];
+      readonly mismatched: readonly string[];
+    };
+
+/**
+ * `context.map` gated result: the deterministic map at the requested base OID, or
+ * a typed gate failure. A failure is NEVER a served map — the gate fails closed.
+ */
+export type ProjectMapResult =
+  | { readonly ok: true; readonly map: ProjectMap }
+  | { readonly ok: false; readonly failure: SnapshotGateFailure };
+
+/**
+ * `context.file` gated result: the structural file context, the file-level
+ * refusals `queryFileContext` already produces (invalid-path / not-found /
+ * shard-unavailable), or a whole-snapshot gate failure wrapped as
+ * `snapshot-unavailable`. One result type so a single call has one shape.
+ */
+export type ProjectFileResult =
+  | FileContextResult
+  | {
+      readonly ok: false;
+      readonly reason: "snapshot-unavailable";
+      readonly failure: SnapshotGateFailure;
+    };
+
 /**
  * Answer "what does the snapshot know about THIS file?" — the file's structural
  * entry plus the symbols for its blob, joined `path → blobOid → symbol shard`.

@@ -97,6 +97,37 @@ function makeBackend(): { backend: CanvasOpsBackend; applied: CanvasOpsEffect[] 
       harnessInvocationCount: 1,
       maxHarnessInvocations: 5,
     }),
+    projectMap: () => ({
+      ok: true,
+      map: {
+        baseRef: "refs/heads/main",
+        baseRefResolution: "explicit-setting",
+        baseOid: "a".repeat(40),
+        fingerprint: "fp",
+        files: [{ path: "src/c1.ts", blobOid: "b".repeat(40), size: 3, mode: "100644" }],
+        scopes: [{ name: "root", root: "", private: true, tags: [] }],
+        edges: [],
+        entryPoints: [],
+        tests: [],
+        ownership: [],
+        conventions: [],
+      },
+    }),
+    fileContext: (path: string) => ({
+      ok: true,
+      context: {
+        path,
+        blobOid: "b".repeat(40),
+        size: 3,
+        mode: "100644",
+        isSymlink: false,
+        scope: "root",
+        hasSymbols: false,
+        extractor: null,
+        symbols: [],
+        tests: [],
+      },
+    }),
     applyEffects: (effects) => {
       for (const effect of effects) applied.push(effect);
     },
@@ -156,6 +187,8 @@ describe("canvasOps@2 SDK server", () => {
       "diff.structure",
       "run.ledger",
       "run.provenance",
+      "context.map",
+      "context.file",
     ]);
     const byName = new Map(defs.map((d) => [d.name, d]));
     // Hot trio is always-loaded (SDK stores it under _meta).
@@ -167,6 +200,8 @@ describe("canvasOps@2 SDK server", () => {
     // readOnlyHint tracks the descriptor: reads true, writers false.
     expect(byName.get("canvas.read")?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get("diff.search")?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get("context.map")?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get("context.file")?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get("canvas.propose")?.annotations?.readOnlyHint).toBe(false);
     // Structural: no user-only op is exposed as a tool.
     for (const userOp of [
@@ -197,6 +232,23 @@ describe("canvasOps@2 SDK server", () => {
     const detail = element.data as ElementDetail;
     expect(detail.ref).toBe(firstKey);
     expect(detail.element?.elementKey).toBe(firstKey);
+  });
+
+  it("round-trips context.map / context.file through the SDK handlers", async () => {
+    const { backend } = makeBackend();
+    const defs = await buildCanvasOpsTools(backend);
+
+    const map = envelopeOf(await callTool(defs, "context.map", {}));
+    expect(map.freshness).toBe("current");
+    expect((map.data as { baseOid: string }).baseOid).toBe("a".repeat(40));
+
+    const file = envelopeOf(await callTool(defs, "context.file", { path: "src/c1.ts" }));
+    expect(file.freshness).toBe("current");
+    expect((file.data as { path: string }).path).toBe("src/c1.ts");
+
+    // context.file with no path → malformed call, isError.
+    const bad = await callTool(defs, "context.file", {});
+    expect(bad.isError).toBe(true);
   });
 
   it("returns isError on a malformed call, distinguishable from a nothing-found reply", async () => {
