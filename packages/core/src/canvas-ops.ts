@@ -15,6 +15,7 @@ import type {
 } from "@rennet/types";
 import { v7 as uuidv7 } from "uuid";
 import { type CanvasEvent, dispatchOrchestratorCanvasOp } from "./canvas";
+import type { NoveltyResult } from "./novelty-ledger";
 import type {
   ProjectFileResult,
   ProjectMapResult,
@@ -26,8 +27,9 @@ import type {
 // canvasOps@2 — the orchestrator's entire world (issue #12)
 //
 // One versioned in-process MCP tool surface: the six interaction ops, the seven
-// read-only retrieval ops, and the two read-only base-branch context ops
-// (`context.map` / `context.file`, issue #14 — Orchestrator Context Access §2).
+// read-only retrieval ops, and the read-only base-branch/change context ops
+// (`context.map` / `context.file`, issue #14 — Orchestrator Context Access §2;
+// `context.novelty`, issue #144 — the deterministic novelty ledger).
 // This module is the PURE contract — tool descriptors with pure handlers over
 // an injected `CanvasOpsBackend` port. It carries NO harness dependency: the Claude slot
 // reaches these descriptors as an in-process MCP server (the SDK wiring lives in
@@ -219,6 +221,18 @@ export interface CanvasOpsBackend {
    * stale/absent/corrupt snapshot is a typed refusal, never a served answer.
    */
   fileContext(path: string): ProjectFileResult;
+  /**
+   * `context.novelty` (issue #144): the deterministic, MODEL-FREE novelty ledger
+   * for the review's CHANGE (each changed file/symbol classified novel/extends/
+   * conforms with cited baseline evidence) against the snapshot at the patchset's
+   * pinned base OID. The backend owns the per-review `{repoKey, patchset}`
+   * resolution and passes it through the SAME fail-closed snapshot gate the context
+   * reads use, so this returns either a served ledger or a TYPED gate failure
+   * (absent | stale | corrupt) — never a ledger computed against a mismatched
+   * baseline. No LLM anywhere in this path (the extends/conforms/novel LLM layer is
+   * a deferred Stage-2 wave).
+   */
+  novelty(): NoveltyResult;
   /** Apply the effects a write op emitted. Never receives an L2 write. */
   applyEffects(effects: readonly CanvasOpsEffect[]): void;
 }
@@ -882,15 +896,17 @@ const runProvenanceTool: CanvasOpsTool = {
   },
 };
 
-// ── Base-branch context reads (issue #14) ────────────────────────────────────
+// ── Base-branch / change context reads (issues #14, #144) ─────────────────────
 //
-// `context.map` / `context.file` are the base-branch/workspace context as a
-// first-class tool surface (Orchestrator Context Access §2.3) — the context #12
-// left riding this issue. They are DETERMINISTIC and MODEL-FREE: each wraps the
-// fail-closed `ProjectContextReader` gate through the backend port, so a stale /
-// absent / corrupt snapshot surfaces as an honest freshness verdict, never a
-// served-but-wrong map. The per-request base-OID (`ReviewIdentity.repo → repoKey
-// → resolved OID`) is resolved by the backend, off this pure surface.
+// `context.map` / `context.file` (issue #14) are the base-branch/workspace context
+// as a first-class tool surface (Orchestrator Context Access §2.3); `context.novelty`
+// (issue #144) is the deterministic novelty ledger for the CHANGE against that base.
+// All three are DETERMINISTIC and MODEL-FREE: each wraps a fail-closed reader gate
+// through the backend port, so a stale / absent / corrupt snapshot surfaces as an
+// honest freshness verdict, never a served-but-wrong answer. The per-request base is
+// resolved by the backend, off this pure surface: `context.map` / `context.file`
+// resolve `ReviewIdentity.repo → repoKey → base OID`; `context.novelty` resolves the
+// review's `{repoKey, patchset}` (the patchset pins its own base OID).
 
 /** The uniform "the snapshot could not be served" payload — a distinguished value. */
 function unavailable(
@@ -999,14 +1015,45 @@ const contextFileTool: CanvasOpsTool = {
   },
 };
 
+const contextNoveltyTool: CanvasOpsTool = {
+  name: "context.novelty",
+  description:
+    "The deterministic NOVELTY LEDGER for this review's change against the base branch at the pinned base OID: every changed file and introduced symbol classified `novel` | `extends` | `conforms`, each verdict citing the concrete baseline entity (or its absence) it rests on. NO model in this path — it is the checkable structural relationship between the change and the baseline, not an interpretation, and it carries the base OID + snapshot fingerprint + patchset id so you can prove which (baseline, diff) pair produced it. A stale/absent/corrupt snapshot rides back as a freshness verdict with an `unavailable` payload, never a ledger computed against a mismatched baseline.",
+  kind: "retrieval",
+  readOnly: true,
+  alwaysLoad: false,
+  params: [],
+  handle(_args, backend) {
+    const result = backend.novelty();
+    if (result.ok) {
+      // The gate only serves a ledger built against a snapshot FRESH at the
+      // patchset's base OID, so a served ledger is always `current`; its own base
+      // OID + fingerprint + patchset id are the (baseline, diff) provenance.
+      return ok(result.ledger, {
+        freshness: "current",
+        evidence: [
+          result.ledger.baseOid,
+          result.ledger.snapshotFingerprint,
+          result.ledger.patchsetId,
+        ],
+      });
+    }
+    // A refusal is a real, honest reply — the verdict rides on the answer (R30).
+    return ok(unavailable(result.failure, { scope: "context.novelty" }), {
+      freshness: snapshotFreshness(result.failure),
+    });
+  },
+};
+
 // ── The surface ──────────────────────────────────────────────────────────────
 
 /**
  * The full canvasOps@2 tool surface, in a stable order: the six interaction ops,
- * the seven retrieval reads, then the two base-branch context reads (issue #14 —
- * `context.map` / `context.file`, the context #12 left riding this issue;
- * `context.knowledge` + the LLM knowledge layer are a later wave and are NOT here).
- * This list IS the structural actor partition: no user-only op
+ * the seven retrieval reads, then the base-branch/change context reads: `context.map`
+ * / `context.file` (issue #14, the context #12 left riding it) and `context.novelty`
+ * (issue #144 — the deterministic novelty ledger for the change). `context.knowledge`
+ * + the LLM knowledge/novelty layers are a later wave and are NOT here. This list IS
+ * the structural actor partition: no user-only op
  * (disposition/adjudicate/expand/select/pin) and no engine-only op
  * (project/invalidate/carry/order) appears here, so "the human still disposes" is
  * a property of the surface's composition. `context.*` are read-only and
@@ -1028,6 +1075,7 @@ export const CANVAS_OPS_TOOLS: readonly CanvasOpsTool[] = [
   runProvenanceTool,
   contextMapTool,
   contextFileTool,
+  contextNoveltyTool,
 ] as const;
 
 const TOOLS_BY_NAME: ReadonlyMap<string, CanvasOpsTool> = new Map(

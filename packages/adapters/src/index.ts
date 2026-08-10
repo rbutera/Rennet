@@ -115,6 +115,11 @@ export {
   noiseReviewFixture,
 } from "./noise-fixture";
 export {
+  type NoveltyBackendPart,
+  noveltyBackend,
+  type ResolvedNoveltyContext,
+} from "./novelty-ledger-backend";
+export {
   type NoveltyLedgerFailure,
   NoveltyLedgerReader,
   type NoveltyLedgerResult,

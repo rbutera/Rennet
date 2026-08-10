@@ -47,9 +47,25 @@ import type {
   WorkspaceScope,
 } from "@rennet/types";
 import { DIFF_TRUNCATION_MARKER } from "@rennet/types";
-import type { LoadedSnapshot } from "./project-context";
+import type { LoadedSnapshot, SnapshotGateFailure } from "./project-context";
 import { queryFileContext } from "./project-context";
 import { structuralTsExtractor } from "./project-snapshot";
+
+/**
+ * `context.novelty` gated result (issue #144): the deterministic novelty ledger
+ * for the review's change against the base snapshot, or a typed gate failure. A
+ * failure is NEVER a served ledger — the snapshot gate fails closed, so the ledger
+ * can never be computed against a mismatched (stale/absent/corrupt) baseline.
+ *
+ * CANONICAL here — alongside `classifyNovelty` and the gate-failure taxonomy — so
+ * the pure `canvasOps@2` `context.novelty` handler (the backend port lives in
+ * core) can speak it without a core → adapters edge, exactly as `ProjectMapResult`
+ * does for `context.map`. The adapter `NoveltyLedgerReader` produces this shape and
+ * re-exports it as `NoveltyLedgerResult` for stability.
+ */
+export type NoveltyResult =
+  | { readonly ok: true; readonly ledger: NoveltyLedger }
+  | { readonly ok: false; readonly failure: SnapshotGateFailure };
 
 // ── Diff parsing (pure, added-lines only) ─────────────────────────────────────
 

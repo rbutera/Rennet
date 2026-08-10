@@ -128,6 +128,32 @@ function makeBackend(): { backend: CanvasOpsBackend; applied: CanvasOpsEffect[] 
         tests: [],
       },
     }),
+    novelty: () => ({
+      ok: true,
+      ledger: {
+        snapshotFingerprint: "fp",
+        baseOid: "a".repeat(40),
+        patchsetId: PATCHSET_ID,
+        entries: [
+          {
+            unit: { kind: "file", path: "src/c1.ts", fileStatus: "added" },
+            classification: "novel",
+            evidence: {
+              snapshotFingerprint: "fp",
+              baseOid: "a".repeat(40),
+              shard: null,
+              match: { kind: "file-absent", path: "src/c1.ts" },
+              context: {
+                scope: "root",
+                isKnownTest: false,
+                isConvention: false,
+                patchTruncated: false,
+              },
+            },
+          },
+        ],
+      },
+    }),
     applyEffects: (effects) => {
       for (const effect of effects) applied.push(effect);
     },
@@ -189,6 +215,7 @@ describe("canvasOps@2 SDK server", () => {
       "run.provenance",
       "context.map",
       "context.file",
+      "context.novelty",
     ]);
     const byName = new Map(defs.map((d) => [d.name, d]));
     // Hot trio is always-loaded (SDK stores it under _meta).
@@ -202,6 +229,7 @@ describe("canvasOps@2 SDK server", () => {
     expect(byName.get("diff.search")?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get("context.map")?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get("context.file")?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get("context.novelty")?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get("canvas.propose")?.annotations?.readOnlyHint).toBe(false);
     // Structural: no user-only op is exposed as a tool.
     for (const userOp of [
@@ -249,6 +277,18 @@ describe("canvasOps@2 SDK server", () => {
     // context.file with no path → malformed call, isError.
     const bad = await callTool(defs, "context.file", {});
     expect(bad.isError).toBe(true);
+  });
+
+  it("round-trips context.novelty through the SDK handler", async () => {
+    const { backend } = makeBackend();
+    const defs = await buildCanvasOpsTools(backend);
+
+    const novelty = envelopeOf(await callTool(defs, "context.novelty", {}));
+    expect(novelty.freshness).toBe("current");
+    const ledger = novelty.data as { baseOid: string; entries: Array<{ classification: string }> };
+    expect(ledger.baseOid).toBe("a".repeat(40));
+    expect(ledger.entries[0]?.classification).toBe("novel");
+    expect(novelty.evidence).toEqual(["a".repeat(40), "fp", PATCHSET_ID]);
   });
 
   it("returns isError on a malformed call, distinguishable from a nothing-found reply", async () => {

@@ -3,6 +3,7 @@ import type {
   CanvasAngle,
   Decomposition,
   Disposition,
+  NoveltyLedger,
   RspProvenance,
 } from "@rennet/types";
 import { describe, expect, it } from "vitest";
@@ -34,6 +35,7 @@ import {
   type ToolOutcome,
   type ViewState,
 } from "./canvas-ops";
+import type { NoveltyResult } from "./novelty-ledger";
 import type {
   ProjectFileResult,
   ProjectMap,
@@ -93,10 +95,15 @@ interface FixtureOptions {
   onProjectMap?: (scope?: ProjectMapScope) => void;
   /** Override the deterministic file-context gate result (default: a fresh served context). */
   fileContext?: ProjectFileResult;
+  /** Override the deterministic novelty-ledger gate result (default: a fresh served ledger). */
+  novelty?: NoveltyResult;
+  /** Fires when a `context.novelty` call reaches the backend (default served ledger). */
+  onNovelty?: () => void;
 }
 
 const FIXTURE_BASE_OID = "a".repeat(40);
 const FIXTURE_FINGERPRINT = "fp-fixture";
+const FIXTURE_PATCHSET_PIN = "ps-novelty-1";
 
 /** A fresh, served project map (the deterministic reader's ok shape). */
 function freshProjectMap(): ProjectMap {
@@ -112,6 +119,33 @@ function freshProjectMap(): ProjectMap {
     tests: [],
     ownership: [],
     conventions: [],
+  };
+}
+
+/** A fresh, served novelty ledger (the deterministic reader's ok shape) — one novel file. */
+function freshNoveltyLedger(): NoveltyLedger {
+  return {
+    snapshotFingerprint: FIXTURE_FINGERPRINT,
+    baseOid: FIXTURE_BASE_OID,
+    patchsetId: FIXTURE_PATCHSET_PIN,
+    entries: [
+      {
+        unit: { kind: "file", path: "packages/a/src/added.ts", fileStatus: "added" },
+        classification: "novel",
+        evidence: {
+          snapshotFingerprint: FIXTURE_FINGERPRINT,
+          baseOid: FIXTURE_BASE_OID,
+          shard: null,
+          match: { kind: "file-absent", path: "packages/a/src/added.ts" },
+          context: {
+            scope: "@t/a",
+            isKnownTest: false,
+            isConvention: false,
+            patchTruncated: false,
+          },
+        },
+      },
+    ],
   };
 }
 
@@ -257,6 +291,10 @@ function makeFixture(options: FixtureOptions = {}): Fixture {
           tests: [],
         },
       },
+    novelty: (): NoveltyResult => {
+      options.onNovelty?.();
+      return options.novelty ?? { ok: true, ledger: freshNoveltyLedger() };
+    },
     applyEffects: (effects) => {
       for (const effect of effects) {
         applied.push(effect);
@@ -304,11 +342,14 @@ describe("canvasOps@2 tool surface", () => {
       "run.provenance",
       "context.map",
       "context.file",
+      "context.novelty",
     ]);
-    // The base-branch context reads (issue #14) now ride this surface; the LLM
-    // knowledge read (context.knowledge) is a later wave and is NOT here yet.
+    // The base-branch context reads (issue #14) + the deterministic novelty ledger
+    // (issue #144) now ride this surface; the LLM knowledge read (context.knowledge)
+    // and the Stage-2 LLM novelty layer are later waves and are NOT here yet.
     expect(names).toContain("context.map");
     expect(names).toContain("context.file");
+    expect(names).toContain("context.novelty");
     expect(names).not.toContain("context.knowledge");
   });
 
@@ -330,6 +371,7 @@ describe("canvasOps@2 tool surface", () => {
       "run.provenance",
       "context.map",
       "context.file",
+      "context.novelty",
     ]) {
       expect(canvasOpsTool(name).readOnly).toBe(true);
     }
@@ -702,6 +744,66 @@ describe("canvasOps@2 tool surface", () => {
       );
       expect(env.freshness).toBe("stale");
       expect((env.data as { unavailable: { reason: string } }).unavailable.reason).toBe("stale");
+    });
+  });
+
+  // Issue #144: the deterministic novelty ledger (context.novelty) ─────────────
+  describe("context.novelty — deterministic novelty ledger through the fail-closed gate", () => {
+    it("serves a fresh ledger as `current`, with base OID + fingerprint + patchset id as evidence", () => {
+      const { backend } = makeFixture();
+      const env = expectOk(run(canvasOpsTool("context.novelty"), {}, backend));
+      const ledger = env.data as NoveltyLedger;
+      expect(ledger.baseOid).toBe(FIXTURE_BASE_OID);
+      expect(ledger.snapshotFingerprint).toBe(FIXTURE_FINGERPRINT);
+      expect(ledger.patchsetId).toBe(FIXTURE_PATCHSET_PIN);
+      expect(ledger.entries[0]?.classification).toBe("novel");
+      expect(env.freshness).toBe("current");
+      expect(env.evidence).toEqual([FIXTURE_BASE_OID, FIXTURE_FINGERPRINT, FIXTURE_PATCHSET_PIN]);
+    });
+
+    it("takes no params and reaches the backend port once", () => {
+      let calls = 0;
+      const { backend } = makeFixture({ onNovelty: () => (calls += 1) });
+      run(canvasOpsTool("context.novelty"), {}, backend);
+      expect(calls).toBe(1);
+    });
+
+    it("rides a STALE snapshot back as freshness `stale` with an `unavailable` payload, not a served ledger (R30)", () => {
+      const { backend } = makeFixture({
+        novelty: {
+          ok: false,
+          failure: { reason: "stale", storedBaseOid: "old", requestedBaseOid: "new" },
+        },
+      });
+      const env = expectOk(run(canvasOpsTool("context.novelty"), {}, backend));
+      expect(env.freshness).toBe("stale");
+      const data = env.data as { unavailable: { reason: string; storedBaseOid?: string } };
+      expect(data.unavailable.reason).toBe("stale");
+      expect(data.unavailable.storedBaseOid).toBe("old");
+      // The distinguished refusal never masquerades as a served ledger.
+      expect((env.data as { baseOid?: string }).baseOid).toBeUndefined();
+      expect((env.data as { entries?: unknown }).entries).toBeUndefined();
+    });
+
+    it("maps an ABSENT snapshot to freshness `failed`", () => {
+      const { backend } = makeFixture({
+        novelty: { ok: false, failure: { reason: "absent" } },
+      });
+      const env = expectOk(run(canvasOpsTool("context.novelty"), {}, backend));
+      expect(env.freshness).toBe("failed");
+      expect((env.data as { unavailable: { reason: string } }).unavailable.reason).toBe("absent");
+    });
+
+    it("maps a CORRUPT snapshot to freshness `failed`", () => {
+      const { backend } = makeFixture({
+        novelty: {
+          ok: false,
+          failure: { reason: "corrupt", missing: ["symbols"], mismatched: [] },
+        },
+      });
+      const env = expectOk(run(canvasOpsTool("context.novelty"), {}, backend));
+      expect(env.freshness).toBe("failed");
+      expect((env.data as { unavailable: { reason: string } }).unavailable.reason).toBe("corrupt");
     });
   });
 });

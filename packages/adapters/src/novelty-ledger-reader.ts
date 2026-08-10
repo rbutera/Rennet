@@ -1,5 +1,5 @@
-import { classifyNovelty } from "@rennet/core";
-import type { NoveltyLedger, Patchset } from "@rennet/types";
+import { classifyNovelty, type NoveltyResult } from "@rennet/core";
+import type { Patchset } from "@rennet/types";
 import type { ProjectContextReader, SnapshotGateFailure } from "./project-context-reader";
 
 /**
@@ -20,9 +20,13 @@ import type { ProjectContextReader, SnapshotGateFailure } from "./project-contex
 /** Why the ledger could not be produced — the snapshot gate refused. */
 export type NoveltyLedgerFailure = SnapshotGateFailure;
 
-export type NoveltyLedgerResult =
-  | { readonly ok: true; readonly ledger: NoveltyLedger }
-  | { readonly ok: false; readonly failure: NoveltyLedgerFailure };
+/**
+ * The reader's result shape. CANONICAL as `NoveltyResult` in `@rennet/core` (so the
+ * pure `context.novelty` handler can speak it without a core → adapters edge, exactly
+ * as `ProjectMapResult` does for `context.map`); aliased here for stability — existing
+ * importers keep resolving `NoveltyLedgerResult` from this module.
+ */
+export type NoveltyLedgerResult = NoveltyResult;
 
 export class NoveltyLedgerReader {
   constructor(private readonly reader: ProjectContextReader) {}
@@ -34,7 +38,7 @@ export class NoveltyLedgerReader {
    * snapshot built at any other OID is refused as `stale` rather than served, so
    * the ledger can never be computed against a mismatched baseline.
    */
-  classify(repoKey: string, patchset: Patchset): NoveltyLedgerResult {
+  classify(repoKey: string, patchset: Patchset): NoveltyResult {
     const requestedBaseOid = patchset.repository.baseOid;
     const gated = this.reader.loadFresh(repoKey, requestedBaseOid);
     if (!gated.ok) return { ok: false, failure: gated.failure };
