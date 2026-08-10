@@ -165,6 +165,16 @@ function makeBackend(): { backend: CanvasOpsBackend; applied: CanvasOpsEffect[] 
         ],
       },
     }),
+    knowledge: () => ({
+      ok: true,
+      knowledge: {
+        baseOid: "a".repeat(40),
+        snapshotFingerprint: "fp",
+        generator: null,
+        statements: [],
+        invalidatedPending: [],
+      },
+    }),
     applyEffects: (effects) => {
       for (const effect of effects) applied.push(effect);
     },
@@ -229,6 +239,7 @@ describe("canvasOps@2 SDK server", () => {
       "context.novelty",
       "context.overview",
       "context.symbol",
+      "context.knowledge",
     ]);
     const byName = new Map(defs.map((d) => [d.name, d]));
     // Hot trio is always-loaded (SDK stores it under _meta).
@@ -245,6 +256,7 @@ describe("canvasOps@2 SDK server", () => {
     expect(byName.get("context.novelty")?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get("context.overview")?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get("context.symbol")?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get("context.knowledge")?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get("canvas.propose")?.annotations?.readOnlyHint).toBe(false);
     // Structural: no user-only op is exposed as a tool.
     for (const userOp of [

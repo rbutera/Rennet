@@ -7,6 +7,8 @@ import {
 } from "@rennet/core";
 import type { Patchset, Review } from "@rennet/types";
 import { execaGit, type GitExec } from "./git-range-diff";
+import { knowledgeBackend } from "./knowledge-backend";
+import { KnowledgeStore } from "./knowledge-store";
 import { noveltyBackend, type ResolvedNoveltyContext } from "./novelty-ledger-backend";
 import { NoveltyLedgerReader } from "./novelty-ledger-reader";
 import { projectContextBackend, type ResolvedRepoContext } from "./project-context-backend";
@@ -155,11 +157,23 @@ export async function createLiveCanvasOpsBackend(
   const reader = new ProjectContextReader(deps.store);
   const noveltyReader = new NoveltyLedgerReader(reader);
 
+  // Knowledge (layer c): seed a committed set into the local store if present (a
+  // committed set is never trusted blind — `discoverCommitted` validates first),
+  // then bind the model-free READ accessor against the same fail-closed gate. An
+  // absent set is an honest empty view; a review never blocks on knowledge.
+  const knowledgeStore = new KnowledgeStore(deps.store);
+  knowledgeStore.discoverCommitted(repoKey, review.repositoryRoot);
+
   const core = reviewBackendCore({ review, pipeline, ...deps.core });
   const contextPart = projectContextBackend(reader, resolveContextFor(review, repoKey));
   const noveltyPart = noveltyBackend(noveltyReader, resolveNoveltyFor(review, repoKey));
+  const knowledgePart = knowledgeBackend(
+    reader,
+    knowledgeStore,
+    resolveContextFor(review, repoKey),
+  );
 
-  const backend: CanvasOpsBackend = { ...core, ...contextPart, ...noveltyPart };
+  const backend: CanvasOpsBackend = { ...core, ...contextPart, ...noveltyPart, ...knowledgePart };
 
   return {
     backend,

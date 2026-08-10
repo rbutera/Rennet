@@ -143,6 +143,29 @@ export {
   type VersionRange,
 } from "./harness-discovery";
 export {
+  type KnowledgeBackendPart,
+  knowledgeBackend,
+} from "./knowledge-backend";
+export {
+  changedPathsBetween,
+  createKnowledgeRunTurn,
+  type EnrichKnowledgeDeps,
+  type EnrichKnowledgeOutcome,
+  enrichKnowledgeForRepo,
+  type KnowledgeDeltaDeps,
+  type KnowledgeDeltaOutcome,
+  type KnowledgeRunTurnOptions,
+  runKnowledgeDeltaForRepo,
+  snapshotContextFromLoaded,
+} from "./knowledge-enrichment";
+export {
+  committedKnowledgeDir,
+  type DiscoverKnowledgeResult,
+  KNOWLEDGE_FILE,
+  KnowledgeStore,
+  type PromoteKnowledgeResult,
+} from "./knowledge-store";
+export {
   activePatchset,
   createLiveCanvasOpsBackend,
   type LiveBackendDeps,

@@ -181,6 +181,7 @@ const TOOL_WHEN_TO_USE: Readonly<Record<string, string>> = {
   "context.novelty": "the change vs base: novel/extends/conforms",
   "context.overview": "a file's exported symbols (don't read the file)",
   "context.symbol": "go-to-definition: where an exported name is defined",
+  "context.knowledge": "learned WHY of a module (labelled hypothesis/confirmed)",
 };
 
 /** First sentence of a description (fallback one-liner), trimmed. */
