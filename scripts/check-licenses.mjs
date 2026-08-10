@@ -31,8 +31,13 @@ const allowed = new Set([
 const allowedUnknownPackages = new Set([
   "@anthropic-ai/claude-agent-sdk",
   "@anthropic-ai/claude-agent-sdk-darwin-arm64",
-  // The other seven per-platform binaries are stripped at packaging and are not
-  // installed on this platform; add them here if a build ever surfaces one.
+  // Linux CI (ubuntu-latest, x64) surfaces the linux-x64 per-platform binary,
+  // just as darwin surfaces darwin-arm64. Same knowingly-shipped SDK, same
+  // stripped-at-packaging status; allowlisted BY NAME (the positive control below
+  // still fires on any un-named Unknown-bucket package).
+  "@anthropic-ai/claude-agent-sdk-linux-x64",
+  // The remaining per-platform binaries are stripped at packaging and are not
+  // installed on these platforms; add them here if a build ever surfaces one.
 ]);
 
 /**
