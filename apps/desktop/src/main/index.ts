@@ -28,6 +28,7 @@ import {
   GitHubForgeAdapter,
   GitHubPublishAdapter,
   type HttpFetch,
+  noiseReviewFixture,
   parseGitHubPrRef,
   projectDetailFixture,
   RepoWatcher,
@@ -441,6 +442,11 @@ app.whenReady().then(async () => {
     // (#32/#41); a fixture stands behind the real command boundary so the lens comes
     // alive now.
     flaggedReview: () => Promise.resolve(flaggedReviewFixture()),
+    // The Noise lens (issue #34): the low-signal churn grouped away, each group tagged
+    // rule vs noise job. The live noise-classification runner is a follow-up; a fixture
+    // stands behind the real command boundary so the lens comes alive now — exactly as
+    // the flagged lens (#138) serves its fixture behind the `flagged.review` boundary.
+    noiseReview: () => Promise.resolve(noiseReviewFixture()),
   });
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);

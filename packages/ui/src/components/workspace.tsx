@@ -6,6 +6,7 @@ import type {
   DecisionsRunStatus,
   DispositionType,
   FlaggedReview,
+  NoiseReview,
   Proposal,
   ReviewNarration,
 } from "@rennet/types";
@@ -31,6 +32,7 @@ import {
   viewAfterRotate,
   zoomReducer,
 } from "../canvas/logic";
+import { buildNoiseIndex } from "../canvas/noise";
 import type { CoverageMosaic } from "../canvas/read-state";
 import type { Mark } from "../canvas/registrar";
 import { createViewStore, useViewStore, type ViewStore } from "../canvas/store";
@@ -45,6 +47,7 @@ import { AnnotationMark, ProposalMark } from "./l3";
 import { LensSwitcher } from "./lens";
 import { MarkIndex, type MarkIndexEntry } from "./mark-index";
 import { NarrationPanel } from "./narration";
+import { NoiseLens } from "./noise";
 import { OrphanTray } from "./orphan-tray";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -86,6 +89,15 @@ export interface CanvasWorkspaceProps {
    * state, never a silent blank.
    */
   flaggedReview?: FlaggedReview;
+
+  /**
+   * The Noise lens's input (issue #34), behind the typed boundary. When the noise
+   * angle is active the lens renders THIS (the low-signal churn grouped away, each
+   * group tagged rule vs noise job), not the canvas analysis layer. Absent means the
+   * review produced no noise input — the lens then shows the honest empty state,
+   * never a silent blank.
+   */
+  noiseReview?: NoiseReview;
 
   /**
    * The Decisions runner's status (issue #137). The grouped decisions themselves
@@ -478,6 +490,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         {angle === "flagged" ? (
           <FlaggedLens
             index={buildFlaggedIndex(props.flaggedReview ?? { status: "ok", findings: [] })}
+            onJumpToAnchor={jumpToAnchor}
+          />
+        ) : angle === "noise" ? (
+          <NoiseLens
+            index={buildNoiseIndex(props.noiseReview ?? { status: "ok", groups: [] })}
             onJumpToAnchor={jumpToAnchor}
           />
         ) : angle === "decisions" ? (

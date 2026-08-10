@@ -110,6 +110,11 @@ export {
   type VersionRange,
 } from "./harness-discovery";
 export {
+  emptyNoiseReviewFixture,
+  failedNoiseReviewFixture,
+  noiseReviewFixture,
+} from "./noise-fixture";
+export {
   type AttachedOrchestratorSession,
   attachOrchestratorSession,
 } from "./orchestrator-session-server";
