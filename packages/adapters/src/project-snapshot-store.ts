@@ -90,7 +90,11 @@ export class ProjectSnapshotStore {
       // snapshot" HERE so the contract stays literal ("malformed → null, never a
       // throw", Rule 75) instead of throwing inside a later "never a throw" gate.
       for (const ref of Object.values(parsed.shards)) {
-        if (!ref || typeof ref !== "object" || typeof (ref as { digest?: unknown }).digest !== "string") {
+        if (
+          !ref ||
+          typeof ref !== "object" ||
+          typeof (ref as { digest?: unknown }).digest !== "string"
+        ) {
           return null;
         }
       }

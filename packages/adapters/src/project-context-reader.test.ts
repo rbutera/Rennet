@@ -233,7 +233,9 @@ describe("ProjectContextReader — the fail-closed staleness/integrity gate", ()
 
     const nonTupleSymbols = { ...manifest, symbols: [null] };
     writeFileSync(manifestPath, JSON.stringify(nonTupleSymbols));
-    expect(() => reader.readFileContext(manifest.repoKey, manifest.baseOid, "packages/a/src/index.ts")).not.toThrow();
+    expect(() =>
+      reader.readFileContext(manifest.repoKey, manifest.baseOid, "packages/a/src/index.ts"),
+    ).not.toThrow();
     const r2 = reader.readProjectMap(manifest.repoKey, manifest.baseOid);
     expect(r2.ok).toBe(false);
   });
