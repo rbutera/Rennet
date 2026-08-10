@@ -63,7 +63,22 @@ export class ProjectSnapshotStore {
     try {
       const raw = readFileSync(this.manifestPath(repoKey), "utf8");
       const parsed = JSON.parse(raw) as ProjectSnapshotManifest;
-      if (!parsed || typeof parsed.baseOid !== "string" || typeof parsed.fingerprint !== "string") {
+      // A manifest that parses as JSON but is malformed in `shards` (missing/null/
+      // non-object) or `symbols` (non-array) must degrade to "no snapshot" here,
+      // NOT slip through to throw later: the downstream gate does
+      // `Object.keys(manifest.shards)` and `for (…of manifest.symbols)`, which
+      // throw on null/non-iterable. Validating the full read shape keeps
+      // loadManifest's contract literal — "malformed → null, never a throw"
+      // (Rule 75, fail-safe on the vital "never serve/never crash on a corrupt
+      // store" circuit).
+      if (
+        !parsed ||
+        typeof parsed.baseOid !== "string" ||
+        typeof parsed.fingerprint !== "string" ||
+        typeof parsed.shards !== "object" ||
+        parsed.shards === null ||
+        !Array.isArray(parsed.symbols)
+      ) {
         return null;
       }
       return parsed;

@@ -118,6 +118,12 @@ export {
   type AttachedOrchestratorSession,
   attachOrchestratorSession,
 } from "./orchestrator-session-server";
+export {
+  type LoadFreshResult,
+  ProjectContextReader,
+  type ProjectMapResult,
+  type SnapshotGateFailure,
+} from "./project-context-reader";
 export { cleanupWorktreeFixture, projectDetailFixture } from "./project-detail-fixture";
 export {
   defaultProjectDiscoveryDeps,
