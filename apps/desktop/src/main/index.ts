@@ -10,7 +10,6 @@ import {
   createClaudeHarness,
   createCodexUtilityAdapter,
   createRefPinner,
-  decisionsRecordFixture,
   defaultDiscoveryDeps,
   defaultProjectDiscoveryDeps,
   deriveProjectDraft,
@@ -36,6 +35,7 @@ import {
   SqliteReviewStore,
 } from "@rennet/adapters";
 import {
+  type AdmittedDocument,
   buildOfferedManifest,
   buildReviewCanvases,
   type CodexUtilityPort,
@@ -45,6 +45,7 @@ import {
   decompose,
   guardSeatTurn,
   ReviewService,
+  runDecisionAngle,
   runFindingAngle,
 } from "@rennet/core";
 import { type CommandName, type DetectedHarness, isCommandName } from "@rennet/protocol";
@@ -52,6 +53,7 @@ import type {
   Canvas,
   CanvasAngle,
   CouncilHarnessId,
+  DecisionsRunStatus,
   ElementDiffs,
   FlaggedReview,
   Patchset,
@@ -260,6 +262,8 @@ async function buildCanvasesForReview(review: Review): Promise<{
   elementDiffs: ElementDiffs;
   narration?: ReviewNarration;
   engine: ReviewEngine;
+  /** How the Decisions lens's producer ran (issue #137): discerned vs failed. */
+  decisionsRun: DecisionsRunStatus;
 }> {
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
@@ -294,18 +298,25 @@ async function buildCanvasesForReview(review: Review): Promise<{
   if (adapter) installed.push("claude-code");
   if (codex.available) installed.push("codex");
 
+  // The Decisions lens (issue #137): the LIVE decision-extraction runner replaces
+  // `decisionsRecordFixture()` behind the unchanged `decisionDocs` boundary. It
+  // reasons over {the offered hunks + the change's stated intent} and emits real
+  // `decision.record` docs the existing projector groups by theme. On a runner
+  // failure it yields an empty doc set + a LOUD `failed` status, kept strictly
+  // apart from "ran, nothing discerned" (an ok run with no decisions).
+  const decisions = await runDecisionsForReview(review, patchset, adapter);
+
   const result = await buildReviewCanvases({
     reviewId: review.id,
     patchset,
     dispositions: review.dispositions,
     council: { availability: { installed } },
-    // The Decisions lens (issue #137): the decision-extraction runner's
+    // The Decisions lens (issue #137): the decision-extraction runner's real
     // `decision.record` docs, placed on the decisions canvas by the existing
-    // projector. The LIVE runner that reasons over {spec, PR body, diff} is a
-    // follow-up (it depends on #136's intent capture); a fixture stands behind
-    // this real boundary so the lens comes alive now — exactly as the flagged
-    // lens (#138) serves its fixture behind the `flagged.review` boundary.
-    decisionDocs: decisionsRecordFixture(),
+    // projector. The runner reasons over the diff alone until the full #136 intent
+    // capture (PR title/body + spec frozen on the patchset) lands; the runner
+    // FULLY supports intent (proven by the live dogfood over {diff, PR body}).
+    decisionDocs: decisions.docs,
     ...(codex.available ? { codexPort: getCodexPort() } : {}),
     ...(runDecompositionTurn ? { runDecompositionTurn } : {}),
     ...(runOrderingTurn ? { runOrderingTurn } : {}),
@@ -325,6 +336,95 @@ async function buildCanvasesForReview(review: Review): Promise<{
     elementDiffs: result.elementDiffs,
     narration: result.narration,
     engine,
+    decisionsRun: decisions.status,
+  };
+}
+
+// The provenance seed for a live decision run (issue #137), mirroring the finding
+// seed. Provenance is stamped on the RSP document but not read by the decisions
+// projector (which consumes docId/docType/body), so a placeholder model is honest
+// for placement; the capability layers are true because this path DOES constrain
+// structured output through the adapter.
+const DECISION_PROVENANCE_SEED = {
+  harness: "claude-code",
+  harnessVersion: "unknown",
+  adapterVersion: "0.0.0",
+  model: "unknown",
+  modelReportedBy: "unknown" as const,
+  capability: {
+    structuredOutput: {
+      implementedByAdapter: true,
+      advertisedByHarness: true,
+      availableInSession: true,
+    },
+    perCallModelSelection: {
+      implementedByAdapter: true,
+      advertisedByHarness: true,
+      availableInSession: true,
+    },
+  },
+};
+
+/**
+ * The live Decisions lens producer (issue #137), replacing `decisionsRecordFixture`.
+ * Decomposes the review's active patchset into the offered hunk manifest and runs
+ * the decision angle on the user's `claude` (subscription OAuth), budget-gated. It
+ * is its OWN live-budget-gated action, distinct from `review.canvases`'s model
+ * phase, so the ceiling stops decision spend without stopping the review (R10,
+ * fail-closed). On `ok` its emitted `decision.record` document is returned as the
+ * `decisionDocs` the projector groups; on a runner failure/budget refusal the doc
+ * set is empty and the status is the LOUD `failed` state — "ran, nothing discerned"
+ * (an ok run with an empty set) is never faked from "did not run".
+ *
+ * Live intent capture (PR title/body + spec) is the deferred #136 piece, so the app
+ * path reasons over the diff alone for now; the runner reasons over {diff, intent}
+ * whenever an intent is threaded (proven by the live dogfood).
+ */
+async function runDecisionsForReview(
+  review: Review,
+  patchset: Patchset,
+  adapter: Awaited<ReturnType<typeof getClaudeHarness>>["adapter"],
+): Promise<{ docs: AdmittedDocument[]; status: DecisionsRunStatus }> {
+  if (!adapter) {
+    return {
+      docs: [],
+      status: { status: "failed", reason: "no model harness is available to discern decisions" },
+    };
+  }
+  const decomposition = decompose(patchset);
+  const manifest = buildOfferedManifest(decomposition);
+  // KNOWN §7 DEVIATION (as in buildCanvasesForReview): the read-only harness runs
+  // with `cwd` on the live mutable checkout rather than an immutable materialisation,
+  // because that layer is not built yet. Follow-up: materialise the active patchset
+  // to an app-owned cache and point `cwd` there. Do NOT read this as satisfied.
+  const runDecisionTurn = createHarnessRunTurn(adapter, {
+    docType: "decision.record",
+    cwd: review.repositoryRoot,
+  });
+  const budget = createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS);
+  const result = await runDecisionAngle({
+    patchsetId: patchset.id,
+    manifest,
+    provenance: DECISION_PROVENANCE_SEED,
+    // A thrown/rejected turn (a session/transport construction exception, #96)
+    // degrades to a turn-failure rather than crashing the command.
+    runTurn: guardSeatTurn(runDecisionTurn),
+    budget,
+  });
+  if (result.status === "ok") {
+    const doc = result.document;
+    const docs: AdmittedDocument[] =
+      doc && doc.docId !== undefined
+        ? [{ docId: doc.docId, docType: doc.docType, body: doc.body }]
+        : [];
+    return { docs, status: { status: "ok" } };
+  }
+  return {
+    docs: [],
+    status: {
+      status: "failed",
+      reason: result.failureReason ?? "the decision runner did not complete",
+    },
   };
 }
 
