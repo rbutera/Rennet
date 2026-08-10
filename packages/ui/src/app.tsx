@@ -30,6 +30,7 @@ import {
   reviewComments,
   reviewCommentsPayload,
 } from "./canvas/publish";
+import { publishedItems } from "./canvas/staging";
 import { CollationDraftCanvas } from "./components/collation-draft-canvas";
 import { DestinationFrame } from "./components/destination-frame";
 import { FrontDoor } from "./components/front-door";
@@ -44,7 +45,7 @@ import {
   TriangleIcon,
 } from "./components/icons";
 import { ProjectDetail } from "./components/project-detail";
-import { type PublishReviewResult, PublishSheet } from "./components/publish-sheet";
+import { type PublishOutcome, PublishSheet } from "./components/publish-sheet";
 import { CanvasWorkspace } from "./components/workspace";
 
 /**
@@ -352,7 +353,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // posts nothing) and this holds what came back, which the paper then shows. Reset
   // whenever the paper is left or a fresh review loads, so a stale outcome never
   // lingers over a new draft.
-  const [publishResult, setPublishResult] = useState<PublishReviewResult | undefined>(undefined);
+  const [publishResult, setPublishResult] = useState<PublishOutcome | undefined>(undefined);
 
   useEffect(() => {
     bridge
@@ -722,7 +723,19 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       draftDefault: true,
     },
   };
-  const publishTargetForMode = publishTarget(destinationMode, draft, publishContext);
+  // The SINGLE source of truth for what publishes (issue #109). The human's
+  // ink/blue staging choice — approve never travels, request-change always does,
+  // comment/question travel only when explicitly staged — is applied HERE, once,
+  // by filtering to the ink (published) subset. Everything outbound (the paper's
+  // preview + the sign wire) derives from this, so what the human staged is
+  // exactly what publishes. The editing surfaces (DestinationFrame, the draft
+  // canvas) keep the FULL `draft`: they show every disposition with its lane, and
+  // the ink/blue split is what they render. Before this seam, `publishTarget` and
+  // `publishReview` both read the full `draft`, so an unstaged comment/question
+  // still entered the payload and an approve-only draft still ran an APPROVE dry
+  // run while the chrome said "Nothing to publish".
+  const inkDraft = publishedItems(draft);
+  const publishTargetForMode = publishTarget(destinationMode, inkDraft, publishContext);
   // The degradation ledger, sourced HONESTLY from the active patchset: a degraded
   // (REST-fallback) changeset really did flatten, so it gates the sign. A clean
   // local capture carries no degradation → no ledger, no gate. #22/council maps the
@@ -750,7 +763,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // consented, non-dry-run send is a later, deliberately gated act (#21).
   async function publishReview(): Promise<void> {
     if (!review || !patchset) return;
-    const comments = reviewComments(draft, publishContext.anchors);
+    // Publish the INK subset only (issue #109), never the full draft — the same
+    // `inkDraft` the paper previewed. An approve-only (or all-unstaged) draft has
+    // an empty ink subset, so `comments` is empty and the sign is a no-op: no
+    // APPROVE dry run, matching the "Nothing to publish" the chrome shows.
+    const comments = reviewComments(inkDraft, publishContext.anchors);
     if (comments.length === 0) return; // the paper's sign is already disabled when empty
     const payload = reviewCommentsPayload(comments);
     const verdict = deriveReviewEvent(comments);
@@ -778,6 +795,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         dryRun: true,
       });
       setPublishResult({
+        kind: "review",
         dryRun: outcome.dryRun,
         verdict,
         count: comments.length,
@@ -793,6 +811,22 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     } finally {
       setBusy(false);
     }
+  }
+  // Mode-split the sign so "what you preview is what signs" holds in BOTH modes
+  // (issue #109, own-branch half). other-pr previews line-anchored review comments
+  // and the wired `publish.review` engine emits exactly those. own-branch previews a
+  // PR SUBMISSION whose creation is the separate, GATED #21 act (`publish.egress`) —
+  // NO command wires it yet — so an own-branch sign must NOT fall back to
+  // `publish.review` (that would emit review comments the human never previewed).
+  // Until #21 lands, own-branch sign is an honest handoff no-op: it sends nothing and
+  // records the not-yet-wired handoff for the sheet to state plainly.
+  function signPaper(): void {
+    if (destinationMode === "own-branch") {
+      setError(undefined);
+      setPublishResult({ kind: "handoff" });
+      return;
+    }
+    void publishReview();
   }
   const destinationChrome = (
     <div className="rennet-glass" data-scheme="dark">
@@ -827,7 +861,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
             setPublishResult(undefined);
             setDestinationView("draft");
           }}
-          onSign={() => void publishReview()}
+          onSign={() => signPaper()}
           onClose={() => {
             setPublishResult(undefined);
             setDestinationView("closed");

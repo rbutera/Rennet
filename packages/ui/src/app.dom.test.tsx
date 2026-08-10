@@ -101,11 +101,34 @@ describe("RennetApp — the Sign button runs the real publish engine (wire-sign-
     fireEvent.click(getByRole("button", { name: "Mark read" }));
     await waitFor(() => expect(destination()?.getAttribute("data-staged-count")).toBe("1"));
 
+    // `publish.review` is the OTHER-PR act. own-branch (the default) previews a PR
+    // SUBMISSION whose creation is the gated #21 act and NEVER calls publish.review
+    // (issue #109, own-branch half), so switch to the other-pr framing first.
+    fireEvent.click(getByRole("tab", { name: "Review to post" }));
+    await waitFor(() => expect(destination()?.getAttribute("data-mode")).toBe("other-pr"));
+
     // Frame → DRAFT → PAPER.
     const openDraft = container.querySelector<HTMLButtonElement>(".destination-open-draft");
     if (!openDraft) throw new Error("the open-draft control did not render");
     fireEvent.click(openDraft);
     await waitFor(() => expect(container.querySelector(".collation-canvas")).not.toBeNull());
+
+    // The "Mark read" comment defaults to the orchestrator — blue/local, so it does
+    // NOT publish (issue #109). STAGE it to the PR (ink) so signing legitimately
+    // reaches the engine. The unstaged-comment-stays-local case is the contract the
+    // staging suite (staging.test.ts) and app.staging-publish.dom.test.tsx assert;
+    // this test is only about the sign→publish.review wire, so it publishes on
+    // purpose by staging first.
+    const stageBox = container.querySelector<HTMLInputElement>(".collation-item-stage-box");
+    if (!stageBox) throw new Error("the stage toggle did not render");
+    expect(stageBox.checked).toBe(false); // an unstaged comment starts with the orchestrator
+    fireEvent.click(stageBox);
+    await waitFor(() =>
+      expect(container.querySelector<HTMLInputElement>(".collation-item-stage-box")?.checked).toBe(
+        true,
+      ),
+    );
+
     const signDraft = container.querySelector<HTMLButtonElement>(".collation-sign");
     if (!signDraft) throw new Error("the draft sign control did not render");
     fireEvent.click(signDraft);

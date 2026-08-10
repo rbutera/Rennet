@@ -72,6 +72,21 @@ export interface PublishReviewResult {
   readonly preview: boolean;
 }
 
+/**
+ * The outcome of a sign, discriminated by destination mode (issue #109, own-branch
+ * half). The two modes sign two DIFFERENT artifacts, so their outcomes differ:
+ *   • `review`  — an OTHER-PR sign that ran the wired `publish.review` engine. Carries
+ *     the dry-run summary above.
+ *   • `handoff` — an OWN-BRANCH sign. The paper previews a PR SUBMISSION whose creation
+ *     is a separate, GATED act (#21 / `publish.egress`) that NO command wires yet, so
+ *     signing sends NOTHING and must never fall back to `publish.review` (that would
+ *     emit review comments the human never previewed). The bundle is recorded as
+ *     ready and the not-yet-wired state is stated honestly.
+ */
+export type PublishOutcome =
+  | ({ readonly kind: "review" } & PublishReviewResult)
+  | { readonly kind: "handoff" };
+
 export function PublishSheet({
   items = [],
   payload,
@@ -118,7 +133,7 @@ export function PublishSheet({
    * shows the actual dry-run outcome (what would leave the machine) in place of the
    * pre-sign notice. Absent ⇒ the pre-sign notice describes what a sign will do.
    */
-  result?: PublishReviewResult;
+  result?: PublishOutcome;
   onSign?: (payload: string) => void;
   /** Back to the collation draft — editing lives there, never here (R40). */
   onBack?: () => void;
@@ -339,10 +354,11 @@ export function PublishSheet({
             posts NOTHING; the aria-legible copy keeps that unmistakable, so a
             dry-run outcome can never read as a real publish. When no sign has run
             yet, the pre-sign notice describes what Hold-to-sign will do. */}
-        {result ? (
+        {result?.kind === "review" ? (
           <div
             className="publish-sheet-result"
             data-testid="publish-result"
+            data-outcome="review"
             data-dry-run={result.dryRun}
             role="status"
           >
@@ -365,6 +381,27 @@ export function PublishSheet({
               </p>
             ) : null}
           </div>
+        ) : result?.kind === "handoff" ? (
+          // OWN-BRANCH sign (issue #109, own-branch half): the PR submission above is
+          // ready, but creating the pull request is the separate, GATED #21 act that
+          // is not wired yet. Signing here sent NOTHING — it never falls back to
+          // publish.review — and the not-yet-wired state is stated plainly.
+          <div
+            className="publish-sheet-result"
+            data-testid="publish-result"
+            data-outcome="handoff"
+            role="status"
+          >
+            <p className="publish-sheet-result-line">
+              Handed off — the PR submission above is ready. Nothing was pushed: creating the pull
+              request is a separate, gated step (#21) that isn't wired yet.
+            </p>
+          </div>
+        ) : variant.mode === "own-branch" ? (
+          <p className="publish-sheet-shell-notice" role="note">
+            Hold to hand off records this PR submission as ready. Creating the pull request is a
+            separate, gated step (#21) — nothing is pushed from here.
+          </p>
         ) : (
           <p className="publish-sheet-shell-notice" role="note">
             Hold to sign runs the publish engine in dry run: it builds the exact GitHub request and

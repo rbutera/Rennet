@@ -430,7 +430,10 @@ describe("honesty affordance: the shell discloses that nothing is published", ()
     const notice = container.querySelector(".publish-sheet-shell-notice");
     expect(notice).not.toBeNull();
     expect(notice?.getAttribute("role")).toBe("note");
-    expect(notice?.textContent).toContain("posts nothing");
+    // own-branch (issue #109, own-branch half): the shell discloses that creating the
+    // PR is the separate, gated #21 act and that NOTHING is pushed from here — the
+    // honest own-branch disclosure, not the review path's "posts nothing".
+    expect(notice?.textContent).toContain("nothing is pushed");
     expect(notice?.textContent).toContain("#21");
   });
 });
