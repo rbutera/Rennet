@@ -499,6 +499,226 @@ export function queryFileContext(snapshot: LoadedSnapshot, path: string): FileCo
   };
 }
 
+// ── context.overview ─────────────────────────────────────────────────────────
+//
+// The LEANEST context-saver (repo-map-symbolic-surface, design §5 layer b): a
+// file's top-level symbol overview — declared names, kinds, and 1-based lines, NO
+// bodies — served straight from the SAME per-file symbol shard `context.file`
+// joins (`path → blobOid → symbol shard`). Model-free and deterministic, on
+// Rennet's OWN index (no LSP, no bundled engine). It is deliberately a NARROWER
+// projection than `context.file`: only the symbol list plus the blob identity +
+// extractor that prove which bytes it was recovered from — no size/mode/scope/
+// tests. An agent asking "what's in this file?" pulls a compact symbol index
+// instead of the whole structural record, or (worse) the file's contents.
+
+/** A file's symbol overview: its declared top-level symbols, signatures-not-bodies. */
+export interface FileOverview {
+  readonly path: string;
+  /** The git blob OID whose symbols these are (content identity — the evidence). */
+  readonly blobOid: string;
+  /** The extractor identity that produced `symbols`, or null when the file bears none. */
+  readonly extractor: string | null;
+  /** Whether a symbol shard exists for this file's blob. */
+  readonly hasSymbols: boolean;
+  /** The declared top-level symbols (name, kind, 1-based line) — never bodies. */
+  readonly symbols: readonly SnapshotSymbol[];
+}
+
+export type FileOverviewResult =
+  | { readonly ok: true; readonly overview: FileOverview }
+  | { readonly ok: false; readonly reason: "invalid-path"; readonly path: string }
+  | { readonly ok: false; readonly reason: "not-found"; readonly path: string }
+  | {
+      readonly ok: false;
+      readonly reason: "shard-unavailable";
+      readonly path: string;
+      readonly digest: string;
+    };
+
+/**
+ * `context.overview` gated result: the file overview, the file-level refusals, or
+ * a whole-snapshot gate failure wrapped as `snapshot-unavailable` — one result
+ * type so a single call has one shape (mirrors {@link ProjectFileResult}).
+ */
+export type ProjectFileOverviewResult =
+  | FileOverviewResult
+  | {
+      readonly ok: false;
+      readonly reason: "snapshot-unavailable";
+      readonly failure: SnapshotGateFailure;
+    };
+
+/**
+ * Answer "what top-level symbols does THIS file declare?" — the compact symbol
+ * overview, joined `path → blobOid → symbol shard`, no bodies. Same fail-closed
+ * taxonomy as {@link queryFileContext}:
+ *  - an unsafe address ⇒ `invalid-path`;
+ *  - a path not in the tree at the base OID ⇒ `not-found`;
+ *  - a referenced symbol shard the loader cannot produce intact ⇒
+ *    `shard-unavailable` (never a silent "no symbols");
+ *  - a file with no symbol shard (e.g. a `.json`/`.md`, or a symlink) ⇒ ok with
+ *    `hasSymbols: false` and empty `symbols` — a legitimate, non-error answer.
+ */
+export function queryFileOverview(snapshot: LoadedSnapshot, path: string): FileOverviewResult {
+  if (!isSafeRepoRelativePath(path)) return { ok: false, reason: "invalid-path", path };
+
+  const file = snapshot.files.find((f) => f.path === path);
+  if (!file) return { ok: false, reason: "not-found", path };
+
+  const digest = snapshot.symbolDigestByBlob.get(file.blobOid);
+  if (digest === undefined) {
+    return {
+      ok: true,
+      overview: {
+        path: file.path,
+        blobOid: file.blobOid,
+        extractor: null,
+        hasSymbols: false,
+        symbols: [],
+      },
+    };
+  }
+
+  const shard = loadSymbolShard(snapshot.load, digest);
+  if (shard === undefined) return { ok: false, reason: "shard-unavailable", path, digest };
+
+  return {
+    ok: true,
+    overview: {
+      path: file.path,
+      blobOid: file.blobOid,
+      extractor: shard.extractor,
+      hasSymbols: true,
+      symbols: shard.symbols,
+    },
+  };
+}
+
+// ── context.symbol (go-to-definition over the exported-symbol index) ──────────
+//
+// Rennet's OWN model-free go-to-definition (repo-map-symbolic-surface, design §5
+// layer b — built on the giants we already have, NOT an LSP or bundled engine).
+// The snapshot's `structural-ts-v1` extractor indexes each file's top-level
+// EXPORTED declarations (`{name, kind, line}` per blob). This resolves a symbol
+// NAME to its definition SITE(S) by scanning that index: `name → (every exported
+// declaration of that name) → path (via blobOid) + line + owning scope`. An agent
+// reading a diff pulls "where is `X` defined?" without dumping a file.
+//
+// HONEST SCOPE, stated in the reply, never papered over: it resolves EXPORTED
+// top-level symbols only — not locals, not class members, not unexported
+// declarations — because that is exactly what the deterministic index contains. A
+// `reexport` site is returned with `kind: "reexport"` so the agent sees it is a
+// re-export, not the original declaration (the index does not chase the re-export
+// target). Multiple matches (a name exported from several files) are ALL returned,
+// ranked deterministically — the honest "here are the N places", never one guess.
+// Model-free and deterministic; identifier-level find-references needs data this
+// index does not carry (occurrences / file text) and is a deliberate follow-up.
+
+/** One definition site of an exported symbol: where it is declared. */
+export interface SymbolDefinitionSite {
+  /** Repo-relative POSIX path of the file the symbol is exported from. */
+  readonly path: string;
+  /** The exported symbol's name (`default` for a default export, `*` for `export *`). */
+  readonly name: string;
+  /** The declaration kind. */
+  readonly kind: SnapshotSymbol["kind"];
+  /** 1-based line of the declaration within the file. */
+  readonly line: number;
+  /** The owning workspace scope (most specific), or null. */
+  readonly scope: string | null;
+}
+
+/** A go-to-definition answer: every exported declaration matching the queried name. */
+export interface SymbolDefinitions {
+  /** The queried symbol name. */
+  readonly name: string;
+  /** Every matching definition site, ranked deterministically by (path, line). May be empty. */
+  readonly sites: readonly SymbolDefinitionSite[];
+}
+
+/** A `context.symbol` lookup: a name, optionally narrowed by kind and/or workspace scope. */
+export interface SymbolLookup {
+  /** The exported symbol name to resolve. */
+  readonly name: string;
+  /** Restrict to this declaration kind, if given. */
+  readonly kind?: SnapshotSymbol["kind"];
+  /** Restrict to definitions inside this workspace scope, if given. */
+  readonly scope?: string;
+}
+
+export type SymbolDefinitionResult =
+  | { readonly ok: true; readonly definitions: SymbolDefinitions }
+  | {
+      readonly ok: false;
+      readonly reason: "shard-unavailable";
+      readonly digest: string;
+    };
+
+/**
+ * `context.symbol` gated result: the definition sites, a shard-decode failure, or
+ * a whole-snapshot gate failure wrapped as `snapshot-unavailable` — one result
+ * type so a single call has one shape (mirrors {@link ProjectFileResult}).
+ */
+export type ProjectSymbolDefinitionResult =
+  | SymbolDefinitionResult
+  | {
+      readonly ok: false;
+      readonly reason: "snapshot-unavailable";
+      readonly failure: SnapshotGateFailure;
+    };
+
+/**
+ * Resolve an exported symbol name to its definition site(s) across the snapshot's
+ * per-file symbol shards. Deterministic and fail-closed: a symbol shard the
+ * manifest references but the loader cannot produce intact ⇒ `shard-unavailable`
+ * (never a silent partial answer). Each blob's shard is decoded at most once even
+ * when several paths share the blob; a shared blob contributes a site per path
+ * (a copied/renamed definition legitimately lives at each path).
+ */
+export function querySymbolDefinition(
+  snapshot: LoadedSnapshot,
+  query: SymbolLookup,
+): SymbolDefinitionResult {
+  // Decode each referenced symbol shard at most once (keyed by digest), fail-closed.
+  const shardByDigest = new Map<string, SymbolShard>();
+  const sites: SymbolDefinitionSite[] = [];
+
+  for (const file of snapshot.files) {
+    if (
+      query.scope !== undefined &&
+      mostSpecificScope(snapshot.scopes, file.path) !== query.scope
+    ) {
+      continue;
+    }
+    const digest = snapshot.symbolDigestByBlob.get(file.blobOid);
+    if (digest === undefined) continue;
+
+    let shard = shardByDigest.get(digest);
+    if (shard === undefined) {
+      const loaded = loadSymbolShard(snapshot.load, digest);
+      if (loaded === undefined) return { ok: false, reason: "shard-unavailable", digest };
+      shard = loaded;
+      shardByDigest.set(digest, shard);
+    }
+
+    for (const symbol of shard.symbols) {
+      if (symbol.name !== query.name) continue;
+      if (query.kind !== undefined && symbol.kind !== query.kind) continue;
+      sites.push({
+        path: file.path,
+        name: symbol.name,
+        kind: symbol.kind,
+        line: symbol.line,
+        scope: mostSpecificScope(snapshot.scopes, file.path),
+      });
+    }
+  }
+
+  // Deterministic rank: by path, then by line (stable across identical snapshots).
+  sites.sort((a, b) => (a.path === b.path ? a.line - b.line : a.path < b.path ? -1 : 1));
+  return { ok: true, definitions: { name: query.name, sites } };
+}
+
 /** The name of the most specific (longest-root) scope that contains `path`, or null. */
 function mostSpecificScope(scopes: readonly WorkspaceScope[], path: string): string | null {
   let best: WorkspaceScope | undefined;

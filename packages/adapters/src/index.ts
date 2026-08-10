@@ -206,8 +206,10 @@ export {
 export {
   type LoadFreshResult,
   ProjectContextReader,
+  type ProjectFileOverviewResult,
   type ProjectFileResult,
   type ProjectMapResult,
+  type ProjectSymbolDefinitionResult,
   type SnapshotGateFailure,
 } from "./project-context-reader";
 export { cleanupWorktreeFixture, projectDetailFixture } from "./project-detail-fixture";

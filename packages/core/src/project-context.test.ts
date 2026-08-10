@@ -17,7 +17,9 @@ import {
   isSafeRepoRelativePath,
   materializeSnapshot,
   queryFileContext,
+  queryFileOverview,
   queryProjectMap,
+  querySymbolDefinition,
 } from "./project-context";
 import { buildSnapshot, type SnapshotStructuralInputs } from "./project-snapshot";
 
@@ -305,5 +307,151 @@ describe("queryFileContext", () => {
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe("shard-unavailable");
+  });
+});
+
+describe("queryFileOverview", () => {
+  it("recovers a file's top-level symbol overview via path → blobOid → shard", () => {
+    const result = queryFileOverview(loaded(), "packages/core/src/a.ts");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.overview.path).toBe("packages/core/src/a.ts");
+    expect(result.overview.blobOid).toBe(B_A);
+    expect(result.overview.hasSymbols).toBe(true);
+    expect(result.overview.extractor).toBe("structural-ts-v1");
+    expect(result.overview.symbols.map((s) => s.name)).toEqual(["foo", "Bar"]);
+  });
+
+  it("is a NARROWER projection than context.file — symbols only, no blob/size/scope/tests fields", () => {
+    const overview = queryFileOverview(loaded(), "packages/core/src/a.ts");
+    expect(overview.ok).toBe(true);
+    if (!overview.ok) return;
+    // The overview carries the symbol list + blob identity + extractor, and NOT
+    // the structural record's size/mode/scope/tests (the context-window economy).
+    expect(Object.keys(overview.overview).sort()).toEqual([
+      "blobOid",
+      "extractor",
+      "hasSymbols",
+      "path",
+      "symbols",
+    ]);
+  });
+
+  it("resolves the SAME symbols for a copied blob at a different path", () => {
+    const a = queryFileOverview(loaded(), "packages/core/src/a.ts");
+    const copy = queryFileOverview(loaded(), "packages/core/src/copy-of-a.ts");
+    expect(a.ok && copy.ok).toBe(true);
+    if (!a.ok || !copy.ok) return;
+    expect(copy.overview.blobOid).toBe(a.overview.blobOid);
+    expect(copy.overview.symbols).toEqual(a.overview.symbols);
+  });
+
+  it("returns a legitimate no-symbols answer for a symlink and a non-source file", () => {
+    const link = queryFileOverview(loaded(), "packages/core/src/link.ts");
+    const json = queryFileOverview(loaded(), "packages/core/package.json");
+    expect(link.ok && json.ok).toBe(true);
+    if (!link.ok || !json.ok) return;
+    expect(link.overview.hasSymbols).toBe(false);
+    expect(link.overview.extractor).toBeNull();
+    expect(link.overview.symbols).toHaveLength(0);
+    expect(json.overview.hasSymbols).toBe(false);
+    expect(json.overview.symbols).toHaveLength(0);
+  });
+
+  it("refuses an unsafe path", () => {
+    const result = queryFileOverview(loaded(), "../etc/passwd");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("invalid-path");
+  });
+
+  it("reports not-found for a path absent from the tree", () => {
+    const result = queryFileOverview(loaded(), "packages/core/src/ghost.ts");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("not-found");
+  });
+
+  it("fails closed when a referenced symbol shard cannot be produced (never a silent no-symbols)", () => {
+    const { manifest, load } = build();
+    const materialized = materializeSnapshot(manifest, load);
+    expect(materialized.ok).toBe(true);
+    if (!materialized.ok) return;
+    const aDigest = materialized.snapshot.symbolDigestByBlob.get(B_A);
+    const holed: LoadedSnapshot = {
+      ...materialized.snapshot,
+      load: (digest) => (digest === aDigest ? undefined : load(digest)),
+    };
+    const result = queryFileOverview(holed, "packages/core/src/a.ts");
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("shard-unavailable");
+  });
+});
+
+describe("querySymbolDefinition", () => {
+  it("resolves an exported name to every definition site, ranked by (path, line)", () => {
+    // `foo` is exported from B_A, which is shared by a.ts AND copy-of-a.ts.
+    const result = querySymbolDefinition(loaded(), { name: "foo" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.definitions.name).toBe("foo");
+    expect(result.definitions.sites.map((s) => `${s.path}:${s.line}`)).toEqual([
+      "packages/core/src/a.ts:1",
+      "packages/core/src/copy-of-a.ts:1",
+    ]);
+    expect(result.definitions.sites[0]?.kind).toBe("function");
+    expect(result.definitions.sites[0]?.scope).toBe("@x/core");
+  });
+
+  it("resolves a single-file symbol to one site", () => {
+    const result = querySymbolDefinition(loaded(), { name: "main" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.definitions.sites).toHaveLength(1);
+    expect(result.definitions.sites[0]?.path).toBe("packages/app/src/main.ts");
+    expect(result.definitions.sites[0]?.scope).toBe("@x/app");
+  });
+
+  it("filters by kind", () => {
+    const asClass = querySymbolDefinition(loaded(), { name: "Bar", kind: "class" });
+    const asType = querySymbolDefinition(loaded(), { name: "Bar", kind: "type" });
+    expect(asClass.ok && asType.ok).toBe(true);
+    if (!asClass.ok || !asType.ok) return;
+    expect(asClass.definitions.sites).toHaveLength(2); // Bar in a.ts + copy-of-a.ts
+    expect(asType.definitions.sites).toHaveLength(0); // Bar is a class, not a type
+  });
+
+  it("filters by workspace scope", () => {
+    const inApp = querySymbolDefinition(loaded(), { name: "foo", scope: "@x/app" });
+    const inCore = querySymbolDefinition(loaded(), { name: "foo", scope: "@x/core" });
+    expect(inApp.ok && inCore.ok).toBe(true);
+    if (!inApp.ok || !inCore.ok) return;
+    expect(inApp.definitions.sites).toHaveLength(0); // foo is only in @x/core
+    expect(inCore.definitions.sites).toHaveLength(2);
+  });
+
+  it("returns an empty site set for an unknown name (honest, not an error)", () => {
+    const result = querySymbolDefinition(loaded(), { name: "doesNotExist" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.definitions.sites).toEqual([]);
+  });
+
+  it("fails closed when a referenced symbol shard cannot be produced", () => {
+    const { manifest, load } = build();
+    const materialized = materializeSnapshot(manifest, load);
+    expect(materialized.ok).toBe(true);
+    if (!materialized.ok) return;
+    const aDigest = materialized.snapshot.symbolDigestByBlob.get(B_A);
+    const holed: LoadedSnapshot = {
+      ...materialized.snapshot,
+      load: (digest) => (digest === aDigest ? undefined : load(digest)),
+    };
+    const result = querySymbolDefinition(holed, { name: "foo" });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("shard-unavailable");
+    expect(result.digest).toBe(aDigest);
   });
 });
