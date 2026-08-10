@@ -1,0 +1,146 @@
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { Query } from "@anthropic-ai/claude-agent-sdk";
+import type { LoadSdkQuery } from "@rennet/adapters";
+import { buildReviewCanvases, type ReviewPipelineResult } from "@rennet/core";
+import type { PatchFile, Patchset, Review } from "@rennet/types";
+import { afterEach, describe, expect, it } from "vitest";
+import { createOrchestratorTurnRunner } from "./orchestrator";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The desktop orchestrator composition root (issue #13, wave 2). Driven with NO
+// model: the runner composes the live backend + primer + turn, and either drives a
+// turn on the discovered `claude` or returns a typed `unavailable`. Injected fake
+// transports keep the whole thing hermetic — no SDK, no spend.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const scratch: string[] = [];
+afterEach(() => {
+  for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+function git(root: string, ...args: string[]): string {
+  return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+}
+
+function write(root: string, path: string, content: string): void {
+  const full = join(root, path);
+  mkdirSync(join(full, ".."), { recursive: true });
+  writeFileSync(full, content);
+}
+
+async function liveReview(): Promise<{ review: Review; pipeline: ReviewPipelineResult }> {
+  const root = mkdtempSync(join(tmpdir(), "rennet-desktop-orch-"));
+  scratch.push(root);
+  git(root, "init", "-q", "-b", "main");
+  git(root, "config", "user.email", "rennet@example.test");
+  git(root, "config", "user.name", "Rennet Test");
+  write(root, "pnpm-workspace.yaml", 'packages:\n  - "packages/*"\n');
+  write(root, "packages/a/package.json", JSON.stringify({ name: "@t/a", main: "./src/index.ts" }));
+  write(
+    root,
+    "packages/a/project.json",
+    JSON.stringify({ name: "t-a", sourceRoot: "packages/a/src", projectType: "library" }),
+  );
+  write(root, "packages/a/src/index.ts", "export const a = 1;\n");
+  git(root, "add", "-A");
+  git(root, "commit", "-q", "-m", "first");
+  const oid = git(root, "rev-parse", "HEAD");
+  const patch = `@@ -1,1 +1,2 @@\n export const a = 1;\n+export const b = 2;`;
+  const files: PatchFile[] = [
+    {
+      path: "packages/a/src/index.ts",
+      status: "modified",
+      additions: 1,
+      deletions: 0,
+      binary: false,
+      patch,
+    },
+  ];
+  const patchset: Patchset = {
+    id: `ps-${oid.slice(0, 8)}`,
+    createdAt: "2026-08-10T00:00:00.000Z",
+    repository: {
+      id: "repo",
+      root,
+      commonDir: join(root, ".git"),
+      baseRef: oid,
+      baseOid: oid,
+      headOid: oid,
+    },
+    files,
+    rawDiff: patch,
+    byteLength: patch.length,
+    truncated: false,
+  };
+  const review: Review = {
+    id: `review-${oid.slice(0, 8)}`,
+    repositoryRoot: root,
+    patchsets: [patchset],
+    activePatchsetId: patchset.id,
+    dispositions: [],
+    status: "current",
+  };
+  const pipeline = await buildReviewCanvases({ reviewId: review.id, patchset, dispositions: [] });
+  return { review, pipeline };
+}
+
+function userDataDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "rennet-desktop-userdata-"));
+  scratch.push(dir);
+  return dir;
+}
+
+function fakeQuery(frames: readonly unknown[]): { loadQuery: LoadSdkQuery; calls: () => number } {
+  let calls = 0;
+  const query = (): Query => {
+    calls += 1;
+    async function* gen(): AsyncGenerator<unknown> {
+      for (const frame of frames) yield frame;
+    }
+    return gen() as unknown as Query;
+  };
+  return { loadQuery: (() => Promise.resolve(query)) as LoadSdkQuery, calls: () => calls };
+}
+
+describe("createOrchestratorTurnRunner — the desktop composition", () => {
+  it("returns a typed unavailable (spawning no model) when no claude is discovered", async () => {
+    const { review, pipeline } = await liveReview();
+    const fake = fakeQuery([]);
+    const run = createOrchestratorTurnRunner({
+      userDataDir: userDataDir(),
+      resolveClaudePath: () => Promise.resolve(null),
+      loadQuery: fake.loadQuery,
+    });
+    const outcome = await run(review, pipeline, "Map the base.");
+    expect(outcome.available).toBe(false);
+    if (!outcome.available) expect(outcome.reason).toMatch(/no claude/i);
+    // No claude → the runner returns before any turn: nothing spawned.
+    expect(fake.calls()).toBe(0);
+  });
+
+  it("composes the live backend + primer + turn and surfaces the tool call", async () => {
+    const { review, pipeline } = await liveReview();
+    const serverTool = "mcp__rennet-canvas-ops__context.map";
+    const fake = fakeQuery([
+      {
+        type: "assistant",
+        message: { content: [{ type: "tool_use", id: "t1", name: serverTool, input: {} }] },
+      },
+      { type: "result", subtype: "success", is_error: false, result: "current; @t/a" },
+    ]);
+    const run = createOrchestratorTurnRunner({
+      userDataDir: userDataDir(),
+      resolveClaudePath: () => Promise.resolve("/fake/claude"),
+      loadQuery: fake.loadQuery,
+    });
+    const outcome = await run(review, pipeline, "Map the base branch.");
+    expect(outcome.available).toBe(true);
+    if (!outcome.available) return;
+    expect(outcome.result.toolCalls.map((c) => c.op)).toEqual(["context.map"]);
+    expect(outcome.result.outcome).toBe("completed");
+    expect(fake.calls()).toBe(1);
+  });
+});

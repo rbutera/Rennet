@@ -31,6 +31,7 @@ import type {
   ReviewEngine,
   ReviewNarration,
 } from "@rennet/types";
+import type { OrchestratorTurnRunner } from "./orchestrator";
 import { type PublishConsentAuthority, publishConsentKey } from "./publish-consent-authority";
 
 /**
@@ -42,6 +43,14 @@ import { type PublishConsentAuthority, publishConsentKey } from "./publish-conse
  */
 export interface DispatchDeps {
   readonly service: ReviewService;
+  /**
+   * The live orchestrator turn runner (issue #13, wave 2): composes the wave-1 live
+   * backend + the lean primer + a real `claude` turn over the in-process
+   * canvasOps@2 MCP server. Held here so the orchestrator capability is part of the
+   * live command-router composition; the conversational command that drives a turn
+   * per user question is the DEFERRED UI loop, so no command routes to it yet.
+   */
+  readonly orchestratorTurn?: OrchestratorTurnRunner;
   /** Repositories the user has granted review access to (renderer-origin guard). */
   readonly allowedRoots: Set<string>;
   /** Resolve a repository to review (Electron dialog, or the test-repo env). `null` = cancelled. */
