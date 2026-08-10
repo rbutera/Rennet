@@ -71,6 +71,7 @@ export const RSP_DOC_TYPES = [
   "adjudication",
   "test.mapping",
   "noise.patternProposal",
+  "noise",
   "anomaly",
   "finding",
   "validation.report",
@@ -119,6 +120,13 @@ export const DOC_TYPE_REGISTRY: Readonly<Record<RspDocType, DocTypeSpec>> = {
     itemsPointer: "/body/edges",
   },
   "noise.patternProposal": { admission: "itemwise", supportedSchemaVersions: [1] },
+  // The Noise lens's live doc (#34): the grouped low-signal churn. Admitted WHOLE
+  // (atomic) — the runner culls each group's items to the grounded set and drops a
+  // malformed group before the gate, so the built doc always admits; a residual
+  // error rejects the whole doc and the runner falls to its honest failed state
+  // (never a manufactured "ran clean"). The generic anchor walk grounds every
+  // item anchor against the offered manifest exactly as it does for a finding.
+  noise: { admission: "atomic", supportedSchemaVersions: [1] },
   anomaly: { admission: "itemwise", supportedSchemaVersions: [1] },
   finding: { admission: "itemwise", supportedSchemaVersions: [1] },
   "validation.report": { admission: "atomic", supportedSchemaVersions: [1] },

@@ -202,6 +202,7 @@ export type RspDocType =
   | "adjudication"
   | "test.mapping"
   | "noise.patternProposal"
+  | "noise"
   | "anomaly"
   | "finding"
   | "validation.report";
@@ -1037,7 +1038,14 @@ export interface NoiseGroup {
   items: NoiseItem[];
 }
 
-/** The `noise` doc body as consumed by the noise-lens derivation. */
+/**
+ * The `noise` doc body (docType `noise`, issue #34): the live noise-classification
+ * runner's structured output, consumed by the noise-lens derivation. The runner
+ * (`runNoiseAngle`) emits it, culls each group's churn items to the GROUNDED ones
+ * (an anchor that resolves to an offered hunk), mints the `groupId`, and stamps the
+ * `noise-job` chip's `model` — so identity and the model label are the runner's,
+ * never the model's to assert (mirroring the finding/decision runners).
+ */
 export interface NoiseBody {
   groups: NoiseGroup[];
 }
@@ -1048,7 +1056,8 @@ export interface NoiseBody {
  * a runner that FAILED (`failed`, with a reason) is a different state and must never
  * be conflated with "no noise" — an all-clear that masks a runner that never ran is
  * the exact lie the empty-vs-failed distinction refuses. The live noise-classification
- * runner (deferred) sets this; until then it is `ok` behind the fixture.
+ * runner (`runNoiseAngle`, #34) sets this: `ok` with the grounded groups it emitted,
+ * or `failed` with the reason on a budget refusal or terminal turn failure.
  */
 export type NoiseReview =
   | { status: "ok"; groups: NoiseGroup[] }

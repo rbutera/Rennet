@@ -212,6 +212,61 @@ const decisionRecordBodySchema = z
   .object({ decisions: z.array(decisionBodyElementSchema) })
   .loose();
 
+/**
+ * The `noise` body (issue #34): the Noise lens's data — the low-signal churn a
+ * changeset touches, grouped away from the code that needs eyes. Each group carries
+ * a `category` (the closed churn vocabulary), a plain-speech `summary`, a
+ * `judgedBy` chip (a deterministic mechanical `rule` naming the rule, OR the LLM
+ * `noise-job`), and the `items` it collects — each an `anchor` to exactly one
+ * offered hunk (a `rennet:` code anchor the generic V005/V008 walk byte-checks
+ * against the offered manifest; an unresolvable or minted anchor rejects the whole
+ * document, so the runner culls ungrounded items before this gate), a plain
+ * `detail`, and an optional `deviates` flag (a line that BREAKS its group's pattern
+ * and must eject into normal review rather than be suppressed).
+ *
+ * This is the MODEL-FACING structured-output shape: it names what the agent emits.
+ * Two runner-owned fields are stamped AFTER the turn and are deliberately NOT
+ * required here (agents never mint identity, and never assert the model label): the
+ * per-group `groupId`, and the `model` on a `noise-job` chip (the runner stamps
+ * which model ran). The schema is `.loose()` so the ON-DISK document — which carries
+ * both stamped fields — also satisfies it when the atomic validator re-checks the
+ * body shape (V108); it is not a second gate that would reject the runner's own
+ * well-formed output.
+ */
+const noiseCategoryBodySchema = z.enum([
+  "formatting",
+  "lockfile",
+  "import-order",
+  "generated",
+  "fixture-rename",
+  "comment-typo",
+  "other",
+]);
+
+const noiseJudgedByBodySchema = z.union([
+  z.object({ kind: z.literal("rule"), rule: z.string() }).loose(),
+  z.object({ kind: z.literal("noise-job") }).loose(),
+]);
+
+const noiseItemBodySchema = z
+  .object({
+    anchor: z.string().min(1),
+    detail: z.string(),
+    deviates: z.boolean().optional(),
+  })
+  .loose();
+
+const noiseGroupBodySchema = z
+  .object({
+    category: noiseCategoryBodySchema,
+    summary: z.string(),
+    judgedBy: noiseJudgedByBodySchema,
+    items: z.array(noiseItemBodySchema),
+  })
+  .loose();
+
+const noiseBodySchema = z.object({ groups: z.array(noiseGroupBodySchema) }).loose();
+
 const BODY_SCHEMAS: Readonly<Partial<Record<RspDocType, z.ZodType>>> = {
   "decomposition.skeleton": skeletonBodySchema,
   "decomposition.proposal": proposalBodySchema,
@@ -219,6 +274,7 @@ const BODY_SCHEMAS: Readonly<Partial<Record<RspDocType, z.ZodType>>> = {
   "rollup-narration": rollupNarrationBodySchema,
   finding: findingBodySchema,
   "decision.record": decisionRecordBodySchema,
+  noise: noiseBodySchema,
 };
 
 /**
@@ -338,6 +394,16 @@ export function validateBodyRules(
   // would throw): decisions carry no per-body semantic rules beyond that generic
   // walk, so the honest answer is the empty error set.
   if (docType === "decision.record") return [];
+
+  // The noise family (#34): the only body gate is V108 (the shape parse above)
+  // plus the generic anchor walk `validateDocument` runs alongside this — which
+  // grounds every group item's `rennet:hunk/<id>` anchor against the offered
+  // manifest. There are no further per-body semantic rules (grouping and the
+  // deviating-line ejection are the derivation's job, not the validator's), so the
+  // honest answer is the empty error set. This branch exists BEFORE the
+  // decomposition fallthrough so a noise body is never fed to the `viewOf` path
+  // (which assumes a `chunks` body and would throw).
+  if (docType === "noise") return [];
 
   const offeredHunkIds = offeredIdsOfKind(manifest, "hunk");
   const view = viewOf(docType, parsed.data);
