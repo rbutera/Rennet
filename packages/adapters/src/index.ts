@@ -56,6 +56,13 @@ export {
 } from "./file-project-store";
 export { FileSettingsStore } from "./file-settings-store";
 export {
+  createVerificationFileReader,
+  createVerificationTurn,
+  DEFAULT_VERIFICATION_CONTEXT_LINES,
+  type VerificationFileReaderOptions,
+  type VerificationTurnOptions,
+} from "./finding-verification-backend";
+export {
   emptyFlaggedReviewFixture,
   failedFlaggedReviewFixture,
   flaggedReviewFixture,

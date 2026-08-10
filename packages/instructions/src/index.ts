@@ -363,6 +363,112 @@ export function renderHypothesisLayer(hypothesis: ReviewHypothesis): string {
   ].join("\n");
 }
 
+// ── The per-finding verification contract (issue #179) ───────────────────────
+
+/**
+ * The reproduce-or-refute verification contract (issue #179). NOT a `PromptContract`
+ * (it does not elicit an RSP `docType` and does not surface a lens): it is the small
+ * dedicated instruction that drives a FRESH session to check a finding another model
+ * raised against the REAL code around it. Its four slots carry the whole discipline:
+ * judge only from the shown code, produce a one-line evidence, and — the load-bearing
+ * failure valve — return `inconclusive` rather than guess, because an inconclusive
+ * finding surfaces to the human with a caveat (safe) while a guessed `reproduced` or
+ * a wrongly-`refuted` finding is not (a refuted finding is DROPPED).
+ */
+export interface VerificationContract {
+  /** Bumped when the SLOT SET or its wording changes (A/B-able against verdict quality). */
+  readonly version: number;
+  readonly role: string;
+  readonly task: string;
+  readonly discipline: string;
+  readonly failureValve: string;
+}
+
+export const FINDING_VERIFICATION_CONTRACT: VerificationContract = {
+  version: 1,
+  role: "You verify a code-review finding against the REAL code; you do not run the review. Another model raised each concern below from a narrow view of one hunk. Your job is to check it against the actual file around it and say, honestly, whether it holds — so a hallucinated or mistaken concern never reaches the reviewer, and a real one arrives with proof.",
+  task: "For each finding you are given — its reference key, its severity, and its one-sentence concern — reproduce it or refute it against the file content shown. REPRODUCE: name the concrete failure path, or cite the exact lines, that make the concern true. REFUTE: show, from the shown code, why it does not hold. If you can honestly do neither, return INCONCLUSIVE. Emit exactly one verification per reference key you were given, echoing that key unchanged. The exact JSON shape is enforced separately as a structured-output constraint you must satisfy; do not describe or restate it.",
+  discipline:
+    "Judge only from the file content you are shown, never from code you cannot see or assume. The evidence is ONE line: for a reproduced finding, the failure path or the lines that prove it; for a refuted or inconclusive one, the concrete reason. Do not soften a genuine bug into inconclusive to be safe, and do not upgrade a hunch into reproduced to look decisive.",
+  failureValve:
+    "If the shown code does not let you establish reproduce OR refute — it is not enough, the claim reaches beyond what you can see, you are genuinely unsure — return inconclusive with the honest reason. Inconclusive is surfaced to the human with a 'could not verify' caveat, so it is a safe and honest answer. A refuted verdict DROPS the finding from the review, so refute a concern only when the shown code proves it wrong; never refute merely because you did not immediately see the problem.",
+};
+
+/** One finding handed to a batched verification turn: its ref key, severity, concern, and offered hunk. */
+export interface VerificationPromptFinding {
+  /** The per-batch reference key the runner minted (e.g. "f1"); the model echoes it back. */
+  readonly ref: string;
+  readonly severity: string;
+  readonly summary: string;
+  /** The offered hunk lines the concern was raised over (may be empty when unavailable). */
+  readonly hunk: string;
+}
+
+/** The real file window a verification batch reads — MORE than the offered hunk (issue #179). */
+export interface VerificationPromptFile {
+  readonly path: string;
+  readonly startLine: number;
+  readonly endLine: number;
+  /** The file's real content across `[startLine, endLine]`, as the snapshot/working tree has it. */
+  readonly text: string;
+}
+
+/**
+ * Render one batched verification prompt (issue #179): the contract's four slots,
+ * the REAL file window (line-numbered so the model can cite exact lines), and each
+ * finding in the batch with its ref key, severity, concern, and offered hunk. Pure
+ * and deterministic — the same inputs render byte-for-byte identically. All findings
+ * in a batch share one file, so the window is shown once and every concern is checked
+ * against it in a single turn (the cost-bounding batch unit).
+ */
+export function renderFindingVerificationPrompt(
+  contract: VerificationContract,
+  batch: {
+    readonly file: VerificationPromptFile;
+    readonly findings: readonly VerificationPromptFinding[];
+  },
+): string {
+  const numbered = batch.file.text
+    .split("\n")
+    .map((line, index) => `${batch.file.startLine + index}\t${line}`)
+    .join("\n");
+  const findings = batch.findings
+    .map((finding) =>
+      [
+        `### ${finding.ref} — severity: ${finding.severity}`,
+        `Concern: ${finding.summary}`,
+        finding.hunk.trim().length > 0
+          ? `Offered hunk:\n${finding.hunk}`
+          : "Offered hunk: (unavailable)",
+      ].join("\n"),
+    )
+    .join("\n\n");
+  return [
+    `# Rennet finding verification: reproduce-or-refute@${contract.version}`,
+    "",
+    "## Role",
+    contract.role,
+    "",
+    "## Task",
+    contract.task,
+    "",
+    "## Discipline",
+    contract.discipline,
+    "",
+    "## Failure valve",
+    contract.failureValve,
+    "",
+    `## File under verification: ${batch.file.path} (lines ${batch.file.startLine}-${batch.file.endLine})`,
+    "The real file content around the findings, beyond the offered hunk. Cite exact line numbers.",
+    "",
+    numbered,
+    "",
+    "## Findings to verify",
+    findings,
+    "",
+  ].join("\n");
+}
+
 // ── Prompt assembly (§6.3) ────────────────────────────────────────────────────
 
 /** The fixed layer order. Earlier is higher priority; later layers drop first. */

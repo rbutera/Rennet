@@ -31,6 +31,7 @@ export * from "./element-diffs";
 export * from "./escape-path";
 export * from "./finding-generation";
 export * from "./finding-reconcile";
+export * from "./finding-verification";
 export * from "./forge-port";
 export * from "./harness";
 export * from "./harness-run-turn";
