@@ -594,7 +594,9 @@
 .code-view-row {
   display: grid;
   grid-template-columns: 52px 1fr;
-  font: 12px / 1.5 var(--mono);
+  /* Real code surface: the inhabited diff rows. Monospace via --code (chrome is sans);
+   * the line-number gutter and code cell inherit it. */
+  font: 12px / 1.5 var(--code);
 }
 .code-view-ln {
   padding: 0 10px;

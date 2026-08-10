@@ -331,7 +331,8 @@ button {
   padding: 16px 18px 40px;
   overflow: auto;
   color: var(--text-soft);
-  font: 11.5px / 1.55 var(--mono);
+  /* Real code surface: the raw unified diff. Monospace via --code (chrome is sans). */
+  font: 11.5px / 1.55 var(--code);
   tab-size: 2;
   white-space: pre;
 }

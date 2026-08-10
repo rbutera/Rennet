@@ -99,3 +99,32 @@ describe("dark paper — the R40 fix: paper is materiality (warmth + opacity), n
     expect(darkBg).not.toBe(lightBg);
   });
 });
+
+describe("chrome type contract — no monospace as UI chrome (resteer fresh update 2 / #62)", () => {
+  const styles = readFileSync(fileURLToPath(new URL("./styles.css", import.meta.url)), "utf8");
+  const canvas = readFileSync(fileURLToPath(new URL("./canvas.css", import.meta.url)), "utf8");
+
+  it("aliases --mono to the proportional --sans so legacy chrome refs are not monospace", () => {
+    // The v3 wireframe kit's mechanism: --mono aliases sans, so every existing chrome
+    // reference (paths, branches, counts, badges, anchors, paper) flips automatically.
+    expect(block(".rennet-glass {")).toContain("--mono: var(--sans)");
+  });
+
+  it("reserves a separate --code token for the real monospace stack (code/diff only)", () => {
+    expect(block(".rennet-glass {")).toMatch(/--code:\s*ui-monospace/);
+  });
+
+  it("routes the genuine code surfaces (raw diff, CodeView rows) at --code, not --mono", () => {
+    // Positive control: the raw diff and the inhabited diff rows are real code.
+    expect(styles).toContain("1.55 var(--code)");
+    expect(canvas).toContain("1.5 var(--code)");
+  });
+
+  it("leaves no --mono font reference stranded now that --mono is sans", () => {
+    // A --mono reference is harmless (it resolves to sans), but a genuine CODE
+    // surface stranded on --mono would silently lose monospace. Guard the two known
+    // code surfaces are the ONLY ones that ever needed it by asserting they moved.
+    expect(styles).not.toMatch(/\.diff\s*\{[^}]*var\(--mono\)/);
+    expect(canvas).not.toMatch(/\.code-view-row\s*\{[^}]*var\(--mono\)/);
+  });
+});
