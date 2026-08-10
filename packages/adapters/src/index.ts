@@ -1,4 +1,14 @@
 export {
+  BaselineAdvanceCoordinator,
+  type BaselineAdvanceDeps,
+  type BaselineWatchHandle,
+  baselineAdvanceDepsFor,
+  DEFAULT_BASELINE_DEBOUNCE_MS,
+  startBaselineWatch,
+  type Timers,
+  type WatchFn,
+} from "./baseline-advance-watcher";
+export {
   buildCanvasOpsTools,
   CANVAS_OPS_INSTRUCTIONS,
   CANVAS_OPS_SERVER_NAME,
@@ -223,6 +233,20 @@ export {
   orchestratorAskFixture,
   reviewAskFixturePorts,
 } from "./review-ask-fixture";
+export {
+  type EnsureOverlayResult,
+  type MergedSnapshotResult,
+  type MergedSnapshotSource,
+  SnapshotOverlayGenerator,
+  SnapshotOverlayReader,
+} from "./snapshot-overlay-generator";
+export {
+  DEFAULT_OVERLAY_MAX_ENTRIES,
+  type OverlayPaths,
+  type OverlayReapResult,
+  type OverlayRetentionPolicy,
+  SnapshotOverlayStore,
+} from "./snapshot-overlay-store";
 export { SqliteReviewStore } from "./sqlite-review-store";
 export {
   type ClaudeTurnUsage,

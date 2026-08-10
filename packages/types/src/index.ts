@@ -1825,6 +1825,73 @@ export interface BuiltSnapshot {
   readonly shards: ReadonlyMap<string, string>;
 }
 
+// ── Base + overlay for a non-default base (#143, design §3) ───────────────────
+//
+// The default-branch ProjectSnapshot is the BASE. A review against a NON-DEFAULT
+// base reads a MERGED view = base + a per-non-default-base OVERLAY, rather than a
+// full independent snapshot or a per-branch tracked map. The overlay is the
+// deterministic `defaultOid..nonDefaultBaseOid` delta: it records only the shard
+// keys that DIFFER from the base (overlay-wins), plus tombstones for symbol shards
+// the non-default base dropped, so the merged read reconstructs — BYTE-IDENTICALLY
+// — the snapshot at the non-default-base OID while storing only what changed.
+//
+// MODEL-FREE and deterministic: a pure function of the base manifest and the
+// target (non-default-base) manifest. Freshness is keyed on the `(defaultOid,
+// nonDefaultBaseOid)` pair — captured here as `baseFingerprint` (which pins the
+// default side, since the fingerprint covers `baseOid`) + `targetBaseOid` — so
+// when the default base advances the overlay is stale and re-derives.
+
+/** The current overlay schema version. Bumped on any breaking overlay shape change. */
+export const SNAPSHOT_OVERLAY_SCHEMA_VERSION = 1;
+
+/**
+ * A base+overlay delta pinning a non-default-base review's effective snapshot.
+ * Applying it to the base manifest ({@link mergeOverlay}) reconstructs the target
+ * manifest exactly (byte-equivalent to a clean full build at `targetBaseOid`).
+ */
+export interface SnapshotOverlay {
+  readonly schemaVersion: number;
+  /** The store key this overlay belongs to (same as the base map's). */
+  readonly repoKey: string;
+  /**
+   * The fingerprint of the BASE map this overlay was derived against — freshness
+   * key part 1. Because the fingerprint covers `baseOid`, a default-branch advance
+   * changes it, which stales the overlay (it must re-derive against the new base).
+   */
+  readonly baseFingerprint: string;
+  /** The default-branch OID the base map was at when this overlay was derived. */
+  readonly baseDefaultOid: string;
+  /** The non-default base ref the overlay targets. */
+  readonly targetBaseRef: string;
+  /** How `targetBaseRef` was resolved. */
+  readonly targetBaseRefResolution: BaseRefResolution;
+  /** The non-default base OID — freshness key part 2; the merged view's `baseOid`. */
+  readonly targetBaseOid: string;
+  /** The merged snapshot's own fingerprint (== a clean full build at `targetBaseOid`). */
+  readonly targetFingerprint: string;
+  /**
+   * The composite `(base, overlay)` id the review pins to — the value a non-default
+   * base review stamps on `Patchset.projectSnapshotId`. A digest over the base and
+   * target fingerprints, so it changes if EITHER side moves.
+   */
+  readonly compositeId: string;
+  /**
+   * Structural shard slots whose digest DIFFERS from the base (overlay-wins). A
+   * slot absent here is inherited from the base verbatim.
+   */
+  readonly structuralDelta: Partial<Record<StructuralShardSlot, ShardRef>>;
+  /**
+   * Per-file symbol shard pointers that are new-or-changed vs the base
+   * (overlay-wins), sorted by `blobOid`.
+   */
+  readonly symbolUpserts: readonly (readonly [blobOid: string, digest: string])[];
+  /**
+   * blobOids present in the base but ABSENT from the target — tombstones the merged
+   * read omits (e.g. a file deleted on the non-default base). Sorted.
+   */
+  readonly symbolTombstones: readonly string[];
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Deterministic novelty ledger (issue #144, Stage 1)
 //

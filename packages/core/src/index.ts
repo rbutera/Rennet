@@ -51,6 +51,7 @@ export * from "./review-backend";
 export * from "./risk-crosscheck";
 export * from "./rollup-narration";
 export * from "./route-plan";
+export * from "./snapshot-overlay";
 
 export type ReviewEvent =
   | { type: "ReviewCreated"; version: 1; reviewId: string; patchset: Patchset }
