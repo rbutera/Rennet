@@ -152,22 +152,26 @@ export interface PrimerManifest {
  * first sentence of its own description, so a newly-added tool is never silently
  * dropped from the index.
  */
+//
+// Terse by mandate: the B5 index rides the ≤4 KB primer ceiling, so as the surface
+// grows these one-liners must stay lean (the schemas carry the per-tool detail).
 const TOOL_WHEN_TO_USE: Readonly<Record<string, string>> = {
-  "canvas.describe": "orient: counts | cohorts | elements of a canvas",
+  "canvas.describe": "orient: counts | cohorts | elements",
   "canvas.view": "what the user is looking at now",
-  "canvas.focus": "scroll/open a target for the user (presentational)",
-  "canvas.annotate": "mark something for the conversation (ephemeral)",
-  "canvas.propose": "suggest a disposition/regroup/split — user decides",
+  "canvas.focus": "scroll/open a target (presentational)",
+  "canvas.annotate": "mark something for the chat (ephemeral)",
+  "canvas.propose": "suggest disposition/regroup/split — user decides",
   "canvas.recompute": "re-run the fleet on a slice (budget-gated)",
-  "canvas.read": "zoom into ONE element/disposition/annotation body",
+  "canvas.read": "zoom into ONE element/disposition/annotation",
   "canvas.thread": "a disposition's clarification back-and-forth",
-  "diff.read": "hunk content + lineage + anchored dispositions",
+  "diff.read": "hunk content + lineage + dispositions",
   "diff.search": "find anchors by text/symbol/path-glob (then zoom)",
-  "diff.structure": "the decomposition DAG / reading order as data",
-  "run.ledger": "which fleet tasks ran, tiers, budgets, admitted/rejected",
+  "diff.structure": "the decomposition DAG / reading order",
+  "run.ledger": "fleet tasks: tiers, budgets, admitted/rejected",
   "run.provenance": "one admitted document's provenance block",
   "context.map": "base-branch map (no model)",
   "context.file": "one file's structural context",
+  "context.novelty": "the change vs base: novel/extends/conforms",
 };
 
 /** First sentence of a description (fallback one-liner), trimmed. */
