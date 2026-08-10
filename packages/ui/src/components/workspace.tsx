@@ -40,7 +40,7 @@ import { BatchView } from "./batch-view";
 import { CodeView } from "./code-view";
 import { CoverageMosaicView } from "./coverage";
 import { DecisionsCanvas } from "./decisions";
-import { FlaggedLens } from "./flagged";
+import { type DeepReviewControl, FlaggedLens } from "./flagged";
 import { FlatCanvas } from "./flat";
 import { GranularityAuthor, type GranularityContext } from "./granularity-author";
 import { AnnotationMark, ProposalMark } from "./l3";
@@ -89,6 +89,14 @@ export interface CanvasWorkspaceProps {
    * state, never a silent blank.
    */
   flaggedReview?: FlaggedReview;
+
+  /**
+   * The deep-review control (issue #191). When present, the Flagged lens offers a
+   * one-tap "deep review" that re-runs the flagged runner with `deepReview: true`
+   * (the two-model reconcile). Absent ⇒ no affordance (a host with no bridge, the
+   * #11 demo, or a test). Additive — the lens is unchanged when it is omitted.
+   */
+  deepReview?: DeepReviewControl;
 
   /**
    * The Noise lens's input (issue #34), behind the typed boundary. When the noise
@@ -491,6 +499,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
           <FlaggedLens
             index={buildFlaggedIndex(props.flaggedReview ?? { status: "ok", findings: [] })}
             onJumpToAnchor={jumpToAnchor}
+            deepReview={props.deepReview}
           />
         ) : angle === "noise" ? (
           <NoiseLens

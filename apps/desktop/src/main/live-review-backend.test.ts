@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildReviewCanvases } from "@rennet/core";
@@ -7,8 +7,10 @@ import type { PatchFile, Patchset, Review } from "@rennet/types";
 import { afterEach, describe, expect, it } from "vitest";
 import { createDesktopReviewBackend, snapshotStoreFor } from "./live-review-backend";
 
-// The desktop composition root over a real git repo: the app-owned store lands
-// under `<userData>/snapshots`, and the assembled backend serves real context data.
+// The desktop composition root over a real git repo: the app-owned store is the
+// local-first, path-keyed store under `~/.rennet/projects/` (issue #188). Tests
+// inject a temp `baseDir` so nothing touches the real home store, and the assembled
+// backend serves real context data.
 
 const scratch: string[] = [];
 afterEach(() => {
@@ -40,10 +42,10 @@ function workspaceRepo(): { root: string; commonDir: string; oid: string } {
 }
 
 describe("createDesktopReviewBackend — the desktop composition root", () => {
-  it("stores snapshots under <userData>/snapshots and serves real context data", async () => {
+  it("stores snapshots under the ~/.rennet/projects base dir and serves real context data", async () => {
     const repo = workspaceRepo();
-    const userDataDir = mkdtempSync(join(tmpdir(), "rennet-userdata-"));
-    scratch.push(userDataDir);
+    const baseDir = mkdtempSync(join(tmpdir(), "rennet-projects-"));
+    scratch.push(baseDir);
 
     const patch = "@@ -1,1 +1,2 @@\n export const a = 1;\n+export const b = 2;";
     const files: PatchFile[] = [
@@ -83,12 +85,14 @@ describe("createDesktopReviewBackend — the desktop composition root", () => {
     const pipeline = await buildReviewCanvases({ reviewId: review.id, patchset, dispositions: [] });
 
     const { backend, snapshot } = await createDesktopReviewBackend(review, pipeline, {
-      userDataDir,
+      baseDir,
     });
     expect(snapshot.generated).toBe(true);
 
-    // The app-owned store wrote under <userData>/snapshots.
-    expect(existsSync(join(userDataDir, "snapshots"))).toBe(true);
+    // The app-owned local-first store wrote the path-keyed project entry directly
+    // under the injected base dir (issue #188), not a `snapshots` subdirectory.
+    expect(existsSync(baseDir)).toBe(true);
+    expect(readdirSync(baseDir).length).toBeGreaterThan(0);
 
     // The composed backend serves real context data end-to-end.
     const map = backend.projectMap();
@@ -99,8 +103,8 @@ describe("createDesktopReviewBackend — the desktop composition root", () => {
     expect(backend.decomposition().hunks.length).toBeGreaterThan(0);
   });
 
-  it("snapshotStoreFor targets the <userData>/snapshots subdirectory", () => {
-    const store = snapshotStoreFor("/tmp/example-userdata");
+  it("snapshotStoreFor composes a store over the injected base dir", () => {
+    const store = snapshotStoreFor("/tmp/example-rennet-projects");
     expect(store).toBeInstanceOf(Object);
   });
 });
