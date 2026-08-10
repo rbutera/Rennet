@@ -54,6 +54,19 @@ export interface Patchset {
   degraded?: boolean;
   /** Human-facing reason a degraded changeset is degraded (the badge copy). */
   degradationReason?: string;
+  /**
+   * The ProjectSnapshot the changeset was computed against (#144 / T0.3 — the
+   * net-novel spine). Fills the Contracts §3.1 role the `RspEnvelope` already
+   * carries: a composite fingerprint that pins the diff pack to a specific
+   * base-branch map, so "what is net-novel" is judged relative to a KNOWN
+   * baseline rather than a bare OID. OPTIONAL and additive in this wave: diff
+   * capture does not yet stamp it (the store/generator that would resolve it is
+   * still landing), and `NoveltyLedgerReader` still pins on
+   * `repository.baseOid`. The net-novel wave (Track C) threads capture-time
+   * stamping and switches the ledger pin onto this field; adding it now lets that
+   * wave be purely additive.
+   */
+  projectSnapshotId?: string;
 }
 
 /**
@@ -1471,11 +1484,12 @@ export interface InvocationBudget {
 // in this map; no clock in any serialized field (a timestamp would defeat
 // reproducibility — freshness is fingerprint/content equality, never age).
 //
-// Storage is LOCAL-ONLY in an app-owned store keyed by the RepoRecord
-// (`realpath(git-common-dir)`, R19/R55): all worktrees of a repo share one entry
-// and the map never travels across branches. The knowledge layer, context.*
-// tools, the novelty ledger, `projectContext.visibility`, and multi-repo
-// WorkspaceContext are deliberate follow-ups, not part of this map.
+// Storage is LOCAL-FIRST in an app-owned store keyed by the escaped absolute
+// top-level PATH (`escapePath(realpath(git-top-level))`, R55/#141): each checkout
+// path — including a worktree on a branch — keys its OWN entry, replacing wave-1's
+// `realpath(git-common-dir)` which made all worktrees share one. Opt-in in-repo
+// promotion, the knowledge layer, context.* tools, and multi-repo WorkspaceContext
+// are deliberate follow-ups.
 
 /** The current ProjectSnapshot schema version. Bumped on any breaking shard shape change. */
 export const PROJECT_SNAPSHOT_SCHEMA_VERSION = 1;
@@ -1634,7 +1648,7 @@ export type StructuralShardSlot =
  */
 export interface ProjectSnapshotManifest {
   readonly schemaVersion: number;
-  /** The RepoRecord key: `realpath(git-common-dir)` (R19). */
+  /** The store key: `escapePath(realpath(git-top-level))` (design §1.1). Part of the fingerprint pin. */
   readonly repoKey: string;
   /** The resolved default-branch ref name. */
   readonly baseRef: string;

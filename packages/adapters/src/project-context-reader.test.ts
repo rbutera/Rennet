@@ -2,7 +2,6 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { sha256Hex } from "@rennet/protocol";
 import type { ProjectSnapshotManifest } from "@rennet/types";
 import { afterEach, describe, expect, it } from "vitest";
 import { ProjectContextReader } from "./project-context-reader";
@@ -177,10 +176,11 @@ describe("ProjectContextReader — the fail-closed staleness/integrity gate", ()
     expect(reader.readProjectMap(manifest.repoKey, manifest.baseOid).ok).toBe(true);
 
     // Overwrite the `files` structural shard on disk with bytes that no longer
-    // hash to its digest. The store lays shards at <sha256(repoKey)>/shards/<digest>.json.
+    // hash to its digest. The store lays shards at <escaped-path>/map/shards/<digest>.json.
     const shardPath = join(
       storeDir,
-      sha256Hex(manifest.repoKey),
+      manifest.repoKey,
+      "map",
       "shards",
       `${manifest.shards.files.digest}.json`,
     );
@@ -203,7 +203,7 @@ describe("ProjectContextReader — the fail-closed staleness/integrity gate", ()
     // out. Without the loadManifest shape-guard the gate would reach
     // `Object.keys(manifest.shards)` and THROW instead of returning a typed
     // reason — violating its own "never a throw" contract (Rule 75).
-    const manifestPath = join(storeDir, sha256Hex(manifest.repoKey), "manifest.json");
+    const manifestPath = join(storeDir, manifest.repoKey, "map", "manifest.json");
     const malformed = { ...manifest, shards: null };
     writeFileSync(manifestPath, JSON.stringify(malformed));
 
@@ -218,7 +218,7 @@ describe("ProjectContextReader — the fail-closed staleness/integrity gate", ()
   it("refuses a NESTED-malformed manifest (null shard value / non-tuple symbols) with a typed failure, never a throw", async () => {
     const { store, manifest, storeDir } = await generate();
     const reader = new ProjectContextReader(store);
-    const manifestPath = join(storeDir, sha256Hex(manifest.repoKey), "manifest.json");
+    const manifestPath = join(storeDir, manifest.repoKey, "map", "manifest.json");
 
     // These pass the container-only shape check (`shards` is a non-null object,
     // `symbols` is an array) but the INNER values are malformed. Without the

@@ -116,10 +116,29 @@ export {
   type LiveBackendDeps,
   type LiveReviewBackend,
   type LiveSnapshotOutcome,
+  type RepoRecord,
   repoKeyOf,
+  repoRecordOf,
   resolveContextFor,
   resolveNoveltyFor,
 } from "./live-review-backend";
+export {
+  committedMapDir,
+  type DiscoverResult,
+  discoverCommittedMap,
+  type MapSource,
+  type PromoteResult,
+  promoteMap,
+  type ResolvedMapSource,
+  readMapFromDir,
+  resolveMapSource,
+  validateMap,
+} from "./map-travel";
+export {
+  applyVisibilitySwitch,
+  previewVisibilitySwitch,
+  type VisibilityPreview,
+} from "./map-visibility";
 export {
   emptyNoiseReviewFixture,
   failedNoiseReviewFixture,
@@ -166,6 +185,12 @@ export {
   type ProjectDiscoveryDeps,
 } from "./project-discovery";
 export {
+  addAlias,
+  type RelocateResult,
+  relocateProject,
+  resolveProjectKey,
+} from "./project-relocate";
+export {
   type GenerateOptions,
   type GenerateResult,
   ProjectSnapshotGenerator,
@@ -183,7 +208,15 @@ export {
   resolveBaseRef,
   type WorkspaceStructure,
 } from "./project-snapshot-source";
-export { ProjectSnapshotStore } from "./project-snapshot-store";
+export {
+  defaultProjectsBaseDir,
+  PROJECT_CONFIG_VERSION,
+  type ProjectConfig,
+  type ProjectPaths,
+  ProjectSnapshotStore,
+  type ProjectVisibility,
+  snapshotStoreFor,
+} from "./project-snapshot-store";
 export { RepoWatcher } from "./repo-watcher";
 export {
   codexAskFixture,

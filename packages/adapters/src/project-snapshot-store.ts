@@ -1,58 +1,138 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import { canonicalize, sha256Hex } from "@rennet/protocol";
 import type { BuiltSnapshot, ProjectSnapshotManifest, SymbolShard } from "@rennet/types";
 
 /**
- * The app-owned, LOCAL-ONLY ProjectSnapshot store (R27/R55, #141).
+ * The app-owned, LOCAL-FIRST ProjectSnapshot store (R27/R55, #141).
  *
- * The derived snapshot lives in an app-owned local store keyed by REPO IDENTITY
- * (the RepoRecord `repoKey` = `realpath(git-common-dir)`, R19), never by
- * working-tree path — so all worktrees of a repo share one entry and the map
- * never travels across branches (it is pinned to the default-branch OID). The
- * store base directory is injected (the desktop app passes
- * `app.getPath("userData")/snapshots`), exactly like the sibling file stores.
+ * The derived snapshot lives under `~/.rennet/projects/<escaped-absolute-path>/`,
+ * keyed by the repo's escaped top-level PATH (the RepoRecord `repoKey` =
+ * `escapePath(realpath(git-top-level))`, design §1.1). Path-keying replaces
+ * wave-1's `sha256Hex(realpath(git-common-dir))`: each checkout PATH — including a
+ * worktree on a branch — now gets its OWN local-first entry ("yours, freshest,
+ * especially on a branch"), instead of all worktrees sharing one. The base
+ * directory is injected (the desktop app passes `~/.rennet/projects`, or
+ * `snapshotStoreFor()` supplies that default); tests pass a temp dir.
  *
- * ⛔ This is NOT the in-repo `.rennet/snapshot/` path the issue text names — R55
- * (Rai, 2026-08-09) moved the DERIVED snapshot out of the mandatory-`.rennet/`
- * claim into this app-owned store. `.rennet/` keeps human-authored config plus,
- * optionally, a MIRRORED map; that opt-in mirror is a follow-on.
+ * Per-project layout (design §1.1):
  *
- * Shards are content-addressed (`shards/<digest>.json`), so a write is
+ *   <baseDir>/<escaped-path>/
+ *     config.json                       ← promotion + relocation + aliases + visibility
+ *     map/                              ← the default-branch BASE map (manifest.json + shards/)
+ *     overlays/<non-default-base-oid>/  ← per-non-default-base overlays  (LATER WAVE)
+ *     knowledge/                        ← learned statements               (LATER WAVE)
+ *
+ * THIS wave populates `config.json` + `map/`. `overlays/` and `knowledge/` are
+ * part of the resolved-path interface ({@link ProjectPaths}) so later waves have a
+ * fixed home, but nothing writes them yet.
+ *
+ * ⛔ This is NOT the in-repo `.rennet/map/` path — that is the OPT-IN PROMOTED
+ * mirror (default off), written on the default branch by `promoteMap` and
+ * discovered/validated by `discoverCommittedMap` (see `map-travel.ts`). The local
+ * store here is always authoritative; the committed mirror is a shared fallback.
+ *
+ * Shards are content-addressed (`map/shards/<digest>.json`), so a write is
  * idempotent and safe to repeat. The manifest is advanced ATOMICALLY: all shards
  * are written first, then the manifest is written to a temp file and `rename`d
- * over `manifest.json` (atomic on a single filesystem). If the process dies
- * mid-write the old manifest still points at its own complete shards, so a
- * reader never sees a half-built snapshot.
+ * over `map/manifest.json` (atomic on a single filesystem). If the process dies
+ * mid-write the old manifest still points at its own complete shards, so a reader
+ * never sees a half-built snapshot.
  */
+
+/** The current project-config schema version. Bumped on a breaking config shape change. */
+export const PROJECT_CONFIG_VERSION = 1;
+
+/** How visible the derived map is to git (design §1.6 / R14). */
+export type ProjectVisibility = "local" | "git-visible";
+
+/**
+ * Per-project config, stored at `<escaped-path>/config.json`. Every field beyond
+ * `version` is OPTIONAL so a project that has only ever built a local map has a
+ * trivially-valid (or absent) config; defaults are read-through, never migrated.
+ */
+export interface ProjectConfig {
+  /** Config schema version. */
+  readonly version: number;
+  /**
+   * The canonical absolute top-level path this project was keyed from (BEFORE
+   * escaping). Recorded so `relocate`/aliases can disambiguate the lossy escaped
+   * segment back to a real path.
+   */
+  readonly path?: string;
+  /**
+   * Opt-in promotion state (A.3): when true, the base map is MIRRORED into
+   * `<repo>/.rennet/map/` on the default branch so collaborators pick it up via
+   * git. Default OFF — a project never writes into the repo unless promoted.
+   */
+  readonly promoted?: boolean;
+  /** Alternative escaped paths that resolve to THIS project (A.6, aliases). */
+  readonly aliases?: readonly string[];
+  /** The escaped path this project was relocated FROM, if any (A.6). */
+  readonly relocatedFrom?: string;
+  /** Visibility of the derived map to git (A.2). Absent ⇒ `local`. */
+  readonly visibility?: ProjectVisibility;
+}
+
+/** The resolved on-disk paths for one project's local store entry. */
+export interface ProjectPaths {
+  /** `<baseDir>/<escaped-path>/` — the project root in the local store. */
+  readonly projectDir: string;
+  /** `config.json`. */
+  readonly configPath: string;
+  /** `map/` — the default-branch BASE map dir (manifest.json + shards/). */
+  readonly mapDir: string;
+  /** `map/manifest.json`. */
+  readonly manifestPath: string;
+  /** `map/shards/`. */
+  readonly shardsDir: string;
+  /** `overlays/` — per-non-default-base overlays (LATER WAVE; dir home reserved). */
+  readonly overlaysDir: string;
+  /** `knowledge/` — learned statements (LATER WAVE; dir home reserved). */
+  readonly knowledgeDir: string;
+}
+
 export class ProjectSnapshotStore {
   constructor(private readonly baseDir: string) {}
 
   /** Monotonic suffix for temp files, so concurrent writes never collide. */
   private tmpSeq = 0;
 
-  /** The per-repo directory, keyed by a filesystem-safe hash of the RepoRecord key. */
-  private repoDir(repoKey: string): string {
-    return join(this.baseDir, sha256Hex(repoKey));
+  /**
+   * The resolved on-disk paths for a project. `repoKey` is ALREADY the escaped,
+   * filesystem-safe segment (`escapePath(...)`), so it is used directly as the
+   * directory name — no hashing, so the store is human-legible and `relocate`
+   * (§1.5) can rename a directory rather than re-key an opaque hash.
+   */
+  paths(repoKey: string): ProjectPaths {
+    const projectDir = join(this.baseDir, repoKey);
+    const mapDir = join(projectDir, "map");
+    return {
+      projectDir,
+      configPath: join(projectDir, "config.json"),
+      mapDir,
+      manifestPath: join(mapDir, "manifest.json"),
+      shardsDir: join(mapDir, "shards"),
+      overlaysDir: join(projectDir, "overlays"),
+      knowledgeDir: join(projectDir, "knowledge"),
+    };
   }
 
   private manifestPath(repoKey: string): string {
-    return join(this.repoDir(repoKey), "manifest.json");
+    return this.paths(repoKey).manifestPath;
   }
 
   private shardPath(repoKey: string, digest: string): string {
-    return join(this.repoDir(repoKey), "shards", `${digest}.json`);
+    return join(this.paths(repoKey).shardsDir, `${digest}.json`);
   }
 
   // NOTE (#3, deferred): a single composed fail-closed `loadCurrent(repoKey,
   // requestedBaseOid)` gate — one call that loads the manifest, checks freshness
   // (`isSnapshotFresh`) AND integrity (`verifySnapshotIntegrity` over the store's
-  // shard loader) before handing any snapshot to a consumer — is intentionally
-  // NOT built here yet: the context.map / context.file / context.knowledge
-  // consumers that would call it do not exist. The pieces it would compose
-  // (`loadManifest`, `loadShard`, `isSnapshotFresh`, `verifySnapshotIntegrity`)
-  // are all present and individually tested; wire the gate when the first
-  // consumer lands so it is covered by a real caller.
+  // shard loader) before handing any snapshot to a consumer — lives in
+  // `ProjectContextReader.loadFresh` (the first real consumer). The pieces here
+  // (`loadManifest`, `loadShard`) are the fail-safe primitives it composes.
 
   /**
    * The current stored manifest for a repo, or null when absent/unreadable/
@@ -145,16 +225,16 @@ export class ProjectSnapshotStore {
   /**
    * Advance the stored snapshot to `built`, atomically. Every referenced shard
    * is written first (content-addressed), then the manifest is written to a temp
-   * file and renamed over the live `manifest.json`. The old snapshot is fully
+   * file and renamed over the live `map/manifest.json`. The old snapshot is fully
    * readable until the final rename.
    */
   advance(built: BuiltSnapshot): void {
     const repoKey = built.manifest.repoKey;
-    const dir = this.repoDir(repoKey);
-    mkdirSync(join(dir, "shards"), { recursive: true });
+    const shardsDir = this.paths(repoKey).shardsDir;
+    mkdirSync(shardsDir, { recursive: true });
 
     for (const [digest, bytes] of built.shards) {
-      const path = this.shardPath(repoKey, digest);
+      const path = join(shardsDir, `${digest}.json`);
       // A pre-existing content-addressed shard is trustworthy ONLY if its
       // on-disk bytes actually hash back to the digest. `existsSync` alone is not
       // enough: an earlier non-atomic write truncated by a crash leaves a file
@@ -172,6 +252,49 @@ export class ProjectSnapshotStore {
     this.writeAtomic(this.manifestPath(repoKey), manifestBytes);
   }
 
+  // ── config.json (A.1 config read/write; the promotion/visibility state) ──────
+
+  /**
+   * The stored project config, or null when absent/unreadable/malformed. FAIL-SAFE
+   * (Rule 75): a corrupt config reads as "no config" (all defaults) rather than
+   * throwing — a project always has a usable, default-off config.
+   */
+  loadConfig(repoKey: string): ProjectConfig | null {
+    try {
+      const raw = readFileSync(this.paths(repoKey).configPath, "utf8");
+      const parsed = JSON.parse(raw) as ProjectConfig;
+      if (!parsed || typeof parsed !== "object" || typeof parsed.version !== "number") {
+        return null;
+      }
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
+
+  /** The stored config, or a fresh default when none exists yet. */
+  loadConfigOrDefault(repoKey: string): ProjectConfig {
+    return this.loadConfig(repoKey) ?? { version: PROJECT_CONFIG_VERSION };
+  }
+
+  /** Persist the project config atomically under `<escaped-path>/config.json`. */
+  saveConfig(repoKey: string, config: ProjectConfig): void {
+    const { projectDir, configPath } = this.paths(repoKey);
+    mkdirSync(projectDir, { recursive: true });
+    this.writeAtomic(configPath, `${canonicalize(config)}\n`);
+  }
+
+  /**
+   * Read-modify-write a project's config atomically. The updater receives the
+   * current config (or a fresh default) and returns the next one. Returns the
+   * written config for the caller to act on.
+   */
+  updateConfig(repoKey: string, update: (current: ProjectConfig) => ProjectConfig): ProjectConfig {
+    const next = update(this.loadConfigOrDefault(repoKey));
+    this.saveConfig(repoKey, next);
+    return next;
+  }
+
   /** Whether an on-disk shard file exists AND its bytes hash back to `digest`. */
   private shardIsIntact(path: string, digest: string): boolean {
     try {
@@ -184,11 +307,29 @@ export class ProjectSnapshotStore {
   /**
    * Write `bytes` to `path` atomically: to a sibling temp file, then `rename`
    * over the target (atomic on a single filesystem). A reader never sees a
-   * partial file, and a crash mid-write leaves the target untouched.
+   * partial file, and a crash mid-write leaves the target untouched. Ensures the
+   * parent dir exists first, so a config/manifest write to a fresh project works.
    */
   private writeAtomic(path: string, bytes: string): void {
+    mkdirSync(join(path, ".."), { recursive: true });
     const tmp = `${path}.tmp-${process.pid}-${this.tmpSeq++}`;
     writeFileSync(tmp, bytes);
     renameSync(tmp, path);
   }
+}
+
+/**
+ * The default local-store base directory: `~/.rennet/projects/` (design §1.1).
+ * The desktop app injects this; tests pass a temp dir instead.
+ */
+export function defaultProjectsBaseDir(): string {
+  return join(homedir(), ".rennet", "projects");
+}
+
+/**
+ * Compose the app's local-first ProjectSnapshot store. `baseDir` defaults to
+ * `~/.rennet/projects/`; a caller (the desktop app, a test) may override it.
+ */
+export function snapshotStoreFor(baseDir: string = defaultProjectsBaseDir()): ProjectSnapshotStore {
+  return new ProjectSnapshotStore(baseDir);
 }

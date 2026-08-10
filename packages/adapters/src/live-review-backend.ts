@@ -1,5 +1,10 @@
 import { realpathSync } from "node:fs";
-import { type CanvasOpsBackend, type ReviewBackendState, reviewBackendCore } from "@rennet/core";
+import {
+  type CanvasOpsBackend,
+  escapePath,
+  type ReviewBackendState,
+  reviewBackendCore,
+} from "@rennet/core";
 import type { Patchset, Review } from "@rennet/types";
 import { execaGit, type GitExec } from "./git-range-diff";
 import { noveltyBackend, type ResolvedNoveltyContext } from "./novelty-ledger-backend";
@@ -37,14 +42,34 @@ export function activePatchset(review: Review): Patchset {
   return patchset;
 }
 
+/** The RepoRecord: a review's store key plus the base OID its snapshot must match. */
+export interface RepoRecord {
+  /** The per-project store key: `escapePath(realpath(git-top-level))` (design §1.1). */
+  readonly repoKey: string;
+  /** The active patchset's pinned base OID (the snapshot freshness pin, R30). */
+  readonly baseOid: string;
+}
+
 /**
- * The RepoRecord `repoKey` = `realpath(git-common-dir)` (R19), the ProjectSnapshot
- * store key. The captured patchset already carries the absolute `commonDir`, so
- * this is the same value `resolveBaseRef` (`project-snapshot-source`) derives for
- * the generator — realpath'd so all worktrees of a repo share one store entry.
+ * The ProjectSnapshot store key: `escapePath(realpath(git-top-level))` (#141 /
+ * R55, design §1.1). The captured patchset carries the absolute top-level `root`,
+ * and this is the SAME value `resolveBaseRef` (`project-snapshot-source`) derives
+ * for the generator, so the generator and the reader agree on the store dir.
+ * Path-keyed and local-first: a worktree on a branch keys its OWN entry (wave-1's
+ * `realpath(git-common-dir)` made all worktrees share one — deliberately replaced).
  */
 export function repoKeyOf(review: Review): string {
-  return realpathSync(activePatchset(review).repository.commonDir);
+  return escapePath(realpathSync(activePatchset(review).repository.root));
+}
+
+/**
+ * The RepoRecord resolver (T0 spine): `{ repoKey, baseOid }` for a review —
+ * `repoKey = escapePath(realpath(git-top-level))`, `baseOid =
+ * activePatchset.repository.baseOid`. The one place these two are minted together;
+ * `resolveContextFor`/`resolveNoveltyFor` close over the same `repoKey`.
+ */
+export function repoRecordOf(review: Review): RepoRecord {
+  return { repoKey: repoKeyOf(review), baseOid: activePatchset(review).repository.baseOid };
 }
 
 /**

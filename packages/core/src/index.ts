@@ -26,6 +26,7 @@ export * from "./context-update-stream";
 export * from "./decision-generation";
 export * from "./decomposition";
 export * from "./element-diffs";
+export * from "./escape-path";
 export * from "./finding-generation";
 export * from "./forge-port";
 export * from "./harness";

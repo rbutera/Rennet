@@ -26,7 +26,7 @@ import type { ProjectContextReader } from "./project-context-reader";
 
 /** The resolved per-review repo context a context read is pinned to. */
 export interface ResolvedRepoContext {
-  /** The RepoRecord `repoKey` = `realpath(git-common-dir)` (R19) — the store key. */
+  /** The store key: `escapePath(realpath(git-top-level))` (design §1.1) — the RepoRecord `repoKey`. */
   readonly repoKey: string;
   /** The resolved default-branch base OID the snapshot must match (R30 freshness). */
   readonly baseOid: string;

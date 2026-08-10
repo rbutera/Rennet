@@ -55,7 +55,7 @@ export function contentAddress(value: unknown): BuiltShard {
 
 /** The structural facts a snapshot is assembled from, all derived at `baseOid`. */
 export interface SnapshotStructuralInputs {
-  /** The RepoRecord key: `realpath(git-common-dir)` (R19). */
+  /** The store key: `escapePath(realpath(git-top-level))` (design §1.1). */
   readonly repoKey: string;
   readonly baseRef: string;
   readonly baseRefResolution: BaseRefResolution;
@@ -152,7 +152,7 @@ export function symbolShardBytes(shard: SymbolShard): BuiltShard {
  * same tree on the same repo share one.
  */
 export interface FingerprintPin {
-  /** The RepoRecord key: `realpath(git-common-dir)` (R19). */
+  /** The store key: `escapePath(realpath(git-top-level))` (design §1.1). */
   readonly repoKey: string;
   readonly baseRef: string;
   readonly baseRefResolution: BaseRefResolution;
