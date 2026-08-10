@@ -219,13 +219,14 @@ describe("CodexUtilityPort", () => {
   });
 
   it("stamps structuredOutput.availableInSession HONESTLY: false when no schema was exercised", async () => {
-    // `finding` has no body schema (bodyJsonSchema returns null), so NO
+    // `adjudication` has no body schema (bodyJsonSchema returns null), so NO
     // --output-schema is passed and structured output is NOT exercised this call.
-    // The capability snapshot must not claim it was available in session.
+    // The capability snapshot must not claim it was available in session. (This
+    // used `finding` before #32 gave that doc type a body schema.)
     const exec = fakeExecutor([{}]);
     const result = await portWith(exec).complete({
-      docType: "finding",
-      prompt: "Report a finding.",
+      docType: "adjudication",
+      prompt: "Adjudicate this claim.",
       patchset: PATCHSET,
       manifest: MANIFEST,
     });

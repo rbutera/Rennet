@@ -282,3 +282,114 @@ describe("bodyJsonSchema", () => {
     expect(bodyJsonSchema("adjudication")).toBeNull();
   });
 });
+
+// ── The finding body (issue #32 / #138) ──────────────────────────────────────
+
+function findingDoc(body: unknown): Record<string, unknown> {
+  return {
+    rsp: 1,
+    docType: "finding",
+    schemaVersion: 1,
+    patchsetId: "ps_1",
+    provenance: provenance(),
+    body,
+    x: {},
+  };
+}
+
+/** One well-formed finding anchored to an offered hunk (h1..h3 in MANIFEST). */
+function finding(overrides: Record<string, unknown> = {}): Record<string, unknown> {
+  return {
+    findingId: "f1",
+    anchor: "rennet:hunk/h1",
+    summary: "the added branch never releases the lock on the early-return path",
+    severity: "high",
+    agreement: { kind: "concur", agree: 1, total: 1 },
+    ...overrides,
+  };
+}
+
+describe("finding body — admission (issue #32)", () => {
+  it("admits a well-formed finding anchored to an offered hunk", () => {
+    const report = validate(findingDoc({ findings: [finding()] }));
+    expect(report.admitted).toBe(true);
+    expect(report.errors).toEqual([]);
+  });
+
+  it("admits an honestly-empty finding set (ran clean)", () => {
+    const report = validate(findingDoc({ findings: [] }));
+    expect(report.admitted).toBe(true);
+  });
+
+  it("rejects an anchor that is not an offered hunk (V008 — minted identity)", () => {
+    const report = validate(findingDoc({ findings: [finding({ anchor: "rennet:hunk/nope" })] }));
+    expect(report.admitted).toBe(false);
+    expect(codes(report)).toContain("V008");
+  });
+
+  it("rejects an empty summary (V130)", () => {
+    const report = validate(findingDoc({ findings: [finding({ summary: "   " })] }));
+    expect(report.admitted).toBe(false);
+    expect(codes(report)).toContain("V130");
+  });
+
+  it("rejects an incoherent concur vote — agree exceeds total (V131)", () => {
+    const report = validate(
+      findingDoc({ findings: [finding({ agreement: { kind: "concur", agree: 3, total: 1 } })] }),
+    );
+    expect(report.admitted).toBe(false);
+    expect(codes(report)).toContain("V131");
+  });
+
+  it("rejects a disagreement with fewer than two labelled answers (V131)", () => {
+    const report = validate(
+      findingDoc({
+        findings: [
+          finding({
+            agreement: { kind: "disagree", answers: [{ model: "Claude", answer: "a leak" }] },
+          }),
+        ],
+      }),
+    );
+    expect(report.admitted).toBe(false);
+    expect(codes(report)).toContain("V131");
+  });
+
+  it("rejects a bad severity with a body-shape error (V108)", () => {
+    const report = validate(findingDoc({ findings: [finding({ severity: "critical" })] }));
+    expect(report.admitted).toBe(false);
+    expect(codes(report)).toContain("V108");
+  });
+});
+
+describe("bodyJsonSchema — finding", () => {
+  it("projects a non-null object schema carrying the findings array + agreement", () => {
+    const schema = bodyJsonSchema("finding") as Record<string, unknown>;
+    expect(schema).not.toBeNull();
+    expect(schema.type).toBe("object");
+    expect(schema).toHaveProperty("properties");
+    // The projection includes the findings collection the model is constrained to.
+    expect(JSON.stringify(schema)).toContain("findings");
+    expect(JSON.stringify(schema)).toContain("agreement");
+  });
+});
+
+describe("bodyJsonSchema — the claude CLI compatibility strip", () => {
+  it("drops the draft-2020-12 $schema meta-reference the CLI cannot resolve", () => {
+    // The `claude` CLI's --json-schema validator rejects a schema whose $schema
+    // points at the draft-2020-12 meta-schema. Every projected docType must omit
+    // it, or no live structured-output turn can run (the #32 live-turn blocker).
+    for (const docType of [
+      "decomposition.skeleton",
+      "decomposition.proposal",
+      "ordering",
+      "rollup-narration",
+      "finding",
+    ] as const) {
+      const schema = bodyJsonSchema(docType) as Record<string, unknown>;
+      expect(schema).not.toHaveProperty("$schema");
+      // The load-bearing shape survives the strip.
+      expect(schema.type).toBe("object");
+    }
+  });
+});
