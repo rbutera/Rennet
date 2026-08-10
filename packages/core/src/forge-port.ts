@@ -47,6 +47,8 @@ export type SsoState =
 export interface ForgePullRequest {
   ref: ForgePullRequestRef;
   title: string;
+  /** The PR description body (markdown); the stated intent (#136). Empty string when none. */
+  body: string;
   isDraft: boolean;
   /** The reviewed head commit OID — pinned locally at review start. */
   headOid: string;

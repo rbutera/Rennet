@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
 import type { PatchsetCapturePort } from "@rennet/core";
-import type { PatchFile, Patchset } from "@rennet/types";
+import type { PatchFile, Patchset, PatchsetIntent, PatchsetSpecSnapshot } from "@rennet/types";
 import { execa } from "execa";
 import {
   type Counts,
@@ -12,6 +12,7 @@ import {
   parseCounts,
   visible,
 } from "./git-range-diff";
+import { snapshotSpec, specPathsOf } from "./patchset-intent-capture";
 
 // The changed-path / numstat / truncation parsing lives in `git-range-diff` so
 // the working-tree capture here and the commit-range capture there parse a diff
@@ -171,6 +172,8 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
       .update(bytes)
       .digest("hex");
 
+    const intent = await captureLocalIntent(root, baseOid, headOid, files);
+
     return {
       id,
       createdAt: new Date().toISOString(),
@@ -179,6 +182,45 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
       rawDiff: visible(completeDiff, this.visibleByteLimit),
       byteLength: bytes.length,
       truncated: bytes.length > this.visibleByteLimit,
+      intent,
     };
   }
+}
+
+/**
+ * Capture the intent surface for a local working-tree review (#136). There is no
+ * PR, so `prBodyAbsent` is stamped honestly (never an empty string masquerading as
+ * intent), and the available surface — the commit subjects between base and head —
+ * is captured instead. The changeset's spec documents are snapshotted from their
+ * current working-tree content, frozen so a later edit to the same file cannot
+ * change what the review was captured against.
+ */
+async function captureLocalIntent(
+  root: string,
+  baseOid: string,
+  headOid: string,
+  files: readonly PatchFile[],
+): Promise<PatchsetIntent> {
+  const log = await git(root, ["log", "--format=%s", `${baseOid}..${headOid}`], false);
+  const commitSubjects = log
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+
+  const specSnapshots: PatchsetSpecSnapshot[] = [];
+  for (const path of specPathsOf(files)) {
+    try {
+      const content = await readFile(resolve(root, path), "utf8");
+      specSnapshots.push(snapshotSpec(path, content));
+    } catch {
+      // Deleted or unreadable in the working tree: omit it honestly.
+    }
+  }
+
+  return {
+    surface: "working-tree",
+    prBodyAbsent: true,
+    ...(commitSubjects.length > 0 ? { commitSubjects } : {}),
+    ...(specSnapshots.length > 0 ? { specSnapshots } : {}),
+  };
 }

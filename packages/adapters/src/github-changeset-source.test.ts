@@ -65,10 +65,15 @@ function forgeReturning(pr: ForgePullRequest, diff = "diff --git a/x.ts b/x.ts\n
   };
 }
 
-function prFrom(baseOid: string, headOid: string): ForgePullRequest {
+function prFrom(
+  baseOid: string,
+  headOid: string,
+  body = "Adds the second export.\n\nCloses #4.",
+): ForgePullRequest {
   return {
     ref,
     title: "Add b",
+    body,
     isDraft: false,
     headOid,
     baseOid,
@@ -234,5 +239,138 @@ describe("GitHubChangesetSource — force-push resilience (acceptance #5)", () =
     const reproduced = await source.reproduce(first.pin);
     expect(reproduced.id).toBe(first.patchset.id);
     expect(reproduced.rawDiff).toBe(first.patchset.rawDiff);
+  });
+});
+
+/** A clone whose feature commit ALSO edits a committed spec document. */
+function clonedRepoWithSpec(specHeadContent: string): {
+  root: string;
+  baseOid: string;
+  headOid: string;
+} {
+  const root = mkdtempSync(join(tmpdir(), "rennet-spec-"));
+  directories.push(root);
+  git(root, "init", "-q", "-b", "main");
+  git(root, "config", "user.email", "rennet@example.test");
+  git(root, "config", "user.name", "Rennet Test");
+  git(root, "remote", "add", "origin", "git@github.com:acme/widget.git");
+  execFileSync("mkdir", ["-p", join(root, "specs")]);
+  writeFileSync(join(root, "app.ts"), "export const a = 1;\n");
+  writeFileSync(join(root, "specs", "spec.md"), "# Spec\n\nThe original rule.\n");
+  git(root, "add", ".");
+  git(root, "commit", "-qm", "base");
+  const baseOid = git(root, "rev-parse", "HEAD").trim();
+  git(root, "checkout", "-qb", "feature");
+  writeFileSync(join(root, "app.ts"), "export const a = 1;\nexport const b = 2;\n");
+  writeFileSync(join(root, "specs", "spec.md"), specHeadContent);
+  git(root, "add", ".");
+  git(root, "commit", "-qm", "feature");
+  const headOid = git(root, "rev-parse", "HEAD").trim();
+  return { root, baseOid, headOid };
+}
+
+describe("GitHubChangesetSource — change-intent capture (#136)", () => {
+  it("freezes the PR title and body onto the patchset intent (github-pr surface)", async () => {
+    const { root, baseOid, headOid } = clonedRepo();
+    const source = new GitHubChangesetSource({
+      forge: forgeReturning(prFrom(baseOid, headOid, "Body of the PR.\n\nDetail.")),
+      git: execaGit,
+      pin: provingPinner,
+      worktrees: worktreesOf(root),
+    });
+    const { patchset } = await source.open(ref);
+    expect(patchset.intent).toBeDefined();
+    expect(patchset.intent?.surface).toBe("github-pr");
+    expect(patchset.intent?.prTitle).toBe("Add b");
+    expect(patchset.intent?.prBody).toBe("Body of the PR.\n\nDetail.");
+    expect(patchset.intent?.prBodyAbsent).toBeUndefined();
+    // Intent rides ALONGSIDE identity: stamping it does not change the content id.
+    const decomposition = decompose(patchset);
+    expect(decomposition.hunks.length).toBeGreaterThan(0);
+  });
+
+  it("records an empty PR body as an honest absence, never an empty-string intent (AC4)", async () => {
+    const { root, baseOid, headOid } = clonedRepo();
+    const source = new GitHubChangesetSource({
+      forge: forgeReturning(prFrom(baseOid, headOid, "")),
+      git: execaGit,
+      pin: provingPinner,
+      worktrees: worktreesOf(root),
+    });
+    const { patchset } = await source.open(ref);
+    expect(patchset.intent?.prBody).toBeUndefined();
+    expect(patchset.intent?.prBodyAbsent).toBe(true);
+  });
+
+  it("snapshots the changeset's spec set from the COMMITTED head, immune to a later working-tree edit (AC1)", async () => {
+    const headSpec = "# Spec\n\nThe shipped rule.\n";
+    const { root, baseOid, headOid } = clonedRepoWithSpec(headSpec);
+    const source = new GitHubChangesetSource({
+      forge: forgeReturning(prFrom(baseOid, headOid)),
+      git: execaGit,
+      pin: provingPinner,
+      worktrees: worktreesOf(root),
+    });
+    const first = await source.open(ref);
+    const snap = first.patchset.intent?.specSnapshots?.find((s) => s.path === "specs/spec.md");
+    expect(snap?.content).toBe(headSpec);
+    expect(snap?.digest.length).toBe(64);
+
+    // Edit the spec in the working tree AFTER capture. Re-opening at the SAME head
+    // still snapshots the committed content — the frozen intent is byte-identical
+    // before and after the local edit.
+    writeFileSync(join(root, "specs", "spec.md"), "# Spec\n\nLATER edit.\n");
+    const second = await source.open(ref);
+    const snap2 = second.patchset.intent?.specSnapshots?.find((s) => s.path === "specs/spec.md");
+    expect(snap2?.content).toBe(headSpec);
+  });
+
+  it("the degraded REST path freezes PR title/body but honestly omits the spec set", async () => {
+    const source = new GitHubChangesetSource({
+      forge: forgeReturning(
+        prFrom("bbbb", "aaaa", "REST body."),
+        "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -0,0 +1 @@\n+export const x = 1;\n",
+      ),
+      git: execaGit,
+      pin: provingPinner,
+      worktrees: { list: () => Promise.resolve([]) },
+    });
+    const { patchset } = await source.open(ref);
+    expect(patchset.intent?.surface).toBe("github-rest");
+    expect(patchset.intent?.prTitle).toBe("Add b");
+    expect(patchset.intent?.prBody).toBe("REST body.");
+    // No clone on disk ⇒ no committed spec content to read ⇒ honestly absent.
+    expect(patchset.intent?.specSnapshots).toBeUndefined();
+  });
+
+  it("a moved head mints a new patchset with its OWN frozen intent; the prior is unchanged (R28, AC3)", async () => {
+    const { root, baseOid, headOid } = clonedRepo();
+    const first = await new GitHubChangesetSource({
+      forge: forgeReturning(prFrom(baseOid, headOid, "First intent.")),
+      git: execaGit,
+      pin: provingPinner,
+      worktrees: worktreesOf(root),
+    }).open(ref);
+
+    // Force-push: the head moves to a new commit with a re-stated intent.
+    writeFileSync(
+      join(root, "app.ts"),
+      "export const a = 1;\nexport const b = 2;\nexport const c = 3;\n",
+    );
+    git(root, "add", "app.ts");
+    git(root, "commit", "-qm", "moved");
+    const movedHead = git(root, "rev-parse", "HEAD").trim();
+
+    const second = await new GitHubChangesetSource({
+      forge: forgeReturning(prFrom(baseOid, movedHead, "Second intent.")),
+      git: execaGit,
+      pin: provingPinner,
+      worktrees: worktreesOf(root),
+    }).open(ref);
+
+    expect(second.patchset.id).not.toBe(first.patchset.id);
+    expect(second.patchset.intent?.prBody).toBe("Second intent.");
+    // The prior patchset's intent is never rewritten by the newer capture.
+    expect(first.patchset.intent?.prBody).toBe("First intent.");
   });
 });

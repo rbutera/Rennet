@@ -42,6 +42,7 @@ export * from "./novelty-ledger";
 export * from "./orchestrator-primer";
 export * from "./orchestrator-session";
 export * from "./ordering-pass";
+export * from "./patchset-intent";
 export * from "./pipeline";
 export * from "./project-context";
 export * from "./project-snapshot";

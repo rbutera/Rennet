@@ -38,7 +38,7 @@ const SEARCH_CEILING = 1000;
 const PR_QUERY = `query($owner:String!,$name:String!,$number:Int!){
   repository(owner:$owner,name:$name){
     pullRequest(number:$number){
-      number title isDraft headRefOid baseRefOid baseRefName headRefName changedFiles id
+      number title body isDraft headRefOid baseRefOid baseRefName headRefName changedFiles id
     }
   }
 }`;
@@ -55,6 +55,8 @@ const HOME_QUERY = `query($q:String!){
 interface GraphqlPr {
   number: number;
   title: string;
+  /** Nullable on GitHub: a PR with no description returns `null`, mapped to "". */
+  body: string | null;
   isDraft: boolean;
   headRefOid: string;
   baseRefOid: string;
@@ -156,6 +158,9 @@ export class GitHubForgeAdapter implements ForgePort {
     return {
       ref,
       title: pr.title,
+      // GitHub returns `null` for an empty description; carry "" so a consumer
+      // distinguishes "no body" (an honest empty) from an unfetched surface.
+      body: pr.body ?? "",
       isDraft: pr.isDraft,
       headOid: pr.headRefOid,
       baseOid: pr.baseRefOid,
