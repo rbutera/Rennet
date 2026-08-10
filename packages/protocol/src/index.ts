@@ -106,6 +106,9 @@ export const reviewSchema: z.ZodType<Review> = z.object({
   pendingPatchsetId: z.string().optional(),
   dispositions: z.array(dispositionSchema),
   status: z.enum(["current", "invalid"]),
+  // A retrospective (read-only, no-post) review. Optional so every existing
+  // review snapshot validates unchanged; absent ⇒ a normal postable review.
+  retrospective: z.boolean().optional(),
 });
 
 // ── Canvas output schema (issue #54) ─────────────────────────────────────────
@@ -586,6 +589,16 @@ export const commandDefinitions = {
       ref: z.string().min(1),
       /** The local clone of the PR's repository (picked via the directory dialog). */
       repoPath: z.string().min(1),
+      /**
+       * Open the PR RETROSPECTIVELY (read-only): the review is for READING an
+       * already-merged (or any) PR, never for posting back. When true, the created
+       * review is flagged `retrospective`, MAIN refuses egress on `publish.review`,
+       * and the renderer hides the sign/publish affordance. Omitted/false ⇒ the
+       * existing live open-PR review, unchanged. A merged PR works either way — the
+       * diff is the git range base..head from history, with no "PR must be open"
+       * assumption — but retrospective is the honest mode for one already landed.
+       */
+      retrospective: z.boolean().optional(),
     }),
     output: z.object({ review: reviewSchema }),
   },

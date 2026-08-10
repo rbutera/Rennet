@@ -272,6 +272,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // (`owner/repo#123` or a PR URL). Opening it picks the local clone, then lands
   // in the same review surface a working-tree capture does.
   const [prRef, setPrRef] = useState("");
+  // Retrospective open (read-only): review an already-merged PR to READ the code,
+  // with posting structurally off. Drives `review.openPr`'s `retrospective` flag.
+  const [prRetrospective, setPrRetrospective] = useState(false);
   // The Canvases view IS the AI review, and it is the default landing surface: a
   // review opens straight onto the real AI review (running it, or the one-tap
   // consent gate under `manual`), never onto canned demo data a first-time user
@@ -667,6 +670,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         commandId: crypto.randomUUID(),
         ref,
         repoPath: path,
+        // Read-only when the reviewer asked to review the PR retrospectively: the
+        // created review is flagged and nothing can be posted from it.
+        retrospective: prRetrospective,
       });
       setReview(result.review);
       setAtFrontDoor(false);
@@ -828,7 +834,21 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     }
     void publishReview();
   }
-  const destinationChrome = (
+  // A retrospective review is read-only: the entire sign → collate → publish surface
+  // is REPLACED by a plain notice, so there is no affordance to post at all. This is
+  // the renderer half of the no-post guarantee; MAIN's `publish.review` refusal is the
+  // structural half, so even without this the command cannot egress.
+  const destinationChrome = review?.retrospective ? (
+    <div className="rennet-glass" data-scheme="dark">
+      <section className="retrospective-notice" role="note" data-testid="retrospective-notice">
+        <p className="eyebrow">RETROSPECTIVE REVIEW</p>
+        <p>
+          Reading an already-merged pull request. Your dispositions stay local — nothing is posted
+          back to GitHub.
+        </p>
+      </section>
+    </div>
+  ) : (
     <div className="rennet-glass" data-scheme="dark">
       <DestinationFrame
         draft={draft}
@@ -972,6 +992,15 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           <button type="submit" className="secondary" disabled={busy || prRef.trim().length === 0}>
             {busy ? "Opening…" : "Open pull request"}
           </button>
+          <label className="pr-retrospective">
+            <input
+              type="checkbox"
+              checked={prRetrospective}
+              onChange={(inputEvent) => setPrRetrospective(inputEvent.target.checked)}
+              disabled={busy}
+            />
+            <span>Retrospective review — read an already-merged PR. Nothing is posted back.</span>
+          </label>
         </form>
         <p className="pr-hint">Pick the local clone next.</p>
 

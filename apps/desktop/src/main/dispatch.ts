@@ -59,9 +59,16 @@ export interface DispatchDeps {
    * Open a GitHub pull request into a review (the front door's second source):
    * parse the ref (`owner/repo#123` or a PR URL), fetch + diff the PR against the
    * local clone at `repoPath`, and persist a new review. Returns the created
-   * review, ready for the same surface the local capture lands in.
+   * review, ready for the same surface the local capture lands in. `retrospective`
+   * opens it read-only (a merged/any PR reviewed after the fact): the review is
+   * flagged so egress is refused and the sign affordance hidden.
    */
-  openPullRequest(commandId: string, ref: string, repoPath: string): Promise<Review>;
+  openPullRequest(
+    commandId: string,
+    ref: string,
+    repoPath: string,
+    retrospective: boolean,
+  ): Promise<Review>;
   /** Begin watching a captured repository root for on-disk changes. */
   startWatching(root: string): void;
   isRepositoryDirty(): boolean;
@@ -242,7 +249,12 @@ export function createDispatch(
         // by patchset source) — nothing to watch, nothing to invalidate here.
         const input = parseCommandInput(name, rawInput);
         assertAllowedRepository(input.repoPath);
-        const review = await deps.openPullRequest(input.commandId, input.ref, input.repoPath);
+        const review = await deps.openPullRequest(
+          input.commandId,
+          input.ref,
+          input.repoPath,
+          input.retrospective ?? false,
+        );
         allowedRoots.add(review.repositoryRoot);
         return parseCommandOutput(name, { review });
       }
@@ -316,6 +328,23 @@ export function createDispatch(
         // THE USER. Every dangerous part is gated here; the pipeline has no other path
         // to egress (this command is reachable only from the trusted renderer origin).
         const input = parseCommandInput(name, rawInput);
+
+        // (0) The RETROSPECTIVE gate (Rule 75, most-permissive-fault): a review opened
+        // read-only over an already-merged/any PR must NEVER egress. We resolve the
+        // addressed review from the persisted store (the latest, same authority the
+        // consent-minting and canvases paths use) and refuse the WHOLE command — dry
+        // run included — before any request is built. This is the structural half: the
+        // renderer also hides the sign affordance, but even a hand-crafted call cannot
+        // post from a retrospective review, in ANY permission mode, because this runs
+        // ahead of the mode/consent branch entirely. A single fault (forged mode,
+        // replayed token, renderer bug) cannot clear it — it is not on that circuit.
+        const addressed = requireLatestReview(input.reviewId);
+        if (addressed.retrospective) {
+          throw new Error(
+            "Publish refused: this is a retrospective review — it is read-only and nothing can be posted.",
+          );
+        }
+
         const target = toForgeReviewTarget(input.target);
 
         // (1) Egress-side "what you see is what leaves" (R33), the MAIN analogue of
