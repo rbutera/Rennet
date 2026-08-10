@@ -1739,3 +1739,230 @@
   font-size: 12px;
   text-align: center;
 }
+
+/* ── The inline conversation cluster (issue #36) ──────────────────────────────
+ * The private research chat, anchored on any anchor, rendered in the RIGHT MARGIN.
+ * It is BLUE (the system's private backlight) end to end — a conversation stays on
+ * this machine and never travels; promotion is the only path out. All colour comes
+ * from the existing --private* / --surface* tokens (no new hues).
+ *
+ * The margin is a fixed-width SIBLING of the diff column in the review-heart split,
+ * so opening or growing a thread changes only this column — the diff never reflows. */
+.review-heart-split {
+  display: flex;
+  align-items: flex-start;
+  gap: 16px;
+}
+.review-heart-split .diff-column {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.conversation-margin {
+  flex: none;
+  width: 340px;
+  max-width: 40%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+/* The discuss / ask-the-harness verb: opens a thread. Reads as private (blue). */
+.discuss-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--private-line);
+  border-radius: var(--chip-radius);
+  background: var(--private-fill);
+  color: var(--private);
+  font: 600 12px / 1 var(--sans);
+  padding: 5px 9px;
+  cursor: pointer;
+}
+.discuss-control:hover,
+.discuss-control:focus-visible {
+  background: var(--private-fill);
+  border-color: var(--private);
+}
+.discuss-control svg {
+  flex: none;
+  opacity: 0.9;
+}
+
+/* The trailing "thread · N" chip on a diff line that already carries a thread. */
+.thread-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 1px solid var(--private-line);
+  border-radius: var(--chip-radius);
+  background: var(--private-fill);
+  color: var(--private);
+  font: 600 11px / 1 var(--sans);
+  padding: 3px 8px;
+  cursor: pointer;
+}
+.thread-chip svg {
+  flex: none;
+  opacity: 0.85;
+}
+
+/* The thread panel — the private backlight material (a solid private surface plus
+ * the inner glow, so text stays legible while the panel reads unmistakably local). */
+.conversation-cluster {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--private-line);
+  border-left: 3px solid var(--private);
+  border-radius: var(--radius);
+  background: var(--private-surface);
+  box-shadow: var(--private-glow);
+  overflow: hidden;
+}
+.conversation-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 13px;
+  border-bottom: 1px solid var(--private-line);
+}
+.conversation-head-lock {
+  display: inline-flex;
+  align-self: center;
+  color: var(--private);
+}
+.conversation-head-title {
+  color: var(--private);
+  font: 700 10px / 1.2 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.conversation-head-anchor {
+  color: var(--text-soft);
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.conversation-head-pill {
+  margin-left: auto;
+  flex: none;
+  padding: 1px 8px;
+  border-radius: var(--chip-radius);
+  border: 1px solid var(--private-line);
+  color: var(--private);
+  font: 600 11px / 1.4 var(--sans);
+  letter-spacing: 0.02em;
+}
+
+.conversation-messages {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 13px;
+}
+.thread-message {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  border: 1px solid var(--private-line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 9px 11px;
+}
+.thread-message[data-author="harness"] {
+  background: var(--private-fill);
+}
+.thread-message-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.thread-message-you {
+  color: var(--text-soft);
+  font: 700 11px / 1.2 var(--sans);
+  letter-spacing: 0.04em;
+}
+.thread-message-model {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--private);
+  font: 700 11px / 1.2 var(--sans);
+  letter-spacing: 0.02em;
+}
+.thread-message-model svg {
+  flex: none;
+}
+.thread-message-body {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+}
+.thread-message-promote {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+.thread-promote-btn {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: var(--surface);
+  color: var(--text-soft);
+  font: 600 11px / 1 var(--sans);
+  padding: 4px 9px;
+  cursor: pointer;
+}
+.thread-promote-btn:hover,
+.thread-promote-btn:focus-visible {
+  color: var(--text);
+  border-color: var(--private-line);
+  background: var(--private-fill);
+}
+.thread-promote-btn.is-subthread {
+  color: var(--private);
+  border-color: var(--private-line);
+}
+
+/* The composer — "Ask about these lines". Orchestrator-routed by default (#139). */
+.conversation-composer {
+  display: flex;
+  align-items: stretch;
+  gap: 8px;
+  padding: 11px 13px;
+  border-top: 1px solid var(--private-line);
+}
+.conversation-composer-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 38px;
+  resize: vertical;
+  border: 1px solid var(--private-line);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font: 400 13px / 1.4 var(--sans);
+  padding: 8px 10px;
+}
+.conversation-composer-input::placeholder {
+  color: var(--text-faint);
+}
+.conversation-composer-send {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 40px;
+  border: 1px solid var(--btn-border);
+  border-radius: var(--radius);
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  cursor: pointer;
+}
+.conversation-composer-send:disabled {
+  opacity: 0.5;
+  cursor: default;
+}

@@ -58,6 +58,34 @@ export {
   withdrawItem,
   withdrawPath,
 } from "./canvas/collation";
+// The inline conversation cluster (issue #36 — the review heart's private research
+// chat): the thread/message model, the privacy boundary (promotion is the only path
+// out), and the right-margin placement core (the diff never reflows). Fixture-driven
+// here; live streaming is the deferred follow-up.
+export type {
+  ConversationAnchor,
+  ConversationAnchorKind,
+  ConversationThread,
+  MessageAuthor,
+  PromotionEvent,
+  PromotionKind,
+  ThreadLane,
+  ThreadMessage,
+} from "./canvas/conversation";
+export {
+  addMessage,
+  answerInThread,
+  askInThread,
+  demoConversationThread,
+  groupThreadsByAnchor,
+  isPrivate,
+  openThread,
+  promoteMessage,
+  THREAD_LANE,
+  threadContentForPublish,
+  threadMarginKey,
+  threadRoute,
+} from "./canvas/conversation";
 // The destination (issue #64): the persistent north the review stages toward, the
 // two variants by mode, the staged vocabulary over #17's batch, and the sign gate.
 export type {
@@ -161,6 +189,19 @@ export type { AskAnswersProps, AskControlProps } from "./components/ask";
 export { AskAnswers, AskControl } from "./components/ask";
 export { BatchView } from "./components/batch-view";
 export { CollationDraftCanvas } from "./components/collation-draft-canvas";
+// The inline conversation cluster UI (issue #36): the discuss verb (opens a thread),
+// the private thread panel, and the right-margin column (a sibling of the diff, so
+// the diff never reflows).
+export type {
+  ConversationClusterProps,
+  ConversationMarginProps,
+} from "./components/conversation-cluster";
+export {
+  ConversationCluster,
+  ConversationMargin,
+  DiscussControl,
+  ThreadChip,
+} from "./components/conversation-cluster";
 export { CoverageMosaicView } from "./components/coverage";
 export { DestinationFrame } from "./components/destination-frame";
 export type {
