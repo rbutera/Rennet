@@ -23,6 +23,7 @@ import {
 import type {
   Canvas,
   CanvasAngle,
+  DecisionsRunStatus,
   ElementDiffs,
   FlaggedReview,
   NoiseReview,
@@ -67,6 +68,13 @@ export interface DispatchDeps {
     narration?: ReviewNarration;
     /** How the set was produced (real-AI-default): AI review vs mechanical outline. */
     engine: ReviewEngine;
+    /**
+     * How the Decisions lens's producer ran (issue #137): `ok` (discerned a
+     * possibly-empty set) vs `failed` (the runner did not complete). Optional so a
+     * caller that does not run decisions omits it; the renderer surface that paints
+     * the failed state distinctly is a follow-up.
+     */
+    decisionsRun?: DecisionsRunStatus;
   }>;
   /**
    * The workspace permission-mode store (issue #103). Reads the persisted

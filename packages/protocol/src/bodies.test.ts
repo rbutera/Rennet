@@ -385,11 +385,35 @@ describe("bodyJsonSchema — the claude CLI compatibility strip", () => {
       "ordering",
       "rollup-narration",
       "finding",
+      "decision.record",
     ] as const) {
       const schema = bodyJsonSchema(docType) as Record<string, unknown>;
       expect(schema).not.toHaveProperty("$schema");
       // The load-bearing shape survives the strip.
       expect(schema.type).toBe("object");
     }
+  });
+});
+
+describe("bodyJsonSchema — decision.record (issue #137)", () => {
+  it("projects a non-null object schema carrying the decisions + evidence shape", () => {
+    const schema = bodyJsonSchema("decision.record") as Record<string, unknown>;
+    expect(schema).not.toBeNull();
+    expect(schema.type).toBe("object");
+    expect(schema).toHaveProperty("properties");
+    const serialized = JSON.stringify(schema);
+    // The model-facing shape the structured-output turn is constrained to.
+    expect(serialized).toContain("decisions");
+    expect(serialized).toContain("evidence");
+    expect(serialized).toContain("alternatives");
+    // The two runner-owned invariants are stamped AFTER the turn, so they are NOT
+    // in the model-facing schema: the runner mints the decisionId (agents never
+    // mint identity), and stamps why.reconstructed=true (reconstructed-ness is
+    // structural, never the model's to assert).
+    expect(serialized).not.toContain("decisionId");
+    expect(serialized).not.toContain("reconstructed");
+    // NO triage taxonomy is even expressible in the shape (issue #137).
+    expect(serialized).not.toContain("triage");
+    expect(serialized).not.toContain("contestable");
   });
 });

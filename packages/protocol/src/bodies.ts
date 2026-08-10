@@ -156,12 +156,69 @@ const findingBodyElementSchema = z
 
 const findingBodySchema = z.object({ findings: z.array(findingBodyElementSchema) }).loose();
 
+/**
+ * The `decision.record` body (issue #137): the Decisions lens's data — the calls
+ * the implementer made, discerned from the change's stated intent and its diff.
+ * Each decision carries a plain-language `title`, an `anchor` to exactly one
+ * offered hunk (a `rennet:` code anchor the generic V005/V008 walk byte-checks
+ * against the offered manifest — an unresolvable or minted anchor rejects that
+ * ITEM, since `decision.record` is item-wise with `/body/decisions` as its items
+ * pointer, so a lone ungrounded decision never sinks the grounded ones), the
+ * `evidence` chips it is drawn from (each a `{kind, label, detail}` naming a
+ * SOURCE — spec / pr-body / hunk — never a verdict), an optional reconstructed
+ * `why`, and the `alternatives` not taken.
+ *
+ * This schema is the MODEL-FACING structured-output shape only: it names what the
+ * agent emits, NOT the on-disk document. Two runner-owned invariants are stamped
+ * AFTER the turn and so are deliberately absent here: the `decisionId` (the runner
+ * mints identity — agents never mint it), and `why.reconstructed` (the runner
+ * stamps the literal `true`, so an inferred rationale can never be presented as a
+ * stated fact — reconstructed-ness is structural, not the model's to assert). The
+ * model emits `why` as `{ text }`; the runner wraps it to `{ reconstructed: true,
+ * text }`.
+ *
+ * NO TRIAGE TAXONOMY (issue #137, load-bearing): there is deliberately no
+ * evidenced / mechanical / contestable field anywhere in this shape. Grouping (the
+ * canvas projector's job) + evidence + a reconstructed why is the whole shape;
+ * judging a decision is the reviewer's job, not a pre-chewed classification's.
+ *
+ * NOTE: because `decision.record` is item-wise WITH an items pointer, the protocol
+ * validator drives the per-item generic anchor/quote walk and does NOT invoke
+ * `validateBodyRules` for it (see `validateDocument`). So this schema is consumed
+ * ONLY by `bodyJsonSchema` (the structured-output constraint); it is not a second
+ * on-disk gate, and `validateBodyRules` short-circuits it to `[]`.
+ */
+const decisionEvidenceBodySchema = z
+  .object({
+    kind: z.enum(["spec", "pr-body", "hunk"]),
+    label: z.string(),
+    detail: z.string(),
+  })
+  .loose();
+
+const decisionWhyBodySchema = z.object({ text: z.string() }).loose();
+
+const decisionBodyElementSchema = z
+  .object({
+    anchor: z.string().min(1),
+    title: z.string(),
+    evidence: z.array(decisionEvidenceBodySchema),
+    why: decisionWhyBodySchema.optional(),
+    alternatives: z.array(z.string()),
+  })
+  .loose();
+
+const decisionRecordBodySchema = z
+  .object({ decisions: z.array(decisionBodyElementSchema) })
+  .loose();
+
 const BODY_SCHEMAS: Readonly<Partial<Record<RspDocType, z.ZodType>>> = {
   "decomposition.skeleton": skeletonBodySchema,
   "decomposition.proposal": proposalBodySchema,
   ordering: orderingBodySchema,
   "rollup-narration": rollupNarrationBodySchema,
   finding: findingBodySchema,
+  "decision.record": decisionRecordBodySchema,
 };
 
 /**
@@ -272,6 +329,15 @@ export function validateBodyRules(
   if (docType === "finding") {
     return validateFindingRules(parsed.data);
   }
+
+  // The decision family (#137) is item-wise WITH an items pointer, so
+  // `validateDocument` drives the per-item generic anchor walk (each decision's
+  // top-level `rennet:hunk/<id>` anchor is checked + grounded there) and never
+  // routes here. This branch exists only so a direct/refactored caller cannot fall
+  // through to the decomposition `viewOf` path (which assumes a `chunks` body and
+  // would throw): decisions carry no per-body semantic rules beyond that generic
+  // walk, so the honest answer is the empty error set.
+  if (docType === "decision.record") return [];
 
   const offeredHunkIds = offeredIdsOfKind(manifest, "hunk");
   const view = viewOf(docType, parsed.data);

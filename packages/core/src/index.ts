@@ -23,6 +23,7 @@ export * from "./canvas-ops";
 export * from "./codex-run-turn";
 export * from "./codex-utility-port";
 export * from "./context-update-stream";
+export * from "./decision-generation";
 export * from "./decomposition";
 export * from "./element-diffs";
 export * from "./finding-generation";
