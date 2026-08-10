@@ -197,3 +197,51 @@ export const RennetMark = ({ size = 30, ...rest }: IconProps) => (
     </text>
   </svg>
 );
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The legend contract (issue #62, prototype frame `00-legend`). The legend is the
+// vocabulary contract: every glyph the app renders must be accounted for here — a
+// glyph with no entry is treated as a bug (`icons.legend.test.ts` enforces it, so
+// adding a glyph without an entry fails the suite). The vocabulary glyphs map to
+// their entry in frame `00-legend`; universal affordances the legend does not
+// enumerate (chevron, back, dismiss, add) are marked `structural` so they are
+// still accounted for without inventing legend vocabulary. The vocabulary-vs-
+// structural split is a judgment call pending the awake designer — adjust the
+// groups freely; the coverage (every glyph has an entry) is the invariant.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface LegendEntry {
+  /** The label this glyph carries in frame `00-legend`, or its role if structural. */
+  entry: string;
+  /** Which legend region it belongs to (or `structural` / `brand`). */
+  group: "conversation" | "lens" | "mode" | "actions" | "objects" | "structural" | "brand";
+}
+
+export const ICON_LEGEND: Record<string, LegendEntry> = {
+  // Conversation cluster · verbs
+  CheckIcon: { entry: "Approve", group: "conversation" },
+  TriangleIcon: { entry: "Request change", group: "conversation" },
+  CommentIcon: { entry: "Comment", group: "conversation" },
+  QuestionIcon: { entry: "Question", group: "conversation" },
+  // The lenses / views
+  FileDiffIcon: { entry: "Code / diff", group: "lens" },
+  LayersIcon: { entry: "Canvases", group: "lens" },
+  TargetIcon: { entry: "Destination", group: "lens" },
+  // Execution mode
+  LockIcon: { entry: "Read-only / private", group: "mode" },
+  // Actions
+  SignIcon: { entry: "Sign", group: "actions" },
+  // Objects
+  MonitorIcon: { entry: "Workspace", group: "objects" },
+  GitBranchIcon: { entry: "Branch / worktree", group: "objects" },
+  SparkleIcon: { entry: "Harness / LLM", group: "objects" },
+  // Structural affordances (universal, not part of the vocabulary the legend enumerates)
+  ChevronIcon: { entry: "Expand / collapse", group: "structural" },
+  FolderIcon: { entry: "Choose a repository", group: "structural" },
+  ArrowRightIcon: { entry: "Proceed", group: "structural" },
+  ArrowLeftIcon: { entry: "Back", group: "structural" },
+  CloseIcon: { entry: "Dismiss", group: "structural" },
+  PlusIcon: { entry: "Add a project", group: "structural" },
+  // Brand
+  RennetMark: { entry: "Rennet", group: "brand" },
+};
