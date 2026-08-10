@@ -49,6 +49,7 @@ import {
   DECISION_CONTRACT,
   type PromptContract,
   renderBaseInstruction,
+  renderHypothesisLayer,
 } from "@rennet/instructions";
 import { computeInputDigest, parseAnchor, resolveAnchor, validateDocument } from "@rennet/protocol";
 import type {
@@ -59,6 +60,7 @@ import type {
   InvocationBudget,
   OfferedManifest,
   ResolutionTrace,
+  ReviewHypothesis,
   RspCapabilitySnapshot,
   RspEnvelope,
   RspModelReportedBy,
@@ -108,6 +110,13 @@ export interface RunDecisionAngleInput {
   readonly manifest: OfferedManifest;
   /** The change's stated intent (PR title/body, spec); the runner reasons over it + the diff. */
   readonly intent?: DecisionIntent;
+  /**
+   * The committed hypothesis (#178). When present, it is rendered as a labelled
+   * disconfirmation layer after the base instruction and before the payload, so
+   * the runner can surface a decision where the change diverges from what we'd
+   * have chosen. Absent, the runner assembles exactly as it does today.
+   */
+  readonly hypothesis?: ReviewHypothesis;
   /** The `decision.record` contract; defaults to the shipped `DECISION_CONTRACT` (#137). */
   readonly contract?: PromptContract;
   readonly provenance: DecisionProvenanceSeed;
@@ -433,6 +442,8 @@ export async function runDecisionAngle(
   const base = renderBaseInstruction(contract);
   const payload = renderPayload(manifest, patchsetId);
   const intentText = renderIntent(intent);
+  const hypothesisLayer =
+    input.hypothesis === undefined ? undefined : renderHypothesisLayer(input.hypothesis);
 
   const attempts: DecisionAttempt[] = [];
   let lastReportText: string | undefined;
@@ -460,6 +471,7 @@ export async function runDecisionAngle(
     const assembled = assemblePrompt(
       {
         base,
+        ...(hypothesisLayer === undefined ? {} : { hypothesis: hypothesisLayer }),
         ...(guidance?.general === undefined ? {} : { general: guidance.general }),
         ...(guidance?.files === undefined ? {} : { files: guidance.files }),
         ...(taskText.length === 0 ? {} : { task: taskText }),

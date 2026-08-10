@@ -46,6 +46,7 @@ import {
   ReviewService,
   runDecisionAngle,
   runFindingAngle,
+  runHypothesisPass,
   runNoiseAngle,
 } from "@rennet/core";
 import { type CommandName, type DetectedHarness, isCommandName } from "@rennet/protocol";
@@ -56,10 +57,12 @@ import type {
   DecisionsRunStatus,
   ElementDiffs,
   FlaggedReview,
+  HypothesisStructure,
   NoiseReview,
   Patchset,
   Review,
   ReviewEngine,
+  ReviewHypothesis,
   ReviewNarration,
 } from "@rennet/types";
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session } from "electron";
@@ -266,6 +269,8 @@ async function buildCanvasesForReview(review: Review): Promise<{
   engine: ReviewEngine;
   /** How the Decisions lens's producer ran (issue #137): discerned vs failed. */
   decisionsRun: DecisionsRunStatus;
+  /** The committed hypothesis (#178), when one was produced; the human's reading frame. */
+  hypothesis?: ReviewHypothesis;
 }> {
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
@@ -306,7 +311,18 @@ async function buildCanvasesForReview(review: Review): Promise<{
   // `decision.record` docs the existing projector groups by theme. On a runner
   // failure it yields an empty doc set + a LOUD `failed` status, kept strictly
   // apart from "ran, nothing discerned" (an ok run with no decisions).
-  const decisions = await runDecisionsForReview(review, patchset, adapter);
+  // ① The hypothesis-first pre-read pass (#178): produce the committed prior ONCE
+  // per review — BEFORE the lens producers reason over hunks — from the change's
+  // structure (deterministic decomposition chunk titles + changed files). Live
+  // intent capture (#136) and the ProjectSnapshot context feed are deferred seams,
+  // so the pass degrades honestly (structure-only) today, exactly as the decision
+  // runner reasons over the diff alone until #136. Its committed hypothesis feeds
+  // the Decisions runner as disconfirmation criteria and rides the result as the
+  // human's reading frame. Absent an adapter (or on a failed pass) it is undefined
+  // and every lens runs exactly as before.
+  const hypothesis = await computeReviewHypothesis(review, patchset, adapter);
+
+  const decisions = await runDecisionsForReview(review, patchset, adapter, hypothesis);
 
   const result = await buildReviewCanvases({
     reviewId: review.id,
@@ -339,7 +355,78 @@ async function buildCanvasesForReview(review: Review): Promise<{
     narration: result.narration,
     engine,
     decisionsRun: decisions.status,
+    ...(hypothesis ? { hypothesis } : {}),
   };
+}
+
+// The provenance seed for a live hypothesis pass (issue #178), mirroring the
+// finding/decision seeds. Provenance is stamped on the RSP document but not read
+// by the reading-frame derivation (which consumes the extracted hypothesis body),
+// so a placeholder model is honest for placement; the capability layers are true
+// because this path DOES constrain structured output through the adapter.
+const HYPOTHESIS_PROVENANCE_SEED = {
+  harness: "claude-code",
+  harnessVersion: "unknown",
+  adapterVersion: "0.0.0",
+  model: "unknown",
+  modelReportedBy: "unknown" as const,
+  capability: {
+    structuredOutput: {
+      implementedByAdapter: true,
+      advertisedByHarness: true,
+      availableInSession: true,
+    },
+    perCallModelSelection: {
+      implementedByAdapter: true,
+      advertisedByHarness: true,
+      availableInSession: true,
+    },
+  },
+};
+
+/**
+ * Produce the committed hypothesis for a review (issue #178), once, before the
+ * lens producers run. It decomposes the active patchset for identity + structure
+ * (the chunk titles + changed-file list — NOT the hunk bodies, so the prior is
+ * genuine), runs the hypothesis pass on the user's `claude` (subscription OAuth),
+ * budget-gated as its own live action, and returns the extracted hypothesis or
+ * `undefined` when the pass could not complete. Live intent capture (#136) and the
+ * ProjectSnapshot context feed are the deferred seams: today the pass degrades
+ * honestly to a structure-only prior, exactly as the decision runner reasons over
+ * the diff alone until #136 lands. A failed pass is never surfaced as an empty
+ * hypothesis — the review simply proceeds with no reading frame.
+ */
+async function computeReviewHypothesis(
+  review: Review,
+  patchset: Patchset,
+  adapter: Awaited<ReturnType<typeof getClaudeHarness>>["adapter"],
+): Promise<ReviewHypothesis | undefined> {
+  if (!adapter) return undefined;
+  const decomposition = decompose(patchset);
+  const manifest = buildOfferedManifest(decomposition);
+  const structure: HypothesisStructure = {
+    changedFiles: patchset.files.map((file) => file.path),
+    chunkTitles: decomposition.chunks.map((chunk) => chunk.title),
+  };
+  // KNOWN §7 DEVIATION (as elsewhere): the read-only harness runs with `cwd` on the
+  // live mutable checkout rather than an immutable materialisation. Do NOT read as
+  // satisfied.
+  const runHypothesisTurn = createHarnessRunTurn(adapter, {
+    docType: "review.hypothesis",
+    cwd: review.repositoryRoot,
+  });
+  const budget = createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS);
+  const result = await runHypothesisPass({
+    patchsetId: patchset.id,
+    manifest,
+    structure,
+    provenance: HYPOTHESIS_PROVENANCE_SEED,
+    // A thrown/rejected turn (a session/transport construction exception, #96)
+    // degrades to a turn-failure rather than crashing the command.
+    runTurn: guardSeatTurn(runHypothesisTurn),
+    budget,
+  });
+  return result.status === "ok" ? result.hypothesis : undefined;
 }
 
 // The provenance seed for a live decision run (issue #137), mirroring the finding
@@ -386,6 +473,7 @@ async function runDecisionsForReview(
   review: Review,
   patchset: Patchset,
   adapter: Awaited<ReturnType<typeof getClaudeHarness>>["adapter"],
+  hypothesis?: ReviewHypothesis,
 ): Promise<{ docs: AdmittedDocument[]; status: DecisionsRunStatus }> {
   if (!adapter) {
     return {
@@ -407,6 +495,10 @@ async function runDecisionsForReview(
   const result = await runDecisionAngle({
     patchsetId: patchset.id,
     manifest,
+    // The committed hypothesis (#178), when produced, feeds the runner as
+    // disconfirmation criteria — so a decision can surface where the change diverges
+    // from what we'd have chosen. Absent, the runner reasons exactly as before.
+    ...(hypothesis ? { hypothesis } : {}),
     provenance: DECISION_PROVENANCE_SEED,
     // A thrown/rejected turn (a session/transport construction exception, #96)
     // degrades to a turn-failure rather than crashing the command.

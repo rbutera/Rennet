@@ -36,6 +36,7 @@ import {
   FINDING_CONTRACT,
   type PromptContract,
   renderBaseInstruction,
+  renderHypothesisLayer,
 } from "@rennet/instructions";
 import { computeInputDigest, parseAnchor, resolveAnchor, validateDocument } from "@rennet/protocol";
 import type {
@@ -46,6 +47,7 @@ import type {
   InvocationBudget,
   OfferedManifest,
   ResolutionTrace,
+  ReviewHypothesis,
   RspCapabilitySnapshot,
   RspEnvelope,
   RspModelReportedBy,
@@ -79,6 +81,14 @@ export interface RunFindingAngleInput {
   readonly patchsetId: string;
   /** The offered occurrence manifest: the hunk ids + lines the model may cite. */
   readonly manifest: OfferedManifest;
+  /**
+   * The committed hypothesis (#178). When present, it is rendered as a labelled
+   * disconfirmation layer positioned after the base instruction and before the
+   * payload — so the runner checks "did the author diverge from what we'd have
+   * done" for each predicted risk. Absent, the runner assembles and runs exactly
+   * as it does today, with no hypothesis layer.
+   */
+  readonly hypothesis?: ReviewHypothesis;
   /** The `finding` contract; defaults to the shipped `FINDING_CONTRACT` (#32). */
   readonly contract?: PromptContract;
   readonly provenance: FindingProvenanceSeed;
@@ -309,6 +319,8 @@ export async function runFindingAngle(input: RunFindingAngleInput): Promise<RunF
   const inputDigest = computeInputDigest(patchsetRef, manifest);
   const base = renderBaseInstruction(contract);
   const payload = renderPayload(manifest, patchsetId);
+  const hypothesisLayer =
+    input.hypothesis === undefined ? undefined : renderHypothesisLayer(input.hypothesis);
 
   const attempts: FindingAttempt[] = [];
   let lastReportText: string | undefined;
@@ -333,6 +345,7 @@ export async function runFindingAngle(input: RunFindingAngleInput): Promise<RunF
     const assembled = assemblePrompt(
       {
         base,
+        ...(hypothesisLayer === undefined ? {} : { hypothesis: hypothesisLayer }),
         ...(guidance?.general === undefined ? {} : { general: guidance.general }),
         ...(guidance?.files === undefined ? {} : { files: guidance.files }),
         ...(lastReportText === undefined ? {} : { task: lastReportText }),

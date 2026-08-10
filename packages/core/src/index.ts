@@ -30,6 +30,7 @@ export * from "./finding-generation";
 export * from "./forge-port";
 export * from "./harness";
 export * from "./harness-run-turn";
+export * from "./hypothesis-generation";
 export * from "./invocation-budget";
 export * from "./model-council";
 export * from "./noise-generation";
@@ -43,6 +44,7 @@ export * from "./project-snapshot";
 export * from "./publish-review";
 export * from "./review-ask";
 export * from "./review-backend";
+export * from "./risk-crosscheck";
 export * from "./rollup-narration";
 export * from "./route-plan";
 

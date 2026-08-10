@@ -111,6 +111,11 @@ export {
 } from "./canvas/destination";
 export type { CanvasFeedSource } from "./canvas/feed";
 export { demoCanvases, demoDiff } from "./canvas/fixtures";
+// The hypothesis reading frame (issue #178): the human's committed prior, derived
+// host-free from a `ReviewHypothesis` + its predicted-risk cross-check. Rendered
+// BEFORE the lenses so the reviewer reads with an expectation. Open risks first.
+export type { HypothesisFrame, HypothesisFrameRisk } from "./canvas/hypothesis";
+export { buildHypothesisFrame } from "./canvas/hypothesis";
 export type { ApprovalScope, DispositionWrite } from "./canvas/logic";
 // The publish target (issue #22): the two context-dependent outbound artifacts a
 // review produces — the own-branch PR submission and the other-pr line-anchored
@@ -212,6 +217,7 @@ export { DispositionCluster } from "./components/disposition-cluster";
 export { FrontDoor } from "./components/front-door";
 export type { GranularityContext } from "./components/granularity-author";
 export { GranularityAuthor } from "./components/granularity-author";
+export { HypothesisReadingFrame } from "./components/hypothesis";
 export type { MarkIndexEntry } from "./components/mark-index";
 export { MarkIndex } from "./components/mark-index";
 export { OrphanTray } from "./components/orphan-tray";

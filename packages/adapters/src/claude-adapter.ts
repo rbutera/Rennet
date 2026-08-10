@@ -19,6 +19,7 @@ import {
   type ToolKind,
   type TurnInput,
 } from "@rennet/core";
+import type { RspTokenUsage } from "@rennet/types";
 import { compareVersions } from "./harness-discovery";
 
 /**
@@ -173,6 +174,39 @@ function readStructuredOutput(record: Record<string, unknown>): unknown {
   return undefined;
 }
 
+function numField(record: Record<string, unknown>, key: string): number {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * Extract the token accounting off a Claude `result` frame's `usage` block into
+ * the RSP `RspTokenUsage` shape (issue #186). Pure and defensive: every count
+ * defaults to 0, and a frame with NO `usage` object returns `undefined` — a turn
+ * that reported no usage is not the same as one that used zero tokens, so the
+ * absence is preserved rather than substituted with a zero block. `total` sums
+ * input + output + cache read + cache creation, the throughput the quota proxy
+ * measures. `reasoning` is null (the Claude result frame does not report it
+ * separately). Threaded onto the completed `SessionOutcome` so the runner that
+ * mints the document stamps real tokens instead of ZERO_TOKENS.
+ */
+export function extractResultUsage(record: Record<string, unknown>): RspTokenUsage | undefined {
+  const usage = asRecord(record.usage);
+  if (!usage) return undefined;
+  const input = numField(usage, "input_tokens");
+  const output = numField(usage, "output_tokens");
+  const cacheRead = numField(usage, "cache_read_input_tokens");
+  const cacheWrite = numField(usage, "cache_creation_input_tokens");
+  return {
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    reasoning: null,
+    total: input + output + cacheRead + cacheWrite,
+  };
+}
+
 /**
  * Normalize one native Claude frame into zero or more `HarnessEvent`s. Pure:
  * every event carries its raw frame in `native`, and any frame we do not model
@@ -300,13 +334,22 @@ export function normalizeClaudeFrame(frame: unknown, context: EnvelopeContext): 
       ];
     }
     const structuredOutput = readStructuredOutput(record);
+    // The turn's token usage (issue #186), when the result frame reported it, so
+    // the completed outcome carries real counts through to the runner's provenance.
+    const usage = extractResultUsage(record);
+    const finalText = stringField(record, "result") ?? "";
     const outcome =
       structuredOutput === undefined
-        ? { status: "completed" as const, finalText: stringField(record, "result") ?? "" }
+        ? {
+            status: "completed" as const,
+            finalText,
+            ...(usage === undefined ? {} : { usage }),
+          }
         : {
             status: "completed" as const,
-            finalText: stringField(record, "result") ?? "",
+            finalText,
             structuredOutput,
+            ...(usage === undefined ? {} : { usage }),
           };
     return [{ ...envelope(context, frame), kind: "session.ended", outcome }];
   }

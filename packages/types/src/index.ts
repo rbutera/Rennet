@@ -205,6 +205,7 @@ export type RspDocType =
   | "noise"
   | "anomaly"
   | "finding"
+  | "review.hypothesis"
   | "validation.report";
 
 /** Task tier: a property of the task, not the wallet (§1). */
@@ -976,6 +977,127 @@ export interface AskReviewResult {
   primary: AskAnswer;
   /** Codex's answer — present ONLY in "both" mode. Never merged with `primary`. */
   secondOpinion?: AskAnswer;
+}
+
+// ─── review.hypothesis: the hypothesis-first pre-read pass (issue #178) ────────
+//
+// Florence's single most load-bearing anti-rubber-stamp move: BEFORE the lens
+// runners read a hunk, the system commits to what this change SHOULD be — its
+// Domain, its in/out Scope, the Design it would have chosen, and 5-10 concrete
+// Risks it would look for — from the change's stated intent + structure + repo
+// context, NOT the full hunk bodies (a genuine prior, not a diff summary). The
+// committed hypothesis then feeds every lens runner as a labelled disconfirmation
+// layer ("did the author diverge from what we'd have done") and surfaces to the
+// human as their reading frame. These shapes are additive: nothing here changes an
+// existing field, so documents stamped before this change validate unchanged.
+
+/**
+ * The change's stated intent, widening the live `DecisionIntent` seam the
+ * Decisions runner already consumes. Every field is optional: absent, the pass
+ * reasons over structure and repo context alone (a degraded but honest read). The
+ * #136 frozen-immutable-snapshot capture is deferred; this is the live seam.
+ */
+export interface ReviewIntent {
+  readonly prTitle?: string;
+  readonly prBody?: string;
+  readonly spec?: string;
+}
+
+/**
+ * A compact, node-free projection of the ProjectSnapshot the Repo-Map builds,
+ * handed to the hypothesis pass by the composition root (which reads the snapshot
+ * through the `context.map`/`context.file` backend — the pass never touches the
+ * store). Absent or a typed refusal degrades the pass to intent + structure alone;
+ * it is never fabricated.
+ */
+export interface HypothesisRepoFileContext {
+  readonly path: string;
+  /** A one-line note about what this file is / its role, when the snapshot has one. */
+  readonly summary?: string;
+}
+
+export interface HypothesisRepoContext {
+  /** A short account of the repo / area the change touches (conventions, neighbours). */
+  readonly summary?: string;
+  /** The changed files with what-they-are context, when the snapshot serves it. */
+  readonly files?: readonly HypothesisRepoFileContext[];
+}
+
+/**
+ * The change's structure the pass sees INSTEAD of the hunk bodies: the changed
+ * file list and the decomposition chunk titles. This is what keeps the prior
+ * genuine — the pass forms expectations from the shape of the change, not from the
+ * code it is meant to check.
+ */
+export interface HypothesisStructure {
+  readonly changedFiles: readonly string[];
+  readonly chunkTitles: readonly string[];
+}
+
+/**
+ * One risk the pass predicts: a concrete failure mode to look for, its severity
+ * (the closed high|medium|low vocabulary, reused from findings), and the
+ * disconfirmer — the check a lens runner applies ("did the author diverge from
+ * what we'd have done"). `riskId` is minted by the PASS (agents never mint
+ * identity), so the model-facing emission omits it and the runner stamps it.
+ */
+export interface HypothesisRisk {
+  readonly riskId: string;
+  readonly statement: string;
+  readonly severity: FindingSeverity;
+  readonly disconfirmer: string;
+}
+
+/** The in/out scope the change is expected to cover. */
+export interface HypothesisScope {
+  readonly inScope: readonly string[];
+  readonly outOfScope: readonly string[];
+}
+
+/**
+ * The `review.hypothesis` document body: the committed prior. An atomic doc — any
+ * body error rejects the whole document (a half-formed hypothesis is not a
+ * hypothesis). `risks` is validator-bounded to 5-10.
+ */
+export interface ReviewHypothesisBody {
+  readonly domain: string;
+  readonly scope: HypothesisScope;
+  readonly designExpectation: string;
+  readonly risks: readonly HypothesisRisk[];
+}
+
+/**
+ * The pass's extracted, ready-to-inject hypothesis: the committed body plus
+ * whether the repo context was present when it was formed (an honest degradation
+ * marker, never a fabricated snapshot). This is what the lens runners consume as
+ * disconfirmation criteria and what the reading-frame derivation renders.
+ */
+export interface ReviewHypothesis extends ReviewHypothesisBody {
+  /** False when the ProjectSnapshot backend refused; the hypothesis stands on intent + structure. */
+  readonly repoContextPresent: boolean;
+}
+
+/**
+ * The Flagged lens's per-review hypothesis input, behind the typed boundary. A
+ * pass that RAN and produced a hypothesis (`ok`) is strictly apart from one that
+ * FAILED (`failed`, with a reason) — a failed pass is "no hypothesis," never an
+ * empty-but-successful one. This mirrors the `FlaggedReview` distinction exactly.
+ */
+export type HypothesisPass =
+  | { status: "ok"; hypothesis: ReviewHypothesis }
+  | { status: "failed"; reason: string };
+
+/**
+ * The deterministic predicted-risk cross-check (issue #181): each hypothesised
+ * risk is `confirmed` (a finding addresses it — a predicted-and-found signal) or
+ * `open` (no finding addresses it — surfaced to the human as a manual check they
+ * must make themselves, NEVER silently dropped). Runs no model turn.
+ */
+export interface RiskCrossCheck {
+  readonly riskId: string;
+  readonly status: "confirmed" | "open";
+  /** The findings that address this risk, when confirmed (empty when open). */
+  readonly findingIds: readonly string[];
 }
 
 // ─── The `noise` doc family + the Noise lens (issue #34) ──────────────────────

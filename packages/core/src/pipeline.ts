@@ -25,6 +25,7 @@ import {
   DECOMPOSITION_PROPOSAL_CONTRACT,
   ORDERING_CONTRACT,
   type PromptContract,
+  REVIEW_HYPOTHESIS_CONTRACT,
   ROLLUP_NARRATION_CONTRACT,
 } from "@rennet/instructions";
 import type {
@@ -36,9 +37,13 @@ import type {
   DecompositionProposalBody,
   Disposition,
   ElementDiffs,
+  HypothesisRepoContext,
+  HypothesisStructure,
   OfferedManifest,
   Patchset,
   ResolutionTrace,
+  ReviewHypothesis,
+  ReviewIntent,
   ReviewNarration,
   RoutePlanResult,
   RspCapabilitySnapshot,
@@ -58,6 +63,11 @@ import type { CodexUtilityPort } from "./codex-utility-port";
 import { type DecomposeOptions, decompose } from "./decomposition";
 import { buildElementDiffs } from "./element-diffs";
 import { guardSeatTurn, type HarnessTurnResult } from "./harness-run-turn";
+import {
+  type HypothesisTurnResult,
+  type RunHypothesisResult,
+  runHypothesisPass,
+} from "./hypothesis-generation";
 import { createInvocationBudget } from "./invocation-budget";
 import { providerHarness, resolveAssignment } from "./model-council";
 import {
@@ -179,6 +189,21 @@ export interface ReviewPipelineInput {
    * depends on #136's intent capture); a fixture stands behind this boundary now.
    */
   readonly decisionDocs?: readonly AdmittedDocument[];
+  /**
+   * Drives the hypothesis-first pre-read pass (#178). Absent (or a budget refusal)
+   * means no hypothesis is produced and the result carries none — every lens then
+   * runs exactly as it does today. When present, the pass runs FIRST (before the
+   * decomposition angle reads a hunk) over the change's intent + structure +
+   * repo context, and its committed hypothesis rides the result for the lens
+   * runners to disconfirm against and for the human's reading frame. It draws from
+   * the SAME shared budget, so its turn counts toward the <5 ceiling.
+   */
+  readonly runHypothesisTurn?: (prompt: string, attempt: number) => Promise<HypothesisTurnResult>;
+  readonly hypothesisContract?: PromptContract;
+  /** The change's stated intent, fed to the hypothesis pass (PR title/body, spec). */
+  readonly intent?: ReviewIntent;
+  /** A compact ProjectSnapshot projection fed to the hypothesis pass; absent → degrades honestly. */
+  readonly repoContext?: HypothesisRepoContext;
   /** Deterministic id hooks (tests); default to the random minters. */
   readonly mintDocId?: () => string;
   readonly newRunId?: () => string;
@@ -209,6 +234,17 @@ export interface ReviewPipelineResult {
   readonly narration: ReviewNarration;
   /** The narration run result (for provenance / telemetry); absent when it did not run. */
   readonly narrationResult?: RunRollupNarrationResult;
+  /**
+   * The committed hypothesis (#178), delivered ALONGSIDE the canvas set (never
+   * embedded on a `Canvas`, so the projection stays byte-identical for replay).
+   * Present only when the hypothesis pass ran AND produced an admitted hypothesis;
+   * absent when no pass ran, the budget refused, or the pass failed. The lens
+   * runners consume it as disconfirmation criteria and the surface renders it as
+   * the human's reading frame.
+   */
+  readonly hypothesis?: ReviewHypothesis;
+  /** The hypothesis pass result (for provenance / telemetry); absent when it did not run. */
+  readonly hypothesisResult?: RunHypothesisResult;
 }
 
 /**
@@ -303,6 +339,39 @@ export async function buildReviewCanvases(
   // executor for its resolved harness (Claude turn OR Codex port) AND the budget
   // permits it. A refusal skips the whole model phase — no spend, floor stands.
   const budgetRefused = routePlan.refused;
+
+  // ① The hypothesis-first pre-read pass (#178). It runs FIRST — before the
+  // decomposition angle reads a hunk — over the change's intent + STRUCTURE (the
+  // deterministic decomposition's chunk titles + the changed-file list, never the
+  // hunk bodies) + repo context, so its risks are a genuine prior rather than a
+  // diff summary. It draws from the SAME shared budget as every other stage, so a
+  // refusal (route plan OR the counter exhausted) leaves the review with no
+  // hypothesis and every lens runs unchanged — never a fabricated one.
+  let hypothesisResult: RunHypothesisResult | undefined;
+  let hypothesis: ReviewHypothesis | undefined;
+  if (input.runHypothesisTurn && !budgetRefused) {
+    const structure: HypothesisStructure = {
+      changedFiles: input.patchset.files.map((file) => file.path),
+      chunkTitles: decomposition.chunks.map((chunk) => chunk.title),
+    };
+    hypothesisResult = await runHypothesisPass({
+      patchsetId: decomposition.patchsetId,
+      manifest,
+      structure,
+      ...(input.intent ? { intent: input.intent } : {}),
+      ...(input.repoContext ? { repoContext: input.repoContext } : {}),
+      contract: input.hypothesisContract ?? REVIEW_HYPOTHESIS_CONTRACT,
+      provenance: seed,
+      // A thrown hypothesis turn degrades to the honest failed state (no hypothesis)
+      // rather than crashing the whole run (#96).
+      runTurn: guardSeatTurn(input.runHypothesisTurn),
+      budget,
+      ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
+      ...(input.newRunId ? { newRunId: input.newRunId } : {}),
+    });
+    if (hypothesisResult.status === "ok") hypothesis = hypothesisResult.hypothesis;
+  }
+
   if (decompositionSeat.runTurn && !budgetRefused) {
     decompositionResult = await runDecompositionAngle({
       decomposition,
@@ -432,5 +501,7 @@ export async function buildReviewCanvases(
     admittedDocs,
     narration,
     ...(narrationResult ? { narrationResult } : {}),
+    ...(hypothesis ? { hypothesis } : {}),
+    ...(hypothesisResult ? { hypothesisResult } : {}),
   };
 }
