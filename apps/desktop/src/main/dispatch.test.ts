@@ -387,6 +387,24 @@ describe("createDispatch — canvas.* routing (issue #54)", () => {
   });
 });
 
+describe("createDispatch — flagged.review routing (the live finding runner, issue #32)", () => {
+  it("resolves the addressed review and returns the runner's FlaggedReview", async () => {
+    const { dispatch } = harness();
+    const review = await capturedReview(dispatch);
+    const result = await dispatch("flagged.review", { reviewId: review.id });
+    // The shared harness's runner stub answers with an honestly-empty ran-clean set.
+    expect(result).toEqual({ status: "ok", findings: [] });
+  });
+
+  it("refuses flagged.review for a stale or unknown review id (the runner spends a model turn)", async () => {
+    const { dispatch } = harness();
+    await capturedReview(dispatch);
+    await expect(dispatch("flagged.review", { reviewId: randomUUID() })).rejects.toThrow(
+      /Review not found/,
+    );
+  });
+});
+
 describe("createDispatch — permission-mode settings (issue #103)", () => {
   it("reads the persisted workspace permission mode", async () => {
     const { dispatch } = harness();

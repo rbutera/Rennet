@@ -21,7 +21,6 @@ import {
   execaGit,
   FileProjectStore,
   FileSettingsStore,
-  flaggedReviewFixture,
   type GhRunner,
   GitCaptureAdapter,
   GitHubChangesetSource,
@@ -37,10 +36,16 @@ import {
   SqliteReviewStore,
 } from "@rennet/adapters";
 import {
+  buildOfferedManifest,
   buildReviewCanvases,
   type CodexUtilityPort,
   createHarnessRunTurn,
+  createInvocationBudget,
+  DEFAULT_MAX_HARNESS_INVOCATIONS,
+  decompose,
+  guardSeatTurn,
   ReviewService,
+  runFindingAngle,
 } from "@rennet/core";
 import { type CommandName, type DetectedHarness, isCommandName } from "@rennet/protocol";
 import type {
@@ -48,6 +53,7 @@ import type {
   CanvasAngle,
   CouncilHarnessId,
   ElementDiffs,
+  FlaggedReview,
   Patchset,
   Review,
   ReviewEngine,
@@ -322,6 +328,76 @@ async function buildCanvasesForReview(review: Review): Promise<{
   };
 }
 
+// The provenance seed for a live finding run. Provenance is stamped on the RSP
+// document but not read by the Flagged lens (findings map straight to the lens),
+// so a placeholder model is honest for placement; the capability layers are set
+// true because this path DOES constrain structured output through the adapter.
+const FINDING_PROVENANCE_SEED = {
+  harness: "claude-code",
+  harnessVersion: "unknown",
+  adapterVersion: "0.0.0",
+  model: "unknown",
+  modelReportedBy: "unknown" as const,
+  capability: {
+    structuredOutput: {
+      implementedByAdapter: true,
+      advertisedByHarness: true,
+      availableInSession: true,
+    },
+    perCallModelSelection: {
+      implementedByAdapter: true,
+      advertisedByHarness: true,
+      availableInSession: true,
+    },
+  },
+};
+
+/**
+ * The live Flagged lens runner (issue #32/#138), replacing `flaggedReviewFixture`.
+ * Decomposes the review's active patchset into the offered hunk manifest and runs
+ * the finding angle on the user's `claude` (subscription OAuth), budget-gated. The
+ * emitted `finding` documents become the lens's `FlaggedReview` behind the SAME
+ * `flagged.review` boundary — the UI is unchanged. With no discoverable harness,
+ * or on a runner failure/budget refusal, the lens gets the LOUD `failed` state —
+ * "ran clean" is never faked from "did not run" (the empty-vs-failed distinction).
+ */
+async function runFlaggedReview(review: Review): Promise<FlaggedReview> {
+  const patchset = activePatchset(review);
+  const { adapter } = await getClaudeHarness();
+  if (!adapter) {
+    return { status: "failed", reason: "no model harness is available to run the review" };
+  }
+  const decomposition = decompose(patchset);
+  const manifest = buildOfferedManifest(decomposition);
+  // KNOWN §7 DEVIATION (as in buildCanvasesForReview): the read-only harness runs
+  // with `cwd` on the live mutable checkout rather than an immutable materialisation,
+  // because that layer is not built yet. Follow-up: materialise the active patchset
+  // to an app-owned cache and point `cwd` there. Do NOT read this as satisfied.
+  const runFindingTurn = createHarnessRunTurn(adapter, {
+    docType: "finding",
+    cwd: review.repositoryRoot,
+  });
+  // A finding run is its own live-budget-gated user action, distinct from
+  // review.canvases; the ceiling stops spend, never the review (R10, fail-closed).
+  const budget = createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS);
+  const result = await runFindingAngle({
+    patchsetId: patchset.id,
+    manifest,
+    provenance: FINDING_PROVENANCE_SEED,
+    // A thrown/rejected turn (a session/transport construction exception, #96)
+    // degrades to a turn-failure rather than crashing the command.
+    runTurn: guardSeatTurn(runFindingTurn),
+    budget,
+  });
+  if (result.status === "ok") {
+    return { status: "ok", findings: result.findings };
+  }
+  return {
+    status: "failed",
+    reason: result.failureReason ?? "the finding runner did not complete",
+  };
+}
+
 function registerCommandHandler(): void {
   ipcMain.handle(IPC_CHANNEL, async (event, request: unknown) => {
     if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url))
@@ -438,11 +514,11 @@ app.whenReady().then(async () => {
     // boundary so the surface comes alive now.
     projectDetail: () => Promise.resolve(projectDetailFixture()),
     cleanupWorktree: () => Promise.resolve(cleanupWorktreeFixture()),
-    // The Flagged lens (issue #138): the automated review layer's findings + dual-
-    // review agreement. Live finding-generation runner + aggregation are a follow-up
-    // (#32/#41); a fixture stands behind the real command boundary so the lens comes
-    // alive now.
-    flaggedReview: () => Promise.resolve(flaggedReviewFixture()),
+    // The Flagged lens (issue #138): the automated review layer's findings. This is
+    // the LIVE finding-generation runner (#32) — a real model turn over the review's
+    // diff, replacing the fixture. Dual-review aggregation (#41) is still a follow-up
+    // (single-model MVP: agreement is concur 1/1). The boundary is unchanged.
+    flaggedReview: runFlaggedReview,
     // The Noise lens (issue #34): the low-signal churn grouped away, each group tagged
     // rule vs noise job. The live noise-classification runner is a follow-up; a fixture
     // stands behind the real command boundary so the lens comes alive now — exactly as

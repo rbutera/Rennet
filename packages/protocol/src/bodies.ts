@@ -114,11 +114,54 @@ const narrationEntrySchema = z
 
 const rollupNarrationBodySchema = z.object({ narrations: z.array(narrationEntrySchema) }).loose();
 
+/**
+ * The `finding` body (issue #32 / #138): the automated review layer's findings —
+ * the data the Flagged lens renders. Each finding carries a severity, an `anchor`
+ * to exactly one offered hunk (a `rennet:` code anchor the generic V005/V008 walk
+ * byte-checks against the offered manifest — an unresolvable or minted anchor is
+ * rejected there, not here), the concern text, and an agreement/vote state. The
+ * agreement mirrors `FindingAgreement`: `concur` carries the vote counts, or
+ * `disagree` carries each model's labelled answer. `summary`/`answer` are any
+ * string here (empty passes the shape); V130/V131 enforce the non-emptiness and
+ * vote coherence so the rejection carries the precise code. The union projects to
+ * a clean `anyOf` for the structured-output constraint.
+ *
+ * The doctype is `itemwise` with no `itemsPointer`, so the whole body is walked
+ * here (V108 shape + the generic anchor walk) exactly like an atomic body — one
+ * malformed finding rejects the document and the runner falls to its honest
+ * failed state (a finding is a model judgement, so there is no deterministic floor
+ * to invent). The finding runner culls ungrounded findings before this gate, so a
+ * lone hallucinated anchor never sinks the grounded ones.
+ */
+const findingSeverityBodySchema = z.enum(["high", "medium", "low"]);
+
+const findingModelAnswerBodySchema = z
+  .object({ model: z.string().min(1), answer: z.string() })
+  .loose();
+
+const findingAgreementBodySchema = z.union([
+  z.object({ kind: z.literal("concur"), agree: z.number(), total: z.number() }).loose(),
+  z.object({ kind: z.literal("disagree"), answers: z.array(findingModelAnswerBodySchema) }).loose(),
+]);
+
+const findingBodyElementSchema = z
+  .object({
+    findingId: z.string().min(1),
+    anchor: z.string().min(1),
+    summary: z.string(),
+    severity: findingSeverityBodySchema,
+    agreement: findingAgreementBodySchema,
+  })
+  .loose();
+
+const findingBodySchema = z.object({ findings: z.array(findingBodyElementSchema) }).loose();
+
 const BODY_SCHEMAS: Readonly<Partial<Record<RspDocType, z.ZodType>>> = {
   "decomposition.skeleton": skeletonBodySchema,
   "decomposition.proposal": proposalBodySchema,
   ordering: orderingBodySchema,
   "rollup-narration": rollupNarrationBodySchema,
+  finding: findingBodySchema,
 };
 
 /**
@@ -129,7 +172,17 @@ const BODY_SCHEMAS: Readonly<Partial<Record<RspDocType, z.ZodType>>> = {
  */
 export function bodyJsonSchema(docType: RspDocType): unknown | null {
   const schema = BODY_SCHEMAS[docType];
-  return schema ? z.toJSONSchema(schema) : null;
+  if (!schema) return null;
+  const projected = z.toJSONSchema(schema) as Record<string, unknown>;
+  // Zod stamps a `$schema: ".../draft/2020-12/schema"` meta-schema reference into
+  // the projection. The `claude` CLI's `--json-schema` validator cannot resolve
+  // that meta-schema and rejects the WHOLE schema at session construction ("no
+  // schema with key or ref .../2020-12/schema"), so no structured-output turn can
+  // run. The field is metadata the constraint does not need — dropping it leaves
+  // the shape (type/properties/required/$defs) untouched. This applies to every
+  // docType's projection equally; it was the live-turn blocker for #32.
+  delete projected.$schema;
+  return projected;
 }
 
 // ── Typed views over a shape-validated body ──────────────────────────────────
@@ -210,6 +263,14 @@ export function validateBodyRules(
   // validator has no canvas-node set — the manifest offers code occurrences).
   if (docType === "rollup-narration") {
     return validateNarrationRules(parsed.data);
+  }
+
+  // The finding family (#32/#138): per-finding non-emptiness + vote coherence.
+  // The anchor's resolution against the offered manifest is the generic walk's
+  // job (V005/V008), run for every docType alongside this — so a finding that
+  // anchors a hunk it was never offered is rejected there, not here.
+  if (docType === "finding") {
+    return validateFindingRules(parsed.data);
   }
 
   const offeredHunkIds = offeredIdsOfKind(manifest, "hunk");
@@ -314,6 +375,56 @@ function validateNarrationRules(parsed: unknown): ValidationError[] {
         code: "V121",
         pointer: `/body/narrations/${index}/paragraph`,
         message: "narration paragraph account is empty",
+      });
+    }
+  });
+  return errors;
+}
+
+// ── The finding rule catalogue (issue #32 / #138) ────────────────────────────
+
+/**
+ * Validate a `finding` body's per-finding semantics: V130 (a non-empty summary —
+ * a flag with no words is not a flag) and V131 (a coherent vote — a `concur` may
+ * not claim more agreement than its total, and a `disagree` needs at least the
+ * two labelled answers a disagreement is made of). All atomic. The severity enum
+ * and the structural agreement shape are enforced by the shape schema (V108); the
+ * anchor's resolution against the offered manifest is the generic walk's job
+ * (V005/V008). This is the gate that can go red on a model that emits a
+ * word-less or self-contradicting finding.
+ */
+function validateFindingRules(parsed: unknown): ValidationError[] {
+  const body = parsed as {
+    findings: {
+      summary: string;
+      agreement:
+        | { kind: "concur"; agree: number; total: number }
+        | { kind: "disagree"; answers: { answer: string }[] };
+    }[];
+  };
+  const errors: ValidationError[] = [];
+  body.findings.forEach((finding, index) => {
+    if (finding.summary.trim().length === 0) {
+      errors.push({
+        code: "V130",
+        pointer: `/body/findings/${index}/summary`,
+        message: "finding summary is empty",
+      });
+    }
+    const agreement = finding.agreement;
+    if (agreement.kind === "concur") {
+      if (agreement.total <= 0 || agreement.agree < 0 || agreement.agree > agreement.total) {
+        errors.push({
+          code: "V131",
+          pointer: `/body/findings/${index}/agreement`,
+          message: `finding concur vote is incoherent: ${agreement.agree} of ${agreement.total}`,
+        });
+      }
+    } else if (agreement.answers.length < 2) {
+      errors.push({
+        code: "V131",
+        pointer: `/body/findings/${index}/agreement/answers`,
+        message: "finding disagreement needs at least two labelled answers",
       });
     }
   });

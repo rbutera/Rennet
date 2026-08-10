@@ -128,11 +128,13 @@ export interface DispatchDeps {
    */
   cleanupWorktree(input: { projectId: string; worktreeId: string }): Promise<{ ok: boolean }>;
   /**
-   * The Flagged lens's input (issue #138): the automated review layer's findings +
-   * dual-review agreement for a review. Read-only, no model spend. A fixture stands
-   * behind the real boundary until the finding-generation runner + aggregation land.
+   * The Flagged lens's input (issue #138): the automated review layer's findings for
+   * a review. The LIVE finding-generation runner (#32) is wired behind this — it
+   * decomposes the review's active patchset and runs a real model turn over the diff,
+   * so this DOES spend a budgeted model invocation. Dispatch resolves the addressed
+   * review (freshness-checked, like `review.canvases`) and passes it in.
    */
-  flaggedReview(reviewId: string): Promise<FlaggedReview>;
+  flaggedReview(review: Review): Promise<FlaggedReview>;
   /**
    * The Noise lens's input (issue #34): the low-signal churn grouped away for a
    * review, each group tagged rule vs noise job. Read-only, no model spend. A fixture
@@ -455,11 +457,13 @@ export function createDispatch(
       }
       // ── The Flagged lens (issue #138) ─────────────────────────────────────────
       case "flagged.review": {
-        // Read-only: the automated review layer's findings + dual-review agreement
-        // for the review. No model spend; a fixture stands behind the real boundary
-        // until the finding-generation runner + aggregation land (deferred, #32/#41).
+        // The LIVE automated review layer (#32): the finding-generation runner turns
+        // the review's diff into real findings. It spends a budgeted model invocation,
+        // so — as with `review.canvases` — we resolve the addressed review (a stale or
+        // unknown id is refused) and hand the runner the review, never a bare id.
         const input = parseCommandInput(name, rawInput);
-        return parseCommandOutput(name, await deps.flaggedReview(input.reviewId));
+        const review = requireLatestReview(input.reviewId);
+        return parseCommandOutput(name, await deps.flaggedReview(review));
       }
       // ── Ask the AI a question about the review (issue #139) ────────────────────
       case "review.ask": {

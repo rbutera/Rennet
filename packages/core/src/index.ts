@@ -25,6 +25,7 @@ export * from "./codex-utility-port";
 export * from "./context-update-stream";
 export * from "./decomposition";
 export * from "./element-diffs";
+export * from "./finding-generation";
 export * from "./forge-port";
 export * from "./harness";
 export * from "./harness-run-turn";
