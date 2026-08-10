@@ -1,47 +1,73 @@
 # repo-map-storage
 
-Where the derived Repo Map lives, how access to it travels across worktrees and branches, and how a map may be shared by explicit commit-and-discover. Builds on the wave-1 app-owned `ProjectSnapshotStore` keyed by repo identity.
+Where the derived Repo Map lives (local-first), how it is keyed and promoted for sharing, and the precedence between a local and a committed map. Adopts codeindexer.dev's path-keyed local-plain-files model; diverges by using `~/.rennet` + opt-in in-repo promotion rather than a shared team volume.
 
 ## ADDED Requirements
 
-### Requirement: The derived Repo Map is stored app-owned and keyed by repo identity
+### Requirement: The derived Repo Map is stored local-first, keyed by escaped absolute path
 
-The derived Repo Map (snapshot manifest + content-addressed shards) SHALL be stored in an app-owned local store keyed by the repository's durable identity (`RepoRecord`, whose primary local alias is `realpath(git-common-dir)`, R19), never by working-tree path. Human-authored config (`project.jsonc`, conventions, guideline docs) SHALL remain repo-local under `.rennet/`. This amends R27 per R55: derived data SHALL NOT be required to live under `.rennet/`.
+The derived Repo Map SHALL be stored locally by default under `~/.rennet/projects/<escaped-absolute-path>/`, with the default-branch base map at `map/`, per-non-default-base overlays at `overlays/<base-oid>/`, and project config at `config.json`. The per-project key `<escaped-absolute-path>` SHALL be derived from the repository's top-level directory (`git rev-parse --show-toplevel`). Derived data SHALL NOT be committed by default.
 
-#### Scenario: all worktrees of a repo share one store entry
+#### Scenario: a project resolves to its escaped-path directory
 
-- **WHEN** two worktrees of the same repository resolve their base ref
-- **THEN** both resolve to the same `repoKey` (same `git-common-dir`)
-- **AND** both read and write the same store entry, so opening the second worktree triggers no rebuild and creates no per-worktree symlink
-
-#### Scenario: derived data is not committed by default
-
-- **WHEN** a snapshot is built or advanced for a repository with the default (local-only) settings
-- **THEN** the derived shards and manifest are written only to the app-owned store
+- **WHEN** a repository at a given absolute path is opened
+- **THEN** its derived map is read and written under `~/.rennet/projects/<escapePath(top-level)>/map/`
 - **AND** the repository's git status is unchanged (no derived file is staged or committed)
 
-### Requirement: A committed map is discovered and validated, never trusted blind
+### Requirement: The escaped-absolute-path scheme is exact and cross-platform
 
-When a repository contains a committed (mirrored) Repo Map under `.rennet/`, Rennet SHALL discover it on project open and validate it before use: shard bytes SHALL be re-verified to hash to their digest and the fingerprint SHALL be re-checked against the committed base OID. A map that fails validation SHALL be ignored in favour of a local build. A map is matched to the current repository by a portable `RepoRecord` alias, not by filesystem path.
+`escapePath(absPath)` SHALL: (1) resolve to the canonical absolute path; (2) replace every character in `{ '/', '\\', ':' }` with `-`; (3) collapse any run of consecutive `-` into a single `-`. It SHALL be deterministic and stable for a given checkout across runs.
 
-#### Scenario: a valid committed map seeds the local store
+#### Scenario: POSIX path
 
-- **WHEN** a repository is opened and it carries a committed map that validates
-- **THEN** the map seeds the local store so the reviewer starts warm without a cold rebuild
+- **WHEN** `escapePath` is applied to `/Users/rai/dev/lumiere`
+- **THEN** the result is `-Users-rai-dev-lumiere`
 
-#### Scenario: a corrupt or mismatched committed map is ignored
+#### Scenario: Windows drive path
 
-- **WHEN** a committed map fails integrity or fingerprint validation, or does not match the repository's portable identity
-- **THEN** it is ignored and a local build is used instead, and no invalid map is ever served to a review
+- **WHEN** `escapePath` is applied to `C:\Users\rai\navi`
+- **THEN** the drive-colon and following backslash collapse to one `-`, yielding `C-Users-rai-navi`
 
-### Requirement: Mirroring a map into the repository is opt-in and default off
+### Requirement: A map can be promoted into the repo as an opt-in, default off
 
-Committing (mirroring) the local derived Repo Map into the repository SHALL be a per-project or per-workspace opt-in that is off by default. When off, no derived data is ever written into `.rennet/`. When on, a mirror is produced only by a deliberate user act.
+Promotion SHALL be a per-project opt-in that is off by default. When on, a deliberate user act SHALL write the `map/` tree into the repository at `<repo>/.rennet/map/` on the default branch, so collaborators pick it up through normal git; `config.json` SHALL record the promotion. When off, no derived data is ever written into the repository.
 
-#### Scenario: default settings never mirror
+#### Scenario: default settings never promote
 
-- **WHEN** a project is opened and snapshots advance under default settings
-- **THEN** `.rennet/` gains no derived shards or manifest
+- **WHEN** snapshots are built or advanced under default settings
+- **THEN** the repository gains no derived `map/` files
+
+#### Scenario: promotion writes a discoverable committed map
+
+- **WHEN** a user promotes the map
+- **THEN** a valid map is written under `<repo>/.rennet/map/` on the default branch and recorded in `config.json`
+
+### Requirement: A committed map is validated on discovery, never trusted blind
+
+When a repository contains a committed map at `<repo>/.rennet/map/`, Rennet SHALL validate it before use: shard bytes SHALL be re-verified to hash to their digest and the fingerprint SHALL be re-checked. A map that fails validation SHALL be ignored in favour of a local build. A committed map pertains to the repository it physically lives in, by construction — no forge-identity or alias matching is performed.
+
+#### Scenario: a corrupt committed map is ignored
+
+- **WHEN** a committed map fails integrity or fingerprint validation
+- **THEN** it is ignored and a local build is used, and no invalid map is served to a review
+
+### Requirement: The local map takes precedence over the committed map
+
+Map resolution SHALL be: local `~/.rennet/projects/<escaped-path>/map/` first, then committed `<repo>/.rennet/map/`, then a local build if neither exists. The local map SHALL win even when the repository is on a non-default branch.
+
+#### Scenario: local wins on a branch
+
+- **WHEN** both a local map and a committed map exist and the checkout is on a non-default branch
+- **THEN** the local map is used and the committed map is the fallback only
+
+### Requirement: A project can be relocated without reindexing
+
+Moving a repository on disk SHALL NOT force a rebuild: a `relocate` operation SHALL update a project's escaped-path directory and record the move in `config.json`, and aliases SHALL resolve alternative escaped paths to the same project.
+
+#### Scenario: relocate preserves the map
+
+- **WHEN** a repository is moved and `relocate` is run with the new path
+- **THEN** the existing map is reused under the new escaped-path directory without reindexing
 
 ### Requirement: The visibility switch never stages or commits
 
