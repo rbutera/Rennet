@@ -3,6 +3,7 @@ import type {
   FindingElement,
   FindingModelAnswer,
   FindingSeverity,
+  FindingVerification,
   FlaggedReview,
 } from "@rennet/types";
 
@@ -30,7 +31,12 @@ import type {
  *   • `rejectedItems` (malformed RSP items the validator dropped) are NEVER flags.
  */
 
-export type { FindingAgreement, FindingModelAnswer, FindingSeverity } from "@rennet/types";
+export type {
+  FindingAgreement,
+  FindingModelAnswer,
+  FindingSeverity,
+  FindingVerification,
+} from "@rennet/types";
 
 /** One row in the flagged index: the flag, its severity, agreement, and anchor. */
 export interface FlaggedRow {
@@ -40,6 +46,14 @@ export interface FlaggedRow {
   /** The mark this row points at; the lens jumps here, it does not own the mark. */
   anchor: string;
   agreement: FindingAgreement;
+  /**
+   * The reproduce-or-refute verification chip (issue #179), when the finding was
+   * verified. `reproduced` renders as a confirmed "we dug into it" chip at the
+   * anchor; `inconclusive` as an honest "could not verify" caveat. Absent on an
+   * unverified (obvious, or pass-did-not-run) finding — a refuted finding never
+   * reaches a row (core dropped it before the lens).
+   */
+  verification?: FindingVerification;
 }
 
 /**
@@ -115,7 +129,22 @@ function toRow(finding: FindingElement): FlaggedRow {
     summary: finding.summary,
     anchor: finding.anchor,
     agreement: finding.agreement,
+    // Carry the verification chip onto the row so the surface can render the
+    // evidence at the anchor (#179). Additive: absent on an unverified finding.
+    ...(isVerification(finding.verification) ? { verification: finding.verification } : {}),
   };
+}
+
+/** A defensive guard for the optional verification chip (a malformed chip is simply ignored). */
+function isVerification(value: unknown): value is FindingVerification {
+  if (typeof value !== "object" || value === null) return false;
+  const chip = value as Record<string, unknown>;
+  return (
+    (chip.verdict === "reproduced" ||
+      chip.verdict === "refuted" ||
+      chip.verdict === "inconclusive") &&
+    typeof chip.evidence === "string"
+  );
 }
 
 /** Fold a review's flagged input into the ordered index the surface renders. */

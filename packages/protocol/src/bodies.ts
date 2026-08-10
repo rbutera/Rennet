@@ -144,6 +144,20 @@ const findingAgreementBodySchema = z.union([
   z.object({ kind: z.literal("disagree"), answers: z.array(findingModelAnswerBodySchema) }).loose(),
 ]);
 
+/**
+ * The verification chip (issue #179): the reproduce-or-refute verdict + a one-line
+ * evidence string. ADDITIVE and OPTIONAL on a finding — `verdict` is the closed
+ * three-value vocabulary (shape-enforced, V108); `evidence` is any string here
+ * (empty passes the shape), V132 enforcing non-emptiness so the rejection carries a
+ * precise code. A finding with no `verification` validates exactly as before.
+ */
+const findingVerificationBodySchema = z
+  .object({
+    verdict: z.enum(["reproduced", "refuted", "inconclusive"]),
+    evidence: z.string(),
+  })
+  .loose();
+
 const findingBodyElementSchema = z
   .object({
     findingId: z.string().min(1),
@@ -151,10 +165,46 @@ const findingBodyElementSchema = z
     summary: z.string(),
     severity: findingSeverityBodySchema,
     agreement: findingAgreementBodySchema,
+    verification: findingVerificationBodySchema.optional(),
   })
   .loose();
 
 const findingBodySchema = z.object({ findings: z.array(findingBodyElementSchema) }).loose();
+
+/**
+ * The per-finding VERIFICATION TURN's structured-output shape (issue #179): NOT an
+ * RSP document type (verification is a micro-judgment attached to a finding, never
+ * a stored doc), so it lives here as a standalone projected schema rather than in
+ * `RSP_DOC_TYPES`. A batched verify turn covers every finding sharing a file, so it
+ * emits an array of `{ ref, verdict, evidence }` — `ref` is the per-batch reference
+ * key the runner fed in (an ordinal, e.g. "f1"), echoed back so the runner maps
+ * each verdict to the finding it belongs to. The runner parses this defensively and
+ * a missing/garbled entry falls to an honest `inconclusive` (never a drop).
+ */
+const findingVerificationTurnItemSchema = z
+  .object({
+    ref: z.string().min(1),
+    verdict: z.enum(["reproduced", "refuted", "inconclusive"]),
+    evidence: z.string(),
+  })
+  .loose();
+
+const findingVerificationTurnBodySchema = z
+  .object({ verifications: z.array(findingVerificationTurnItemSchema) })
+  .loose();
+
+/**
+ * The JSON Schema the per-finding verification TURN is constrained to (issue #179).
+ * Projected from the Zod shape with the meta-schema `$schema` stripped for the same
+ * reason `bodyJsonSchema` strips it (the `claude` CLI validator cannot resolve the
+ * 2020-12 meta-schema ref). This is a standalone export — verification is not an
+ * `RspDocType`, so it is not reachable through `bodyJsonSchema`.
+ */
+export function findingVerificationJsonSchema(): unknown {
+  const projected = z.toJSONSchema(findingVerificationTurnBodySchema) as Record<string, unknown>;
+  delete projected.$schema;
+  return projected;
+}
 
 /**
  * The `decision.record` body (issue #137): the Decisions lens's data — the calls
@@ -574,6 +624,7 @@ function validateFindingRules(parsed: unknown): ValidationError[] {
       agreement:
         | { kind: "concur"; agree: number; total: number }
         | { kind: "disagree"; answers: { answer: string }[] };
+      verification?: { verdict: string; evidence: string };
     }[];
   };
   const errors: ValidationError[] = [];
@@ -583,6 +634,16 @@ function validateFindingRules(parsed: unknown): ValidationError[] {
         code: "V130",
         pointer: `/body/findings/${index}/summary`,
         message: "finding summary is empty",
+      });
+    }
+    // V132 (issue #179): a verification chip, when present, must carry evidence —
+    // a verdict with no words is not a verification. The verdict enum is enforced
+    // by the shape schema (V108); this is the non-emptiness gate that can go red.
+    if (finding.verification && finding.verification.evidence.trim().length === 0) {
+      errors.push({
+        code: "V132",
+        pointer: `/body/findings/${index}/verification/evidence`,
+        message: "finding verification evidence is empty",
       });
     }
     const agreement = finding.agreement;

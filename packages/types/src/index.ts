@@ -930,6 +930,37 @@ export type FindingAgreement =
   | { kind: "disagree"; answers: FindingModelAnswer[] };
 
 /**
+ * The verdict of a per-finding reproduce-or-refute verification (issue #179). A
+ * fresh session — by default a different seat than the one that raised the finding
+ * — is fed the REAL code around the anchor (more than the offered hunk) and asked
+ * to REPRODUCE the claim (cite the concrete failure path or the exact lines that
+ * make it true), REFUTE it (show why it does not hold), or, if it can establish
+ * neither, return INCONCLUSIVE. The disposition is load-bearing and asymmetric: a
+ * `refuted` finding is DROPPED before the lens (the anti-hallucination-of-substance
+ * gate), a `reproduced` finding surfaces with its evidence, and an `inconclusive`
+ * finding surfaces WITH an honest caveat and is NEVER silently dropped — a dead or
+ * uncertain verifier must never read as an all-clear (Rule 75/81ak: could-not-check
+ * beats a false clear, because for a claim of a PROBLEM the silent drop fails toward
+ * hiding a real bug).
+ */
+export type FindingVerdict = "reproduced" | "refuted" | "inconclusive";
+
+/**
+ * The verification chip attached to a surfaced finding (issue #179). ADDITIVE and
+ * OPTIONAL on `FindingElement`: a finding without it validates and renders exactly
+ * as before this change, and existing `finding` documents remain admissible
+ * unchanged. `evidence` is the one-line "we dug into it and found Y" for a
+ * `reproduced` finding, and the honest caveat for an `inconclusive` one — which
+ * also carries WHY it was not established (genuine verifier uncertainty, the
+ * per-review verification cap, an exhausted budget, or unreadable code). A
+ * `refuted` finding never carries this, because it never surfaces.
+ */
+export interface FindingVerification {
+  verdict: FindingVerdict;
+  evidence: string;
+}
+
+/**
  * The canvas-facing shape of one finding: an id, the anchor it is about, a short
  * summary, its severity, and its agreement state. The `finding` doc body (issue
  * #32) is an ADDITIVE superset — the lens placement only needs these fields.
@@ -940,6 +971,12 @@ export interface FindingElement {
   summary: string;
   severity: FindingSeverity;
   agreement: FindingAgreement;
+  /**
+   * The reproduce-or-refute verification chip (issue #179), when the verification
+   * pass ran on this finding. Absent on an unverified finding (obvious, or the pass
+   * did not run) — additive, so nothing downstream breaks when it is missing.
+   */
+  verification?: FindingVerification;
 }
 
 /** The `finding` doc body as consumed by the flagged-canvas projector. */
