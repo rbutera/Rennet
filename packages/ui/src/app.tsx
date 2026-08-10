@@ -465,15 +465,32 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     void bridge
       .invoke("flagged.review", { reviewId })
       .then((result) => {
-        // Guard the shape: a host or test bridge that returns anything but a
-        // FlaggedReview (`{ status }`) leaves the lens on its honest empty state.
+        // Trust boundary (#148): a runner whose result we cannot READ is NOT an
+        // all-clear. A valid `{status:"ok"|"failed"}` passes through as-is; ANY
+        // other shape is a result we cannot trust and MUST surface as `failed` —
+        // never be dropped to undefined, which defaults to ok-empty downstream and
+        // reads as "ran clean". A check that could not complete must say
+        // "Couldn't check", never rubber-stamp the diff.
         if (cancelled) return;
         const review = result as Partial<FlaggedReview> | undefined;
         if (review?.status === "ok" || review?.status === "failed") {
           setFlaggedReview(review as FlaggedReview);
+        } else {
+          setFlaggedReview({
+            status: "failed",
+            reason: "The flagged review returned a response Rennet could not read.",
+          });
         }
       })
-      .catch(() => undefined);
+      .catch((reason: unknown) => {
+        // A rejected fetch (no handler, transport error, a thrown runner) is a
+        // failure to CHECK, not a clean result — surface it honestly as `failed`.
+        if (cancelled) return;
+        setFlaggedReview({
+          status: "failed",
+          reason: reason instanceof Error ? reason.message : String(reason),
+        });
+      });
     return () => {
       cancelled = true;
     };
@@ -490,15 +507,32 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     void bridge
       .invoke("noise.review", { reviewId })
       .then((result) => {
-        // Guard the shape: a host or test bridge that returns anything but a
-        // NoiseReview (`{ status }`) leaves the lens on its honest empty state.
+        // Trust boundary (#152): a runner whose result we cannot READ is NOT an
+        // all-clear. A valid `{status:"ok"|"failed"}` passes through as-is; ANY
+        // other shape is a result we cannot trust and MUST surface as `failed` —
+        // never be dropped to undefined, which defaults to ok-empty downstream and
+        // reads as "ran clean". A check that could not complete must say
+        // "Couldn't check", never rubber-stamp the diff.
         if (cancelled) return;
         const review = result as Partial<NoiseReview> | undefined;
         if (review?.status === "ok" || review?.status === "failed") {
           setNoiseReview(review as NoiseReview);
+        } else {
+          setNoiseReview({
+            status: "failed",
+            reason: "The noise review returned a response Rennet could not read.",
+          });
         }
       })
-      .catch(() => undefined);
+      .catch((reason: unknown) => {
+        // A rejected fetch (no handler, transport error, a thrown runner) is a
+        // failure to CHECK, not a clean result — surface it honestly as `failed`.
+        if (cancelled) return;
+        setNoiseReview({
+          status: "failed",
+          reason: reason instanceof Error ? reason.message : String(reason),
+        });
+      });
     return () => {
       cancelled = true;
     };
