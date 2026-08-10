@@ -24,7 +24,14 @@
   /* type */
   --serif: "New York", ui-serif, Georgia, serif;
   --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
-  --mono: ui-monospace, "SF Mono", Menlo, monospace;
+  /* Chrome is sans (resteer fresh update 2 / #62: no monospace as UI chrome —
+   * monospace is for actual code only, never interface texture). --mono aliases
+   * --sans so every legacy chrome reference (paths, branches, refs, counts, badges,
+   * anchors, the whole paper surface) flips to proportional type automatically;
+   * only genuine code/diff/signature surfaces opt into --code, the real monospace
+   * stack. Mirrors the v3 wireframe kit's type contract (kit.mjs). */
+  --mono: var(--sans);
+  --code: ui-monospace, "SF Mono", Menlo, monospace;
 
   /* Frosted-chrome material (issue #61). Glass is the CHROME and the app backdrop,
    * NEVER the content. The real desktop shows through here — a transparent Electron
