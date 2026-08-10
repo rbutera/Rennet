@@ -193,4 +193,25 @@ describe("ProjectContextReader — the fail-closed staleness/integrity gate", ()
     if (result.failure.reason !== "corrupt") return;
     expect(result.failure.mismatched).toContain(manifest.shards.files.digest);
   });
+
+  it("refuses a MALFORMED manifest (null shards) with a typed failure, never a throw", async () => {
+    const { store, manifest, storeDir } = await generate();
+    const reader = new ProjectContextReader(store);
+
+    // Overwrite the manifest with parseable-but-malformed JSON: the real baseOid
+    // and schemaVersion (so it passes the freshness check), but `shards` nulled
+    // out. Without the loadManifest shape-guard the gate would reach
+    // `Object.keys(manifest.shards)` and THROW instead of returning a typed
+    // reason — violating its own "never a throw" contract (Rule 75).
+    const manifestPath = join(storeDir, sha256Hex(manifest.repoKey), "manifest.json");
+    const malformed = { ...manifest, shards: null };
+    writeFileSync(manifestPath, JSON.stringify(malformed));
+
+    expect(() => reader.readProjectMap(manifest.repoKey, manifest.baseOid)).not.toThrow();
+    const result = reader.readProjectMap(manifest.repoKey, manifest.baseOid);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    // A store that cannot produce a well-formed manifest degrades to "no snapshot".
+    expect(result.failure.reason).toBe("absent");
+  });
 });
