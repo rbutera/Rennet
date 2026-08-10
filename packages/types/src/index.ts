@@ -1662,3 +1662,147 @@ export interface BuiltSnapshot {
   /** digest → canonical bytes, for every structural and symbol shard the manifest references. */
   readonly shards: ReadonlyMap<string, string>;
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Deterministic novelty ledger (issue #144, Stage 1)
+//
+// The MODEL-FREE half of net-novel detection: given a base-branch ProjectSnapshot
+// and a captured Patchset, classify each changed unit `novel` / `extends` /
+// `conforms` against the baseline the snapshot records. Reproducible and golden-
+// testable: same (snapshot, patchset) in ⇒ same ledger out, no clock, no
+// randomness, no model. Every classification carries the concrete baseline
+// evidence it matched (a snapshot shard entry + the snapshot fingerprint pin), so
+// the DEFERRED Stage 2 (the LLM-cite layer) can turn an entry into cited prose:
+// "every net-novel judgment cites a (projectSnapshotId, shard ref)" (R54).
+//
+// Scope is deliberately NARROW (what keeps Stage 1 assertable in CI): two unit
+// kinds — changed files and changed exported symbols — each adjudicated purely
+// from the snapshot's structural shards + the diff. The remaining unit kinds the
+// direction enumerates (internal dependency edges, external deps + version
+// changes, entry points, ownership crossings, submodule gitlink advances) need
+// head-side manifest / lockfile / submodule content the base snapshot does not
+// index, and are a documented later wave — NOT folded in with a fuzzy guess.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** The three-way novelty verdict for a changed unit (R54). */
+export type NoveltyClassification =
+  /** Not present in the baseline — a genuinely new file / symbol. */
+  | "novel"
+  /** Builds on a specific existing baseline entity (same path / same-named symbol). */
+  | "extends"
+  /** New, but a structural instance of an established convention the snapshot records. */
+  | "conforms";
+
+/** The granularity a novelty entry is about. Narrow by design (#144). */
+export type NoveltyUnitKind = "file" | "symbol";
+
+/** The changed unit a classification is attached to. */
+export interface NoveltyUnit {
+  readonly kind: NoveltyUnitKind;
+  /** The changed file's post-image repo-relative path (the new path for a rename). */
+  readonly path: string;
+  /** The file's change status in the diff. */
+  readonly fileStatus: FileChangeStatus;
+  /** The previous path, present only for a renamed file. */
+  readonly previousPath?: string;
+  /** The exported symbol name — present iff `kind === "symbol"`. */
+  readonly symbol?: string;
+}
+
+/**
+ * The concrete baseline match (or absence of one) that DECIDED a classification.
+ * A discriminated union so the deferred LLM-cite layer can cite the exact shard
+ * entry: an "…-present"/"…-renamed"/"…-removed" match cites an existing baseline
+ * entity (an `extends`/`conforms` proof); an "…-absent" match is the proof of
+ * novelty (nothing in the baseline to cite, which is itself the citation).
+ */
+export type NoveltyMatch =
+  /** Novel file: the path is absent from the snapshot `files` shard. */
+  | { readonly kind: "file-absent"; readonly path: string }
+  /** Extends: the modified file exists in the baseline at this blob. */
+  | { readonly kind: "file-present"; readonly path: string; readonly blobOid: string }
+  /** Extends: the file was renamed from an existing baseline path. */
+  | {
+      readonly kind: "file-renamed";
+      readonly from: string;
+      readonly to: string;
+      readonly fromBlobOid: string;
+    }
+  /** Extends: the change removes an existing baseline file. */
+  | { readonly kind: "file-removed"; readonly path: string; readonly blobOid: string }
+  /** Novel symbol: an introduced export with no same-named baseline symbol in the file. */
+  | { readonly kind: "symbol-absent"; readonly path: string; readonly symbol: string }
+  /** Extends: an introduced export whose name already exists in the baseline file. */
+  | {
+      readonly kind: "symbol-present";
+      readonly path: string;
+      readonly symbol: SnapshotSymbol;
+      readonly blobOid: string;
+    }
+  /** Conforms: a new file that is another instance of an established test convention. */
+  | {
+      readonly kind: "test-convention";
+      readonly path: string;
+      readonly matchedBy: string;
+      readonly siblingTestCount: number;
+    };
+
+/**
+ * Supplementary snapshot context on the file a unit belongs to — never the
+ * deciding evidence, but the cross-references the Stage 2 layer reads for framing
+ * (which workspace scope, whether the baseline already knew this path as a test /
+ * a convention config, and whether the diff for this file was truncated so the
+ * symbol coverage is partial).
+ */
+export interface NoveltyFileContext {
+  /** The most specific workspace scope the file belongs to, or null. */
+  readonly scope: string | null;
+  /** Whether the path is a known test in the baseline `tests` shard. */
+  readonly isKnownTest: boolean;
+  /** Whether the path is a known convention config in the baseline `conventions` shard. */
+  readonly isConvention: boolean;
+  /**
+   * True when this file's patch was truncated (carries `DIFF_TRUNCATION_MARKER`),
+   * so introduced-symbol coverage is PARTIAL and an absence of symbol units is not
+   * a guarantee of no novel symbols. Fail-open honesty for the deferred judge.
+   */
+  readonly patchTruncated: boolean;
+}
+
+/** The baseline evidence a single classification cites (R54). */
+export interface NoveltyEvidence {
+  /** The fingerprint of the snapshot compared against — the freshness/content pin. */
+  readonly snapshotFingerprint: string;
+  /** The base commit OID the snapshot was built at. */
+  readonly baseOid: string;
+  /**
+   * The snapshot shard the deciding evidence came from (`"symbols"` for a symbol
+   * shard), or null when the decision is an ABSENCE (nothing in the baseline).
+   */
+  readonly shard: StructuralShardSlot | "symbols" | null;
+  /** The concrete baseline match (or absence) that decided the classification. */
+  readonly match: NoveltyMatch;
+  /** Cross-reference context on the owning file. */
+  readonly context: NoveltyFileContext;
+}
+
+/** One classified unit: what changed, the verdict, and the baseline evidence for it. */
+export interface LedgerEntry {
+  readonly unit: NoveltyUnit;
+  readonly classification: NoveltyClassification;
+  readonly evidence: NoveltyEvidence;
+}
+
+/**
+ * The deterministic novelty ledger for one patchset against one snapshot. Pinned
+ * to the snapshot `fingerprint` + `baseOid` and the `patchsetId`, so a consumer
+ * can prove which (baseline, diff) pair produced it — and re-run the ledger when
+ * the baseline advances mid-review (R29), LLM-re-adjudicating only the entries
+ * whose classification changed. `entries` are in a deterministic total order.
+ */
+export interface NoveltyLedger {
+  readonly snapshotFingerprint: string;
+  readonly baseOid: string;
+  readonly patchsetId: string;
+  readonly entries: readonly LedgerEntry[];
+}
