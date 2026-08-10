@@ -1,4 +1,5 @@
 import { parseAnchor } from "@rennet/protocol";
+import type { DispositionType } from "@rennet/types";
 import { type ReactNode, useEffect, useState } from "react";
 import { type WindowRange, windowRows } from "../canvas/logic";
 import {
@@ -12,6 +13,7 @@ import {
   resolveAnchorToRows,
 } from "../canvas/registrar";
 import { detectLanguage, type LanguageId, tokenizeLine } from "../syntax/highlight";
+import { DispositionCluster } from "./disposition-cluster";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CodeView — the ONLY diff surface (R16), and now an INHABITED canvas (issue #77).
@@ -55,6 +57,17 @@ export interface CodeViewProps {
   focusAnchor?: string;
   /** Reports placement (placed + orphans) up, so the host routes orphans + builds the index. */
   onPlacement?: (placement: MarkPlacement) => void;
+
+  /**
+   * The disposition cluster on the chunk/file HEADER (issue #109). When present, the
+   * header carries the four verbs anchored to this file/chunk; disposing calls this
+   * with the chosen verb and the host resolves it to the L2 write (a chunk-header
+   * disposition). Absent ⇒ no cluster (additive: existing callers render unchanged,
+   * so the R16 node envelope is untouched — the cluster lives on the non-windowed
+   * header, never in the per-row window). Line + range anchoring ride the inhabited
+   * canvas + the #36/#139 thread machinery; the header is this slice's floor.
+   */
+  onDispose?: (type: DispositionType) => void;
 }
 
 const SIDE_CLASS = { additions: "cv-add", deletions: "cv-del", context: "cv-ctx" } as const;
@@ -100,6 +113,7 @@ export function CodeView({
   renderMarkCard,
   focusAnchor,
   onPlacement,
+  onDispose,
 }: CodeViewProps) {
   // The live scroll position: seeded from the prop (which the node-count control
   // test and any programmatic positioning inject), then advanced by the user's
@@ -154,6 +168,17 @@ export function CodeView({
         <span className="code-view-tier" title="Definition tier">
           {tier}
         </span>
+        {/* The chunk-header disposition cluster (issue #109) — the four verbs
+            anchored to this file/chunk. Progressively disclosed (calm roll-up, #62)
+            by the header's hover/focus, so the surface reads quiet until engaged. */}
+        {onDispose ? (
+          <DispositionCluster
+            anchor={{ kind: "chunk", label: path }}
+            compact
+            labelled={false}
+            onDispose={onDispose}
+          />
+        ) : null}
       </header>
       <div
         className="code-view-scroll"

@@ -1411,3 +1411,179 @@
   color: var(--text-soft);
   font-size: 13px;
 }
+
+/* ── The disposition cluster (#109): verbs times anchors ──────────────────────
+ * The four verbs as iconographic controls on any anchor (a line, a chunk header,
+ * an element). Reuses the disposition-bar shape; each verb keeps its hover tint. */
+.disposition-cluster {
+  display: flex;
+  gap: 6px;
+}
+.disposition-cluster-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  padding: 5px 10px;
+  color: var(--text-soft);
+  background: var(--surface-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.disposition-cluster.is-compact .disposition-cluster-btn {
+  gap: 4px;
+  padding: 3px 7px;
+  font-size: 11px;
+}
+.disposition-cluster-btn svg {
+  flex: none;
+  opacity: 0.85;
+}
+/* The material law is felt on the control: an ink verb carries a hairline of ink
+ * (it travels); a blue verb carries the private backlight (it stays local). */
+.disposition-cluster-btn[data-lane="ink"] {
+  border-color: var(--hairline-strong);
+}
+.disposition-cluster-btn[data-lane="blue"] {
+  border-color: var(--private-line);
+}
+.disposition-cluster-btn.d-approve:hover {
+  color: var(--green);
+  border-color: var(--green-line);
+  background: var(--green-fill);
+}
+.disposition-cluster-btn.d-request:hover {
+  color: var(--amber);
+  border-color: var(--amber-line);
+  background: var(--amber-fill);
+}
+.disposition-cluster-btn.d-comment:hover,
+.disposition-cluster-btn.d-question:hover {
+  color: var(--private);
+  border-color: var(--private-line);
+  background: var(--private-fill);
+}
+
+/* Calm roll-up (#62): the chunk-header cluster is quiet until the header is
+ * engaged. opacity (not display) keeps it in the DOM + tab order. */
+.code-view-head .disposition-cluster.is-compact {
+  margin-left: auto;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.code-view-head:hover .disposition-cluster.is-compact,
+.code-view-head:focus-within .disposition-cluster.is-compact {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .code-view-head .disposition-cluster.is-compact {
+    transition: none;
+  }
+}
+
+/* ── Ink vs blue on the collation draft (#109) ───────────────────────────────
+ * Each item shows the lane it will take: ink travels to the PR, blue stays on
+ * this machine (the private backlight). The stage toggle moves a comment/question
+ * between them. */
+.collation-item-lane {
+  flex: none;
+  margin-left: 8px;
+  padding: 2px 8px;
+  border-radius: var(--chip-radius);
+  border: 1px solid var(--hairline-strong);
+  font: 700 10px / 1.2 var(--sans);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.collation-item-lane[data-lane="ink"] {
+  color: var(--text);
+  border-color: var(--hairline-strong);
+  background: var(--surface-2);
+}
+.collation-item-lane[data-lane="blue"] {
+  color: var(--private);
+  border-color: var(--private-line);
+  background: var(--private-fill);
+}
+.collation-item[data-lane="ink"] {
+  border-left: 2px solid var(--text-soft);
+}
+.collation-item[data-lane="blue"] {
+  border-left: 2px solid var(--private-line);
+}
+.collation-item-stage {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  color: var(--text-soft);
+  font-size: 12px;
+  cursor: pointer;
+}
+.collation-item-stage-box {
+  flex: none;
+  accent-color: var(--private);
+}
+
+/* The sign-off roll-up: the PR review type over the ink subset + the lane split. */
+.collation-rollup {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin: 12px 0 4px;
+  padding: 10px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.collation-rollup-line {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.collation-rollup-label {
+  color: var(--text-faint);
+  font: 700 10px / 1.2 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.collation-rollup-verdict {
+  color: var(--text);
+  font-weight: 700;
+  font-size: 14px;
+}
+.collation-rollup-verdict[data-verdict="request-changes"] {
+  color: var(--amber);
+}
+.collation-rollup-verdict[data-verdict="none"] {
+  color: var(--text-soft);
+}
+.collation-rollup-lanes {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-soft);
+  font-size: 12px;
+}
+.collation-lane-count[data-lane="blue"] {
+  color: var(--private);
+}
+.collation-lane-sep {
+  color: var(--text-faint);
+}
+
+/* The destination frame's private pill (the wireframe's "N private"). */
+.destination-private-pill {
+  margin-left: 8px;
+  padding: 1px 8px;
+  border-radius: var(--chip-radius);
+  border: 1px solid var(--private-line);
+  background: var(--private-fill);
+  color: var(--private);
+  font: 700 10px / 1.4 var(--sans);
+  letter-spacing: 0.03em;
+}

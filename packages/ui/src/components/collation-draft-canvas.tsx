@@ -11,6 +11,14 @@ import {
   withdrawItem,
 } from "../canvas/collation";
 import type { DestinationVariant } from "../canvas/destination";
+import {
+  isStageable,
+  itemLane,
+  laneCounts,
+  publishReviewLabel,
+  publishReviewType,
+  stageItem,
+} from "../canvas/staging";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The COLLATION DRAFT CANVAS (issue #101; ruling R40) — the forming destination.
@@ -66,6 +74,11 @@ export function CollationDraftCanvas({
 }) {
   const items = collationItems(draft);
   const empty = draft.length === 0;
+  // The ink/blue split + the sign-off roll-up (issue #109). Ink travels to the PR;
+  // blue stays on this machine. The roll-up is the PR review type over the ink
+  // subset only (request-changes / comments / nothing) — approve never appears.
+  const lanes = laneCounts(draft);
+  const rollup = publishReviewType(draft);
 
   return (
     <div
@@ -119,12 +132,15 @@ export function CollationDraftCanvas({
           <ol className="collation-items" aria-label="Collated dispositions">
             {draft.map((item, index) => {
               const refining = item.refined === undefined;
+              const lane = itemLane(item);
+              const stageable = isStageable(item.type);
               return (
                 <li
                   className="collation-item"
                   data-item-id={item.id}
                   data-path={item.path}
                   data-type={item.type}
+                  data-lane={lane}
                   key={item.id}
                 >
                   <div className="collation-item-top">
@@ -148,7 +164,44 @@ export function CollationDraftCanvas({
                         </option>
                       ))}
                     </select>
+                    {/* The material law, visible per item (issue #109): ink travels
+                        to the PR; blue stays on this machine. */}
+                    <span
+                      className="collation-item-lane"
+                      data-lane={lane}
+                      title={
+                        lane === "ink"
+                          ? "Ink — this travels to the pull request"
+                          : "Blue — private to this machine, never published"
+                      }
+                    >
+                      {lane === "ink" ? "Publishes" : "Local"}
+                    </span>
                   </div>
+
+                  {/* The stage / keep-local toggle (issue #109). Only comment and
+                      question are stageable — they default to the orchestrator (blue)
+                      and travel to the PR (ink) only when staged. Approve never
+                      publishes and request-change always does, so neither shows a
+                      toggle: their lane is not the reviewer's to move. */}
+                  {stageable ? (
+                    <label className="collation-item-stage">
+                      <input
+                        type="checkbox"
+                        className="collation-item-stage-box"
+                        aria-label={`Stage item ${index + 1} to the pull request`}
+                        checked={lane === "ink"}
+                        onChange={(event) =>
+                          onChange(stageItem(draft, item.id, event.target.checked))
+                        }
+                      />
+                      <span>
+                        {lane === "ink"
+                          ? "Staged to the PR — uncheck to keep it with the orchestrator"
+                          : "With the orchestrator — check to stage it onto the PR"}
+                      </span>
+                    </label>
+                  ) : null}
 
                   <textarea
                     className="collation-item-body"
@@ -227,6 +280,30 @@ export function CollationDraftCanvas({
           Everything you've staged is here. Sign still blocks on anything not yet ingested — the
           whole account, or nothing.
         </p>
+
+        {/* The sign-off roll-up (issue #109): the PR review type over the INK subset
+            only. Approve never appears; request-changes drives the type; a staged
+            comment/question rolls up to a plain comments review; else nothing
+            publishes. The lane counts state what travels vs what stays local. */}
+        <div className="collation-rollup" role="note" data-rollup={rollup ?? "none"}>
+          <p className="collation-rollup-line">
+            <span className="collation-rollup-label">Posts as</span>
+            <span className="collation-rollup-verdict" data-verdict={rollup ?? "none"}>
+              {publishReviewLabel(rollup)}
+            </span>
+          </p>
+          <p className="collation-rollup-lanes">
+            <span className="collation-lane-count" data-lane="ink">
+              <strong>{lanes.ink}</strong> travel to the PR
+            </span>
+            <span className="collation-lane-sep" aria-hidden="true">
+              ·
+            </span>
+            <span className="collation-lane-count" data-lane="blue">
+              <strong>{lanes.blue}</strong> stay on this machine
+            </span>
+          </p>
+        </div>
 
         <footer className="collation-foot">
           <p className="collation-foot-note">
