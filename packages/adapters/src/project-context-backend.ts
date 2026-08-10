@@ -1,8 +1,19 @@
-import type { ProjectFileResult, ProjectMapResult, ProjectMapScope } from "@rennet/core";
+import type {
+  ProjectFileOverviewResult,
+  ProjectFileResult,
+  ProjectMapResult,
+  ProjectMapScope,
+  ProjectSymbolDefinitionResult,
+  SymbolLookup,
+} from "@rennet/core";
 import type { ProjectContextReader } from "./project-context-reader";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The `context.map` / `context.file` slice of a `CanvasOpsBackend` (issue #14).
+// The context-read slice of a `CanvasOpsBackend`: `context.map` / `context.file`
+// (issue #14) plus the model-free symbolic ops `context.overview` /
+// `context.symbol` (repo-map-symbolic-surface) — all served from the same
+// deterministic ProjectSnapshot reader, model-free and fail-closed. Rennet's OWN
+// exported-symbol index backs go-to-definition; no LSP, no bundled engine.
 //
 // The pure canvasOps@2 tools call `backend.projectMap()` / `backend.fileContext()`
 // (issue #12's port pattern: capabilities are METHODS on the injected backend, so
@@ -32,10 +43,12 @@ export interface ResolvedRepoContext {
   readonly baseOid: string;
 }
 
-/** The two `CanvasOpsBackend` accessors this adapter supplies. */
+/** The `CanvasOpsBackend` accessors this adapter supplies (deterministic snapshot reads). */
 export interface ProjectContextBackendPart {
   projectMap(scope?: ProjectMapScope): ProjectMapResult;
   fileContext(path: string): ProjectFileResult;
+  fileOverview(path: string): ProjectFileOverviewResult;
+  symbolDefinition(query: SymbolLookup): ProjectSymbolDefinitionResult;
 }
 
 /**
@@ -60,6 +73,14 @@ export function projectContextBackend(
     fileContext(path: string): ProjectFileResult {
       const { repoKey, baseOid } = resolve();
       return reader.readFileContext(repoKey, baseOid, path);
+    },
+    fileOverview(path: string): ProjectFileOverviewResult {
+      const { repoKey, baseOid } = resolve();
+      return reader.readFileOverview(repoKey, baseOid, path);
+    },
+    symbolDefinition(query: SymbolLookup): ProjectSymbolDefinitionResult {
+      const { repoKey, baseOid } = resolve();
+      return reader.readSymbolDefinition(repoKey, baseOid, query);
     },
   };
 }

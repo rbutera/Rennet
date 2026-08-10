@@ -17,19 +17,24 @@ import { v7 as uuidv7 } from "uuid";
 import { type CanvasEvent, dispatchOrchestratorCanvasOp } from "./canvas";
 import type { NoveltyResult } from "./novelty-ledger";
 import type {
+  ProjectFileOverviewResult,
   ProjectFileResult,
   ProjectMapResult,
   ProjectMapScope,
+  ProjectSymbolDefinitionResult,
   SnapshotGateFailure,
+  SymbolLookup,
 } from "./project-context";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // canvasOps@2 — the orchestrator's entire world (issue #12)
 //
 // One versioned in-process MCP tool surface: the six interaction ops, the seven
-// read-only retrieval ops, and the read-only base-branch/change context ops
+// read-only retrieval ops, the read-only base-branch/change context ops
 // (`context.map` / `context.file`, issue #14 — Orchestrator Context Access §2;
-// `context.novelty`, issue #144 — the deterministic novelty ledger).
+// `context.novelty`, issue #144 — the deterministic novelty ledger), and the
+// model-free symbolic ops (`context.overview` / `context.symbol`,
+// repo-map-symbolic-surface — the "IDE for the agent" over Rennet's own index).
 // This module is the PURE contract — tool descriptors with pure handlers over
 // an injected `CanvasOpsBackend` port. It carries NO harness dependency: the Claude slot
 // reaches these descriptors as an in-process MCP server (the SDK wiring lives in
@@ -233,6 +238,27 @@ export interface CanvasOpsBackend {
    * a deferred Stage-2 wave).
    */
   novelty(): NoveltyResult;
+  /**
+   * `context.overview` (repo-map-symbolic-surface, layer b): the LEANEST
+   * context-saver — a file's top-level symbol overview (names, kinds, lines, NO
+   * bodies) served straight from the deterministic snapshot's per-file symbol
+   * shards. Model-free, on Rennet's OWN index (no LSP, no bundled engine). The
+   * backend resolves the base OID and passes the same fail-closed gate the other
+   * context reads use, so a stale/absent/corrupt snapshot is a typed refusal,
+   * never a served-but-wrong overview.
+   */
+  fileOverview(path: string): ProjectFileOverviewResult;
+  /**
+   * `context.symbol` (repo-map-symbolic-surface, layer b): Rennet's OWN model-free
+   * go-to-definition. Resolves an exported symbol NAME to its definition site(s)
+   * across the snapshot's `structural-ts-v1` symbol index (path + line + owning
+   * scope), pinned to the review's base OID. NO model and NO LSP — it scans the
+   * deterministic exported-symbol index we already build. Honest scope: exported
+   * top-level symbols only (a `reexport` site is labelled as such). The backend
+   * resolves the base OID and passes the same fail-closed gate, so a
+   * stale/absent/corrupt snapshot is a typed refusal, never a served-but-wrong site.
+   */
+  symbolDefinition(query: SymbolLookup): ProjectSymbolDefinitionResult;
   /** Apply the effects a write op emitted. Never receives an L2 write. */
   applyEffects(effects: readonly CanvasOpsEffect[]): void;
 }
@@ -1045,14 +1071,209 @@ const contextNoveltyTool: CanvasOpsTool = {
   },
 };
 
+// ── Symbolic navigation surface (repo-map-symbolic-surface, layer b) ──────────
+//
+// The model-free "IDE for the agent" (context-window economy is the design goal,
+// not a side effect), built on Rennet's OWN deterministic index — no LSP, no
+// bundled engine, no model. Per Rai (2026-08-10): recreate the useful bits
+// ourselves rather than bundle a proprietary tool (codeindexer, rejected on
+// licence) or ship a heavy runtime (Serena's Python+LSP stack).
+//
+//   • `context.overview` — a file's exported-symbol overview from its per-file
+//     symbol shard. "What's in this file" without reading it.
+//   • `context.symbol`  — go-to-definition: resolve an exported symbol NAME to its
+//     definition site(s) across the same exported-symbol index.
+//
+// Both are honest about the index's reach: EXPORTED top-level symbols only (the
+// `structural-ts-v1` extractor's scope). Identifier-level `context.references`
+// needs occurrence data this index does not carry (identifier usages / file text)
+// and is a deliberate follow-up, not a half-built tool here.
+
+const contextOverviewTool: CanvasOpsTool = {
+  name: "context.overview",
+  description:
+    "The leanest context-saver: ONE file's top-level symbol OVERVIEW at the review's pinned base OID — declared symbols (name, kind, 1-based line), signatures not bodies, recovered structurally from the snapshot's per-file symbol shards. NO model and NO LSP in this path. Use this to learn what a file contains WITHOUT reading the file into your window. Paginated with totality — follow the cursor; a page is never the whole. A stale/absent/corrupt snapshot rides back as a freshness verdict with an `unavailable` payload; a file with no extractable symbols is an honest ok with `hasSymbols: false`.",
+  kind: "retrieval",
+  readOnly: true,
+  alwaysLoad: false,
+  params: [
+    {
+      name: "path",
+      type: "string",
+      optional: false,
+      description: "Repo-relative POSIX path of the file, escape-checked.",
+    },
+    {
+      name: "limit",
+      type: "number",
+      optional: true,
+      description: "Max symbols per page (default 50, max 200).",
+    },
+    {
+      name: "cursor",
+      type: "string",
+      optional: true,
+      description: "The next-page offset returned by a previous call, or omit for the first page.",
+    },
+  ],
+  handle(args, backend) {
+    const path = requireString(args, "path");
+    if (!path) return fail("invalid-input", "context.overview requires a path");
+    const result = backend.fileOverview(path);
+    if (result.ok) {
+      const { page, total, cursor } = paginate(
+        result.overview.symbols,
+        optString(args, "cursor"),
+        pageLimit(args),
+      );
+      // The overview minus the paginated symbol slice; `symbols` carries just the
+      // page, `total` + `cursor` carry the totality (never a silent cap).
+      return ok(
+        {
+          path: result.overview.path,
+          blobOid: result.overview.blobOid,
+          extractor: result.overview.extractor,
+          hasSymbols: result.overview.hasSymbols,
+          symbols: page,
+        },
+        { freshness: "current", evidence: [result.overview.blobOid], total, cursor },
+      );
+    }
+    switch (result.reason) {
+      case "invalid-path":
+        return fail("invalid-input", `context.overview refuses unsafe path: ${result.path}`);
+      case "not-found":
+        return fail("not-found", `no file ${result.path} at the base OID`);
+      case "shard-unavailable":
+        return ok(
+          unavailable(
+            { reason: "corrupt", missing: [], mismatched: [result.digest] },
+            {
+              path: result.path,
+            },
+          ),
+          { freshness: "failed" },
+        );
+      case "snapshot-unavailable":
+        return ok(unavailable(result.failure, { path }), {
+          freshness: snapshotFreshness(result.failure),
+        });
+    }
+  },
+};
+
+const SYMBOL_KINDS = [
+  "function",
+  "class",
+  "const",
+  "let",
+  "var",
+  "interface",
+  "type",
+  "enum",
+  "default",
+  "reexport",
+] as const;
+
+const contextSymbolTool: CanvasOpsTool = {
+  name: "context.symbol",
+  description:
+    "Go-to-definition, model-free: resolve an EXPORTED symbol NAME to its definition site(s) across the base branch at the pinned base OID — each site's file path, 1-based line, declaration kind, and owning workspace scope, from Rennet's deterministic exported-symbol index (the same shards `context.overview` reads). NO model, NO LSP. Use this to find WHERE a symbol is defined instead of reading files to hunt for it. Honest scope: EXPORTED top-level symbols only (not locals, class members, or unexported declarations); a re-export site is returned with kind `reexport`, not chased to its origin. Every match is returned (a name exported from several files yields several sites), so an empty `sites` is a real 'no exported definition found', never a hidden error. Optionally narrow by `kind` and/or workspace `scope`. A stale/absent/corrupt snapshot rides back as a freshness verdict with an `unavailable` payload.",
+  kind: "retrieval",
+  readOnly: true,
+  alwaysLoad: false,
+  params: [
+    {
+      name: "name",
+      type: "string",
+      optional: false,
+      description: "The exported symbol name to resolve (e.g. `buildCanvas`).",
+    },
+    {
+      name: "kind",
+      type: "enum",
+      optional: true,
+      enum: SYMBOL_KINDS,
+      description: "Restrict to this declaration kind.",
+    },
+    {
+      name: "scope",
+      type: "string",
+      optional: true,
+      description: "Restrict to definitions inside this workspace scope name.",
+    },
+    {
+      name: "limit",
+      type: "number",
+      optional: true,
+      description: "Max definition sites per page (default 50, max 200).",
+    },
+    {
+      name: "cursor",
+      type: "string",
+      optional: true,
+      description: "The next-page offset returned by a previous call, or omit for the first page.",
+    },
+  ],
+  handle(args, backend) {
+    const name = requireString(args, "name");
+    if (!name) return fail("invalid-input", "context.symbol requires a name");
+    const kind = enumArg(args, "kind", SYMBOL_KINDS);
+    const scope = optString(args, "scope");
+    const query: SymbolLookup = {
+      name,
+      ...(kind !== undefined ? { kind } : {}),
+      ...(scope !== undefined ? { scope } : {}),
+    };
+    const result = backend.symbolDefinition(query);
+    if (result.ok) {
+      const { page, total, cursor } = paginate(
+        result.definitions.sites,
+        optString(args, "cursor"),
+        pageLimit(args),
+      );
+      // Evidence is the concrete site set (path:line per definition); an empty set
+      // is an honest "no exported definition", carried by total:0, not a fake hit.
+      return ok(
+        { name: result.definitions.name, sites: page },
+        {
+          freshness: "current",
+          evidence: page.map((site) => `${site.path}:${site.line}`),
+          total,
+          cursor,
+        },
+      );
+    }
+    switch (result.reason) {
+      case "shard-unavailable":
+        return ok(
+          unavailable(
+            { reason: "corrupt", missing: [], mismatched: [result.digest] },
+            { scope: `context.symbol:${name}` },
+          ),
+          { freshness: "failed" },
+        );
+      case "snapshot-unavailable":
+        return ok(unavailable(result.failure, { scope: `context.symbol:${name}` }), {
+          freshness: snapshotFreshness(result.failure),
+        });
+    }
+  },
+};
+
 // ── The surface ──────────────────────────────────────────────────────────────
 
 /**
  * The full canvasOps@2 tool surface, in a stable order: the six interaction ops,
- * the seven retrieval reads, then the base-branch/change context reads: `context.map`
- * / `context.file` (issue #14, the context #12 left riding it) and `context.novelty`
- * (issue #144 — the deterministic novelty ledger for the change). `context.knowledge`
- * + the LLM knowledge/novelty layers are a later wave and are NOT here. This list IS
+ * the seven retrieval reads, the base-branch/change context reads (`context.map`
+ * / `context.file`, issue #14, the context #12 left riding it; `context.novelty`,
+ * issue #144 — the deterministic novelty ledger for the change), then the model-free
+ * "IDE for the agent" symbolic ops (`context.overview` — a file's exported-symbol
+ * overview; `context.symbol` — go-to-definition over the same exported-symbol index),
+ * both riding Rennet's OWN deterministic shards (no LSP, no bundled engine).
+ * Identifier-level `context.references` needs occurrence data this index does not
+ * carry and is a deliberate follow-up. `context.knowledge` + the LLM knowledge/
+ * novelty layers are a later wave and are NOT here. This list IS
  * the structural actor partition: no user-only op
  * (disposition/adjudicate/expand/select/pin) and no engine-only op
  * (project/invalidate/carry/order) appears here, so "the human still disposes" is
@@ -1076,6 +1297,8 @@ export const CANVAS_OPS_TOOLS: readonly CanvasOpsTool[] = [
   contextMapTool,
   contextFileTool,
   contextNoveltyTool,
+  contextOverviewTool,
+  contextSymbolTool,
 ] as const;
 
 const TOOLS_BY_NAME: ReadonlyMap<string, CanvasOpsTool> = new Map(

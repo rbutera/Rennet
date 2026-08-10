@@ -28,8 +28,9 @@ import { buildRoutePlan, type RoutePlanOptions } from "./route-plan";
 // The production `CanvasOpsBackend` core (issue #13 — the live end-to-end review).
 //
 // `reviewBackendCore(state)` is the PURE half of the two-layer production backend:
-// every `CanvasOpsBackend` accessor EXCEPT the three store-backed Repo-Map reads
-// (`projectMap` / `fileContext` / `novelty`). It is a pure function of the live
+// every `CanvasOpsBackend` accessor EXCEPT the store-backed Repo-Map reads
+// (`projectMap` / `fileContext` / `novelty`, plus the symbolic surface
+// `fileOverview` / `symbolDefinition`). It is a pure function of the live
 // `Review` + the `buildReviewCanvases` result + recorded run state — no store, no
 // Node, no I/O — so `core` stays node-free and the dependency arrows hold
 // (`core` must not import `adapters`). The desktop composition root spreads this
@@ -50,7 +51,10 @@ import { buildRoutePlan, type RoutePlanOptions } from "./route-plan";
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The accessors the pure core supplies — everything but the store-backed Repo-Map reads. */
-export type ReviewBackendCore = Omit<CanvasOpsBackend, "projectMap" | "fileContext" | "novelty">;
+export type ReviewBackendCore = Omit<
+  CanvasOpsBackend,
+  "projectMap" | "fileContext" | "novelty" | "fileOverview" | "symbolDefinition"
+>;
 
 /**
  * The live review state the core reads through. `pipeline` is the

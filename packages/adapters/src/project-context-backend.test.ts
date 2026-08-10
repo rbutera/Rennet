@@ -217,3 +217,95 @@ describe("context.file through the real reader gate", () => {
     expect((env.data as { unavailable: { reason: string } }).unavailable.reason).toBe("stale");
   });
 });
+
+describe("context.overview through the real reader gate", () => {
+  it("recovers a source file's symbol overview as `current`, symbols only", async () => {
+    const { store, manifest } = await generate();
+    const reader = new ProjectContextReader(store);
+    const backend = backendFor(reader, () => ({
+      repoKey: manifest.repoKey,
+      baseOid: manifest.baseOid,
+    }));
+
+    const env = okEnvelope(
+      canvasOpsTool("context.overview").handle({ path: "packages/a/src/index.ts" }, backend),
+    );
+    expect(env.freshness).toBe("current");
+    const data = env.data as { hasSymbols: boolean; symbols: Array<{ name: string }> };
+    expect(data.hasSymbols).toBe(true);
+    expect(data.symbols.map((s) => s.name).sort()).toEqual(["a", "makeA"]);
+    // The evidence is the blob identity the symbols were recovered from.
+    expect(env.evidence).toHaveLength(1);
+  });
+
+  it("refuses an escaping path as invalid-input", async () => {
+    const { store, manifest } = await generate();
+    const reader = new ProjectContextReader(store);
+    const backend = backendFor(reader, () => ({
+      repoKey: manifest.repoKey,
+      baseOid: manifest.baseOid,
+    }));
+    const outcome = canvasOpsTool("context.overview").handle({ path: "../escape.ts" }, backend);
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.error.code).toBe("invalid-input");
+  });
+
+  it("rides a whole-snapshot stale gate back as freshness `stale`", async () => {
+    const { store, manifest } = await generate();
+    const reader = new ProjectContextReader(store);
+    const backend = backendFor(reader, () => ({
+      repoKey: manifest.repoKey,
+      baseOid: "0000000000000000000000000000000000000000",
+    }));
+    const env = okEnvelope(
+      canvasOpsTool("context.overview").handle({ path: "packages/a/src/index.ts" }, backend),
+    );
+    expect(env.freshness).toBe("stale");
+    expect((env.data as { unavailable: { reason: string } }).unavailable.reason).toBe("stale");
+  });
+});
+
+describe("context.symbol through the real reader gate", () => {
+  it("resolves an exported symbol name to its definition site(s) as `current`", async () => {
+    const { store, manifest } = await generate();
+    const reader = new ProjectContextReader(store);
+    const backend = backendFor(reader, () => ({
+      repoKey: manifest.repoKey,
+      baseOid: manifest.baseOid,
+    }));
+
+    const env = okEnvelope(canvasOpsTool("context.symbol").handle({ name: "makeA" }, backend));
+    expect(env.freshness).toBe("current");
+    const data = env.data as { name: string; sites: Array<{ path: string; line: number }> };
+    expect(data.name).toBe("makeA");
+    expect(data.sites).toHaveLength(1);
+    expect(data.sites[0]?.path).toBe("packages/a/src/index.ts");
+    expect(env.evidence).toEqual(["packages/a/src/index.ts:2"]);
+  });
+
+  it("refuses a missing name arg as invalid-input", async () => {
+    const { store, manifest } = await generate();
+    const reader = new ProjectContextReader(store);
+    const backend = backendFor(reader, () => ({
+      repoKey: manifest.repoKey,
+      baseOid: manifest.baseOid,
+    }));
+    const outcome = canvasOpsTool("context.symbol").handle({}, backend);
+    expect(outcome.ok).toBe(false);
+    if (outcome.ok) return;
+    expect(outcome.error.code).toBe("invalid-input");
+  });
+
+  it("rides a whole-snapshot stale gate back as freshness `stale`", async () => {
+    const { store, manifest } = await generate();
+    const reader = new ProjectContextReader(store);
+    const backend = backendFor(reader, () => ({
+      repoKey: manifest.repoKey,
+      baseOid: "0000000000000000000000000000000000000000",
+    }));
+    const env = okEnvelope(canvasOpsTool("context.symbol").handle({ name: "makeA" }, backend));
+    expect(env.freshness).toBe("stale");
+    expect((env.data as { unavailable: { reason: string } }).unavailable.reason).toBe("stale");
+  });
+});

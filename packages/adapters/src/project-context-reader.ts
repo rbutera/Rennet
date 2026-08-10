@@ -2,12 +2,17 @@ import {
   isSnapshotFresh,
   type LoadedSnapshot,
   materializeSnapshot,
+  type ProjectFileOverviewResult,
   type ProjectFileResult,
   type ProjectMapResult,
   type ProjectMapScope,
+  type ProjectSymbolDefinitionResult,
   queryFileContext,
+  queryFileOverview,
   queryProjectMap,
+  querySymbolDefinition,
   type SnapshotGateFailure,
+  type SymbolLookup,
   verifySnapshotIntegrity,
 } from "@rennet/core";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
@@ -17,7 +22,13 @@ import type { ProjectSnapshotStore } from "./project-snapshot-store";
 // `canvasOps@2` context tools can speak them without a core → adapters edge.
 // Re-exported here for stability: existing importers (and the adapters barrel)
 // keep resolving them from this module.
-export type { ProjectFileResult, ProjectMapResult, SnapshotGateFailure } from "@rennet/core";
+export type {
+  ProjectFileOverviewResult,
+  ProjectFileResult,
+  ProjectMapResult,
+  ProjectSymbolDefinitionResult,
+  SnapshotGateFailure,
+} from "@rennet/core";
 
 /**
  * The composed, fail-closed ProjectSnapshot READ gate (#14, Part 3) — the single
@@ -129,5 +140,38 @@ export class ProjectContextReader {
     const gated = this.loadFresh(repoKey, requestedBaseOid);
     if (!gated.ok) return { ok: false, reason: "snapshot-unavailable", failure: gated.failure };
     return queryFileContext(gated.snapshot, path);
+  }
+
+  /**
+   * `context.overview` at the adapter boundary: a file's top-level symbol overview
+   * (names/kinds/lines, no bodies) at the requested base OID, served from the same
+   * per-file symbol shards `context.file` reads. Passes through the SAME
+   * fail-closed gate first; a gate failure is surfaced as a `snapshot-unavailable`
+   * refusal so a single call has one result type.
+   */
+  readFileOverview(
+    repoKey: string,
+    requestedBaseOid: string,
+    path: string,
+  ): ProjectFileOverviewResult {
+    const gated = this.loadFresh(repoKey, requestedBaseOid);
+    if (!gated.ok) return { ok: false, reason: "snapshot-unavailable", failure: gated.failure };
+    return queryFileOverview(gated.snapshot, path);
+  }
+
+  /**
+   * `context.symbol` at the adapter boundary: resolve an exported symbol name to
+   * its definition site(s) at the requested base OID, over the same per-file
+   * symbol shards. Passes through the SAME fail-closed gate first; a gate failure
+   * is surfaced as a `snapshot-unavailable` refusal so a single call has one shape.
+   */
+  readSymbolDefinition(
+    repoKey: string,
+    requestedBaseOid: string,
+    query: SymbolLookup,
+  ): ProjectSymbolDefinitionResult {
+    const gated = this.loadFresh(repoKey, requestedBaseOid);
+    if (!gated.ok) return { ok: false, reason: "snapshot-unavailable", failure: gated.failure };
+    return querySymbolDefinition(gated.snapshot, query);
   }
 }

@@ -131,6 +131,78 @@ describe("ProjectContextReader — context.file over a real generated snapshot",
   });
 });
 
+describe("ProjectContextReader — context.overview over a real generated snapshot", () => {
+  it("recovers a file's symbol overview through the gate (symbols only)", async () => {
+    const { store, manifest } = await generate();
+    const reader = new ProjectContextReader(store);
+    const result = reader.readFileOverview(
+      manifest.repoKey,
+      manifest.baseOid,
+      "packages/a/src/index.ts",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.overview.hasSymbols).toBe(true);
+    expect(result.overview.symbols.map((s) => s.name).sort()).toEqual(["a", "makeA"]);
+  });
+
+  it("surfaces a whole-snapshot gate failure as snapshot-unavailable (stale pin)", async () => {
+    const { store, manifest } = await generate();
+    const reader = new ProjectContextReader(store);
+    const result = reader.readFileOverview(
+      manifest.repoKey,
+      "0000000000000000000000000000000000000000",
+      "packages/a/src/index.ts",
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("snapshot-unavailable");
+    if (result.reason !== "snapshot-unavailable") return;
+    expect(result.failure.reason).toBe("stale");
+  });
+});
+
+describe("ProjectContextReader — context.symbol over a real generated snapshot", () => {
+  it("resolves an exported symbol name to its definition site through the gate", async () => {
+    const { store, manifest } = await generate();
+    const reader = new ProjectContextReader(store);
+    // The fixture exports `makeA` (a function) from packages/a/src/index.ts.
+    const result = reader.readSymbolDefinition(manifest.repoKey, manifest.baseOid, {
+      name: "makeA",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.definitions.sites).toHaveLength(1);
+    expect(result.definitions.sites[0]?.path).toBe("packages/a/src/index.ts");
+    expect(result.definitions.sites[0]?.kind).toBe("function");
+    expect(result.definitions.sites[0]?.scope).toBe("@t/a");
+  });
+
+  it("returns an empty site set for a name absent from the index", async () => {
+    const { store, manifest } = await generate();
+    const reader = new ProjectContextReader(store);
+    const result = reader.readSymbolDefinition(manifest.repoKey, manifest.baseOid, {
+      name: "noSuchSymbol",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.definitions.sites).toEqual([]);
+  });
+
+  it("surfaces a stale pin as snapshot-unavailable, never served sites", async () => {
+    const { store, manifest } = await generate();
+    const reader = new ProjectContextReader(store);
+    const result = reader.readSymbolDefinition(
+      manifest.repoKey,
+      "0000000000000000000000000000000000000000",
+      { name: "makeA" },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("snapshot-unavailable");
+  });
+});
+
 describe("ProjectContextReader — the fail-closed staleness/integrity gate", () => {
   it("refuses an ABSENT snapshot (no map served)", async () => {
     const { store, manifest } = await generate();

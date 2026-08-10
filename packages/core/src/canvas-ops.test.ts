@@ -37,10 +37,13 @@ import {
 } from "./canvas-ops";
 import type { NoveltyResult } from "./novelty-ledger";
 import type {
+  ProjectFileOverviewResult,
   ProjectFileResult,
   ProjectMap,
   ProjectMapResult,
   ProjectMapScope,
+  ProjectSymbolDefinitionResult,
+  SymbolLookup,
 } from "./project-context";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -95,6 +98,12 @@ interface FixtureOptions {
   onProjectMap?: (scope?: ProjectMapScope) => void;
   /** Override the deterministic file-context gate result (default: a fresh served context). */
   fileContext?: ProjectFileResult;
+  /** Override the deterministic file-overview gate result (default: a fresh served overview). */
+  fileOverview?: ProjectFileOverviewResult;
+  /** Override the deterministic go-to-definition gate result (default: two served sites). */
+  symbolDefinition?: ProjectSymbolDefinitionResult;
+  /** Capture the lookup the last `context.symbol` call passed the backend. */
+  onSymbolDefinition?: (query: SymbolLookup) => void;
   /** Override the deterministic novelty-ledger gate result (default: a fresh served ledger). */
   novelty?: NoveltyResult;
   /** Fires when a `context.novelty` call reaches the backend (default served ledger). */
@@ -291,6 +300,47 @@ function makeFixture(options: FixtureOptions = {}): Fixture {
           tests: [],
         },
       },
+    fileOverview: (path: string): ProjectFileOverviewResult =>
+      options.fileOverview ?? {
+        ok: true,
+        overview: {
+          path,
+          blobOid: "b".repeat(40),
+          extractor: "test",
+          hasSymbols: true,
+          symbols: [
+            { name: "foo", kind: "function", line: 1 },
+            { name: "Bar", kind: "class", line: 5 },
+          ],
+        },
+      },
+    symbolDefinition: (query: SymbolLookup): ProjectSymbolDefinitionResult => {
+      options.onSymbolDefinition?.(query);
+      return (
+        options.symbolDefinition ?? {
+          ok: true,
+          definitions: {
+            name: query.name,
+            sites: [
+              {
+                path: "packages/a/src/index.ts",
+                name: query.name,
+                kind: "function",
+                line: 2,
+                scope: "@t/a",
+              },
+              {
+                path: "packages/b/src/index.ts",
+                name: query.name,
+                kind: "const",
+                line: 9,
+                scope: "@t/b",
+              },
+            ],
+          },
+        }
+      );
+    },
     novelty: (): NoveltyResult => {
       options.onNovelty?.();
       return options.novelty ?? { ok: true, ledger: freshNoveltyLedger() };
@@ -343,13 +393,20 @@ describe("canvasOps@2 tool surface", () => {
       "context.map",
       "context.file",
       "context.novelty",
+      "context.overview",
+      "context.symbol",
     ]);
     // The base-branch context reads (issue #14) + the deterministic novelty ledger
-    // (issue #144) now ride this surface; the LLM knowledge read (context.knowledge)
-    // and the Stage-2 LLM novelty layer are later waves and are NOT here yet.
+    // (issue #144) + the model-free symbolic ops (repo-map-symbolic-surface:
+    // context.overview + context.symbol) ride this surface. Identifier-level
+    // context.references is a follow-up (the index carries no occurrence data); the
+    // LLM knowledge read (context.knowledge) is a later wave.
     expect(names).toContain("context.map");
     expect(names).toContain("context.file");
     expect(names).toContain("context.novelty");
+    expect(names).toContain("context.overview");
+    expect(names).toContain("context.symbol");
+    expect(names).not.toContain("context.references");
     expect(names).not.toContain("context.knowledge");
   });
 
@@ -804,6 +861,228 @@ describe("canvasOps@2 tool surface", () => {
       const env = expectOk(run(canvasOpsTool("context.novelty"), {}, backend));
       expect(env.freshness).toBe("failed");
       expect((env.data as { unavailable: { reason: string } }).unavailable.reason).toBe("corrupt");
+    });
+  });
+
+  // repo-map-symbolic-surface: the model-free "IDE for the agent" (layer b) ─────
+  describe("context.overview — a file's symbol overview from the snapshot (no LSP)", () => {
+    it("serves a fresh overview as `current`, with the blob OID as evidence, symbols paginated", () => {
+      const { backend } = makeFixture();
+      const env = expectOk(
+        run(canvasOpsTool("context.overview"), { path: "packages/a/src/index.ts" }, backend),
+      );
+      const data = env.data as {
+        path: string;
+        hasSymbols: boolean;
+        symbols: { name: string }[];
+      };
+      expect(data.path).toBe("packages/a/src/index.ts");
+      expect(data.hasSymbols).toBe(true);
+      expect(data.symbols.map((s) => s.name)).toEqual(["foo", "Bar"]);
+      expect(env.freshness).toBe("current");
+      expect(env.evidence).toEqual(["b".repeat(40)]);
+      // Totality: the true count rides back, and the whole page fit (cursor null).
+      expect(env.total).toBe(2);
+      expect(env.cursor).toBeNull();
+    });
+
+    it("paginates the symbol list with totality (a page is never the whole)", () => {
+      const { backend } = makeFixture();
+      const first = expectOk(
+        run(
+          canvasOpsTool("context.overview"),
+          { path: "packages/a/src/index.ts", limit: 1 },
+          backend,
+        ),
+      );
+      expect((first.data as { symbols: unknown[] }).symbols).toHaveLength(1);
+      expect(first.total).toBe(2);
+      expect(first.cursor).toBe("1");
+      const second = expectOk(
+        run(
+          canvasOpsTool("context.overview"),
+          { path: "packages/a/src/index.ts", limit: 1, cursor: "1" },
+          backend,
+        ),
+      );
+      expect((second.data as { symbols: { name: string }[] }).symbols.map((s) => s.name)).toEqual([
+        "Bar",
+      ]);
+      expect(second.cursor).toBeNull();
+    });
+
+    it("is an honest ok with hasSymbols:false for a file bearing no symbol shard", () => {
+      const { backend } = makeFixture({
+        fileOverview: {
+          ok: true,
+          overview: {
+            path: "packages/a/package.json",
+            blobOid: "j".repeat(40),
+            extractor: null,
+            hasSymbols: false,
+            symbols: [],
+          },
+        },
+      });
+      const env = expectOk(
+        run(canvasOpsTool("context.overview"), { path: "packages/a/package.json" }, backend),
+      );
+      const data = env.data as { hasSymbols: boolean; symbols: unknown[] };
+      expect(data.hasSymbols).toBe(false);
+      expect(data.symbols).toEqual([]);
+      expect(env.freshness).toBe("current");
+    });
+
+    it("refuses a missing path arg as invalid-input", () => {
+      const { backend } = makeFixture();
+      const outcome = run(canvasOpsTool("context.overview"), {}, backend);
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) return;
+      expect(outcome.error.code).toBe("invalid-input");
+    });
+
+    it("maps the reader's invalid-path refusal to an invalid-input call error", () => {
+      const { backend } = makeFixture({
+        fileOverview: { ok: false, reason: "invalid-path", path: "../escape.ts" },
+      });
+      const outcome = run(canvasOpsTool("context.overview"), { path: "../escape.ts" }, backend);
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) return;
+      expect(outcome.error.code).toBe("invalid-input");
+    });
+
+    it("maps a path absent from the tree to a not-found call error", () => {
+      const { backend } = makeFixture({
+        fileOverview: { ok: false, reason: "not-found", path: "packages/a/ghost.ts" },
+      });
+      const outcome = run(
+        canvasOpsTool("context.overview"),
+        { path: "packages/a/ghost.ts" },
+        backend,
+      );
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) return;
+      expect(outcome.error.code).toBe("not-found");
+    });
+
+    it("surfaces a corrupt symbol shard as a `failed` read with a uniform `unavailable` payload", () => {
+      const { backend } = makeFixture({
+        fileOverview: {
+          ok: false,
+          reason: "shard-unavailable",
+          path: "packages/a/src/index.ts",
+          digest: "deadbeef",
+        },
+      });
+      const env = expectOk(
+        run(canvasOpsTool("context.overview"), { path: "packages/a/src/index.ts" }, backend),
+      );
+      expect(env.freshness).toBe("failed");
+      const data = env.data as { unavailable: { reason: string; mismatched: string[] } };
+      expect(data.unavailable.reason).toBe("corrupt");
+      expect(data.unavailable.mismatched).toEqual(["deadbeef"]);
+    });
+
+    it("rides a whole-snapshot stale gate back as freshness `stale`, not a served overview", () => {
+      const { backend } = makeFixture({
+        fileOverview: {
+          ok: false,
+          reason: "snapshot-unavailable",
+          failure: { reason: "stale", storedBaseOid: "old", requestedBaseOid: "new" },
+        },
+      });
+      const env = expectOk(
+        run(canvasOpsTool("context.overview"), { path: "packages/a/src/index.ts" }, backend),
+      );
+      expect(env.freshness).toBe("stale");
+      expect((env.data as { unavailable: { reason: string } }).unavailable.reason).toBe("stale");
+      expect((env.data as { symbols?: unknown }).symbols).toBeUndefined();
+    });
+  });
+
+  describe("context.symbol — go-to-definition over the exported-symbol index (no LSP)", () => {
+    it("serves definition sites as `current`, with each site's path:line as evidence", () => {
+      const { backend } = makeFixture();
+      const env = expectOk(run(canvasOpsTool("context.symbol"), { name: "makeA" }, backend));
+      const data = env.data as { name: string; sites: { path: string; line: number }[] };
+      expect(data.name).toBe("makeA");
+      expect(data.sites.map((s) => `${s.path}:${s.line}`)).toEqual([
+        "packages/a/src/index.ts:2",
+        "packages/b/src/index.ts:9",
+      ]);
+      expect(env.freshness).toBe("current");
+      expect(env.evidence).toEqual(["packages/a/src/index.ts:2", "packages/b/src/index.ts:9"]);
+      expect(env.total).toBe(2);
+      expect(env.cursor).toBeNull();
+    });
+
+    it("passes name/kind/scope through to the backend port", () => {
+      let seen: SymbolLookup | undefined;
+      const { backend } = makeFixture({ onSymbolDefinition: (q) => (seen = q) });
+      run(canvasOpsTool("context.symbol"), { name: "Foo", kind: "class", scope: "@t/a" }, backend);
+      expect(seen).toEqual({ name: "Foo", kind: "class", scope: "@t/a" });
+    });
+
+    it("ignores an unknown kind value (defensive enum parse) rather than erroring", () => {
+      let seen: SymbolLookup | undefined;
+      const { backend } = makeFixture({ onSymbolDefinition: (q) => (seen = q) });
+      run(canvasOpsTool("context.symbol"), { name: "Foo", kind: "not-a-kind" }, backend);
+      expect(seen).toEqual({ name: "Foo" });
+    });
+
+    it("paginates the sites with totality", () => {
+      const { backend } = makeFixture();
+      const first = expectOk(
+        run(canvasOpsTool("context.symbol"), { name: "makeA", limit: 1 }, backend),
+      );
+      expect((first.data as { sites: unknown[] }).sites).toHaveLength(1);
+      expect(first.total).toBe(2);
+      expect(first.cursor).toBe("1");
+    });
+
+    it("returns an honest empty site set (total 0), never an error, when nothing matches", () => {
+      const { backend } = makeFixture({
+        symbolDefinition: { ok: true, definitions: { name: "ghost", sites: [] } },
+      });
+      const env = expectOk(run(canvasOpsTool("context.symbol"), { name: "ghost" }, backend));
+      const data = env.data as { name: string; sites: unknown[] };
+      expect(data.name).toBe("ghost");
+      expect(data.sites).toEqual([]);
+      expect(env.total).toBe(0);
+      expect(env.freshness).toBe("current");
+    });
+
+    it("refuses a missing name arg as invalid-input", () => {
+      const { backend } = makeFixture();
+      const outcome = run(canvasOpsTool("context.symbol"), {}, backend);
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) return;
+      expect(outcome.error.code).toBe("invalid-input");
+    });
+
+    it("surfaces a corrupt symbol shard as a `failed` read with an `unavailable` payload", () => {
+      const { backend } = makeFixture({
+        symbolDefinition: { ok: false, reason: "shard-unavailable", digest: "deadbeef" },
+      });
+      const env = expectOk(run(canvasOpsTool("context.symbol"), { name: "makeA" }, backend));
+      expect(env.freshness).toBe("failed");
+      const data = env.data as { unavailable: { reason: string; mismatched: string[] } };
+      expect(data.unavailable.reason).toBe("corrupt");
+      expect(data.unavailable.mismatched).toEqual(["deadbeef"]);
+    });
+
+    it("rides a whole-snapshot stale gate back as freshness `stale`, not served sites", () => {
+      const { backend } = makeFixture({
+        symbolDefinition: {
+          ok: false,
+          reason: "snapshot-unavailable",
+          failure: { reason: "stale", storedBaseOid: "old", requestedBaseOid: "new" },
+        },
+      });
+      const env = expectOk(run(canvasOpsTool("context.symbol"), { name: "makeA" }, backend));
+      expect(env.freshness).toBe("stale");
+      expect((env.data as { unavailable: { reason: string } }).unavailable.reason).toBe("stale");
+      expect((env.data as { sites?: unknown }).sites).toBeUndefined();
     });
   });
 });
