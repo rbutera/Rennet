@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import { escapePath } from "@rennet/core";
 import type {
   BaseRefResolution,
   ConventionEntry,
@@ -42,7 +42,12 @@ async function tryGit(git: GitExec, root: string, args: string[]): Promise<strin
 }
 
 export interface ResolvedBase {
-  /** The RepoRecord key: `realpath(git-common-dir)` (R19). */
+  /**
+   * The per-project store key: `escapePath(realpath(git-top-level))` (#141 / R55,
+   * design §1.1). Path-keyed and local-first — each checkout PATH (including a
+   * worktree on a branch) gets its own store entry, replacing wave-1's
+   * `realpath(git-common-dir)` which made all worktrees share one entry.
+   */
   readonly repoKey: string;
   /** The repository top-level working directory. */
   readonly root: string;
@@ -66,11 +71,10 @@ export async function resolveBaseRef(
 ): Promise<ResolvedBase> {
   const git = options.git ?? execaGit;
   const topLevel = (await git(root, ["rev-parse", "--show-toplevel"], { reject: true })).trim();
-  const commonDirRaw = (
-    await git(topLevel, ["rev-parse", "--git-common-dir"], { reject: true })
-  ).trim();
-  const commonDir = isAbsolute(commonDirRaw) ? commonDirRaw : resolve(topLevel, commonDirRaw);
-  const repoKey = realpathSync(commonDir);
+  // The store key is the escaped, realpath-canonical top-level PATH (design §1.1),
+  // so a worktree on a branch keys its own local-first entry. `realpath` is the
+  // node I/O half of the escaped-path scheme; `escapePath` (core) is the pure half.
+  const repoKey = escapePath(realpathSync(topLevel));
 
   const attempts: { ref: string | null; resolution: BaseRefResolution }[] = [
     // explicit setting is the deliberate human override — highest precedence.

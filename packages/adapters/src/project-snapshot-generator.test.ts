@@ -228,7 +228,8 @@ describe("ProjectSnapshotGenerator — end-to-end over a real git repo", () => {
 /** Locate a content-addressed shard file under a store base dir, by digest. */
 function findShardPath(storeDir: string, digest: string): string {
   for (const repo of readdirSync(storeDir)) {
-    const candidate = join(storeDir, repo, "shards", `${digest}.json`);
+    // Local-first layout (design §1.1): <escaped-path>/map/shards/<digest>.json.
+    const candidate = join(storeDir, repo, "map", "shards", `${digest}.json`);
     try {
       readFileSync(candidate);
       return candidate;
@@ -374,7 +375,9 @@ describe("ProjectSnapshotGenerator — rename & same-content copy through the re
     expect(first).toBeDefined();
     if (!first) return;
     const [digest, goodBytes] = first;
-    const shardsDir = join(storeDir, sha256Hex(repoKey), "shards");
+    // Local-first layout (design §1.1): <baseDir>/<escaped-path>/map/shards/ —
+    // the escaped repoKey is used directly as the dir name (no sha256Hex hashing).
+    const shardsDir = join(storeDir, repoKey, "map", "shards");
     mkdirSync(shardsDir, { recursive: true });
     const shardFile = join(shardsDir, `${digest}.json`);
     writeFileSync(shardFile, goodBytes.slice(0, Math.max(1, goodBytes.length - 5)));
