@@ -44,8 +44,9 @@ import {
   decompose,
   guardSeatTurn,
   ReviewService,
+  resolveDualSeat,
   runDecisionAngle,
-  runFindingAngle,
+  runDualFindingReview,
   runHypothesisPass,
   runNoiseAngle,
 } from "@rennet/core";
@@ -547,49 +548,68 @@ const FINDING_PROVENANCE_SEED = {
 };
 
 /**
- * The live Flagged lens runner (issue #32/#138), replacing `flaggedReviewFixture`.
- * Decomposes the review's active patchset into the offered hunk manifest and runs
- * the finding angle on the user's `claude` (subscription OAuth), budget-gated. The
- * emitted `finding` documents become the lens's `FlaggedReview` behind the SAME
- * `flagged.review` boundary — the UI is unchanged. With no discoverable harness,
- * or on a runner failure/budget refusal, the lens gets the LOUD `failed` state —
- * "ran clean" is never faked from "did not run" (the empty-vs-failed distinction).
+ * The live Flagged lens runner (issue #32/#138 + dual-model #41), replacing
+ * `flaggedReviewFixture`. Decomposes the review's active patchset into the offered
+ * hunk manifest and runs the finding lens on the user's installed provider seats,
+ * budget-gated. The result becomes the lens's `FlaggedReview` behind the SAME
+ * `flagged.review` boundary — the UI is unchanged.
+ *
+ *   • QUICK review (`deepReview` false/omitted) → ONE Claude seat, exactly today's
+ *     behaviour: each finding keeps its honest `concur 1/1`, no `dual` note.
+ *   • DEEP review (`deepReview` true) with two providers installed → the SAME finding
+ *     lens runs INDEPENDENTLY on a Claude seat and a Codex seat, and the two grounded
+ *     sets are reconciled into agreement/disagreement (#41) — never averaged. If the
+ *     Codex seat is unavailable or errors it degrades to the single seat with an
+ *     honest "second seat unavailable" marker (never a fabricated concurrence).
+ *
+ * With no discoverable provider, or on a total runner failure/budget refusal, the
+ * lens gets the LOUD `failed` state — "ran clean" is never faked from "did not run".
  */
-async function runFlaggedReview(review: Review): Promise<FlaggedReview> {
+async function runFlaggedReview(review: Review, deepReview = false): Promise<FlaggedReview> {
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
-  if (!adapter) {
-    return { status: "failed", reason: "no model harness is available to run the review" };
-  }
+  const codex = await getCodexAvailability();
   const decomposition = decompose(patchset);
   const manifest = buildOfferedManifest(decomposition);
   // KNOWN §7 DEVIATION (as in buildCanvasesForReview): the read-only harness runs
   // with `cwd` on the live mutable checkout rather than an immutable materialisation,
   // because that layer is not built yet. Follow-up: materialise the active patchset
   // to an app-owned cache and point `cwd` there. Do NOT read this as satisfied.
-  const runFindingTurn = createHarnessRunTurn(adapter, {
+  const claudeTurn = adapter
+    ? createHarnessRunTurn(adapter, { docType: "finding", cwd: review.repositoryRoot })
+    : undefined;
+
+  // The honestly-probed installed set: the Codex port is passed IFF codex is
+  // installed, so a Codex seat is always executable (the resolver's invariant).
+  const installed: CouncilHarnessId[] = [];
+  if (adapter) installed.push("claude-code");
+  if (codex.available) installed.push("codex");
+
+  // The ordered dual seats (Claude first, Codex second), each with its honest
+  // provenance seed and executor. Under a single provider this is one seat.
+  const seats = resolveDualSeat({
+    council: { availability: { installed } },
+    jobId: "finding-generation",
     docType: "finding",
-    cwd: review.repositoryRoot,
-  });
-  // A finding run is its own live-budget-gated user action, distinct from
-  // review.canvases; the ceiling stops spend, never the review (R10, fail-closed).
-  const budget = createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS);
-  const result = await runFindingAngle({
     patchsetId: patchset.id,
     manifest,
-    provenance: FINDING_PROVENANCE_SEED,
-    // A thrown/rejected turn (a session/transport construction exception, #96)
-    // degrades to a turn-failure rather than crashing the command.
-    runTurn: guardSeatTurn(runFindingTurn),
-    budget,
+    baseSeed: FINDING_PROVENANCE_SEED,
+    ...(claudeTurn ? { claudeTurn } : {}),
+    ...(codex.available ? { codexPort: getCodexPort() } : {}),
   });
-  if (result.status === "ok") {
-    return { status: "ok", findings: result.findings };
-  }
-  return {
-    status: "failed",
-    reason: result.failureReason ?? "the finding runner did not complete",
-  };
+
+  // Each seat is its OWN live-budget-gated action (R10, fail-closed): the ceiling
+  // stops spend, never the review. The dual runner guards each seat's turn (a
+  // thrown Codex spawn degrades to a failed seat, then the reconcile degrades) and
+  // owns the reconcile + the honest single-provider degradation.
+  const { review: flagged } = await runDualFindingReview({
+    deepReview,
+    patchsetId: patchset.id,
+    manifest,
+    seats,
+    makeBudget: () => createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS),
+  });
+  return flagged;
 }
 
 // The provenance seed for a live noise run (issue #34), mirroring the finding seed.

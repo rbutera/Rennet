@@ -149,9 +149,11 @@ export interface DispatchDeps {
    * a review. The LIVE finding-generation runner (#32) is wired behind this — it
    * decomposes the review's active patchset and runs a real model turn over the diff,
    * so this DOES spend a budgeted model invocation. Dispatch resolves the addressed
-   * review (freshness-checked, like `review.canvases`) and passes it in.
+   * review (freshness-checked, like `review.canvases`) and passes it in. `deepReview`
+   * (issue #41) opts into the dual-model path (two provider seats reconciled into
+   * agreement/disagreement); omitted/false is the single-seat quick review.
    */
-  flaggedReview(review: Review): Promise<FlaggedReview>;
+  flaggedReview(review: Review, deepReview: boolean): Promise<FlaggedReview>;
   /**
    * The Noise lens's input (issue #34): the low-signal churn grouped away for a
    * review, each group tagged rule vs noise job. The LIVE noise-classification runner
@@ -483,7 +485,10 @@ export function createDispatch(
         // unknown id is refused) and hand the runner the review, never a bare id.
         const input = parseCommandInput(name, rawInput);
         const review = requireLatestReview(input.reviewId);
-        return parseCommandOutput(name, await deps.flaggedReview(review));
+        return parseCommandOutput(
+          name,
+          await deps.flaggedReview(review, input.deepReview ?? false),
+        );
       }
       // ── Ask the AI a question about the review (issue #139) ────────────────────
       case "review.ask": {

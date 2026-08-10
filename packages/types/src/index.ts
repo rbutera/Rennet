@@ -939,13 +939,39 @@ export interface FindingBody {
 }
 
 /**
+ * How the flagged review was produced (issue #41, dual-model). It rides the
+ * `ok` variant as an ADDITIVE optional field, so a single-seat review (today's
+ * default) omits it and nothing downstream changes. When two provider seats run,
+ * `seats` names both labels in order; `secondSeatUnavailable` is the HONEST
+ * degradation marker — set only when a second seat was requested (deep review,
+ * two providers installed) but was unavailable or errored, so the lens can show a
+ * "single provider — no second opinion" badge rather than fabricate a concurrence.
+ * It NEVER carries a merged verdict — disagreement lives in each finding's
+ * `agreement`, this only records WHO ran.
+ */
+export interface DualReviewNote {
+  /** The provider labels that actually contributed findings, in order (e.g. ["Claude", "Codex"]). */
+  readonly seats: readonly string[];
+  /**
+   * Present ONLY when dual review degraded to a single seat: the reason the second
+   * seat produced nothing (unavailable, errored, or only one provider installed).
+   * Absent on a full two-seat run and on a deliberate single-seat (quick) review.
+   */
+  readonly secondSeatUnavailable?: string;
+}
+
+/**
  * The Flagged lens's per-review input, behind the typed boundary. A review that
  * RAN and found nothing (`ok` with an empty `findings`) is honestly empty; a
  * runner that FAILED (`failed`, with a reason) is a different state and must never
  * be conflated with "no findings". This distinction is load-bearing for the lens.
+ *
+ * The optional `dual` note (issue #41) records how the review was produced — a
+ * single seat, or two provider seats reconciled into agreement/disagreement. It is
+ * additive: an `ok` review with no `dual` is exactly the pre-#41 shape.
  */
 export type FlaggedReview =
-  | { status: "ok"; findings: FindingElement[] }
+  | { status: "ok"; findings: FindingElement[]; dual?: DualReviewNote }
   | { status: "failed"; reason: string };
 
 // ─── review.ask: ask the AI a question, one model or both (issue #139) ────────
