@@ -141,7 +141,7 @@ export function ReviewWorkspace({
         <section className="invalid-banner" role="status">
           <div>
             <strong>Your code changed.</strong>
-            <span>The review stays pinned to the previous patchset until you regenerate it.</span>
+            <span>Pinned to the previous patchset until you regenerate.</span>
           </div>
           <button type="button" onClick={onRegenerate}>
             Regenerate affected review
@@ -208,7 +208,7 @@ export function ReviewWorkspace({
 
         <aside className="angle-panel" aria-label="Review angles">
           <div className="panel-title">Angles</div>
-          <p className="muted">Manual coverage for this first local slice.</p>
+          <p className="muted">Manual coverage only.</p>
           {angles.map((angle) => (
             <div className="angle-row" key={angle}>
               <span>{angle}</span>
@@ -827,7 +827,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
               setAtFrontDoor(true);
             }}
           >
-            Review a repo or PR directly
+            Review directly
           </button>
         </>
       );
@@ -842,18 +842,15 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           <RennetMark size={34} />
         </div>
         <p className="eyebrow">RENNET</p>
-        <h1>Review the code you actually have.</h1>
-        <p>
-          Capture committed branch work, staged changes, unstaged edits, and untracked files into
-          one immutable local patchset.
-        </p>
+        <h1>Start a review.</h1>
+        <p>Capture local git changes into one patchset.</p>
         <button type="button" disabled={busy} onClick={chooseRepository}>
           <FolderIcon size={15} />
           {busy ? "Working…" : "Choose a repository"}
         </button>
 
         <div className="entry-divider" aria-hidden="true">
-          <span>or review a pull request</span>
+          <span>or a pull request</span>
         </div>
 
         <form
@@ -879,7 +876,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
             {busy ? "Opening…" : "Open pull request"}
           </button>
         </form>
-        <p className="pr-hint">You will pick the local clone of the repository.</p>
+        <p className="pr-hint">Pick the local clone next.</p>
 
         {error ? <p className="error">{error}</p> : null}
       </main>
@@ -974,14 +971,14 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           // behind it a calm primer stands in — never demo canvases.
           <section className="canvas-primer" aria-hidden="true">
             <p className="eyebrow">AI REVIEW</p>
-            <h2>Your AI code review is one tap away.</h2>
-            <p>Grant permission above and Rennet runs the review over your captured diff.</p>
+            <h2>Waiting for permission.</h2>
+            <p>Grant permission above to run the review.</p>
           </section>
         ) : loadFailed ? (
           <section className="canvas-primer" role="alert">
             <p className="eyebrow">AI REVIEW</p>
-            <h2>The AI review couldn't be produced.</h2>
-            <p>The review engine returned nothing for this changeset.</p>
+            <h2>The review failed.</h2>
+            <p>The engine returned nothing.</p>
             <button type="button" onClick={retryLiveLoad}>
               Try again
             </button>
@@ -989,8 +986,8 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         ) : (
           <section className="canvas-primer" role="status">
             <p className="eyebrow">AI REVIEW</p>
-            <h2>Running your AI review…</h2>
-            <p>Reading the diff and drafting the review angles over your own subscription.</p>
+            <h2>Running the review…</h2>
+            <p>Reading the diff and drafting review angles.</p>
           </section>
         )
       ) : (

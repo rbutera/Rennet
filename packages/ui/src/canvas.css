@@ -288,7 +288,7 @@
 }
 .flat-element-kind {
   color: var(--text-faint);
-  font: 700 10px / 1.2 var(--mono);
+  font: 700 10px / 1.2 var(--sans);
   letter-spacing: 0.08em;
   text-transform: uppercase;
 }
@@ -335,6 +335,37 @@
   color: var(--private);
   border-color: var(--private-line);
   background: var(--private-fill);
+}
+
+/* ── Calm reading surface (#62): quiet the per-row disposition cluster ────────
+ * The roll-up reads calm, not a dense grid of always-on controls. The per-row
+ * cluster — a list row in Sequence/Flat, a decision row and a cohort header in
+ * Decisions — stays in the DOM and in the tab order; it just no longer paints
+ * until the row is engaged. opacity (not display) keeps it reachable by keyboard
+ * and assistive tech, and focus-within reveals it before a keyboard user lands
+ * on it. The width stays reserved, so revealing on hover causes no layout shift.
+ * The roll-up-level bar in .canvas-toolbar stays always-on: that is the single
+ * calm cluster the surface keeps visible. */
+.flat-element .disposition-bar.is-compact,
+.decision .disposition-bar.is-compact,
+.cohort-head .disposition-bar.is-compact {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.flat-element:hover .disposition-bar.is-compact,
+.flat-element:focus-within .disposition-bar.is-compact,
+.decision:hover .disposition-bar.is-compact,
+.decision:focus-within .disposition-bar.is-compact,
+.cohort-head:hover .disposition-bar.is-compact,
+.cohort-head:focus-within .disposition-bar.is-compact {
+  opacity: 1;
+}
+@media (prefers-reduced-motion: reduce) {
+  .flat-element .disposition-bar.is-compact,
+  .decision .disposition-bar.is-compact,
+  .cohort-head .disposition-bar.is-compact {
+    transition: none;
+  }
 }
 
 /* ── L3: the orchestrator's hand (glass chrome, dashed, distinct) ─────────── */
@@ -435,7 +466,7 @@
 }
 .code-view-tier {
   color: var(--text-faint);
-  font: 10px / 1.2 var(--mono);
+  font: 10px / 1.2 var(--sans);
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
@@ -911,7 +942,7 @@
   flex: none;
   border-radius: var(--chip-radius);
   padding: 3px 9px;
-  font: 700 10px / 1.2 var(--mono);
+  font: 700 10px / 1.2 var(--sans);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   border: 1px solid var(--hairline);
@@ -974,7 +1005,7 @@
 .flag-disagree-flare {
   display: block;
   color: var(--amber);
-  font: 700 10px / 1.2 var(--mono);
+  font: 700 10px / 1.2 var(--sans);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   margin-bottom: 8px;
@@ -995,7 +1026,7 @@
 }
 .flag-answer-model {
   color: var(--amber);
-  font: 700 10px / 1.2 var(--mono);
+  font: 700 10px / 1.2 var(--sans);
   letter-spacing: 0.06em;
   text-transform: uppercase;
 }

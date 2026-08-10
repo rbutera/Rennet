@@ -82,7 +82,8 @@ button {
 .eyebrow {
   margin: 0;
   color: var(--text-faint);
-  font: 700 10px / 1.2 var(--mono);
+  /* Chrome label, not code: proportional face (#62 — monospace is code-only). */
+  font: 700 10px / 1.2 var(--sans);
   letter-spacing: 0.16em;
 }
 .provenance {
@@ -516,30 +517,32 @@ button {
 
 /* Additive view toggle between the file/review surface and the canvas surface (#11).
  * Glass chrome pill (frosted), soft-blue active state. */
+/* Two standalone tab pills, not a chunky box of buttons (#62): each pill matches
+ * .workspace-projects / .entry-back exactly (same padding, border, radius, glass),
+ * so the three top-corner controls share one height and one corner radius. The old
+ * form nested 9px pills inside a 12px padded box, which sat taller than its siblings
+ * and read as a mismatched "last radius button". */
 .view-toggle {
   position: fixed;
   z-index: 12;
   top: 12px;
   right: 16px;
-  display: flex;
-  gap: 4px;
-  padding: 3px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius);
-  background: var(--side-bg);
-  -webkit-backdrop-filter: var(--side-blur);
-  backdrop-filter: var(--side-blur);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 .view-toggle button {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  border: 0;
-  border-radius: var(--chip-radius);
   padding: 5px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
   color: var(--text-soft);
-  background: transparent;
+  background: var(--side-bg);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
   font-size: 12px;
   font-weight: 600;
   cursor: pointer;
@@ -549,6 +552,7 @@ button {
 }
 .view-toggle button.is-active {
   color: var(--accent);
+  border-color: var(--accent-soft-line);
   background: var(--accent-soft);
 }
 
@@ -1974,7 +1978,7 @@ button {
   gap: 8px;
 }
 .smart-sort-label {
-  font: 700 10px / 1.2 var(--mono);
+  font: 700 10px / 1.2 var(--sans);
   letter-spacing: 0.14em;
   color: var(--text-faint);
   text-transform: uppercase;
@@ -2171,7 +2175,7 @@ button {
   color: var(--green);
 }
 .smart-row-statelabel {
-  font: 700 10px / 1.2 var(--mono);
+  font: 700 10px / 1.2 var(--sans);
   letter-spacing: 0.08em;
   text-transform: uppercase;
   color: var(--text-faint);
