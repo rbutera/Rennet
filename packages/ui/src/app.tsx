@@ -309,7 +309,18 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // Bumped by the retry affordance to re-run the live load for the same review
   // (e.g. after the user installs their Claude CLI and asks for the real review).
   const [reloadNonce, setReloadNonce] = useState(0);
-  const fetchedForReview = useRef<string | null>(null);
+  // The canvas-fetch guard is keyed on the review's IDENTITY (review id + active
+  // patchset), NOT the churning `Review` object the 1500ms freshness poll (below)
+  // deserializes fresh every tick (#59). `reviewRef` always holds the latest review
+  // so the canvas effect can read it WITHOUT depending on that object reference — a
+  // dependency on the object would re-run (and so cancel) the in-flight enrichment
+  // fetch on every poll, and on a slow real harness the enrichment would never land.
+  // `fetchedCanvasKey` records the identity that was ENRICHED, and only on SUCCESS,
+  // so a cancelled or failed fetch retries and a regenerate (new patchset ⇒ new key)
+  // re-fetches.
+  const reviewRef = useRef<Review | null | undefined>(review);
+  reviewRef.current = review;
+  const fetchedCanvasKey = useRef<string | null>(null);
   // Permission mode (issue #103). The persisted workspace default governs the
   // gated harness run (#58); `undefined` until bootstrap resolves it, which
   // `resolvePermissionMode` treats as the safe `manual` default. `harnessAuthorization`
@@ -375,6 +386,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // paper — the outcome was built from the prior review's draft. Clear it so a
   // stale dry-run summary never lingers over a different review.
   const reviewId = review?.id;
+  // The canvas-fetch identity: a change of review OR active patchset (a regenerate)
+  // is a new set to enrich; a no-op freshness poll keeps the same string, so it does
+  // NOT re-run the canvas effect. Null until a review is open.
+  const canvasFetchKey = review ? `${review.id}::${review.activePatchsetId}` : null;
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on review identity only.
   useEffect(() => {
     setPublishResult(undefined);
@@ -433,7 +448,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setLoadFailed(false);
     setFlaggedReview(undefined);
     setNoiseReview(undefined);
-    fetchedForReview.current = null;
+    fetchedCanvasKey.current = null;
   }, [reviewId]);
 
   // The Flagged lens (issue #138): fetch the automated review layer's findings for
@@ -490,12 +505,21 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // consented under manual), fetch the engine-produced canvas set once and render
   // the REAL AI review. A failure (no harness, pipeline error) returns null and is
   // surfaced as an honest error + retry — never a demo standing in for a review.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: reloadNonce re-triggers the load on retry.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: reloadNonce re-triggers the load on retry; review is read via reviewRef, keyed by canvasFetchKey.
   useEffect(() => {
-    if (view !== "canvases" || !review) return;
-    if (fetchedForReview.current === review.id) return;
+    if (view !== "canvases") return;
+    // Read the review off the ref, NOT the dependency array: this effect is keyed on
+    // `canvasFetchKey` (review id + active patchset), so a no-op 1500ms freshness
+    // poll — which swaps in a byte-identical `Review` behind a fresh object
+    // reference — no longer re-runs it and therefore no longer cancels an in-flight
+    // enrichment fetch (#59). `reviewRef.current` is the same review `canvasFetchKey`
+    // was derived from this render, so its id/patchset match the key.
+    const current = reviewRef.current;
+    if (!current || !canvasFetchKey) return;
+    // Already enriched THIS id+patchset: the success-recorded key blocks a redundant
+    // refetch. A cancelled/failed fetch never records, so it stays free to retry.
+    if (fetchedCanvasKey.current === canvasFetchKey) return;
     if (awaitingHarnessConsent) return; // #58 gate: await consent before any harness turn
-    fetchedForReview.current = review.id;
     setLoadFailed(false);
     let cancelled = false;
     // The single-use harness-run authorization relayed to the main gate (bead
@@ -505,16 +529,22 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     // main requires none. Main verifies + consumes the token — the renderer no
     // longer asserts a boolean it could forge or replay.
     const authorization =
-      requiresConsent(effectiveMode, "harness.run") && harnessAuthorization?.reviewId === review.id
+      requiresConsent(effectiveMode, "harness.run") && harnessAuthorization?.reviewId === current.id
         ? harnessAuthorization.token
         : null;
-    void loadCanvases(bridge, review, authorization).then((live) => {
+    void loadCanvases(bridge, current, authorization).then((live) => {
       if (cancelled) return;
       if (!live) {
         // Nothing real came back — surface it honestly rather than standing on a demo.
+        // The key is NOT recorded, so the retry affordance (which bumps `reloadNonce`)
+        // re-runs this and fetches again — a failed load never poisons the identity.
         setLoadFailed(true);
         return;
       }
+      // Record the enriched identity ONLY here, on success (#59): a slow fetch that
+      // outlived one or more freshness polls still lands, and the recorded key then
+      // prevents a redundant refetch of the SAME id+patchset.
+      fetchedCanvasKey.current = canvasFetchKey;
       setCanvases(live.canvases);
       setElementDiffs(live.elementDiffs);
       setNarration(live.narration);
@@ -526,7 +556,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     };
   }, [
     view,
-    review,
+    canvasFetchKey,
     bridge,
     awaitingHarnessConsent,
     effectiveMode,
@@ -539,7 +569,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // nonce re-runs the effect above; e.g. the user installs their Claude CLI, then
   // asks for the real AI review without reopening the app.
   function retryLiveLoad(): void {
-    fetchedForReview.current = null;
+    fetchedCanvasKey.current = null;
     setLoadFailed(false);
     setLiveLoaded(false);
     setReloadNonce((nonce) => nonce + 1);
