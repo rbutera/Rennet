@@ -123,6 +123,7 @@ export {
   type GitHubChangesetSourceDeps,
   type GitObjectPinner,
   type ReviewedHeadPin,
+  ReviewedOidUnavailableError,
   type WorktreeProvider,
 } from "./github-changeset-source";
 export { GitHubForgeAdapter, type GitHubForgeConfig } from "./github-forge";
