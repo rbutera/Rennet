@@ -1460,3 +1460,205 @@ export interface InvocationBudget {
   readonly remaining: number;
   tryConsume(purpose: string): BudgetGrant;
 }
+
+// ── ProjectSnapshot (issue #14, Part 1) ──────────────────────────────────────
+//
+// The deterministic base-branch structural map. Pinned to the resolved
+// default-branch OID; MODEL-FREE and BYTE-REPRODUCIBLE. Every structural fact is
+// a pure function of the tree at `baseOid`, so an incremental rebuild of the
+// changed-path closure is byte-identical to a clean full build (the load-bearing
+// property that makes "never consume stale context" checkable). No LLM anywhere
+// in this map; no clock in any serialized field (a timestamp would defeat
+// reproducibility — freshness is fingerprint/content equality, never age).
+//
+// Storage is LOCAL-ONLY in an app-owned store keyed by the RepoRecord
+// (`realpath(git-common-dir)`, R19/R55): all worktrees of a repo share one entry
+// and the map never travels across branches. The knowledge layer, context.*
+// tools, the novelty ledger, `projectContext.visibility`, and multi-repo
+// WorkspaceContext are deliberate follow-ups, not part of this map.
+
+/** The current ProjectSnapshot schema version. Bumped on any breaking shard shape change. */
+export const PROJECT_SNAPSHOT_SCHEMA_VERSION = 1;
+
+/** How the pinned default-branch ref was resolved (most-authoritative first). */
+export type BaseRefResolution =
+  | "forge-metadata"
+  | "symbolic-head"
+  | "configured-upstream"
+  | "explicit-setting";
+
+/** A single tracked file in the tree at `baseOid`. Sorted by `path` in the shard. */
+export interface SnapshotFileEntry {
+  /** Repo-relative POSIX path. */
+  readonly path: string;
+  /** The git blob OID of the file's content at `baseOid`. Content identity. */
+  readonly blobOid: string;
+  /** Blob size in bytes. */
+  readonly size: number;
+  /** The git file mode, e.g. "100644", "100755", "120000" (symlink). */
+  readonly mode: string;
+}
+
+/** A workspace scope (package / project), derived from the workspace tooling config. */
+export interface WorkspaceScope {
+  /** The package name (from package.json `name`), or the directory name if unnamed. */
+  readonly name: string;
+  /** Repo-relative POSIX path to the scope root. */
+  readonly root: string;
+  /** Repo-relative POSIX source root, when a `project.json` declares one. */
+  readonly sourceRoot?: string;
+  /** Nx `projectType` when a `project.json` declares one. */
+  readonly type?: "library" | "application";
+  /** Whether `package.json` marks the scope private. */
+  readonly private: boolean;
+  /** Nx tags, sorted, when a `project.json` declares them. */
+  readonly tags: readonly string[];
+}
+
+/** A dependency edge between two workspace scopes (never a folder heuristic, #142). */
+export interface DependencyEdge {
+  /** The depending scope name. */
+  readonly from: string;
+  /** The depended-on scope name. */
+  readonly to: string;
+  /** `manifest` = a workspace: dependency in package.json; `implicit` = project.json implicitDependencies. */
+  readonly kind: "manifest" | "implicit";
+}
+
+/** The entry surface a scope exposes, read from its `package.json`. */
+export interface EntryPoint {
+  /** The owning scope name. */
+  readonly scope: string;
+  readonly main?: string;
+  readonly module?: string;
+  readonly types?: string;
+  /** The `exports` field, canonicalized; opaque JSON preserved verbatim. */
+  readonly exports?: unknown;
+  /** `bin` entries as name → path, sorted by name. */
+  readonly bin: readonly (readonly [string, string])[];
+}
+
+/** A test file, classified from the file inventory by configured conventions. */
+export interface TestEntry {
+  readonly path: string;
+  /** The owning scope name, or null if outside any scope. */
+  readonly scope: string | null;
+  /** The convention glob that matched. */
+  readonly matchedBy: string;
+}
+
+/** A CODEOWNERS rule, in file order (order is significant — last match wins in git). */
+export interface OwnershipRule {
+  readonly pattern: string;
+  readonly owners: readonly string[];
+}
+
+/** A configured convention input: a config file present at `baseOid`, content-addressed. */
+export interface ConventionEntry {
+  /** Repo-relative POSIX path of the config file. */
+  readonly path: string;
+  /** Content identity of the file at `baseOid` (its git blob OID — a pure function of the bytes). */
+  readonly digest: string;
+  /** A stable label for the kind of convention this file carries. */
+  readonly kind:
+    | "formatter"
+    | "linter"
+    | "typescript"
+    | "workspace"
+    | "nx"
+    | "editorconfig"
+    | "rennet"
+    | "other";
+}
+
+/** A symbol extracted deterministically from a source file's bytes. */
+export interface SnapshotSymbol {
+  /** The declared name (`default` for a default export). */
+  readonly name: string;
+  /** The kind of declaration. */
+  readonly kind:
+    | "function"
+    | "class"
+    | "const"
+    | "let"
+    | "var"
+    | "interface"
+    | "type"
+    | "enum"
+    | "default"
+    | "reexport";
+  /** 1-based line of the declaration within the file. */
+  readonly line: number;
+}
+
+/**
+ * The per-file symbol shard, addressed by `blobOid` and content-addressed as a
+ * PURE FUNCTION OF BLOB CONTENT — it carries no path. Because the same blob
+ * yields byte-identical symbols under a fixed extractor, an unchanged blob yields
+ * a byte-identical shard, so an incremental rebuild reuses it for free and a clean
+ * full build recomputes the same bytes. This is what makes incremental==clean
+ * hold for renames and same-content copies: a blob that moves path (rename) or is
+ * shared by two paths (copy) resolves to the SAME shard regardless of path. The
+ * path a shard belongs to is recovered from the `files` structural shard, which
+ * lists `path → blobOid`; a blob shared by N paths is one shard referenced N times.
+ */
+export interface SymbolShard {
+  readonly blobOid: string;
+  /** The extractor identity, so a future upgrade invalidates old shards honestly. */
+  readonly extractor: string;
+  readonly symbols: readonly SnapshotSymbol[];
+}
+
+/** A pointer from the manifest to a content-addressed structural shard. */
+export interface ShardRef {
+  readonly digest: string;
+  readonly entries: number;
+}
+
+/** The logical structural shards a manifest points at (excluding per-file symbol shards). */
+export type StructuralShardSlot =
+  | "files"
+  | "scopes"
+  | "edges"
+  | "entryPoints"
+  | "tests"
+  | "ownership"
+  | "conventions";
+
+/**
+ * The ProjectSnapshot manifest: the root pointer document. Contains NO clock —
+ * every field is a pure function of the tree at `baseOid`, so two builds at the
+ * same OID produce byte-identical manifests. The `fingerprint` is a digest over
+ * the pin plus the sorted shard digests; freshness is fingerprint/content
+ * equality, never age.
+ */
+export interface ProjectSnapshotManifest {
+  readonly schemaVersion: number;
+  /** The RepoRecord key: `realpath(git-common-dir)` (R19). */
+  readonly repoKey: string;
+  /** The resolved default-branch ref name. */
+  readonly baseRef: string;
+  /** How `baseRef` was resolved. */
+  readonly baseRefResolution: BaseRefResolution;
+  /** The pinned default-branch commit OID. */
+  readonly baseOid: string;
+  /** Digest over all canonical manifest content: `{ schemaVersion, repoKey, baseRef, baseRefResolution, baseOid, structural shard digests, symbol shard digests }`. */
+  readonly fingerprint: string;
+  /** The structural shard pointers, keyed by slot. */
+  readonly shards: Readonly<Record<StructuralShardSlot, ShardRef>>;
+  /** Per-file symbol shard pointers, sorted by `blobOid`. */
+  readonly symbols: readonly (readonly [blobOid: string, digest: string])[];
+}
+
+/** A built shard: its canonical bytes and their content digest. */
+export interface BuiltShard {
+  readonly digest: string;
+  readonly bytes: string;
+}
+
+/** The full result of a snapshot build: the manifest plus every shard's bytes by digest. */
+export interface BuiltSnapshot {
+  readonly manifest: ProjectSnapshotManifest;
+  /** digest → canonical bytes, for every structural and symbol shard the manifest references. */
+  readonly shards: ReadonlyMap<string, string>;
+}
