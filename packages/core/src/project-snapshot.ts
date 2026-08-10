@@ -16,8 +16,11 @@
  *    field. Every byte is a pure function of the tree at `baseOid`.
  *  - Everything that becomes bytes is put through `canonicalize` (sorted keys,
  *    2-space indent, LF) and content-addressed with the node-free `sha256Hex`.
- *  - Symbol shards are addressed by `blobOid`, so an unchanged blob yields a
- *    byte-identical shard whether it is reused from a prior build or recomputed.
+ *  - Symbol shards are addressed by `blobOid` and their bytes are a pure function
+ *    of blob content (NO path), so an unchanged blob yields a byte-identical shard
+ *    whether reused or recomputed — and a blob that is renamed or copied resolves
+ *    to the SAME shard regardless of path. Path is recovered from the `files`
+ *    structural shard (`path → blobOid`), never baked into shard identity.
  *
  * All IO — git, the workspace tooling, and the filesystem store — lives in
  * `@rennet/adapters`. This module knows nothing about any of it; it is exercised
@@ -123,11 +126,17 @@ function structuralShard(slot: StructuralShardSlot, entries: readonly unknown[])
   return contentAddress({ slot, version: STRUCTURAL_SHARD_VERSION, entries });
 }
 
-/** Content-address a per-file symbol shard by its canonical bytes. */
+/**
+ * Content-address a per-file symbol shard. The shard bytes are a PURE FUNCTION OF
+ * BLOB CONTENT (blobOid + extractor + symbols) and carry NO path — so a blob that
+ * is renamed (same content, new path) or copied (one content, two paths) resolves
+ * to the exact same shard digest whether it was freshly extracted at the new path
+ * or reused verbatim from a prior build at the old path. Path is NOT identity
+ * here; it is recovered from the `files` structural shard (`path → blobOid`).
+ */
 export function symbolShardBytes(shard: SymbolShard): BuiltShard {
   return contentAddress({
     blobOid: shard.blobOid,
-    path: shard.path,
     extractor: shard.extractor,
     symbols: shard.symbols,
   });
@@ -136,13 +145,30 @@ export function symbolShardBytes(shard: SymbolShard): BuiltShard {
 // ── The fingerprint ──────────────────────────────────────────────────────────
 
 /**
- * The freshness/integrity fingerprint: a digest over the pin (`baseOid`,
- * `schemaVersion`) plus every shard digest. Deterministic and clock-free, so two
- * builds at the same OID share a fingerprint. Two snapshots are the same content
- * iff their fingerprints match.
+ * The identifying pin the fingerprint covers, alongside the shard digests. This
+ * is EVERY canonical manifest field except the shard pointers themselves and the
+ * fingerprint: so two manifests that differ only in `repoKey`, `baseRef`, or
+ * `baseRefResolution` get DIFFERENT fingerprints (#4), while two builds of the
+ * same tree on the same repo share one.
+ */
+export interface FingerprintPin {
+  /** The RepoRecord key: `realpath(git-common-dir)` (R19). */
+  readonly repoKey: string;
+  readonly baseRef: string;
+  readonly baseRefResolution: BaseRefResolution;
+  readonly baseOid: string;
+}
+
+/**
+ * The freshness/integrity fingerprint: a digest over the pin (`schemaVersion`,
+ * `repoKey`, `baseRef`, `baseRefResolution`, `baseOid`) plus every shard digest.
+ * It covers all canonical manifest content (#4), so the fingerprint alone
+ * identifies the snapshot's content. Deterministic and clock-free, so two builds
+ * of the same tree on the same repo share a fingerprint; two snapshots are the
+ * same content iff their fingerprints match.
  */
 export function computeFingerprint(
-  baseOid: string,
+  pin: FingerprintPin,
   shards: Readonly<Record<StructuralShardSlot, ShardRef>>,
   symbols: readonly (readonly [string, string])[],
 ): string {
@@ -156,7 +182,10 @@ export function computeFingerprint(
   return sha256Hex(
     canonicalize({
       schemaVersion: PROJECT_SNAPSHOT_SCHEMA_VERSION,
-      baseOid,
+      repoKey: pin.repoKey,
+      baseRef: pin.baseRef,
+      baseRefResolution: pin.baseRefResolution,
+      baseOid: pin.baseOid,
       structural,
       symbols: symbolDigests,
     }),
@@ -221,7 +250,16 @@ export function buildSnapshot(
     shardBytes.set(built.digest, built.bytes);
   }
 
-  const fingerprint = computeFingerprint(inputs.baseOid, shards, symbols);
+  const fingerprint = computeFingerprint(
+    {
+      repoKey: inputs.repoKey,
+      baseRef: inputs.baseRef,
+      baseRefResolution: inputs.baseRefResolution,
+      baseOid: inputs.baseOid,
+    },
+    shards,
+    symbols,
+  );
 
   const manifest: ProjectSnapshotManifest = {
     schemaVersion: PROJECT_SNAPSHOT_SCHEMA_VERSION,
@@ -299,8 +337,16 @@ export function verifySnapshotIntegrity(
   }
 
   const fingerprintOk =
-    computeFingerprint(manifest.baseOid, manifest.shards, manifest.symbols) ===
-    manifest.fingerprint;
+    computeFingerprint(
+      {
+        repoKey: manifest.repoKey,
+        baseRef: manifest.baseRef,
+        baseRefResolution: manifest.baseRefResolution,
+        baseOid: manifest.baseOid,
+      },
+      manifest.shards,
+      manifest.symbols,
+    ) === manifest.fingerprint;
 
   return {
     ok: fingerprintOk && missing.length === 0 && mismatched.length === 0,
@@ -355,11 +401,9 @@ export function planIncrementalSymbols(
     seen.add(file.blobOid);
     const prior = previousByBlob.get(file.blobOid);
     if (prior && prior.extractor === extractorId) {
-      // Re-key the reused shard's path to this file so the shard is a pure
-      // function of (blobOid, path); a blob shared by two paths is extracted
-      // once per path only if the path differs — but content addressing keys on
-      // bytes, and bytes include the path, so we keep the original blob's path
-      // for stability. The blob content is identical, so symbols are identical.
+      // Reuse the prior shard verbatim. Its bytes are a pure function of blob
+      // content (no path), so it is byte-identical to what a clean build would
+      // extract at this file's path — reuse is free and path-independent.
       reuse.push(prior);
     } else {
       toExtract.push(file);
@@ -482,8 +526,10 @@ export function extractSymbolShard(
 ): SymbolShard {
   return {
     blobOid: file.blobOid,
-    path: file.path,
     extractor: extractorId,
+    // `file.path` gates extraction (the extractor understands only source
+    // extensions), but it is NOT stored on the shard: the shard is a pure
+    // function of blob content, so its path is recovered from the `files` shard.
     symbols: extract(file.path, text),
   };
 }

@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { canonicalize, sha256Hex } from "@rennet/protocol";
 import type { BuiltSnapshot, ProjectSnapshotManifest, SymbolShard } from "@rennet/types";
@@ -28,6 +28,9 @@ import type { BuiltSnapshot, ProjectSnapshotManifest, SymbolShard } from "@renne
 export class ProjectSnapshotStore {
   constructor(private readonly baseDir: string) {}
 
+  /** Monotonic suffix for temp files, so concurrent writes never collide. */
+  private tmpSeq = 0;
+
   /** The per-repo directory, keyed by a filesystem-safe hash of the RepoRecord key. */
   private repoDir(repoKey: string): string {
     return join(this.baseDir, sha256Hex(repoKey));
@@ -40,6 +43,16 @@ export class ProjectSnapshotStore {
   private shardPath(repoKey: string, digest: string): string {
     return join(this.repoDir(repoKey), "shards", `${digest}.json`);
   }
+
+  // NOTE (#3, deferred): a single composed fail-closed `loadCurrent(repoKey,
+  // requestedBaseOid)` gate — one call that loads the manifest, checks freshness
+  // (`isSnapshotFresh`) AND integrity (`verifySnapshotIntegrity` over the store's
+  // shard loader) before handing any snapshot to a consumer — is intentionally
+  // NOT built here yet: the context.map / context.file / context.knowledge
+  // consumers that would call it do not exist. The pieces it would compose
+  // (`loadManifest`, `loadShard`, `isSnapshotFresh`, `verifySnapshotIntegrity`)
+  // are all present and individually tested; wire the gate when the first
+  // consumer lands so it is covered by a real caller.
 
   /**
    * The current stored manifest for a repo, or null when absent/unreadable/
@@ -94,9 +107,9 @@ export class ProjectSnapshotStore {
 
   /**
    * Advance the stored snapshot to `built`, atomically. Every referenced shard
-   * is written first (content-addressed, idempotent), then the manifest is
-   * written to a temp file and renamed over the live `manifest.json`. The old
-   * snapshot is fully readable until the final rename.
+   * is written first (content-addressed), then the manifest is written to a temp
+   * file and renamed over the live `manifest.json`. The old snapshot is fully
+   * readable until the final rename.
    */
   advance(built: BuiltSnapshot): void {
     const repoKey = built.manifest.repoKey;
@@ -105,16 +118,40 @@ export class ProjectSnapshotStore {
 
     for (const [digest, bytes] of built.shards) {
       const path = this.shardPath(repoKey, digest);
-      // Idempotent: a content-addressed file that already exists holds the same
-      // bytes by construction, so skip the rewrite.
-      if (!existsSync(path)) writeFileSync(path, bytes);
+      // A pre-existing content-addressed shard is trustworthy ONLY if its
+      // on-disk bytes actually hash back to the digest. `existsSync` alone is not
+      // enough: an earlier non-atomic write truncated by a crash leaves a file
+      // that EXISTS but is corrupt, and publishing a fresh manifest that points
+      // at it would serve a truncated shard (#2). So verify the bytes, and
+      // (re)write the known-good bytes on any absence or mismatch. The write is
+      // atomic (temp + rename in the same dir), so a crash mid-rewrite cannot
+      // itself leave a truncated shard behind.
+      if (!this.shardIsIntact(path, digest)) this.writeAtomic(path, bytes);
     }
 
     // Canonical bytes (sorted keys, LF) so the stored manifest is itself
     // byte-reproducible for a given OID, matching the shard bytes.
     const manifestBytes = `${canonicalize(built.manifest)}\n`;
-    const tmp = join(dir, `manifest.json.tmp-${process.pid}`);
-    writeFileSync(tmp, manifestBytes);
-    renameSync(tmp, this.manifestPath(repoKey));
+    this.writeAtomic(this.manifestPath(repoKey), manifestBytes);
+  }
+
+  /** Whether an on-disk shard file exists AND its bytes hash back to `digest`. */
+  private shardIsIntact(path: string, digest: string): boolean {
+    try {
+      return sha256Hex(readFileSync(path, "utf8")) === digest;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Write `bytes` to `path` atomically: to a sibling temp file, then `rename`
+   * over the target (atomic on a single filesystem). A reader never sees a
+   * partial file, and a crash mid-write leaves the target untouched.
+   */
+  private writeAtomic(path: string, bytes: string): void {
+    const tmp = `${path}.tmp-${process.pid}-${this.tmpSeq++}`;
+    writeFileSync(tmp, bytes);
+    renameSync(tmp, path);
   }
 }

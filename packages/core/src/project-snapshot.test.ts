@@ -228,6 +228,80 @@ describe("the load-bearing property: incremental === clean full build, byte-for-
   });
 });
 
+describe("rename & same-content copy: incremental === clean, byte-for-byte (the review's blocker)", () => {
+  // CONTROLLED inputs on purpose. rennet's own git history contains NO
+  // eligible-source (.ts/.js) rename or same-content copy — only a single `.md`
+  // rename and some config/yaml/json copies, none of which produce symbol shards
+  // — so the bug cannot be reproduced from real history; a same-content pair of
+  // SOURCE files is required. Against the pre-fix code (path baked into the
+  // symbol-shard bytes) BOTH tests FAIL; after removing path from the shard bytes
+  // they PASS. Proven red-before / green-after.
+
+  it("a pure RENAME (same blob, new path) yields byte-identical incremental and clean builds", () => {
+    const v1: Tree = new Map([
+      ["src/mod-a.ts", "export const shared = 1;\nexport function f() {}\n"],
+      ["src/keep.ts", "export const keep = 0;\n"],
+    ]);
+    // mod-a.ts → mod-b.ts, byte-identical content; keep.ts untouched.
+    const v2: Tree = new Map([
+      ["src/mod-b.ts", "export const shared = 1;\nexport function f() {}\n"],
+      ["src/keep.ts", "export const keep = 0;\n"],
+    ]);
+
+    const previous = symbolShardsOf("oid1", v1);
+    const clean = fullBuild("oid2", v2);
+    const { built: incremental, plan } = incrementalBuild("oid2", v2, previous);
+
+    // Nothing changed content, so the renamed blob is reused verbatim — any
+    // divergence here is PURELY the path-in-shard bug.
+    expect(plan.toExtract).toHaveLength(0);
+    expect(plan.reuse).toHaveLength(2);
+
+    expect(serializeManifest(incremental.manifest)).toBe(serializeManifest(clean.manifest));
+    expect(incremental.manifest.fingerprint).toBe(clean.manifest.fingerprint);
+
+    const cleanShards = new Map(clean.shards);
+    const incShards = new Map(incremental.shards);
+    expect([...incShards.keys()].sort()).toEqual([...cleanShards.keys()].sort());
+    for (const [digest, bytes] of incShards) expect(bytes).toBe(cleanShards.get(digest));
+  });
+
+  it("a same-content COPY (two paths, one blob) yields byte-identical incremental and clean builds", () => {
+    // v1 holds the blob at a path that sorts LATE; v2 adds a copy at a path that
+    // sorts EARLY and keeps the original. A clean build's blobOid dedup keeps the
+    // FIRST-encountered path's shard (a-copy); the incremental build reuses the
+    // PRIOR shard (z-orig). With path in the shard bytes those two disagree; with
+    // path out of the bytes they are the same shard. This is the copy divergence
+    // the review flagged (worse than rename: the retained path is arbitrary).
+    const v1: Tree = new Map([
+      ["src/z-orig.ts", "export const dup = 2;\n"],
+      ["src/keep.ts", "export const keep = 0;\n"],
+    ]);
+    const v2: Tree = new Map([
+      ["src/a-copy.ts", "export const dup = 2;\n"],
+      ["src/z-orig.ts", "export const dup = 2;\n"],
+      ["src/keep.ts", "export const keep = 0;\n"],
+    ]);
+
+    const previous = symbolShardsOf("oid1", v1);
+    const clean = fullBuild("oid2", v2);
+    const { built: incremental } = incrementalBuild("oid2", v2, previous);
+
+    // One blob shared by two paths ⇒ exactly one symbol entry for it; two
+    // distinct blobs total (dup + keep) ⇒ two symbol entries in each build.
+    expect(clean.manifest.symbols).toHaveLength(2);
+    expect(incremental.manifest.symbols).toHaveLength(2);
+
+    expect(serializeManifest(incremental.manifest)).toBe(serializeManifest(clean.manifest));
+    expect(incremental.manifest.fingerprint).toBe(clean.manifest.fingerprint);
+
+    const cleanShards = new Map(clean.shards);
+    const incShards = new Map(incremental.shards);
+    expect([...incShards.keys()].sort()).toEqual([...cleanShards.keys()].sort());
+    for (const [digest, bytes] of incShards) expect(bytes).toBe(cleanShards.get(digest));
+  });
+});
+
 describe("the staleness gate: a stale or corrupt shard cannot be served", () => {
   it("is fresh only at the exact pinned OID", () => {
     const { manifest } = fullBuild("oid2", treeV2);
@@ -276,7 +350,47 @@ describe("the staleness gate: a stale or corrupt shard cannot be served", () => 
     const b = fullBuild("oid1", treeV2).manifest; // same OID label, different content
     expect(a.fingerprint).not.toBe(b.fingerprint);
     // And it is a pure recomputation, not a stored value.
-    expect(computeFingerprint(a.baseOid, a.shards, a.symbols)).toBe(a.fingerprint);
+    expect(
+      computeFingerprint(
+        {
+          repoKey: a.repoKey,
+          baseRef: a.baseRef,
+          baseRefResolution: a.baseRefResolution,
+          baseOid: a.baseOid,
+        },
+        a.shards,
+        a.symbols,
+      ),
+    ).toBe(a.fingerprint);
+  });
+
+  it("covers repoKey / baseRef / baseRefResolution (#4): a change to any of them changes the fingerprint", () => {
+    // Two snapshots of the SAME tree at the SAME OID that differ ONLY in an
+    // identifying manifest field must NOT share a fingerprint — the fingerprint
+    // is meant to identify all canonical manifest content, not just the shards.
+    const base = fullBuild("oid2", treeV2).manifest;
+
+    const otherRepo = buildSnapshot(
+      { ...inputsFor("oid2", treeV2), repoKey: "/some/other/repo/.git" },
+      symbolShardsOf("oid2", treeV2),
+    ).manifest;
+    expect(otherRepo.fingerprint).not.toBe(base.fingerprint);
+
+    const otherRef = buildSnapshot(
+      { ...inputsFor("oid2", treeV2), baseRef: "origin/release" },
+      symbolShardsOf("oid2", treeV2),
+    ).manifest;
+    expect(otherRef.fingerprint).not.toBe(base.fingerprint);
+
+    const otherResolution = buildSnapshot(
+      { ...inputsFor("oid2", treeV2), baseRefResolution: "explicit-setting" },
+      symbolShardsOf("oid2", treeV2),
+    ).manifest;
+    expect(otherResolution.fingerprint).not.toBe(base.fingerprint);
+
+    // Sanity: identical inputs still agree (the property that must survive #4).
+    const twin = buildSnapshot(inputsFor("oid2", treeV2), symbolShardsOf("oid2", treeV2)).manifest;
+    expect(twin.fingerprint).toBe(base.fingerprint);
   });
 });
 

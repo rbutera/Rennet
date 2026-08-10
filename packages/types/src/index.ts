@@ -1592,14 +1592,18 @@ export interface SnapshotSymbol {
 }
 
 /**
- * The per-file symbol shard, addressed by `blobOid`. Because it is a pure
- * function of the blob's bytes, an unchanged blob yields a byte-identical shard,
- * so an incremental rebuild reuses it for free and a clean full build recomputes
- * the same bytes — this is where the content-addressed reuse actually pays off.
+ * The per-file symbol shard, addressed by `blobOid` and content-addressed as a
+ * PURE FUNCTION OF BLOB CONTENT — it carries no path. Because the same blob
+ * yields byte-identical symbols under a fixed extractor, an unchanged blob yields
+ * a byte-identical shard, so an incremental rebuild reuses it for free and a clean
+ * full build recomputes the same bytes. This is what makes incremental==clean
+ * hold for renames and same-content copies: a blob that moves path (rename) or is
+ * shared by two paths (copy) resolves to the SAME shard regardless of path. The
+ * path a shard belongs to is recovered from the `files` structural shard, which
+ * lists `path → blobOid`; a blob shared by N paths is one shard referenced N times.
  */
 export interface SymbolShard {
   readonly blobOid: string;
-  readonly path: string;
   /** The extractor identity, so a future upgrade invalidates old shards honestly. */
   readonly extractor: string;
   readonly symbols: readonly SnapshotSymbol[];
@@ -1638,7 +1642,7 @@ export interface ProjectSnapshotManifest {
   readonly baseRefResolution: BaseRefResolution;
   /** The pinned default-branch commit OID. */
   readonly baseOid: string;
-  /** Digest over `{ baseOid, schemaVersion, structural shard digests, symbol shard digests }`. */
+  /** Digest over all canonical manifest content: `{ schemaVersion, repoKey, baseRef, baseRefResolution, baseOid, structural shard digests, symbol shard digests }`. */
   readonly fingerprint: string;
   /** The structural shard pointers, keyed by slot. */
   readonly shards: Readonly<Record<StructuralShardSlot, ShardRef>>;

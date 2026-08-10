@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isSnapshotFresh, serializeManifest, verifySnapshotIntegrity } from "@rennet/core";
+import { sha256Hex } from "@rennet/protocol";
 import { afterEach, describe, expect, it } from "vitest";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
 import { matchesGlob, parseWorkspaceGlobs } from "./project-snapshot-source";
@@ -262,4 +263,184 @@ describe("parseWorkspaceGlobs / matchesGlob — against the real workspace file"
     expect(matchesGlob("libs/a.b", "libs/a.b")).toBe(true);
     expect(matchesGlob("libs/a.b", "libs/axb")).toBe(false);
   });
+});
+
+describe("ProjectSnapshotGenerator — rename & same-content copy through the real git source", () => {
+  // CONTROLLED fixtures, and this is a deliberate documented fallback: rennet's
+  // own git history has NO eligible-source (.ts/.js) rename or same-content copy
+  // — only a single `.md` rename and some config/yaml/json copies, none of which
+  // produce symbol shards — so a synthetic .ts rename/copy is the only way to
+  // drive the blocker through the real git → core → store pipeline. The airtight
+  // byte-level proof lives in the core package's PURE tests; these exercise the
+  // same property end-to-end over actual git plumbing.
+
+  function bareRepo(): { root: string; storeDir: string } {
+    const root = mkdtempSync(join(tmpdir(), "rennet-rc-"));
+    const storeDir = mkdtempSync(join(tmpdir(), "rennet-rcstore-"));
+    scratch.push(root, storeDir);
+    git(root, "init", "-q", "-b", "main");
+    git(root, "config", "user.email", "rennet@example.test");
+    git(root, "config", "user.name", "Rennet Test");
+    write(root, "pnpm-workspace.yaml", 'packages:\n  - "packages/*"\n');
+    write(root, "packages/p/package.json", JSON.stringify({ name: "@t/p", private: true }));
+    return { root, storeDir };
+  }
+
+  it("a pure RENAME (same blob, new path) is byte-identical incremental vs clean full build", async () => {
+    const { root, storeDir } = bareRepo();
+    write(root, "packages/p/src/mod-a.ts", "export const x = 1;\nexport function f() {}\n");
+    write(root, "packages/p/src/keep.ts", "export const keep = 0;\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "one");
+    const oid1 = git(root, "rev-parse", "HEAD");
+
+    git(root, "mv", "packages/p/src/mod-a.ts", "packages/p/src/mod-b.ts");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "rename mod-a to mod-b");
+    const oid2 = git(root, "rev-parse", "HEAD");
+    // Confirm git sees it as a byte-identical rename (R100).
+    expect(git(root, "diff", "--name-status", "-M100%", oid1, oid2)).toMatch(/^R100\t/m);
+
+    const store = new ProjectSnapshotStore(storeDir);
+    const inc = new ProjectSnapshotGenerator({ store });
+    await inc.generate(root, { explicitBaseRef: oid1 });
+    const step2 = await inc.generate(root, { explicitBaseRef: oid2 });
+    const full = await new ProjectSnapshotGenerator().generate(root, {
+      explicitBaseRef: oid2,
+      previousSymbols: [],
+    });
+
+    // The moved blob was reused (its content never changed), so any divergence
+    // would be purely the path-in-shard bug.
+    expect(step2.reusedSymbolShards).toBeGreaterThanOrEqual(1);
+    expect(serializeManifest(step2.manifest)).toBe(serializeManifest(full.manifest));
+    expect(step2.manifest.fingerprint).toBe(full.manifest.fingerprint);
+    const fullShards = new Map(full.built.shards);
+    expect([...step2.built.shards.keys()].sort()).toEqual([...fullShards.keys()].sort());
+    for (const [d, b] of step2.built.shards) expect(b).toBe(fullShards.get(d));
+  }, 60000);
+
+  it("a same-content COPY (two paths, one blob) is byte-identical incremental vs clean full build", async () => {
+    const { root, storeDir } = bareRepo();
+    // oid1: the blob lives at a LATE-sorting path only.
+    write(root, "packages/p/src/z-orig.ts", "export const dup = 2;\n");
+    write(root, "packages/p/src/keep.ts", "export const keep = 0;\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "one");
+    const oid1 = git(root, "rev-parse", "HEAD");
+
+    // oid2: copy the SAME content to an EARLY-sorting path, keep the original.
+    write(root, "packages/p/src/a-copy.ts", "export const dup = 2;\n");
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "copy dup to a-copy");
+    const oid2 = git(root, "rev-parse", "HEAD");
+
+    const store = new ProjectSnapshotStore(storeDir);
+    const inc = new ProjectSnapshotGenerator({ store });
+    await inc.generate(root, { explicitBaseRef: oid1 });
+    const step2 = await inc.generate(root, { explicitBaseRef: oid2 });
+    const full = await new ProjectSnapshotGenerator().generate(root, {
+      explicitBaseRef: oid2,
+      previousSymbols: [],
+    });
+
+    // dup + keep ⇒ two symbol entries; the shared blob is ONE entry in each.
+    expect(full.manifest.symbols).toHaveLength(2);
+    expect(step2.manifest.symbols).toHaveLength(2);
+    expect(serializeManifest(step2.manifest)).toBe(serializeManifest(full.manifest));
+    expect(step2.manifest.fingerprint).toBe(full.manifest.fingerprint);
+    const fullShards = new Map(full.built.shards);
+    expect([...step2.built.shards.keys()].sort()).toEqual([...fullShards.keys()].sort());
+    for (const [d, b] of step2.built.shards) expect(b).toBe(fullShards.get(d));
+  }, 60000);
+
+  it("advance REWRITES a pre-existing but truncated shard rather than trusting existsSync (#2)", async () => {
+    const { root } = workspaceRepo();
+    const oid2 = git(root, "rev-parse", "HEAD");
+    const storeDir = mkdtempSync(join(tmpdir(), "rennet-advstore-"));
+    scratch.push(storeDir);
+
+    // Build WITHOUT a store to get the BuiltSnapshot, then plant a truncated copy
+    // of one shard on disk — exactly what a non-atomic writeFileSync + crash
+    // leaves behind — before advancing.
+    const built = (
+      await new ProjectSnapshotGenerator().generate(root, {
+        explicitBaseRef: oid2,
+        previousSymbols: [],
+      })
+    ).built;
+    const repoKey = built.manifest.repoKey;
+    const first = [...built.shards][0];
+    expect(first).toBeDefined();
+    if (!first) return;
+    const [digest, goodBytes] = first;
+    const shardsDir = join(storeDir, sha256Hex(repoKey), "shards");
+    mkdirSync(shardsDir, { recursive: true });
+    const shardFile = join(shardsDir, `${digest}.json`);
+    writeFileSync(shardFile, goodBytes.slice(0, Math.max(1, goodBytes.length - 5)));
+    // The planted file EXISTS but does NOT hash to its digest.
+    expect(sha256Hex(readFileSync(shardFile, "utf8"))).not.toBe(digest);
+
+    new ProjectSnapshotStore(storeDir).advance(built);
+
+    // Advance verified the on-disk bytes and rewrote the corrupt shard.
+    const after = readFileSync(shardFile, "utf8");
+    expect(after).toBe(goodBytes);
+    expect(sha256Hex(after)).toBe(digest);
+
+    // And the published snapshot passes the integrity gate through the store.
+    const store = new ProjectSnapshotStore(storeDir);
+    const loaded = store.loadManifest(repoKey);
+    expect(loaded).not.toBeNull();
+    if (!loaded) return;
+    expect(verifySnapshotIntegrity(loaded, (d) => store.loadShard(repoKey, d)).ok).toBe(true);
+  }, 60000);
+});
+
+describe("ProjectSnapshotGenerator — dogfood over the REAL rennet repo", () => {
+  const repoRoot = join(import.meta.dirname, "../../..");
+  function realGit(...args: string[]): string {
+    return execFileSync("git", args, { cwd: repoRoot, encoding: "utf8" }).trim();
+  }
+
+  it("generates a clean, integral, fresh full snapshot at the resolved default branch (main)", async () => {
+    const mainOid = realGit("rev-parse", "main");
+    const { manifest, built } = await new ProjectSnapshotGenerator().generate(repoRoot, {
+      explicitBaseRef: "main",
+      previousSymbols: [],
+    });
+
+    expect(manifest.baseOid).toBe(mainOid);
+    expect(manifest.schemaVersion).toBe(1);
+    // Self-consistent: every referenced shard is present and hashes back.
+    expect(verifySnapshotIntegrity(manifest, (d) => built.shards.get(d)).ok).toBe(true);
+    expect(isSnapshotFresh(manifest, mainOid)).toBe(true);
+    // It really mapped the real source tree: many eligible files ⇒ many shards.
+    expect(manifest.symbols.length).toBeGreaterThan(50);
+  }, 180000);
+
+  it("incremental rebuild === clean full build over a real recent commit range from rennet's own history", async () => {
+    const oid2 = realGit("rev-parse", "HEAD");
+    const oid1 = realGit("rev-parse", "HEAD~1");
+    const storeDir = mkdtempSync(join(tmpdir(), "rennet-dogfood-"));
+    scratch.push(storeDir);
+
+    const store = new ProjectSnapshotStore(storeDir);
+    const inc = new ProjectSnapshotGenerator({ store });
+    await inc.generate(repoRoot, { explicitBaseRef: oid1 });
+    const step2 = await inc.generate(repoRoot, { explicitBaseRef: oid2 });
+    const full = await new ProjectSnapshotGenerator().generate(repoRoot, {
+      explicitBaseRef: oid2,
+      previousSymbols: [],
+    });
+
+    // The load-bearing property, over the real repo.
+    expect(serializeManifest(step2.manifest)).toBe(serializeManifest(full.manifest));
+    expect(step2.manifest.fingerprint).toBe(full.manifest.fingerprint);
+    const fullShards = new Map(full.built.shards);
+    expect([...step2.built.shards.keys()].sort()).toEqual([...fullShards.keys()].sort());
+    for (const [d, b] of step2.built.shards) expect(b).toBe(fullShards.get(d));
+    // And it genuinely reused work: most blobs are unchanged across one commit.
+    expect(step2.reusedSymbolShards).toBeGreaterThan(0);
+  }, 180000);
 });
