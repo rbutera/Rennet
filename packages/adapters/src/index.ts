@@ -124,6 +124,25 @@ export {
   discoverProject,
   type ProjectDiscoveryDeps,
 } from "./project-discovery";
+export {
+  type GenerateOptions,
+  type GenerateResult,
+  ProjectSnapshotGenerator,
+} from "./project-snapshot-generator";
+export {
+  listTree,
+  matchesGlob,
+  parseWorkspaceGlobs,
+  type ResolvedBase,
+  readBlobText,
+  readConventions,
+  readOwnership,
+  readTests,
+  readWorkspaceStructure,
+  resolveBaseRef,
+  type WorkspaceStructure,
+} from "./project-snapshot-source";
+export { ProjectSnapshotStore } from "./project-snapshot-store";
 export { RepoWatcher } from "./repo-watcher";
 export {
   codexAskFixture,
