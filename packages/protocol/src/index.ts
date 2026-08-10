@@ -484,8 +484,21 @@ export const findingElementSchema = z.object({
   severity: findingSeveritySchema,
   agreement: findingAgreementSchema,
 });
+/**
+ * The dual-model provenance note (issue #41). Additive optional on the `ok`
+ * flagged review: `seats` names the provider labels that ran; `secondSeatUnavailable`
+ * is the honest degradation marker. It carries NO merged verdict.
+ */
+export const dualReviewNoteSchema = z.object({
+  seats: z.array(z.string().min(1)),
+  secondSeatUnavailable: z.string().optional(),
+});
 export const flaggedReviewSchema: z.ZodType<FlaggedReview> = z.union([
-  z.object({ status: z.literal("ok"), findings: z.array(findingElementSchema) }),
+  z.object({
+    status: z.literal("ok"),
+    findings: z.array(findingElementSchema),
+    dual: dualReviewNoteSchema.optional(),
+  }),
   z.object({ status: z.literal("failed"), reason: z.string() }),
 ]);
 
@@ -875,7 +888,12 @@ export const commandDefinitions = {
   // behind the real boundary until the finding-generation runner + aggregation
   // land (deferred; they sequence with #32/#41). No model spend here.
   "flagged.review": {
-    input: z.object({ reviewId: z.string().min(1) }),
+    // `deepReview` (issue #41) opts the review into the dual-model path: two
+    // provider seats run the finding lens independently and their findings are
+    // reconciled into agreement/disagreement. Omitted/false is the quick,
+    // single-seat review (today's behaviour, byte-identical). Hypothesis-first is
+    // ALWAYS on; dual-model is the deep-review feature.
+    input: z.object({ reviewId: z.string().min(1), deepReview: z.boolean().optional() }),
     output: flaggedReviewSchema,
   },
   // ── Ask the AI a question about the review (issue #139) ────────────────────
