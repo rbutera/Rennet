@@ -1,4 +1,6 @@
 import {
+  type AskAnswer,
+  askReview,
   buildForgeReviewPost,
   canonicalReviewPayload,
   type ForgePublishPort,
@@ -137,6 +139,19 @@ export interface DispatchDeps {
    * stands behind the real boundary until the noise-classification runner lands.
    */
   noiseReview(reviewId: string): Promise<NoiseReview>;
+  /**
+   * The review.ask ports (issue #139): the two model-facing sessions a review
+   * question can reach. `askOrchestrator` is the one model the reviewer converses
+   * with (always asked); `askCodex` is the second opinion (asked ONLY in "both"
+   * mode). Dispatch calls the core `askReview` router over these — the router owns
+   * the orchestrator-once / both-adds-codex / never-synthesize law, so the invariant
+   * holds on the real command path, not only in an isolated unit test. A fixture
+   * stands behind these ports until the live orchestrator/Codex invocation lands.
+   */
+  readonly reviewAsk: {
+    askOrchestrator(input: { reviewId: string; question: string }): Promise<AskAnswer>;
+    askCodex(input: { reviewId: string; question: string }): Promise<AskAnswer>;
+  };
 }
 
 /** Lift the wire target shape into the core `ForgeReviewTarget` nouns. */
@@ -445,6 +460,29 @@ export function createDispatch(
         // until the finding-generation runner + aggregation land (deferred, #32/#41).
         const input = parseCommandInput(name, rawInput);
         return parseCommandOutput(name, await deps.flaggedReview(input.reviewId));
+      }
+      // ── Ask the AI a question about the review (issue #139) ────────────────────
+      case "review.ask": {
+        // The reviewer's question. The core `askReview` router owns the whole law:
+        // the orchestrator is asked exactly once (every mode); Codex is asked ONLY in
+        // "both" mode; and the two answers come back side by side, NEVER merged. We
+        // run it here — not a bespoke branch — so "orchestrator mode never touches
+        // Codex, and no synthesis is ever produced" holds on the real command path.
+        // The ports are fixtured this wave (deferred live invocation); the routing is
+        // real. `mode` is defaulted to "orchestrator" by the schema, so an omitted
+        // mode never fires a second model.
+        const input = parseCommandInput(name, rawInput);
+        // The schema defaults `mode` to "orchestrator", so an omitted mode never
+        // fires a second model at runtime; the `?? "orchestrator"` only narrows the
+        // `z.input` type (which keeps a defaulted field optional) and restates the
+        // same wrong-side-safe default.
+        const mode = input.mode ?? "orchestrator";
+        const result = await askReview(mode, input.question, {
+          askOrchestrator: (question) =>
+            deps.reviewAsk.askOrchestrator({ reviewId: input.reviewId, question }),
+          askCodex: (question) => deps.reviewAsk.askCodex({ reviewId: input.reviewId, question }),
+        });
+        return parseCommandOutput(name, result);
       }
       // ── The Noise lens (issue #34) ────────────────────────────────────────────
       case "noise.review": {

@@ -933,6 +933,50 @@ export type FlaggedReview =
   | { status: "ok"; findings: FindingElement[] }
   | { status: "failed"; reason: string };
 
+// ─── review.ask: ask the AI a question, one model or both (issue #139) ────────
+//
+// When the reviewer asks a question ABOUT the review, it goes to the ORCHESTRATOR
+// — the one model they converse with — by DEFAULT. A per-message affordance lets
+// them ask BOTH models instead, and then two labelled answers arrive side by side
+// and the reviewer decides for themselves. The load-bearing invariant (Rai, #139):
+// there is NO synthesis block, NO auto-merge, EVER, and nothing fires to a second
+// model behind the reviewer's back. These shapes carry that law: the response can
+// hold at most a `primary` (always the orchestrator) plus a `secondOpinion`
+// (Codex, ONLY in "both" mode) — it has no field for a third, merged answer, so
+// the invariant is structural, not merely a convention.
+
+/** Which minds answer a review question. Default "orchestrator" — one model. */
+export type AskMode = "orchestrator" | "both";
+
+/**
+ * One model's answer to a review question, labelled by the model that gave it
+ * (e.g. "Orchestrator · Claude", "codex"). The label is what the side-by-side
+ * cards show, so the reviewer always knows WHO said WHAT.
+ */
+export interface AskAnswer {
+  /** The model/harness label shown on the answer card (prototype frame 14). */
+  model: string;
+  /** That model's answer text, rendered verbatim (never merged with another). */
+  answer: string;
+}
+
+/**
+ * The result of one review question. `primary` is ALWAYS the orchestrator's
+ * answer; `secondOpinion` is Codex's answer and is present ONLY in "both" mode.
+ * There is deliberately NO third field: the shape cannot express a synthesized or
+ * merged answer, so "no synthesis, ever" holds by construction rather than by
+ * discipline. When both are present they render side by side, labelled, and the
+ * reviewer reconciles any disagreement themselves.
+ */
+export interface AskReviewResult {
+  /** Which routing produced this result (echoes the requested mode). */
+  mode: AskMode;
+  /** The orchestrator's answer — the one model you converse with. Always present. */
+  primary: AskAnswer;
+  /** Codex's answer — present ONLY in "both" mode. Never merged with `primary`. */
+  secondOpinion?: AskAnswer;
+}
+
 // ─── The `noise` doc family + the Noise lens (issue #34) ──────────────────────
 //
 // The Noise lens groups the low-signal churn a changeset touches — formatting,

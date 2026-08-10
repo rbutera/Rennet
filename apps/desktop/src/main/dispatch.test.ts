@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { buildGitHubReviewRequest } from "@rennet/adapters";
 import {
+  type AskAnswer,
   canonicalReviewPayload,
   type ForgePublishPort,
   type ForgeReviewPost,
@@ -147,6 +148,10 @@ function harness(
   };
   publishPort: ForgePublishPort & { posts: ForgeReviewPost[] };
   publishConsent: PublishConsentAuthority;
+  reviewAsk: {
+    askOrchestrator: ReturnType<typeof vi.fn>;
+    askCodex: ReturnType<typeof vi.fn>;
+  };
 } {
   const capture: PatchsetCapturePort = { capture: () => Promise.resolve(patchset()) };
   const service = new ReviewService(capture, new InMemoryStore());
@@ -171,6 +176,17 @@ function harness(
   // single-use, review-bound token and consumes it before the harness runs.
   const consent = createHarnessConsentAuthority();
   const publishConsent = createPublishConsentAuthority();
+  // review.ask ports (issue #139) as recording spies, so a test can assert the
+  // orchestrator is asked exactly once and Codex only in "both" mode — the whole
+  // point of the issue is that negative guarantee on the REAL command path.
+  const reviewAsk = {
+    askOrchestrator: vi.fn<(input: { reviewId: string; question: string }) => Promise<AskAnswer>>(
+      async () => ({ model: "Orchestrator · Claude", answer: "orchestrator's answer" }),
+    ),
+    askCodex: vi.fn<(input: { reviewId: string; question: string }) => Promise<AskAnswer>>(
+      async () => ({ model: "codex", answer: "codex's answer" }),
+    ),
+  };
   const deps: DispatchDeps = {
     service,
     allowedRoots,
@@ -216,6 +232,7 @@ function harness(
     cleanupWorktree: () => Promise.resolve({ ok: true }),
     flaggedReview: () => Promise.resolve({ status: "ok", findings: [] }),
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
+    reviewAsk,
   };
   return {
     dispatch: createDispatch(deps),
@@ -226,6 +243,7 @@ function harness(
     consent,
     publishPort,
     publishConsent,
+    reviewAsk,
   };
 }
 
@@ -985,6 +1003,11 @@ function frontDoorHarness(seed: {
     cleanupWorktree: () => Promise.resolve({ ok: true }),
     flaggedReview: () => Promise.resolve({ status: "ok", findings: [] }),
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
+    reviewAsk: {
+      askOrchestrator: () =>
+        Promise.resolve({ model: "Orchestrator · Claude", answer: "orchestrator" }),
+      askCodex: () => Promise.resolve({ model: "codex", answer: "codex" }),
+    },
   };
   return { dispatch: createDispatch(deps), allowedRoots, addCalls, discoverCalls };
 }
@@ -1074,5 +1097,70 @@ describe("createDispatch — front door (issue #29)", () => {
     });
     const out = (await dispatch("harness.detect", {})) as { detected: DetectedHarness[] };
     expect(out.detected.map((harness) => harness.id)).toEqual(["claude", "gh"]);
+  });
+});
+
+describe("createDispatch — review.ask routing (issue #139)", () => {
+  it("orchestrator mode asks the orchestrator ONCE and Codex ZERO times", async () => {
+    const { dispatch, reviewAsk } = harness();
+    const out = (await dispatch("review.ask", {
+      commandId: randomUUID(),
+      reviewId: "review-1",
+      mode: "orchestrator",
+      question: "is the retry-after in seconds or ms?",
+    })) as { mode: string; primary: { model: string }; secondOpinion?: unknown };
+    expect(reviewAsk.askOrchestrator).toHaveBeenCalledTimes(1);
+    expect(reviewAsk.askCodex).not.toHaveBeenCalled();
+    expect(out.mode).toBe("orchestrator");
+    expect(out.primary.model).toBe("Orchestrator · Claude");
+    expect(out.secondOpinion).toBeUndefined();
+  });
+
+  it("an OMITTED mode defaults to orchestrator — never fires a second model", async () => {
+    const { dispatch, reviewAsk } = harness();
+    const out = (await dispatch("review.ask", {
+      commandId: randomUUID(),
+      reviewId: "review-1",
+      question: "no mode given",
+    })) as { mode: string; secondOpinion?: unknown };
+    expect(out.mode).toBe("orchestrator");
+    expect(reviewAsk.askCodex).not.toHaveBeenCalled();
+    expect(out.secondOpinion).toBeUndefined();
+  });
+
+  it("both mode asks the orchestrator ONCE and Codex ONCE — two labelled answers, no third", async () => {
+    const { dispatch, reviewAsk } = harness();
+    const out = (await dispatch("review.ask", {
+      commandId: randomUUID(),
+      reviewId: "review-1",
+      mode: "both",
+      question: "does the client agree?",
+    })) as {
+      mode: string;
+      primary: { model: string };
+      secondOpinion?: { model: string };
+    };
+    expect(reviewAsk.askOrchestrator).toHaveBeenCalledTimes(1);
+    expect(reviewAsk.askCodex).toHaveBeenCalledTimes(1);
+    expect(out.mode).toBe("both");
+    expect(out.primary.model).toBe("Orchestrator · Claude");
+    expect(out.secondOpinion?.model).toBe("codex");
+    // No merged answer can exist — the result has exactly these three keys.
+    expect(Object.keys(out).sort()).toEqual(["mode", "primary", "secondOpinion"]);
+  });
+
+  it("threads the reviewId to the ports (a question is ABOUT a review)", async () => {
+    const { dispatch, reviewAsk } = harness();
+    await dispatch("review.ask", {
+      commandId: randomUUID(),
+      reviewId: "review-42",
+      mode: "both",
+      question: "q",
+    });
+    expect(reviewAsk.askOrchestrator).toHaveBeenCalledWith({
+      reviewId: "review-42",
+      question: "q",
+    });
+    expect(reviewAsk.askCodex).toHaveBeenCalledWith({ reviewId: "review-42", question: "q" });
   });
 });

@@ -35,6 +35,7 @@ export * from "./orchestrator-session";
 export * from "./ordering-pass";
 export * from "./pipeline";
 export * from "./publish-review";
+export * from "./review-ask";
 export * from "./rollup-narration";
 export * from "./route-plan";
 

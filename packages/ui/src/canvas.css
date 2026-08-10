@@ -1587,3 +1587,155 @@
   font: 700 10px / 1.4 var(--sans);
   letter-spacing: 0.03em;
 }
+
+/* ── The Ask surface (issue #139): send control + side-by-side labelled answers ─ */
+/* The reviewer asks a question about the review; the caret opts into "ask both".  */
+/* Two answers render side by side, labelled — there is no synthesis card, ever.   */
+.ask-control {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 12px;
+}
+.ask-input {
+  width: 100%;
+  min-height: 44px;
+  resize: vertical;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font: 400 14px / 1.4 var(--sans);
+  padding: 9px 11px;
+}
+.ask-input::placeholder {
+  color: var(--text-faint);
+}
+.ask-input:disabled {
+  opacity: 0.6;
+}
+.ask-send {
+  position: relative;
+  display: inline-flex;
+  align-self: flex-end;
+  align-items: stretch;
+}
+.ask-send-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--btn-border);
+  border-right: none;
+  border-radius: var(--radius) 0 0 var(--radius);
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  font: 600 13px / 1 var(--sans);
+  padding: 9px 14px;
+  cursor: pointer;
+}
+.ask-send-primary:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ask-send-caret {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 30px;
+  border: 1px solid var(--btn-border);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.ask-send-caret:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.ask-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  z-index: 20;
+  display: flex;
+  flex-direction: column;
+  min-width: 260px;
+  border: 1px solid var(--raised-border);
+  border-radius: var(--radius);
+  background: var(--raised);
+  padding: 5px;
+  gap: 2px;
+}
+.ask-menu-item {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  border: none;
+  border-radius: var(--chip-radius);
+  background: transparent;
+  color: var(--text);
+  font: 500 13px / 1.2 var(--sans);
+  padding: 8px 10px;
+  cursor: pointer;
+  text-align: left;
+}
+.ask-menu-item:hover,
+.ask-menu-item[aria-checked="true"] {
+  background: var(--surface-2);
+}
+.ask-menu-hint {
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.ask-answers {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 14px;
+}
+.ask-question-echo {
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.4;
+}
+.ask-question-label {
+  color: var(--text);
+  font-weight: 700;
+}
+.ask-answer-cards {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 12px;
+}
+.ask-answers[data-count="2"] .ask-answer-cards {
+  grid-template-columns: 1fr 1fr;
+}
+.ask-answer-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 11px 13px;
+}
+.ask-answer-head {
+  color: var(--text-soft);
+  font: 700 11px / 1.2 var(--sans);
+  letter-spacing: 0.05em;
+}
+.ask-answer-body {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.ask-answers-foot {
+  color: var(--text-faint);
+  font-size: 12px;
+  text-align: center;
+}
