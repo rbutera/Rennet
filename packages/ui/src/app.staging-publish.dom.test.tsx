@@ -89,12 +89,17 @@ function recordingBridge(ready: Review): {
   return { bridge: { invoke: invoke as unknown as RennetBridge["invoke"] }, calls };
 }
 
-// Mount, mark the one file read (→ a `comment` in the draft), and open the draft
-// canvas so a single item is present and editable. Returns the RTL handle + the
-// recorded publish calls.
-async function reachDraftCanvas(): Promise<
-  ReturnType<typeof mount> & { calls: CommandInput<"publish.review">[] }
-> {
+// Mount, mark the one file read (→ a `comment` in the draft), select the
+// destination framing, and open the draft canvas so a single item is present and
+// editable. Returns the RTL handle + the recorded publish calls.
+//
+// The mode is EXPLICIT (issue #109, own-branch half): `publish.review` is the
+// OTHER-PR act, so the publish-payload assertions run in `other-pr`; `own-branch`
+// previews a PR submission whose creation is the gated #21 act and never calls
+// publish.review, and has its own tests below.
+async function reachDraftCanvas(
+  mode: "own-branch" | "other-pr" = "other-pr",
+): Promise<ReturnType<typeof mount> & { calls: CommandInput<"publish.review">[] }> {
   const { bridge, calls } = recordingBridge(review);
   const handle = mount(<RennetApp bridge={bridge} />);
   const { container, getByRole } = handle;
@@ -105,6 +110,14 @@ async function reachDraftCanvas(): Promise<
     expect(container.querySelector(".destination-frame")?.getAttribute("data-staged-count")).toBe(
       "1",
     ),
+  );
+  // Select the destination framing (own-branch "Handoff bundle" / other-pr "Review
+  // to post"); the collated data is identical, only the outbound act differs.
+  fireEvent.click(
+    getByRole("tab", { name: mode === "other-pr" ? "Review to post" : "Handoff bundle" }),
+  );
+  await waitFor(() =>
+    expect(container.querySelector(".destination-frame")?.getAttribute("data-mode")).toBe(mode),
   );
   const openDraft = container.querySelector<HTMLButtonElement>(".destination-open-draft");
   if (!openDraft) throw new Error("the open-draft control did not render");
@@ -291,5 +304,63 @@ describe("staging controls the publish payload (#109) — ink dispositions publi
     expect(call.verdict).toBe("COMMENT");
     expect(call.comments).toHaveLength(1); // ONLY the staged one, not both
     expect(call.comments).toEqual([{ path: "src/x.ts", side: "RIGHT", type: "comment", body: "" }]);
+  });
+});
+
+// ── OWN-BRANCH: the default mode signs a PR submission, never review comments ──
+
+const paperMode = (container: HTMLElement) =>
+  container.querySelector(".publish-sheet")?.getAttribute("data-mode");
+const paperPreview = (container: HTMLElement) =>
+  container.querySelector('[data-testid="publish-preview"]')?.textContent ?? "";
+
+describe("staging controls the publish payload (#109) — own-branch signs a submission, not a review", () => {
+  it("own-branch preview is the PR SUBMISSION bytes — not review-comment bytes", async () => {
+    // What the human previews IS what would leave. In own-branch that is a PR
+    // submission (kind pr-submission), never a pr-review payload.
+    const { container } = await reachDraftCanvas("own-branch");
+    retype(container, "request-change"); // always ink → a non-empty handoff bundle
+    await waitFor(() => expect(laneOf(container)).toBe("ink"));
+
+    await openPaper(container);
+    expect(paperMode(container)).toBe("own-branch");
+    expect(paperPreview(container)).toContain("pr-submission");
+    expect(paperPreview(container)).not.toContain("pr-review");
+  });
+
+  it("own-branch sign HANDS OFF and never calls publish.review (the own-branch trust half)", async () => {
+    // The P1 this closes: own-branch used to fall back to publish.review, emitting
+    // review comments the human never previewed. It must not — creating the PR is the
+    // separate, gated #21 act that no command wires yet, so signing is an honest
+    // handoff no-op that states the not-yet-wired step and sends nothing.
+    const { container, calls } = await reachDraftCanvas("own-branch");
+    retype(container, "request-change");
+    await waitFor(() => expect(publishCount(container)).toBe("1"));
+
+    await openPaper(container);
+    expect(paperMode(container)).toBe("own-branch");
+    expect(signPaper(container).disabled).toBe(false); // there IS a bundle to hand off
+    await flush();
+
+    // No review was ever posted — the whole point.
+    expect(calls).toHaveLength(0);
+    // The paper states the honest handoff outcome, not a dry-run review.
+    const result = container.querySelector('[data-testid="publish-result"]');
+    expect(result).not.toBeNull();
+    expect(result?.getAttribute("data-outcome")).toBe("handoff");
+    expect(result?.getAttribute("data-dry-run")).toBeNull(); // never a review dry run
+    expect(result?.textContent).toContain("separate, gated step (#21)");
+  });
+
+  it("own-branch with an empty ink subset cannot sign (approve-only hands off nothing)", async () => {
+    const { container, calls } = await reachDraftCanvas("own-branch");
+    retype(container, "approve"); // approve never travels → empty bundle
+    await waitFor(() => expect(publishCount(container)).toBe("0"));
+
+    await openPaper(container);
+    expect(paperMode(container)).toBe("own-branch");
+    expect(signPaper(container).disabled).toBe(true);
+    await flush();
+    expect(calls).toHaveLength(0);
   });
 });

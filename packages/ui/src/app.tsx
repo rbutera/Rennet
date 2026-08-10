@@ -45,7 +45,7 @@ import {
   TriangleIcon,
 } from "./components/icons";
 import { ProjectDetail } from "./components/project-detail";
-import { type PublishReviewResult, PublishSheet } from "./components/publish-sheet";
+import { type PublishOutcome, PublishSheet } from "./components/publish-sheet";
 import { CanvasWorkspace } from "./components/workspace";
 
 /**
@@ -353,7 +353,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // posts nothing) and this holds what came back, which the paper then shows. Reset
   // whenever the paper is left or a fresh review loads, so a stale outcome never
   // lingers over a new draft.
-  const [publishResult, setPublishResult] = useState<PublishReviewResult | undefined>(undefined);
+  const [publishResult, setPublishResult] = useState<PublishOutcome | undefined>(undefined);
 
   useEffect(() => {
     bridge
@@ -795,6 +795,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         dryRun: true,
       });
       setPublishResult({
+        kind: "review",
         dryRun: outcome.dryRun,
         verdict,
         count: comments.length,
@@ -810,6 +811,22 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     } finally {
       setBusy(false);
     }
+  }
+  // Mode-split the sign so "what you preview is what signs" holds in BOTH modes
+  // (issue #109, own-branch half). other-pr previews line-anchored review comments
+  // and the wired `publish.review` engine emits exactly those. own-branch previews a
+  // PR SUBMISSION whose creation is the separate, GATED #21 act (`publish.egress`) —
+  // NO command wires it yet — so an own-branch sign must NOT fall back to
+  // `publish.review` (that would emit review comments the human never previewed).
+  // Until #21 lands, own-branch sign is an honest handoff no-op: it sends nothing and
+  // records the not-yet-wired handoff for the sheet to state plainly.
+  function signPaper(): void {
+    if (destinationMode === "own-branch") {
+      setError(undefined);
+      setPublishResult({ kind: "handoff" });
+      return;
+    }
+    void publishReview();
   }
   const destinationChrome = (
     <div className="rennet-glass" data-scheme="dark">
@@ -844,7 +861,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
             setPublishResult(undefined);
             setDestinationView("draft");
           }}
-          onSign={() => void publishReview()}
+          onSign={() => signPaper()}
           onClose={() => {
             setPublishResult(undefined);
             setDestinationView("closed");
