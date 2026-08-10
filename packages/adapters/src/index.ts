@@ -115,6 +115,11 @@ export {
   noiseReviewFixture,
 } from "./noise-fixture";
 export {
+  type NoveltyLedgerFailure,
+  NoveltyLedgerReader,
+  type NoveltyLedgerResult,
+} from "./novelty-ledger-reader";
+export {
   type AttachedOrchestratorSession,
   attachOrchestratorSession,
 } from "./orchestrator-session-server";

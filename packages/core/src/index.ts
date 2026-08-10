@@ -33,6 +33,7 @@ export * from "./harness-run-turn";
 export * from "./invocation-budget";
 export * from "./model-council";
 export * from "./noise-generation";
+export * from "./novelty-ledger";
 export * from "./orchestrator-primer";
 export * from "./orchestrator-session";
 export * from "./ordering-pass";
