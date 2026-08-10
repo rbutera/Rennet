@@ -33,6 +33,7 @@ import {
   projectDetailFixture,
   RepoWatcher,
   resolveGitHubAuth,
+  reviewAskFixturePorts,
   SqliteReviewStore,
 } from "@rennet/adapters";
 import {
@@ -447,6 +448,13 @@ app.whenReady().then(async () => {
     // stands behind the real command boundary so the lens comes alive now — exactly as
     // the flagged lens (#138) serves its fixture behind the `flagged.review` boundary.
     noiseReview: () => Promise.resolve(noiseReviewFixture()),
+    // review.ask (issue #139): the ports a review question reaches. The core
+    // `askReview` router (invoked in dispatch) owns the orchestrator-once /
+    // both-adds-codex / never-synthesize law; these ports are the deferred half —
+    // canned answers stand behind the real typed boundary until the live
+    // orchestrator/Codex sessions are wired, exactly as the flagged/noise fixtures
+    // stand behind their read boundaries.
+    reviewAsk: reviewAskFixturePorts(),
   });
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);

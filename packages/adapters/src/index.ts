@@ -125,6 +125,11 @@ export {
   type ProjectDiscoveryDeps,
 } from "./project-discovery";
 export { RepoWatcher } from "./repo-watcher";
+export {
+  codexAskFixture,
+  orchestratorAskFixture,
+  reviewAskFixturePorts,
+} from "./review-ask-fixture";
 export { SqliteReviewStore } from "./sqlite-review-store";
 export {
   discoverWorktreeIdentities,

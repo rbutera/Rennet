@@ -1,4 +1,5 @@
 import type {
+  AskReviewResult,
   Canvas,
   Disposition,
   DispositionAnchor,
@@ -488,6 +489,23 @@ export const flaggedReviewSchema: z.ZodType<FlaggedReview> = z.union([
   z.object({ status: z.literal("failed"), reason: z.string() }),
 ]);
 
+// ── review.ask: ask the AI a question, one model or both (issue #139) ─────────
+// The wire shape of a review question's routing + result. `mode` defaults to
+// "orchestrator" so an omitted mode NEVER fires a second model. The result can
+// carry at most `primary` (always the orchestrator) + `secondOpinion` (Codex, only
+// in "both" mode) — there is no field for a merged answer, so "no synthesis, ever"
+// is enforced by the schema itself, not only by the router.
+export const askModeSchema = z.enum(["orchestrator", "both"]);
+export const askAnswerSchema = z.object({
+  model: z.string().min(1),
+  answer: z.string(),
+});
+export const askReviewResultSchema: z.ZodType<AskReviewResult> = z.object({
+  mode: askModeSchema,
+  primary: askAnswerSchema,
+  secondOpinion: askAnswerSchema.optional(),
+});
+
 // ── The Noise lens: grouped low-signal churn (issue #34) ──────────────────────
 // The low-signal churn a changeset touches, grouped away from the code that needs
 // eyes and tagged with how each group was judged (a deterministic mechanical RULE
@@ -859,6 +877,28 @@ export const commandDefinitions = {
   "flagged.review": {
     input: z.object({ reviewId: z.string().min(1) }),
     output: flaggedReviewSchema,
+  },
+  // ── Ask the AI a question about the review (issue #139) ────────────────────
+  // The reviewer's question goes to the ORCHESTRATOR by default; `mode: "both"`
+  // ADDITIONALLY asks Codex, and the two labelled answers come back side by side.
+  //   • `mode` defaults to "orchestrator" (wrong-side-safe): an omitted mode NEVER
+  //     fires a second model behind the reviewer's back.
+  //   • The output carries at most `primary` (always the orchestrator) + an optional
+  //     `secondOpinion` (Codex, only in "both") — there is NO merged-answer field, so
+  //     "no synthesis, ever" is a property of the schema, not just the router.
+  // The live orchestrator/Codex invocation is deferred (a fixture stands behind the
+  // real command boundary); the routing law — orchestrator once, both adds Codex,
+  // never a synthesis — lives in `@rennet/core`'s `askReview` and is enforced here.
+  "review.ask": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+      /** Default "orchestrator": an omitted mode never fires a second model. */
+      mode: askModeSchema.default("orchestrator"),
+      /** The reviewer's question about the review. */
+      question: z.string().min(1),
+    }),
+    output: askReviewResultSchema,
   },
   // ── The Noise lens (issue #34) ─────────────────────────────────────────────
   // The low-signal churn the changeset touches, grouped away and tagged with how

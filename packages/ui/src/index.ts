@@ -3,6 +3,19 @@ import "./tokens.css";
 import "./canvas.css";
 
 export { RennetApp, ReviewWorkspace } from "./app";
+// The Ask surface (issue #139): per-thread routing memory + the ordered answer
+// cards. Kept host-free so the routing law (no synthesis, remembered per thread)
+// is unit-testable without a DOM.
+export type { AskCard, AskModeByThread, AskOption } from "./canvas/ask";
+export {
+  ASK_OPTIONS,
+  askCards,
+  askedBoth,
+  askModeForThread,
+  DEFAULT_ASK_MODE,
+  isAskAnswer,
+  rememberAskMode,
+} from "./canvas/ask";
 export type {
   AuthoredResult,
   AuthoringAct,
@@ -144,6 +157,8 @@ export {
   publishReviewType,
   stageItem,
 } from "./canvas/staging";
+export type { AskAnswersProps, AskControlProps } from "./components/ask";
+export { AskAnswers, AskControl } from "./components/ask";
 export { BatchView } from "./components/batch-view";
 export { CollationDraftCanvas } from "./components/collation-draft-canvas";
 export { CoverageMosaicView } from "./components/coverage";
