@@ -1,0 +1,73 @@
+# CI check gate for Rennet.
+#
+# Runs the SAME full gate that passes locally: `pnpm check`, which is
+#   nx run-many -t format,architecture,licenses,lint,typecheck,test,build
+# (authoritative per AGENTS.md "Nx workflow" and package.json `scripts.check`).
+# This gate carries its own positive controls that CAN go red: the architecture
+# (forbidden-import) check and the licenses check each assert a deliberate-failure
+# calibration, so a green run is meaningful, not decoration.
+#
+# The gate is intentionally platform-independent (Vite builds, Vitest, ESLint,
+# Biome, tsc) and runs on Linux. It deliberately does NOT run:
+#   - `e2e`     (Playwright + Electron; needs a display, not part of `pnpm check`)
+#   - `package` / `package-smoke` (Electron packaging; macOS-only, lives in the
+#                 release workflow and issue #42's distribution slice)
+#   - `audit`   (network-dependent; not part of the local gate)
+#
+# Security: read-only token, no secrets, `pull_request` (never `pull_request_target`).
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  # Reusable so the release workflow runs this exact gate without duplicating it.
+  workflow_call:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    name: check (format · architecture · licenses · lint · typecheck · test · build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # pnpm must be on PATH before setup-node so `cache: pnpm` can resolve the store.
+      # action-setup reads the exact version from package.json `packageManager`
+      # (pnpm@10.32.1) — no hardcoded version to drift.
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      # Node version comes from .nvmrc (24.18.0). `.npmrc` sets engine-strict=true,
+      # so the install FAILS if the runner Node differs — pinning here is load-bearing.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      # Local Nx cache only (no Nx Cloud / remote cache — not approved, see AGENTS.md).
+      # Same-input targets restore from a prior run; a lockfile change busts the key.
+      - name: Restore Nx cache
+        uses: actions/cache@v4
+        with:
+          path: .nx/cache
+          key: nx-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-${{ github.sha }}
+          restore-keys: |
+            nx-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml') }}-
+            nx-${{ runner.os }}-
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # The gate. Fails the job (and therefore the PR) if any target fails.
+      - name: Check
+        run: pnpm check

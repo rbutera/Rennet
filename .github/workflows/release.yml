@@ -1,0 +1,130 @@
+# Release workflow — SKELETON.
+#
+# Status: the real installer story (code signing, notarization, .dmg/.zip makers,
+# electron-updater, THIRD-PARTY-NOTICES) is tracked in issue #42
+# ("Real installer: signed, notarized, auto-updating releases"), which is BLOCKED
+# on RAI-ONLY Apple Developer enrolment + a protected-environment setup. This file
+# scaffolds the intended shape (bead 132: `ci.yml` + protected-environment
+# `release.yml`, secrets only in the protected environment requiring Rai's approval,
+# `pull_request_target` banned, unsigned `--dir` package smoke) WITHOUT wiring any
+# external publish live.
+#
+# What runs today (safe, no secrets):
+#   1. check  — the full gate, reused from ci.yml.
+#   2. build  — Vite build + unsigned electron-forge `package` + package smoke on
+#               macOS, uploaded as a private workflow ARTIFACT (not a public release).
+# What is stubbed (needs #42 + Rai):
+#   3. publish — creating a GitHub Release and attaching SIGNED, NOTARIZED installers.
+#               Triple-gated (manual dispatch + explicit `publish: true` input + the
+#               protected `release` environment's approval) and currently a no-op
+#               placeholder. Nothing here auto-publishes.
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: >-
+          Attempt the (currently stubbed) publish job. Requires the protected
+          `release` environment approval AND signing secrets that do not exist yet
+          (blocked on #42). Leave false to only build + smoke the unsigned app.
+        type: boolean
+        default: false
+  # A `v*` tag runs check + build only. It deliberately does NOT publish — the
+  # publish job's `if` requires a manual dispatch with publish=true.
+  push:
+    tags:
+      - "v*"
+
+# Default to read-only. The publish job elevates to `contents: write` locally, and
+# only after passing the protected-environment approval gate.
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # 1. Full gate, defined once in ci.yml.
+  check:
+    uses: ./.github/workflows/ci.yml
+
+  # 2. Build the app and smoke the UNSIGNED package on macOS. No secrets, no signing,
+  #    no publish. Mirrors bead 132's "unsigned --dir package smoke".
+  build:
+    name: build + unsigned package smoke (macOS)
+    needs: check
+    runs-on: macos-14 # arm64 — matches the electron-forge out dir Rennet-darwin-arm64
+    timeout-minutes: 40
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Renderer/main/preload bundles (cross-platform, part of `pnpm check`).
+      - name: Build desktop bundles
+        run: pnpm nx run rennet-desktop:build
+
+      # Existing nx targets: `package` (electron-forge package -> ad-hoc-signed .app
+      # under apps/desktop/out/) then `package-smoke` (boots the packaged app).
+      # This is the closest-to-a-distributable that exists today; it is UNSIGNED and
+      # is NOT a real notarized installer (that is #42).
+      - name: Package (unsigned) + smoke
+        run: pnpm nx run rennet-desktop:package-smoke
+
+      # Private to repo members, NOT a public release. Safe to keep on every build.
+      - name: Upload unsigned app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: rennet-unsigned-darwin-arm64
+          path: apps/desktop/out/**
+          if-no-files-found: error
+          retention-days: 14
+
+  # 3. Publish — EXTERNAL-FACING, STUBBED. Blocked on #42 + Rai's sign-off.
+  #    Triple gate:
+  #      a) manual dispatch only (a `v*` tag alone will not reach this job),
+  #      b) explicit `publish: true` input,
+  #      c) the protected `release` environment (must be created in repo settings
+  #         with Rai as a required reviewer; signing/notarization secrets live there).
+  publish:
+    name: publish signed release (STUB — needs #42)
+    needs: build
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+    runs-on: macos-14
+    # This environment gates on Rai's approval and holds the signing secrets.
+    # Until it exists in repo settings, this job cannot run — by design.
+    environment: release
+    permissions:
+      contents: write # only granted here, only after the environment approval
+    steps:
+      - name: Not implemented — see issue #42
+        run: |
+          echo "::error title=Release publishing is not implemented::Blocked on #42."
+          echo "Before this job can publish a real release, #42 must land:"
+          echo "  - Apple Developer enrolment + protected-environment secrets (RAI-ONLY)"
+          echo "  - signing + notarization (notarytool via App Store Connect API key)"
+          echo "  - an nx 'make' target producing .dmg/.zip via the forge makers"
+          echo "  - THIRD-PARTY-NOTICES generation + TRADEMARK.md (beads 134/135)"
+          echo "  - build-input provenance lines in the release body (bead 132)"
+          echo ""
+          echo "Intended shape once unblocked (DO NOT enable without Rai's sign-off):"
+          echo "  1. reuse the unsigned artifact from the build job (or re-make signed)"
+          echo "  2. sign + notarize + staple the .app, build the DMG"
+          echo "  3. create a DRAFT GitHub release (gh release create --draft \\"
+          echo "       \"\${GITHUB_REF_NAME}\" ...) so a human publishes it explicitly"
+          exit 1
