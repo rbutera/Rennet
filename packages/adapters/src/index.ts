@@ -42,6 +42,12 @@ export {
   discoverCodexAvailability,
 } from "./codex-exec";
 export {
+  decisionsRecordFixture,
+  emptyDecisionsRecordFixture,
+  failedDecisionsRunStatus,
+  okDecisionsRunStatus,
+} from "./decisions-fixture";
+export {
   deriveProjectDraft,
   FileProjectStore,
   type FileProjectStoreDeps,

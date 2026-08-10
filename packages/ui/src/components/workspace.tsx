@@ -3,6 +3,7 @@ import type {
   Canvas,
   CanvasAngle,
   CanvasChangeNotification,
+  DecisionsRunStatus,
   DispositionType,
   FlaggedReview,
   Proposal,
@@ -85,6 +86,14 @@ export interface CanvasWorkspaceProps {
    * state, never a silent blank.
    */
   flaggedReview?: FlaggedReview;
+
+  /**
+   * The Decisions runner's status (issue #137). The grouped decisions themselves
+   * come from the canvas (placed by `projectDecisions`); this thin status only
+   * distinguishes a runner that FAILED from a review that ran and discerned
+   * nothing. Absent ⇒ `ok` (the live failed signal lands with the live runner).
+   */
+  decisionsRunStatus?: DecisionsRunStatus;
 
   // ── Authoring depth (issue #17), additive and optional ──────────────────────
   // The dock renders only the sections whose props are supplied, so a host that
@@ -478,6 +487,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
             onToggleCohort={(cohortKey) => store.getState().toggleCohort(cohortKey)}
             onApproveScope={approveScope}
             onSelectElement={selectElement}
+            runStatus={props.decisionsRunStatus ?? { status: "ok" }}
           />
         ) : (
           <FlatCanvas

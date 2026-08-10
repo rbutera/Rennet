@@ -10,6 +10,7 @@ import {
   createClaudeHarness,
   createCodexUtilityAdapter,
   createRefPinner,
+  decisionsRecordFixture,
   defaultDiscoveryDeps,
   defaultProjectDiscoveryDeps,
   deriveProjectDraft,
@@ -290,6 +291,13 @@ async function buildCanvasesForReview(review: Review): Promise<{
     patchset,
     dispositions: review.dispositions,
     council: { availability: { installed } },
+    // The Decisions lens (issue #137): the decision-extraction runner's
+    // `decision.record` docs, placed on the decisions canvas by the existing
+    // projector. The LIVE runner that reasons over {spec, PR body, diff} is a
+    // follow-up (it depends on #136's intent capture); a fixture stands behind
+    // this real boundary so the lens comes alive now — exactly as the flagged
+    // lens (#138) serves its fixture behind the `flagged.review` boundary.
+    decisionDocs: decisionsRecordFixture(),
     ...(codex.available ? { codexPort: getCodexPort() } : {}),
     ...(runDecompositionTurn ? { runDecompositionTurn } : {}),
     ...(runOrderingTurn ? { runOrderingTurn } : {}),

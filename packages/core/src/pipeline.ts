@@ -169,6 +169,16 @@ export interface ReviewPipelineInput {
    */
   readonly runNarrationTurn?: (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
   readonly narrationContract?: PromptContract;
+  /**
+   * The decision-extraction runner's output (issue #137): admitted
+   * `decision.record` documents to place on the decisions canvas. The projector
+   * groups them by anchored chunk; each decision carries its evidence chips +
+   * reconstructed why for the lens. Supplied independently of the model phase, so
+   * decisions are admitted on BOTH the live and the deterministic-floor paths.
+   * The LIVE runner that reasons over {spec, PR body, diff} is deferred (it
+   * depends on #136's intent capture); a fixture stands behind this boundary now.
+   */
+  readonly decisionDocs?: readonly AdmittedDocument[];
   /** Deterministic id hooks (tests); default to the random minters. */
   readonly mintDocId?: () => string;
   readonly newRunId?: () => string;
@@ -353,6 +363,14 @@ export async function buildReviewCanvases(
         body: { ...proposalBody, readingOrder },
       },
     ];
+  }
+
+  // Admit the decision-extraction runner's `decision.record` docs (issue #137)
+  // alongside the decomposition/ordering output, on BOTH paths (the model phase
+  // above may not have run). The projector routes them to the decisions canvas
+  // and groups them by anchored chunk; no other angle admits them.
+  if (input.decisionDocs && input.decisionDocs.length > 0) {
+    admittedDocs = [...admittedDocs, ...input.decisionDocs];
   }
 
   const canvasEvents = input.canvasEvents ?? [];

@@ -802,21 +802,77 @@ export const CANVAS_ANGLES: readonly CanvasAngle[] = [
 ] as const;
 
 /**
- * The minimal canvas-facing shape of a decision, as the decisions canvas needs
- * it: an id, the anchor it is about, and a title. The richer `decision.record`
- * body (issue #26) is an ADDITIVE superset of this; the canvas placement only
- * needs the id + anchor + title, so this stays deliberately small and stable.
+ * One evidence chip a decision is drawn from (issue #137). The Decisions lens
+ * shows the raw material a decision was discerned from — a spec line, a passage of
+ * the PR body, or a hunk of the diff — so a reviewer can judge the decision at its
+ * source. `kind` is the source class; `label` is the short chip caption (e.g.
+ * "spec §3.2", "PR body", "store.ts +12"); `detail` is the quoted material.
+ *
+ * NOTE (issue #137, load-bearing): these three kinds name the SOURCE of evidence,
+ * never a verdict about the decision. There is deliberately no evidenced /
+ * mechanical / contestable triage bucket here — judging a decision is the
+ * reviewer's job, not a pre-chewed classification's.
+ */
+export interface DecisionEvidence {
+  kind: "spec" | "pr-body" | "hunk";
+  label: string;
+  detail: string;
+}
+
+/**
+ * A decision's reconstructed rationale (issue #137). `reconstructed` is a literal
+ * `true`: the TYPE SYSTEM enforces that every `why` is marked reconstructed, so an
+ * inferred rationale can never be presented as a stated fact. A decision with no
+ * discernible rationale simply has no `why` (it still renders — title + evidence —
+ * rather than inventing one).
+ */
+export interface DecisionWhy {
+  reconstructed: true;
+  text: string;
+}
+
+/**
+ * The rich detail a decision carries beyond its id/anchor/title (issue #137):
+ * the evidence chips it was drawn from, an optional reconstructed why, and the
+ * alternatives not taken where the diff or PR body made them discernible. Carried
+ * on the placed `AnalysisElement` so the existing decisions surface renders it.
+ */
+export interface DecisionDetail {
+  evidence: DecisionEvidence[];
+  why?: DecisionWhy;
+  alternatives: string[];
+}
+
+/**
+ * The canvas-facing shape of a decision. `decisionId`, `anchor`, and `title` are
+ * all the projector needs for PLACEMENT (grouping by anchored chunk — the chunk's
+ * title IS the theme label the lens shows, e.g. "Storage and state"); the richer
+ * fields (issue #137) are an ADDITIVE superset the surface renders: the evidence
+ * chips a decision was drawn from, an optional reconstructed why, and the
+ * alternatives not taken where the diff or PR body made them discernible.
  */
 export interface DecisionRecordElement {
   decisionId: string;
   anchor: string;
   title: string;
+  evidence?: DecisionEvidence[];
+  why?: DecisionWhy;
+  alternatives?: string[];
 }
 
 /** The `decision.record` body as consumed by the decisions-canvas projector. */
 export interface DecisionRecordBody {
   decisions: DecisionRecordElement[];
 }
+
+/**
+ * The Decisions runner's per-review status (issue #137), mirroring `FlaggedReview`.
+ * A review that RAN and discerned no decisions is honestly empty; a runner that
+ * FAILED to run is a different state and must never be conflated with "no
+ * decisions". The live decision-extraction runner (deferred, depends on #136's
+ * intent capture) sets this; until then it is `ok` behind the fixture.
+ */
+export type DecisionsRunStatus = { status: "ok" } | { status: "failed"; reason: string };
 
 // ─── The `finding` doc family + the Flagged lens (issue #138) ─────────────────
 //
@@ -899,6 +955,13 @@ export interface AnalysisElement {
   anchor: string;
   kind: string;
   title: string;
+  /**
+   * The rich decision detail (issue #137), present ONLY on `kind:"decision"`
+   * elements the decisions projector places. Optional so every other canvas's
+   * elements are unchanged (and byte-identical replay is preserved); the
+   * decisions surface reads it to render evidence chips + a reconstructed why.
+   */
+  decision?: DecisionDetail;
 }
 
 /**
