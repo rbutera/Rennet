@@ -93,6 +93,36 @@ export interface GitHubChangesetSourceDeps {
 const DEGRADED_REASON =
   "This diff came from GitHub's REST API because the repository is not on disk. Whole-repo-context angles (reach, blast-radius) cannot run on the degraded diff.";
 
+/** The remote the reviewed OIDs are fetched from when they are not yet local. */
+const REVIEW_REMOTE = "origin";
+
+/**
+ * The reviewed base/head OIDs are not in the local object store and could not be
+ * retrieved from the remote either. Thrown (never swallowed) so the caller fails
+ * closed with an honest, actionable reason instead of the local-first path pinning
+ * a missing object and crashing deep inside git.
+ *
+ * The common cause is a squash- or rebase-merged PR whose head commit was never
+ * fetched into this clone (Rennet's own PRs are all squash-merged), combined with
+ * the PR head ref having been deleted on the remote. A wrong `origin` (pointing at
+ * a different repository than the PR's) produces the same failure.
+ */
+export class ReviewedOidUnavailableError extends Error {
+  override readonly name = "ReviewedOidUnavailableError";
+  constructor(
+    readonly prNumber: number,
+    readonly missingOids: readonly string[],
+    readonly remote: string = REVIEW_REMOTE,
+  ) {
+    super(
+      `Cannot open PR #${prNumber} for review: the reviewed commit(s) ` +
+        `${missingOids.join(", ")} are not in the local clone and could not be ` +
+        `fetched from '${remote}'. The PR head may have been deleted on the remote, ` +
+        `or '${remote}' does not point at the PR's repository.`,
+    );
+  }
+}
+
 export class GitHubChangesetSource {
   constructor(private readonly deps: GitHubChangesetSourceDeps) {}
 
@@ -103,6 +133,13 @@ export class GitHubChangesetSource {
     const match = matchWorktree(ref.repo, worktrees);
 
     if (match) {
+      // The pin (and the local diff) needs both OIDs already in the object store.
+      // For a merge-commit-merged PR the head is reachable from what the clone has,
+      // but a squash- or rebase-merged PR's head commit was never fetched here, so
+      // retrieve any not-yet-local reviewed OID from the remote FIRST. This is the
+      // host-side "fetch the OID before pin" step the pinner's contract defers to
+      // composition (#193). Fails closed with a typed error if it cannot.
+      await this.ensureReviewedOidsLocal(match.root, pr, ref.number);
       // Local-first: pin the OIDs (survives force-push), then diff locally.
       await this.deps.pin.pin(match.root, [pr.baseOid, pr.headOid]);
       const patchset = await captureRangePatchset(this.deps.git, {
@@ -137,6 +174,70 @@ export class GitHubChangesetSource {
       sso: combinedSso,
       pin: null,
     };
+  }
+
+  /**
+   * Ensure the reviewed base AND head OIDs are in the local object store before we
+   * pin and diff them, fetching from the remote when they are not (#193).
+   *
+   * Fast path: when both OIDs are already present (the merge-commit case, or a
+   * clone that has fetched the head) nothing runs — no network, no side effects.
+   *
+   * When an OID is missing, fetch the PR head ref first: `refs/pull/<n>/head` is the
+   * one ref GitHub keeps pointing at the reviewed commit even after a squash- or
+   * rebase-merge deletes the source branch, and its history carries the base OID too
+   * (the head branched from the base), so this single fetch usually supplies both.
+   * If anything is still missing, fall back to fetching the specific OIDs directly
+   * (GitHub's reachable-SHA fetch). Each attempt is best-effort; the object store,
+   * re-checked at the end, is the sole arbiter of success. If an OID still cannot be
+   * produced we throw `ReviewedOidUnavailableError` rather than let the pin crash.
+   */
+  private async ensureReviewedOidsLocal(
+    root: string,
+    pr: ForgePullRequest,
+    prNumber: number,
+  ): Promise<void> {
+    const wanted = [pr.baseOid, pr.headOid];
+    if ((await this.missingOids(root, wanted)).length === 0) return;
+
+    const attempts: string[][] = [
+      ["fetch", "--no-tags", "--no-write-fetch-head", REVIEW_REMOTE, `refs/pull/${prNumber}/head`],
+      ["fetch", "--no-tags", "--no-write-fetch-head", REVIEW_REMOTE, ...wanted],
+    ];
+    for (const args of attempts) {
+      if ((await this.missingOids(root, wanted)).length === 0) break;
+      try {
+        await this.deps.git(root, args);
+      } catch {
+        // Best-effort: a deleted PR ref or a remote that rejects a bare-SHA want
+        // makes an attempt fail. The final object-store check below is the arbiter.
+      }
+    }
+
+    const stillMissing = await this.missingOids(root, wanted);
+    if (stillMissing.length > 0) {
+      throw new ReviewedOidUnavailableError(prNumber, stillMissing);
+    }
+  }
+
+  /** Return the subset of `oids` NOT resolvable to a commit in the local store. */
+  private async missingOids(root: string, oids: readonly string[]): Promise<string[]> {
+    const missing: string[] = [];
+    for (const oid of oids) {
+      // `rev-parse --verify --quiet` prints the resolved OID on success and nothing
+      // on failure, so stdout (all GitExec exposes) distinguishes present from
+      // absent without relying on the exit code. `^{commit}` requires the object to
+      // be present AND a commit, which is exactly what pin + range-diff need.
+      const out = await this.deps.git(
+        root,
+        ["rev-parse", "--verify", "--quiet", `${oid}^{commit}`],
+        {
+          reject: false,
+        },
+      );
+      if (out.trim().length === 0) missing.push(oid);
+    }
+    return missing;
   }
 
   /**

@@ -10,6 +10,7 @@ import {
   createRefPinner,
   GitHubChangesetSource,
   type GitObjectPinner,
+  ReviewedOidUnavailableError,
   type WorktreeProvider,
 } from "./github-changeset-source";
 import { discoverWorktreeIdentities } from "./worktree-discovery";
@@ -372,5 +373,118 @@ describe("GitHubChangesetSource — change-intent capture (#136)", () => {
     expect(second.patchset.intent?.prBody).toBe("Second intent.");
     // The prior patchset's intent is never rewritten by the newer capture.
     expect(first.patchset.intent?.prBody).toBe("First intent.");
+  });
+});
+
+/**
+ * A "server" repo whose PR head is reachable ONLY via `refs/pull/7/head` (the
+ * source branch is deleted, the squash/rebase-merge shape), paired with a clone
+ * that has the base but has NEVER fetched the head. The clone's `origin` is the
+ * fetchable server; a second `github` remote carries the identity the worktree
+ * matcher keys on (a real clone's single `origin` is both at once — split here so
+ * the fetch stays hermetic instead of reaching github.com).
+ */
+function serverWithPrHeadAndCloneMissingIt(): {
+  cloneRoot: string;
+  baseOid: string;
+  headOid: string;
+} {
+  const server = mkdtempSync(join(tmpdir(), "rennet-srv-"));
+  directories.push(server);
+  git(server, "init", "-q", "-b", "main");
+  git(server, "config", "user.email", "rennet@example.test");
+  git(server, "config", "user.name", "Rennet Test");
+  writeFileSync(join(server, "app.ts"), "export const a = 1;\n");
+  git(server, "add", "app.ts");
+  git(server, "commit", "-qm", "base");
+  const baseOid = git(server, "rev-parse", "HEAD").trim();
+  git(server, "checkout", "-qb", "feature");
+  writeFileSync(join(server, "app.ts"), "export const a = 1;\nexport const b = 2;\n");
+  git(server, "add", "app.ts");
+  git(server, "commit", "-qm", "feature");
+  const headOid = git(server, "rev-parse", "HEAD").trim();
+  // Publish the PR head ref the way GitHub does, then delete the branch so the head
+  // is reachable ONLY via refs/pull/7/head — exactly what a squash-merge leaves.
+  git(server, "update-ref", "refs/pull/7/head", headOid);
+  git(server, "checkout", "-q", "main");
+  git(server, "branch", "-qD", "feature");
+
+  const cloneRoot = mkdtempSync(join(tmpdir(), "rennet-clone-"));
+  directories.push(cloneRoot);
+  git(cloneRoot, "init", "-q", "-b", "main");
+  git(cloneRoot, "config", "user.email", "rennet@example.test");
+  git(cloneRoot, "config", "user.name", "Rennet Test");
+  git(cloneRoot, "remote", "add", "origin", server);
+  git(cloneRoot, "remote", "add", "github", "git@github.com:acme/widget.git");
+  git(cloneRoot, "fetch", "-q", "origin", "main");
+  git(cloneRoot, "update-ref", "refs/heads/main", "FETCH_HEAD");
+  return { cloneRoot, baseOid, headOid };
+}
+
+/** A base-only server + clone: the PR head is neither local nor fetchable anywhere. */
+function serverBaseOnlyClone(): { cloneRoot: string; baseOid: string } {
+  const server = mkdtempSync(join(tmpdir(), "rennet-srv-"));
+  directories.push(server);
+  git(server, "init", "-q", "-b", "main");
+  git(server, "config", "user.email", "rennet@example.test");
+  git(server, "config", "user.name", "Rennet Test");
+  writeFileSync(join(server, "app.ts"), "export const a = 1;\n");
+  git(server, "add", "app.ts");
+  git(server, "commit", "-qm", "base");
+  const baseOid = git(server, "rev-parse", "HEAD").trim();
+
+  const cloneRoot = mkdtempSync(join(tmpdir(), "rennet-clone-"));
+  directories.push(cloneRoot);
+  git(cloneRoot, "init", "-q", "-b", "main");
+  git(cloneRoot, "config", "user.email", "rennet@example.test");
+  git(cloneRoot, "config", "user.name", "Rennet Test");
+  git(cloneRoot, "remote", "add", "origin", server);
+  git(cloneRoot, "remote", "add", "github", "git@github.com:acme/widget.git");
+  git(cloneRoot, "fetch", "-q", "origin", "main");
+  git(cloneRoot, "update-ref", "refs/heads/main", "FETCH_HEAD");
+  return { cloneRoot, baseOid };
+}
+
+describe("GitHubChangesetSource — fetch-before-pin for squash/rebase-merged PRs (#193)", () => {
+  it("fetches a reviewed head OID that is not yet local, then pins and diffs it", async () => {
+    const { cloneRoot, baseOid, headOid } = serverWithPrHeadAndCloneMissingIt();
+    // Precondition: the reviewed head really is absent from the clone before review.
+    expect(() => git(cloneRoot, "cat-file", "-e", headOid)).toThrow();
+
+    const pin = { pin: vi.fn(provingPinner.pin) } satisfies GitObjectPinner;
+    const source = new GitHubChangesetSource({
+      forge: forgeReturning(prFrom(baseOid, headOid)),
+      git: execaGit,
+      pin,
+      worktrees: worktreesOf(cloneRoot),
+    });
+    const result = await source.open(ref);
+
+    // The head was fetched into the local object store BEFORE the pin ran (the
+    // proving pinner would have thrown on a missing object otherwise)...
+    expect(() => git(cloneRoot, "cat-file", "-e", headOid)).not.toThrow();
+    expect(pin.pin).toHaveBeenCalledWith(cloneRoot, [baseOid, headOid]);
+    // ...and the outcome is a real LOCAL diff, not the degraded REST fallback.
+    expect(result.patchset.source).toBe("github-local");
+    expect(result.patchset.degraded).toBeUndefined();
+    expect(result.pin?.headOid).toBe(headOid);
+    expect(result.patchset.rawDiff).toBe(git(cloneRoot, "diff", `${baseOid}...${headOid}`));
+  });
+
+  it("fails closed with a typed error when the reviewed head cannot be fetched", async () => {
+    const { cloneRoot, baseOid } = serverBaseOnlyClone();
+    const unreachableHead = "0".repeat(40);
+    const source = new GitHubChangesetSource({
+      forge: forgeReturning(prFrom(baseOid, unreachableHead)),
+      git: execaGit,
+      pin: provingPinner,
+      worktrees: worktreesOf(cloneRoot),
+    });
+
+    const error = await source.open(ref).catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(ReviewedOidUnavailableError);
+    expect((error as ReviewedOidUnavailableError).missingOids).toContain(unreachableHead);
+    // The head that could not be fetched is named in the message (honest, actionable).
+    expect((error as Error).message).toContain(unreachableHead);
   });
 });
