@@ -1162,6 +1162,42 @@
   font-size: 11px;
   font-weight: 600;
 }
+/* Deep review (issue #191): the one-tap control that invokes the two-model pass,
+   and the honest "who ran" badge for the result. */
+.flag-deep-review {
+  margin-left: auto;
+  color: var(--text-soft);
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--chip-radius);
+  padding: 4px 12px;
+  font: 600 12px / 1.2 var(--sans);
+  cursor: pointer;
+}
+.flag-deep-review:hover:not(:disabled) {
+  border-color: var(--private);
+  color: var(--private);
+}
+.flag-deep-review:disabled {
+  color: var(--text-faint);
+  cursor: default;
+  opacity: 0.75;
+}
+.flag-dual {
+  border-radius: var(--chip-radius);
+  padding: 3px 10px;
+  font: 600 11px / 1.2 var(--sans);
+}
+.flag-dual-full {
+  color: var(--green);
+  background: var(--green-fill);
+  border: 1px solid var(--green-line);
+}
+.flag-dual-degraded {
+  color: var(--amber);
+  background: var(--amber-surface);
+  border: 1px solid var(--amber-line);
+}
 .flagged-empty {
   color: var(--text-faint);
   font-style: italic;

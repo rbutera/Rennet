@@ -1,4 +1,5 @@
 import type {
+  DualReviewNote,
   FindingAgreement,
   FindingElement,
   FindingModelAnswer,
@@ -70,6 +71,14 @@ export type FlaggedIndex =
       /** Per-severity counts over the placed rows (for the lens header chips). */
       counts: Record<FindingSeverity, number>;
       total: number;
+      /**
+       * How the review was produced (issue #41/#191). Present only on a review that
+       * carried a `dual` note — a two-seat deep review, or a deep review that
+       * degraded to one seat. Absent on a single-seat quick review. The lens reads
+       * it to show WHO ran (and the honest "single provider" degradation), never a
+       * merged verdict — disagreement itself lives per-row in `agreement`.
+       */
+      dual?: DualReviewNote;
     };
 
 const SEVERITY_RANK: Record<FindingSeverity, number> = { high: 0, medium: 1, low: 2 };
@@ -167,5 +176,24 @@ export function buildFlaggedIndex(review: FlaggedReview): FlaggedIndex {
     );
   const counts: Record<FindingSeverity, number> = { high: 0, medium: 0, low: 0 };
   for (const row of rows) counts[row.severity] += 1;
-  return { state: "ok", rows, counts, total: rows.length };
+  // Carry the dual-review note through, additively: a well-formed note records who
+  // ran (and any single-seat degradation); a malformed one is simply ignored.
+  return {
+    state: "ok",
+    rows,
+    counts,
+    total: rows.length,
+    ...(isDualNote(review.dual) ? { dual: review.dual } : {}),
+  };
+}
+
+/** A defensive guard for the optional dual-review note (a malformed note is ignored). */
+function isDualNote(value: unknown): value is DualReviewNote {
+  if (typeof value !== "object" || value === null) return false;
+  const note = value as Record<string, unknown>;
+  return (
+    Array.isArray(note.seats) &&
+    note.seats.every((seat) => typeof seat === "string") &&
+    (note.secondSeatUnavailable === undefined || typeof note.secondSeatUnavailable === "string")
+  );
 }

@@ -134,6 +134,47 @@ describe("buildFlaggedIndex — the flagged index derivation", () => {
   });
 });
 
+describe("buildFlaggedIndex — the dual-review note (issue #191)", () => {
+  it("omits `dual` for a single-seat quick review", () => {
+    const index = buildFlaggedIndex(ok([finding({ findingId: "x" })]));
+    if (index.state !== "ok") throw new Error("expected ok");
+    expect(index.dual).toBeUndefined();
+  });
+
+  it("carries a full two-seat note through additively", () => {
+    const review: FlaggedReview = {
+      status: "ok",
+      findings: [finding({ findingId: "x" })],
+      dual: { seats: ["Claude", "Codex"] },
+    };
+    const index = buildFlaggedIndex(review);
+    if (index.state !== "ok") throw new Error("expected ok");
+    expect(index.dual).toEqual({ seats: ["Claude", "Codex"] });
+  });
+
+  it("carries the honest single-seat degradation marker", () => {
+    const review: FlaggedReview = {
+      status: "ok",
+      findings: [],
+      dual: { seats: ["Claude"], secondSeatUnavailable: "only one provider installed" },
+    };
+    const index = buildFlaggedIndex(review);
+    if (index.state !== "ok") throw new Error("expected ok");
+    expect(index.dual?.secondSeatUnavailable).toBe("only one provider installed");
+  });
+
+  it("ignores a malformed dual note rather than crashing the lens", () => {
+    const review = {
+      status: "ok",
+      findings: [finding({ findingId: "x" })],
+      dual: { seats: "Claude" },
+    } as unknown as FlaggedReview;
+    const index = buildFlaggedIndex(review);
+    if (index.state !== "ok") throw new Error("expected ok");
+    expect(index.dual).toBeUndefined();
+  });
+});
+
 describe("isFinding — the strict flag guard", () => {
   it("accepts a well-formed finding", () => {
     expect(isFinding(finding({ findingId: "x" }))).toBe(true);

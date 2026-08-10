@@ -87,8 +87,8 @@ async function liveReview(): Promise<{ review: Review; pipeline: ReviewPipelineR
   return { review, pipeline };
 }
 
-function userDataDir(): string {
-  const dir = mkdtempSync(join(tmpdir(), "rennet-desktop-userdata-"));
+function tempBaseDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "rennet-desktop-projects-"));
   scratch.push(dir);
   return dir;
 }
@@ -110,7 +110,7 @@ describe("createOrchestratorTurnRunner — the desktop composition", () => {
     const { review, pipeline } = await liveReview();
     const fake = fakeQuery([]);
     const run = createOrchestratorTurnRunner({
-      userDataDir: userDataDir(),
+      baseDir: tempBaseDir(),
       resolveClaudePath: () => Promise.resolve(null),
       loadQuery: fake.loadQuery,
     });
@@ -132,7 +132,7 @@ describe("createOrchestratorTurnRunner — the desktop composition", () => {
       { type: "result", subtype: "success", is_error: false, result: "current; @t/a" },
     ]);
     const run = createOrchestratorTurnRunner({
-      userDataDir: userDataDir(),
+      baseDir: tempBaseDir(),
       resolveClaudePath: () => Promise.resolve("/fake/claude"),
       loadQuery: fake.loadQuery,
     });

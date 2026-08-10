@@ -1,4 +1,18 @@
+import type { DualReviewNote } from "@rennet/types";
 import type { FlaggedIndex, FlaggedRow } from "../canvas/flagged";
+
+/**
+ * The deep-review affordance (issue #191). Dual-model review is built + wired at the
+ * command boundary behind a `deepReview` toggle on `flagged.review`; this control is
+ * how a human invokes it. `active` is true once requested (the button reflects the
+ * pending/refreshing state); `onRequest` re-runs the flagged review with
+ * `deepReview: true` so a second provider seat reconciles into per-finding
+ * agreement/disagreement.
+ */
+export interface DeepReviewControl {
+  active: boolean;
+  onRequest(): void;
+}
 
 // The Flagged lens (issue #138): one INDEX over everything the automated review
 // layer raised. Each row carries a severity chip, the models' agreement state
@@ -37,6 +51,32 @@ function Agreement({ row }: { row: FlaggedRow }) {
   );
 }
 
+/**
+ * How the review was produced (issue #41/#191): who ran, and the HONEST single-seat
+ * degradation marker. It NEVER shows a merged verdict — per-finding disagreement
+ * lives in each row's `Agreement`. Absent `dual` ⇒ a single-seat quick review, and
+ * nothing renders.
+ */
+function DualBadge({ dual }: { dual?: DualReviewNote }) {
+  if (!dual) return null;
+  if (dual.secondSeatUnavailable) {
+    return (
+      <span
+        className="flag-dual flag-dual-degraded"
+        data-dual="degraded"
+        title={dual.secondSeatUnavailable}
+      >
+        single provider — no second opinion
+      </span>
+    );
+  }
+  return (
+    <span className="flag-dual flag-dual-full" data-dual="full">
+      reconciled by {dual.seats.join(" + ")}
+    </span>
+  );
+}
+
 function FlagRow({
   row,
   onJumpToAnchor,
@@ -69,9 +109,16 @@ function FlagRow({
 export function FlaggedLens({
   index,
   onJumpToAnchor,
+  deepReview,
 }: {
   index: FlaggedIndex;
   onJumpToAnchor(anchor: string): void;
+  /**
+   * The deep-review control (issue #191). Absent ⇒ no affordance is shown (a host
+   * with no bridge, or a fixture). Present ⇒ the toolbar offers a one-tap deep
+   * review that opts the flagged runner into the two-model reconcile.
+   */
+  deepReview?: DeepReviewControl;
 }) {
   // A runner that did not complete — kept LOUDLY distinct from "nothing flagged".
   if (index.state === "failed") {
@@ -100,6 +147,19 @@ export function FlaggedLens({
             <span className="flag-count flag-count-medium">{index.counts.medium} medium</span>
             <span className="flag-count flag-count-low">{index.counts.low} low</span>
           </span>
+        ) : null}
+        <DualBadge dual={index.dual} />
+        {deepReview ? (
+          <button
+            type="button"
+            className="flag-deep-review"
+            data-active={deepReview.active}
+            aria-pressed={deepReview.active}
+            disabled={deepReview.active}
+            onClick={deepReview.onRequest}
+          >
+            {deepReview.active ? "Deep review requested" : "Deep review"}
+          </button>
         ) : null}
       </div>
       {index.total === 0 ? (

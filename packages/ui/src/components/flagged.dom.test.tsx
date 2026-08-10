@@ -115,4 +115,73 @@ describe("FlaggedLens — the flagged index surface", () => {
     expect(getByText(/Couldn't check/)).toBeTruthy();
     expect(getByText(/harness timed out/)).toBeTruthy();
   });
+
+  // ── Deep review (issue #191): the UI control that invokes the two-model pass ──
+  it("shows NO deep-review control when the affordance is not wired", () => {
+    const { container } = mount(
+      <FlaggedLens index={buildFlaggedIndex(REVIEW)} onJumpToAnchor={vi.fn()} />,
+    );
+    expect(container.querySelector(".flag-deep-review")).toBeNull();
+  });
+
+  it("invokes deep review when the control is clicked", async () => {
+    const onRequest = vi.fn();
+    const { container, user, getByText } = mount(
+      <FlaggedLens
+        index={buildFlaggedIndex(REVIEW)}
+        onJumpToAnchor={vi.fn()}
+        deepReview={{ active: false, onRequest }}
+      />,
+    );
+    const button = container.querySelector<HTMLButtonElement>(".flag-deep-review");
+    if (!button) throw new Error("expected the deep-review control");
+    expect(button.disabled).toBe(false);
+    expect(getByText("Deep review")).toBeTruthy();
+    await user.click(button);
+    expect(onRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("reflects the requested state and cannot be re-fired while active", async () => {
+    const onRequest = vi.fn();
+    const { container, user, getByText } = mount(
+      <FlaggedLens
+        index={buildFlaggedIndex(REVIEW)}
+        onJumpToAnchor={vi.fn()}
+        deepReview={{ active: true, onRequest }}
+      />,
+    );
+    const button = container.querySelector<HTMLButtonElement>(".flag-deep-review");
+    if (!button) throw new Error("expected the deep-review control");
+    expect(button.getAttribute("aria-pressed")).toBe("true");
+    expect(button.disabled).toBe(true);
+    expect(getByText("Deep review requested")).toBeTruthy();
+    await user.click(button);
+    expect(onRequest).not.toHaveBeenCalled();
+  });
+
+  it("badges a full two-seat reconcile with who ran", () => {
+    const dualReview: FlaggedReview = {
+      status: "ok",
+      findings: REVIEW.status === "ok" ? REVIEW.findings : [],
+      dual: { seats: ["Claude", "Codex"] },
+    };
+    const { container, getByText } = mount(
+      <FlaggedLens index={buildFlaggedIndex(dualReview)} onJumpToAnchor={vi.fn()} />,
+    );
+    expect(container.querySelector('[data-dual="full"]')).toBeTruthy();
+    expect(getByText(/reconciled by Claude \+ Codex/)).toBeTruthy();
+  });
+
+  it("badges an HONEST single-provider degradation when the second seat was unavailable", () => {
+    const degraded: FlaggedReview = {
+      status: "ok",
+      findings: REVIEW.status === "ok" ? REVIEW.findings : [],
+      dual: { seats: ["Claude"], secondSeatUnavailable: "only one provider installed" },
+    };
+    const { container, getByText } = mount(
+      <FlaggedLens index={buildFlaggedIndex(degraded)} onJumpToAnchor={vi.fn()} />,
+    );
+    expect(container.querySelector('[data-dual="degraded"]')).toBeTruthy();
+    expect(getByText(/single provider — no second opinion/)).toBeTruthy();
+  });
 });

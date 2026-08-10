@@ -800,11 +800,12 @@ app.whenReady().then(async () => {
   // The live orchestrator turn runner (issue #13, wave 2): composes the wave-1 live
   // backend + the lean primer + a real `claude` turn over the in-process canvasOps@2
   // MCP server. It reuses the SAME memoized `claude` discovery the review pipeline
-  // uses (R2 subscription OAuth) and the app-owned snapshot store under userData. It
-  // is wired into the command-router composition here; the conversational command
-  // that would drive a turn per user question is the DEFERRED UI loop.
+  // uses (R2 subscription OAuth) and the app-owned LOCAL-FIRST snapshot store under
+  // `~/.rennet/projects/` (issue #188 — `baseDir` omitted, so it inherits
+  // `defaultProjectsBaseDir()`). It is wired into the command-router composition
+  // here; the conversational command that would drive a turn per user question is
+  // the DEFERRED UI loop.
   const orchestratorTurn = createOrchestratorTurnRunner({
-    userDataDir: app.getPath("userData"),
     resolveClaudePath: async () => (await getClaudeHarness()).discovery.chosen?.path ?? null,
     env: process.env,
   });

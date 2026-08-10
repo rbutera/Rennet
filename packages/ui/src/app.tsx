@@ -300,6 +300,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // boundary (a fixture stands behind it until the finding-generation runner lands);
   // undefined until it loads, so the lens shows the honest empty state meanwhile.
   const [flaggedReview, setFlaggedReview] = useState<FlaggedReview | undefined>(undefined);
+  // Deep review (issue #191): the human opts THIS review into the two-model
+  // reconcile. Off by default (quick review, single Claude seat); flipping it
+  // re-runs the flagged fetch with `deepReview: true`. Reset per review below.
+  const [deepReviewRequested, setDeepReviewRequested] = useState(false);
   // The Noise lens's input (issue #34): the low-signal churn grouped away for the
   // open review, each group tagged rule vs noise job. Fetched over the same real
   // command boundary as the flagged input (a fixture stands behind it until the
@@ -452,6 +456,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setLoadFailed(false);
     setFlaggedReview(undefined);
     setNoiseReview(undefined);
+    // A new review starts as a quick review — never inherit the prior review's
+    // deep-review request (which would silently double-spend on open).
+    setDeepReviewRequested(false);
     fetchedCanvasKey.current = null;
   }, [reviewId]);
 
@@ -462,8 +469,14 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   useEffect(() => {
     if (!reviewId) return;
     let cancelled = false;
+    // `deepReview` opts into the two-model reconcile (issue #191); omitted (false)
+    // it stays a quick single-Claude review. The command boundary defaults it to
+    // false, so a quick run passes nothing extra.
     void bridge
-      .invoke("flagged.review", { reviewId })
+      .invoke("flagged.review", {
+        reviewId,
+        ...(deepReviewRequested ? { deepReview: true } : {}),
+      })
       .then((result) => {
         // Guard the shape: a host or test bridge that returns anything but a
         // FlaggedReview (`{ status }`) leaves the lens on its honest empty state.
@@ -477,7 +490,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     return () => {
       cancelled = true;
     };
-  }, [reviewId, bridge]);
+  }, [reviewId, bridge, deepReviewRequested]);
 
   // The Noise lens (issue #34): fetch the low-signal churn grouped away for the open
   // review over the real command boundary. Like the flagged fetch it carries NO
@@ -1074,6 +1087,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
               bridge={bridge}
               narration={narration}
               flaggedReview={flaggedReview}
+              deepReview={{
+                active: deepReviewRequested,
+                onRequest: () => setDeepReviewRequested(true),
+              }}
               noiseReview={noiseReview}
               onDispositions={(writes) => {
                 setCanvases((current) => (current ? applyWrites(current, writes) : current));

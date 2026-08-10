@@ -19,8 +19,8 @@ import { createDesktopReviewBackend } from "./live-review-backend";
 // lean primer from that live state, and drive ONE model turn on the user's own
 // `claude` (R2 subscription OAuth) with the in-process canvasOps@2 MCP server
 // wired in. Like `createDesktopReviewBackend`, this module is electron-free (it
-// takes `userDataDir` + a claude-path resolver as values) so it is unit-testable
-// without spinning up Electron.
+// takes an optional `baseDir` + a claude-path resolver as values) so it is
+// unit-testable without spinning up Electron.
 //
 // "When an orchestrator turn is requested" = a call to the returned runner. The
 // wave proves the backend + surface run LIVE (the gated real-turn proof); the chat
@@ -29,8 +29,12 @@ import { createDesktopReviewBackend } from "./live-review-backend";
 
 /** The app-level deps a turn runner is bound to (resolved lazily, per the app). */
 export interface OrchestratorRunnerDeps {
-  /** Where the app-owned ProjectSnapshot store lives (Electron userData). */
-  readonly userDataDir: string;
+  /**
+   * Base directory for the app-owned local-first ProjectSnapshot store. Omitted in
+   * the app so the store defaults to `~/.rennet/projects/` (`defaultProjectsBaseDir`,
+   * issue #188); a test injects a temp dir so it never touches the real home store.
+   */
+  readonly baseDir?: string;
   /**
    * Resolve the user's discovered `claude` binary path, or `null` when none is
    * installed. Bound to the app's memoized discovery; a turn refuses cleanly (never
@@ -85,7 +89,7 @@ export function createOrchestratorTurnRunner(deps: OrchestratorRunnerDeps): Orch
     }
 
     const { backend, snapshot } = await createDesktopReviewBackend(review, pipeline, {
-      userDataDir: deps.userDataDir,
+      ...(deps.baseDir ? { baseDir: deps.baseDir } : {}),
       ...deps.backend,
     });
     const primer = deriveOrchestratorPrimerState(pipeline, backend, snapshot);
