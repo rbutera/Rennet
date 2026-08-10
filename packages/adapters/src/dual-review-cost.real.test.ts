@@ -13,7 +13,13 @@ import {
 import type { Patchset, RspTokenUsage } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { createClaudeHarness } from "./claude-query";
-import { createCodexUtilityAdapter, discoverCodexAvailability } from "./codex-exec";
+import {
+  createCodexExecutor,
+  createCodexUtilityAdapter,
+  defaultCodexExecEffects,
+  discoverCodexAvailability,
+} from "./codex-exec";
+import { type CodexSessionReadResult, codexSessionsRoot } from "./codex-session-usage";
 import { captureRangePatchset, execaGit } from "./git-range-diff";
 import { createInstrumentedRunTurn, createMetricsCollector } from "./turn-metrics";
 
@@ -118,8 +124,16 @@ describe("rennet dual-model Flagged review — cost (gated real turns)", () => {
         ),
       };
 
-      // ── Codex seat: real `codex exec`, tokens captured off the returned turn ──
-      const port = createCodexUtilityAdapter();
+      // ── Codex seat: real `codex exec`, tokens now read from the session log ──
+      // The executor correlates each `codex exec` to its rollout `.jsonl` by the
+      // unique scratch cwd and returns REAL tokens; the onUsageMeasurement hook
+      // collects the correlation outcome so the report is honest about measured vs
+      // unmeasured (never "opaque", never a guessed number).
+      const codexMeasurements: CodexSessionReadResult[] = [];
+      const executor = createCodexExecutor(defaultCodexExecEffects, {
+        onUsageMeasurement: (m) => codexMeasurements.push(m),
+      });
+      const port = createCodexUtilityAdapter({ executor });
       const rawCodexTurn = createCodexRunTurn(port, {
         docType: "finding",
         patchset: { id: patchset.id },
@@ -165,7 +179,11 @@ describe("rennet dual-model Flagged review — cost (gated real turns)", () => {
 
       const cx = codexTokens as RspTokenUsage | null;
       const codexTotal = cx?.total ?? null;
-      const codexOpaque = cx === null || cx.total === 0;
+      const codexMeasured = cx !== null && cx.total > 0;
+      const measuredCount = codexMeasurements.filter((m) => m.status === "measured").length;
+      const codexStatusNote = codexMeasured
+        ? `measured from ${measuredCount} session log(s)`
+        : `UNMEASURED: ${codexMeasurements.map((m) => `${m.status}${m.reason ? ` (${m.reason})` : ""}`).join("; ") || "no measurement recorded"}`;
 
       line("");
       line("=== RENNET DUAL-REVIEW COST — per seat (Flagged lens) ===");
@@ -191,20 +209,33 @@ describe("rennet dual-model Flagged review — cost (gated real turns)", () => {
         [
           "Codex".padEnd(8),
           String(codexAttempts).padStart(6),
-          String(codexTotal ?? "OPAQUE").padStart(12),
+          String(codexTotal ?? "UNMEASURED").padStart(12),
           String(Math.round(codexLatencyMs)).padStart(10),
           `${DEFAULT_CODEX_UTILITY_MODEL} / subscription`,
         ].join(" "),
       );
+      if (codexMeasured && cx) {
+        line(
+          [
+            "  ".padEnd(8),
+            "".padStart(6),
+            `in ${cx.input} / out ${cx.output} / cacheRead ${cx.cacheRead}`.padStart(12),
+            "",
+            "REAL (session log)",
+          ].join(" "),
+        );
+      }
       line("-".repeat(60));
+      line(`codex sessions dir: ${codexSessionsRoot()}`);
+      line(`codex usage: ${codexStatusNote}`);
       line(
         `Claude vs baseline finding turn (~${BASELINE_FINDING_TOTAL_TOKENS} tok): the SECOND opinion`,
       );
       line(`  → dual Flagged ≈ 1 Claude finding turn + 1 Codex finding turn.`);
       line(
-        codexOpaque
-          ? "  → Codex per-call token usage is OPAQUE on subscription (reported little/none); NOT guessed."
-          : `  → Codex reported ${codexTotal} tokens.`,
+        codexMeasured
+          ? `  → Codex reported ${codexTotal} REAL tokens (read from the session log, chaching-style).`
+          : "  → Codex usage UNMEASURED (session log not correlated); NOT guessed, NOT opaque.",
       );
       const reconciled = review.status === "ok" ? review.findings.length : 0;
       const concur =
@@ -233,7 +264,9 @@ describe("rennet dual-model Flagged review — cost (gated real turns)", () => {
               codex: {
                 attempts: codexAttempts,
                 tokens: cx,
-                opaque: codexOpaque,
+                measured: codexMeasured,
+                sessionsDir: codexSessionsRoot(),
+                measurements: codexMeasurements,
                 latencyMs: codexLatencyMs,
               },
               reconcile: { reconciled, concur, disagree, status: review.status },

@@ -7,6 +7,7 @@ import {
   type CodexRunSpec,
   createCodexExecutor,
   discoverCodexAvailability,
+  sanitizeSchemaForCodex,
 } from "./codex-exec";
 
 // ── buildCodexExecArgs — the four load-bearing gotchas live in the argv ────────
@@ -124,6 +125,20 @@ describe("createCodexExecutor", () => {
     expect(state.spec?.args).not.toContain("--output-schema");
   });
 
+  it("writes the CODEX-SANITIZED schema (additionalProperties {} → false)", async () => {
+    const { effects, state } = fakeEffects({ outContent: "{}" });
+    const executor = createCodexExecutor(effects);
+    await executor({
+      model: "gpt-5.6-luna",
+      effort: "low",
+      prompt: "p",
+      outputSchema: { type: "object", properties: {}, additionalProperties: {} },
+    });
+    const written = JSON.parse(state.writes[0]?.data ?? "null");
+    // OpenAI structured outputs would 400 on the loose {} — it must be false.
+    expect(written.additionalProperties).toBe(false);
+  });
+
   it("throws (and still cleans up) on a non-zero exit", async () => {
     const { effects, state } = fakeEffects({
       outContent: "{}",
@@ -149,6 +164,103 @@ describe("createCodexExecutor", () => {
     const executor = createCodexExecutor(effects, { harnessVersion: "0.146.0" });
     const result = await executor({ model: "gpt-5.6-luna", effort: "low", prompt: "p" });
     expect(result.harnessVersion).toBe("0.146.0");
+  });
+
+  it("records NO tokens when no session-usage reader is injected (honest unmeasured)", async () => {
+    const { effects } = fakeEffects({ outContent: "{}" });
+    // The fake effects omit readSessionUsage — the executor must not fabricate a zero.
+    const executor = createCodexExecutor(effects);
+    const result = await executor({ model: "gpt-5.6-luna", effort: "low", prompt: "p" });
+    expect(result.tokens).toBeUndefined();
+  });
+
+  it("threads REAL tokens from the session log correlated by the scratch cwd", async () => {
+    const { effects } = fakeEffects({ outContent: "{}" });
+    let seenCwd: string | undefined;
+    let seenSince: number | undefined;
+    const measurements: string[] = [];
+    const executor = createCodexExecutor(
+      {
+        ...effects,
+        readSessionUsage: async ({ correlationCwd, modifiedSince }) => {
+          seenCwd = correlationCwd;
+          seenSince = modifiedSince;
+          return {
+            status: "measured",
+            usage: {
+              input: 14791,
+              output: 398,
+              cacheRead: 9984,
+              cacheWrite: 0,
+              reasoning: 93,
+              total: 25173,
+            },
+            sessionFile: "/sessions/2026/08/10/a.jsonl",
+            scanned: 3,
+            matched: 1,
+          };
+        },
+      },
+      {
+        now: () => 1_000_000,
+        onUsageMeasurement: (m) => measurements.push(m.status),
+      },
+    );
+
+    const result = await executor({ model: "gpt-5.6-luna", effort: "low", prompt: "p" });
+
+    expect(result.tokens).toEqual({
+      input: 14791,
+      output: 398,
+      cacheRead: 9984,
+      cacheWrite: 0,
+      reasoning: 93,
+      total: 25173,
+    });
+    // Correlated by the scratch cwd, over a window that opens before the run.
+    expect(seenCwd).toMatch(/rennet-codex-/);
+    expect(seenSince).toBe(1_000_000 - 5_000);
+    expect(measurements).toEqual(["measured"]);
+  });
+
+  it("records NO tokens (but fires the hook) when the log is unmeasured", async () => {
+    const { effects } = fakeEffects({ outContent: "{}" });
+    const measurements: string[] = [];
+    const executor = createCodexExecutor(
+      {
+        ...effects,
+        readSessionUsage: async () => ({
+          status: "unmeasured",
+          usage: null,
+          sessionFile: null,
+          reason: "no codex session log correlated",
+          scanned: 2,
+          matched: 0,
+        }),
+      },
+      { onUsageMeasurement: (m) => measurements.push(m.status) },
+    );
+    const result = await executor({ model: "gpt-5.6-luna", effort: "low", prompt: "p" });
+    expect(result.tokens).toBeUndefined();
+    expect(measurements).toEqual(["unmeasured"]);
+  });
+
+  it("never fails the run when the usage read throws (fires an unmeasured hook)", async () => {
+    const { effects } = fakeEffects({ outContent: "{}" });
+    const measurements: string[] = [];
+    const executor = createCodexExecutor(
+      {
+        ...effects,
+        readSessionUsage: async () => {
+          throw new Error("disk gone");
+        },
+      },
+      { onUsageMeasurement: (m) => measurements.push(m.status) },
+    );
+    const result = await executor({ model: "gpt-5.6-luna", effort: "low", prompt: "p" });
+    expect(result.output).toEqual({});
+    expect(result.tokens).toBeUndefined();
+    expect(measurements).toEqual(["unmeasured"]);
   });
 });
 
@@ -181,5 +293,62 @@ describe("discoverCodexAvailability", () => {
     const probe = vi.fn(async () => ({ exitCode: 0, stdout: "codex\n" }));
     const result = await discoverCodexAvailability(probe);
     expect(result).toEqual({ available: true, version: null });
+  });
+});
+
+// ── sanitizeSchemaForCodex — the OpenAI structured-output compatibility strip ──
+
+describe("sanitizeSchemaForCodex", () => {
+  it("rewrites an empty-object additionalProperties to false (deeply)", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        findings: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: { id: { type: "string" } },
+            required: ["id"],
+            additionalProperties: {},
+          },
+        },
+      },
+      required: ["findings"],
+      additionalProperties: {},
+    };
+    const out = sanitizeSchemaForCodex(schema);
+    // Round-trip through JSON so the deep assertions read structurally, not via
+    // a chain of possibly-undefined casts.
+    const j = JSON.parse(JSON.stringify(out));
+    expect(j.additionalProperties).toBe(false);
+    expect(j.properties.findings.items.additionalProperties).toBe(false);
+    // Non-additionalProperties structure is preserved intact.
+    expect(j.required).toEqual(["findings"]);
+    expect(j.properties.findings.items.properties.id).toEqual({ type: "string" });
+  });
+
+  it("keeps a TYPED additionalProperties subschema (only the empty-object case flips)", () => {
+    const schema = { type: "object", additionalProperties: { type: "string" } };
+    const out = sanitizeSchemaForCodex(schema) as Record<string, unknown>;
+    expect(out.additionalProperties).toEqual({ type: "string" });
+  });
+
+  it("does not mutate its input", () => {
+    const schema = { type: "object", additionalProperties: {} };
+    const clone = structuredClone(schema);
+    sanitizeSchemaForCodex(schema);
+    expect(schema).toEqual(clone);
+  });
+
+  it("handles arrays and leaves an existing false untouched", () => {
+    const schema = {
+      anyOf: [
+        { type: "object", additionalProperties: {} },
+        { type: "object", additionalProperties: false },
+      ],
+    };
+    const out = sanitizeSchemaForCodex(schema) as { anyOf: Record<string, unknown>[] };
+    expect(out.anyOf[0]?.additionalProperties).toBe(false);
+    expect(out.anyOf[1]?.additionalProperties).toBe(false);
   });
 });

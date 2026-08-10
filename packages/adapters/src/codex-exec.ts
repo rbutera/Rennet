@@ -34,9 +34,50 @@ import {
   createCodexUtilityPort,
 } from "@rennet/core";
 import { execa } from "execa";
+import {
+  type CodexSessionReadResult,
+  type CodexSessionUsageReader,
+  defaultCodexSessionUsageReader,
+} from "./codex-session-usage";
 
 /** The `codex` binary invoked for a utility call. */
 export const CODEX_EXEC_BIN = "codex";
+
+/**
+ * The Codex analogue of `bodyJsonSchema`'s `$schema` strip for the Claude CLI.
+ *
+ * `codex exec --output-schema` feeds the schema to OpenAI structured outputs,
+ * which requires `additionalProperties: false` on every object and rejects a
+ * typeless `additionalProperties: {}` node with a 400 (`invalid_json_schema`,
+ * "schema must have a 'type' key"). Zod's `z.toJSONSchema` projects the RSP body
+ * schemas' loose objects as `additionalProperties: {}`, so WITHOUT this the Codex
+ * seat NEVER completes a structured emission — it 400s on every attempt, degrades
+ * to a single seat, and its token cost is unmeasurable because it never runs.
+ *
+ * This pure, deep, non-mutating transform rewrites every empty-object
+ * `additionalProperties` to `false` (a typed additionalProperties subschema is
+ * kept and recursed into). It is applied only on the Codex path; the Claude path
+ * tolerates `{}` and is untouched.
+ */
+export function sanitizeSchemaForCodex(schema: unknown): unknown {
+  if (Array.isArray(schema)) return schema.map(sanitizeSchemaForCodex);
+  if (schema === null || typeof schema !== "object") return schema;
+  const out: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(schema as Record<string, unknown>)) {
+    if (
+      key === "additionalProperties" &&
+      value !== null &&
+      typeof value === "object" &&
+      !Array.isArray(value) &&
+      Object.keys(value as Record<string, unknown>).length === 0
+    ) {
+      out[key] = false; // OpenAI strict structured outputs demand a boolean here
+      continue;
+    }
+    out[key] = sanitizeSchemaForCodex(value);
+  }
+  return out;
+}
 
 /**
  * Pure argv assembly. Flags 1, 3, and 4 live here; the model/effort knobs, the
@@ -90,6 +131,14 @@ export interface CodexExecEffects {
   readonly readFile: (path: string) => Promise<string>;
   readonly rm: (path: string) => Promise<void>;
   readonly run: CodexRun;
+  /**
+   * Read the real token usage from the Codex session log written during the run,
+   * correlated by the scratch cwd. OPTIONAL: when absent (e.g. a unit test's
+   * injected effects) the executor records NO tokens — honest "unmeasured", never
+   * a fabricated zero. `defaultCodexExecEffects` supplies the real reader over
+   * `~/.codex/sessions`.
+   */
+  readonly readSessionUsage?: CodexSessionUsageReader;
 }
 
 /** The real effects: node fs + one `execa` spawn with closed stdin. */
@@ -98,6 +147,7 @@ export const defaultCodexExecEffects: CodexExecEffects = {
   writeFile: (path, data) => writeFile(path, data, "utf8"),
   readFile: (path) => readFile(path, "utf8"),
   rm: (path) => rm(path, { recursive: true, force: true }),
+  readSessionUsage: defaultCodexSessionUsageReader,
   run: async (spec) => {
     const result = await execa(spec.bin, [...spec.args], {
       cwd: spec.cwd,
@@ -114,7 +164,25 @@ export interface CreateCodexExecutorOptions {
   readonly bin?: string;
   /** The discovered `codex` version, stamped onto the exec result's provenance. */
   readonly harnessVersion?: string;
+  /**
+   * Observability hook fired once per run with the session-log correlation
+   * outcome (measured / unmeasured / ambiguous) — the honest surface a cost
+   * harness reads to report REAL Codex tokens or an honest "unmeasured" reason,
+   * without the measurement metadata having to travel through the port. Never
+   * affects the run; a throw inside it is not caught here, so keep it total.
+   */
+  readonly onUsageMeasurement?: (measurement: CodexSessionReadResult) => void;
+  /** Wall clock, injectable for a deterministic window in tests. Defaults to `Date.now`. */
+  readonly now?: () => number;
 }
+
+/**
+ * The safety margin subtracted from the run's start when bounding the session-log
+ * mtime window — absorbs clock skew and the gap between "we sampled now()" and
+ * "codex created its rollout file". Correlation is by the unique scratch cwd, so
+ * a slightly generous window only widens the candidate set the cwd then filters.
+ */
+export const CODEX_USAGE_WINDOW_MARGIN_MS = 5_000;
 
 /**
  * Build the real `CodexExecutor`: write the schema to a scratch temp dir, spawn
@@ -127,14 +195,24 @@ export function createCodexExecutor(
   options: CreateCodexExecutorOptions = {},
 ): CodexExecutor {
   const bin = options.bin ?? CODEX_EXEC_BIN;
+  const now = options.now ?? Date.now;
   return async (req: CodexExecRequest): Promise<CodexExecResult> => {
     const dir = await effects.mkdtemp(join(tmpdir(), "rennet-codex-"));
     const outPath = join(dir, "out.json");
+    // Bound the session-log search to files written from just before this spawn.
+    // Captured BEFORE the run so codex's rollout (created at process start) is
+    // always in-window; the unique scratch `dir` is the real correlation key.
+    const windowStart = now() - CODEX_USAGE_WINDOW_MARGIN_MS;
     try {
       let schemaPath: string | undefined;
       if (req.outputSchema !== undefined) {
         schemaPath = join(dir, "schema.json");
-        await effects.writeFile(schemaPath, JSON.stringify(req.outputSchema));
+        // OpenAI structured outputs (behind --output-schema) reject the loose
+        // `additionalProperties: {}` the Zod projection emits; sanitize per-Codex.
+        await effects.writeFile(
+          schemaPath,
+          JSON.stringify(sanitizeSchemaForCodex(req.outputSchema)),
+        );
       }
       const args = buildCodexExecArgs(
         { model: req.model, effort: req.effort, prompt: req.prompt },
@@ -159,8 +237,34 @@ export function createCodexExecutor(
       } catch {
         throw new Error(`codex exec output was not valid JSON: ${raw.slice(0, 200)}`);
       }
+      // Best-effort REAL token usage from the session log (chaching-style),
+      // correlated by this run's unique scratch cwd. Measurement never fails the
+      // call: any error → no tokens → the port stamps an honest unmeasured zero.
+      let tokens: CodexExecResult["tokens"];
+      if (effects.readSessionUsage !== undefined) {
+        try {
+          const measurement = await effects.readSessionUsage({
+            correlationCwd: dir,
+            modifiedSince: windowStart,
+          });
+          options.onUsageMeasurement?.(measurement);
+          if (measurement.status === "measured" && measurement.usage !== null) {
+            tokens = measurement.usage;
+          }
+        } catch (error) {
+          options.onUsageMeasurement?.({
+            status: "unmeasured",
+            usage: null,
+            sessionFile: null,
+            reason: `codex session usage read threw: ${error instanceof Error ? error.message : String(error)}`,
+            scanned: 0,
+            matched: 0,
+          });
+        }
+      }
       return {
         output,
+        ...(tokens === undefined ? {} : { tokens }),
         ...(options.harnessVersion === undefined ? {} : { harnessVersion: options.harnessVersion }),
       };
     } finally {
