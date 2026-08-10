@@ -45,3 +45,8 @@ tmp/
 
 .claude/worktrees
 .claude/settings.local.json
+
+# openspec: the user's global ~/.gitignore ignores openspec/ repo-wide.
+# Un-ignore it here so openspec changes track normally (no more `git add -f`).
+!openspec/
+!openspec/**
