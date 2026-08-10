@@ -28,6 +28,7 @@ export {
 export {
   buildCodexExecArgs,
   CODEX_EXEC_BIN,
+  CODEX_USAGE_WINDOW_MARGIN_MS,
   type CodexAvailability,
   type CodexExecEffects,
   type CodexRun,
@@ -41,7 +42,21 @@ export {
   defaultCodexExecEffects,
   defaultCodexVersionProbe,
   discoverCodexAvailability,
+  sanitizeSchemaForCodex,
 } from "./codex-exec";
+export {
+  type CodexSessionReadDeps,
+  type CodexSessionReadResult,
+  type CodexSessionUsageReader,
+  codexSessionsRoot,
+  defaultCodexSessionReadDeps,
+  defaultCodexSessionUsageReader,
+  type ParsedCodexSession,
+  parseCodexSessionText,
+  type ReadCodexSessionUsageOptions,
+  readCodexSessionUsage,
+  ZERO_CODEX_USAGE,
+} from "./codex-session-usage";
 export {
   decisionsRecordFixture,
   emptyDecisionsRecordFixture,
