@@ -110,6 +110,16 @@ export {
   type VersionRange,
 } from "./harness-discovery";
 export {
+  activePatchset,
+  createLiveCanvasOpsBackend,
+  type LiveBackendDeps,
+  type LiveReviewBackend,
+  type LiveSnapshotOutcome,
+  repoKeyOf,
+  resolveContextFor,
+  resolveNoveltyFor,
+} from "./live-review-backend";
+export {
   emptyNoiseReviewFixture,
   failedNoiseReviewFixture,
   noiseReviewFixture,

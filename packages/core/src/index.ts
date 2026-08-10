@@ -42,6 +42,7 @@ export * from "./project-context";
 export * from "./project-snapshot";
 export * from "./publish-review";
 export * from "./review-ask";
+export * from "./review-backend";
 export * from "./rollup-narration";
 export * from "./route-plan";
 
