@@ -23,6 +23,7 @@ import type {
   CanvasAngle,
   ElementDiffs,
   FlaggedReview,
+  NoiseReview,
   Review,
   ReviewEngine,
   ReviewNarration,
@@ -130,6 +131,12 @@ export interface DispatchDeps {
    * behind the real boundary until the finding-generation runner + aggregation land.
    */
   flaggedReview(reviewId: string): Promise<FlaggedReview>;
+  /**
+   * The Noise lens's input (issue #34): the low-signal churn grouped away for a
+   * review, each group tagged rule vs noise job. Read-only, no model spend. A fixture
+   * stands behind the real boundary until the noise-classification runner lands.
+   */
+  noiseReview(reviewId: string): Promise<NoiseReview>;
 }
 
 /** Lift the wire target shape into the core `ForgeReviewTarget` nouns. */
@@ -438,6 +445,14 @@ export function createDispatch(
         // until the finding-generation runner + aggregation land (deferred, #32/#41).
         const input = parseCommandInput(name, rawInput);
         return parseCommandOutput(name, await deps.flaggedReview(input.reviewId));
+      }
+      // ── The Noise lens (issue #34) ────────────────────────────────────────────
+      case "noise.review": {
+        // Read-only: the low-signal churn grouped away for the review, tagged rule vs
+        // noise job. No model spend; a fixture stands behind the real boundary until
+        // the live noise-classification runner lands (deferred).
+        const input = parseCommandInput(name, rawInput);
+        return parseCommandOutput(name, await deps.noiseReview(input.reviewId));
       }
       // ── Canvas user ops (issue #54 wires #10's command surface into dispatch) ──
       case "canvas.disposition": {

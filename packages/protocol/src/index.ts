@@ -4,6 +4,7 @@ import type {
   DispositionAnchor,
   ElementDiffs,
   FlaggedReview,
+  NoiseReview,
   Patchset,
   Review,
   ReviewEngine,
@@ -487,6 +488,43 @@ export const flaggedReviewSchema: z.ZodType<FlaggedReview> = z.union([
   z.object({ status: z.literal("failed"), reason: z.string() }),
 ]);
 
+// ── The Noise lens: grouped low-signal churn (issue #34) ──────────────────────
+// The low-signal churn a changeset touches, grouped away from the code that needs
+// eyes and tagged with how each group was judged (a deterministic mechanical RULE
+// vs the LLM NOISE JOB), delivered behind the typed command boundary. A fixture
+// stands behind it until the live noise-classification runner lands. The renderer
+// folds this into the noise index; `status` keeps "ran clean" honestly apart from
+// "the runner did not complete".
+export const noiseCategorySchema = z.enum([
+  "formatting",
+  "lockfile",
+  "import-order",
+  "generated",
+  "fixture-rename",
+  "comment-typo",
+  "other",
+]);
+export const noiseJudgedBySchema = z.union([
+  z.object({ kind: z.literal("rule"), rule: z.string().min(1) }),
+  z.object({ kind: z.literal("noise-job"), model: z.string().min(1) }),
+]);
+export const noiseItemSchema = z.object({
+  anchor: z.string().min(1),
+  detail: z.string(),
+  deviates: z.boolean().optional(),
+});
+export const noiseGroupSchema = z.object({
+  groupId: z.string().min(1),
+  category: noiseCategorySchema,
+  summary: z.string(),
+  judgedBy: noiseJudgedBySchema,
+  items: z.array(noiseItemSchema),
+});
+export const noiseReviewSchema: z.ZodType<NoiseReview> = z.union([
+  z.object({ status: z.literal("ok"), groups: z.array(noiseGroupSchema) }),
+  z.object({ status: z.literal("failed"), reason: z.string() }),
+]);
+
 export const commandDefinitions = {
   "app.bootstrap": {
     input: z.object({}),
@@ -821,6 +859,16 @@ export const commandDefinitions = {
   "flagged.review": {
     input: z.object({ reviewId: z.string().min(1) }),
     output: flaggedReviewSchema,
+  },
+  // ── The Noise lens (issue #34) ─────────────────────────────────────────────
+  // The low-signal churn the changeset touches, grouped away and tagged with how
+  // each group was judged (mechanical rule vs LLM noise job) — read-only, no model
+  // spend. A fixture stands behind the real boundary until the live noise-
+  // classification runner lands (deferred). Nothing is silently hidden: the lens
+  // renders every group inspectable and pull-back-able.
+  "noise.review": {
+    input: z.object({ reviewId: z.string().min(1) }),
+    output: noiseReviewSchema,
   },
 } as const;
 

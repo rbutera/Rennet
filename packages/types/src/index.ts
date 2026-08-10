@@ -933,6 +933,83 @@ export type FlaggedReview =
   | { status: "ok"; findings: FindingElement[] }
   | { status: "failed"; reason: string };
 
+// ─── The `noise` doc family + the Noise lens (issue #34) ──────────────────────
+//
+// The Noise lens groups the low-signal churn a changeset touches — formatting,
+// lockfile regeneration, import reordering, generated output, fixture renames,
+// comment typos — AWAY from the code that needs eyes. Each group is collapsed
+// under a plain-speech one-line summary, tagged with HOW it was judged (a
+// deterministic mechanical RULE, or the LLM NOISE JOB), and is pull-back-able:
+// nothing is silently hidden, only grouped, and any group can be reopened into
+// the main review. This shape is deliberately small and stable (like
+// `FindingElement`); the live noise-classification runner (deferred) will emit it.
+
+/**
+ * The kind of churn a noise group collects. A CLOSED vocabulary matching the
+ * lens's plain-speech categories; `other` is the honest catch-all so a group is
+ * never forced into a wrong bucket to be placed (totality over tidiness).
+ */
+export type NoiseCategory =
+  | "formatting"
+  | "lockfile"
+  | "import-order"
+  | "generated"
+  | "fixture-rename"
+  | "comment-typo"
+  | "other";
+
+/**
+ * How a noise group was judged, shown per group as a chip (issue #34). A `rule`
+ * chip is a deterministic mechanical rule (the formatter, the lockfile path, an
+ * import-order AST check) — mechanical CERTAINTY; a `noise-job` chip is the LLM
+ * noise job's call over the ambiguous remainder — a MODEL's judgment. The two are
+ * kept distinct so a reviewer can tell settled-by-machine from settled-by-model.
+ */
+export type NoiseJudgedBy = { kind: "rule"; rule: string } | { kind: "noise-job"; model: string };
+
+/**
+ * One churn item inside a noise group: the anchor it lives at and a short plain
+ * detail. `deviates` marks a line that BREAKS its group's pattern — the totality
+ * floor's deviating-line ejection: it is never suppressed inside the group, it
+ * ejects into normal review (the derivation lifts it out; nothing is dropped).
+ */
+export interface NoiseItem {
+  anchor: string;
+  detail: string;
+  deviates?: boolean;
+}
+
+/**
+ * The canvas-facing shape of one noise group: an id, its category, the plain-speech
+ * one-line summary the collapsed row shows, how it was judged (rule vs noise job),
+ * and the churn items it collects (kept INSPECTABLE — the group is collapsed, never
+ * dropped). The live `noise` doc body (a follow-up) is an ADDITIVE superset.
+ */
+export interface NoiseGroup {
+  groupId: string;
+  category: NoiseCategory;
+  summary: string;
+  judgedBy: NoiseJudgedBy;
+  items: NoiseItem[];
+}
+
+/** The `noise` doc body as consumed by the noise-lens derivation. */
+export interface NoiseBody {
+  groups: NoiseGroup[];
+}
+
+/**
+ * The Noise lens's per-review input, behind the typed boundary (issue #34). A
+ * review that RAN and grouped nothing (`ok` with empty `groups`) is honestly empty;
+ * a runner that FAILED (`failed`, with a reason) is a different state and must never
+ * be conflated with "no noise" — an all-clear that masks a runner that never ran is
+ * the exact lie the empty-vs-failed distinction refuses. The live noise-classification
+ * runner (deferred) sets this; until then it is `ok` behind the fixture.
+ */
+export type NoiseReview =
+  | { status: "ok"; groups: NoiseGroup[] }
+  | { status: "failed"; reason: string };
+
 /** L0 — a slice of the substrate a canvas is about: the chunks it covers. */
 export interface SubstrateChunkRef {
   chunkId: string;

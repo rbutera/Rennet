@@ -9,6 +9,7 @@ import type {
   CanvasAngle,
   ElementDiffs,
   FlaggedReview,
+  NoiseReview,
   Patchset,
   Review,
   ReviewEngine,
@@ -295,6 +296,12 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // boundary (a fixture stands behind it until the finding-generation runner lands);
   // undefined until it loads, so the lens shows the honest empty state meanwhile.
   const [flaggedReview, setFlaggedReview] = useState<FlaggedReview | undefined>(undefined);
+  // The Noise lens's input (issue #34): the low-signal churn grouped away for the
+  // open review, each group tagged rule vs noise job. Fetched over the same real
+  // command boundary as the flagged input (a fixture stands behind it until the
+  // noise-classification runner lands); undefined until it loads, so the lens shows
+  // the honest empty state meanwhile.
+  const [noiseReview, setNoiseReview] = useState<NoiseReview | undefined>(undefined);
   // The live load returned null (no harness / pipeline error) for THIS review, so
   // there is nothing real to show — the UI offers an honest error + retry rather
   // than silently standing on a demo.
@@ -425,6 +432,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setLiveLoaded(false);
     setLoadFailed(false);
     setFlaggedReview(undefined);
+    setNoiseReview(undefined);
     fetchedForReview.current = null;
   }, [reviewId]);
 
@@ -444,6 +452,31 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         const review = result as Partial<FlaggedReview> | undefined;
         if (review?.status === "ok" || review?.status === "failed") {
           setFlaggedReview(review as FlaggedReview);
+        }
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [reviewId, bridge]);
+
+  // The Noise lens (issue #34): fetch the low-signal churn grouped away for the open
+  // review over the real command boundary. Like the flagged fetch it carries NO
+  // model spend and is independent of the harness-consent gate, so it loads on its
+  // own — and its own try/catch means a noise fetch failure never disturbs the
+  // canvas load or the flagged fetch.
+  useEffect(() => {
+    if (!reviewId) return;
+    let cancelled = false;
+    void bridge
+      .invoke("noise.review", { reviewId })
+      .then((result) => {
+        // Guard the shape: a host or test bridge that returns anything but a
+        // NoiseReview (`{ status }`) leaves the lens on its honest empty state.
+        if (cancelled) return;
+        const review = result as Partial<NoiseReview> | undefined;
+        if (review?.status === "ok" || review?.status === "failed") {
+          setNoiseReview(review as NoiseReview);
         }
       })
       .catch(() => undefined);
@@ -948,6 +981,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
               bridge={bridge}
               narration={narration}
               flaggedReview={flaggedReview}
+              noiseReview={noiseReview}
               onDispositions={(writes) => {
                 setCanvases((current) => (current ? applyWrites(current, writes) : current));
                 // dispose == staged: authoring a disposition collates it into the draft
