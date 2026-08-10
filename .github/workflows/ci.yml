@@ -37,8 +37,21 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
+      # fetch-depth: 0 — some adapters tests dogfood the real repo git history
+      # (project-snapshot-generator.test.ts runs `git rev-parse HEAD~1`), which the
+      # default shallow (depth 1) clone cannot satisfy.
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # Those same dogfood tests resolve `main` by name. On a pull_request the
+      # checkout is a detached merge ref with no local `main`, so materialise it.
+      # On a push to main we are already on the branch, so the guard skips.
+      - name: Ensure a local `main` ref (for repo-dogfood tests)
+        run: |
+          git rev-parse --verify --quiet refs/heads/main >/dev/null \
+            || git fetch --no-tags origin +refs/heads/main:refs/heads/main
 
       # pnpm must be on PATH before setup-node so `cache: pnpm` can resolve the store.
       # action-setup reads the exact version from package.json `packageManager`
