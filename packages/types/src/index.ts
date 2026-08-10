@@ -40,6 +40,56 @@ export const DIFF_TRUNCATION_MARKER = "[diff truncated by Rennet]";
  */
 export type PatchsetSource = "local" | "github-local" | "github-rest";
 
+/**
+ * An immutable snapshot of one spec / openspec document relevant to the change,
+ * frozen onto the patchset at capture time (#136). `digest` is a sha256 over the
+ * FULL captured document; `content` is the document text INLINED when it is under
+ * the inlining cap, and absent (digest-only) when it was too large. Captured from
+ * the committed content at the reviewed head OID (or the working-tree content for
+ * a local review), so the spec view renders what the change actually shipped
+ * against rather than a later-edited version of the same file.
+ */
+export interface PatchsetSpecSnapshot {
+  readonly path: string;
+  readonly digest: string;
+  /** The captured document text; absent ⇒ digest-only (over the inlining cap). */
+  readonly content?: string;
+}
+
+/** Which surface a patchset's captured intent came from. */
+export type PatchsetIntentSurface = "github-pr" | "github-rest" | "working-tree";
+
+/**
+ * The change's stated intent, captured WITH the patchset and immutable for its
+ * lifetime (#136). It is the raw material the Decisions lens, the hypothesis pass,
+ * and the spec view reason over — widening the live `ReviewIntent` / `DecisionIntent`
+ * seam the runners already consume with the additional surface provenance and the
+ * frozen spec set. A remote head update mints a NEW patchset (R28); it never
+ * rewrites the intent frozen on the prior one.
+ *
+ * Honest absence is first-class: `prBodyAbsent` marks "there was no PR body surface
+ * at all" (a working-tree / no-PR review), so a consumer never mistakes an empty
+ * string for the stated intent. A no-PR review captures the available surface
+ * (`commitSubjects`) instead of fabricating a body.
+ */
+export interface PatchsetIntent {
+  /** The surface this intent was captured from. */
+  readonly surface: PatchsetIntentSurface;
+  /** The PR title, when a PR exists. */
+  readonly prTitle?: string;
+  /** The PR body (markdown), when a PR exists and carried one. */
+  readonly prBody?: string;
+  /** True when NO PR body surface existed (working-tree / no-PR) — not an empty body. */
+  readonly prBodyAbsent?: boolean;
+  /** Immutable snapshots / digests of the spec documents the change shipped against. */
+  readonly specSnapshots?: readonly PatchsetSpecSnapshot[];
+  /**
+   * The available intent surface for a no-PR review: the commit subject lines
+   * between base and head. Captured honestly instead of inventing a PR body.
+   */
+  readonly commitSubjects?: readonly string[];
+}
+
 export interface Patchset {
   id: string;
   createdAt: string;
@@ -67,6 +117,15 @@ export interface Patchset {
    * wave be purely additive.
    */
   projectSnapshotId?: string;
+  /**
+   * The change's stated intent (PR title/body + immutable spec snapshots), frozen
+   * at capture time (#136). OPTIONAL and additive: a patchset captured before this
+   * field, or by a path with no intent surface, simply omits it and every
+   * downstream pass degrades honestly to structure-only. The id is content-addressed
+   * over `(repository, files, bytes)` and does NOT include intent, so stamping it
+   * leaves patchset identity unchanged.
+   */
+  intent?: PatchsetIntent;
 }
 
 /**

@@ -43,6 +43,7 @@ import {
   DEFAULT_MAX_HARNESS_INVOCATIONS,
   decompose,
   guardSeatTurn,
+  patchsetIntentToReviewIntent,
   ReviewService,
   resolveDualSeat,
   runDecisionAngle,
@@ -402,10 +403,11 @@ const HYPOTHESIS_PROVENANCE_SEED = {
  * (the chunk titles + changed-file list — NOT the hunk bodies, so the prior is
  * genuine), runs the hypothesis pass on the user's `claude` (subscription OAuth),
  * budget-gated as its own live action, and returns the extracted hypothesis or
- * `undefined` when the pass could not complete. Live intent capture (#136) and the
- * ProjectSnapshot context feed are the deferred seams: today the pass degrades
- * honestly to a structure-only prior, exactly as the decision runner reasons over
- * the diff alone until #136 lands. A failed pass is never surfaced as an empty
+ * `undefined` when the pass could not complete. The change's stated intent (#136)
+ * is now projected from the frozen capture on the patchset and fed in; the
+ * ProjectSnapshot context feed remains a deferred seam. When no intent surface was
+ * captured (a no-PR working-tree review that touched no spec), the pass degrades
+ * honestly to a structure-only prior. A failed pass is never surfaced as an empty
  * hypothesis — the review simply proceeds with no reading frame.
  */
 async function computeReviewHypothesis(
@@ -428,10 +430,16 @@ async function computeReviewHypothesis(
     cwd: review.repositoryRoot,
   });
   const budget = createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS);
+  // The change's stated intent (#136), projected from the frozen capture on the
+  // patchset. Absent (a no-PR working-tree review with no spec touched) it is
+  // undefined and the pass runs on structure + repo context alone — the honest
+  // degrade, unchanged from before intent capture landed.
+  const intent = patchsetIntentToReviewIntent(patchset.intent);
   const result = await runHypothesisPass({
     patchsetId: patchset.id,
     manifest,
     structure,
+    ...(intent ? { intent } : {}),
     provenance: HYPOTHESIS_PROVENANCE_SEED,
     // A thrown/rejected turn (a session/transport construction exception, #96)
     // degrades to a turn-failure rather than crashing the command.
@@ -477,9 +485,10 @@ const DECISION_PROVENANCE_SEED = {
  * set is empty and the status is the LOUD `failed` state — "ran, nothing discerned"
  * (an ok run with an empty set) is never faked from "did not run".
  *
- * Live intent capture (PR title/body + spec) is the deferred #136 piece, so the app
- * path reasons over the diff alone for now; the runner reasons over {diff, intent}
- * whenever an intent is threaded (proven by the live dogfood).
+ * The change's stated intent (PR title/body + spec) is captured with the patchset
+ * (#136) and projected onto the runner's intent seam here, so the runner reasons
+ * over {diff, intent}. When no intent surface was captured it degrades to the diff
+ * alone — the honest fallback, unchanged from before capture landed.
  */
 async function runDecisionsForReview(
   review: Review,
@@ -504,9 +513,15 @@ async function runDecisionsForReview(
     cwd: review.repositoryRoot,
   });
   const budget = createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS);
+  // The change's stated intent (#136), projected from the frozen capture on the
+  // patchset (PR title/body + the spec set). Absent, the runner reasons over the
+  // diff alone — the honest degrade. `DecisionIntent` is structurally identical to
+  // the mapped `ReviewIntent`, so the same projection feeds both runners.
+  const intent = patchsetIntentToReviewIntent(patchset.intent);
   const result = await runDecisionAngle({
     patchsetId: patchset.id,
     manifest,
+    ...(intent ? { intent } : {}),
     // The committed hypothesis (#178), when produced, feeds the runner as
     // disconfirmation criteria — so a decision can surface where the change diverges
     // from what we'd have chosen. Absent, the runner reasons exactly as before.

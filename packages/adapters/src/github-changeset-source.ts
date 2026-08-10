@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import type { ForgePort, ForgePullRequestRef, SsoState } from "@rennet/core";
-import type { Patchset } from "@rennet/types";
+import type { ForgePort, ForgePullRequest, ForgePullRequestRef, SsoState } from "@rennet/core";
+import type { PatchFile, Patchset, PatchsetIntent, PatchsetSpecSnapshot } from "@rennet/types";
 import {
   captureRangePatchset,
   DEFAULT_VISIBLE_BYTE_LIMIT,
@@ -8,6 +8,7 @@ import {
   parseUnifiedDiffFiles,
   visible,
 } from "./git-range-diff";
+import { snapshotSpec, specPathsOf } from "./patchset-intent-capture";
 import { type LocalWorktree, matchWorktree } from "./worktree-discovery";
 
 /**
@@ -112,8 +113,13 @@ export class GitHubChangesetSource {
         source: "github-local",
         visibleByteLimit: this.deps.visibleByteLimit,
       });
+      // Freeze the stated intent onto the patchset (#136): PR title/body plus the
+      // spec set snapshotted at the reviewed HEAD OID (the clone is on disk, so we
+      // read the committed content — what the change shipped against, immutable).
+      const specSnapshots = await this.snapshotSpecsAtHead(match.root, pr.headOid, patchset.files);
+      const intent = forgePrIntent("github-pr", pr, specSnapshots);
       return {
-        patchset,
+        patchset: { ...patchset, intent },
         sso: pr.sso,
         pin: { root: match.root, baseOid: pr.baseOid, headOid: pr.headOid, baseRef: pr.baseRef },
       };
@@ -122,11 +128,40 @@ export class GitHubChangesetSource {
     // Degraded fallback: no clone on disk, so take GitHub's REST diff and BADGE it.
     const { diff, sso } = await this.deps.forge.fetchDiff(ref);
     const combinedSso: SsoState = sso.kind === "none" ? pr.sso : sso;
+    const restPatchset = this.restPatchset(ref, pr.baseOid, pr.headOid, pr.baseRef, diff);
+    // Intent still freezes onto the degraded patchset — the PR title/body come from
+    // the forge, not the clone. Spec snapshots need the on-disk committed content,
+    // which the REST path does not have, so the spec set is honestly absent.
     return {
-      patchset: this.restPatchset(ref, pr.baseOid, pr.headOid, pr.baseRef, diff),
+      patchset: { ...restPatchset, intent: forgePrIntent("github-rest", pr, []) },
       sso: combinedSso,
       pin: null,
     };
+  }
+
+  /**
+   * Snapshot the changeset's spec documents from their COMMITTED content at the
+   * reviewed head OID. `git show <headOid>:<path>` reads the exact bytes the change
+   * shipped against; a document unreadable at head (e.g. deleted by the change) is
+   * skipped rather than fabricated. The read is best-effort per file, so a single
+   * unreadable spec never fails the whole capture.
+   */
+  private async snapshotSpecsAtHead(
+    root: string,
+    headOid: string,
+    files: readonly PatchFile[],
+  ): Promise<PatchsetSpecSnapshot[]> {
+    const snapshots: PatchsetSpecSnapshot[] = [];
+    for (const path of specPathsOf(files)) {
+      try {
+        const content = await this.deps.git(root, ["show", `${headOid}:${path}`]);
+        snapshots.push(snapshotSpec(path, content));
+      } catch {
+        // Unreadable at head (deleted by the change, or a binary/odd object): the
+        // spec set omits it honestly rather than inventing a snapshot.
+      }
+    }
+    return snapshots;
   }
 
   /**
@@ -185,4 +220,29 @@ export class GitHubChangesetSource {
       degradationReason: DEGRADED_REASON,
     };
   }
+}
+
+/**
+ * Build the frozen intent for a GitHub PR review (#136). The title/body come from
+ * the forge (GitHub owns identity). An empty PR body is recorded as an honest
+ * absence (`prBodyAbsent`) rather than an empty string masquerading as intent, and
+ * a blank title is simply omitted.
+ */
+function forgePrIntent(
+  surface: "github-pr" | "github-rest",
+  pr: ForgePullRequest,
+  specSnapshots: readonly PatchsetSpecSnapshot[],
+): PatchsetIntent {
+  const intent: {
+    surface: "github-pr" | "github-rest";
+    prTitle?: string;
+    prBody?: string;
+    prBodyAbsent?: boolean;
+    specSnapshots?: readonly PatchsetSpecSnapshot[];
+  } = { surface };
+  if (pr.title.trim().length > 0) intent.prTitle = pr.title;
+  if (pr.body.trim().length > 0) intent.prBody = pr.body;
+  else intent.prBodyAbsent = true;
+  if (specSnapshots.length > 0) intent.specSnapshots = specSnapshots;
+  return intent;
 }

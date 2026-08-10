@@ -27,6 +27,7 @@ const prBody = JSON.stringify({
       pullRequest: {
         number: 42,
         title: "Add the thing",
+        body: "Implements the thing.\n\nCloses #1.",
         isDraft: false,
         headRefOid: "aaaa1111",
         baseRefOid: "bbbb2222",
@@ -49,12 +50,47 @@ describe("GitHubForgeAdapter.fetchPullRequest", () => {
     expect(pr.baseRef).toBe("main");
     expect(pr.headRef).toBe("feature/thing");
     expect(pr.title).toBe("Add the thing");
+    // The PR body is the stated intent (#136) — fetched, not just the title.
+    expect(pr.body).toBe("Implements the thing.\n\nCloses #1.");
     expect(pr.forgeRef).toBe("PR_kwabc");
     expect(pr.sso).toEqual({ kind: "none" });
     // Clone URLs derived from owner/name identity (never a path guess) so the
     // worktree matcher can map them onto a local clone.
     expect(pr.cloneUrls).toContain("https://github.com/acme/widget.git");
     expect(pr.cloneUrls.some((url) => url.includes("git@github.com:acme/widget"))).toBe(true);
+  });
+
+  it("requests the body in the GraphQL document and maps a null body to an honest empty string", async () => {
+    let sentQuery = "";
+    const emptyBody = JSON.stringify({
+      data: {
+        repository: {
+          pullRequest: {
+            number: 42,
+            title: "Add the thing",
+            body: null,
+            isDraft: false,
+            headRefOid: "aaaa1111",
+            baseRefOid: "bbbb2222",
+            baseRefName: "main",
+            headRefName: "feature/thing",
+            changedFiles: 1,
+            id: "PR_kwabc",
+          },
+        },
+      },
+    });
+    const http: HttpFetch = (_url, init) => {
+      sentQuery = JSON.parse(init?.body ?? "{}").query ?? "";
+      return Promise.resolve(response(200, {}, emptyBody));
+    };
+    const pr = await new GitHubForgeAdapter({ http, token: "t" }).fetchPullRequest(ref);
+    // GitHub returns `null` for a PR with no description; carry "" (an honest empty
+    // body) so a consumer never confuses it with an unfetched surface.
+    expect(pr.body).toBe("");
+    // The document must actually request `body`, or the adapter only ever works
+    // against a mock that happens to include it.
+    expect(sentQuery).toContain("body");
   });
 
   it("parses X-GitHub-SSO on EVERY response and carries partial-results on the PR", async () => {

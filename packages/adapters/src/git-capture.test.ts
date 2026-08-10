@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -97,6 +97,39 @@ describe("GitCaptureAdapter", () => {
         binary: false,
       }),
     ]);
+  });
+
+  it("captures the working-tree intent surface honestly: no PR body, commit subjects, spec snapshot (#136)", async () => {
+    const root = repository();
+    git(root, "checkout", "-qb", "feature");
+    writeFileSync(join(root, "branch.txt"), "branch\n");
+    git(root, "add", "branch.txt");
+    git(root, "commit", "-qm", "add the branch file");
+    // A spec document changed in the working tree (uncommitted).
+    mkdirSync(join(root, "specs"));
+    writeFileSync(join(root, "specs", "spec.md"), "# Spec\n\nthe rule\n");
+
+    const patchset = await new GitCaptureAdapter().capture(root);
+    // No PR: the missing body is marked honestly, never an empty-string intent.
+    expect(patchset.intent?.surface).toBe("working-tree");
+    expect(patchset.intent?.prBodyAbsent).toBe(true);
+    expect(patchset.intent?.prBody).toBeUndefined();
+    // The available surface is the commit subjects between base and head.
+    expect(patchset.intent?.commitSubjects).toContain("add the branch file");
+    // The changeset's spec doc is snapshotted from the working-tree content.
+    const snap = patchset.intent?.specSnapshots?.find((s) => s.path === "specs/spec.md");
+    expect(snap?.content).toBe("# Spec\n\nthe rule\n");
+    expect(snap?.digest.length).toBe(64);
+  });
+
+  it("marks the intent absent-of-PR-body even when there are no commits since base", async () => {
+    const root = repository();
+    // Only an uncommitted working-tree edit: no commits between base and head.
+    writeFileSync(join(root, "tracked.txt"), "after\n");
+    const patchset = await new GitCaptureAdapter().capture(root);
+    expect(patchset.intent?.surface).toBe("working-tree");
+    expect(patchset.intent?.prBodyAbsent).toBe(true);
+    expect(patchset.intent?.commitSubjects).toBeUndefined();
   });
 
   it("marks a visible diff as truncated without changing its content identity", async () => {
