@@ -1,0 +1,143 @@
+import {
+  type FileContextResult,
+  isSnapshotFresh,
+  type LoadedSnapshot,
+  materializeSnapshot,
+  type ProjectMap,
+  type ProjectMapScope,
+  queryFileContext,
+  queryProjectMap,
+  verifySnapshotIntegrity,
+} from "@rennet/core";
+import type { ProjectSnapshotStore } from "./project-snapshot-store";
+
+/**
+ * The composed, fail-closed ProjectSnapshot READ gate (#14, Part 3) — the single
+ * call the `context.map` / `context.file` consumers pass a request through so a
+ * STALE or CORRUPT snapshot can never enter it. This is exactly the `loadCurrent`
+ * gate `ProjectSnapshotStore` left as a deferred NOTE ("wire the gate when the
+ * first consumer lands so it is covered by a real caller") — the context reader
+ * IS that first consumer.
+ *
+ * The gate composes the pieces the foundation built and individually tested:
+ *   1. `store.loadManifest`        — the current stored manifest (or absent).
+ *   2. `isSnapshotFresh`           — freshness is content equality at the
+ *                                    REQUESTED base OID, never age (R30). A
+ *                                    snapshot built at any other OID is stale.
+ *   3. `verifySnapshotIntegrity`   — every referenced shard is present AND hashes
+ *                                    back to its digest AND the manifest's own
+ *                                    fingerprint matches (a missing/corrupt shard
+ *                                    or tampered manifest fails closed).
+ *   4. `materializeSnapshot`       — decode the structural shards into a queryable
+ *                                    `LoadedSnapshot` (itself fail-closed).
+ *
+ * Only after all four pass does a queryable snapshot exist. Every failure is a
+ * TYPED reason, never a throw and never a partial read (Rule 75, fail toward
+ * refusal on the vital "never serve stale context" circuit).
+ */
+
+/** Why the gate refused to produce a queryable snapshot. */
+export type SnapshotGateFailure =
+  /** No snapshot has been generated for this repo yet. */
+  | { readonly reason: "absent" }
+  /** A snapshot exists but was built at a different OID than the request pins to. */
+  | { readonly reason: "stale"; readonly storedBaseOid: string; readonly requestedBaseOid: string }
+  /** The stored snapshot failed the integrity gate (missing/corrupt shard or tampered manifest). */
+  | {
+      readonly reason: "corrupt";
+      readonly missing: readonly string[];
+      readonly mismatched: readonly string[];
+    };
+
+export type LoadFreshResult =
+  | { readonly ok: true; readonly snapshot: LoadedSnapshot }
+  | { readonly ok: false; readonly failure: SnapshotGateFailure };
+
+export type ProjectMapResult =
+  | { readonly ok: true; readonly map: ProjectMap }
+  | { readonly ok: false; readonly failure: SnapshotGateFailure };
+
+export class ProjectContextReader {
+  constructor(private readonly store: ProjectSnapshotStore) {}
+
+  /**
+   * The fail-closed gate: load + freshness + integrity + materialize. Returns a
+   * queryable {@link LoadedSnapshot} for `requestedBaseOid`, or a typed failure.
+   * A caller that has an OID in hand (the review's resolved base OID) passes it;
+   * a snapshot at any other OID is refused as stale rather than served.
+   */
+  loadFresh(repoKey: string, requestedBaseOid: string): LoadFreshResult {
+    const manifest = this.store.loadManifest(repoKey);
+    if (!manifest) return { ok: false, failure: { reason: "absent" } };
+
+    if (!isSnapshotFresh(manifest, requestedBaseOid)) {
+      return {
+        ok: false,
+        failure: { reason: "stale", storedBaseOid: manifest.baseOid, requestedBaseOid },
+      };
+    }
+
+    const load = (digest: string): string | undefined => this.store.loadShard(repoKey, digest);
+
+    const integrity = verifySnapshotIntegrity(manifest, load);
+    if (!integrity.ok) {
+      return {
+        ok: false,
+        failure: {
+          reason: "corrupt",
+          missing: integrity.missing,
+          mismatched: integrity.mismatched,
+        },
+      };
+    }
+
+    const materialized = materializeSnapshot(manifest, load);
+    if (!materialized.ok) {
+      // Integrity passed but a structural shard would not decode — treat as
+      // corruption (fail closed) rather than serving a partial map.
+      return {
+        ok: false,
+        failure: { reason: "corrupt", missing: materialized.slots, mismatched: [] },
+      };
+    }
+
+    return { ok: true, snapshot: materialized.snapshot };
+  }
+
+  /**
+   * `context.map` at the adapter boundary: the deterministic structural map for a
+   * repo at the requested base OID, optionally scoped. Passes through the gate, so
+   * a stale/absent/corrupt snapshot yields a typed failure, never a served map.
+   */
+  readProjectMap(
+    repoKey: string,
+    requestedBaseOid: string,
+    scope?: ProjectMapScope,
+  ): ProjectMapResult {
+    const gated = this.loadFresh(repoKey, requestedBaseOid);
+    if (!gated.ok) return gated;
+    return { ok: true, map: queryProjectMap(gated.snapshot, scope) };
+  }
+
+  /**
+   * `context.file` at the adapter boundary: what the snapshot knows about one
+   * file (structural entry + symbols) at the requested base OID. Passes through
+   * the gate first; a gate failure is surfaced as a `snapshot-unavailable`
+   * {@link FileContextResult}-shaped refusal so a single call has one result type.
+   */
+  readFileContext(
+    repoKey: string,
+    requestedBaseOid: string,
+    path: string,
+  ):
+    | FileContextResult
+    | {
+        readonly ok: false;
+        readonly reason: "snapshot-unavailable";
+        readonly failure: SnapshotGateFailure;
+      } {
+    const gated = this.loadFresh(repoKey, requestedBaseOid);
+    if (!gated.ok) return { ok: false, reason: "snapshot-unavailable", failure: gated.failure };
+    return queryFileContext(gated.snapshot, path);
+  }
+}

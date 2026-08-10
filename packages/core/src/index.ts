@@ -37,6 +37,7 @@ export * from "./orchestrator-primer";
 export * from "./orchestrator-session";
 export * from "./ordering-pass";
 export * from "./pipeline";
+export * from "./project-context";
 export * from "./project-snapshot";
 export * from "./publish-review";
 export * from "./review-ask";
