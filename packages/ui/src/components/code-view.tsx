@@ -12,7 +12,7 @@ import {
   type RegistryRow,
   resolveAnchorToRows,
 } from "../canvas/registrar";
-import { isClickableSymbolToken } from "../canvas/symbol";
+import { splitIdentifierRuns, tokenMayContainSymbol } from "../canvas/symbol";
 import { detectLanguage, type LanguageId, tokenizeLine } from "../syntax/highlight";
 import { DispositionCluster } from "./disposition-cluster";
 
@@ -117,24 +117,38 @@ function renderCode(
   const nodes: ReactNode[] = [];
   let column = 0; // the token's start column — a stable, data-derived key (not an array index).
   for (const tok of tokenizeLine(row.text, language)) {
-    // A symbol token (a function/type/variable/property identifier) is clickable
-    // when the host wants symbol lookups — clicking it opens the in-app inspector
-    // (Rai, wireframes #8). Every other token stays inert chrome.
-    const clickableName = onSymbolClick && isClickableSymbolToken(tok.type) ? tok.text.trim() : "";
-    if (clickableName.length > 0 && onSymbolClick) {
-      const name = clickableName;
-      nodes.push(
-        <button
-          type="button"
-          className={`rtok rtok-${tok.type} rtok-symbol`}
-          key={column}
-          data-symbol={name}
-          title={`Inspect ${name}`}
-          onClick={() => onSymbolClick(name)}
-        >
-          {tok.text}
-        </button>,
-      );
+    // When the host wants symbol lookups, split a symbol-bearing token into its
+    // identifier RUNS and make each one clickable (Rai, wireframes #8). This does not
+    // key off the highlight class — an ordinary `plain` identifier, or several inside
+    // one whitespace-merged token, each resolve independently. Inert tokens (keyword,
+    // string, comment, number, operator, punctuation) render as one plain span.
+    if (onSymbolClick && tokenMayContainSymbol(tok.type)) {
+      let offset = 0;
+      for (const segment of splitIdentifierRuns(tok.text)) {
+        const key = column + offset;
+        if (segment.isIdentifier) {
+          const name = segment.text;
+          nodes.push(
+            <button
+              type="button"
+              className={`rtok rtok-${tok.type} rtok-symbol`}
+              key={key}
+              data-symbol={name}
+              title={`Inspect ${name}`}
+              onClick={() => onSymbolClick(name)}
+            >
+              {segment.text}
+            </button>,
+          );
+        } else {
+          nodes.push(
+            <span className={`rtok rtok-${tok.type}`} key={key}>
+              {segment.text}
+            </span>,
+          );
+        }
+        offset += segment.text.length;
+      }
     } else {
       nodes.push(
         <span className={`rtok rtok-${tok.type}`} key={column}>

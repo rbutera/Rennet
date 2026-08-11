@@ -25,20 +25,59 @@ import type { TokenType } from "../syntax/languages";
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * The token classes that name a symbol worth inspecting: a function, a type, a
- * variable, or a property identifier. Keywords, strings, comments, numbers,
- * operators and punctuation are inert chrome — clicking them would resolve nothing.
+ * Token classes whose TEXT can never be a clickable symbol: keywords, string/comment
+ * literals, numbers, operators, punctuation. Everything else (`plain`, `function`,
+ * `type`, `variable`, `property`) may carry an identifier worth inspecting.
+ *
+ * Clickability must NOT key off the highlight class alone: the tokenizer classifies
+ * an ordinary identifier (`count`, `result`, `value`) as `plain`, and merges a
+ * leading-whitespace run into the following `plain` token — so a class-only check
+ * misses the common case entirely. Instead a symbol-bearing token's text is split
+ * into identifier runs, and only those runs become clickable.
  */
-const CLICKABLE_SYMBOL_TOKENS: ReadonlySet<TokenType> = new Set<TokenType>([
-  "function",
-  "type",
-  "variable",
-  "property",
+const NON_SYMBOL_TOKENS: ReadonlySet<TokenType> = new Set<TokenType>([
+  "keyword",
+  "string",
+  "comment",
+  "number",
+  "operator",
+  "punctuation",
 ]);
 
-/** Whether a syntax token is a clickable symbol (a function/type/variable/property identifier). */
-export function isClickableSymbolToken(type: TokenType): boolean {
-  return CLICKABLE_SYMBOL_TOKENS.has(type);
+/** Whether a token's text may contain a clickable identifier (i.e. is not inert chrome). */
+export function tokenMayContainSymbol(type: TokenType): boolean {
+  return !NON_SYMBOL_TOKENS.has(type);
+}
+
+/** One segment of a token's text: an identifier run (clickable) or the gap around it. */
+export interface TokenSegment {
+  readonly text: string;
+  readonly isIdentifier: boolean;
+}
+
+// A JS/TS identifier run. Deliberately independent of the highlighter's word
+// classification so a `plain` identifier (or several separated by whitespace inside
+// one merged token) each become their own clickable run.
+const IDENTIFIER_RUN = /[A-Za-z_$][A-Za-z0-9_$]*/g;
+
+/**
+ * Split a token's text into identifier runs and the gaps between them, in order,
+ * covering the whole string. `"  count"` → `[gap "  ", ident "count"]`;
+ * `"foo bar"` → `[ident "foo", gap " ", ident "bar"]`; `"doThing"` → `[ident]`.
+ * Pure; a text with no identifier is a single gap segment.
+ */
+export function splitIdentifierRuns(text: string): TokenSegment[] {
+  const segments: TokenSegment[] = [];
+  let last = 0;
+  IDENTIFIER_RUN.lastIndex = 0;
+  for (let match = IDENTIFIER_RUN.exec(text); match !== null; match = IDENTIFIER_RUN.exec(text)) {
+    if (match.index > last)
+      segments.push({ text: text.slice(last, match.index), isIdentifier: false });
+    segments.push({ text: match[0], isIdentifier: true });
+    last = match.index + match[0].length;
+  }
+  if (last < text.length) segments.push({ text: text.slice(last), isIdentifier: false });
+  return segments;
 }
 
 // The lookup answer shapes are shared with the protocol command

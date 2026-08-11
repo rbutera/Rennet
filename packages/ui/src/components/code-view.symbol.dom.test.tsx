@@ -11,6 +11,11 @@ import { CodeView } from "./code-view";
 // classifies as a `function` token, and an Uppercase `Widget` type token.
 const CALL_DIFF = ["@@ -1,2 +1,2 @@", "+  doThing();", "+  const w = new Widget();"].join("\n");
 
+// A line of ORDINARY identifiers the tokenizer classifies as `plain` — the real
+// common case the class-only check missed. `count`, `result`, `value` are all plain;
+// `const` is a keyword and must NOT be clickable.
+const PLAIN_DIFF = ["@@ -1,1 +1,1 @@", "+  const count = result.value;"].join("\n");
+
 describe("CodeView — impl/test counterpart button (#7)", () => {
   it("renders the given label and fires onView on click", () => {
     const onView = vi.fn();
@@ -49,5 +54,23 @@ describe("CodeView — clickable symbol tokens (#8)", () => {
   it("leaves identifiers inert (plain spans, no buttons) when no handler is given", () => {
     const { container } = mount(<CodeView path="src/foo.ts" diff={CALL_DIFF} renderAll />);
     expect(container.querySelector(".rtok-symbol")).toBeNull();
+  });
+
+  it("makes ORDINARY (plain-classified) identifiers clickable — the real common case", () => {
+    const onSymbolClick = vi.fn();
+    const { container } = mount(
+      <CodeView path="src/foo.ts" diff={PLAIN_DIFF} onSymbolClick={onSymbolClick} renderAll />,
+    );
+    // count / result / value are all `plain`, yet each must be its own clickable run.
+    for (const name of ["count", "result", "value"]) {
+      const token = container.querySelector<HTMLButtonElement>(
+        `.rtok-symbol[data-symbol="${name}"]`,
+      );
+      if (!token) throw new Error(`identifier "${name}" was not clickable`);
+      fireEvent.click(token);
+      expect(onSymbolClick).toHaveBeenCalledWith(name);
+    }
+    // `const` is a keyword — it must NOT be clickable.
+    expect(container.querySelector('.rtok-symbol[data-symbol="const"]')).toBeNull();
   });
 });

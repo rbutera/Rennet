@@ -26,6 +26,35 @@ import type { Review, SymbolInspection } from "@rennet/types";
 /** The default ceiling on reference sites returned for display. */
 export const DEFAULT_REFERENCE_CAP = 200;
 
+/**
+ * A shallow clone of the review whose ACTIVE patchset is pinned to its `headOid` —
+ * so a backend built from it generates its ProjectSnapshot over the REVIEWED tree
+ * (`base..head`), not the base tree. This matters: the symbolic surface is otherwise
+ * a base-snapshot facility, so a symbol ADDED, RENAMED, or MOVED in the PR would
+ * return missing/stale over the base — the inspector lying about the exact code under
+ * review. Pinning to head makes go-to-definition / find-references answer about the
+ * reviewed code, which is the whole point of clicking a symbol in the diff.
+ *
+ * `headOid` is always a real, present git object (`rev-parse HEAD` for a local
+ * capture, the fetched PR head for a PR review), so the snapshot generator can read
+ * it. (Uncommitted working-tree edits past `headOid` are not covered — the review's
+ * own range is `base..head` committed, and that is what the reviewer is reading.)
+ * Only the active patchset's `repository.baseOid` is changed; all else is preserved.
+ */
+export function reviewPinnedToHead(review: Review): Review {
+  return {
+    ...review,
+    patchsets: review.patchsets.map((patchset) =>
+      patchset.id === review.activePatchsetId
+        ? {
+            ...patchset,
+            repository: { ...patchset.repository, baseOid: patchset.repository.headOid },
+          }
+        : patchset,
+    ),
+  };
+}
+
 /** Human-readable reason for a gated symbolic result that could not answer. */
 function unavailableReason(result: { readonly reason: string }): string {
   if (result.reason === "shard-unavailable") return "the symbol index could not be read";

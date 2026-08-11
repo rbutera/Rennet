@@ -3,10 +3,12 @@ import type {
   ProjectReferenceResult,
   ProjectSymbolDefinitionResult,
 } from "@rennet/core";
+import type { Review } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import {
   createLiveSymbolLookup,
   lookupSymbol,
+  reviewPinnedToHead,
   symbolDefinitionSection,
   symbolReferencesSection,
 } from "./symbol-lookup-live";
@@ -124,6 +126,34 @@ describe("lookupSymbol", () => {
     expect(inspection.name).toBe("makeThing");
     expect(inspection.definition).toMatchObject({ status: "ok" });
     expect(inspection.references).toMatchObject({ status: "ok" });
+  });
+});
+
+describe("reviewPinnedToHead", () => {
+  const review = {
+    id: "rev-1",
+    activePatchsetId: "ps-2",
+    patchsets: [
+      { id: "ps-1", repository: { baseOid: "base1", headOid: "head1" } },
+      { id: "ps-2", repository: { baseOid: "base2", headOid: "head2", baseRef: "main" } },
+    ],
+  } as unknown as Review;
+
+  it("pins the ACTIVE patchset's baseOid to its headOid (the reviewed tree)", () => {
+    const pinned = reviewPinnedToHead(review);
+    const active = pinned.patchsets.find((p) => p.id === "ps-2");
+    if (!active) throw new Error("active patchset missing");
+    expect(active.repository.baseOid).toBe("head2"); // now reads the reviewed code
+    expect(active.repository.headOid).toBe("head2");
+    // other repository fields preserved
+    expect((active.repository as { baseRef?: string }).baseRef).toBe("main");
+  });
+
+  it("leaves non-active patchsets untouched, and does not mutate the input", () => {
+    const pinned = reviewPinnedToHead(review);
+    expect(pinned.patchsets.find((p) => p.id === "ps-1")?.repository.baseOid).toBe("base1");
+    // input unchanged
+    expect(review.patchsets.find((p) => p.id === "ps-2")?.repository.baseOid).toBe("base2");
   });
 });
 

@@ -18,7 +18,7 @@ import {
   type DispositionBatch,
   type OrphanedDisposition,
 } from "../canvas/authoring";
-import { resolveCounterpart } from "../canvas/counterpart";
+import { type CounterpartTarget, resolveCounterpart } from "../canvas/counterpart";
 import type { CanvasFeedSource } from "../canvas/feed";
 import { useCanvasFeed } from "../canvas/feed";
 import { buildFlaggedIndex } from "../canvas/flagged";
@@ -407,6 +407,22 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     store.getState().setZoom({ ...zoom, level: "element", elementKey });
   }
 
+  // Jump to the impl↔test counterpart (Rai, wireframes #7). The target element may
+  // live on ANOTHER lens (the current lens placed none for that file), so switch to
+  // the target lens first, then select the element from THAT canvas — reading the
+  // target canvas directly rather than the render-closure `canvas`, which would be
+  // stale straight after the angle change.
+  function navigateToCounterpart(target: CounterpartTarget): void {
+    const targetCanvas = props.canvases[target.angle];
+    if (target.angle !== angle) store.getState().setAngle(target.angle);
+    const element = targetCanvas?.layers.analysis.elements.find(
+      (el) => el.elementKey === target.elementKey,
+    );
+    store.getState().select(target.elementKey);
+    if (element) store.getState().setCursor(element.anchor);
+    store.getState().setZoom({ level: "element", elementKey: target.elementKey });
+  }
+
   // The Flagged lens is an INDEX: a row jumps to the mark at its anchor. The mark
   // still renders at its anchor on the code surface — the lens points at it, it
   // does not own it. Set the cursor + deixis focus so the span at the anchor
@@ -507,8 +523,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   const diff = codeAltitude && selection ? props.diffFor?.(selection) : undefined;
 
   // The impl↔test counterpart jump (Rai, wireframes #7): resolved for the shown file
-  // against this review's files. Null ⇒ no button (no counterpart in the review).
-  const counterpart = diff ? resolveCounterpart(canvas, diff.path) : null;
+  // against this review's changed-file inventory, ACROSS lenses — so the button does
+  // not vanish just because the active lens placed no element for the counterpart.
+  // Null ⇒ no button (the counterpart is not a changed file in the review).
+  const counterpart = diff ? resolveCounterpart(props.canvases, angle, diff.path) : null;
 
   // The narrated account for the altitude in view (#70): the whole-changeset
   // roll-up at roll-up zoom, the cohort's account at cohort zoom, nothing below.
@@ -660,7 +678,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
                 ? {
                     label: counterpart.label,
                     path: counterpart.path,
-                    onView: () => selectElement(counterpart.elementKey),
+                    onView: () => navigateToCounterpart(counterpart),
                   }
                 : undefined
             }

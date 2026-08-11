@@ -1,5 +1,5 @@
 import { parseAnchor } from "@rennet/protocol";
-import type { Canvas } from "@rennet/types";
+import { CANVAS_ANGLES, type Canvas, type CanvasAngle } from "@rennet/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The implementation ↔ test counterpart jump (Rai, wireframes #7).
@@ -31,6 +31,8 @@ export interface CounterpartTarget {
   readonly label: string;
   /** The element to select when the button is pressed (the counterpart's element in this review). */
   readonly elementKey: string;
+  /** The lens whose canvas carries that element — may differ from the current one. */
+  readonly angle: CanvasAngle;
   /** The counterpart file's repo-relative path (for the button's title/tooltip). */
   readonly path: string;
   /** Which side the counterpart is — the shown file's own kind is the opposite. */
@@ -91,33 +93,70 @@ export function elementKeyForPath(canvas: Canvas, path: string): string | null {
 }
 
 /**
+ * Locate a file's element across the review's lenses, INDEPENDENT of which lens is
+ * active. The counterpart's presence is a property of the review (its changed-file
+ * inventory), not of the current lens's analysis placement — so a changed test with
+ * no *decision* element must still resolve. Prefers the current lens (no lens switch
+ * when it already has the element), then falls back to any other lens that placed
+ * one — in practice the `sequence` lens, which has an element per changed chunk, so
+ * every changed file resolves there. Returns null only when the file is not in the
+ * review at all.
+ */
+function locatePath(
+  canvases: Record<CanvasAngle, Canvas>,
+  currentAngle: CanvasAngle,
+  path: string,
+): { angle: CanvasAngle; elementKey: string } | null {
+  const order: CanvasAngle[] = [currentAngle, ...CANVAS_ANGLES.filter((a) => a !== currentAngle)];
+  for (const angle of order) {
+    const canvas = canvases[angle];
+    if (!canvas) continue;
+    const elementKey = elementKeyForPath(canvas, path);
+    if (elementKey) return { angle, elementKey };
+  }
+  return null;
+}
+
+/**
  * Resolve the impl↔test counterpart jump for the file currently shown, or null when
- * there is none to offer on this surface. Pure: reads only the canvas and the path.
+ * there is none to offer. Pure: reads only the canvas set and the path.
  *
  *   - a TEST file → its implementation, labelled "View implementation";
  *   - an IMPLEMENTATION file → its test (`.test.` preferred, then `.spec.`),
  *     labelled "View test";
- *   - the counterpart must itself be a placed element in THIS review, else null.
+ *   - the counterpart must be a changed file in THIS review (resolved across lenses,
+ *     not tied to the active lens's analysis), else null.
  */
-export function resolveCounterpart(canvas: Canvas, currentPath: string): CounterpartTarget | null {
+export function resolveCounterpart(
+  canvases: Record<CanvasAngle, Canvas>,
+  currentAngle: CanvasAngle,
+  currentPath: string,
+): CounterpartTarget | null {
   if (isTestPath(currentPath)) {
     const implPath = implementationPathFor(currentPath);
     if (!implPath) return null;
-    const elementKey = elementKeyForPath(canvas, implPath);
-    if (!elementKey) return null;
+    const located = locatePath(canvases, currentAngle, implPath);
+    if (!located) return null;
     return {
       label: "View implementation",
-      elementKey,
+      elementKey: located.elementKey,
+      angle: located.angle,
       path: implPath,
       counterpartKind: "implementation",
     };
   }
   // An implementation file: try the test candidates in preference order, and take
-  // the first that is a placed element in this review.
+  // the first that is a changed file placed in the review (any lens).
   for (const testPath of testPathsFor(currentPath)) {
-    const elementKey = elementKeyForPath(canvas, testPath);
-    if (elementKey) {
-      return { label: "View test", elementKey, path: testPath, counterpartKind: "test" };
+    const located = locatePath(canvases, currentAngle, testPath);
+    if (located) {
+      return {
+        label: "View test",
+        elementKey: located.elementKey,
+        angle: located.angle,
+        path: testPath,
+        counterpartKind: "test",
+      };
     }
   }
   return null;

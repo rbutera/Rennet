@@ -3,16 +3,17 @@ import type { TokenType } from "../syntax/languages";
 import {
   basename,
   groupReferencesByFile,
-  isClickableSymbolToken,
   type SymbolReferenceRow,
+  splitIdentifierRuns,
+  tokenMayContainSymbol,
 } from "./symbol";
 
-describe("isClickableSymbolToken", () => {
-  it("is true for symbol identifiers, false for inert chrome", () => {
-    const clickable: TokenType[] = ["function", "type", "variable", "property"];
-    for (const type of clickable) expect(isClickableSymbolToken(type)).toBe(true);
+describe("tokenMayContainSymbol", () => {
+  it("is true for symbol-bearing token classes (incl. plain), false for inert chrome", () => {
+    // `plain` MUST be included — the tokenizer classifies ordinary identifiers as plain.
+    const bearing: TokenType[] = ["plain", "function", "type", "variable", "property"];
+    for (const type of bearing) expect(tokenMayContainSymbol(type)).toBe(true);
     const inert: TokenType[] = [
-      "plain",
       "keyword",
       "string",
       "comment",
@@ -20,7 +21,33 @@ describe("isClickableSymbolToken", () => {
       "operator",
       "punctuation",
     ];
-    for (const type of inert) expect(isClickableSymbolToken(type)).toBe(false);
+    for (const type of inert) expect(tokenMayContainSymbol(type)).toBe(false);
+  });
+});
+
+describe("splitIdentifierRuns", () => {
+  it("separates an identifier from a leading-whitespace gap (the merged-token case)", () => {
+    expect(splitIdentifierRuns("  count")).toEqual([
+      { text: "  ", isIdentifier: false },
+      { text: "count", isIdentifier: true },
+    ]);
+  });
+
+  it("splits several identifiers merged into one token", () => {
+    expect(splitIdentifierRuns("foo bar")).toEqual([
+      { text: "foo", isIdentifier: true },
+      { text: " ", isIdentifier: false },
+      { text: "bar", isIdentifier: true },
+    ]);
+  });
+
+  it("returns a single identifier segment for a bare identifier (incl. digits/$_)", () => {
+    expect(splitIdentifierRuns("value2")).toEqual([{ text: "value2", isIdentifier: true }]);
+    expect(splitIdentifierRuns("$_priv")).toEqual([{ text: "$_priv", isIdentifier: true }]);
+  });
+
+  it("returns a single gap segment when there is no identifier", () => {
+    expect(splitIdentifierRuns("   ")).toEqual([{ text: "   ", isIdentifier: false }]);
   });
 });
 

@@ -1,4 +1,4 @@
-import type { Canvas, SubstrateChunkRef } from "@rennet/types";
+import type { Canvas, CanvasAngle, SubstrateChunkRef } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import {
   elementKeyForPath,
@@ -82,47 +82,112 @@ describe("elementKeyForPath", () => {
   });
 });
 
+// A canvas set (all six angles) where every angle SHARES the substrate (all files),
+// but only the angles in `anglesWithElements` place analysis elements — the exact
+// shape of the bug: a lens (e.g. Decisions) that placed no element for a changed
+// file, while `sequence` did.
+function canvasSet(
+  files: string[],
+  anglesWithElements: CanvasAngle[],
+): Record<CanvasAngle, Canvas> {
+  const chunks: SubstrateChunkRef[] = files.map((path, index) => ({
+    chunkId: `c${index + 1}`,
+    hunkIds: [`c${index + 1}-h1`],
+    filePaths: [path],
+  }));
+  const build = (angle: CanvasAngle): Canvas => {
+    const withElements = anglesWithElements.includes(angle);
+    const elements = withElements
+      ? files.map((path, index) => ({
+          elementKey: `${angle}-el-${index + 1}`,
+          docId: `doc-${index + 1}`,
+          anchor: `rennet:hunk/c${index + 1}-h1`,
+          kind: "chunk",
+          title: path,
+        }))
+      : [];
+    return {
+      canvasId: `r\0p\0${angle}`,
+      reviewId: "r",
+      patchsetId: "p",
+      angle,
+      layers: {
+        substrate: { chunks },
+        analysis: { elements, cohorts: [], readingOrder: elements.map((el) => el.elementKey) },
+        disposition: { dispositions: [] },
+        annotation: { annotations: [], proposals: [] },
+      },
+      overlay: [],
+    };
+  };
+  return {
+    spec: build("spec"),
+    sequence: build("sequence"),
+    decisions: build("decisions"),
+    claims: build("claims"),
+    noise: build("noise"),
+    flagged: build("flagged"),
+  };
+}
+
 describe("resolveCounterpart", () => {
   it("on an implementation, points at its test in the review (View test)", () => {
-    const canvas = canvasWithFiles(["src/foo.ts", "src/foo.test.ts"]);
-    expect(resolveCounterpart(canvas, "src/foo.ts")).toEqual({
+    const canvases = canvasSet(["src/foo.ts", "src/foo.test.ts"], ["sequence"]);
+    expect(resolveCounterpart(canvases, "sequence", "src/foo.ts")).toEqual({
       label: "View test",
-      elementKey: "el-2",
+      elementKey: "sequence-el-2",
+      angle: "sequence",
       path: "src/foo.test.ts",
       counterpartKind: "test",
     });
   });
 
   it("on a test, points back at its implementation (View implementation)", () => {
-    const canvas = canvasWithFiles(["src/foo.ts", "src/foo.test.ts"]);
-    expect(resolveCounterpart(canvas, "src/foo.test.ts")).toEqual({
+    const canvases = canvasSet(["src/foo.ts", "src/foo.test.ts"], ["sequence"]);
+    expect(resolveCounterpart(canvases, "sequence", "src/foo.test.ts")).toEqual({
       label: "View implementation",
-      elementKey: "el-1",
+      elementKey: "sequence-el-1",
+      angle: "sequence",
       path: "src/foo.ts",
       counterpartKind: "implementation",
     });
   });
 
-  it("prefers a .test. counterpart over .spec. when both are present", () => {
-    const canvas = canvasWithFiles(["src/foo.ts", "src/foo.spec.ts", "src/foo.test.ts"]);
-    const target = resolveCounterpart(canvas, "src/foo.ts");
+  it("resolves ACROSS lenses: in Decisions (no element) it still finds the test via sequence", () => {
+    // THE bug: the active lens placed no element for the changed test file.
+    const canvases = canvasSet(["src/foo.ts", "src/foo.test.ts"], ["sequence"]);
+    const target = resolveCounterpart(canvases, "decisions", "src/foo.ts");
     expect(target?.path).toBe("src/foo.test.ts");
+    expect(target?.angle).toBe("sequence"); // fell back off the active lens
+    expect(target?.elementKey).toBe("sequence-el-2");
+  });
+
+  it("prefers the CURRENT lens when it has the element (no lens switch)", () => {
+    const canvases = canvasSet(["src/foo.ts", "src/foo.test.ts"], ["sequence", "decisions"]);
+    const target = resolveCounterpart(canvases, "decisions", "src/foo.ts");
+    expect(target?.angle).toBe("decisions");
+    expect(target?.elementKey).toBe("decisions-el-2");
+  });
+
+  it("prefers a .test. counterpart over .spec. when both are present", () => {
+    const canvases = canvasSet(["src/foo.ts", "src/foo.spec.ts", "src/foo.test.ts"], ["sequence"]);
+    expect(resolveCounterpart(canvases, "sequence", "src/foo.ts")?.path).toBe("src/foo.test.ts");
   });
 
   it("falls back to a .spec. counterpart when no .test. is in the review", () => {
-    const canvas = canvasWithFiles(["src/foo.ts", "src/foo.spec.ts"]);
-    const target = resolveCounterpart(canvas, "src/foo.ts");
+    const canvases = canvasSet(["src/foo.ts", "src/foo.spec.ts"], ["sequence"]);
+    const target = resolveCounterpart(canvases, "sequence", "src/foo.ts");
     expect(target?.path).toBe("src/foo.spec.ts");
     expect(target?.label).toBe("View test");
   });
 
-  it("is null when the counterpart is not part of the review", () => {
-    const canvas = canvasWithFiles(["src/foo.ts"]);
-    expect(resolveCounterpart(canvas, "src/foo.ts")).toBeNull();
+  it("is null when the counterpart is not a changed file in the review", () => {
+    const canvases = canvasSet(["src/foo.ts"], ["sequence"]);
+    expect(resolveCounterpart(canvases, "sequence", "src/foo.ts")).toBeNull();
   });
 
   it("is null for a file with no impl/test partner convention", () => {
-    const canvas = canvasWithFiles(["docs/README.md"]);
-    expect(resolveCounterpart(canvas, "docs/README.md")).toBeNull();
+    const canvases = canvasSet(["docs/README.md"], ["sequence"]);
+    expect(resolveCounterpart(canvases, "sequence", "docs/README.md")).toBeNull();
   });
 });

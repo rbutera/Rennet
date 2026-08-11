@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { join, normalize, resolve, sep } from "node:path";
+import { join, normalize, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
@@ -80,11 +80,12 @@ import type {
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell } from "electron";
 import { createDispatch } from "./dispatch";
 import { createDesktopReviewBackend } from "./live-review-backend";
+import { EDITOR_CLIS, performOpenInEditor } from "./open-in-editor";
 import { createOrchestratorTurnRunner } from "./orchestrator";
 import { createProcessProject } from "./process-project";
 import { createPublishConsentAuthority } from "./publish-consent-authority";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
-import { createLiveSymbolLookup } from "./symbol-lookup-live";
+import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 
 const execFileAsync = promisify(execFile);
 
@@ -1041,27 +1042,42 @@ app.whenReady().then(async () => {
     // patchset. The pipeline is a deterministic-floor build (no lens/model turns).
     symbolLookup: createLiveSymbolLookup({
       buildBackend: async (review) => {
+        // Pin to the REVIEWED tree (base..head), not the base — so a symbol added,
+        // renamed, or moved in the PR resolves instead of reading stale/missing over
+        // the base snapshot. The pipeline is a deterministic-floor build; only the
+        // symbolic ops (context.symbol/references) are read from this backend.
+        const headReview = reviewPinnedToHead(review);
         const pipeline = await buildReviewCanvases({
-          reviewId: review.id,
-          patchset: activePatchset(review),
-          dispositions: review.dispositions,
+          reviewId: headReview.id,
+          patchset: activePatchset(headReview),
+          dispositions: headReview.dispositions,
         });
-        const live = await createDesktopReviewBackend(review, pipeline);
+        const live = await createDesktopReviewBackend(headReview, pipeline);
         return live.backend;
       },
     }),
-    // review.openInEditor (Rai, wireframes #8): open a review file via the OS. The
-    // path is repo-relative (from the symbolic index); resolve it against the review's
-    // root and REFUSE anything that escapes the root before handing it to the shell.
-    // `shell.openPath` returns "" on success or an error string; a line hint is not
-    // yet honoured (opening at a line needs an editor-specific CLI — a follow-up).
-    openInEditor: async ({ review, path }) => {
-      const root = resolve(review.repositoryRoot);
-      const target = resolve(root, path);
-      if (target !== root && !target.startsWith(root + sep)) return { ok: false };
-      const error = await shell.openPath(target);
-      return { ok: error === "" };
-    },
+    // review.openInEditor (Rai, wireframes #8): open a review file AT ITS LINE. Try a
+    // line-jumping editor CLI (`<cli> -g file:line`, VS Code / Cursor / Sublime
+    // family) first; fall back to an OS-level open (no line) only when none took it.
+    // Path resolution + the escape-the-root refusal live in `performOpenInEditor`.
+    openInEditor: ({ review, path, line }) =>
+      performOpenInEditor(
+        {
+          launchAtLine: async (absPath, ln) => {
+            for (const cli of EDITOR_CLIS) {
+              try {
+                await execFileAsync(cli, ["-g", `${absPath}:${ln}`]);
+                return true;
+              } catch {
+                // Not installed / refused — try the next candidate editor.
+              }
+            }
+            return false;
+          },
+          openPath: async (absPath) => (await shell.openPath(absPath)) === "",
+        },
+        { repositoryRoot: review.repositoryRoot, path, line },
+      ),
     reviewAsk: createLiveReviewAskPorts({
       // Dispatch resolves + freshness-pins the review (and its patchset) and hands the
       // SAME snapshot to both legs, so the ports never re-resolve. The pipeline is a
