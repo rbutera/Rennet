@@ -6,7 +6,7 @@ The repository now contains the first runnable desktop MVP alongside the archite
 
 ## Start here
 
-- [Master plan](./docs/Rennet%20Master%20Plan.md): authoritative product and architecture reconciliation.
+- [Contracts and rulings](./docs/Rennet%20Contracts%20and%20Rulings.md): the authority register (formerly the master plan): rulings, frozen core, open questions, and the execution pipeline.
 - [Architecture contracts](./docs/Rennet%20Architecture%20Contracts.md): project context, immutable patchsets, invalidation, persistence, privacy, and publication.
 - [Dependency standard](./docs/Rennet%20Dependency%20Standard.md): authoritative package, licence, toolchain, and ownership decisions.
 - [Local review MVP](./docs/Rennet%20Local%20Review%20MVP.md): what is implemented, how to run it, and the deliberately missing product layers.
@@ -50,4 +50,4 @@ Nx runs and locally caches lint, TypeScript 7 typechecking, unit tests, and Vite
 
 There is no Rennet backend. Selected harnesses or model providers may receive explicitly assembled code and context, and the app must disclose that before a run. Never use easyJet or other client repositories, data, screenshots, or pull requests as fixtures without written authorization.
 
-This private repository does not currently grant a licence. The planned public licensing split is recorded in the master plan and must be implemented before the repository becomes public.
+This private repository does not currently grant a licence. The planned public licensing split is recorded in the contracts and rulings and must be implemented before the repository becomes public.
