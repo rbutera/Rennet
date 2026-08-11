@@ -352,12 +352,13 @@ export interface OpenSpecViewModel {
  * artifacts, each addressable element carrying a stable review anchor (structural
  * key + durable target), and a whole-change summary. A pure function of its inputs.
  *
- * `coverage` (optional) is the produced hunk↔requirement mapping, keyed by
- * requirement anchor key: each requirement view is handed exactly the coverage the
- * runner emitted for it, or none. Omitting it (the honest default today, since no
- * mapping runner ships yet — the council jobs are catalogue-only) leaves every
- * requirement's `coverage` absent, so the Spec view renders no chips rather than a
- * fabricated one.
+ * `coverage` (optional) is the produced hunk↔requirement mapping (from the live
+ * `runCoverageMapping` runner, over the `openspec.coverage` boundary), keyed by
+ * `openSpecRequirementCoverageKey(capability, name)`: each requirement view is handed
+ * exactly the coverage the runner emitted for it, or none. Omitting it (a host with no
+ * producer, or a run that FAILED — the app passes it only on a completed `ok` mapping)
+ * leaves every requirement's `coverage` absent, so the Spec view renders no chips
+ * rather than a fabricated one.
  */
 export function buildOpenSpecView(
   change: OpenSpecChange,

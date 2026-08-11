@@ -148,12 +148,12 @@ export interface CanvasWorkspaceProps {
 
   /**
    * The produced hunk↔requirement coverage (Rai, wireframes #9 / R53), keyed by
-   * requirement anchor key. When present, each requirement in the Spec view renders
-   * its coverage chip (covered-by-N-hunks·M-tests → jumps to the claiming hunk, or an
-   * honest amber "unimplemented" for a computed zero). Absent ⇒ no chips: the view
-   * never fabricates coverage. Today no mapping runner produces this (the council
-   * jobs are catalogue-only), so the host passes nothing and the chips stay dark
-   * until a real producer lands — the seam is live, the number is never faked.
+   * `openSpecRequirementCoverageKey(capability, name)`. When present, each requirement
+   * in the Spec view renders its coverage chip (covered-by-N-hunks·M-tests → jumps to
+   * the claiming hunk, or an honest amber "unimplemented" for a computed zero). The
+   * live `runCoverageMapping` runner produces it over the `openspec.coverage` boundary;
+   * the app passes it ONLY on a completed `ok` mapping, so absent ⇒ no chips (no
+   * producer, or a failed/uncomputed run) and the view never fabricates coverage.
    */
   openSpecCoverage?: OpenSpecCoverageIndex;
 
