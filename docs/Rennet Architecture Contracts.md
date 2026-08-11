@@ -13,6 +13,8 @@ source: codex
 
 # Rennet Architecture Contracts
 
+> ⚠️ **READ FIRST — RULE ZERO (CLAUDE.md, Rai, 2026-08-11) outranks every contract below.** No consent gates, no gates, no robustness for robustness' sake. Where a clause here denies the product a capability, demands an approval ceremony, or blocks work until something is discharged, Rule Zero wins and the clause is marked superseded in place.
+
 This note is the authoritative contract for project context, review snapshots, persistence, harness access, and publication in [[Code Review Harness App|Rennet]]. It records Rai's decisions from 2026-08-05 and resolves the relevant contradictions in [[Wingman Architecture Plan]], [[Wingman Settings and Setup Plan]], [[Wingman LSP Integration Plan]], [[Wingman Harness Adapter Protocol]], [[Wingman GitHub Integration Plan]], [[Wingman Surfacing DSL and Model Routing Plan]], and [[Wingman Repo Bootstrap Plan]].
 
 Where this note conflicts with those subordinate plans, **this note wins**. [[Rennet Contracts and Rulings]] remains authoritative outside this note's scope.
@@ -31,6 +33,8 @@ These are build constraints, not preferences:
 8. A repeated command cannot repeat an internal mutation or an external side effect.
 9. Unknown durable events are preserved but never skipped to produce a plausible projection. Unsupported history fails closed.
 10. “Delete review” removes every Rennet-controlled copy of that review and states the limits of deletion outside Rennet's control.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), for invariants 3, 4, 5, 7 and 9 only.** No consent gates, no gates, no robustness for robustness' sake. What applies instead: (3) stale context degrades visibly and says so, it never blocks the dependent operation; (4) Rennet may regenerate automatically when that makes the review better — no permission step (see §7.2, spend is not gated); (5) Rennet may write, commit, and push on the acting path, because handing work to a coding harness and submitting a PR both require it (R33 as amended by Rai 2026-08-11); (7) the harness is not confined to a read-only materialisation — a capable agent is the product, and it may run against the live checkout when the task needs it; (9) unknown events are still preserved byte-for-byte and reported honestly, but they no longer fail closed onto the whole review. Invariants 1, 2, 6, 8 and 10 stand unchanged — they make the product work, they do not police it.
 
 ## 2. Project context and `.rennet`
 
@@ -79,6 +83,8 @@ If `.rennet` files are already tracked, switching to `local` cannot make them un
 Rennet may create and incrementally maintain `.rennet/` after project context is enabled. This is the explicit exception to the older rule that Rennet never creates `.rennet/`. Discovery alone still writes nothing.
 
 Repo-supplied `.rennet` content is untrusted input. Existing shareable-key allowlists, repo-relative path escape checks, content-hash trust gates, and base-ref reading continue to apply. A branch may not change the context used to review itself unless the reviewer explicitly adopts that change for the review.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), for the trust-gate and adoption ceremony.** No consent gates, no gates, no robustness for robustness' sake. Path-escape and key-shape checks stay (they stop real breakage); the content-hash trust gate and the "reviewer explicitly adopts" step go — read the repo's context, and say in the run ledger where it came from.
 
 ### 2.3 `ProjectSnapshot`
 
@@ -306,6 +312,8 @@ The default harness working directory is an app-cache-owned immutable materialis
 
 Writes, arbitrary execution, inherited MCP servers, hooks, and ambient project settings are denied unless a capability-specific feature explicitly requires and discloses them. If a harness cannot be proven isolated, the `ContextManifest` sets `exhaustive: false`, names possible unmanaged sources, and the UI does not claim a complete egress manifest.
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The harness is not sandboxed by default: writes, execution, MCP servers and hooks are available to it, because an agent that cannot run the tests it just wrote is a gate wearing a lab coat. The honest half survives — a non-exhaustive manifest is still reported as non-exhaustive, and the UI still never claims a complete egress manifest it does not have.
+
 Before first use of each harness, and whenever its authority materially changes, Rennet shows:
 
 - executable, version, model-selection source, and provider;
@@ -314,6 +322,8 @@ Before first use of each harness, and whenever its authority materially changes,
 - that selected source/context may leave the machine for the harness's provider;
 - reported or estimated spend visibility and the applicable budget;
 - a link to the exact assembled prompt/context manifest for each run.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), for the "before first use" interstitial only.** No consent gates, no gates, no robustness for robustness' sake. Every fact in the list above stays available and true — as the title-bar execution-mode glyph, the per-run narration line, and the run ledger (R31, v3 resteer item 1) — but it is never a screen the user has to get past before a harness may run.
 
 The truthful product claim is: **Rennet has no Rennet backend. Data is processed locally except for material explicitly sent through the user's selected harness/provider.** “Nothing leaves your machine” and unqualified “no cloud” are prohibited claims.
 
@@ -340,6 +350,8 @@ An unknown event type or unsupported event version is preserved byte-for-byte, b
 
 A store written by a newer schema is opened read-only only for safe metadata/export paths; normal review operations refuse. Migrations take a verified backup first and downgrade is refused.
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), for the blocking and refusal behaviour.** No consent gates, no gates, no robustness for robustness' sake. Preserve the bytes, show the partial projection *labelled as partial*, and let the user carry on reviewing; a version the app does not understand is a thing to report, not a reason to lock the review.
+
 ## 8. GitHub secret ownership
 
 GitHub credentials remain host-owned:
@@ -358,6 +370,8 @@ GitHub credentials remain host-owned:
 Completing a local review creates a **PR submission preview** containing the proposed title, body, draft/base/head metadata, surfaced decisions, and publication/degradation ledger. Preview is a pure local projection. It does not push a branch, create a PR, update a PR, post comments, or resolve threads.
 
 The user may copy the preview. A future create/update-PR action is a separate, explicitly labelled GitHub mutation and is idempotent under §6. Rennet never pushes source code as part of that action; a remotely available head is a precondition.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), for the never-push clause.** No consent gates, no gates, no robustness for robustness' sake. Pushing the branch is *part of* submitting the PR, not a precondition the user must satisfy first — R33 as amended by Rai on 2026-08-11 already says so. The preview stays pure; the submit act pushes.
 
 ### 9.2 Reviewer-side publication
 
@@ -385,6 +399,8 @@ The contract is implemented only when all of these can fail and have been demons
 - A seeded unknown event prevents projection, completion, regeneration, and publication.
 - `gh` tokens never appear in durable storage or renderer messages; persisted tokens are rejected when strong OS encryption is unavailable.
 - Author preview causes zero Git or GitHub mutations. Every external mutation requires a separate explicit act and survives timeout/retry without duplication.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), for the opening "implemented only when…" clause and for four bullets: the harness-denial bullet, the stale-context-unusable bullet, the seeded-unknown-event bullet, and the "no model call occurs until regeneration is invoked" half of the invalidation bullet.** No consent gates, no gates, no robustness for robustness' sake. These criteria assert gates this document no longer has, so a build is not held back for failing to demonstrate them; every other bullet here is a real product property (byte-identical rebuilds, immutable patchsets, honest read state, one side effect per command, real deletion, prompts shown as sent) and still holds.
 
 ## Related
 

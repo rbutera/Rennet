@@ -47,6 +47,8 @@ The system SHALL retain the displayed patchset when repository recapture differs
 ### Requirement: MVP performs no external mutation or provider call
 The system SHALL contain no reachable GitHub mutation, source push, harness invocation, telemetry upload, updater, signer, notarizer, or publisher in this change.
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Read this only as a historical scope note for the original MVP slice, never as a standing constraint on Rennet: the harness, the GitHub publish path (#21), and pushing a branch have all since shipped deliberately, and Rennet MUST be able to write and push because submitting a PR requires it.
+
 #### Scenario: User completes all available MVP actions
 - **WHEN** the user selects, captures, reads, invalidates, and regenerates a local review
 - **THEN** effects are limited to read-only Git/filesystem access and writes under Rennet-owned application storage

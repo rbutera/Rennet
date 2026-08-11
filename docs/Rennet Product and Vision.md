@@ -11,6 +11,8 @@ related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Architecture Contracts]]
 
 > **Resteer 2026-08-09:** the v3 shell and lens set are folded into this document (§1 shape-of-the-app, §4.1 six angles incl. the new Flagged lens and purified Decisions, claims retired to infrastructure, §4.7 paper-and-sign, §4.8 peek-then-pin inspector). Full record: [[Rennet v3 Resteer 2026-08-09]] and the v3 prototype (gallery https://nimbus.piranha-wyvern.ts.net:9443/).
 
+> ⚠️ **READ FIRST — RULE ZERO (CLAUDE.md, Rai, 2026-08-11) outranks this document and every document it points at.** No consent gates, no gates, no robustness for robustness' sake. Rennet is a diff digestor and PR review buddy; where a passage below denies the product a capability, demands a ceremony, or blocks work, Rule Zero wins and the passage is marked superseded in place.
+
 **This is the canonical statement of what Rennet is.** Read it first. Every other document in `docs/` plays a supporting role — the authority register for rulings is [[Rennet Contracts and Rulings]], the frozen engineering contracts are [[Rennet Architecture Contracts]], and [[Rennet Doc Architecture]] maps the whole set. Where this document and a deeper document disagree on *intent*, this document wins; where they disagree on a *ruling or contract*, the deeper authority wins and this document has a bug — file it.
 
 ---
@@ -31,6 +33,8 @@ The essentials, all settled and frozen:
 - **BYOK via the user's own installed harnesses** — Claude Code first (an `@anthropic-ai/claude-agent-sdk` integration that spawns the user's own installed `claude`, so auth stays on their subscription at no per-token cost), then codex and omp behind the same adapter protocol.
 - **Zero-config is the North Star.** Install, and the harnesses already on your machine are auto-detected and just work. No API-key ceremony.
 - **The human disposes.** No auto-approve, no auto-comment, nothing another human sees without an explicit human act. This is enforced structurally (see §4), not by prompt.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), for "enforced structurally" only.** No consent gates, no gates, no robustness for robustness' sake. "The human disposes" stands as product intent — it is the whole thesis, *you still have to answer for it* — but it is not implemented by amputating the agent's tool surface: a capable agent is the product.
 - **Both review modes are v1**: reviewing a diff an LLM just generated locally (working-tree changeset source) AND reviewing someone else's PR (GitHub changeset source). One engine, two sources.
 - **MIT throughout** — one licence for every package. The `protocol`/`types` import-nothing rule survives as an architectural boundary (a mobile or third-party client is a peer of the renderer), not a licensing one.
 
@@ -87,6 +91,8 @@ An *angle* is the lens; a **canvas** is the stateful per-review surface instance
 
 Four actors, partitioned **structurally**: the engine (project/invalidate/carry/order), the fleet (emit RSP documents, nothing else), the orchestrator (describe/view/focus/annotate/propose/recompute via MCP tools), and the user (dispose/adjudicate/expand/select/pin, direct UI). The orchestrator's tool surface simply does not contain user-only or engine-only operations — "the human still disposes" is a property of the wiring, not an instruction.
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), for the structural partition and "no agent may write L2".** No consent gates, no gates, no robustness for robustness' sake. The four roles remain a useful description of who does what, and L2 remains the user's own layer by design; they are not enforced by withholding capability from the orchestrator, because denying an agent a capability so it "structurally cannot" act is exactly what Rule Zero forbids.
+
 ### 4.3 The disposition model and the review→agent handoff loop
 
 The **disposition** is the one data model of review action: `{anchor, type: approve | request-change | comment | question, body}` — extended by the refinement loop (§4.4) with `refined`, `published`, and an inline `thread`. One model, two destinations — the mode decides where it goes, never what it is:
@@ -95,6 +101,8 @@ The **disposition** is the one data model of review action: `{anchor, type: appr
 - Reviewing **your own branch** → dispositions batch into a **task bundle handed to a coding harness**, which addresses them on the branch → produces a **new patchset** → Rennet **re-reviews only the DELTA**. An approved hunk that did not change stays approved.
 
 This loop is what turns Rennet from a reading tool into a **review-driven coding loop**, and it is cheap precisely because the architecture already pays for it: immutable patchsets, occurrence-ID + lineage identity, and review state that survives a force-push. The safety properties do not relax inside the loop: the human still disposes, Rennet never pushes source code, and an agent-authored change is never "already read" because a human once read the code it replaced. Full contract: [[Rennet Contracts and Rulings]] §2.1.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), for "Rennet never pushes source code".** No consent gates, no gates, no robustness for robustness' sake. The handoff loop hands work to a coding harness that writes on the branch, and submitting the result is a push — Rennet must be able to do both (R33 as amended by Rai 2026-08-11). The read-state half of the sentence stands: an agent-authored change is never "already read".
 
 ### 4.4 The comment-refinement loop
 
@@ -115,9 +123,13 @@ This loop is what turns Rennet from a reading tool into a **review-driven coding
 
 **Read state is action-defined**: a chunk is READ when the reviewer acts on it (approve, request-change, ask-question) — never by scroll position or dwell time. Anything merely scrolled past is at most *skimmed*, and the totality/residue guarantee reports it as unread. Done/publish block on incomplete ingestion; the noise angle is the floor that makes the residue visible. Read state never auto-carries through similarity; ambiguity fails closed.
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), for "done/publish block on incomplete ingestion".** No consent gates, no gates, no robustness for robustness' sake. Incomplete ingestion is shown in the residue and on the sheet, and the user publishes anyway if they want to; honest read state is a feature, refusing to let someone finish is a gate.
+
 ### 4.7 Publish as preview
 
-The paper sheet previews **exactly what leaves the machine**, context-dependent: reviewing your own unpushed branch or your own PR → it previews the **PR submission**; someone else's PR → it previews the **review it will post**, every line item, with the degradation ledger. What posts is the **refined** form of each comment (§4.4). Publish is a three-phase explicit human act, idempotent, with outcome-unknown reconciliation. Rennet never pushes source code. This is the **paper-and-sign ceremony**: the paper is the one solid, signable object in an otherwise translucent product, and the review it posts to GitHub is the human's **signed verdict**, previewed line for line before it leaves the machine.
+The paper sheet previews **exactly what leaves the machine**, context-dependent: reviewing your own unpushed branch or your own PR → it previews the **PR submission**; someone else's PR → it previews the **review it will post**, every line item, with the degradation ledger. What posts is the **refined** form of each comment (§4.4). Publish is a three-phase explicit human act, idempotent, with outcome-unknown reconciliation. Rennet never pushes source code. This is the **paper-and-sign ceremony**:
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), for "Rennet never pushes source code".** No consent gates, no gates, no robustness for robustness' sake. Signing the paper on your own branch means submitting the PR, and that means pushing — Rennet does it as part of the act the user asked for (R33 as amended by Rai 2026-08-11). The paper itself is not a consent gate: it is the review, previewed line for line, which is the product doing its job. the paper is the one solid, signable object in an otherwise translucent product, and the review it posts to GitHub is the human's **signed verdict**, previewed line for line before it leaves the machine.
 
 ### 4.8 LSP code intelligence
 

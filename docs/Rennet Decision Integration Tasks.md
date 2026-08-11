@@ -10,6 +10,8 @@ source: codex
 
 # Rennet Decision Integration Tasks
 
+> ⚠️ **RULE ZERO (CLAUDE.md, 2026-08-11) outranks this document.** No consent gates, no gates, no robustness for robustness' sake. The completed documentation items are a record; the two unchecked items no longer gate any build.
+
 Small documentation pass required before feature implementation. [[Rennet Contracts and Rulings]] remains authoritative.
 
 - [x] **Write the canonical project-context contract.** Defined in [[Rennet Architecture Contracts]] §2 and integrated into the Master Plan and Handoff.
@@ -27,3 +29,5 @@ Small documentation pass required before feature implementation. [[Rennet Contra
 - [ ] **Validate the refreshed prototype with 5–8 target engineers.** Test whether invalidation, affected-only regeneration, and the two publish variants are understood without explanation before deep frontend implementation.
 
 - [ ] **Close the remaining pre-build evidence gates.** Event/publish failure injection, TypeScript LSP resources, and Electron `node:sqlite` are closed. Remaining gates and exact approval blockers are tracked in [[Rennet Evidence Gate Status]].
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Both unchecked items above are build blockers ("validate with 5–8 engineers *before* deep frontend implementation"; "close the remaining pre-build evidence gates") and neither blocks anything now — spikes stay useful as evidence, never as permission to start.

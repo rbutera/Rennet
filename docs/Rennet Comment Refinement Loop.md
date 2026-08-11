@@ -9,9 +9,13 @@ related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Canvas Paradigm]]", "[[R
 
 # Rennet Comment-Refinement Loop
 
+> ⚠️ **RULE ZERO (CLAUDE.md, 2026-08-11) outranks this document.** No consent gates, no gates, no robustness for robustness' sake. The messy-in/clean-out loop, the refiner contract, and the clarification thread all stand; the passages carrying a ⛔ SUPERSEDED marker are void where they conflict.
+
 *Design doc, 2026-08-06. Designs Rai's headline new feature (voice, 2026-08-06): when the user comments / requests-change / disapproves, the raw input is NOT what gets posted — an agent interprets and cleans it, asking inline clarifying questions when unclear, and the publish preview shows the cleaned, investigated version. "Write it messy → agent cleans it up → clean version lands on the PR." Extends Rennet Contracts and Rulings §2.1 (the disposition model + handoff loop), the Canvas Paradigm's L2 layer, and the publication contract (Architecture Contracts §9). Honours: MIT throughout, action-defined read state, smooth+quick, decisions-never-capped, roll-up/zoom, Q5 view+lens-at-request-time.*
 
 **Headline recommendation up front: model refinement as a lifecycle on the existing disposition — the raw draft is immutable and user-sovereign, the refined form is a fleet-emitted, validator-admitted `refinement@1` document that becomes the *effective body* only through a user adjudication act (the R9 propose→adjudicate pattern the canvas contract already uses), and the publish/handoff sheet is the adjudication backstop so nothing unadjudicated ever leaves the machine. Refinement runs always, in the background, on the light tier; it never blocks the user's next disposition; clarification questions are the exception path (a `needs-clarification` verdict rendered into a per-disposition inline thread), not the default. The clarification thread is local machinery and is structurally excluded from publish — paper is what leaves the machine, and the paper is the effective body. Ship slice A (no thread: draft → background refine → sheet adjudication → publish/handoff) first; it already delivers the whole "messy in, clean out" promise.**
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. "The sheet is the adjudication backstop so nothing unadjudicated ever leaves" is a gate: the draft surfaces unsettled rows and offers one-act accept-all, and the user signs whenever they choose (see §4).
 
 ---
 
@@ -227,6 +231,8 @@ The publish sheet (someone-else's-PR mode) and the handoff sheet (own-branch mod
 - The sheet lists every disposition **showing its effective-body candidate**: accepted text where adjudicated, the proposed refined text where not, the raw draft where refinement failed or was bailed. Per row, a compact **raw → refined toggle/diff** — zoom in to see exactly what changed, zoom out to trust the roll-up.
 - **Bulk adjudication is one act** (Q4: bulk allowed): "Accept all refined versions (12)" — with per-row opt-out, per-row edit, per-row use-raw. Approve the roll-up or partials of it; the user picks the altitude.
 - **Unadjudicated proposals block publish/handoff the way the sheet already blocks on incomplete ingestion** — not by nagging during review, but by the sheet refusing to be signed while a row is unsettled. One rule, both modes (OQ4 confirms or overrides). Settling all rows is at worst one bulk act, so the gate costs one click, not thirty.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The draft shows unsettled rows plainly and offers accept-all in one act, but it never refuses to be signed — signing is the user's call, and what they sign is what goes.
 - `needs-clarification` threads still open at sheet time render as rows with the question visible and two affordances: answer now, or post-as-written. Nothing is ever silently dropped or silently posted raw.
 
 ### 4.1 Destination A: someone else's PR (publish)
@@ -264,6 +270,8 @@ The publish sheet (someone-else's-PR mode) and the handoff sheet (own-branch mod
 2. **Auto-settle on `no-change`** (§1.4): when the refiner proposes zero changes, the disposition settles as raw without a user act. Safe by construction (nothing agent-authored adopted). Confirm.
 3. **Does the orchestrator get a voice in the clarification thread?** v1 says no: exactly two speakers (user, refiner), orchestrator reads via `canvas.thread`. The alternative — the orchestrator answering clarifications on the user's behalf from conversation context — is powerful and edges toward the agent adjudicating for the user. Recommend: not in v1; revisit with evidence.
 4. **One gate rule for both destinations:** unadjudicated refinements block the sheet from signing, publish and handoff alike (at worst one bulk act to clear). Confirm — or should own-branch handoff be looser (it's private; raw going to your own coding agent is harmless)?
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Questions 3 and 4 are closed toward capability: the orchestrator may speak in the clarification thread, and nothing blocks the sign in either mode.
 5. **Voice and attribution of posted text:** refined comments post in the user's first-person voice, under their identity, with no AI-attribution marker (frozen-rule family). Confirm; and should the refiner preserve the user's tone or normalise to a house style? (Recommend: preserve tone — it should read as *you on a good day*, not as a bot.)
 6. **Spend visibility:** refinement spend is ledger-only (`run.ledger`), no per-refinement ceremony — same stance as `context.ask`. Confirm.
 

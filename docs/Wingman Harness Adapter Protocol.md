@@ -8,9 +8,14 @@ updated: 2026-08-05
 
 # Rennet Harness Adapter Protocol
 
+> [!DANGER] RULE ZERO (CLAUDE.md, 2026-08-11) outranks every ruling in this file
+> **NO CONSENT GATES. NO GATES. NO ROBUSTNESS FOR ROBUSTNESS' SAKE.** Rennet is a diff digestor and PR review buddy; the acting path must be able to write, and must be able to push, because submitting a PR requires a push. Passages below that specify approval arbitration, consent or disclosure ceremony, a read-only-by-default posture, capability flags that start `false` and must be *earned*, or fail-closed handling of unexpected requests are marked ⛔ SUPERSEDED inline. What survives untouched: *decoding* a harness's own approval/denial frames (interoperability), the handshake and version negotiation, the error taxonomy, and cost/telemetry reporting. What does not survive: turning any of that into a prompt the user has to answer before Rennet may act.
+
 > [!IMPORTANT] Current implementation authority, 2026-08-06
 > ⛔ **SUPERSEDED 2026-08-06: the Claude Agent SDK is now ADOPTED, not banned — see Master Plan R2.** The Claude adapter is an SDK integration, not the clean-room process-per-turn CLI wrapper §0.2 mandates below. The *non-SDK* guidance elsewhere in this file still stands regardless of that reversal: discover harnesses via login-shell PATH harvest (never `which`), earn capability flags through a conformance suite, keep a read-only sandbox posture, and never read or persist a harness credential.
 > This note preserves the 2026-08-04 protocol research, but [[Rennet Contracts and Rulings]] and [[Rennet Architecture Contracts]] override its transport recipes. Build **Rennet**. ~~Never import or bundle the proprietary Claude Agent SDK; drive the user's installed `claude` CLI through a clean-room process-per-turn adapter.~~ (superseded, see note above — SDK adopted). Never read or persist harness credentials. Deterministic work stays local; semantic utility work is batched by meaningful unit, never process-per-hunk or per item. Capability flags start false and are earned by conformance.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The two clauses "earn capability flags through a conformance suite" and "keep a read-only sandbox posture" are struck: capabilities are declared and used, the conformance suite is a test that reports reality rather than a gate that withholds function, and the adapter's default posture is read-write on the acting path.
 
 The normalized event protocol and adapter layer for [[Code Review Harness App]]. The product name is Rennet; the filename is retained only to preserve existing Obsidian links.
 
@@ -56,6 +61,8 @@ const commandArgs = ["exec", "--experimental-json"];
 It structurally cannot do three things Rennet needs:
 
 1. **Approval arbitration.** There is no approval channel at all: `ThreadEvent` has no approval variant, `TurnOptions` has exactly two fields (`outputSchema`, `signal`), and there is no callback anywhere in `index.d.ts`. `codex exec` is non-interactive by construction. The human-is-the-gate trust model cannot be implemented on it at any price.
+
+   > ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Reason 1 is struck: the "human-is-the-gate trust model" is exactly the ceremony Rule Zero forbids, and a missing approval channel is no longer a defect. Reasons 2 (machine-readable errors) and 3 (context-window telemetry) are untouched and are on their own sufficient to keep the `app-server` decision.
 2. **Machine-readable errors.** `run()` does `throw new Error(turnFailure.message)`, flattening the structured `codexErrorInfo` union to a bare string, and dropping `willRetry` entirely. The adapter would be reduced to substring-matching English.
 3. **Context-window telemetry.** `totalTokens` and `modelContextWindow` exist on app-server's `ThreadTokenUsage` and are absent from the SDK's `Usage`.
 
@@ -74,6 +81,8 @@ This revises the stack note's "use the official SDK rather than hand-rolling a J
 > ⭐ **Why this belongs here rather than in the licence discussion:** it is a *positive* guarantee the clean-room CLI wrapper could not have offered. Spawning `claude` ourselves gives no structured statement of which credential answered — we would have had to infer it. **The SDK hands it over as typed data, per session.** So the option we chose is the one that can *prove* the property the other one merely assumed, and that is a real argument for the SDK independent of build cost.
 >
 > ⚠️ **Known limit, do not over-claim:** the spawned CLI inherits `process.env`, so an ambient `ANTHROPIC_API_KEY` in the launching shell can still take precedence — that is Claude Code's own precedence rule and identical under any wrapper. **This assertion is exactly what makes that case visible instead of silent.** Treat it as detection, never as prevention. It fits the capability model below: earn it with a conformance test that proves the warning fires, or it is a claim rather than a capability.
+>
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), final sentence only.** No consent gates, no gates, no robustness for robustness' sake. The "earn it with a conformance test or it is not a capability" clause is struck along with the rest of the earned-capability model. The `apiKeySource` warning itself SURVIVES: it is non-blocking information that stops money leaving silently, which makes the product better rather than harder to use, and it explicitly does not fail the turn closed.
 
 ⛔ **SUPERSEDED 2026-08-06: this whole subsection is reversed.** The Claude Agent SDK is adopted (Master Plan R2). Rennet DOES link the SDK for the Claude adapter; it spawns the user's own installed `claude` binary and authenticates on their subscription, so the "must not link" premise below no longer holds, and the "zero compiled artifacts" framing is retired — the SDK's prebuilt per-platform binary is an accepted, budgeted packaging cost (see [[References/Desktop and Mobile Stack 2026]]).
 
@@ -166,7 +175,11 @@ export interface HarnessDescriptor {
 }
 ```
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), `canGateToolCalls` only.** No consent gates, no gates, no robustness for robustness' sake. "Can WE arbitrate each tool call before it runs? False collapses the trust model to all-or-nothing" is struck — all-or-nothing *is* the model, and Rennet does not arbitrate its own harness's tool calls. Keep the flag only if a harness's wire protocol requires an answer to a server-initiated approval frame, in which case it describes a decoding obligation, not a user prompt. Every other flag in `HarnessCapabilities` is untouched: they describe what the harness can do, which is the opposite of a gate.
+
 The UI reads `capabilities` and nothing else. No `if (harness === 'codex')` anywhere above the adapter boundary; that rule is what makes harness plurality a positioning claim rather than a maintenance tax.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Capability flags are read from what the adapter actually implements; they do NOT start `false` and they are not withheld pending a conformance run (see §2.3, §9 hook 9, D11, B14 — all marked).
 
 ### 1.2 Event envelope
 
@@ -227,6 +240,8 @@ export type SessionOutcome =
   | { status: 'cancelled'; partial: boolean }
   | { status: 'failed'; error: HarnessError };
 ```
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), the `approval.requested` event kind only.** No consent gates, no gates, no robustness for robustness' sake. Codex's app-server really does send server-initiated approval requests, so *decoding* the frame and *answering* it stays — that is interoperability, and an unanswered request hangs the turn. What is struck is routing that event to a human: Rennet answers approval requests itself, permissively, and does not raise an are-you-sure. `tool.denied` likewise stays as a faithful record of something the harness did, not as a state Rennet manufactures.
 
 `tool.output` carries `output: unknown` **and** `text: string` deliberately. The Claude SDK exposes `SDKUserMessage.tool_use_result` (`sdk.d.ts:4613`), documented as "the tool's full Output object, not the string content sent to the model … render from it instead of parsing the tool_result text", with per-tool types in `sdk-tools.d.ts` (3,807 lines). Codex gives structured `ThreadItem` payloads. Parsing model-facing prose when a typed object is available is the bug the field pair exists to prevent.
 
@@ -351,9 +366,13 @@ export type ApprovalDecision =
   | { decision: 'deny'; message: string };
 ```
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Two fields of `SessionSpec` are struck: `readOnly` (there is no read-only default for review — Rennet drives the user's harness and must be able to write, and to push), and `onApproval` as a *human-facing* callback. Where a harness's protocol demands an answer, the adapter answers `{ decision: 'allow' }` itself so the turn proceeds; `ApprovalDecision` survives only as the wire shape of that answer. `allowedTools`, `budgetUsd`, `signal`, `model`, `systemPrompt`, and `outputSchema` are untouched — those are configuration, not permission.
+
 > [!WARNING] Historical SDK approval finding
 > ⛔ **SUPERSEDED 2026-08-06: the SDK is no longer "retired" — it is adopted (Master Plan R2).** The shipping Claude adapter is expected to be SDK-based, so `onApproval`/`CanUseTool` are back in scope rather than forbidden; re-derive the approval-arbitration design against the adopted SDK rather than against this CLI-only note.
 > The `onApproval` rule below applied only to the retired Claude Agent SDK. The shipping CLI adapter has no SDK callback: it launches with an explicit read-only tool allowlist, refuses bypass modes, and treats any unexpected write/exec request as a denied turn. Do not implement `CanUseTool` or import SDK types.
+>
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. "Read-only tool allowlist", "refuses bypass modes", and "treats any unexpected write/exec request as a denied turn" are all struck — that last one is a fail-closed gate, and the first two deny the agent capability so it "structurally cannot" act. A capable agent is the product. The adapter launches with write and exec available.
 
 ---
 
@@ -364,6 +383,8 @@ export type ApprovalDecision =
 > [!DANGER] The SDK mapping below is research, not an implementation recipe
 > ⛔ **SUPERSEDED 2026-08-06: this whole "clean-room CLI, never import SDK types" posture is reversed — the Claude Agent SDK is adopted, see Master Plan R2.** The credential/context-disclosure discipline (never persist a harness credential, disclose inherited project context) still applies to the SDK integration.
 > Current transport is a fresh `claude -p --output-format stream-json --include-partial-messages --resume <id> --fork-session --json-schema ...` child process for each turn. Decode the CLI JSONL with tolerant runtime schemas and preserve unknown native frames for diagnostics. Rennet owns the logical thread and normalized transcript; the harness owns authentication and its native session. Never import SDK types, never set/read credentials, and never inherit unbounded project hooks/MCP/tool context without explicit disclosure.
+>
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), the disclosure clause only.** No consent gates, no gates, no robustness for robustness' sake. "Never inherit project hooks/MCP/tool context **without explicit disclosure**" made inherited context contingent on a disclosure ceremony; inheriting the user's own project context in the user's own repo is the feature, and it is loaded without a receipt. The credential clause is unaffected and stands on its own practical grounds (§3.5).
 
 Historical transport studied here: `@anthropic-ai/claude-agent-sdk`. ~~It is superseded by the clean-room CLI wrapper above.~~ ⛔ SUPERSEDED 2026-08-06 (reversal of the reversal): the SDK is adopted; it is no longer "historical", it is the current design.
 
@@ -403,6 +424,8 @@ Options that matter and are easy to get wrong:
 - `settingSources` (`:1910`): omit and every source loads like the CLI; `[]` isolates. **`'project'` must be present for `CLAUDE.md` to load**, which is exactly what the parent note's per-repo reviewer-context feature needs.
 - `systemPrompt` as a bare string is a **full replacement**; use `{type:'preset', preset:'claude_code', append}` to extend. Replacing wholesale throws away the harness's own tool discipline.
 - `bypassPermissions` additionally requires `allowDangerouslySkipPermissions: true` (`:1748`). This is historical SDK evidence; Rennet never sets either. See §3.4.
+
+  > ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. "Rennet never sets either" is struck — it is a self-imposed lockdown whose only effect is to make the harness stop and ask. The permission mode Rennet passes is whatever lets the turn run to completion without prompting; §3.4, its referent, is itself superseded below.
 - `CLAUDE_AGENT_SDK_CLIENT_APP` is an SDK-only user-agent field. Rennet does not set it because Rennet does not use the SDK.
 - `maxBudgetUsd` (`:1683`) is real budget enforcement, surfacing as result subtype `error_max_budget_usd`. Use it for §5 rather than counting tokens ourselves.
 - Historical SDK peer dependencies were `@anthropic-ai/sdk`, `@modelcontextprotocol/sdk`, and `zod`. Rennet supplies none of them for the Claude CLI adapter.
@@ -491,6 +514,8 @@ Constraint: omp declares `engines.bun >= 1.3.14` and `main: ./src/index.ts`. It 
 
 Refinement hook. The adapter ships as `OmpAdapter` implementing `HarnessAdapter` with every capability flag defaulting to `false` except the ones proven by a `docs/harness-conformance` test run. The conformance suite is the artefact that upgrades flags:
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Flags do not start `false` and are not "earned" — a capability flag that must be unlocked by ceremony is a gate whose only effect is that a working feature stays hidden. Declare each flag to match what the adapter implements, and let the conformance suite *fail loudly* when a declaration is wrong. The suite itself is untouched: it is ordinary test discipline, which Rule Zero explicitly leaves alone. Read the `it(…)  // gates canResume` comments below as "covers", not "unlocks".
+
 ```ts
 // One suite, run against every adapter. Flags are earned, not declared.
 describe.each(adapters)('conformance: %s', (adapter) => {
@@ -576,6 +601,8 @@ export type HarnessHealth =
 
 ### 3.4 Sandbox posture: read-only by default
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md) — THIS ENTIRE SECTION.** No consent gates, no gates, no robustness for robustness' sake. Read-only-by-default on the acting path is precisely what Rule Zero forbids: Rennet drives the user's coding harness, so it must be able to write, and must be able to push, because submitting a PR requires a push. Every posture below is struck — codex `sandboxMode: "read-only"` / `approvalPolicy: "untrusted"`, Claude's read/search-only allowlist with mutation and exec denied, omp `--approval-mode=always-ask`. The premise "a review tool that edits your code while you read is a trust catastrophe" is rejected as the argument for a gate: acting on a review is the product (see the refine/act-on-review loop already shipped). `tool.denied` remains a first-class event because harnesses still emit denials of their own; it is no longer a posture Rennet manufactures.
+
 Rennet is a review tool. It reads an immutable patchset and answers questions about it. It has no business writing to the working tree, and a review tool that edits your code while you read is a trust catastrophe.
 
 - Codex: `sandboxMode: "read-only"`, `approvalPolicy: "untrusted"`.
@@ -617,10 +644,12 @@ Two genuinely different workloads:
 | Examples | decomposition into chunks, blast-radius analysis, diff chat, claims-and-evidence mapping | chunk summaries, claim extraction, one-line hunk labels, dedupe/severity scoring of findings |
 | Needs the repo on disk | yes, that is the entire structural advantage | no, the input is already-extracted text |
 | Needs tools | yes | no |
-| Needs approval arbitration | yes | no |
+| Needs approval arbitration | yes ⛔ struck, see below | no |
 | Shape | long-lived session, many turns, streamed | one shot, schema-constrained, batched, parallel |
 | Volume | a few meaningful turns | a few batched calls |
 | Latency tolerance | seconds, visibly streaming | must be cheap and parallel |
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), the "Needs approval arbitration" row only.** No consent gates, no gates, no robustness for robustness' sake. Tier 1 does not need approval arbitration either; the row collapses to "no / no" and is no longer a distinguishing axis between the tiers. Every other row of this table stands — the tier split is a real workload difference (repo on disk, tools, session shape, volume, latency), not a safety argument.
 
 **Utility calls do not route through `HarnessAdapter`.** Everything the adapter provides (process supervision, session lifecycle, permission arbitration, tool-event normalization) is dead weight for "summarize these forty lines as one sentence", and the per-call process cost is real. They go through a separate, much smaller port:
 
@@ -805,12 +834,14 @@ Line-count reality check against the stack note's ~800: protocol types ~250, Cla
 | D4 | **Superseded:** Claude uses a clean-room process-per-turn CLI wrapper ⛔ SUPERSEDED AGAIN 2026-08-06: this ruling is reversed — the "alternative rejected" (linked Agent SDK) is now the adopted design, see Master Plan R2 | Linked Agent SDK streaming mode | Proprietary SDK linkage is incompatible with the licence and unnecessary for CLI resume/fork continuity |
 | D5 | Utility tier defaults to `harness-degenerate`, not direct API | Direct OpenAI-compatible endpoint as default (the stack note's assumption) | Neither harness on this machine has an API key; both are subscription OAuth. A key requirement violates the zero-config North Star |
 | D6 | The adapter never reads a credential | Read `~/.codex/auth.json` and the Claude Keychain item in place | Reading the Keychain item from a differently-signed binary triggers an ACL prompt on first launch; parsing codex's `auth.json` yields a token that expires under live rotation. Spawning a process that authenticates itself is both safer and easier |
-| D7 | Read-only sandbox posture by default across all harnesses | Inherit each harness's default | A review tool must not write to the tree. Makes `tool.denied` a normal event, not an error |
+| D7 | ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO** — Read-only sandbox posture by default across all harnesses | Inherit each harness's default | A review tool must not write to the tree. Makes `tool.denied` a normal event, not an error |
 | D8 | Every event carries its raw native frame; unknown frames become `passthrough` | Drop unmodelled events | BYOK means facing harness versions newer than anything tested. Silent loss is the failure mode; visible passthrough is recoverable |
 | D9 | Adapter-assigned monotonic `seq`, not harness timestamps | Order by the harness's own clock | The Claude SDK's own type says "do not order messages by this field" |
 | D10 | Self-consistency runs on demand, not by default | N=3 always | 9 agentic runs per changeset by default is the product's dominant cost. Baseline 1 per harness; N=3 fires only to adjudicate an observed divergence |
-| D11 | Capability flags start `false` and are earned by a conformance suite | Declare capabilities from docs | Docs were wrong twice in this exercise (Claude's `PermissionMode`, codex's dead `on-failure`). A flag nobody tested is a claim, not a capability |
+| D11 | ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO** — Capability flags start `false` and are earned by a conformance suite | Declare capabilities from docs | Docs were wrong twice in this exercise (Claude's `PermissionMode`, codex's dead `on-failure`). A flag nobody tested is a claim, not a capability |
 | D12 | Three-state health (`ready`/`degraded`/`unavailable`), with `above-tested` as a distinct degradation | Boolean available/unavailable | BYOK means N versions per harness; installed CLI/protocol versions can move beyond the conformance range |
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), rows D7 and D11 (marked in place above), plus reason 1 of D1.** No consent gates, no gates, no robustness for robustness' sake. D7 is a read-only-by-default posture on the acting path; D11 is an earned-capability model. D1's "the SDK has no approval channel at all" is no longer a defect, but D1 itself STANDS on its other three grounds (flattened `codexErrorInfo`, dropped `willRetry`, missing `totalTokens`/`modelContextWindow`). D2, D3, D4, D5, D6, D8, D9, D10, D12 are untouched. D12 in particular is not a gate: `degraded` reports a fact and does not withhold function.
 
 ---
 
@@ -818,9 +849,11 @@ Line-count reality check against the stack note's ~800: protocol types ~250, Cla
 
 **Blocking, cheap, do these first**
 
-1. **Direct Claude CLI fidelity and isolation.** ⛔ SUPERSEDED 2026-08-06: the SDK is adopted, not retired (Master Plan R2) — this spike's premise (CLI-only, no SDK) needs re-deriving against the SDK. Verify resume/fork, schema output, partial frames, cancellation, prompt-cache behaviour, and whether inherited project context can be excluded and disclosed. This replaces the retired Agent SDK packaging spike.
+1. **Direct Claude CLI fidelity and isolation.** ⛔ SUPERSEDED 2026-08-06: the SDK is adopted, not retired (Master Plan R2) — this spike's premise (CLI-only, no SDK) needs re-deriving against the SDK. ⛔ SUPERSEDED AGAIN 2026-08-11 by RULE ZERO (CLAUDE.md): the "excluded and disclosed" half of the last clause is struck — inherited project context is the feature, and it needs neither exclusion machinery nor a disclosure receipt. Resume/fork, schema output, partial frames, cancellation, and prompt-cache behaviour remain worth verifying. Verify resume/fork, schema output, partial frames, cancellation, prompt-cache behaviour, and whether inherited project context can be excluded and disclosed. This replaces the retired Agent SDK packaging spike.
 2. **Do forked Claude sessions hit the prompt cache?** Measure `cacheReadInputTokens` across a fork. Decides whether N=3 self-consistency (§5.3) is cheap or is the product's dominant cost line.
 3. **Live codex turn**: confirm the approval round trip (`item/commandExecution/requestApproval` → `{decision}` → `serverRequest/resolved` → `item/completed`) and whether `turn/steer` is reliable enough to expose. `canSteer` stays `false` until then.
+
+   > ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), the last sentence.** No consent gates, no gates, no robustness for robustness' sake. `canSteer` is not held at `false` pending a spike. The approval round trip is still worth confirming as **protocol correctness** — codex's app-server will stall a turn on an unanswered server-initiated request — but what we are confirming is that the adapter answers it automatically and the turn proceeds, not that a human was consulted.
 
 **Design questions**
 
@@ -833,6 +866,8 @@ Line-count reality check against the stack note's ~800: protocol types ~250, Cla
 **Refinement hooks (deliberately unspecified)**
 
 9. **omp/Pi mapping table.** Not written, because writing it would mean inventing it. The hook is the conformance suite: each passing test flips one capability flag from `false`. Until a test passes, the UI treats that capability as absent, which degrades gracefully rather than lying.
+
+   > ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), second and third sentences.** No consent gates, no gates, no robustness for robustness' sake. Tests do not flip flags and the UI does not hide a working capability pending a green run. The first sentence stands: not inventing an unverified mapping table is honest documentation, not a gate.
 10. **A fourth harness.** The interface is `HarnessAdapter` plus a conformance run. Nothing above the adapter boundary branches on `HarnessId`; if it starts to, that is the bug.
 11. **Version-skew envelope.** `testedRange` is currently a hand-maintained constant, which is a Brita-filter violation waiting to happen. It should be derived from whatever versions CI actually ran the conformance suite against.
 
@@ -858,18 +893,18 @@ Line-count reality check against the stack note's ~800: protocol types ~250, Cla
 |---|---|---|---|---|
 | B1 | Spike: direct Claude CLI fidelity and isolation | Verify `-p`, resume/fork, structured output, partial frames, cancellation, prompt-cache behaviour, and inherited-context isolation/disclosure | P0 | none |
 | B2 | Spike: prompt-cache behaviour across a forked Claude session | Measure `cacheReadInputTokens` on N forks of a primed session. Decides whether N=3 self-consistency is affordable | P0 | none |
-| B3 | Spike: live codex app-server turn, approvals and steer | Execute a real turn; confirm the approval round trip and whether `turn/steer` is reliable. Sets `canSteer` and `canGateToolCalls` for codex | P0 | none |
+| B3 | Spike: live codex app-server turn, approvals and steer | Execute a real turn; confirm the approval round trip and whether `turn/steer` is reliable. ⛔ SUPERSEDED 2026-08-11 by RULE ZERO: it does not "set" `canSteer`/`canGateToolCalls` — flags are declared, not earned; confirm the adapter auto-answers the request so the turn does not stall | P0 | none |
 | B4 | Implement `core/protocol`: normalized event types + capability flags | §1 verbatim, zero `node:*` imports so the phone can import it | P0 | none |
 | B5 | Implement harness discovery with login-shell PATH harvest | §3.1-3.3. Login-shell PATH, known locations, our own resolution, execute-to-health-check, three-state health. Test against this machine, where a bare login shell finds neither harness | P0 | B4 |
-| B6 | Implement the Claude Code adapter | Clean-room process-per-turn CLI wrapper, tolerant decoders, read-only posture, explicit isolation disclosure. ⛔ SUPERSEDED 2026-08-06: SDK-based adapter, not a clean-room CLI wrapper — see Master Plan R2. | P0 | B1, B4, B5 |
-| B7 | Build the harness conformance suite | One suite run against every adapter; each passing test earns one capability flag. Built against Claude first | P1 | B6 |
+| B6 | Implement the Claude Code adapter | Clean-room process-per-turn CLI wrapper, tolerant decoders, read-only posture, explicit isolation disclosure. ⛔ SUPERSEDED 2026-08-06: SDK-based adapter, not a clean-room CLI wrapper — see Master Plan R2. ⛔ SUPERSEDED AGAIN 2026-08-11 by RULE ZERO: "read-only posture" and "explicit isolation disclosure" are struck; the adapter ships with write and exec available and loads project context without a disclosure ceremony. Tolerant decoders stay (protocol correctness). | P0 | B1, B4, B5 |
+| B7 | Build the harness conformance suite | One suite run against every adapter; each passing test earns one capability flag. ⛔ SUPERSEDED 2026-08-11 by RULE ZERO: the suite *verifies* declared flags and fails loudly when a declaration is wrong; it does not "earn" them. Built against Claude first | P1 | B6 |
 | B8 | Implement the utility tier with `harness-degenerate` default | `UtilityPort`, both implementations, the router, batch scheduling, unit cancellation | P1 | B4, B5 |
 | B9 | Ratify the oh-my-pi correction | The package named in the brief is an abandoned namesake; the real target is `omp` (`can1357/oh-my-pi`), with `pi` as a subset. Confirm the third slot's meaning before any code | P1 | none |
 | B10 | Implement the codex app-server adapter | JSON-RPC client, initialize handshake, 11 server-request handlers, bindings generated in CI from a pinned reference version | P1 | B3, B4, B7 |
 | B11 | Session persistence and re-attach | Own event log, three-state thread lifecycle, non-silent orphan rebuild, `harnessVersionAtCreation`, orphan-process reaping | P1 | B4, B6 |
 | B12 | Disagreement machinery | Two-axis design: within-harness noise floor, between-harness divergence, `substantive` verdict only reaches the UI. On-demand N=3 | P2 | B2, B10, anchoring engine |
 | B13 | Claim identity and matching | `(anchor, assertion)` with anchor equality then semantic match as a batched utility call. On the hot path for every disagreement | P2 | B8, anchoring engine |
-| B14 | omp adapter slot | Capability flags all `false`; earned by B7. Includes the Bun-presence health check | P3 | B7, B9 |
+| B14 | omp adapter slot | Capability flags all `false`; earned by B7. ⛔ SUPERSEDED 2026-08-11 by RULE ZERO: declare flags to match what the adapter implements; do not start them `false` pending ceremony. Includes the Bun-presence health check | P3 | B7, B9 |
 | B15 | Derive `testedRange` from CI instead of hand-maintaining it | Currently a hand-maintained constant, which is a Brita-filter violation: it will silently go stale | P3 | B7 |
 
 ---

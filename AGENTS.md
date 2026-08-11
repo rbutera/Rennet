@@ -1,15 +1,45 @@
 # Rennet agent instructions
 
+## ⛔ RULE ZERO — NO GATES
+
+**NO CONSENT GATES. NO GATES. NO ROBUSTNESS FOR ROBUSTNESS' SAKE.**
+
+Rai, 2026-08-11, verbatim: *"STOP POLISHING SECURITY CEREMONY WHEN I AM TRYING TO BUILD A DIFF DIGESTOR AND PR REVIEW BUDDY."*
+
+This outranks every other instruction in this file and every doctrine in `docs/`. If a ruling, a contract, a review finding or your own good judgement points at adding a gate, **Rule Zero wins.**
+
+What this forbids:
+
+- Consent tokens, approval ceremonies, disclosure receipts, are-you-sure confirmations.
+- Denying an agent a capability so it "structurally cannot" do something. **A capable agent is the product.**
+- Read-only-by-default postures on the acting path. Rennet drives the user's coding harness; it must be able to write, and it must be able to push, because submitting a PR requires a push.
+- Hardening, sandboxing or lockdown work filed as its own task.
+- A reviewer's finding whose fix is any of the above. Findings are not orders — sort them, and drop the ceremony.
+
+What is still worth fixing, and the test that tells them apart:
+
+**Does this make the product do its job better, or does it make the product harder to use safely?** The first is a feature. The second is a gate, however good the argument.
+
+So: a diff that doesn't show what changed is a bug. A crash is a bug. A lie in the UI is a bug. An agent that can't run the tests it just wrote is a gate wearing a lab coat.
+
+⚠️ The failure mode this rule exists to stop is *persuasive*. Every gate added here arrived with a coherent safety argument, written by someone pleased with their own reasoning. **Feeling clever about a restriction is the signal to stop, not to proceed.**
+
+
 Rennet is Rai Butera's personal product. This is the product monorepo and the private working remote is `rbutera/rennet`.
 
 ## Read before changing the product
+
+**Start here: `docs/Rennet Delivery Order.md`.** It says what to build next, what is already finished on an unmerged branch, and how to read the Rule Zero amendment blocks now sitting on many issues. It outranks the ordering implied by issue numbers, P-labels, and any plan document below.
+
+Then, for depth:
 
 1. `docs/Rennet Product and Vision.md`
 2. `docs/Rennet Contracts and Rulings.md`
 3. `docs/Rennet Architecture Contracts.md`
 4. `docs/Rennet Dependency Standard.md`
-5. `docs/Rennet Evidence Gate Status.md`
-6. `docs/Rennet Navi Handoff.md`
+5. `docs/Rennet Navi Handoff.md`
+
+Every one of these is subordinate to Rule Zero. `docs/Rennet Evidence Gate Status.md` was removed from this list on 2026-08-11: gating implementation on an open evidence gate is exactly the ceremony Rule Zero forbids.
 
 The Contracts and Rulings document (formerly titled the Master Plan; ruling numbers unchanged) wins on general product and architecture conflicts, and the Product and Vision document is the canonical statement of intent. The Architecture Contracts win within project context, immutable patchsets, invalidation, persistence, privacy, and publication. The Dependency Standard wins on package selection, versions, toolchain ownership, package licensing, and dependency overlap. Historical Wingman documents are evidence and rationale only where a current authority supersedes them.
 
@@ -19,10 +49,9 @@ The Contracts and Rulings document (formerly titled the Master Plan; ruling numb
 - Never add AI attribution or co-author trailers. Rai is the sole author.
 - Rennet is **MIT** licensed throughout, one licence for every package (Rai's decision, 2026-08-06). There is no AGPL boundary and no Apache-2.0 carve-out for `protocol`/`types`; any document still describing that split is superseded.
 - The Claude adapter **uses `@anthropic-ai/claude-agent-sdk`** (Rai's decision, 2026-08-06, superseding the original R2 ruling in docs/Rennet Contracts and Rulings.md). The SDK spawns the user's own installed `claude` binary via `pathToClaudeCodeExecutable`, so it authenticates with the user's Claude subscription and costs nothing per token. Strip the SDK's bundled per-platform executables at packaging time. Never bundle a harness binary of our own, and never read a credential.
-- Never auto-approve, auto-comment, push source branches, or publish anything another human can see without an explicit human action.
-- Say "no Rennet backend" and disclose harness/provider egress. Never claim universally that nothing leaves the machine.
+- Nothing another human can see gets published without Rai clicking post. This is a product feature — the review is his, in his voice, over his signature — not a safety gate. **Pushing a branch is not publishing**: Rennet's coding-agent loop writes and pushes freely, because submitting a PR requires a push.
+- Say "no Rennet backend" and disclose harness/provider egress. Never claim universally that nothing leaves the machine. This is honest copy, not a consent screen — state the fact, do not make the user clear a dialog.
 - `.rennet/` is local and ignored by default. Rennet never stages or commits a user's project context.
-- Do not implement a subsystem while its relevant P0 evidence gate is open.
 
 ## Intended package boundaries
 

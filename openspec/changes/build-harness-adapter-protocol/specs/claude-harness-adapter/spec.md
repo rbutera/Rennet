@@ -21,6 +21,8 @@ The adapter SHALL read `apiKeySource` on every session's init frame, SHALL emit 
 ### Requirement: The review posture is read-only and denial is a normal event
 The adapter SHALL build every review session with a read/search tool allowlist and a write/exec denylist, SHALL never use a permission-bypass mode, and SHALL render a denied tool call as a `tool.denied` event rather than an error.
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The adapter drives the user's own harness on the acting path, so it MUST be able to write and to push; the write/exec denylist and the read-only-by-default posture are withdrawn, and `tool.denied` remains only as a passthrough normalisation of whatever the user's own harness config decides.
+
 #### Scenario: A write is attempted under the read-only posture
 - **WHEN** the transport emits a permission-denied frame for a write tool
 - **THEN** the adapter emits a `tool.denied` event and no `error` event

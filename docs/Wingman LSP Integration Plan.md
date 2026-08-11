@@ -8,8 +8,17 @@ updated: 2026-08-05
 
 # Rennet LSP Integration Plan
 
+> [!DANGER] RULE ZERO (CLAUDE.md, 2026-08-11) outranks every L-decision in this file
+> **NO CONSENT GATES. NO GATES. NO ROBUSTNESS FOR ROBUSTNESS' SAKE.** Rennet is a diff digestor and PR review buddy; the acting path must be able to write, and must be able to push, because submitting a PR requires a push.
+>
+> **Most of this file is safe, and the reason is worth stating: nearly all of its "gates" are accuracy gates, not consent gates.** L6's degraded-result detector, L7's health gates, L8's lockfile check, L12's no-diagnostics call, L13's definitions-are-not-coverage rule, and L16's refusal set all exist because the alternative is *a confident wrong answer* — the tool telling you `react` is defined on the line you clicked. That is the hallucination case, and dropping the answer is the product working. **All of it stands, untouched.**
+>
+> What is marked ⛔ SUPERSEDED below is the read-only/never-mutate posture and the ceremony attached to it: the source-repo-must-be-byte-identical rule and its pre-build spike gate (banner, L1, OQ7, L-B1), "never install without an explicit act" (L4), "source repos are read-only" (L5), the per-repo opt-ins (OQ10, L-B15), and the removal of `promoteToWorktree` for boundary reasons (L-B18).
+
 > [!IMPORTANT] Current implementation authority, 2026-08-05
 > Build **Rennet** under [[Rennet Contracts and Rulings]] and [[Rennet Architecture Contracts]]. Persistent project context belongs in the repo's `.rennet/`; temporary staging and materialisations belong in Rennet's application cache. Opening or reviewing a repo must never mutate the source checkout or its Git metadata. Therefore the measured `git worktree add` mechanism below is evidence only and cannot ship unchanged for client repos. The replacement materialisation mechanism must be selected by a pre-build spike and prove zero source-repo mutation.
+>
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Three things are struck. (a) "Must never mutate the source checkout or its Git metadata" as an absolute — Rennet drives the user's harness in the user's repo and writes there; `git worktree add`'s 292 KB of admin data is not a violation to design around. (b) "Cannot ship unchanged" — the measured worktree mechanism is a perfectly good shipping mechanism; use it. (c) "Must be selected by a pre-build spike and prove zero source-repo mutation" — a rule whose effect is "you may not build X until ceremony Y is discharged", which Rule Zero forbids by name. **What survives as ordinary hygiene, not as a boundary:** put disposable materialisations in the app cache, clean them up, and do not leave orphans lying around. That is tidiness, and tidiness does not need a gate.
 
 Code intelligence for [[Code Review Harness App]] (name decided: Rennet). Ratified by Rai 2026-08-04 late evening as **essential**: "being able to view the definition of any symbol in a diff."
 
@@ -61,6 +70,8 @@ An empty result that flatters what you already suspect is the highest-risk outpu
 ## 1. Decisions
 
 ### L1 — AMENDED: materialize reviewed refs without source-repo mutation
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), the "without source-repo mutation" constraint and the spike that gates it.** No consent gates, no gates, no robustness for robustness' sake. `git worktree add --detach` is measured at 0.32 s / 33 MB / 292 KB of `.git` admin data and it *works*; ship it. The findings that survive and are the actual engineering content of L1 are: **a complete filesystem materialisation is required** (virtual URI schemes are verifiably dead upstream), and **a sparse/partial checkout is forbidden** — the second is correctness, not ceremony, because a partial tree returns the degraded self-reference and that is indistinguishable from success. "Rennet materialisations must not appear in the user's `git worktree list`" is a nicety worth having if free, not a boundary worth a spike.
 
 > [!DANGER] `git worktree add` is not the shipping mechanism
 > It writes administrative entries into the source repo's common Git directory, violating the read-only client-repo boundary. Keep the finding that Tier 1 needs complete `file://` trees, but implement `MaterializationPort` behind an application-cache checkout/copy mechanism that leaves the source working tree and Git metadata byte-identical. The exact mechanism is deliberately gated by a spike; do not choose between a cache clone, alternates, archive, or another approach in this historical note.
@@ -134,6 +145,10 @@ This is, for the record, exactly what Phabricator shipped in 2012 — **[cited]*
 
 ### L4 — Detect toolchains; never install without an explicit act. FROZEN
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), the "never install without an explicit act" rule.** No consent gates, no gates, no robustness for robustness' sake. "Explicit act" is a consent gate, and denying Rennet the ability to install a server it needs is capability denial — a capable agent is the product. Rennet may install a language server, restore packages, and download a server binary; prefer doing it into Rennet's own cache, and prefer doing it in the background.
+>
+> **Reason 2 survives intact and is the one that actually shapes the design: `gd` must feel instant.** So the rule that replaces this one is a *latency* rule, not a permission rule — never block a keystroke on a network install; serve Tier 0 immediately, install behind it, and upgrade the answer when the server is ready. Reason 3's specific observation (Roslyn auto-restore writes `obj/` into the tree it analyses) stays as a **fact to route around** — restore into a cache-owned tree because `obj/` in the working tree is untidy, not because writing is forbidden. The detection ladder and the non-modal copyable install line below are good UX and are untouched.
+
 Rennet may **spawn** a language server it finds. It may not `npm install`, `dotnet restore`, or download a server binary as a side effect of the reviewer pressing `gd`.
 
 Three reasons, and the third is the one that decides it:
@@ -147,6 +162,8 @@ Detection ladder per language: user-configured path (the settings workstream own
 Licensing note, since it interacts with the AGPL core / proprietary mobile split: every candidate server is spawned as a **child process**, never linked. `typescript-go` Apache-2.0, `typescript-language-server` Apache-2.0, `vtsls` MIT, `Microsoft.CodeAnalysis.LanguageServer` MIT (**[cited]** verified from the `.nuspec` inside the actual nupkg). Same clean-room posture already decided for the Claude adapter. ⛔ **SUPERSEDED 2026-08-06: Rennet is MIT throughout, so there is no AGPL core / proprietary mobile split for this to interact with, and "the clean-room posture already decided for the Claude adapter" is itself reversed — the Claude Agent SDK is adopted (Master Plan R2). The spawn-as-child-process design for LSP servers is otherwise unaffected: it was never about the Claude adapter's SDK question, just the third-party licences named above.**
 
 ### L5 — Mutation policy: cache-owned trees may be writable, source repos are read-only. FROZEN
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), the read-only half.** No consent gates, no gates, no robustness for robustness' sake. "Against the user's own working tree or any of their worktrees: **never**" is a read-only-by-default posture, and the sentence that follows it — "Disable automatic restore and **accept the health-gated degraded mode**" — is the tell: it trades a working feature for a purity property. Rennet may write to the user's tree. The **preference** for doing language-server work inside a cache-owned materialisation stands on ordinary grounds (it is disposable, and nobody wants a stray `obj/`), but it is a default, not a prohibition, and it must not be the reason Tier 1 degrades.
 
 A language server may need to write (caches, `obj/`, generated types). Split by ownership:
 
@@ -657,7 +674,7 @@ Consistent with the architecture plan's dogfood target: Rai reviewing real the e
 | Component | v1 | Note |
 |---|---|---|
 | Tier 0 index: tree-sitter tags over the repo at the reviewed ref | **MUST** | Reuses B13's grammars. The reason there is no empty state |
-| Cache-owned materialisation, refcounted, namespaced | **MUST** | Must prove zero mutation of source checkout and Git metadata |
+| Cache-owned materialisation, refcounted, namespaced | **MUST** | ~~Must prove zero mutation of source checkout and Git metadata~~ ⛔ SUPERSEDED 2026-08-11 by RULE ZERO: no proof obligation; `git worktree add --detach` is the mechanism |
 | Base-side materialization, lazily on first left-side Tier 1 query | **MUST** | L2. The part with no prior art |
 | Launch-time + quit-time orphan prune | **MUST** | A crash otherwise leaks application-cache resources |
 | Disk budget + LRU + idle eviction | **MUST** | Cheap now, a support burden later |
@@ -691,9 +708,13 @@ Critical path: **tree-sitter tag index → position mapper → materialization p
 ### Frozen — do not change without escalating
 
 - **Complete cache-owned filesystem trees are the mechanism** (L1). Virtual schemes remain unsuitable; source-repo mutation is prohibited.
+
+  > ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO, the last clause.** "Source-repo mutation is prohibited" is struck (L1, marked). "Complete trees, never sparse" and "virtual schemes are unsuitable" both stand — those are correctness findings verified against upstream.
 - **Two immutable sides, two materialisations, two servers** (L2). Overlay is never the primary mechanism.
 - **Every answer carries its tier** (L3).
 - **Detect, never install** (L4); **never silently mutate a tree we do not own** (L5).
+
+  > ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO — both halves of this bullet.** Rennet may install and may write; see L4 and L5, marked. The `gd`-must-feel-instant latency rule replaces the install prohibition.
 - **The degraded-result detector and the positive-control readiness probe** (L6).
 - **Definitions are context, never coverage** (L13).
 - **Open-in-editor discloses the copy before the click** (L14).
@@ -716,9 +737,13 @@ Critical path: **tree-sitter tag index → position mapper → materialization p
 5. **Multi-project monorepo root selection.** **[measured]** `typescript-language-server` walked up correctly from `apps/fusion-frontend`. Repos with overlapping `include` globs, project references, or several tsconfigs claiming one file are unproven. A wrong project root produces — of course — the self-referential degraded answer.
 6. **The worktree `.git`-is-a-file caveat.** **[measured]** it is a file containing `gitdir:`. tsserver did not care. **[cited]** other tools' root detection has broken on exactly this. Test each new server against a worktree, not a clone.
 7. **Resolved as a requirement, open as a mechanism:** source-repo Git metadata must remain untouched. Spike complete cache-owned materialisation strategies and reject any candidate that appears in the user's `git worktree list` or changes source-repo bytes.
+
+   > ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. This question is closed rather than open: use `git worktree add --detach`, which is already measured and already works. Not littering the user's `git worktree list` is worth a namespace and a cleanup pass, not a spike that blocks the feature.
 8. **Partial clone for large repos.** Sparse checkout is rejected (L1). `--filter=blob:none` on the fetch plus a full tree checkout might cut the cost on very large repos without the correctness loss. Unmeasured.
 9. **Base-server eviction across reviews.** The `(repoId, refOid, languageId)` key correctly shares a base server between PRs off the same base; the eviction policy when reviews close at different times is unspecified.
 10. **Should a running language server be visible?** For a client repo, an unexpected subprocess — especially one that might restore packages from a private feed — is a legitimate concern. Recommend a "servers running" indicator in the same inventory line as the harness listeners, and C# Tier 1 opt-in per repo.
+
+    > ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), the "opt-in per repo" half.** No consent gates, no gates, no robustness for robustness' sake. C# Tier 1 runs when it can run; an opt-in is a consent gate on a feature the user already asked for by pressing `gd`. **The "servers running" indicator stands and is a good idea** — showing what is running is visibility, which is the opposite of asking permission, and it costs the user nothing.
 11. **GitHub's 2026 Files-changed symbol navigation** is **[unverified]**; the check failed its own positive control. Five minutes with a logged-in browser before this document's prior-art section is quoted anywhere external.
 12. **Whether Scrutiny's LSP runs in the diff or only in its repo browser** is **[unverified]** and matters for the competitive read.
 
@@ -728,12 +753,14 @@ Critical path: **tree-sitter tag index → position mapper → materialization p
 
 > [!IMPORTANT] Materialisation rows amended
 > Any row below that says `git worktree add`, source-repo orphan pruning, or promotion of a Rennet cache tree into the source repo is superseded. Use [[Rennet Navi Handoff]] for current sequencing.
+>
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md) — this amendment is itself reversed.** No consent gates, no gates, no robustness for robustness' sake. `git worktree add`, orphan pruning, and `promoteToWorktree` are all back in scope; see L1, OQ7, L-B1, and L-B18, all marked.
 
 Sized for autonomous execution. Dependencies hard unless marked soft. `B*` references are architecture-plan beads.
 
 | # | Title | P | Depends on | Description |
 |---|---|---|---|---|
-| L-B1 | Spike and implement a source-read-only materialisation port | P0 | B5, B6 | Compare complete application-cache materialisation strategies. Select one that leaves the source working tree and Git metadata byte-identical, remains valid if the donor moves/disappears, and supports refcount, LRU, disk budget, and orphan cleanup. The test must snapshot source-repo state before/after and assert no Rennet entry appears in `git worktree list`. |
+| L-B1 | ~~Spike and implement a source-read-only materialisation port~~ → **Implement the materialisation port** | P0 | B5, B6 | Compare complete application-cache materialisation strategies. Select one that leaves the source working tree and Git metadata byte-identical, remains valid if the donor moves/disappears, and supports refcount, LRU, disk budget, and orphan cleanup. The test must snapshot source-repo state before/after and assert no Rennet entry appears in `git worktree list`. ⛔ SUPERSEDED 2026-08-11 by RULE ZERO: drop the spike and the byte-identical requirement — implement `git worktree add --detach` (0.32 s, measured) behind `MaterializationPort`. Refcount, LRU, disk budget, and orphan cleanup all stay; they are resource hygiene, not a boundary. |
 | L-B2 | Position mapper: diff line → `RefPosition`, total, with the full refusal set | P0 | B7, B11 | Implement L16 including side→ref→path→line selection, renames via `prevPath`, UTF-16 character offsets computed from the JS string (never byte ranges), and every refusal reason. Fixture-driven: added file, deleted file, rename, binary, submodule, truncated diff, `\ No newline`, astral-plane characters in the line. A returned position that cannot exist at its ref is a test failure. |
 | L-B3 | Tier 0 structural index: tree-sitter tags over a repo at a ref | P0 | B13 | Build a symbol index from the standard `tags.scm` queries for the grammars already loaded. Incremental, keyed by tree OID, cached outside the event log (derived, disposable). Answers "definitions named X" with a ranking heuristic and an explicit candidate count. Must work with zero toolchain and with the network off. |
 | L-B4 | `lsp-host` utility process, ~60-line JSON-RPC client, lifecycle and teardown | P0 | B17 | Stand up the `lsp-host` `utilityProcess` per L10. Content-Length framing, `initialize`/`initialized`/`shutdown`/`exit`, **answer `workspace/configuration` and `client/registerCapability` or servers stall**, one-open-per-URI discipline, idle teardown with SIGTERM→SIGKILL escalation (no server provides it), concurrent-server cap with LRU. |
@@ -747,10 +774,10 @@ Sized for autonomous execution. Dependencies hard unless marked soft. `B*` refer
 | L-B12 | Hover with tier-labelled types | P1 | L-B5, L-B8 | `textDocument/hover` on the same position, rendered as a transient glass tip (≤2 lines) or an opaque band (scrollable). Must carry the tier badge: without deps the types are not absent but **wrong** (`any` where the truth is `boolean`), which is the exact case the label exists for. |
 | L-B13 | Spike: measure cold start and RSS on a large repo, and drive `tsc --lsp` directly | P0 | L-B4 | Answers open questions 1, 2, and 3 — the three numbers the entire budget rests on and which I did not measure. Re-run `lsp-probe.mjs` / `lsp-coldstart.mjs` against `tsc --lsp --stdio`, confirm definition/hover/typeDefinition/references, isolate real per-server RSS on product-repo, and curve cold start against file count. Run before L-B6 promotes tsgo to primary. |
 | L-B14 | Spike: multi-project monorepo root selection | P1 | L-B6 | Open questions 5 and 6. Overlapping `include` globs, project references, several tsconfigs claiming one file, and the worktree-`.git`-is-a-file root-detection caveat. Failure mode is the self-referential answer, so the test must assert the *correct target file*, never merely non-null. |
-| L-B15 | C# Tier 1: Roslyn LS with the assets-file health gate | P2 | L-B5, L-B6 | LATER per L9. Acquire from the vs-impl feed (never nuget.org), launch `--stdio` with the two required flags as shipped in 5.4.0, send `solution/open`, wait for `workspace/projectInitializationComplete`, pull diagnostics. **Gate every semantic result on `obj/project.assets.json` existing with a clean `logs[]` and non-empty `targets`.** Restore is permitted inside our ephemeral worktrees and requires an explicit per-repo opt-in anywhere else. |
+| L-B15 | C# Tier 1: Roslyn LS with the assets-file health gate | P2 | L-B5, L-B6 | LATER per L9. Acquire from the vs-impl feed (never nuget.org), launch `--stdio` with the two required flags as shipped in 5.4.0, send `solution/open`, wait for `workspace/projectInitializationComplete`, pull diagnostics. **Gate every semantic result on `obj/project.assets.json` existing with a clean `logs[]` and non-empty `targets`.** Restore is permitted inside our ephemeral worktrees and requires an explicit per-repo opt-in anywhere else. ⛔ SUPERSEDED 2026-08-11 by RULE ZERO, the last sentence only: no per-repo opt-in for restore. The assets-file gate STANDS — a failed restore makes Roslyn emit false `CS0246`s that are lexically identical to real errors, so that gate is accuracy, not ceremony. |
 | L-B16 | References (`gr`) as a capped queue surface | P2 | L-B8 | `textDocument/references` with `context.includeDeclaration`, a hard result cap, `truncated` surfaced honestly, results as a right-margin queue with per-result band expansion. Cancellable — this is the request users abort. |
 | L-B17 | Docked / alongside definition variant | P3 | L-B8 | `gD` / `cmd-shift-click`. Shares one dock with the thread panel and preserves its state. Gated on window width via a command `when` clause. Deliberately after the inline band proves the interaction. |
-| L-B18 | **Removed:** promote cache materialisation to worktree | — | — | Outside the read-only review boundary. A future explicit export/create-worktree feature would require a separate user-authorised design. |
+| L-B18 | ~~**Removed:**~~ **Restored:** promote cache materialisation to worktree (`promoteToWorktree`) | P3 | L-B1 | Outside the read-only review boundary. A future explicit export/create-worktree feature would require a separate user-authorised design. ⛔ SUPERSEDED 2026-08-11 by RULE ZERO: the read-only review boundary is struck, so the reason for removal is gone and "user-authorised design" is a consent gate. L14 already calls this "the eventual real fix" for the editor footgun, and the four-noun model already says the ephemeral tree *is* a worktree of that repo — promotion is a rename and an attach. Build it. |
 
 Critical path to a usable v1: **L-B1 → L-B2 → L-B3 → L-B4 → L-B5 → L-B6 → L-B7 → L-B8 → L-B10 → L-B11.** L-B13 runs in parallel from the start and can change L9's ladder, so it must not be deferred.
 

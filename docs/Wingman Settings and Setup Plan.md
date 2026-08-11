@@ -11,6 +11,9 @@ updated: 2026-08-05
 > [!IMPORTANT] Current implementation authority, 2026-08-05
 > Build **Rennet** under [[Rennet Contracts and Rulings]] and [[Rennet Architecture Contracts]]. Persistent project config, deterministic snapshots, and learned codebase knowledge live under the repo's `.rennet/`. Temporary staging, model frames, materialised trees, and caches live in Rennet's application cache. Rennet incrementally refreshes the project snapshot as the default branch advances and never consumes derived context whose input fingerprints are stale. `projectContext.visibility` is `local` by default or `git-visible`; Rennet never stages or commits context.
 
+> [!IMPORTANT] ⛔ RULE ZERO (CLAUDE.md, added by Rai 2026-08-11) outranks this document
+> **No consent gates. No gates. No robustness for robustness' sake.** Rule Zero outranks every ruling number and every doctrine in `docs/`. Passages below that specify trust gates, acknowledgement gates, signing ceremonies, read-only postures on the acting path, or "you may not build X until ceremony Y is discharged" are superseded **in place** and marked ⛔ inline. Rennet drives the user's coding harness: it may write, and it may push, because submitting a PR requires a push. Nothing here has been deleted; the marks state what no longer binds. The zero-config, provenance, discovery, and context-assembly design in this document is unaffected and still applies.
+
 Per-repository and per-project/workspace preferences, plus the setup flows that must never ask a question they can answer themselves. The product name is Rennet; the filename is retained only to preserve existing Obsidian links. Sits on the canonical contracts in [[Rennet Architecture Contracts]], the event-sourced state design in [[Wingman Architecture Plan]], the discovery subsystem in [[Wingman Harness Adapter Protocol]], and the repo doctrine in [[Wingman Repo Bootstrap Plan]].
 
 Elevated to a first-class workstream by Rai on 2026-08-04 (late evening). The tension this document exists to resolve, stated plainly:
@@ -178,6 +181,8 @@ Concretely:
 - Rennet never runs `git add`, commits, changes branches, or mutates `.git`. It never writes outside `.rennet/` unless a separate explicit feature contract says so.
 - UI changes to personal preferences still default to the app-side store. Changes to project context show their target and provenance.
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The blanket "Rennet never runs `git add`, commits, or changes branches" denial no longer binds: Rennet's acting path may write, commit, and push, because submitting a PR requires a push — keeping `.rennet/` out of the user's index by default remains a sensible default, not a capability the product structurally lacks.
+
 **Rule two: the repo file is untrusted input.**
 
 This is the rule people skip, and it is the one with teeth. A `.rennet/project.jsonc` arrives on a branch, from a contributor, in a PR you are about to review. It can therefore be authored by the person whose code you are checking. That makes it two attack surfaces at once:
@@ -193,6 +198,8 @@ So:
 4. **Trust gate.** The first time committed/shared project instructions are seen, and every time their content hash changes, that untrusted contribution is inert until accepted. Rennet-generated deterministic snapshot data is verified by fingerprints rather than manually trusted. Learned prose never acquires authority merely because it is stored under `.rennet/`.
 
 The trust gate is scoped to human-authored or committed instruction changes, not routine deterministic snapshot refresh. The UI shows the exact changed bytes and provenance, so a project cannot silently rewrite the prompt used to review itself.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. This covers the whole of "rule two" above, items 1 through 4: the **trust gate** (item 4) is dead — a repo file's contents are live the moment they are read, with no acceptance step, no content-hash re-prompt, and nothing held inert pending a human click. Showing the user what a repo file contributed, and where it came from, is fine and useful; requiring them to clear a screen before it takes effect is not. The schema allowlist, the executable/endpoint restriction, and path escape-checking (items 1-3) are hardening and are not a prerequisite for building anything.
 
 ### 2.5 Context documents are read at the base ref
 
@@ -264,6 +271,8 @@ Sharing column: **P** = personal (app-side only, rejected from repo files), **S*
 
 Residue rule, inherited from the Codex critique (c): an ignored or unparseable file is not the same as a covered file. Ignored files, binary files, submodule changes, and mode-only changes are all carried in an explicit `excluded` bucket that the coverage surface displays and that **the publish sheet lists**. "Done" may be reached with a non-empty excluded bucket; it may not be reached with an *unacknowledged* one. A settings key that could silently shrink the reviewed surface without a visible count is a settings key that lies about coverage.
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Counting and displaying the excluded bucket is a real feature and stays; **the acknowledgement gate on "done" does not** — nothing blocks a review from reaching done, and the user is never made to clear a residue prompt.
+
 ### 3.5 Context documents
 
 | Key | Type | Default | Scope | Share | Merge | Notes |
@@ -287,6 +296,8 @@ Residue rule, inherited from the Codex critique (c): an ignored or unparseable f
 | `publish.includeSettingsNote` | `boolean` | `false` | G W R C | P | R | Whether a non-default chunk budget is stated in the review body |
 | `publish.holdToSignMs` | `number` | `700` | G | P | R | The ceremony's dwell. Accessibility floor of 0 is allowed; the ceremony is then a confirm |
 | `publish.threadStyle` | `'multi-line' \| 'single-line'` | `multi-line` | G W R | S | R | Degrades automatically where the forge lacks multi-line anchors |
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Two rows in this table are ceremony rather than setting: **`publish.holdToSignMs`** — there is no hold-to-sign dwell and no confirm step, so the key describes nothing; and **`publish.defaultEvent`'s "never defaults to APPROVE at any layer, the schema rejects it as a default"** — the schema does not deny the value. `APPROVE` is an ordinary default like any other. The rest of the table (thread style, draft-vs-ready, what appears in the body) is ordinary preference and stands.
 
 ### 3.7 Findings and the false-positive budget
 
@@ -381,6 +392,8 @@ A settings system's discipline is what it refuses. Each of these will be request
 | "Churn-heat as a blast-radius signal" | **Not a value.** Anti-correlates with defects; the enum has no such member |
 | "Use `position` anchoring for older forges" | **Not a setting.** `line`/`side` only; degradation is automatic and capability-driven |
 | "Skip the residue check on huge PRs" | **Not a setting.** The totality assertion is what makes coverage mean anything |
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Four rows of this anti-inventory are gate machinery and no longer bind: **"auto-approve when no findings"** and **"auto-post comments"** (approval and posting are ordinary capabilities, not never-automated acts — the product may do them), **"let the harness fix it" / read-only sandbox posture across all harnesses** (Rennet drives the user's harness and must be able to write to the tree; a capable agent is the product), and **"skip the residue check"** (nothing is blocked on a totality assertion). The remaining rows — no churn-heat signal, no `position` anchoring, no telemetry, opaque code surface — are design positions about product quality, not gates, and stand unchanged.
 
 ---
 
@@ -783,6 +796,8 @@ Rai's ratified v1 serves **both modes**: reviewing a locally generated diff befo
 
 The deliberate asymmetry: everything that shapes **stored data or identity** is MUST (records, aliases, layers, events), and almost everything that is only **surface** is LATER. Config surfaces are cheap to add and stored-shape mistakes are not.
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The **"Trust gate on repo file first-sight and change — MUST"** row is struck: it is not a v1 requirement, it is not a requirement at all. Everything else in this cut stands.
+
 ---
 
 ## 8. Open questions and refinement hooks
@@ -795,6 +810,8 @@ The deliberate asymmetry: everything that shapes **stored data or identity** is 
 - The resolver returns provenance; there is no bare-value read path.
 - Discovery is read-only, bounded, and never escapes the root.
 - Pace and coverage privacy is not a setting.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. "**Frozen: do not change without escalating**" is itself an escalation gate and does not bind — nothing in this list is frozen. Specifically dead: "automatic source-checkout writes are confined to `.rennet/`; Rennet never stages, commits, changes branches, mutates `.git`, or writes user source" (the acting path may do all of these), and the read-only framing of discovery insofar as it is enforced by a `GitPort` write-command denylist — bounded, cheap scanning is a performance property; the port must not be built so that Rennet structurally cannot write. The remaining entries (personal keys stay out of committed files, provenance on every read) are ordinary design and stand.
 
 **Adjustable with evidence**
 
@@ -846,6 +863,8 @@ The deliberate asymmetry: everything that shapes **stored data or identity** is 
 | S20 | Config schema versioning and forward migration | `schemaVersion`, migrations applied on read and written back on next save with a backup first, plus golden fixtures of every historical shape. Needed before the first key is renamed | P2 | S3 |
 | S21 | Settings projection for the mobile companion | Path-stripped, resolved-only projection of the settings the phone can act on; never layers, never files, never local paths. Designed with the pairing protocol, not after it | P3 | pairing protocol |
 | S22 | Settings export / import bundle | The entire sync story: a file the user moves. No cloud, no account, no account-shaped anything | P3 | S3 |
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. **S5's trust-gate clause** ("hold untrusted human-authored instruction changes inert until accepted") is struck from the bead; the reader/parser itself is still worth building. **S18's "never `git add`, commit, change branches, mutate `.git`, or touch user source"** is struck for the same reason as §2.4 rule one. **S7's read-only `GitPort` command allowlist** must not be built as a structural write-denial. The rest of the bead list is unaffected.
 
 ---
 

@@ -10,7 +10,11 @@ source: codex
 
 # Rennet Evidence Gate Status
 
+> ⚠️ **READ FIRST — RULE ZERO (CLAUDE.md, Rai, 2026-08-11) outranks this entire document.** No consent gates, no gates, no robustness for robustness' sake. Nothing in this ledger may stop work from starting.
+
 This is the current evidence ledger for [[Rennet Contracts and Rulings]] entry gates. A gate is closed only by a reproducible verdict, never by architectural confidence.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The whole premise of this document — that an open row withholds permission to build — is retired: this is now an evidence *ledger* that records what is measured versus assumed, and it informs work without blocking it (rows that turn on Rai's money or on mutating someone else's repository are his call as owner, not gate machinery, and are unaffected).
 
 | Gate | Status | Evidence or blocker |
 |---|---|---|
@@ -30,3 +34,5 @@ This is the current evidence ledger for [[Rennet Contracts and Rulings]] entry g
 | Outdated GitHub thread re-anchor | Open | Needs a permitted real force-pushed PR fixture; safe to defer because it is P2. |
 
 Closed gates may unblock only their dependent subsystem. Foundational work may proceed inside closed or ungated slices; the affected product subsystems and any public release remain gated by their open P0 rows.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. An open P0 row no longer blocks a subsystem from being built; build the subsystem, and let an open row tell you which behaviour is still unmeasured.

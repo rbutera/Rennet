@@ -1,5 +1,7 @@
 ## 1. Ledger gate (pure, TDD) — `canvas/destination.ts`
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Section 1 in full, plus tasks **2.3**, **2.5**, **2.6**, and **6.1**–**6.3** below, are withdrawn: they build and then harden an acknowledge-before-you-may-publish gate. If the ledger is kept at all it is display-only. Sections 2.1/2.2/2.4, 3, 4 and 5 stand.
+
 - [x] 1.1 Add the UI-local `PublishLedger` / `LedgerEntry` view-model types (over `@rennet/types` primitives; no `@rennet/core` import)
 - [x] 1.2 `ledgerBlocksSign(ledger, acknowledged)`: true iff the ledger is present, has ≥1 entry, and is not acknowledged; false when absent, empty, or acknowledged
 - [x] 1.3 Unit tests for `ledgerBlocksSign` (present+unacked → blocks; present+acked → open; empty → open; undefined → open) — each red-provable

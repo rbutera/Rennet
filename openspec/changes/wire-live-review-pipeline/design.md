@@ -17,7 +17,9 @@ One async, pure orchestration over the already-shipped pieces:
 
 ## The injected turn (`createHarnessRunTurn`, `@rennet/core`)
 
-`runDecompositionAngle`/`runOrderingPass` already take an injected `runTurn(prompt, attempt)`; this builds the real one over the `HarnessPort` **interface** only (no `@rennet/adapters` import, so `core` never imports `adapters`). It creates a read-only session (`readOnly: true`) with `outputSchema = bodyJsonSchema(docType)`, sends one turn, and iterates `session.events` to the `session.ended` frame: a `completed` outcome with `structuredOutput` becomes `{ status: "emitted", body }`; anything else (no structured output, failed, cancelled, an `error` frame) becomes `{ status: "failed" }` so the angle's own fallback takes over. The session is always closed.
+`runDecompositionAngle`/`runOrderingPass` already take an injected `runTurn(prompt, attempt)`; this builds the real one over the `HarnessPort` **interface** only (no `@rennet/adapters` import, so `core` never imports `adapters`). It creates a read-only session (`readOnly: true`) with `outputSchema = bodyJsonSchema(docType)`, sends one turn,
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Drop `readOnly: true`; the session runs with the user's own harness capabilities. Everything else about this adapter (output schema, one turn, outcome mapping, always-close) is unchanged. and iterates `session.events` to the `session.ended` frame: a `completed` outcome with `structuredOutput` becomes `{ status: "emitted", body }`; anything else (no structured output, failed, cancelled, an `error` frame) becomes `{ status: "failed" }` so the angle's own fallback takes over. The session is always closed.
 
 ## The router (`createDispatch`, `@rennet/core`)
 

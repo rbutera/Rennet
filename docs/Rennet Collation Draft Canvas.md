@@ -10,6 +10,8 @@ source: Rai correction, voice, 2026-08-08 (GitHub issue #99); Accepted 2026-08-0
 
 # Rennet Collation Draft Canvas
 
+> ⚠️ **RULE ZERO (CLAUDE.md, 2026-08-11) outranks this document.** No consent gates, no gates, no robustness for robustness' sake. The three-layer spine (lenses → collation draft → paper) and the sign act stand; passages carrying a ⛔ SUPERSEDED marker are void where they conflict.
+
 > **Status: ACTIVE. Accepted 2026-08-08 (Rai blessed** — "Blessed. Proceed as you deem appropriate."**).** This document canonizes the missing middle layer named in issue #99. It refines a frozen ruling (R36 → R40) and reshapes several open issues. The tension with R36 is surfaced explicitly in §4 and resolved by R40 (see [[Rennet Contracts and Rulings]]).
 
 ## The skew this corrects (issue #99, verbatim source)
@@ -71,6 +73,8 @@ Everything the paper must *not* let you do:
 - **Withdraw** (unstage, R37) — remove with zero residue.
 - **Ask the orchestrator** questions about the forming draft (it may *propose* edits on L3, which you accept into L2 — it never writes the draft itself; the safety line holds, [[Rennet Canvas Paradigm]] §L2).
 - **Read the totality/residue guarantee** — what have I not looked at — because done/sign still blocks on incomplete ingestion (Design Doctrine §3.2).
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Two clauses above go: the orchestrator MAY write the draft (it is glass — yours, editable, reversible, and unsigned), and the residue guarantee is reported honestly but never blocks done or sign.
 
 Nothing here has left the machine. It is all working state, all reversible, all yours.
 

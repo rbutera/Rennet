@@ -25,6 +25,8 @@ The publish sheet SHALL NOT invoke its sign callback for a pointer hold whose el
 ### Requirement: Signing is blocked until run degradations are acknowledged
 When the publish sheet is given a degradation ledger carrying one or more entries, it SHALL block every sign path (pointer hold and keyboard) until those degradations are explicitly acknowledged, regardless of the hold duration. After acknowledgement the sign paths SHALL behave normally. When no ledger is supplied, or the ledger has zero entries, no gate SHALL apply (the shipped shell is unchanged).
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. This entire requirement and its three scenarios are withdrawn: signing SHALL NOT be blocked on an acknowledgement act. What applies instead is display-only — when a degradation ledger is present the sheet SHALL show its entries so the user can read what degraded, and the sign paths SHALL remain fully available at all times.
+
 #### Scenario: Unacknowledged degradations block a sufficient hold
 - **WHEN** the sheet is mounted with a ledger carrying an unacknowledged entry and a hold meeting `holdToSignMs` is completed
 - **THEN** the sign callback is not called
@@ -48,6 +50,8 @@ The publish sheet SHALL let a keyboard/AT user complete the publish act via an e
 - **WHEN** the ledger carries an unacknowledged entry and Enter is pressed on the focused sign control
 - **THEN** the sign callback is not called
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. This scenario falls with the ledger gate above; the keyboard path signs whenever the user activates it, ledger or no ledger. The rest of this requirement — a keyboard user can complete the act, emitting exactly the previewed bytes — stands and is a genuine feature.
+
 ### Requirement: Signing clears the staged paper at the app level
 When a sign completes in `RennetApp`, the staged set SHALL be cleared to empty and the publish sheet SHALL close, demonstrating the dispose==staged journey ending. This SHALL be verified by mounting `RennetApp` and observing the staged count return to zero, not by exercising a presentational subcomponent alone.
 
@@ -57,6 +61,8 @@ When a sign completes in `RennetApp`, the staged set SHALL be cleared to empty a
 
 ### Requirement: A shell sign honestly discloses that nothing was published
 While the publish pipeline (#21) is unbuilt, the publish sheet SHALL carry a persistent, aria-legible notice that signing in the shell clears the staged paper and publishes nothing, so a shell sign can never read as a real publish under the paper/glass doctrine.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. This requirement is also simply **obsolete**: #21 shipped (`747d966`), so signing DOES publish and a notice claiming otherwise is now false. Remove the notice rather than reword it — a permanent disclosure banner on the publish sheet is ceremony, not product.
 
 #### Scenario: The shell honesty notice is present
 - **WHEN** the publish sheet renders

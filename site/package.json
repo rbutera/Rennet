@@ -1,0 +1,12 @@
+{
+  "name": "rennet-site",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Rennet pre-launch status page. Build-only, not deployed.",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "brand": "node brand/render.mjs && node brand/qa.mjs",
+    "serve": "node --experimental-strip-types serve.mjs"
+  }
+}

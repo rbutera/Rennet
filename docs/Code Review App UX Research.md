@@ -8,6 +8,8 @@ tags:
 created: 2026-08-04
 ---
 
+> 📜 **Historical evidence, not current authority.** Superseded wherever it conflicts with **RULE ZERO** (`CLAUDE.md`): no consent gates, no gates, no robustness for robustness' sake. Read for rationale and provenance only.
+
 # Code Review App UX Research
 
 Discovery context-gathering for [[Code Review Harness App]]: a desktop-native (macOS first) code review tool powered by an LLM harness, interoperable with GitHub PRs, focused on making large, often LLM-generated PRs digestible. This note surveys the state of the art in diff/review UX, the research on large-changeset review, native macOS design language, LLM-in-the-loop review patterns, and mobile companion prior art.

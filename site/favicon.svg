@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Rennet">
+  <!-- The mark on the app-icon's dark ground (aurora at its darkest), so it reads
+       on any browser chrome. Solid bone curd, open backlit whey, a hairline cut. -->
+  <defs>
+    <filter id="fg" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="1.1" result="b"/>
+      <feFlood flood-color="#85C4DC" flood-opacity="0.6"/>
+      <feComposite in2="b" operator="in" result="g"/>
+      <feMerge><feMergeNode in="g"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect x="0" y="0" width="64" height="64" rx="14" fill="#0c1218"/>
+  <g transform="translate(4 4) scale(0.875)">
+    <path d="M 31 8 A 24 24 0 0 0 31 56 Z" fill="#EDEFF2"/>
+    <path d="M 33 8 A 24 24 0 0 1 33 56" fill="none" stroke="#85C4DC"
+          stroke-width="3.6" stroke-linecap="round" filter="url(#fg)"/>
+  </g>
+</svg>

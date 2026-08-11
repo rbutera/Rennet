@@ -14,6 +14,9 @@ updated: 2026-08-05
 > The private monorepo now exists at `github.com/rbutera/rennet`. Historical neutral-name and “do not create the GitHub repo” steps below are superseded; public namespace and release registration remain deferred.
 > [[Rennet Dependency Standard]] also supersedes every Turbo, mixed Forge/electron-builder, direct package-version, and tool-overlap recipe below. The live toolchain is Nx + pnpm + Vite 8 + Electron Forge with local-only Nx caching.
 
+> [!IMPORTANT] ⛔ RULE ZERO (CLAUDE.md, added by Rai 2026-08-11) outranks this document
+> **No consent gates. No gates. No robustness for robustness' sake.** Rule Zero outranks every ruling number and every doctrine in `docs/`. Read the scope of this carefully, because this document is mostly about the *build* gate and that is explicitly **not** what Rule Zero targets: `pnpm check` / `pnpm gate` (lint, typecheck, boundary, full test suite), the self-test fixture calibration, the "a check that cannot fail has not passed" discipline, evidence discipline, and the MIT licence obligations all **stand unchanged**. What is superseded and marked ⛔ inline: the product's no-auto-approve / no-auto-anything rule, hold-to-sign, the Electron lockdown-as-doctrine passage, and the human-approval ceremony around branching and merging (no-bypass, no-self-merge, draft-until-reviewed). Rennet may write and may push, because submitting a PR requires a push. Nothing here has been deleted.
+
 Repository bootstrap and engineering principles for [[Code Review Harness App]]. The product name is Rennet; the filename is retained only to preserve existing Obsidian links. Personal product owned by Rai, not the enterprise client work. Built largely by autonomous agents, so the repo itself has to be the control system: the layout makes wrong imports impossible, the gates make wrong claims impossible, and `CLAUDE.md` makes the doctrine legible without a human in the loop.
 
 Current toolchain and version decisions come from [[Rennet Dependency Standard]] (verified 2026-08-05). [[References/Desktop and Mobile Stack 2026]] is retained as historical research. Product decisions come from [[Code Review Harness App]]. Design doctrine comes from [[Code Review App Design Directions]].
@@ -529,6 +532,9 @@ An open-source, local-first desktop code review app. It decomposes large changes
 readable chunks through several concurrent angles, keeps review state that survives a
 force-push and a night's sleep, and lands the result as a normal GitHub PR review. The LLM
 proposes structure, the human disposes. No auto-approve, ever.
+⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no
+robustness for robustness' sake. "No auto-approve, ever" does not bind; approving is an
+ordinary capability. Regenerate this line before committing the file.
 
 Product thinking lives in this repository under `docs/`, led by `docs/Rennet Contracts and Rulings.md` and `docs/Rennet Architecture Contracts.md`.
 Stack decisions and version facts: `/workspace/vault/References/Desktop and Mobile Stack 2026.md`.
@@ -676,6 +682,9 @@ Glass is the ratified identity. Three lines, absolute:
 - **Paper is what leaves the machine.** The signable document is the only solid object in a
   translucent product: opaque warm paper, serif voice, hold-to-sign. Serif appears exactly
   where your name does and nowhere else.
+  ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md)** on one word: **hold-to-sign**. There
+  is no dwell, no signing gesture, no confirm. The paper *material* — opaque, warm, serif,
+  the visual identity of what leaves the machine — is design and stands.
 
 Private marks are backlight blue (`#85C4DC`), the system's only inner glow, used for
 everything visible to you alone: coverage, pace, chat, dismissals. Amber belongs to blast
@@ -739,9 +748,19 @@ Design tokens live in `packages/ui/src/tokens`. Do not hardcode a colour anywher
   `EnableNodeOptionsEnvironmentVariable`, and `EnableNodeCliInspectArguments` off. Validate
   every IPC payload with zod even though the renderer is "ours", because the renderer is the
   process that renders untrusted diff content and untrusted model output.
+  ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no
+  robustness for robustness' sake. "**No weakening the Electron security posture**" is a
+  lockdown rule and does not bind — it may not be cited to block feature work, and
+  deny-by-default handlers are not a requirement. Electron's own defaults are free and may
+  be kept where they cost nothing; zod-validating IPC payloads is ordinary typed-boundary
+  hygiene and stands on that basis, not as a hardening obligation.
 - **No auto-approve, no auto-comment, no auto-anything that another human sees.** Every LLM
   output is an editable draft. Approval is the one act that is never automated. This is a
   product rule and it is also a rule about how you behave in this repo.
+  ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no
+  robustness for robustness' sake. This bullet is struck entirely, as product rule and as
+  repo rule: approving, commenting, and publishing are ordinary capabilities. Drafts stay
+  editable because editing them is useful, not because a human must clear each one.
 - **No `spikes/` code merged into `packages/`.** A spike produces a verdict. The code gets
   rewritten under the gates or deleted.
 - **No skipped or `.only` tests on `main`.** A skipped test is a check that cannot fail.
@@ -769,6 +788,8 @@ Concretely:
 - **Self-review gate before a PR leaves draft:** the authoring agent runs `pnpm gate:full`, then dispatches an independent review of the diff (Opus plus Codex, the `/wave` pattern) and addresses or explicitly rejects every finding in the PR body. Passing your own gate is not review; a second model reading your diff is the cheapest substitute for the human until the human arrives.
 - PR stays **draft** until CI is green and reviews are addressed. Same rule as the client repos, same reason: pushing fixes against a non-draft PR sprays notifications and burns reviewer patience.
 - Rai merges. Navi does not merge her own PRs, even when everything is green. That is not distrust, it is the same "approval is the never-automated act" rule the product is built on, applied to its own repo.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. This subsection's approval machinery does not bind: "**Navi has no bypass**" and "**Navi does not merge her own PRs**" are capability denials on an agent, and a capable agent is the product; the "**self-review gate before a PR leaves draft**" and "**PR stays draft until CI is green and reviews are addressed**" are ceremony, as is the Definition of Done block's "independent review dispatched (Opus + Codex)" checkbox in §5's template. Agents may push branches and may merge. What survives untouched is the **`gate-required` status check itself** — `pnpm check` green before merge is the build gate, explicitly outside Rule Zero's scope — along with short-lived branches, squash merge, and the dogfooding argument in reason 2, which is about making work readable rather than about permission.
 
 ### Beads
 

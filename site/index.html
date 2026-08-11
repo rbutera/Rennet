@@ -1,0 +1,130 @@
+<!doctype html>
+<html lang="en" data-scheme="dark">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rennet: a review harness</title>
+    <meta
+      name="description"
+      content="Rennet is a local code review harness: it separates a pull request too big to read into chunks you can finish, and leaves every judgement call to you."
+    />
+    <!-- No fonts fetched, no analytics, no third-party anything. tokens.css is a
+         build-time copy of the app's real token file (packages/ui/src/tokens.css),
+         so the site cannot drift from the product. -->
+    <link rel="stylesheet" href="./tokens.css" />
+    <link rel="stylesheet" href="./styles.css" />
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="alternate" type="application/atom+xml" title="Rennet build log" href="./feed.xml" />
+  </head>
+  <body>
+    <button id="scheme" class="scheme" type="button" aria-label="Toggle light and dark">
+      scheme
+    </button>
+
+    <main>
+      <!-- 1 · Masthead -->
+      <header class="masthead">
+        <div class="lockup" aria-label="Rennet">
+          <svg class="mark" viewBox="0 0 64 64" width="40" height="40" aria-hidden="true">
+            <path d="M 31 8 A 24 24 0 0 0 31 56 Z" fill="var(--mark-ink)" />
+            <path
+              d="M 33 8 A 24 24 0 0 1 33 56"
+              fill="none"
+              stroke="var(--private)"
+              stroke-width="3.6"
+              stroke-linecap="round"
+            />
+          </svg>
+          <span class="wordmark">Rennet</span>
+        </div>
+        <p class="category-line">A review harness.</p>
+      </header>
+
+      <!-- honesty line, prominent, near the top -->
+      <p class="honesty"><!--HONESTY_LINE--></p>
+
+      <!-- 2 · The exposure thesis -->
+      <section class="thesis">
+        <h1>You stopped writing the code. You still have to answer for it.</h1>
+        <div class="blocks">
+          <div class="block">
+            <h2>The stakes</h2>
+            <p>
+              LLM-generated code has inflated pull requests everywhere, and review is the
+              bottleneck. Cloud review tools die at enterprise procurement. Fully
+              autonomous review is trusted by nobody. The first user is not a smuggler,
+              it is the engineer who no longer writes code by hand and cannot honestly say
+              they have read the PRs their agents open.
+            </p>
+          </div>
+          <div class="block">
+            <h2>What it is</h2>
+            <p>
+              A local-first review harness. A changeset too big to hold in your head is
+              rolled up into logical cohorts you can read from base principles up, its
+              decisions surfaced, never hidden, never capped. The result lands as a normal
+              GitHub review, or on your own branch as a batch handed back to a coding agent
+              that Rennet then re-reviews only where it changed.
+            </p>
+          </div>
+          <div class="block">
+            <h2>The proof</h2>
+            <p>
+              Local-first, no Rennet backend, no telemetry. It drives the coding harnesses
+              already on your machine, on your own keys. And the human disposes: no
+              auto-approve, no auto-comment, nothing another person sees without an explicit
+              act of yours. That is a property of the wiring, not a promise in a prompt.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <!-- one screenshot -->
+      <figure class="shot">
+        <img src="./screenshot.png" alt="The Rennet review surface" />
+        <figcaption>The review surface. Lo-fi wireframe; the app is not released yet.</figcaption>
+      </figure>
+
+      <!-- 4 · The category paragraph -->
+      <section class="category">
+        <p>
+          A coding harness points a model at your codebase so it can write. A review
+          harness points models at a change so you can read. The harness does the
+          structural work. You do the deciding.
+        </p>
+      </section>
+
+      <!-- 10 · What it is not -->
+      <section class="isnot">
+        <h2>What it is not</h2>
+        <ul>
+          <li>Not a bot.</li>
+          <li>Not a cloud service.</li>
+          <li>No account with anyone but GitHub.</li>
+          <li>No telemetry.</li>
+          <li>Does not comment on your behalf.</li>
+        </ul>
+      </section>
+
+      <!-- A build log, not a blog -->
+      <section class="buildlog">
+        <div class="buildlog-head">
+          <h2>Build log</h2>
+          <a href="./feed.xml">Atom feed</a>
+        </div>
+        <ol><!--BUILD_LOG--></ol>
+      </section>
+
+      <!-- 11 · Footer -->
+      <footer>
+        <p class="name">
+          Rennet is the enzyme that separates milk into curds and whey. It adds nothing; it
+          separates what is already there.
+        </p>
+        <p class="meta">MIT-licensed. Runs on your machine.</p>
+      </footer>
+    </main>
+
+    <script src="./scheme-toggle.js"></script>
+  </body>
+</html>

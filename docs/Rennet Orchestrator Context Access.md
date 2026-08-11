@@ -9,6 +9,8 @@ related: ["[[Rennet Canvas Paradigm]]", "[[Rennet Contracts and Rulings]]", "[[R
 
 # Rennet Orchestrator Context Access
 
+> ⚠️ **RULE ZERO (CLAUDE.md, 2026-08-11) outranks this document.** No consent gates, no gates, no robustness for robustness' sake. The lean-bootstrap-plus-retrieval thesis, the tool surface, `context.ask`, and the protocol card all stand; passages carrying a ⛔ SUPERSEDED marker are void where they conflict.
+
 *Design doc, 2026-08-06. Answers Rai's superseding direction on OQ6/primer-budget (voice, ~13:00): capping the primer is wrong, and dumping the whole context is wrong. The right design arms the orchestrator with tools and on-demand retrieval — possibly a background knowledge agent it can ask questions to — so it accesses what it needs without overloading its own context window, and it must know (a) that it CAN ask, (b) HOW to ask, and (c) WHAT KIND of answers come back. This doc supersedes the primer sketch in [[Rennet Canvas Paradigm]] §4.3 and its Open Question 6.*
 
 **Headline recommendation: turn the priming manifest from a container of context into a map of context. Boot the orchestrator with a lean, deterministic bootstrap (~2–4 KB: identity, freshness verdicts, count-level canvas state, and a protocol card that teaches it to ask) and put everything else behind a read-only retrieval tool family added to the existing in-process `canvasOps` MCP server (version the combined surface `canvasOps@2`). Build the background knowledge agent — but hide it behind ONE tool, `context.ask`, so from the orchestrator's side asking a sub-agent and calling a tool are the same act with the same schema-constrained contract. Nothing about the orchestrator's world changes if the answering machinery behind that tool is later upgraded, downgraded, or re-tiered. Settle the remaining unknowns (sync-vs-async ask, primer floor, should-ask rate) with the five experiments in §6.**
@@ -67,6 +69,8 @@ Extend, don't reinvent: the canvas doc §5.1 already puts an in-process MCP serv
 
 All retrieval tools are **read-only** (`readOnlyHint: true` — which also lets the harness parallelise them), **actor-tagged `visibility: model`**, and widen the write surface by exactly nothing: the ⛔ list of Canvas Paradigm §3.1c (no L2 writes, no L1 edits, no reordering, no publish sheet, no cross-review reads) is preserved because those operations simply do not exist on the surface.
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. `readOnlyHint` on a *retrieval* tool is just an accurate annotation and is fine; keeping the write surface empty so the orchestrator structurally cannot act is not — add the write ops the product needs and let the user sign what publishes.
+
 ### 2.1 Canvas bucket (the review's surfaces)
 
 | Tool | Signature (sketch) | Returns |
@@ -116,6 +120,8 @@ Byte-capped per response (settings-owned cap, same family as `context.totalBudge
 The obvious objection — "fifteen tools' schemas will eat the context you saved" — is already answered by the harness: **the Claude Agent SDK's tool search is on by default and defers in-process MCP tool schemas**; Claude sees a compact name list and loads a schema on demand (verified against the SDK's custom-tools doc, 2026-08-06). The bootstrap's B5 tool index plus deferred schemas is a few hundred bytes; only the schemas of tools actually used enter the window. Mark the always-hot trio — `canvas.describe`, `canvas.view`, `context.ask` — `alwaysLoad: true` so the core loop never pays a search round-trip. Codex/omp slots lack this exact mechanism; for them the schema set is the cost, which is one of the things E5 measures — and a reason to keep the tool *count* disciplined rather than the tool *reach*.
 
 ### 2.6 What stays structural
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. This whole section is capability denial plus a budget gate: nothing "stays structural" — give the orchestrator the operations the product needs, keep `canvas.recompute` visible and accounted rather than budget-gated, and let the user's sign be the only line.
 
 The actor partition is enforced by surface composition, not by the protocol card: the orchestrator's MCP server contains no user-only or engine-only operation, so "the human still disposes" remains a property of the wiring. The retrieval family adds only reads. `canvas.recompute` (the one expensive escalation that *causes* model spend) stays exactly as §3.1c defined it — explicit, RoutePlan-budget-gated, visible to the user.
 
@@ -198,6 +204,8 @@ Why this lands the three requirements:
 - **(c) WHAT comes back** — the uniform envelope and the answer-document shape are stated once in the card and declared per-tool in the schemas. Crucially the card teaches the *semantics* the schema can't: cite evidence, surface staleness, respect cursors, honour `unanswered`.
 
 And the enforcement note that keeps this honest: the card is teaching, not security. Everything the orchestrator must not do is absent from its surface (§2.6), so a mis-taught or prompt-drifted orchestrator degrades to *unhelpful*, never to *unsafe*.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The protocol card stands as teaching; the "unsafe is impossible because the surface is empty" guarantee it leans on does not — designing for a capable orchestrator is the point.
 
 ---
 

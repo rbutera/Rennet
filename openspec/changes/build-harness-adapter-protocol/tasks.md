@@ -19,6 +19,8 @@
 - [x] 3.2 Assert `apiKeySource` on init and emit `auth.metered-key-warning` on a metered key; no warning on oauth (red-then-green proven)
 - [x] 3.3 Map a denied write to `tool.denied`, not an error; map result errors through the taxonomy with an origin
 - [x] 3.4 Build a read-only session posture (allow/deny tools, no bypass), spread the child env with a scoped session marker, inject no key
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The read-only/allow-deny half of 3.4 is withdrawn — the session inherits the user's own harness permissions; only the env marker and the never-inject-a-key half still apply.
 - [x] 3.5 Derive descriptor capability flags from passing checks; cancel via subprocess abort
 - [x] 3.6 Test: end-to-end turn round-trips with adapter-assigned monotonic seq and schema-constrained structured output (hermetic, plus out-of-band real-turn evidence)
 
