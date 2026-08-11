@@ -1,12 +1,31 @@
-import type { Project } from "@rennet/protocol";
+import type { Project, PullRequest } from "@rennet/protocol";
 import { projectDetailSchema } from "@rennet/protocol";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { GitExec } from "./git-range-diff";
 import {
   defaultProjectDetailSourceDeps,
   loadProjectDetail,
   type ProjectDetailSourceDeps,
 } from "./project-detail-source";
+import type { ProjectPrSource } from "./project-pr-source";
+
+/** A canned PullRequest for the B2 merge tests. */
+const pr = (overrides: Partial<PullRequest> = {}): PullRequest => ({
+  id: "PR_1",
+  number: 7,
+  title: "Front door",
+  repository: "acme/widget",
+  branch: "feat/x",
+  author: "octocat",
+  state: "open",
+  reviewRequestedFromViewer: false,
+  ci: "passing",
+  additions: 10,
+  deletions: 1,
+  changedFiles: 2,
+  lastActivityAt: "2026-08-10T00:00:00.000Z",
+  ...overrides,
+});
 
 /** ISO-Z instant for a unix-seconds time, mirroring the source's own conversion. */
 const iso = (unix: number): string => new Date(unix * 1000).toISOString();
@@ -299,6 +318,142 @@ describe("loadProjectDetail — live local work (B1)", () => {
     });
     const detail = await loadProjectDetail(depsWith(git, ["/repo"]), repoProject("/repo"));
     expect(detail.locals).toEqual([]); // main excluded, detached skipped
+  });
+});
+
+describe("loadProjectDetail — live remote PRs (B2)", () => {
+  const depsWithPr = (
+    git: GitExec,
+    roots: readonly string[],
+    prSource: ProjectPrSource,
+  ): ProjectDetailSourceDeps => ({ git, prSource, resolveRepoRoots: () => Promise.resolve(roots) });
+
+  it("wires live PRs and pins the viewer + local author to the GitHub login", async () => {
+    const git = makeGit({
+      "/repo": {
+        remoteUrl: "git@github.com:acme/widget.git",
+        userName: "Rai Butera", // git identity — must be OVERRIDDEN by the GitHub login
+        branches: { main: 1000, "feat/y": 2000 },
+        worktrees: [{ path: "/repo", branch: "main" }],
+        aheadBehind: { "feat/y": { ahead: 1, behind: 0 } },
+      },
+    });
+    const prSource: ProjectPrSource = {
+      resolveViewer: async () => "octocat",
+      listOpenPullRequests: async (repository) => ({
+        prs: [pr({ repository, reviewRequestedFromViewer: true })],
+        truncated: false,
+      }),
+    };
+
+    const detail = await loadProjectDetail(
+      depsWithPr(git, ["/repo"], prSource),
+      repoProject("/repo"),
+    );
+
+    expect(detail.viewer.login).toBe("octocat"); // GitHub login pins ownership, not "Rai Butera"
+    expect(detail.locals[0]?.author).toBe("octocat"); // local work reads as the same viewer
+    expect(detail.prs).toHaveLength(1);
+    expect(detail.prs[0]?.repository).toBe("acme/widget");
+    expect(() => projectDetailSchema.parse(detail)).not.toThrow();
+  });
+
+  it("emits matching repository identities so a local worktree folds into its PR row", async () => {
+    const git = makeGit({
+      "/repo": {
+        remoteUrl: "git@github.com:acme/widget.git",
+        userName: "rai",
+        branches: { main: 1000, "feat/x": 2000 },
+        worktrees: [
+          { path: "/repo", branch: "main" },
+          { path: "/wt/x", branch: "feat/x" },
+        ],
+        aheadBehind: { "feat/x": { ahead: 2, behind: 0 } },
+      },
+    });
+    const prSource: ProjectPrSource = {
+      resolveViewer: async () => "octocat",
+      listOpenPullRequests: async (repository) => ({
+        prs: [pr({ repository, branch: "feat/x" })],
+        truncated: false,
+      }),
+    };
+
+    const detail = await loadProjectDetail(
+      depsWithPr(git, ["/repo"], prSource),
+      repoProject("/repo"),
+    );
+    const local = detail.locals.find((l) => l.branch === "feat/x");
+    // Byte-identical (repository, branch) on both halves — the smart-list dedupe key.
+    expect(local?.repository).toBe(detail.prs[0]?.repository);
+    expect(local?.branch).toBe(detail.prs[0]?.branch);
+  });
+
+  it("propagates truncated from the PR source", async () => {
+    const git = makeGit({
+      "/repo": {
+        remoteUrl: "git@github.com:acme/widget.git",
+        userName: "rai",
+        branches: { main: 1 },
+      },
+    });
+    const prSource: ProjectPrSource = {
+      resolveViewer: async () => "octocat",
+      listOpenPullRequests: async () => ({ prs: [], truncated: true }),
+    };
+    const detail = await loadProjectDetail(
+      depsWithPr(git, ["/repo"], prSource),
+      repoProject("/repo"),
+    );
+    expect(detail.truncated).toBe(true);
+  });
+
+  it("keeps the git identity when the GitHub viewer is null", async () => {
+    const git = makeGit({
+      "/repo": {
+        remoteUrl: "git@github.com:acme/widget.git",
+        userName: "Rai Butera",
+        branches: { main: 1 },
+      },
+    });
+    const prSource: ProjectPrSource = {
+      resolveViewer: async () => null,
+      listOpenPullRequests: async () => ({ prs: [], truncated: false }),
+    };
+    const detail = await loadProjectDetail(
+      depsWithPr(git, ["/repo"], prSource),
+      repoProject("/repo"),
+    );
+    expect(detail.viewer.login).toBe("Rai Butera");
+  });
+
+  it("does NOT fetch PRs for a local-only repo (no forge identity)", async () => {
+    const git = makeGit({
+      "/some/repo": { commonDir: "/some/repo/.git", userName: "rai", branches: { main: 1 } },
+    });
+    const listOpenPullRequests = vi.fn(async () => ({ prs: [], truncated: false }));
+    const resolveViewer = vi.fn(async () => "octocat");
+    const detail = await loadProjectDetail(
+      depsWithPr(git, ["/some/repo"], { resolveViewer, listOpenPullRequests }),
+      repoProject("/some/repo"),
+    );
+    expect(listOpenPullRequests).not.toHaveBeenCalled();
+    expect(resolveViewer).not.toHaveBeenCalled(); // no forge repo → no GitHub round-trip at all
+    expect(detail.prs).toEqual([]);
+  });
+
+  it("without a prSource, prs stays empty (B1 local-only surface preserved)", async () => {
+    const git = makeGit({
+      "/repo": {
+        remoteUrl: "git@github.com:acme/widget.git",
+        userName: "rai",
+        branches: { main: 1, "feat/z": 2 },
+        aheadBehind: { "feat/z": { ahead: 1, behind: 0 } },
+      },
+    });
+    const detail = await loadProjectDetail(depsWith(git, ["/repo"]), repoProject("/repo"));
+    expect(detail.prs).toEqual([]);
+    expect(detail.truncated).toBe(false);
   });
 });
 

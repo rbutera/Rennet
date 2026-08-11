@@ -35,6 +35,7 @@ export {
   type LoadClaudeQuery,
   toSdkOptions,
 } from "./claude-query";
+export { type CleanupWorktreeDeps, cleanupWorktree } from "./cleanup-worktree";
 export {
   buildCodexExecArgs,
   CODEX_EXEC_BIN,
@@ -258,6 +259,12 @@ export {
   discoverProject,
   type ProjectDiscoveryDeps,
 } from "./project-discovery";
+export {
+  createGitHubProjectPrSource,
+  type GitHubProjectPrSourceConfig,
+  type ProjectPrSource,
+  parseForgeRepository,
+} from "./project-pr-source";
 export {
   addAlias,
   type RelocateResult,

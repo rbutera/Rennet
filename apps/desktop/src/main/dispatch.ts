@@ -424,15 +424,16 @@ export function createDispatch(
       // ── Project detail: the unified smart list (issue #37) ────────────────────
       case "project.detail": {
         // Read-only substrate for a project the user has added. No repository
-        // capture, no model spend: just the local work + PRs + viewer the renderer
-        // folds into one list. (Live wiring is a follow-up; a fixture stands in.)
+        // capture, no model spend: real local work (git) + live GitHub OPEN PRs +
+        // viewer, which the renderer folds into one list. A missing GitHub token
+        // degrades to the local-only half, never a failed fetch shown as zero PRs.
         const input = parseCommandInput(name, rawInput);
         return parseCommandOutput(name, await deps.projectDetail(input.projectId));
       }
       case "project.cleanupWorktree": {
         // The merged-PR read-only row's clean-up. A destructive local act, so it is a
-        // command rather than a renderer effect; the host handler is a documented stub
-        // this wave (nothing is deleted from disk yet).
+        // command rather than a renderer effect; the host handler runs a real, NON-
+        // forcing `git worktree remove` (a dirty worktree is refused, never swept).
         const input = parseCommandInput(name, rawInput);
         const result = await deps.cleanupWorktree({
           projectId: input.projectId,
