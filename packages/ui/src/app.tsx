@@ -1,4 +1,9 @@
-import { openSpecRequirementCoverageKey, type Project, type RennetBridge } from "@rennet/protocol";
+import {
+  type AppearanceScheme,
+  openSpecRequirementCoverageKey,
+  type Project,
+  type RennetBridge,
+} from "@rennet/protocol";
 import type {
   CanvasAngle,
   ElementDiffs,
@@ -48,6 +53,7 @@ import {
 } from "./components/icons";
 import { ProjectDetail } from "./components/project-detail";
 import { type PublishOutcome, PublishSheet } from "./components/publish-sheet";
+import { SettingsScreen } from "./components/settings-screen";
 import { CanvasWorkspace } from "./components/workspace";
 import type { SmartRow } from "./project/smart-list";
 
@@ -268,6 +274,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // project-detail (the review's real home) is a later slice.
   const [atFrontDoor, setAtFrontDoor] = useState(false);
   const [directEntry, setDirectEntry] = useState(false);
+  // The settings screen (wireframe #15): opened from the front door, closed back
+  // to it. `scheme` is the reviewer's chosen appearance, fetched once and applied
+  // to the front door's `data-scheme` — so changing it in settings re-themes here.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [scheme, setScheme] = useState<AppearanceScheme>("system");
   // Project detail (issue #37): the unified smart list. Clicking a project row opens
   // this surface (local work + every PR in one list); a row there opens the review.
   const [projectDetail, setProjectDetail] = useState<Project | null>(null);
@@ -412,6 +423,16 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       .catch((reason: unknown) =>
         setError(reason instanceof Error ? reason.message : String(reason)),
       );
+  }, [bridge]);
+
+  // The reviewer's appearance scheme (wireframe #15), fetched once so the front
+  // door themes to it. Settings updates it live via `onSchemeChange`. Fail-quiet:
+  // an unavailable settings surface leaves the builtin `system` default.
+  useEffect(() => {
+    bridge
+      .invoke("settings.get", {})
+      .then(({ scheme: loaded }) => setScheme(loaded))
+      .catch(() => undefined);
   }, [bridge]);
 
   const patchset = useMemo(() => (review ? activePatchset(review) : undefined), [review]);
@@ -1172,6 +1193,22 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     );
   }
 
+  // The settings screen (wireframe #15): opened from the front door's affordance,
+  // closed back to it. Takes precedence over the front door so it is a full screen,
+  // not an overlay; the chosen scheme flows back to `data-scheme` on close.
+  if (settingsOpen) {
+    return (
+      <>
+        {error ? <div className="error-toast">{error}</div> : null}
+        <SettingsScreen
+          bridge={bridge}
+          onBack={() => setSettingsOpen(false)}
+          onSchemeChange={setScheme}
+        />
+      </>
+    );
+  }
+
   // The front door is the app's entry: shown on first run (no restored review) and
   // whenever the user steps back to Projects from an open review. The legacy repo/PR
   // entry is one terse disclosure away so no existing capability is orphaned.
@@ -1181,7 +1218,12 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         <>
           {error ? <div className="error-toast">{error}</div> : null}
           {busy ? <div className="busy-bar" /> : null}
-          <FrontDoor bridge={bridge} onOpenProject={(project) => setProjectDetail(project)} />
+          <FrontDoor
+            bridge={bridge}
+            onOpenProject={(project) => setProjectDetail(project)}
+            onOpenSettings={() => setSettingsOpen(true)}
+            scheme={scheme}
+          />
           <button
             type="button"
             className="front-door-direct"

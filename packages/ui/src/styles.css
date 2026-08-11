@@ -2584,3 +2584,343 @@ button {
   font-family: var(--sans);
   font-size: 11px;
 }
+
+/* ── Settings: the config ladder (wireframe #15) ───────────────────────────── */
+/* Glass chrome, one palette. The screen themes to the reviewer's chosen scheme via
+ * `data-scheme` on `.settings` (light composes the bright-room tokens under it). */
+.front-door-settings {
+  margin-left: auto;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--text-soft);
+  cursor: pointer;
+}
+.front-door-settings:hover {
+  color: var(--text);
+  border-color: var(--accent-soft-line);
+  background: var(--accent-soft);
+}
+
+.settings {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0 24px 96px;
+  background: var(--chrome-bg);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
+  color: var(--text);
+}
+.settings-bar {
+  width: 100%;
+  max-width: 760px;
+  height: 68px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.settings-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-soft);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.settings-back:hover {
+  color: var(--text);
+  border-color: var(--accent-soft-line);
+}
+.settings-mark {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--accent-soft-line);
+  border-radius: 9px;
+  color: var(--accent);
+  background: var(--accent-soft);
+}
+.settings-bar h1 {
+  margin: 0;
+  font-size: 18px;
+  font-weight: var(--display-weight);
+  letter-spacing: var(--display-track);
+  color: var(--text);
+}
+.settings-sub {
+  margin-left: auto;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.settings-error {
+  width: 100%;
+  max-width: 760px;
+  margin: 0 0 12px;
+  padding: 9px 13px;
+  border: 1px solid var(--amber-line);
+  border-radius: var(--chip-radius);
+  background: var(--amber-surface);
+  color: var(--amber);
+  font-size: 13px;
+}
+.settings-error-inline {
+  margin: 8px 0 0;
+}
+.settings-loading {
+  margin-top: 40px;
+  color: var(--text-faint);
+}
+.settings-body {
+  width: 100%;
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+}
+.settings-tabs {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.settings-tab {
+  padding: 7px 14px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--text-soft);
+  font-size: 13px;
+  cursor: pointer;
+}
+.settings-tab.on {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--accent-contrast);
+}
+.settings-panel {
+  border: 1px solid var(--raised-border);
+  border-radius: var(--radius);
+  background: var(--raised);
+  box-shadow: var(--raised-shadow);
+  padding: 6px 18px 18px;
+}
+.settings-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--hairline);
+  margin-bottom: 6px;
+}
+.settings-pick {
+  padding: 5px 11px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.settings-pick.on {
+  background: var(--accent-soft);
+  border-color: var(--accent-soft-line);
+  color: var(--text);
+}
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--hairline);
+}
+.settings-row:last-of-type {
+  border-bottom: none;
+}
+.settings-row-label {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.settings-k {
+  font-size: 13.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.settings-d {
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.settings-row-value {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.settings-seg {
+  display: inline-flex;
+  margin: 0;
+  padding: 0;
+  min-width: 0;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 8px;
+  overflow: hidden;
+}
+.settings-seg-btn {
+  padding: 6px 12px;
+  border: none;
+  border-right: 1px solid var(--hairline);
+  background: var(--surface-2);
+  color: var(--text-soft);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.settings-seg-btn:last-child {
+  border-right: none;
+}
+.settings-seg-btn.on {
+  background: var(--accent);
+  color: var(--accent-contrast);
+}
+.settings-seg-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.settings-readthrough {
+  font-size: 13px;
+  color: var(--text-soft);
+}
+.settings-prov {
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  border: 1px solid var(--hairline-strong);
+  border-radius: 5px;
+  padding: 2px 7px;
+}
+.settings-prov-set {
+  color: var(--private);
+  background: var(--private-fill);
+  border-color: var(--private-line);
+}
+.settings-note,
+.settings-applied {
+  margin: 12px 0 0;
+  font-size: 12.5px;
+  color: var(--text-faint);
+}
+.settings-applied {
+  color: var(--private);
+}
+.settings-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+  padding: 40px 0;
+  color: var(--text-faint);
+  text-align: center;
+}
+.settings-empty-mark {
+  color: var(--accent);
+  opacity: 0.7;
+}
+
+/* The per-repo guidance panel (the wireframe's central instr card). */
+.settings-guidance {
+  margin-top: 18px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  overflow: hidden;
+}
+.settings-guidance-h {
+  padding: 10px 13px;
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--hairline);
+  font-size: 11.5px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.settings-guidance-b {
+  padding: 13px;
+}
+.settings-guidance-empty,
+.settings-guidance-lede {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--text-soft);
+}
+.settings-guidance-empty {
+  margin: 0;
+  color: var(--text-faint);
+}
+.settings-rules {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.settings-rule {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.settings-rule-body {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-rule-k {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+.settings-rule-why {
+  font-size: 12.5px;
+  color: var(--text-soft);
+}
+.settings-sev {
+  flex: none;
+  margin-top: 1px;
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  border-radius: 5px;
+  padding: 2px 7px;
+  border: 1px solid var(--hairline-strong);
+  color: var(--text-faint);
+}
+.settings-sev-high {
+  color: var(--amber);
+  background: var(--amber-fill);
+  border-color: var(--amber-line);
+}
+.settings-sev-medium {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-soft-line);
+}
+.settings-sev-low {
+  color: var(--green);
+  background: var(--green-fill);
+  border-color: var(--green-line);
+}
+.settings-guidance-dropped {
+  margin: 12px 0 0;
+  font-size: 12px;
+  color: var(--text-faint);
+}

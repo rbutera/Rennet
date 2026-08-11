@@ -15,6 +15,7 @@ import {
   MonitorIcon,
   PlusIcon,
   RennetMark,
+  SlidersIcon,
   SparkleIcon,
 } from "./icons";
 import { ProjectProcessing } from "./project-processing";
@@ -34,9 +35,15 @@ import { ProjectProcessing } from "./project-processing";
 export function FrontDoor({
   bridge,
   onOpenProject,
+  onOpenSettings,
+  scheme,
 }: {
   bridge: RennetBridge;
   onOpenProject(project: Project): void;
+  /** Open the settings screen (wireframe #15). Omitted ⇒ no settings affordance. */
+  onOpenSettings?(): void;
+  /** The reviewer's chosen appearance scheme; drives `data-scheme`. */
+  scheme?: "dark" | "light" | "system";
 }) {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [detected, setDetected] = useState<DetectedHarness[] | null>(null);
@@ -67,7 +74,7 @@ export function FrontDoor({
   }
 
   return (
-    <div className="rennet-glass front-door" data-scheme="dark">
+    <div className="rennet-glass front-door" data-scheme={scheme === "light" ? "light" : "dark"}>
       <header className="front-door-bar">
         <span className="front-door-mark" aria-hidden="true">
           {flow?.step === "processing" ? (
@@ -85,6 +92,17 @@ export function FrontDoor({
           <span className="front-door-step">step {flow.step === "type-path" ? 1 : 2} of 2</span>
         ) : null}
         {flow?.step === "processing" ? <span className="front-door-step">processing</span> : null}
+        {onOpenSettings && !flow ? (
+          <button
+            type="button"
+            className="front-door-settings"
+            onClick={onOpenSettings}
+            title="Settings"
+            aria-label="Settings"
+          >
+            <SlidersIcon size={16} />
+          </button>
+        ) : null}
       </header>
 
       {error ? <p className="front-door-error">{error}</p> : null}

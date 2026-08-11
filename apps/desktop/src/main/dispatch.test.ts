@@ -150,7 +150,7 @@ function harness(
   publishPort: ForgePublishPort & { posts: ForgeReviewPost[] } = fakePublishPort(),
   opts: Pick<
     DispatchDeps,
-    "symbolLookup" | "openInEditor" | "openSpecChange" | "openSpecCoverage"
+    "symbolLookup" | "openInEditor" | "openSpecChange" | "openSpecCoverage" | "settings"
   > = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -256,6 +256,7 @@ function harness(
     openInEditor: opts.openInEditor,
     openSpecChange: opts.openSpecChange,
     openSpecCoverage: opts.openSpecCoverage,
+    settings: opts.settings,
   };
   return {
     dispatch: createDispatch(deps),
@@ -1595,5 +1596,78 @@ describe("createDispatch — review.openInEditor (wireframes #8)", () => {
       path: "src/x.ts",
     })) as { ok: boolean };
     expect(out.ok).toBe(false);
+  });
+});
+
+describe("createDispatch — settings.* routing (the config ladder, wireframe #15)", () => {
+  it("delegates settings.get / setAppearance / setRepoVisibility to the settings dep", async () => {
+    const setAppearance = vi.fn((scheme: "dark" | "light" | "system") => scheme);
+    const setRepoVisibility = vi.fn(
+      async (input: { projectId: string; visibility: "local" | "git-visible" }) => ({
+        visibility: input.visibility,
+        changed: true,
+        gitignorePath: "/orbital/.rennet/.gitignore",
+      }),
+    );
+    const settings = {
+      get: () => ({
+        scheme: "light" as const,
+        schemeProvenance: {
+          layer: "global" as const,
+          contributions: [
+            { layer: "builtin" as const, value: "system", effective: false },
+            { layer: "global" as const, value: "light", effective: true },
+          ],
+        },
+        projects: [],
+      }),
+      guidance: () => ({ rules: [], reason: "absent" as const, dropped: 0 }),
+      setAppearance,
+      setRepoVisibility,
+    };
+    const { dispatch } = harness(undefined, { settings });
+
+    const view = (await dispatch("settings.get", {})) as { scheme: string };
+    expect(view.scheme).toBe("light");
+
+    const applied = (await dispatch("settings.setAppearance", { scheme: "dark" })) as {
+      scheme: string;
+    };
+    expect(setAppearance).toHaveBeenCalledWith("dark");
+    // The route re-resolves provenance from the dep's own answer.
+    expect(applied.scheme).toBe("dark");
+
+    const vis = (await dispatch("settings.setRepoVisibility", {
+      commandId: crypto.randomUUID(),
+      projectId: "p1",
+      visibility: "git-visible",
+    })) as { changed: boolean; gitignorePath: string };
+    expect(setRepoVisibility).toHaveBeenCalledWith({ projectId: "p1", visibility: "git-visible" });
+    expect(vis.changed).toBe(true);
+    expect(vis.gitignorePath).toContain(".gitignore");
+  });
+
+  it("with NO settings dep wired, degrades to the builtin view and an absent catalogue (never throws)", async () => {
+    const { dispatch } = harness();
+    const view = (await dispatch("settings.get", {})) as {
+      scheme: string;
+      projects: unknown[];
+    };
+    expect(view.scheme).toBe("system");
+    expect(view.projects).toEqual([]);
+
+    const guidance = (await dispatch("settings.guidance", { projectId: "p1" })) as {
+      reason: string | null;
+    };
+    expect(guidance.reason).toBe("absent");
+
+    const vis = (await dispatch("settings.setRepoVisibility", {
+      commandId: crypto.randomUUID(),
+      projectId: "p1",
+      visibility: "git-visible",
+    })) as { changed: boolean; gitignorePath: string };
+    // A benign no-op — it never fabricates a repo write it did not perform.
+    expect(vis.changed).toBe(false);
+    expect(vis.gitignorePath).toBe("");
   });
 });

@@ -58,6 +58,7 @@ export * from "./review-backend";
 export * from "./risk-crosscheck";
 export * from "./rollup-narration";
 export * from "./route-plan";
+export * from "./settings-resolver";
 export * from "./snapshot-overlay";
 
 export type ReviewEvent =

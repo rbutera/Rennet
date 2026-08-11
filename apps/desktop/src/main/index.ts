@@ -1,8 +1,10 @@
 import { execFile } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { join, normalize, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
+  applyVisibilitySwitch,
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
   type CodexAvailability,
@@ -18,6 +20,7 @@ import {
   defaultCodexDiscoveryDeps,
   defaultCodexExecEffects,
   defaultDiscoveryDeps,
+  defaultGlobalConfigPath,
   defaultProjectDetailSourceDeps,
   defaultProjectDiscoveryDeps,
   deriveProjectDraft,
@@ -26,6 +29,7 @@ import {
   discoverProject,
   discoverWorktreeIdentities,
   execaGit,
+  FileConfigStore,
   FileProjectStore,
   type GhRunner,
   GitCaptureAdapter,
@@ -55,10 +59,13 @@ import {
   DEFAULT_MAX_HARNESS_INVOCATIONS,
   DEFAULT_MAX_VERIFICATIONS,
   decompose,
+  escapePath,
   guardSeatTurn,
   patchsetIntentToReviewIntent,
   ReviewService,
   resolveDualSeat,
+  resolveScheme,
+  resolveVisibility,
   runCoverageMapping,
   runDecisionAngle,
   runDualFindingReview,
@@ -66,7 +73,14 @@ import {
   runNoiseAngle,
   verifyFlaggedReview,
 } from "@rennet/core";
-import { type DetectedHarness, isCommandName, type ProjectProcessEvent } from "@rennet/protocol";
+import {
+  type DetectedHarness,
+  isCommandName,
+  type Project,
+  type ProjectProcessEvent,
+  type SettingsProject,
+  type SettingsView,
+} from "@rennet/protocol";
 import type {
   Canvas,
   CanvasAngle,
@@ -1065,8 +1079,15 @@ app.whenReady().then(async () => {
   // The ProjectSnapshot generator over the app-owned LOCAL-FIRST store under
   // `~/.rennet/projects/` (issue #188 default base dir). Drives the initial context
   // dump: `project.process` builds each included repo's snapshot through this, and
-  // its real stages become the processing screen's live narration.
-  const snapshotGenerator = new ProjectSnapshotGenerator({ store: snapshotStoreFor() });
+  // its real stages become the processing screen's live narration. The store is
+  // SHARED with the settings surface (below) so the per-project `config.json`
+  // (visibility/promotion) they read and write is the same one the generator keys.
+  const snapshotStore = snapshotStoreFor();
+  const snapshotGenerator = new ProjectSnapshotGenerator({ store: snapshotStore });
+  // The global (app-side, personal) config store — layer 1 of the settings ladder
+  // (wireframe #15). A plain document at `~/.rennet/config.json`, sibling to the
+  // project snapshot store; holds the reviewer's scheme, never a repo fact.
+  const configStore = new FileConfigStore(defaultGlobalConfigPath());
   // The publish egress port + its consent authority (issue #21). The port constructs
   // requests purely (dry-run) and posts only via the gated `publish.review` command.
   const publishPort = new GitHubPublishAdapter({
@@ -1265,6 +1286,98 @@ app.whenReady().then(async () => {
         return createLiveCodexAsk({ executor })({ review, question });
       },
     }),
+    // The settings surface (wireframe #15): the config ladder over the REAL stores.
+    // `get` resolves the global appearance layer (`~/.rennet/config.json`) plus every
+    // project's repo-scope visibility/promotion (its `~/.rennet/projects/<key>/
+    // config.json`), each with provenance from the pure core resolver. `guidance`
+    // reads one project's `.rennet/conventions.json` house rules read-through.
+    // `setAppearance` writes only the app-side config (no repo write). `setRepoVisibility`
+    // runs the REAL map-visibility switch (the repo's Rennet-owned `.rennet/.gitignore`).
+    settings: (() => {
+      // A project's snapshot-store key + real top-level path, or null when its
+      // `openPath` cannot be realpath'd (a since-removed checkout) — the settings
+      // surface then shows that project at builtin defaults rather than throwing.
+      const repoKeyFor = (openPath: string): { repoKey: string; repoRoot: string } | null => {
+        try {
+          const repoRoot = realpathSync(openPath);
+          return { repoKey: escapePath(repoRoot), repoRoot };
+        } catch {
+          return null;
+        }
+      };
+      const settingsProjectFor = (project: Project): SettingsProject => {
+        const keyed = repoKeyFor(project.openPath);
+        const config = keyed ? snapshotStore.loadConfig(keyed.repoKey) : null;
+        const visibility = resolveVisibility(config?.visibility);
+        return {
+          projectId: project.id,
+          name: project.name,
+          openPath: project.openPath,
+          visibility: visibility.value,
+          visibilityProvenance: visibility.provenance,
+          promoted: config?.promoted ?? false,
+        };
+      };
+      return {
+        get: (): SettingsView => {
+          const scheme = resolveScheme(configStore.read());
+          return {
+            scheme: scheme.value,
+            schemeProvenance: scheme.provenance,
+            projects: projectStore.list().map(settingsProjectFor),
+          };
+        },
+        guidance: (projectId: string) => {
+          const project = projectStore.list().find((entry) => entry.id === projectId);
+          if (!project) return { rules: [], reason: "absent" as const, dropped: 0 };
+          const load = loadConventionCatalogue(project.openPath);
+          if (!load.catalogue) {
+            return { rules: [], reason: load.reason ?? ("absent" as const), dropped: load.dropped };
+          }
+          return {
+            rules: load.catalogue.rules.map((rule) => ({
+              convention: rule.convention,
+              rationale: rule.rationale,
+              severity: rule.severity,
+              ...(rule.antiPattern ? { antiPattern: rule.antiPattern } : {}),
+            })),
+            reason: null,
+            dropped: load.dropped,
+          };
+        },
+        setAppearance: (scheme: SettingsView["scheme"]) => {
+          configStore.update((current) => ({
+            ...current,
+            appearance: { ...current.appearance, scheme },
+          }));
+          return scheme;
+        },
+        setRepoVisibility: async (input: {
+          projectId: string;
+          visibility: SettingsProject["visibility"];
+        }) => {
+          const project = projectStore.list().find((entry) => entry.id === input.projectId);
+          const keyed = project ? repoKeyFor(project.openPath) : null;
+          if (!keyed) {
+            // The project or its checkout is gone; report an honest no-op rather
+            // than writing a `.gitignore` into a path we could not resolve.
+            return { visibility: input.visibility, changed: false, gitignorePath: "" };
+          }
+          const preview = await applyVisibilitySwitch(
+            snapshotStore,
+            keyed.repoKey,
+            keyed.repoRoot,
+            input.visibility,
+            execaGit,
+          );
+          return {
+            visibility: preview.target,
+            changed: preview.changed,
+            gitignorePath: preview.gitignorePath,
+          };
+        },
+      };
+    })(),
   });
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);

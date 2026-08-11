@@ -894,6 +894,107 @@ export const openSpecCoverageSchema: z.ZodType<OpenSpecCoverage> = z.object({
   edges: z.array(openSpecCoverageEdgeSchema),
 });
 
+// ── Settings: the config ladder (wireframe #15, Settings and Setup Plan) ──────
+// The settings surface edits a small, HONEST slice of the ladder the plan
+// describes: what actually exists as consumed config today. Two axes the plan
+// names — SCOPE (which layer a value applies to) and PROVENANCE (which layer it
+// resolved from) — are preserved as first-class shapes here, so the surface can
+// grow into the full ladder without re-keying. What ships:
+//   • global scope: `appearance.scheme` — a personal, app-side preference the
+//     renderer consumes as `data-scheme`. Side-effect-free, never a repo write.
+//   • repo scope: `visibility` — per project, genuinely consumed by the map
+//     visibility switch (writes the repo's Rennet-owned `.rennet/.gitignore`).
+//   • repo scope: `promoted` — read-through (the real promotion state), shown with
+//     provenance; changing it is the separate explicit promote act, not a toggle.
+//   • per-repo guidance — the `.rennet/conventions.json` catalogue the review
+//     runners read before every review, shown read-through (the wireframe panel).
+// Deliberately NOT invented: execution-mode default, worktree location, and
+// harness-selection preferences — none exist as stored/consumed config yet.
+
+/** The appearance scheme: an explicit choice, or `system` (follow the OS). */
+export const appearanceSchemeSchema = z.enum(["dark", "light", "system"]);
+export type AppearanceScheme = z.infer<typeof appearanceSchemeSchema>;
+
+/** How visible a project's derived map is to git (mirrors the adapter's union). */
+export const projectVisibilitySchema = z.enum(["local", "git-visible"]);
+export type ProjectVisibility = z.infer<typeof projectVisibilitySchema>;
+
+/**
+ * The global (layer 1) config document, stored at `~/.rennet/config.json`. Every
+ * field beyond `version` is optional so an untouched install is a trivially-valid
+ * (or absent) `{ version }`; defaults are read-through, never migrated in.
+ */
+export const globalConfigSchema = z.object({
+  version: z.number().int().nonnegative(),
+  appearance: z.object({ scheme: appearanceSchemeSchema.optional() }).optional(),
+});
+export type GlobalConfig = z.infer<typeof globalConfigSchema>;
+
+/** Which ladder layer a resolved value came from. `builtin` < `global` < `repo`. */
+export const settingsLayerSchema = z.enum(["builtin", "global", "repo"]);
+export type SettingsLayer = z.infer<typeof settingsLayerSchema>;
+
+/**
+ * A resolved setting carries WHERE it came from, not just the value — provenance
+ * is the return type, not a feature (Settings and Setup Plan §1.4). `contributions`
+ * lists every layer that offered a value, lowest-first, flagging the effective one.
+ */
+export const resolvedProvenanceSchema = z.object({
+  layer: settingsLayerSchema,
+  contributions: z.array(
+    z.object({ layer: settingsLayerSchema, value: z.string(), effective: z.boolean() }),
+  ),
+});
+export type ResolvedProvenance = z.infer<typeof resolvedProvenanceSchema>;
+
+/** One project row on the settings ladder: its real, resolved repo-scope config. */
+export const settingsProjectSchema = z.object({
+  projectId: z.string().min(1),
+  name: z.string().min(1),
+  openPath: z.string().min(1),
+  /** The resolved effective visibility, with the layer it came from. */
+  visibility: projectVisibilitySchema,
+  visibilityProvenance: resolvedProvenanceSchema,
+  /** The real promotion state (read-through; changing it is a separate act). */
+  promoted: z.boolean(),
+});
+export type SettingsProject = z.infer<typeof settingsProjectSchema>;
+
+/** The whole settings view: the global layer plus every project's repo layer. */
+export const settingsViewSchema = z.object({
+  /** The resolved effective scheme (builtin `system`, overridden by global). */
+  scheme: appearanceSchemeSchema,
+  schemeProvenance: resolvedProvenanceSchema,
+  projects: z.array(settingsProjectSchema),
+});
+export type SettingsView = z.infer<typeof settingsViewSchema>;
+
+/** One convention rule shown in the per-repo guidance panel (never model-facing). */
+export const settingsConventionRuleSchema = z.object({
+  convention: z.string().min(1),
+  rationale: z.string().min(1),
+  severity: findingSeveritySchema,
+  antiPattern: z.string().optional(),
+});
+
+/** Why no guidance catalogue was produced, or `null` when one was. */
+export const conventionLoadReasonSchema = z.enum([
+  "absent",
+  "unreadable",
+  "empty",
+  "no-valid-rules",
+]);
+
+/** The per-repo guidance catalogue (`.rennet/conventions.json`) for one project. */
+export const settingsGuidanceSchema = z.object({
+  rules: z.array(settingsConventionRuleSchema),
+  /** The typed reason the catalogue is empty, or `null` when rules are present. */
+  reason: conventionLoadReasonSchema.nullable(),
+  /** How many rules were dropped as malformed (itemwise honest degradation). */
+  dropped: z.number().int().nonnegative(),
+});
+export type SettingsGuidance = z.infer<typeof settingsGuidanceSchema>;
+
 export const commandDefinitions = {
   "app.bootstrap": {
     input: z.object({}),
@@ -1303,6 +1404,50 @@ export const commandDefinitions = {
       line: z.number().int().positive().optional(),
     }),
     output: z.object({ ok: z.boolean() }),
+  },
+  // ── Settings: read the config ladder (wireframe #15) ───────────────────────
+  // The whole settings surface: the global appearance layer + every project's
+  // resolved repo-scope config, each carrying its provenance. Read-only; no model
+  // spend. Fail-safe — a corrupt global config or an unreadable project config
+  // resolves to defaults, never a throw.
+  "settings.get": {
+    input: z.object({}),
+    output: settingsViewSchema,
+  },
+  // ── Settings: the per-repo guidance catalogue for one project (wireframe #15) ─
+  // The `.rennet/conventions.json` house rules the review runners read before every
+  // review, shown read-through. Absent/unreadable/empty degrade to an honest empty
+  // catalogue with a typed reason — never a throw, never a fabricated rule.
+  "settings.guidance": {
+    input: z.object({ projectId: z.string().min(1) }),
+    output: settingsGuidanceSchema,
+  },
+  // ── Settings: set the global appearance scheme (wireframe #15) ─────────────
+  // A personal, app-side preference the renderer consumes as `data-scheme`.
+  // Side-effect-free — writes only `~/.rennet/config.json`, never a repo.
+  "settings.setAppearance": {
+    input: z.object({ scheme: appearanceSchemeSchema }),
+    output: z.object({
+      scheme: appearanceSchemeSchema,
+      schemeProvenance: resolvedProvenanceSchema,
+    }),
+  },
+  // ── Settings: set a project's repo-scope map visibility (wireframe #15) ────
+  // Genuinely consumed: runs the real visibility switch, which writes the repo's
+  // Rennet-owned `.rennet/.gitignore` (exclusion state only — never stages,
+  // un-stages, or commits) and records `visibility` in the project's config. This
+  // is a repo write, so `changed`/`gitignorePath` are returned for an honest note.
+  "settings.setRepoVisibility": {
+    input: z.object({
+      commandId: commandIdSchema,
+      projectId: z.string().min(1),
+      visibility: projectVisibilitySchema,
+    }),
+    output: z.object({
+      visibility: projectVisibilitySchema,
+      changed: z.boolean(),
+      gitignorePath: z.string(),
+    }),
   },
 } as const;
 

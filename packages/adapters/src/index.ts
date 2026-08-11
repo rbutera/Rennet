@@ -83,6 +83,11 @@ export {
   okDecisionsRunStatus,
 } from "./decisions-fixture";
 export {
+  defaultGlobalConfigPath,
+  FileConfigStore,
+  GLOBAL_CONFIG_VERSION,
+} from "./file-config-store";
+export {
   deriveProjectDraft,
   FileProjectStore,
   type FileProjectStoreDeps,
