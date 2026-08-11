@@ -151,13 +151,23 @@ async function openPaper(container: HTMLElement) {
   await waitFor(() => expect(container.querySelector(".publish-sheet")).not.toBeNull());
 }
 
-/** Attempt to sign the paper via the keyboard, exactly as a reviewer would. */
-function signPaper(container: HTMLElement): HTMLButtonElement {
+/** The paper's sign control (for disabled-state assertions). */
+function signButton(container: HTMLElement): HTMLButtonElement {
   const sign = container.querySelector<HTMLButtonElement>(".publish-sheet-sign");
   if (!sign) throw new Error("the paper sign control did not render");
-  sign.focus();
-  fireEvent.keyDown(sign, { key: "Enter" });
   return sign;
+}
+
+/**
+ * Complete a real hold-to-sign on the paper (issue #21: a single keypress no longer
+ * signs — the sign is a real egress, so it needs a deliberate HOLD). These tests use
+ * real timers, so hold past the 800ms budget in wall-clock time.
+ */
+async function completeSign(container: HTMLElement): Promise<void> {
+  const sign = signButton(container);
+  fireEvent.mouseDown(sign);
+  await new Promise((resolve) => setTimeout(resolve, 850));
+  fireEvent.mouseUp(sign);
 }
 
 /** Flush pending microtasks so a would-be async publish call has a chance to land. */
@@ -185,7 +195,7 @@ describe("staging controls the publish payload (#109) — local dispositions nev
     expect(rollupLabel(container)).toBe("Nothing to publish");
 
     await openPaper(container);
-    expect(signPaper(container).disabled).toBe(true); // nothing to sign
+    expect(signButton(container).disabled).toBe(true); // nothing to sign
     await flush();
     expect(calls).toHaveLength(0); // it never reached the engine
   });
@@ -198,7 +208,7 @@ describe("staging controls the publish payload (#109) — local dispositions nev
     expect(rollupLabel(container)).toBe("Nothing to publish");
 
     await openPaper(container);
-    expect(signPaper(container).disabled).toBe(true);
+    expect(signButton(container).disabled).toBe(true);
     await flush();
     expect(calls).toHaveLength(0);
   });
@@ -215,7 +225,7 @@ describe("staging controls the publish payload (#109) — local dispositions nev
     expect(container.querySelector(".collation-item-stage-box")).toBeNull();
 
     await openPaper(container);
-    expect(signPaper(container).disabled).toBe(true);
+    expect(signButton(container).disabled).toBe(true);
     await flush();
     expect(calls).toHaveLength(0); // no APPROVE dry run — the bug is closed
   });
@@ -232,7 +242,8 @@ describe("staging controls the publish payload (#109) — ink dispositions publi
     expect(rollupLabel(container)).toBe("Comments");
 
     await openPaper(container);
-    expect(signPaper(container).disabled).toBe(false);
+    expect(signButton(container).disabled).toBe(false);
+    await completeSign(container);
     await waitFor(() => expect(calls).toHaveLength(1));
     const call = calls[0];
     if (!call) throw new Error("publish.review was not invoked");
@@ -249,7 +260,7 @@ describe("staging controls the publish payload (#109) — ink dispositions publi
     expect(publishCount(container)).toBe("1");
 
     await openPaper(container);
-    signPaper(container);
+    await completeSign(container);
     await waitFor(() => expect(calls).toHaveLength(1));
     const call = calls[0];
     if (!call) throw new Error("publish.review was not invoked");
@@ -269,7 +280,8 @@ describe("staging controls the publish payload (#109) — ink dispositions publi
     expect(rollupLabel(container)).toBe("Request changes");
 
     await openPaper(container);
-    expect(signPaper(container).disabled).toBe(false);
+    expect(signButton(container).disabled).toBe(false);
+    await completeSign(container);
     await waitFor(() => expect(calls).toHaveLength(1));
     const call = calls[0];
     if (!call) throw new Error("publish.review was not invoked");
@@ -297,7 +309,7 @@ describe("staging controls the publish payload (#109) — ink dispositions publi
     );
 
     await openPaper(container);
-    signPaper(container);
+    await completeSign(container);
     await waitFor(() => expect(calls).toHaveLength(1));
     const call = calls[0];
     if (!call) throw new Error("publish.review was not invoked");
@@ -339,7 +351,8 @@ describe("staging controls the publish payload (#109) — own-branch signs a sub
 
     await openPaper(container);
     expect(paperMode(container)).toBe("own-branch");
-    expect(signPaper(container).disabled).toBe(false); // there IS a bundle to hand off
+    expect(signButton(container).disabled).toBe(false); // there IS a bundle to hand off
+    await completeSign(container);
     await flush();
 
     // No review was ever posted — the whole point.
@@ -359,7 +372,7 @@ describe("staging controls the publish payload (#109) — own-branch signs a sub
 
     await openPaper(container);
     expect(paperMode(container)).toBe("own-branch");
-    expect(signPaper(container).disabled).toBe(true);
+    expect(signButton(container).disabled).toBe(true);
     await flush();
     expect(calls).toHaveLength(0);
   });

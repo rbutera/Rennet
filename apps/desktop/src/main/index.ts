@@ -356,7 +356,24 @@ async function openPullRequest(
         "Open this PR from a local clone of that repository (REST-only review is not available yet).",
     );
   }
-  return service.createReviewFromPatchset(commandId, result.patchset, { retrospective });
+  // Stamp the REAL post-target onto the review (issue #21) so the renderer can post
+  // this exact PR AS THE USER on a hold-to-sign — the repo, PR number, the forge's
+  // opaque node id (`forgeRef`), and the reviewed head OID. A RETROSPECTIVE review
+  // gets NO target (nothing may be posted): `createReviewFromPatchset` also drops it
+  // defensively, and this is the honest producer half.
+  const pr = result.pullRequest;
+  const postTarget = retrospective
+    ? undefined
+    : {
+        repo: { forge: pr.ref.repo.forge, owner: pr.ref.repo.owner, name: pr.ref.repo.name },
+        number: pr.ref.number,
+        forgeRef: pr.forgeRef,
+        headOid: pr.headOid,
+      };
+  return service.createReviewFromPatchset(commandId, result.patchset, {
+    retrospective,
+    ...(postTarget ? { postTarget } : {}),
+  });
 }
 
 /**

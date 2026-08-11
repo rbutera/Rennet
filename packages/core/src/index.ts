@@ -13,6 +13,7 @@ import {
   type RelevanceCandidate,
   type RelevanceVerdict,
   type Review,
+  type ReviewPostTarget,
 } from "@rennet/types";
 import { v7 as uuidv7 } from "uuid";
 
@@ -67,6 +68,8 @@ export type ReviewEvent =
       patchset: Patchset;
       /** Opened read-only, over a merged/any PR: MAIN refuses egress (see `Review.retrospective`). */
       retrospective?: boolean;
+      /** The real PR post-target (issue #21); present only on a non-retrospective PR review. */
+      postTarget?: ReviewPostTarget;
     }
   | { type: "PatchsetActivated"; version: 1; reviewId: string; patchset: Patchset }
   | {
@@ -467,6 +470,24 @@ function requireActivePatchset(
   return current;
 }
 
+/**
+ * Whether a review's PR post-target (issue #21) survives activating `patchset`.
+ * It survives ONLY while the activated patchset is still the forge PR's OWN patchset:
+ * a github source (`github-local`/`github-rest`) AT THE SAME reviewed head the target
+ * was minted for. A local working-tree recapture (source `local`/absent) or a moved
+ * head drops it — so a PR review recaptured locally cannot post its local diffs to the
+ * real PR. Returns the target unchanged when it survives, else `undefined`.
+ */
+function postTargetSurvivingActivation(
+  postTarget: ReviewPostTarget | undefined,
+  patchset: Patchset,
+): ReviewPostTarget | undefined {
+  if (!postTarget) return undefined;
+  const isForgePr = patchset.source === "github-local" || patchset.source === "github-rest";
+  if (isForgePr && patchset.repository.headOid === postTarget.headOid) return postTarget;
+  return undefined;
+}
+
 export function foldReview(current: Review | null, event: ReviewEvent): Review {
   switch (event.type) {
     case "ReviewCreated":
@@ -480,6 +501,10 @@ export function foldReview(current: Review | null, event: ReviewEvent): Review {
         // Only stamp the flag when the review is retrospective, so a normal review's
         // snapshot is byte-identical to before (back-compat with persisted state).
         ...(event.retrospective ? { retrospective: true } : {}),
+        // Only stamp the post-target when one was supplied (a non-retrospective PR
+        // review). A local capture / retrospective review omits it, so its snapshot
+        // stays byte-identical to before (back-compat with persisted state).
+        ...(event.postTarget ? { postTarget: event.postTarget } : {}),
       };
     case "PatchsetActivated": {
       if (!current || current.id !== event.reviewId) {
@@ -488,8 +513,19 @@ export function foldReview(current: Review | null, event: ReviewEvent): Review {
       const patchsets = current.patchsets.some((patchset) => patchset.id === event.patchset.id)
         ? current.patchsets
         : [...current.patchsets, event.patchset];
+      // Strip the PR post-target from the base and re-add it ONLY if it survives this
+      // activation (issue #21). A PR review can be locally recaptured under the same
+      // review id (`review.capture`/`regenerate` → PatchsetActivated), which would
+      // otherwise inherit the PR's egress target onto local working-tree content — so
+      // the human could sign local diffs that post to a real PR. The target survives
+      // ONLY while the activated patchset is still the forge PR's OWN patchset (a
+      // github source at the same reviewed head); otherwise it is dropped and the
+      // review becomes an unpostable local review (the "no postTarget → refused" gate
+      // then handles egress for free).
+      const { postTarget: priorTarget, ...base } = current;
+      const postTarget = postTargetSurvivingActivation(priorTarget, event.patchset);
       return {
-        ...current,
+        ...base,
         patchsets,
         activePatchsetId: event.patchset.id,
         pendingPatchsetId: undefined,
@@ -497,6 +533,7 @@ export function foldReview(current: Review | null, event: ReviewEvent): Review {
         // never a blanket wipe.
         dispositions: carryDispositions(current.dispositions, event.patchset),
         status: "current",
+        ...(postTarget ? { postTarget } : {}),
       };
     }
     case "DispositionSet": {
@@ -617,10 +654,20 @@ export class ReviewService {
   async createReviewFromPatchset(
     commandId: string,
     patchset: Patchset,
-    options?: { retrospective?: boolean },
+    options?: { retrospective?: boolean; postTarget?: ReviewPostTarget },
   ): Promise<Review> {
     const retrospective = options?.retrospective ?? false;
-    const digest = payloadDigest({ patchsetId: patchset.id, mode: "open-pr", retrospective });
+    // A retrospective review must never carry a post-target (nothing may be posted
+    // from it), so drop it defensively even if a caller supplied both.
+    const postTarget = retrospective ? undefined : options?.postTarget;
+    const digest = payloadDigest({
+      patchsetId: patchset.id,
+      mode: "open-pr",
+      retrospective,
+      // The post-target is part of the review's identity: two opens of the same
+      // patchset against different PR coordinates are different reviews.
+      postTarget: postTarget ?? null,
+    });
     const receipt = this.store.receipt(commandId, digest);
     if (receipt) return receipt;
     const event: ReviewEvent = {
@@ -629,6 +676,7 @@ export class ReviewService {
       reviewId: uuidv7(),
       patchset,
       ...(retrospective ? { retrospective: true } : {}),
+      ...(postTarget ? { postTarget } : {}),
     };
     const review = foldReview(null, event);
     return this.store.commit(commandId, digest, [event], review);

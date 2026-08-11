@@ -220,6 +220,28 @@ export interface PublishThread {
   type: DispositionType;
 }
 
+/**
+ * The real forge coordinates a review can POST back to (issue #21, the real-post
+ * flip). Present ONLY on a non-retrospective review opened from a real pull request
+ * (`review.openPr`): it carries the exact identity a real GitHub egress needs — the
+ * repo, the PR number, the forge's opaque PR node id (`forgeRef`), and the reviewed
+ * head OID. Mirrors the protocol `publishTargetSchema` byte-for-byte so the renderer
+ * hands it straight to `publish.requestConsent` + `publish.review` with no re-derive.
+ *
+ * A LOCAL working-tree capture has no PR, so it has NO postTarget — the renderer
+ * falls to the local-preview dry-run and genuinely cannot post (there is no PR to
+ * post to). A RETROSPECTIVE review also omits it (nothing may be posted). So the
+ * PRESENCE of this field is exactly the set of reviews a real post is legitimate for.
+ */
+export interface ReviewPostTarget {
+  readonly repo: { readonly forge: string; readonly owner: string; readonly name: string };
+  readonly number: number;
+  /** The forge's opaque PR node id (GraphQL `pullRequestId`); carried, never parsed here. */
+  readonly forgeRef: string;
+  /** The reviewed head commit OID, pinned at review start (GraphQL `commitOID`). */
+  readonly headOid: string;
+}
+
 export interface Review {
   id: string;
   repositoryRoot: string;
@@ -241,6 +263,14 @@ export interface Review {
    * existing snapshot and the live working-tree / open-PR paths validate unchanged.
    */
   retrospective?: boolean;
+  /**
+   * The real PR post-target (issue #21). Present ONLY on a non-retrospective PR
+   * review, so its presence is precisely "this review can post to a real PR". A
+   * local working-tree review and a retrospective review both omit it, and the
+   * renderer's sign path stays a dry-run/no-op for those. Omitted ⇒ every existing
+   * snapshot validates unchanged.
+   */
+  postTarget?: ReviewPostTarget;
 }
 
 export interface CommandFailure {

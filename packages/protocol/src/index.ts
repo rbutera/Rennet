@@ -107,6 +107,26 @@ export const dispositionSchema: z.ZodType<Disposition> = z.object({
   body: z.string(),
 });
 
+// The real forge post-target — the single source of truth reused by BOTH the
+// review snapshot (`Review.postTarget`) and the publish commands
+// (`publishTargetSchema`), so the coordinates the renderer reads off a review are
+// byte-identical to the ones it hands to `publish.requestConsent`/`publish.review`.
+const forgeRepoSchema = z.object({
+  forge: z.string().min(1),
+  owner: z.string().min(1),
+  name: z.string().min(1),
+});
+
+/** The pinned publish target: which PR, which node id, which reviewed head. */
+const forgePublishTargetSchema = z.object({
+  repo: forgeRepoSchema,
+  number: z.number().int().positive(),
+  /** The forge's opaque PR node id (carried, interpreted only in the adapter). */
+  forgeRef: z.string().min(1),
+  /** The reviewed head commit OID, pinned at review start (GraphQL `commitOID`). */
+  headOid: z.string().min(1),
+});
+
 export const reviewSchema: z.ZodType<Review> = z.object({
   id: z.string().min(1),
   repositoryRoot: z.string().min(1),
@@ -118,6 +138,11 @@ export const reviewSchema: z.ZodType<Review> = z.object({
   // A retrospective (read-only, no-post) review. Optional so every existing
   // review snapshot validates unchanged; absent ⇒ a normal postable review.
   retrospective: z.boolean().optional(),
+  // The real PR post-target (issue #21). Present ONLY on a non-retrospective PR
+  // review; its presence is exactly "this review can post to a real PR". Optional
+  // so every existing snapshot (and every local/retrospective review) validates
+  // unchanged.
+  postTarget: forgePublishTargetSchema.optional(),
 });
 
 // ── Canvas output schema (issue #54) ─────────────────────────────────────────
@@ -274,21 +299,10 @@ const commandIdSchema = z.uuid();
 // leaves", R33), then gates the real egress on the effective mode + a single-use,
 // target-and-payload-bound consent token before anything leaves the machine.
 
-const forgeRepoSchema = z.object({
-  forge: z.string().min(1),
-  owner: z.string().min(1),
-  name: z.string().min(1),
-});
-
-/** The pinned publish target: which PR, which node id, which reviewed head. */
-const publishTargetSchema = z.object({
-  repo: forgeRepoSchema,
-  number: z.number().int().positive(),
-  /** The forge's opaque PR node id (carried, interpreted only in the adapter). */
-  forgeRef: z.string().min(1),
-  /** The reviewed head commit OID, pinned at review start (GraphQL `commitOID`). */
-  headOid: z.string().min(1),
-});
+// `forgeRepoSchema` and the publish target now live above `reviewSchema` (the
+// single source of truth `Review.postTarget` also reuses). Alias kept so the
+// publish-command definitions below read unchanged.
+const publishTargetSchema = forgePublishTargetSchema;
 
 /** The review verdict (the real GitHub review event). */
 const forgeReviewEventSchema = z.enum(["APPROVE", "REQUEST_CHANGES", "COMMENT"]);
@@ -992,9 +1006,18 @@ export const commandDefinitions = {
       target: publishTargetSchema,
       /** The canonical payload bytes the token authorises (bound by digest). */
       payload: z.string(),
+      /**
+       * The resolved review VERDICT/event the token authorises. Bound alongside the
+       * payload because it is the one outbound field the payload bytes do not capture
+       * (`buildForgeReviewPost` renders the GraphQL post as a pure function of review +
+       * target + payload + verdict) — so an APPROVE/REQUEST_CHANGES cannot be swapped in
+       * after the human approved a COMMENT. The renderer sends the same value here and
+       * at `publish.review`.
+       */
+      verdict: forgeReviewEventSchema,
     }),
     output: z.object({
-      /** The opaque, single-use authorization bound to (review, target, payload). */
+      /** The opaque, single-use authorization bound to (review, target, payload, verdict). */
       authorization: z.string().min(1),
     }),
   },
