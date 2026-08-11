@@ -2,7 +2,9 @@ import type { Canvas } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import {
   adjudicateProposal,
+  blastNotAssessed,
   blastPaint,
+  blastReasonsByChunk,
   CANVAS_LENSES,
   canvasCoverage,
   fanOutApproval,
@@ -10,6 +12,7 @@ import {
   isPainted,
   MAX_RENDERED_NODES,
   NODES_PER_ROW,
+  paintedChunkIds,
   refocusCursor,
   rotateLens,
   viewAfterRotate,
@@ -249,6 +252,57 @@ describe("blastPaint — amber overlay, never a queue", () => {
     expect([...blastPaint(canvas)].sort()).toEqual(["rennet:chunk/c1", "rennet:chunk/c2"]);
     expect(isPainted(canvas, "rennet:chunk/c1")).toBe(true);
     expect(isPainted(canvas, "rennet:chunk/absent")).toBe(false);
+  });
+});
+
+describe("blast radius — file targets, reasons, not-assessed (issue #35)", () => {
+  it("resolves rennet:file/<path> targets to the chunks that cover them", () => {
+    const canvas = decisionsCanvas({
+      overlay: [
+        { target: "rennet:file/b.ts", signal: "deletions", reason: "gone", assessed: true }, // b.ts ∈ c1
+        { target: "rennet:file/d.ts", signal: "irreversibility", reason: "drop", assessed: true }, // d.ts ∈ c2
+      ],
+    });
+    expect([...paintedChunkIds(canvas)].sort()).toEqual(["c1", "c2"]);
+  });
+
+  it("surfaces the one-line reason on the covering chunk", () => {
+    const canvas = decisionsCanvas({
+      overlay: [
+        {
+          target: "rennet:file/b.ts",
+          signal: "deletions",
+          reason: "File deleted; importers break.",
+          assessed: true,
+        },
+      ],
+    });
+    expect(blastReasonsByChunk(canvas).get("c1")).toContain("File deleted");
+  });
+
+  it("surfaces deferred signals as NOT ASSESSED and excludes them from the amber paint", () => {
+    const canvas = decisionsCanvas({
+      overlay: [
+        { target: "rennet:file/a.ts", signal: "deletions", reason: "gone", assessed: true },
+        {
+          target: "rennet:review/blast-radius",
+          signal: "fan-in",
+          reason: "Fan-in not assessed.",
+          assessed: false,
+        },
+        {
+          target: "rennet:review/blast-radius",
+          signal: "contract-surface",
+          reason: "Contract surface not assessed.",
+          assessed: false,
+        },
+      ],
+    });
+    // The deferred signals are surfaced (sorted), so the reviewer sees them as unmeasured.
+    expect(blastNotAssessed(canvas).map((s) => s.signal)).toEqual(["contract-surface", "fan-in"]);
+    // ...but they are NOT amber paint on any element (no false claim of risk).
+    expect(paintedChunkIds(canvas).has("c1")).toBe(true);
+    expect([...blastPaint(canvas)]).not.toContain("rennet:review/blast-radius");
   });
 });
 
