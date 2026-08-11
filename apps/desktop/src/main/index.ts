@@ -94,7 +94,11 @@ import type {
 } from "@rennet/types";
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell } from "electron";
 import { createDispatch } from "./dispatch";
-import { createHandoffConsentAuthority } from "./handoff-consent-authority";
+import {
+  type ConfirmHandoff,
+  createHandoffConsentAuthority,
+  createHandoffPreparationStore,
+} from "./handoff-consent-authority";
 import { createDesktopReviewBackend } from "./live-review-backend";
 import { EDITOR_CLIS, performOpenInEditor } from "./open-in-editor";
 import { createOrchestratorTurnRunner } from "./orchestrator";
@@ -1141,6 +1145,22 @@ app.whenReady().then(async () => {
   });
   const publishConsent = createPublishConsentAuthority();
   const handoffConsent = createHandoffConsentAuthority();
+  const handoffPrep = createHandoffPreparationStore();
+  // The native handoff confirmation (Codex F2): a real modal over the MAIN-stored
+  // disclosure. A consent token is minted only when this returns true, so the token is
+  // evidence of a human gesture, not of the renderer calling an IPC. Warning-styled,
+  // default = Cancel (wrong-side-safe).
+  const confirmHandoff: ConfirmHandoff = async (disclosure) => {
+    const { response } = await dialog.showMessageBox({
+      type: "warning",
+      buttons: ["Cancel", "Run handoff"],
+      defaultId: 0,
+      cancelId: 0,
+      message: "Hand these changes to a coding agent?",
+      detail: disclosure.summary,
+    });
+    return response === 1;
+  };
   // The live orchestrator turn runner (issue #13, wave 2): composes the wave-1 live
   // backend + the lean primer + a real `claude` turn over the in-process canvasOps@2
   // MCP server. It reuses the SAME memoized `claude` discovery the review pipeline
@@ -1160,6 +1180,8 @@ app.whenReady().then(async () => {
     publishPort,
     publishConsent,
     handoffConsent,
+    handoffPrep,
+    confirmHandoff,
     // The write-enabled handoff turn (issue #18): brackets a live `claude` write turn
     // (exec DENIED, so `git push` is unreachable — R33) with git checkpoints and
     // returns the turn diff. Reuses the SAME memoized `claude` discovery the review

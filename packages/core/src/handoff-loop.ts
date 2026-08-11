@@ -219,16 +219,26 @@ export function buildHandoffBundle(input: BuildHandoffBundleInput): HandoffBundl
     ),
   }));
   const prompt = renderHandoffPrompt(tasks);
+  // The digest binds the CANONICAL COMPLETE bundle the human is disclosed (Codex F3):
+  // the patchset it was built against, every task WITH its resolved diff context, and
+  // the rendered prompt. Excluding the patchset id or the context would let a bundle
+  // prepared against patch-1 pass the consent check after the review activated patch-2
+  // — a different prompt at a different cost than was disclosed. The reviewId is NOT
+  // hashed (it is bound separately by the consent key); the digest is over the bundle
+  // CONTENT so the same content always yields the same digest.
   const digest = sha256Hex(
-    JSON.stringify(
-      tasks.map((task) => ({
+    JSON.stringify({
+      patchsetId: input.patchset.id,
+      tasks: tasks.map((task) => ({
         path: task.path,
         type: task.type,
         instruction: task.instruction,
         span: task.span ?? null,
         side: task.side ?? null,
+        context: task.context,
       })),
-    ),
+      prompt,
+    }),
   );
   return { reviewId: input.reviewId, patchsetId: input.patchset.id, tasks, prompt, digest };
 }

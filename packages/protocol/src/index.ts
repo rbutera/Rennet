@@ -1692,18 +1692,21 @@ export const commandDefinitions = {
   // Batch the reviewer's open request-change/comment dispositions into a task
   // bundle, hand it to a coding harness in a WRITE-enabled session, capture the
   // result as a NEW immutable patchset, and re-review only the delta. The loop is a
-  // three-step ceremony precisely because the write session spends the user's quota
-  // AND edits their working tree — the safety-critical acts are structural, not
-  // promised:
-  //   • `prepare` is PURE (no session, no token): it composes the bundle and returns
-  //     the spend DISCLOSURE the user acts on. Read-only over the review.
-  //   • `requestConsent` mints a single-use token bound to (reviewId, bundleDigest),
-  //     the explicit user act after seeing the disclosure — the ONLY way to obtain a
-  //     run authorization. No auto-run path exists.
-  //   • `run` REBUILDS the bundle deterministically from the same dispositions,
-  //     refuses unless its digest matches the disclosed `bundleDigest` AND the token
-  //     consumes, then runs the write turn and captures the delta. So a run can only
-  //     execute a bundle the user saw and approved.
+  // three-step ceremony because the write session spends the user's quota AND edits
+  // their working tree — so the ENTRY to a run is gated main-side (Codex F2/F3):
+  //   • `prepare` composes the bundle, RECORDS its digest + disclosure MAIN-side, and
+  //     returns the disclosure to display. No session, no token, no spend.
+  //   • `requestConsent` shows a NATIVE confirmation over the MAIN-stored disclosure
+  //     and mints a single-use token bound to (reviewId, the STORED digest) ONLY on an
+  //     affirmative human act — `authorization` is null when the user declines. The
+  //     renderer supplies NO digest: a token proves a human confirmed, not that another
+  //     IPC command ran. It is the ONLY way to obtain a run authorization.
+  //   • `run` REBUILDS the bundle from the same dispositions against the CURRENT active
+  //     patchset and refuses unless its digest matches the MAIN-stored disclosed digest
+  //     AND the token consumes. The digest covers the whole disclosed bundle (patchset,
+  //     resolved context, prompt), so a bundle prepared on one patchset cannot run after
+  //     the review activated another. So a run can only execute the exact bundle a human
+  //     saw and confirmed.
   "review.handoff.prepare": {
     input: z.object({
       commandId: commandIdSchema,
@@ -1717,23 +1720,24 @@ export const commandDefinitions = {
     input: z.object({
       commandId: commandIdSchema,
       reviewId: z.string().min(1),
-      /** The digest of the bundle the user saw disclosed (from `prepare`). */
-      bundleDigest: z.string().min(1),
     }),
     output: z.object({
-      /** The single-use authorization bound to (reviewId, bundleDigest). */
-      authorization: z.string().min(1),
+      /**
+       * The single-use authorization bound to (reviewId, the main-stored disclosed
+       * digest), minted ONLY after the native confirmation returned affirmative. Null
+       * when the user declined or nothing was prepared for this review.
+       */
+      authorization: z.string().min(1).nullable(),
     }),
   },
   "review.handoff.run": {
     input: z.object({
       commandId: commandIdSchema,
       reviewId: z.string().min(1),
-      /** The SAME dispositions `prepare`/`requestConsent` saw; the bundle is rebuilt. */
+      /** The SAME dispositions `prepare` saw; the bundle is rebuilt and checked against
+       *  the main-stored disclosed digest (the renderer supplies no digest). */
       dispositions: z.array(handoffDispositionSchema),
-      /** The disclosed bundle digest the token is bound to (integrity + spend gate). */
-      bundleDigest: z.string().min(1),
-      /** The single-use token from `requestConsent`. Absent/forged ⇒ refused. */
+      /** The single-use token from `requestConsent`. Absent/forged/mismatched ⇒ refused. */
       authorization: z.string().min(1),
     }),
     output: handoffRunOutputSchema,

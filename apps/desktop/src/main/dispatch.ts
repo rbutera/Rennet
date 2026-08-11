@@ -49,7 +49,12 @@ import type {
   ReviewNarration,
   SymbolInspection,
 } from "@rennet/types";
-import { type HandoffConsentAuthority, handoffConsentKey } from "./handoff-consent-authority";
+import {
+  type ConfirmHandoff,
+  type HandoffConsentAuthority,
+  type HandoffPreparationStore,
+  handoffConsentKey,
+} from "./handoff-consent-authority";
 import type { OrchestratorTurnRunner } from "./orchestrator";
 import { type PublishConsentAuthority, publishConsentKey } from "./publish-consent-authority";
 
@@ -131,6 +136,19 @@ export interface DispatchDeps {
    * so a run under an undisclosed or unconfirmed bundle is structurally impossible.
    */
   readonly handoffConsent: HandoffConsentAuthority;
+  /**
+   * The main-owned handoff PREPARATION store (issue #18, Codex F2): `prepare` records
+   * the disclosed bundle's digest + disclosure here; `requestConsent` and `run` read
+   * it so consent binds the exact bundle main disclosed, never a renderer-supplied one.
+   */
+  readonly handoffPrep: HandoffPreparationStore;
+  /**
+   * The native handoff confirmation (issue #18, Codex F2): shows the main-stored
+   * disclosure and returns true only on an affirmative human act. A consent token is
+   * minted ONLY when this resolves true, so the token is evidence of a human gesture,
+   * not of the renderer calling an IPC command.
+   */
+  readonly confirmHandoff: ConfirmHandoff;
   /**
    * The write-enabled handoff turn (issue #18): brackets a coding-harness write turn
    * with workspace checkpoints and returns the turn diff. Composed by the root as
@@ -735,9 +753,10 @@ export function createDispatch(
       }
       // ── The review→agent handoff loop (issue #18, Contracts §2.1) ──────────────
       case "review.handoff.prepare": {
-        // PURE: compose the bundle from the addressed dispositions + the active
-        // patchset, and return the spend DISCLOSURE the user acts on. No session, no
-        // token, no spend — this is the surface the user reads before deciding.
+        // Compose the bundle from the addressed dispositions + the active patchset,
+        // RECORD its digest + disclosure MAIN-side (so consent binds the exact bundle
+        // main disclosed — Codex F2), and return the disclosure the user reads before
+        // deciding. No session, no token, no spend.
         const input = parseCommandInput(name, rawInput);
         const review = requireLatestReview(input.reviewId);
         const bundle = buildHandoffBundle({
@@ -745,30 +764,35 @@ export function createDispatch(
           patchset: activePatchsetOf(review),
           dispositions: input.dispositions,
         });
-        return parseCommandOutput(name, {
-          bundle,
-          disclosure: disclosureFor(bundle, "claude-code"),
-        });
+        const disclosure = disclosureFor(bundle, "claude-code");
+        deps.handoffPrep.store(review.id, { digest: bundle.digest, disclosure });
+        return parseCommandOutput(name, { bundle, disclosure });
       }
       case "review.handoff.requestConsent": {
-        // The explicit user act after seeing the disclosure: MAIN mints a single-use
-        // token bound to (reviewId, bundleDigest). This is the ONLY way to obtain a
-        // run authorization — there is no auto-run path.
+        // The HUMAN act (Codex F2): show a NATIVE confirmation over the MAIN-stored
+        // disclosure and mint a single-use token — bound to (reviewId, the STORED
+        // digest) — ONLY on an affirmative result. The renderer supplies no digest, so
+        // a token proves a human confirmed, not that renderer code called an IPC. Null
+        // authorization when nothing was prepared or the user declined.
         const input = parseCommandInput(name, rawInput);
         const review = requireLatestReview(input.reviewId);
+        const prepared = deps.handoffPrep.get(review.id);
+        if (!prepared) return parseCommandOutput(name, { authorization: null });
+        const confirmed = await deps.confirmHandoff(prepared.disclosure);
+        if (!confirmed) return parseCommandOutput(name, { authorization: null });
         const authorization = deps.handoffConsent.grant(
-          handoffConsentKey(review.id, input.bundleDigest),
+          handoffConsentKey(review.id, prepared.digest),
         );
         return parseCommandOutput(name, { authorization });
       }
       case "review.handoff.run": {
-        // The write-enabled turn. The START of a run is gated:
-        //   • rebuild the bundle from the SAME dispositions and refuse unless its
-        //     digest matches the disclosed one (spend-disclosed: the run cannot
-        //     execute a bundle the user never saw).
-        //   • consume the single-use token (explicit-act: no token ⇒ no run).
-        //   • capture appends a NEW patchset; the prior one stays byte-identical
-        //     (R28), asserted below.
+        // The write-enabled turn. The START of a run is gated (Codex F2/F3):
+        //   • rebuild the bundle from the SAME dispositions against the CURRENT active
+        //     patchset and refuse unless its digest matches the MAIN-stored disclosed
+        //     digest (the renderer supplies no digest; a patchset move since prepare
+        //     changes the digest and refuses).
+        //   • consume the single-use token bound to that stored digest (no token ⇒ no run).
+        //   • capture appends a NEW patchset; the prior one stays byte-identical (R28).
         // The write session itself is fully capable (Bash included, Rai's call); R33
         // ("Rennet never pushes") is an instruction to the agent, not a wall here.
         const input = parseCommandInput(name, rawInput);
@@ -780,7 +804,8 @@ export function createDispatch(
           patchset: priorActive,
           dispositions: input.dispositions,
         });
-        if (bundle.digest !== input.bundleDigest) {
+        const prepared = deps.handoffPrep.get(review.id);
+        if (!prepared || bundle.digest !== prepared.digest) {
           return parseCommandOutput(name, {
             status: "refused",
             reason: "the handoff bundle changed since it was disclosed",
@@ -788,7 +813,7 @@ export function createDispatch(
         }
         if (
           !deps.handoffConsent.consume(
-            handoffConsentKey(review.id, input.bundleDigest),
+            handoffConsentKey(review.id, prepared.digest),
             input.authorization,
           )
         ) {
@@ -813,6 +838,9 @@ export function createDispatch(
         // that carry, and is not wired here (honest `matcher-not-wired`).
         const updated = await service.capture(input.commandId, review.repositoryRoot, review.id);
         deps.setRepositoryDirty(false);
+        // The handoff completed: drop the main-stored preparation so a re-run needs a
+        // fresh prepare + confirm (the token was already consumed above).
+        deps.handoffPrep.clear(review.id);
         // R28 immutability: the pre-handoff patchset must survive byte-identical. Its
         // id is content-addressed over (repository, files, bytes), so the SAME id still
         // present proves the content was never rewritten.
