@@ -1,11 +1,12 @@
 import type { DispositionType, OpenSpecBlock, OpenSpecScenario } from "@rennet/types";
 import type { AskMode, AskReviewResult } from "../canvas/ask";
-import type {
-  OpenSpecDeltaGroupView,
-  OpenSpecDeltaView,
-  OpenSpecRequirementView,
-  OpenSpecReviewAnchor,
-  OpenSpecViewModel,
+import {
+  classifyCoverage,
+  type OpenSpecDeltaGroupView,
+  type OpenSpecDeltaView,
+  type OpenSpecRequirementView,
+  type OpenSpecReviewAnchor,
+  type OpenSpecViewModel,
 } from "../canvas/openspec";
 import { AskAnswers, AskControl } from "./ask";
 import { DispositionCluster } from "./disposition-cluster";
@@ -171,14 +172,93 @@ function Scenario({
   );
 }
 
+/** The link glyph the coverage chip wears (the requirement↔diff tie made visible). */
+function CoverageIcon() {
+  return (
+    <svg
+      className="ospec-covchip-icon"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.7"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M9.5 14.5l5-5" />
+      <path d="M11 7l1.2-1.2a3.4 3.4 0 0 1 4.9 4.9L16 12" />
+      <path d="M13 17l-1.2 1.2a3.4 3.4 0 0 1-4.9-4.9L8 12" />
+    </svg>
+  );
+}
+
+/** `n hunks` / `n tests` with honest singular/plural. */
+function count(n: number, noun: string): string {
+  return `${n} ${noun}${n === 1 ? "" : "s"}`;
+}
+
+/**
+ * The requirement's coverage chip (Rai, wireframes #9 / R53): the requirements-side
+ * mouth of the hunk↔requirement mapping. A COVERED requirement reads "covered by N
+ * hunks · M tests" and, when a jump is wired, is a button that jumps to the first
+ * claiming hunk (reusing the diff-lens anchor navigation). A requirement the mapping
+ * scored at ZERO hunks reads a quiet amber "unimplemented · 0 hunks" — an honest
+ * computed zero, never a gate. A requirement with NO mapping (coverage absent) shows
+ * no chip at all: the view never fabricates coverage it was not handed.
+ */
+function CoverageChip({
+  view,
+  onJumpToHunk,
+}: {
+  view: OpenSpecRequirementView;
+  onJumpToHunk?(anchor: string): void;
+}) {
+  const chip = classifyCoverage(view.coverage);
+  if (!chip) return null;
+  if (chip.kind === "unimplemented") {
+    return (
+      <span className="ospec-covchip ospec-covchip-zero" data-coverage="unimplemented">
+        <CoverageIcon />
+        unimplemented · 0 hunks
+      </span>
+    );
+  }
+  const label = `covered by ${count(chip.hunks.length, "hunk")} · ${count(chip.tests, "test")}`;
+  const jumpTarget = chip.hunks[0];
+  // Jump to the FIRST claiming hunk when navigation is wired and there is a target;
+  // otherwise the chip is a static, honest label (still says what it covers).
+  if (onJumpToHunk && jumpTarget) {
+    return (
+      <button
+        type="button"
+        className="ospec-covchip"
+        data-coverage="covered"
+        onClick={() => onJumpToHunk(jumpTarget)}
+        aria-label={`${label} — jump to the claiming hunk`}
+      >
+        <CoverageIcon />
+        {label}
+      </button>
+    );
+  }
+  return (
+    <span className="ospec-covchip" data-coverage="covered">
+      <CoverageIcon />
+      {label}
+    </span>
+  );
+}
+
 function Requirement({
   view,
   operation,
   onDispose,
+  onJumpToHunk,
 }: {
   view: OpenSpecRequirementView;
   operation: OpenSpecDeltaGroupView["operation"];
   onDispose(anchor: OpenSpecReviewAnchor, type: DispositionType): void;
+  onJumpToHunk?(anchor: string): void;
 }) {
   const { requirement } = view;
   return (
@@ -212,6 +292,14 @@ function Requirement({
           ))}
         </div>
       ) : null}
+      {/* Coverage foot (issue #9 / R53): the requirement's tie to the diff — covered
+          by N hunks · M tests (click jumps to the claiming hunk), or an honest
+          "unimplemented" when the mapping scored zero, or nothing when uncomputed. */}
+      {view.coverage ? (
+        <div className="ospec-requirement-foot">
+          <CoverageChip view={view} onJumpToHunk={onJumpToHunk} />
+        </div>
+      ) : null}
     </li>
   );
 }
@@ -219,9 +307,11 @@ function Requirement({
 function SpecDelta({
   view,
   onDispose,
+  onJumpToHunk,
 }: {
   view: OpenSpecDeltaView;
   onDispose(anchor: OpenSpecReviewAnchor, type: DispositionType): void;
+  onJumpToHunk?(anchor: string): void;
 }) {
   return (
     <section className="ospec-delta" data-capability={view.delta.capability}>
@@ -260,6 +350,7 @@ function SpecDelta({
                 view={requirement}
                 operation={group.operation}
                 onDispose={onDispose}
+                onJumpToHunk={onJumpToHunk}
               />
             ))}
           </ol>
@@ -273,12 +364,19 @@ export function OpenSpecView({
   view,
   onDispose,
   ask,
+  onJumpToHunk,
 }: {
   view: OpenSpecViewModel;
   /** Author a disposition against a Spec anchor (the shared DispositionWrite seam). */
   onDispose(anchor: OpenSpecReviewAnchor, type: DispositionType): void;
   /** The ask surface (orchestrator by default, opt-in both). Absent ⇒ no ask panel. */
   ask?: OpenSpecAskState;
+  /**
+   * Jump to a claiming hunk from a requirement's coverage chip, by its diff anchor
+   * (the SAME anchor navigation the diff lenses use). Absent ⇒ covered chips render
+   * as static labels rather than jump buttons (still honest about what they cover).
+   */
+  onJumpToHunk?(anchor: string): void;
 }) {
   const { summary, proposal } = view;
   return (
@@ -417,7 +515,12 @@ export function OpenSpecView({
         <section className="ospec-deltas" aria-label="Spec deltas">
           <h3 className="ospec-section-title">Spec deltas</h3>
           {view.specDeltas.map((delta) => (
-            <SpecDelta key={delta.anchor.key} view={delta} onDispose={onDispose} />
+            <SpecDelta
+              key={delta.anchor.key}
+              view={delta}
+              onDispose={onDispose}
+              onJumpToHunk={onJumpToHunk}
+            />
           ))}
         </section>
       ) : null}

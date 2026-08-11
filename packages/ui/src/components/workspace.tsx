@@ -39,6 +39,7 @@ import { buildNoiseIndex } from "../canvas/noise";
 import {
   authorOpenSpecDisposition,
   buildOpenSpecView,
+  type OpenSpecCoverageIndex,
   type OpenSpecReviewAnchor,
 } from "../canvas/openspec";
 import type { CoverageMosaic } from "../canvas/read-state";
@@ -144,6 +145,17 @@ export interface CanvasWorkspaceProps {
    * spec angle falls back to the flat canvas (no change loaded), never a blank.
    */
   openSpecChange?: OpenSpecChange;
+
+  /**
+   * The produced hunk↔requirement coverage (Rai, wireframes #9 / R53), keyed by
+   * requirement anchor key. When present, each requirement in the Spec view renders
+   * its coverage chip (covered-by-N-hunks·M-tests → jumps to the claiming hunk, or an
+   * honest amber "unimplemented" for a computed zero). Absent ⇒ no chips: the view
+   * never fabricates coverage. Today no mapping runner produces this (the council
+   * jobs are catalogue-only), so the host passes nothing and the chips stay dark
+   * until a real producer lands — the seam is live, the number is never faked.
+   */
+  openSpecCoverage?: OpenSpecCoverageIndex;
 
   /**
    * The Spec view's ask surface (issue #139 seam): ask the orchestrator by default,
@@ -708,9 +720,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         {angle === "spec" ? (
           props.openSpecChange ? (
             <OpenSpecView
-              view={buildOpenSpecView(props.openSpecChange)}
+              view={buildOpenSpecView(props.openSpecChange, props.openSpecCoverage)}
               onDispose={disposeOpenSpec}
               ask={props.openSpecAsk}
+              // A coverage chip jumps to its claiming hunk through the SAME anchor
+              // navigation the Flagged/Noise index lenses use (issue #9 / R53): set
+              // the cursor, land on the hunk's element, zoom to its diff.
+              onJumpToHunk={jumpToAnchor}
             />
           ) : (
             // The Spec angle is EXHAUSTIVE (wireframes #9): a change renders the viewer,

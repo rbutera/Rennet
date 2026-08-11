@@ -2682,3 +2682,21 @@ export interface OpenSpecChange {
   readonly tasks?: OpenSpecTasks;
   readonly specDeltas: readonly OpenSpecSpecDelta[];
 }
+
+/**
+ * The coverage of ONE requirement: which changeset hunks CLAIM it, and how many
+ * tests exercise it (the requirements-side mouth of the hunk↔requirement mapping,
+ * Rai wireframes #9 / R53). `hunks` are diff-anchor strings the Spec view jumps to
+ * (the same anchor grammar the diff lenses navigate by); `hunks.length === 0` is a
+ * COMPUTED zero — the requirement is genuinely unimplemented, distinct from coverage
+ * that was never computed at all (which the view represents by having NO entry). This
+ * is a produced signal, never inferred at render time: the derivation attaches
+ * exactly what a mapping runner emitted, so the honest zero and an absent mapping
+ * stay distinguishable.
+ */
+export interface OpenSpecRequirementCoverage {
+  /** The changeset hunk anchors that claim this requirement (jump targets). */
+  readonly hunks: readonly string[];
+  /** The count of tests that exercise this requirement. */
+  readonly tests: number;
+}

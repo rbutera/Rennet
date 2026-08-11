@@ -1,7 +1,13 @@
 import type { OpenSpecChange } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { anchorPathKey } from "./logic";
-import { authorOpenSpecDisposition, buildOpenSpecView, requirementAnchor } from "./openspec";
+import {
+  authorOpenSpecDisposition,
+  buildOpenSpecView,
+  classifyCoverage,
+  type OpenSpecCoverageIndex,
+  requirementAnchor,
+} from "./openspec";
 
 /** Narrow an optional to present, or fail the test loudly (no non-null assertions). */
 function present<T>(value: T | undefined | null): T {
@@ -276,6 +282,55 @@ describe("authorOpenSpecDisposition — durable, span-grained (issue #1)", () =>
     const result = authorOpenSpecDisposition(view.changeAnchor, "approve");
     expect(result.writes[0]?.body).toBe("");
     expect(result.writes[0]?.type).toBe("approve");
+  });
+});
+
+describe("classifyCoverage (issue #9 / R53)", () => {
+  it("returns no chip when coverage was NOT computed (never a fake unimplemented)", () => {
+    expect(classifyCoverage(undefined)).toBeUndefined();
+  });
+
+  it("returns the honest unimplemented chip for a computed ZERO", () => {
+    expect(classifyCoverage({ hunks: [], tests: 0 })).toEqual({ kind: "unimplemented" });
+  });
+
+  it("returns the covered chip carrying the claiming hunks + test count", () => {
+    expect(classifyCoverage({ hunks: ["hunk:a", "hunk:b"], tests: 4 })).toEqual({
+      kind: "covered",
+      hunks: ["hunk:a", "hunk:b"],
+      tests: 4,
+    });
+  });
+});
+
+describe("buildOpenSpecView — coverage attachment (issue #9 / R53)", () => {
+  it("attaches ONLY the coverage the runner produced, by requirement anchor key", () => {
+    const bare = buildOpenSpecView(CHANGE);
+    // The runner covered the first requirement (2 hunks · 3 tests) and scored the
+    // second at zero; it emitted nothing for the modified-group requirement.
+    const firstKey = present(bare.specDeltas[0]?.groups[0]?.requirements[0]).anchor.key;
+    const secondKey = present(bare.specDeltas[0]?.groups[0]?.requirements[1]).anchor.key;
+    const coverage: OpenSpecCoverageIndex = new Map([
+      [firstKey, { hunks: ["hunk:h1", "hunk:h2"], tests: 3 }],
+      [secondKey, { hunks: [], tests: 0 }],
+    ]);
+
+    const view = buildOpenSpecView(CHANGE, coverage);
+    const reqs = present(view.specDeltas[0]?.groups[0]?.requirements);
+    expect(reqs[0]?.coverage).toEqual({ hunks: ["hunk:h1", "hunk:h2"], tests: 3 });
+    // A computed zero is PRESENT-with-empty-hunks, distinct from uncomputed.
+    expect(reqs[1]?.coverage).toEqual({ hunks: [], tests: 0 });
+    // The modified-group requirement had no entry ⇒ coverage stays absent (no chip).
+    expect(view.specDeltas[0]?.groups[1]?.requirements[0]?.coverage).toBeUndefined();
+  });
+
+  it("leaves every requirement's coverage absent when no index is passed (today's honest default)", () => {
+    const view = buildOpenSpecView(CHANGE);
+    for (const delta of view.specDeltas) {
+      for (const group of delta.groups) {
+        for (const req of group.requirements) expect(req.coverage).toBeUndefined();
+      }
+    }
   });
 });
 
