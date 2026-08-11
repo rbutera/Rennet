@@ -155,6 +155,7 @@ function harness(
   extra: {
     capturePort?: PatchsetCapturePort;
     runHandoffTurn?: DispatchDeps["runHandoffTurn"];
+    composeBundle?: DispatchDeps["composeBundle"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -249,6 +250,7 @@ function harness(
     publishPort,
     publishConsent,
     ...(extra.runHandoffTurn ? { runHandoffTurn: extra.runHandoffTurn } : {}),
+    ...(extra.composeBundle ? { composeBundle: extra.composeBundle } : {}),
     // Front-door deps (issue #29): a trivial in-memory projects capability plus
     // stub discovery/detection. The dedicated front-door tests exercise these
     // handlers directly; the shared harness only needs them to satisfy the shape.
@@ -1992,5 +1994,73 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
       dispositions: HANDOFF_DISPOSITIONS,
     })) as { status: string };
     expect(out.status).toBe("unavailable");
+  });
+});
+
+// ── review.handoff.compose (issue #72, Model Council M24) ──────────────────────
+
+const COMPOSE_DISPOSITIONS = [
+  { path: "src/a.ts", type: "request-change" as const, body: "add a guard" },
+  { path: "src/a.ts", type: "comment" as const, body: "and log it" },
+];
+
+describe("createDispatch — review.handoff.compose (issue #72)", () => {
+  it("returns the mechanical floor when no composer is wired (composed:false, nothing lost)", async () => {
+    const { dispatch } = harness();
+    const review = await capturedReview(dispatch);
+    const out = (await dispatch("review.handoff.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      dispositions: COMPOSE_DISPOSITIONS,
+    })) as { bundle: { composed: boolean; tasks: unknown[]; traceMap: Record<string, number> } };
+
+    expect(out.bundle.composed).toBe(false);
+    // One task per ask; both asks traced.
+    expect(out.bundle.tasks).toHaveLength(2);
+    expect(Object.keys(out.bundle.traceMap).sort()).toEqual(["d0", "d1"]);
+  });
+
+  it("delegates to the wired composer and returns its composed bundle", async () => {
+    const composeBundle = vi.fn<NonNullable<DispatchDeps["composeBundle"]>>(async ({ bundle }) => ({
+      reviewId: bundle.reviewId,
+      patchsetId: bundle.patchsetId,
+      tasks: [
+        {
+          title: "Guard and log",
+          sourceDispositions: ["d0", "d1"],
+          asks: bundle.tasks.map((task, index) => ({ ...task, id: `d${index}` })),
+        },
+      ],
+      prompt: "composed",
+      digest: "deadbeef",
+      composed: true,
+      traceMap: { d0: 0, d1: 0 },
+    }));
+    const { dispatch } = harness(undefined, {}, { composeBundle });
+    const review = await capturedReview(dispatch);
+
+    const out = (await dispatch("review.handoff.compose", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      dispositions: COMPOSE_DISPOSITIONS,
+    })) as { bundle: { composed: boolean; tasks: { title: string }[] } };
+
+    expect(composeBundle).toHaveBeenCalledTimes(1);
+    // It was handed the reviewed repo root for the compose session's cwd.
+    expect(composeBundle.mock.calls[0]?.[0]?.repoRoot).toBe(review.repositoryRoot);
+    expect(out.bundle.composed).toBe(true);
+    expect(out.bundle.tasks[0]?.title).toBe("Guard and log");
+  });
+
+  it("refuses a stale/unknown review id", async () => {
+    const { dispatch } = harness();
+    await capturedReview(dispatch);
+    await expect(
+      dispatch("review.handoff.compose", {
+        commandId: randomUUID(),
+        reviewId: "not-a-real-review",
+        dispositions: COMPOSE_DISPOSITIONS,
+      }),
+    ).rejects.toThrow();
   });
 });

@@ -43,10 +43,14 @@ export const COMPOSE_OUTPUT_SCHEMA = {
       items: {
         type: "object",
         properties: {
-          title: { type: "string", description: "One plain line naming what the group accomplishes." },
+          title: {
+            type: "string",
+            description: "One plain line naming what the group accomplishes.",
+          },
           dispositionIds: {
             type: "array",
-            description: "The note ids merged into this group. Every id appears in exactly one group.",
+            description:
+              "The note ids merged into this group. Every id appears in exactly one group.",
             items: { type: "string" },
           },
         },
@@ -99,7 +103,11 @@ export function mapComposeOutput(output: unknown): ComposePortResult {
 }
 
 /** Build a `ComposePort` over a Codex executor bound to the council-resolved model. */
-export function codexComposePort(executor: CodexExecutor, model: string, effort: string): ComposePort {
+export function codexComposePort(
+  executor: CodexExecutor,
+  model: string,
+  effort: string,
+): ComposePort {
   return async (prompt) => {
     try {
       const result = await executor({ model, effort, prompt, outputSchema: COMPOSE_OUTPUT_SCHEMA });
@@ -128,7 +136,10 @@ export function claudeComposePort(port: HarnessPort, cwd: string, model?: string
         ...(model === undefined ? {} : { model }),
       });
     } catch (error) {
-      return { status: "failed", reason: `the compose session failed to start: ${describeThrow(error)}` };
+      return {
+        status: "failed",
+        reason: `the compose session failed to start: ${describeThrow(error)}`,
+      };
     }
     try {
       await session.send({ prompt });
@@ -142,7 +153,8 @@ export function claudeComposePort(port: HarnessPort, cwd: string, model?: string
             }
             return mapComposeOutput(outcome.structuredOutput);
           }
-          if (outcome.status === "failed") return { status: "failed", reason: outcome.error.message };
+          if (outcome.status === "failed")
+            return { status: "failed", reason: outcome.error.message };
           return { status: "failed", reason: "the compose turn was cancelled" };
         }
       }
@@ -161,8 +173,13 @@ export interface LiveComposeDeps {
   claudePort(): Promise<HarnessPort | null>;
   /** The Codex executor resolved to the absolute binary, or null when no `codex`. */
   codexExecutor(): Promise<CodexExecutor | null>;
-  /** The reviewed repo root — the read-only compose session's working directory. */
-  repoRoot(): string;
+}
+
+/** The input to one compose call: the mechanical bundle + the reviewed repo root. */
+export interface LiveComposeInput {
+  readonly bundle: HandoffBundle;
+  /** The reviewed repo root — the read-only Claude compose session's working directory. */
+  readonly repoRoot: string;
 }
 
 /**
@@ -174,8 +191,8 @@ export interface LiveComposeDeps {
  */
 export function createLiveComposeBundle(
   deps: LiveComposeDeps,
-): (bundle: HandoffBundle) => Promise<ComposedHandoffBundle> {
-  return async (bundle) => {
+): (input: LiveComposeInput) => Promise<ComposedHandoffBundle> {
+  return async ({ bundle, repoRoot }) => {
     const [claudePort, executor] = await Promise.all([deps.claudePort(), deps.codexExecutor()]);
     const installed: CouncilHarnessId[] = [];
     if (claudePort !== null) installed.push("claude-code");
@@ -188,13 +205,14 @@ export function createLiveComposeBundle(
       if (harness === "codex" && executor !== null) {
         port = codexComposePort(executor, resolution.model, resolution.effort);
       } else if (harness === "claude-code" && claudePort !== null) {
-        port = claudeComposePort(claudePort, deps.repoRoot());
+        port = claudeComposePort(claudePort, repoRoot);
       }
     }
     // No seat backs the resolved harness: compose with an unavailable port so the core
     // router returns the deterministic mechanical floor (a real, complete bundle).
     const composePort: ComposePort =
-      port ?? (() => Promise.resolve({ status: "unavailable", reason: "no compose seat installed" }));
+      port ??
+      (() => Promise.resolve({ status: "unavailable", reason: "no compose seat installed" }));
     return composeHandoffBundle(bundle, composePort);
   };
 }

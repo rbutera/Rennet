@@ -51,7 +51,9 @@ function anchorLabel(task: HandoffTask): string {
   if (task.span === undefined) return "whole file";
   const end = task.span.endLine ?? task.span.startLine;
   const range =
-    end === task.span.startLine ? `line ${task.span.startLine}` : `lines ${task.span.startLine}–${end}`;
+    end === task.span.startLine
+      ? `line ${task.span.startLine}`
+      : `lines ${task.span.startLine}–${end}`;
   return task.side === undefined ? range : `${range}, ${task.side}`;
 }
 
@@ -72,7 +74,11 @@ export interface ComposeProposal {
 
 /** The outcome of the one model turn. A failure NEVER fabricates a proposal. */
 export type ComposePortResult =
-  | { readonly status: "emitted"; readonly proposal: ComposeProposal; readonly usage?: RspTokenUsage }
+  | {
+      readonly status: "emitted";
+      readonly proposal: ComposeProposal;
+      readonly usage?: RspTokenUsage;
+    }
   | { readonly status: "unavailable"; readonly reason: string }
   | { readonly status: "failed"; readonly reason: string };
 
@@ -105,8 +111,11 @@ export function buildComposePrompt(asks: readonly ComposableAsk[]): string {
     "The notes:",
   ];
   for (const ask of asks) {
-    const body = ask.instruction.trim() === "" ? "(no text — infer from the anchor)" : ask.instruction.trim();
-    lines.push(`- id ${ask.id} · ${TYPE_LABEL[ask.type]} · ${ask.path} (${anchorLabel(ask)}): ${body}`);
+    const body =
+      ask.instruction.trim() === "" ? "(no text — infer from the anchor)" : ask.instruction.trim();
+    lines.push(
+      `- id ${ask.id} · ${TYPE_LABEL[ask.type]} · ${ask.path} (${anchorLabel(ask)}): ${body}`,
+    );
   }
   lines.push(
     "",
@@ -118,7 +127,9 @@ export function buildComposePrompt(asks: readonly ComposableAsk[]): string {
 
 // ── Validation: the partition must be a TOTAL COVER of the ask ids ────────────
 
-export type CompositionValidation = { readonly ok: true } | { readonly ok: false; readonly reason: string };
+export type CompositionValidation =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: string };
 
 /**
  * Validate the model's partition against the asks: every ask id appears in exactly
@@ -138,14 +149,19 @@ export function validateComposition(
       return { ok: false, reason: "a group cited no asks" };
     }
     for (const id of group.dispositionIds) {
-      if (!known.has(id)) return { ok: false, reason: `the composition cited an unknown ask id: ${id}` };
-      if (seen.has(id)) return { ok: false, reason: `the composition cited ask id ${id} more than once` };
+      if (!known.has(id))
+        return { ok: false, reason: `the composition cited an unknown ask id: ${id}` };
+      if (seen.has(id))
+        return { ok: false, reason: `the composition cited ask id ${id} more than once` };
       seen.add(id);
     }
   }
   if (seen.size !== known.size) {
     const missing = [...known].filter((id) => !seen.has(id));
-    return { ok: false, reason: `the composition dropped ${missing.length} ask(s): ${missing.join(", ")}` };
+    return {
+      ok: false,
+      reason: `the composition dropped ${missing.length} ask(s): ${missing.join(", ")}`,
+    };
   }
   return { ok: true };
 }
@@ -176,12 +192,17 @@ export function renderComposedPrompt(tasks: readonly ComposedTask[]): string {
     `## Tasks (${tasks.length} — ${askCount} review note${askCount === 1 ? "" : "s"})`,
   ];
   tasks.forEach((task, index) => {
-    out.push("", `### ${index + 1}. ${task.title.trim() === "" ? task.asks[0]?.path ?? "task" : task.title.trim()}`);
+    out.push(
+      "",
+      `### ${index + 1}. ${task.title.trim() === "" ? (task.asks[0]?.path ?? "task") : task.title.trim()}`,
+    );
     for (const ask of task.asks) {
       out.push(
         "",
         `- ${TYPE_LABEL[ask.type]} — ${ask.path} (${anchorLabel(ask)}):`,
-        ask.instruction.trim() === "" ? "  (no instruction body — infer from the context below)" : `  ${ask.instruction.trim()}`,
+        ask.instruction.trim() === ""
+          ? "  (no instruction body — infer from the context below)"
+          : `  ${ask.instruction.trim()}`,
       );
       if (ask.context !== "") {
         out.push("", "  Anchored diff context:", "  ```diff", ask.context, "  ```");

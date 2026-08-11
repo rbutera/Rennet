@@ -1,4 +1,4 @@
-import type { HandoffDisposition, Patchset, PatchFile } from "@rennet/types";
+import type { HandoffDisposition, PatchFile, Patchset } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
 import {
   asksFromBundle,
@@ -47,7 +47,11 @@ function bundleOf(dispositions: HandoffDisposition[]) {
 const THREE_ASKS: HandoffDisposition[] = [
   { path: "src/auth.ts", type: "request-change", body: "validate the token before use" },
   { path: "src/auth.ts", type: "comment", body: "also handle the expired-token case" },
-  { path: "src/user.ts", type: "request-change", body: "return 404 not 500 when the user is missing" },
+  {
+    path: "src/user.ts",
+    type: "request-change",
+    body: "return 404 not 500 when the user is missing",
+  },
 ];
 
 function portReturning(result: ComposePortResult): ComposePort {
@@ -118,7 +122,10 @@ describe("composeHandoffBundle — valid model authoring", () => {
         { title: "Fix the missing-user status code", dispositionIds: ["d2"] },
       ],
     };
-    const composed = await composeHandoffBundle(bundleOf(THREE_ASKS), portReturning(emitted(proposal)));
+    const composed = await composeHandoffBundle(
+      bundleOf(THREE_ASKS),
+      portReturning(emitted(proposal)),
+    );
 
     expect(composed.composed).toBe(true);
     expect(composed.tasks).toHaveLength(2);
@@ -142,7 +149,10 @@ describe("composeHandoffBundle — valid model authoring", () => {
         { title: "b", dispositionIds: ["d0", "d1"] },
       ],
     };
-    const composed = await composeHandoffBundle(bundleOf(THREE_ASKS), portReturning(emitted(proposal)));
+    const composed = await composeHandoffBundle(
+      bundleOf(THREE_ASKS),
+      portReturning(emitted(proposal)),
+    );
     const asks = asksFromBundle(bundleOf(THREE_ASKS));
     // Every id is present exactly once, and points at a real task index.
     expect(Object.keys(composed.traceMap).sort()).toEqual(asks.map((a) => a.id));

@@ -43,17 +43,32 @@ rewriting a note. Then:
 - `apps/desktop/src/main/handoff-compose-live.ts` (new): council-routed one-batched-turn
   compose port (Codex + Claude seats), mirrors `refine-comment-live.ts`.
 
-## Still TODO (blocked / pending answers)
+## Wired + gated (DONE)
 
-- ⚠️ **Deps**: the worktree has NO `node_modules`; lead ⛔'d `pnpm install`. Nothing
-  typechecked or gate-run yet. Awaiting the lead's provisioning call.
-- **Protocol + dispatch**: a `review.handoff.compose` command returning the composed
-  bundle (additive, useful in both integration scopes). Awaiting the lead's scope call:
-  compose-command-only vs threading the composed bundle through #18's prepare→run.
-- **Live port test** + **dispatch test**.
-- **Gate** vs the branch baseline **2066 / 7** (feat/handoff-loop), delta reported.
+- **Protocol**: `review.handoff.compose` command + `composableAskSchema` /
+  `composedTaskSchema` / `composedHandoffBundleSchema` (output schemas `z.ZodType<T>`
+  for the IPC-strip guard).
+- **Live port**: `apps/desktop/src/main/handoff-compose-live.ts` +
+  `handoff-compose-live.test.ts` (8 tests: output-mapping, read-only session posture,
+  Codex + Claude seats adopt a valid authoring, no-seat / malformed → floor).
+- **Dispatch**: `review.handoff.compose` case + optional `composeBundle` dep, composed in
+  `index.ts` (council-routed over the same claude+codex probes the refiner uses). 3
+  dispatch tests (floor when unwired, delegates when wired + passes repoRoot, refuses
+  stale id).
+- **Gate GREEN**: full `NX_DAEMON=false pnpm check`, all 8 projects. **2090 passed / 7
+  skipped**, **+24** over the `feat/handoff-loop` 2066/7 baseline (13 core + 8 live + 3
+  dispatch). Diff is against `feat/handoff-loop`, NOT main.
 
-## Seam
+## Seam — the ORDERING CONSTRAINT (baked into the protocol command doc)
 
-Threading the composed bundle through prepare→run's consent-DIGEST binding is #18 code
-under dual review. Left as a documented seam unless the lead pulls it in-scope.
+Threading the composed bundle through #18's prepare→run consent-DIGEST is left as a
+seam (#18 is under dual review). ⚠️ **The wiring MUST compose BEFORE the spend
+disclosure, and the DISCLOSED artifact must BE the composed bundle (its `digest`)**,
+because #18's `run` refuses on digest drift. Two ways to get it wrong:
+- **Compose after disclosure** → digest drifts → every composed run dead-refuses.
+- **Worse**: a `composed:false` fallback *after* disclosure → the human authorised the
+  composed form but the mechanical form would run. (Sibling of the #74 signing-hold
+  defect where a late model result swapped the payload mid-hold.)
+So: compose once, disclose the composed bundle, bind consent to its digest, never
+recompose between disclosure and run. This is written into the `review.handoff.compose`
+command doc in `packages/protocol/src/index.ts` so the wirer inherits it.

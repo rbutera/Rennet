@@ -1,6 +1,9 @@
 import type {
   AskReviewResult,
   Canvas,
+  ComposableAsk,
+  ComposedHandoffBundle,
+  ComposedTask,
   DecisionsRunStatus,
   Disposition,
   DispositionAnchor,
@@ -1228,6 +1231,35 @@ const handoffRunOutputSchema = z.discriminatedUnion("status", [
 ]);
 export type HandoffRunOutput = z.infer<typeof handoffRunOutputSchema>;
 
+// ── Handoff-bundle composition schemas (issue #72, M24) ────────────────────────
+// The output shapes are annotated `z.ZodType<T>` for the IPC-strip guard; the input
+// (`handoffDispositionSchema`, reused from #18) is the plain-object one.
+const composableAskSchema = z.object({
+  path: z.string().min(1),
+  type: dispositionTypeSchema,
+  instruction: z.string(),
+  span: anchorSpanSchema.optional(),
+  side: anchorSideSchema.optional(),
+  context: z.string(),
+  id: z.string().min(1),
+}) satisfies z.ZodType<ComposableAsk>;
+
+const composedTaskSchema: z.ZodType<ComposedTask> = z.object({
+  title: z.string(),
+  sourceDispositions: z.array(z.string()),
+  asks: z.array(composableAskSchema),
+});
+
+const composedHandoffBundleSchema: z.ZodType<ComposedHandoffBundle> = z.object({
+  reviewId: z.string().min(1),
+  patchsetId: z.string().min(1),
+  tasks: z.array(composedTaskSchema),
+  prompt: z.string(),
+  digest: z.string().min(1),
+  composed: z.boolean(),
+  traceMap: z.record(z.string(), z.number().int().nonnegative()),
+});
+
 export const commandDefinitions = {
   "app.bootstrap": {
     input: z.object({}),
@@ -1782,6 +1814,26 @@ export const commandDefinitions = {
       dispositions: z.array(handoffDispositionSchema),
     }),
     output: handoffRunOutputSchema,
+  },
+  // ── Compose the handoff bundle (issue #72, Model Council M24) ───────────────
+  // The light-tier authoring step over the mechanical bundle: order the asks for
+  // execution sense, merge overlapping asks, write a connective narrative — WITHOUT
+  // altering what was asked (the model returns only a partition of ask ids; the
+  // bodies are reconstructed verbatim). ⚠️ ORDERING CONTRACT for a future wiring:
+  // composition must run BEFORE the spend disclosure, and the DISCLOSED artifact must
+  // BE the composed bundle (its `digest`), because #18's run refuses on digest drift.
+  // Composing AFTER disclosure would either dead-refuse every run (digest drift) or —
+  // worse — let a `composed:false` fallback run the mechanical form the human never
+  // authorised. This command produces the composed bundle to disclose; it does NOT
+  // itself spend beyond the one light-tier compose turn, and posts nothing.
+  "review.handoff.compose": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+      /** The addressed dispositions in effective (refined-if-kept, else raw) form. */
+      dispositions: z.array(handoffDispositionSchema),
+    }),
+    output: z.object({ bundle: composedHandoffBundleSchema }),
   },
 } as const;
 
