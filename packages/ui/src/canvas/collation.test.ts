@@ -68,6 +68,33 @@ describe("ingestWrites — dispose == staged (upsert by path, order preserved)",
     expect(next.filter((item) => item.path === "src/alpha.ts")).toHaveLength(2);
     expect(next.find((item) => item.path === "src/alpha.ts")?.type).toBe("question");
   });
+
+  it("invalidates a stale refined form when a re-ingest changes the body (#19 seam)", () => {
+    // The item already carries a refined form (as #19 will set). Re-ingesting a
+    // write over its path with a NEW body must drop the stale refinement, or
+    // effectiveBody keeps serving the old refined text over the fresh raw.
+    const draft: CollationDraft = [
+      { id: "src/a.ts", path: "src/a.ts", type: "comment", raw: "old raw", refined: "old refined" },
+    ];
+    const next = ingestWrites(draft, [{ path: "src/a.ts", type: "comment", body: "new raw" }]);
+    const item = next[0];
+    if (!item) throw new Error("ingested item missing");
+    expect(item.raw).toBe("new raw");
+    // If refined survived, this stays "old refined" → the stale-refinement bug → red.
+    expect(item.refined).toBeUndefined();
+    expect(effectiveBody(item)).toBe("new raw");
+  });
+
+  it("keeps a still-valid refined form when a re-ingest does not change the body", () => {
+    // Re-anchoring/retyping the SAME body must not needlessly drop the refinement
+    // (no over-invalidation): the refined form is still a refinement of that body.
+    const draft: CollationDraft = [
+      { id: "src/a.ts", path: "src/a.ts", type: "comment", raw: "same", refined: "clean" },
+    ];
+    const next = ingestWrites(draft, [{ path: "src/a.ts", type: "question", body: "same" }]);
+    expect(next[0]?.type).toBe("question");
+    expect(next[0]?.refined).toBe("clean");
+  });
 });
 
 describe("rewordItem / retypeItem — edit by stable id, never touching order", () => {
@@ -83,6 +110,32 @@ describe("rewordItem / retypeItem — edit by stable id, never touching order", 
     const next = retypeItem(draftFromBatch(batch), "src/alpha.ts", "question");
     expect(next.find((item) => item.id === "src/alpha.ts")?.type).toBe("question");
     expect(next.find((item) => item.id === "src/beta.ts")?.type).toBe("request-change");
+  });
+
+  it("invalidates a stale refined form when the raw body is reworded (#19 seam)", () => {
+    // A reworded item that already had a refined form must drop it — otherwise
+    // effectiveBody keeps showing/publishing the stale refined text and the
+    // textarea input snaps back over what the user typed (the #101 review catch).
+    const draft: CollationDraft = [
+      { id: "a", path: "src/a.ts", type: "comment", raw: "messy", refined: "clean" },
+    ];
+    const next = rewordItem(draft, "a", "reworded");
+    const item = next[0];
+    if (!item) throw new Error("reworded item missing");
+    expect(item.raw).toBe("reworded");
+    // If reword preserved refined, effectiveBody stays "clean" → stale bug → red.
+    expect(item.refined).toBeUndefined();
+    expect(effectiveBody(item)).toBe("reworded");
+  });
+
+  it("keeps a still-valid refined form when the reword does not change the body", () => {
+    // No body change ⇒ no invalidation: the refinement is still valid, so a reword
+    // to identical text must not needlessly drop it (over-invalidation guard).
+    const draft: CollationDraft = [
+      { id: "a", path: "src/a.ts", type: "comment", raw: "same", refined: "clean" },
+    ];
+    const next = rewordItem(draft, "a", "same");
+    expect(next[0]?.refined).toBe("clean");
   });
 });
 
