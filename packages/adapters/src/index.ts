@@ -275,6 +275,8 @@ export {
   type GenerateOptions,
   type GenerateResult,
   ProjectSnapshotGenerator,
+  type SnapshotBuildProgress,
+  type SnapshotBuildStage,
 } from "./project-snapshot-generator";
 export {
   listTree,

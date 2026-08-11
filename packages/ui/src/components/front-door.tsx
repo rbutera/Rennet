@@ -17,6 +17,7 @@ import {
   RennetMark,
   SparkleIcon,
 } from "./icons";
+import { ProjectProcessing } from "./project-processing";
 
 /**
  * The front door (issue #29). The empty projects list IS first run; the
@@ -69,11 +70,26 @@ export function FrontDoor({
     <div className="rennet-glass front-door" data-scheme="dark">
       <header className="front-door-bar">
         <span className="front-door-mark" aria-hidden="true">
-          {flow ? <PlusIcon size={16} /> : <RennetMark size={22} />}
+          {flow?.step === "processing" ? (
+            <SparkleIcon size={18} />
+          ) : flow ? (
+            <PlusIcon size={16} />
+          ) : (
+            <RennetMark size={22} />
+          )}
         </span>
-        <h1>{flow ? "Add a project" : "Rennet"}</h1>
-        {flow ? (
+        <h1>
+          {flow?.step === "processing"
+            ? flow.project.name
+            : flow
+              ? "Add a project"
+              : "Rennet"}
+        </h1>
+        {flow && flow.step !== "processing" ? (
           <span className="front-door-step">step {flow.step === "type-path" ? 1 : 2} of 2</span>
+        ) : null}
+        {flow?.step === "processing" ? (
+          <span className="front-door-step">processing</span>
         ) : null}
       </header>
 
@@ -86,6 +102,7 @@ export function FrontDoor({
           projects={projects ?? []}
           onFlow={setFlow}
           onAdded={afterAdd}
+          onOpenProject={onOpenProject}
           onError={setError}
         />
       ) : (
@@ -200,7 +217,10 @@ type AddFlow =
       primaryBranch: string;
       editingBranch: boolean;
       busy: boolean;
-    };
+    }
+  // The initial context dump: the project is persisted; now its snapshot builds
+  // with live narration. `projects` is the post-add list, applied on finish.
+  | { step: "processing"; project: Project; projects: Project[] };
 
 function AddProject({
   bridge,
@@ -208,6 +228,7 @@ function AddProject({
   projects,
   onFlow,
   onAdded,
+  onOpenProject,
   onError,
 }: {
   bridge: RennetBridge;
@@ -215,6 +236,7 @@ function AddProject({
   projects: Project[];
   onFlow(flow: AddFlow | null): void;
   onAdded(projects: Project[]): void;
+  onOpenProject(project: Project): void;
   onError(message: string | undefined): void;
 }) {
   if (flow.step === "type-path") {
@@ -228,12 +250,21 @@ function AddProject({
       />
     );
   }
+  if (flow.step === "processing") {
+    return (
+      <ProjectProcessing
+        bridge={bridge}
+        project={flow.project}
+        onDone={() => onAdded(flow.projects)}
+        onOpen={() => onOpenProject(flow.project)}
+      />
+    );
+  }
   return (
     <WorktreeConfig
       bridge={bridge}
       flow={flow}
       onFlow={onFlow}
-      onAdded={onAdded}
       onError={onError}
     />
   );
@@ -398,13 +429,11 @@ function WorktreeConfig({
   bridge,
   flow,
   onFlow,
-  onAdded,
   onError,
 }: {
   bridge: RennetBridge;
   flow: Extract<AddFlow, { step: "worktree" }>;
   onFlow(flow: AddFlow | null): void;
-  onAdded(projects: Project[]): void;
   onError(message: string | undefined): void;
 }) {
   const { discovery } = flow;
@@ -421,13 +450,15 @@ function WorktreeConfig({
     onError(undefined);
     onFlow({ ...flow, busy: true });
     try {
-      const { projects } = await bridge.invoke("projects.add", {
+      const { project, projects } = await bridge.invoke("projects.add", {
         commandId: crypto.randomUUID(),
         discovery,
         includedRepos: flow.included,
         primaryBranch: flow.primaryBranch.trim() || discovery.primaryBranch,
       });
-      onAdded(projects);
+      // Persisted — now build its snapshot (the initial context dump) with live
+      // narration. The post-add list rides through, applied when processing ends.
+      onFlow({ step: "processing", project, projects });
     } catch (reason) {
       onFlow({ ...flow, busy: false });
       onError(messageFrom(reason));

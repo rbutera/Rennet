@@ -5,7 +5,14 @@
 // real `FrontDoor` over a recording fake `RennetBridge` and drives the WHOLE
 // journey — empty state → type + path → worktree config → confirm → the project
 // appears — asserting the recorded command inputs (behavioural, not presence).
-import type { CommandInput, DiscoveryResult, Project, RennetBridge } from "@rennet/protocol";
+import type {
+  CommandInput,
+  DiscoveryResult,
+  ProcessedRepoSummary,
+  Project,
+  ProjectProcessEvent,
+  RennetBridge,
+} from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, mount, waitFor } from "../test/dom";
 import { FrontDoor } from "./front-door";
@@ -22,6 +29,10 @@ interface FakeConfig {
   detected?: { id: string; version: string | null }[];
   chosenPath?: string;
   discovery?: DiscoveryResult;
+  /** The live narration events `project.process` streams before it resolves. */
+  progressEvents?: ProjectProcessEvent[];
+  /** The per-repo summaries `project.process` resolves with. */
+  processedRepos?: ProcessedRepoSummary[];
 }
 
 function fakeBridge(config: FakeConfig = {}): {
@@ -30,6 +41,7 @@ function fakeBridge(config: FakeConfig = {}): {
 } {
   const calls: { name: string; input: unknown }[] = [];
   let projects = [...(config.projects ?? [])];
+  let progressListener: ((event: ProjectProcessEvent) => void) | undefined;
   const invoke = async (name: string, input: unknown): Promise<unknown> => {
     calls.push({ name, input });
     switch (name) {
@@ -56,11 +68,25 @@ function fakeBridge(config: FakeConfig = {}): {
         projects = [...projects, added];
         return { project: added, projects };
       }
+      case "project.process": {
+        // Stream the configured narration to the live subscriber (registered in the
+        // component's effect before this invoke runs), then resolve like main does.
+        const repos = config.processedRepos ?? [];
+        for (const event of config.progressEvents ?? []) progressListener?.(event);
+        progressListener?.({ kind: "done", repos });
+        return { repos };
+      }
       default:
         return {};
     }
   };
-  return { bridge: { invoke: invoke as unknown as RennetBridge["invoke"] }, calls };
+  const onProgress: RennetBridge["onProgress"] = (_commandId, listener) => {
+    progressListener = listener;
+    return () => {
+      progressListener = undefined;
+    };
+  };
+  return { bridge: { invoke: invoke as unknown as RennetBridge["invoke"], onProgress }, calls };
 }
 
 describe("FrontDoor — the empty projects list is first run", () => {
@@ -79,7 +105,10 @@ describe("FrontDoor — the empty projects list is first run", () => {
 
 describe("FrontDoor — the add-a-project flow", () => {
   it("walks type+path → worktree config → confirm, persisting the confirmed choices", async () => {
-    const { bridge, calls } = fakeBridge({ chosenPath: "/orbital" });
+    const { bridge, calls } = fakeBridge({
+      chosenPath: "/orbital",
+      processedRepos: [{ repo: "orbital", path: "/orbital", ok: true, files: 12, symbols: 8 }],
+    });
     const { container, getByRole } = mount(<FrontDoor bridge={bridge} onOpenProject={vi.fn()} />);
 
     // Open the flow from the empty-state affordance.
@@ -111,7 +140,16 @@ describe("FrontDoor — the add-a-project flow", () => {
     expect(addInput).toMatchObject({ includedRepos: ["atlas"], primaryBranch: "main" });
     expect(addInput.discovery.path).toBe("/orbital");
 
-    // The flow closes and the new project shows in the populated list.
+    // Confirm moves into the processing screen (the initial context dump), which
+    // runs the real `project.process` and reaches its done state.
+    await waitFor(() => expect(calls.some((call) => call.name === "project.process")).toBe(true));
+    await waitFor(() =>
+      expect(container.querySelector(".processing[data-phase='done']")).not.toBeNull(),
+    );
+    expect(container.textContent).toContain("orbital is ready");
+
+    // "Back to projects" closes the flow and the new project shows in the list.
+    fireEvent.click(getByRole("button", { name: /Back to projects/ }));
     await waitFor(() => expect(container.querySelector(".project-row")).not.toBeNull());
     expect(container.querySelector(".project-row-name")?.textContent).toBe("orbital");
   });

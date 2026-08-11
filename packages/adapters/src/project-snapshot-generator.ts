@@ -73,6 +73,37 @@ export interface GenerateOptions {
    * default). Pass an empty array to force a clean full reference build.
    */
   readonly previousReferences?: readonly ReferenceShard[];
+  /**
+   * An optional sink for live build progress, called once as each real stage
+   * begins/completes (see {@link SnapshotBuildStage}). Wired to the desktop app's
+   * processing screen so the narration is honest — every line reflects a step the
+   * generator actually performed. Omitted by every non-interactive caller.
+   */
+  readonly onProgress?: (progress: SnapshotBuildProgress) => void;
+}
+
+/**
+ * The real stages of a snapshot build, in the order they execute. Each is a step
+ * {@link ProjectSnapshotGenerator.generate} genuinely performs — the desktop
+ * processing screen maps these to live narration.
+ */
+export type SnapshotBuildStage =
+  | "resolve"
+  | "tree"
+  | "workspace"
+  | "conventions"
+  | "symbols"
+  | "build"
+  | "verify"
+  | "store";
+
+/** A single live build-progress datum: which stage, a friendly note, an optional real detail. */
+export interface SnapshotBuildProgress {
+  readonly stage: SnapshotBuildStage;
+  /** A present-tense line describing the step ("Reading the file tree"). */
+  readonly note: string;
+  /** A concrete, real detail when known ("412 files", "main"). */
+  readonly detail?: string;
 }
 
 export interface GenerateResult {
@@ -86,6 +117,8 @@ export interface GenerateResult {
   readonly reusedReferenceShards: number;
   /** How many files had their references freshly extracted (the changed closure). */
   readonly extractedReferenceShards: number;
+  /** Total files in the tree at the base OID (the whole snapshot's breadth). */
+  readonly fileCount: number;
 }
 
 export class ProjectSnapshotGenerator {
@@ -108,12 +141,31 @@ export class ProjectSnapshotGenerator {
     /** The resolved top-level working directory, for OID-addressed blob reads. */
     root: string;
   }> {
+    const progress = options.onProgress;
+    progress?.({ stage: "resolve", note: "Finding the default branch" });
     const base = await resolveBaseRef(repoRoot, {
       git: this.git,
       explicitBaseRef: options.explicitBaseRef,
     });
+    progress?.({ stage: "resolve", note: "Finding the default branch", detail: base.baseRef });
+
+    progress?.({ stage: "tree", note: "Reading the file tree" });
     const files = await listTree(base.root, base.baseOid, this.git);
+    progress?.({
+      stage: "tree",
+      note: "Reading the file tree",
+      detail: `${files.length} ${files.length === 1 ? "file" : "files"}`,
+    });
+
+    progress?.({ stage: "workspace", note: "Mapping the workspace" });
     const workspace = await readWorkspaceStructure(base.root, files, this.git);
+    progress?.({
+      stage: "workspace",
+      note: "Mapping the workspace",
+      detail: `${workspace.scopes.length} ${workspace.scopes.length === 1 ? "scope" : "scopes"}`,
+    });
+
+    progress?.({ stage: "conventions", note: "Learning conventions & ownership" });
     const conventions = readConventions(files);
     const ownership = await readOwnership(base.root, files, this.git);
     const tests = readTests(files, workspace.scopes);
@@ -169,6 +221,15 @@ export class ProjectSnapshotGenerator {
     for (const file of plan.toExtract) toRead.set(file.blobOid, file);
     for (const file of refPlan.toExtract) toRead.set(file.blobOid, file);
 
+    const progress = options.onProgress;
+    progress?.({
+      stage: "symbols",
+      note: "Extracting symbols & references",
+      detail:
+        toRead.size === 0
+          ? "reusing cached symbols"
+          : `${toRead.size} ${toRead.size === 1 ? "file" : "files"} to parse`,
+    });
     const extracted: SymbolShard[] = [];
     const extractedReferences: ReferenceShard[] = [];
     for (const file of toRead.values()) {
@@ -183,6 +244,7 @@ export class ProjectSnapshotGenerator {
       }
     }
 
+    progress?.({ stage: "build", note: "Building the repo map" });
     const built = buildSnapshot(
       inputs,
       [...plan.reuse, ...extracted],
@@ -191,6 +253,7 @@ export class ProjectSnapshotGenerator {
 
     // Verify BEFORE advancing: a stale/corrupt/tampered shard fails closed here
     // and is never committed as the current snapshot.
+    progress?.({ stage: "verify", note: "Verifying integrity" });
     const integrity = verifySnapshotIntegrity(built.manifest, (digest) => built.shards.get(digest));
     if (!integrity.ok) {
       throw new Error(
@@ -198,7 +261,10 @@ export class ProjectSnapshotGenerator {
       );
     }
 
-    this.deps.store?.advance(built);
+    if (this.deps.store) {
+      progress?.({ stage: "store", note: "Saving the snapshot" });
+      this.deps.store.advance(built);
+    }
 
     return {
       built,
@@ -207,6 +273,7 @@ export class ProjectSnapshotGenerator {
       extractedSymbolShards: plan.toExtract.length,
       reusedReferenceShards: refPlan.reuse.length,
       extractedReferenceShards: refPlan.toExtract.length,
+      fileCount: inputs.files.length,
     };
   }
 

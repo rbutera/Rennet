@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { join, normalize, resolve } from "node:path";
+import { basename, join, normalize, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
@@ -34,8 +34,11 @@ import {
   loadProjectDetail,
   type ProjectPrSource,
   parseGitHubPrRef,
+  ProjectSnapshotGenerator,
   RepoWatcher,
   resolveGitHubAuth,
+  type SnapshotBuildProgress,
+  snapshotStoreFor,
   SqliteReviewStore,
 } from "@rennet/adapters";
 import {
@@ -58,7 +61,13 @@ import {
   runNoiseAngle,
   verifyFlaggedReview,
 } from "@rennet/core";
-import { type CommandName, type DetectedHarness, isCommandName } from "@rennet/protocol";
+import {
+  type CommandName,
+  type DetectedHarness,
+  isCommandName,
+  type ProcessedRepoSummary,
+  type ProjectProcessEvent,
+} from "@rennet/protocol";
 import type {
   Canvas,
   CanvasAngle,
@@ -84,6 +93,10 @@ import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from ".
 const execFileAsync = promisify(execFile);
 
 const IPC_CHANNEL = "rennet:invoke";
+// The push channel a long-running command streams live progress on (today
+// `project.process`'s snapshot-build narration). The renderer's `onProgress`
+// bridge filters by the `commandId` it passed to `invoke`.
+const PROGRESS_CHANNEL = "rennet:progress";
 const APP_ORIGIN = "app://rennet";
 
 protocol.registerSchemesAsPrivileged([
@@ -219,7 +232,7 @@ let projectStore: FileProjectStore;
 let service: ReviewService;
 let repositoryDirty = false;
 const allowedRoots = new Set<string>();
-let dispatch: ((name: CommandName, input: unknown) => Promise<unknown>) | null = null;
+let dispatch: ReturnType<typeof createDispatch> | null = null;
 
 function isTrustedAppUrl(value: string): boolean {
   const url = new URL(value);
@@ -833,7 +846,20 @@ function registerCommandHandler(): void {
     const { name, input } = request as { name?: unknown; input?: unknown };
     if (typeof name !== "string" || !isCommandName(name)) throw new Error("Unknown command");
     if (!dispatch) throw new Error("The command router is not ready");
-    return dispatch(name, input);
+    // A command that carries a `commandId` may stream live progress; push each
+    // event on the progress channel keyed by that id so the renderer can filter to
+    // its own invocation. `sender.isDestroyed()` guards a window closed mid-build.
+    const commandId =
+      input && typeof input === "object" && typeof (input as { commandId?: unknown }).commandId === "string"
+        ? (input as { commandId: string }).commandId
+        : undefined;
+    const emitProgress = commandId
+      ? (progress: ProjectProcessEvent): void => {
+          if (!event.sender.isDestroyed())
+            event.sender.send(PROGRESS_CHANNEL, { commandId, event: progress });
+        }
+      : undefined;
+    return dispatch(name, input, { emitProgress });
   });
 }
 
@@ -890,6 +916,11 @@ app.whenReady().then(async () => {
   store = new SqliteReviewStore(join(app.getPath("userData"), "rennet.sqlite"));
   projectStore = new FileProjectStore(join(app.getPath("userData"), "projects.json"));
   service = new ReviewService(capture, store);
+  // The ProjectSnapshot generator over the app-owned LOCAL-FIRST store under
+  // `~/.rennet/projects/` (issue #188 default base dir). Drives the initial context
+  // dump: `project.process` builds each included repo's snapshot through this, and
+  // its real stages become the processing screen's live narration.
+  const snapshotGenerator = new ProjectSnapshotGenerator({ store: snapshotStoreFor() });
   // The publish egress port + its consent authority (issue #21). The port constructs
   // requests purely (dry-run) and posts only via the gated `publish.review` command.
   const publishPort = new GitHubPublishAdapter({
@@ -937,6 +968,52 @@ app.whenReady().then(async () => {
         const project = projectStore.add(draft);
         return { project, projects: projectStore.list() };
       },
+    },
+    // The initial context dump (issue #29, wireframe #2): build every included
+    // repo's ProjectSnapshot, streaming the real generator stages as live
+    // narration. Soft per-repo failure is carried in the summary, never thrown, so
+    // one bad repo cannot abort a workspace's remaining repos. Pure over git.
+    processProject: async ({ projectId }, emit) => {
+      const project = projectStore.list().find((entry) => entry.id === projectId);
+      if (!project) return { repos: [] };
+      const repoPaths =
+        project.includedRepoPaths && project.includedRepoPaths.length > 0
+          ? project.includedRepoPaths
+          : [project.openPath || project.path];
+      const repos: ProcessedRepoSummary[] = [];
+      for (const [index, path] of repoPaths.entries()) {
+        const repo = basename(path) || path;
+        emit({ kind: "repo-start", repo, index: index + 1, total: repoPaths.length });
+        try {
+          const result = await snapshotGenerator.generate(path, {
+            onProgress: (progress: SnapshotBuildProgress) =>
+              emit({
+                kind: "stage",
+                repo,
+                stage: progress.stage,
+                note: progress.note,
+                detail: progress.detail,
+              }),
+          });
+          const summary: ProcessedRepoSummary = {
+            repo,
+            path,
+            ok: true,
+            files: result.fileCount,
+            symbols: result.manifest.symbols.length,
+            references: result.manifest.references.length,
+            reusedSymbols: result.reusedSymbolShards,
+            baseRef: result.manifest.baseRef,
+          };
+          repos.push(summary);
+          emit({ kind: "repo-done", repo, summary });
+        } catch (reason) {
+          const message = reason instanceof Error ? reason.message : String(reason);
+          repos.push({ repo, path, ok: false, error: message });
+          emit({ kind: "repo-error", repo, message });
+        }
+      }
+      return { repos };
     },
     discoverProject: ({ path, kind }) =>
       discoverProject(defaultProjectDiscoveryDeps(execaGit), path, kind),
