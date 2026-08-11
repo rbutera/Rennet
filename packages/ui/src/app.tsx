@@ -23,6 +23,7 @@ import {
   type CollationItem,
   clearRefined,
   ingestWrites,
+  itemRefineSignature,
   setRefined,
   withdrawPath,
 } from "./canvas/collation";
@@ -390,6 +391,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // id. An adopted refinement is durable on the item (`item.refined`); this map
   // holds only the in-flight/failed/no-change states the refine turn produces.
   const [refineStates, setRefineStates] = useState<Record<string, RefineItemState>>({});
+  // The latest draft, readable synchronously inside an async refine continuation so
+  // it can reject an outcome for a note that changed while the turn was in flight
+  // (the closure `draft` is stale by then).
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const [destinationMode, setDestinationMode] = useState<DestinationMode>("own-branch");
   // The forming-destination surface (R40): the frame opens the DRAFT (editable
   // glass collation canvas); signing the draft opens the PAPER; the paper signs or
@@ -1188,15 +1194,16 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   }
 
   /**
-   * The draft change handler wired to every edit (#19 invalidation). When an item's
-   * raw note changes (reword / merge) or the item is removed (withdraw), its
+   * The draft change handler wired to every edit (#19 invalidation). When any input
+   * a refinement is bound to changes — the raw body (reword / merge), the type
+   * (retype), the anchor (re-anchor), or the item's existence (withdraw) — its
    * EPHEMERAL refine verdict is stale: a "no-change" / "failed" / "unavailable"
-   * message must not linger over text that has since changed — and because the
+   * message must not linger over a note the model never saw, and because the
    * message branch renders AHEAD of the Refine button, a lingering message also
-   * hides the button for the new text. This is the SAME invalidation event as
-   * #236's DURABLE `refined` (which `rewordItem` clears); here its ephemeral
-   * sibling is cleared on the same event. A pure reorder / retype leaves every raw
-   * unchanged, so nothing is dropped.
+   * hides the button for the new text. This is the SAME invalidation event as the
+   * DURABLE `refined` (which `rewordItem`/`retypeItem` clear); the ephemeral sibling
+   * is cleared on the same signal, keyed off the shared `itemRefineSignature`. A
+   * pure reorder leaves every signature unchanged, so nothing is dropped.
    */
   function handleDraftChange(next: CollationDraft): void {
     setRefineStates((prev) => {
@@ -1205,8 +1212,8 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       for (const [id, state] of Object.entries(prev)) {
         const before = draft.find((entry) => entry.id === id);
         const after = next.find((entry) => entry.id === id);
-        // Keep a verdict only while its item still exists with the SAME raw body.
-        if (before && after && after.raw === before.raw) {
+        // Keep a verdict only while its item still exists with the SAME refine inputs.
+        if (before && after && itemRefineSignature(before) === itemRefineSignature(after)) {
           kept[id] = state;
         } else {
           changed = true;
@@ -1229,15 +1236,23 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
 
   /**
    * Refine one raw note into a clean comment (#19): mark it refining, run the real
-   * council-routed model turn, and round the result back onto the draft. A refined
-   * result is ADOPTED only if the note has not been edited meanwhile (a refinement
-   * of a stale raw is dropped, never shown over the new text — the #236 law); a
-   * no-change / unavailable / failed outcome is surfaced HONESTLY and the raw stays
-   * the effective body.
+   * council-routed model turn, and round the result back onto the draft. EVERY
+   * outcome — refined, no-change, unavailable, failed — is bound to the item's full
+   * refine inputs at request time (`itemRefineSignature`: raw + type + anchor) and
+   * DROPPED if any of them changed while the turn ran, so a verdict for a note the
+   * model never saw is never shown or adopted. A surviving outcome is surfaced
+   * HONESTLY; the sovereign raw stays the effective body unless a refinement lands.
    */
   async function refineItem(item: CollationItem): Promise<void> {
     if (!review || item.raw.trim() === "") return;
-    const refinedFrom = item.raw;
+    const basedOn = itemRefineSignature(item);
+    // The outcome is stale once the item's refine inputs have changed since the turn
+    // began (reword / retype / re-anchor), or the item is gone. `draftRef` reads the
+    // LATEST draft; the closure `item` is the request-time snapshot.
+    const isStale = (): boolean => {
+      const current = draftRef.current.find((entry) => entry.id === item.id);
+      return current === undefined || itemRefineSignature(current) !== basedOn;
+    };
     setRefineStates((prev) => ({ ...prev, [item.id]: { status: "refining" } }));
     try {
       const result = await bridge.invoke("review.refine", {
@@ -1248,15 +1263,19 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         raw: item.raw,
         lens: canvasAngle,
         path: item.path,
+        // The anchor (#78) rides along so the producer grounds against the RIGHT
+        // hunk, not a truncation from the file's start (the Codex grounding catch).
+        ...(item.span === undefined ? {} : { span: item.span }),
+        ...(item.side === undefined ? {} : { side: item.side }),
       });
+      if (isStale()) {
+        // The note changed or was withdrawn mid-turn — drop the outcome entirely and
+        // return the item to idle for its NEW content.
+        clearRefineState(item.id);
+        return;
+      }
       if (result.status === "refined") {
-        setDraft((current) => {
-          const target = current.find((entry) => entry.id === item.id);
-          // The note was edited or withdrawn while the turn ran — drop the stale
-          // refinement rather than post a clean version of text that no longer exists.
-          if (!target || target.raw !== refinedFrom) return current;
-          return setRefined(current, item.id, result.refined);
-        });
+        setDraft((current) => setRefined(current, item.id, result.refined));
         clearRefineState(item.id);
       } else if (result.status === "no-change") {
         setRefineStates((prev) => ({ ...prev, [item.id]: { status: "no-change" } }));
@@ -1272,6 +1291,12 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         }));
       }
     } catch (err) {
+      // A comms failure is also stale-gated: don't pin "failed" onto a note that has
+      // since changed (the message would sit over text the turn never concerned).
+      if (isStale()) {
+        clearRefineState(item.id);
+        return;
+      }
       setRefineStates((prev) => ({
         ...prev,
         [item.id]: { status: "failed", reason: err instanceof Error ? err.message : String(err) },
