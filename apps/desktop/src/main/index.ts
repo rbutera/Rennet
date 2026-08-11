@@ -29,10 +29,12 @@ import {
   discoverProject,
   discoverWorktreeIdentities,
   execaGit,
+  claudeHandoffRunPort,
   FileConfigStore,
   FileProjectStore,
   type GhRunner,
   GitCaptureAdapter,
+  GitCheckpointStore,
   GitHubChangesetSource,
   GitHubForgeAdapter,
   GitHubPublishAdapter,
@@ -64,6 +66,7 @@ import {
   patchsetIntentToReviewIntent,
   ReviewService,
   resolveDualSeat,
+  runHandoffTurn as runHandoffTurnCore,
   runCoverageMapping,
   runDecisionAngle,
   runDualFindingReview,
@@ -99,6 +102,7 @@ import {
   PROACTIVE_REHYDRATION_COMMAND_ID,
   type ProactiveRehydration,
 } from "./proactive-rehydration";
+import { createHandoffConsentAuthority } from "./handoff-consent-authority";
 import { createProcessProject } from "./process-project";
 import { createPublishConsentAuthority } from "./publish-consent-authority";
 import { createLiveRefinePort } from "./refine-comment-live";
@@ -1136,6 +1140,7 @@ app.whenReady().then(async () => {
     resolveToken: resolveGitHubToken,
   });
   const publishConsent = createPublishConsentAuthority();
+  const handoffConsent = createHandoffConsentAuthority();
   // The live orchestrator turn runner (issue #13, wave 2): composes the wave-1 live
   // backend + the lean primer + a real `claude` turn over the in-process canvasOps@2
   // MCP server. It reuses the SAME memoized `claude` discovery the review pipeline
@@ -1154,6 +1159,24 @@ app.whenReady().then(async () => {
     orchestratorTurn,
     publishPort,
     publishConsent,
+    handoffConsent,
+    // The write-enabled handoff turn (issue #18): brackets a live `claude` write turn
+    // (exec DENIED, so `git push` is unreachable — R33) with git checkpoints and
+    // returns the turn diff. Reuses the SAME memoized `claude` discovery the review
+    // pipeline uses (R2 subscription OAuth). When no `claude` is installed, it returns
+    // an honest failed turn (the run command surfaces it, never a fabricated success).
+    runHandoffTurn: async ({ repoRoot, bundle }) => {
+      const { adapter } = await getClaudeHarness();
+      if (!adapter) {
+        return { status: "failed", reason: "no coding harness (claude) is installed to run the handoff" };
+      }
+      return runHandoffTurnCore({
+        repoRoot,
+        bundle,
+        runPort: claudeHandoffRunPort(adapter),
+        checkpoint: new GitCheckpointStore(repoRoot),
+      });
+    },
     chooseRepository,
     openPullRequest,
     startWatching: (root: string) =>

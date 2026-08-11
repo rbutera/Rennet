@@ -111,6 +111,11 @@ export {
   flaggedReviewFixture,
 } from "./flagged-fixture";
 export { GitCheckpointStore } from "./checkpoint-store";
+export {
+  claudeHandoffRunPort,
+  HANDOFF_DENIED_TOOLS,
+  HANDOFF_WRITE_TOOLS,
+} from "./handoff-run-live";
 export { GitCaptureAdapter } from "./git-capture";
 export {
   type Counts,

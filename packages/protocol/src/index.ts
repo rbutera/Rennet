@@ -7,6 +7,11 @@ import type {
   ElementDiffs,
   FindingVerification,
   FlaggedReview,
+  HandoffBundle,
+  HandoffDisclosure,
+  HandoffDisposition,
+  HandoffRunResult,
+  HandoffTask,
   NoiseReview,
   OpenSpecChange,
   OpenSpecCoverage,
@@ -1121,6 +1126,74 @@ export const settingsGuidanceSchema = z.object({
 });
 export type SettingsGuidance = z.infer<typeof settingsGuidanceSchema>;
 
+// ── The review→agent handoff loop schemas (issue #18) ──────────────────────────
+// Mirror the `@rennet/types` wire shapes. The OUTPUT schemas are annotated
+// `z.ZodType<T>` so a field added to a type that is NOT added here fails the build
+// (the IPC-strip guard: an optional field silently dropped at the boundary is the
+// recurring #242 defect). The disposition INPUT schema is a plain object so its
+// `z.input` type infers concretely (a `z.ZodType<T>` annotation defaults the Input
+// param to `unknown`, which would type the command input's `dispositions` as
+// `unknown[]`). The bundle's `z.ZodType<HandoffBundle>` annotation still catches a
+// task-shape drift through `tasks: z.array(handoffTaskSchema)`.
+const handoffDispositionSchema = z.object({
+  path: z.string().min(1),
+  type: dispositionTypeSchema,
+  body: z.string(),
+  span: anchorSpanSchema.optional(),
+  side: anchorSideSchema.optional(),
+}) satisfies z.ZodType<HandoffDisposition>;
+
+const handoffTaskSchema = z.object({
+  path: z.string().min(1),
+  type: dispositionTypeSchema,
+  instruction: z.string(),
+  span: anchorSpanSchema.optional(),
+  side: anchorSideSchema.optional(),
+  context: z.string(),
+}) satisfies z.ZodType<HandoffTask>;
+
+const handoffBundleSchema: z.ZodType<HandoffBundle> = z.object({
+  reviewId: z.string().min(1),
+  patchsetId: z.string().min(1),
+  tasks: z.array(handoffTaskSchema),
+  prompt: z.string(),
+  digest: z.string().min(1),
+});
+
+const handoffDisclosureSchema: z.ZodType<HandoffDisclosure> = z.object({
+  harness: z.string().min(1),
+  model: z.string().optional(),
+  taskCount: z.number().int().nonnegative(),
+  writeEnabled: z.literal(true),
+  editsWorkingTree: z.literal(true),
+  summary: z.string(),
+});
+
+const handoffRunResultSchema: z.ZodType<HandoffRunResult> = z.object({
+  review: reviewSchema,
+  turnDiff: z.string(),
+  filesTouched: z.array(z.string()),
+  carriedFloor: z.number().int().nonnegative(),
+  lineageCarry: z.enum(["matcher-not-wired", "applied"]),
+});
+
+/**
+ * The `review.handoff.run` outcome. A discriminated union so every non-success is
+ * an HONEST, distinct state the renderer can render, never a fabricated result:
+ *   • `ran`         — the write turn completed and a new patchset was captured.
+ *   • `refused`     — the consent token was absent / forged / bound to a different
+ *                     bundle (the explicit-act + spend-disclosed gates fired).
+ *   • `unavailable` — no coding harness is installed to run the write session.
+ *   • `failed`      — the write turn ran but did not complete.
+ */
+const handoffRunOutputSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ran"), result: handoffRunResultSchema }),
+  z.object({ status: z.literal("refused"), reason: z.string() }),
+  z.object({ status: z.literal("unavailable"), reason: z.string() }),
+  z.object({ status: z.literal("failed"), reason: z.string() }),
+]);
+export type HandoffRunOutput = z.infer<typeof handoffRunOutputSchema>;
+
 export const commandDefinitions = {
   "app.bootstrap": {
     input: z.object({}),
@@ -1614,6 +1687,56 @@ export const commandDefinitions = {
       visibility: projectVisibilitySchema,
     }),
     output: setRepoVisibilityOutcomeSchema,
+  },
+  // ── The review→agent handoff loop (issue #18, Contracts §2.1 destination B) ──
+  // Batch the reviewer's open request-change/comment dispositions into a task
+  // bundle, hand it to a coding harness in a WRITE-enabled session, capture the
+  // result as a NEW immutable patchset, and re-review only the delta. The loop is a
+  // three-step ceremony precisely because the write session spends the user's quota
+  // AND edits their working tree — the safety-critical acts are structural, not
+  // promised:
+  //   • `prepare` is PURE (no session, no token): it composes the bundle and returns
+  //     the spend DISCLOSURE the user acts on. Read-only over the review.
+  //   • `requestConsent` mints a single-use token bound to (reviewId, bundleDigest),
+  //     the explicit user act after seeing the disclosure — the ONLY way to obtain a
+  //     run authorization. No auto-run path exists.
+  //   • `run` REBUILDS the bundle deterministically from the same dispositions,
+  //     refuses unless its digest matches the disclosed `bundleDigest` AND the token
+  //     consumes, then runs the write turn and captures the delta. So a run can only
+  //     execute a bundle the user saw and approved.
+  "review.handoff.prepare": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+      /** The addressed dispositions in effective (refined-if-kept, else raw) form. */
+      dispositions: z.array(handoffDispositionSchema),
+    }),
+    output: z.object({ bundle: handoffBundleSchema, disclosure: handoffDisclosureSchema }),
+  },
+  "review.handoff.requestConsent": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+      /** The digest of the bundle the user saw disclosed (from `prepare`). */
+      bundleDigest: z.string().min(1),
+    }),
+    output: z.object({
+      /** The single-use authorization bound to (reviewId, bundleDigest). */
+      authorization: z.string().min(1),
+    }),
+  },
+  "review.handoff.run": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+      /** The SAME dispositions `prepare`/`requestConsent` saw; the bundle is rebuilt. */
+      dispositions: z.array(handoffDispositionSchema),
+      /** The disclosed bundle digest the token is bound to (integrity + spend gate). */
+      bundleDigest: z.string().min(1),
+      /** The single-use token from `requestConsent`. Absent/forged ⇒ refused. */
+      authorization: z.string().min(1),
+    }),
+    output: handoffRunOutputSchema,
   },
 } as const;
 

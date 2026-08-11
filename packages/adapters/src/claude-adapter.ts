@@ -512,6 +512,11 @@ export class ClaudeAdapter implements HarnessPort {
     const allowedTools = spec.readOnly
       ? (spec.allowedTools ?? READ_ONLY_ALLOWED_TOOLS)
       : spec.allowedTools;
+    // A read-only session denies the fixed write/exec set; a write-enabled session
+    // denies whatever the caller specified (the handoff passes the exec/network tools
+    // so the coding agent can edit files but cannot push, R33). Absent on a write
+    // session ⇒ no policy denial (back-compat with the existing write callers).
+    const disallowedTools = spec.readOnly ? WRITE_EXEC_DENIED_TOOLS : spec.disallowedTools;
     return {
       cwd: spec.cwd,
       pathToClaudeCodeExecutable: this.#config.binaryPath,
@@ -520,7 +525,7 @@ export class ClaudeAdapter implements HarnessPort {
       abortController: abort,
       ...(spec.model === undefined ? {} : { model: spec.model }),
       ...(allowedTools === undefined ? {} : { allowedTools }),
-      ...(spec.readOnly ? { disallowedTools: WRITE_EXEC_DENIED_TOOLS } : {}),
+      ...(disallowedTools === undefined ? {} : { disallowedTools }),
       ...(spec.outputSchema === undefined ? {} : { outputSchema: spec.outputSchema }),
       ...(spec.systemPrompt?.mode === "append"
         ? { appendSystemPrompt: spec.systemPrompt.text }

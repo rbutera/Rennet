@@ -2,10 +2,13 @@ import {
   type AskAnswer,
   askReview,
   buildForgeReviewPost,
+  buildHandoffBundle,
   canonicalReviewPayload,
+  disclosureFor,
   type ForgePublishPort,
   type ForgeReviewTarget,
   forgeTargetKey,
+  type HandoffTurnOutcome,
   type ReviewService,
   resolveReviewEvent,
 } from "@rennet/core";
@@ -34,15 +37,20 @@ import type {
   DispositionType,
   ElementDiffs,
   FlaggedReview,
+  HandoffBundle,
+  HandoffDisposition,
+  HandoffRunResult,
   NoiseReview,
   OpenSpecChange,
   OpenSpecCoverage,
+  Patchset,
   RefinementResult,
   Review,
   ReviewEngine,
   ReviewNarration,
   SymbolInspection,
 } from "@rennet/types";
+import { type HandoffConsentAuthority, handoffConsentKey } from "./handoff-consent-authority";
 import type { OrchestratorTurnRunner } from "./orchestrator";
 import { type PublishConsentAuthority, publishConsentKey } from "./publish-consent-authority";
 
@@ -117,6 +125,24 @@ export interface DispatchDeps {
    * post under a consent-requiring mode cannot be forged or replayed.
    */
   readonly publishConsent: PublishConsentAuthority;
+  /**
+   * The main-owned HANDOFF consent authority (issue #18): mints a single-use token
+   * bound to (reviewId, bundleDigest) on the user's explicit act
+   * (`review.handoff.requestConsent`) and consumes it before the write session runs,
+   * so a run under an undisclosed or unconfirmed bundle is structurally impossible.
+   */
+  readonly handoffConsent: HandoffConsentAuthority;
+  /**
+   * The write-enabled handoff turn (issue #18): brackets a coding-harness write turn
+   * with workspace checkpoints and returns the turn diff. Composed by the root as
+   * `runHandoffTurn` over the live Claude adapter (exec-denied) + the git checkpoint
+   * store. Optional so a composition WITHOUT a coding harness still constructs — the
+   * `run` command then answers an honest `unavailable` rather than throwing.
+   */
+  readonly runHandoffTurn?: (input: {
+    repoRoot: string;
+    bundle: HandoffBundle;
+  }) => Promise<HandoffTurnOutcome>;
   /**
    * The front door (issue #29): the persisted projects list and the read-only
    * discovery + harness-detection that feed the add-a-project flow. `add` takes the
@@ -332,6 +358,13 @@ export function createDispatch(
     const current = service.bootstrap();
     if (!current || current.id !== reviewId) throw new Error("Review not found");
     return current;
+  }
+
+  /** The review's active patchset (the handoff bundle's baseline). */
+  function activePatchsetOf(review: Review): Patchset {
+    const patchset = review.patchsets.find((candidate) => candidate.id === review.activePatchsetId);
+    if (!patchset) throw new Error("The active patchset is missing");
+    return patchset;
   }
 
   return async function dispatch(
@@ -700,6 +733,101 @@ export function createDispatch(
             ...(input.side === undefined ? {} : { side: input.side }),
           }),
         );
+      }
+      // ── The review→agent handoff loop (issue #18, Contracts §2.1) ──────────────
+      case "review.handoff.prepare": {
+        // PURE: compose the bundle from the addressed dispositions + the active
+        // patchset, and return the spend DISCLOSURE the user acts on. No session, no
+        // token, no spend — this is the surface the user reads before deciding.
+        const input = parseCommandInput(name, rawInput);
+        const review = requireLatestReview(input.reviewId);
+        const bundle = buildHandoffBundle({
+          reviewId: review.id,
+          patchset: activePatchsetOf(review),
+          dispositions: input.dispositions,
+        });
+        return parseCommandOutput(name, {
+          bundle,
+          disclosure: disclosureFor(bundle, "claude-code"),
+        });
+      }
+      case "review.handoff.requestConsent": {
+        // The explicit user act after seeing the disclosure: MAIN mints a single-use
+        // token bound to (reviewId, bundleDigest). This is the ONLY way to obtain a
+        // run authorization — there is no auto-run path.
+        const input = parseCommandInput(name, rawInput);
+        const review = requireLatestReview(input.reviewId);
+        const authorization = deps.handoffConsent.grant(
+          handoffConsentKey(review.id, input.bundleDigest),
+        );
+        return parseCommandOutput(name, { authorization });
+      }
+      case "review.handoff.run": {
+        // The write-enabled turn. Every gate is STRUCTURAL:
+        //   • rebuild the bundle from the SAME dispositions and refuse unless its
+        //     digest matches the disclosed one (spend-disclosed: the run cannot
+        //     execute a bundle the user never saw).
+        //   • consume the single-use token (explicit-act: no token ⇒ no run).
+        //   • the write session denies exec, so `git push` is unreachable (R33).
+        //   • capture appends a NEW patchset; the prior one stays byte-identical
+        //     (R28), asserted below.
+        const input = parseCommandInput(name, rawInput);
+        const review = requireLatestReview(input.reviewId);
+        assertAllowedRepository(review.repositoryRoot);
+        const priorActive = activePatchsetOf(review);
+        const bundle = buildHandoffBundle({
+          reviewId: review.id,
+          patchset: priorActive,
+          dispositions: input.dispositions,
+        });
+        if (bundle.digest !== input.bundleDigest) {
+          return parseCommandOutput(name, {
+            status: "refused",
+            reason: "the handoff bundle changed since it was disclosed",
+          });
+        }
+        if (
+          !deps.handoffConsent.consume(
+            handoffConsentKey(review.id, input.bundleDigest),
+            input.authorization,
+          )
+        ) {
+          return parseCommandOutput(name, {
+            status: "refused",
+            reason: "no valid handoff authorization — the run must be explicitly confirmed",
+          });
+        }
+        if (!deps.runHandoffTurn) {
+          return parseCommandOutput(name, {
+            status: "unavailable",
+            reason: "no coding harness is available to run the handoff",
+          });
+        }
+        const turn = await deps.runHandoffTurn({ repoRoot: review.repositoryRoot, bundle });
+        if (turn.status === "failed") {
+          return parseCommandOutput(name, { status: "failed", reason: turn.reason });
+        }
+        // Capture the agent's result as a NEW patchset — the delta re-review. The
+        // PatchsetActivated fold appends it and runs the byte-identical floor carry
+        // (approved-unchanged dispositions survive); the #16 matcher would upgrade
+        // that carry, and is not wired here (honest `matcher-not-wired`).
+        const updated = await service.capture(input.commandId, review.repositoryRoot, review.id);
+        deps.setRepositoryDirty(false);
+        // R28 immutability: the pre-handoff patchset must survive byte-identical. Its
+        // id is content-addressed over (repository, files, bytes), so the SAME id still
+        // present proves the content was never rewritten.
+        const preserved = updated.patchsets.find((candidate) => candidate.id === priorActive.id);
+        if (!preserved) {
+          throw new Error("Handoff violated patchset immutability: the prior patchset was rewritten");
+        }
+        const result: HandoffRunResult = {
+          review: updated,
+          turnDiff: turn.turnDiff,
+          filesTouched: [...turn.filesTouched],
+          carriedFloor: updated.dispositions.length,
+          lineageCarry: "matcher-not-wired",
+        };
+        return parseCommandOutput(name, { status: "ran", result });
       }
       // ── The Noise lens (issue #34) ────────────────────────────────────────────
       case "noise.review": {
