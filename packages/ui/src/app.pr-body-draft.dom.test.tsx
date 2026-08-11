@@ -163,6 +163,38 @@ describe("RennetApp — the drafted body flows to the composer + preview (#74 ME
       "gpt-5.6-luna",
     );
   });
+
+  it("the drafted-then-EDITED body is what the PAPER previews and signs (the production handoff)", async () => {
+    // The uncovered handoff: composer `prDraft.body` → publishContext.submission.body
+    // → the paper the human holds-to-sign. Removing the `body: prBody` spread at
+    // app.tsx:998 left every composer-only test green — this drives model result →
+    // EDIT → paper, so it reddens on exactly that break.
+    const { bridge } = draftingBridge(review, DRAFTED);
+    const { container } = await toDraftWithNote(bridge, "some note");
+    clickDraftWithAi(container);
+    const composerBody = () =>
+      container.querySelector<HTMLTextAreaElement>('[data-testid="pr-draft-body"]');
+    await waitFor(() => expect(composerBody()?.value).toBe("An honest account of the change."));
+    // The human edits the drafted body before signing — the paper must carry the edit,
+    // not the model's first draft and not the deterministic fallback.
+    const EDITED = "EDITED_BODY::this-exact-account-must-reach-the-paper";
+    const bodyEl = composerBody();
+    if (!bodyEl) throw new Error("composer body textarea missing");
+    fireEvent.change(bodyEl, { target: { value: EDITED } });
+    await waitFor(() => expect(composerBody()?.value).toBe(EDITED));
+    // Open the paper (the hold-to-sign surface) over the settled draft.
+    const sign = container.querySelector<HTMLButtonElement>(".collation-sign");
+    if (!sign) throw new Error("draft Sign (open-paper) control missing");
+    expect(sign.disabled).toBe(false);
+    fireEvent.click(sign);
+    await waitFor(() => expect(container.querySelector(".publish-sheet")).not.toBeNull());
+    // RED-proof (body handoff, app.tsx:998): drop the spread → "(no description)".
+    expect(container.querySelector('[data-testid="pr-body"]')?.textContent).toContain(EDITED);
+    // And the drafted title rides the sibling handoff (app.tsx:997) onto the paper.
+    expect(container.querySelector(".publish-sheet-pr-title")?.textContent).toBe(
+      "Bound the fail-open path",
+    );
+  });
 });
 
 describe("RennetApp — the draft Sign is disabled while a draft is in flight (#74 HIGH-2)", () => {
