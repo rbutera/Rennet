@@ -70,6 +70,7 @@ export class BaselineAdvanceCoordinator {
   private running = false;
   private dirty = false;
   private draining: Promise<void> | null = null;
+  private closed = false;
 
   private readonly debounceMs: number;
   private readonly timers: Timers;
@@ -81,11 +82,26 @@ export class BaselineAdvanceCoordinator {
 
   /** A ref may have moved. Debounced: the burst collapses to a single scheduled drain. */
   notify(): void {
+    if (this.closed) return;
     if (this.pending !== null) this.timers.clearTimeout(this.pending);
     this.pending = this.timers.setTimeout(() => {
       this.pending = null;
       this.trigger();
     }, this.debounceMs);
+  }
+
+  /**
+   * Terminal shutdown: clear any pending debounced drain and refuse all further
+   * triggers, so a queued notify can never fire a pass AFTER the owner has torn the
+   * watcher down. An already-running drain is left to settle (it was legitimately in
+   * flight); the closed flag stops it re-looping and blocks any new pass.
+   */
+  cancel(): void {
+    this.closed = true;
+    if (this.pending !== null) {
+      this.timers.clearTimeout(this.pending);
+      this.pending = null;
+    }
   }
 
   /** Resolves once any in-flight drain settles (test seam; no-op when idle). */
@@ -94,6 +110,7 @@ export class BaselineAdvanceCoordinator {
   }
 
   private trigger(): void {
+    if (this.closed) return;
     // Coalesce: a drain already running just marks the run dirty (one more pass
     // afterwards at the newest tip); we never start a second concurrent drain.
     if (this.running) {
@@ -122,7 +139,7 @@ export class BaselineAdvanceCoordinator {
         // The watcher must never crash the host process; surface and continue.
         this.deps.onError?.(error);
       }
-    } while (this.dirty);
+    } while (this.dirty && !this.closed);
   }
 }
 

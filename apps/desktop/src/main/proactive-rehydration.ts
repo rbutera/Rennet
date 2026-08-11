@@ -33,11 +33,21 @@ import type { ProcessedRepoSummary, Project, ProjectProcessEvent } from "@rennet
  * with background narration, and tears down cleanly.
  *
  * Design fidelity (R54, `Rennet Orchestrator Context Access.md`): the "proactive
- * update" direction keeps the DETERMINISTIC snapshot rebuild warm and NEVER blocks a
- * review — the review path pins to its patchset base OID and refuses a stale snapshot
- * synchronously, so a background regen can only make a later review faster, never
- * wrong. (The LLM knowledge layer is a separate, not-yet-wired composition; it is
- * deliberately NOT triggered here.)
+ * update" direction keeps the DETERMINISTIC snapshot rebuild warm and never yields a
+ * WRONG review — every context read is gated on content-equality at the review's own
+ * pinned base OID (`project-context-reader.ts`, R30) and returns a typed `stale`
+ * refusal rather than serving a mismatched map. (The LLM knowledge layer is a separate,
+ * not-yet-wired composition; it is deliberately NOT triggered here.)
+ *
+ * ⚠️ KNOWN LIMITATION (#143, Codex review): the store holds ONE manifest per repo, so a
+ * background advance to a newer tip EVICTS the warm map from a review still pinned to an
+ * OLDER base OID — that review's context reads then fail-closed to `stale` (honest,
+ * never wrong output) until it re-opens and regenerates at its own OID. So a pass makes
+ * a review opened AT the new tip faster, but can DEGRADE (never corrupt) an in-flight
+ * older-pinned one. The real fixes — OID-addressable manifests, or suppressing
+ * advancement while a review is leased to the prior snapshot — are a follow-on; this
+ * ships as a known limitation (Rai's features-over-hardening call). The interaction is
+ * pinned by a test so a future "fix" must update it.
  *
  * Two judgement calls, both flagged in the handoff:
  *  - "Don't fight the user": we only keep warm what is ALREADY built — a repo with no
@@ -191,6 +201,9 @@ export async function startRepoRehydration(
     close: () => {
       if (closed) return;
       closed = true;
+      // Terminal: cancel first so a queued/debounced notify can never fire a pass
+      // AFTER teardown, THEN stop the fs watch so no new notify arrives.
+      coordinator.cancel();
       watchHandle.close();
     },
   };
@@ -230,14 +243,24 @@ export function projectRepoPaths(project: Project): string[] {
 export function createProactiveRehydration(deps: ProactiveRehydrationDeps): ProactiveRehydration {
   const startRepo = deps.startRepo ?? startRepoRehydration;
   const handles = new Map<string, RepoRehydrationHandle>();
-  // Guard against a concurrent second `ensureForProject` racing a not-yet-registered
-  // repoKey into two watchers: remember paths we have a start in flight for.
+  // Paths already accounted for (a live watcher, or one resolved to an already-warm
+  // repoKey): a later ensure SKIPS startup entirely rather than starting a watcher and
+  // immediately closing it as a duplicate. A path that could NOT be warmed yet (no
+  // snapshot) is deliberately NOT cached, so a later ensure — after the project is
+  // processed and its manifest exists — retries it.
+  const startedPaths = new Set<string>();
+  // Guard against a concurrent second `ensureForProject` racing the same path into two
+  // starts before either has resolved.
   const inFlight = new Set<string>();
+  // Terminal shutdown: once closed, a start that resolves late is closed on arrival and
+  // never retained, so teardown can never leak an orphaned watcher.
+  let closed = false;
 
   return {
     ensureForProject: async (project) => {
+      if (closed) return;
       for (const repoPath of projectRepoPaths(project)) {
-        if (inFlight.has(repoPath)) continue;
+        if (startedPaths.has(repoPath) || inFlight.has(repoPath)) continue;
         inFlight.add(repoPath);
         try {
           const handle = await startRepo({
@@ -249,7 +272,16 @@ export function createProactiveRehydration(deps: ProactiveRehydrationDeps): Proa
             ...(deps.onError ? { onError: deps.onError } : {}),
             ...(deps.git ? { git: deps.git } : {}),
           });
+          // No snapshot yet — not cached, so a later ensure retries this path.
           if (!handle) continue;
+          // Teardown happened while this start was in flight: close on arrival, never
+          // retain (finding: closeAll must be terminal, no late watcher survives it).
+          if (closed) {
+            handle.close();
+            continue;
+          }
+          // This path is now accounted for — future ensures skip it.
+          startedPaths.add(repoPath);
           // Another path may have resolved to the same repoKey (shared common dir):
           // keep the first, close the duplicate.
           if (handles.has(handle.repoKey)) {
@@ -265,6 +297,7 @@ export function createProactiveRehydration(deps: ProactiveRehydrationDeps): Proa
       }
     },
     closeAll: () => {
+      closed = true;
       for (const handle of handles.values()) handle.close();
       handles.clear();
     },

@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 import {
+  ProjectContextReader,
   ProjectSnapshotGenerator,
   ProjectSnapshotStore,
   type Timers,
@@ -14,6 +15,7 @@ import {
   createProactiveRehydration,
   projectRepoPaths,
   type RepoRehydrationHandle,
+  type StartRepoRehydrationDeps,
   startRepoRehydration,
 } from "./proactive-rehydration";
 
@@ -217,6 +219,49 @@ describe("proactive rehydration — end to end over a real git repo", () => {
     expect(watcher.targets).toHaveLength(0);
     expect(generateSpy).not.toHaveBeenCalled();
   });
+
+  it("serves the new tip warm but evicts an OLDER-pinned reader — the #143 known limitation", async () => {
+    const { root, storeDir, oid1, advance } = repoOnMain();
+    const store = new ProjectSnapshotStore(storeDir);
+    const generator = new ProjectSnapshotGenerator({ store });
+    await generator.generate(root, { explicitBaseRef: "main" }); // manifest at oid1
+
+    const reader = new ProjectContextReader(store);
+    const done = deferred();
+    const clock = fakeTimers();
+    const watcher = capturingWatch();
+    const handle = await startRepoRehydration({
+      repoPath: root,
+      explicitBaseRef: "main",
+      store,
+      generator,
+      narrate: (event) => {
+        if (event.kind === "repo-done" || event.kind === "repo-error") done.resolve();
+      },
+      watch: watcher.watch,
+      timers: clock.timers,
+    });
+    const repoKey = handle?.repoKey ?? "";
+
+    // Before the advance: a read pinned to oid1 is fresh.
+    expect(reader.loadFresh(repoKey, oid1).ok).toBe(true);
+
+    const oid2 = advance();
+    watcher.fire(`${sep}refs${sep}heads`);
+    clock.flush();
+    await done.promise;
+
+    // After: the NEW tip is served warm (the value) — but the OLD-pinned read is now
+    // refused `stale` (the known limitation: a background advance DEGRADES an in-flight
+    // older-pinned review, never corrupts it). If a future fix makes both readable
+    // (OID-addressable manifests / lease-suppression), THIS assertion must change.
+    expect(reader.loadFresh(repoKey, oid2).ok).toBe(true);
+    const stale = reader.loadFresh(repoKey, oid1);
+    expect(stale.ok).toBe(false);
+    if (!stale.ok) expect(stale.failure.reason).toBe("stale");
+
+    handle?.close();
+  });
 });
 
 describe("proactive rehydration — the registry", () => {
@@ -231,15 +276,12 @@ describe("proactive rehydration — the registry", () => {
       ...over,
     }) as Project;
 
-  it("starts one watcher per included repo and is idempotent by repoKey", async () => {
+  it("starts one watcher per included repo, dedupes by repoKey, and a second ensure starts NOTHING new", async () => {
     const closed: string[] = [];
-    const started: string[] = [];
     const startRepo = vi.fn(
-      async (deps: { repoPath: string }): Promise<RepoRehydrationHandle | null> => {
+      async (deps: StartRepoRehydrationDeps): Promise<RepoRehydrationHandle | null> => {
         // Both included repos share one common dir → the SAME repoKey (a worktree pair).
-        const repoKey = "shared-key";
-        started.push(deps.repoPath);
-        return { repoKey, close: () => closed.push(deps.repoPath) };
+        return { repoKey: "shared-key", close: () => closed.push(deps.repoPath) };
       },
     );
     const registry = createProactiveRehydration({
@@ -252,17 +294,48 @@ describe("proactive rehydration — the registry", () => {
     });
 
     await registry.ensureForProject(project());
-    // Two repos attempted; the second's duplicate repoKey was closed, one handle kept.
-    expect(started).toEqual(["/repo/a", "/repo/b"]);
+    // One attempt per included repo; the second's duplicate repoKey was closed, one kept.
+    expect(startRepo).toHaveBeenCalledTimes(2);
     expect(closed).toEqual(["/repo/b"]);
 
-    // A second ensure for the same project starts nothing new (repoKey already warm)…
-    started.length = 0;
+    // A second ensure for the same project starts NOTHING new — both paths are cached.
+    // (This is the assertion the previous version reset the counter for but never made.)
     await registry.ensureForProject(project());
-    // …the duplicate is still closed each attempt, but no new handle is retained.
+    expect(startRepo).toHaveBeenCalledTimes(2);
+
     registry.closeAll();
     // closeAll closed the one retained handle (repo /repo/a).
     expect(closed).toContain("/repo/a");
+  });
+
+  it("closeAll() closes a watcher whose start resolves AFTER teardown — no orphan survives", async () => {
+    const gate = deferred();
+    let lateHandleClosed = false;
+    const startRepo = vi.fn(async (): Promise<RepoRehydrationHandle | null> => {
+      await gate.promise; // hold the start in flight
+      return {
+        repoKey: "k",
+        close: () => {
+          lateHandleClosed = true;
+        },
+      };
+    });
+    const registry = createProactiveRehydration({
+      store: {} as never,
+      generator: {} as never,
+      narrate: () => {
+        /* ignored */
+      },
+      startRepo,
+    });
+
+    const ensuring = registry.ensureForProject(project({ includedRepoPaths: ["/repo/a"] }));
+    registry.closeAll(); // teardown while the start is still awaiting
+    gate.resolve(); // the start resolves LATE
+    await ensuring;
+
+    // The late handle was closed on arrival, never retained as an orphan.
+    expect(lateHandleClosed).toBe(true);
   });
 
   it("projectRepoPaths falls back to the single open path when no included repos", () => {
