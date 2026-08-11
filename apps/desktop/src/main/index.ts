@@ -8,6 +8,7 @@ import {
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
   type CodexAvailability,
+  claudeHandoffRunPort,
   cleanupWorktree,
   createClaudeHarness,
   createCodexExecutor,
@@ -33,6 +34,7 @@ import {
   FileProjectStore,
   type GhRunner,
   GitCaptureAdapter,
+  GitCheckpointStore,
   GitHubChangesetSource,
   GitHubForgeAdapter,
   GitHubPublishAdapter,
@@ -44,6 +46,7 @@ import {
   parseGitHubPrRef,
   RepoWatcher,
   readOpenSpecChange,
+  repoHasSubmodules,
   resolveGitHubAuth,
   SqliteReviewStore,
   snapshotStoreFor,
@@ -67,6 +70,7 @@ import {
   runCoverageMapping,
   runDecisionAngle,
   runDualFindingReview,
+  runHandoffTurn as runHandoffTurnCore,
   runHypothesisPass,
   runNoiseAngle,
   verifyFlaggedReview,
@@ -1155,6 +1159,37 @@ app.whenReady().then(async () => {
     orchestratorTurn,
     publishPort,
     publishConsent,
+    // The write-enabled handoff turn (issue #18): brackets a live `claude` write turn
+    // (fully capable, Bash included — Rai's call) with git checkpoints and returns the
+    // turn diff. Reuses the SAME memoized `claude` discovery the review pipeline uses
+    // (R2 subscription OAuth). Refuses a repo with submodules (Codex F6) and answers an
+    // honest failed turn when no `claude` is installed — never a fabricated success.
+    runHandoffTurn: async ({ repoRoot, bundle }) => {
+      if (await repoHasSubmodules(repoRoot)) {
+        return {
+          status: "failed",
+          reason:
+            "Handoff does not support repositories with submodules yet: a coding agent's edits inside a submodule leave the gitlink unchanged, so the review would not see them. Refusing rather than losing them.",
+          turnDiff: "",
+          filesTouched: [],
+        };
+      }
+      const { adapter } = await getClaudeHarness();
+      if (!adapter) {
+        return {
+          status: "failed",
+          reason: "no coding harness (claude) is installed to run the handoff",
+          turnDiff: "",
+          filesTouched: [],
+        };
+      }
+      return runHandoffTurnCore({
+        repoRoot,
+        bundle,
+        runPort: claudeHandoffRunPort(adapter),
+        checkpoint: new GitCheckpointStore(repoRoot),
+      });
+    },
     chooseRepository,
     openPullRequest,
     startWatching: (root: string) =>

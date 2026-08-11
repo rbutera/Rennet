@@ -16,6 +16,7 @@ export {
   createCanvasOpsServer,
   type LoadCanvasOpsSdk,
 } from "./canvas-ops-server";
+export { GitCheckpointStore, repoHasSubmodules } from "./checkpoint-store";
 export {
   CLAUDE_TESTED_RANGE,
   ClaudeAdapter,
@@ -152,6 +153,7 @@ export {
   type GitHubPublishConfig,
 } from "./github-publish";
 export { parseGitHubSso } from "./github-sso";
+export { claudeHandoffRunPort } from "./handoff-run-live";
 export {
   compareVersions,
   type DiscoverCodexOptions,

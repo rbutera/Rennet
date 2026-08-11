@@ -7,6 +7,11 @@ import type {
   ElementDiffs,
   FindingVerification,
   FlaggedReview,
+  HandoffBundle,
+  HandoffDisclosure,
+  HandoffDisposition,
+  HandoffRunResult,
+  HandoffTask,
   NoiseReview,
   OpenSpecChange,
   OpenSpecCoverage,
@@ -1150,6 +1155,79 @@ export const settingsGuidanceSchema = z.object({
 });
 export type SettingsGuidance = z.infer<typeof settingsGuidanceSchema>;
 
+// ── The review→agent handoff loop schemas (issue #18) ──────────────────────────
+// Mirror the `@rennet/types` wire shapes. The OUTPUT schemas are annotated
+// `z.ZodType<T>` so a field added to a type that is NOT added here fails the build
+// (the IPC-strip guard: an optional field silently dropped at the boundary is the
+// recurring #242 defect). The disposition INPUT schema is a plain object so its
+// `z.input` type infers concretely (a `z.ZodType<T>` annotation defaults the Input
+// param to `unknown`, which would type the command input's `dispositions` as
+// `unknown[]`). The bundle's `z.ZodType<HandoffBundle>` annotation still catches a
+// task-shape drift through `tasks: z.array(handoffTaskSchema)`.
+const handoffDispositionSchema = z.object({
+  path: z.string().min(1),
+  type: dispositionTypeSchema,
+  body: z.string(),
+  span: anchorSpanSchema.optional(),
+  side: anchorSideSchema.optional(),
+}) satisfies z.ZodType<HandoffDisposition>;
+
+const handoffTaskSchema = z.object({
+  path: z.string().min(1),
+  type: dispositionTypeSchema,
+  instruction: z.string(),
+  span: anchorSpanSchema.optional(),
+  side: anchorSideSchema.optional(),
+  context: z.string(),
+}) satisfies z.ZodType<HandoffTask>;
+
+const handoffBundleSchema: z.ZodType<HandoffBundle> = z.object({
+  reviewId: z.string().min(1),
+  patchsetId: z.string().min(1),
+  tasks: z.array(handoffTaskSchema),
+  prompt: z.string(),
+  digest: z.string().min(1),
+});
+
+const handoffDisclosureSchema: z.ZodType<HandoffDisclosure> = z.object({
+  harness: z.string().min(1),
+  model: z.string().optional(),
+  taskCount: z.number().int().nonnegative(),
+  writeEnabled: z.literal(true),
+  editsWorkingTree: z.literal(true),
+  summary: z.string(),
+});
+
+const handoffRunResultSchema: z.ZodType<HandoffRunResult> = z.object({
+  review: reviewSchema,
+  turnDiff: z.string(),
+  filesTouched: z.array(z.string()),
+  carriedFloor: z.number().int().nonnegative(),
+  lineageCarry: z.enum(["matcher-not-wired", "applied"]),
+});
+
+/**
+ * The `review.handoff.run` outcome. A discriminated union so every non-success is
+ * an HONEST, distinct state the renderer can render, never a fabricated result:
+ *   • `ran`         — the write turn completed and a new patchset was captured.
+ *   • `refused`     — the consent token was absent / forged / bound to a different
+ *                     bundle (the explicit-act + spend-disclosed gates fired).
+ *   • `unavailable` — no coding harness is installed to run the write session.
+ *   • `failed`      — the write turn ran but did not complete.
+ */
+const handoffRunOutputSchema = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("ran"), result: handoffRunResultSchema }),
+  z.object({ status: z.literal("unavailable"), reason: z.string() }),
+  // A failed turn carries the files the agent changed BEFORE erroring (Codex F4), so a
+  // partial mutation on disk is surfaced to the reviewer rather than hidden.
+  z.object({
+    status: z.literal("failed"),
+    reason: z.string(),
+    filesTouched: z.array(z.string()),
+  }),
+]);
+export type HandoffRunOutput = z.infer<typeof handoffRunOutputSchema>;
+
 export const commandDefinitions = {
   "app.bootstrap": {
     input: z.object({}),
@@ -1678,6 +1756,32 @@ export const commandDefinitions = {
       visibility: projectVisibilitySchema,
     }),
     output: setRepoVisibilityOutcomeSchema,
+  },
+  // ── The review→agent handoff loop (issue #18, Contracts §2.1 destination B) ──
+  // Batch the reviewer's open request-change/comment dispositions into a task bundle,
+  // hand it to a coding harness in a WRITE-enabled session, capture the result as a
+  // NEW immutable patchset, and re-review only the delta. Two steps, no gates: a
+  // button that runs the agent IS the human act (Rule Zero — no consent ceremony).
+  //   • `prepare` composes the bundle and returns it + a disclosure to display. Pure.
+  //   • `run` rebuilds the bundle from the dispositions against the current active
+  //     patchset, runs the write turn, and captures the delta.
+  "review.handoff.prepare": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+      /** The addressed dispositions in effective (refined-if-kept, else raw) form. */
+      dispositions: z.array(handoffDispositionSchema),
+    }),
+    output: z.object({ bundle: handoffBundleSchema, disclosure: handoffDisclosureSchema }),
+  },
+  "review.handoff.run": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+      /** The dispositions to hand off; the bundle is rebuilt from them + the active patchset. */
+      dispositions: z.array(handoffDispositionSchema),
+    }),
+    output: handoffRunOutputSchema,
   },
 } as const;
 

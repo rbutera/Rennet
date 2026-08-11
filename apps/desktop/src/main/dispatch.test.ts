@@ -152,6 +152,10 @@ function harness(
     DispatchDeps,
     "symbolLookup" | "openInEditor" | "openSpecChange" | "openSpecCoverage" | "settings"
   > = {},
+  extra: {
+    capturePort?: PatchsetCapturePort;
+    runHandoffTurn?: DispatchDeps["runHandoffTurn"];
+  } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
   service: ReviewService;
@@ -167,7 +171,9 @@ function harness(
   refineCommentSpy: ReturnType<typeof vi.fn>;
   draftPrBodySpy: ReturnType<typeof vi.fn>;
 } {
-  const capture: PatchsetCapturePort = { capture: () => Promise.resolve(patchset()) };
+  const capture: PatchsetCapturePort = extra.capturePort ?? {
+    capture: () => Promise.resolve(patchset()),
+  };
   const service = new ReviewService(capture, new InMemoryStore());
   const allowedRoots = new Set<string>();
   let dirty = false;
@@ -242,6 +248,7 @@ function harness(
     buildCanvases,
     publishPort,
     publishConsent,
+    ...(extra.runHandoffTurn ? { runHandoffTurn: extra.runHandoffTurn } : {}),
     // Front-door deps (issue #29): a trivial in-memory projects capability plus
     // stub discovery/detection. The dedicated front-door tests exercise these
     // handlers directly; the shared harness only needs them to satisfy the shape.
@@ -1841,5 +1848,149 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
     expect(vis.status).toBe("unresolved");
     expect(vis.changed).toBe(false);
     expect(vis.gitignorePath).toBe("");
+  });
+});
+
+// ── The review→agent handoff loop (issue #18, Contracts §2.1) ──────────────────
+
+/** A capture port that returns v1 on the first call (initial review.capture) and a
+ *  changed v2 on the second (the handoff's post-turn capture), so the delta is real. */
+function twoPhaseCapture(): PatchsetCapturePort {
+  let calls = 0;
+  return {
+    capture: () => {
+      calls += 1;
+      if (calls === 1) return Promise.resolve(patchset()); // v1: patch-1, src/a.ts
+      return Promise.resolve({
+        ...patchset(),
+        id: "patch-2",
+        files: [
+          {
+            path: "src/a.ts",
+            status: "modified",
+            additions: 2,
+            deletions: 0,
+            binary: false,
+            patch: "XY",
+          },
+          // An edit NO disposition mentioned — the totality guarantee must surface it.
+          {
+            path: "src/unrelated.ts",
+            status: "added",
+            additions: 1,
+            deletions: 0,
+            binary: false,
+            patch: "Z",
+          },
+        ],
+        rawDiff: "XYZ",
+      });
+    },
+  };
+}
+
+const HANDOFF_TURN = {
+  status: "completed" as const,
+  finalText: "addressed the change",
+  turnDiff: [
+    "diff --git a/src/a.ts b/src/a.ts",
+    "@@ -1 +1 @@",
+    "diff --git a/src/unrelated.ts b/src/unrelated.ts",
+    "@@ -0,0 +1 @@",
+  ].join("\n"),
+  filesTouched: ["src/a.ts", "src/unrelated.ts"],
+};
+
+const HANDOFF_DISPOSITIONS = [
+  { path: "src/a.ts", type: "request-change" as const, body: "add a guard clause" },
+];
+
+describe("createDispatch — review.handoff.* (the review→agent loop, issue #18)", () => {
+  it("prepare composes a bundle and its disclosure (pure — no session, no gate)", async () => {
+    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>();
+    const { dispatch } = harness(undefined, {}, { runHandoffTurn });
+    const review = await capturedReview(dispatch);
+
+    const out = (await dispatch("review.handoff.prepare", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      dispositions: HANDOFF_DISPOSITIONS,
+    })) as {
+      bundle: { digest: string; tasks: unknown[] };
+      disclosure: { writeEnabled: boolean; editsWorkingTree: boolean; taskCount: number };
+    };
+
+    expect(out.bundle.tasks).toHaveLength(1);
+    expect(out.disclosure.writeEnabled).toBe(true);
+    expect(out.disclosure.taskCount).toBe(1);
+    // Preparing NEVER runs the write turn.
+    expect(runHandoffTurn).not.toHaveBeenCalled();
+  });
+
+  it("run captures a NEW patchset, preserves the prior byte-identical (R28), and proves totality", async () => {
+    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
+      async () => HANDOFF_TURN,
+    );
+    const { dispatch } = harness(undefined, {}, { capturePort: twoPhaseCapture(), runHandoffTurn });
+    const review = await capturedReview(dispatch);
+    const priorActiveId = review.activePatchsetId;
+
+    // A button-press IS the human act — run directly, no consent ceremony.
+    const out = (await dispatch("review.handoff.run", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      dispositions: HANDOFF_DISPOSITIONS,
+    })) as {
+      status: string;
+      result: {
+        review: Review;
+        turnDiff: string;
+        filesTouched: string[];
+        lineageCarry: string;
+      };
+    };
+
+    expect(out.status).toBe("ran");
+    expect(runHandoffTurn).toHaveBeenCalledTimes(1);
+    // A NEW patchset is active; the prior one still exists (R28: never rewritten).
+    expect(out.result.review.activePatchsetId).toBe("patch-2");
+    expect(out.result.review.patchsets.map((p) => p.id)).toContain(priorActiveId);
+    const preserved = out.result.review.patchsets.find((p) => p.id === priorActiveId);
+    expect(preserved?.files).toEqual(patchset().files);
+    // Totality: the agent's edit to a file no disposition mentioned still appears.
+    expect(out.result.filesTouched).toContain("src/unrelated.ts");
+    expect(out.result.lineageCarry).toBe("matcher-not-wired");
+  });
+
+  it("run surfaces the files a FAILED turn changed before erroring (Codex F4)", async () => {
+    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(async () => ({
+      status: "failed" as const,
+      reason: "harness overloaded",
+      turnDiff: "diff --git a/src/half.ts b/src/half.ts",
+      filesTouched: ["src/half.ts"],
+    }));
+    const { dispatch } = harness(undefined, {}, { capturePort: twoPhaseCapture(), runHandoffTurn });
+    const review = await capturedReview(dispatch);
+
+    const out = (await dispatch("review.handoff.run", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      dispositions: HANDOFF_DISPOSITIONS,
+    })) as { status: string; reason: string; filesTouched: string[] };
+
+    expect(out.status).toBe("failed");
+    // The edits made before the error are surfaced, not hidden.
+    expect(out.filesTouched).toEqual(["src/half.ts"]);
+  });
+
+  it("run answers 'unavailable' honestly when no coding harness is wired", async () => {
+    const { dispatch } = harness();
+    const review = await capturedReview(dispatch);
+    const out = (await dispatch("review.handoff.run", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      dispositions: HANDOFF_DISPOSITIONS,
+    })) as { status: string };
+    expect(out.status).toBe("unavailable");
   });
 });
