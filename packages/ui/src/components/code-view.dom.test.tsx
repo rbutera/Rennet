@@ -55,6 +55,31 @@ describe("CodeView — mounted scroll interaction (the #11 frozen-window bug)", 
     expect(container.querySelector('[data-raw-index="0"]')).toBeNull();
   });
 
+  it("follows a focusAnchor beyond the initial viewport into view (the coverage-chip jump)", async () => {
+    // A 400-row hunk; the initial window is pinned at the top (rows ~0-30).
+    const { container } = mount(
+      <CodeView
+        path="src/big.ts"
+        diff={bigDiff(400)}
+        occurrenceIds="H"
+        rowHeight={18}
+        viewportHeight={480}
+        // A jump target deep in the hunk (new-file lines 200-201 → rows ~200).
+        focusAnchor="rennet:hunk/H#L200-L201@additions"
+      />,
+    );
+    const scrollEl = container.querySelector<HTMLElement>(".code-view-scroll");
+    if (!scrollEl) throw new Error("scroll container did not mount");
+
+    // The window followed the resolved focus row instead of freezing at row 0, so the
+    // pulsed row is actually painted (on-screen) rather than CSS-focused off-screen.
+    await waitFor(() => {
+      expect(Number(scrollEl.getAttribute("data-window-start"))).toBeGreaterThan(150);
+    });
+    expect(container.querySelector('[data-raw-index="200"]')).not.toBeNull();
+    expect(container.querySelector('[data-raw-index="0"]')).toBeNull();
+  });
+
   it("starts each test from a clean document (the harness unmounts between tests)", () => {
     // Proves afterEach(cleanup) from the shared harness fired: the previous test's
     // tree is gone before this one mounts. Guards downstream slices against

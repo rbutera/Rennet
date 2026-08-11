@@ -220,6 +220,20 @@ export function CodeView({
     if (placement && onPlacement) onPlacement(placement);
   }, [placementKey, onPlacement]);
 
+  // Bring the deixis focus into view. A jump — a coverage chip to a later hunk in a
+  // multi-hunk chunk, a Flagged/Noise index row — resolves rows ANYWHERE in the diff,
+  // but the window is seeded from `scrollTop` and would otherwise leave the pulsed row
+  // scrolled off-screen (the CSS focus is then useless). When the FIRST focused row
+  // CHANGES, move the window so that row sits near the top (a small margin), clamped
+  // into range. Keyed on the row index (a number) — user scrolling does not change it,
+  // so this never fights the reviewer's own scroll, only a fresh jump target.
+  const firstFocusRow = focusRows.size > 0 ? Math.min(...focusRows) : -1;
+  useEffect(() => {
+    if (firstFocusRow < 0 || renderAll) return;
+    const margin = Math.min(overscan, 4) * rowHeight;
+    setScroll(Math.max(0, firstFocusRow * rowHeight - margin));
+  }, [firstFocusRow, renderAll, rowHeight, overscan]);
+
   const total = registry.rows.length;
   const range: WindowRange = renderAll
     ? { start: 0, end: total }

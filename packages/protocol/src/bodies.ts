@@ -214,17 +214,18 @@ export function findingVerificationJsonSchema(): unknown {
  * and the runner GROUNDS it itself (drops any hunk the model names that was not
  * offered) rather than leaning on the RSP validator. Each mapping carries the
  * requirement's identity (`capability` + `requirement` name, echoed back so the
- * runner joins it to the real requirement), the `hunks` that implement it (hunk ids
- * from the offered set; the runner keeps only the grounded ones and shapes them into
- * `rennet:hunk/<id>` jump anchors), and the count of `tests` that exercise it. An
- * empty `hunks` is an honest "unimplemented" — a computed zero, not a fabrication.
+ * runner joins it to the real requirement), the `hunks` that implement it, and the
+ * `testHunks` that test it — BOTH as hunk ids from the offered set; the runner keeps
+ * only the grounded ones, shapes `hunks` into `rennet:hunk/<id>` jump anchors, and
+ * DERIVES the shown test count from the distinct grounded `testHunks` files (never a
+ * free scalar). An empty `hunks` is an honest "unimplemented" — a computed zero.
  */
 const coverageMappingTurnItemSchema = z
   .object({
     capability: z.string().min(1),
     requirement: z.string().min(1),
     hunks: z.array(z.string()),
-    tests: z.number(),
+    testHunks: z.array(z.string()),
   })
   .loose();
 

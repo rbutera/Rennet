@@ -2508,7 +2508,9 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font: 500 11.5px / 1.2 var(--mono);
+  /* Proportional UI face — the Design Doctrine reserves monospace for actual CODE,
+     never a label/count/chip (docs/Rennet Design Doctrine.md §mono). */
+  font: 500 11.5px / 1.2 var(--sans);
   padding: 4px 8px;
   border-radius: 6px;
   color: var(--green);
@@ -2519,7 +2521,7 @@
    a default button, and give it the affordance cues without shifting layout. */
 button.ospec-covchip {
   cursor: pointer;
-  font-family: var(--mono);
+  font-family: var(--sans);
 }
 button.ospec-covchip:hover {
   border-color: var(--green);

@@ -11,20 +11,24 @@
  * verification) it does not mint an RSP envelope or run the RSP validator. Instead it
  * takes the SAME anti-hallucination discipline the finding runner applies with
  * `cullFindings`: the model's output is GROUNDED against the offered hunk set, and any
- * hunk it names that was not offered is dropped. Two more honesty rules make the three
- * chip states truthful:
+ * hunk it names that was not offered is dropped. The test COUNT is grounded the same
+ * way — derived from the distinct offered test FILES the model cited, never a free
+ * scalar it could inflate. Two more honesty rules make the three chip states truthful:
  *
  *   1. The REQUIREMENTS are the authority, never the model. The runner iterates the
  *      change's real requirements and attaches the model's mapping to each — so the
  *      model can neither invent a requirement nor silently drop one. A requirement the
- *      model returned no mapping for (within a real mappings array) is an honest
+ *      model returned no mapping for (within a genuine set of mappings) is an honest
  *      computed ZERO (`unimplemented`).
- *   2. "Ran" and "did not run" never blur. A completed turn whose body carries a real
- *      `mappings` array yields `ok` (every requirement covered-or-zero). A budget
- *      refusal, a turn failure, or a body with NO usable mappings array yields
- *      `failed` with an empty edge set — so the Spec view renders NO chips rather than
- *      a fabricated all-unimplemented, keeping "not computed" distinct from a real
- *      zero. Fail-closed on the money circuit (Rule 75): an ABSENT budget is a refusal.
+ *   2. "Ran" and "did not run" never blur. A run is genuine only if at least one model
+ *      mapping JOINS a real requirement; an empty `mappings` array, an all-malformed
+ *      one, or one whose entries name no real requirement all reduce to ZERO usable
+ *      mappings — the model said nothing about any requirement, so (like a budget
+ *      refusal or a turn failure) the runner yields `failed` with an empty edge set,
+ *      and the Spec view renders NO chips rather than a fabricated all-unimplemented.
+ *      A genuine all-unimplemented (entries that DO join real requirements, with empty
+ *      hunk lists) passes the gate and yields `ok`. Fail-closed on the money circuit
+ *      (Rule 75): an ABSENT budget is a refusal.
  */
 
 import type { InvocationBudget, OpenSpecCoverageEdge } from "@rennet/types";
@@ -82,7 +86,12 @@ interface RawMappingItem {
   readonly capability: string;
   readonly requirement: string;
   readonly hunks: readonly string[];
-  readonly tests: number;
+  /**
+   * The offered hunk ids the model judges to be TESTS covering this requirement. The
+   * count shown to the user is DERIVED from the grounded subset of these (distinct
+   * test files) — never a free scalar the model could inflate past the offered set.
+   */
+  readonly testHunks: readonly string[];
 }
 
 /** A stable join key for a (capability, requirement) pair, matching the model echo. */
@@ -128,12 +137,13 @@ function renderPrompt(input: RunCoverageMappingInput): string {
     "You are mapping OpenSpec requirements to the code changes that implement them.",
     "",
     "For EACH requirement below, decide which of the offered hunks implement it and",
-    "how many of those hunks are TEST files (a test that exercises the requirement).",
+    "which offered hunks are TESTS that exercise it.",
     "Return a mapping per requirement:",
     "  - `capability` and `requirement`: echo the requirement's identity EXACTLY.",
     "  - `hunks`: the ids of the offered hunks that implement it (an empty array when",
     "    the change does NOT implement it — an honest 'unimplemented', never a guess).",
-    "  - `tests`: how many DISTINCT test files among those hunks cover it (0 when none).",
+    "  - `testHunks`: the ids of the offered hunks in TEST files that cover it (empty",
+    "    when none). The test count shown is derived from these, so cite real ids only.",
     "Only cite hunk ids from the offered set. Do not invent hunks or requirements.",
     "",
     `patchsetId: ${input.patchsetId}`,
@@ -161,32 +171,48 @@ function readMappings(body: unknown): RawMappingItem[] | null {
     const hunks = Array.isArray(candidate.hunks)
       ? candidate.hunks.filter((h): h is string => typeof h === "string")
       : [];
-    const tests = typeof candidate.tests === "number" ? candidate.tests : 0;
+    const testHunks = Array.isArray(candidate.testHunks)
+      ? candidate.testHunks.filter((h): h is string => typeof h === "string")
+      : [];
     items.push({
       capability: candidate.capability,
       requirement: candidate.requirement,
       hunks,
-      tests,
+      testHunks,
     });
   }
   return items;
 }
 
-/** A non-negative integer test count from a possibly-fractional/negative model value. */
-function safeTestCount(value: number): number {
-  if (!Number.isFinite(value) || value <= 0) return 0;
-  return Math.floor(value);
+/**
+ * The count of DISTINCT test FILES among the model's test-hunk ids, GROUNDED against
+ * the offered hunks: an id the model named that was not offered is dropped (like the
+ * implementing-hunk culling), and multiple hunks in one test file count once. So the
+ * displayed "N tests" can never exceed the real offered test surface — the number is
+ * derived from grounded evidence, never a free scalar the model could inflate.
+ */
+function groundedTestCount(
+  testHunkIds: readonly string[],
+  hunkFileById: ReadonlyMap<string, string>,
+): number {
+  const files = new Set<string>();
+  for (const id of testHunkIds) {
+    const filePath = hunkFileById.get(id);
+    if (filePath !== undefined) files.add(filePath);
+  }
+  return files.size;
 }
 
 /**
  * Ground the model's mappings against the REAL requirements + offered hunks. Every
  * requirement gets exactly one edge: the model's mapping for it (hunks culled to the
- * offered set and shaped into `rennet:hunk/<id>` anchors, deduped, in offered order),
- * or an honest zero when the model returned none for it.
+ * offered set and shaped into `rennet:hunk/<id>` anchors, deduped, in offered order;
+ * the test count derived from the grounded test-hunk files), or an honest zero when
+ * the model returned none for it.
  */
 function groundEdges(
   requirements: readonly CoverageRequirementInput[],
-  offeredHunkIds: ReadonlySet<string>,
+  hunkFileById: ReadonlyMap<string, string>,
   raw: readonly RawMappingItem[],
 ): OpenSpecCoverageEdge[] {
   const byKey = new Map<string, RawMappingItem>();
@@ -197,7 +223,7 @@ function groundEdges(
     const seen = new Set<string>();
     const hunks: string[] = [];
     for (const id of mapping?.hunks ?? []) {
-      if (!offeredHunkIds.has(id) || seen.has(id)) continue;
+      if (!hunkFileById.has(id) || seen.has(id)) continue;
       seen.add(id);
       hunks.push(`rennet:hunk/${id}`);
     }
@@ -205,7 +231,7 @@ function groundEdges(
       capability: requirement.capability,
       requirement: requirement.name,
       hunks,
-      tests: mapping ? safeTestCount(mapping.tests) : 0,
+      tests: mapping ? groundedTestCount(mapping.testHunks, hunkFileById) : 0,
     };
   });
 }
@@ -225,7 +251,13 @@ export async function runCoverageMapping(
   if (input.requirements.length === 0) return { status: "ok", edges: [] };
 
   const maxRetries = input.maxRetries ?? 1;
-  const offeredHunkIds = new Set(input.hunks.map((hunk) => hunk.id));
+  const hunkFileById = new Map(input.hunks.map((hunk) => [hunk.id, hunk.filePath] as const));
+  // The authoritative requirement identities: a model mapping is "usable" only if it
+  // joins one of these. Zero usable mappings ⇒ the model told us nothing about any
+  // real requirement (an empty array, all-malformed, or all-unknown identities).
+  const authoritativeKeys = new Set(
+    input.requirements.map((requirement) => joinKey(requirement.capability, requirement.name)),
+  );
   const prompt = renderPrompt(input);
   let lastFailure = "the coverage mapping runner did not complete";
 
@@ -244,14 +276,22 @@ export async function runCoverageMapping(
     }
 
     const mappings = readMappings(turn.body);
-    if (mappings === null) {
-      // Completed, but no usable mappings array: NOT an all-unimplemented result —
-      // retry, then fail (a garbled body never masquerades as a set of real zeros).
-      lastFailure = "the coverage turn returned no usable mappings";
+    // A run is genuine only if at least one mapping JOINS a real requirement. An empty
+    // `mappings` array, an all-malformed one, or one whose entries name no real
+    // requirement all reduce to zero usable mappings — the model said nothing about
+    // any requirement, indistinguishable from a refusal, so it must NOT paint a
+    // confident all-unimplemented. Retry, then fail (no chips). A GENUINE
+    // all-unimplemented comes from entries that DO join real requirements with empty
+    // hunk lists — those pass this gate and yield `ok`.
+    const usable = mappings?.filter((mapping) =>
+      authoritativeKeys.has(joinKey(mapping.capability, mapping.requirement)),
+    );
+    if (!usable || usable.length === 0) {
+      lastFailure = "the coverage turn returned no mapping for any requirement";
       continue;
     }
 
-    return { status: "ok", edges: groundEdges(input.requirements, offeredHunkIds, mappings) };
+    return { status: "ok", edges: groundEdges(input.requirements, hunkFileById, usable) };
   }
 
   return { status: "failed", edges: [], failureReason: lastFailure };

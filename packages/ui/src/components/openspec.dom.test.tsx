@@ -290,9 +290,11 @@ describe("OpenSpecView — review affordances reuse the seams", () => {
 });
 
 describe("OpenSpecView — coverage chips (issue #9 / R53)", () => {
-  // The runner's output for THIS change: the added requirement is covered by one
-  // hunk and two tests; the modified requirement is a computed zero. Keyed by
-  // (capability, requirement name) — the SAME key a real mapping producer emits.
+  // The runner's GROUNDED output for THIS change: the added requirement is covered by
+  // one implementing hunk and two tests — `hunks` and `tests` are INDEPENDENT grounded
+  // counts (one impl hunk + two distinct test files), so 1-hunk·2-tests is a real
+  // producible state, not a contradiction. The modified requirement is a computed
+  // zero. Keyed by (capability, name) — the SAME key a real mapping producer emits.
   const cap = "review-hypothesis-pass";
   const coverage: OpenSpecCoverageIndex = new Map([
     [
