@@ -1068,13 +1068,26 @@
   color: var(--accent);
   font-style: italic;
 }
-.collation-refine-failed {
+.collation-refine-failed,
+.collation-refine-unavailable {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+/* Terse chrome label (§4) vs the model/system reason (content, breathes). */
+.collation-refine-chrome {
+  font-weight: 650;
   color: var(--danger);
 }
-.collation-refine-unavailable,
-.collation-refine-nochange,
-.collation-refine-raw {
+.collation-refine-unavailable .collation-refine-chrome {
+  color: var(--text-soft);
+}
+.collation-refine-reason {
   color: var(--text-faint);
+}
+.collation-refine-nochange {
+  color: var(--green);
 }
 .collation-item-actions {
   display: flex;

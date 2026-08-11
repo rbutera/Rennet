@@ -46,12 +46,12 @@ import {
 
 const TYPES: DispositionType[] = ["approve", "request-change", "comment", "question"];
 
-/** The mode-specific line naming what editing earns its place on this draft. */
+/** The mode-specific line naming what editing earns its place on this draft. Terse
+ *  chrome (§4 four-word rule): the item controls show the affordances, so the frame
+ *  names the destination, not a how-to sentence. */
 const EDIT_FRAMING: Record<DestinationVariant["mode"], string> = {
-  "own-branch":
-    "Compose your dispositions into one coherent handoff — merge, reorder, and reword them into a single set of asks.",
-  "other-pr":
-    "Refine each comment into the review you'll post — reword, group related ones, and drop the ones you've decided against.",
+  "own-branch": "Compose the handoff.",
+  "other-pr": "Refine the review.",
 };
 
 /**
@@ -148,10 +148,10 @@ export function CollationDraftCanvas({
                 className="collation-refine-all"
                 onClick={() => onRefineAll()}
                 disabled={!anyRefinable}
-                aria-label="Refine all notes to post"
-                title="Clean every rough note into a well-phrased comment — your originals are kept"
+                aria-label="Refine all notes"
+                title="Refine every note"
               >
-                ✦ Refine to post
+                Refine to post
               </button>
             ) : null}
             <button
@@ -284,30 +284,33 @@ export function CollationDraftCanvas({
                     className="collation-item-refine"
                     data-refine-state={refineState?.status ?? (refined ? "refined" : "idle")}
                   >
+                    {/* Terse chrome labels (§4); the model/system reason and the
+                        refined body are CONTENT and breathe. The raw textarea above
+                        stays visible, so "your original posts" holds structurally
+                        without a chrome sentence saying so. */}
                     {refined ? (
                       <div className="collation-refined" role="note">
-                        <p className="collation-refined-label">
-                          Refined — this posts instead of your note
-                        </p>
+                        <p className="collation-refined-label">Refined</p>
                         <p className="collation-refined-body">{item.refined}</p>
                         {onKeepRaw ? (
                           <button
                             type="button"
                             className="collation-keep-raw"
-                            aria-label={`Keep my original note for item ${index + 1}`}
+                            aria-label={`Keep original note for item ${index + 1}`}
                             onClick={() => onKeepRaw(item)}
                           >
-                            Keep my original
+                            Keep original
                           </button>
                         ) : null}
                       </div>
                     ) : refineState?.status === "refining" ? (
                       <p className="collation-refine-pending" aria-live="polite">
-                        Refining your note…
+                        Refining…
                       </p>
                     ) : refineState?.status === "failed" ? (
                       <p className="collation-refine-failed" role="alert">
-                        Couldn't refine this note: {refineState.reason}. Your original will post.
+                        <span className="collation-refine-chrome">Refine failed</span>
+                        <span className="collation-refine-reason">{refineState.reason}</span>
                         {onRefine ? (
                           <button
                             type="button"
@@ -321,11 +324,12 @@ export function CollationDraftCanvas({
                       </p>
                     ) : refineState?.status === "unavailable" ? (
                       <p className="collation-refine-unavailable" role="note">
-                        {refineState.reason}. Your original will post.
+                        <span className="collation-refine-chrome">Refine unavailable</span>
+                        <span className="collation-refine-reason">{refineState.reason}</span>
                       </p>
                     ) : refineState?.status === "no-change" ? (
                       <p className="collation-refine-nochange" role="note">
-                        Already clear — nothing to refine. Your note posts as written.
+                        Already clear
                       </p>
                     ) : onRefine && refinable ? (
                       <button
@@ -334,13 +338,9 @@ export function CollationDraftCanvas({
                         aria-label={`Refine item ${index + 1}`}
                         onClick={() => onRefine(item)}
                       >
-                        ✦ Refine to post
+                        Refine
                       </button>
-                    ) : (
-                      <p className="collation-refine-raw" role="note">
-                        Posts as your note, unchanged.
-                      </p>
-                    )}
+                    ) : null}
                   </div>
 
                   <div className="collation-item-actions">

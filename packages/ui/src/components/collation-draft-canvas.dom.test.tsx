@@ -215,9 +215,7 @@ describe("refine control (#19) — the comment-refinement loop", () => {
     expect(
       within(itemAt(container, 0)).getByLabelText<HTMLTextAreaElement>("Body for item 1").value,
     ).toBe("messy");
-    fireEvent.click(
-      within(itemAt(container, 0)).getByLabelText("Keep my original note for item 1"),
-    );
+    fireEvent.click(within(itemAt(container, 0)).getByLabelText("Keep original note for item 1"));
     expect(keeps).toEqual(["a"]);
   });
 
@@ -225,16 +223,18 @@ describe("refine control (#19) — the comment-refinement loop", () => {
     const { container } = mountRefine(draftOf("src/a.ts"), {
       "src/a.ts": { status: "refining" },
     });
-    expect(container.textContent).toContain("Refining your note");
+    expect(container.textContent).toContain("Refining");
     expect(within(itemAt(container, 0)).queryByLabelText("Refine item 1")).toBeNull();
   });
 
-  it("states a failed turn honestly (keeps the raw) and offers Retry", () => {
+  it("states a failed turn honestly (terse chrome + the reason as content) and offers Retry", () => {
     const { container, refines } = mountRefine(draftOf("src/a.ts"), {
       "src/a.ts": { status: "failed", reason: "codex exited 1" },
     });
+    // Terse chrome label + the model/system reason (content). The raw textarea stays
+    // visible, so "the original posts" holds structurally without a chrome sentence.
+    expect(container.textContent).toContain("Refine failed");
     expect(container.textContent).toContain("codex exited 1");
-    expect(container.textContent).toContain("Your original will post");
     fireEvent.click(within(itemAt(container, 0)).getByLabelText("Retry refining item 1"));
     expect(refines).toEqual(["src/a.ts"]);
   });
