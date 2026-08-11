@@ -296,6 +296,14 @@ describe("buildElementDiffs", () => {
       newStart: floorHunk?.newStart,
       newLines: floorHunk?.newLines,
     });
+    // Opus caveat folded in: pin that the proposal element is the SOLE owner of the floor
+    // hunk, not merely that elements[0] carries it. A producer change that duplicated the
+    // hunk onto a second element's diff would redden here rather than slip past a
+    // single-element check. #250 r2 F3.
+    const ownersOfFloorHunk = Object.entries(diffs)
+      .filter(([, entry]) => entry?.hunkOccurrences.flat().some((occ) => occ.id === floorHunkId))
+      .map(([key]) => key);
+    expect(ownersOfFloorHunk).toEqual([element?.elementKey]);
   });
 
   // Oversize-split fragments: two decomposition hunks (splitOf fragments) that
