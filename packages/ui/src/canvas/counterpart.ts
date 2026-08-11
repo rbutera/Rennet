@@ -1,4 +1,3 @@
-import { parseAnchor } from "@rennet/protocol";
 import { CANVAS_ANGLES, type Canvas, type CanvasAngle } from "@rennet/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -73,69 +72,66 @@ export function testPathsFor(implPath: string): string[] {
 }
 
 /**
- * The elementKey of the analysis element that renders a given file path in this
- * canvas, or null when the path is not part of the changeset (or has no placed
- * element). Maps path → substrate chunk (by `filePaths`) → the element anchored to
- * that chunk or one of its hunks, mirroring the workspace's own anchor↔element
- * resolution.
+ * Resolves an element to the repo-relative path of the file its diff renders — the
+ * SAME per-element diff the workspace shows (`diffFor(elementKey).path`). This is the
+ * authoritative file↔element mapping: it does NOT go through chunk/hunk IDs, so it is
+ * immune to the floor-vs-proposal ID mismatch. (The floor substrate carries floor
+ * chunk IDs, but a live admitted decomposition anchors Sequence elements to PROPOSAL
+ * chunk IDs that regroup hunks and mint different IDs — matching on those IDs breaks;
+ * matching on the resolved diff path does not.)
  */
-export function elementKeyForPath(canvas: Canvas, path: string): string | null {
-  const chunk = canvas.layers.substrate.chunks.find((candidate) =>
-    candidate.filePaths.includes(path),
-  );
-  if (!chunk) return null;
-  const ids = new Set<string>([chunk.chunkId, ...chunk.hunkIds]);
-  const element = canvas.layers.analysis.elements.find((candidate) => {
-    const parsed = parseAnchor(candidate.anchor);
-    return parsed.ok && ids.has(parsed.anchor.id);
-  });
-  return element?.elementKey ?? null;
-}
+export type ElementPathResolver = (elementKey: string) => string | undefined;
 
 /**
  * Locate a file's element across the review's lenses, INDEPENDENT of which lens is
- * active. The counterpart's presence is a property of the review (its changed-file
- * inventory), not of the current lens's analysis placement — so a changed test with
- * no *decision* element must still resolve. Prefers the current lens (no lens switch
- * when it already has the element), then falls back to any other lens that placed
- * one — in practice the `sequence` lens, which has an element per changed chunk, so
- * every changed file resolves there. Returns null only when the file is not in the
- * review at all.
+ * active and of the analysis ID shape. The counterpart's presence is a property of
+ * the review (its changed-file inventory), not of the current lens's placement — so a
+ * changed test with no *decision* element must still resolve. Prefers the current
+ * lens (no lens switch when it already renders that file), then falls back to any
+ * other lens — in practice the `sequence` lens, which has an element per changed
+ * chunk, so every changed file resolves there. Null only when no element in the
+ * review renders that path.
  */
 function locatePath(
   canvases: Record<CanvasAngle, Canvas>,
   currentAngle: CanvasAngle,
   path: string,
+  pathForElement: ElementPathResolver,
 ): { angle: CanvasAngle; elementKey: string } | null {
   const order: CanvasAngle[] = [currentAngle, ...CANVAS_ANGLES.filter((a) => a !== currentAngle)];
   for (const angle of order) {
     const canvas = canvases[angle];
     if (!canvas) continue;
-    const elementKey = elementKeyForPath(canvas, path);
-    if (elementKey) return { angle, elementKey };
+    for (const element of canvas.layers.analysis.elements) {
+      if (pathForElement(element.elementKey) === path) {
+        return { angle, elementKey: element.elementKey };
+      }
+    }
   }
   return null;
 }
 
 /**
  * Resolve the impl↔test counterpart jump for the file currently shown, or null when
- * there is none to offer. Pure: reads only the canvas set and the path.
+ * there is none to offer. Pure: reads the canvas set, the path, and a resolver from
+ * elementKey → its diff path (the workspace's `diffFor`).
  *
  *   - a TEST file → its implementation, labelled "View implementation";
  *   - an IMPLEMENTATION file → its test (`.test.` preferred, then `.spec.`),
  *     labelled "View test";
- *   - the counterpart must be a changed file in THIS review (resolved across lenses,
- *     not tied to the active lens's analysis), else null.
+ *   - the counterpart must be a changed file in THIS review (resolved across lenses
+ *     by DIFF PATH, not by analysis ID), else null.
  */
 export function resolveCounterpart(
   canvases: Record<CanvasAngle, Canvas>,
   currentAngle: CanvasAngle,
   currentPath: string,
+  pathForElement: ElementPathResolver,
 ): CounterpartTarget | null {
   if (isTestPath(currentPath)) {
     const implPath = implementationPathFor(currentPath);
     if (!implPath) return null;
-    const located = locatePath(canvases, currentAngle, implPath);
+    const located = locatePath(canvases, currentAngle, implPath, pathForElement);
     if (!located) return null;
     return {
       label: "View implementation",
@@ -146,9 +142,9 @@ export function resolveCounterpart(
     };
   }
   // An implementation file: try the test candidates in preference order, and take
-  // the first that is a changed file placed in the review (any lens).
+  // the first that is a changed file rendered in the review (any lens).
   for (const testPath of testPathsFor(currentPath)) {
-    const located = locatePath(canvases, currentAngle, testPath);
+    const located = locatePath(canvases, currentAngle, testPath, pathForElement);
     if (located) {
       return {
         label: "View test",

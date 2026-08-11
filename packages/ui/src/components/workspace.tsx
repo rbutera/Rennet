@@ -523,10 +523,17 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   const diff = codeAltitude && selection ? props.diffFor?.(selection) : undefined;
 
   // The impl↔test counterpart jump (Rai, wireframes #7): resolved for the shown file
-  // against this review's changed-file inventory, ACROSS lenses — so the button does
-  // not vanish just because the active lens placed no element for the counterpart.
-  // Null ⇒ no button (the counterpart is not a changed file in the review).
-  const counterpart = diff ? resolveCounterpart(props.canvases, angle, diff.path) : null;
+  // against this review's changed-file inventory, ACROSS lenses and by the element's
+  // real DIFF PATH (not analysis IDs — immune to the floor-vs-proposal chunk-ID
+  // regrouping). Null ⇒ no button (the counterpart is not a changed file here).
+  const counterpart = diff
+    ? resolveCounterpart(
+        props.canvases,
+        angle,
+        diff.path,
+        (elementKey) => props.diffFor?.(elementKey)?.path,
+      )
+    : null;
 
   // The narrated account for the altitude in view (#70): the whole-changeset
   // roll-up at roll-up zoom, the cohort's account at cohort zoom, nothing below.

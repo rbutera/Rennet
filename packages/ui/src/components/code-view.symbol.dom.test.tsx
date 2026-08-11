@@ -16,6 +16,11 @@ const CALL_DIFF = ["@@ -1,2 +1,2 @@", "+  doThing();", "+  const w = new Widget(
 // `const` is a keyword and must NOT be clickable.
 const PLAIN_DIFF = ["@@ -1,1 +1,1 @@", "+  const count = result.value;"].join("\n");
 
+// A JSON line: the tokenizer classifies the QUOTED key `"name"` as a `property`
+// token (string in key position). It must NOT become a clickable button — that was
+// the regression the identifier-run split introduced.
+const JSON_DIFF = ["@@ -1,1 +1,1 @@", '+  "name": 1,'].join("\n");
+
 describe("CodeView — impl/test counterpart button (#7)", () => {
   it("renders the given label and fires onView on click", () => {
     const onView = vi.fn();
@@ -72,5 +77,16 @@ describe("CodeView — clickable symbol tokens (#8)", () => {
     }
     // `const` is a keyword — it must NOT be clickable.
     expect(container.querySelector('.rtok-symbol[data-symbol="const"]')).toBeNull();
+  });
+
+  it("does NOT make a quoted property key clickable (no dead button in JSON)", () => {
+    const onSymbolClick = vi.fn();
+    const { container } = mount(
+      <CodeView path="config.json" diff={JSON_DIFF} onSymbolClick={onSymbolClick} renderAll />,
+    );
+    // The quoted key is rendered but is not a clickable symbol button.
+    expect(container.querySelector('.rtok-symbol[data-symbol="name"]')).toBeNull();
+    expect(container.querySelectorAll(".rtok-symbol")).toHaveLength(0);
+    expect(container.textContent).toContain('"name"');
   });
 });

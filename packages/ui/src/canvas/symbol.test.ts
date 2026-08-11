@@ -6,6 +6,7 @@ import {
   type SymbolReferenceRow,
   splitIdentifierRuns,
   tokenMayContainSymbol,
+  tokenTextMayContainSymbol,
 } from "./symbol";
 
 describe("tokenMayContainSymbol", () => {
@@ -22,6 +23,22 @@ describe("tokenMayContainSymbol", () => {
       "punctuation",
     ];
     for (const type of inert) expect(tokenMayContainSymbol(type)).toBe(false);
+  });
+});
+
+describe("tokenTextMayContainSymbol", () => {
+  it("excludes a QUOTED property key (a string in key position), keeps a bare key", () => {
+    // `"name":` tokenizes as a `property` whose text keeps the quotes — a string, not
+    // a symbol. A bare `name:` key stays symbol-bearing.
+    expect(tokenTextMayContainSymbol("property", '"name"')).toBe(false);
+    expect(tokenTextMayContainSymbol("property", "'name'")).toBe(false);
+    expect(tokenTextMayContainSymbol("property", "name")).toBe(true);
+  });
+  it("still admits ordinary identifiers and excludes inert chrome", () => {
+    expect(tokenTextMayContainSymbol("plain", "count")).toBe(true);
+    expect(tokenTextMayContainSymbol("function", "doThing")).toBe(true);
+    expect(tokenTextMayContainSymbol("string", '"count"')).toBe(false);
+    expect(tokenTextMayContainSymbol("keyword", "const")).toBe(false);
   });
 });
 

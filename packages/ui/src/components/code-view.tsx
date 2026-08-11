@@ -12,7 +12,7 @@ import {
   type RegistryRow,
   resolveAnchorToRows,
 } from "../canvas/registrar";
-import { splitIdentifierRuns, tokenMayContainSymbol } from "../canvas/symbol";
+import { splitIdentifierRuns, tokenTextMayContainSymbol } from "../canvas/symbol";
 import { detectLanguage, type LanguageId, tokenizeLine } from "../syntax/highlight";
 import { DispositionCluster } from "./disposition-cluster";
 
@@ -121,8 +121,9 @@ function renderCode(
     // identifier RUNS and make each one clickable (Rai, wireframes #8). This does not
     // key off the highlight class — an ordinary `plain` identifier, or several inside
     // one whitespace-merged token, each resolve independently. Inert tokens (keyword,
-    // string, comment, number, operator, punctuation) render as one plain span.
-    if (onSymbolClick && tokenMayContainSymbol(tok.type)) {
+    // string, comment, number, operator, punctuation) render as one plain span, and a
+    // QUOTED property key (`"name":`) is a string, not a symbol, so it is inert too.
+    if (onSymbolClick && tokenTextMayContainSymbol(tok.type, tok.text)) {
       let offset = 0;
       for (const segment of splitIdentifierRuns(tok.text)) {
         const key = column + offset;

@@ -44,9 +44,25 @@ const NON_SYMBOL_TOKENS: ReadonlySet<TokenType> = new Set<TokenType>([
   "punctuation",
 ]);
 
-/** Whether a token's text may contain a clickable identifier (i.e. is not inert chrome). */
+/** Whether a token's CLASS may contain a clickable identifier (i.e. is not inert chrome). */
 export function tokenMayContainSymbol(type: TokenType): boolean {
   return !NON_SYMBOL_TOKENS.has(type);
+}
+
+/** The string delimiters a quoted key can open with. */
+const STRING_DELIMITERS: ReadonlySet<string> = new Set(['"', "'", "`"]);
+
+/**
+ * Whether a token, given its class AND text, may carry a clickable identifier.
+ * Beyond the class check, this excludes a QUOTED property key — the tokenizer
+ * classifies a string in key position (`"name":` in JSON/YAML/CSS) as `property`,
+ * and its text keeps the quotes, so splitting out `name` would render a DEAD
+ * clickable button inside a string. A quoted property is a string, not a symbol.
+ */
+export function tokenTextMayContainSymbol(type: TokenType, text: string): boolean {
+  if (!tokenMayContainSymbol(type)) return false;
+  if (type === "property" && text.length > 0 && STRING_DELIMITERS.has(text.charAt(0))) return false;
+  return true;
 }
 
 /** One segment of a token's text: an identifier run (clickable) or the gap around it. */
