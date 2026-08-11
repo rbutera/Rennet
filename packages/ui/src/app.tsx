@@ -65,6 +65,7 @@ import { ProjectDetail } from "./components/project-detail";
 import { type PublishOutcome, PublishSheet } from "./components/publish-sheet";
 import { SettingsScreen } from "./components/settings-screen";
 import { CanvasWorkspace } from "./components/workspace";
+import { runBatched } from "./concurrency";
 import type { SmartRow } from "./project/smart-list";
 
 /**
@@ -110,6 +111,10 @@ function resolveProposal(canvases: CanvasSet, proposalId: string): CanvasSet {
 }
 
 const angles = ["Logic", "Security", "Tests", "Performance", "Maintainability", "Product"];
+
+/** Max concurrent refine turns fired by "Refine all" (#19) — bounds the model
+ *  subprocess fan-out on a large draft without the deferred budget machinery. */
+const REFINE_CONCURRENCY = 3;
 
 function activePatchset(review: Review): Patchset {
   const patchset = review.patchsets.find((candidate) => candidate.id === review.activePatchsetId);
@@ -1310,17 +1315,21 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     clearRefineState(item.id);
   }
 
-  /** Refine every refinable, not-yet-refined, not-in-flight item in one act. */
-  function refineAll(): void {
-    for (const item of draft) {
-      if (
+  /**
+   * Refine every refinable, not-yet-refined, not-in-flight item — BOUNDED (#19).
+   * Each refine is a real model turn (a `codex exec` / Claude subprocess), so
+   * firing all of a large draft at once is real resource pressure; `runBatched`
+   * caps the fan-out to `REFINE_CONCURRENCY` at a time. The staleness gate in
+   * `refineItem` still handles a note edited between click and its batch.
+   */
+  async function refineAll(): Promise<void> {
+    const eligible = draft.filter(
+      (item) =>
         item.raw.trim() !== "" &&
         item.refined === undefined &&
-        refineStates[item.id]?.status !== "refining"
-      ) {
-        void refineItem(item);
-      }
-    }
+        refineStates[item.id]?.status !== "refining",
+    );
+    await runBatched(eligible, REFINE_CONCURRENCY, (item) => refineItem(item));
   }
 
   // Which top-level surface is showing — mirrors the branch order of the returns
