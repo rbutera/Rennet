@@ -50,6 +50,16 @@ function pointerHold(button: HTMLButtonElement, heldMs: number): void {
   fireEvent.mouseUp(button);
 }
 
+/** A completed KEYBOARD hold (issue #21): a single keypress no longer signs. */
+function keyboardHold(button: HTMLButtonElement, heldMs: number, key = "Enter"): void {
+  const base = 1_000_000;
+  vi.setSystemTime(base);
+  button.focus();
+  fireEvent.keyDown(button, { key });
+  vi.setSystemTime(base + heldMs);
+  fireEvent.keyUp(button, { key });
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
 });
@@ -361,10 +371,9 @@ describe("target disagreement fails closed (issue #106): a payload/variant that 
     // A completed pointer hold emits nothing.
     pointerHold(signButton(container), 850);
     expect(signed).toHaveLength(0);
-    // The keyboard path is blocked too.
+    // The keyboard path is blocked too — even a completed hold emits nothing.
     const button = signButton(container);
-    button.focus();
-    fireEvent.keyDown(button, { key: "Enter" });
+    keyboardHold(button, 850);
     expect(signed).toHaveLength(0);
     // The sign control is disabled and the blocked state is announced (aria-legible).
     expect(button.disabled).toBe(true);
@@ -389,8 +398,7 @@ describe("target disagreement fails closed (issue #106): a payload/variant that 
     );
     pointerHold(signButton(container), 850);
     const button = signButton(container);
-    button.focus();
-    fireEvent.keyDown(button, { key: "Enter" });
+    keyboardHold(button, 850);
     expect(signed).toHaveLength(0);
     expect(button.disabled).toBe(true);
   });

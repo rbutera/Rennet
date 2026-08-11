@@ -4,6 +4,7 @@ import {
   type AskAnswer,
   canonicalReviewPayload,
   type ForgePublishPort,
+  type ForgeReviewEvent,
   type ForgeReviewPost,
   type PatchsetCapturePort,
   type ReviewCommentInput,
@@ -67,6 +68,17 @@ function prPatchset(): Patchset {
     repository: { ...patchset().repository, id: "clone", root: "/clone" },
   };
 }
+
+// The real PR coordinates an opened-PR review posts to (issue #21). The harness's
+// `openPullRequest` stamps this as the review's `postTarget`, so a real post from
+// that review targets its OWN pull request — the target-binding gate's happy case.
+// Defined here (above the harness) because the harness needs it.
+const SANDBOX_TARGET = {
+  repo: { forge: "github", owner: "rbutera", name: "rennet-egress-sandbox" },
+  number: 1,
+  forgeRef: "PR_kwSANDBOX1",
+  headOid: "deadbeefcafe0001",
+};
 
 class InMemoryStore implements ReviewStorePort {
   #latest: Review | null = null;
@@ -187,7 +199,13 @@ function harness(
     allowedRoots,
     chooseRepository: () => Promise.resolve(REPO),
     openPullRequest: (commandId, _ref, _repoPath, retrospective) =>
-      service.createReviewFromPatchset(commandId, prPatchset(), { retrospective }),
+      service.createReviewFromPatchset(commandId, prPatchset(), {
+        retrospective,
+        // A non-retrospective PR review carries the real post-target (issue #21), just
+        // as the live `openPullRequest` stamps it — so a real post from it is bound to
+        // its OWN pull request.
+        ...(retrospective ? {} : { postTarget: SANDBOX_TARGET }),
+      }),
     startWatching: () => undefined,
     isRepositoryDirty: () => dirty,
     setRepositoryDirty: (value) => {
@@ -438,12 +456,23 @@ describe("createDispatch — openspec.change routing (the live Spec source, wire
 // exercises and is red-provable by neutralising exactly that gate.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SANDBOX_TARGET = {
-  repo: { forge: "github", owner: "rbutera", name: "rennet-egress-sandbox" },
-  number: 1,
-  forgeRef: "PR_kwSANDBOX1",
-  headOid: "deadbeefcafe0001",
-};
+// SANDBOX_TARGET now lives above the harness (the opened-PR review's postTarget).
+
+/**
+ * Open a PR review whose `postTarget` is SANDBOX_TARGET — the target-binding gate's
+ * happy case: a real post from it targets its OWN pull request. The publish egress
+ * tests post from THIS, not a local capture (which now cannot post at all, #21).
+ */
+async function postableReview(dispatch: ReturnType<typeof createDispatch>): Promise<Review> {
+  await dispatch("repository.choose", {}); // grant REPO (the openPr repoPath)
+  const result = (await dispatch("review.openPr", {
+    commandId: randomUUID(),
+    ref: "rbutera/rennet-egress-sandbox#1",
+    repoPath: REPO,
+    retrospective: false,
+  })) as { review: Review };
+  return result.review;
+}
 
 function publishComments(): ReviewCommentInput[] {
   return [
@@ -453,17 +482,24 @@ function publishComments(): ReviewCommentInput[] {
   ];
 }
 
+// publishComments carries a request-change ⇒ the resolved verdict is REQUEST_CHANGES.
+// Consent binds the verdict now (issue #21), so a mint must declare the verdict the
+// post will carry; the tests default to this and override where they exercise a swap.
+const PUBLISH_VERDICT: ForgeReviewEvent = "REQUEST_CHANGES";
+
 async function requestPublishConsent(
   dispatch: ReturnType<typeof createDispatch>,
   reviewId: string,
   target: typeof SANDBOX_TARGET,
   payload: string,
+  verdict: ForgeReviewEvent = PUBLISH_VERDICT,
 ): Promise<string> {
   const out = (await dispatch("publish.requestConsent", {
     commandId: randomUUID(),
     reviewId,
     target,
     payload,
+    verdict,
   })) as { authorization: string };
   return out.authorization;
 }
@@ -561,7 +597,7 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
   it("(a) refuses a REAL post with no consent token (posting stays explicitly confirmed)", async () => {
     const port = fakePublishPort();
     const { dispatch } = harness(port);
-    const review = await capturedReview(dispatch);
+    const review = await postableReview(dispatch);
     const comments = publishComments();
     const payload = canonicalReviewPayload(comments);
 
@@ -581,7 +617,7 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
   it("(c) refuses a REAL post whose consent token was minted for a different payload", async () => {
     const port = fakePublishPort();
     const { dispatch } = harness(port);
-    const review = await capturedReview(dispatch);
+    const review = await postableReview(dispatch);
     const comments = publishComments();
     const payload = canonicalReviewPayload(comments);
 
@@ -618,7 +654,7 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     // keys equal and this post would be authorised.
     const port = fakePublishPort();
     const { dispatch } = harness(port);
-    const review = await capturedReview(dispatch);
+    const review = await postableReview(dispatch);
     const comments = publishComments();
     const payload = canonicalReviewPayload(comments);
 
@@ -637,14 +673,18 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
         authorization: token,
         dryRun: false,
       }),
-    ).rejects.toThrow(/not authorized/i);
+      // Refused: a post to a node id other than the review's OWN pull request is caught
+      // by the target-binding gate (issue #21) — which runs before the token check — and,
+      // were that removed, the forgeRef in the consent key would still refuse it. Either
+      // way, NOTHING posts to a different PR than approved.
+    ).rejects.toThrow(/does not match|not authorized/i);
     expect(port.posts).toHaveLength(0);
   });
 
   it("(e) happy path: a matching single-use token authorizes exactly one post", async () => {
     const port = fakePublishPort();
     const { dispatch } = harness(port);
-    const review = await capturedReview(dispatch);
+    const review = await postableReview(dispatch);
     const comments = publishComments();
     const payload = canonicalReviewPayload(comments);
     const token = await requestPublishConsent(dispatch, review.id, SANDBOX_TARGET, payload);
@@ -684,7 +724,7 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
   it("(e2) the real post's request is byte-identical to the dry-run's", async () => {
     const port = fakePublishPort();
     const { dispatch } = harness(port);
-    const review = await capturedReview(dispatch);
+    const review = await postableReview(dispatch);
     const comments = publishComments();
     const payload = canonicalReviewPayload(comments);
 
@@ -733,6 +773,186 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
       }),
     ).rejects.toThrow(/no content/i);
     expect(port.posts).toHaveLength(0);
+  });
+
+  it("(g) a LOCAL capture (no postTarget) cannot mint consent OR post — there is no PR to post to", async () => {
+    // The most-permissive-fault the reviewers caught: a local capture could mint +
+    // consume consent and post for REAL to an arbitrary PR. It must not — a review with
+    // no `postTarget` owns no pull request, so neither the mint nor the post is allowed.
+    const port = fakePublishPort();
+    const { dispatch } = harness(port);
+    const local = await capturedReview(dispatch); // a working-tree capture — no postTarget
+    const comments = publishComments();
+    const payload = canonicalReviewPayload(comments);
+
+    // The mint is refused: no token can be obtained for a review with no PR.
+    await expect(
+      dispatch("publish.requestConsent", {
+        commandId: randomUUID(),
+        reviewId: local.id,
+        target: SANDBOX_TARGET,
+        payload,
+        verdict: PUBLISH_VERDICT,
+      }),
+    ).rejects.toThrow(/no pull request/i);
+
+    // And a hand-crafted real post is refused structurally — before any token check —
+    // because the review owns no target. NOTHING leaves.
+    await expect(
+      dispatch("publish.review", {
+        commandId: randomUUID(),
+        reviewId: local.id,
+        target: SANDBOX_TARGET,
+        comments,
+        payload,
+        authorization: "forged-token",
+        dryRun: false,
+      }),
+    ).rejects.toThrow(/no pull request/i);
+    expect(port.posts).toHaveLength(0);
+  });
+
+  it("(h) a real post whose target is not the review's OWN pull request is refused", async () => {
+    const port = fakePublishPort();
+    const { dispatch } = harness(port);
+    const review = await postableReview(dispatch); // postTarget = SANDBOX_TARGET
+    const comments = publishComments();
+    const payload = canonicalReviewPayload(comments);
+    const otherPr = {
+      repo: { forge: "github", owner: "rbutera", name: "rennet" },
+      number: 999,
+      forgeRef: "PR_kwOTHERPR",
+      headOid: "beefbeefbeef9999",
+    };
+
+    // A token cannot even be minted for a PR other than the review's own.
+    await expect(
+      dispatch("publish.requestConsent", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        target: otherPr,
+        payload,
+        verdict: PUBLISH_VERDICT,
+      }),
+    ).rejects.toThrow(/does not match/i);
+
+    // And a hand-crafted real post to the wrong PR is refused before the token check.
+    await expect(
+      dispatch("publish.review", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        target: otherPr,
+        comments,
+        payload,
+        authorization: "forged-token",
+        dryRun: false,
+      }),
+    ).rejects.toThrow(/does not match/i);
+    expect(port.posts).toHaveLength(0);
+  });
+
+  it("(i) a verdict swapped in AFTER the token was minted voids it — the approved event is bound", async () => {
+    // The verdict is the one outbound field the payload bytes do not capture, so it is
+    // bound into the consent token too: a token minted while the paper showed
+    // REQUEST_CHANGES cannot be consumed to post an APPROVE the human never saw.
+    const port = fakePublishPort();
+    const { dispatch } = harness(port);
+    const review = await postableReview(dispatch);
+    const comments = publishComments(); // derives REQUEST_CHANGES
+    const payload = canonicalReviewPayload(comments);
+    const token = await requestPublishConsent(
+      dispatch,
+      review.id,
+      SANDBOX_TARGET,
+      payload,
+      "REQUEST_CHANGES",
+    );
+
+    // Posting with an APPROVE override — a different event than approved — is refused.
+    await expect(
+      dispatch("publish.review", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        target: SANDBOX_TARGET,
+        comments,
+        payload,
+        verdict: "APPROVE",
+        authorization: token,
+        dryRun: false,
+      }),
+    ).rejects.toThrow(/not authorized/i);
+    expect(port.posts).toHaveLength(0);
+
+    // The SAME token still authorises the exact verdict it was minted for (it was not
+    // consumed by the mismatched attempt).
+    const out = (await dispatch("publish.review", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      target: SANDBOX_TARGET,
+      comments,
+      payload,
+      verdict: "REQUEST_CHANGES",
+      authorization: token,
+      dryRun: false,
+    })) as PublishResult;
+    expect(out.outcome).not.toBeNull();
+    expect(port.posts).toHaveLength(1);
+  });
+
+  it("(j) single-flight: a concurrent second real post of the same content is refused while the first is in flight", async () => {
+    // The double-sign race: two near-simultaneous completed signs both pass the
+    // adapter's query-before-post check before either mutation lands, double-posting.
+    // The main-owned single-flight (keyed by the deterministic marker) refuses the
+    // second while the first is still in flight.
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const posts: ForgeReviewPost[] = [];
+    const port = fakePublishPort({
+      publishReview: async (post) => {
+        posts.push(post);
+        await gate; // hold the first post in flight, marker in the in-flight set
+        return { reviewRef: "PRR_1", url: null, reused: false };
+      },
+    });
+    const { dispatch } = harness(port);
+    const review = await postableReview(dispatch);
+    const comments = publishComments();
+    const payload = canonicalReviewPayload(comments);
+
+    // Two signs → two tokens. The first post starts and hangs (its synchronous run adds
+    // the marker to the in-flight set before it awaits the gate).
+    const token1 = await requestPublishConsent(dispatch, review.id, SANDBOX_TARGET, payload);
+    const first = dispatch("publish.review", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      target: SANDBOX_TARGET,
+      comments,
+      payload,
+      authorization: token1,
+      dryRun: false,
+    });
+
+    // A second sign mints a fresh token and tries to post the SAME content concurrently.
+    const token2 = await requestPublishConsent(dispatch, review.id, SANDBOX_TARGET, payload);
+    await expect(
+      dispatch("publish.review", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        target: SANDBOX_TARGET,
+        comments,
+        payload,
+        authorization: token2,
+        dryRun: false,
+      }),
+    ).rejects.toThrow(/already in progress/i);
+
+    // Release the first; it lands exactly once.
+    release();
+    const out1 = (await first) as PublishResult;
+    expect(out1.outcome).not.toBeNull();
+    expect(posts).toHaveLength(1);
   });
 });
 

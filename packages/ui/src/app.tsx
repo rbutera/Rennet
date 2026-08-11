@@ -361,6 +361,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // whenever the paper is left or a fresh review loads, so a stale outcome never
   // lingers over a new draft.
   const [publishResult, setPublishResult] = useState<PublishOutcome | undefined>(undefined);
+  // A publish is in flight (issue #21 double-sign race). The ref is the SYNCHRONOUS
+  // re-entry guard — two completed signs fired before React re-renders both see it —
+  // and the state disables the sign control so the paper reflects the pending post.
+  const publishingRef = useRef(false);
+  const [publishing, setPublishing] = useState(false);
 
   useEffect(() => {
     bridge
@@ -825,6 +830,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // human's hold-to-sign. A partial/absent hold never calls this function.
   async function publishReview(): Promise<void> {
     if (!review || !patchset) return;
+    // Re-entry guard (issue #21 double-sign race): a publish already in flight must
+    // not start a second — two completed signs before a re-render would otherwise mint
+    // and consume two tokens. The ref is synchronous (state lags a render); the sign
+    // control is also disabled via `publishing` below.
+    if (publishingRef.current) return;
     // Publish the INK subset only (issue #109), never the full draft — the same
     // `inkDraft` the paper previewed. An approve-only (or all-unstaged) draft has
     // an empty ink subset, so `comments` is empty and the sign is a no-op: no
@@ -848,13 +858,15 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       type: comment.type,
       body: comment.body,
     }));
+    publishingRef.current = true;
+    setPublishing(true);
     setBusy(true);
     setError(undefined);
     try {
       // Mint the single-use consent token ONLY for a real post (real target present).
-      // Bound to (review, target, payload): MAIN consumes it at egress and any drift
-      // in target or payload voids it. This is the sole minting site, reached only on
-      // a completed hold-to-sign.
+      // Bound to (review, target, payload, verdict): MAIN consumes it at egress and any
+      // drift in target, payload, or verdict voids it. This is the sole minting site,
+      // reached only on a completed hold-to-sign.
       let authorization: string | undefined;
       if (realTarget) {
         const consent = await bridge.invoke("publish.requestConsent", {
@@ -862,6 +874,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           reviewId: review.id,
           target: realTarget,
           payload,
+          verdict,
         });
         authorization = consent.authorization;
       }
@@ -892,6 +905,8 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
+      publishingRef.current = false;
+      setPublishing(false);
       setBusy(false);
     }
   }
@@ -963,6 +978,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
             review?.postTarget !== undefined
           }
           postLabel={review?.postTarget ? previewTargetLabel(review.postTarget) : undefined}
+          pending={publishing}
           onBack={() => {
             // Editing lives on the draft; a returned-to edit invalidates the outcome.
             setPublishResult(undefined);

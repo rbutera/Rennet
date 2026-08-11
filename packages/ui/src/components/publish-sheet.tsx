@@ -97,6 +97,7 @@ export function PublishSheet({
   result,
   willPost = false,
   postLabel,
+  pending = false,
   onSign,
   onBack,
   onClose,
@@ -147,6 +148,12 @@ export function PublishSheet({
   willPost?: boolean;
   /** The real post destination label (`owner/name#number`), shown in the real-post notice. */
   postLabel?: string;
+  /**
+   * A publish is in flight (issue #21): disables the sign control so a second sign
+   * cannot start while the first is still landing. The synchronous re-entry guard in
+   * the caller is the real protection; this is its visible reflection.
+   */
+  pending?: boolean;
   onSign?: (payload: string) => void;
   /** Back to the collation draft — editing lives there, never here (R40). */
   onBack?: () => void;
@@ -231,25 +238,40 @@ export function PublishSheet({
     if (outbound !== null) onSign?.(outbound);
   }
 
-  function signByKeyboard(event: { key: string; repeat?: boolean; preventDefault(): void }): void {
-    // Keyboard accessibility (issue #80): an explicit Enter/Space activation of the
-    // focused sign control IS the deliberate act — the keyboard equivalent of
-    // clearing the pointer hold — so it signs at ANY hold budget. It can never
-    // auto-approve: nothing signs without an intentional keypress on the focused
-    // control. It routes through the SAME degradation gate and emits EXACTLY the
-    // previewed bytes (never a transform).
+  function beginHoldByKeyboard(event: {
+    key: string;
+    repeat?: boolean;
+    preventDefault(): void;
+  }): void {
+    // Keyboard accessibility (issue #80) is now a real HOLD, not a single keypress
+    // (issue #21): pressing Enter/Space STARTS the hold, releasing it (see
+    // `endHoldByKeyboard`) completes it, through the SAME `resolveSign` budget gate as
+    // the pointer. A single tap no longer signs — because the sign is now a real GitHub
+    // egress, one keypress firing a post was too easy. It stays fully keyboard-operable:
+    // hold the key for the budget, then release.
     if (event.key !== "Enter" && event.key !== " ") return;
     // Ignore keyboard auto-repeat: a HELD Enter/Space emits a stream of repeat
-    // keydowns, and without this guard each one calls onSign again — a repeated
-    // publish once #21 makes the sign a real Git/GitHub mutation. Only the first,
-    // non-repeat activation is the deliberate act.
+    // keydowns; only the FIRST starts the hold, so the elapsed time is measured from
+    // the true press, and a repeat never resets the clock.
     if (event.repeat) return;
     event.preventDefault();
-    // Fail closed on a payload/variant/target disagreement (issue #106), same as
-    // the pointer path — the keyboard sign is no exception.
-    if (targetBlocksSign) return;
-    if (ledgerBlocksSign(ledger, acknowledged)) return;
-    onSign?.(payload);
+    beginHold();
+  }
+
+  function endHoldByKeyboard(event: { key: string; preventDefault(): void }): void {
+    // Releasing the key ENDS the hold, exactly like a pointer mouseup: `endHold`
+    // measures the elapsed time and signs only if it cleared the budget, through the
+    // same target/ledger/hold gates. A release below the budget signs nothing.
+    if (event.key !== "Enter" && event.key !== " ") return;
+    event.preventDefault();
+    endHold();
+  }
+
+  function clearHold(): void {
+    // Focus leaving mid-hold (blur) abandons the hold, mirroring pointer `mouseLeave`,
+    // so a started-but-unreleased keyboard hold never lingers to sign later.
+    holdStart.current = null;
+    setArmed(false);
   }
 
   return (
@@ -443,18 +465,19 @@ export function PublishSheet({
               type="button"
               className={`publish-sheet-sign ${armed ? "is-arming" : ""}`}
               data-hold-ms={holdToSignMs}
-              // A pointer user holds; a keyboard/AT user does not — a single Enter or
-              // Space on the focused control signs. Announce that additively so the
-              // "Hold to …" visible label does not mislead AT, without changing it.
+              // Both pointer AND keyboard now complete a real HOLD (issue #21): a
+              // keyboard user presses and holds Enter/Space for the budget, then
+              // releases. Announce the keys additively so AT knows the affordance.
               aria-keyshortcuts="Enter Space"
-              disabled={itemCount === 0 || targetBlocksSign}
+              // Disabled while a publish is in flight (double-sign race): the sync ref
+              // in `publishReview` is the real guard; this reflects it in the UI.
+              disabled={itemCount === 0 || targetBlocksSign || pending}
               onMouseDown={beginHold}
               onMouseUp={endHold}
-              onMouseLeave={() => {
-                holdStart.current = null;
-                setArmed(false);
-              }}
-              onKeyDown={signByKeyboard}
+              onMouseLeave={clearHold}
+              onKeyDown={beginHoldByKeyboard}
+              onKeyUp={endHoldByKeyboard}
+              onBlur={clearHold}
             >
               Hold to {variant.signLabel.toLowerCase()}
             </button>

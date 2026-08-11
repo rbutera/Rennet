@@ -961,9 +961,18 @@ export const commandDefinitions = {
       target: publishTargetSchema,
       /** The canonical payload bytes the token authorises (bound by digest). */
       payload: z.string(),
+      /**
+       * The resolved review VERDICT/event the token authorises. Bound alongside the
+       * payload because it is the one outbound field the payload bytes do not capture
+       * (`buildForgeReviewPost` renders the GraphQL post as a pure function of review +
+       * target + payload + verdict) — so an APPROVE/REQUEST_CHANGES cannot be swapped in
+       * after the human approved a COMMENT. The renderer sends the same value here and
+       * at `publish.review`.
+       */
+      verdict: forgeReviewEventSchema,
     }),
     output: z.object({
-      /** The opaque, single-use authorization bound to (review, target, payload). */
+      /** The opaque, single-use authorization bound to (review, target, payload, verdict). */
       authorization: z.string().min(1),
     }),
   },

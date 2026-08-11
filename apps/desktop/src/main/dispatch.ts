@@ -5,7 +5,9 @@ import {
   canonicalReviewPayload,
   type ForgePublishPort,
   type ForgeReviewTarget,
+  forgeTargetKey,
   type ReviewService,
+  resolveReviewEvent,
 } from "@rennet/core";
 import {
   type CommandName,
@@ -240,8 +242,38 @@ export function createDispatch(
 ): (name: CommandName, rawInput: unknown, ctx?: DispatchContext) => Promise<unknown> {
   const { service, allowedRoots } = deps;
 
+  // In-flight REAL posts, keyed by the deterministic idempotency marker (issue #21
+  // double-sign race). Two concurrent real posts of the same (review, target, payload)
+  // share a marker, so the second is refused while the first is still landing — the
+  // main-owned half of the double-sign guard (the renderer disables the sign control
+  // while a publish is pending; this closes the window between two near-simultaneous
+  // completed signs before either mutation returns). A dropped-outcome retry is a
+  // SEQUENTIAL call (the first has left the set), so the adapter's query-before-post
+  // idempotency still yields exactly one review.
+  const realPostInFlight = new Set<string>();
+
   function assertAllowedRepository(repositoryPath: string): void {
     if (!allowedRoots.has(repositoryPath)) throw new Error("Repository access was not granted");
+  }
+
+  /**
+   * The egress target-binding gate (issue #21, most-permissive-fault): a real post is
+   * legitimate ONLY against the review's OWN pull request. `requestConsent` and the
+   * real `publish.review` both call this so a token can neither be MINTED nor CONSUMED
+   * for a local capture (no `postTarget`) or a mismatched target — even by a
+   * hand-crafted call. A single fault (a renderer bug, a replayed/forged target) cannot
+   * clear it: the review's stored `postTarget` is the authority, not the caller's input.
+   * Mirrors the retrospective structural gate exactly.
+   */
+  function assertTargetIsReviewOwn(review: Review, target: ForgeReviewTarget): void {
+    if (!review.postTarget) {
+      throw new Error(
+        "Publish refused: this review has no pull request to post to (a local capture cannot be posted).",
+      );
+    }
+    if (forgeTargetKey(toForgeReviewTarget(review.postTarget)) !== forgeTargetKey(target)) {
+      throw new Error("Publish refused: the target does not match this review's pull request.");
+    }
   }
 
   /** The latest review, asserted to be the one addressed (freshness/canvases path). */
@@ -340,7 +372,15 @@ export function createDispatch(
         // Refuse to mint a token for a stale or unknown review id; only the current
         // review can be published from this session.
         const review = requireLatestReview(input.reviewId);
-        const key = publishConsentKey(review.id, toForgeReviewTarget(input.target), input.payload);
+        const target = toForgeReviewTarget(input.target);
+        // Bind the mint to the review's OWN pull request (issue #21): a local capture
+        // (no postTarget) or a mismatched target cannot even obtain a token, so the
+        // real-post path below can never receive one for the wrong PR.
+        assertTargetIsReviewOwn(review, target);
+        // Bind the resolved VERDICT into the token too, so an APPROVE/REQUEST_CHANGES
+        // cannot be swapped in after approval (the verdict is the one outbound field
+        // the payload bytes do not capture).
+        const key = publishConsentKey(review.id, target, input.payload, input.verdict);
         return parseCommandOutput(name, { authorization: deps.publishConsent.grant(key) });
       }
       case "publish.review": {
@@ -395,13 +435,21 @@ export function createDispatch(
         if (input.dryRun === false) {
           // (4) REAL egress. Posting a review to GitHub is an EXTERNAL act — a review
           // leaving the machine AS THE USER — so unlike running a model (which just
-          // runs), a real send ALWAYS requires an explicit user confirmation. MAIN
-          // requires the single-use CONSENT token it minted for THIS (review, target,
-          // payload) via `publish.requestConsent`, verified + CONSUMED here. Absent /
-          // forged / replayed / target-or-payload-mismatched ⇒ refused, and NOTHING
-          // leaves. This is the machine's most dangerous action; the confirmation is
-          // unconditional, never governed by a permission mode.
-          const key = publishConsentKey(input.reviewId, target, input.payload);
+          // runs), a real send ALWAYS requires an explicit user confirmation.
+          //
+          // (4a) TARGET-BINDING gate (most-permissive-fault): the post must target the
+          // review's OWN pull request. A local capture (no postTarget) or a mismatched
+          // target is refused BEFORE the token is even looked at, so a token can never
+          // authorise a post to an arbitrary PR — it runs on the same authority
+          // (`addressed.postTarget`) the retrospective gate does.
+          assertTargetIsReviewOwn(addressed, target);
+          // (4b) The single-use CONSENT token MAIN minted for THIS (review, target,
+          // payload, VERDICT) via `publish.requestConsent`, verified + CONSUMED here.
+          // Absent / forged / replayed / target-payload-or-verdict-mismatched ⇒ refused,
+          // and NOTHING leaves. The verdict is resolved the SAME way it is for the post
+          // (`resolveReviewEvent`), so the token authorises exactly the event that ships.
+          const resolvedVerdict = resolveReviewEvent(input.comments, input.verdict);
+          const key = publishConsentKey(input.reviewId, target, input.payload, resolvedVerdict);
           const authorization = input.authorization;
           if (
             typeof authorization !== "string" ||
@@ -409,14 +457,27 @@ export function createDispatch(
           ) {
             throw new Error("Publish refused: not authorized to post — confirm the send first");
           }
-          const outcome = await deps.publishPort.publishReview(post);
-          return parseCommandOutput(name, {
-            dryRun: false,
-            request: deps.publishPort.buildReviewRequest(post),
-            marker: post.marker,
-            ledger: post.ledger,
-            outcome,
-          });
+          // (4c) Single-flight by marker (double-sign race): refuse a concurrent real
+          // post of the same content while the first is still in flight, so two
+          // near-simultaneous signs cannot both pass the adapter's query-before-post
+          // check and double-post. A sequential retry (first already resolved) is not
+          // in the set and relies on the adapter's marker idempotency instead.
+          if (realPostInFlight.has(post.marker)) {
+            throw new Error("Publish refused: a publish for this review is already in progress.");
+          }
+          realPostInFlight.add(post.marker);
+          try {
+            const outcome = await deps.publishPort.publishReview(post);
+            return parseCommandOutput(name, {
+              dryRun: false,
+              request: deps.publishPort.buildReviewRequest(post),
+              marker: post.marker,
+              ledger: post.ledger,
+              outcome,
+            });
+          } finally {
+            realPostInFlight.delete(post.marker);
+          }
         }
 
         // Dry-run (the default): construct + return the EXACT request, post NOTHING.

@@ -65,6 +65,21 @@ function pointerHold(button: HTMLButtonElement, heldMs: number): void {
   fireEvent.mouseUp(button);
 }
 
+/**
+ * Complete a KEYBOARD hold of `heldMs` (issue #21): press the sign key, advance the
+ * fake clock, release. Keyboard is now a real hold too — a single keypress no longer
+ * signs, because the sign is a real GitHub egress — so a completed keyboard sign is
+ * keydown → (elapsed) → keyup, through the same `resolveSign` budget gate as pointer.
+ */
+function keyboardHold(button: HTMLButtonElement, heldMs: number, key = "Enter"): void {
+  const base = 1_000_000;
+  vi.setSystemTime(base);
+  button.focus();
+  fireEvent.keyDown(button, { key });
+  vi.setSystemTime(base + heldMs);
+  fireEvent.keyUp(button, { key });
+}
+
 beforeEach(() => {
   vi.useFakeTimers();
 });
@@ -135,8 +150,7 @@ describe("emit fidelity (MUT A′): the sheet signs the HANDED payload, never a 
       />,
     );
     const button = signButton(container);
-    button.focus();
-    fireEvent.keyDown(button, { key: "Enter" });
+    keyboardHold(button, 850);
     expect(signed).toEqual([sentinel]);
   });
 });
@@ -209,8 +223,8 @@ describe("ledger gate: unacknowledged degradations block signing", () => {
   });
 });
 
-describe("keyboard sign (a11y): Enter/Space on the focused control signs deliberately", () => {
-  it("Enter signs with the byte-equal payload at the default non-zero hold", () => {
+describe("keyboard sign (a11y): a HELD Enter/Space signs deliberately (issue #21)", () => {
+  it("a keyboard hold that clears the budget signs, byte-equal", () => {
     const draft = stagedDraft(...writes);
     const signed: string[] = [];
     const { container } = mount(
@@ -220,16 +234,13 @@ describe("keyboard sign (a11y): Enter/Space on the focused control signs deliber
         onSign={(payload) => signed.push(payload)}
       />,
     );
-    const button = signButton(container);
-    button.focus();
-
-    fireEvent.keyDown(button, { key: "Enter" });
+    keyboardHold(signButton(container), 850);
 
     expect(signed).toHaveLength(1);
     expect(signed[0]).toBe(collationPayload(draft));
   });
 
-  it("Space also signs, byte-equal", () => {
+  it("a keyboard hold BELOW the budget does not sign (a single keypress no longer posts)", () => {
     const draft = stagedDraft(...writes);
     const signed: string[] = [];
     const { container } = mount(
@@ -239,9 +250,23 @@ describe("keyboard sign (a11y): Enter/Space on the focused control signs deliber
         onSign={(payload) => signed.push(payload)}
       />,
     );
-    const button = signButton(container);
-    button.focus();
-    fireEvent.keyDown(button, { key: " " });
+    // A quick press-and-release (200ms < 800ms) does NOT sign — the exact gap issue #21
+    // closed, where one Enter fired a real GitHub post.
+    keyboardHold(signButton(container), 200);
+    expect(signed).toHaveLength(0);
+  });
+
+  it("Space also signs on a completed hold, byte-equal", () => {
+    const draft = stagedDraft(...writes);
+    const signed: string[] = [];
+    const { container } = mount(
+      <PublishSheet
+        {...paper(draft)}
+        variant={destinationVariant("own-branch")}
+        onSign={(payload) => signed.push(payload)}
+      />,
+    );
+    keyboardHold(signButton(container), 850, " ");
 
     expect(signed).toHaveLength(1);
     expect(signed[0]).toBe(collationPayload(draft));
@@ -274,16 +299,16 @@ describe("keyboard sign (a11y): Enter/Space on the focused control signs deliber
       />,
     );
     const button = signButton(container);
-    button.focus();
 
-    fireEvent.keyDown(button, { key: "Enter" });
+    // A completed keyboard hold is still blocked while the ledger is unacknowledged.
+    keyboardHold(button, 850);
     expect(signed).toHaveLength(0);
 
     const ack = container.querySelector<HTMLInputElement>(".publish-sheet-ack-box");
     if (!ack) throw new Error("the acknowledge control did not render for a non-empty ledger");
     fireEvent.click(ack);
 
-    fireEvent.keyDown(button, { key: "Enter" });
+    keyboardHold(button, 850);
     expect(signed).toHaveLength(1);
     expect(signed[0]).toBe(collationPayload(draft));
   });
@@ -326,8 +351,7 @@ describe("ledger swap fail-closed: a changed ledger re-blocks a prior acknowledg
     // reset, `acknowledged` carries over from A and the hold signs → red here.
     const button = signButton(container);
     pointerHold(button, 850);
-    button.focus();
-    fireEvent.keyDown(button, { key: "Enter" });
+    keyboardHold(button, 850);
     expect(signed).toHaveLength(1);
 
     // Acknowledging B reopens both paths, byte-equal.
@@ -335,7 +359,7 @@ describe("ledger swap fail-closed: a changed ledger re-blocks a prior acknowledg
     if (!ackB) throw new Error("the acknowledge control did not render for ledger B");
     fireEvent.click(ackB);
     pointerHold(button, 850);
-    fireEvent.keyDown(button, { key: "Enter" });
+    keyboardHold(button, 850);
     expect(signed).toHaveLength(3);
     expect(signed[1]).toBe(collationPayload(draft));
     expect(signed[2]).toBe(collationPayload(draft));
@@ -391,11 +415,11 @@ describe("ledger swap fail-closed: a changed ledger re-blocks a prior acknowledg
   });
 });
 
-describe("keyboard auto-repeat: a held sign key fires onSign only once", () => {
-  // Both sign keys, since the repeat guard is key-agnostic (`if (event.repeat)`): if
-  // it were ever narrowed to Enter only, a HELD Space would double-fire and only the
-  // Space row reddens.
-  it.each([["Enter"], [" "]])("a repeat %s keydown does not re-fire onSign", (key) => {
+describe("keyboard auto-repeat: a held sign key measures the hold from the FIRST press", () => {
+  // Both sign keys, since the repeat guard is key-agnostic (`if (event.repeat)`): if it
+  // were ever narrowed to Enter only, a HELD Space's auto-repeat would reset the hold
+  // clock and only the Space row reddens.
+  it.each([["Enter"], [" "]])("a repeat %s keydown does not reset the hold clock", (key) => {
     const draft = stagedDraft(...writes);
     const signed: string[] = [];
     const { container } = mount(
@@ -408,11 +432,18 @@ describe("keyboard auto-repeat: a held sign key fires onSign only once", () => {
     const button = signButton(container);
     button.focus();
 
-    // First activation signs; the auto-repeat keydown (repeat:true) from a HELD key
-    // must be ignored, or #21's real publish double-fires. Without the event.repeat
-    // guard this is length 2 → red.
+    // A HELD key emits: one real keydown, then a stream of auto-repeat keydowns, then
+    // one keyup on release. The repeats must be IGNORED so the hold is measured from the
+    // FIRST press. Here the first press is at t0, a repeat lands at t0+500, and release
+    // at t0+850. If the repeat reset the clock (guard removed), the measured hold would
+    // be 350ms < 800ms and NOTHING signs → red. With the guard it is 850ms → one sign.
+    const base = 1_000_000;
+    vi.setSystemTime(base);
     fireEvent.keyDown(button, { key });
+    vi.setSystemTime(base + 500);
     fireEvent.keyDown(button, { key, repeat: true });
+    vi.setSystemTime(base + 850);
+    fireEvent.keyUp(button, { key });
 
     expect(signed).toHaveLength(1);
     expect(signed[0]).toBe(collationPayload(draft));

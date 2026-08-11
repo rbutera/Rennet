@@ -134,11 +134,14 @@ describe("RennetApp — the Sign button runs the real publish engine (wire-sign-
     fireEvent.click(signDraft);
     await waitFor(() => expect(container.querySelector(".publish-sheet")).not.toBeNull());
 
-    // Sign the paper via the keyboard (a deliberate Enter on the focused control).
+    // Complete a real hold-to-sign on the paper (issue #21: a single keypress no
+    // longer signs — the sign is a real egress, so it takes a deliberate HOLD). Real
+    // timers here, so hold past the 800ms budget in wall-clock time.
     const sign = container.querySelector<HTMLButtonElement>(".publish-sheet-sign");
     if (!sign) throw new Error("the sign control did not render");
-    sign.focus();
-    fireEvent.keyDown(sign, { key: "Enter" });
+    fireEvent.mouseDown(sign);
+    await new Promise((resolve) => setTimeout(resolve, 850));
+    fireEvent.mouseUp(sign);
 
     // The publish engine was invoked exactly once, in DRY-RUN, with the canonical
     // review-comment payload and the derived verdict. RED-proof: point `onSign` back

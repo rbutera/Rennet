@@ -174,11 +174,16 @@ const signButton = (container: HTMLElement) => {
   if (!sign) throw new Error("the paper sign control did not render");
   return sign;
 };
-/** A completed sign: an explicit Enter on the focused sign control (the deliberate act). */
-function signByKeyboard(container: HTMLElement): void {
+/**
+ * A completed hold-to-sign (issue #21): a single keypress no longer signs — the sign
+ * is a real GitHub egress, so it takes a deliberate HOLD. Real timers here, so hold
+ * past the 800ms budget in wall-clock time.
+ */
+async function completeSign(container: HTMLElement): Promise<void> {
   const sign = signButton(container);
-  sign.focus();
-  fireEvent.keyDown(sign, { key: "Enter" });
+  fireEvent.mouseDown(sign);
+  await new Promise((resolve) => setTimeout(resolve, 850));
+  fireEvent.mouseUp(sign);
 }
 async function flush() {
   await new Promise((resolve) => setTimeout(resolve, 0));
@@ -195,7 +200,7 @@ describe("real-post flip (issue #21) — a completed sign posts a real PR review
     const preview = previewBytes(container);
     expect(preview).toContain("pr-review");
 
-    signByKeyboard(container);
+    await completeSign(container);
     await waitFor(() => expect(realPosts()).toHaveLength(1));
 
     // The consent token was minted exactly once, bound to the real target + the
@@ -203,6 +208,9 @@ describe("real-post flip (issue #21) — a completed sign posts a real PR review
     expect(consentCalls).toHaveLength(1);
     expect(consentCalls[0]?.target).toEqual(POST_TARGET);
     expect(consentCalls[0]?.payload).toBe(preview);
+    // The verdict is bound into the token too (one comment ⇒ COMMENT), so it cannot be
+    // swapped after approval.
+    expect(consentCalls[0]?.verdict).toBe("COMMENT");
 
     // The real post carries that token, the real target, and byte-for-byte the
     // previewed payload — "what you see is what leaves".
@@ -247,7 +255,7 @@ describe("real-post flip (issue #21) — a completed sign posts a real PR review
     // The honest local-capture notice, NOT the will-post notice.
     expect(container.querySelector('[data-testid="will-post-notice"]')).toBeNull();
 
-    signByKeyboard(container);
+    await completeSign(container);
     await waitFor(() => expect(publishCalls).toHaveLength(1));
     expect(consentCalls).toHaveLength(0); // never mint a token with no PR to post to
     expect(realPosts()).toHaveLength(0); // dry run only
@@ -259,7 +267,7 @@ describe("real-post flip (issue #21) — a completed sign posts a real PR review
 
   it("(e) a failed GitHub post surfaces the error — never a silent success", async () => {
     const { container, realPosts } = await reachPaper(reviewWith(POST_TARGET), { failPost: true });
-    signByKeyboard(container);
+    await completeSign(container);
     await waitFor(() => expect(realPosts()).toHaveLength(1)); // the attempt was made
     // The error is shown; the paper never claims a post landed.
     await waitFor(() => expect(container.querySelector(".error-toast")).not.toBeNull());
