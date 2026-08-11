@@ -139,6 +139,18 @@ describe("attachRiskCrossCheck — the live-path composition point (issue #181)"
     expect(result.crossChecks).toEqual([]);
   });
 
+  it("carries the hypothesis alongside the crossChecks (issue #178: they must travel together)", () => {
+    const hypothesis = HYPOTHESIS([
+      risk("r1", "the store key is keyed per branch not per repository root", "check keying"),
+    ]);
+    const result = attachRiskCrossCheck(okReview([finding("f1", "unrelated concern")]), hypothesis);
+    if (result.status !== "ok") throw new Error("expected ok");
+    // The reading frame is folded from THIS hypothesis + THESE crossChecks, and the
+    // crossChecks reference the hypothesis's per-pass riskIds — so both ride the review.
+    expect(result.hypothesis).toBe(hypothesis);
+    expect(result.crossChecks?.map((c) => c.riskId)).toEqual(["r1"]);
+  });
+
   it("preserves the dual note while adding crossChecks (additive, existing fields intact)", () => {
     const review: FlaggedReview = {
       status: "ok",

@@ -60,6 +60,7 @@ import {
   DEFAULT_MAX_VERIFICATIONS,
   decompose,
   guardSeatTurn,
+  markVerificationUnavailable,
   patchsetIntentToReviewIntent,
   ReviewService,
   resolveDualSeat,
@@ -811,8 +812,9 @@ async function runFlaggedReview(review: Review, deepReview = true): Promise<Flag
   // (#206, createVerificationFileReaderForPatchset) selects working-tree vs
   // git-show-at-head by the patchset's captured surface, so verification reads the
   // right bytes for working-tree AND PR/retrospective reviews. Absent a Claude adapter
-  // there is no verification seat (createVerificationTurn needs a HarnessPort), so the
-  // findings surface unverified — carrying no chip, never silently altered.
+  // there is no verification seat (createVerificationTurn needs a HarnessPort) — but in
+  // DEEP review that absence must ANNOUNCE itself (P0-3, below), never surface a chipless
+  // finding that reads as "nothing to check."
   if (deepReview && adapter) {
     const readFileWindow = createVerificationFileReaderForPatchset({
       patchset,
@@ -841,8 +843,18 @@ async function runFlaggedReview(review: Review, deepReview = true): Promise<Flag
     // `verified` unchanged.
     return attachRiskCrossCheck(verified, hypothesis);
   }
+  // DEEP review requested but NO Claude verifier (e.g. Codex-only: findings were
+  // produced by the Codex seat, but verification needs the Claude adapter). Announce it
+  // honestly (P0-3): every finding that WOULD have been verified gets an explicit
+  // "verification unavailable" inconclusive caveat, so an absent chip never reads as an
+  // all-clear while deep review appears active. `adapter` is falsy here (we are past the
+  // branch above), so this is exactly the no-verifier deep case.
+  if (deepReview) {
+    return attachRiskCrossCheck(markVerificationUnavailable(flagged), hypothesis);
+  }
   // Quick review (single-seat, unverified): the cross-check still runs — it is a
-  // free deterministic step — over the single seat's own findings.
+  // free deterministic step — over the single seat's own findings. No chip, byte-
+  // identical to before (quick review never promised verification).
   return attachRiskCrossCheck(flagged, hypothesis);
 }
 

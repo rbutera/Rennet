@@ -2,6 +2,7 @@ import type { RennetBridge } from "@rennet/protocol";
 import type {
   Canvas,
   CanvasAngle,
+  DecisionsRunStatus,
   ElementDiffs,
   Review,
   ReviewEngine,
@@ -26,6 +27,13 @@ export interface LoadedCanvases {
   elementDiffs: ElementDiffs;
   narration?: ReviewNarration;
   engine?: ReviewEngine;
+  /**
+   * How the Decisions runner ran (issue #137/#160). Present when the engine reports
+   * it; absent ⇒ the UI defaults to `ok`. Carried so the Decisions lens can paint a
+   * FAILED runner distinctly from a review that ran and discerned nothing — without
+   * it, "the decisions pass crashed" renders identical to "found nothing".
+   */
+  decisionsRun?: DecisionsRunStatus;
 }
 
 /**
@@ -43,16 +51,20 @@ export async function loadCanvases(
   try {
     // Running the harness is Rennet's whole job — it just runs. No consent token,
     // no permission mode: opening Canvases composes the model turn directly.
-    const { canvases, elementDiffs, narration, engine } = await bridge.invoke("review.canvases", {
-      commandId: crypto.randomUUID(),
-      reviewId: review.id,
-      repoPath: review.repositoryRoot,
-    });
+    const { canvases, elementDiffs, narration, engine, decisionsRun } = await bridge.invoke(
+      "review.canvases",
+      {
+        commandId: crypto.randomUUID(),
+        reviewId: review.id,
+        repoPath: review.repositoryRoot,
+      },
+    );
     return {
       canvases,
       elementDiffs,
       ...(narration ? { narration } : {}),
       ...(engine ? { engine } : {}),
+      ...(decisionsRun ? { decisionsRun } : {}),
     };
   } catch {
     return null;

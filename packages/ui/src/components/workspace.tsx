@@ -23,6 +23,7 @@ import { type CounterpartTarget, resolveCounterpart } from "../canvas/counterpar
 import type { CanvasFeedSource } from "../canvas/feed";
 import { useCanvasFeed } from "../canvas/feed";
 import { buildFlaggedIndex } from "../canvas/flagged";
+import { buildHypothesisFrame } from "../canvas/hypothesis";
 import {
   type Adjudication,
   type ApprovalScope,
@@ -53,6 +54,7 @@ import { DecisionsCanvas } from "./decisions";
 import { type DeepReviewControl, FlaggedLens } from "./flagged";
 import { FlatCanvas } from "./flat";
 import { GranularityAuthor, type GranularityContext } from "./granularity-author";
+import { HypothesisReadingFrame } from "./hypothesis";
 import { AnnotationMark, ProposalMark } from "./l3";
 import { LensSwitcher } from "./lens";
 import { MarkIndex, type MarkIndexEntry } from "./mark-index";
@@ -307,6 +309,20 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   // Deixis: the anchor the agent (or the index) is pointing at — the CodeView
   // pulses its span. Cleared as the user moves on.
   const [focusAnchor, setFocusAnchor] = useState<string | null>(null);
+  // The hypothesis reading frame (issue #178/#181), folded from the flagged review's
+  // committed hypothesis + its predicted-risk cross-check. BOTH ride the SAME
+  // FlaggedReview on purpose — the cross-check references the hypothesis's per-pass
+  // minted riskIds, so a frame built from a different pass's hypothesis would fall
+  // every risk back to `open`. Absent a hypothesis (no adapter, a failed pass, or
+  // before the flagged review lands) the frame is simply not shown.
+  const hypothesisFrame = useMemo(() => {
+    const flagged = props.flaggedReview;
+    if (flagged?.status !== "ok" || !flagged.hypothesis) return undefined;
+    return buildHypothesisFrame(flagged.hypothesis, flagged.crossChecks ?? []);
+  }, [props.flaggedReview]);
+  // Narrative-first (Design Doctrine §3.2): the reading frame shows by default, but is
+  // collapsible so it never traps the reviewer above the lens they want to read.
+  const [hypothesisOpen, setHypothesisOpen] = useState(true);
   // The open symbol inspector (Rai, wireframes #8 + #11): null when closed. When
   // FLOATING a newer click retargets it (single-entry history); when PINNED a click
   // pushes onto the breadcrumb chain so the reviewer navigates deeper in the rail.
@@ -590,6 +606,24 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     setFocusAnchor(anchor);
   }
 
+  // Jump from a possibly-related risk in the reading frame to the finding the lexical
+  // cross-check paired with it (issue #178): switch to the Flagged lens (where findings
+  // live) and scroll the matching finding row into view, so the reviewer can judge the
+  // relation themselves. The row carries `data-finding-id`; a no-match is a best-effort
+  // no-op (never a throw), and the scroll waits a frame for the lens to mount after the
+  // angle change.
+  function jumpToFinding(findingId: string): void {
+    goToAngle("flagged");
+    if (typeof window === "undefined") return;
+    const selector =
+      typeof CSS !== "undefined" && typeof CSS.escape === "function"
+        ? `[data-finding-id="${CSS.escape(findingId)}"]`
+        : `[data-finding-id="${findingId}"]`;
+    window.requestAnimationFrame(() => {
+      document.querySelector(selector)?.scrollIntoView({ block: "center" });
+    });
+  }
+
   // Jump from a Spec-view coverage chip to its claiming hunk (Rai, wireframes #9 /
   // R53). The chip lives on the SPEC angle, whose analysis elements are DOCUMENT-
   // anchored — so the claiming hunk is never on the active canvas; it lives on a code
@@ -818,6 +852,34 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
       {marks.length > 0 ? <MarkIndex entries={markEntries} onNavigate={navigateToMark} /> : null}
 
       <main className="canvas-surface">
+        {/* The hypothesis reading frame (issue #178/#181): the reviewer's prior —
+            domain, scope, the design we'd have chosen, and the predicted risks with
+            their cross-check status — shown BEFORE the lenses so the review is read
+            with expectations rather than rubber-stamped. An OPEN risk (predicted, no
+            finding cleared it) is the #181 payoff: it surfaces here for the human to
+            check themselves. Collapsible (narrative-first, never a trap). Placement is
+            not in the wireframes (invented per Design Doctrine §3.2). */}
+        {hypothesisFrame ? (
+          <section className="hypothesis-panel" aria-label="Review hypothesis">
+            <button
+              type="button"
+              className="hypothesis-panel-toggle"
+              aria-expanded={hypothesisOpen}
+              onClick={() => setHypothesisOpen((open) => !open)}
+            >
+              <span className="hypothesis-panel-title">Reading frame</span>
+              <span className="hypothesis-panel-counts">
+                <span className="hypothesis-panel-open">{hypothesisFrame.counts.open} open</span>
+                <span className="hypothesis-panel-addressed">
+                  {hypothesisFrame.counts.confirmed} related
+                </span>
+              </span>
+            </button>
+            {hypothesisOpen ? (
+              <HypothesisReadingFrame frame={hypothesisFrame} onJumpToFinding={jumpToFinding} />
+            ) : null}
+          </section>
+        ) : null}
         {/* Narrative first (Design Doctrine R2): the zoom ladder's own voice for
             the altitude in view, above the grouped summary. Shown at the roll-up
             and cohort altitudes; never a spinner, never a silent blank. */}

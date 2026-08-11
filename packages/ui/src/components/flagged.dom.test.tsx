@@ -187,4 +187,68 @@ describe("FlaggedLens — the flagged index surface", () => {
     expect(container.querySelector('[data-dual="degraded"]')).toBeTruthy();
     expect(getByText(/single provider — no second opinion/)).toBeTruthy();
   });
+
+  // ── The verification chip (issue #179): reproduce-or-refute evidence on the row.
+  // A refuted finding never reaches the lens (core drops it), so the surface only
+  // ever renders `reproduced` (confirmed) or `inconclusive` (an honest caveat). ──
+  it("renders a reproduced verification chip WITH its evidence at the finding", () => {
+    const review: FlaggedReview = {
+      status: "ok",
+      findings: [
+        {
+          findingId: "f-verified",
+          anchor: "rennet:hunk/v-1",
+          summary: "load() returns null and the result is dereferenced",
+          severity: "high",
+          agreement: { kind: "concur", agree: 1, total: 1 },
+          verification: {
+            verdict: "reproduced",
+            evidence: "load() returns T | null at L12; L14 dereferences it unguarded",
+          },
+        },
+      ],
+    };
+    const { container, getByText } = mount(
+      <FlaggedLens index={buildFlaggedIndex(review)} onJumpToAnchor={vi.fn()} />,
+    );
+    const chip = container.querySelector('[data-verdict="reproduced"]');
+    expect(chip).toBeTruthy();
+    expect(chip?.classList.contains("flag-verification-reproduced")).toBe(true);
+    expect(getByText("reproduced")).toBeTruthy();
+    expect(getByText(/L14 dereferences it unguarded/)).toBeTruthy();
+  });
+
+  it("renders an inconclusive chip as an honest caveat, never a silent all-clear", () => {
+    const review: FlaggedReview = {
+      status: "ok",
+      findings: [
+        {
+          findingId: "f-inconclusive",
+          anchor: "rennet:hunk/v-2",
+          summary: "a possible race between watcher and generator",
+          severity: "medium",
+          agreement: { kind: "concur", agree: 1, total: 1 },
+          verification: {
+            verdict: "inconclusive",
+            evidence: "could not read the neighbouring file",
+          },
+        },
+      ],
+    };
+    const { container, getByText } = mount(
+      <FlaggedLens index={buildFlaggedIndex(review)} onJumpToAnchor={vi.fn()} />,
+    );
+    const chip = container.querySelector('[data-verdict="inconclusive"]');
+    expect(chip).toBeTruthy();
+    expect(chip?.classList.contains("flag-verification-inconclusive")).toBe(true);
+    expect(getByText("couldn't verify")).toBeTruthy();
+    expect(getByText(/could not read the neighbouring file/)).toBeTruthy();
+  });
+
+  it("renders NO verification chip on an unverified finding (additive, absent by default)", () => {
+    const { container } = mount(
+      <FlaggedLens index={buildFlaggedIndex(REVIEW)} onJumpToAnchor={vi.fn()} />,
+    );
+    expect(container.querySelector(".flag-verification")).toBeNull();
+  });
 });

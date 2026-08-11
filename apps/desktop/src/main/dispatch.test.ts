@@ -399,12 +399,14 @@ describe("createDispatch — canvas.* routing (issue #54)", () => {
 });
 
 describe("createDispatch — flagged.review routing (the live finding runner, issue #32)", () => {
-  it("resolves the addressed review and returns the runner's FlaggedReview", async () => {
+  it("resolves the addressed review and returns the runner's FlaggedReview, stamped with the active patchset", async () => {
     const { dispatch } = harness();
     const review = await capturedReview(dispatch);
     const result = await dispatch("flagged.review", { reviewId: review.id });
-    // The shared harness's runner stub answers with an honestly-empty ran-clean set.
-    expect(result).toEqual({ status: "ok", findings: [] });
+    // The shared harness's runner stub answers with an honestly-empty ran-clean set, and
+    // dispatch stamps the ACTIVE patchset onto the ok result (#160/P0-2) so the renderer
+    // can bind it to the canvases beside it and drop a regenerate-stale result.
+    expect(result).toEqual({ status: "ok", findings: [], patchsetId: review.activePatchsetId });
   });
 
   it("refuses flagged.review for a stale or unknown review id (the runner spends a model turn)", async () => {

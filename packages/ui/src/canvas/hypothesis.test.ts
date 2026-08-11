@@ -17,7 +17,7 @@ function hypothesis(risks: ReviewHypothesis["risks"], repoContextPresent = true)
 }
 
 describe("buildHypothesisFrame — the reading frame (#178)", () => {
-  it("orders by severity, then OPEN before confirmed within a severity, then riskId", () => {
+  it("orders OPEN before confirmed GLOBALLY, then by severity — weak matches never bury the genuine rows (P0-1)", () => {
     const h = hypothesis([
       risk("r-high-confirmed", "high"),
       risk("r-high-open", "high"),
@@ -28,11 +28,15 @@ describe("buildHypothesisFrame — the reading frame (#178)", () => {
       { riskId: "r-high-confirmed", status: "confirmed", findingIds: ["f1"] },
     ];
     const frame = buildHypothesisFrame(h, crossChecks);
+    // ALL three open ("check yourself") risks lead, severity-ordered, and the lone
+    // confirmed ("possibly related") risk sorts LAST — even though it is HIGH severity.
+    // (Red-proof: revert the comparator to severity-first and r-high-confirmed jumps to
+    // second, above the medium/low open rows — the exact ordering harm P0-1 guards.)
     expect(frame.risks.map((r) => r.riskId)).toEqual([
-      "r-high-open", // high, open first
-      "r-high-confirmed", // high, confirmed after open
-      "r-medium-open",
-      "r-low-open",
+      "r-high-open", // open, high
+      "r-medium-open", // open, medium
+      "r-low-open", // open, low — still above the confirmed row
+      "r-high-confirmed", // confirmed sorts last despite being HIGH severity
     ]);
   });
 

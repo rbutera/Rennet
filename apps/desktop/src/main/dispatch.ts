@@ -528,12 +528,17 @@ export function createDispatch(
         // Running the review harness (the model spend) is Rennet's entire job — it
         // just runs. No permission mode, no consent token: opening Canvases composes
         // the model turn directly.
-        const { canvases, elementDiffs, narration, engine } = await deps.buildCanvases(review);
+        const { canvases, elementDiffs, narration, engine, decisionsRun } =
+          await deps.buildCanvases(review);
         return parseCommandOutput(name, {
           canvases,
           elementDiffs,
           ...(narration ? { narration } : {}),
           engine,
+          // The Decisions runner's status (issue #137/#160): carried so the renderer
+          // can paint a FAILED decisions pass distinctly from "ran, found nothing".
+          // Absent ⇒ the UI defaults to `ok` (the pre-#160 shape).
+          ...(decisionsRun ? { decisionsRun } : {}),
         });
       }
       // ── The front door: projects + discovery (issue #29) ──────────────────────
@@ -613,7 +618,13 @@ export function createDispatch(
         const review = requireLatestReview(input.reviewId);
         // Dual-model is the DEFAULT (Rai's mandate, 2026-08-11): an omitted flag runs
         // BOTH provider seats. Only an explicit `false` opts down to single-Claude.
-        return parseCommandOutput(name, await deps.flaggedReview(review, input.deepReview ?? true));
+        const flagged = await deps.flaggedReview(review, input.deepReview ?? true);
+        // Stamp the patchset this result was computed against (#160/P0-2) so the renderer
+        // can bind it to the canvases beside it and discard a regenerate-stale result.
+        return parseCommandOutput(
+          name,
+          flagged.status === "ok" ? { ...flagged, patchsetId: review.activePatchsetId } : flagged,
+        );
       }
       // ── Ask the AI a question about the review (issue #139) ────────────────────
       case "review.ask": {

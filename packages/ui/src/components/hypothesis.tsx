@@ -2,10 +2,16 @@ import type { HypothesisFrame, HypothesisFrameRisk } from "../canvas/hypothesis"
 
 // The hypothesis reading frame (issue #178): the human's prior, shown BEFORE the
 // lenses. It renders what this change SHOULD be (domain), what is in and out of
-// scope, the design we would have chosen, and the risk list — each risk carrying
-// its confirmed/open status. An OPEN risk is the anti-rubber-stamp payoff: a risk
-// we predicted that the automated pass did not clear, so it is where the reviewer's
-// own attention should go. It jumps to any finding that addressed a confirmed risk.
+// scope, the design we would have chosen, and the risk list.
+//
+// The cross-check that pairs a predicted risk with a finding is a LEXICAL token
+// overlap, not a semantic proof (packages/core/src/risk-crosscheck.ts). It can pair
+// two unrelated things that share words, so a match is a WEAK pointer, never a claim
+// the risk was resolved. So a matched ("confirmed") risk renders as "possibly
+// related" with a jump to the finding for the reviewer to judge — it must NEVER read
+// as "addressed" (a false-verdict trap). An UNMATCHED ("open") risk is the
+// anti-rubber-stamp payoff — predicted, and no finding even mentioned it — so it
+// carries the loud "check yourself" weight where the reviewer's attention should go.
 
 const SEVERITY_LABEL = { high: "high", medium: "medium", low: "low" } as const;
 
@@ -23,7 +29,7 @@ function RiskRow({
           {SEVERITY_LABEL[risk.severity]}
         </span>
         <span className={`hypothesis-status hypothesis-status-${risk.status}`}>
-          {risk.status === "open" ? "open — check this yourself" : "addressed by a finding"}
+          {risk.status === "open" ? "check yourself" : "possibly related"}
         </span>
       </div>
       <p className="hypothesis-risk-statement">{risk.statement}</p>
@@ -57,10 +63,12 @@ export function HypothesisReadingFrame({
   return (
     <section className="hypothesis-frame" aria-label="Review hypothesis">
       <header className="hypothesis-frame-head">
-        <p className="hypothesis-frame-title">Before you read the diff — what we expected</p>
+        {/* Chrome, terse (Design Doctrine §4, ≤4 words): the section names itself, the
+            model-voiced domain/scope/design/risks below carry the meaning. */}
+        <p className="hypothesis-frame-title">What we expected</p>
         {frame.repoContextPresent ? null : (
           <p className="hypothesis-degraded" role="note">
-            Formed without repository context — a lighter prior.
+            Formed without repo context
           </p>
         )}
       </header>
@@ -103,10 +111,19 @@ export function HypothesisReadingFrame({
           <span className="hypothesis-risk-counts">
             <span className="hypothesis-count hypothesis-count-open">{frame.counts.open} open</span>
             <span className="hypothesis-count hypothesis-count-confirmed">
-              {frame.counts.confirmed} addressed
+              {frame.counts.confirmed} related
             </span>
           </span>
         </div>
+        {/* The all-matched caveat (P0-1): "0 open" must never read as "nothing to worry
+            about." When EVERY predicted risk drew only a lexical match, say plainly that
+            none was verified — a content caveat (it breathes, like the failed-runner
+            banners) so a screen of "possibly related" is not mistaken for an all-clear. */}
+        {frame.counts.open === 0 && frame.counts.confirmed > 0 ? (
+          <p className="hypothesis-all-related" role="note">
+            Every predicted risk drew only a lexical match — none was verified. Judge each yourself.
+          </p>
+        ) : null}
         <ol className="hypothesis-risk-list">
           {frame.risks.map((risk) => (
             <RiskRow key={risk.riskId} risk={risk} onJumpToFinding={onJumpToFinding} />

@@ -97,10 +97,19 @@ function sharedCount(a: ReadonlySet<string>, b: ReadonlySet<string>): number {
 
 /**
  * Cross-check every hypothesised risk against the produced findings. Each risk
- * becomes a `RiskCrossCheck`: `confirmed` with the ids of the findings that
- * address it, or `open` with an empty finding list. Deterministic and total —
- * every risk is accounted for exactly once, in order, and no finding match can
- * cause a risk to be dropped.
+ * becomes a `RiskCrossCheck`: `confirmed` with the ids of the findings that match
+ * it, or `open` with an empty finding list. Deterministic and total — every risk is
+ * accounted for exactly once, in order, and no finding match can cause a risk to be
+ * dropped.
+ *
+ * ⚠️ The match is a LEXICAL salient-token overlap, not a semantic proof: it can pair
+ * two unrelated statements that happen to share words. So `confirmed` is a WEAK
+ * "possibly related" pointer, NEVER evidence a risk was resolved — the surface must
+ * render it as such and must never claim the risk is "addressed" (a false-verdict
+ * trap). Binding to real per-finding risk provenance would strengthen this; today
+ * there is none, so the safe direction is to under-claim: an `open` shown for a risk
+ * that was actually handled is a small annoyance; a `confirmed` read as resolved is
+ * a trap.
  */
 export function crossCheckRisks(
   hypothesis: ReviewHypothesis,
@@ -119,6 +128,12 @@ export function crossCheckRisks(
         findingIds.push(finding.id);
       }
     }
+    // ⚠️ LAMP: `confirmed` here means only that a finding shares >= 2 salient tokens
+    // with this risk — a LEXICAL overlap, which can pair two unrelated statements. It
+    // is NOT proof the risk was resolved. This is why the reading frame deliberately
+    // renders `confirmed` as "possibly related" (a weak pointer), never "addressed":
+    // do not read this status as a resolution. Binding to real per-finding risk
+    // provenance would let it mean what its name says; there is none today.
     return findingIds.length > 0
       ? { riskId: risk.riskId, status: "confirmed", findingIds }
       : { riskId: risk.riskId, status: "open", findingIds: [] };
@@ -154,5 +169,13 @@ export function attachRiskCrossCheck(
   hypothesis: ReviewHypothesis | undefined,
 ): FlaggedReview {
   if (review.status !== "ok" || hypothesis === undefined) return review;
-  return { ...review, crossChecks: crossCheckRisks(hypothesis, review.findings) };
+  // Carry BOTH the crossChecks AND the hypothesis itself (issue #178): the reading
+  // frame is folded from this hypothesis + these crossChecks, and the crossChecks
+  // reference the hypothesis's per-pass-minted `riskId`s — so they must travel
+  // together, or the frame would fall every risk back to `open` on a riskId mismatch.
+  return {
+    ...review,
+    crossChecks: crossCheckRisks(hypothesis, review.findings),
+    hypothesis,
+  };
 }

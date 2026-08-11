@@ -1230,6 +1230,44 @@
   background: var(--amber-surface);
   border: 1px solid var(--amber-line);
 }
+/* The reproduce-or-refute verification chip (issue #179): a terse chrome verdict
+   label + the model's evidence prose. `reproduced` is a confirmed green treatment;
+   `inconclusive` an honest amber caveat (never a silent all-clear). The evidence is
+   content and breathes; the label is chrome (proportional face, never monospace). */
+.flag-verification {
+  display: flex;
+  align-items: baseline;
+  gap: 9px;
+  margin-top: 9px;
+  border-radius: var(--radius);
+  border: 1px solid var(--hairline);
+  padding: 7px 10px;
+}
+.flag-verification-reproduced {
+  background: var(--green-fill);
+  border-color: var(--green-line);
+}
+.flag-verification-inconclusive {
+  background: var(--amber-surface);
+  border-color: var(--amber-line);
+}
+.flag-verification-label {
+  flex: none;
+  font: 700 10px / 1.2 var(--sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.flag-verification-reproduced .flag-verification-label {
+  color: var(--green);
+}
+.flag-verification-inconclusive .flag-verification-label {
+  color: var(--amber);
+}
+.flag-verification-evidence {
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.4;
+}
 .flagged-empty {
   color: var(--text-faint);
   font-style: italic;
@@ -1254,6 +1292,217 @@
   color: var(--text-faint);
   font: 500 12px / 1.4 var(--mono);
   margin: 0;
+}
+
+/* ── The hypothesis reading frame (issue #178/#181) ──────────────────────────
+   The reviewer's prior, shown before the lenses. Glass chrome (§1: chrome may be
+   translucent); the collapse header is terse chrome, the domain/scope/design/risk
+   prose is model content and breathes. An OPEN risk (predicted, uncleared) draws
+   amber — the risk signal the human must check themselves (#181). */
+.hypothesis-panel {
+  border: 1px solid var(--raised-border);
+  border-radius: var(--radius);
+  background: var(--raised);
+  margin-bottom: 14px;
+  overflow: hidden;
+}
+.hypothesis-panel-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  gap: 12px;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  cursor: pointer;
+  padding: 10px 14px;
+  text-align: left;
+}
+.hypothesis-panel-title {
+  font: 700 11px / 1.2 var(--sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+.hypothesis-panel-counts {
+  display: inline-flex;
+  gap: 8px;
+  font: 600 11px / 1.2 var(--sans);
+}
+.hypothesis-panel-open {
+  color: var(--amber);
+}
+.hypothesis-panel-addressed {
+  color: var(--text-faint);
+}
+.hypothesis-frame {
+  border-top: 1px solid var(--hairline);
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.hypothesis-frame-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+.hypothesis-frame-title {
+  font: 700 10px / 1.2 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin: 0;
+}
+.hypothesis-degraded {
+  font: 600 10px / 1.2 var(--sans);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--amber);
+  margin: 0;
+}
+/* The section labels are chrome (terse); the values below them breathe. */
+.hypothesis-label {
+  font: 700 10px / 1.2 var(--sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin: 0 0 5px;
+}
+.hypothesis-domain p,
+.hypothesis-design p {
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.45;
+  margin: 0;
+}
+.hypothesis-scope-cols {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.hypothesis-scope-tag {
+  display: inline-block;
+  font: 700 9px / 1.2 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin-bottom: 4px;
+}
+.hypothesis-scope-in ul,
+.hypothesis-scope-out ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.hypothesis-scope-in li,
+.hypothesis-scope-out li {
+  color: var(--text-soft);
+  font-size: 12.5px;
+  line-height: 1.35;
+}
+.hypothesis-risks-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.hypothesis-risk-counts {
+  display: inline-flex;
+  gap: 8px;
+  font: 600 11px / 1.2 var(--sans);
+}
+.hypothesis-count-open {
+  color: var(--amber);
+}
+.hypothesis-count-confirmed {
+  color: var(--text-faint);
+}
+/* The all-matched caveat (P0-1): shown only when every predicted risk drew a weak
+   lexical match and none is open — so "0 open" never reads as an all-clear. */
+.hypothesis-all-related {
+  margin: 0 0 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--amber-line);
+  background: var(--amber-surface);
+  color: var(--amber);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.hypothesis-risk-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.hypothesis-risk {
+  border: 1px solid var(--raised-border);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 9px 11px;
+}
+/* An OPEN risk is the anti-rubber-stamp payoff (#181): amber-edged, so the
+   uncleared risks draw the eye where the reviewer's attention should go. */
+.hypothesis-risk[data-status="open"] {
+  border-color: var(--amber-line);
+  background: var(--amber-surface);
+}
+.hypothesis-risk-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 6px;
+}
+.hypothesis-status {
+  font: 700 9px / 1.2 var(--sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.hypothesis-status-open {
+  color: var(--amber);
+}
+.hypothesis-status-confirmed {
+  color: var(--text-faint);
+}
+.hypothesis-risk-statement {
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.4;
+  margin: 0 0 4px;
+}
+.hypothesis-risk-disconfirm {
+  color: var(--text-faint);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 0;
+}
+.hypothesis-risk-findings {
+  margin-top: 7px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.hypothesis-finding-jump {
+  border: 1px solid var(--hairline);
+  background: var(--surface-2);
+  border-radius: var(--chip-radius);
+  color: var(--text-soft);
+  font: 600 11px / 1.2 var(--sans);
+  padding: 3px 9px;
+  cursor: pointer;
+}
+.hypothesis-finding-jump:hover {
+  border-color: var(--accent);
+  color: var(--accent);
 }
 
 /* ── The Noise lens (issue #34): grouped low-signal churn ──────────────────── */

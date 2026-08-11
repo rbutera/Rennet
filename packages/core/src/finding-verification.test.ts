@@ -1,10 +1,12 @@
-import type { FindingElement, OfferedManifest, RspTokenUsage } from "@rennet/types";
+import type { FindingElement, FlaggedReview, OfferedManifest, RspTokenUsage } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import {
   classifyNonObvious,
   DEFAULT_MAX_VERIFICATIONS,
   describeVerificationCost,
+  markVerificationUnavailable,
   runFindingVerification,
+  VERIFIER_UNAVAILABLE_CAVEAT,
   type VerificationFileReader,
   type VerificationFileWindow,
   type VerificationTurn,
@@ -388,5 +390,56 @@ describe("verifyFlaggedReview (#179)", () => {
 describe("DEFAULT_MAX_VERIFICATIONS", () => {
   it("is a sane positive cap", () => {
     expect(DEFAULT_MAX_VERIFICATIONS).toBeGreaterThan(0);
+  });
+});
+
+describe("markVerificationUnavailable — deep review with no verifier (#179 P0-3)", () => {
+  const ok = (findings: FindingElement[]): FlaggedReview => ({ status: "ok", findings });
+
+  it("stamps an inconclusive 'verification unavailable' caveat on a non-obvious finding", () => {
+    // A Codex-only deep review produced this behavioural finding, but no Claude verifier
+    // ran — so it must carry an HONEST caveat, never surface chip-less (reading as an
+    // all-clear) while deep review appears active.
+    const result = markVerificationUnavailable(
+      ok([finding({ findingId: "F1", severity: "high" })]),
+    );
+    if (result.status !== "ok") throw new Error("expected ok");
+    expect(result.findings[0]?.verification).toEqual({
+      verdict: "inconclusive",
+      evidence: VERIFIER_UNAVAILABLE_CAVEAT,
+    });
+  });
+
+  it("leaves an OBVIOUS finding chip-less (never over-marks — matches the verified path)", () => {
+    // Low severity and mechanical claims never pay for a verification turn, so an absent
+    // chip is honest for them; the caveat is only for findings that WOULD have verified.
+    const result = markVerificationUnavailable(
+      ok([
+        finding({ findingId: "low", severity: "low" }),
+        finding({ findingId: "mech", severity: "high", summary: "this import is now unused" }),
+      ]),
+    );
+    if (result.status !== "ok") throw new Error("expected ok");
+    expect(result.findings[0]?.verification).toBeUndefined();
+    expect(result.findings[1]?.verification).toBeUndefined();
+  });
+
+  it("leaves a finding that ALREADY carries a chip untouched", () => {
+    const already = finding({
+      findingId: "F1",
+      severity: "high",
+      verification: { verdict: "reproduced", evidence: "we dug into it" },
+    });
+    const result = markVerificationUnavailable(ok([already]));
+    if (result.status !== "ok") throw new Error("expected ok");
+    expect(result.findings[0]?.verification).toEqual({
+      verdict: "reproduced",
+      evidence: "we dug into it",
+    });
+  });
+
+  it("passes a FAILED review through unchanged", () => {
+    const failed: FlaggedReview = { status: "failed", reason: "both seats down" };
+    expect(markVerificationUnavailable(failed)).toBe(failed);
   });
 });
