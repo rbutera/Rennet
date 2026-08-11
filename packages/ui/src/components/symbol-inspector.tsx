@@ -75,12 +75,14 @@ export interface SymbolInspectorProps {
  */
 function TierChip({ tier }: { tier?: SymbolTier }) {
   if (!tier) return null;
+  // `candidates` lives only on the guess/structural arm of the discriminated union.
+  const candidates = tier.kind === "guess" && tier.method === "structural" ? tier.candidates : null;
   const title =
     tier.method === "textual"
       ? "Name-based textual match: same-named symbols and mentions in comments or strings are included, so this is a guess, not a resolved reference."
       : tier.kind === "exact"
         ? "Resolved to a single exported declaration by structural extraction (not a TypeScript LSP — exported top-level symbols only)."
-        : `Structural extraction found ${tier.candidates ?? 0} declarations of this name; the index cannot pick one, so these are candidates.`;
+        : `Structural extraction found ${candidates ?? 0} declarations of this name; the index cannot pick one, so these are candidates.`;
   return (
     <span
       className={`symbol-tier symbol-tier--${tier.kind}`}
@@ -90,8 +92,8 @@ function TierChip({ tier }: { tier?: SymbolTier }) {
     >
       <span className="symbol-tier-kind">{tier.kind}</span>
       <span className="symbol-tier-method">{tier.method}</span>
-      {tier.candidates && tier.candidates > 1 ? (
-        <span className="symbol-tier-candidates">{tier.candidates} candidates</span>
+      {candidates !== null ? (
+        <span className="symbol-tier-candidates">{candidates} candidates</span>
       ) : null}
     </span>
   );
@@ -404,7 +406,9 @@ export function SymbolInspector({
         <>
           <DefinitionSection section={inspection.definition} onOpenInEditor={onOpenInEditor} />
           <ReferencesSection section={inspection.references} onOpenInEditor={onOpenInEditor} />
-          {inspection.neighbors ? (
+          {/* The sibling mini-browser is a PINNED-only affordance (wireframes #11): the
+              floating quick peek stays a peek, the rail is where you navigate deeper. */}
+          {pinned && inspection.neighbors ? (
             <NeighborsSection
               neighbors={inspection.neighbors}
               current={name}

@@ -12,7 +12,7 @@ import type {
   Proposal,
   ReviewNarration,
 } from "@rennet/types";
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import {
   type AuthoringAct,
   authorDisposition,
@@ -189,6 +189,9 @@ export interface CanvasWorkspaceProps {
 
 /** One inspected name in the navigation history: loading, errored, or resolved. */
 interface InspectorEntry {
+  /** Unique per lookup invocation — settles this entry and only this one, so two
+   *  in-flight lookups of the SAME name land on their own entries (never each other's). */
+  readonly requestId: number;
   readonly name: string;
   readonly pending: boolean;
   readonly error?: string;
@@ -207,10 +210,15 @@ interface SymbolInspectorState {
   readonly cursor: number;
 }
 
-/** Fill a still-pending entry's result in by name (a stale one no longer in view is a harmless no-op). */
+/**
+ * Fill in the result of ONE lookup, matched by its `requestId` — never by name.
+ * A response for an entry no longer in history (retargeted / truncated away) is a
+ * harmless no-op, and two concurrent lookups of the same name settle their OWN
+ * entries rather than the oldest response completing the newest entry.
+ */
 function applyLookupResult(
   state: SymbolInspectorState,
-  name: string,
+  requestId: number,
   patch: {
     readonly pending: false;
     readonly inspection?: SymbolInspection;
@@ -220,7 +228,7 @@ function applyLookupResult(
   return {
     ...state,
     history: state.history.map((entry) =>
-      entry.name === name && entry.pending ? { ...entry, ...patch } : entry,
+      entry.requestId === requestId ? { ...entry, ...patch } : entry,
     ),
   };
 }
@@ -266,16 +274,20 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   // FLOATING a newer click retargets it (single-entry history); when PINNED a click
   // pushes onto the breadcrumb chain so the reviewer navigates deeper in the rail.
   const [symbolState, setSymbolState] = useState<SymbolInspectorState | null>(null);
+  // Monotonic lookup id, so each invocation settles its OWN history entry.
+  const requestSeq = useRef(0);
 
   // Click a code identifier (in the diff or a pinned neighbour) → resolve it via the
   // lookup port and show it. Floating: retarget. Pinned: truncate any forward history
-  // and push the new name as the current crumb. A late lookup fills its entry in by
-  // name, so a stale one the reviewer navigated away from cannot overwrite the view.
+  // and push the new name as the current crumb. The result settles by requestId, so
+  // out-of-order responses (even for the same name) each land on their own entry.
   function inspectSymbol(name: string): void {
     const lookup = props.symbolLookup;
     if (!lookup) return;
+    requestSeq.current += 1;
+    const requestId = requestSeq.current;
     setSymbolState((current) => {
-      const entry: InspectorEntry = { name, pending: true };
+      const entry: InspectorEntry = { requestId, name, pending: true };
       if (!current?.pinned) return { pinned: false, history: [entry], cursor: 0 };
       const kept = current.history.slice(0, current.cursor + 1);
       const history = [...kept, entry];
@@ -284,13 +296,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     lookup(name)
       .then((inspection) => {
         setSymbolState((current) =>
-          current ? applyLookupResult(current, name, { pending: false, inspection }) : current,
+          current ? applyLookupResult(current, requestId, { pending: false, inspection }) : current,
         );
       })
       .catch((reason) => {
         const error = reason instanceof Error ? reason.message : String(reason);
         setSymbolState((current) =>
-          current ? applyLookupResult(current, name, { pending: false, error }) : current,
+          current ? applyLookupResult(current, requestId, { pending: false, error }) : current,
         );
       });
   }

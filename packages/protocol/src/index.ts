@@ -710,16 +710,46 @@ const symbolReferenceRowSchema = z.object({
   line: z.number().int().positive(),
   scope: z.string().nullable(),
 });
+// The honest confidence tier (#11), a discriminated union so `exact` can only ever
+// ride with `structural` — a textual result cannot carry `exact` across the wire.
+// This MUST cross the boundary: without it the live tier chip never renders (the
+// object schema below would otherwise strip the unknown `tier` key).
+const symbolTierSchema = z.union([
+  z.object({ kind: z.literal("exact"), method: z.literal("structural") }),
+  z.object({
+    kind: z.literal("guess"),
+    method: z.literal("structural"),
+    candidates: z.number().int().positive(),
+  }),
+  z.object({ kind: z.literal("guess"), method: z.literal("textual") }),
+]);
 function symbolSectionSchema<T extends z.ZodTypeAny>(row: T) {
   return z.union([
-    z.object({ status: z.literal("ok"), sites: z.array(row), truncated: z.boolean().optional() }),
+    z.object({
+      status: z.literal("ok"),
+      sites: z.array(row),
+      truncated: z.boolean().optional(),
+      tier: symbolTierSchema.optional(),
+    }),
     z.object({ status: z.literal("unavailable"), reason: z.string() }),
   ]);
 }
+// The definition file's sibling symbols (#11), the pinned mini-browser's clickable
+// rungs — likewise must survive the boundary or in-app navigation never exists.
+const symbolNeighborSchema = z.object({
+  name: z.string().min(1),
+  kind: z.string().min(1),
+  line: z.number().int().positive(),
+});
+const symbolNeighborsSchema = z.object({
+  path: z.string().min(1),
+  symbols: z.array(symbolNeighborSchema),
+});
 export const symbolInspectionSchema: z.ZodType<SymbolInspection> = z.object({
   name: z.string().min(1),
   definition: symbolSectionSchema(symbolDefinitionRowSchema),
   references: symbolSectionSchema(symbolReferenceRowSchema),
+  neighbors: symbolNeighborsSchema.optional(),
 });
 
 // ── The Spec angle's OpenSpec change (wireframes #9) ─────────────────────────

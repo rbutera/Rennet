@@ -1190,6 +1190,61 @@ describe("createDispatch — review.symbolLookup (the symbol inspector, wirefram
     expect(out.references.status).toBe("ok");
   });
 
+  it("carries the tier + neighbours ACROSS the command boundary (parseCommandOutput must not strip them)", async () => {
+    // The boundary that made #11 dark once: dispatch runs the lookup result through
+    // parseCommandOutput (the IPC schema). If the schema omits `tier`/`neighbors`,
+    // zod strips them here and the live tier chip + mini-browser never exist — even
+    // though the isolated component tests pass on hand-built fixtures. This proves
+    // the transport carries them through the SAME path the running app uses.
+    const symbolLookup = vi.fn(async ({ name }: { review: Review; name: string }) => ({
+      name,
+      definition: {
+        status: "ok" as const,
+        sites: [{ path: "src/x.ts", line: 3, kind: "function", scope: null }],
+        tier: { kind: "exact" as const, method: "structural" as const },
+      },
+      references: {
+        status: "ok" as const,
+        sites: [
+          { path: "src/y.ts", line: 9, scope: null },
+          { path: "src/z.ts", line: 4, scope: null },
+        ],
+        truncated: false,
+        tier: { kind: "guess" as const, method: "textual" as const },
+      },
+      neighbors: {
+        path: "src/x.ts",
+        symbols: [
+          { name: "makeThing", kind: "function", line: 3 },
+          { name: "helper", kind: "function", line: 20 },
+        ],
+      },
+    }));
+    const h = harness(undefined, { symbolLookup });
+    const review = await capturedReview(h.dispatch);
+
+    const out = (await h.dispatch("review.symbolLookup", {
+      reviewId: review.id,
+      name: "makeThing",
+    })) as {
+      definition: { tier?: unknown };
+      references: { tier?: unknown };
+      neighbors?: unknown;
+    };
+
+    // Survives the schema: the exact tier on definitions, the textual tier on
+    // references, and the whole neighbours block — none stripped at the boundary.
+    expect(out.definition.tier).toEqual({ kind: "exact", method: "structural" });
+    expect(out.references.tier).toEqual({ kind: "guess", method: "textual" });
+    expect(out.neighbors).toEqual({
+      path: "src/x.ts",
+      symbols: [
+        { name: "makeThing", kind: "function", line: 3 },
+        { name: "helper", kind: "function", line: 20 },
+      ],
+    });
+  });
+
   it("refuses a stale/unknown reviewId", async () => {
     const symbolLookup = vi.fn();
     const h = harness(undefined, { symbolLookup });

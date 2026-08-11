@@ -229,4 +229,35 @@ describe("SymbolInspector — pin + mini-browser (#11)", () => {
     fireEvent.click(at(rungs, 1)); // "refill"
     expect(onNavigate).toHaveBeenCalledWith("refill");
   });
+
+  it("shows the sibling mini-browser ONLY when pinned (the floating peek stays a peek)", () => {
+    // Un-pinned: neighbours are present in the data but the peek does not show them.
+    const floating = mount(
+      <SymbolInspector
+        name="TokenBucket"
+        inspection={EXACT_INSPECTION}
+        onClose={vi.fn()}
+        onTogglePin={vi.fn()}
+      />,
+    );
+    expect(floating.container.querySelector('[data-section="neighbors"]')).toBeNull();
+    expect(floating.container.querySelector(".symbol-neighbor")).toBeNull();
+    floating.unmount();
+
+    // Pinned: the same inspection now surfaces the mini-browser.
+    const pinned = mount(
+      <SymbolInspector
+        name="TokenBucket"
+        inspection={EXACT_INSPECTION}
+        onClose={vi.fn()}
+        pinned
+        onTogglePin={vi.fn()}
+        breadcrumb={["TokenBucket"]}
+        cursor={0}
+        onNavigate={vi.fn()}
+      />,
+    );
+    expect(pinned.container.querySelector('[data-section="neighbors"]')).not.toBeNull();
+    expect(pinned.container.querySelectorAll(".symbol-neighbor").length).toBe(2);
+  });
 });

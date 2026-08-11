@@ -2037,14 +2037,15 @@ export interface SymbolInspectorReferenceRow {
  *  - `guess` / `textual`: find-references is NAME-BASED and textual (`context.references`
  *    is regex, not a parse), so two distinct symbols that share a name are
  *    indistinguishable. Always a guess.
- * Never fabricated: a textual result can never carry `exact`.
+ * A DISCRIMINATED UNION, so the honesty guarantee is a COMPILE error, not just a
+ * test: there is no `{ kind: "exact", method: "textual" }` arm, so a textual result
+ * can never carry `exact`. A structural guess always names its candidate count; a
+ * textual guess never carries one.
  */
-export interface SymbolTier {
-  readonly kind: "exact" | "guess";
-  readonly method: "structural" | "textual";
-  /** When guessing among several structural definition sites, how many candidates. */
-  readonly candidates?: number;
-}
+export type SymbolTier =
+  | { readonly kind: "exact"; readonly method: "structural" }
+  | { readonly kind: "guess"; readonly method: "structural"; readonly candidates: number }
+  | { readonly kind: "guess"; readonly method: "textual" };
 
 /**
  * One gated section of a lookup: the sites, or an honest `unavailable` when the
