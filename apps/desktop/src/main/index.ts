@@ -13,6 +13,7 @@ import {
   createVerificationFileReaderForPatchset,
   createVerificationTurn,
   defaultDiscoveryDeps,
+  defaultProjectDetailSourceDeps,
   defaultProjectDiscoveryDeps,
   deriveProjectDraft,
   discoverClaude,
@@ -29,8 +30,8 @@ import {
   GitHubPublishAdapter,
   type HttpFetch,
   loadConventionCatalogue,
+  loadProjectDetail,
   parseGitHubPrRef,
-  projectDetailFixture,
   RepoWatcher,
   resolveGitHubAuth,
   reviewAskFixturePorts,
@@ -929,10 +930,18 @@ app.whenReady().then(async () => {
     discoverProject: ({ path, kind }) =>
       discoverProject(defaultProjectDiscoveryDeps(execaGit), path, kind),
     detectHarnesses,
-    // Project detail (issue #37): the unified smart list's substrate. Live git +
-    // GitHub wiring is a follow-up; a fixture stands behind the real command
-    // boundary so the surface comes alive now.
-    projectDetail: () => Promise.resolve(projectDetailFixture()),
+    // Project detail (issue #37): the unified smart list's substrate. B1 wires the
+    // LOCAL half live — real worktrees/branches with dirty/ahead/behind from git,
+    // keyed off the stored project. `prs` is empty until B2 wires the live GitHub
+    // set behind the same boundary. An unknown projectId degrades to an empty detail
+    // (fail-safe, mirroring the project store) rather than throwing the surface down.
+    projectDetail: (projectId) => {
+      const project = projectStore.list().find((entry) => entry.id === projectId);
+      if (!project) {
+        return Promise.resolve({ viewer: { login: "you" }, locals: [], prs: [], truncated: false });
+      }
+      return loadProjectDetail(defaultProjectDetailSourceDeps(execaGit), project);
+    },
     cleanupWorktree: () => Promise.resolve(cleanupWorktreeFixture()),
     // The Flagged lens (issue #138): the automated review layer's findings. This is
     // the LIVE finding-generation runner (#32) — a real model turn over the review's
