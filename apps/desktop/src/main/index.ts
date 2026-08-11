@@ -23,7 +23,6 @@ import {
   discoverWorktreeIdentities,
   execaGit,
   FileProjectStore,
-  FileSettingsStore,
   type GhRunner,
   GitCaptureAdapter,
   GitHubChangesetSource,
@@ -76,7 +75,6 @@ import type {
 } from "@rennet/types";
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session } from "electron";
 import { createDispatch } from "./dispatch";
-import { createHarnessConsentAuthority } from "./harness-consent-authority";
 import { createOrchestratorTurnRunner } from "./orchestrator";
 import { createPublishConsentAuthority } from "./publish-consent-authority";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
@@ -196,7 +194,6 @@ async function resolveGitHubToken(): Promise<string> {
 }
 
 let store: SqliteReviewStore;
-let settings: FileSettingsStore;
 let projectStore: FileProjectStore;
 let service: ReviewService;
 let repositoryDirty = false;
@@ -870,14 +867,8 @@ async function createWindow(): Promise<void> {
 
 app.whenReady().then(async () => {
   store = new SqliteReviewStore(join(app.getPath("userData"), "rennet.sqlite"));
-  settings = new FileSettingsStore(join(app.getPath("userData"), "settings.json"));
   projectStore = new FileProjectStore(join(app.getPath("userData"), "projects.json"));
   service = new ReviewService(capture, store);
-  // The main-owned harness-run consent authority (bead workspace-fyvxb): mints a
-  // single-use, review-bound token on the user's approval and consumes it before
-  // the harness runs. In-process only — a restart must re-ask, never inherit a
-  // stale authorization.
-  const consent = createHarnessConsentAuthority();
   // The publish egress port + its consent authority (issue #21). The port constructs
   // requests purely (dry-run) and posts only via the gated `publish.review` command.
   const publishPort = new GitHubPublishAdapter({
@@ -901,8 +892,6 @@ app.whenReady().then(async () => {
     service,
     allowedRoots,
     orchestratorTurn,
-    settings,
-    consent,
     publishPort,
     publishConsent,
     chooseRepository,

@@ -62,59 +62,13 @@ describe("review.canvases command", () => {
     expect(() => parseCommandOutput("review.canvases", { canvases: canvasSet() })).toThrow();
   });
 
-  it("parses a valid input", () => {
+  it("parses a valid input (no consent token — running the model just runs)", () => {
     const input = parseCommandInput("review.canvases", {
       commandId: "018f2c3d-0000-7000-8000-000000000000",
       reviewId: "review-1",
       repoPath: "/repo",
     });
     expect(input.reviewId).toBe("review-1");
-  });
-
-  it("accepts a single-use authorization token (bead workspace-fyvxb)", () => {
-    const input = parseCommandInput("review.canvases", {
-      commandId: "018f2c3d-0000-7000-8000-000000000000",
-      reviewId: "review-1",
-      repoPath: "/repo",
-      authorization: "018f2c3d-1111-7000-8000-000000000000",
-    });
-    expect(input.authorization).toBe("018f2c3d-1111-7000-8000-000000000000");
-  });
-
-  it("rejects an empty authorization token (positive control)", () => {
-    expect(() =>
-      parseCommandInput("review.canvases", {
-        commandId: "018f2c3d-0000-7000-8000-000000000000",
-        reviewId: "review-1",
-        repoPath: "/repo",
-        authorization: "",
-      }),
-    ).toThrow();
-  });
-});
-
-describe("harness.requestConsent command (bead workspace-fyvxb)", () => {
-  it("is a known command", () => {
-    expect(isCommandName("harness.requestConsent")).toBe(true);
-  });
-
-  it("parses a valid mint request", () => {
-    const input = parseCommandInput("harness.requestConsent", {
-      commandId: "018f2c3d-0000-7000-8000-000000000000",
-      reviewId: "review-1",
-    });
-    expect(input.reviewId).toBe("review-1");
-  });
-
-  it("round-trips the minted authorization through the output schema", () => {
-    const output = parseCommandOutput("harness.requestConsent", {
-      authorization: "018f2c3d-1111-7000-8000-000000000000",
-    });
-    expect(output.authorization).toBe("018f2c3d-1111-7000-8000-000000000000");
-  });
-
-  it("rejects an empty authorization in the output (positive control)", () => {
-    expect(() => parseCommandOutput("harness.requestConsent", { authorization: "" })).toThrow();
   });
 
   it("rejects a malformed canvas (positive control)", () => {

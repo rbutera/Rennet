@@ -30,8 +30,8 @@ async function flush(times = 8): Promise<void> {
 const enriched = { canvases: demoCanvases(), elementDiffs: {} };
 
 // A ready review with one changed file. The Canvases view is the default landing,
-// and `auto` mode clears the harness-consent gate, so the enriched workspace (and
-// its lens switcher) render with no consent tap.
+// and opening it enriches directly (running the harness is Rennet's whole job, no
+// consent gate), so the enriched workspace and its lens switcher render.
 const baseReview: Review = {
   id: "review",
   repositoryRoot: "/code/rennet",
@@ -82,8 +82,6 @@ function makeBridge(opts: {
     switch (name) {
       case "app.bootstrap":
         return { review: clone() };
-      case "settings.permissionMode":
-        return { mode: "auto" };
       case "review.checkFreshness":
         return { review: clone() };
       case "review.canvases":

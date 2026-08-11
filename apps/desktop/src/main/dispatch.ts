@@ -11,14 +11,11 @@ import {
   type CommandName,
   type DetectedHarness,
   type DiscoveryResult,
-  type PermissionMode,
   type Project,
   type ProjectDetail,
   type ProjectKind,
   parseCommandInput,
   parseCommandOutput,
-  requiresConsent,
-  resolvePermissionMode,
 } from "@rennet/protocol";
 import type {
   Canvas,
@@ -92,25 +89,6 @@ export interface DispatchDeps {
      */
     decisionsRun?: DecisionsRunStatus;
   }>;
-  /**
-   * The workspace permission-mode store (issue #103). Reads the persisted
-   * workspace default; writes it. The renderer layers a per-run override over
-   * the value this returns.
-   */
-  readonly settings: {
-    permissionMode(): PermissionMode;
-    setPermissionMode(mode: PermissionMode): void;
-  };
-  /**
-   * The main-owned harness-run consent authority (bead workspace-fyvxb). MAIN
-   * mints a single-use, review-bound authorization on the user's approval act
-   * (`harness.requestConsent`) and consumes it before the harness runs, instead
-   * of trusting a renderer-supplied replayable boolean.
-   */
-  readonly consent: {
-    grant(reviewId: string): string;
-    consume(reviewId: string, authorization: string): boolean;
-  };
   /**
    * The forge egress port (issue #21). `buildReviewRequest` is pure and network-free
    * (the dry-run evidence, no credential); `publishReview` performs the real, gated
@@ -262,15 +240,6 @@ export function createDispatch(
         allowedRoots.add(review.repositoryRoot);
         return parseCommandOutput(name, { review });
       }
-      case "settings.permissionMode": {
-        parseCommandInput(name, rawInput);
-        return parseCommandOutput(name, { mode: deps.settings.permissionMode() });
-      }
-      case "settings.setPermissionMode": {
-        const input = parseCommandInput(name, rawInput);
-        deps.settings.setPermissionMode(input.mode);
-        return parseCommandOutput(name, { mode: deps.settings.permissionMode() });
-      }
       case "review.setDisposition": {
         const input = parseCommandInput(name, rawInput);
         const review = service.setDisposition(
@@ -303,17 +272,6 @@ export function createDispatch(
         deps.setRepositoryDirty(false);
         return parseCommandOutput(name, { review });
       }
-      case "harness.requestConsent": {
-        // The renderer REQUESTS approval for this review's harness run (bead
-        // workspace-fyvxb). MAIN is the sole issuer: it binds a fresh single-use
-        // token to the CURRENT review and returns it. Requiring the latest review
-        // keeps a token from being minted for a stale/unknown id. Minting is
-        // independent of the mode (harmless under auto/bypass, where the token is
-        // never checked); the enforcement lives at consume time below.
-        const input = parseCommandInput(name, rawInput);
-        const review = requireLatestReview(input.reviewId);
-        return parseCommandOutput(name, { authorization: deps.consent.grant(review.id) });
-      }
       case "publish.requestConsent": {
         // The renderer REQUESTS approval to POST to GitHub; MAIN mints the token. It
         // is bound to (review, target, payload) via `publishConsentKey`, so the token
@@ -321,8 +279,8 @@ export function createDispatch(
         // head) — the renderer must present the SAME target + payload at egress or the
         // token cannot consume.
         const input = parseCommandInput(name, rawInput);
-        // Parity with `harness.requestConsent`: refuse to mint a token for a stale or
-        // unknown review id; only the current review can be published from this session.
+        // Refuse to mint a token for a stale or unknown review id; only the current
+        // review can be published from this session.
         const review = requireLatestReview(input.reviewId);
         const key = publishConsentKey(review.id, toForgeReviewTarget(input.target), input.payload);
         return parseCommandOutput(name, { authorization: deps.publishConsent.grant(key) });
@@ -377,29 +335,21 @@ export function createDispatch(
         });
 
         if (input.dryRun === false) {
-          // (4) REAL egress. Two independent guards on this vital circuit (Rule 75:
-          // no single fault clears it):
-          //   a. the effective MODE resolved from the persisted WORKSPACE store (the
-          //      j98dt authority — a renderer-supplied mode is NOT trusted;
-          //      corrupt/unknown still ASKS);
-          //   b. under a mode that ASKS (manual), a single-use CONSENT token that MAIN
-          //      minted for THIS (review, target, payload) — verified + CONSUMED here.
-          //      Absent / forged / replayed / target-or-payload-mismatched ⇒ refused,
-          //      and NOTHING leaves.
-          const effectiveMode = resolvePermissionMode({
-            workspace: deps.settings.permissionMode(),
-          });
-          if (requiresConsent(effectiveMode, "publish.egress")) {
-            const key = publishConsentKey(input.reviewId, target, input.payload);
-            const authorization = input.authorization;
-            if (
-              typeof authorization !== "string" ||
-              !deps.publishConsent.consume(key, authorization)
-            ) {
-              throw new Error(
-                "Publish refused: not authorized to post under the current permission mode",
-              );
-            }
+          // (4) REAL egress. Posting a review to GitHub is an EXTERNAL act — a review
+          // leaving the machine AS THE USER — so unlike running a model (which just
+          // runs), a real send ALWAYS requires an explicit user confirmation. MAIN
+          // requires the single-use CONSENT token it minted for THIS (review, target,
+          // payload) via `publish.requestConsent`, verified + CONSUMED here. Absent /
+          // forged / replayed / target-or-payload-mismatched ⇒ refused, and NOTHING
+          // leaves. This is the machine's most dangerous action; the confirmation is
+          // unconditional, never governed by a permission mode.
+          const key = publishConsentKey(input.reviewId, target, input.payload);
+          const authorization = input.authorization;
+          if (
+            typeof authorization !== "string" ||
+            !deps.publishConsent.consume(key, authorization)
+          ) {
+            throw new Error("Publish refused: not authorized to post — confirm the send first");
           }
           const outcome = await deps.publishPort.publishReview(post);
           return parseCommandOutput(name, {
@@ -425,29 +375,9 @@ export function createDispatch(
         const input = parseCommandInput(name, rawInput);
         assertAllowedRepository(input.repoPath);
         const review = requireLatestReview(input.reviewId);
-        // #58/#103 harness-run gate, enforced at the MAIN boundary. Two
-        // independent guards on the vital model-spend circuit (Rule 75: no single
-        // fault clears it):
-        //   1. The effective MODE is resolved from the persisted WORKSPACE store
-        //      (the j98dt authority — a renderer-supplied mode is NOT trusted;
-        //      corrupt/unknown still ASKS). Unchanged here.
-        //   2. Under a mode that ASKS (manual), the per-run CONSENT is no longer a
-        //      renderer-supplied boolean (forgeable + replayable). MAIN requires a
-        //      single-use token that IT minted for THIS review (bead
-        //      workspace-fyvxb), verifies + CONSUMES it here, and only then runs
-        //      the harness. Absent / forged / already-consumed ⇒ refused, and the
-        //      model turn never composes. `consume` is called ONLY when the mode
-        //      asks, so an auto/bypass run neither needs nor spends a token.
-        const effectiveMode = resolvePermissionMode({ workspace: deps.settings.permissionMode() });
-        if (requiresConsent(effectiveMode, "harness.run")) {
-          const authorization = input.authorization;
-          if (
-            typeof authorization !== "string" ||
-            !deps.consent.consume(review.id, authorization)
-          ) {
-            throw new Error("The harness run was not authorized under the current permission mode");
-          }
-        }
+        // Running the review harness (the model spend) is Rennet's entire job — it
+        // just runs. No permission mode, no consent token: opening Canvases composes
+        // the model turn directly.
         const { canvases, elementDiffs, narration, engine } = await deps.buildCanvases(review);
         return parseCommandOutput(name, {
           canvases,
@@ -533,35 +463,12 @@ export function createDispatch(
         // `mode` is defaulted to "orchestrator" by the schema, so an omitted mode
         // never fires a second model.
         const input = parseCommandInput(name, rawInput);
-        // Resolve + freshness-pin ONCE (P1-2): a stale/unknown id is refused, AND the
-        // question must be ABOUT the CURRENT active patchset — a mismatch (the review
-        // regenerated since the renderer framed the question) is refused rather than
-        // silently answered against new code. The single resolved `review` is handed
-        // to BOTH legs below, so a "both" ask cannot cross two patchsets.
+        // Resolve the CURRENT review ONCE (a stale/unknown id is refused) and hand the
+        // SAME snapshot to both legs below, so a "both" ask can never cross two
+        // patchsets. Asking a model is Rennet's whole job — it just runs against the
+        // current review; there is no permission gate and no consent token, and a
+        // question always answers against the latest code rather than ever refusing.
         const review = requireLatestReview(input.reviewId);
-        if (review.activePatchsetId !== input.patchsetId) {
-          throw new Error(
-            "The review changed since this question was framed; reopen the review and ask again",
-          );
-        }
-        // The model-spend gate (P1-1), mirroring the `review.canvases` harness gate.
-        // The ports are LIVE model spend (a real orchestrator turn + optional `codex
-        // exec`), so under a mode that ASKS (manual) MAIN requires the single-use,
-        // review-bound token IT minted and CONSUMES it here — BEFORE `askReview`, so a
-        // missing / forged / already-spent token calls NEITHER port. Under auto/bypass
-        // the mode does not ask, no token is needed, and nothing is consumed.
-        const effectiveMode = resolvePermissionMode({ workspace: deps.settings.permissionMode() });
-        if (requiresConsent(effectiveMode, "model.spend")) {
-          const authorization = input.authorization;
-          if (
-            typeof authorization !== "string" ||
-            !deps.consent.consume(review.id, authorization)
-          ) {
-            throw new Error(
-              "The review question was not authorized under the current permission mode",
-            );
-          }
-        }
         const mode = input.mode ?? "orchestrator";
         const result = await askReview(mode, input.question, {
           askOrchestrator: (question) => deps.reviewAsk.askOrchestrator({ review, question }),

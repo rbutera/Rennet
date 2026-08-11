@@ -44,7 +44,7 @@ async function flush(times = 6): Promise<void> {
 const enriched = { canvases: demoCanvases(), elementDiffs: {} };
 
 // A ready review with one changed file. The Canvases view is the default landing, so
-// opening it (under `auto`, no consent gate) fires the live-canvas enrichment fetch.
+// opening it fires the live-canvas enrichment fetch directly (no consent gate).
 const baseReview: Review = {
   id: "review",
   repositoryRoot: "/code/rennet",
@@ -101,10 +101,8 @@ describe("RennetApp — the live-canvas render race (#59)", () => {
       switch (name) {
         case "app.bootstrap":
           return { review: freshClone() };
-        // `auto` ⇒ the harness-run gate is `allow`, so the enrichment fetch fires
-        // with no consent tap and no token — the effect is exercised directly.
-        case "settings.permissionMode":
-          return { mode: "auto" };
+        // Opening Canvases fires the enrichment fetch directly — running the harness
+        // is Rennet's whole job, so there is no consent gate to clear.
         case "review.checkFreshness":
           freshnessCalls += 1;
           return { review: freshClone() }; // the churn: new object, same identity
@@ -121,7 +119,7 @@ describe("RennetApp — the live-canvas render race (#59)", () => {
     await act(async () => {
       handle = mount(<RennetApp bridge={bridge} />);
     });
-    // Let bootstrap + permissionMode resolve and the effects settle.
+    // Let bootstrap resolve and the effects settle.
     await act(async () => {
       await flush();
     });
@@ -167,8 +165,6 @@ describe("RennetApp — the live-canvas render race (#59)", () => {
       switch (name) {
         case "app.bootstrap":
           return { review: freshClone() };
-        case "settings.permissionMode":
-          return { mode: "auto" };
         case "review.checkFreshness":
           return { review: freshClone() };
         case "review.canvases":

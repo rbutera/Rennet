@@ -5,8 +5,8 @@ import { z } from "zod";
 
 /**
  * The projects persistence (issue #29). A minimal JSON-file-backed store for the
- * front door's populated state — sibling of {@link FileSettingsStore}, kept
- * separate because a project list is not per-review event history.
+ * front door's populated state, kept separate from the review event log because a
+ * project list is not per-review event history.
  *
  * FAIL-SAFE READ (Rule 75, wrong-side): a missing file, an unreadable file, or a
  * malformed entry resolves to an EMPTY list, never a throw — a corrupt store must

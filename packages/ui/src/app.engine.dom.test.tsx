@@ -4,8 +4,9 @@
 // AI review and is the default landing. When the engine reports it produced the
 // DETERMINISTIC mechanical outline (no model installed), the UI must say so LOUDLY
 // — never pass the outline off as an AI review. This mounts the whole `RennetApp`
-// over a fake `RennetBridge` in `auto` mode (so the live load fires with no consent
-// prompt) and asserts, behaviourally, that the loud fallback banner appears iff the
+// over a fake `RennetBridge` (the live load fires directly — running the harness is
+// Rennet's whole job, no consent step) and asserts, behaviourally, that the loud
+// fallback banner appears iff the
 // engine's `aiReview` is false, and names the missing Claude CLI.
 import type { RennetBridge } from "@rennet/protocol";
 import type { Review, ReviewEngine } from "@rennet/types";
@@ -49,10 +50,9 @@ const review: Review = {
   ],
 };
 
-/** A bridge in `auto` mode whose live load reports the given engine provenance. */
+/** A bridge whose live load reports the given engine provenance. */
 function bridgeWithEngine(engine: ReviewEngine): RennetBridge {
   const invoke = async (name: string): Promise<unknown> => {
-    if (name === "settings.permissionMode") return { mode: "auto" };
     if (name === "review.canvases") return { canvases: demoCanvases(), elementDiffs: {}, engine };
     return { review };
   };
