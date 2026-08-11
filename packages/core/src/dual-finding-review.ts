@@ -32,7 +32,11 @@ import type {
   ReviewHypothesis,
 } from "@rennet/types";
 import type { DualSeat } from "./dual-seat";
-import { type RunFindingAngleResult, runFindingAngle } from "./finding-generation";
+import {
+  type FindingIntent,
+  type RunFindingAngleResult,
+  runFindingAngle,
+} from "./finding-generation";
 import { reconcileFindings } from "./finding-reconcile";
 import { guardSeatTurn } from "./harness-run-turn";
 
@@ -46,6 +50,8 @@ export interface RunDualFindingReviewInput {
   readonly manifest: OfferedManifest;
   /** The ordered seats from `resolveDualSeat` (Claude first, Codex second). */
   readonly seats: readonly DualSeat[];
+  /** The change's stated intent (#136), fed to BOTH seats' `task` slot. */
+  readonly intent?: FindingIntent;
   /** The committed hypothesis (#178), fed to BOTH seats as disconfirmation criteria. */
   readonly hypothesis?: ReviewHypothesis;
   /** The per-project convention catalogue (#180), fed to BOTH seats as a checklist layer. */
@@ -85,6 +91,7 @@ async function runSeat(seat: DualSeat, input: RunDualFindingReviewInput): Promis
     // the reconcile degrades to the other seat.
     runTurn: guardSeatTurn(seat.runTurn),
     budget: input.makeBudget(),
+    ...(input.intent ? { intent: input.intent } : {}),
     ...(input.hypothesis ? { hypothesis: input.hypothesis } : {}),
     ...(input.conventions ? { conventions: input.conventions } : {}),
     ...(input.contract ? { contract: input.contract } : {}),

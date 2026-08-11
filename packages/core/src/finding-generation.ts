@@ -78,11 +78,29 @@ export interface FindingProvenanceSeed {
   readonly resolutionTrace?: ResolutionTrace;
 }
 
+/**
+ * The change's stated intent (issue #136). The finding runner reasons over the diff
+ * PLUS this — the PR title/body and the spec when present — so a concern can be
+ * measured against what the change SET OUT to do, not just what the code shows. Every
+ * field is optional: absent, the runner reasons over the diff alone (the honest
+ * degrade, byte-identical to before capture landed). Structurally identical to the
+ * Decisions runner's `DecisionIntent` and the `ReviewIntent` the intent projection
+ * emits (`patchsetIntentToReviewIntent`), so the one projected value feeds all three —
+ * kept as a local type to hold the finding runner parallel to the decision runner.
+ */
+export interface FindingIntent {
+  readonly prTitle?: string;
+  readonly prBody?: string;
+  readonly spec?: string;
+}
+
 export interface RunFindingAngleInput {
   /** The patchset the offered manifest was built over; anchors resolve against it. */
   readonly patchsetId: string;
   /** The offered occurrence manifest: the hunk ids + lines the model may cite. */
   readonly manifest: OfferedManifest;
+  /** The change's stated intent (PR title/body, spec); the runner reasons over it + the diff (#136). */
+  readonly intent?: FindingIntent;
   /**
    * The committed hypothesis (#178). When present, it is rendered as a labelled
    * disconfirmation layer positioned after the base instruction and before the
@@ -180,6 +198,18 @@ const ZERO_TOKENS: RspTokenUsage = {
 };
 
 const SEVERITIES = new Set<FindingSeverity>(["high", "medium", "low"]);
+
+/** A compact, model-facing serialisation of the change's stated intent, when present. */
+function renderIntent(intent: FindingIntent | undefined): string | undefined {
+  if (intent === undefined) return undefined;
+  const parts: Record<string, string> = {};
+  if (intent.prTitle !== undefined && intent.prTitle.trim().length > 0)
+    parts.prTitle = intent.prTitle;
+  if (intent.prBody !== undefined && intent.prBody.trim().length > 0) parts.prBody = intent.prBody;
+  if (intent.spec !== undefined && intent.spec.trim().length > 0) parts.spec = intent.spec;
+  if (Object.keys(parts).length === 0) return undefined;
+  return JSON.stringify({ intent: parts }, null, 2);
+}
 
 /** A compact, model-facing serialisation of the offered hunks and their lines. */
 function renderPayload(manifest: OfferedManifest, patchsetId: string): string {
@@ -315,6 +345,7 @@ export async function runFindingAngle(input: RunFindingAngleInput): Promise<RunF
   const {
     patchsetId,
     manifest,
+    intent,
     contract = FINDING_CONTRACT,
     provenance: seed,
     runTurn,
@@ -330,6 +361,7 @@ export async function runFindingAngle(input: RunFindingAngleInput): Promise<RunF
   const inputDigest = computeInputDigest(patchsetRef, manifest);
   const base = renderBaseInstruction(contract);
   const payload = renderPayload(manifest, patchsetId);
+  const intentText = renderIntent(intent);
   const hypothesisLayer =
     input.hypothesis === undefined ? undefined : renderHypothesisLayer(input.hypothesis);
   // The per-project convention checklist (#180). An absent catalogue, or one with
@@ -359,6 +391,11 @@ export async function runFindingAngle(input: RunFindingAngleInput): Promise<RunF
       break;
     }
 
+    // The intent rides the `task` slot and the retry report is appended to it, so a
+    // rejection's feedback never displaces the change's stated intent. Absent an intent
+    // (and on the first attempt with no report), the slot is empty and the assembled
+    // prompt is byte-identical to before intent capture reached the finding runner.
+    const taskText = [intentText, lastReportText].filter((part) => part !== undefined).join("\n\n");
     const assembled = assemblePrompt(
       {
         base,
@@ -366,7 +403,7 @@ export async function runFindingAngle(input: RunFindingAngleInput): Promise<RunF
         ...(conventionLayer === undefined ? {} : { conventions: conventionLayer }),
         ...(guidance?.general === undefined ? {} : { general: guidance.general }),
         ...(guidance?.files === undefined ? {} : { files: guidance.files }),
-        ...(lastReportText === undefined ? {} : { task: lastReportText }),
+        ...(taskText.length === 0 ? {} : { task: taskText }),
         payload,
       },
       assembleOptions ?? {},
