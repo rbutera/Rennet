@@ -917,17 +917,26 @@ export const commandDefinitions = {
   //   • The output carries at most `primary` (always the orchestrator) + an optional
   //     `secondOpinion` (Codex, only in "both") — there is NO merged-answer field, so
   //     "no synthesis, ever" is a property of the schema, not just the router.
-  // The live orchestrator/Codex invocation is deferred (a fixture stands behind the
-  // real command boundary); the routing law — orchestrator once, both adds Codex,
-  // never a synthesis — lives in `@rennet/core`'s `askReview` and is enforced here.
+  // The routing law — orchestrator once, both adds Codex, never a synthesis — lives
+  // in `@rennet/core`'s `askReview`. The ports are LIVE (a real orchestrator turn +
+  // an optional `codex exec`), so an ask IS metered model spend and MAIN gates it
+  // like `review.canvases`: `patchsetId` pins the exact snapshot the question is
+  // ABOUT (a mismatch with the current active patchset is refused, so a stale-view
+  // question is never silently answered against regenerated code), and
+  // `authorization` is the single-use, review-bound token MAIN minted — required
+  // under a mode that ASKS (manual), unused under auto/bypass.
   "review.ask": {
     input: z.object({
       commandId: commandIdSchema,
       reviewId: z.string().min(1),
+      /** The active patchset the question is ABOUT — dispatch refuses a mismatch. */
+      patchsetId: z.string().min(1),
       /** Default "orchestrator": an omitted mode never fires a second model. */
       mode: askModeSchema.default("orchestrator"),
       /** The reviewer's question about the review. */
       question: z.string().min(1),
+      /** The single-use main-minted harness authorization; required under manual. */
+      authorization: z.string().optional(),
     }),
     output: askReviewResultSchema,
   },

@@ -70,24 +70,20 @@ const pipeline = {} as ReviewPipelineResult;
 const buildPipeline = () => Promise.resolve(pipeline);
 
 describe("createLiveReviewAskPorts — askOrchestrator", () => {
-  it("resolves the review, builds the pipeline, drives the turn, and returns its final text", async () => {
+  it("builds the pipeline over the given review, drives the turn, and returns its final text", async () => {
     const turn = vi.fn<OrchestratorTurnRunner>(() =>
       Promise.resolve(completed("the retry-after is in milliseconds")),
     );
-    const resolveReview = vi.fn((id: string) => review(id));
-    const ports = createLiveReviewAskPorts({
-      resolveReview,
-      buildPipeline,
-      orchestratorTurn: turn,
-    });
-    const answer = await ports.askOrchestrator({
-      reviewId: "review-9",
-      question: "seconds or ms?",
-    });
+    const built = vi.fn<(r: Review) => Promise<ReviewPipelineResult>>(() =>
+      Promise.resolve(pipeline),
+    );
+    const ports = createLiveReviewAskPorts({ buildPipeline: built, orchestratorTurn: turn });
+    const r = review("review-9");
+    const answer = await ports.askOrchestrator({ review: r, question: "seconds or ms?" });
 
-    expect(resolveReview).toHaveBeenCalledWith("review-9");
-    // The turn is driven over the resolved review + built pipeline + the question.
-    expect(turn).toHaveBeenCalledWith(review("review-9"), pipeline, "seconds or ms?");
+    // The pipeline is built over the SAME review dispatch resolved (never re-fetched).
+    expect(built).toHaveBeenCalledWith(r);
+    expect(turn).toHaveBeenCalledWith(r, pipeline, "seconds or ms?");
     expect(answer).toEqual({
       model: ORCHESTRATOR_ASK_LABEL,
       answer: "the retry-after is in milliseconds",
@@ -96,19 +92,17 @@ describe("createLiveReviewAskPorts — askOrchestrator", () => {
 
   it("returns an HONEST unavailable answer (never a fabricated one) when no claude is present", async () => {
     const ports = createLiveReviewAskPorts({
-      resolveReview: (id) => review(id),
       buildPipeline,
       orchestratorTurn: () =>
         Promise.resolve({ available: false, reason: "no claude binary is available" }),
     });
-    const answer = await ports.askOrchestrator({ reviewId: "review-1", question: "q" });
+    const answer = await ports.askOrchestrator({ review: review(), question: "q" });
     expect(answer.model).toBe(ORCHESTRATOR_ASK_LABEL);
     expect(answer.answer).toMatch(/unavailable: no claude/i);
   });
 
   it("returns an HONEST failed answer carrying the harness error when the turn fails", async () => {
     const ports = createLiveReviewAskPorts({
-      resolveReview: (id) => review(id),
       buildPipeline,
       orchestratorTurn: () =>
         Promise.resolve({
@@ -129,60 +123,42 @@ describe("createLiveReviewAskPorts — askOrchestrator", () => {
           },
         }),
     });
-    const answer = await ports.askOrchestrator({ reviewId: "review-1", question: "q" });
+    const answer = await ports.askOrchestrator({ review: review(), question: "q" });
     expect(answer.answer).toMatch(/failed: the model rejected the turn/i);
   });
 
   it("does not pass an empty final answer off as the model's reply", async () => {
     const ports = createLiveReviewAskPorts({
-      resolveReview: (id) => review(id),
       buildPipeline,
       orchestratorTurn: () => Promise.resolve(completed("   ")),
     });
-    const answer = await ports.askOrchestrator({ reviewId: "review-1", question: "q" });
+    const answer = await ports.askOrchestrator({ review: review(), question: "q" });
     expect(answer.answer).toMatch(/without a final answer/i);
-  });
-
-  it("propagates a stale/unknown review id (a question is ABOUT the open review)", async () => {
-    const ports = createLiveReviewAskPorts({
-      resolveReview: () => {
-        throw new Error("Review not found");
-      },
-      buildPipeline,
-      orchestratorTurn: () => Promise.resolve(completed("x")),
-    });
-    await expect(ports.askOrchestrator({ reviewId: "gone", question: "q" })).rejects.toThrow(
-      /Review not found/,
-    );
   });
 });
 
 describe("createLiveReviewAskPorts — askCodex", () => {
-  it("delegates to the live codex port with the resolved review + question", async () => {
+  it("delegates to the live codex port with the given review + question", async () => {
     const askCodex = vi.fn(
       async (): Promise<AskAnswer> => ({ model: CODEX_ASK_LABEL, answer: "codex says ms" }),
     );
     const ports = createLiveReviewAskPorts({
-      resolveReview: (id) => review(id),
       buildPipeline,
       orchestratorTurn: () => Promise.resolve(completed("x")),
       askCodex,
     });
-    const answer = await ports.askCodex({ reviewId: "review-7", question: "seconds or ms?" });
-    expect(askCodex).toHaveBeenCalledWith({
-      review: review("review-7"),
-      question: "seconds or ms?",
-    });
+    const r = review("review-7");
+    const answer = await ports.askCodex({ review: r, question: "seconds or ms?" });
+    expect(askCodex).toHaveBeenCalledWith({ review: r, question: "seconds or ms?" });
     expect(answer).toEqual({ model: CODEX_ASK_LABEL, answer: "codex says ms" });
   });
 
   it("returns an honest unavailable answer when no codex port is wired", async () => {
     const ports = createLiveReviewAskPorts({
-      resolveReview: (id) => review(id),
       buildPipeline,
       orchestratorTurn: () => Promise.resolve(completed("x")),
     });
-    const answer = await ports.askCodex({ reviewId: "review-1", question: "q" });
+    const answer = await ports.askCodex({ review: review(), question: "q" });
     expect(answer.model).toBe(CODEX_ASK_LABEL);
     expect(answer.answer).toMatch(/not installed/i);
   });
@@ -190,11 +166,10 @@ describe("createLiveReviewAskPorts — askCodex", () => {
 
 describe("the LIVE ports preserve the no-synthesis law through the real askReview router", () => {
   function livePorts(): {
-    askOrchestrator: (i: { reviewId: string; question: string }) => Promise<AskAnswer>;
-    askCodex: (i: { reviewId: string; question: string }) => Promise<AskAnswer>;
+    askOrchestrator: (i: { review: Review; question: string }) => Promise<AskAnswer>;
+    askCodex: (i: { review: Review; question: string }) => Promise<AskAnswer>;
   } {
     return createLiveReviewAskPorts({
-      resolveReview: (id) => review(id),
       buildPipeline,
       orchestratorTurn: () => Promise.resolve(completed("orchestrator answer")),
       askCodex: async () => ({ model: CODEX_ASK_LABEL, answer: "codex answer" }),
@@ -203,10 +178,11 @@ describe("the LIVE ports preserve the no-synthesis law through the real askRevie
 
   it("orchestrator mode asks the orchestrator ONCE and Codex ZERO times", async () => {
     const ports = livePorts();
+    const r = review();
     const orchestrator = vi.fn((question: string) =>
-      ports.askOrchestrator({ reviewId: "review-1", question }),
+      ports.askOrchestrator({ review: r, question }),
     );
-    const codex = vi.fn((question: string) => ports.askCodex({ reviewId: "review-1", question }));
+    const codex = vi.fn((question: string) => ports.askCodex({ review: r, question }));
     const result = await askReview("orchestrator", "seconds or ms?", {
       askOrchestrator: orchestrator,
       askCodex: codex,
@@ -220,9 +196,10 @@ describe("the LIVE ports preserve the no-synthesis law through the real askRevie
 
   it("both mode returns two labelled answers side by side and NO third (merged) field", async () => {
     const ports = livePorts();
+    const r = review();
     const result = await askReview("both", "does the client agree?", {
-      askOrchestrator: (question) => ports.askOrchestrator({ reviewId: "review-1", question }),
-      askCodex: (question) => ports.askCodex({ reviewId: "review-1", question }),
+      askOrchestrator: (question) => ports.askOrchestrator({ review: r, question }),
+      askCodex: (question) => ports.askCodex({ review: r, question }),
     });
     expect(result.mode).toBe("both");
     expect(result.primary.model).toBe(ORCHESTRATOR_ASK_LABEL);
@@ -285,5 +262,18 @@ describe("buildCodexAskPrompt", () => {
     expect(prompt).toContain("diff truncated");
     // The inlined diff body never exceeds the ceiling (+ the marker line).
     expect(prompt.length).toBeLessThan(CODEX_ASK_DIFF_CEILING + 300);
+  });
+
+  it("honours the BYTE bound for a multi-byte diff (never code units)", () => {
+    // Each "€" is 3 UTF-8 bytes but 1 code unit. A code-unit slice would keep
+    // CEILING chars = ~3x CEILING bytes; the byte-correct clip must not.
+    const multibyte = "€".repeat(CODEX_ASK_DIFF_CEILING);
+    const prompt = buildCodexAskPrompt(multibyte, "q");
+    expect(prompt).toContain("diff truncated");
+    // The inlined diff (everything before the marker) is within the BYTE ceiling.
+    const diffPart = prompt.slice(0, prompt.indexOf("\n… (diff truncated"));
+    const euroStart = diffPart.indexOf("€");
+    const diffBody = diffPart.slice(euroStart);
+    expect(new TextEncoder().encode(diffBody).length).toBeLessThanOrEqual(CODEX_ASK_DIFF_CEILING);
   });
 });

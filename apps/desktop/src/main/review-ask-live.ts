@@ -52,12 +52,6 @@ function activePatchsetOf(review: Review): Patchset {
 /** The deps the live ports are bound to (all injected so the module stays testable). */
 export interface LiveReviewAskDeps {
   /**
-   * Resolve + freshness-check the addressed review, throwing when the id is not the
-   * currently open review (mirrors dispatch's `requireLatestReview`). The ports bind
-   * to the LIVE review object so a re-capture is reflected on the next ask.
-   */
-  resolveReview(reviewId: string): Review;
-  /**
    * Build the review's pipeline for the orchestrator turn. The app injects a
    * deterministic-floor build (`buildReviewCanvases` with no lens/model turns): the
    * ask's model spend is the ONE orchestrator turn, not a fresh lens review, and the
@@ -75,23 +69,25 @@ export interface LiveReviewAskDeps {
   askCodex?(input: { review: Review; question: string }): Promise<AskAnswer>;
 }
 
-/** The dispatch-dep-shaped ports (`{ reviewId, question } → AskAnswer`). */
+/**
+ * The dispatch-dep-shaped ports. Both take the ALREADY-RESOLVED `review` — dispatch
+ * resolves and freshness-pins the review+patchset ONCE and hands the SAME snapshot
+ * to both legs, so the two legs of a "both" ask can never cross two patchsets.
+ */
 export interface LiveReviewAskPorts {
-  askOrchestrator(input: { reviewId: string; question: string }): Promise<AskAnswer>;
-  askCodex(input: { reviewId: string; question: string }): Promise<AskAnswer>;
+  askOrchestrator(input: { review: Review; question: string }): Promise<AskAnswer>;
+  askCodex(input: { review: Review; question: string }): Promise<AskAnswer>;
 }
 
 /**
- * Build the LIVE review.ask ports. Drop-in for `reviewAskFixturePorts()`: same
- * `{ reviewId, question } → AskAnswer` shape, so the desktop composition root swaps
- * one for the other and the dispatch path (which runs the real `askReview` router)
- * is unchanged. The negative guarantee — orchestrator-only never calls Codex — lives
- * in that router, not here.
+ * Build the LIVE review.ask ports. Drop-in for `reviewAskFixturePorts()`: the same
+ * `{ review, question } → AskAnswer` shape the dispatch path calls through the real
+ * `askReview` router. The negative guarantee — orchestrator-only never calls Codex —
+ * lives in that router, not here.
  */
 export function createLiveReviewAskPorts(deps: LiveReviewAskDeps): LiveReviewAskPorts {
   return {
-    async askOrchestrator({ reviewId, question }) {
-      const review = deps.resolveReview(reviewId);
+    async askOrchestrator({ review, question }) {
       const pipeline = await deps.buildPipeline(review);
       const outcome = await deps.orchestratorTurn(review, pipeline, question);
       if (!outcome.available) {
@@ -120,8 +116,7 @@ export function createLiveReviewAskPorts(deps: LiveReviewAskDeps): LiveReviewAsk
             : "The orchestrator completed the turn without a final answer.",
       };
     },
-    async askCodex({ reviewId, question }) {
-      const review = deps.resolveReview(reviewId);
+    async askCodex({ review, question }) {
       if (!deps.askCodex) {
         return {
           model: CODEX_ASK_LABEL,
@@ -146,14 +141,34 @@ export const CODEX_ASK_OUTPUT_SCHEMA = {
   additionalProperties: false,
 } as const;
 
-/** Assemble the one-shot Codex prompt: a terse instruction, the (bounded) diff of
- *  the review, and the reviewer's question. Codex has no MCP tools this call — it is
- *  a single exec — so the diff is inlined as its whole context. */
+/** Truncate `text` to at most `maxBytes` UTF-8 bytes (never code units — a
+ *  multi-byte diff must honour the BYTE bound the ceiling claims). The cut is walked
+ *  back off any partial trailing multi-byte sequence to a real char boundary, so the
+ *  result is valid UTF-8 AND never exceeds `maxBytes` (a naive decode would emit a
+ *  3-byte U+FFFD for the partial tail and slip over the bound). */
+function truncateToBytes(text: string, maxBytes: number): { text: string; truncated: boolean } {
+  const bytes = new TextEncoder().encode(text);
+  if (bytes.length <= maxBytes) return { text, truncated: false };
+  // Continuation bytes are 10xxxxxx; walk `end` back until it lands on a lead/ASCII
+  // byte, so `subarray(0, end)` contains only whole code points.
+  let end = maxBytes;
+  while (end > 0) {
+    const byte = bytes[end];
+    if (byte === undefined || (byte & 0xc0) !== 0x80) break;
+    end--;
+  }
+  const decoded = new TextDecoder("utf-8").decode(bytes.subarray(0, end));
+  return { text: decoded, truncated: true };
+}
+
+/** Assemble the one-shot Codex prompt: a terse instruction, the (byte-bounded) diff
+ *  of the review, and the reviewer's question. Codex has no MCP tools this call — it
+ *  is a single exec — so the diff is inlined as its whole context. */
 export function buildCodexAskPrompt(diff: string, question: string): string {
-  const bounded =
-    diff.length > CODEX_ASK_DIFF_CEILING
-      ? `${diff.slice(0, CODEX_ASK_DIFF_CEILING)}\n… (diff truncated at ${CODEX_ASK_DIFF_CEILING} bytes)`
-      : diff;
+  const { text: clipped, truncated } = truncateToBytes(diff, CODEX_ASK_DIFF_CEILING);
+  const bounded = truncated
+    ? `${clipped}\n… (diff truncated at ${CODEX_ASK_DIFF_CEILING} bytes)`
+    : clipped;
   return [
     "You are a second-opinion code reviewer answering ONE question about a code change.",
     "Answer only the question, concisely and concretely. Do not restate the diff.",

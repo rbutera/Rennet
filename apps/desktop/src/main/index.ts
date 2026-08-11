@@ -961,13 +961,10 @@ app.whenReady().then(async () => {
     //     "unavailable" answer, never a crash, so a "both" ask still returns the
     //     orchestrator's answer).
     reviewAsk: createLiveReviewAskPorts({
-      // The freshness-checked resolution mirrors dispatch's `requireLatestReview`:
-      // a question is ABOUT the open review, and a stale/unknown id is refused.
-      resolveReview: (reviewId) => {
-        const current = service.bootstrap();
-        if (!current || current.id !== reviewId) throw new Error("Review not found");
-        return current;
-      },
+      // Dispatch resolves + freshness-pins the review (and its patchset) and hands the
+      // SAME snapshot to both legs, so the ports never re-resolve. The pipeline is a
+      // deterministic-floor build (no lens/model turns): the ask's model spend is the
+      // ONE orchestrator turn, not a fresh lens review.
       buildPipeline: (review) =>
         buildReviewCanvases({
           reviewId: review.id,

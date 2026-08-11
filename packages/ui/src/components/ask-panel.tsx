@@ -19,20 +19,43 @@ import { AskAnswers, AskControl } from "./ask";
 // multi-turn conversation thread are the deferred follow-ups; a working single-shot
 // ask lands first.
 
+/** The default UI-side ceiling on a single ask before the panel unblocks with an
+ *  honest timeout (the underlying turn is not aborted — this frees the surface so it
+ *  is never permanently stuck; true turn-abort is a follow-up). */
+export const DEFAULT_ASK_TIMEOUT_MS = 180_000;
+
 export interface AskPanelProps {
   /** The command bridge — `review.ask` runs over it. */
   bridge: RennetBridge;
   /** The open review a question is ABOUT. */
   reviewId: string;
+  /** The active patchset the question is ABOUT — MAIN refuses a mismatch. */
+  patchsetId: string;
+  /**
+   * Obtain the single-use, review-bound authorization for THIS ask, or `null` when
+   * the effective mode does not require one (auto/bypass). The parent owns the mode
+   * and the `harness.requestConsent` mint, so the panel never fabricates consent — it
+   * relays a token MAIN issued, which MAIN consumes once. A rejection surfaces as the
+   * ask error (the model spend never runs unauthorized).
+   */
+  authorize(): Promise<string | null>;
+  /** UI timeout for a single ask; defaults to {@link DEFAULT_ASK_TIMEOUT_MS}. */
+  timeoutMs?: number;
 }
 
 /**
  * A self-contained ask surface: a question box + the one-model/both split, and the
  * side-by-side answer cards for the last question. Holds only its own draft/mode/
  * result state, so mounting it next to the canvases needs nothing from the parent
- * but the bridge and the review id.
+ * but the bridge, the review+patchset id, and the authorize hook.
  */
-export function AskPanel({ bridge, reviewId }: AskPanelProps) {
+export function AskPanel({
+  bridge,
+  reviewId,
+  patchsetId,
+  authorize,
+  timeoutMs = DEFAULT_ASK_TIMEOUT_MS,
+}: AskPanelProps) {
   // The routing for the next question. Defaults to "orchestrator" so pressing Ask
   // without touching the caret NEVER fires a second model (the same wrong-side-safe
   // default the schema and router enforce).
@@ -51,18 +74,34 @@ export function AskPanel({ bridge, reviewId }: AskPanelProps) {
     if (trimmed.length === 0 || pending) return;
     setPending(true);
     setError(undefined);
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      const result = await bridge.invoke("review.ask", {
+      // Authorize BEFORE the spend: under manual mode this mints the single-use
+      // token MAIN consumes; under auto/bypass it resolves null and MAIN needs none.
+      const authorization = await authorize();
+      const invocation = bridge.invoke("review.ask", {
         commandId: crypto.randomUUID(),
         reviewId,
+        patchsetId,
         mode,
         question: trimmed,
+        ...(authorization === null ? {} : { authorization }),
       });
+      // Race the invocation against a UI timeout so a turn that never settles cannot
+      // leave the panel permanently pending (and blocking every later ask).
+      const timeout = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("The AI did not answer in time. Try asking again.")),
+          timeoutMs,
+        );
+      });
+      const result = await Promise.race([invocation, timeout]);
       setAsked({ question: trimmed, result });
       setQuestion("");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
+      if (timer !== undefined) clearTimeout(timer);
       setPending(false);
     }
   }
