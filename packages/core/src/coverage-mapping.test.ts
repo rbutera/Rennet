@@ -137,6 +137,28 @@ describe("runCoverageMapping — grounding + completeness", () => {
     expect(result.edges[0]?.tests).toBe(1);
   });
 
+  it("does NOT count an IMPLEMENTATION file the model cited as a test (no impl inflation)", async () => {
+    const result = await runCoverageMapping({
+      patchsetId: "ps-1",
+      requirements: [REQUIREMENTS[0] as CoverageRequirementInput],
+      hunks: HUNKS,
+      budget: budget(),
+      runTurn: emit({
+        mappings: [
+          {
+            capability: "review-hypothesis-pass",
+            requirement: FIRST,
+            hunks: ["h1"],
+            // h1 is src/hypothesis.ts — an offered hunk, but an IMPLEMENTATION file,
+            // not a test. It must not count toward the test total.
+            testHunks: ["h1"],
+          },
+        ],
+      }),
+    });
+    expect(result.edges[0]?.tests).toBe(0);
+  });
+
   it("gives a requirement the model OMITTED an honest computed zero (unimplemented)", async () => {
     const result = await runCoverageMapping({
       patchsetId: "ps-1",

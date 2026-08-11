@@ -34,6 +34,7 @@
 import type { InvocationBudget, OpenSpecCoverageEdge } from "@rennet/types";
 import type { HarnessTurnResult } from "./harness-run-turn";
 import { budgetAbsentRefusal } from "./invocation-budget";
+import { classifyTestGlob } from "./novelty-ledger";
 
 /** One requirement the mapping is produced for (the AUTHORITY the runner iterates). */
 export interface CoverageRequirementInput {
@@ -185,11 +186,14 @@ function readMappings(body: unknown): RawMappingItem[] | null {
 }
 
 /**
- * The count of DISTINCT test FILES among the model's test-hunk ids, GROUNDED against
- * the offered hunks: an id the model named that was not offered is dropped (like the
- * implementing-hunk culling), and multiple hunks in one test file count once. So the
- * displayed "N tests" can never exceed the real offered test surface — the number is
- * derived from grounded evidence, never a free scalar the model could inflate.
+ * The count of DISTINCT test FILES among the model's test-hunk ids, GROUNDED two ways:
+ *   1. the id must be an OFFERED hunk (a ghost id the model invented is dropped), and
+ *   2. its file must be a real TEST file by the deterministic convention classifier
+ *      (`classifyTestGlob`) — so the model cannot inflate the count by citing an
+ *      IMPLEMENTATION hunk as a test.
+ * Multiple hunks in one test file count once. So the displayed "N tests" can never
+ * exceed the real offered TEST surface — derived from grounded evidence, never a free
+ * scalar the model could pad.
  */
 function groundedTestCount(
   testHunkIds: readonly string[],
@@ -198,7 +202,9 @@ function groundedTestCount(
   const files = new Set<string>();
   for (const id of testHunkIds) {
     const filePath = hunkFileById.get(id);
-    if (filePath !== undefined) files.add(filePath);
+    if (filePath === undefined) continue; // not offered — a hallucinated id
+    if (classifyTestGlob(filePath) === null) continue; // not a test file — impl inflation
+    files.add(filePath);
   }
   return files.size;
 }

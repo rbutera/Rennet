@@ -71,11 +71,14 @@ describe("CodeView — mounted scroll interaction (the #11 frozen-window bug)", 
     const scrollEl = container.querySelector<HTMLElement>(".code-view-scroll");
     if (!scrollEl) throw new Error("scroll container did not mount");
 
-    // The window followed the resolved focus row instead of freezing at row 0, so the
-    // pulsed row is actually painted (on-screen) rather than CSS-focused off-screen.
+    // The REAL viewport moved (not just the virtual window state): the effect set the
+    // element's scrollTop through its ref, so the row is actually on-screen rather than
+    // hidden behind a spacer at scrollTop 0.
     await waitFor(() => {
-      expect(Number(scrollEl.getAttribute("data-window-start"))).toBeGreaterThan(150);
+      expect(scrollEl.scrollTop).toBeGreaterThan(150 * 18);
     });
+    // ...and the window followed, so the focused row is painted and the top recycled.
+    expect(Number(scrollEl.getAttribute("data-window-start"))).toBeGreaterThan(150);
     expect(container.querySelector('[data-raw-index="200"]')).not.toBeNull();
     expect(container.querySelector('[data-raw-index="0"]')).toBeNull();
   });
