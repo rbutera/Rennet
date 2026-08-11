@@ -45,6 +45,7 @@ import {
 } from "@rennet/adapters";
 import {
   type AdmittedDocument,
+  attachRiskCrossCheck,
   buildOfferedManifest,
   buildReviewCanvases,
   type CodexUtilityPort,
@@ -799,9 +800,16 @@ async function runFlaggedReview(review: Review, deepReview = true): Promise<Flag
       budget: createInvocationBudget(DEFAULT_MAX_VERIFICATIONS),
       maxVerifications: DEFAULT_MAX_VERIFICATIONS,
     });
-    return verified;
+    // The predicted-risk cross-check (#181), the LAST transform: reconcile the
+    // hypothesis's predicted risks against the VERIFIED findings (after refuted
+    // ones were dropped), so a risk marked `confirmed` is addressed by a finding
+    // that actually surfaces. Deterministic, $0 — absent a hypothesis it returns
+    // `verified` unchanged.
+    return attachRiskCrossCheck(verified, hypothesis);
   }
-  return flagged;
+  // Quick review (single-seat, unverified): the cross-check still runs — it is a
+  // free deterministic step — over the single seat's own findings.
+  return attachRiskCrossCheck(flagged, hypothesis);
 }
 
 // The provenance seed for a live noise run (issue #34), mirroring the finding seed.

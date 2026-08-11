@@ -615,11 +615,26 @@ export const dualReviewNoteSchema = z.object({
   seats: z.array(z.string().min(1)),
   secondSeatUnavailable: z.string().optional(),
 });
+/**
+ * The predicted-risk cross-check (issue #181): one hypothesised risk reconciled
+ * against the surfaced findings. `open` (no finding addressed it) carries an empty
+ * `findingIds`; `confirmed` names the findings that addressed it. Additive optional
+ * on the `ok` flagged review — a review formed without a hypothesis omits it. This
+ * field MUST be in the schema or the command boundary would strip it before the
+ * renderer (the ok branch is a strict `z.object`), so the anti-rubber-stamp payoff
+ * would silently never reach the UI (a delivery check, Rule 80).
+ */
+export const riskCrossCheckSchema = z.object({
+  riskId: z.string().min(1),
+  status: z.enum(["confirmed", "open"]),
+  findingIds: z.array(z.string().min(1)),
+});
 export const flaggedReviewSchema: z.ZodType<FlaggedReview> = z.union([
   z.object({
     status: z.literal("ok"),
     findings: z.array(findingElementSchema),
     dual: dualReviewNoteSchema.optional(),
+    crossChecks: z.array(riskCrossCheckSchema).optional(),
   }),
   z.object({ status: z.literal("failed"), reason: z.string() }),
 ]);

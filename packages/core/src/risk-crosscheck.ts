@@ -18,7 +18,12 @@
  * meaningful token overlap, never an incidental shared stopword.
  */
 
-import type { FindingElement, ReviewHypothesis, RiskCrossCheck } from "@rennet/types";
+import type {
+  FindingElement,
+  FlaggedReview,
+  ReviewHypothesis,
+  RiskCrossCheck,
+} from "@rennet/types";
 
 /** The minimum number of shared salient tokens for a finding to address a risk. */
 export const RISK_MATCH_MIN_SHARED_TOKENS = 2;
@@ -118,4 +123,36 @@ export function crossCheckRisks(
       ? { riskId: risk.riskId, status: "confirmed", findingIds }
       : { riskId: risk.riskId, status: "open", findingIds: [] };
   });
+}
+
+/**
+ * Surface the predicted-risk cross-check onto a completed `FlaggedReview` (the
+ * live-path wiring for issue #181). This is the ONE composition point that turns
+ * the pure `crossCheckRisks` reconciliation into something the review carries to
+ * the UI, and it is deliberately the LAST transform of the review:
+ *
+ *   • It runs on the review's FINAL findings — after dual-model reconciliation
+ *     (#41) AND after per-finding verification (#179) have dropped any refuted
+ *     finding. Cross-checking earlier would let a false, later-dropped finding mark
+ *     a risk `confirmed` and then vanish, leaving a risk that looks handled by a
+ *     finding no reader can see — the exact "prettier rubber stamp" this fights.
+ *   • It is a pure, deterministic, NO-model-turn step ($0), so it runs on BOTH the
+ *     deep (dual + verified) and quick (single-seat) paths, never gated on spend.
+ *   • It degrades honestly: a `failed` review, or one produced with NO hypothesis
+ *     (an absent adapter, a failed hypothesis pass), is returned UNCHANGED — no
+ *     `crossChecks` field, byte-identical to the pre-#181 shape. A hypothesis with
+ *     no risks yields an empty `crossChecks`, which is honestly "nothing predicted",
+ *     never a silent all-clear.
+ *
+ * The result rides the review's `ok` variant additively, so the Flagged lens
+ * boundary and every existing consumer are unchanged; `buildHypothesisFrame`
+ * (`@rennet/ui`) folds the same `RiskCrossCheck[]` next to the hypothesis into the
+ * reader's frame, defaulting any risk it cannot match to `open`.
+ */
+export function attachRiskCrossCheck(
+  review: FlaggedReview,
+  hypothesis: ReviewHypothesis | undefined,
+): FlaggedReview {
+  if (review.status !== "ok" || hypothesis === undefined) return review;
+  return { ...review, crossChecks: crossCheckRisks(hypothesis, review.findings) };
 }
