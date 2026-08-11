@@ -110,10 +110,11 @@ export interface CanvasWorkspaceProps {
   flaggedReview?: FlaggedReview;
 
   /**
-   * The deep-review control (issue #191). When present, the Flagged lens offers a
-   * one-tap "deep review" that re-runs the flagged runner with `deepReview: true`
-   * (the two-model reconcile). Absent ⇒ no affordance (a host with no bridge, the
-   * #11 demo, or a test). Additive — the lens is unchanged when it is omitted.
+   * The dual-model control (issue #191). Dual is the DEFAULT; when present, the
+   * Flagged lens offers a toggle that opts DOWN to the single-Claude quick review
+   * (and back), re-running the flagged runner with the chosen mode. Absent ⇒ no
+   * affordance (a host with no bridge, the #11 demo, or a test). Additive — the lens
+   * is unchanged when it is omitted.
    */
   deepReview?: DeepReviewControl;
 

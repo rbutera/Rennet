@@ -19,7 +19,7 @@ import type {
   ProjectKind,
   ProjectProcessEvent,
 } from "@rennet/protocol";
-import type { Canvas, CanvasAngle, Patchset, Review } from "@rennet/types";
+import type { Canvas, CanvasAngle, FlaggedReview, Patchset, Review } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
 import { createDispatch, type DispatchDeps } from "./dispatch";
@@ -148,6 +148,7 @@ function harness(
     askOrchestrator: ReturnType<typeof vi.fn>;
     askCodex: ReturnType<typeof vi.fn>;
   };
+  flaggedReviewSpy: ReturnType<typeof vi.fn>;
 } {
   const capture: PatchsetCapturePort = { capture: () => Promise.resolve(patchset()) };
   const service = new ReviewService(capture, new InMemoryStore());
@@ -175,6 +176,12 @@ function harness(
       }),
     ),
   };
+  const flaggedReviewSpy = vi.fn<(review: Review, deepReview: boolean) => Promise<FlaggedReview>>(
+    async () => ({
+      status: "ok",
+      findings: [],
+    }),
+  );
   const deps: DispatchDeps = {
     service,
     allowedRoots,
@@ -218,7 +225,10 @@ function harness(
     projectDetail: () =>
       Promise.resolve({ viewer: { login: "rai" }, locals: [], prs: [], truncated: false }),
     cleanupWorktree: () => Promise.resolve({ ok: true }),
-    flaggedReview: () => Promise.resolve({ status: "ok", findings: [] }),
+    // Recording spy so a test can assert what `deepReview` the dispatch passed the
+    // runner — the whole point of the default-dual mandate is that guarantee at the
+    // real command boundary. The stub answers with an honestly-empty ran-clean set.
+    flaggedReview: flaggedReviewSpy,
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
     reviewAsk,
     symbolLookup: opts.symbolLookup,
@@ -233,6 +243,7 @@ function harness(
     publishPort,
     publishConsent,
     reviewAsk,
+    flaggedReviewSpy,
   };
 }
 
@@ -372,6 +383,23 @@ describe("createDispatch — flagged.review routing (the live finding runner, is
     await expect(dispatch("flagged.review", { reviewId: randomUUID() })).rejects.toThrow(
       /Review not found/,
     );
+  });
+
+  it("defaults to DUAL-model review when deepReview is OMITTED (Rai's mandate: not opt-in)", async () => {
+    const { dispatch, flaggedReviewSpy } = harness();
+    const review = await capturedReview(dispatch);
+    // The renderer sends only the reviewId — no deepReview flag at all.
+    await dispatch("flagged.review", { reviewId: review.id });
+    expect(flaggedReviewSpy).toHaveBeenCalledTimes(1);
+    // The dispatch defaulted the omitted flag to TRUE — both provider seats run.
+    expect(flaggedReviewSpy.mock.calls[0]?.[1]).toBe(true);
+  });
+
+  it("passes an explicit deepReview:false straight through as the manual opt-DOWN to quick", async () => {
+    const { dispatch, flaggedReviewSpy } = harness();
+    const review = await capturedReview(dispatch);
+    await dispatch("flagged.review", { reviewId: review.id, deepReview: false });
+    expect(flaggedReviewSpy.mock.calls[0]?.[1]).toBe(false);
   });
 });
 

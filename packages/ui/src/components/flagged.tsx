@@ -2,16 +2,18 @@ import type { DualReviewNote } from "@rennet/types";
 import type { FlaggedIndex, FlaggedRow } from "../canvas/flagged";
 
 /**
- * The deep-review affordance (issue #191). Dual-model review is built + wired at the
- * command boundary behind a `deepReview` toggle on `flagged.review`; this control is
- * how a human invokes it. `active` is true once requested (the button reflects the
- * pending/refreshing state); `onRequest` re-runs the flagged review with
- * `deepReview: true` so a second provider seat reconciles into per-finding
- * agreement/disagreement.
+ * The dual-model affordance (issue #191). Dual-model review is the DEFAULT (Rai's
+ * mandate, 2026-08-11 — the tool's whole job is to spend tokens and run models, so
+ * a single-seat default was wrong): every review starts dual, running both provider
+ * seats and reconciling them into per-finding agreement/disagreement. This control
+ * is the explicit OPT-DOWN — a two-way toggle that lets a human drop to the
+ * single-Claude "quick" review, never a one-way "opt into deep". `active` is true
+ * while dual is on (the default); `onToggle` flips between dual and quick, re-running
+ * the flagged review with the new mode.
  */
 export interface DeepReviewControl {
   active: boolean;
-  onRequest(): void;
+  onToggle(): void;
 }
 
 // The Flagged lens (issue #138): one INDEX over everything the automated review
@@ -114,9 +116,10 @@ export function FlaggedLens({
   index: FlaggedIndex;
   onJumpToAnchor(anchor: string): void;
   /**
-   * The deep-review control (issue #191). Absent ⇒ no affordance is shown (a host
-   * with no bridge, or a fixture). Present ⇒ the toolbar offers a one-tap deep
-   * review that opts the flagged runner into the two-model reconcile.
+   * The dual-model control (issue #191). Absent ⇒ no affordance is shown (a host
+   * with no bridge, or a fixture). Present ⇒ the toolbar offers a toggle that opts
+   * DOWN from the default dual-model reconcile to a single-Claude quick review (and
+   * back). Dual is the default; this is the opt-down, not an opt-in.
    */
   deepReview?: DeepReviewControl;
 }) {
@@ -155,10 +158,9 @@ export function FlaggedLens({
             className="flag-deep-review"
             data-active={deepReview.active}
             aria-pressed={deepReview.active}
-            disabled={deepReview.active}
-            onClick={deepReview.onRequest}
+            onClick={deepReview.onToggle}
           >
-            {deepReview.active ? "Deep review requested" : "Deep review"}
+            {deepReview.active ? "Dual review · switch to quick" : "Quick review · switch to dual"}
           </button>
         ) : null}
       </div>
