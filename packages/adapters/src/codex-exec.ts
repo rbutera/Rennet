@@ -44,20 +44,54 @@ import {
 export const CODEX_EXEC_BIN = "codex";
 
 /**
+ * Wrap a subschema so the model may emit `null` for it — the OpenAI-idiomatic way
+ * to express an OPTIONAL field under strict structured outputs, where every
+ * property must be listed in `required` (an absent-from-`required` property 400s).
+ * Idempotent: a subschema already admitting null is returned untouched.
+ */
+function nullableSubschema(sub: unknown): unknown {
+  if (sub !== null && typeof sub === "object" && !Array.isArray(sub)) {
+    const s = sub as Record<string, unknown>;
+    if (Array.isArray(s.anyOf)) {
+      const hasNull = (s.anyOf as unknown[]).some(
+        (branch) =>
+          branch !== null &&
+          typeof branch === "object" &&
+          (branch as Record<string, unknown>).type === "null",
+      );
+      return hasNull ? sub : { ...s, anyOf: [...(s.anyOf as unknown[]), { type: "null" }] };
+    }
+    if (s.type === "null") return sub;
+  }
+  return { anyOf: [sub, { type: "null" }] };
+}
+
+/**
  * The Codex analogue of `bodyJsonSchema`'s `$schema` strip for the Claude CLI.
  *
  * `codex exec --output-schema` feeds the schema to OpenAI structured outputs,
- * which requires `additionalProperties: false` on every object and rejects a
- * typeless `additionalProperties: {}` node with a 400 (`invalid_json_schema`,
- * "schema must have a 'type' key"). Zod's `z.toJSONSchema` projects the RSP body
- * schemas' loose objects as `additionalProperties: {}`, so WITHOUT this the Codex
- * seat NEVER completes a structured emission — it 400s on every attempt, degrades
- * to a single seat, and its token cost is unmeasurable because it never runs.
+ * which is STRICT in two ways this transform reconciles the Zod projection with:
  *
- * This pure, deep, non-mutating transform rewrites every empty-object
- * `additionalProperties` to `false` (a typed additionalProperties subschema is
- * kept and recursed into). It is applied only on the Codex path; the Claude path
- * tolerates `{}` and is untouched.
+ *   1. Every object must set `additionalProperties: false`. Zod's `.loose()`
+ *      projects `additionalProperties: {}` (a typeless node), which 400s
+ *      (`invalid_json_schema`, "schema must have a 'type' key"). We flip every
+ *      empty-object `additionalProperties` to `false` (a typed subschema is kept
+ *      and recursed into), and set `additionalProperties: false` on any object
+ *      with `properties` that omits it.
+ *   2. Every object's `required` must list EVERY key in `properties`. Zod's
+ *      `.optional()` projects a property that is ABSENT from `required`, which
+ *      400s ("'required' ... including every key in properties. Missing '<prop>'").
+ *      This is why #195's additionalProperties-only fix never resolved the empty
+ *      Codex finding seat: the finding item's `.optional()` `verification` (and
+ *      `decision.record.why`, `noise.deviates`, …) tripped this second rule, so
+ *      EVERY structured emission 400'd, exited non-zero, and degraded to a single
+ *      seat. We add each previously-optional property to `required` but make it
+ *      NULLABLE (`anyOf` with `{type:null}`) so the model can still signal absence;
+ *      `stripNullDeep` then removes the emitted nulls, restoring the field's
+ *      original optional (absent) semantics for the on-disk validator.
+ *
+ * Pure, deep, non-mutating. Applied only on the Codex path; the Claude path
+ * tolerates `{}` and optional-not-required and is untouched.
  */
 export function sanitizeSchemaForCodex(schema: unknown): unknown {
   if (Array.isArray(schema)) return schema.map(sanitizeSchemaForCodex);
@@ -75,6 +109,40 @@ export function sanitizeSchemaForCodex(schema: unknown): unknown {
       continue;
     }
     out[key] = sanitizeSchemaForCodex(value);
+  }
+  // Strict `required` completeness: enforce it on every object that declares
+  // `properties`. `out.properties` is the already-recursed copy, so mutating it
+  // never touches the caller's input.
+  const props = out.properties;
+  if (props !== null && typeof props === "object" && !Array.isArray(props)) {
+    const propObj = props as Record<string, unknown>;
+    const keys = Object.keys(propObj);
+    const required = new Set(Array.isArray(out.required) ? (out.required as string[]) : []);
+    for (const key of keys) {
+      if (!required.has(key)) propObj[key] = nullableSubschema(propObj[key]);
+    }
+    out.required = keys;
+    if (out.additionalProperties === undefined) out.additionalProperties = false;
+  }
+  return out;
+}
+
+/**
+ * Remove every `null`-valued object property, deeply. `sanitizeSchemaForCodex`
+ * forces an optional field to be `required` + nullable so OpenAI strict accepts
+ * the schema; the model then emits `null` for a field it would otherwise omit.
+ * Stripping those nulls restores the original optional semantics — a `null`
+ * `verification` becomes an ABSENT `verification`, which is what the RSP body
+ * validator (`.optional()`, not `.nullable()`) expects. Array elements are
+ * preserved (indices are load-bearing); only object keys are dropped.
+ */
+export function stripNullDeep(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stripNullDeep);
+  if (value === null || typeof value !== "object") return value;
+  const out: Record<string, unknown> = {};
+  for (const [key, inner] of Object.entries(value as Record<string, unknown>)) {
+    if (inner === null) continue;
+    out[key] = stripNullDeep(inner);
   }
   return out;
 }
@@ -197,6 +265,23 @@ export function createCodexExecutor(
   const bin = options.bin ?? CODEX_EXEC_BIN;
   const now = options.now ?? Date.now;
   return async (req: CodexExecRequest): Promise<CodexExecResult> => {
+    // Fire a LEGIBLE failure measurement so a Codex seat that never produced a
+    // document shows up as an explicit "unmeasured (reason)" entry rather than an
+    // empty `measurements: []` — the silent-degrade trap (bead workspace-vk1qk):
+    // a cost harness that sees no measurement reads "UNMEASURED (no measurement
+    // recorded)", which is indistinguishable from "we couldn't correlate the log"
+    // even though the truth is "the seat errored and ran nothing". A future silent
+    // Codex-empty must be impossible to miss.
+    const reportExecFailure = (reason: string): void => {
+      options.onUsageMeasurement?.({
+        status: "unmeasured",
+        usage: null,
+        sessionFile: null,
+        reason,
+        scanned: 0,
+        matched: 0,
+      });
+    };
     const dir = await effects.mkdtemp(join(tmpdir(), "rennet-codex-"));
     const outPath = join(dir, "out.json");
     // Bound the session-log search to files written from just before this spawn.
@@ -226,17 +311,32 @@ export function createCodexExecutor(
         ...(req.signal === undefined ? {} : { signal: req.signal }),
       });
       if (result.exitCode !== 0) {
-        throw new Error(
-          `codex exec exited ${result.exitCode}: ${result.stderr.trim() || "no stderr"}`,
-        );
+        const reason = `codex exec exited ${result.exitCode}: ${result.stderr.trim() || "no stderr"}`;
+        reportExecFailure(reason);
+        throw new Error(reason);
       }
-      const raw = await effects.readFile(outPath);
+      let raw: string;
+      try {
+        raw = await effects.readFile(outPath);
+      } catch (error) {
+        // No `-o` file: codex accepted the request but emitted no final message
+        // (the exact shape the empty-Codex-seat dogfood saw). Make it legible.
+        const reason = `codex exec produced no output file: ${error instanceof Error ? error.message : String(error)}`;
+        reportExecFailure(reason);
+        throw new Error(reason, { cause: error });
+      }
       let output: unknown;
       try {
         output = JSON.parse(raw);
       } catch {
-        throw new Error(`codex exec output was not valid JSON: ${raw.slice(0, 200)}`);
+        const reason = `codex exec output was not valid JSON: ${raw.slice(0, 200)}`;
+        reportExecFailure(reason);
+        throw new Error(reason);
       }
+      // Undo the schema's optional→required-nullable rewrite: a `null` the model
+      // emitted for a forced-nullable optional field becomes an ABSENT field, the
+      // shape the RSP body validator (`.optional()`, not `.nullable()`) expects.
+      output = stripNullDeep(output);
       // Best-effort REAL token usage from the session log (chaching-style),
       // correlated by this run's unique scratch cwd. Measurement never fails the
       // call: any error → no tokens → the port stamps an honest unmeasured zero.
