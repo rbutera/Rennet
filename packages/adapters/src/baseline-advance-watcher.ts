@@ -1,7 +1,7 @@
 import { type FSWatcher, watch as nodeWatch } from "node:fs";
 import { join } from "node:path";
 import { execaGit, type GitExec } from "./git-range-diff";
-import type { ProjectSnapshotGenerator } from "./project-snapshot-generator";
+import type { GenerateOptions, ProjectSnapshotGenerator } from "./project-snapshot-generator";
 import { resolveBaseRef } from "./project-snapshot-source";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
 
@@ -70,6 +70,7 @@ export class BaselineAdvanceCoordinator {
   private running = false;
   private dirty = false;
   private draining: Promise<void> | null = null;
+  private closed = false;
 
   private readonly debounceMs: number;
   private readonly timers: Timers;
@@ -81,11 +82,26 @@ export class BaselineAdvanceCoordinator {
 
   /** A ref may have moved. Debounced: the burst collapses to a single scheduled drain. */
   notify(): void {
+    if (this.closed) return;
     if (this.pending !== null) this.timers.clearTimeout(this.pending);
     this.pending = this.timers.setTimeout(() => {
       this.pending = null;
       this.trigger();
     }, this.debounceMs);
+  }
+
+  /**
+   * Terminal shutdown: clear any pending debounced drain and refuse all further
+   * triggers, so a queued notify can never fire a pass AFTER the owner has torn the
+   * watcher down. An already-running drain is left to settle (it was legitimately in
+   * flight); the closed flag stops it re-looping and blocks any new pass.
+   */
+  cancel(): void {
+    this.closed = true;
+    if (this.pending !== null) {
+      this.timers.clearTimeout(this.pending);
+      this.pending = null;
+    }
   }
 
   /** Resolves once any in-flight drain settles (test seam; no-op when idle). */
@@ -94,6 +110,7 @@ export class BaselineAdvanceCoordinator {
   }
 
   private trigger(): void {
+    if (this.closed) return;
     // Coalesce: a drain already running just marks the run dirty (one more pass
     // afterwards at the newest tip); we never start a second concurrent drain.
     if (this.running) {
@@ -122,7 +139,7 @@ export class BaselineAdvanceCoordinator {
         // The watcher must never crash the host process; surface and continue.
         this.deps.onError?.(error);
       }
-    } while (this.dirty);
+    } while (this.dirty && !this.closed);
   }
 }
 
@@ -140,15 +157,30 @@ export function baselineAdvanceDepsFor(opts: {
   readonly git?: GitExec;
   readonly debounceMs?: number;
   readonly timers?: Timers;
+  /**
+   * The confirmed default-branch ref the initial snapshot was built at (the
+   * project's primary branch). Threaded into BOTH the tip re-resolution and the
+   * regen so the proactive pass tracks and rebuilds at exactly the ref the initial
+   * dump used — otherwise `resolveBaseRef` falls back to origin/HEAD, which can
+   * differ from the primary branch and churn a spurious pass on every notify.
+   */
+  readonly explicitBaseRef?: GenerateOptions["explicitBaseRef"];
+  /** Live build-stage narration for the regen (surfaced as background progress). */
+  readonly onProgress?: GenerateOptions["onProgress"];
   readonly onPass?: BaselineAdvanceDeps["onPass"];
   readonly onError?: BaselineAdvanceDeps["onError"];
 }): BaselineAdvanceDeps {
   const git = opts.git ?? execaGit;
+  const withRef = opts.explicitBaseRef ? { explicitBaseRef: opts.explicitBaseRef } : {};
   return {
-    resolveCurrentBaseOid: async () => (await resolveBaseRef(opts.repoRoot, { git })).baseOid,
+    resolveCurrentBaseOid: async () =>
+      (await resolveBaseRef(opts.repoRoot, { git, ...withRef })).baseOid,
     storedBaseOid: () => opts.store.loadManifest(opts.repoKey)?.baseOid ?? null,
     runDeltaPass: async () => {
-      await opts.generator.generate(opts.repoRoot);
+      await opts.generator.generate(opts.repoRoot, {
+        ...withRef,
+        ...(opts.onProgress ? { onProgress: opts.onProgress } : {}),
+      });
     },
     debounceMs: opts.debounceMs,
     timers: opts.timers,
@@ -174,7 +206,9 @@ const REAL_WATCH: WatchFn = (path, listener) => {
 
 /**
  * Start the event-driven baseline watch (design §2, the shared trigger): watch the
- * git common dir's `refs/remotes/origin/` tree and `packed-refs` file, calling
+ * git common dir's `refs/heads/` tree (LOCAL branch tips — a commit, rebase, or reset
+ * on the default branch), the `refs/remotes/origin/` tree (a fetch/pull advancing the
+ * remote default), and the `packed-refs` file (either, once packed), calling
  * `coordinator.notify()` on any change. Best-effort and OPTIONAL — a path that
  * cannot be watched (e.g. no remote refs yet) is skipped, never fatal; the coordinator
  * still works driven by any other trigger (review-open remains the always-correct
@@ -190,6 +224,7 @@ export function startBaselineWatch(
   const notify = () => coordinator.notify();
   const watchers: { close(): void }[] = [];
   for (const target of [
+    join(gitCommonDir, "refs", "heads"),
     join(gitCommonDir, "refs", "remotes", "origin"),
     join(gitCommonDir, "packed-refs"),
   ]) {

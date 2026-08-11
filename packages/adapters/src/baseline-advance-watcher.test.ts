@@ -1,8 +1,11 @@
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   BaselineAdvanceCoordinator,
   type BaselineAdvanceDeps,
+  startBaselineWatch,
   type Timers,
+  type WatchFn,
 } from "./baseline-advance-watcher";
 
 /** A manual timer: `notify` schedules one pending callback; `flush` fires it. */
@@ -168,5 +171,92 @@ describe("BaselineAdvanceCoordinator — debounce + coalesce", () => {
     t.flush();
     await coord.whenIdle();
     expect(runDeltaPass).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("BaselineAdvanceCoordinator — cancel / teardown", () => {
+  it("cancel() clears a PENDING debounced pass — nothing fires after teardown", async () => {
+    const runDeltaPass = vi.fn(async () => {
+      /* recorded by vi.fn */
+    });
+    const t = fakeTimers();
+    const coord = new BaselineAdvanceCoordinator({
+      resolveCurrentBaseOid: async () => "oid2",
+      storedBaseOid: () => "oid1", // a movement IS pending (oid1 → oid2)
+      runDeltaPass,
+      timers: t.timers,
+    });
+
+    coord.notify(); // schedules a pending debounced drain
+    expect(t.pending()).toBe(true);
+    coord.cancel(); // teardown BEFORE the debounce fires
+    expect(t.pending()).toBe(false); // the pending timer was cleared
+    t.flush(); // would have fired the drain — now a no-op
+    await coord.whenIdle();
+
+    expect(runDeltaPass).not.toHaveBeenCalled();
+  });
+
+  it("notify() after cancel() never schedules another pass", async () => {
+    const runDeltaPass = vi.fn(async () => {
+      /* recorded by vi.fn */
+    });
+    const t = fakeTimers();
+    const coord = new BaselineAdvanceCoordinator({
+      resolveCurrentBaseOid: async () => "oid2",
+      storedBaseOid: () => "oid1",
+      runDeltaPass,
+      timers: t.timers,
+    });
+
+    coord.cancel();
+    coord.notify();
+    expect(t.pending()).toBe(false); // closed → notify is inert
+    t.flush();
+    await coord.whenIdle();
+
+    expect(runDeltaPass).not.toHaveBeenCalled();
+  });
+});
+
+describe("startBaselineWatch — watched ref targets", () => {
+  it("watches local refs/heads (+ origin + packed-refs) and a change there drives a pass", async () => {
+    const listeners: { path: string; fn: () => void }[] = [];
+    const watch: WatchFn = (path, listener) => {
+      listeners.push({ path, fn: listener });
+      return {
+        close: () => {
+          /* no teardown needed */
+        },
+      };
+    };
+    const t = fakeTimers();
+    const runDeltaPass = vi.fn(async () => {
+      /* recorded by vi.fn */
+    });
+    const coord = new BaselineAdvanceCoordinator({
+      resolveCurrentBaseOid: async () => "oidTip",
+      storedBaseOid: () => "oid0",
+      runDeltaPass,
+      timers: t.timers,
+    });
+
+    const handle = startBaselineWatch("/repo/.git", coord, { watch });
+    const paths = listeners.map((l) => l.path);
+    // The LOCAL branch tip is now watched — a commit/rebase/reset on main fires, not
+    // only a fetch that moves the remote ref.
+    expect(paths).toContain(join("/repo/.git", "refs", "heads"));
+    expect(paths).toContain(join("/repo/.git", "refs", "remotes", "origin"));
+    expect(paths).toContain(join("/repo/.git", "packed-refs"));
+
+    // Firing the refs/heads listener (a local advance) drives notify → debounce → pass.
+    const heads = listeners.find((l) => l.path.endsWith(join("refs", "heads")));
+    heads?.fn();
+    expect(t.pending()).toBe(true);
+    t.flush();
+    await coord.whenIdle();
+    expect(runDeltaPass).toHaveBeenCalledTimes(1);
+
+    handle.close();
   });
 });

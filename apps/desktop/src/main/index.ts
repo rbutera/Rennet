@@ -93,6 +93,11 @@ import { createDispatch } from "./dispatch";
 import { createDesktopReviewBackend } from "./live-review-backend";
 import { EDITOR_CLIS, performOpenInEditor } from "./open-in-editor";
 import { createOrchestratorTurnRunner } from "./orchestrator";
+import {
+  createProactiveRehydration,
+  PROACTIVE_REHYDRATION_COMMAND_ID,
+  type ProactiveRehydration,
+} from "./proactive-rehydration";
 import { createProcessProject } from "./process-project";
 import { createPublishConsentAuthority } from "./publish-consent-authority";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
@@ -289,6 +294,10 @@ let service: ReviewService;
 let repositoryDirty = false;
 const allowedRoots = new Set<string>();
 let dispatch: ReturnType<typeof createDispatch> | null = null;
+// Proactive snapshot rehydration (#143, the snapshot half): keeps each built
+// project's Repo Map (ProjectSnapshot) warm as its reference branch advances — NOT
+// the LLM knowledge layer. Assigned in `whenReady`, torn down on quit.
+let rehydration: ProactiveRehydration | null = null;
 
 function isTrustedAppUrl(value: string): boolean {
   const url = new URL(value);
@@ -1075,6 +1084,34 @@ app.whenReady().then(async () => {
   // (visibility/promotion) they read and write is the same one the generator keys.
   const snapshotStore = snapshotStoreFor();
   const snapshotGenerator = new ProjectSnapshotGenerator({ store: snapshotStore });
+  // Proactive snapshot rehydration (#143, the snapshot half): keep each already-built
+  // project's Repo Map (ProjectSnapshot) warm as its reference branch advances (a
+  // fetch, a local commit, a rebase). This does NOT refresh the LLM knowledge layer
+  // (context.knowledge) — that stays unwired. The background pass narrates on the SAME
+  // `rennet:progress` push the processing screen uses, under a stable command id, so
+  // the mechanism is visible-capable with no new protocol surface. It only warms repos
+  // that already have a snapshot — it never cold-builds in the background.
+  rehydration = createProactiveRehydration({
+    store: snapshotStore,
+    generator: snapshotGenerator,
+    narrate: (event) => {
+      for (const win of BrowserWindow.getAllWindows()) {
+        if (win.isDestroyed()) continue;
+        win.webContents.send(PROGRESS_CHANNEL, {
+          commandId: PROACTIVE_REHYDRATION_COMMAND_ID,
+          event,
+        });
+      }
+    },
+  });
+  // At launch, resume warming every project whose Repo Map already exists.
+  for (const project of projectStore.list()) void rehydration.ensureForProject(project);
+  // The initial context dump's core, wrapped below so a successful process also starts
+  // keeping that project's freshly-built Repo Map warm.
+  const processProjectCore = createProcessProject({
+    generate: (repoRoot, options) => snapshotGenerator.generate(repoRoot, options),
+    listProjects: () => projectStore.list(),
+  });
   // The global (app-side, personal) config store — layer 1 of the settings ladder
   // (wireframe #15). A plain document at `~/.rennet/config.json`, sibling to the
   // project snapshot store; holds the reviewer's scheme, never a repo fact.
@@ -1131,10 +1168,16 @@ app.whenReady().then(async () => {
     // repo's ProjectSnapshot at the CONFIRMED primary branch, streaming the real
     // generator stages as live narration. Extracted to `process-project.ts` so the
     // branch-selection + real-count wiring is unit-tested off-Electron.
-    processProject: createProcessProject({
-      generate: (repoRoot, options) => snapshotGenerator.generate(repoRoot, options),
-      listProjects: () => projectStore.list(),
-    }),
+    processProject: async (input, emit) => {
+      const result = await processProjectCore(input, emit);
+      // The Repo Map now exists for this project — start (idempotently) keeping it
+      // warm as its reference branch advances. Fire-and-forget: never delays the
+      // processing response, and a start failure can only leave the map un-warmed,
+      // never break the process.
+      const processed = projectStore.list().find((entry) => entry.id === input.projectId);
+      if (processed) void rehydration?.ensureForProject(processed);
+      return result;
+    },
     discoverProject: ({ path, kind }) =>
       discoverProject(defaultProjectDiscoveryDeps(execaGit), path, kind),
     detectHarnesses,
@@ -1342,5 +1385,6 @@ app.whenReady().then(async () => {
 app.on("window-all-closed", () => app.quit());
 app.on("before-quit", () => {
   void watcher.close();
+  rehydration?.closeAll();
   store?.close();
 });
