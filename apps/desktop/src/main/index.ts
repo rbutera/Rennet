@@ -10,6 +10,8 @@ import {
   createClaudeHarness,
   createCodexUtilityAdapter,
   createRefPinner,
+  createVerificationFileReaderForPatchset,
+  createVerificationTurn,
   defaultDiscoveryDeps,
   defaultProjectDiscoveryDeps,
   deriveProjectDraft,
@@ -42,6 +44,7 @@ import {
   createHarnessRunTurn,
   createInvocationBudget,
   DEFAULT_MAX_HARNESS_INVOCATIONS,
+  DEFAULT_MAX_VERIFICATIONS,
   decompose,
   guardSeatTurn,
   patchsetIntentToReviewIntent,
@@ -51,6 +54,7 @@ import {
   runDualFindingReview,
   runHypothesisPass,
   runNoiseAngle,
+  verifyFlaggedReview,
 } from "@rennet/core";
 import { type CommandName, type DetectedHarness, isCommandName } from "@rennet/protocol";
 import type {
@@ -665,6 +669,39 @@ async function runFlaggedReview(review: Review, deepReview = false): Promise<Fla
     makeBudget: () => createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS),
     ...(conventions ? { conventions } : {}),
   });
+
+  // ── Per-finding verification (#179): a DEEP-REVIEW feature, alongside dual-model ──
+  // Quick review stays single-Claude with NO verification (byte-identical to before).
+  // In deep review, reproduce-or-refute each non-obvious finding against the REAL file
+  // content: a refuted finding is dropped, the rest carry an evidence chip. The reader
+  // (#206, createVerificationFileReaderForPatchset) selects working-tree vs
+  // git-show-at-head by the patchset's captured surface, so verification reads the
+  // right bytes for working-tree AND PR/retrospective reviews. Absent a Claude adapter
+  // there is no verification seat (createVerificationTurn needs a HarnessPort), so the
+  // findings surface unverified — carrying no chip, never silently altered.
+  if (deepReview && adapter) {
+    const readFileWindow = createVerificationFileReaderForPatchset({
+      patchset,
+      hunks: decomposition.hunks,
+      git: execaGit,
+    });
+    const runTurn = createVerificationTurn(adapter, { cwd: review.repositoryRoot });
+    // BUDGET-GATE (Rule 75, vital money circuit): `maxVerifications` caps how many
+    // findings are verified — the over-cap remainder surfaces an honest "not verified"
+    // caveat chip (CAP_CAVEAT), NEVER a silent skip that would read as an all-clear —
+    // and the invocation budget bounds actual model turns (one per file batch,
+    // fail-closed). Both limits surface on the findings themselves; the returned
+    // telemetry is the aggregate of those same per-finding chips, so no capped or
+    // refused finding is dropped without a visible caveat.
+    const { review: verified } = await verifyFlaggedReview(flagged, {
+      manifest,
+      readFileWindow,
+      runTurn,
+      budget: createInvocationBudget(DEFAULT_MAX_VERIFICATIONS),
+      maxVerifications: DEFAULT_MAX_VERIFICATIONS,
+    });
+    return verified;
+  }
   return flagged;
 }
 
