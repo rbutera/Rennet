@@ -6,6 +6,7 @@ import {
 } from "@rennet/protocol";
 import type {
   CanvasAngle,
+  DecisionsRunStatus,
   ElementDiffs,
   FlaggedReview,
   NoiseReview,
@@ -308,6 +309,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // `engine.aiReview` is false the set is the DETERMINISTIC mechanical outline (no
   // model installed) and the UI says so loudly, never passing it off as AI.
   const [engine, setEngine] = useState<ReviewEngine | undefined>(undefined);
+  // The Decisions runner's status (issue #137/#160), delivered with the canvas set.
+  // Undefined until a live load sets it (or on an older engine that omits it) →
+  // the Decisions lens defaults to `ok`. When the runner FAILED, this carries the
+  // reason so the lens paints the failed banner instead of "no decisions".
+  const [decisionsRun, setDecisionsRun] = useState<DecisionsRunStatus | undefined>(undefined);
   const [liveLoaded, setLiveLoaded] = useState(false);
   // The Flagged lens's input (issue #138): the automated review layer's findings +
   // dual-review agreement for the open review. Fetched over the real command
@@ -533,6 +539,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setElementDiffs({});
     setNarration(undefined);
     setEngine(undefined);
+    setDecisionsRun(undefined);
     setLiveLoaded(false);
     setLoadFailed(false);
     setFlaggedReview(undefined);
@@ -740,6 +747,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       setElementDiffs(live.elementDiffs);
       setNarration(live.narration);
       setEngine(live.engine);
+      setDecisionsRun(live.decisionsRun);
       setLiveLoaded(true);
     });
     return () => {
@@ -1403,6 +1411,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                 },
               }}
               noiseReview={noiseReview}
+              // The Decisions runner's status (issue #137/#160): when the runner
+              // FAILED, the Decisions lens paints the failed banner instead of
+              // conflating a crashed pass with "no decisions". Absent ⇒ `ok`.
+              decisionsRunStatus={decisionsRun}
               // The Spec angle's structured OpenSpec viewer (Rai, wireframes #9), LIVE:
               // parse-on-open of the change the reviewed patchset selected, over the real
               // command boundary (`openspec.change`). Undefined when the review touches no

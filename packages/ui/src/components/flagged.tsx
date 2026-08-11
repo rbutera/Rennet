@@ -79,6 +79,32 @@ function DualBadge({ dual }: { dual?: DualReviewNote }) {
   );
 }
 
+/**
+ * The reproduce-or-refute verification chip (issue #179): the evidence the
+ * verification pass produced for a finding. A `reproduced` finding shows a confirmed
+ * "we dug into it" chip; an `inconclusive` one shows an honest "couldn't verify"
+ * caveat — never silently dropped, because a dead or uncertain verifier must never
+ * read as an all-clear. A `refuted` finding never reaches a row (core dropped it),
+ * so it renders nothing here. The verdict LABEL is Rennet chrome (terse, one word or
+ * two, proportional type); the `evidence` is the model's own account and breathes
+ * (Design Doctrine §4, the authorship seam).
+ */
+function Verification({ verification }: { verification: FlaggedRow["verification"] }) {
+  if (!verification || verification.verdict === "refuted") return null;
+  const reproduced = verification.verdict === "reproduced";
+  return (
+    <div
+      className={`flag-verification flag-verification-${verification.verdict}`}
+      data-verdict={verification.verdict}
+    >
+      <span className="flag-verification-label">
+        {reproduced ? "reproduced" : "couldn't verify"}
+      </span>
+      <span className="flag-verification-evidence">{verification.evidence}</span>
+    </div>
+  );
+}
+
 function FlagRow({
   row,
   onJumpToAnchor,
@@ -87,7 +113,7 @@ function FlagRow({
   onJumpToAnchor(anchor: string): void;
 }) {
   return (
-    <li className="flag" data-severity={row.severity}>
+    <li className="flag" data-severity={row.severity} data-finding-id={row.findingId}>
       <div className="flag-head">
         <span className={`flag-severity flag-severity-${row.severity}`}>
           {SEVERITY_LABEL[row.severity]}
@@ -104,6 +130,7 @@ function FlagRow({
         </button>
       </div>
       <Agreement row={row} />
+      <Verification verification={row.verification} />
     </li>
   );
 }

@@ -1,9 +1,11 @@
 import type {
   AskReviewResult,
   Canvas,
+  DecisionsRunStatus,
   Disposition,
   DispositionAnchor,
   ElementDiffs,
+  FindingVerification,
   FlaggedReview,
   NoiseReview,
   OpenSpecChange,
@@ -12,6 +14,7 @@ import type {
   Patchset,
   Review,
   ReviewEngine,
+  ReviewHypothesis,
   ReviewNarration,
   SymbolInspection,
 } from "@rennet/types";
@@ -288,6 +291,17 @@ const reviewEngineSchema: z.ZodType<ReviewEngine> = z.object({
   claudeAvailable: z.boolean(),
   codexAvailable: z.boolean(),
 });
+
+// ── The Decisions runner's status (issue #137/#160) ──────────────────────────
+// Delivered alongside the canvas set so the renderer can paint a runner that
+// FAILED distinctly from a review that ran and discerned nothing. This field MUST
+// be in the `review.canvases` output schema or the command boundary strips it (the
+// output is a strict `z.object`) and "the decisions pass crashed" would silently
+// render identical to "found nothing" — the exact false-verdict #160 removes.
+const decisionsRunStatusSchema: z.ZodType<DecisionsRunStatus> = z.union([
+  z.object({ status: z.literal("ok") }),
+  z.object({ status: z.literal("failed"), reason: z.string() }),
+]);
 
 const commandIdSchema = z.uuid();
 
@@ -615,12 +629,26 @@ export const findingAgreementSchema = z.union([
   z.object({ kind: z.literal("concur"), agree: z.number(), total: z.number() }),
   z.object({ kind: z.literal("disagree"), answers: z.array(findingModelAnswerSchema) }),
 ]);
+/**
+ * The reproduce-or-refute verification chip (issue #179). Additive optional on a
+ * finding: a `reproduced` chip carries its one-line evidence, an `inconclusive`
+ * chip its honest caveat; a `refuted` finding never surfaces (core drops it before
+ * the lens). This field MUST be in the schema or the `flagged.review` command
+ * boundary strips it (the finding is a strict `z.object`) and the evidence the
+ * verification pass computed would silently never reach the row (a delivery gap,
+ * Rule 80) — the UI would render every finding as unverified.
+ */
+export const findingVerificationSchema: z.ZodType<FindingVerification> = z.object({
+  verdict: z.enum(["reproduced", "refuted", "inconclusive"]),
+  evidence: z.string(),
+});
 export const findingElementSchema = z.object({
   findingId: z.string().min(1),
   anchor: z.string().min(1),
   summary: z.string(),
   severity: findingSeveritySchema,
   agreement: findingAgreementSchema,
+  verification: findingVerificationSchema.optional(),
 });
 /**
  * The dual-model provenance note (issue #41). Additive optional on the `ok`
@@ -645,12 +673,41 @@ export const riskCrossCheckSchema = z.object({
   status: z.enum(["confirmed", "open"]),
   findingIds: z.array(z.string().min(1)),
 });
+/**
+ * The committed hypothesis (issue #178): the reviewer's reading frame — the domain,
+ * in/out scope, the design we'd have chosen, and the predicted risks (each with the
+ * `riskId` the pass minted). It rides the `ok` flagged review additively, ALONGSIDE
+ * `crossChecks`, and this pairing is load-bearing: `riskId` is minted per pass with a
+ * random id, and the crossChecks reconcile THIS hypothesis's risks against the
+ * findings — so the reading frame must be folded from the SAME hypothesis, or every
+ * risk would fall back to `open` (a riskId mismatch). Carrying both on one review
+ * keeps that pair consistent. Absent ⇒ no hypothesis was produced (the pre-#178
+ * shape); the reading frame is simply not shown.
+ */
+export const reviewHypothesisSchema: z.ZodType<ReviewHypothesis> = z.object({
+  domain: z.string(),
+  scope: z.object({
+    inScope: z.array(z.string()),
+    outOfScope: z.array(z.string()),
+  }),
+  designExpectation: z.string(),
+  risks: z.array(
+    z.object({
+      riskId: z.string().min(1),
+      statement: z.string(),
+      severity: findingSeveritySchema,
+      disconfirmer: z.string(),
+    }),
+  ),
+  repoContextPresent: z.boolean(),
+});
 export const flaggedReviewSchema: z.ZodType<FlaggedReview> = z.union([
   z.object({
     status: z.literal("ok"),
     findings: z.array(findingElementSchema),
     dual: dualReviewNoteSchema.optional(),
     crossChecks: z.array(riskCrossCheckSchema).optional(),
+    hypothesis: reviewHypothesisSchema.optional(),
   }),
   z.object({ status: z.literal("failed"), reason: z.string() }),
 ]);
@@ -1125,6 +1182,11 @@ export const commandDefinitions = {
       // desktop build that predates it still validates; absent ⇒ the UI makes no
       // engine claim (it never shows a false "AI review" badge on an unknown set).
       engine: reviewEngineSchema.optional(),
+      // How the Decisions runner ran (issue #137/#160): `ok` vs `failed`. Optional
+      // so a caller that does not run decisions omits it; absent ⇒ the UI defaults to
+      // `ok` (the pre-#160 shape). Carried so the Decisions failed banner can fire
+      // rather than reading a crashed pass as "no decisions".
+      decisionsRun: decisionsRunStatusSchema.optional(),
     }),
   },
   // ── Publish consent request, main-issued (issue #21) ───────────────────────

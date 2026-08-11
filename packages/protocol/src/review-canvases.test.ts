@@ -89,4 +89,49 @@ describe("review.canvases command", () => {
     expect(() => canvasSchema.parse(emptyCanvas("spec"))).not.toThrow();
     expect(() => canvasSchema.parse({ canvasId: "x" })).toThrow();
   });
+
+  // ── decisionsRun delivery (issue #137/#160) ─────────────────────────────────
+  // The Decisions failed state MUST survive the command boundary. The output is a
+  // strict z.object, so an unschema'd field is silently stripped — and stripping
+  // `decisionsRun` would make "the decisions pass crashed" render identical to
+  // "found nothing" (the exact false-verdict #160 removes). These assertions go red
+  // if the field is ever dropped from the schema.
+  it("carries a FAILED decisionsRun status through the output (reaches the failed banner)", () => {
+    const output = parseCommandOutput("review.canvases", {
+      canvases: canvasSet(),
+      elementDiffs: {},
+      decisionsRun: { status: "failed", reason: "the extraction runner timed out" },
+    });
+    expect(output.decisionsRun).toEqual({
+      status: "failed",
+      reason: "the extraction runner timed out",
+    });
+  });
+
+  it("carries an OK decisionsRun status through the output", () => {
+    const output = parseCommandOutput("review.canvases", {
+      canvases: canvasSet(),
+      elementDiffs: {},
+      decisionsRun: { status: "ok" },
+    });
+    expect(output.decisionsRun).toEqual({ status: "ok" });
+  });
+
+  it("round-trips WITHOUT decisionsRun unchanged (pre-#160 shape preserved)", () => {
+    const output = parseCommandOutput("review.canvases", {
+      canvases: canvasSet(),
+      elementDiffs: {},
+    });
+    expect(output.decisionsRun).toBeUndefined();
+  });
+
+  it("rejects a failed decisionsRun with no reason (positive control)", () => {
+    expect(() =>
+      parseCommandOutput("review.canvases", {
+        canvases: canvasSet(),
+        elementDiffs: {},
+        decisionsRun: { status: "failed" },
+      }),
+    ).toThrow();
+  });
 });

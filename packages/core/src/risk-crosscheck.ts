@@ -154,5 +154,13 @@ export function attachRiskCrossCheck(
   hypothesis: ReviewHypothesis | undefined,
 ): FlaggedReview {
   if (review.status !== "ok" || hypothesis === undefined) return review;
-  return { ...review, crossChecks: crossCheckRisks(hypothesis, review.findings) };
+  // Carry BOTH the crossChecks AND the hypothesis itself (issue #178): the reading
+  // frame is folded from this hypothesis + these crossChecks, and the crossChecks
+  // reference the hypothesis's per-pass-minted `riskId`s — so they must travel
+  // together, or the frame would fall every risk back to `open` on a riskId mismatch.
+  return {
+    ...review,
+    crossChecks: crossCheckRisks(hypothesis, review.findings),
+    hypothesis,
+  };
 }

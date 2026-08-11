@@ -528,12 +528,17 @@ export function createDispatch(
         // Running the review harness (the model spend) is Rennet's entire job — it
         // just runs. No permission mode, no consent token: opening Canvases composes
         // the model turn directly.
-        const { canvases, elementDiffs, narration, engine } = await deps.buildCanvases(review);
+        const { canvases, elementDiffs, narration, engine, decisionsRun } =
+          await deps.buildCanvases(review);
         return parseCommandOutput(name, {
           canvases,
           elementDiffs,
           ...(narration ? { narration } : {}),
           engine,
+          // The Decisions runner's status (issue #137/#160): carried so the renderer
+          // can paint a FAILED decisions pass distinctly from "ran, found nothing".
+          // Absent ⇒ the UI defaults to `ok` (the pre-#160 shape).
+          ...(decisionsRun ? { decisionsRun } : {}),
         });
       }
       // ── The front door: projects + discovery (issue #29) ──────────────────────

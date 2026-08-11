@@ -23,7 +23,7 @@ function RiskRow({
           {SEVERITY_LABEL[risk.severity]}
         </span>
         <span className={`hypothesis-status hypothesis-status-${risk.status}`}>
-          {risk.status === "open" ? "open — check this yourself" : "addressed by a finding"}
+          {risk.status === "open" ? "open · check yourself" : "addressed"}
         </span>
       </div>
       <p className="hypothesis-risk-statement">{risk.statement}</p>
@@ -57,10 +57,12 @@ export function HypothesisReadingFrame({
   return (
     <section className="hypothesis-frame" aria-label="Review hypothesis">
       <header className="hypothesis-frame-head">
-        <p className="hypothesis-frame-title">Before you read the diff — what we expected</p>
+        {/* Chrome, terse (Design Doctrine §4, ≤4 words): the section names itself, the
+            model-voiced domain/scope/design/risks below carry the meaning. */}
+        <p className="hypothesis-frame-title">What we expected</p>
         {frame.repoContextPresent ? null : (
           <p className="hypothesis-degraded" role="note">
-            Formed without repository context — a lighter prior.
+            Formed without repo context
           </p>
         )}
       </header>

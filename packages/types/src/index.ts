@@ -1120,6 +1120,16 @@ export type FlaggedReview =
       findings: FindingElement[];
       dual?: DualReviewNote;
       crossChecks?: readonly RiskCrossCheck[];
+      /**
+       * The committed hypothesis (issue #178) that produced this review, carried so
+       * the surface can fold the reader's reading frame. It rides ALONGSIDE
+       * `crossChecks` on purpose: the cross-check reconciles THIS hypothesis's risks
+       * (matched by the per-pass-minted `riskId`) against the findings, so the frame
+       * must be built from the SAME hypothesis or every risk would fall back to
+       * `open`. Additive and present only when a hypothesis was produced: a review
+       * with no hypothesis omits it, exactly the pre-#178 shape.
+       */
+      hypothesis?: ReviewHypothesis;
     }
   | { status: "failed"; reason: string };
 
