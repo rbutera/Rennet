@@ -1,5 +1,6 @@
 import type { CanvasAngle } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
+import type { ZoomLevel } from "../canvas/logic";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The command registry (wireframes screen 16: "⌘K, every action a named
@@ -54,6 +55,8 @@ export interface CommandContext {
   overlayOn: boolean;
   scheme: "dark" | "light";
   angle: CanvasAngle;
+  /** The live zoom altitude — used to omit the zoom command that would clamp (no-op). */
+  zoomLevel: ZoomLevel;
 
   // Navigation + review actions (app.tsx handlers).
   backToProjects(): void;
@@ -95,9 +98,25 @@ export function buildCommands(ctx: CommandContext): Command[] {
   const commands: Command[] = [];
 
   if (ctx.screen === "workspace") {
+    // A view command is offered only when it CHANGES the view — the destination that
+    // is already shown would be inert, so it is omitted (never a dead entry).
+    if (ctx.view !== "review") {
+      commands.push({
+        id: "nav.files",
+        title: "Show Files view",
+        group: "Navigate",
+        run: ctx.showFiles,
+      });
+    }
+    if (ctx.view !== "canvases") {
+      commands.push({
+        id: "nav.canvases",
+        title: "Show Canvases view",
+        group: "Navigate",
+        run: ctx.showCanvases,
+      });
+    }
     commands.push(
-      { id: "nav.files", title: "Show Files view", group: "Navigate", run: ctx.showFiles },
-      { id: "nav.canvases", title: "Show Canvases view", group: "Navigate", run: ctx.showCanvases },
       {
         id: "nav.projects",
         title: "Back to projects",
@@ -130,7 +149,9 @@ export function buildCommands(ctx: CommandContext): Command[] {
     // while the Canvases view is showing a loaded review (the lens switcher + zoom
     // bar are on screen). Absent otherwise, never a dead entry.
     if (ctx.canvasReady) {
+      // Every lens EXCEPT the one already active — "go to the lens I'm on" is inert.
       for (const angle of CANVAS_ANGLES) {
+        if (angle === ctx.angle) continue;
         commands.push({
           id: `lens.${angle}`,
           title: `Go to ${ANGLE_LABELS[angle]} lens`,
@@ -138,9 +159,27 @@ export function buildCommands(ctx: CommandContext): Command[] {
           run: () => ctx.goToAngle(angle),
         });
       }
+      // Zoom clamps at the ends (zoomReducer), so the clamped direction is omitted:
+      // no "Zoom in" at the deepest (diff) altitude, no "Zoom out" at the roll-up.
+      if (ctx.zoomLevel !== "diff") {
+        commands.push({
+          id: "zoom.in",
+          title: "Zoom in",
+          group: "Zoom",
+          keybinding: "l",
+          run: ctx.zoomIn,
+        });
+      }
+      if (ctx.zoomLevel !== "rollup") {
+        commands.push({
+          id: "zoom.out",
+          title: "Zoom out",
+          group: "Zoom",
+          keybinding: "h",
+          run: ctx.zoomOut,
+        });
+      }
       commands.push(
-        { id: "zoom.in", title: "Zoom in", group: "Zoom", keybinding: "l", run: ctx.zoomIn },
-        { id: "zoom.out", title: "Zoom out", group: "Zoom", keybinding: "h", run: ctx.zoomOut },
         {
           id: "view.overlay",
           title: ctx.overlayOn ? "Hide the blast-radius overlay" : "Paint the blast-radius overlay",

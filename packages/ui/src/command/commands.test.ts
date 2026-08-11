@@ -19,6 +19,7 @@ function context(overrides: Partial<CommandContext> = {}): CommandContext {
     overlayOn: false,
     scheme: "dark",
     angle: "decisions",
+    zoomLevel: "cohort",
     backToProjects: vi.fn(),
     backToProjectList: vi.fn(),
     showFiles: vi.fn(),
@@ -48,15 +49,41 @@ describe("buildCommands — context-aware registry", () => {
   });
 
   it("offers the review + lens + zoom + appearance commands in the workspace", () => {
+    // On the Canvases view at a mid zoom, lens decisions (the active angle) is the one
+    // omitted; every OTHER lens plus both zoom directions and the toggles are present.
     const ids = buildCommands(context()).map((command) => command.id);
     expect(ids).toContain("nav.files");
     expect(ids).toContain("review.retry");
-    // All six lenses.
-    for (const angle of ["spec", "sequence", "decisions", "claims", "noise", "flagged"]) {
+    for (const angle of ["spec", "sequence", "claims", "noise", "flagged"]) {
       expect(ids).toContain(`lens.${angle}`);
     }
     expect(ids).toContain("zoom.in");
+    expect(ids).toContain("zoom.out");
     expect(ids).toContain("view.scheme");
+  });
+
+  it("omits the inert command: the current view, the active lens, a clamped zoom", () => {
+    // Current view (Canvases) → no "Show Canvases view"; the OTHER view is offered.
+    const canvases = buildCommands(context({ view: "canvases" })).map((c) => c.id);
+    expect(canvases).not.toContain("nav.canvases");
+    expect(canvases).toContain("nav.files");
+    // Current view (Files) → no "Show Files view"; the OTHER view is offered.
+    const files = buildCommands(context({ view: "review" })).map((c) => c.id);
+    expect(files).not.toContain("nav.files");
+    expect(files).toContain("nav.canvases");
+
+    // Active lens is omitted; the others remain.
+    const onFlagged = buildCommands(context({ angle: "flagged" })).map((c) => c.id);
+    expect(onFlagged).not.toContain("lens.flagged");
+    expect(onFlagged).toContain("lens.decisions");
+
+    // Zoom clamps: no "Zoom in" at diff, no "Zoom out" at the roll-up.
+    const atDiff = buildCommands(context({ zoomLevel: "diff" })).map((c) => c.id);
+    expect(atDiff).not.toContain("zoom.in");
+    expect(atDiff).toContain("zoom.out");
+    const atRollup = buildCommands(context({ zoomLevel: "rollup" })).map((c) => c.id);
+    expect(atRollup).not.toContain("zoom.out");
+    expect(atRollup).toContain("zoom.in");
   });
 
   it("drops the lens/zoom/appearance commands when the Canvases view is not live", () => {

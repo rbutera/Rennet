@@ -371,10 +371,12 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // methods, never a parallel copy. `paletteOpen` toggles the ⌘K overlay.
   const viewStore = useMemo(() => createViewStore(), []);
   const [paletteOpen, setPaletteOpen] = useState(false);
-  // Subscribed so the palette's toggle labels + current lens read live store state.
+  // Subscribed so the palette's toggle labels + current lens/zoom read live store state
+  // (and so an inert command — the lens already active, a zoom at its clamp — is omitted).
   const canvasAngle = useViewStore(viewStore, (state) => state.angle);
   const canvasScheme = useViewStore(viewStore, (state) => state.scheme);
   const canvasOverlayOn = useViewStore(viewStore, (state) => state.overlayOn);
+  const canvasZoomLevel = useViewStore(viewStore, (state) => state.zoom.level);
 
   // ⌘K (or Ctrl-K) toggles the palette app-wide: the listener is on `window`, so it
   // fires from any surface (front door, project detail, review) regardless of focus.
@@ -473,6 +475,13 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setFlaggedReview(undefined);
     setNoiseReview(undefined);
     setOpenSpecChange(undefined);
+    // Reset the LIFTED view store's review-scoped state (lens/zoom/selection/cursor/
+    // cohorts/overlay), preserving the scheme. The store now outlives a single review
+    // (it was lifted here for the ⌘K palette), so without this reset, opening review B
+    // after viewing review A at diff depth would render B at "Diff" with A's selection —
+    // a hunk that does not exist in B, so no diff. Before the lift, unmounting the
+    // workspace discarded the store; this restores that clean-per-review guarantee.
+    viewStore.getState().resetView();
     // NOTE: the dual-model mode is NOT reset here. It is derived synchronously from
     // reviewId (`deepReviewOn`, above), so a new review already reads the dual default
     // this same render — resetting it in this effect would commit a render too late
@@ -1004,6 +1013,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         overlayOn: canvasOverlayOn,
         scheme: canvasScheme,
         angle: canvasAngle,
+        zoomLevel: canvasZoomLevel,
         backToProjects: () => setAtFrontDoor(true),
         backToProjectList: () => setProjectDetail(null),
         showFiles: () => setView("review"),

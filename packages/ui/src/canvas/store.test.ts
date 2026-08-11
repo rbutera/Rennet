@@ -30,4 +30,29 @@ describe("view store — ephemeral navigation state, no read state", () => {
     store.getState().setScheme("light");
     expect(store.getState().scheme).toBe("light");
   });
+
+  it("resetView clears the review-scoped state but preserves the scheme", () => {
+    // A store carrying a full review's worth of view state (the lifted, app-lifetime
+    // store after viewing review A at diff depth).
+    const store = createViewStore({
+      angle: "flagged",
+      zoom: { level: "diff", elementKey: "rennet:hunk/h9" },
+      selection: "rennet:hunk/h9",
+      cursorAnchor: "rennet:hunk/h9",
+      overlayOn: true,
+      expandedCohorts: { "cohort:c1": true },
+      scheme: "light",
+    });
+    store.getState().resetView();
+    const state = store.getState();
+    // Review-scoped fields are back to the clean roll-up default…
+    expect(state.angle).toBe("decisions");
+    expect(state.zoom).toEqual({ level: "rollup" });
+    expect(state.selection).toBeUndefined();
+    expect(state.cursorAnchor).toBeUndefined();
+    expect(state.overlayOn).toBe(false);
+    expect(state.expandedCohorts).toEqual({});
+    // …but the scheme (a global appearance preference) survives.
+    expect(state.scheme).toBe("light");
+  });
 });

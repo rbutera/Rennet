@@ -38,6 +38,14 @@ export interface ViewState {
   select(elementKey?: string): void;
   setCursor(anchor?: string): void;
   setScheme(scheme: Scheme): void;
+  /**
+   * Reset the REVIEW-SCOPED view state (lens, zoom, selection, cursor, expanded
+   * cohorts, overlay) to the clean roll-up default, PRESERVING the scheme (a global
+   * appearance choice, not review state). A lifted, app-lifetime store must call this
+   * when the open review changes, so review B never inherits review A's selection —
+   * which points at a hunk that does not exist in B.
+   */
+  resetView(): void;
 }
 
 export type ViewStore = ReturnType<typeof createViewStore>;
@@ -70,6 +78,16 @@ export function createViewStore(initial?: Partial<ViewState>) {
     select: (elementKey) => set({ selection: elementKey }),
     setCursor: (anchor) => set({ cursorAnchor: anchor }),
     setScheme: (scheme) => set({ scheme }),
+    // Scheme is deliberately NOT reset — it is a global appearance preference.
+    resetView: () =>
+      set({
+        angle: "decisions",
+        overlayOn: false,
+        expandedCohorts: {},
+        zoom: { level: "rollup" },
+        selection: undefined,
+        cursorAnchor: undefined,
+      }),
   }));
 }
 
