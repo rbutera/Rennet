@@ -3,6 +3,9 @@ import type {
   SymbolInspectorDefinitionRow,
   SymbolInspectorReferenceRow,
   SymbolInspectorSection,
+  SymbolNeighbor,
+  SymbolNeighbors,
+  SymbolTier,
 } from "@rennet/types";
 import type { TokenType } from "../syntax/languages";
 
@@ -102,7 +105,7 @@ export function splitIdentifierRuns(text: string): TokenSegment[] {
 export type SymbolDefinitionRow = SymbolInspectorDefinitionRow;
 export type SymbolReferenceRow = SymbolInspectorReferenceRow;
 export type SymbolLookupSection<Row> = SymbolInspectorSection<Row>;
-export type { SymbolInspection };
+export type { SymbolInspection, SymbolNeighbor, SymbolNeighbors, SymbolTier };
 
 /** The port the inspector calls: resolve one name to its definitions + references. */
 export type SymbolLookupPort = (name: string) => Promise<SymbolInspection>;

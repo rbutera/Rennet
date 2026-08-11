@@ -3,7 +3,7 @@ import type {
   ProjectReferenceResult,
   ProjectSymbolDefinitionResult,
 } from "@rennet/core";
-import type { Review, SymbolInspection } from "@rennet/types";
+import type { Review, SymbolInspection, SymbolNeighbors } from "@rennet/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.symbolLookup — the LIVE symbol inspector port (Rai, wireframes #8).
@@ -61,23 +61,40 @@ function unavailableReason(result: { readonly reason: string }): string {
   return "the project snapshot is not available yet";
 }
 
-/** Project a `context.symbol` result onto the inspector's definition section. */
+/**
+ * Project a `context.symbol` result onto the inspector's definition section, with an
+ * honest confidence tier. Go-to-definition is a STRUCTURAL extraction of exported
+ * declarations, so a single site is an `exact`/`structural` answer (the queried name
+ * resolved unambiguously); several sites for one name is a `guess`/`structural` with
+ * the site count as its candidate list (the index cannot pick one). An empty answer
+ * carries no tier — there is nothing to be confident about. The tier is NEVER `exact`
+ * for anything but a single structural site: this label cannot be fabricated.
+ */
 export function symbolDefinitionSection(
   result: ProjectSymbolDefinitionResult,
 ): SymbolInspection["definition"] {
   if (!result.ok) return { status: "unavailable", reason: unavailableReason(result) };
-  return {
-    status: "ok",
-    sites: result.definitions.sites.map((site) => ({
-      path: site.path,
-      line: site.line,
-      kind: site.kind,
-      scope: site.scope,
-    })),
-  };
+  const sites = result.definitions.sites.map((site) => ({
+    path: site.path,
+    line: site.line,
+    kind: site.kind,
+    scope: site.scope,
+  }));
+  if (sites.length === 0) return { status: "ok", sites };
+  const tier =
+    sites.length === 1
+      ? ({ kind: "exact", method: "structural" } as const)
+      : ({ kind: "guess", method: "structural", candidates: sites.length } as const);
+  return { status: "ok", sites, tier };
 }
 
-/** Project a `context.references` result onto the inspector's references section (capped). */
+/**
+ * Project a `context.references` result onto the inspector's references section
+ * (capped). Find-references is NAME-BASED and textual (regex, not a parse), so a
+ * non-empty answer is always a `guess`/`textual` tier — two distinct symbols that
+ * share a name are indistinguishable here, and the chip says so. An empty answer
+ * carries no tier.
+ */
 export function symbolReferencesSection(
   result: ProjectReferenceResult,
   cap: number = DEFAULT_REFERENCE_CAP,
@@ -89,20 +106,53 @@ export function symbolReferencesSection(
     line: site.line,
     scope: site.scope,
   }));
-  return { status: "ok", sites, truncated: all.length > cap };
+  if (sites.length === 0) return { status: "ok", sites, truncated: false };
+  return {
+    status: "ok",
+    sites,
+    truncated: all.length > cap,
+    tier: { kind: "guess", method: "textual" },
+  };
 }
 
-/** Resolve one name to its definitions + references over a review's live backend. */
+/**
+ * The sibling top-level symbols of the primary definition site's file, from the
+ * model-free `context.overview`. These are the clickable rungs of the pinned mini-
+ * browser — REAL declared symbols (name, kind, line), never fabricated code text.
+ * Absent when there is no definition site, the backend lacks the overview op, or the
+ * overview could not be read (a gated snapshot); the pinned preview simply omits the
+ * "in this file" row then, never inventing one.
+ */
+export function definitionNeighbors(
+  backend: CanvasOpsBackend,
+  definition: SymbolInspection["definition"],
+): SymbolNeighbors | undefined {
+  if (definition.status !== "ok") return undefined;
+  const primary = definition.sites[0];
+  if (primary === undefined) return undefined;
+  if (typeof backend.fileOverview !== "function") return undefined;
+  const result = backend.fileOverview(primary.path);
+  if (!result.ok) return undefined;
+  return {
+    path: result.overview.path,
+    symbols: result.overview.symbols.map((symbol) => ({
+      name: symbol.name,
+      kind: symbol.kind,
+      line: symbol.line,
+    })),
+  };
+}
+
+/** Resolve one name to its definitions + references + definition-file neighbours. */
 export function lookupSymbol(
   backend: CanvasOpsBackend,
   name: string,
   cap: number = DEFAULT_REFERENCE_CAP,
 ): SymbolInspection {
-  return {
-    name,
-    definition: symbolDefinitionSection(backend.symbolDefinition({ name })),
-    references: symbolReferencesSection(backend.references({ name }), cap),
-  };
+  const definition = symbolDefinitionSection(backend.symbolDefinition({ name }));
+  const references = symbolReferencesSection(backend.references({ name }), cap);
+  const neighbors = definitionNeighbors(backend, definition);
+  return neighbors ? { name, definition, references, neighbors } : { name, definition, references };
 }
 
 export interface LiveSymbolLookupDeps {

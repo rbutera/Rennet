@@ -2775,3 +2775,189 @@
 .symbol-error {
   color: var(--del-glyph);
 }
+
+/* ── Tier chip (#11): the honest exact-vs-guess confidence, discrete. ────────── */
+.symbol-tier {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 8px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--hairline);
+  font: 10px / 1.4 var(--mono);
+  text-transform: none;
+  letter-spacing: 0;
+  vertical-align: middle;
+}
+.symbol-tier--exact {
+  color: var(--accent);
+  background: var(--accent-soft);
+  border-color: var(--accent-soft-line);
+}
+.symbol-tier--guess {
+  color: var(--amber);
+  background: var(--amber-fill);
+  border-color: var(--amber-line);
+}
+.symbol-tier-kind {
+  font-weight: 600;
+}
+.symbol-tier-method {
+  color: var(--text-faint);
+}
+.symbol-tier--guess .symbol-tier-method {
+  color: inherit;
+  opacity: 0.75;
+}
+.symbol-tier-candidates {
+  padding-left: 5px;
+  border-left: 1px solid currentcolor;
+  opacity: 0.85;
+}
+
+/* ── Pin control + pinned mini-browser chrome (#11). ────────────────────────── */
+.symbol-inspector-pin {
+  appearance: none;
+  border: 1px solid var(--hairline-strong);
+  background: none;
+  color: var(--text-faint);
+  border-radius: 999px;
+  padding: 1px 9px;
+  font: 11px / 1.4 var(--sans);
+  cursor: pointer;
+}
+.symbol-inspector-pin:hover {
+  color: var(--text);
+}
+.symbol-inspector-pin--on {
+  color: var(--accent);
+  border-color: var(--accent-soft-line);
+  background: var(--accent-soft);
+}
+.symbol-nav {
+  display: flex;
+  gap: 6px;
+  margin-top: 10px;
+}
+.symbol-nav-btn {
+  appearance: none;
+  border: 1px solid var(--hairline-strong);
+  background: none;
+  color: var(--text);
+  border-radius: 7px;
+  padding: 3px 10px;
+  font: 11px / 1.4 var(--sans);
+  cursor: pointer;
+}
+.symbol-nav-btn:hover:not(:disabled) {
+  border-color: var(--accent-soft-line);
+}
+.symbol-nav-btn:disabled {
+  color: var(--text-faint);
+  opacity: 0.5;
+  cursor: default;
+}
+.symbol-crumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 3px 4px;
+  margin-top: 10px;
+}
+.symbol-crumb-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.symbol-crumb-sep {
+  color: var(--text-faint);
+  font: 11px / 1 var(--mono);
+}
+.symbol-crumb-name {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 1px 2px;
+  color: var(--text-faint);
+  font: 11px / 1.3 var(--mono);
+  cursor: pointer;
+}
+.symbol-crumb-name:hover:not(:disabled) {
+  color: var(--text);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.symbol-crumb-name--current {
+  color: var(--text);
+  font-weight: 600;
+  cursor: default;
+}
+
+/* ── Neighbour rungs: the definition file's real sibling symbols, clickable. ── */
+.symbol-neighbors {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.symbol-neighbor {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  appearance: none;
+  border: 1px solid var(--hairline);
+  background: var(--raised);
+  border-radius: 7px;
+  padding: 3px 8px;
+  font: 11px / 1.3 var(--mono);
+  color: var(--text);
+  cursor: pointer;
+}
+.symbol-neighbor:hover:not(:disabled) {
+  border-color: var(--accent-soft-line);
+}
+.symbol-neighbor--current {
+  border-color: var(--accent-soft-line);
+  background: var(--accent-soft);
+  color: var(--accent);
+  cursor: default;
+}
+.symbol-neighbor:disabled:not(.symbol-neighbor--current) {
+  cursor: default;
+  opacity: 0.7;
+}
+.symbol-neighbor-kind {
+  color: var(--text-faint);
+  font-size: 10px;
+}
+.symbol-neighbor--current .symbol-neighbor-kind {
+  color: inherit;
+}
+.symbol-pinned-note {
+  margin-top: 12px;
+  color: var(--text-faint);
+  font: 10px / 1.4 var(--mono);
+}
+
+/* ── Docked layout: the pinned inspector becomes a right-hand rail. ──────────── */
+.diff-zoom--split {
+  display: flex;
+  align-items: flex-start;
+  gap: 18px;
+}
+.diff-zoom--split .diff-zoom-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.diff-zoom-rail {
+  flex: 0 0 320px;
+  position: sticky;
+  top: 12px;
+  align-self: flex-start;
+}
+.symbol-inspector--pinned {
+  margin-top: 0;
+}
