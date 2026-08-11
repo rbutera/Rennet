@@ -2,21 +2,37 @@ import type { Project } from "@rennet/protocol";
 import { projectDetailSchema } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import type { GitExec } from "./git-range-diff";
-import { loadProjectDetail, type ProjectDetailSourceDeps } from "./project-detail-source";
+import {
+  defaultProjectDetailSourceDeps,
+  loadProjectDetail,
+  type ProjectDetailSourceDeps,
+} from "./project-detail-source";
 
 /** ISO-Z instant for a unix-seconds time, mirroring the source's own conversion. */
 const iso = (unix: number): string => new Date(unix * 1000).toISOString();
 
+/** Build a NUL-delimited `git worktree list --porcelain -z` payload. */
+const wtz = (records: { path: string; branch?: string }[]): string =>
+  records
+    .map(
+      (r) =>
+        `worktree ${r.path}\0HEAD ${"a".repeat(40)}\0${
+          r.branch ? `branch refs/heads/${r.branch}` : "detached"
+        }\0\0`,
+    )
+    .join("");
+
 /** A single repo root's canned git responses. */
 interface RepoFixture {
   remoteUrl?: string;
+  commonDir?: string;
   userName?: string;
   userEmail?: string;
   /** branch short name → committer time (unix seconds). */
   branches: Record<string, number>;
-  /** raw `git worktree list --porcelain` output. */
-  worktreeList: string;
-  /** branch → ahead/behind vs the primary branch. */
+  /** worktree records → the `-z` payload. */
+  worktrees?: { path: string; branch?: string }[];
+  /** branch → ahead/behind vs the primary branch; a MISSING entry simulates rev-list failing. */
   aheadBehind?: Record<string, { ahead: number; behind: number }>;
   /** worktree paths considered dirty by `status --porcelain`. */
   dirtyWorktrees?: string[];
@@ -38,16 +54,20 @@ function makeGit(repos: Record<string, RepoFixture>): GitExec {
         return args[1] === "user.name" ? (repo.userName ?? "") : (repo.userEmail ?? "");
       case "remote":
         return repo.remoteUrl ?? "";
+      case "rev-parse":
+        // `rev-parse --path-format=absolute --git-common-dir`
+        return repo.commonDir ?? "";
       case "for-each-ref":
         return `${Object.entries(repo.branches)
           .map(([name, unix]) => `${name}\t${unix}`)
           .join("\n")}\n`;
       case "worktree":
-        return repo.worktreeList;
+        return wtz(repo.worktrees ?? []);
       case "rev-list": {
         const spec = args[args.length - 1] ?? "";
         const branch = spec.split("...")[1] ?? "";
-        const ab = repo.aheadBehind?.[branch] ?? { ahead: 0, behind: 0 };
+        const ab = repo.aheadBehind?.[branch];
+        if (!ab) return ""; // rev-list failed: base unresolvable
         // `--left-right --count` prints "behind<TAB>ahead" for `primary...branch`.
         return `${ab.behind}\t${ab.ahead}\n`;
       }
@@ -78,15 +98,11 @@ const depsWith = (git: GitExec, roots: readonly string[]): ProjectDetailSourceDe
   resolveRepoRoots: () => Promise.resolve(roots),
 });
 
-const twoWorktrees = `worktree /repo
-HEAD aaaaaaa
-branch refs/heads/main
-
-worktree /wt/x
-HEAD bbbbbbb
-branch refs/heads/feat/x
-
-`;
+/** main + one linked feature worktree. */
+const twoWorktrees = [
+  { path: "/repo", branch: "main" },
+  { path: "/wt/x", branch: "feat/x" },
+];
 
 describe("loadProjectDetail — live local work (B1)", () => {
   it("maps worktrees + branches to LocalWork, excluding the primary branch", async () => {
@@ -95,7 +111,7 @@ describe("loadProjectDetail — live local work (B1)", () => {
         remoteUrl: "git@github.com:acme/widget.git",
         userName: "Rai Butera",
         branches: { main: 1000, "feat/x": 2000, "feat/y": 1500 },
-        worktreeList: twoWorktrees,
+        worktrees: twoWorktrees,
         aheadBehind: { "feat/x": { ahead: 3, behind: 0 }, "feat/y": { ahead: 1, behind: 2 } },
         dirtyWorktrees: ["/wt/x"],
       },
@@ -140,7 +156,7 @@ describe("loadProjectDetail — live local work (B1)", () => {
         remoteUrl: "git@github.com:acme/widget.git",
         userName: "rai",
         branches: { main: 1000, "feat/x": 2000 }, // feat/x is both a ref AND a worktree
-        worktreeList: twoWorktrees,
+        worktrees: twoWorktrees,
         aheadBehind: { "feat/x": { ahead: 3, behind: 0 } },
         dirtyWorktrees: ["/wt/x"],
       },
@@ -154,13 +170,49 @@ describe("loadProjectDetail — live local work (B1)", () => {
     expect(feat[0]?.dirty).toBe(true);
   });
 
+  it("reports ahead/behind as null (not 0/0) when the base ref is unresolvable", async () => {
+    const git = makeGit({
+      "/repo": {
+        remoteUrl: "git@github.com:acme/widget.git",
+        userName: "rai",
+        branches: { main: 1000, "feat/orphan": 2000 },
+        worktrees: [{ path: "/repo", branch: "main" }],
+        aheadBehind: {}, // rev-list fails for feat/orphan → null, never a false 0/0
+      },
+    });
+
+    const detail = await loadProjectDetail(depsWith(git, ["/repo"]), repoProject("/repo"));
+    const orphan = detail.locals.find((l) => l.branch === "feat/orphan");
+    expect(orphan?.ahead).toBeNull();
+    expect(orphan?.behind).toBeNull();
+  });
+
+  it("preserves a worktree path with whitespace via NUL-delimited parsing", async () => {
+    const weird = "/wt/with space/feat";
+    const git = makeGit({
+      "/repo": {
+        remoteUrl: "git@github.com:acme/widget.git",
+        userName: "rai",
+        branches: { main: 1000, "feat/x": 2000 },
+        worktrees: [
+          { path: "/repo", branch: "main" },
+          { path: weird, branch: "feat/x" },
+        ],
+        aheadBehind: { "feat/x": { ahead: 1, behind: 0 } },
+      },
+    });
+
+    const detail = await loadProjectDetail(depsWith(git, ["/repo"]), repoProject("/repo"));
+    expect(detail.locals.find((l) => l.branch === "feat/x")?.id).toBe(weird); // exact, not corrupted
+  });
+
   it("produces output that validates against projectDetailSchema (ISO-Z timestamps)", async () => {
     const git = makeGit({
       "/repo": {
         remoteUrl: "https://github.com/acme/widget",
         userName: "rai",
         branches: { main: 1000, "feat/x": 2000 },
-        worktreeList: twoWorktrees,
+        worktrees: twoWorktrees,
         aheadBehind: { "feat/x": { ahead: 1, behind: 0 } },
       },
     });
@@ -172,12 +224,12 @@ describe("loadProjectDetail — live local work (B1)", () => {
     expect(detail.prs).toEqual([]);
   });
 
-  it("falls back to the repo basename and to user.email / 'you' for identity", async () => {
+  it("uses the git-common-dir identity (not the basename) when there is no remote", async () => {
     const gitEmail = makeGit({
       "/some/repo": {
-        userEmail: "rai@example.com", // no user.name, no remote
+        commonDir: "/some/repo/.git", // no remote → the durable RepoRecord identity (R19)
+        userEmail: "rai@example.com", // no user.name
         branches: { main: 1000, "feat/z": 2000 },
-        worktreeList: "",
         aheadBehind: { "feat/z": { ahead: 2, behind: 0 } },
       },
     });
@@ -186,12 +238,10 @@ describe("loadProjectDetail — live local work (B1)", () => {
       repoProject("/some/repo"),
     );
     expect(detail.viewer.login).toBe("rai@example.com");
-    expect(detail.locals[0]?.repository).toBe("repo"); // basename fallback
+    expect(detail.locals[0]?.repository).toBe("/some/repo/.git"); // NOT "repo"
     expect(detail.locals[0]?.author).toBe("rai@example.com");
 
-    const gitNothing = makeGit({
-      "/x": { branches: { main: 1 }, worktreeList: "" },
-    });
+    const gitNothing = makeGit({ "/x": { branches: { main: 1 } } });
     const empty = await loadProjectDetail(depsWith(gitNothing, ["/x"]), repoProject("/x"));
     expect(empty.viewer.login).toBe("you");
     expect(empty.locals).toEqual([]);
@@ -217,14 +267,12 @@ describe("loadProjectDetail — live local work (B1)", () => {
         remoteUrl: "git@github.com:acme/a.git",
         userName: "rai",
         branches: { main: 1000, "feat/shared": 2000 },
-        worktreeList: "",
         aheadBehind: { "feat/shared": { ahead: 1, behind: 0 } },
       },
       "/b": {
         remoteUrl: "git@github.com:acme/b.git",
         userName: "rai",
         branches: { main: 1000, "feat/shared": 3000 },
-        worktreeList: "",
         aheadBehind: { "feat/shared": { ahead: 5, behind: 0 } },
       },
     });
@@ -243,18 +291,34 @@ describe("loadProjectDetail — live local work (B1)", () => {
         remoteUrl: "git@github.com:acme/widget.git",
         userName: "rai",
         branches: { main: 1000 },
-        worktreeList: `worktree /repo
-HEAD aaaaaaa
-branch refs/heads/main
-
-worktree /wt/detached
-HEAD bbbbbbb
-detached
-
-`,
+        worktrees: [
+          { path: "/repo", branch: "main" },
+          { path: "/wt/detached" }, // no branch
+        ],
       },
     });
     const detail = await loadProjectDetail(depsWith(git, ["/repo"]), repoProject("/repo"));
     expect(detail.locals).toEqual([]); // main excluded, detached skipped
+  });
+});
+
+describe("defaultProjectDetailSourceDeps.resolveRepoRoots", () => {
+  it("honours the stored included-repo selection and never re-discovers", async () => {
+    // A throwing git proves discovery is NOT consulted when the selection is stored.
+    const throwingGit: GitExec = async () => {
+      throw new Error("discovery must not run when the selection is persisted");
+    };
+    const deps = defaultProjectDetailSourceDeps(throwingGit);
+    const project: Project = {
+      ...repoProject("/ws"),
+      kind: "workspace",
+      includedRepoPaths: ["/ws/a", "/ws/b"], // "/ws/excluded" deliberately absent
+    };
+    await expect(deps.resolveRepoRoots(project)).resolves.toEqual(["/ws/a", "/ws/b"]);
+  });
+
+  it("returns the open path for a repo-kind project", async () => {
+    const deps = defaultProjectDetailSourceDeps(makeGit({}));
+    await expect(deps.resolveRepoRoots(repoProject("/solo"))).resolves.toEqual(["/solo"]);
   });
 });

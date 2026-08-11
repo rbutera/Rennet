@@ -20,12 +20,14 @@ import { parseRemoteIdentity } from "./worktree-discovery";
  * this same module behind the unchanged command boundary.
  *
  * ── Contract notes the sibling waves depend on ───────────────────────────────
- *  • `repository` identity is `owner/name` (from the origin remote), falling back to
- *    the repo directory basename when there is no forge remote. B2 MUST emit the
+ *  • `repository` identity is `owner/name` (from the origin remote). B2 MUST emit the
  *    SAME `owner/name` identity for each PullRequest so the renderer's composite
  *    `(repository, branch)` dedupe folds a local branch into its PR row. This is an
  *    EXACT string match (see `smart-list.ts` `compositeKey`), so the two halves must
- *    agree byte-for-byte.
+ *    agree byte-for-byte. When there is NO forge remote the identity falls back to the
+ *    durable RepoRecord alias — `realpath(git-common-dir)` (R19) — NOT a directory-name
+ *    guess: `worktree-discovery.ts`'s law forbids inferring `acme/widget` from a dir
+ *    named `widget`. A local-only repo has no PR, so this only ever keys local dedupe.
  *  • Ownership: local work is the viewer's by definition ("you edit what you own"),
  *    so every LocalWork.author is set to the viewer login — matching the shipped
  *    fixture semantics and `smart-list.ts` (`local.author === viewer` ⇒ mine). The
@@ -58,14 +60,21 @@ function firstLine(output: string): string {
   return "";
 }
 
-/** The `owner/name` identity of a repo root, or its basename when there is no forge remote. */
+/**
+ * The repo's stable identity: `owner/name` from the origin remote, else the durable
+ * RepoRecord alias `realpath(git-common-dir)` (R19). NEVER the directory basename —
+ * that is the path-name guess `worktree-discovery.ts` explicitly forbids.
+ */
 async function repositoryIdentity(git: GitExec, root: string): Promise<string> {
   const url = firstLine(await git(root, ["remote", "get-url", "origin"], { reject: false }));
   const identity = url ? parseRemoteIdentity(url) : null;
   if (identity) return `${identity.owner}/${identity.name}`;
-  // basename fallback: the last path segment, resilient to a trailing slash.
-  const segments = root.split("/").filter((segment) => segment.length > 0);
-  return segments[segments.length - 1] ?? root;
+  // No forge remote → the durable common-dir identity, not a directory-name guess.
+  const commonDir = firstLine(
+    await git(root, ["rev-parse", "--path-format=absolute", "--git-common-dir"], { reject: false }),
+  );
+  if (commonDir.length > 0) return commonDir;
+  return root; // last resort: not a git work tree, so no branches are emitted anyway.
 }
 
 /** A local branch's last-commit time (unix seconds) and whether it exists locally. */
@@ -96,7 +105,12 @@ interface ParsedWorktree {
   branch: string;
 }
 
-/** Parse `git worktree list --porcelain` into (path, branch) pairs; detached skipped. */
+/**
+ * Parse `git worktree list --porcelain -z` into (path, branch) pairs; detached
+ * skipped. The `-z` form is NUL-delimited (attributes split by `\0`, records by
+ * `\0\0`), so a worktree path containing a newline or trailing whitespace survives
+ * intact — a plain-`--porcelain` newline split would corrupt it.
+ */
 function parseWorktrees(output: string): ParsedWorktree[] {
   const worktrees: ParsedWorktree[] = [];
   let path: string | undefined;
@@ -106,17 +120,16 @@ function parseWorktrees(output: string): ParsedWorktree[] {
     path = undefined;
     branch = undefined;
   };
-  for (const raw of output.split("\n")) {
-    const line = raw.trimEnd();
-    if (line.length === 0) {
-      flush();
+  for (const token of output.split("\0")) {
+    if (token.length === 0) {
+      flush(); // the double-NUL record separator yields an empty token
       continue;
     }
-    if (line.startsWith("worktree ")) {
-      flush(); // a new record starts even without a blank separator
-      path = line.slice("worktree ".length);
-    } else if (line.startsWith("branch ")) {
-      const ref = line.slice("branch ".length);
+    if (token.startsWith("worktree ")) {
+      flush(); // a new record starts even without the separator
+      path = token.slice("worktree ".length); // NOT trimmed: the path is exact
+    } else if (token.startsWith("branch ")) {
+      const ref = token.slice("branch ".length);
       branch = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
     }
     // `detached`, `bare`, `HEAD <sha>` carry no branch → the record flushes without one.
@@ -125,18 +138,24 @@ function parseWorktrees(output: string): ParsedWorktree[] {
   return worktrees;
 }
 
-/** Commits behind/ahead of `primary` for `branch` (`rev-list --left-right --count`). */
+/**
+ * Commits behind/ahead of `primary` for `branch` (`rev-list --left-right --count`).
+ * Returns `null/null` when the count could NOT be computed — the base ref is
+ * unresolvable in this repo (a missing/foreign primary) — which is distinct from a
+ * genuinely even `0/0`. Collapsing the two would make an unknown base read as
+ * "fully merged" (a lying gauge, Rule 81ap).
+ */
 async function aheadBehind(
   git: GitExec,
   root: string,
   primary: string,
   branch: string,
-): Promise<{ ahead: number; behind: number }> {
+): Promise<{ ahead: number | null; behind: number | null }> {
   const out = await git(root, ["rev-list", "--left-right", "--count", `${primary}...${branch}`], {
     reject: false,
   });
   const match = /^\s*(\d+)\s+(\d+)\s*$/.exec(out);
-  if (!match) return { ahead: 0, behind: 0 };
+  if (!match) return { ahead: null, behind: null };
   // `primary...branch` with --left-right: left = in primary not branch = behind;
   // right = in branch not primary = ahead.
   return {
@@ -165,7 +184,9 @@ async function loadRepoLocalWork(
 ): Promise<LocalWork[]> {
   const repository = await repositoryIdentity(git, root);
   const activity = await readBranchActivity(git, root);
-  const worktreesRaw = await git(root, ["worktree", "list", "--porcelain"], { reject: false });
+  const worktreesRaw = await git(root, ["worktree", "list", "--porcelain", "-z"], {
+    reject: false,
+  });
   const worktrees = parseWorktrees(worktreesRaw);
 
   // Key on the composite (repository, branch) so a checked-out worktree and its own
@@ -263,14 +284,20 @@ export async function loadProjectDetail(
 
 /**
  * The real source effects. `resolveRepoRoots` maps a project onto its repo roots: a
- * `repo` project is its own open path; a `workspace` fans out via read-only
- * discovery to every repo it contains.
+ * `repo` project is its own open path; a `workspace` honours the stored inclusion
+ * set (so an excluded repo never appears), falling back to discovering every repo
+ * under the path only for a legacy project saved before the selection was persisted.
  */
 export function defaultProjectDetailSourceDeps(git: GitExec): ProjectDetailSourceDeps {
   return {
     git,
     async resolveRepoRoots(project: Project): Promise<readonly string[]> {
       if (project.kind === "repo") return [project.openPath || project.path];
+      // Honour the user's include/exclude choice, persisted at add time.
+      if (project.includedRepoPaths && project.includedRepoPaths.length > 0) {
+        return project.includedRepoPaths;
+      }
+      // Legacy project (no persisted selection) → discover all repos under the path.
       const result = await discoverProject(
         defaultProjectDiscoveryDeps(git),
         project.path,

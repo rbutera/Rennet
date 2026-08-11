@@ -364,6 +364,14 @@ export const projectSchema = z.object({
   primaryBranch: z.string().min(1),
   /** The reviewable path a project row opens (the repo, or the first included repo). */
   openPath: z.string().min(1),
+  /**
+   * The working-tree paths of the repos the user INCLUDED at add time (a workspace
+   * can exclude some of its repos). Persisted so live detail honours the selection
+   * instead of re-scanning every repo under the workspace. Optional for
+   * backward-compatibility: a project stored before this field existed has it
+   * absent, and the reader falls back to discovering all repos under the path.
+   */
+  includedRepoPaths: z.array(z.string().min(1)).optional(),
   addedAt: z.iso.datetime(),
 });
 export type Project = z.infer<typeof projectSchema>;
@@ -412,9 +420,15 @@ export const localWorkSchema = z.object({
   author: z.string().min(1),
   /** Uncommitted changes present in the worktree. */
   dirty: z.boolean(),
-  /** Commits ahead of / behind the primary branch. */
-  ahead: z.number().int().nonnegative(),
-  behind: z.number().int().nonnegative(),
+  /**
+   * Commits ahead of / behind the primary branch. `null` means the comparison could
+   * NOT be computed (the base ref is unresolvable in this repo) — distinct from `0`,
+   * which is a genuinely even branch. A live source must never collapse an
+   * un-computable comparison to `0/0`, or a branch with an unknown base reads as
+   * "fully merged, nothing to do" (a lying gauge).
+   */
+  ahead: z.number().int().nonnegative().nullable(),
+  behind: z.number().int().nonnegative().nullable(),
   /** How far along the local pipeline this work sits. */
   stage: smartListStageSchema,
   /** Recency of engagement (ISO), the HOT-sort key. */

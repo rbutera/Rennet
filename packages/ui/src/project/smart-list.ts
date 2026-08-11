@@ -57,8 +57,9 @@ export interface SmartRow {
   /** Present on a local-work row. */
   local?: {
     dirty: boolean;
-    ahead: number;
-    behind: number;
+    /** `null` when the ahead/behind comparison could not be computed (base unresolvable). */
+    ahead: number | null;
+    behind: number | null;
     stage: SmartListStage;
   };
   /**
