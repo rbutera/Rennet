@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { type OpenSpecChangeSource, parseOpenSpecChange } from "./openspec-change";
 
+/** Narrow an optional to present, or fail the test loudly (no non-null assertions). */
+function present<T>(value: T | undefined | null): T {
+  if (value === undefined || value === null) throw new Error("expected a present value");
+  return value;
+}
+
 // The worked example is a REAL Rennet OpenSpec change: `add-review-intelligence-
 // core`. These fixtures are verbatim excerpts of its artifacts, so the parser is
 // exercised against the exact markdown shape the app will read off disk — not a
@@ -123,7 +129,7 @@ describe("parseOpenSpecChange — proposal", () => {
   });
 
   it("parses the Why section as ordered blocks with a numbered list", () => {
-    const { why } = parseOpenSpecChange(SOURCE).proposal!;
+    const { why } = present(parseOpenSpecChange(SOURCE).proposal);
     expect(why[0]).toEqual({
       kind: "paragraph",
       text: expect.stringContaining("REPLACE and SUPERSEDE"),
@@ -137,14 +143,14 @@ describe("parseOpenSpecChange — proposal", () => {
   });
 
   it("pulls the bold lead out of each What Changes item", () => {
-    const { whatChanges } = parseOpenSpecChange(SOURCE).proposal!;
+    const { whatChanges } = present(parseOpenSpecChange(SOURCE).proposal);
     expect(whatChanges).toHaveLength(2);
     expect(whatChanges[0]?.lead).toContain("A hypothesis pre-read pass");
     expect(whatChanges[0]?.text).toContain("node-free core runner");
   });
 
   it("separates new from modified capabilities and names each", () => {
-    const { newCapabilities, modifiedCapabilities } = parseOpenSpecChange(SOURCE).proposal!;
+    const { newCapabilities, modifiedCapabilities } = present(parseOpenSpecChange(SOURCE).proposal);
     expect(newCapabilities.map((c) => c.name)).toEqual([
       "review-hypothesis-pass",
       "dual-model-lens-review",
@@ -156,7 +162,7 @@ describe("parseOpenSpecChange — proposal", () => {
   });
 
   it("reads each Impact row as an area + detail", () => {
-    const { impact } = parseOpenSpecChange(SOURCE).proposal!;
+    const { impact } = present(parseOpenSpecChange(SOURCE).proposal);
     expect(impact.map((row) => row.area)).toEqual(["packages/types", "packages/protocol"]);
     expect(impact[0]?.detail).toContain("additive only");
   });
@@ -164,25 +170,25 @@ describe("parseOpenSpecChange — proposal", () => {
 
 describe("parseOpenSpecChange — design", () => {
   it("builds an ordered section tree at level 2 and 3, dropping the H1 title", () => {
-    const { design } = parseOpenSpecChange(SOURCE);
-    const headings = design!.sections.map((s) => s.heading);
+    const design = present(parseOpenSpecChange(SOURCE).design);
+    const headings = design.sections.map((s) => s.heading);
     expect(headings).toEqual(["Context", "Cost/latency envelope", "Budget model"]);
-    expect(design!.sections[0]?.level).toBe(2);
-    expect(design!.sections[2]?.level).toBe(3);
-    expect(design!.sections[2]?.id).toBe("budget-model");
+    expect(design.sections[0]?.level).toBe(2);
+    expect(design.sections[2]?.level).toBe(3);
+    expect(design.sections[2]?.id).toBe("budget-model");
   });
 
   it("captures a fenced code block verbatim", () => {
-    const { design } = parseOpenSpecChange(SOURCE);
-    const context = design!.sections[0];
+    const design = present(parseOpenSpecChange(SOURCE).design);
+    const context = design.sections[0];
     const code = context?.blocks.find((block) => block.kind === "code");
     expect(code).toBeDefined();
     if (code?.kind === "code") expect(code.code).toContain("runHypothesisPass");
   });
 
   it("parses a markdown table into headers and rows", () => {
-    const { design } = parseOpenSpecChange(SOURCE);
-    const cost = design!.sections.find((s) => s.heading === "Cost/latency envelope");
+    const design = present(parseOpenSpecChange(SOURCE).design);
+    const cost = design.sections.find((s) => s.heading === "Cost/latency envelope");
     const table = cost?.blocks.find((block) => block.kind === "table");
     expect(table).toBeDefined();
     if (table?.kind === "table") {
@@ -195,18 +201,18 @@ describe("parseOpenSpecChange — design", () => {
 
 describe("parseOpenSpecChange — tasks", () => {
   it("groups the checklist and rolls up an honest progress count", () => {
-    const { tasks } = parseOpenSpecChange(SOURCE);
-    expect(tasks!.groups.map((g) => g.title)).toEqual([
+    const tasks = present(parseOpenSpecChange(SOURCE).tasks);
+    expect(tasks.groups.map((g) => g.title)).toEqual([
       "0. Rai decisions (gate the build)",
       "1. Shared types (types)",
     ]);
-    expect(tasks!.total).toBe(5);
-    expect(tasks!.done).toBe(1);
+    expect(tasks.total).toBe(5);
+    expect(tasks.done).toBe(1);
   });
 
   it("reads per-item checkbox state", () => {
-    const { tasks } = parseOpenSpecChange(SOURCE);
-    const rai = tasks!.groups[0];
+    const tasks = present(parseOpenSpecChange(SOURCE).tasks);
+    const rai = tasks.groups[0];
     expect(rai?.total).toBe(2);
     expect(rai?.done).toBe(1);
     expect(rai?.items[0]?.status).toBe("todo");
@@ -244,9 +250,13 @@ describe("parseOpenSpecChange — spec deltas", () => {
 
   it("keeps the second requirement and its scenario distinct from the first", () => {
     const reqs = parseOpenSpecChange(SOURCE).specDeltas[0]?.groups[0]?.requirements;
-    expect(reqs?.[1]?.name).toBe("The pass degrades honestly when intent or repo context is absent");
+    expect(reqs?.[1]?.name).toBe(
+      "The pass degrades honestly when intent or repo context is absent",
+    );
     expect(reqs?.[1]?.scenarios).toHaveLength(1);
-    expect(reqs?.[1]?.scenarios[0]?.name).toBe("Missing repo context does not block the hypothesis");
+    expect(reqs?.[1]?.scenarios[0]?.name).toBe(
+      "Missing repo context does not block the hypothesis",
+    );
   });
 });
 

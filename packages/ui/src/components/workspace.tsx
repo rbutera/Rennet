@@ -54,7 +54,7 @@ import { LensSwitcher } from "./lens";
 import { MarkIndex, type MarkIndexEntry } from "./mark-index";
 import { NarrationPanel } from "./narration";
 import { NoiseLens } from "./noise";
-import { OpenSpecView, type OpenSpecAskState } from "./openspec";
+import { type OpenSpecAskState, OpenSpecView } from "./openspec";
 import { OrphanTray } from "./orphan-tray";
 
 // ─────────────────────────────────────────────────────────────────────────────

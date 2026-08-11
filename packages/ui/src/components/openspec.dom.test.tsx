@@ -159,8 +159,8 @@ describe("OpenSpecView — review affordances reuse the seams", () => {
     const onDispose = vi.fn<(anchor: OpenSpecReviewAnchor, type: string) => void>();
     const { getByRole, user } = mount(<OpenSpecView view={view} onDispose={onDispose} />);
     await user.click(getByRole("button", { name: `Approve on roll-up ${view.name}` }));
-    expect(onDispose.mock.calls[0][0].kind).toBe("change");
-    expect(onDispose.mock.calls[0][1]).toBe("approve");
+    expect(onDispose.mock.calls[0]?.[0].kind).toBe("change");
+    expect(onDispose.mock.calls[0]?.[1]).toBe("approve");
   });
 
   it("renders the ask control and fires onAsk (orchestrator default)", async () => {

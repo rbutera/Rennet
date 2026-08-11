@@ -93,14 +93,23 @@ const LIST_MARKER = /^(\s*)([-*+]|\d+\.)\s+(.*)$/;
 function splitListItem(body: string): OpenSpecListItem {
   const bold = /^\*\*(.+?)\*\*\s*(.*)$/.exec(body);
   if (bold) {
-    const lead = bold[1].trim();
-    const rest = bold[2].replace(/^[—–:-]\s*/, "").trim();
+    const lead = (bold[1] ?? "").trim();
+    const rest = (bold[2] ?? "").replace(/^[—–:-]\s*/, "").trim();
     // A wholly-bold item (no remainder) reads better as plain text than as an
     // orphan lead with an empty body.
     if (rest.length === 0) return { text: lead };
     return { lead, text: rest };
   }
   return { text: body.trim() };
+}
+
+/** True for the opening/closing of a fenced code block. */
+function isFence(line: string): boolean {
+  return /^\s*```/.test(line);
+}
+
+function isClosingFence(line: string): boolean {
+  return /^\s*```\s*$/.test(line);
 }
 
 /**
@@ -112,7 +121,7 @@ function parseBlocks(lines: readonly string[]): OpenSpecBlock[] {
   const blocks: OpenSpecBlock[] = [];
   let i = 0;
   while (i < lines.length) {
-    const line = lines[i];
+    const line = lines[i] ?? "";
     if (line.trim().length === 0 || isHorizontalRule(line)) {
       i += 1;
       continue;
@@ -121,11 +130,11 @@ function parseBlocks(lines: readonly string[]): OpenSpecBlock[] {
     // Fenced code.
     const fence = /^\s*```(.*)$/.exec(line);
     if (fence) {
-      const language = fence[1].trim();
+      const language = (fence[1] ?? "").trim();
       const body: string[] = [];
       i += 1;
-      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) {
-        body.push(lines[i]);
+      while (i < lines.length && !isClosingFence(lines[i] ?? "")) {
+        body.push(lines[i] ?? "");
         i += 1;
       }
       i += 1; // consume the closing fence (if any)
@@ -134,12 +143,15 @@ function parseBlocks(lines: readonly string[]): OpenSpecBlock[] {
     }
 
     // Table.
-    if (isTableRow(line) && i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
+    const nextLine = lines[i + 1] ?? "";
+    if (isTableRow(line) && i + 1 < lines.length && isTableSeparator(nextLine)) {
       const headers = tableCells(line);
       const rows: string[][] = [];
       i += 2; // header + separator
-      while (i < lines.length && isTableRow(lines[i]) && !isTableSeparator(lines[i])) {
-        rows.push(tableCells(lines[i]));
+      while (i < lines.length) {
+        const rowLine = lines[i] ?? "";
+        if (!isTableRow(rowLine) || isTableSeparator(rowLine)) break;
+        rows.push(tableCells(rowLine));
         i += 1;
       }
       blocks.push({ kind: "table", headers, rows });
@@ -152,24 +164,18 @@ function parseBlocks(lines: readonly string[]): OpenSpecBlock[] {
       const items: OpenSpecListItem[] = [];
       const ordered = /^\s*\d+\.\s/.test(line);
       while (i < lines.length) {
-        const match = LIST_MARKER.exec(lines[i]);
-        if (match) {
-          let body = match[3];
-          // Fold plain continuation lines (indented, not a new marker, not blank).
-          while (
-            i + 1 < lines.length &&
-            lines[i + 1].trim().length > 0 &&
-            !LIST_MARKER.test(lines[i + 1]) &&
-            /^\s+/.test(lines[i + 1])
-          ) {
-            body += ` ${lines[i + 1].trim()}`;
-            i += 1;
-          }
-          items.push(splitListItem(body.trim()));
+        const match = LIST_MARKER.exec(lines[i] ?? "");
+        if (!match) break;
+        let body = match[3] ?? "";
+        // Fold plain continuation lines (indented, not a new marker, not blank).
+        while (i + 1 < lines.length) {
+          const cont = lines[i + 1] ?? "";
+          if (cont.trim().length === 0 || LIST_MARKER.test(cont) || !/^\s+/.test(cont)) break;
+          body += ` ${cont.trim()}`;
           i += 1;
-          continue;
         }
-        break;
+        items.push(splitListItem(body.trim()));
+        i += 1;
       }
       blocks.push({ kind: "list", ordered, items });
       continue;
@@ -178,13 +184,14 @@ function parseBlocks(lines: readonly string[]): OpenSpecBlock[] {
     // Paragraph (run to the next blank line or block-start).
     const para: string[] = [];
     while (i < lines.length) {
-      const cur = lines[i];
+      const cur = lines[i] ?? "";
+      const curNext = lines[i + 1] ?? "";
       if (
         cur.trim().length === 0 ||
         isHorizontalRule(cur) ||
-        /^\s*```/.test(cur) ||
+        isFence(cur) ||
         LIST_MARKER.test(cur) ||
-        (isTableRow(cur) && i + 1 < lines.length && isTableSeparator(lines[i + 1]))
+        (isTableRow(cur) && i + 1 < lines.length && isTableSeparator(curNext))
       ) {
         break;
       }
@@ -207,24 +214,28 @@ function findHeadings(lines: readonly string[]): Heading[] {
   const headings: Heading[] = [];
   let inFence = false;
   for (let i = 0; i < lines.length; i += 1) {
-    if (/^\s*```/.test(lines[i])) {
+    const line = lines[i] ?? "";
+    if (isFence(line)) {
       inFence = !inFence;
       continue;
     }
     if (inFence) continue;
-    const match = /^(#{1,6})\s+(.*)$/.exec(lines[i]);
-    if (match) headings.push({ level: match[1].length, text: match[2].trim(), line: i });
+    const match = /^(#{1,6})\s+(.*)$/.exec(line);
+    if (match) {
+      headings.push({ level: (match[1] ?? "").length, text: (match[2] ?? "").trim(), line: i });
+    }
   }
   return headings;
 }
 
-/** The lines of a section: everything after `heading.line` up to the next heading of level ≤ `heading.level`. */
+/** The lines of a section: after its heading up to the next heading of level ≤ its own. */
 function sectionBody(
   lines: readonly string[],
   headings: readonly Heading[],
   index: number,
 ): string[] {
   const heading = headings[index];
+  if (!heading) return [];
   const next = headings.slice(index + 1).find((candidate) => candidate.level <= heading.level);
   const end = next ? next.line : lines.length;
   return lines.slice(heading.line + 1, end);
@@ -241,7 +252,7 @@ function parseCapabilityNotes(lines: readonly string[]): OpenSpecCapabilityNote[
       const whole = item.lead ? `${item.lead} ${item.text}` : item.text;
       const backticked = /^`([^`]+)`\s*[:—–-]?\s*(.*)$/.exec(whole);
       if (backticked) {
-        notes.push({ name: backticked[1].trim(), summary: backticked[2].trim() });
+        notes.push({ name: (backticked[1] ?? "").trim(), summary: (backticked[2] ?? "").trim() });
         continue;
       }
       const colon = whole.indexOf(":");
@@ -310,7 +321,8 @@ function parseProposal(md: string): OpenSpecProposal {
         } else {
           // No bold lead: split on the first dash/colon so the area is still named.
           const split = /^(.*?)\s*[—–:-]\s+(.*)$/.exec(item.text);
-          if (split) impact.push({ area: plainLabel(split[1]), detail: split[2].trim() });
+          if (split)
+            impact.push({ area: plainLabel(split[1] ?? ""), detail: (split[2] ?? "").trim() });
           else impact.push({ area: "", detail: item.text });
         }
       }
@@ -328,6 +340,7 @@ function parseDesign(md: string): OpenSpecDesign {
   const sections: OpenSpecDesignSection[] = [];
   for (let i = 0; i < headings.length; i += 1) {
     const heading = headings[i];
+    if (!heading) continue;
     // The `#` title is the doc's name, not a section; the tree is `##`/`###`.
     if (heading.level < 2 || heading.level > 3) continue;
     sections.push({
@@ -349,8 +362,8 @@ function parseTaskGroup(title: string, lines: readonly string[]): OpenSpecTaskGr
   for (const line of lines) {
     const match = TASK_ITEM.exec(line);
     if (!match) continue;
-    const status = match[1].toLowerCase() === "x" ? "done" : "todo";
-    items.push({ text: match[2].trim(), status });
+    const status = (match[1] ?? "").toLowerCase() === "x" ? "done" : "todo";
+    items.push({ text: (match[2] ?? "").trim(), status });
   }
   const done = items.filter((item) => item.status === "done").length;
   return { id: slugify(title), title, items, total: items.length, done };
@@ -361,8 +374,9 @@ function parseTasks(md: string): OpenSpecTasks {
   const headings = findHeadings(lines);
   const groups: OpenSpecTaskGroup[] = [];
   for (let i = 0; i < headings.length; i += 1) {
-    if (headings[i].level !== 2) continue;
-    const group = parseTaskGroup(headings[i].text, sectionBody(lines, headings, i));
+    const heading = headings[i];
+    if (heading?.level !== 2) continue;
+    const group = parseTaskGroup(heading.text, sectionBody(lines, headings, i));
     // Keep only groups that actually carry checklist items.
     if (group.items.length > 0) groups.push(group);
   }
@@ -385,18 +399,15 @@ const SCENARIO_STEP = /^\s*[-*]\s+\*\*(WHEN|THEN|AND|GIVEN)\*\*\s*(.*)$/i;
 function parseScenario(name: string, lines: readonly string[]): OpenSpecScenario {
   const steps: OpenSpecScenarioStep[] = [];
   for (let i = 0; i < lines.length; i += 1) {
-    const match = SCENARIO_STEP.exec(lines[i]);
+    const match = SCENARIO_STEP.exec(lines[i] ?? "");
     if (!match) continue;
-    const keyword = match[1].toLowerCase() as OpenSpecScenarioKeyword;
-    let text = match[2].trim();
+    const keyword = (match[1] ?? "").toLowerCase() as OpenSpecScenarioKeyword;
+    let text = (match[2] ?? "").trim();
     // Fold a plain continuation line into the step.
-    while (
-      i + 1 < lines.length &&
-      lines[i + 1].trim().length > 0 &&
-      !SCENARIO_STEP.test(lines[i + 1]) &&
-      !/^\s*#{1,6}\s/.test(lines[i + 1])
-    ) {
-      text += ` ${lines[i + 1].trim()}`;
+    while (i + 1 < lines.length) {
+      const cont = lines[i + 1] ?? "";
+      if (cont.trim().length === 0 || SCENARIO_STEP.test(cont) || /^\s*#{1,6}\s/.test(cont)) break;
+      text += ` ${cont.trim()}`;
       i += 1;
     }
     steps.push({ keyword, text });
@@ -410,19 +421,21 @@ function parseRequirement(
   headings: readonly Heading[],
   reqIndex: number,
 ): OpenSpecRequirement {
+  const reqHeading = headings[reqIndex];
+  if (!reqHeading) return { name, statement: "", scenarios: [] };
+
   // Statement = the prose between the requirement heading and its first scenario.
   const scenarioHeadings = headings.filter(
-    (h) => h.level === 4 && /^scenario:/i.test(h.text) && h.line > headings[reqIndex].line,
+    (h) => h.level === 4 && /^scenario:/i.test(h.text) && h.line > reqHeading.line,
   );
   const nextReq = headings.slice(reqIndex + 1).find((h) => h.level <= 3);
   const reqEnd = nextReq ? nextReq.line : Number.POSITIVE_INFINITY;
   const ownScenarios = scenarioHeadings.filter((h) => h.line < reqEnd);
 
-  const statementEnd =
-    ownScenarios.length > 0 ? ownScenarios[0].line : Math.min(reqEnd, lines.length);
-  const statementLines = lines.slice(headings[reqIndex].line + 1, statementEnd);
-  const statementBlocks = parseBlocks(statementLines);
-  const statement = statementBlocks
+  const firstScenario = ownScenarios[0];
+  const statementEnd = firstScenario ? firstScenario.line : Math.min(reqEnd, lines.length);
+  const statementLines = lines.slice(reqHeading.line + 1, statementEnd);
+  const statement = parseBlocks(statementLines)
     .filter(
       (block): block is Extract<OpenSpecBlock, { kind: "paragraph" }> => block.kind === "paragraph",
     )
@@ -447,10 +460,11 @@ function parseSpecDelta(capability: string, md: string): OpenSpecSpecDelta {
 
   for (let i = 0; i < headings.length; i += 1) {
     const heading = headings[i];
-    if (heading.level !== 2) continue;
+    if (heading?.level !== 2) continue;
     const opMatch = /^(added|modified|removed|renamed)\b/i.exec(heading.text.trim());
     if (!opMatch) continue;
-    const operation = DELTA_OPERATIONS[opMatch[1].toLowerCase()];
+    const operation = DELTA_OPERATIONS[(opMatch[1] ?? "").toLowerCase()];
+    if (!operation) continue;
 
     // The requirement headings under this operation (level-3 `Requirement:`).
     const opEnd = headings.slice(i + 1).find((h) => h.level === 2);
@@ -458,7 +472,7 @@ function parseSpecDelta(capability: string, md: string): OpenSpecSpecDelta {
     const requirements: OpenSpecRequirement[] = [];
     for (let j = i + 1; j < headings.length; j += 1) {
       const req = headings[j];
-      if (req.line >= opEndLine) break;
+      if (!req || req.line >= opEndLine) break;
       if (req.level !== 3 || !/^requirement:/i.test(req.text)) continue;
       const reqName = req.text.replace(/^requirement:\s*/i, "").trim();
       requirements.push(parseRequirement(reqName, lines, headings, j));

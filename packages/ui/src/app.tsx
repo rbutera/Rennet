@@ -14,6 +14,7 @@ import { type CollationDraft, ingestWrites, withdrawPath } from "./canvas/collat
 import { type DestinationMode, destinationVariant, type PublishLedger } from "./canvas/destination";
 import { type CanvasSet, loadCanvases } from "./canvas/load";
 import { type DispositionWrite, withoutProposal } from "./canvas/logic";
+import { openSpecChangeFixture } from "./canvas/openspec.fixture";
 import {
   deriveReviewEvent,
   type PublishContext,
@@ -40,7 +41,6 @@ import {
 } from "./components/icons";
 import { ProjectDetail } from "./components/project-detail";
 import { type PublishOutcome, PublishSheet } from "./components/publish-sheet";
-import { openSpecChangeFixture } from "./canvas/openspec.fixture";
 import { CanvasWorkspace } from "./components/workspace";
 import type { SmartRow } from "./project/smart-list";
 

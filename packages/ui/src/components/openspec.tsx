@@ -46,12 +46,10 @@ const OPERATION_LABEL: Record<OpenSpecDeltaView["delta"]["groups"][number]["oper
   renamed: "Renamed",
 };
 
-const STEP_LABEL: Record<OpenSpecScenario["steps"][number]["keyword"], string> = {
-  given: "Given",
-  when: "When",
-  then: "Then",
-  and: "And",
-};
+/** Title-case a Gherkin keyword for display (avoids a record with a `then` key). */
+function stepLabel(keyword: OpenSpecScenario["steps"][number]["keyword"]): string {
+  return keyword.charAt(0).toUpperCase() + keyword.slice(1);
+}
 
 /** A compact review cluster on one Spec anchor — the shared disposition seam. */
 function AnchorReview({
@@ -152,7 +150,7 @@ function Scenario({ scenario }: { scenario: OpenSpecScenario }) {
         {scenario.steps.map((step, index) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: steps are an ordered Gherkin sequence
           <li className="ospec-step" data-keyword={step.keyword} key={index}>
-            <span className="ospec-step-keyword">{STEP_LABEL[step.keyword]}</span>
+            <span className="ospec-step-keyword">{stepLabel(step.keyword)}</span>
             <span className="ospec-step-text">{step.text}</span>
           </li>
         ))}
@@ -248,7 +246,7 @@ export function OpenSpecView({
           <span className="ospec-kicker">OpenSpec change</span>
           <h2 className="ospec-name">{view.name}</h2>
         </div>
-        <div className="ospec-summary" aria-label="Change summary">
+        <div className="ospec-summary">
           <span className="ospec-stat">
             <span className="ospec-stat-num">{summary.requirements}</span> requirements
           </span>

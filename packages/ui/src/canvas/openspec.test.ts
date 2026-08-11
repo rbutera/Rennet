@@ -2,6 +2,12 @@ import type { OpenSpecChange } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { authorOpenSpecDisposition, buildOpenSpecView, requirementAnchor } from "./openspec";
 
+/** Narrow an optional to present, or fail the test loudly (no non-null assertions). */
+function present<T>(value: T | undefined | null): T {
+  if (value === undefined || value === null) throw new Error("expected a present value");
+  return value;
+}
+
 // A small but shape-faithful change (proposal + design + tasks + one spec delta
 // with two requirements, one carrying a scenario). Exercises anchoring, the
 // new/modified capability split, the summary roll-up, and disposition authoring.
@@ -100,7 +106,7 @@ describe("buildOpenSpecView — anchoring", () => {
 
   it("splits new from modified capabilities and anchors each", () => {
     const view = buildOpenSpecView(CHANGE);
-    const caps = view.proposal!.capabilities;
+    const caps = present(view.proposal).capabilities;
     expect(caps.map((c) => `${c.nature}:${c.note.name}`)).toEqual([
       "new:review-hypothesis-pass",
       "new:dual-model-lens-review",
@@ -132,8 +138,8 @@ describe("buildOpenSpecView — anchoring", () => {
   });
 
   it("derives the same key whether built into the view or requested directly", () => {
-    const delta = CHANGE.specDeltas[0]!;
-    const requirement = delta.groups[0]!.requirements[0]!;
+    const delta = present(CHANGE.specDeltas[0]);
+    const requirement = present(present(delta.groups[0]).requirements[0]);
     const direct = requirementAnchor(CHANGE, delta, requirement);
     const view = buildOpenSpecView(CHANGE);
     expect(view.specDeltas[0]?.requirements[0]?.anchor.key).toBe(direct.key);
@@ -143,15 +149,14 @@ describe("buildOpenSpecView — anchoring", () => {
 describe("authorOpenSpecDisposition", () => {
   it("produces one DispositionWrite keyed by the anchor, plus a trace", () => {
     const view = buildOpenSpecView(CHANGE);
-    const anchor = view.specDeltas[0]?.requirements[0]?.anchor;
-    expect(anchor).toBeDefined();
-    const result = authorOpenSpecDisposition(anchor!, "request-change", "this needs a guard");
+    const anchor = present(view.specDeltas[0]?.requirements[0]?.anchor);
+    const result = authorOpenSpecDisposition(anchor, "request-change", "this needs a guard");
     expect(result.writes).toEqual([
-      { path: anchor!.key, type: "request-change", body: "this needs a guard" },
+      { path: anchor.key, type: "request-change", body: "this needs a guard" },
     ]);
     expect(result.trace).toEqual({
       granularity: "element",
-      source: anchor!.key,
+      source: anchor.key,
       writes: result.writes,
     });
   });
