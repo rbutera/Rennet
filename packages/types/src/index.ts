@@ -1509,7 +1509,16 @@ export interface Canvas {
  * the real code, not a fixture.
  */
 export interface ElementDiff {
+  /** The primary/display path (the header shows this one). */
   path: string;
+  /**
+   * EVERY file this element's diff renders, in file order. Usually one, but a
+   * proposal chunk can regroup hunks from several files into ONE element (e.g. an
+   * implementation and its test), and then `diff` shows all of them — so a consumer
+   * asking "does this element render file X?" must test membership here, not just
+   * compare `path` (which is only the first file). Always contains `path`.
+   */
+  paths: readonly string[];
   diff: string;
 }
 

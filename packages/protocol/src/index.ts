@@ -222,7 +222,11 @@ const canvasSetSchema = z.object({
 // doc-anchored element (flat angle, no code diff) simply has no entry. A full,
 // failing-capable schema (path + diff both required) so the IPC surface keeps a
 // real positive control.
-const elementDiffSchema = z.object({ path: z.string(), diff: z.string() });
+const elementDiffSchema = z.object({
+  path: z.string(),
+  paths: z.array(z.string()),
+  diff: z.string(),
+});
 const elementDiffsSchema: z.ZodType<ElementDiffs> = z.record(z.string(), elementDiffSchema);
 
 // ── Roll-up narration placement (issue #70) ──────────────────────────────────

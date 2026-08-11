@@ -21,7 +21,7 @@ const DIFF = [
 ].join("\n");
 
 function diffFor() {
-  return { path: "packages/ui/src/review.ts", diff: DIFF };
+  return { path: "packages/ui/src/review.ts", paths: ["packages/ui/src/review.ts"], diff: DIFF };
 }
 
 describe("CanvasWorkspace — code is visible in the review flow (#63)", () => {

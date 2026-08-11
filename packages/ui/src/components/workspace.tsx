@@ -5,6 +5,7 @@ import type {
   CanvasChangeNotification,
   DecisionsRunStatus,
   DispositionType,
+  ElementDiff,
   FlaggedReview,
   NoiseReview,
   OpenSpecChange,
@@ -69,7 +70,7 @@ import { SymbolInspector } from "./symbol-inspector";
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A per-element diff resolver (the real product wires the patchset; demo injects one). */
-export type DiffResolver = (elementKey: string) => { path: string; diff: string } | undefined;
+export type DiffResolver = (elementKey: string) => ElementDiff | undefined;
 
 export interface CanvasWorkspaceProps {
   canvases: Record<CanvasAngle, Canvas>;
@@ -523,15 +524,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   const diff = codeAltitude && selection ? props.diffFor?.(selection) : undefined;
 
   // The impl↔test counterpart jump (Rai, wireframes #7): resolved for the shown file
-  // against this review's changed-file inventory, ACROSS lenses and by the element's
-  // real DIFF PATH (not analysis IDs — immune to the floor-vs-proposal chunk-ID
-  // regrouping). Null ⇒ no button (the counterpart is not a changed file here).
+  // against this review's changed-file inventory, ACROSS lenses and by the SET of
+  // paths each element's diff renders (not analysis IDs, not a single path — so it is
+  // immune to both the floor-vs-proposal chunk-ID regrouping AND a proposal chunk that
+  // merges an impl and its test into one element). Null ⇒ no button.
   const counterpart = diff
     ? resolveCounterpart(
         props.canvases,
         angle,
         diff.path,
-        (elementKey) => props.diffFor?.(elementKey)?.path,
+        (elementKey) => props.diffFor?.(elementKey)?.paths,
       )
     : null;
 

@@ -156,7 +156,7 @@ function harness(
   const buildCanvases = vi.fn(() =>
     Promise.resolve({
       canvases: canvasSet(),
-      elementDiffs: { e1: { path: "src/a.ts", diff: "@@ -1,1 +1,2 @@\n+x" } },
+      elementDiffs: { e1: { path: "src/a.ts", paths: ["src/a.ts"], diff: "@@ -1,1 +1,2 @@\n+x" } },
       engine: { aiReview: true, claudeAvailable: true, codexAvailable: true },
     }),
   );

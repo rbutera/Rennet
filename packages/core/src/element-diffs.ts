@@ -197,10 +197,14 @@ function renderDiff(
     });
   }
   if (selected.length > 0) {
-    return { path: resolved.path, diff: selected.map((raw) => raw.text).join("\n") };
+    // `files` is EVERY file this element's hunks span (a proposal chunk can regroup
+    // several) — carried so a consumer can test file membership, not just `path`.
+    return { path: resolved.path, paths: files, diff: selected.map((raw) => raw.text).join("\n") };
   }
   const patch = patchByFile.get(resolved.path);
-  if (patch && patch.trim().length > 0) return { path: resolved.path, diff: patch };
+  if (patch && patch.trim().length > 0) {
+    return { path: resolved.path, paths: [resolved.path], diff: patch };
+  }
   return null;
 }
 

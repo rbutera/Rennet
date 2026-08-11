@@ -40,7 +40,9 @@ describe("review.canvases command", () => {
   it("round-trips a five-angle canvas set + the element diff map through the output schema", () => {
     const output = parseCommandOutput("review.canvases", {
       canvases: canvasSet(),
-      elementDiffs: { e1: { path: "src/a.ts", diff: "@@ -1,1 +1,2 @@\n+added" } },
+      elementDiffs: {
+        e1: { path: "src/a.ts", paths: ["src/a.ts"], diff: "@@ -1,1 +1,2 @@\n+added" },
+      },
     });
     expect(Object.keys(output.canvases).sort()).toEqual([...CANVAS_ANGLES].sort());
     expect(output.canvases.sequence.layers.analysis.elements[0]?.title).toBe("A");
