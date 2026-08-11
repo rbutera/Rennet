@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { ASK_OPTIONS, type AskMode, DEFAULT_ASK_MODE } from "../canvas/ask";
 import type {
   ConversationAnchor,
   ConversationThread,
@@ -168,10 +169,11 @@ export interface ConversationClusterProps {
   onSubThread?(messageId: string): void;
   /**
    * Ask about these lines. The host owns the send — it invokes the LIVE `review.ask`
-   * boundary and appends the real answer. Fired with the trimmed question; the
-   * composer clears itself.
+   * boundary and appends the real answer. Fired with the trimmed question AND the
+   * chosen routing (orchestrator by default, "both" the per-turn opt-in from the
+   * composer's caret); the composer clears itself.
    */
-  onAsk?(body: string): void;
+  onAsk?(body: string, mode: AskMode): void;
   /**
    * A live turn is in flight for this thread: render an honest "thinking" row and
    * disable the composer, so a pending ask is never mistaken for a finished answer.
@@ -201,6 +203,11 @@ export function ConversationCluster({
   error,
 }: ConversationClusterProps) {
   const [draft, setDraft] = useState("");
+  // The per-turn routing (#139): a thread starts at its own route (orchestrator by
+  // default) and the caret opts THIS turn into "both". Held here, not globally, so a
+  // choice never leaks past the thread it was made in.
+  const [mode, setMode] = useState<AskMode>(thread.route ?? DEFAULT_ASK_MODE);
+  const [menuOpen, setMenuOpen] = useState(false);
   // A pending turn holds the composer: one live ask at a time per thread, so the
   // reviewer cannot queue a second question over an in-flight orchestrator turn.
   const canSend = draft.trim().length > 0 && !pending;
@@ -208,8 +215,13 @@ export function ConversationCluster({
 
   function send(): void {
     if (!canSend || !onAsk) return;
-    onAsk(draft.trim());
+    onAsk(draft.trim(), mode);
     setDraft("");
+  }
+
+  function pickMode(next: AskMode): void {
+    setMode(next);
+    setMenuOpen(false);
   }
 
   return (
@@ -255,18 +267,58 @@ export function ConversationCluster({
       </div>
 
       {onAsk ? (
-        <div className="conversation-composer">
+        <div className="conversation-composer" data-ask-mode={mode}>
           <textarea
             className="conversation-composer-input"
             placeholder="Ask about these lines"
             aria-label={`Ask about ${thread.anchor.label}`}
             value={draft}
+            disabled={pending}
             onChange={(event) => setDraft(event.target.value)}
           />
+          {/* The per-turn routing caret (#139): "Ask the orchestrator" is the default,
+              "Ask both models" the opt-in. Picking a routing changes only THIS turn's
+              mode; there is no synthesis — "both" yields two labelled answers. */}
+          <div className="conversation-composer-route">
+            <button
+              type="button"
+              className="conversation-composer-caret"
+              aria-label="ask options"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              disabled={pending}
+              onClick={() => setMenuOpen((open) => !open)}
+            >
+              <span aria-hidden="true">⌄</span>
+            </button>
+            {menuOpen ? (
+              <div className="conversation-route-menu" role="menu">
+                {ASK_OPTIONS.map((option) => (
+                  <button
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={option.mode === mode}
+                    className="conversation-route-item"
+                    data-mode={option.mode}
+                    key={option.mode}
+                    onClick={() => pickMode(option.mode)}
+                  >
+                    <span className="conversation-route-label">{option.label}</span>
+                    <span className="conversation-route-hint">{option.hint}</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
           <button
             type="button"
             className="conversation-composer-send"
-            aria-label="Ask the orchestrator about these lines"
+            data-ask-mode={mode}
+            aria-label={
+              mode === "both"
+                ? "Ask both models about these lines"
+                : "Ask the orchestrator about these lines"
+            }
             disabled={!canSend}
             onClick={send}
           >
@@ -283,7 +335,7 @@ export interface ConversationMarginProps {
   threads: readonly ConversationThread[];
   onPromote?(threadId: string, messageId: string, kind: PromotionKind): void;
   onSubThread?(threadId: string, messageId: string): void;
-  onAsk?(threadId: string, body: string): void;
+  onAsk?(threadId: string, body: string, mode: AskMode): void;
   /** Thread ids with a live turn in flight — each renders its honest "thinking" row. */
   pendingThreadIds?: ReadonlySet<string>;
   /** The last failure per thread id, surfaced honestly in that thread's panel. */
@@ -315,7 +367,7 @@ export function ConversationMargin({
             onPromote ? (messageId, kind) => onPromote(thread.id, messageId, kind) : undefined
           }
           onSubThread={onSubThread ? (messageId) => onSubThread(thread.id, messageId) : undefined}
-          onAsk={onAsk ? (body) => onAsk(thread.id, body) : undefined}
+          onAsk={onAsk ? (body, mode) => onAsk(thread.id, body, mode) : undefined}
           pending={pendingThreadIds?.has(thread.id) ?? false}
           error={errorByThread?.[thread.id]}
         />

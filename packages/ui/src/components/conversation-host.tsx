@@ -1,5 +1,6 @@
 import type { RennetBridge } from "@rennet/protocol";
 import { useState } from "react";
+import type { AskMode } from "../canvas/ask";
 import {
   answerInThread,
   askInThread,
@@ -111,7 +112,7 @@ export function ConversationHost({
     });
   }
 
-  async function ask(threadId: string, body: string): Promise<void> {
+  async function ask(threadId: string, body: string, mode: AskMode): Promise<void> {
     const thread = threads.find((candidate) => candidate.id === threadId);
     if (!thread || pending.has(threadId)) return;
     // Build the live question BEFORE appending the new "you" message, so the folded
@@ -132,9 +133,10 @@ export function ConversationHost({
       const invocation = bridge.invoke("review.ask", {
         commandId: crypto.randomUUID(),
         reviewId,
-        // The thread's own routing (#139): a fresh thread is orchestrator-only, so a
-        // turn never fires a second model behind the reviewer's back.
-        mode: thread.route,
+        // The per-turn routing the reviewer chose in the composer (#139): "orchestrator"
+        // by default so a turn never fires a second model behind their back; "both" is
+        // the explicit opt-in that ALSO asks Codex, its answer appended as a second card.
+        mode,
         question,
       });
       // Race a UI timeout so a turn that never settles cannot leave the thread stuck.
@@ -198,7 +200,7 @@ export function ConversationHost({
       ) : null}
       <ConversationMargin
         threads={threads}
-        onAsk={(threadId, body) => void ask(threadId, body)}
+        onAsk={(threadId, body, mode) => void ask(threadId, body, mode)}
         onPromote={promote}
         pendingThreadIds={pending}
         errorByThread={errors}

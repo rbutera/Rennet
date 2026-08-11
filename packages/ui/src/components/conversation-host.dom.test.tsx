@@ -135,20 +135,45 @@ describe("ConversationHost — the live in-diff conversation", () => {
     expect(second.question).toContain("but what caps the blast radius?");
   });
 
-  it("appends BOTH cards for a 'both' result — primary + secondOpinion, no third", async () => {
+  it("opts THIS turn into 'both' from the caret, sends mode='both', and appends both cards", async () => {
     const both: AskReviewResult = {
       mode: "both",
       primary: { model: "Orchestrator · Claude", answer: "Milliseconds." },
       secondOpinion: { model: "codex", answer: "Milliseconds — the wrapper divides by 1000." },
     };
-    const { bridge } = fakeBridge([both]);
+    const { bridge, calls } = fakeBridge([both]);
     const { container } = mount(
       <ConversationHost bridge={bridge} reviewId="review-1" anchors={[RANGE_ANCHOR]} />,
     );
-    openAndAsk(container, "seconds or ms?");
+
+    // Open a thread, then OPT INTO "both" via the composer caret before sending — this
+    // is the production path that makes the Claude+Codex route reachable at all.
+    const discuss = container.querySelector<HTMLButtonElement>(".discuss-control");
+    if (!discuss) throw new Error("no discuss control");
+    fireEvent.click(discuss);
+    const caret = container.querySelector<HTMLButtonElement>(".conversation-composer-caret");
+    if (!caret) throw new Error("no routing caret");
+    fireEvent.click(caret);
+    const bothOption = container.querySelector<HTMLButtonElement>(
+      '.conversation-route-item[data-mode="both"]',
+    );
+    if (!bothOption) throw new Error("no 'both' menu item");
+    fireEvent.click(bothOption);
+    const input = container.querySelector<HTMLTextAreaElement>(".conversation-composer-input");
+    const send = container.querySelector<HTMLButtonElement>(".conversation-composer-send");
+    if (!input || !send) throw new Error("no composer");
+    fireEvent.change(input, { target: { value: "seconds or ms?" } });
+    fireEvent.click(send);
+
     await waitFor(() =>
       expect(container.querySelectorAll('.thread-message[data-author="harness"]').length).toBe(2),
     );
+    // The REAL request carried mode "both" — the vacuous version asserted only the
+    // fake's response and would pass even if the UI could never send "both".
+    const ask = calls.find((c) => c.name === "review.ask");
+    expect(ask).toBeDefined();
+    const askInput = ask?.input as CommandInput<"review.ask">;
+    expect(askInput.mode).toBe("both");
     const labels = [...container.querySelectorAll(".thread-message-model")].map(
       (n) => n.textContent,
     );
