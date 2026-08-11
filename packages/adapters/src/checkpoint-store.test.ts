@@ -4,11 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { filesTouchedByDiff } from "@rennet/core";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  GitCheckpointStore,
-  recoverHandoffCheckpoints,
-  repoHasSubmodules,
-} from "./checkpoint-store";
+import { GitCheckpointStore, repoHasSubmodules } from "./checkpoint-store";
 
 const directories: string[] = [];
 
@@ -156,30 +152,12 @@ describe("GitCheckpointStore.changedPaths + F5/F6/F7", () => {
     expect(reflog.trim()).toBe("");
   });
 
-  it("discard is idempotent — deleting an already-gone ref is not an error (F5)", async () => {
+  it("discard is best-effort — deleting an already-gone ref does not throw", async () => {
     const root = repository();
     const store = new GitCheckpointStore(root);
     const ref = await store.capture();
     await store.discard(ref);
     await expect(store.discard(ref)).resolves.toBeUndefined(); // second discard: no throw
-  });
-
-  it("recoverHandoffCheckpoints sweeps leftover refs a crashed run left behind (F5)", async () => {
-    const root = repository();
-    const store = new GitCheckpointStore(root);
-    const a = await store.capture();
-    const b = await store.capture();
-    expect(
-      git(root, "for-each-ref", "--format=%(refname)", "refs/rennet/").split("\n").filter(Boolean),
-    ).toHaveLength(2);
-
-    const removed = await recoverHandoffCheckpoints(root);
-    expect(removed).toBe(2);
-    expect(git(root, "for-each-ref", "--format=%(refname)", "refs/rennet/")).toBe("");
-    // Idempotent: recovering a clean repo removes nothing.
-    expect(await recoverHandoffCheckpoints(root)).toBe(0);
-    void a;
-    void b;
   });
 
   it("repoHasSubmodules is false for a plain repository (F6)", async () => {

@@ -54,24 +54,20 @@ You touch `packages/types`, `packages/protocol`, the carry seam. I ADD, additive
 - I did NOT modify `partitionCarry`, `carryDispositions`, `DispositionRelevanceJudge`,
   `LineageEntry`, or any existing lineage type. My seam is a NEW interface in core.
 
-## Invariants (asserted by test)
+## Shape (Rule Zero — NO consent gates)
 
-- ⛔ Startable ONLY by an explicit user act — `run` refuses without a single-use consent
-  token minted by `requestConsent` (main-owned `HandoffConsentAuthority`). No scheduler/
-  reactor path calls `runHandoff`. Test: run without token ⇒ refused.
-- ⛔ Spend disclosed before the write session — `prepare` returns a `HandoffDisclosure`
-  (harness, model, task count, write-enabled, will-edit-working-tree); `run` binds the
-  consent token to the exact bundle digest, so the session cannot run on an undisclosed
-  bundle. Test: token bound to bundle A cannot run bundle B.
-- ⛔ Active patchset byte-identical before/after — the pre-handoff patchset object is
-  unchanged in `review.patchsets` after capture (event-sourced append, never rewrite).
-- R33 ("Rennet never pushes") — RENNET's own capture path only reads; it never pushes.
-  The write session itself is FULLY CAPABLE (Bash included, Rai's call 2026-08-11), so
-  "don't push" is an INSTRUCTION to the agent, not a structural wall. The enforced
-  safety is at the START of a run (human authorises, spend disclosed), not in the
-  model's post-go tool surface.
+Two steps, no ceremony: `prepare` gives a bundle + disclosure; `run` runs it. **A button
+that runs the agent IS the human act** — there is no consent token, no digest binding, no
+`requestConsent`, no spend-disclosure refusal. (The earlier consent machinery was ripped
+out entirely on Rai's ruling, 2026-08-11.)
+
+- **Active patchset byte-identical before/after** — the pre-handoff patchset object is
+  unchanged in `review.patchsets` after capture (event-sourced append, never rewrite). Tested.
+- **R33 ("Rennet never pushes")** — Rennet's own capture path only reads. The write
+  session is FULLY CAPABLE (Bash included, Rai's call); "don't push" is an instruction to
+  the agent, not a wall.
 - **Totality** — an agent edit unrelated to any disposition still appears in the new
-  patchset (whole-tree capture) and the turn diff. Test asserts it.
+  patchset and the turn diff, on success AND on failure (F4). Tested.
 
 ## Files (planned)
 
@@ -151,3 +147,27 @@ Reversal + six findings, all green (full gate, all 8 projects).
   not the display-diff regex, so a tab/quoted path is not dropped (tested with a tab).
 
 ⭐ Codex confirmed `notWiredLineageCarry()` survived unattacked — the #16 seam is honest.
+
+## Rule Zero rip-out (2026-08-11, supersedes the "Codex FIX-THEN-MERGE round" above)
+
+Rai's ruling — NO CONSENT GATES, NO ROBUSTNESS FOR ROBUSTNESS' SAKE. The consent path
+was DELETED, not improved:
+- Deleted `handoff-consent-authority.ts` (token, digest binding, preparation store,
+  native confirmation), the `review.handoff.requestConsent` command, and the run's
+  authorization/digest checks. `run` now: resolve review → build bundle → run → capture.
+- `prepare` no longer stores anything; the bundle `digest` is just a content id, not a gate.
+- Codex F2/F3 (consent hardening) are MOOT and were reverted.
+
+KEPT — the three diff-visibility bugs (the digestor failing to show the diff):
+- **F4** failed-with-changes: post-checkpoint always taken; a failed turn carries
+  `turnDiff` + `filesTouched`; the run command surfaces `filesTouched` on failure. Tested.
+- **F6** submodule refusal: `repoHasSubmodules` refuses a repo with submodules (invisible
+  gitlink edits). Tested.
+- **F7** structural changed-paths: `git diff --name-only -z`, tested with a tab in the
+  filename that the display-diff regex drops.
+
+F5 SIMPLIFIED to a plain best-effort `finally` discard (hygiene, not a gate). The
+recovery sweep + not-swallowed ceremony were removed. The no-reflog `-c
+core.logAllRefUpdates=false` flag stays (one cheap flag; makes the hidden-refs claim true).
+
+Bash stays ON, lamp deleted. Gate green, 2069 passed / 7 skipped (+3 over 2066/7).

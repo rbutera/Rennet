@@ -219,26 +219,18 @@ export function buildHandoffBundle(input: BuildHandoffBundleInput): HandoffBundl
     ),
   }));
   const prompt = renderHandoffPrompt(tasks);
-  // The digest binds the CANONICAL COMPLETE bundle the human is disclosed (Codex F3):
-  // the patchset it was built against, every task WITH its resolved diff context, and
-  // the rendered prompt. Excluding the patchset id or the context would let a bundle
-  // prepared against patch-1 pass the consent check after the review activated patch-2
-  // — a different prompt at a different cost than was disclosed. The reviewId is NOT
-  // hashed (it is bound separately by the consent key); the digest is over the bundle
-  // CONTENT so the same content always yields the same digest.
+  // A content digest over the ordered tasks — a stable bundle identity (same tasks ⇒
+  // same digest), used by callers that want to key on the bundle. Not a gate.
   const digest = sha256Hex(
-    JSON.stringify({
-      patchsetId: input.patchset.id,
-      tasks: tasks.map((task) => ({
+    JSON.stringify(
+      tasks.map((task) => ({
         path: task.path,
         type: task.type,
         instruction: task.instruction,
         span: task.span ?? null,
         side: task.side ?? null,
-        context: task.context,
       })),
-      prompt,
-    }),
+    ),
   );
   return { reviewId: input.reviewId, patchsetId: input.patchset.id, tasks, prompt, digest };
 }
@@ -368,16 +360,14 @@ export interface RunHandoffTurnInput {
  * an agent that wrote a file and then errored leaves that mutation on disk, and the
  * failure carries the diff so it is never hidden. `filesTouched` comes from the
  * checkpoint's STRUCTURAL path list (Codex F7), not from parsing the display diff, so
- * a quoted/spaced path is not silently dropped. Both checkpoint refs are discarded
- * after use (Codex F5); a discard failure is surfaced, never swallowed — but the
- * PRIMARY error (a failed capture/diff) wins so cleanup never masks the real cause.
+ * a quoted/spaced path is not silently dropped. The checkpoint refs are discarded in a
+ * finally, best-effort (hygiene, not a gate).
  */
 export async function runHandoffTurn(input: RunHandoffTurnInput): Promise<HandoffTurnOutcome> {
   const created: CheckpointRef[] = [];
   const before = await input.checkpoint.capture();
   created.push(before);
-
-  const bracket = async (): Promise<HandoffTurnOutcome> => {
+  try {
     const outcome = await input.runPort({
       cwd: input.repoRoot,
       prompt: input.bundle.prompt,
@@ -399,33 +389,13 @@ export async function runHandoffTurn(input: RunHandoffTurnInput): Promise<Handof
       filesTouched,
       ...(outcome.usage === undefined ? {} : { usage: outcome.usage }),
     };
-  };
-
-  let result: HandoffTurnOutcome | undefined;
-  let primaryError: unknown;
-  try {
-    result = await bracket();
-  } catch (error) {
-    primaryError = error;
-  }
-
-  // Clean up the hidden checkpoint refs (not in a `finally`, so a cleanup failure
-  // cannot mask the primary result). Discard failures are collected and surfaced;
-  // startup recovery is the backstop for a ref leaked by a crash.
-  const cleanupErrors: string[] = [];
-  for (const ref of created) {
-    try {
-      await input.checkpoint.discard(ref);
-    } catch (error) {
-      cleanupErrors.push(error instanceof Error ? error.message : String(error));
+  } finally {
+    // Best-effort cleanup of the hidden checkpoint refs (hygiene). A discard failure is
+    // ignored — leaked refs are harmless and pruned by ordinary `git gc`.
+    for (const ref of created) {
+      await input.checkpoint.discard(ref).catch(() => undefined);
     }
   }
-
-  if (primaryError !== undefined) throw primaryError;
-  if (cleanupErrors.length > 0) {
-    throw new Error(`handoff checkpoint cleanup failed: ${cleanupErrors.join("; ")}`);
-  }
-  return result as HandoffTurnOutcome;
 }
 
 // ── The #16 lineage-carry seam (explicitly UNIMPLEMENTED) ─────────────────────

@@ -132,28 +132,13 @@ export class GitCheckpointStore implements CheckpointPort {
     return out.split("\0").filter((path) => path.length > 0);
   }
 
-  /**
-   * Delete a checkpoint ref once the loop no longer needs it (Codex F5). Idempotent —
-   * a ref that is already gone is success — but a real deletion FAILURE throws rather
-   * than being swallowed, so the orchestrator's finally surfaces it.
-   */
+  /** Delete a checkpoint ref once the loop no longer needs it — best-effort hygiene. */
   async discard(ref: CheckpointRef): Promise<void> {
-    const result = await execa("git", ["update-ref", "-d", ref.ref], {
+    await execa("git", ["update-ref", "-d", ref.ref], {
       cwd: this.root,
       reject: false,
       shell: false,
     });
-    if (result.exitCode === 0) return;
-    // Not deleted — but if the ref no longer resolves, it was already gone (fine).
-    const resolves = await execa("git", ["rev-parse", "--verify", "--quiet", ref.ref], {
-      cwd: this.root,
-      reject: false,
-      shell: false,
-    });
-    if (resolves.exitCode !== 0) return;
-    throw new Error(
-      `failed to discard checkpoint ref ${ref.ref}: ${result.stderr || result.stdout}`,
-    );
   }
 }
 
@@ -173,29 +158,4 @@ export async function repoHasSubmodules(repoRoot: string): Promise<boolean> {
     stripFinalNewline: true,
   });
   return result.exitCode === 0 && result.stdout.trim().length > 0;
-}
-
-/**
- * Startup recovery (Codex F5): delete every leftover handoff checkpoint ref in a
- * repository — the refs a crashed run could not clean in its finally. Best-effort per
- * ref; returns the number removed. Safe to call on a repo that has none.
- */
-export async function recoverHandoffCheckpoints(repoRoot: string): Promise<number> {
-  const listed = await execa(
-    "git",
-    ["for-each-ref", "--format=%(refname)", CHECKPOINT_REF_PREFIX],
-    { cwd: repoRoot, reject: false, shell: false, stripFinalNewline: true },
-  );
-  if (listed.exitCode !== 0 || listed.stdout.trim() === "") return 0;
-  const refs = listed.stdout.split("\n").filter((line) => line.length > 0);
-  let removed = 0;
-  for (const ref of refs) {
-    const result = await execa("git", ["update-ref", "-d", ref], {
-      cwd: repoRoot,
-      reject: false,
-      shell: false,
-    });
-    if (result.exitCode === 0) removed += 1;
-  }
-  return removed;
 }

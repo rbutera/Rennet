@@ -46,7 +46,6 @@ import {
   parseGitHubPrRef,
   RepoWatcher,
   readOpenSpecChange,
-  recoverHandoffCheckpoints,
   repoHasSubmodules,
   resolveGitHubAuth,
   SqliteReviewStore,
@@ -96,11 +95,6 @@ import type {
 } from "@rennet/types";
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell } from "electron";
 import { createDispatch } from "./dispatch";
-import {
-  type ConfirmHandoff,
-  createHandoffConsentAuthority,
-  createHandoffPreparationStore,
-} from "./handoff-consent-authority";
 import { createDesktopReviewBackend } from "./live-review-backend";
 import { EDITOR_CLIS, performOpenInEditor } from "./open-in-editor";
 import { createOrchestratorTurnRunner } from "./orchestrator";
@@ -117,9 +111,6 @@ import { createSettingsComposition } from "./settings";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 
 const execFileAsync = promisify(execFile);
-
-/** Repos whose leftover handoff checkpoints were swept this process (Codex F5, once each). */
-const recoveredHandoffRepos = new Set<string>();
 
 const IPC_CHANNEL = "rennet:invoke";
 // The push channel a long-running command streams live progress on (today
@@ -1149,23 +1140,6 @@ app.whenReady().then(async () => {
     resolveToken: resolveGitHubToken,
   });
   const publishConsent = createPublishConsentAuthority();
-  const handoffConsent = createHandoffConsentAuthority();
-  const handoffPrep = createHandoffPreparationStore();
-  // The native handoff confirmation (Codex F2): a real modal over the MAIN-stored
-  // disclosure. A consent token is minted only when this returns true, so the token is
-  // evidence of a human gesture, not of the renderer calling an IPC. Warning-styled,
-  // default = Cancel (wrong-side-safe).
-  const confirmHandoff: ConfirmHandoff = async (disclosure) => {
-    const { response } = await dialog.showMessageBox({
-      type: "warning",
-      buttons: ["Cancel", "Run handoff"],
-      defaultId: 0,
-      cancelId: 0,
-      message: "Hand these changes to a coding agent?",
-      detail: disclosure.summary,
-    });
-    return response === 1;
-  };
   // The live orchestrator turn runner (issue #13, wave 2): composes the wave-1 live
   // backend + the lean primer + a real `claude` turn over the in-process canvasOps@2
   // MCP server. It reuses the SAME memoized `claude` discovery the review pipeline
@@ -1184,22 +1158,12 @@ app.whenReady().then(async () => {
     orchestratorTurn,
     publishPort,
     publishConsent,
-    handoffConsent,
-    handoffPrep,
-    confirmHandoff,
     // The write-enabled handoff turn (issue #18): brackets a live `claude` write turn
     // (fully capable, Bash included — Rai's call) with git checkpoints and returns the
     // turn diff. Reuses the SAME memoized `claude` discovery the review pipeline uses
     // (R2 subscription OAuth). Refuses a repo with submodules (Codex F6) and answers an
     // honest failed turn when no `claude` is installed — never a fabricated success.
     runHandoffTurn: async ({ repoRoot, bundle }) => {
-      // Startup recovery (Codex F5): once per repo per process, before this run creates
-      // any of its own checkpoints, sweep leftover refs a crashed prior run could not
-      // clean. Once-per-repo so it never deletes a concurrent run's live refs.
-      if (!recoveredHandoffRepos.has(repoRoot)) {
-        recoveredHandoffRepos.add(repoRoot);
-        await recoverHandoffCheckpoints(repoRoot).catch(() => 0);
-      }
       if (await repoHasSubmodules(repoRoot)) {
         return {
           status: "failed",

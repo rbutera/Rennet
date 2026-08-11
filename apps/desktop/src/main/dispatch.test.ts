@@ -25,11 +25,6 @@ import { CANVAS_ANGLES } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
 import { createDispatch, type DispatchDeps } from "./dispatch";
 import {
-  createHandoffConsentAuthority,
-  createHandoffPreparationStore,
-  type HandoffConsentAuthority,
-} from "./handoff-consent-authority";
-import {
   createPublishConsentAuthority,
   type PublishConsentAuthority,
 } from "./publish-consent-authority";
@@ -160,7 +155,6 @@ function harness(
   extra: {
     capturePort?: PatchsetCapturePort;
     runHandoffTurn?: DispatchDeps["runHandoffTurn"];
-    confirmHandoff?: DispatchDeps["confirmHandoff"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -169,8 +163,6 @@ function harness(
   buildCanvases: ReturnType<typeof vi.fn>;
   publishPort: ForgePublishPort & { posts: ForgeReviewPost[] };
   publishConsent: PublishConsentAuthority;
-  handoffConsent: HandoffConsentAuthority;
-  handoffPrep: ReturnType<typeof createHandoffPreparationStore>;
   reviewAsk: {
     askOrchestrator: ReturnType<typeof vi.fn>;
     askCodex: ReturnType<typeof vi.fn>;
@@ -199,8 +191,6 @@ function harness(
     }),
   );
   const publishConsent = createPublishConsentAuthority();
-  const handoffConsent = createHandoffConsentAuthority();
-  const handoffPrep = createHandoffPreparationStore();
   // review.ask ports (issue #139) as recording spies, so a test can assert the
   // orchestrator is asked exactly once and Codex only in "both" mode — the whole
   // point of the issue is that negative guarantee on the REAL command path.
@@ -248,11 +238,6 @@ function harness(
     buildCanvases,
     publishPort,
     publishConsent,
-    handoffConsent,
-    handoffPrep,
-    // Default: the native confirmation says yes. A test overrides this to assert the
-    // decline path (no token minted) and that a token is evidence of a human act.
-    confirmHandoff: extra.confirmHandoff ?? (() => Promise.resolve(true)),
     ...(extra.runHandoffTurn ? { runHandoffTurn: extra.runHandoffTurn } : {}),
     // Front-door deps (issue #29): a trivial in-memory projects capability plus
     // stub discovery/detection. The dedicated front-door tests exercise these
@@ -303,8 +288,6 @@ function harness(
     buildCanvases,
     publishPort,
     publishConsent,
-    handoffConsent,
-    handoffPrep,
     reviewAsk,
     flaggedReviewSpy,
     refineCommentSpy,
@@ -1267,9 +1250,6 @@ function frontDoorHarness(seed: {
       }),
     publishPort: fakePublishPort(),
     publishConsent: createPublishConsentAuthority(),
-    handoffConsent: createHandoffConsentAuthority(),
-    handoffPrep: createHandoffPreparationStore(),
-    confirmHandoff: () => Promise.resolve(true),
     projects: {
       list: () => stored,
       add: (input) => {
@@ -1843,32 +1823,8 @@ const HANDOFF_DISPOSITIONS = [
   { path: "src/a.ts", type: "request-change" as const, body: "add a guard clause" },
 ];
 
-async function prepareHandoff(
-  dispatch: ReturnType<typeof createDispatch>,
-  reviewId: string,
-  dispositions = HANDOFF_DISPOSITIONS,
-): Promise<{ digest: string; prompt: string }> {
-  const prep = (await dispatch("review.handoff.prepare", {
-    commandId: randomUUID(),
-    reviewId,
-    dispositions,
-  })) as { bundle: { digest: string; prompt: string } };
-  return prep.bundle;
-}
-
-async function consentHandoff(
-  dispatch: ReturnType<typeof createDispatch>,
-  reviewId: string,
-): Promise<string | null> {
-  const consent = (await dispatch("review.handoff.requestConsent", {
-    commandId: randomUUID(),
-    reviewId,
-  })) as { authorization: string | null };
-  return consent.authorization;
-}
-
 describe("createDispatch — review.handoff.* (the review→agent loop, issue #18)", () => {
-  it("prepare composes a bundle and discloses the write-enabled spend (no session, no token)", async () => {
+  it("prepare composes a bundle and its disclosure (pure — no session, no gate)", async () => {
     const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>();
     const { dispatch } = harness(undefined, {}, { runHandoffTurn });
     const review = await capturedReview(dispatch);
@@ -1884,124 +1840,8 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
 
     expect(out.bundle.tasks).toHaveLength(1);
     expect(out.disclosure.writeEnabled).toBe(true);
-    expect(out.disclosure.editsWorkingTree).toBe(true);
     expect(out.disclosure.taskCount).toBe(1);
-    // Pure: preparing NEVER runs the write turn.
-    expect(runHandoffTurn).not.toHaveBeenCalled();
-  });
-
-  it("requestConsent mints a token ONLY after the native confirmation says yes (Codex F2)", async () => {
-    const confirmHandoff = vi.fn<NonNullable<DispatchDeps["confirmHandoff"]>>(() =>
-      Promise.resolve(true),
-    );
-    const { dispatch } = harness(undefined, {}, { confirmHandoff });
-    const review = await capturedReview(dispatch);
-    await prepareHandoff(dispatch, review.id);
-
-    const authorization = await consentHandoff(dispatch, review.id);
-    // A human gesture happened, over the main-stored disclosure — not a renderer digest.
-    expect(confirmHandoff).toHaveBeenCalledTimes(1);
-    expect(confirmHandoff.mock.calls[0]?.[0]?.writeEnabled).toBe(true);
-    expect(typeof authorization).toBe("string");
-  });
-
-  it("requestConsent returns NO token when the human DECLINES the confirmation (Codex F2)", async () => {
-    const confirmHandoff = () => Promise.resolve(false);
-    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
-      async () => HANDOFF_TURN,
-    );
-    const { dispatch } = harness(undefined, {}, { confirmHandoff, runHandoffTurn });
-    const review = await capturedReview(dispatch);
-    await prepareHandoff(dispatch, review.id);
-
-    const authorization = await consentHandoff(dispatch, review.id);
-    expect(authorization).toBeNull();
-    // And a run with no token is refused — renderer code cannot mint a run.
-    const out = (await dispatch("review.handoff.run", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      dispositions: HANDOFF_DISPOSITIONS,
-      authorization: "not-a-real-token",
-    })) as { status: string };
-    expect(out.status).toBe("refused");
-    expect(runHandoffTurn).not.toHaveBeenCalled();
-  });
-
-  it("requestConsent returns NO token when nothing was prepared for the review", async () => {
-    const { dispatch } = harness();
-    const review = await capturedReview(dispatch);
-    // No prepare → nothing main-stored → no token, even though confirm defaults to yes.
-    const authorization = await consentHandoff(dispatch, review.id);
-    expect(authorization).toBeNull();
-  });
-
-  it("run REFUSES without a consent token — the loop is startable only by an explicit act", async () => {
-    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
-      async () => HANDOFF_TURN,
-    );
-    const { dispatch } = harness(undefined, {}, { capturePort: twoPhaseCapture(), runHandoffTurn });
-    const review = await capturedReview(dispatch);
-    await prepareHandoff(dispatch, review.id);
-
-    const out = (await dispatch("review.handoff.run", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      dispositions: HANDOFF_DISPOSITIONS,
-      authorization: "not-a-real-token",
-    })) as { status: string; reason: string };
-
-    expect(out.status).toBe("refused");
-    expect(runHandoffTurn).not.toHaveBeenCalled();
-  });
-
-  it("run REFUSES when the dispositions changed since disclosure (spend-disclosed gate)", async () => {
-    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
-      async () => HANDOFF_TURN,
-    );
-    const { dispatch } = harness(undefined, {}, { capturePort: twoPhaseCapture(), runHandoffTurn });
-    const review = await capturedReview(dispatch);
-    await prepareHandoff(dispatch, review.id);
-    const authorization = await consentHandoff(dispatch, review.id);
-
-    // The run submits DIFFERENT dispositions than were disclosed: rebuilt digest ≠ stored.
-    const out = (await dispatch("review.handoff.run", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      dispositions: [
-        { path: "src/a.ts", type: "request-change" as const, body: "something ELSE entirely" },
-      ],
-      authorization: authorization ?? "",
-    })) as { status: string };
-
-    expect(out.status).toBe("refused");
-    expect(runHandoffTurn).not.toHaveBeenCalled();
-  });
-
-  it("run REFUSES when the active patchset moved since disclosure — same dispositions, valid token (Codex F3)", async () => {
-    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
-      async () => HANDOFF_TURN,
-    );
-    const { dispatch } = harness(undefined, {}, { capturePort: twoPhaseCapture(), runHandoffTurn });
-    const review = await capturedReview(dispatch);
-    // Disclosed + confirmed against patch-1.
-    await prepareHandoff(dispatch, review.id);
-    const authorization = await consentHandoff(dispatch, review.id);
-    // The review then activates a DIFFERENT patchset (patch-2) — a local recapture.
-    await dispatch("review.regenerate", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      repoPath: REPO,
-    });
-    // Same dispositions + the still-valid token, but the bundle now resolves against
-    // patch-2 (different context) → its digest ≠ the disclosed patch-1 digest → refused.
-    const out = (await dispatch("review.handoff.run", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      dispositions: HANDOFF_DISPOSITIONS,
-      authorization: authorization ?? "",
-    })) as { status: string };
-
-    expect(out.status).toBe("refused");
+    // Preparing NEVER runs the write turn.
     expect(runHandoffTurn).not.toHaveBeenCalled();
   });
 
@@ -2013,13 +1853,11 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
     const review = await capturedReview(dispatch);
     const priorActiveId = review.activePatchsetId;
 
-    const bundle = await prepareHandoff(dispatch, review.id);
-    const authorization = await consentHandoff(dispatch, review.id);
+    // A button-press IS the human act — run directly, no consent ceremony.
     const out = (await dispatch("review.handoff.run", {
       commandId: randomUUID(),
       reviewId: review.id,
       dispositions: HANDOFF_DISPOSITIONS,
-      authorization: authorization ?? "",
     })) as {
       status: string;
       result: {
@@ -2032,7 +1870,6 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
 
     expect(out.status).toBe("ran");
     expect(runHandoffTurn).toHaveBeenCalledTimes(1);
-    expect(runHandoffTurn.mock.calls[0]?.[0]?.bundle.prompt).toBe(bundle.prompt);
     // A NEW patchset is active; the prior one still exists (R28: never rewritten).
     expect(out.result.review.activePatchsetId).toBe("patch-2");
     expect(out.result.review.patchsets.map((p) => p.id)).toContain(priorActiveId);
@@ -2043,44 +1880,35 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
     expect(out.result.lineageCarry).toBe("matcher-not-wired");
   });
 
-  it("run answers 'unavailable' honestly when no coding harness is wired", async () => {
-    const { dispatch } = harness();
+  it("run surfaces the files a FAILED turn changed before erroring (Codex F4)", async () => {
+    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(async () => ({
+      status: "failed" as const,
+      reason: "harness overloaded",
+      turnDiff: "diff --git a/src/half.ts b/src/half.ts",
+      filesTouched: ["src/half.ts"],
+    }));
+    const { dispatch } = harness(undefined, {}, { capturePort: twoPhaseCapture(), runHandoffTurn });
     const review = await capturedReview(dispatch);
-    await prepareHandoff(dispatch, review.id);
-    const authorization = await consentHandoff(dispatch, review.id);
+
     const out = (await dispatch("review.handoff.run", {
       commandId: randomUUID(),
       reviewId: review.id,
       dispositions: HANDOFF_DISPOSITIONS,
-      authorization: authorization ?? "",
-    })) as { status: string };
-    expect(out.status).toBe("unavailable");
+    })) as { status: string; reason: string; filesTouched: string[] };
+
+    expect(out.status).toBe("failed");
+    // The edits made before the error are surfaced, not hidden.
+    expect(out.filesTouched).toEqual(["src/half.ts"]);
   });
 
-  it("the consent token is single-use — a replayed run is refused", async () => {
-    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
-      async () => HANDOFF_TURN,
-    );
-    const { dispatch } = harness(undefined, {}, { capturePort: twoPhaseCapture(), runHandoffTurn });
+  it("run answers 'unavailable' honestly when no coding harness is wired", async () => {
+    const { dispatch } = harness();
     const review = await capturedReview(dispatch);
-    await prepareHandoff(dispatch, review.id);
-    const authorization = await consentHandoff(dispatch, review.id);
-    const runInput = {
+    const out = (await dispatch("review.handoff.run", {
+      commandId: randomUUID(),
       reviewId: review.id,
       dispositions: HANDOFF_DISPOSITIONS,
-      authorization: authorization ?? "",
-    };
-
-    const first = (await dispatch("review.handoff.run", {
-      commandId: randomUUID(),
-      ...runInput,
     })) as { status: string };
-    const second = (await dispatch("review.handoff.run", {
-      commandId: randomUUID(),
-      ...runInput,
-    })) as { status: string };
-
-    expect(first.status).toBe("ran");
-    expect(second.status).toBe("refused"); // the token was consumed on the first run
+    expect(out.status).toBe("unavailable");
   });
 });

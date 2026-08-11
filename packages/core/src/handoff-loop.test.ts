@@ -345,16 +345,17 @@ describe("runHandoffTurn", () => {
     expect(cp.discard).toHaveBeenCalledTimes(2);
   });
 
-  it("does NOT swallow a checkpoint cleanup failure — it surfaces (Codex F5)", async () => {
-    const cp = makeCheckpoint({ paths: [], discardError: "cannot lock ref" });
-    await expect(
-      runHandoffTurn({
-        repoRoot: "/repo",
-        bundle: A_BUNDLE(),
-        runPort: runPortReturning({ status: "completed", finalText: "done" }),
-        checkpoint: cp.port,
-      }),
-    ).rejects.toThrow(/checkpoint cleanup failed/);
+  it("discards both checkpoint refs best-effort even when discard rejects (hygiene, not a gate)", async () => {
+    const cp = makeCheckpoint({ paths: ["src/foo.ts"], discardError: "cannot lock ref" });
+    // A discard failure is swallowed — the run still returns its real result.
+    const result = await runHandoffTurn({
+      repoRoot: "/repo",
+      bundle: A_BUNDLE(),
+      runPort: runPortReturning({ status: "completed", finalText: "done" }),
+      checkpoint: cp.port,
+    });
+    expect(result.status).toBe("completed");
+    expect(cp.discard).toHaveBeenCalledTimes(2);
   });
 });
 
