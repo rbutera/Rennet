@@ -253,6 +253,18 @@ export interface Review {
    * canonical read-state: the derived read-set is the distinct anchor paths.
    */
   dispositions: Disposition[];
+  /**
+   * The orphan tray (issue #16, §3.4): dispositions whose anchored occurrence
+   * VANISHED from the successor patchset — the file left the changeset entirely,
+   * with no same-path successor and no rename link. Per the frozen contract a
+   * vanished occurrence "orphans, surfaced against its last known version" — it
+   * must NEVER silently drop to void. A changed-but-present occurrence is NOT an
+   * orphan (it reopens for re-reading, dropped from `dispositions`); only a true
+   * disappearance lands here. Recomputed on every patchset activation. Optional
+   * and stamped ONLY when non-empty, so every existing review snapshot validates
+   * unchanged (back-compat, exactly like `retrospective`/`postTarget`).
+   */
+  orphaned?: Disposition[];
   status: "current" | "invalid";
   /**
    * A RETROSPECTIVE review is opened to READ an already-merged (or any) pull

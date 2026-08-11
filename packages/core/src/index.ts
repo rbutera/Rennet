@@ -16,6 +16,7 @@ import {
   type ReviewPostTarget,
 } from "@rennet/types";
 import { v7 as uuidv7 } from "uuid";
+import { autoCarries } from "./lineage-matcher";
 
 export * from "./angle-generation";
 export * from "./canvas";
@@ -305,18 +306,97 @@ function anchorCarries(anchor: DispositionAnchor, file: PatchFile | undefined): 
 }
 
 /**
- * Carry dispositions across a re-capture, CONSERVATIVELY — the deterministic
- * FLOOR. A path-grained disposition survives only where the successor file is
- * byte-identical; a span-grained disposition survives only where its side-text
- * at the same file-line span is byte-identical. Any change, shift, out-of-bounds
- * span, missing side, rename, or removal fails closed (dropped, so the reviewer
- * re-reads). No fuzzy matching — that is the relevance judge's job (Tier 2).
+ * Re-anchor and carry a disposition across a file RENAME (a `move` in the lineage
+ * graph, issue #16), or return null when the move cannot be BYTE-VERIFIED — in
+ * which case it reopens (dropped), never a wrong carry. The disposition carries
+ * only when the successor renamed file certifies the SAME content the reviewer
+ * disposed on:
+ *
+ *  - span-grained: the side-text at the same file-line span is byte-identical
+ *    (re-extracted from the renamed file's patch, truncation fails closed),
+ *    re-anchored to the new path with a refreshed whole-file `contentDigest`;
+ *  - path-grained: the renamed file's patch is byte-identical to the original
+ *    (a header-only rename with unchanged hunks), so the whole-file digest still
+ *    matches; re-anchored to the new path.
+ *
+ * Because the whole-file key is patch-based, a rename that ALSO changed content
+ * does not carry path-grained here — it reopens (safe). Gated on the matcher's
+ * calibrated `autoCarries("move")` policy, so narrowing the policy to exact-only
+ * disables move carry with no other change.
  */
-function carryDispositions(previous: Disposition[], next: Patchset): Disposition[] {
+function carryMoveOntoRename(disposition: Disposition, renamed: PatchFile): Disposition | null {
+  if (!autoCarries("move")) return null;
+  const { anchor } = disposition;
+  if (anchor.span && anchor.side && anchor.spanDigest) {
+    if (patchTruncated(renamed)) return null; // a truncated successor cannot certify
+    const text = extractSpanText(renamed, anchor.span, anchor.side);
+    if (text === undefined || sha256Hex(text) !== anchor.spanDigest) return null;
+    return {
+      ...disposition,
+      anchor: { ...anchor, path: renamed.path, contentDigest: fileContentDigest(renamed) },
+    };
+  }
+  if (!patchCertifiesContent(renamed)) return null;
+  if (fileContentDigest(renamed) !== anchor.contentDigest) return null;
+  return { ...disposition, anchor: { ...anchor, path: renamed.path } };
+}
+
+/**
+ * Carry dispositions across a re-capture (issue #16), by the FILE-level lineage,
+ * gated by the matcher's calibrated auto-carry policy. Returns the carried set
+ * AND the orphan tray:
+ *
+ *  - EXACT (same path, byte-identical): carries unchanged — the preserved #10
+ *    byte-identical floor (`anchorCarries`), including its lossy-patch and
+ *    span-truncation fail-closed. This branch is byte-for-byte the old behaviour.
+ *  - MOVE (git rename, byte-verifiable): carries re-anchored to the new path.
+ *  - VANISHED (file deleted, or gone from the changeset with no rename link):
+ *    ORPHANED — surfaced against its last-known version, NEVER dropped to void
+ *    (§3.4: "a vanished occurrence orphans, surfaced").
+ *  - PRESENT-BUT-CHANGED (or an unverifiable move): dropped → reopens for review.
+ *
+ * At FILE granularity git's own rename detection (`previousPath`) is ground-truth
+ * lineage, so the seam uses it directly; the fuzzy occurrence matcher
+ * (`lineage-matcher`, the spike) is the SUB-FILE engine #18's delta re-review
+ * consumes. Both share the one policy, `autoCarries`. No fuzzy matching decides a
+ * carry here — a carry is always a byte-verified identity, never a similarity.
+ */
+export function carryDispositionsByLineage(
+  previous: Disposition[],
+  next: Patchset,
+): { carried: Disposition[]; orphaned: Disposition[] } {
   const fileByPath = new Map(next.files.map((file) => [file.path, file] as const));
-  return previous.filter((disposition) =>
-    anchorCarries(disposition.anchor, fileByPath.get(disposition.anchor.path)),
+  const renameByPrevious = new Map(
+    next.files
+      .filter((file) => file.previousPath !== undefined && file.status === "renamed")
+      .map((file) => [file.previousPath!, file] as const),
   );
+  const carried: Disposition[] = [];
+  const orphaned: Disposition[] = [];
+  for (const disposition of previous) {
+    const path = disposition.anchor.path;
+    const sameFile = fileByPath.get(path);
+    if (sameFile) {
+      // A deletion at the same path is a vanished occurrence, not a change.
+      if (sameFile.status === "deleted") {
+        orphaned.push(disposition);
+      } else if (anchorCarries(disposition.anchor, sameFile)) {
+        carried.push(disposition); // EXACT — the preserved floor
+      }
+      // else: present but changed → reopen (dropped, not orphaned)
+      continue;
+    }
+    const renamed = renameByPrevious.get(path);
+    if (renamed) {
+      const moved = carryMoveOntoRename(disposition, renamed);
+      if (moved) carried.push(moved);
+      // else: moved+changed / unverifiable → reopen (dropped, not orphaned)
+      continue;
+    }
+    // Truly vanished from the changeset → orphaned; surfaced, never vanishes.
+    orphaned.push(disposition);
+  }
+  return { carried, orphaned };
 }
 
 /**
@@ -526,16 +606,23 @@ export function foldReview(current: Review | null, event: ReviewEvent): Review {
       // github source at the same reviewed head); otherwise it is dropped and the
       // review becomes an unpostable local review (the "no postTarget → refused" gate
       // then handles egress for free).
-      const { postTarget: priorTarget, ...base } = current;
+      // Strip the prior orphan tray too — it is recomputed for THIS activation
+      // (a vanished-then-returned occurrence must not stay orphaned forever).
+      const { postTarget: priorTarget, orphaned: _priorOrphaned, ...base } = current;
       const postTarget = postTargetSurvivingActivation(priorTarget, event.patchset);
+      // Lineage-driven carry (issue #16): byte-identical exact carries (the #10
+      // floor, unchanged), a byte-verifiable rename carries re-anchored, a vanished
+      // occurrence orphans (surfaced, never dropped to void), everything else reopens.
+      const { carried, orphaned } = carryDispositionsByLineage(current.dispositions, event.patchset);
       return {
         ...base,
         patchsets,
         activePatchsetId: event.patchset.id,
         pendingPatchsetId: undefined,
-        // Conservative carry: keep dispositions only on byte-identical anchors,
-        // never a blanket wipe.
-        dispositions: carryDispositions(current.dispositions, event.patchset),
+        dispositions: carried,
+        // Stamp the orphan tray ONLY when non-empty, so a review with no orphans
+        // stays byte-identical to before (back-compat with persisted snapshots).
+        ...(orphaned.length ? { orphaned } : {}),
         status: "current",
         ...(postTarget ? { postTarget } : {}),
       };
