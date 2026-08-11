@@ -4,7 +4,6 @@ import {
   anchoredContext,
   buildHandoffBundle,
   type CheckpointPort,
-  type CheckpointRef,
   disclosureFor,
   filesTouchedByDiff,
   HANDOFF_ADDRESSED_TYPES,
@@ -254,7 +253,7 @@ function checkpointReturning(diff: string): { port: CheckpointPort; captured: nu
         commit: `c${state.captured}`,
       });
     },
-    diff: (_from: CheckpointRef, _to: CheckpointRef) => Promise.resolve(diff),
+    diff: () => Promise.resolve(diff),
   };
   return { port, captured: state.captured };
 }

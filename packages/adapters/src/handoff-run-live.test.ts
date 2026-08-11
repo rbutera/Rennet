@@ -5,7 +5,6 @@ import type {
   HarnessPort,
   HarnessSession,
   SessionSpec,
-  TurnInput,
 } from "@rennet/core";
 import { describe, expect, it } from "vitest";
 import {
@@ -28,7 +27,7 @@ class FakeSession implements HarnessSession {
       },
     };
   }
-  send(_input: TurnInput): Promise<string> {
+  send(): Promise<string> {
     return Promise.resolve("t1");
   }
   interrupt(): Promise<void> {

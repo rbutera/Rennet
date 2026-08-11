@@ -38,7 +38,6 @@ import type {
   ElementDiffs,
   FlaggedReview,
   HandoffBundle,
-  HandoffDisposition,
   HandoffRunResult,
   NoiseReview,
   OpenSpecChange,
