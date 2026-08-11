@@ -16,7 +16,11 @@ export {
   createCanvasOpsServer,
   type LoadCanvasOpsSdk,
 } from "./canvas-ops-server";
-export { GitCheckpointStore } from "./checkpoint-store";
+export {
+  GitCheckpointStore,
+  recoverHandoffCheckpoints,
+  repoHasSubmodules,
+} from "./checkpoint-store";
 export {
   CLAUDE_TESTED_RANGE,
   ClaudeAdapter,

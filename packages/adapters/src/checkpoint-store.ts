@@ -86,8 +86,11 @@ export class GitCheckpointStore implements CheckpointPort {
         env,
       );
       const ref = `${CHECKPOINT_REF_PREFIX}${randomUUID()}`;
-      // A hidden ref — off every branch, so `git branch`/`git log`/the reflog stay clean.
-      await git(this.root, ["update-ref", ref, commit]);
+      // A hidden ref — off every branch. `-c core.logAllRefUpdates=false` suppresses a
+      // reflog even when the user's config is `always` (Codex F5: without this, a
+      // reflog IS written for refs/rennet/*, so the "reflog stays clean" claim only
+      // holds when we force it off here).
+      await git(this.root, ["-c", "core.logAllRefUpdates=false", "update-ref", ref, commit]);
       return { ref, commit };
     } finally {
       // The temp index is disposable — never leave it behind.
@@ -96,9 +99,9 @@ export class GitCheckpointStore implements CheckpointPort {
   }
 
   /**
-   * The turn diff: the tree-to-tree diff between two checkpoints, in the same
-   * `diff --git a/… b/…` unified format `GitCaptureAdapter` and the review pipeline
-   * read, so `filesTouchedByDiff` parses it identically.
+   * The turn diff: the tree-to-tree diff between two checkpoints, in the unified
+   * `diff --git a/… b/…` format, for DISPLAY. `changedPaths` (not this) is the
+   * authoritative file list — parsing this display diff loses quoted/spaced paths.
    */
   async diff(from: CheckpointRef, to: CheckpointRef): Promise<string> {
     return git(this.root, [
@@ -112,15 +115,87 @@ export class GitCheckpointStore implements CheckpointPort {
   }
 
   /**
-   * Delete a checkpoint ref once the loop no longer needs it (hygiene — the objects
-   * become unreachable and are pruned by ordinary `git gc`). Best-effort: a missing
-   * ref is not an error.
+   * The STRUCTURAL changed-path list between two checkpoints (Codex F7): `git diff
+   * --name-only -z` NUL-delimits paths and never quotes them, so a path containing a
+   * tab, space, or quote is returned intact — unlike parsing the `diff --git` headers,
+   * where such a path renders as `"a/…" "b/…"` and is silently dropped.
+   */
+  async changedPaths(from: CheckpointRef, to: CheckpointRef): Promise<readonly string[]> {
+    const out = await git(this.root, [
+      "diff",
+      "--name-only",
+      "-z",
+      "--no-ext-diff",
+      from.commit,
+      to.commit,
+    ]);
+    return out.split("\0").filter((path) => path.length > 0);
+  }
+
+  /**
+   * Delete a checkpoint ref once the loop no longer needs it (Codex F5). Idempotent —
+   * a ref that is already gone is success — but a real deletion FAILURE throws rather
+   * than being swallowed, so the orchestrator's finally surfaces it.
    */
   async discard(ref: CheckpointRef): Promise<void> {
-    await execa("git", ["update-ref", "-d", ref.ref], {
+    const result = await execa("git", ["update-ref", "-d", ref.ref], {
       cwd: this.root,
       reject: false,
       shell: false,
     });
+    if (result.exitCode === 0) return;
+    // Not deleted — but if the ref no longer resolves, it was already gone (fine).
+    const resolves = await execa("git", ["rev-parse", "--verify", "--quiet", ref.ref], {
+      cwd: this.root,
+      reject: false,
+      shell: false,
+    });
+    if (resolves.exitCode !== 0) return;
+    throw new Error(
+      `failed to discard checkpoint ref ${ref.ref}: ${result.stderr || result.stdout}`,
+    );
   }
+}
+
+/**
+ * Whether a repository contains git submodules (Codex F6). A coding agent's edits
+ * INSIDE a submodule leave the superproject's gitlink OID unchanged, so the checkpoint
+ * turn diff and the patchset capture — both of which read the superproject — cannot
+ * see them. The handoff refuses such repos rather than silently losing those edits;
+ * recursive submodule checkpointing is the follow-up. `git submodule status` lists one
+ * line per submodule (empty when there are none).
+ */
+export async function repoHasSubmodules(repoRoot: string): Promise<boolean> {
+  const result = await execa("git", ["submodule", "status"], {
+    cwd: repoRoot,
+    reject: false,
+    shell: false,
+    stripFinalNewline: true,
+  });
+  return result.exitCode === 0 && result.stdout.trim().length > 0;
+}
+
+/**
+ * Startup recovery (Codex F5): delete every leftover handoff checkpoint ref in a
+ * repository — the refs a crashed run could not clean in its finally. Best-effort per
+ * ref; returns the number removed. Safe to call on a repo that has none.
+ */
+export async function recoverHandoffCheckpoints(repoRoot: string): Promise<number> {
+  const listed = await execa(
+    "git",
+    ["for-each-ref", "--format=%(refname)", CHECKPOINT_REF_PREFIX],
+    { cwd: repoRoot, reject: false, shell: false, stripFinalNewline: true },
+  );
+  if (listed.exitCode !== 0 || listed.stdout.trim() === "") return 0;
+  const refs = listed.stdout.split("\n").filter((line) => line.length > 0);
+  let removed = 0;
+  for (const ref of refs) {
+    const result = await execa("git", ["update-ref", "-d", ref], {
+      cwd: repoRoot,
+      reject: false,
+      shell: false,
+    });
+    if (result.exitCode === 0) removed += 1;
+  }
+  return removed;
 }

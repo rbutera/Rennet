@@ -243,115 +243,118 @@ describe("filesTouchedByDiff", () => {
   });
 });
 
-function checkpointReturning(diff: string): { port: CheckpointPort; captured: number } {
-  const state = { captured: 0 };
-  const port: CheckpointPort = {
-    capture: () => {
-      state.captured += 1;
-      return Promise.resolve({
-        ref: `refs/rennet/checkpoints/${state.captured}`,
-        commit: `c${state.captured}`,
-      });
-    },
-    diff: () => Promise.resolve(diff),
-  };
-  return { port, captured: state.captured };
+function makeCheckpoint(
+  opts: { diff?: string; paths?: readonly string[]; discardError?: string } = {},
+) {
+  let captureCount = 0;
+  const capture = vi.fn<CheckpointPort["capture"]>(() => {
+    captureCount += 1;
+    return Promise.resolve({ ref: `r${captureCount}`, commit: `c${captureCount}` });
+  });
+  const diff = vi.fn<CheckpointPort["diff"]>(() => Promise.resolve(opts.diff ?? ""));
+  const changedPaths = vi.fn<CheckpointPort["changedPaths"]>(() =>
+    Promise.resolve(opts.paths ?? []),
+  );
+  const discard = vi.fn<CheckpointPort["discard"]>(() =>
+    opts.discardError !== undefined
+      ? Promise.reject(new Error(opts.discardError))
+      : Promise.resolve(),
+  );
+  const port: CheckpointPort = { capture, diff, changedPaths, discard };
+  return { port, capture, diff, changedPaths, discard };
 }
 
 function runPortReturning(outcome: HandoffRunOutcome): HandoffRunPort {
   return () => Promise.resolve(outcome);
 }
 
+const A_BUNDLE = () =>
+  buildHandoffBundle({
+    reviewId: "r1",
+    patchset,
+    dispositions: [disposition({ path: "src/foo.ts", type: "request-change", body: "x" })],
+  });
+
 describe("runHandoffTurn", () => {
   it("brackets the write turn with two checkpoints and returns the turn diff + files touched", async () => {
-    const bundle = buildHandoffBundle({
-      reviewId: "r1",
-      patchset,
-      dispositions: [disposition({ path: "src/foo.ts", type: "request-change", body: "x" })],
-    });
-    const turnDiff = [
-      "diff --git a/src/foo.ts b/src/foo.ts",
-      "@@ -1 +1 @@",
-      "-const b = 2;",
-      "+const b = 3;",
-    ].join("\n");
-    const capture = vi.fn<CheckpointPort["capture"]>(() =>
-      Promise.resolve({ ref: "r", commit: "c" }),
-    );
-    const diff = vi.fn<CheckpointPort["diff"]>(() => Promise.resolve(turnDiff));
+    const turnDiff =
+      "diff --git a/src/foo.ts b/src/foo.ts\n@@ -1 +1 @@\n-const b = 2;\n+const b = 3;";
+    const cp = makeCheckpoint({ diff: turnDiff, paths: ["src/foo.ts"] });
     const runPort = vi.fn<HandoffRunPort>(() =>
       Promise.resolve({ status: "completed", finalText: "done" }),
     );
 
     const result = await runHandoffTurn({
       repoRoot: "/repo",
-      bundle,
+      bundle: A_BUNDLE(),
       runPort,
-      checkpoint: { capture, diff },
+      checkpoint: cp.port,
     });
 
-    expect(capture).toHaveBeenCalledTimes(2); // before AND after the turn
+    expect(cp.capture).toHaveBeenCalledTimes(2); // before AND after the turn
     expect(runPort).toHaveBeenCalledTimes(1);
-    // The write turn ran AFTER the first checkpoint (the bracket order).
-    expect(capture.mock.invocationCallOrder[0]).toBeLessThan(
+    // The write turn ran AFTER the first checkpoint, BEFORE the second (the bracket order).
+    expect(cp.capture.mock.invocationCallOrder[0]).toBeLessThan(
       runPort.mock.invocationCallOrder[0] ?? 0,
     );
     expect(runPort.mock.invocationCallOrder[0]).toBeLessThan(
-      capture.mock.invocationCallOrder[1] ?? 0,
+      cp.capture.mock.invocationCallOrder[1] ?? 0,
     );
     expect(result.status).toBe("completed");
     if (result.status === "completed") {
       expect(result.turnDiff).toBe(turnDiff);
       expect(result.filesTouched).toEqual(["src/foo.ts"]);
     }
+    // Both checkpoint refs are cleaned up (Codex F5).
+    expect(cp.discard).toHaveBeenCalledTimes(2);
   });
 
   it("proves totality — an edit to a file no disposition mentioned still appears in filesTouched", async () => {
-    const bundle = buildHandoffBundle({
-      reviewId: "r1",
-      patchset,
-      dispositions: [disposition({ path: "src/foo.ts", type: "request-change", body: "x" })],
-    });
-    // The agent also touched src/unrelated.ts, which no disposition addressed.
-    const turnDiff = [
-      "diff --git a/src/foo.ts b/src/foo.ts",
-      "@@ -1 +1 @@",
-      "diff --git a/src/unrelated.ts b/src/unrelated.ts",
-      "@@ -1 +1 @@",
-    ].join("\n");
-    const { port } = checkpointReturning(turnDiff);
+    // `changedPaths` is the structural source (Codex F7); the agent also touched an
+    // unrelated file, which the totality guarantee must surface.
+    const cp = makeCheckpoint({ diff: "…", paths: ["src/foo.ts", "src/unrelated.ts"] });
     const result = await runHandoffTurn({
       repoRoot: "/repo",
-      bundle,
+      bundle: A_BUNDLE(),
       runPort: runPortReturning({ status: "completed", finalText: "done" }),
-      checkpoint: port,
+      checkpoint: cp.port,
     });
     expect(result.status).toBe("completed");
-    if (result.status === "completed") {
-      expect(result.filesTouched).toContain("src/unrelated.ts");
-    }
+    if (result.status === "completed") expect(result.filesTouched).toContain("src/unrelated.ts");
   });
 
-  it("does not diff or claim a turn when the write turn fails", async () => {
-    const bundle = buildHandoffBundle({
-      reviewId: "r1",
-      patchset,
-      dispositions: [disposition({ path: "src/foo.ts", type: "request-change", body: "x" })],
-    });
-    const diff = vi.fn<CheckpointPort["diff"]>(() => Promise.resolve(""));
-    const capture = vi.fn<CheckpointPort["capture"]>(() =>
-      Promise.resolve({ ref: "r", commit: "c" }),
-    );
+  it("a FAILED turn still carries the turn diff + files it changed before erroring (Codex F4)", async () => {
+    // The agent wrote src/half.ts, then the turn errored: the mutation is on disk and
+    // must NOT be hidden. The post-checkpoint is taken on failure too.
+    const partialDiff = "diff --git a/src/half.ts b/src/half.ts\n@@ -0,0 +1 @@\n+half";
+    const cp = makeCheckpoint({ diff: partialDiff, paths: ["src/half.ts"] });
     const result = await runHandoffTurn({
       repoRoot: "/repo",
-      bundle,
+      bundle: A_BUNDLE(),
       runPort: runPortReturning({ status: "failed", reason: "harness overloaded" }),
-      checkpoint: { capture, diff },
+      checkpoint: cp.port,
     });
     expect(result.status).toBe("failed");
-    if (result.status === "failed") expect(result.reason).toBe("harness overloaded");
-    // The failed turn is not diffed into a fake result.
-    expect(diff).not.toHaveBeenCalled();
+    if (result.status === "failed") {
+      expect(result.reason).toBe("harness overloaded");
+      expect(result.turnDiff).toBe(partialDiff);
+      expect(result.filesTouched).toEqual(["src/half.ts"]); // the edits are visible, not hidden
+    }
+    // The post-checkpoint WAS taken (both captures) and both refs cleaned up.
+    expect(cp.capture).toHaveBeenCalledTimes(2);
+    expect(cp.discard).toHaveBeenCalledTimes(2);
+  });
+
+  it("does NOT swallow a checkpoint cleanup failure — it surfaces (Codex F5)", async () => {
+    const cp = makeCheckpoint({ paths: [], discardError: "cannot lock ref" });
+    await expect(
+      runHandoffTurn({
+        repoRoot: "/repo",
+        bundle: A_BUNDLE(),
+        runPort: runPortReturning({ status: "completed", finalText: "done" }),
+        checkpoint: cp.port,
+      }),
+    ).rejects.toThrow(/checkpoint cleanup failed/);
   });
 });
 

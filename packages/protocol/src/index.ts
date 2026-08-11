@@ -1190,7 +1190,13 @@ const handoffRunOutputSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("ran"), result: handoffRunResultSchema }),
   z.object({ status: z.literal("refused"), reason: z.string() }),
   z.object({ status: z.literal("unavailable"), reason: z.string() }),
-  z.object({ status: z.literal("failed"), reason: z.string() }),
+  // A failed turn carries the files the agent changed BEFORE erroring (Codex F4), so a
+  // partial mutation on disk is surfaced to the reviewer rather than hidden.
+  z.object({
+    status: z.literal("failed"),
+    reason: z.string(),
+    filesTouched: z.array(z.string()),
+  }),
 ]);
 export type HandoffRunOutput = z.infer<typeof handoffRunOutputSchema>;
 

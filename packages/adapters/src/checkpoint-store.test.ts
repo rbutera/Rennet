@@ -4,7 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { filesTouchedByDiff } from "@rennet/core";
 import { afterEach, describe, expect, it } from "vitest";
-import { GitCheckpointStore } from "./checkpoint-store";
+import {
+  GitCheckpointStore,
+  recoverHandoffCheckpoints,
+  repoHasSubmodules,
+} from "./checkpoint-store";
 
 const directories: string[] = [];
 
@@ -114,5 +118,72 @@ describe("GitCheckpointStore", () => {
     const ref = await store.capture();
     await store.discard(ref);
     expect(git(root, "for-each-ref", "--format=%(refname)", "refs/rennet/")).not.toContain(ref.ref);
+  });
+});
+
+describe("GitCheckpointStore.changedPaths + F5/F6/F7", () => {
+  it("changedPaths returns a path with a TAB intact where the display diff quotes it (F7)", async () => {
+    const root = repository();
+    const store = new GitCheckpointStore(root);
+    // A tab in the filename is exactly what git C-quotes in the `diff --git` header.
+    const tabbedName = "weird\tname.ts";
+    const before = await store.capture();
+    writeFileSync(join(root, tabbedName), "x\n");
+    const after = await store.capture();
+
+    // The display diff C-quotes the path (`diff --git "a/…" "b/…"`), so parsing the
+    // header drops the file — the exact F7 defect.
+    const diff = await store.diff(before, after);
+    expect(filesTouchedByDiff(diff)).not.toContain(tabbedName);
+    // The structural changedPaths (`--name-only -z`) returns it intact.
+    expect(await store.changedPaths(before, after)).toContain(tabbedName);
+  });
+
+  it("does NOT write a reflog for the checkpoint ref even when core.logAllRefUpdates=always (F5)", async () => {
+    const root = repository();
+    git(root, "config", "core.logAllRefUpdates", "always");
+    const store = new GitCheckpointStore(root);
+    writeFileSync(join(root, "tracked.txt"), "changed\n");
+    const ref = await store.capture();
+    // No reflog exists for the hidden checkpoint ref (`git reflog show` exits non-zero
+    // and prints nothing when the ref has no log — which is exactly what we want).
+    let reflog: string;
+    try {
+      reflog = execFileSync("git", ["reflog", "show", ref.ref], { cwd: root, encoding: "utf8" });
+    } catch {
+      reflog = "";
+    }
+    expect(reflog.trim()).toBe("");
+  });
+
+  it("discard is idempotent — deleting an already-gone ref is not an error (F5)", async () => {
+    const root = repository();
+    const store = new GitCheckpointStore(root);
+    const ref = await store.capture();
+    await store.discard(ref);
+    await expect(store.discard(ref)).resolves.toBeUndefined(); // second discard: no throw
+  });
+
+  it("recoverHandoffCheckpoints sweeps leftover refs a crashed run left behind (F5)", async () => {
+    const root = repository();
+    const store = new GitCheckpointStore(root);
+    const a = await store.capture();
+    const b = await store.capture();
+    expect(
+      git(root, "for-each-ref", "--format=%(refname)", "refs/rennet/").split("\n").filter(Boolean),
+    ).toHaveLength(2);
+
+    const removed = await recoverHandoffCheckpoints(root);
+    expect(removed).toBe(2);
+    expect(git(root, "for-each-ref", "--format=%(refname)", "refs/rennet/")).toBe("");
+    // Idempotent: recovering a clean repo removes nothing.
+    expect(await recoverHandoffCheckpoints(root)).toBe(0);
+    void a;
+    void b;
+  });
+
+  it("repoHasSubmodules is false for a plain repository (F6)", async () => {
+    const root = repository();
+    expect(await repoHasSubmodules(root)).toBe(false);
   });
 });

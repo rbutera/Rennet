@@ -830,7 +830,14 @@ export function createDispatch(
         }
         const turn = await deps.runHandoffTurn({ repoRoot: review.repositoryRoot, bundle });
         if (turn.status === "failed") {
-          return parseCommandOutput(name, { status: "failed", reason: turn.reason });
+          // Surface the files the agent changed before erroring (Codex F4) — the working
+          // tree was modified even though the turn failed; hiding it defeats totality.
+          deps.setRepositoryDirty(turn.filesTouched.length > 0);
+          return parseCommandOutput(name, {
+            status: "failed",
+            reason: turn.reason,
+            filesTouched: [...turn.filesTouched],
+          });
         }
         // Capture the agent's result as a NEW patchset — the delta re-review. The
         // PatchsetActivated fold appends it and runs the byte-identical floor carry

@@ -303,12 +303,17 @@ export interface CheckpointRef {
 /**
  * The injected checkpoint store (the real one writes hidden git refs; T3 Code's
  * pattern, vendored in `@rennet/adapters`). `capture` snapshots the working tree
- * (tracked + untracked) without touching HEAD/index/branch/reflog; `diff` renders
- * the change between two checkpoints (the turn diff).
+ * (tracked + untracked) without touching HEAD/index/branch/reflog; `diff` renders the
+ * change between two checkpoints (the turn diff, for display); `changedPaths` returns
+ * the changed paths STRUCTURALLY (`git diff --name-only -z`, Codex F7) so a path with
+ * a tab/space/quote is not lost by parsing the display diff; `discard` deletes a
+ * checkpoint ref once the turn no longer needs it (Codex F5, cleaned in a finally).
  */
 export interface CheckpointPort {
   capture(): Promise<CheckpointRef>;
   diff(from: CheckpointRef, to: CheckpointRef): Promise<string>;
+  changedPaths(from: CheckpointRef, to: CheckpointRef): Promise<readonly string[]>;
+  discard(ref: CheckpointRef): Promise<void>;
 }
 
 /** The `diff --git a/… b/…` file headers → the changed paths (post-image side). */
@@ -321,7 +326,13 @@ export function filesTouchedByDiff(unifiedDiff: string): string[] {
   return [...paths].sort();
 }
 
-/** The result of the bracketed write turn (before the new patchset is captured). */
+/**
+ * The result of the bracketed write turn (before the new patchset is captured).
+ * ⭐ A FAILED turn STILL carries `turnDiff` + `filesTouched` (Codex F4): the agent
+ * may have edited files before it errored, and those mutations are on disk regardless
+ * — hiding them would defeat the totality guarantee at exactly the moment it matters.
+ * The post-checkpoint is taken whether the turn passed or failed.
+ */
 export type HandoffTurnOutcome =
   | {
       readonly status: "completed";
@@ -330,7 +341,12 @@ export type HandoffTurnOutcome =
       readonly filesTouched: readonly string[];
       readonly usage?: RspTokenUsage;
     }
-  | { readonly status: "failed"; readonly reason: string };
+  | {
+      readonly status: "failed";
+      readonly reason: string;
+      readonly turnDiff: string;
+      readonly filesTouched: readonly string[];
+    };
 
 export interface RunHandoffTurnInput {
   readonly repoRoot: string;
@@ -346,26 +362,70 @@ export interface RunHandoffTurnInput {
  * turn → post-checkpoint → diff. The turn diff isolates exactly what THIS turn
  * changed (distinct from any pre-existing uncommitted work), and `filesTouched`
  * carries every path it changed — including edits unrelated to any disposition, so
- * the totality guarantee is measurable at the source. A failed turn returns the
- * honest failure; it never captures a patchset from a turn that did not complete.
+ * the totality guarantee is measurable at the source.
+ *
+ * ⭐ The post-checkpoint is ALWAYS taken once the turn ran, pass OR fail (Codex F4):
+ * an agent that wrote a file and then errored leaves that mutation on disk, and the
+ * failure carries the diff so it is never hidden. `filesTouched` comes from the
+ * checkpoint's STRUCTURAL path list (Codex F7), not from parsing the display diff, so
+ * a quoted/spaced path is not silently dropped. Both checkpoint refs are discarded
+ * after use (Codex F5); a discard failure is surfaced, never swallowed — but the
+ * PRIMARY error (a failed capture/diff) wins so cleanup never masks the real cause.
  */
 export async function runHandoffTurn(input: RunHandoffTurnInput): Promise<HandoffTurnOutcome> {
+  const created: CheckpointRef[] = [];
   const before = await input.checkpoint.capture();
-  const outcome = await input.runPort({
-    cwd: input.repoRoot,
-    prompt: input.bundle.prompt,
-    ...(input.signal === undefined ? {} : { signal: input.signal }),
-  });
-  if (outcome.status === "failed") return { status: "failed", reason: outcome.reason };
-  const after = await input.checkpoint.capture();
-  const turnDiff = await input.checkpoint.diff(before, after);
-  return {
-    status: "completed",
-    finalText: outcome.finalText,
-    turnDiff,
-    filesTouched: filesTouchedByDiff(turnDiff),
-    ...(outcome.usage === undefined ? {} : { usage: outcome.usage }),
+  created.push(before);
+
+  const bracket = async (): Promise<HandoffTurnOutcome> => {
+    const outcome = await input.runPort({
+      cwd: input.repoRoot,
+      prompt: input.bundle.prompt,
+      ...(input.signal === undefined ? {} : { signal: input.signal }),
+    });
+    // ALWAYS take the post-checkpoint — the turn ran, so whatever it changed (even
+    // before erroring) must be captured, not hidden.
+    const after = await input.checkpoint.capture();
+    created.push(after);
+    const turnDiff = await input.checkpoint.diff(before, after);
+    const filesTouched = await input.checkpoint.changedPaths(before, after);
+    if (outcome.status === "failed") {
+      return { status: "failed", reason: outcome.reason, turnDiff, filesTouched };
+    }
+    return {
+      status: "completed",
+      finalText: outcome.finalText,
+      turnDiff,
+      filesTouched,
+      ...(outcome.usage === undefined ? {} : { usage: outcome.usage }),
+    };
   };
+
+  let result: HandoffTurnOutcome | undefined;
+  let primaryError: unknown;
+  try {
+    result = await bracket();
+  } catch (error) {
+    primaryError = error;
+  }
+
+  // Clean up the hidden checkpoint refs (not in a `finally`, so a cleanup failure
+  // cannot mask the primary result). Discard failures are collected and surfaced;
+  // startup recovery is the backstop for a ref leaked by a crash.
+  const cleanupErrors: string[] = [];
+  for (const ref of created) {
+    try {
+      await input.checkpoint.discard(ref);
+    } catch (error) {
+      cleanupErrors.push(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  if (primaryError !== undefined) throw primaryError;
+  if (cleanupErrors.length > 0) {
+    throw new Error(`handoff checkpoint cleanup failed: ${cleanupErrors.join("; ")}`);
+  }
+  return result as HandoffTurnOutcome;
 }
 
 // ── The #16 lineage-carry seam (explicitly UNIMPLEMENTED) ─────────────────────

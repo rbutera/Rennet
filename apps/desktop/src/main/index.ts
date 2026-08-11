@@ -46,6 +46,8 @@ import {
   parseGitHubPrRef,
   RepoWatcher,
   readOpenSpecChange,
+  recoverHandoffCheckpoints,
+  repoHasSubmodules,
   resolveGitHubAuth,
   SqliteReviewStore,
   snapshotStoreFor,
@@ -115,6 +117,9 @@ import { createSettingsComposition } from "./settings";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 
 const execFileAsync = promisify(execFile);
+
+/** Repos whose leftover handoff checkpoints were swept this process (Codex F5, once each). */
+const recoveredHandoffRepos = new Set<string>();
 
 const IPC_CHANNEL = "rennet:invoke";
 // The push channel a long-running command streams live progress on (today
@@ -1183,16 +1188,34 @@ app.whenReady().then(async () => {
     handoffPrep,
     confirmHandoff,
     // The write-enabled handoff turn (issue #18): brackets a live `claude` write turn
-    // (exec DENIED, so `git push` is unreachable — R33) with git checkpoints and
-    // returns the turn diff. Reuses the SAME memoized `claude` discovery the review
-    // pipeline uses (R2 subscription OAuth). When no `claude` is installed, it returns
-    // an honest failed turn (the run command surfaces it, never a fabricated success).
+    // (fully capable, Bash included — Rai's call) with git checkpoints and returns the
+    // turn diff. Reuses the SAME memoized `claude` discovery the review pipeline uses
+    // (R2 subscription OAuth). Refuses a repo with submodules (Codex F6) and answers an
+    // honest failed turn when no `claude` is installed — never a fabricated success.
     runHandoffTurn: async ({ repoRoot, bundle }) => {
+      // Startup recovery (Codex F5): once per repo per process, before this run creates
+      // any of its own checkpoints, sweep leftover refs a crashed prior run could not
+      // clean. Once-per-repo so it never deletes a concurrent run's live refs.
+      if (!recoveredHandoffRepos.has(repoRoot)) {
+        recoveredHandoffRepos.add(repoRoot);
+        await recoverHandoffCheckpoints(repoRoot).catch(() => 0);
+      }
+      if (await repoHasSubmodules(repoRoot)) {
+        return {
+          status: "failed",
+          reason:
+            "Handoff does not support repositories with submodules yet: a coding agent's edits inside a submodule leave the gitlink unchanged, so the review would not see them. Refusing rather than losing them.",
+          turnDiff: "",
+          filesTouched: [],
+        };
+      }
       const { adapter } = await getClaudeHarness();
       if (!adapter) {
         return {
           status: "failed",
           reason: "no coding harness (claude) is installed to run the handoff",
+          turnDiff: "",
+          filesTouched: [],
         };
       }
       return runHandoffTurnCore({
