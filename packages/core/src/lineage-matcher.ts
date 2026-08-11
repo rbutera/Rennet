@@ -424,3 +424,175 @@ export const AUTO_CARRY_LINEAGES: ReadonlySet<Lineage> = new Set<Lineage>(["exac
 export function autoCarries(lineage: Lineage): boolean {
   return AUTO_CARRY_LINEAGES.has(lineage);
 }
+
+// ── Measurement (the spike verdict) ───────────────────────────────────────────
+//
+// Precision and recall are measured PER mutation class against ground truth (the
+// transformation actually applied to a fixture), never against a prediction of
+// the matcher's own output. A classification counts as a true positive only when
+// BOTH the lineage class AND the successor target match the truth — so a `move`
+// pointing at the wrong file is a false positive, not a lucky hit. The safety
+// number the auto-carry policy rests on is `autoCarry.precision`: it MUST be 1.
+
+/** The true forward lineage of one prior occurrence in a fixture. */
+export interface FixtureGroundTruth {
+  readonly fromId: string;
+  readonly lineage: Lineage;
+  readonly toId?: string;
+  readonly toIds?: readonly string[];
+}
+
+/** One measured patchset pair: prior/successor occurrence sets + ground truth. */
+export interface LineageFixture {
+  readonly name: string;
+  /** Human label for the dominant mutation (for the verdict table's rows). */
+  readonly mutationClass: string;
+  readonly prior: readonly MatchOccurrence[];
+  readonly successor: readonly MatchOccurrence[];
+  readonly truth: readonly FixtureGroundTruth[];
+  /** Successor ids that are genuinely new (no antecedent), if any. */
+  readonly addedTruth?: readonly string[];
+}
+
+/** Per-class precision/recall tallies. */
+export interface ClassMetrics {
+  readonly truePositive: number;
+  readonly falsePositive: number;
+  readonly falseNegative: number;
+  readonly support: number;
+  readonly precision: number | null;
+  readonly recall: number | null;
+}
+
+export interface MeasurementReport {
+  readonly perClass: ReadonlyMap<Lineage, ClassMetrics>;
+  /** The safety aggregate over the auto-carry classes (exact + move). */
+  readonly autoCarry: ClassMetrics;
+  /** Auto-carries landed on the WRONG code — the product's worst failure. MUST be 0. */
+  readonly wrongCarries: number;
+  readonly totalPriors: number;
+}
+
+const ALL_LINEAGES: readonly Lineage[] = [
+  "exact",
+  "move",
+  "one-to-one",
+  "split",
+  "merge",
+  "ambiguous",
+  "terminated",
+];
+
+/** Whether a prediction's target matches the truth for a class that has one. */
+function targetMatches(pred: LineageClassification, truth: FixtureGroundTruth): boolean {
+  if (truth.lineage === "split") {
+    const a = new Set(pred.toIds ?? []);
+    const b = new Set(truth.toIds ?? []);
+    return a.size === b.size && [...b].every((id) => a.has(id));
+  }
+  if (truth.lineage === "terminated" || truth.lineage === "ambiguous") return true;
+  return pred.toId === truth.toId;
+}
+
+function ratio(numerator: number, denominator: number): number | null {
+  return denominator === 0 ? null : numerator / denominator;
+}
+
+/** Run the matcher over every fixture and tally precision/recall per class. */
+export function measure(fixtures: readonly LineageFixture[]): MeasurementReport {
+  const tp = new Map<Lineage, number>();
+  const fp = new Map<Lineage, number>();
+  const fn = new Map<Lineage, number>();
+  const support = new Map<Lineage, number>();
+  for (const l of ALL_LINEAGES) {
+    tp.set(l, 0);
+    fp.set(l, 0);
+    fn.set(l, 0);
+    support.set(l, 0);
+  }
+  let autoTp = 0;
+  let autoFp = 0;
+  let autoSupport = 0;
+  let wrongCarries = 0;
+  let totalPriors = 0;
+
+  for (const fixture of fixtures) {
+    const result = classifyLineage(fixture.prior, fixture.successor);
+    const predByFrom = new Map(result.classifications.map((c) => [c.fromId, c]));
+    for (const truth of fixture.truth) {
+      totalPriors += 1;
+      support.set(truth.lineage, support.get(truth.lineage)! + 1);
+      if (autoCarries(truth.lineage)) autoSupport += 1;
+      const pred = predByFrom.get(truth.fromId);
+      if (!pred) {
+        // No classification emitted at all → a false negative for the true class.
+        fn.set(truth.lineage, fn.get(truth.lineage)! + 1);
+        continue;
+      }
+      const correct = pred.lineage === truth.lineage && targetMatches(pred, truth);
+      if (correct) {
+        tp.set(pred.lineage, tp.get(pred.lineage)! + 1);
+        if (autoCarries(pred.lineage)) autoTp += 1;
+      } else {
+        fp.set(pred.lineage, fp.get(pred.lineage)! + 1);
+        fn.set(truth.lineage, fn.get(truth.lineage)! + 1);
+      }
+      // Safety: an auto-carry prediction that is not a correct auto-carry landed
+      // read state on the wrong code (wrong class OR wrong target).
+      if (autoCarries(pred.lineage)) {
+        if (autoCarries(truth.lineage)) {
+          if (!correct) {
+            autoFp += 1;
+            wrongCarries += 1;
+          }
+        } else {
+          autoFp += 1;
+          wrongCarries += 1;
+        }
+      }
+    }
+  }
+
+  const perClass = new Map<Lineage, ClassMetrics>();
+  for (const l of ALL_LINEAGES) {
+    const t = tp.get(l)!;
+    const f = fp.get(l)!;
+    const n = fn.get(l)!;
+    perClass.set(l, {
+      truePositive: t,
+      falsePositive: f,
+      falseNegative: n,
+      support: support.get(l)!,
+      precision: ratio(t, t + f),
+      recall: ratio(t, t + n),
+    });
+  }
+
+  const autoCarry: ClassMetrics = {
+    truePositive: autoTp,
+    falsePositive: autoFp,
+    falseNegative: autoSupport - autoTp,
+    support: autoSupport,
+    precision: ratio(autoTp, autoTp + autoFp),
+    recall: ratio(autoTp, autoSupport),
+  };
+
+  return { perClass, autoCarry, wrongCarries, totalPriors };
+}
+
+/** Render the measurement as the markdown tables the verdict doc commits. */
+export function renderMeasurementTables(report: MeasurementReport): string {
+  const pct = (v: number | null): string => (v === null ? "—" : `${(v * 100).toFixed(1)}%`);
+  const rows = ALL_LINEAGES.map((l) => {
+    const m = report.perClass.get(l)!;
+    return `| \`${l}\` | ${m.support} | ${m.truePositive} | ${m.falsePositive} | ${m.falseNegative} | ${pct(m.precision)} | ${pct(m.recall)} |`;
+  });
+  const a = report.autoCarry;
+  return [
+    "| Class | Support | TP | FP | FN | Precision | Recall |",
+    "|---|---|---|---|---|---|---|",
+    ...rows,
+    "",
+    `**Auto-carry aggregate (exact + move):** precision ${pct(a.precision)}, recall ${pct(a.recall)} over ${a.support} carryable priors. **Wrong carries: ${report.wrongCarries}** (must be 0).`,
+  ].join("\n");
+}
