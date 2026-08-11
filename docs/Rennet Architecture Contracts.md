@@ -317,7 +317,7 @@ Before first use of each harness, and whenever its authority materially changes,
 
 The truthful product claim is: **Rennet has no Rennet backend. Data is processed locally except for material explicitly sent through the user's selected harness/provider.** “Nothing leaves your machine” and unqualified “no cloud” are prohibited claims.
 
-Automatic deterministic refresh may run without spend consent. Any model-backed initial generation or regeneration requires an explicit user act under an accepted harness disclosure and budget. A shared repository setting may never raise spend.
+Running a model to review code is Rennet's core function, so model spend is not gated: an initial generation or regeneration runs without any permission prompt or consent step, under the disclosure and budget above (deterministic refresh needs no model at all). A shared repository setting may never raise spend. Sending a review OUT to a forge is different — publishing to GitHub still requires a distinct explicit act (invariant 5), never a silent post.
 
 ### 7.3 Deleting a review
 
