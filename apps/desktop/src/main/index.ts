@@ -640,18 +640,20 @@ const FINDING_PROVENANCE_SEED = {
  * budget-gated. The result becomes the lens's `FlaggedReview` behind the SAME
  * `flagged.review` boundary — the UI is unchanged.
  *
- *   • QUICK review (`deepReview` false/omitted) → ONE Claude seat, exactly today's
- *     behaviour: each finding keeps its honest `concur 1/1`, no `dual` note.
- *   • DEEP review (`deepReview` true) with two providers installed → the SAME finding
- *     lens runs INDEPENDENTLY on a Claude seat and a Codex seat, and the two grounded
- *     sets are reconciled into agreement/disagreement (#41) — never averaged. If the
- *     Codex seat is unavailable or errors it degrades to the single seat with an
- *     honest "second seat unavailable" marker (never a fabricated concurrence).
+ *   • DEEP/DUAL review (`deepReview` true) is the DEFAULT (Rai's mandate, 2026-08-11)
+ *     with two providers installed → the SAME finding lens runs INDEPENDENTLY on a
+ *     Claude seat and a Codex seat, and the two grounded sets are reconciled into
+ *     agreement/disagreement (#41) — never averaged. If the Codex seat is unavailable
+ *     or errors it degrades to the single seat with an honest "second seat
+ *     unavailable" marker (never a fabricated concurrence). Per-finding verification
+ *     (#179) also runs by default under this same flag.
+ *   • QUICK review (`deepReview` explicit false) is the manual OPT-DOWN → ONE Claude
+ *     seat: each finding keeps its honest `concur 1/1`, no `dual` note, no verification.
  *
  * With no discoverable provider, or on a total runner failure/budget refusal, the
  * lens gets the LOUD `failed` state — "ran clean" is never faked from "did not run".
  */
-async function runFlaggedReview(review: Review, deepReview = false): Promise<FlaggedReview> {
+async function runFlaggedReview(review: Review, deepReview = true): Promise<FlaggedReview> {
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
   const codex = await getCodexAvailability();
@@ -1012,8 +1014,9 @@ app.whenReady().then(async () => {
       ),
     // The Flagged lens (issue #138): the automated review layer's findings. This is
     // the LIVE finding-generation runner (#32) — a real model turn over the review's
-    // diff, replacing the fixture. Dual-review aggregation (#41) is still a follow-up
-    // (single-model MVP: agreement is concur 1/1). The boundary is unchanged.
+    // diff. Dual-review aggregation (#41) + per-finding verification (#179) run by
+    // DEFAULT now (Rai's mandate, 2026-08-11); an explicit opt-down gives single-Claude
+    // quick. The boundary is unchanged.
     flaggedReview: runFlaggedReview,
     // The Noise lens (issue #34): the low-signal churn grouped away, each group tagged
     // rule vs noise job. This is the LIVE noise-classification runner — a real model

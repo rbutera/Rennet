@@ -116,47 +116,50 @@ describe("FlaggedLens — the flagged index surface", () => {
     expect(getByText(/harness timed out/)).toBeTruthy();
   });
 
-  // ── Deep review (issue #191): the UI control that invokes the two-model pass ──
-  it("shows NO deep-review control when the affordance is not wired", () => {
+  // ── Dual-model (issue #191): the UI toggle. Dual is the DEFAULT; the control is
+  // the OPT-DOWN to a single-Claude quick review (and back), never an opt-in. ──
+  it("shows NO dual-model control when the affordance is not wired", () => {
     const { container } = mount(
       <FlaggedLens index={buildFlaggedIndex(REVIEW)} onJumpToAnchor={vi.fn()} />,
     );
     expect(container.querySelector(".flag-deep-review")).toBeNull();
   });
 
-  it("invokes deep review when the control is clicked", async () => {
-    const onRequest = vi.fn();
+  it("with dual ON (the default), offers a live opt-down to quick", async () => {
+    const onToggle = vi.fn();
     const { container, user, getByText } = mount(
       <FlaggedLens
         index={buildFlaggedIndex(REVIEW)}
         onJumpToAnchor={vi.fn()}
-        deepReview={{ active: false, onRequest }}
+        deepReview={{ active: true, onToggle }}
       />,
     );
     const button = container.querySelector<HTMLButtonElement>(".flag-deep-review");
-    if (!button) throw new Error("expected the deep-review control");
+    if (!button) throw new Error("expected the dual-model control");
+    // Dual is on by default: the button is pressed, never disabled (it is a live toggle).
+    expect(button.getAttribute("aria-pressed")).toBe("true");
     expect(button.disabled).toBe(false);
-    expect(getByText("Deep review")).toBeTruthy();
+    expect(getByText("Dual review · switch to quick")).toBeTruthy();
     await user.click(button);
-    expect(onRequest).toHaveBeenCalledTimes(1);
+    expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
-  it("reflects the requested state and cannot be re-fired while active", async () => {
-    const onRequest = vi.fn();
+  it("with quick opted-down, offers a toggle back UP to dual", async () => {
+    const onToggle = vi.fn();
     const { container, user, getByText } = mount(
       <FlaggedLens
         index={buildFlaggedIndex(REVIEW)}
         onJumpToAnchor={vi.fn()}
-        deepReview={{ active: true, onRequest }}
+        deepReview={{ active: false, onToggle }}
       />,
     );
     const button = container.querySelector<HTMLButtonElement>(".flag-deep-review");
-    if (!button) throw new Error("expected the deep-review control");
-    expect(button.getAttribute("aria-pressed")).toBe("true");
-    expect(button.disabled).toBe(true);
-    expect(getByText("Deep review requested")).toBeTruthy();
+    if (!button) throw new Error("expected the dual-model control");
+    expect(button.getAttribute("aria-pressed")).toBe("false");
+    expect(button.disabled).toBe(false);
+    expect(getByText("Quick review · switch to dual")).toBeTruthy();
     await user.click(button);
-    expect(onRequest).not.toHaveBeenCalled();
+    expect(onToggle).toHaveBeenCalledTimes(1);
   });
 
   it("badges a full two-seat reconcile with who ran", () => {

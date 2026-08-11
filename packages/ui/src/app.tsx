@@ -301,10 +301,12 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // loads, or when the review touches no change — the Spec angle then shows its honest
   // empty state, never a fixture.
   const [openSpecChange, setOpenSpecChange] = useState<OpenSpecChange | undefined>(undefined);
-  // Deep review (issue #191): the human opts THIS review into the two-model
-  // reconcile. Off by default (quick review, single Claude seat); flipping it
-  // re-runs the flagged fetch with `deepReview: true`. Reset per review below.
-  const [deepReviewRequested, setDeepReviewRequested] = useState(false);
+  // Dual-model review (issue #191): ON by DEFAULT (Rai's mandate, 2026-08-11 — the
+  // tool's whole job is to spend tokens and run models, so dual-model + per-finding
+  // verification are the default, never an opt-in). Flipping it OFF opts THIS review
+  // DOWN to the single-Claude quick review; each flip re-runs the flagged fetch with
+  // the chosen mode (`deepReview: <this>`). Reset to the dual default per review below.
+  const [deepReviewOn, setDeepReviewOn] = useState(true);
   // The Noise lens's input (issue #34): the low-signal churn grouped away for the
   // open review, each group tagged rule vs noise job. Fetched over the same real
   // command boundary as the flagged input (a fixture stands behind it until the
@@ -424,9 +426,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setFlaggedReview(undefined);
     setNoiseReview(undefined);
     setOpenSpecChange(undefined);
-    // A new review starts as a quick review — never inherit the prior review's
-    // deep-review request (which would silently double-spend on open).
-    setDeepReviewRequested(false);
+    // A new review starts DUAL (the default) — reset any prior opt-down to quick so
+    // a fresh review always gets both provider seats unless the human opts down again.
+    setDeepReviewOn(true);
     fetchedCanvasKey.current = null;
   }, [reviewId]);
 
@@ -437,13 +439,14 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   useEffect(() => {
     if (!reviewId) return;
     let cancelled = false;
-    // `deepReview` opts into the two-model reconcile (issue #191); omitted (false)
-    // it stays a quick single-Claude review. The command boundary defaults it to
-    // false, so a quick run passes nothing extra.
+    // `deepReview` selects the two-model reconcile (issue #191), which is now the
+    // DEFAULT. We send the flag EXPLICITLY (never omit) because the command boundary
+    // now defaults an omitted flag to DUAL — so an opt-down to quick has to travel as
+    // an explicit `false`, or the omission would silently run dual anyway.
     void bridge
       .invoke("flagged.review", {
         reviewId,
-        ...(deepReviewRequested ? { deepReview: true } : {}),
+        deepReview: deepReviewOn,
       })
       .then((result) => {
         // Trust boundary (#148): a runner whose result we cannot READ is NOT an
@@ -475,7 +478,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     return () => {
       cancelled = true;
     };
-  }, [reviewId, bridge, deepReviewRequested]);
+  }, [reviewId, bridge, deepReviewOn]);
 
   // The Spec angle (wireframes #9): parse-on-open of the change the reviewed patchset
   // selected, over the real command boundary. Deterministic — NO model spend. A missing
@@ -1090,8 +1093,8 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
               narration={narration}
               flaggedReview={flaggedReview}
               deepReview={{
-                active: deepReviewRequested,
-                onRequest: () => setDeepReviewRequested(true),
+                active: deepReviewOn,
+                onToggle: () => setDeepReviewOn((on) => !on),
               }}
               noiseReview={noiseReview}
               // The Spec angle's structured OpenSpec viewer (Rai, wireframes #9), LIVE:

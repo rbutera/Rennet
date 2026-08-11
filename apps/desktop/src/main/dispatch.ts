@@ -151,8 +151,9 @@ export interface DispatchDeps {
    * decomposes the review's active patchset and runs a real model turn over the diff,
    * so this DOES spend a budgeted model invocation. Dispatch resolves the addressed
    * review (freshness-checked, like `review.canvases`) and passes it in. `deepReview`
-   * (issue #41) opts into the dual-model path (two provider seats reconciled into
-   * agreement/disagreement); omitted/false is the single-seat quick review.
+   * (issue #41) selects the dual-model path (two provider seats reconciled into
+   * agreement/disagreement) — the DEFAULT (Rai's mandate, 2026-08-11). Explicit
+   * `false` is the opt-DOWN to the single-Claude quick review.
    */
   flaggedReview(review: Review, deepReview: boolean): Promise<FlaggedReview>;
   /**
@@ -518,10 +519,9 @@ export function createDispatch(
         // unknown id is refused) and hand the runner the review, never a bare id.
         const input = parseCommandInput(name, rawInput);
         const review = requireLatestReview(input.reviewId);
-        return parseCommandOutput(
-          name,
-          await deps.flaggedReview(review, input.deepReview ?? false),
-        );
+        // Dual-model is the DEFAULT (Rai's mandate, 2026-08-11): an omitted flag runs
+        // BOTH provider seats. Only an explicit `false` opts down to single-Claude.
+        return parseCommandOutput(name, await deps.flaggedReview(review, input.deepReview ?? true));
       }
       // ── Ask the AI a question about the review (issue #139) ────────────────────
       case "review.ask": {

@@ -180,12 +180,20 @@ describe("runDualFindingReview — dual-model Flagged orchestration (#41)", () =
     expect(review.status).toBe("failed");
   });
 
-  it("DEEP review with only one provider installed notes the single provider honestly", async () => {
+  it("DEFAULT (dual) review with only one provider installed DEGRADES honestly — marker set, NO fabricated concur", async () => {
+    // Dual is now the default (Rai's mandate, 2026-08-11): a review with only one
+    // provider on the machine (e.g. Codex not installed) must degrade to the single
+    // seat with the honest "no second opinion" marker — never masquerade as a full
+    // two-seat concurrence. deepReview:true here IS the default path.
     const seats = [seat("claude-code", "Claude", emits([finding("x", "low")]))];
     const { review } = await runDualFindingReview(baseInput(seats, true));
     if (review.status !== "ok") throw new Error("expected ok");
+    // Only the one seat is named — the second seat is NOT invented.
     expect(review.dual?.seats).toEqual(["Claude"]);
     expect(review.dual?.secondSeatUnavailable).toContain("one provider");
+    // The finding carries the honest single-seat vote (concur 1/1), NOT a faked 2/2 —
+    // the degraded run never dresses one opinion up as agreement between two.
+    expect(review.findings[0]?.agreement).toEqual({ kind: "concur", agree: 1, total: 1 });
   });
 
   it("fails loudly with NO seats available", async () => {

@@ -1138,11 +1138,12 @@ export const commandDefinitions = {
   // behind the real boundary until the finding-generation runner + aggregation
   // land (deferred; they sequence with #32/#41). No model spend here.
   "flagged.review": {
-    // `deepReview` (issue #41) opts the review into the dual-model path: two
-    // provider seats run the finding lens independently and their findings are
-    // reconciled into agreement/disagreement. Omitted/false is the quick,
-    // single-seat review (today's behaviour, byte-identical). Hypothesis-first is
-    // ALWAYS on; dual-model is the deep-review feature.
+    // `deepReview` (issue #41) selects the dual-model path: two provider seats run
+    // the finding lens independently and their findings are reconciled into
+    // agreement/disagreement. This is the DEFAULT (Rai's mandate, 2026-08-11) — an
+    // OMITTED flag runs dual (dispatch defaults it to true), and only an explicit
+    // `false` opts down to the single-Claude quick review. Hypothesis-first is ALWAYS
+    // on; dual-model + per-finding verification (#179) are the default deep behaviour.
     input: z.object({ reviewId: z.string().min(1), deepReview: z.boolean().optional() }),
     output: flaggedReviewSchema,
   },
