@@ -2063,6 +2063,31 @@
   cursor: default;
 }
 
+/* The LIVE conversation host (issue #36): the discuss-verb row above the right-margin
+ * column, plus the honest live states a turn passes through. No fixture fallback: a
+ * pending turn reads as pending, a failed turn reads as failed. */
+.conversation-host {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.conversation-host-discuss {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.conversation-pending {
+  margin: 0;
+  color: var(--private);
+  font: 600 12px / 1.4 var(--sans);
+  opacity: 0.85;
+}
+.conversation-error {
+  margin: 0;
+  color: var(--danger, #c0392b);
+  font: 500 12px / 1.4 var(--sans);
+}
+
 /* ───────────────────────────────────────────────────────────────────────────
    The Spec angle: a structured OpenSpec change viewer (Rai, wireframes #9).
    Tokens only (the glass-theme discipline). Structured, not a markdown dump:

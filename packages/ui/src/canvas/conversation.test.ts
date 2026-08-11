@@ -4,6 +4,7 @@ import {
   addMessage,
   answerInThread,
   askInThread,
+  buildConversationQuestion,
   type ConversationAnchor,
   demoConversationThread,
   groupThreadsByAnchor,
@@ -67,6 +68,45 @@ describe("growing a thread (ask → answer)", () => {
     expect(base.messages).toHaveLength(0);
     expect(grown.messages).toHaveLength(1);
     expect(grown).not.toBe(base);
+  });
+});
+
+describe("composing the live question (the multi-turn carrier over review.ask)", () => {
+  it("a first ask scopes to the anchor and carries no transcript", () => {
+    const question = buildConversationQuestion(LINE_ANCHOR, [], "why fail open?");
+    expect(question).toBe(
+      "The reviewer is discussing line src/rate/bucket.ts:14 in this code review.\n\n" +
+        "The reviewer asks: why fail open?",
+    );
+    // No transcript header when the thread is fresh.
+    expect(question).not.toContain("Conversation so far:");
+  });
+
+  it("a follow-up folds the prior you/harness turns in so the stateless turn has context", () => {
+    let thread = askInThread(openThread("t1", LINE_ANCHOR), "m1", "why fail open?");
+    thread = answerInThread(thread, "m2", "Orchestrator · Claude", "outage must not spread");
+    const question = buildConversationQuestion(
+      thread.anchor,
+      thread.messages,
+      "but what caps the blast radius?",
+    );
+    // The anchor scope, the whole conversation so far (labelled by speaker), and the
+    // new question all travel in the ONE string the stateless orchestrator turn reads.
+    expect(question).toContain("discussing line src/rate/bucket.ts:14");
+    expect(question).toContain("Conversation so far:");
+    expect(question).toContain("You: why fail open?");
+    expect(question).toContain("Orchestrator · Claude: outage must not spread");
+    expect(question).toContain("The reviewer now asks: but what caps the blast radius?");
+    // The new question is the LAST thing — it comes after the transcript.
+    expect(question.lastIndexOf("but what caps the blast radius?")).toBeGreaterThan(
+      question.indexOf("Conversation so far:"),
+    );
+  });
+
+  it("labels a harness message with no model as a generic assistant", () => {
+    const priorNoModel = [{ id: "m1", author: "harness" as const, body: "an answer" }];
+    const question = buildConversationQuestion(LINE_ANCHOR, priorNoModel, "and then?");
+    expect(question).toContain("Assistant: an answer");
   });
 });
 

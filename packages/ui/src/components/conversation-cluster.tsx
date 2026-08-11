@@ -167,10 +167,22 @@ export interface ConversationClusterProps {
   /** Open a sub-thread on a message fragment. */
   onSubThread?(messageId: string): void;
   /**
-   * Ask about these lines. The host owns the send (deferred: the live token stream
-   * appends the reply). Fired with the trimmed question; the composer clears itself.
+   * Ask about these lines. The host owns the send — it invokes the LIVE `review.ask`
+   * boundary and appends the real answer. Fired with the trimmed question; the
+   * composer clears itself.
    */
   onAsk?(body: string): void;
+  /**
+   * A live turn is in flight for this thread: render an honest "thinking" row and
+   * disable the composer, so a pending ask is never mistaken for a finished answer.
+   */
+  pending?: boolean;
+  /**
+   * The last live turn on this thread FAILED (no harness, a turn error, a transport
+   * reject). Surfaced honestly in the panel — never swallowed, never replaced by a
+   * fixture answer.
+   */
+  error?: string;
 }
 
 /**
@@ -185,9 +197,13 @@ export function ConversationCluster({
   onPromote,
   onSubThread,
   onAsk,
+  pending = false,
+  error,
 }: ConversationClusterProps) {
   const [draft, setDraft] = useState("");
-  const canSend = draft.trim().length > 0;
+  // A pending turn holds the composer: one live ask at a time per thread, so the
+  // reviewer cannot queue a second question over an in-flight orchestrator turn.
+  const canSend = draft.trim().length > 0 && !pending;
   const pill = anchorPill ?? thread.anchor.label;
 
   function send(): void {
@@ -223,6 +239,19 @@ export function ConversationCluster({
             onSubThread={onSubThread}
           />
         ))}
+        {/* Honest live states — never a fixture fallback. A turn in flight shows a
+            "thinking" row; a failed turn shows the reason. Both sit AFTER the real
+            messages so a pending/failed ask is never read as an answer. */}
+        {pending ? (
+          <p className="conversation-pending" role="status" aria-live="polite">
+            Asking the orchestrator…
+          </p>
+        ) : null}
+        {error ? (
+          <p className="conversation-error" role="alert">
+            {error}
+          </p>
+        ) : null}
       </div>
 
       {onAsk ? (
@@ -255,6 +284,10 @@ export interface ConversationMarginProps {
   onPromote?(threadId: string, messageId: string, kind: PromotionKind): void;
   onSubThread?(threadId: string, messageId: string): void;
   onAsk?(threadId: string, body: string): void;
+  /** Thread ids with a live turn in flight — each renders its honest "thinking" row. */
+  pendingThreadIds?: ReadonlySet<string>;
+  /** The last failure per thread id, surfaced honestly in that thread's panel. */
+  errorByThread?: Readonly<Record<string, string>>;
 }
 
 /**
@@ -269,6 +302,8 @@ export function ConversationMargin({
   onPromote,
   onSubThread,
   onAsk,
+  pendingThreadIds,
+  errorByThread,
 }: ConversationMarginProps) {
   return (
     <section className="conversation-margin" aria-label="Conversation threads">
@@ -281,6 +316,8 @@ export function ConversationMargin({
           }
           onSubThread={onSubThread ? (messageId) => onSubThread(thread.id, messageId) : undefined}
           onAsk={onAsk ? (body) => onAsk(thread.id, body) : undefined}
+          pending={pendingThreadIds?.has(thread.id) ?? false}
+          error={errorByThread?.[thread.id]}
         />
       ))}
     </section>

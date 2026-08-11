@@ -60,8 +60,10 @@ export {
 } from "./canvas/collation";
 // The inline conversation cluster (issue #36 — the review heart's private research
 // chat): the thread/message model, the privacy boundary (promotion is the only path
-// out), and the right-margin placement core (the diff never reflows). Fixture-driven
-// here; live streaming is the deferred follow-up.
+// out), and the right-margin placement core (the diff never reflows). The harness
+// answers are now LIVE (see `ConversationHost` below) over the real `review.ask`
+// boundary; `buildConversationQuestion` is the pure carrier that folds the anchor +
+// the conversation so far into the stateless turn.
 export type {
   ConversationAnchor,
   ConversationAnchorKind,
@@ -76,6 +78,7 @@ export {
   addMessage,
   answerInThread,
   askInThread,
+  buildConversationQuestion,
   demoConversationThread,
   groupThreadsByAnchor,
   isPrivate,
@@ -207,6 +210,14 @@ export {
   DiscussControl,
   ThreadChip,
 } from "./components/conversation-cluster";
+// The LIVE conversation host (issue #36): wires the cluster to the real `review.ask`
+// boundary — opening/continuing a thread invokes the orchestrator and its own answer
+// populates the thread (no fixture). The sibling of `AskPanel` for the in-diff chat.
+export type { ConversationHostProps } from "./components/conversation-host";
+export {
+  ConversationHost,
+  DEFAULT_CONVERSATION_TIMEOUT_MS,
+} from "./components/conversation-host";
 export { CoverageMosaicView } from "./components/coverage";
 export { DestinationFrame } from "./components/destination-frame";
 export type {

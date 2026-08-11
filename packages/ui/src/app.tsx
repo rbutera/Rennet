@@ -12,6 +12,7 @@ import type {
 } from "@rennet/types";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { type CollationDraft, ingestWrites, withdrawPath } from "./canvas/collation";
+import type { ConversationAnchor } from "./canvas/conversation";
 import { type DestinationMode, destinationVariant, type PublishLedger } from "./canvas/destination";
 import { type CanvasSet, loadCanvases } from "./canvas/load";
 import { type DispositionWrite, withoutProposal } from "./canvas/logic";
@@ -28,6 +29,7 @@ import {
 import { publishedItems } from "./canvas/staging";
 import { AskPanel } from "./components/ask-panel";
 import { CollationDraftCanvas } from "./components/collation-draft-canvas";
+import { ConversationHost } from "./components/conversation-host";
 import { DestinationFrame } from "./components/destination-frame";
 import { FrontDoor } from "./components/front-door";
 import {
@@ -1167,6 +1169,27 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                 always ABOUT the open review. Asking a model is Rennet's whole job —
                 the ask just runs, with no permission step. */}
             {review ? <AskPanel bridge={bridge} reviewId={review.id} /> : null}
+            {/* The inline conversation (issue #36), LIVE: open a private thread on any
+                changed file and converse with the orchestrator. Each turn runs the
+                real `review.ask` boundary and the orchestrator's OWN answer populates
+                the thread — no fixture. Keyed by review id so a new review starts a
+                fresh conversation. Per-diff-LINE anchoring inside the diff renderer is
+                the remaining wireframe ambition; the conversation itself is live and
+                multi-turn-contextual now, anchored to the review's real files. */}
+            {review && patchset ? (
+              <ConversationHost
+                key={review.id}
+                bridge={bridge}
+                reviewId={review.id}
+                anchors={patchset.files.map(
+                  (file): ConversationAnchor => ({
+                    kind: "chunk",
+                    label: file.path,
+                    key: file.path,
+                  }),
+                )}
+              />
+            ) : null}
           </>
         ) : loadFailed ? (
           <section className="canvas-primer" role="alert">

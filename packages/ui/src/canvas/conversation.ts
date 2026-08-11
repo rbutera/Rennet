@@ -161,6 +161,47 @@ export function threadRoute(thread: ConversationThread): AskMode {
   return thread.route;
 }
 
+// ── Composing the LIVE question the orchestrator answers ──────────────────────
+//
+// The live boundary is `review.ask` (#139): ONE question about the review → ONE
+// orchestrator turn. That turn is STATELESS — it carries no session memory across
+// asks — so a multi-turn conversation's context cannot live in the harness; it must
+// travel INSIDE the question. `buildConversationQuestion` is that pure carrier: it
+// folds the thread's ANCHOR (which file / lines the reviewer is discussing) and the
+// conversation SO FAR into the string handed to `review.ask`, then appends the new
+// message. Each turn is therefore genuinely live (a real orchestrator turn) AND
+// genuinely contextual (the orchestrator sees the whole thread), with no invented
+// streaming transport and no server-side session.
+
+/** How a message's author is labelled in the folded conversation transcript. */
+function messageSpeaker(message: ThreadMessage): string {
+  return message.author === "you" ? "You" : (message.model ?? "Assistant");
+}
+
+/**
+ * Build the `review.ask` question for the next turn of a thread. Pure and
+ * deterministic: the anchor scopes the question to the discussed lines, the prior
+ * messages carry the conversation's context (so a follow-up is answered IN context),
+ * and `body` is the new question. With no prior messages it is a plain first ask; with
+ * prior messages it prepends the transcript so the stateless orchestrator turn still
+ * answers as a continuation. `body` is trimmed by the caller (the composer already
+ * trims); this function does not re-trim or validate — it only composes.
+ */
+export function buildConversationQuestion(
+  anchor: ConversationAnchor,
+  priorMessages: readonly ThreadMessage[],
+  body: string,
+): string {
+  const scope = `The reviewer is discussing ${anchor.kind} ${anchor.label} in this code review.`;
+  if (priorMessages.length === 0) {
+    return `${scope}\n\nThe reviewer asks: ${body}`;
+  }
+  const transcript = priorMessages
+    .map((message) => `${messageSpeaker(message)}: ${message.body}`)
+    .join("\n\n");
+  return `${scope}\n\nConversation so far:\n${transcript}\n\nThe reviewer now asks: ${body}`;
+}
+
 // ── The privacy boundary: promotion is the ONLY path out ──────────────────────
 
 /** Every thread is private. A thread never has an "ink" lane; only promotions travel. */
