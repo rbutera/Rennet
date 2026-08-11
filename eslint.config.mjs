@@ -73,6 +73,9 @@ export default [
       "packages/ui/src/**/*.test.ts",
       "packages/ui/src/**/*.test.tsx",
       "packages/ui/src/canvas/fixtures.ts",
+      // A REAL parsed OpenSpec change (data, not styling): its spec text carries
+      // issue refs like #178 that the hex selector would false-match.
+      "packages/ui/src/canvas/openspec.fixture.ts",
     ],
     rules: {
       "no-restricted-syntax": [

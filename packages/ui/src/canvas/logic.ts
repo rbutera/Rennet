@@ -1,5 +1,7 @@
 import { parseAnchor } from "@rennet/protocol";
 import type {
+  AnchorSide,
+  AnchorSpan,
   Canvas,
   CanvasAngle,
   DispositionType,
@@ -31,11 +33,33 @@ export type ApprovalScope =
   | { kind: "selection"; elementKeys: string[] }
   | { kind: "anchor"; elementKey: string };
 
-/** One per-anchor L2 disposition write (the `canvas.disposition` command input). */
+/**
+ * One per-anchor L2 disposition write (the `canvas.disposition` command input).
+ * `span`/`side` are optional and all-or-none: present ⇒ a span-grained disposition
+ * (distinct dispositions coexist per file, keyed by `path#L…@side`); absent ⇒
+ * path-grained (one per file), the diff lenses' unchanged behaviour.
+ */
 export interface DispositionWrite {
   path: string;
   type: DispositionType;
   body: string;
+  span?: AnchorSpan;
+  side?: AnchorSide;
+}
+
+/**
+ * The stable identity of a disposition write — path-grained on `path`, span-grained
+ * on `path#L<start>-L<end>@<side>`. Mirrors the engine's own `anchorKey` (core), so
+ * the local draft keys a write exactly as the engine does: two spans on one file,
+ * and a path-grained + a span disposition on the same file, coexist. Replicated
+ * here because `@rennet/ui` cannot import `@rennet/core`.
+ */
+export function anchorPathKey(write: Pick<DispositionWrite, "path" | "span" | "side">): string {
+  if (write.span && write.side) {
+    const end = write.span.endLine ?? write.span.startLine;
+    return `${write.path}#L${write.span.startLine}-L${end}@${write.side}`;
+  }
+  return write.path;
 }
 
 /** chunkId → the file paths that chunk touches (from L0 substrate). */

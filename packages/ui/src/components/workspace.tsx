@@ -7,6 +7,7 @@ import type {
   DispositionType,
   FlaggedReview,
   NoiseReview,
+  OpenSpecChange,
   Proposal,
   ReviewNarration,
 } from "@rennet/types";
@@ -33,6 +34,11 @@ import {
   zoomReducer,
 } from "../canvas/logic";
 import { buildNoiseIndex } from "../canvas/noise";
+import {
+  authorOpenSpecDisposition,
+  buildOpenSpecView,
+  type OpenSpecReviewAnchor,
+} from "../canvas/openspec";
 import type { CoverageMosaic } from "../canvas/read-state";
 import type { Mark } from "../canvas/registrar";
 import { createViewStore, useViewStore, type ViewStore } from "../canvas/store";
@@ -48,6 +54,7 @@ import { LensSwitcher } from "./lens";
 import { MarkIndex, type MarkIndexEntry } from "./mark-index";
 import { NarrationPanel } from "./narration";
 import { NoiseLens } from "./noise";
+import { type OpenSpecAskState, OpenSpecView } from "./openspec";
 import { OrphanTray } from "./orphan-tray";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -68,6 +75,14 @@ export interface CanvasWorkspaceProps {
   bridge?: RennetBridge;
   /** Fan-out sink: the per-anchor L2 writes a single approve act produced. */
   onDispositions?: (writes: DispositionWrite[]) => void;
+  /**
+   * A disposition write the engine REJECTED (a real rejection now that
+   * `canvas.disposition` is wired — e.g. a Spec anchor whose artifact file is not in
+   * the reviewed patchset, or a wrong-`side` span). Surfaced so the host can tell the
+   * reviewer their comment did not persist, never silently swallowed. Absent ⇒ the
+   * rejection is still logged (never silent), just not host-surfaced.
+   */
+  onDispositionError?: (write: DispositionWrite, error: Error) => void;
   /** Proposal adjudication sink (accept/dismiss/structural). */
   onAdjudicate?: (adjudication: Adjudication) => void;
   /** Change-feed invalidation hint — where a re-query (TanStack invalidation) slots in. */
@@ -114,6 +129,23 @@ export interface CanvasWorkspaceProps {
    * nothing. Absent ⇒ `ok` (the live failed signal lands with the live runner).
    */
   decisionsRunStatus?: DecisionsRunStatus;
+
+  /**
+   * The parsed OpenSpec change the Spec angle renders (Rai, wireframes #9). When the
+   * `spec` angle is active and this is present, the workspace renders the structured
+   * `OpenSpecView` (proposal / design / tasks / spec deltas) instead of the flat
+   * canvas fallback. Its review affordances (comment / request-change / question)
+   * flow through the SAME disposition seam as the diff lenses (`emit`). Absent ⇒ the
+   * spec angle falls back to the flat canvas (no change loaded), never a blank.
+   */
+  openSpecChange?: OpenSpecChange;
+
+  /**
+   * The Spec view's ask surface (issue #139 seam): ask the orchestrator by default,
+   * opt in to ask both models, no synthesis. Absent ⇒ the Spec view renders without
+   * an ask panel (the disposition verbs still carry the question affordance).
+   */
+  openSpecAsk?: OpenSpecAskState;
 
   // ── Authoring depth (issue #17), additive and optional ──────────────────────
   // The dock renders only the sections whose props are supplied, so a host that
@@ -253,9 +285,6 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
 
   function emit(writes: DispositionWrite[]): void {
     props.onDispositions?.(writes);
-    // Best-effort bridge write. The engine may not yet handle canvas.* commands
-    // (the snapshot/dispatch wiring is a follow-up), so a failure must not crash
-    // the surface — the fan-out sink above is what the demo renders from.
     for (const write of writes) {
       props.bridge
         ?.invoke("canvas.disposition", {
@@ -265,13 +294,42 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
           path: write.path,
           disposition: write.type,
           body: write.body,
+          // Span-grained when the write carries one (the Spec view's per-node
+          // review). All-or-none; a diff-lens write has neither and stays path-grained.
+          ...(write.span && write.side ? { span: write.span, side: write.side } : {}),
         })
-        .catch(() => undefined);
+        .catch((cause: unknown) => {
+          // FAIL LOUD, never silent. `canvas.disposition` IS wired to the engine
+          // (dispatch → setDisposition), so a rejection now means a REAL rejection —
+          // a path/span the engine refuses (a Spec node whose artifact file is not in
+          // the reviewed patchset, or a wrong-`side` span on a modified file). A
+          // silently-dropped review comment is the exact stub this whole change
+          // fights, so we surface it, never swallow it. Diff-lens writes hit valid
+          // patchset paths and never reject, so this path is dead for them — their
+          // behaviour is byte-for-byte unchanged.
+          const error = cause instanceof Error ? cause : new Error(String(cause));
+          props.onDispositionError?.(write, error);
+          // The never-silent floor even when no host surface is wired (the demo):
+          // a rejection is at least visible, never a no-op that looks like success.
+          console.error("canvas.disposition rejected — the review comment did NOT persist", {
+            path: write.path,
+            span: write.span,
+            side: write.side,
+            error: error.message,
+          });
+        });
     }
   }
 
   function approveScope(scope: ApprovalScope, type: DispositionType): void {
     emit(fanOutApproval(canvas, scope, type));
+  }
+
+  // A Spec-view disposition resolves to exactly one write (its anchor key is the
+  // path) and rides the SAME `emit` seam — sink + best-effort `canvas.disposition`
+  // bridge command — as every diff-lens disposition. Review lives on the spec too.
+  function disposeOpenSpec(anchor: OpenSpecReviewAnchor, type: DispositionType): void {
+    emit(authorOpenSpecDisposition(anchor, type).writes);
   }
 
   // Resolve an authoring act at any altitude to its per-anchor L2 writes and fan
@@ -495,7 +553,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         {narrationPlacement ? (
           <NarrationPanel altitude={ZOOM_LABELS[zoom.level]} placement={narrationPlacement} />
         ) : null}
-        {angle === "flagged" ? (
+        {angle === "spec" && props.openSpecChange ? (
+          <OpenSpecView
+            view={buildOpenSpecView(props.openSpecChange)}
+            onDispose={disposeOpenSpec}
+            ask={props.openSpecAsk}
+          />
+        ) : angle === "flagged" ? (
           <FlaggedLens
             index={buildFlaggedIndex(props.flaggedReview ?? { status: "ok", findings: [] })}
             onJumpToAnchor={jumpToAnchor}

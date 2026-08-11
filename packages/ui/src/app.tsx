@@ -14,6 +14,7 @@ import { type CollationDraft, ingestWrites, withdrawPath } from "./canvas/collat
 import { type DestinationMode, destinationVariant, type PublishLedger } from "./canvas/destination";
 import { type CanvasSet, loadCanvases } from "./canvas/load";
 import { type DispositionWrite, withoutProposal } from "./canvas/logic";
+import { openSpecChangeFixture } from "./canvas/openspec.fixture";
 import {
   deriveReviewEvent,
   type PublishContext,
@@ -1065,6 +1066,12 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                 onRequest: () => setDeepReviewRequested(true),
               }}
               noiseReview={noiseReview}
+              // The Spec angle's structured OpenSpec viewer (Rai, wireframes #9).
+              // Fixture-backed today (a REAL parsed rennet change), matching how the
+              // other lenses shipped behind typed boundaries; the live half —
+              // parse-on-open of the change selected for this review — is the
+              // deferred wiring (bead).
+              openSpecChange={openSpecChangeFixture}
               onDispositions={(writes) => {
                 setCanvases((current) => (current ? applyWrites(current, writes) : current));
                 // dispose == staged: authoring a disposition collates it into the draft

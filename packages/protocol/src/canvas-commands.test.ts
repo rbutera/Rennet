@@ -27,6 +27,34 @@ describe("canvas user commands (issue #10)", () => {
     ).toThrow();
   });
 
+  it("accepts an optional span+side (the Spec view's per-node write) and rejects half (issue #78)", () => {
+    // Span-grained: both span and side present.
+    const withSpan = parseCommandInput("canvas.disposition", {
+      commandId: COMMAND_ID,
+      reviewId: "rev",
+      patchsetId: "ps",
+      path: "openspec/changes/x/specs/cap/spec.md",
+      disposition: "request-change",
+      body: "needs a guard",
+      span: { startLine: 3 },
+      side: "additions",
+    });
+    expect(withSpan.span).toEqual({ startLine: 3 });
+    expect(withSpan.side).toBe("additions");
+    // A span without a side (or vice-versa) is rejected — all-or-none.
+    expect(() =>
+      parseCommandInput("canvas.disposition", {
+        commandId: COMMAND_ID,
+        reviewId: "rev",
+        patchsetId: "ps",
+        path: "a.ts",
+        disposition: "comment",
+        body: "",
+        span: { startLine: 3 },
+      }),
+    ).toThrow();
+  });
+
   it("accepts a proposal adjudication with an accepted/dismissed outcome only", () => {
     expect(
       parseCommandInput("canvas.adjudicateProposal", {
