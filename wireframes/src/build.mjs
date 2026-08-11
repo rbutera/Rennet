@@ -6,6 +6,7 @@ import { dirname, resolve } from 'node:path';
 import { doc } from './kit.mjs';
 import { frame00 } from './frame00.mjs';
 import { frame01, frame02, frame03, frame04 } from './onboarding.mjs';
+import { frameProjectsList } from './projectslist.mjs';
 import { frame05 } from './frame05.mjs';
 import { frame06, frame07, frame08, frame09, frame10, frameNoise } from './review.mjs';
 import { frame11, frame12, frame13, frame14, frame15, frame16 } from './finalize.mjs';
@@ -19,6 +20,7 @@ const FRAMES = {
   '02-add-project': frame02,
   '03-worktree-config': frame03,
   '04-processing': frame04,
+  '04a-projects-list': frameProjectsList,
   '05-project-detail': frame05,
   '06-review-heart': frame06,
   '07-spec-view': frame07,
@@ -36,9 +38,9 @@ const FRAMES = {
 
 export const NAMES = Object.keys(FRAMES);
 
-Object.entries(FRAMES).forEach(([name, fn], i) => {
+Object.entries(FRAMES).forEach(([name, fn]) => {
   const spec = fn();
-  spec.head.badge = String(i).padStart(2, '0'); // badge follows flow position
+  spec.head.badge = name.split('-')[0]; // badge derives from the filename prefix (05, 04a, …)
   const html = doc(spec);
   writeFileSync(resolve(__dir, `${name}.html`), html);
   console.log('wrote', `${name}.html`, `(${Math.round(html.length / 1024)} KB)`);

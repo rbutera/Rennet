@@ -18,6 +18,7 @@ const SCREENS = [
   { f: '02-add-project.png', n: 'Add a project', tag: 'Onboarding', p: 'Two nouns only: workspace or project repo, a path, and a recents / detected list. Everything else is inference.', feats: [] },
   { f: '03-worktree-config.png', n: 'Worktree config', tag: 'Onboarding', p: 'Discovery shown as editable defaults, not questions. Include toggles all on, primary branch confirmed, one Confirm.', feats: [] },
   { f: '04-processing.png', n: 'Processing', tag: 'Onboarding', p: 'The narrated context dump. An honest MVP spinner over a live feed; completed lines collapse into a ledger, then it becomes the project. A more delightful animation is promoted post-MVP.', feats: [] },
+  { f: '04a-projects-list.png', n: 'Projects list', tag: 'Home', p: 'The populated front door — the same screen as first-run, now with projects. One row per project, most-recently-active first; a row is a whole project — a single repo or a multi-repo workspace. Add-a-project stays present as its own row; detection stays one ambient line. Row states drawn: active/needs-you, quiet, processing, stale-map, never-opened.', feats: [] },
   { f: '05-project-detail.png', n: 'Project detail', tag: 'Home', p: 'The everyday landing: one scroll, two zones. Yours (local worktrees becoming PRs) in backlight with trajectory dots + Make PR / Re-steer; Team (every PR, yours included) in ink. Mode glyph in the title bar, no consent banner.', feats: [] },
   { f: '06-review-heart.png', n: 'The review heart', tag: 'Review', p: 'The tall sequence canvas. In-diff dispositions, the inline conversation cluster on every line, view-test + open-in-editor on the sticky header, threads in the right margin. Real scroll, no fold.', feats: [] },
   { f: '07-spec-view.png', n: 'Spec view', tag: 'Review', p: 'The openspec artifact set rendered as its shape: distilled why, capability grid, requirement rows with WHEN/THEN scenarios, coverage chips. Reviewable material, not raw markdown. Worked on a real rennet change.', feats: [] },
@@ -129,11 +130,11 @@ const html = `<style>
 </style>
 
 <header class="hero"><div class="wrap">
-  <p class="kicker">Rennet &middot; lo-fi wireframes &middot; v3</p>
+  <p class="kicker">Rennet &middot; lo-fi wireframes &middot; v3.2</p>
   <h1>The whole app, one scroll.</h1>
-  <p class="lede">Eighteen screens in flow order, rebuilt from your feedback and updated again since. The wizard is gone: add-a-project is the onboarding, and the narrated processing screen is the tutorial. Project detail is one scroll of two zones. A Noise lens now joins the review lenses; the chrome moved to a sans UI type, with monospace kept for code only; the execution-mode glyph rides every in-project title bar; and processing shows an honest MVP spinner. Terse chrome; the LLM canvas content stays rich.</p>
+  <p class="lede">Nineteen screens in flow order, rebuilt from your feedback and updated again since. The wizard is gone: add-a-project is the onboarding, and the narrated processing screen is the tutorial. The populated projects list is the front door — the same screen as first-run, now with projects — and project detail is one scroll of two zones. A Noise lens now joins the review lenses; the chrome moved to a sans UI type, with monospace kept for code only; the execution-mode glyph rides every in-project title bar; and processing shows an honest MVP spinner. Terse chrome; the LLM canvas content stays rich.</p>
   <div class="meta">
-    <span>18 screens</span><span>no wizard</span><span>two-zone landing</span>
+    <span>19 screens</span><span>no wizard</span><span>two-zone landing</span>
     <span>spec / decisions / flagged / noise</span><span>orchestrator-default questions</span><span>peek-then-pin symbols</span><span>sans chrome, mono code</span><span>mode glyph everywhere</span>
   </div>
 </div></header>
@@ -162,7 +163,7 @@ ${(() => {
   </section>
 </main>
 
-<footer><div class="wrap">Rennet wireframes v3 &middot; rebuilt from your feedback &middot; HTML sources in rennet-wireframes-v3/src, iterable for v4.</div></footer>`;
+<footer><div class="wrap">Rennet wireframes v3.2 &middot; rebuilt from your feedback &middot; HTML sources in wireframes/src, iterable further.</div></footer>`;
 
 writeFileSync(OUT, html);
 const kb = Math.round(Buffer.byteLength(html) / 1024);
