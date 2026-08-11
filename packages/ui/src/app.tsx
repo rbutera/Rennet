@@ -15,7 +15,7 @@ import { type CollationDraft, ingestWrites, withdrawPath } from "./canvas/collat
 import type { ConversationAnchor } from "./canvas/conversation";
 import { type DestinationMode, destinationVariant, type PublishLedger } from "./canvas/destination";
 import { type CanvasSet, loadCanvases } from "./canvas/load";
-import { type DispositionWrite, withoutProposal } from "./canvas/logic";
+import { type DispositionWrite, withoutProposal, zoomReducer } from "./canvas/logic";
 import {
   deriveReviewEvent,
   type PublishContext,
@@ -27,8 +27,11 @@ import {
   reviewCommentsPayload,
 } from "./canvas/publish";
 import { publishedItems } from "./canvas/staging";
+import { createViewStore, useViewStore } from "./canvas/store";
+import { buildCommands, type CommandContext, type Screen } from "./command/commands";
 import { AskPanel } from "./components/ask-panel";
 import { CollationDraftCanvas } from "./components/collation-draft-canvas";
+import { CommandPalette } from "./components/command-palette";
 import { ConversationHost } from "./components/conversation-host";
 import { DestinationFrame } from "./components/destination-frame";
 import { FrontDoor } from "./components/front-door";
@@ -362,6 +365,32 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // lingers over a new draft.
   const [publishResult, setPublishResult] = useState<PublishOutcome | undefined>(undefined);
 
+  // The command palette (wireframes screen 16). The view store is LIFTED here so the
+  // palette's Lens/Zoom/Appearance commands drive the SAME store the CanvasWorkspace
+  // renders from (passed to it as `store` below) — the palette runs the real store
+  // methods, never a parallel copy. `paletteOpen` toggles the ⌘K overlay.
+  const viewStore = useMemo(() => createViewStore(), []);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  // Subscribed so the palette's toggle labels + current lens/zoom read live store state
+  // (and so an inert command — the lens already active, a zoom at its clamp — is omitted).
+  const canvasAngle = useViewStore(viewStore, (state) => state.angle);
+  const canvasScheme = useViewStore(viewStore, (state) => state.scheme);
+  const canvasOverlayOn = useViewStore(viewStore, (state) => state.overlayOn);
+  const canvasZoomLevel = useViewStore(viewStore, (state) => state.zoom.level);
+
+  // ⌘K (or Ctrl-K) toggles the palette app-wide: the listener is on `window`, so it
+  // fires from any surface (front door, project detail, review) regardless of focus.
+  useEffect(() => {
+    function onKey(event: KeyboardEvent): void {
+      if ((event.metaKey || event.ctrlKey) && (event.key === "k" || event.key === "K")) {
+        event.preventDefault();
+        setPaletteOpen((open) => !open);
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
   useEffect(() => {
     bridge
       .invoke("app.bootstrap", {})
@@ -446,6 +475,13 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setFlaggedReview(undefined);
     setNoiseReview(undefined);
     setOpenSpecChange(undefined);
+    // Reset the LIFTED view store's review-scoped state (lens/zoom/selection/cursor/
+    // cohorts/overlay), preserving the scheme. The store now outlives a single review
+    // (it was lifted here for the ⌘K palette), so without this reset, opening review B
+    // after viewing review A at diff depth would render B at "Diff" with A's selection —
+    // a hunk that does not exist in B, so no diff. Before the lift, unmounting the
+    // workspace discarded the store; this restores that clean-per-review guarantee.
+    viewStore.getState().resetView();
     // NOTE: the dual-model mode is NOT reset here. It is derived synchronously from
     // reviewId (`deepReviewOn`, above), so a new review already reads the dual default
     // this same render — resetting it in this effect would commit a render too late
@@ -953,6 +989,65 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     }
   }
 
+  // Which top-level surface is showing — mirrors the branch order of the returns
+  // below, so the palette offers exactly the commands live for the current screen.
+  const screen: Screen | null =
+    review === undefined
+      ? null
+      : projectDetail
+        ? "projectDetail"
+        : atFrontDoor || !review
+          ? directEntry
+            ? "directEntry"
+            : "frontDoor"
+          : "workspace";
+  // The lens/zoom/scheme commands act on the live store, so they are only offered
+  // while the Canvases view is actually showing a loaded review.
+  const canvasReady = view === "canvases" && liveLoaded && canvases !== null;
+  const commandContext: CommandContext | null = screen
+    ? {
+        screen,
+        canvasReady,
+        view,
+        deepReviewOn,
+        overlayOn: canvasOverlayOn,
+        scheme: canvasScheme,
+        angle: canvasAngle,
+        zoomLevel: canvasZoomLevel,
+        backToProjects: () => setAtFrontDoor(true),
+        backToProjectList: () => setProjectDetail(null),
+        showFiles: () => setView("review"),
+        showCanvases: () => setView("canvases"),
+        reviewDirectly: () => {
+          setDirectEntry(true);
+          setAtFrontDoor(true);
+        },
+        chooseRepository: () => void chooseRepository(),
+        retryReview: retryLiveLoad,
+        regenerate: () => void regenerate(),
+        toggleDeepReview: () => {
+          if (reviewId) setDeepReviewChoice({ reviewId, on: !deepReviewOn });
+        },
+        goToAngle: (angle) => viewStore.getState().setAngle(angle),
+        zoomIn: () =>
+          viewStore.getState().setZoom(zoomReducer(viewStore.getState().zoom, { type: "zoomIn" })),
+        zoomOut: () =>
+          viewStore.getState().setZoom(zoomReducer(viewStore.getState().zoom, { type: "zoomOut" })),
+        toggleOverlay: () => viewStore.getState().toggleOverlay(),
+        toggleScheme: () => {
+          const state = viewStore.getState();
+          state.setScheme(state.scheme === "dark" ? "light" : "dark");
+        },
+      }
+    : null;
+  const palette = (
+    <CommandPalette
+      open={paletteOpen}
+      commands={commandContext ? buildCommands(commandContext) : []}
+      onClose={() => setPaletteOpen(false)}
+    />
+  );
+
   if (review === undefined) return <div className="loading">Restoring local review…</div>;
 
   // Project detail (issue #37): clicking a project row opens its unified smart list —
@@ -969,6 +1064,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           onOpenRow={(row) => void openRow(projectDetail, row)}
           onBack={() => setProjectDetail(null)}
         />
+        {palette}
       </>
     );
   }
@@ -993,66 +1089,74 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           >
             Review directly
           </button>
+          {palette}
         </>
       );
     }
     return (
-      <main className="empty-state">
-        <button type="button" className="entry-back" onClick={() => setDirectEntry(false)}>
-          <ArrowLeftIcon size={13} />
-          Projects
-        </button>
-        <div className="mark" aria-hidden="true">
-          <RennetMark size={34} />
-        </div>
-        <p className="eyebrow">RENNET</p>
-        <h1>Start a review.</h1>
-        <p>Capture local git changes into one patchset.</p>
-        <button type="button" disabled={busy} onClick={chooseRepository}>
-          <FolderIcon size={15} />
-          {busy ? "Working…" : "Choose a repository"}
-        </button>
-
-        <div className="entry-divider" aria-hidden="true">
-          <span>or a pull request</span>
-        </div>
-
-        <form
-          className="pr-door"
-          onSubmit={(submitEvent) => {
-            submitEvent.preventDefault();
-            void openPullRequest();
-          }}
-        >
-          <input
-            type="text"
-            className="pr-input"
-            value={prRef}
-            onChange={(inputEvent) => setPrRef(inputEvent.target.value)}
-            placeholder="owner/repo#42  or  a GitHub PR URL"
-            aria-label="Pull request reference"
-            spellCheck={false}
-            autoCapitalize="off"
-            autoCorrect="off"
-            disabled={busy}
-          />
-          <button type="submit" className="secondary" disabled={busy || prRef.trim().length === 0}>
-            {busy ? "Opening…" : "Open pull request"}
+      <>
+        {palette}
+        <main className="empty-state">
+          <button type="button" className="entry-back" onClick={() => setDirectEntry(false)}>
+            <ArrowLeftIcon size={13} />
+            Projects
           </button>
-          <label className="pr-retrospective">
+          <div className="mark" aria-hidden="true">
+            <RennetMark size={34} />
+          </div>
+          <p className="eyebrow">RENNET</p>
+          <h1>Start a review.</h1>
+          <p>Capture local git changes into one patchset.</p>
+          <button type="button" disabled={busy} onClick={chooseRepository}>
+            <FolderIcon size={15} />
+            {busy ? "Working…" : "Choose a repository"}
+          </button>
+
+          <div className="entry-divider" aria-hidden="true">
+            <span>or a pull request</span>
+          </div>
+
+          <form
+            className="pr-door"
+            onSubmit={(submitEvent) => {
+              submitEvent.preventDefault();
+              void openPullRequest();
+            }}
+          >
             <input
-              type="checkbox"
-              checked={prRetrospective}
-              onChange={(inputEvent) => setPrRetrospective(inputEvent.target.checked)}
+              type="text"
+              className="pr-input"
+              value={prRef}
+              onChange={(inputEvent) => setPrRef(inputEvent.target.value)}
+              placeholder="owner/repo#42  or  a GitHub PR URL"
+              aria-label="Pull request reference"
+              spellCheck={false}
+              autoCapitalize="off"
+              autoCorrect="off"
               disabled={busy}
             />
-            <span>Retrospective review — read an already-merged PR. Nothing is posted back.</span>
-          </label>
-        </form>
-        <p className="pr-hint">Pick the local clone next.</p>
+            <button
+              type="submit"
+              className="secondary"
+              disabled={busy || prRef.trim().length === 0}
+            >
+              {busy ? "Opening…" : "Open pull request"}
+            </button>
+            <label className="pr-retrospective">
+              <input
+                type="checkbox"
+                checked={prRetrospective}
+                onChange={(inputEvent) => setPrRetrospective(inputEvent.target.checked)}
+                disabled={busy}
+              />
+              <span>Retrospective review — read an already-merged PR. Nothing is posted back.</span>
+            </label>
+          </form>
+          <p className="pr-hint">Pick the local clone next.</p>
 
-        {error ? <p className="error">{error}</p> : null}
-      </main>
+          {error ? <p className="error">{error}</p> : null}
+        </main>
+      </>
     );
   }
 
@@ -1109,6 +1213,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
               </div>
             ) : null}
             <CanvasWorkspace
+              store={viewStore}
               canvases={canvases}
               bridge={bridge}
               narration={narration}
@@ -1219,6 +1324,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       {/* The destination is always-present chrome: the north is visible in both the
           Files and Canvases views, present from review-open even when empty. */}
       {destinationChrome}
+      {palette}
     </>
   );
 }
