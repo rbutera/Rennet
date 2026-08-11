@@ -2829,3 +2829,97 @@ export interface OpenSpecCoverage {
   readonly status: "ok" | "failed";
   readonly edges: readonly OpenSpecCoverageEdge[];
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The review→agent handoff loop (issue #18, Contracts §2.1 destination B). The
+// wire shapes only; the composer, disclosure, and orchestrator live in
+// `@rennet/core` (`handoff-loop.ts`), and the command schemas mirror these in
+// `@rennet/protocol`. Appended at the file END so it does not collide with the
+// concurrent lineage-matcher work above.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One disposition addressed to the coding agent — the effective (refined-if-kept,
+ * else raw) body the reviewer staged, plus its anchor. Path-grained ⟺ `span`/`side`
+ * both absent; span-grained ⟺ both present (the #78 all-or-none rule). The renderer
+ * supplies these from the SAME collation draft it would publish, so the agent
+ * addresses exactly what the reviewer wrote, in its cleaned form.
+ */
+export interface HandoffDisposition {
+  readonly path: string;
+  readonly type: DispositionType;
+  /** The effective body the agent must address (refined if the user kept one, else raw). */
+  readonly body: string;
+  readonly span?: AnchorSpan;
+  readonly side?: AnchorSide;
+}
+
+/**
+ * One resolved task in the bundle: a disposition whose anchor has been resolved to
+ * the concrete diff context (the anchored hunk, or the file section) it refers to.
+ * `context` is bounded and honestly marked when cut; "" when the file is not in the
+ * active patchset's diff (the agent then works from the instruction alone).
+ */
+export interface HandoffTask {
+  readonly path: string;
+  readonly type: DispositionType;
+  /** The reviewer's instruction — the effective disposition body, verbatim. */
+  readonly instruction: string;
+  readonly span?: AnchorSpan;
+  readonly side?: AnchorSide;
+  /** The bounded diff context the instruction is anchored to (may be ""). */
+  readonly context: string;
+}
+
+/**
+ * The task bundle handed to the coding harness. The `prompt` IS the contract: it
+ * enumerates the tasks and instructs the agent to address them AND NOTHING ELSE
+ * (the human still disposes; the agent addresses dispositions, §2.1). `digest` is a
+ * content hash over the ordered tasks, so the spend disclosure the user approved and
+ * the bundle the write session runs are provably the same bundle (the consent token
+ * binds to it).
+ */
+export interface HandoffBundle {
+  readonly reviewId: string;
+  /** The active patchset the dispositions were made against (the bundle's baseline). */
+  readonly patchsetId: string;
+  readonly tasks: readonly HandoffTask[];
+  readonly prompt: string;
+  readonly digest: string;
+}
+
+/**
+ * The spend disclosure surfaced BEFORE a write-enabled session runs (issue #18's
+ * "spend is disclosed" invariant). A handoff spends the user's own harness quota AND
+ * edits their working tree, so the disclosure names both. `model` is the harness's
+ * resolved model when known (absent ⇒ the harness runs its own default). This is the
+ * surface the user acts on; `requestConsent` binds a token to the bundle it describes.
+ */
+export interface HandoffDisclosure {
+  readonly harness: string;
+  readonly model?: string;
+  readonly taskCount: number;
+  /** Always true: the session may write files. Named so the user sees it, never a surprise. */
+  readonly writeEnabled: true;
+  /** Always true: the agent edits the working tree in place (a new patchset captures it). */
+  readonly editsWorkingTree: true;
+  /** A plain-language one-liner for the disclosure surface (R41 chrome is terse; this is content). */
+  readonly summary: string;
+}
+
+/**
+ * The result of a completed handoff run. `review` carries the NEW patchset (the
+ * delta re-review's successor canvas opens on it) with the prior patchset preserved
+ * byte-identical (R28). `turnDiff` is the exact diff the agent's turn produced
+ * (bracketed by workspace checkpoints); `filesTouched` is every path the turn
+ * changed — including edits unrelated to any disposition (the totality guarantee).
+ * `carriedFloor` counts the dispositions the byte-identical floor carried forward;
+ * `lineageCarry` reports whether the #16 matcher upgraded that carry or is not wired.
+ */
+export interface HandoffRunResult {
+  readonly review: Review;
+  readonly turnDiff: string;
+  readonly filesTouched: readonly string[];
+  readonly carriedFloor: number;
+  readonly lineageCarry: "matcher-not-wired" | "applied";
+}
