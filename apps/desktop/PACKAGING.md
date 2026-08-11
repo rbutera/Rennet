@@ -40,8 +40,19 @@ fine for local/dev distribution — no Apple account required.
 
 ## Signed + notarized build (release)
 
-The SAME `make` command produces a signed, notarized, stapled DMG the moment the
-Apple credentials are present in the environment. Nothing else changes.
+The SAME `make` command produces a release build whose **`Rennet.app` is signed
+with your Developer ID, notarized, and stapled** the moment the Apple credentials
+are present in the environment. Nothing else changes.
+
+**What actually gets processed:** electron-forge signs, notarizes, and staples the
+**app** during packaging, *before* MakerDMG wraps it. The `.dmg` file itself is
+only a container — it is **not** separately signed, notarized, or stapled. So
+verify against the app (mounted from the DMG, or installed), never against the
+`.dmg`. Because the app carries its own stapled notarization ticket, it launches
+with no Gatekeeper warning once copied to /Applications. (Notarizing the `.dmg`
+*itself* — so the download passes Gatekeeper before it is even opened — is a
+separate `xcrun notarytool submit` + `xcrun stapler staple` on the `.dmg`. That
+is not wired here and is not needed for the installed app to run clean.)
 
 ### The one thing Rai does
 
@@ -68,8 +79,9 @@ Apple credentials are present in the environment. Nothing else changes.
    pnpm exec nx run rennet-desktop:make
    ```
 
-That is the whole step. The resulting DMG passes `spctl -a -t open --context
-context:primary-signature` and opens with no Gatekeeper warning on any Mac.
+That is the whole step. The `Rennet.app` inside the resulting DMG is signed,
+notarized, and stapled, so it opens with no Gatekeeper warning on any Mac once
+copied out of the DMG.
 
 ### What each variable controls
 
@@ -86,16 +98,23 @@ notarized (useful for testing signing without a notarization round-trip).
 
 ### Verifying a signed build
 
+Mount the DMG and verify the **app inside it** (not the `.dmg`):
+
 ```bash
 DMG=$(ls apps/desktop/out/make/*.dmg | head -1)
 MP=$(hdiutil attach "$DMG" -nobrowse -readonly | grep /Volumes | awk -F'\t' '{print $NF}')
-codesign --verify --deep --strict --verbose=2 "$MP"/*.app     # -> valid on disk
-spctl -a -vvv -t install "$MP"/*.app                          # -> accepted (source=Notarized Developer ID)
+APP="$MP"/Rennet.app
+codesign --verify --deep --strict --verbose=2 "$APP"   # -> valid on disk
+xcrun stapler validate "$APP"                          # -> The validate action worked!
+spctl -a -vvv -t exec "$APP"                           # -> accepted (source=Notarized Developer ID)
 hdiutil detach "$MP"
 ```
 
-On the default unsigned build, that `spctl` assessment reports `rejected` — that
-is the Gatekeeper warning described above, and it is the only difference.
+`-t exec` is the Gatekeeper assessment type for an application (`-t install` is
+for installer packages, not this app). On the default unsigned build, `codesign`
+still reports the ad-hoc signature as valid, but `stapler validate` fails (no
+notarization ticket) and `spctl -a -t exec` reports `rejected` — that is the
+Gatekeeper warning described above, and it is the only difference.
 
 ## How the config is wired
 

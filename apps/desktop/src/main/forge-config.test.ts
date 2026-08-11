@@ -1,0 +1,88 @@
+import { createRequire } from "node:module";
+import { afterEach, describe, expect, it } from "vitest";
+
+// forge.config.cjs computes its signing config from process.env at load time, so
+// each case clears the four Apple vars, sets the ones under test, and re-requires
+// the module fresh. These assertions guard the honesty invariants a bad signing
+// build would violate: the real-signing path must be FATAL-on-failure, and the
+// notarize block must only appear when all creds are present.
+const require = createRequire(import.meta.url);
+const configPath = require.resolve("../../forge.config.cjs");
+const APPLE_VARS = [
+  "APPLE_SIGNING_IDENTITY",
+  "APPLE_ID",
+  "APPLE_APP_SPECIFIC_PASSWORD",
+  "APPLE_TEAM_ID",
+] as const;
+
+const savedEnv = new Map(APPLE_VARS.map((key) => [key, process.env[key]]));
+
+type ForgeConfig = {
+  packagerConfig: {
+    osxSign: {
+      identity: string;
+      continueOnError?: boolean;
+      optionsForFile: () => { hardenedRuntime: boolean; entitlements?: string };
+    };
+    osxNotarize?: { appleId: string; appleIdPassword: string; teamId: string };
+  };
+};
+
+function loadConfig(env: Partial<Record<(typeof APPLE_VARS)[number], string>>): ForgeConfig {
+  for (const key of APPLE_VARS) delete process.env[key];
+  Object.assign(process.env, env);
+  delete require.cache[configPath];
+  return require(configPath) as ForgeConfig;
+}
+
+afterEach(() => {
+  for (const key of APPLE_VARS) {
+    const value = savedEnv.get(key);
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+  delete require.cache[configPath];
+});
+
+describe("forge.config.cjs signing", () => {
+  it("default (no creds): ad-hoc signature, not hardened, no notarization", () => {
+    const { packagerConfig } = loadConfig({});
+    expect(packagerConfig.osxSign.identity).toBe("-");
+    expect(packagerConfig.osxSign.optionsForFile().hardenedRuntime).toBe(false);
+    expect("osxNotarize" in packagerConfig).toBe(false);
+  });
+
+  it("real-signing path makes a signing failure FATAL (continueOnError:false)", () => {
+    const { packagerConfig } = loadConfig({
+      APPLE_SIGNING_IDENTITY: "Developer ID Application: Test (ABCDE12345)",
+    });
+    expect(packagerConfig.osxSign.identity).toBe("Developer ID Application: Test (ABCDE12345)");
+    // The regression guard: @electron/packager defaults osxSign.continueOnError
+    // to true, which would ship an unsigned app under a 0 exit code.
+    expect(packagerConfig.osxSign.continueOnError).toBe(false);
+    const perFile = packagerConfig.osxSign.optionsForFile();
+    expect(perFile.hardenedRuntime).toBe(true);
+    expect(perFile.entitlements).toMatch(/entitlements\.plist$/);
+  });
+
+  it("signing identity alone does not enable notarization", () => {
+    const { packagerConfig } = loadConfig({
+      APPLE_SIGNING_IDENTITY: "Developer ID Application: Test (ABCDE12345)",
+    });
+    expect("osxNotarize" in packagerConfig).toBe(false);
+  });
+
+  it("all four creds enable notarytool notarization", () => {
+    const { packagerConfig } = loadConfig({
+      APPLE_SIGNING_IDENTITY: "Developer ID Application: Test (ABCDE12345)",
+      APPLE_ID: "dev@example.com",
+      APPLE_APP_SPECIFIC_PASSWORD: "aaaa-bbbb-cccc-dddd",
+      APPLE_TEAM_ID: "ABCDE12345",
+    });
+    expect(packagerConfig.osxNotarize).toEqual({
+      appleId: "dev@example.com",
+      appleIdPassword: "aaaa-bbbb-cccc-dddd",
+      teamId: "ABCDE12345",
+    });
+  });
+});

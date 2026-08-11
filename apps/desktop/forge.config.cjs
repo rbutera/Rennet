@@ -33,6 +33,14 @@ const entitlementsPath = path.join(__dirname, "entitlements.plist");
 const osxSign = signingIdentity
   ? {
       identity: signingIdentity,
+      // Make a real-signing failure FATAL. @electron/packager defaults osxSign to
+      // `continueOnError: true` (mac.js createSignOpts), which swallows a failed
+      // Developer ID sign as a warning and ships an ad-hoc / unsigned app that
+      // exits 0 — a build that claims it is signed while it is not. On the real
+      // signing path we want the opposite: fail loud so a broken/absent cert
+      // stops the release instead of producing a bad artifact. (The default
+      // ad-hoc branch keeps the permissive default; "-" signing does not fail.)
+      continueOnError: false,
       optionsForFile: () => ({
         hardenedRuntime: true,
         entitlements: entitlementsPath,
