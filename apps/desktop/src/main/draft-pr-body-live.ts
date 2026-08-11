@@ -57,7 +57,8 @@ export const PR_BODY_OUTPUT_SCHEMA = {
     },
     body: {
       type: "string",
-      description: "The PR description in Markdown: an honest account of the change, not a diffstat.",
+      description:
+        "The PR description in Markdown: an honest account of the change, not a diffstat.",
     },
   },
   required: ["title", "body"],
@@ -128,7 +129,11 @@ export function claudeDraftPrBodyPort(port: HarnessPort, cwd: string): PrBodyDra
   return async (prompt) => {
     let session: Awaited<ReturnType<HarnessPort["createSession"]>>;
     try {
-      session = await port.createSession({ cwd, readOnly: true, outputSchema: PR_BODY_OUTPUT_SCHEMA });
+      session = await port.createSession({
+        cwd,
+        readOnly: true,
+        outputSchema: PR_BODY_OUTPUT_SCHEMA,
+      });
     } catch (error) {
       return {
         status: "failed",
@@ -148,14 +153,18 @@ export function claudeDraftPrBodyPort(port: HarnessPort, cwd: string): PrBodyDra
           const outcome = event.outcome;
           if (outcome.status === "completed") {
             if (outcome.structuredOutput === undefined) {
-              return { status: "failed", reason: "the PR-body draft turn produced no structured output" };
+              return {
+                status: "failed",
+                reason: "the PR-body draft turn produced no structured output",
+              };
             }
             const mapped = mapDraftOutput(outcome.structuredOutput);
             return mapped.status === "emitted" && actualModel !== undefined
               ? { ...mapped, model: actualModel }
               : mapped;
           }
-          if (outcome.status === "failed") return { status: "failed", reason: outcome.error.message };
+          if (outcome.status === "failed")
+            return { status: "failed", reason: outcome.error.message };
           return { status: "failed", reason: "the PR-body draft turn was cancelled" };
         }
       }

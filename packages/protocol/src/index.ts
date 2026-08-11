@@ -772,16 +772,19 @@ export const refinementResultSchema: z.ZodType<RefinementResult> = z.discriminat
 // body (an empty either way is `failed`); the shape has NO field for a fabricated
 // draft, so a failed turn keeps the deterministic composed body — never a blank the
 // human might sign unread. The draft is human-editable and posts NOTHING (R33).
-export const prBodyDraftResultSchema: z.ZodType<PrBodyDraftResult> = z.discriminatedUnion("status", [
-  z.object({
-    status: z.literal("drafted"),
-    title: z.string().min(1),
-    body: z.string().min(1),
-    model: z.string().min(1),
-  }),
-  z.object({ status: z.literal("unavailable"), reason: z.string() }),
-  z.object({ status: z.literal("failed"), reason: z.string() }),
-]);
+export const prBodyDraftResultSchema: z.ZodType<PrBodyDraftResult> = z.discriminatedUnion(
+  "status",
+  [
+    z.object({
+      status: z.literal("drafted"),
+      title: z.string().min(1),
+      body: z.string().min(1),
+      model: z.string().min(1),
+    }),
+    z.object({ status: z.literal("unavailable"), reason: z.string() }),
+    z.object({ status: z.literal("failed"), reason: z.string() }),
+  ],
+);
 
 // ── The Noise lens: grouped low-signal churn (issue #34) ──────────────────────
 // The low-signal churn a changeset touches, grouped away from the code that needs

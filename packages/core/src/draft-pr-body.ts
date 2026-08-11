@@ -83,7 +83,12 @@ export interface PrBodyDraftInput {
  * this and the caller falls back to the resolved model.
  */
 export type PrBodyDraftPortResult =
-  | { readonly status: "emitted"; readonly title?: string; readonly body?: string; readonly model?: string }
+  | {
+      readonly status: "emitted";
+      readonly title?: string;
+      readonly body?: string;
+      readonly model?: string;
+    }
   | { readonly status: "unavailable"; readonly reason: string }
   | { readonly status: "failed"; readonly reason: string };
 
@@ -134,7 +139,10 @@ export function buildPrBodyPrompt(input: PrBodyDraftInput): string {
   }
   const dispositions = input.dispositions.filter((item) => item.resolution.trim() !== "");
   if (dispositions.length > 0) {
-    lines.push("", "The reviewer's dispositions on this change (what they asked for and approved):");
+    lines.push(
+      "",
+      "The reviewer's dispositions on this change (what they asked for and approved):",
+    );
     for (const item of dispositions) {
       lines.push(`- [${TYPE_INTENT[item.type]}] ${item.path}: ${item.resolution.trim()}`);
     }

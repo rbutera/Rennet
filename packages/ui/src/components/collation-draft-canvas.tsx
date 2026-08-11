@@ -285,7 +285,8 @@ export function CollationDraftCanvas({
                 data-status="failed"
                 role="alert"
               >
-                The draft didn't land: {prDraftState.reason}. Your text is untouched — write or retry.
+                The draft didn't land: {prDraftState.reason}. Your text is untouched — write or
+                retry.
               </p>
             ) : null}
           </div>

@@ -21,7 +21,8 @@ const INPUT: PrBodyDraftInput = {
     {
       type: "request-change",
       path: "keys.ts",
-      resolution: "Document the migration note in the PR body — re-keying changes what a 429 means.",
+      resolution:
+        "Document the migration note in the PR body — re-keying changes what a 429 means.",
     },
     { type: "approve", path: "rate-limit.ts", resolution: "The fallback bucket is defensible." },
     { type: "comment", path: "empty.ts", resolution: "   " },
@@ -109,13 +110,22 @@ describe("draftPrBody — mapping the port outcome", () => {
       model: "m",
     });
     const result = await draftPrBody(INPUT, port, "resolved-model");
-    expect(result).toMatchObject({ status: "drafted", title: "Trim me", body: "Body with surround" });
+    expect(result).toMatchObject({
+      status: "drafted",
+      title: "Trim me",
+      body: "Body with surround",
+    });
   });
 });
 
 describe("draftPrBody — the honesty floor", () => {
   it("maps an emitted result with an empty title to `failed` (never a blank preview)", async () => {
-    const port = portReturning({ status: "emitted", title: "   ", body: "A real body.", model: "m" });
+    const port = portReturning({
+      status: "emitted",
+      title: "   ",
+      body: "A real body.",
+      model: "m",
+    });
     const result = await draftPrBody(INPUT, port, "resolved-model");
     expect(result.status).toBe("failed");
   });
@@ -159,7 +169,10 @@ describe("draftPrBody — the port receives the assembled prompt (citing contrac
       return {
         status: "emitted",
         title: "Bound the fail-open path",
-        body: citesRequirement && citesDecision ? "Grounded body citing the requirement and decision 2." : "",
+        body:
+          citesRequirement && citesDecision
+            ? "Grounded body citing the requirement and decision 2."
+            : "",
         model: "m",
       };
     };

@@ -165,6 +165,7 @@ function harness(
   };
   flaggedReviewSpy: ReturnType<typeof vi.fn>;
   refineCommentSpy: ReturnType<typeof vi.fn>;
+  draftPrBodySpy: ReturnType<typeof vi.fn>;
 } {
   const capture: PatchsetCapturePort = { capture: () => Promise.resolve(patchset()) };
   const service = new ReviewService(capture, new InMemoryStore());
@@ -210,6 +211,15 @@ function harness(
   // the boundary the "all-unavailable still-green" catch (P1-7) proved untested.
   const refineCommentSpy = vi.fn<NonNullable<DispatchDeps["refineComment"]>>(async () => ({
     status: "no-change" as const,
+    model: "test-model",
+  }));
+  // The PR-body drafting producer (issue #74, M26) as a recording spy, so a test can
+  // assert the LIVE command path invokes it with the RESOLVED review + the drafting
+  // material — and that a build WITHOUT the drafter answers an honest `unavailable`.
+  const draftPrBodySpy = vi.fn<NonNullable<DispatchDeps["draftPrBody"]>>(async () => ({
+    status: "drafted" as const,
+    title: "A drafted title",
+    body: "A drafted body.",
     model: "test-model",
   }));
   const deps: DispatchDeps = {
@@ -268,6 +278,7 @@ function harness(
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
     reviewAsk,
     refineComment: refineCommentSpy,
+    draftPrBody: draftPrBodySpy,
     symbolLookup: opts.symbolLookup,
     openInEditor: opts.openInEditor,
     openSpecChange: opts.openSpecChange,
@@ -284,6 +295,7 @@ function harness(
     reviewAsk,
     flaggedReviewSpy,
     refineCommentSpy,
+    draftPrBodySpy,
   };
 }
 
@@ -489,6 +501,76 @@ describe("createDispatch — review.refine routing (the live producer, issue #19
         itemId: "x",
         type: "comment",
         raw: "note",
+      }),
+    ).rejects.toThrow(/Review not found/);
+  });
+});
+
+describe("createDispatch — review.draftPrBody routing (the live producer, issue #74)", () => {
+  it("invokes the producer with the RESOLVED review and the exact drafting material, returning its result", async () => {
+    const { dispatch, draftPrBodySpy } = harness();
+    const review = await capturedReview(dispatch);
+    const result = await dispatch("review.draftPrBody", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      base: "main",
+      head: "feat/rate-limit-fallback",
+      narration: { oneLine: "one line", paragraph: "a paragraph" },
+      dispositions: [{ type: "request-change", path: "keys.ts", resolution: "add a note" }],
+      requirements: ["The limiter MUST bound the fail-open path"],
+      decisions: ["Chose a local bucket (decision 2)"],
+    });
+    // The producer ran exactly once, handed the RESOLVED review (not a bare id) and
+    // the caller's exact material. Removing the `deps.draftPrBody(...)` call — the
+    // wiring — reddens this: nothing else asserts the producer is reached.
+    expect(draftPrBodySpy).toHaveBeenCalledTimes(1);
+    const arg = draftPrBodySpy.mock.calls[0]?.[0];
+    expect(arg.review.id).toBe(review.id);
+    expect(arg).toMatchObject({
+      base: "main",
+      head: "feat/rate-limit-fallback",
+      narration: { oneLine: "one line", paragraph: "a paragraph" },
+      dispositions: [{ type: "request-change", path: "keys.ts", resolution: "add a note" }],
+      requirements: ["The limiter MUST bound the fail-open path"],
+      decisions: ["Chose a local bucket (decision 2)"],
+    });
+    // …and the route returns the producer's result verbatim.
+    expect(result).toEqual({
+      status: "drafted",
+      title: "A drafted title",
+      body: "A drafted body.",
+      model: "test-model",
+    });
+  });
+
+  it("omits absent optional material rather than passing empty stand-ins", async () => {
+    const { dispatch, draftPrBodySpy } = harness();
+    const review = await capturedReview(dispatch);
+    await dispatch("review.draftPrBody", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      base: "main",
+      head: "feat/thin",
+      dispositions: [],
+    });
+    const arg = draftPrBodySpy.mock.calls[0]?.[0];
+    // A thin submission carries no narration/requirements/decisions keys at all — the
+    // producer degrades honestly on their absence, never on an empty fabricated value.
+    expect(arg).not.toHaveProperty("narration");
+    expect(arg).not.toHaveProperty("requirements");
+    expect(arg).not.toHaveProperty("decisions");
+  });
+
+  it("refuses review.draftPrBody for a stale or unknown review id (the producer spends a model turn)", async () => {
+    const { dispatch } = harness();
+    await capturedReview(dispatch);
+    await expect(
+      dispatch("review.draftPrBody", {
+        commandId: randomUUID(),
+        reviewId: randomUUID(),
+        base: "main",
+        head: "feat/x",
+        dispositions: [],
       }),
     ).rejects.toThrow(/Review not found/);
   });
