@@ -366,11 +366,15 @@ describe("resolveAnchor — the total function with four outcomes", () => {
   it("returns unresolved for a minted id", () => {
     expect(resolveAnchor(anchor("rennet:hunk/hNOPE"), MANIFEST).outcome).toBe("unresolved");
   });
-  it("returns superseded for a forward-mapped id, carrying state", () => {
+  it("supersedes a CHANGED (one-to-one) id to its successor but does NOT carry state", () => {
+    // Issue #16 Critical: `hOld` is a `one-to-one` (edited) lineage. It maps
+    // forward (superseded → re-anchor to h1) but read/analysis state must NOT
+    // carry — a changed occurrence reopens. This test previously pinned
+    // carriesState:true, i.e. state carried onto edited code.
     const resolution = resolveAnchor(anchor("rennet:hunk/hOld"), MANIFEST);
     expect(resolution.outcome).toBe("superseded");
     expect(resolution.occurrenceId).toBe("h1");
-    expect(resolution.carriesState).toBe(true);
+    expect(resolution.carriesState).toBe(false);
   });
   it("returns orphaned for a terminated lineage", () => {
     const resolution = resolveAnchor(anchor("rennet:hunk/hDead"), MANIFEST);
@@ -379,6 +383,47 @@ describe("resolveAnchor — the total function with four outcomes", () => {
   });
   it("fails closed on ambiguous lineage: orphaned, never carrying state", () => {
     const resolution = resolveAnchor(anchor("rennet:hunk/hAmbig"), MANIFEST);
+    expect(resolution.outcome).toBe("orphaned");
+    expect(resolution.carriesState).toBe(false);
+  });
+});
+
+// ── The carry authority across ALL seven lineage classes (issue #16 Critical 2) ─
+// `carriesState` is the BINDING gate the disposition seam shares via the single
+// `autoCarries` authority in `@rennet/types`. Only `exact` may carry; every other
+// mapped class supersedes (re-anchors) or orphans WITHOUT carrying state. Before
+// the fix, resolveAnchor returned carriesState:true for every targeted non-ambiguous
+// class — one-to-one/move/split/merge all carried read state onto changed code.
+describe("resolveAnchor — carry authority is exact-only across all seven classes", () => {
+  const SEVEN: OfferedManifest = {
+    occurrences: [{ id: "hNew", kind: "hunk", sides: { additions: ["x"] } }],
+    lineage: [
+      { fromId: "hExact", lineage: "exact", toId: "hNew" },
+      { fromId: "hOneToOne", lineage: "one-to-one", toId: "hNew" },
+      { fromId: "hMove", lineage: "move", toId: "hNew" },
+      { fromId: "hSplit", lineage: "split", toId: "hNew" },
+      { fromId: "hMerge", lineage: "merge", toId: "hNew" },
+      { fromId: "hAmbiguous", lineage: "ambiguous", toId: "hNew" },
+      { fromId: "hTerminated", lineage: "terminated" },
+    ],
+  };
+
+  it("carries state ONLY for exact", () => {
+    expect(resolveAnchor(anchor("rennet:hunk/hExact"), SEVEN).carriesState).toBe(true);
+  });
+
+  it.each(["hOneToOne", "hMove", "hSplit", "hMerge"])(
+    "supersedes %s to its successor but never carries state",
+    (fromId) => {
+      const resolution = resolveAnchor(anchor(`rennet:hunk/${fromId}`), SEVEN);
+      expect(resolution.outcome).toBe("superseded");
+      expect(resolution.occurrenceId).toBe("hNew");
+      expect(resolution.carriesState).toBe(false);
+    },
+  );
+
+  it.each(["hAmbiguous", "hTerminated"])("orphans %s, never carrying state", (fromId) => {
+    const resolution = resolveAnchor(anchor(`rennet:hunk/${fromId}`), SEVEN);
     expect(resolution.outcome).toBe("orphaned");
     expect(resolution.carriesState).toBe(false);
   });

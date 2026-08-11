@@ -1,0 +1,242 @@
+/* Rennet status page. Every colour and type choice rides a token from the app's
+ * tokens.css (copied in at build time), so the site cannot drift from the product.
+ * No @font-face, no imports, no network. */
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--sans);
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+main {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 88px 28px 120px;
+}
+
+section,
+figure,
+header {
+  margin: 0 0 72px;
+}
+
+/* scheme toggle: the only interactive thing on the page */
+.scheme {
+  position: fixed;
+  top: 20px;
+  right: 20px;
+  font-family: var(--sans);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--text-soft);
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  border-radius: var(--chip-radius);
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.scheme:hover {
+  color: var(--text);
+  border-color: var(--hairline-strong);
+}
+
+/* 1 · masthead */
+.masthead {
+  margin-bottom: 40px;
+}
+.lockup {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.mark {
+  display: block;
+}
+.wordmark {
+  font-size: 30px;
+  font-weight: 650;
+  letter-spacing: 0.005em;
+  color: var(--mark-ink);
+}
+.category-line {
+  margin: 14px 0 0;
+  color: var(--text-soft);
+  font-size: 16px;
+}
+
+/* honesty line */
+.honesty {
+  margin: 0 0 72px;
+  padding: 18px 20px;
+  border: 1px solid var(--private-line);
+  border-radius: var(--radius);
+  background: var(--private-fill);
+  color: var(--text);
+  font-size: 15px;
+}
+
+/* 2 · thesis */
+.thesis h1 {
+  font-size: clamp(28px, 5vw, 40px);
+  line-height: 1.15;
+  font-weight: 700;
+  letter-spacing: var(--display-track);
+  margin: 0 0 40px;
+  max-width: 18ch;
+}
+.blocks {
+  display: grid;
+  gap: 28px;
+}
+@media (min-width: 640px) {
+  .blocks {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+.block h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  font-weight: 600;
+  margin: 0 0 10px;
+}
+.block p {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text-soft);
+}
+
+/* screenshot */
+.shot {
+  margin: 0 0 72px;
+}
+.shot img {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+}
+.shot figcaption {
+  margin-top: 12px;
+  font-size: 13px;
+  color: var(--text-faint);
+}
+
+/* 4 · category paragraph */
+.category p {
+  font-size: 20px;
+  line-height: 1.5;
+  color: var(--text);
+  margin: 0;
+  max-width: 54ch;
+}
+
+/* 10 · what it is not */
+.isnot h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  font-weight: 600;
+  margin: 0 0 16px;
+}
+.isnot ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.isnot li {
+  font-size: 16px;
+  color: var(--text);
+  padding-left: 18px;
+  position: relative;
+}
+.isnot li::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.7em;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--private);
+}
+
+/* build log */
+.buildlog-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 18px;
+}
+.buildlog-head h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--text-faint);
+  font-weight: 600;
+  margin: 0;
+}
+.buildlog-head a {
+  font-size: 13px;
+  color: var(--private);
+  text-decoration: none;
+}
+.buildlog-head a:hover {
+  text-decoration: underline;
+}
+.buildlog ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 12px;
+}
+.buildlog li {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  gap: 16px;
+  font-size: 14px;
+  align-items: baseline;
+}
+.buildlog time {
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.buildlog .entry {
+  color: var(--text-soft);
+}
+
+/* footer */
+footer {
+  margin-top: 96px;
+  padding-top: 28px;
+  border-top: 1px solid var(--hairline);
+}
+footer .name {
+  font-size: 14px;
+  color: var(--text-soft);
+  margin: 0 0 8px;
+  max-width: 60ch;
+}
+footer .meta {
+  font-size: 13px;
+  color: var(--text-faint);
+  margin: 0;
+}

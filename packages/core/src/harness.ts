@@ -288,16 +288,7 @@ export interface SessionSpec {
   readonly cwd: string;
   readonly model?: string;
   readonly systemPrompt?: { readonly mode: "replace" | "append"; readonly text: string };
-  /** The review default. Read-only means every write/exec is denied by policy. */
-  readonly readOnly: boolean;
   readonly allowedTools?: readonly string[];
-  /**
-   * Tools DENIED by policy on a WRITE-enabled session (`readOnly: false`). A
-   * read-only session ignores this and denies the fixed write/exec set. A handoff
-   * write session passes the exec/network tools here so the coding agent can edit
-   * files but cannot run `git push` — the structural half of R33 (never pushes).
-   */
-  readonly disallowedTools?: readonly string[];
   readonly outputSchema?: unknown;
   readonly signal?: AbortSignal;
 }

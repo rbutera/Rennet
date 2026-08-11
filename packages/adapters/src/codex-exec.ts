@@ -341,6 +341,10 @@ export function createCodexExecutor(
       // correlated by this run's unique scratch cwd. Measurement never fails the
       // call: any error → no tokens → the port stamps an honest unmeasured zero.
       let tokens: CodexExecResult["tokens"];
+      // The model Codex ACTUALLY ran, read from the correlated session log (#74 MED-3).
+      // Best-effort like the usage read: absent ⇒ the consumer falls back to the
+      // requested model, never a fabricated claim about what ran.
+      let observedModel: string | undefined;
       if (effects.readSessionUsage !== undefined) {
         try {
           const measurement = await effects.readSessionUsage({
@@ -350,6 +354,9 @@ export function createCodexExecutor(
           options.onUsageMeasurement?.(measurement);
           if (measurement.status === "measured" && measurement.usage !== null) {
             tokens = measurement.usage;
+          }
+          if (measurement.model != null && measurement.model !== "") {
+            observedModel = measurement.model;
           }
         } catch (error) {
           options.onUsageMeasurement?.({
@@ -365,6 +372,7 @@ export function createCodexExecutor(
       return {
         output,
         ...(tokens === undefined ? {} : { tokens }),
+        ...(observedModel === undefined ? {} : { model: observedModel }),
         ...(options.harnessVersion === undefined ? {} : { harnessVersion: options.harnessVersion }),
       };
     } finally {

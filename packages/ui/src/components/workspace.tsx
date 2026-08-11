@@ -427,6 +427,45 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     return occurrenceIdsForElementOn(canvas, elementAnchor);
   }
 
+  // The occurrence ids an element actually RENDERS ON, resolved from its real diff, for
+  // membership / shown-marks / jump resolution. A hunk- or floor-chunk-anchored element's
+  // set is its anchor set (its own hunk, or its substrate chunk's hunks). A PROPOSAL chunk
+  // (`projectSequence`) regroups floor hunks under a synthetic chunk id absent from the
+  // substrate, so its anchor set is just that id; its REAL rendered hunks live in
+  // `ElementDiff.hunkOccurrences` (emitted with the diff text, #84, so it cannot drift).
+  // Union the two, falling back to the anchor set alone when the diff is unavailable (the
+  // demo host, or an unresolved element) so we never lose the element's own hunks. This is
+  // the #250 owner resolution the mark index already runs (`hunkOwnerKey` above), lifted so
+  // the shown-marks filter (mark cards) and both jump paths resolve proposal-chunk
+  // membership the same way instead of falling back to substrate-only ids.
+  function renderedOccurrenceIdsForElementOn(
+    targetCanvas: Canvas,
+    element: { elementKey: string; anchor: string },
+  ): string[] {
+    const anchorIds = occurrenceIdsForElementOn(targetCanvas, element.anchor);
+    // Only a PROPOSAL chunk — a chunk anchor ABSENT from the substrate — needs its real
+    // diff to recover the floor hunks it regrouped; its anchor set is just its own
+    // synthetic id. For a hunk anchor or a real substrate chunk the anchor set is already
+    // authoritative, and augmenting it from `hunkOccurrences` would let a foreign or
+    // blanket diff (a mark's own element diff resolved for the WRONG element) bleed a hunk
+    // in, false-matching membership. Mirrors the round-1 resolver: anchor ownership wins,
+    // the proposal pass only fills a hunk no anchor claimed.
+    const parsed = parseAnchor(element.anchor);
+    const isProposalChunk =
+      parsed.ok &&
+      parsed.anchor.kind === "chunk" &&
+      !targetCanvas.layers.substrate.chunks.some((chunk) => chunk.chunkId === parsed.anchor.id);
+    if (!isProposalChunk) return anchorIds;
+    const ids = new Set(anchorIds);
+    const elementDiff = props.diffFor?.(element.elementKey);
+    if (elementDiff) {
+      for (const hunk of elementDiff.hunkOccurrences) {
+        for (const occurrence of hunk) ids.add(occurrence.id);
+      }
+    }
+    return [...ids];
+  }
+
   // The index's orphan verdict is AUTHORITATIVE (issue #84 P0-2), not the old coarse
   // "is the occurrence in the changeset" test. The coarse test misses the fine cases —
   // a present occurrence whose span falls out of its slice, or an element whose mapping
@@ -443,20 +482,53 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   const authoritativePlaced = new Set<string>();
   const authoritativeOrphan = new Set<string>();
   if (props.diffFor) {
+    // Resolve which element OWNS each hunk in two passes. FIRST by element ANCHOR (a
+    // hunk-anchored element owns its hunk; a floor-chunk element owns its substrate
+    // chunk's hunks) — the original resolution, kept so the #84 empty-`hunkOccurrences`
+    // element still owns its hunk via its anchor and therefore still reaches
+    // `placeMarks` to orphan loudly. THEN, for any hunk no anchor claimed, by the
+    // element's REAL diff (`ElementDiff.hunkOccurrences`). That second pass is the #250
+    // fix: a proposal chunk (`projectSequence`) regroups floor hunks into an element
+    // whose chunk anchor is NOT in the floor substrate, so its anchor occurrence set is
+    // just its own chunk id — a mark on a regrouped hunk found no owner, never reached
+    // `placeMarks`, and silently rode the coarse "in changeset" verdict as a false
+    // "placed". `hunkOccurrences` is emitted with the diff text so it cannot drift from
+    // it (#84), which is what makes it a trustworthy ownership source.
+    const elementDiffByKey = new Map<string, ElementDiff>();
+    const hunkOwnerKey = new Map<string, string>();
+    for (const element of canvas.layers.analysis.elements) {
+      const elementDiff = props.diffFor(element.elementKey);
+      if (elementDiff) elementDiffByKey.set(element.elementKey, elementDiff);
+      for (const hunkId of occurrenceIdsForElement(element.anchor)) {
+        if (!hunkOwnerKey.has(hunkId)) hunkOwnerKey.set(hunkId, element.elementKey);
+      }
+    }
+    for (const element of canvas.layers.analysis.elements) {
+      const elementDiff = elementDiffByKey.get(element.elementKey);
+      if (!elementDiff) continue;
+      for (const hunk of elementDiff.hunkOccurrences) {
+        for (const occurrence of hunk) {
+          if (!hunkOwnerKey.has(occurrence.id)) hunkOwnerKey.set(occurrence.id, element.elementKey);
+        }
+      }
+    }
     const marksByElementKey = new Map<string, Mark[]>();
     for (const mark of marks) {
       const parsed = parseAnchor(mark.anchor);
       if (!parsed.ok) continue;
-      const owner = canvas.layers.analysis.elements.find((element) =>
-        occurrenceIdsForElement(element.anchor).includes(parsed.anchor.id),
-      );
-      if (!owner) continue;
-      const list = marksByElementKey.get(owner.elementKey) ?? [];
+      const ownerKey = hunkOwnerKey.get(parsed.anchor.id);
+      if (ownerKey === undefined) continue;
+      const list = marksByElementKey.get(ownerKey) ?? [];
       list.push(mark);
-      marksByElementKey.set(owner.elementKey, list);
+      marksByElementKey.set(ownerKey, list);
     }
     for (const [elementKey, elementMarks] of marksByElementKey) {
-      const elementDiff = props.diffFor(elementKey);
+      // Only an element whose diff RESOLVED can be adjudicated by `placeMarks`. An
+      // anchor-only owner (diffFor returned undefined) keeps the coarse verdict rather
+      // than false-orphaning a mark we simply could not place here — the invariant the
+      // #84 set relies on, which #250 must preserve (never trade a hidden orphan for a
+      // false one).
+      const elementDiff = elementDiffByKey.get(elementKey);
       if (!elementDiff) continue;
       const registry = buildRowRegistry({
         diff: elementDiff.diff,
@@ -487,10 +559,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   function navigateToMark(entry: MarkIndexEntry): void {
     const parsed = parseAnchor(entry.anchor);
     if (parsed.ok) {
-      const element = canvas.layers.analysis.elements.find((candidate) => {
-        const candidateAnchor = parseAnchor(candidate.anchor);
-        return candidateAnchor.ok && candidateAnchor.anchor.id === parsed.anchor.id;
-      });
+      // Resolve the element that actually RENDERS the mark's hunk, not one whose ANCHOR
+      // id equals it. A proposal chunk owns a floor hunk through its diff, never through
+      // its (synthetic, out-of-substrate) anchor id, so an anchor-equality find left the
+      // jump dead for a valid proposal-chunk mark (#250).
+      const element = canvas.layers.analysis.elements.find((candidate) =>
+        renderedOccurrenceIdsForElementOn(canvas, candidate).includes(parsed.anchor.id),
+      );
       if (element) {
         store.getState().select(element.elementKey);
         store.getState().setCursor(entry.anchor);
@@ -647,7 +722,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     for (const candidateAngle of orderedAngles) {
       const candidateCanvas = props.canvases[candidateAngle];
       const element = candidateCanvas.layers.analysis.elements.find((el) =>
-        occurrenceIdsForElementOn(candidateCanvas, el.anchor).includes(targetId),
+        renderedOccurrenceIdsForElementOn(candidateCanvas, el).includes(targetId),
       );
       if (!element) continue;
       // Read the TARGET canvas directly (not the render-closure `canvas`, stale right
@@ -763,7 +838,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   const selectedElement = selection
     ? canvas.layers.analysis.elements.find((element) => element.elementKey === selection)
     : undefined;
-  const shownOccurrenceIds = selectedElement ? occurrenceIdsForElement(selectedElement.anchor) : [];
+  const shownOccurrenceIds = selectedElement
+    ? renderedOccurrenceIdsForElementOn(canvas, selectedElement)
+    : [];
   const shownMarks = marks.filter((mark) => {
     const parsed = parseAnchor(mark.anchor);
     return parsed.ok && shownOccurrenceIds.includes(parsed.anchor.id);

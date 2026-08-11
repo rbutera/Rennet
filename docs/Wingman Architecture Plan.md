@@ -8,9 +8,10 @@ updated: 2026-08-05
 
 # Rennet Architecture Plan
 
+> Rule Zero (`AGENTS.md`) outranks this file: no consent gates, no gates, no robustness for robustness' sake.
+
 > [!IMPORTANT] Current implementation authority, 2026-08-06
-> ⛔ **SUPERSEDED 2026-08-06: the banner below (originally 2026-08-05) restated two rules that are now reversed. Rennet is MIT throughout (no AGPL-3.0-only, no Apache-2.0 split), and the Claude Agent SDK is ADOPTED, not banned — see Master Plan R2/R3. The rest of the banner's rulings still stand.**
-> This is a detailed historical plan for **Rennet**. [[Rennet Contracts and Rulings]], [[Rennet Architecture Contracts]], [[Rennet Dependency Standard]], and [[Rennet Navi Handoff]] override every conflicting recipe below. In particular: use `@rennet/*`; use the final package tree in Master Plan R21; `ui` imports only `protocol` and `types`; ~~licence open packages as `AGPL-3.0-only`; never link the Claude Agent SDK~~ (both superseded 2026-08-06, see note above); use occurrence IDs plus a lineage graph; use validated hybrid decomposition; never invoke a harness per hunk; the six angles exclude Subtraction; route handoff is removed; use `ForgePort`, not `GithubPort`; and use Nx + Vite 8 + Electron Forge, not Turbo or mixed packagers. Sections and backlog rows that retain the old design are evidence and rationale only, not build instructions.
+> This is a detailed historical plan for **Rennet**. [[Rennet Contracts and Rulings]], [[Rennet Architecture Contracts]], [[Rennet Dependency Standard]], and [[Rennet Navi Handoff]] override every conflicting recipe below. In particular: use `@rennet/*`; use the final package tree in Master Plan R21; every package is MIT; `ui` imports only `protocol` and `types`; the Claude adapter links `@anthropic-ai/claude-agent-sdk` (R2); use occurrence IDs plus a lineage graph; use validated hybrid decomposition; never invoke a harness per hunk; the six angles exclude Subtraction; route handoff is removed; use `ForgePort`, not `GithubPort`; and use Nx + Vite 8 + Electron Forge, not Turbo or mixed packagers. Sections and backlog rows that retain the old design are evidence and rationale only, not build instructions.
 
 Implementation architecture for [[Code Review Harness App]]. The product name is Rennet; the filename is retained only to preserve existing Obsidian links. Current package choices are in [[Rennet Dependency Standard]]; the older stack note remains research evidence.
 
@@ -103,7 +104,7 @@ Each decision states the call, why, and what was rejected. **Frozen** decisions 
 ### D1 — SUPERSEDED: original five-package sketch
 
 > [!IMPORTANT] Current package tree
-> Use `packages/{types, protocol, core, adapters, ui, instructions, tsconfig}` plus `apps/{desktop, mobile-placeholder}`, `scripts/`, and non-workspace `spikes/`. Packages use `@rennet/*`. `protocol` and `types` are Apache-2.0 and import no other in-repo packages. `ui` imports only those two packages. The old tree below is historical. ⛔ **SUPERSEDED 2026-08-06: the Apache-2.0 designation on `protocol`/`types` is gone — every package is MIT.**
+> Use `packages/{types, protocol, core, adapters, ui, instructions, tsconfig}` plus `apps/{desktop, mobile-placeholder}`, `scripts/`, and non-workspace `spikes/`. Packages use `@rennet/*` and every one is MIT. `protocol` and `types` import no other in-repo packages; `ui` imports only those two. The old tree below is historical.
 
 The hub note proposes `core/` + `shell/` + `ui/`. Concretely:
 
@@ -127,7 +128,7 @@ Rejected: a single package with folders (boundaries become vibes); `core` split 
 
 ### D2 — AMENDED: dependency rules
 
-The current dependency matrix is the package tree above plus Master Plan R3/R4/R20/R21. In particular, `ui → core` and mobile importing core subpaths are prohibited; `protocol` may import `types`, and neither Apache package may import anything else in-repo. ⛔ **SUPERSEDED 2026-08-06: there is no "Apache package" distinction any more — `protocol` and `types` are MIT, same as the rest of the repo. The import-boundary rule itself (architecture, not licensing) still stands.**
+The current dependency matrix is the package tree above plus Master Plan R3/R4/R20/R21. In particular, `ui → core` and mobile importing core subpaths are prohibited; `protocol` may import `types`, and neither may import anything else in-repo.
 
 | Package | May import | Must never import |
 |---|---|---|
@@ -181,7 +182,7 @@ Calibration requirement on layer 4: **the boundary checker ships with a fixture 
 ### D4 — SUPERSEDED: content-addressed hunk identity
 
 > [!DANGER] Do not implement this identity model
-> The current model is an immutable `OccurrenceId` plus an explicit lineage graph with exact, one-to-one, split, merge, move, ambiguous, and rejected edges. Path, symbol, content hashes, and similarity are matcher evidence only. Similarity never carries read state; ambiguity fails closed and reopens the occurrence. Exact byte-identical lineage may preserve unaffected analysis only after the matcher-precision gate passes. `hunkKey` survives only as a feature and dismissal-key input. See Master Plan R8 and the canonical review/patchset contract.
+> The current model is an immutable `OccurrenceId` plus an explicit lineage graph with exact, one-to-one, split, merge, move, ambiguous, and rejected edges. Path, symbol, content hashes, and similarity are matcher evidence only. Similarity never carries read state; ambiguity reopens the occurrence, because carrying read state across a match that might be wrong tells the reviewer they read something they did not. Exact byte-identical lineage preserves unaffected analysis. `hunkKey` survives only as a feature and dismissal-key input. See Master Plan R8 and the canonical review/patchset contract.
 
 The remainder of D4 records the superseded design and its original rationale.
 
@@ -239,7 +240,7 @@ An angle is a **total function** `(HunkVersion[], AngleInput) => AngleView`. Con
 ### D7 — AMENDED: validated hybrid decomposition
 
 > [!IMPORTANT] Current rule
-> Deterministic code owns totality, classification, size limits, validation, and the offline fallback. A harness proposes one complete, versioned decomposition graph with rationale; it never emits per-hunk regroup operations. The validator rejects omission, duplication, oversize chunks, and invalid anchors. A human accepts or edits the proposal. The deterministic result is the floor, not the semantic authority. Initial decomposition must remain under five harness invocations and produce a useful first chunk within 15 seconds.
+> Deterministic code owns totality, classification, size limits, validation, and the offline fallback. A harness proposes one complete, versioned decomposition graph with rationale; it never emits per-hunk regroup operations. The validator rejects omission, duplication, oversize chunks, and invalid anchors — that is output correctness, and a decomposition that silently drops hunks is wrong, not merely unapproved. A validated decomposition applies immediately; the reviewer can edit it. The deterministic result is the floor, not the semantic authority. Initial decomposition must remain under five harness invocations and produce a useful first chunk within 15 seconds.
 
 This closes the hub's open question *"Cohorting engine: deterministic vs LLM-proposed vs hybrid?"*
 
@@ -255,7 +256,7 @@ The deterministic pass:
 
 Why deterministic-first rather than LLM-first: the app must open a PR and be useful with the network down, with no key configured, and in under a second. A model that improves the grouping is a large win; a model that is *required* for the grouping makes the core unusable when it is slow, absent, or wrong. It also makes the grouping testable — a golden-file test over a fixture repo, which an LLM-first design cannot have.
 
-The old `hunk.regrouped` harness recipe is retired. Harness output is admitted atomically as `decomposition.proposed`, then accepted, rejected, or human-edited as a complete graph. Human corrections remain durable inputs; deterministic validation remains mandatory.
+The old `hunk.regrouped` harness recipe is retired. Harness output is admitted atomically as `decomposition.proposed`, validated, and applied as a complete graph. Human corrections remain durable inputs; deterministic validation remains mandatory.
 
 ### D8 — Event store: SQLite via kysely, synchronous fold-forward projections. FROZEN
 
@@ -352,14 +353,13 @@ The core rule this encodes: **the renderer never holds domain logic.** The comma
 ### D12 — AMENDED: main routes, engine owns state, adapters own harness lifecycle
 
 > [!IMPORTANT] Claude process rule
-> ⛔ **SUPERSEDED 2026-08-06: the ban on the Claude Agent SDK below is reversed — the SDK is now adopted; see Master Plan R2.** The clean-room process-per-turn CLI wrapper this rule prescribes is no longer the mandated design.
-> Never import or bundle `@anthropic-ai/claude-agent-sdk`. The Claude adapter starts a clean `claude -p` child process for each turn, using `--resume <id> --fork-session` when continuing a logical Rennet thread. Rennet persists the logical thread and the minimum harness session identifier needed to continue it, not a long-lived SDK process. Other adapters may be long-lived only where their verified protocol requires it. Process ownership follows the adapter capability, not a universal one-process-per-session rule.
+> The Claude adapter links `@anthropic-ai/claude-agent-sdk` (Master Plan R2) and points it at the user's installed `claude` binary; the SDK's bundled per-platform executables are stripped at packaging. Rennet persists the logical thread and the minimum harness session identifier needed to continue it. Other adapters may be long-lived only where their verified protocol requires it. Process ownership follows the adapter capability, not a universal one-process-per-session rule.
 
 Per the stack note §1: heavy work goes in `utilityProcess`, not the main process and not `child_process.fork`.
 
 - **main** — windows, menus, IPC dispatch, `safeStorage`, updates. No domain work, ever. It must never block.
 - **engine** (one `utilityProcess`) — `GitPort`, diff parse, tree-sitter, chunking, angles, **and the SQLite event store**. Single writer. The store lives here rather than in main specifically because `node-sqlite3-wasm` is synchronous, and synchronous SQLite on the main process is a jank source on exactly the frames the product is judged by.
-- **harness adapter host** — supervises child processes according to the verified adapter contract. Claude is process-per-turn over the installed CLI; Codex uses its app-server protocol. No proprietary SDK or harness binary is linked or bundled. ⛔ **SUPERSEDED 2026-08-06: the Claude Agent SDK is adopted; the "no proprietary SDK" posture no longer applies to Claude.**
+- **harness adapter host** — supervises child processes according to the verified adapter contract. Claude runs through the Agent SDK over the installed CLI; Codex uses its app-server protocol. No harness binary of our own is bundled.
 - **renderer** — React, `@pierre/diffs`, and Pierre's worker pool for highlighting.
 
 ### D13 — Two streaming channels: ephemeral deltas bypass the store, durable events do not. FROZEN
@@ -550,7 +550,7 @@ export interface WingmanAnnotation {
 ### 2.3 Event taxonomy (`core/events`)
 
 > [!WARNING] Illustrative, not exhaustive
-> The code sketch below predates the canonical schema. Do not copy its union. The current taxonomy includes patch failure/cancellation/truncation, lineage ambiguity/confirmation/rejection/split/merge, review abandoned/superseded/attached, atomic decomposition proposal/accept/reject, external-forge changes, command deduplication, and publish cancel/supersede/retry/outcome-unknown/reconcile. `route.drafted` is deleted. Unknown event types stop projection and publishing with a clear upgrade error; they are preserved but never skipped-and-continued.
+> The code sketch below predates the canonical schema. Do not copy its union. The current taxonomy includes patch failure/cancellation/truncation, lineage ambiguity/confirmation/rejection/split/merge, review abandoned/superseded/attached, atomic decomposition proposal/accept/reject, external-forge changes, command deduplication, and publish cancel/supersede/retry/outcome-unknown/reconcile. `route.drafted` is deleted. Unknown event types stop projection with a clear upgrade error and are preserved, never skipped-and-continued — a projection that silently drops events it cannot read produces a coverage map that lies about what was reviewed. Publishing warns loudly and names the unknown types rather than refusing.
 
 ```ts
 export interface EventEnvelope<T extends ReviewEventType = ReviewEventType> {
@@ -749,14 +749,14 @@ Both review modes are in the dogfood cut. Local review is the first vertical sli
 | GitHub PR ingestion via `gh auth token` + `@octokit/graphql` | **MUST** | PR list, files, threads, checks in one round trip |
 | Own unified-diff parser (byte offsets, renames, binary, submodule) | **MUST** | parse-diff to bootstrap only |
 | tree-sitter symbol enrichment | **MUST** | Degrades to `''` without a grammar; identity still works |
-| Occurrence IDs + lineage graph, exact carry only after precision gate | **MUST** | Master Plan R8 |
+| Occurrence IDs + lineage graph with exact carry | **MUST** | Master Plan R8 |
 | Ambiguous/similar lineage reopens + version-to-version mini-diff | **MUST** | Similarity is evidence, never identity |
 | Validated hybrid decomposition ≤400 LOC + deterministic floor | **MUST** | Master Plan R9/R10 |
 | Event store, projections, upcast mechanism | **MUST** | Mechanism MUST; actual upcasts LATER |
 | Private-event structural exclusion + its test | **MUST** | D9. Without the test it is not a guarantee |
 | Typed IPC + command registry + cancellation | **MUST** | D11 |
 | Engine utility process | **MUST** | D12 |
-| Claude Code CLI adapter | **MUST** | Clean-room `claude -p`, process-per-turn; nothing bundled. ⛔ SUPERSEDED 2026-08-06: SDK adopted, no clean-room mandate — see Master Plan R2 |
+| Claude Code adapter | **MUST** | Agent SDK over the user's installed binary (Master Plan R2); no harness binary of our own bundled |
 | Angle: the sequence | **MUST** | The primary rail |
 | Angle: decisions | **MUST** | Strongest validated positioning fit |
 | Angle: blast radius | **MUST** | Cheap explainable signals only, no churn-heat |
@@ -765,7 +765,7 @@ Both review modes are in the dogfood cut. Local review is the first vertical sli
 | Residue check + loud error state | **MUST** | Falls out of D6 totality; costs almost nothing |
 | Anchored threads + diff chat (one harness) | **MUST** | Second-opinion switcher LATER |
 | Findings: rubric, severity floor, sticky dismissal | **MUST** | FP budget is CORE per validation |
-| Publish: prepare → sign → succeed, batched GraphQL review | **MUST** | D15. Ceremony *act* MUST, ceremony *polish* LATER |
+| Publish: prepare → sign → succeed, batched GraphQL review | **MUST** | D15. The three-phase idempotent log is the MUST; presentation polish is LATER |
 | Keyboard command registry feeding palette + menu bar | **MUST** | ~300 lines; daily-driver ergonomics |
 | Unsigned local dev build | **MUST** | Enough to daily-drive |
 | Signing, notarization, `@electron/fuses`, asarUnpack | LATER | Needed for distribution, not for Rai |
@@ -773,7 +773,7 @@ Both review modes are in the dogfood cut. Local review is the first vertical sli
 | Glass chrome / vibrancy identity | LATER | Ratified identity, but rough edges allowed in v1 |
 | Codex + oh-my-pi adapters | LATER | Interface must exist in v1; impls later |
 | Harness disagreement | LATER | Needs ≥2 adapters + stochasticity baseline |
-| Local PR submission preview | **MUST** | Preview only; pushing remains an explicit action |
+| Local PR submission | **MUST** | The preview is a view, not a stopping point; submitting a PR includes the push it requires |
 | Drag hunks between chunks | LATER | `hunk.regrouped` event should exist in v1 |
 | LLM chunk refinement | LATER | Deterministic baseline must stand alone first |
 | Watch mode | LATER | |
@@ -790,12 +790,12 @@ Both review modes are in the dogfood cut. Local review is the first vertical sli
 ### Frozen — do not change without escalating to Rai
 
 - **Durable repo identity = `RepoRecord`; git common dir is a machine-local alias**, never the durable identity.
-- **Occurrence IDs plus an explicit lineage graph** (Master Plan R8). Similarity is matcher evidence only; ambiguity fails closed.
+- **Occurrence IDs plus an explicit lineage graph** (Master Plan R8). Similarity is matcher evidence only; an ambiguous match reopens the occurrence instead of carrying read state.
 - **Events are append-only; corrections are new events** (D8).
 - **Private events are structurally excluded from publish** (D9), with the test as the mechanism.
 - **`core` has zero `node:*` imports** (D2/D3).
 - **Validated hybrid decomposition with an always-available deterministic floor** (Master Plan R9/R10).
-- **Publish is an explicit three-phase human act** (D15) — ratified by Rai as the signature gesture.
+- **Publish is a three-phase idempotent act ending in the sign step** (D15) — ratified by Rai as the signature gesture.
 - **Renderer holds no domain logic** (D11).
 
 ### Adjustable — Navi may revise with evidence
@@ -824,30 +824,30 @@ Both review modes are in the dogfood cut. Local review is the first vertical sli
 ## 5. Bead candidates
 
 > [!DANGER] Do not execute this backlog verbatim
-> It predates the reconciled handoff. Use [[Rennet Navi Handoff]] for current sequencing. Any row below mentioning `@wingman`, five packages, `hunkKey` identity, deterministic-authoritative chunking, the Claude Agent SDK, route handoff, or a Pierre renderer fallback is superseded.
+> It predates the reconciled handoff. Use [[Rennet Navi Handoff]] for current sequencing. Any row below mentioning `@wingman`, five packages, `hunkKey` identity, deterministic-authoritative chunking, route handoff, or a Pierre renderer fallback is superseded.
 
 Sized for autonomous agent execution. Dependencies are hard unless marked soft.
 
 | # | Title | P | Depends on | Description |
 |---|---|---|---|---|
-| B1 | Scaffold the Rennet monorepo (pnpm + turbo + Biome + TS 7 + Vitest) | P0 | — | Create the final package layout from Master Plan R21 with `@rennet/*` names and the Apache/AGPL boundary from R3/R4. No app code, just a green build/test/boundary gate. ⛔ SUPERSEDED 2026-08-06: no Apache/AGPL boundary — everything is MIT. |
+| B1 | Scaffold the Rennet monorepo (pnpm + turbo + Biome + TS 7 + Vitest) | P0 | — | Create the final package layout from Master Plan R21 with `@rennet/*` names, MIT throughout. No app code, just a green build/test/boundary gate. |
 | B2 | Implement and prove the four-layer boundary enforcement | P0 | B1 | Wire Biome `noRestrictedImports` per D3, write `tooling/check-boundaries.ts`, and add fixture files that violate each rule. CI must assert the checker *fails* on the fixtures — a boundary check that cannot fail has not passed. |
 | B3 | Spike: measure `@pierre/diffs` against a real 5,000-line diff | P0 | B1 | Render a genuine large the enterprise client PR diff through `CodeView` with the worker pool on, profile with Chrome DevTools, record frame times. Confirm 1.3.2 still exports `Virtualizer`/`useWorkerPool`. Outcome decides D14. Highest information value in the list. |
-| B4 | Spikes: `node:sqlite` in Electron and direct Claude CLI fidelity/isolation | P0 | B1 | The store check may delete a dependency. The CLI spike verifies process-per-turn resume/fork/schema/partial frames/cancellation/context isolation. No SDK binary is linked or bundled. ⛔ SUPERSEDED 2026-08-06: SDK adopted — see Master Plan R2. |
+| B4 | Spikes: `node:sqlite` in Electron and Claude transport fidelity | P0 | B1 | The store check may delete a dependency. The transport spike verifies resume/fork, schema output, partial frames, and cancellation through the Agent SDK over the user's installed binary. |
 | B5 | `GitPort`: spawn wrapper with streaming, cancellation, and shell:false hardening | P0 | B1 | ~250 lines per the stack note. Plumbing commands only, NUL-delimited parsing, `AbortSignal` per call, streamed stdout never buffered. Resolve an absolute git path and assert output shape defensively (§0.4). |
 | B6 | Workspace / repo / worktree discovery (the four nouns) | P0 | B5 | Implement `RepoId` = realpath of `--git-common-dir`, worktree enumeration via `--porcelain`, nested-repo and foreign-worktree detection. Golden test against Rai's actual layout: `/workspace`, nested `product-repo`, worktrees at `/workspace/wt/*` and `product-repo/.claude/worktrees/*`. |
 | B7 | Own the unified-diff parser | P0 | B5 | Replace parse-diff with a parser carrying byte offsets, per-line old/new numbers, rename and mode detection, binary and submodule cases. Fixture-driven, including malformed and truncated input. |
 | B8 | Event store: schema, kysely bridge, append+fold transaction | P0 | B1, B4(soft) | Implement D8 including the `SqliteDatabase` shim with the `reader` derivation and eager `finalize()`. Unit-test the bridge against every statement shape the query builder emits, including `RETURNING`. |
 | B9 | Event taxonomy, zod schemas, upcast mechanism, projection rebuild | P0 | B8 | Encode the D-2.3 taxonomy with per-type `private` flags and `currentVersion`. Implement read-time upcasting and drop-and-replay projection rebuild on `PROJECTION_SCHEMA_VERSION` bump. Property test: replay from zero equals incremental fold. |
 | B10 | Private-event exclusion, with the byte-identical publish test | P0 | B9 | Implement the publish-projection view that excludes `private=1`, and the test asserting the publish payload digest is unchanged when private events are deleted from the store (D9). This test *is* the guarantee. |
-| B11 | Occurrence IDs, lineage graph, and matcher-precision gate | P0 | B7, B9 | Implement immutable occurrence identities and explicit exact/move/split/merge/ambiguous/rejected edges. Hashes are evidence only. Duplicate-body and ambiguity fixtures must fail closed. |
+| B11 | Occurrence IDs, lineage graph, and matcher-precision measurement | P0 | B7, B9 | Implement immutable occurrence identities and explicit exact/move/split/merge/ambiguous/rejected edges. Hashes are evidence only. Duplicate-body and ambiguity fixtures must reopen rather than carry read state. Measure matcher precision as a thing to learn, not a bar to clear. |
 | B12 | Possible-continuation UI and version-to-version mini-diff | P1 | B11 | Similarity may propose lineage but never carries read/analysis state. Preserve stale prior artifacts visibly and reopen changed/ambiguous occurrences. |
 | B13 | tree-sitter enrichment pipeline (web-tree-sitter, WASM) | P1 | B7 | Load grammars lazily per language, extract enclosing symbol path per hunk. Must never throw on an unknown language; must never block the pipeline on a missing grammar. |
 | B14 | Validated hybrid decomposition with deterministic floor | P0 | B11 | Harness emits one complete versioned graph; validator proves totality, uniqueness, anchors, DAG, and ≤400 LOC. Offline deterministic fallback remains available. Enforce <5 invocations and <15s first useful chunk. |
 | B15 | Angle framework + the sequence angle + residue check | P0 | B14 | Implement `AngleView` as a pure total function with the `inputDigest` cache and the totality assertion emitting `residue.detected`. Ship the sequence angle over B14's chunks. |
 | B16 | Typed IPC layer and command registry | P0 | B9 | ~200 lines per D11/2.4: command map in `core/protocol`, single validating `ipcMain.handle` dispatcher, `MessageChannelMain` streaming, `requestId` cancellation. Reject unknown command names loudly. |
 | B17 | Engine utility process and process supervision | P0 | B16, B8 | Stand up the engine `utilityProcess` owning git, diff, and the store (D12). Main becomes a pure router. Include crash detection and restart with in-flight request rejection. |
-| B18 | Claude Code CLI adapter behind the normalized protocol | P0 | B17 | Implement the clean-room process-per-turn `claude -p` wrapper with tolerant decoders, resume/fork identifiers, isolation disclosure, and no SDK/credential access. Cancellation kills only the owned turn process. ⛔ SUPERSEDED 2026-08-06: the SDK is adopted; this is no longer the mandated design — see Master Plan R2. |
+| B18 | Claude Code adapter behind the normalized protocol | P0 | B17 | Implement the Agent SDK adapter (Master Plan R2) with tolerant decoders, resume/fork identifiers, and no credential access. Cancellation kills only the owned turn process. |
 | B19 | Two-channel streaming (durable events vs ephemeral deltas) | P1 | B18, B16 | Implement D13: coalesce token deltas at ~16ms straight to the renderer without persisting; append one `thread.messageAdded` on completion. Verify a mid-stream crash loses only the partial answer. |
 | B20 | GitHub ingestion: `gh auth token` + GraphQL PR/threads/checks | P0 | B1 | Read the token from `gh`, never store a copy. One GraphQL round trip for PR, files, threads, comments, check runs. Device-flow fallback is LATER; stub the seam. |
 | B21 | Renderer: `CodeView` integration with domain annotations | P0 | B3, B15, B16 | Map `FileDiffIR` + raw patch slices to `CodeViewItem[]` per D10, with `DiffLineAnnotation<WingmanAnnotation>`. One scroll owner (D14). Wire `updateItemId`/`version` for patchset changes. |
@@ -869,6 +869,6 @@ Critical path to a dogfoodable build: **B1 → B2 → B5 → B6 → B7 → B11 �
 
 Three places where I made a call Rai may want to overturn.
 
-1. **Resolved:** local author-side review leads and both modes ship in dogfood. Route handoff is removed. Local publishing produces a PR submission preview; every GitHub mutation remains a separate explicit action.
+1. **Resolved:** local author-side review leads and both modes ship in dogfood. Route handoff is removed. Local publishing shows a PR submission preview and then performs the mutations submission requires, including the push.
 2. **`@tanstack/react-virtual` is demoted.** The stack note lists it as must-use; §0.1 shows Pierre virtualizes already. I kept it for non-diff lists only. If the B3 measurement disappoints, it returns to the diff surface at file granularity.
 3. **Similarity carry-forward is MUST, not LATER.** It is genuinely more work than exact matching and could plausibly be cut from v1. I kept it because force-push survival is the defensible wedge per the market analysis, and a v1 that loses your place on every amended commit will not survive contact with the enterprise client PR churn — it would fail exactly where the product claims to win.

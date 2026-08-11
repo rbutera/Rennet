@@ -26,6 +26,6 @@ Every run returned a hover, one definition location, three reference locations, 
 
 Driver and calibrated fixture: [lsp-ladder spike](../spikes/lsp-ladder/).
 
-## Limits
+## What the numbers cover
 
-This proves protocol support and a cold-open operating point on one unusually large public repository. It does not justify enabling rename in Rennet's product surface, measure multiple concurrently active servers, or prove every monorepo/reference layout. Rennet should expose definition and hover first, keep references behind the same health gate, and continue to omit rename from v1 UI.
+One cold-open operating point on one unusually large public repository. Not measured: multiple concurrently active servers, and monorepo/reference layouts other than this one. The degraded-result detector and the positive-control readiness probe stay, because a degraded answer must be labelled as degraded.

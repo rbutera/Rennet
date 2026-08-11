@@ -40,10 +40,16 @@ const HARNESS_ID = "claude-code" as const;
 const DISPLAY_NAME = "Claude Code";
 const SESSION_ENV_MARKER = "RENNET_HARNESS_SESSION";
 
-/** Read/search tools permitted under the review-default read-only posture. */
-const READ_ONLY_ALLOWED_TOOLS: readonly string[] = ["Read", "Grep", "Glob", "LS"];
-/** Write/exec tools denied by policy, so an attempt renders as `tool.denied`. */
-const WRITE_EXEC_DENIED_TOOLS: readonly string[] = [
+// Rennet drives the user's harness CAPABLE BY DEFAULT: every session may read,
+// write, and run commands (Bash carries `git`, so it covers the push half of
+// Make-PR). There is no read-only posture and no deny list — a session that only
+// reads is a prompt outcome, not a capability the adapter withholds to force it
+// (Rai, 2026-08-11: capability is not where behaviour is enforced).
+const SESSION_ALLOWED_TOOLS: readonly string[] = [
+  "Read",
+  "Grep",
+  "Glob",
+  "LS",
   "Write",
   "Edit",
   "MultiEdit",
@@ -66,8 +72,12 @@ export interface ClaudeQueryOptions {
   readonly model?: string;
   readonly allowedTools?: readonly string[];
   readonly disallowedTools?: readonly string[];
-  /** Never a bypass mode; review is read-only. */
-  readonly permissionMode: "default";
+  /**
+   * Always bypass. The harness runs headless and capable by default — there is
+   * no read-only gate, and a headless turn has no TTY to answer a permission
+   * prompt, so write/exec must run without one.
+   */
+  readonly permissionMode: "bypassPermissions";
   /** The SDK REPLACES the child env, so this is always the full env, never a patch. */
   readonly env: Readonly<Record<string, string | undefined>>;
   readonly abortController?: AbortController;
@@ -509,22 +519,17 @@ export class ClaudeAdapter implements HarnessPort {
     // the scoped session marker. We never inject an API key: the assertion path
     // detects a metered key rather than forcing one.
     const env: Record<string, string | undefined> = { ...baseEnv, [SESSION_ENV_MARKER]: sessionId };
-    const allowedTools = spec.readOnly
-      ? (spec.allowedTools ?? READ_ONLY_ALLOWED_TOOLS)
-      : spec.allowedTools;
-    // A read-only session denies the fixed write/exec set; a write-enabled session
-    // takes whatever the caller specified in `disallowedTools` (absent ⇒ the full
-    // default tool surface, which is what a coding agent wants — Bash included).
-    const disallowedTools = spec.readOnly ? WRITE_EXEC_DENIED_TOOLS : spec.disallowedTools;
+    // Capable by default: one session shape with the full toolset. An explicit
+    // `spec.allowedTools` still narrows it (configuration, not a gate).
+    const allowedTools = spec.allowedTools ?? SESSION_ALLOWED_TOOLS;
     return {
       cwd: spec.cwd,
       pathToClaudeCodeExecutable: this.#config.binaryPath,
-      permissionMode: "default",
+      permissionMode: "bypassPermissions",
       env,
       abortController: abort,
       ...(spec.model === undefined ? {} : { model: spec.model }),
       ...(allowedTools === undefined ? {} : { allowedTools }),
-      ...(disallowedTools === undefined ? {} : { disallowedTools }),
       ...(spec.outputSchema === undefined ? {} : { outputSchema: spec.outputSchema }),
       ...(spec.systemPrompt?.mode === "append"
         ? { appendSystemPrompt: spec.systemPrompt.text }

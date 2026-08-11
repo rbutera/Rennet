@@ -123,7 +123,6 @@ describe("createHarnessRunTurn", () => {
 
     await runTurn("prompt", 0);
 
-    expect(state.spec?.readOnly).toBe(true);
     expect(state.spec?.cwd).toBe("/somewhere");
     expect(state.spec?.model).toBe("sonnet");
     expect(state.spec?.outputSchema).toEqual(bodyJsonSchema("ordering"));

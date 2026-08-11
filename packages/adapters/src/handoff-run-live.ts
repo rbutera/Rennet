@@ -37,11 +37,11 @@ function describeThrow(error: unknown): string {
 
 /**
  * Build the LIVE write-enabled `HandoffRunPort` over the Claude harness adapter. One
- * `readOnly: false` session per run, with the harness's FULL default tool surface (no
- * tool policy imposed, Bash included — Rai's call). The drain mirrors
- * `createHarnessRunTurn`: a completed outcome emits the final text (+ usage when
- * reported); a construction throw, an error frame, or a failed/cancelled outcome is
- * an honest turn failure. The session is always closed.
+ * session per run with the harness's FULL default tool surface (sessions are capable
+ * by default, Bash included — Rai's call; the handoff imposes no `allowedTools`
+ * narrowing). The drain mirrors `createHarnessRunTurn`: a completed outcome emits the
+ * final text (+ usage when reported); a construction throw, an error frame, or a
+ * failed/cancelled outcome is an honest turn failure. The session is always closed.
  */
 export function claudeHandoffRunPort(port: HarnessPort, model?: string): HandoffRunPort {
   return async (input) => {
@@ -49,7 +49,6 @@ export function claudeHandoffRunPort(port: HarnessPort, model?: string): Handoff
     try {
       session = await port.createSession({
         cwd: input.cwd,
-        readOnly: false,
         ...(model === undefined ? {} : { model }),
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       });

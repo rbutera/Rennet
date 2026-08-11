@@ -57,14 +57,14 @@ function fakePort(events: HarnessEvent[]): {
 }
 
 describe("claudeHandoffRunPort", () => {
-  it("creates a WRITE-enabled session with the FULL default tool surface (no policy, Bash included)", async () => {
+  it("creates a session with the FULL default tool surface (no allowedTools narrowing, Bash included)", async () => {
     const { port, lastSpec } = fakePort([endedEvent({ status: "completed", finalText: "did it" })]);
     await claudeHandoffRunPort(port)({ cwd: "/repo", prompt: "do the thing" });
     const spec = lastSpec();
-    expect(spec?.readOnly).toBe(false);
-    // A capable coding agent gets no tool restriction — Rai's call (2026-08-11).
+    // A capable coding agent gets no tool restriction — the session is capable by
+    // default (Rai's call, 2026-08-11); the handoff imposes no `allowedTools`.
+    expect(spec?.cwd).toBe("/repo");
     expect(spec?.allowedTools).toBeUndefined();
-    expect(spec?.disallowedTools).toBeUndefined();
   });
 
   it("returns the completed final text (with usage when reported)", async () => {

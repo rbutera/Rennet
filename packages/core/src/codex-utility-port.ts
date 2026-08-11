@@ -53,6 +53,13 @@ export interface CodexExecResult {
   readonly output: unknown;
   /** Best-effort token usage; Codex exposes little/none per call on subscription. */
   readonly tokens?: RspTokenUsage;
+  /**
+   * The model Codex ACTUALLY ran, read best-effort from the correlated session log
+   * (#74 MED-3). Present when the log was found and named a model; absent otherwise,
+   * so a consumer reports the OBSERVED model when known and falls back to the
+   * requested model rather than claiming a runtime pick it could not confirm.
+   */
+  readonly model?: string;
   /** The `codex` binary version, when the composition root discovered it. */
   readonly harnessVersion?: string;
 }

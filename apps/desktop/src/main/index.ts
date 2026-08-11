@@ -95,6 +95,7 @@ import type {
 } from "@rennet/types";
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell } from "electron";
 import { createDispatch } from "./dispatch";
+import { createLiveDraftPrBodyPort } from "./draft-pr-body-live";
 import { createDesktopReviewBackend } from "./live-review-backend";
 import { EDITOR_CLIS, performOpenInEditor } from "./open-in-editor";
 import { createOrchestratorTurnRunner } from "./orchestrator";
@@ -1376,6 +1377,24 @@ app.whenReady().then(async () => {
     // adapter (a light read-only session with the inline schema, the same
     // structured-output mechanism every pipeline lens seat uses; no docType).
     refineComment: createLiveRefinePort({
+      claudePort: async () => (await getClaudeHarness()).adapter ?? null,
+      codexExecutor: async () => {
+        const codex = await getCodexResolution();
+        if (codex.binPath === null) return null;
+        return createCodexExecutor(defaultCodexExecEffects, {
+          bin: codex.binPath,
+          ...(codex.version ? { harnessVersion: codex.version } : {}),
+        });
+      },
+    }),
+    // review.draftPrBody (issue #74, M26): the LIVE PR-body drafting producer. The
+    // own-branch destination's paper opens with an HONEST ACCOUNT of the change,
+    // drafted by a real, council-routed model turn. Runs on WHICHEVER seat the
+    // council resolves for `pr-body-draft` (Codex Luna when installed, else the
+    // Claude adapter) — the SAME seat probes the refine producer uses (bead
+    // workspace-6qp15). Degrades to an honest `unavailable` (the deterministic
+    // composed body still previews) when neither seat is installed. Posts NOTHING.
+    draftPrBody: createLiveDraftPrBodyPort({
       claudePort: async () => (await getClaudeHarness()).adapter ?? null,
       codexExecutor: async () => {
         const codex = await getCodexResolution();

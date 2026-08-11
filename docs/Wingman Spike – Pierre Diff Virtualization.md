@@ -6,6 +6,8 @@ created: 2026-08-04
 updated: 2026-08-05
 ---
 
+> 📜 **Historical evidence, not current authority.** Superseded wherever it conflicts with **RULE ZERO** (`CLAUDE.md`): no consent gates, no gates, no robustness for robustness' sake. Read for rationale and provenance only.
+
 # Rennet Spike – Pierre Diff Virtualization
 
 Spike #1 for [[Code Review Harness App]], the highest-information-value item on

@@ -253,6 +253,18 @@ export interface Review {
    * canonical read-state: the derived read-set is the distinct anchor paths.
    */
   dispositions: Disposition[];
+  /**
+   * The orphan tray (issue #16, §3.4): dispositions whose anchored occurrence
+   * VANISHED from the successor patchset — the file left the changeset entirely,
+   * with no same-path successor and no rename link. Per the frozen contract a
+   * vanished occurrence "orphans, surfaced against its last known version" — it
+   * must NEVER silently drop to void. A changed-but-present occurrence is NOT an
+   * orphan (it reopens for re-reading, dropped from `dispositions`); only a true
+   * disappearance lands here. Recomputed on every patchset activation. Optional
+   * and stamped ONLY when non-empty, so every existing review snapshot validates
+   * unchanged (back-compat, exactly like `retrospective`/`postTarget`).
+   */
+  orphaned?: Disposition[];
   status: "current" | "invalid";
   /**
    * A RETROSPECTIVE review is opened to READ an already-merged (or any) pull
@@ -465,6 +477,30 @@ export type Lineage =
   | "move"
   | "ambiguous"
   | "terminated";
+
+/**
+ * The auto-carry authority (issue #16, frozen contract §3.4). The SINGLE source
+ * of truth for which lineage classes may carry analysis and read state forward
+ * WITHOUT re-review — read by both the disposition carry seam (`@rennet/core`)
+ * AND the graph consumer `resolveAnchor` (`@rennet/protocol`), so the policy
+ * cannot be advisory in one place and binding in another. It lives in the lowest
+ * layer precisely so no consumer can drift from it.
+ *
+ * ⭐ `exact` ONLY. §3.4: "Only an exact, byte-identical occurrence with matching
+ * contextual disambiguators may carry." `move` was REMOVED after measurement
+ * (`docs/Rennet Lineage Matcher Verdict.md`): content + optional context cannot
+ * distinguish a move from a delete-plus-copy or a context-rotated reassignment,
+ * so a confidently-labelled `move` can point at the WRONG occurrence — the
+ * product's worst failure. `move` returns as a carry class only behind
+ * deterministic provenance that PROVES continuation. Everything else
+ * (`one-to-one`, `split`, `merge`, `ambiguous`, `terminated`) reopens or orphans.
+ */
+export const AUTO_CARRY_LINEAGES: ReadonlySet<Lineage> = new Set<Lineage>(["exact"]);
+
+/** Whether a lineage class auto-carries analysis and read state (exact only). */
+export function autoCarries(lineage: Lineage): boolean {
+  return AUTO_CARRY_LINEAGES.has(lineage);
+}
 
 /** The four (and only four) resolution outcomes. */
 export type ResolutionOutcome = "resolved" | "unresolved" | "superseded" | "orphaned";
@@ -1201,6 +1237,37 @@ export interface AskReviewResult {
 export type RefinementResult =
   | { readonly status: "refined"; readonly refined: string; readonly model: string }
   | { readonly status: "no-change"; readonly model: string }
+  | { readonly status: "unavailable"; readonly reason: string }
+  | { readonly status: "failed"; readonly reason: string };
+
+// ─── review.draftPrBody: the PR title/body drafting result (issue #74, M26) ────
+//
+// The own-branch destination's PR-submission preview (#22) needs a title + body.
+// A light-tier, council-routed model turn drafts them from the reviewed changeset
+// — the roll-up narration, the staged dispositions' resolutions, the spec angle's
+// requirements, the decisions surfaced — so the body reads as an HONEST ACCOUNT of
+// the change rather than a diffstat. The draft is a STARTING POINT handed to the
+// human, never an act: the human edits it, and the edited form is what a later,
+// separate, explicit create act (#21) would use. Nothing here posts, pushes, or
+// otherwise egresses (R33) — drafting only produces text into a preview.
+//
+//   - `drafted`      — the turn produced a non-empty title AND body (the producer
+//                      enforces both non-empty; an empty title or body is `failed`,
+//                      never a blank preview). `model` records who wrote the draft.
+//   - `unavailable`  — no model seat is installed to draft with (the deterministic
+//                      fallback body still previews; the UI says so plainly).
+//   - `failed`       — a turn ran and did not produce a usable title+body.
+//
+// Like `RefinementResult`, the shape has NO field for a fabricated success: a
+// failed draft returns an honest state, and the preview keeps the deterministic
+// composed body, never a blank the human might sign unread.
+export type PrBodyDraftResult =
+  | {
+      readonly status: "drafted";
+      readonly title: string;
+      readonly body: string;
+      readonly model: string;
+    }
   | { readonly status: "unavailable"; readonly reason: string }
   | { readonly status: "failed"; readonly reason: string };
 

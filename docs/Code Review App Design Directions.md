@@ -8,6 +8,8 @@ created: 2026-08-04
 updated: 2026-08-05
 ---
 
+> 📜 **Historical evidence, not current authority.** Superseded wherever it conflicts with **RULE ZERO** (`CLAUDE.md`): no consent gates, no gates, no robustness for robustness' sake. Read for rationale and provenance only.
+
 # Code Review App Design Directions
 
 > [!IMPORTANT] Current design authority, 2026-08-05
@@ -72,9 +74,11 @@ The skill was applied in craft mode (its interactive machinery, concept roll and
 
 ## The interactive mood board (round 5)
 
-Rai asked for something he can look at and interact with, plus two hard additions: the macOS vibrancy/glass treatment he likes ("glassy transparent sidebar"), and a home surface showing all branches, PRs, and worktrees in one place. The current interactive prototype is at `../prototypes/moodboard/index.html`.
+> **Authority notice, 2026-08-11:** the mood board (`prototypes/moodboard/`) was removed when the canonical wireframes landed in `wireframes/`. The references in this section are historical; the mood board's tokens survive verbatim in `packages/ui/src/tokens.css`, and its glass direction is now the ratified design (`docs/Rennet Design Doctrine.md`). The dead links below have been de-linked to plain paths.
 
-- Open [the current moodboard](../prototypes/moodboard/index.html) in a real browser.
+Rai asked for something he can look at and interact with, plus two hard additions: the macOS vibrancy/glass treatment he likes ("glassy transparent sidebar"), and a home surface showing all branches, PRs, and worktrees in one place. The current interactive prototype was at `prototypes/moodboard/index.html`.
+
+- Open the mood board (`prototypes/moodboard/index.html`, since removed) in a real browser.
 - The screens are one set of HTML themed entirely by design tokens (`assets/tokens.css`), which is itself the design-system argument: the structure holds, the world swaps.
 - Interactions that demonstrate feel: sidebar collapse on Home, angle switching (keys 1/2) and mark-chunk-read (R, coverage cells advance) on Review, press-and-hold to sign on Publish.
 - The home surface is the workspace model made visible: repos grouped by durable project identity, worktrees shown as checkouts of their repo, local reviews first, PRs with patchset/review state, and explicit invalidation/regeneration status when source moves.
@@ -110,7 +114,7 @@ Materiality inversion, built, not described: in a fully translucent product, **t
 
 ### Mood board file list (current)
 
-The current canonical files live under `prototypes/moodboard/`: [index.html](../prototypes/moodboard/index.html), `home.html`, `review.html`, `decisions.html`, `chat.html`, `publish.html`, `mobile.html`, and `assets/`. The retired Subtraction screen is retained under `prototypes/archive/` with the earlier exploratory mockups.
+The canonical files lived under `prototypes/moodboard/`: `index.html`, `home.html`, `review.html`, `decisions.html`, `chat.html`, `publish.html`, `mobile.html`, and `assets/` (removed 2026-08-11; superseded by `wireframes/`). The retired Subtraction screen is retained under `prototypes/archive/` with the earlier exploratory mockups.
 
 ## Decisions still open after ratification
 

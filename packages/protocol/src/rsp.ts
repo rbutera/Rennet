@@ -32,6 +32,7 @@ import type {
   ValidationError,
   ValidationReport,
 } from "@rennet/types";
+import { autoCarries } from "@rennet/types";
 import { z } from "zod";
 import { validateBodyRules } from "./bodies";
 import { sha256Hex } from "./sha256";
@@ -364,8 +365,8 @@ export function resolveAnchor(parsed: ParsedAnchor, manifest: OfferedManifest): 
 
   const entry = manifest.lineage?.find((candidate) => candidate.fromId === parsed.id);
   if (entry) {
-    // Ambiguity fails closed: an ambiguous or terminated lineage never carries
-    // read-state forward; it orphans, surfaced against its last known version.
+    // Ambiguity fails closed: an ambiguous or terminated lineage never maps
+    // forward; it orphans, surfaced against its last known version.
     if (
       entry.lineage === "ambiguous" ||
       entry.lineage === "terminated" ||
@@ -373,11 +374,19 @@ export function resolveAnchor(parsed: ParsedAnchor, manifest: OfferedManifest): 
     ) {
       return { outcome: "orphaned", lineage: entry.lineage, carriesState: false };
     }
+    // A mapped-forward lineage supersedes to its successor id — but whether it may
+    // CARRY analysis/read-state without re-review is the shared auto-carry
+    // authority (`autoCarries`, `@rennet/types`), NOT "has a target". §3.4: only
+    // an EXACT byte-identical occurrence carries; a changed/moved/split/merged one
+    // reopens (superseded so it re-anchors to the successor, but carriesState
+    // false). This is the binding gate the disposition seam shares — issue #16
+    // Critical: a `one-to-one` here was returning carriesState:true, i.e. read
+    // state carried onto edited code.
     return {
       outcome: "superseded",
       occurrenceId: entry.toId,
       lineage: entry.lineage,
-      carriesState: true,
+      carriesState: autoCarries(entry.lineage),
     };
   }
 

@@ -55,7 +55,6 @@ export function createKnowledgeRunTurn(
   return async function runTurn(prompt: string, attempt: number): Promise<HarnessTurnResult> {
     const session = await port.createSession({
       cwd: options.cwd,
-      readOnly: true,
       outputSchema: KNOWLEDGE_OUTPUT_SCHEMA,
       ...(options.model === undefined ? {} : { model: options.model }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),

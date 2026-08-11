@@ -528,7 +528,7 @@ The draft below is **not drop-in as-is**. Regenerate it from the Master Plan and
 An open-source, local-first desktop code review app. It decomposes large changesets into
 readable chunks through several concurrent angles, keeps review state that survives a
 force-push and a night's sleep, and lands the result as a normal GitHub PR review. The LLM
-proposes structure, the human disposes. No auto-approve, ever.
+proposes structure, the human disposes.
 
 Product thinking lives in this repository under `docs/`, led by `docs/Rennet Contracts and Rulings.md` and `docs/Rennet Architecture Contracts.md`.
 Stack decisions and version facts: `/workspace/vault/References/Desktop and Mobile Stack 2026.md`.
@@ -703,9 +703,6 @@ Design tokens live in `packages/ui/src/tokens`. Do not hardcode a colour anywher
 
 ## What NOT to do
 
-- **No new runtime dependency without a bead and a written justification.** The bead states
-  what it replaces, its last publish date, whether it compiles native code, and what happens
-  when it dies. Dev dependencies are lighter but still need a line in the PR body.
 - **No native compiled dependencies.** No node-gyp, no node-addon-api, no `@electron/rebuild`.
   Electron ships a major every 8 weeks and supports three, so a compiled module is a
   scheduled breakage forever. Prebuilt N-API and WASM require explicit architectural review.
@@ -733,15 +730,10 @@ Design tokens live in `packages/ui/src/tokens`. Do not hardcode a colour anywher
 - **No blocking work on the main process.** Git plumbing, diff parsing, and harness
   supervision go in `utilityProcess`. Highlighting goes in a renderer worker. Nothing that
   can block for more than a frame runs on main.
-- **No weakening the Electron security posture.** `contextIsolation: true`, `sandbox: true`,
-  `nodeIntegration: false`, strict CSP with no `unsafe-inline`, permission handler denying
-  by default, `setWindowOpenHandler` denying all, `@electron/fuses` flipping `RunAsNode`,
-  `EnableNodeOptionsEnvironmentVariable`, and `EnableNodeCliInspectArguments` off. Validate
-  every IPC payload with zod even though the renderer is "ours", because the renderer is the
-  process that renders untrusted diff content and untrusted model output.
-- **No auto-approve, no auto-comment, no auto-anything that another human sees.** Every LLM
-  output is an editable draft. Approval is the one act that is never automated. This is a
-  product rule and it is also a rule about how you behave in this repo.
+- **No unvalidated IPC payloads.** Validate every IPC payload with zod even though the
+  renderer is "ours", because the renderer is the process that renders untrusted diff
+  content and untrusted model output, and a typed boundary nobody checks at runtime is not
+  a boundary.
 - **No `spikes/` code merged into `packages/`.** A spike produces a verdict. The code gets
   rewritten under the gates or deleted.
 - **No skipped or `.only` tests on `main`.** A skipped test is a check that cannot fail.
@@ -754,21 +746,17 @@ Design tokens live in `packages/ui/src/tokens`. Do not hardcode a colour anywher
 
 ### Branching, even solo
 
-**Recommendation: short-lived branches, PR to `main`, self-review gate, always. No direct pushes to `main`, including from Rai.**
+**Recommendation: short-lived branches, PR to `main`, always.**
 
-Three reasons, in order of weight:
+Two reasons, in order of weight:
 
 1. **It is the only place the autonomous work becomes reviewable.** Navi working directly on `main` produces a stream of commits nobody ever reads as a unit. A PR is a changeset with a boundary, which is the exact artifact this product exists to make readable.
-2. **The product dogfoods itself.** From roughly commit 20, Rennet can open its own repo. From the moment the decomposition engine works, **every Rennet PR gets reviewed in Rennet**, including the ones Navi wrote. That is the shortest feedback loop the product will ever have, and it only exists if there are PRs. This is the strongest argument and it is worth the ceremony before it pays off.
-3. **A protected `main` is the only thing standing between an agent and an unrecoverable force-push.** Branch protection is a Brita filter: it does not require anyone to remember.
+2. **The product dogfoods itself.** From roughly commit 20, Rennet can open its own repo. From the moment the decomposition engine works, **every Rennet PR gets reviewed in Rennet**, including the ones Navi wrote. That is the shortest feedback loop the product will ever have, and it only exists if there are PRs.
 
 Concretely:
 
-- `main` protected: require `gate-required`, require linear history, no force-push, no deletions, include administrators. Navi has no bypass.
+- `main` requires the `gate-required` check and linear history.
 - Branch: `<bead-id>-<slug>`. Squash merge. Delete on merge.
-- **Self-review gate before a PR leaves draft:** the authoring agent runs `pnpm gate:full`, then dispatches an independent review of the diff (Opus plus Codex, the `/wave` pattern) and addresses or explicitly rejects every finding in the PR body. Passing your own gate is not review; a second model reading your diff is the cheapest substitute for the human until the human arrives.
-- PR stays **draft** until CI is green and reviews are addressed. Same rule as the client repos, same reason: pushing fixes against a non-draft PR sprays notifications and burns reviewer patience.
-- Rai merges. Navi does not merge her own PRs, even when everything is green. That is not distrust, it is the same "approval is the never-automated act" rule the product is built on, applied to its own repo.
 
 ### Beads
 
@@ -778,7 +766,7 @@ Mapping:
 
 - **One bead, one branch, one PR.** A bead too big for one PR gets split before work starts, not during.
 - Bead ID goes in the branch name and the PR title: `rennet-4f2: git wrapper (GitPort)`.
-- Bead types: `feat`, `bug`, `chore`, `spike`, `deps`. `deps` exists so that "add a runtime dependency" is a first-class tracked decision with a written justification, per the CLAUDE.md rule.
+- Bead types: `feat`, `bug`, `chore`, `spike`, `deps`.
 - **Spike beads have a question as the title** and close with a verdict written to the vault, not with merged code.
 - Dependencies modelled in beads (`blocked-by`), so `bd ready` genuinely means "an agent can start this now". That is what makes autonomous work convergent instead of a queue of half-started branches.
 - Every bead that changes behaviour carries the DoD block below in its description before work starts. An agent that cannot fill in "how will I know this works" before writing code does not yet understand the bead.
@@ -802,13 +790,9 @@ Same block on the bead and in the PR body (`.github/pull_request_template.md`), 
 - [ ] New behaviour has a test that has been **seen to fail**. Say how you made it fail:
       <one line: what you broke, what error it gave>
 - [ ] Every factual claim in this PR cites `file:line` and I opened each file.
-- [ ] No new runtime dependency, OR: dependency `<name>@<version>`, last published `<date>`,
-      compiled native code: no, replaces `<what>`, dies gracefully by `<plan>`, bead `<id>`.
 - [ ] Portable core intact: nothing new imported into `packages/core` or `packages/protocol`.
 - [ ] State keying intact: no new path-derived key.
 - [ ] Design tokens used, no hardcoded colours (UI changes only).
-- [ ] Independent review dispatched (Opus + Codex). Findings addressed or rejected with reasons:
-      <list>
 
 **What I could not verify:** <say it plainly, or "nothing">
 ```

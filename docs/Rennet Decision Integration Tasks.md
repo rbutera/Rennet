@@ -4,13 +4,13 @@ categories: [project]
 status: active
 created: 2026-08-05
 updated: 2026-08-05
-related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Architecture Contracts]]", "[[Rennet Evidence Gate Status]]"]
+related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Architecture Contracts]]"]
 source: codex
 ---
 
 # Rennet Decision Integration Tasks
 
-Small documentation pass required before feature implementation. [[Rennet Contracts and Rulings]] remains authoritative.
+The documentation pass that landed the canonical contracts. Complete; kept as the record of what each item produced. [[Rennet Contracts and Rulings]] remains authoritative.
 
 - [x] **Write the canonical project-context contract.** Defined in [[Rennet Architecture Contracts]] §2 and integrated into the Master Plan and Handoff.
 
@@ -23,7 +23,3 @@ Small documentation pass required before feature implementation. [[Rennet Contra
 - [x] **Normalise the subordinate plans against the Master Plan.** Eleven plans now carry explicit authority notices; operative recipes use the canonical names and contracts while historical measurements remain labelled as evidence only.
 
 - [x] **Refresh the canonical prototype.** It now shows Rennet, six angles, author-first home, invalidation/regeneration, both publish variants, and honest privacy language.
-
-- [ ] **Validate the refreshed prototype with 5–8 target engineers.** Test whether invalidation, affected-only regeneration, and the two publish variants are understood without explanation before deep frontend implementation.
-
-- [ ] **Close the remaining pre-build evidence gates.** Event/publish failure injection, TypeScript LSP resources, and Electron `node:sqlite` are closed. Remaining gates and exact approval blockers are tracked in [[Rennet Evidence Gate Status]].

@@ -104,7 +104,6 @@ export function createHarnessRunTurn(
   return async function runTurn(prompt: string): Promise<HarnessTurnResult> {
     const session = await port.createSession({
       cwd: options.cwd,
-      readOnly: true,
       ...(outputSchema === null ? {} : { outputSchema }),
       ...(options.model === undefined ? {} : { model: options.model }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),

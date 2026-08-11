@@ -1,0 +1,21 @@
+{
+  "comment": "The build log. One genuine dated line per entry, newest last; the build reverses it for display and for the Atom feed. Keep each to one line. This is the only pre-launch content the audience respects, so it stays honest.",
+  "entries": [
+    {
+      "date": "2026-08-04",
+      "text": "Name settled: Rennet. The enzyme that separates milk into curds and whey, adding nothing."
+    },
+    {
+      "date": "2026-08-09",
+      "text": "The v3 shell landed: a projects list, a narrated processing moment, the two-zone project landing, six reading angles."
+    },
+    {
+      "date": "2026-08-11",
+      "text": "The mark got its corrections: a solid bone half, an open backlit half, a hairline cut between them. It reads as divided at 16px."
+    },
+    {
+      "date": "2026-08-11",
+      "text": "This status page went up locally. No waitlist, no email capture, nothing to sign up for, because there is nothing to run yet."
+    }
+  ]
+}

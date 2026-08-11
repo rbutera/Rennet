@@ -4,7 +4,7 @@ categories: [project]
 status: implemented
 created: 2026-08-05
 updated: 2026-08-05
-related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Architecture Contracts]]", "[[Rennet Dependency Standard]]", "[[Rennet Evidence Gate Status]]"]
+related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Architecture Contracts]]", "[[Rennet Dependency Standard]]"]
 ---
 
 # Rennet Local Review MVP
@@ -32,13 +32,11 @@ Review state is stored in app-owned `node:sqlite` with WAL, a schema-version gat
 
 Nx tags plus ESLint enforce the arrows. A manifest checker rejects illegal workspace dependencies, and its forbidden `ui → core` import positive control must fail before the architecture gate passes.
 
-## Security and external effects
+## External effects
 
-The renderer is sandboxed with context isolation and no Node integration. The preload exposes only `invoke(name, input)`. Main validates the exact `app://rennet` sender, parses every input and output, denies permission requests, external navigation, and new windows, and serves production assets through a restricted custom protocol with CSP.
+The preload exposes exactly one method, `invoke(name, input)`, and main parses every input and output against the protocol schemas. That single typed surface is the renderer↔main contract; production assets are served through a custom protocol. Forge produces an ASAR-only macOS app.
 
-Forge produces an ASAR-only macOS app. The package gate reads the emitted fuse wire: RunAsNode, `NODE_OPTIONS`, CLI inspect, and extra file-protocol privileges are disabled; cookie encryption, embedded ASAR integrity, ASAR-only loading, and WASM trap handlers are enabled.
-
-This slice has no Rennet backend, telemetry, model/harness invocation, network API, GitHub mutation, source-repository write command, distribution signing identity, notarization, updater, publisher, or release action. Forge applies only the local ad-hoc macOS signature required to launch the packaged arm64 artifact after fuse hardening.
+This slice has no Rennet backend, telemetry, model/harness invocation, network API, GitHub mutation, source-repository write command, distribution signing identity, notarization, updater, publisher, or release action. Forge applies only the local ad-hoc macOS signature required to launch the packaged arm64 artifact.
 
 ## Run and verify
 
@@ -52,7 +50,7 @@ pnpm e2e
 pnpm exec nx run rennet-desktop:package-smoke
 ```
 
-The Playwright E2E journey launches the real unpackaged Electron binary against a synthetic temporary repository, proves that renderer `process` is absent, captures the diff, edits the source repository, observes invalidation, proves the old diff is still visible, regenerates, and sees the new diff. Playwright cannot attach to the hardened package because the CLI inspect fuse is deliberately disabled; the separate package smoke owns signature verification, exact fuse assertions, and proving the emitted app remains running. Unit/integration fixtures cover empty and mixed Git states, stable and changed identities, event replay across restart, command reuse mismatch, read state, invalidation, regeneration, and unknown-event refusal.
+The Playwright E2E journey launches the real unpackaged Electron binary against a synthetic temporary repository, captures the diff, edits the source repository, observes invalidation, proves the old diff is still visible, regenerates, and sees the new diff. The separate package smoke proves the emitted app launches and stays running. Unit/integration fixtures cover empty and mixed Git states, stable and changed identities, event replay across restart, command reuse mismatch, read state, invalidation, regeneration, and unknown-event refusal.
 
 ## Deliberate gaps
 

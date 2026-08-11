@@ -43,6 +43,7 @@ import type {
   OpenSpecChange,
   OpenSpecCoverage,
   Patchset,
+  PrBodyDraftResult,
   RefinementResult,
   Review,
   ReviewEngine,
@@ -226,6 +227,25 @@ export interface DispatchDeps {
     span?: AnchorSpan;
     side?: AnchorSide;
   }) => Promise<RefinementResult>;
+  /**
+   * The PR-body drafting producer (issue #74, M26): draft a PR title + body from the
+   * reviewed changeset via a real, council-routed model turn. Takes the ALREADY-
+   * RESOLVED review (dispatch freshness-pins it once) plus the drafting material the
+   * renderer holds (branch shape, roll-up narration, dispositions, requirements,
+   * decisions). Optional so a composition without a drafter still constructs —
+   * dispatch then answers an honest `unavailable`, and the renderer keeps the
+   * deterministic composed body. Drafting produces text into a preview; it NEVER
+   * posts, pushes, or egresses (R33).
+   */
+  readonly draftPrBody?: (input: {
+    review: Review;
+    base: string;
+    head: string;
+    narration?: { oneLine: string; paragraph: string };
+    dispositions: readonly { type: DispositionType; path: string; resolution: string }[];
+    requirements?: readonly string[];
+    decisions?: readonly string[];
+  }) => Promise<PrBodyDraftResult>;
   /**
    * The symbol inspector port (Rai, wireframes #8): resolve one clicked identifier to
    * its definition + reference sites over the review's model-free symbolic surface.
@@ -794,6 +814,37 @@ export function createDispatch(
           lineageCarry: "matcher-not-wired",
         };
         return parseCommandOutput(name, { status: "ran", result });
+      }
+      // ── Draft the PR title + body (issue #74, M26) ─────────────────────────────
+      case "review.draftPrBody": {
+        // The own-branch destination's PR-submission preview (#22) needs a title +
+        // body. Resolve the CURRENT review ONCE (a stale/unknown id is refused), then
+        // run the council-routed drafting turn over the reviewed changeset the renderer
+        // handed in. ⚠️ EGRESS: the drafting material IS sent to the harness (the same
+        // per-turn egress every lens makes) — but the RESULT posts NOTHING. It is a
+        // draft into a preview; creating the PR is the separate hold-to-sign act (#21).
+        // With no drafter wired, answer an honest `unavailable` rather than throwing —
+        // the renderer keeps the deterministic composed body.
+        const input = parseCommandInput(name, rawInput);
+        const review = requireLatestReview(input.reviewId);
+        if (!deps.draftPrBody) {
+          return parseCommandOutput(name, {
+            status: "unavailable",
+            reason: "PR-body drafting is not available in this build",
+          });
+        }
+        return parseCommandOutput(
+          name,
+          await deps.draftPrBody({
+            review,
+            base: input.base,
+            head: input.head,
+            dispositions: input.dispositions,
+            ...(input.narration === undefined ? {} : { narration: input.narration }),
+            ...(input.requirements === undefined ? {} : { requirements: input.requirements }),
+            ...(input.decisions === undefined ? {} : { decisions: input.decisions }),
+          }),
+        );
       }
       // ── The Noise lens (issue #34) ────────────────────────────────────────────
       case "noise.review": {

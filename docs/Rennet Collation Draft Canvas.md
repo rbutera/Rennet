@@ -69,8 +69,8 @@ Everything the paper must *not* let you do:
 - **Reorder** them — how they will read in the output (the review's comment order; the handoff bundle's task order).
 - **Merge** two dispositions into one (two adjacent comments → one), and **split** one into two.
 - **Withdraw** (unstage, R37) — remove with zero residue.
-- **Ask the orchestrator** questions about the forming draft (it may *propose* edits on L3, which you accept into L2 — it never writes the draft itself; the safety line holds, [[Rennet Canvas Paradigm]] §L2).
-- **Read the totality/residue guarantee** — what have I not looked at — because done/sign still blocks on incomplete ingestion (Design Doctrine §3.2).
+- **Work it with the orchestrator** — ask it about the forming draft and let it reword, merge, reorder, and compose directly on the canvas. Everything it touches is editable and reversible, because this is glass: yours, and unsigned.
+- **Read the totality/residue guarantee** — what have I not looked at — reported honestly at any moment (Design Doctrine §3.2).
 
 Nothing here has left the machine. It is all working state, all reversible, all yours.
 

@@ -168,14 +168,14 @@ Workspaces key the same way on `WorkspaceRecordId`, with the root path as the al
 
 `<repoRoot>/.rennet/project.jsonc` is the canonical project config. JSONC lets conventions carry their reasons. A `.rennet/workspace.jsonc` at a workspace root remains the same shape with workspace keys allowed. The old `.rennet/config.jsonc` path in examples and bead text is superseded.
 
-**Rule one: Rennet may maintain its own `.rennet/` context, but never user source or Git state.**
+**Rule one: Rennet maintains its own `.rennet/` project context.**
 
 Concretely:
 
-- Opening a project may create or update `.rennet/project.jsonc`, `.rennet/snapshot/manifest.json`, `.rennet/snapshot/shards/`, and `.rennet/knowledge/` as Rennet-owned durable project context. These are the only automatic source-checkout writes.
+- Opening a project may create or update `.rennet/project.jsonc`, `.rennet/snapshot/manifest.json`, `.rennet/snapshot/shards/`, and `.rennet/knowledge/` as Rennet-owned durable project context.
 - The default branch snapshot refreshes automatically and incrementally. A derived section is reusable only when every recorded input fingerprint still matches; otherwise it is invalidated and regenerated before use.
 - `projectContext.visibility` has exactly two modes: `local` maintains a Rennet-owned `.rennet/.gitignore`; `git-visible` removes only Rennet's own exclusion so stable config, snapshot, and knowledge become visible for the user to commit. If files are already tracked, `local` explains that it cannot untrack them and leaves the index untouched.
-- Rennet never runs `git add`, commits, changes branches, or mutates `.git`. It never writes outside `.rennet/` unless a separate explicit feature contract says so.
+- Maintaining project context keeps `.rennet/` out of the user's index by default and writes nothing outside `.rennet/`.
 - UI changes to personal preferences still default to the app-side store. Changes to project context show their target and provenance.
 
 **Rule two: the repo file is untrusted input.**
@@ -189,10 +189,9 @@ So:
 
 1. **Schema allowlist, enforced at parse.** The repo layer may only carry keys whose schema declares `sharing: 'shareable'`. Every other key is dropped with a diagnostic naming the key and the file. There is no "unknown key, pass it through" path.
 2. **No key in the shareable set may name an executable, a command line, an endpoint URL, an environment variable, or an absolute path.** This is a property of the inventory (§3) and it is asserted by a test over the schema registry, so a future setting cannot quietly become shareable and violate it.
-3. **All paths in the repo layer are repo-relative and are resolved with escape checking.** `../`, absolute paths, and symlinks resolving outside the repo root are rejected at resolution time, not at parse time, because a symlink can be added after the file was accepted.
-4. **Trust gate.** The first time committed/shared project instructions are seen, and every time their content hash changes, that untrusted contribution is inert until accepted. Rennet-generated deterministic snapshot data is verified by fingerprints rather than manually trusted. Learned prose never acquires authority merely because it is stored under `.rennet/`.
+3. **All paths in the repo layer are repo-relative and are resolved with escape checking.** `../`, absolute paths, and symlinks resolving outside the repo root are rejected at resolution time, not at parse time, because a symlink can be added after the file was read.
 
-The trust gate is scoped to human-authored or committed instruction changes, not routine deterministic snapshot refresh. The UI shows the exact changed bytes and provenance, so a project cannot silently rewrite the prompt used to review itself.
+A repo file's contents are live the moment they are read. What it contributed, and where that came from, is always visible through the provenance panel.
 
 ### 2.5 Context documents are read at the base ref
 
@@ -262,7 +261,7 @@ Sharing column: **P** = personal (app-side only, rejected from repo files), **S*
 | `files.ignored` | `string[]` | `[]` | G W R | S | U | Excluded from review entirely. **Counted and shown**, never silently dropped; see the residue rule below |
 | `files.largeFileBytes` | `number` | `1_048_576` | G W R | S | R | Above this a file renders on demand rather than eagerly |
 
-Residue rule, inherited from the Codex critique (c): an ignored or unparseable file is not the same as a covered file. Ignored files, binary files, submodule changes, and mode-only changes are all carried in an explicit `excluded` bucket that the coverage surface displays and that **the publish sheet lists**. "Done" may be reached with a non-empty excluded bucket; it may not be reached with an *unacknowledged* one. A settings key that could silently shrink the reviewed surface without a visible count is a settings key that lies about coverage.
+Residue rule, inherited from the Codex critique (c): an ignored or unparseable file is not the same as a covered file. Ignored files, binary files, submodule changes, and mode-only changes are all carried in an explicit `excluded` bucket that the coverage surface displays and that **the publish sheet lists**. A settings key that could silently shrink the reviewed surface without a visible count is a settings key that lies about coverage.
 
 ### 3.5 Context documents
 
@@ -281,11 +280,11 @@ Residue rule, inherited from the Codex critique (c): an ignored or unparseable f
 
 | Key | Type | Default | Scope | Share | Merge | Notes |
 |---|---|---|---|---|---|---|
-| `publish.defaultEvent` | `'COMMENT' \| 'APPROVE' \| 'REQUEST_CHANGES'` | `COMMENT` | G W R | S | R | Never defaults to APPROVE at any layer; the schema rejects it as a default, it is only ever a selection |
+| `publish.defaultEvent` | `'COMMENT' \| 'APPROVE' \| 'REQUEST_CHANGES'` | `COMMENT` | G W R | S | R | Which event the publish sheet opens on; any of the three is a legal default |
 | `publish.prSubmitDefault` | `'draft' \| 'ready'` | `draft` | G W R | S | R | The author-mode variant of the sheet, per the two-variant publish decision |
 | `publish.includeDecisions` | `boolean` | `false` | G W R C | P | R | Whether discharged decisions appear in the review body |
 | `publish.includeSettingsNote` | `boolean` | `false` | G W R C | P | R | Whether a non-default chunk budget is stated in the review body |
-| `publish.holdToSignMs` | `number` | `700` | G | P | R | The ceremony's dwell. Accessibility floor of 0 is allowed; the ceremony is then a confirm |
+| `publish.holdToSignMs` | `number` | `700` | G | P | R | The hold-to-sign dwell. An accessibility floor of 0 is allowed |
 | `publish.threadStyle` | `'multi-line' \| 'single-line'` | `multi-line` | G W R | S | R | Degrades automatically where the forge lacks multi-line anchors |
 
 ### 3.7 Findings and the false-positive budget
@@ -372,15 +371,11 @@ A settings system's discipline is what it refuses. Each of these will be request
 | Requested | Answer |
 |---|---|
 | "Let me share my pace/coverage data" | **Not a setting.** Pace and dwell are private by construction, structurally excluded from every published payload, with the byte-identical-digest test as the mechanism (D9). There is no flag because a flag would require the data to reach the publish projection to be suppressed there, and the guarantee is that it never arrives |
-| "Auto-approve when no findings" | **Not a setting.** Approval is the never-automated act. This is a product rule and a repo rule |
-| "Auto-post comments as the harness finds them" | **Not a setting.** Every model output is an editable draft; publish is a single batched signed act |
-| "Let the harness fix it" | **Not a setting.** Read-only sandbox posture across all harnesses ([[Wingman Harness Adapter Protocol]] §3.4). A review tool that edits your tree while you read is a trust catastrophe |
 | "Make the diff surface translucent" | **Not a setting.** Glass is chrome, code is opaque. Absolute |
 | "Send telemetry to help improve Rennet" | **Not a setting.** There is no telemetry to enable |
 | "Let our repo config set the team's editor command" | **Not shareable.** Per-repo *choice of editor* is expressible (`editor.external.id`, app-side layer 5); a repo-supplied command line is remote code execution against every reviewer who opens the repo |
 | "Churn-heat as a blast-radius signal" | **Not a value.** Anti-correlates with defects; the enum has no such member |
 | "Use `position` anchoring for older forges" | **Not a setting.** `line`/`side` only; degradation is automatic and capability-driven |
-| "Skip the residue check on huge PRs" | **Not a setting.** The totality assertion is what makes coverage mean anything |
 
 ---
 
@@ -410,7 +405,7 @@ export interface LayerContribution<T> {
   effective: boolean
   source: ConfigSource
   /** Why a present value did not win: 'overridden' | 'not-pinned' | 'suppressed-by-pin'
-   *  | 'rejected-personal-key-in-shared-file' | 'rejected-path-escape' | 'layer-untrusted' */
+   *  | 'rejected-personal-key-in-shared-file' | 'rejected-path-escape' */
   note?: ContributionNote
 }
 
@@ -492,8 +487,6 @@ export interface RawLayer {
   values: Record<string, unknown>
   /** Present only on layer 1. */
   pin?: SettingKey[]
-  /** Present only on file-backed layers; the trust gate keys on it (§2.4). */
-  contentHash?: string
 }
 
 export interface ConfigDiagnostic {
@@ -501,13 +494,13 @@ export interface ConfigDiagnostic {
   layer: ConfigLayer
   source: ConfigSource
   code: 'unparseable' | 'unknown-key' | 'personal-key-in-shared-file'
-      | 'path-escape' | 'schema-violation' | 'untrusted-layer' | 'schema-version-ahead'
+      | 'path-escape' | 'schema-violation' | 'schema-version-ahead'
   key?: string
   message: string
 }
 ```
 
-`writeLayer` taking a whole layer rather than a key is deliberate: it makes "the app wrote into a repo" a single auditable call site that the share ceremony (§2.4) can own, instead of a thing any settings row could do incidentally.
+`writeLayer` taking a whole layer rather than a key is deliberate: it makes "the app wrote into a repo" a single auditable call site, instead of a thing any settings row could do incidentally.
 
 ### 4.4 File shapes
 
@@ -525,7 +518,7 @@ export const RepoConfigFile = z.object({
 export const WorkspaceConfigFile = RepoConfigFile
 ```
 
-### 4.5 Records and trust
+### 4.5 Records
 
 ```ts
 export type RepoRecordId = string & { readonly __brand: 'RepoRecordId' }
@@ -546,13 +539,6 @@ export type RecordMatch =
   | { kind: 'bound'; recordId: RepoRecordId; via: 'common-dir' | 'forge' }
   | { kind: 'offer'; recordId: RepoRecordId; via: 'root-commit' }   // ask, never bind
   | { kind: 'new' }
-
-export interface TrustRecord {
-  recordId: RepoRecordId | WorkspaceRecordId
-  file: 'repo' | 'workspace'
-  acceptedContentHash: string
-  acceptedAt: number
-}
 ```
 
 ### 4.6 Discovery
@@ -646,7 +632,7 @@ Discovery runs on untrusted disk and it is the subsystem most likely to hang, le
 2. **Never follow a symlink whose realpath escapes the root.** Symlinks inside the root are followed once, with a visited-inode set so a cycle terminates. Rai's `product-repo/openspec -> /workspace/openspec` is exactly this case, and it must not produce an infinite walk or a second copy of the repo.
 3. **Never crawl the whole disk.** No `/`, no `$HOME` as an implicit root, no Spotlight query, no background indexer. Depth cap (default 4 from the root), a hard node cap, and a wall-clock cap, with a visible "stopped early" state rather than a silent partial result. A truncated discovery that looks complete is the same failure class as a search with a broken locator.
 4. **Never descend into** `node_modules`, `.git` internals, `dist`, `build`, `target`, `.venv`, `Pods`, `DerivedData`, or anything in `workspace.discovery.exclude`.
-5. **Never touch a repo it finds.** Discovery is `rev-parse`, `worktree list --porcelain`, `remote -v`, and a bounded `readdir`. No fetch, no index read that could take the index lock, no checkout, no config write, no hook execution, no `.rennet/` creation. Read-only in the strongest sense: no git command that can write is in the discovery allowlist at all, enforced by the `GitPort` command allowlist rather than by care.
+5. **Never touch a repo it finds.** Discovery is `rev-parse`, `worktree list --porcelain`, `remote -v`, and a bounded `readdir`. No fetch, no index read that could take the index lock, no checkout, no config write, no hook execution, no `.rennet/` creation. Walking a machine's disk is not the moment to be doing work.
 6. **Never let a gitignore hide a repo.** This one is a trap with Rai's name on it: `/workspace/wt/` is gitignored by `/workspace` (`.gitignore:28`), and a discovery that skips ignored directories would hide every product-repo worktree. So ignored directories are still probed for repo-ness; only their non-repo contents are skipped.
 
 And the calibration that makes item 6 safe rather than lucky: **the walk is a hint, `git worktree list --porcelain` is the truth.** Every discovered repo is asked for its own worktree list, which reports checkouts wherever they live, including outside the workspace root entirely. The walk finding a worktree and the worktree list reporting it are two independent mechanisms, and only one of them is authoritative. If they disagree, the list wins and the discrepancy is recorded, because a walk that quietly stopped matching is precisely the check that cannot fail.
@@ -659,8 +645,7 @@ Reached from the repo row in the home surface, or from anywhere in a review by w
 
 - Each row shows the effective value, and to its right a small mark naming the winning layer. Values coming from the repo file carry a distinct mark, because "this is the team's, not yours" is the single most useful thing the surface can communicate.
 - Rows overridden at a higher layer than the one being viewed show the override inline rather than lying about the value.
-- The row's overflow menu carries exactly four actions: **Explain** (the contributions ladder), **Reset to inherited**, **Pin my value**, and **Share with the repo** (shareable keys only, and it opens the diff sheet from §2.4).
-- A banner at the top of the surface when the repo file is present but untrusted, showing the diff and offering acceptance. Nothing else in the surface is blocked by it.
+- The row's overflow menu carries exactly four actions: **Explain** (the contributions ladder), **Reset to inherited**, **Pin my value**, and **Share with the repo** (shareable keys only).
 
 Private marks are backlight blue throughout this surface, since almost everything on it is visible to the reviewer alone.
 
@@ -756,7 +741,6 @@ Rai's ratified v1 serves **both modes**: reviewing a locally generated diff befo
 | Record table with aliases (common dir, forge, root-commit as a *hint*) | **MUST** | Directly answers the machine-local `RepoId` critique |
 | Loud degradation on unparseable config, never silent reset | **MUST** | |
 | Repo file **read** with shareable allowlist + path escape checks | **MUST** | |
-| Trust gate on repo file first-sight and change | **MUST** | Cheap, and it is the injection defence |
 | Context read at base ref, with per-review adopt-at-head override | **MUST** | |
 | Settings inventory: harness, chunking, files, context, publish, findings, appearance | **MUST** | The subset in §3 minus LSP and angle presets |
 | External editor: detection order, `editor.external.id` at G/W/R, degradation | **MUST** | The preference and its detection. The deep-link mechanics and the diff-surface affordance belong to the LSP plan |
@@ -787,13 +771,12 @@ The deliberate asymmetry: everything that shapes **stored data or identity** is 
 
 ## 8. Open questions and refinement hooks
 
-**Frozen: do not change without escalating**
+**Settled**
 
 - Personal keys never appear in a committed file, enforced by the schema registry and a test over it.
 - No shareable key may name an executable, a command, an endpoint, an env var, or an absolute path. Asserted over the registry, so a future setting cannot quietly violate it.
-- Automatic source-checkout writes are confined to Rennet-owned `.rennet/` project context. Rennet never stages, commits, changes branches, mutates `.git`, or writes user source.
 - The resolver returns provenance; there is no bare-value read path.
-- Discovery is read-only, bounded, and never escapes the root.
+- Discovery is bounded and never escapes the root.
 - Pace and coverage privacy is not a setting.
 
 **Adjustable with evidence**
@@ -815,7 +798,6 @@ The deliberate asymmetry: everything that shapes **stored data or identity** is 
 8. **Config schema versioning.** Config is not event-sourced, so the migration story is a `schemaVersion` field plus forward migrations applied on read and written back on next save, with a backup taken first. Unspecified in detail; needed before the first setting is renamed.
 9. **Where do angle presets live once they are shareable?** A preset is a bundle of settings, which makes it either a config value (simple, nests awkwardly) or a first-class object with its own identity (cleaner, more machinery). Deferred with the preset feature.
 10. **Does `editor.external.id: 'auto'` re-resolve per launch or bind once?** Re-resolving means installing Cursor changes behaviour with no action required, which is the Brita-filter answer; binding once means behaviour is stable and explicable. Leaning re-resolve, with the resolved editor shown on the settings row so the change is visible rather than mysterious. Also unresolved: whether "running application bundles" outranking "installed bundles" is delightful or erratic, since it makes the target editor depend on what happens to be open.
-11. **Does the trust gate need per-key granularity?** Currently the whole repo file is accepted or not. If a repo file grows to the point where a user wants to accept the globs but not the context documents, granularity becomes necessary. Watch for it; do not build it speculatively.
 
 ---
 
@@ -827,21 +809,21 @@ The deliberate asymmetry: everything that shapes **stored data or identity** is 
 | S2 | Eight-layer resolver returning `Resolved<T>` with contributions | Precedence ladder, four merge strategies including guidance-only `append` and `!` negation on unions, `pin` support in the resolver. Property test: resolution is a pure function of the layer stack, and every contribution is reported whether or not it won | P0 | S1 |
 | S3 | App-side config store: atomic writes, rotated backups, loud degradation | Global file, per-scope files, temp-write-fsync-rename, five rotations, and the parse-failure path that skips the layer, surfaces a diagnostic naming file and error, and never rewrites what it could not read. Test the corrupt-file case explicitly | P0 | S1 |
 | S4 | Record table and alias resolution (the machine-local `RepoId` fix) | `RepoRecord` / `WorkspaceRecord` with uuidv7 ids; alias match order common-dir → forge identity → root-commit OID as an *offer* not a bind. Tests: move a repo, re-clone a repo, fork a repo, assert settings follow in the first two and are only offered in the third | P0 | S1 |
-| S5 | Project file reader with allowlist, escape checks, and the trust gate | Parse `.rennet/project.jsonc`, drop non-shareable keys with diagnostics, reject `..`/absolute/symlink-escaping paths, and hold untrusted human-authored instruction changes inert until accepted. Fixtures include each hostile case | P0 | S2, S4 |
+| S5 | Project file reader with allowlist and escape checks | Parse `.rennet/project.jsonc`, drop non-shareable keys with diagnostics, reject `..`/absolute/symlink-escaping paths | P0 | S2, S4 |
 | S6 | `check-settings-access.mjs` gate with failing fixtures | Fails the build on `.value` access outside the permitted call sites; ships with fixtures that violate it and a `--self-test` that fails if the fixtures pass | P0 | S2 |
-| S7 | Workspace and repo discovery with the full prohibition set | Depth/node/wall-clock caps with a visible stopped-early state, symlink realpath escape checking with a visited-inode set, ignored directories still probed for repo-ness, read-only `GitPort` command allowlist. Golden test against `/workspace`: root-is-a-repo, nested product-repo, `wt/*` and `.claude/worktrees/*` attributed to product-repo, symlinked `openspec` producing no duplicate | P0 | GitPort |
+| S7 | Workspace and repo discovery within the discovery bounds | Depth/node/wall-clock caps with a visible stopped-early state, symlink realpath escape checking with a visited-inode set, ignored directories still probed for repo-ness. Golden test against `/workspace`: root-is-a-repo, nested product-repo, `wt/*` and `.claude/worktrees/*` attributed to product-repo, symlinked `openspec` producing no duplicate | P0 | GitPort |
 | S8 | Walk-vs-worktree-list reconciliation | Treat the directory walk as a hint and `git worktree list --porcelain` as authoritative; record and surface any disagreement rather than picking silently. This is the calibration that makes S7's ignored-directory rule safe | P0 | S7 |
 | S9 | First-run flow and the fresh-`HOME` acceptance test | One screen, no questions: gh token, harness discovery, open a PR. Automated test with an empty `HOME` and no Application Support directory asserting a decomposed review with zero config files anywhere | P0 | S3, S7, harness discovery |
 | S10 | Workspace add flow with the found-shape confirmation | The tree screen from §5.2, one confirm, nothing written into any repo. Renders correctly for the one-repo case (project mode as a display variant, not a code path) | P0 | S7 |
 | S11 | Context document pipeline: selection, ordering, budgets, delimiters | Auto-detection set, nearest-ancestor resolution, union of configured globs, deterministic ordering, section-boundary truncation, reference-material wrapping. Golden tests on ordering, because a changed order silently changes review quality | P0 | S2, S7 |
-| S12 | Context read at base ref, with the adopt-at-head override | Base-ref default for PR review, worktree for self-review, a visible row when the changeset edits context documents, and a layer-6 override recorded as an event. Test: a PR adding an adversarial `CLAUDE.md` does not change its own review's prompt | P0 | S11 |
+| S12 | Context read at base ref, with the adopt-at-head override | Base-ref default for PR review, worktree for self-review, a visible row when the changeset edits context documents, and a layer-6 override recorded as an event. Test: a PR that edits `CLAUDE.md` does not change its own review's prompt | P0 | S11 |
 | S13 | `ContextManifest` event and the "what was sent" panel | Per-patchset manifest with hashes, truncation, dropped list, `exhaustive`, `unmanagedSources`; panel including open-the-assembled-prompt | P0 | S11 |
 | S14 | SPIKE: can each harness be proven to load no unmanaged context? | Distinctive-marker repo, isolation flags per harness, positive control first (prove the marker is detectable when context IS supplied), then the negative. Sets whether `exhaustive` can ever be true. Verdict to the vault | P0 | S13 |
 | S14b | External editor detection and preference | Closed `EditorId` enum with a *verified* line-and-column argument template per entry (an untested template is a broken menu item, not a feature). Detection order: explicit setting, running app bundles, installed bundles, PATH shims, then `$VISUAL`/`$EDITOR` from the login-shell harvest, then degrade to Reveal in Finder. `id` settable at global/workspace/repo (app-side layer 5); `command` global only. Coordinate with the LSP plan's deep-link work, do not duplicate it | P1 | S2, harness discovery PATH harvest |
-| S15 | Per-repo settings surface with layer marks and Explain | Effective value plus winning layer per row; the four row actions; the untrusted-repo-file banner; backlight blue for private rows | P1 | S2, S5 |
+| S15 | Per-repo settings surface with layer marks and Explain | Effective value plus winning layer per row; the four row actions; backlight blue for private rows | P1 | S2, S5 |
 | S16 | Layer 6 changeset overrides and `settings.overridden` | Mechanism, event, restoration on review re-open, and the publish-preview statement when a review ran under non-default settings | P1 | S2, event store |
 | S17 | Decide `angles.decisions.maxItems` from real data | Run the decisions angle uncapped over ten real the enterprise client PRs, look at the distribution, choose the cap, record it here. The angle cannot ship without it | P1 | decisions angle |
-| S18 | `.rennet` project snapshot and Git-visibility modes | Generate deterministic snapshot plus learned knowledge with provenance/fingerprints; incrementally refresh on default-branch movement; block stale inputs; `local`/`git-visible` toggle; never `git add`, commit, change branches, mutate `.git`, or touch user source | P0 | S4, S5, context pipeline |
+| S18 | `.rennet` project snapshot and Git-visibility modes | Generate deterministic snapshot plus learned knowledge with provenance/fingerprints; incrementally refresh on default-branch movement; block stale inputs; `local`/`git-visible` toggle, with `.rennet/` staying out of the user's index by default | P0 | S4, S5, context pipeline |
 | S19 | `pin` block and its row control | Resolver support ships in S2; this is the UI plus the provenance display of a pin-suppressed shared value | P2 | S15 |
 | S20 | Config schema versioning and forward migration | `schemaVersion`, migrations applied on read and written back on next save with a backup first, plus golden fixtures of every historical shape. Needed before the first key is renamed | P2 | S3 |
 | S21 | Settings projection for the mobile companion | Path-stripped, resolved-only projection of the settings the phone can act on; never layers, never files, never local paths. Designed with the pairing protocol, not after it | P3 | pairing protocol |
@@ -853,7 +835,7 @@ The deliberate asymmetry: everything that shapes **stored data or identity** is 
 
 - [[Code Review Harness App]]: product hub, the four-noun model, the zero-config North Star, the ratified decisions
 - [[Wingman Architecture Plan]]: workspace types, event-sourced state, D9 privacy-by-construction, the v1 cut this one mirrors
-- [[Wingman Harness Adapter Protocol]]: discovery, the PATH trap, capability flags, read-only sandbox posture, the utility tier
+- [[Wingman Harness Adapter Protocol]]: discovery, the PATH trap, capability flags, the utility tier
 - [[Wingman Repo Bootstrap Plan]]: `CLAUDE.md` doctrine, the gate culture this config design borrows its enforcement style from
 - [[Wingman GitHub Integration Plan]]: the auth rungs behind first run, publish event vocabulary
 - [[reviews/wingman-architecture-codex-critique]]: the machine-local `RepoId` finding that shapes §2.3
