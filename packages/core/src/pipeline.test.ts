@@ -195,6 +195,44 @@ function sequenceTitles(canvas: {
   return canvas.layers.analysis.elements.map((element) => element.title);
 }
 
+describe("buildReviewCanvases — blast-radius overlay is consumed (issue #35)", () => {
+  it("populates every canvas overlay from the changeset — not the empty model-angle path", async () => {
+    const patchset = patchsetOf("br-1", [
+      file("src/alpha.ts", ALPHA),
+      file("src/gamma.ts", GAMMA),
+      // A destructive statement in an ordinary code file → the irreversibility
+      // signal via the destructive-SQL branch (not the schema-path branch).
+      file("src/user-repo.ts", "@@ -0,0 +1,1 @@\n+  await db.query('DROP TABLE users');"),
+    ]);
+    const runDecompositionTurn = vi.fn(
+      async (): Promise<DecompositionTurnResult> => ({
+        status: "emitted",
+        body: deterministicProposalBody(decompose(patchset)),
+      }),
+    );
+    const result = await buildReviewCanvases({
+      reviewId: "br-review",
+      patchset,
+      dispositions: [],
+      runDecompositionTurn,
+    });
+    // The overlay is painted identically onto every angle's canvas.
+    for (const angle of CANVAS_ANGLES) {
+      const overlay = result.canvases[angle].overlay;
+      // Consumed end-to-end: the deferred markers are ALWAYS present, which proves
+      // this is the deterministic producer and not the (empty) model-angle path.
+      expect(overlay.some((p) => p.signal === "fan-in" && p.assessed === false)).toBe(true);
+      expect(overlay.some((p) => p.signal === "contract-surface" && p.assessed === false)).toBe(
+        true,
+      );
+      // And the changeset's real risk fired, with a rendered one-line reason.
+      const irr = overlay.find((p) => p.signal === "irreversibility");
+      expect(irr?.target).toBe("rennet:file/src/user-repo.ts");
+      expect(irr?.reason).toMatch(/destructive/i);
+    }
+  });
+});
+
 describe("buildReviewCanvases", () => {
   it("populates all five canvases from the real decomposition of the diff", async () => {
     const decomposition = decompose(edgedPatchset);

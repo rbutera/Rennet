@@ -40,6 +40,7 @@ import type {
   HypothesisRepoContext,
   HypothesisStructure,
   OfferedManifest,
+  OwnershipRule,
   Patchset,
   ResolutionTrace,
   ReviewHypothesis,
@@ -57,6 +58,7 @@ import {
   type RunDecompositionAngleResult,
   runDecompositionAngle,
 } from "./angle-generation";
+import { computeBlastRadius } from "./blast-radius";
 import { type AdmittedDocument, buildCanvas, type CanvasEvent } from "./canvas";
 import { createCodexRunTurn } from "./codex-run-turn";
 import type { CodexUtilityPort } from "./codex-utility-port";
@@ -135,6 +137,13 @@ export interface ReviewPipelineInput {
   readonly reviewId: string;
   readonly patchset: Patchset;
   readonly dispositions: Disposition[];
+  /**
+   * CODEOWNERS rules for the blast-radius CODEOWNERS-overlap signal (issue #35).
+   * Optional: absent ⇒ the overlap signal simply does not fire (the other three
+   * signals still compute from the changeset). A caller threads this from the
+   * project snapshot's ownership when available.
+   */
+  readonly ownership?: readonly OwnershipRule[];
   /** L3 canvas-op events (session-scoped); empty for a fresh review. */
   readonly canvasEvents?: CanvasEvent[];
   readonly decomposeOptions?: DecomposeOptions;
@@ -443,6 +452,14 @@ export async function buildReviewCanvases(
   }
 
   const canvasEvents = input.canvasEvents ?? [];
+  // The deterministic blast-radius overlay (issue #35): computed once from the
+  // changeset + CODEOWNERS and painted identically onto every angle's canvas. It
+  // is DATA the overlay renders amber — never an ordering input (the ordering pass
+  // has no blast-radius parameter) and never a gate.
+  const blastRadius = computeBlastRadius({
+    files: input.patchset.files,
+    ownership: input.ownership ?? [],
+  });
   const entries = CANVAS_ANGLES.map((angle): [CanvasAngle, Canvas] => [
     angle,
     buildCanvas({
@@ -453,6 +470,7 @@ export async function buildReviewCanvases(
       decomposition,
       dispositions: input.dispositions,
       canvasEvents,
+      blastRadius,
     }),
   ]);
   const canvases = Object.fromEntries(entries) as Record<CanvasAngle, Canvas>;
