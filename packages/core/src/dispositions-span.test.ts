@@ -352,6 +352,66 @@ describe("span-aware carry — the deterministic floor (issue #78)", () => {
   });
 });
 
+// ── Span move-carry across a git RENAME (issue #16 F4; F1 for path-grained) ────
+// The ONE safe move-carry: a span whose side-text is byte-identical at the new
+// path carries, re-anchored via git's deterministic `previousPath` link. A real
+// pure rename renders the new file as a full-add with byte-identical additions
+// (verified against the git-capture adapter), which is exactly this shape.
+describe("span move-carry across a rename (issue #16)", () => {
+  function renamedFile(previousPath: string, path: string, patch: string): PatchFile {
+    return {
+      path,
+      previousPath,
+      status: "renamed",
+      additions: 0,
+      deletions: 0,
+      binary: false,
+      patch,
+    };
+  }
+
+  it("carries a span disposition onto the renamed path when the side-text is byte-identical", () => {
+    const original = file("old.ts", PATCH_A);
+    const review = setDisposition(
+      created(patchsetOf("p1", [original])),
+      spanAnchor(original, { startLine: 2, endLine: 3 }, "additions"),
+      "approve",
+    );
+    const next = activate(review, patchsetOf("p2", [renamedFile("old.ts", "new.ts", PATCH_A)]));
+    // Re-anchored to the new path, span + side preserved; NOT orphaned.
+    expect(next.dispositions.map((d) => anchorKey(d.anchor))).toEqual(["new.ts#L2-L3@additions"]);
+    expect(next.orphaned).toBeUndefined();
+  });
+
+  it("REOPENS a span rename whose side-text changed by one byte (never a wrong carry)", () => {
+    const original = file("old.ts", PATCH_A);
+    const review = setDisposition(
+      created(patchsetOf("p1", [original])),
+      spanAnchor(original, { startLine: 2, endLine: 3 }, "additions"),
+      "approve",
+    );
+    const edited = "@@ -1,2 +1,4 @@\n keep1\n+span2X\n+span3\n keep4";
+    const next = activate(review, patchsetOf("p2", [renamedFile("old.ts", "new.ts", edited)]));
+    expect(next.dispositions).toEqual([]);
+    expect(next.orphaned).toBeUndefined();
+  });
+
+  it("REOPENS a PATH-grained disposition on a rename — path-grained move-carry is dead (F1)", () => {
+    // Even a byte-identical patch reopens: the path-grained rename branch was
+    // removed (a real rename's patch differs in its headers, so it never carried
+    // in production). Only span byte-identity carries across a rename.
+    const original = file("old.ts", PATCH_A);
+    const review = setDisposition(
+      created(patchsetOf("p1", [original])),
+      { path: "old.ts", contentDigest: fileContentDigest(original) },
+      "approve",
+    );
+    const next = activate(review, patchsetOf("p2", [renamedFile("old.ts", "new.ts", PATCH_A)]));
+    expect(next.dispositions).toEqual([]);
+    expect(next.orphaned).toBeUndefined();
+  });
+});
+
 // ── setDisposition authors span anchors (task 4) ──────────────────────────────
 
 class InMemoryStore implements ReviewStorePort {

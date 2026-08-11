@@ -138,6 +138,13 @@ export const reviewSchema: z.ZodType<Review> = z.object({
   activePatchsetId: z.string().min(1),
   pendingPatchsetId: z.string().optional(),
   dispositions: z.array(dispositionSchema),
+  // The orphan tray (issue #16): dispositions whose occurrence VANISHED from the
+  // successor patchset, surfaced against their last-known version rather than
+  // dropped to void. Optional field crossing IPC — declared by hand (a `z.ZodType`
+  // on Review only guards REQUIRED fields; an unlisted optional is silently
+  // stripped at the boundary). Absent ⇒ no orphans, so every existing snapshot
+  // validates unchanged.
+  orphaned: z.array(dispositionSchema).optional(),
   status: z.enum(["current", "invalid"]),
   // A retrospective (read-only, no-post) review. Optional so every existing
   // review snapshot validates unchanged; absent ⇒ a normal postable review.
