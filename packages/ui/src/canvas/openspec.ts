@@ -1,3 +1,4 @@
+import { openSpecRequirementCoverageKey } from "@rennet/protocol";
 import type {
   AnchorSide,
   AnchorSpan,
@@ -250,12 +251,13 @@ export interface OpenSpecCapabilityView {
 export type { OpenSpecRequirementCoverage } from "@rennet/types";
 
 /**
- * The coverage index a build consumes: per-requirement coverage keyed by the
- * requirement's structural anchor `key` (what `requirementAnchor` derives). It is a
- * PRODUCED artifact — a mapping runner's output — never inferred here; the view
- * attaches whatever the runner emitted for a requirement, or nothing when the runner
- * emitted nothing for it. Absent index entirely ⇒ coverage was not computed and no
- * chip renders; a present entry with `hunks.length === 0` is an honest computed zero
+ * The coverage index a build consumes: per-requirement coverage keyed by
+ * `openSpecRequirementCoverageKey(capability, requirementName)` — the SAME key the
+ * core producer emits its edges under, so neither side depends on the other's slug
+ * logic. It is a PRODUCED artifact — a mapping runner's output — never inferred here;
+ * the view attaches whatever the runner emitted for a requirement, or nothing when the
+ * runner emitted nothing for it. Absent index entirely ⇒ coverage was not computed and
+ * no chip renders; a present entry with `hunks.length === 0` is an honest computed zero
  * (`unimplemented`). These two must never collapse into one another.
  */
 export type OpenSpecCoverageIndex = ReadonlyMap<string, OpenSpecRequirementCoverage>;
@@ -402,15 +404,19 @@ export function buildOpenSpecView(
         operation: group.operation,
         requirements: group.requirements.map((requirement): OpenSpecRequirementView => {
           const anchor = requirementAnchor(change, delta, requirement);
+          // Attach ONLY what the runner produced for this requirement, keyed by
+          // (capability, name) — the same key the producer emits. Absent ⇒ no chip;
+          // present-with-zero-hunks ⇒ honest unimplemented.
+          const requirementCoverage = coverage?.get(
+            openSpecRequirementCoverageKey(delta.capability, requirement.name),
+          );
           return {
             requirement,
             anchor,
             scenarioAnchors: requirement.scenarios.map((scenario) =>
               scenarioAnchor(change, delta, requirement, scenario.name, scenario.source),
             ),
-            // Attach ONLY what the runner produced for this requirement (by anchor
-            // key). Absent ⇒ no chip; present-with-zero-hunks ⇒ honest unimplemented.
-            ...(coverage?.get(anchor.key) ? { coverage: coverage.get(anchor.key) } : {}),
+            ...(requirementCoverage ? { coverage: requirementCoverage } : {}),
           };
         }),
       }),

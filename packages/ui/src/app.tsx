@@ -1,10 +1,11 @@
-import type { Project, RennetBridge } from "@rennet/protocol";
+import { openSpecRequirementCoverageKey, type Project, type RennetBridge } from "@rennet/protocol";
 import type {
   CanvasAngle,
   ElementDiffs,
   FlaggedReview,
   NoiseReview,
   OpenSpecChange,
+  OpenSpecCoverage,
   Patchset,
   Review,
   ReviewEngine,
@@ -16,6 +17,7 @@ import type { ConversationAnchor } from "./canvas/conversation";
 import { type DestinationMode, destinationVariant, type PublishLedger } from "./canvas/destination";
 import { type CanvasSet, loadCanvases } from "./canvas/load";
 import { type DispositionWrite, withoutProposal, zoomReducer } from "./canvas/logic";
+import type { OpenSpecCoverageIndex } from "./canvas/openspec";
 import {
   deriveReviewEvent,
   type PublishContext,
@@ -306,6 +308,13 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // loads, or when the review touches no change — the Spec angle then shows its honest
   // empty state, never a fixture.
   const [openSpecChange, setOpenSpecChange] = useState<OpenSpecChange | undefined>(undefined);
+  // The Spec view's requirement→hunk coverage (wireframes #9 / R53), keyed by
+  // (capability, name). Undefined until the produced mapping resolves `ok`; a failed
+  // or absent mapping leaves it undefined so the Spec view renders NO chips — an
+  // uncomputed mapping never masquerades as a real zero.
+  const [openSpecCoverage, setOpenSpecCoverage] = useState<OpenSpecCoverageIndex | undefined>(
+    undefined,
+  );
   // Dual-model review (issue #191): ON by DEFAULT (Rai's mandate, 2026-08-11 — the
   // tool's whole job is to spend tokens and run models, so dual-model + per-finding
   // verification are the default, never an opt-in). The human can opt a review DOWN
@@ -475,6 +484,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setFlaggedReview(undefined);
     setNoiseReview(undefined);
     setOpenSpecChange(undefined);
+    setOpenSpecCoverage(undefined);
     // Reset the LIFTED view store's review-scoped state (lens/zoom/selection/cursor/
     // cohorts/overlay), preserving the scheme. The store now outlives a single review
     // (it was lifted here for the ⌘K palette), so without this reset, opening review B
@@ -553,6 +563,43 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       .catch(() => {
         if (cancelled) return;
         setOpenSpecChange(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reviewId, bridge]);
+
+  // The Spec view's coverage chips (wireframes #9 / R53): fetch the produced
+  // requirement→hunk mapping for the open review. It spends a budgeted model turn ONLY
+  // when the review actually touches an OpenSpec change (the producer returns null
+  // otherwise, before any turn), so a non-spec review pays nothing. A `null`/`failed`
+  // result leaves the coverage index undefined — the Spec view renders no chips, and
+  // an uncomputed mapping never masquerades as a real zero. Its own try/catch means a
+  // coverage failure never disturbs the change fetch or the canvas load.
+  useEffect(() => {
+    if (!reviewId) return;
+    let cancelled = false;
+    void bridge
+      .invoke("openspec.coverage", { reviewId })
+      .then((result) => {
+        if (cancelled) return;
+        const coverage = result as OpenSpecCoverage | null;
+        // Only a mapping that RAN (`ok`) yields chips; failed/absent ⇒ no chips.
+        if (coverage?.status !== "ok") {
+          setOpenSpecCoverage(undefined);
+          return;
+        }
+        const index: OpenSpecCoverageIndex = new Map(
+          coverage.edges.map((edge) => [
+            openSpecRequirementCoverageKey(edge.capability, edge.requirement),
+            { hunks: edge.hunks, tests: edge.tests },
+          ]),
+        );
+        setOpenSpecCoverage(index);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setOpenSpecCoverage(undefined);
       });
     return () => {
       cancelled = true;
@@ -1232,6 +1279,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
               // command boundary (`openspec.change`). Undefined when the review touches no
               // change — the Spec angle then shows its honest empty state, never a fixture.
               openSpecChange={openSpecChange}
+              // The produced requirement→hunk coverage (wireframes #9 / R53): present
+              // only when the mapping ran; absent ⇒ the Spec view renders no chips.
+              openSpecCoverage={openSpecCoverage}
               onDispositions={(writes) => {
                 setCanvases((current) => (current ? applyWrites(current, writes) : current));
                 // dispose == staged: authoring a disposition collates it into the draft

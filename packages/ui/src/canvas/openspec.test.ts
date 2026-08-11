@@ -1,3 +1,4 @@
+import { openSpecRequirementCoverageKey } from "@rennet/protocol";
 import type { OpenSpecChange } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { anchorPathKey } from "./logic";
@@ -304,20 +305,27 @@ describe("classifyCoverage (issue #9 / R53)", () => {
 });
 
 describe("buildOpenSpecView — coverage attachment (issue #9 / R53)", () => {
-  it("attaches ONLY the coverage the runner produced, by requirement anchor key", () => {
-    const bare = buildOpenSpecView(CHANGE);
+  it("attaches ONLY the coverage the runner produced, by (capability, name) key", () => {
     // The runner covered the first requirement (2 hunks · 3 tests) and scored the
-    // second at zero; it emitted nothing for the modified-group requirement.
-    const firstKey = present(bare.specDeltas[0]?.groups[0]?.requirements[0]).anchor.key;
-    const secondKey = present(bare.specDeltas[0]?.groups[0]?.requirements[1]).anchor.key;
+    // second at zero; it emitted nothing for the modified-group requirement. Keyed by
+    // (capability, requirement name) — the SAME key the core producer emits under.
+    const cap = "review-hypothesis-pass";
+    const firstKey = openSpecRequirementCoverageKey(
+      cap,
+      "A hypothesis is committed before the runners read the diff",
+    );
+    const secondKey = openSpecRequirementCoverageKey(
+      cap,
+      "The pass degrades honestly when context is absent",
+    );
     const coverage: OpenSpecCoverageIndex = new Map([
-      [firstKey, { hunks: ["hunk:h1", "hunk:h2"], tests: 3 }],
+      [firstKey, { hunks: ["rennet:hunk/h1", "rennet:hunk/h2"], tests: 3 }],
       [secondKey, { hunks: [], tests: 0 }],
     ]);
 
     const view = buildOpenSpecView(CHANGE, coverage);
     const reqs = present(view.specDeltas[0]?.groups[0]?.requirements);
-    expect(reqs[0]?.coverage).toEqual({ hunks: ["hunk:h1", "hunk:h2"], tests: 3 });
+    expect(reqs[0]?.coverage).toEqual({ hunks: ["rennet:hunk/h1", "rennet:hunk/h2"], tests: 3 });
     // A computed zero is PRESENT-with-empty-hunks, distinct from uncomputed.
     expect(reqs[1]?.coverage).toEqual({ hunks: [], tests: 0 });
     // The modified-group requirement had no entry ⇒ coverage stays absent (no chip).

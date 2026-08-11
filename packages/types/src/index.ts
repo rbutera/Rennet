@@ -2700,3 +2700,31 @@ export interface OpenSpecRequirementCoverage {
   /** The count of tests that exercise this requirement. */
   readonly tests: number;
 }
+
+/**
+ * One produced coverage edge: a requirement (identified by its capability + exact
+ * name, so a consumer can key it without the ui's anchor-slug logic) mapped to the
+ * grounded hunks that implement it and the count of tests that exercise it. `hunks`
+ * are `rennet:hunk/<id>` anchors already grounded against the offered manifest (the
+ * producer dropped any the model hallucinated); an empty `hunks` is a computed zero
+ * (`unimplemented`), never a fabrication.
+ */
+export interface OpenSpecCoverageEdge {
+  readonly capability: string;
+  readonly requirement: string;
+  readonly hunks: readonly string[];
+  readonly tests: number;
+}
+
+/**
+ * The coverage producer's result over a whole change. `status: "ok"` means the
+ * mapping RAN — every requirement has an edge (covered or an honest zero), so the
+ * Spec view can render every chip. `status: "failed"` means the runner did not
+ * complete (no model available, budget refused, every turn failed): `edges` is empty
+ * and the Spec view renders NO chips, keeping "not computed" distinct from a real
+ * zero. Never a fabricated edge on failure.
+ */
+export interface OpenSpecCoverage {
+  readonly status: "ok" | "failed";
+  readonly edges: readonly OpenSpecCoverageEdge[];
+}

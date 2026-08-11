@@ -23,6 +23,7 @@ export * from "./canvas-ops";
 export * from "./codex-run-turn";
 export * from "./codex-utility-port";
 export * from "./context-update-stream";
+export * from "./coverage-mapping";
 export * from "./decision-generation";
 export * from "./decomposition";
 export * from "./dual-finding-review";

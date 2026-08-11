@@ -7,6 +7,7 @@
 // and that the review affordances reuse the shared seams: a per-requirement
 // DispositionCluster fires `onDispose` with the right anchor + verb, and the
 // AskControl fires `onAsk`. Assertions are behavioural, not presence-only.
+import { openSpecRequirementCoverageKey } from "@rennet/protocol";
 import type { OpenSpecChange } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -290,20 +291,25 @@ describe("OpenSpecView — review affordances reuse the seams", () => {
 
 describe("OpenSpecView — coverage chips (issue #9 / R53)", () => {
   // The runner's output for THIS change: the added requirement is covered by one
-  // hunk and two tests; the modified requirement is a computed zero. Keyed by the
-  // requirement anchor keys the view derives (what a real mapping runner keys by).
-  function coverageFor(view: ReturnType<typeof buildOpenSpecView>): OpenSpecCoverageIndex {
-    const addedKey = view.specDeltas[0]?.groups[0]?.requirements[0]?.anchor.key;
-    const modifiedKey = view.specDeltas[0]?.groups[1]?.requirements[0]?.anchor.key;
-    if (!addedKey || !modifiedKey) throw new Error("expected both requirement anchors");
-    return new Map([
-      [addedKey, { hunks: ["hunk:claim-1"], tests: 2 }],
-      [modifiedKey, { hunks: [], tests: 0 }],
-    ]);
-  }
+  // hunk and two tests; the modified requirement is a computed zero. Keyed by
+  // (capability, requirement name) — the SAME key a real mapping producer emits.
+  const cap = "review-hypothesis-pass";
+  const coverage: OpenSpecCoverageIndex = new Map([
+    [
+      openSpecRequirementCoverageKey(
+        cap,
+        "A hypothesis is committed before the runners read the diff",
+      ),
+      { hunks: ["rennet:hunk/claim-1"], tests: 2 },
+    ],
+    [
+      openSpecRequirementCoverageKey(cap, "The validator admits the new doc type"),
+      { hunks: [], tests: 0 },
+    ],
+  ]);
 
   it("renders 'covered by N hunks · M tests' (honest singular/plural) and 'unimplemented · 0 hunks'", () => {
-    const view = buildOpenSpecView(CHANGE, coverageFor(buildOpenSpecView(CHANGE)));
+    const view = buildOpenSpecView(CHANGE, coverage);
     const { getByText, container } = mount(<OpenSpecView view={view} onDispose={vi.fn()} />);
 
     // Covered: one hunk (singular), two tests (plural).
@@ -319,7 +325,7 @@ describe("OpenSpecView — coverage chips (issue #9 / R53)", () => {
   });
 
   it("jumps to the FIRST claiming hunk when a covered chip is clicked", async () => {
-    const view = buildOpenSpecView(CHANGE, coverageFor(buildOpenSpecView(CHANGE)));
+    const view = buildOpenSpecView(CHANGE, coverage);
     const onJumpToHunk = vi.fn<(anchor: string) => void>();
     const { getByRole, user } = mount(
       <OpenSpecView view={view} onDispose={vi.fn()} onJumpToHunk={onJumpToHunk} />,
@@ -328,11 +334,11 @@ describe("OpenSpecView — coverage chips (issue #9 / R53)", () => {
       getByRole("button", { name: "covered by 1 hunk · 2 tests — jump to the claiming hunk" }),
     );
     expect(onJumpToHunk).toHaveBeenCalledTimes(1);
-    expect(onJumpToHunk).toHaveBeenCalledWith("hunk:claim-1");
+    expect(onJumpToHunk).toHaveBeenCalledWith("rennet:hunk/claim-1");
   });
 
   it("renders a covered chip as a STATIC label when no jump is wired (still honest)", () => {
-    const view = buildOpenSpecView(CHANGE, coverageFor(buildOpenSpecView(CHANGE)));
+    const view = buildOpenSpecView(CHANGE, coverage);
     const { getByText } = mount(<OpenSpecView view={view} onDispose={vi.fn()} />);
     const covered = getByText("covered by 1 hunk · 2 tests");
     expect(covered.closest("button")).toBeNull();
