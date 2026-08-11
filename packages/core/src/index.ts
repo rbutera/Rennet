@@ -42,6 +42,7 @@ export * from "./knowledge-generation";
 export * from "./model-council";
 export * from "./noise-generation";
 export * from "./novelty-ledger";
+export * from "./openspec-change";
 export * from "./orchestrator-primer";
 export * from "./orchestrator-session";
 export * from "./ordering-pass";
