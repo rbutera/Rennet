@@ -1,4 +1,9 @@
-import { openSpecRequirementCoverageKey, type Project, type RennetBridge } from "@rennet/protocol";
+import {
+  type AppearanceScheme,
+  openSpecRequirementCoverageKey,
+  type Project,
+  type RennetBridge,
+} from "@rennet/protocol";
 import type {
   CanvasAngle,
   ElementDiffs,
@@ -48,6 +53,7 @@ import {
 } from "./components/icons";
 import { ProjectDetail } from "./components/project-detail";
 import { type PublishOutcome, PublishSheet } from "./components/publish-sheet";
+import { SettingsScreen } from "./components/settings-screen";
 import { CanvasWorkspace } from "./components/workspace";
 import type { SmartRow } from "./project/smart-list";
 
@@ -268,6 +274,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // project-detail (the review's real home) is a later slice.
   const [atFrontDoor, setAtFrontDoor] = useState(false);
   const [directEntry, setDirectEntry] = useState(false);
+  // The settings screen (wireframe #15): opened from the front door, closed back
+  // to it. `scheme` is the reviewer's chosen appearance, fetched once and applied
+  // to the front door's `data-scheme` — so changing it in settings re-themes here.
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [scheme, setScheme] = useState<AppearanceScheme>("system");
   // Project detail (issue #37): the unified smart list. Clicking a project row opens
   // this surface (local work + every PR in one list); a row there opens the review.
   const [projectDetail, setProjectDetail] = useState<Project | null>(null);
@@ -413,6 +424,44 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         setError(reason instanceof Error ? reason.message : String(reason)),
       );
   }, [bridge]);
+
+  // The reviewer's appearance scheme (wireframe #15), fetched once so the front
+  // door themes to it. Settings updates it live via `onSchemeChange`. Fail-quiet:
+  // an unavailable settings surface leaves the builtin `system` default.
+  useEffect(() => {
+    bridge
+      .invoke("settings.get", {})
+      .then(({ scheme: loaded }) => setScheme(loaded))
+      .catch(() => undefined);
+  }, [bridge]);
+
+  // `system` resolves through the OS via `prefers-color-scheme`, live: an OS
+  // appearance change re-themes the app without a reload. `matchMedia` is guarded
+  // for the (test / SSR) case where it is absent, defaulting to dark.
+  const [systemDark, setSystemDark] = useState(
+    () => typeof matchMedia === "undefined" || matchMedia("(prefers-color-scheme: dark)").matches,
+  );
+  useEffect(() => {
+    if (typeof matchMedia === "undefined") return;
+    const query = matchMedia("(prefers-color-scheme: dark)");
+    const onChange = (event: MediaQueryListEvent) => setSystemDark(event.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+  // The single resolved scheme every app-level surface renders in. `system` folds
+  // to the live OS value here, so every screen inherits ONE answer (no screen
+  // hardcodes dark, and an explicit Light no longer reverts on navigation).
+  const effectiveScheme: "dark" | "light" =
+    scheme === "light" ? "light" : scheme === "dark" ? "dark" : systemDark ? "dark" : "light";
+
+  // Apply the resolved scheme to the document ROOT, so every surface inherits it —
+  // including screens that carry no `.rennet-glass`/`.canvas-app` scope of their own
+  // (the restore + direct-entry screens, the review-level chrome). The self-scoping
+  // components re-declare the base tokens locally, so they ALSO receive the resolved
+  // scheme as a prop; this root attribute is what themes everything in between.
+  useEffect(() => {
+    document.documentElement.setAttribute("data-scheme", effectiveScheme);
+  }, [effectiveScheme]);
 
   const patchset = useMemo(() => (review ? activePatchset(review) : undefined), [review]);
   // A GitHub-PR review is a SNAPSHOT of a pinned range, not the working tree, so
@@ -1014,7 +1063,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // the renderer half of the no-post guarantee; MAIN's `publish.review` refusal is the
   // structural half, so even without this the command cannot egress.
   const destinationChrome = review?.retrospective ? (
-    <div className="rennet-glass" data-scheme="dark">
+    <div className="rennet-glass" data-scheme={effectiveScheme}>
       <section className="retrospective-notice" role="note" data-testid="retrospective-notice">
         <p className="eyebrow">RETROSPECTIVE REVIEW</p>
         <p>
@@ -1024,7 +1073,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       </section>
     </div>
   ) : (
-    <div className="rennet-glass" data-scheme="dark">
+    <div className="rennet-glass" data-scheme={effectiveScheme}>
       <DestinationFrame
         draft={draft}
         mode={destinationMode}
@@ -1164,10 +1213,28 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         <ProjectDetail
           bridge={bridge}
           project={projectDetail}
+          scheme={effectiveScheme}
           onOpenRow={(row) => void openRow(projectDetail, row)}
           onBack={() => setProjectDetail(null)}
         />
         {palette}
+      </>
+    );
+  }
+
+  // The settings screen (wireframe #15): opened from the front door's affordance,
+  // closed back to it. Takes precedence over the front door so it is a full screen,
+  // not an overlay; the chosen scheme flows back to `data-scheme` on close.
+  if (settingsOpen) {
+    return (
+      <>
+        {error ? <div className="error-toast">{error}</div> : null}
+        <SettingsScreen
+          bridge={bridge}
+          scheme={effectiveScheme}
+          onBack={() => setSettingsOpen(false)}
+          onSchemeChange={setScheme}
+        />
       </>
     );
   }
@@ -1181,7 +1248,12 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         <>
           {error ? <div className="error-toast">{error}</div> : null}
           {busy ? <div className="busy-bar" /> : null}
-          <FrontDoor bridge={bridge} onOpenProject={(project) => setProjectDetail(project)} />
+          <FrontDoor
+            bridge={bridge}
+            onOpenProject={(project) => setProjectDetail(project)}
+            onOpenSettings={() => setSettingsOpen(true)}
+            scheme={effectiveScheme}
+          />
           <button
             type="button"
             className="front-door-direct"
@@ -1319,6 +1391,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
               store={viewStore}
               canvases={canvases}
               bridge={bridge}
+              scheme={effectiveScheme}
               narration={narration}
               flaggedReview={flaggedReview}
               deepReview={{

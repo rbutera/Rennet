@@ -79,4 +79,38 @@ describe("map-visibility switch (A.2)", () => {
     expect(written).not.toContain("map/");
     expect(store.loadConfig("-k")?.visibility).toBe("git-visible");
   });
+
+  it("REFUSES the real switch when the project config is malformed, leaving BOTH files byte-identical (Rule 75, non-vacuous)", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "rennet-vis4-"));
+    const storeDir = mkdtempSync(join(tmpdir(), "rennet-vis4-store-"));
+    scratch.push(repo, storeDir);
+    const store = new ProjectSnapshotStore(storeDir);
+
+    // A .gitignore with NO managed block, plus a malformed project config. The
+    // target is `local` DELIBERATELY: it ADDS the managed block, so the switch's
+    // write branch genuinely WOULD run (`preview.changed === true`). That is what
+    // makes this non-vacuous — if the pre-write malformed guard were removed, the
+    // `.gitignore` would actually be rewritten before `updateConfig` throws, and
+    // the byte-identical assertion below would go red.
+    mkdirSync(join(repo, ".rennet"), { recursive: true });
+    const gitignore = join(repo, ".rennet", ".gitignore");
+    const gitignoreBefore = "# untouched\nkeep.local\n";
+    writeFileSync(gitignore, gitignoreBefore);
+    // Sanity: this exact switch DOES change the file (the write branch is live).
+    const preview = await previewVisibilitySwitch(repo, "local", readOnlyGit());
+    expect(preview.changed).toBe(true);
+    const configPath = store.paths("-k").configPath;
+    mkdirSync(join(configPath, ".."), { recursive: true });
+    const configBefore = '{ "version": 1, "visibility": "loc'; // truncated, unparseable
+    writeFileSync(configPath, configBefore);
+
+    // The REAL write path throws rather than half-applying.
+    await expect(applyVisibilitySwitch(store, "-k", repo, "local", readOnlyGit())).rejects.toThrow(
+      /malformed/,
+    );
+
+    // Neither file was touched — this is what makes the guard non-vacuous.
+    expect(readFileSync(gitignore, "utf8")).toBe(gitignoreBefore);
+    expect(readFileSync(configPath, "utf8")).toBe(configBefore);
+  });
 });

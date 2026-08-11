@@ -130,6 +130,14 @@ export async function applyVisibilitySwitch(
   target: ProjectVisibility,
   git: GitExec = execaGit,
 ): Promise<VisibilityPreview> {
+  // Refuse a malformed config BEFORE writing anything (Rule 75): otherwise the
+  // `.gitignore` would be written and then `updateConfig` would throw, leaving a
+  // half-applied switch. Check first, so neither file is touched.
+  if (store.loadConfigState(repoKey).status === "malformed") {
+    throw new Error(
+      `refusing a visibility switch on a repo with a malformed config (${repoRoot}); fix or remove ${store.paths(repoKey).configPath} first`,
+    );
+  }
   const preview = await previewVisibilitySwitch(repoRoot, target, git);
   if (preview.changed) {
     const path = preview.gitignorePath;

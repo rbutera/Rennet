@@ -233,5 +233,6 @@ export type { MarkIndexEntry } from "./components/mark-index";
 export { MarkIndex } from "./components/mark-index";
 export { OrphanTray } from "./components/orphan-tray";
 export { PublishSheet } from "./components/publish-sheet";
+export { SettingsScreen } from "./components/settings-screen";
 export type { CanvasWorkspaceProps, DiffResolver } from "./components/workspace";
 export { CanvasWorkspace } from "./components/workspace";

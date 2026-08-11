@@ -1,8 +1,10 @@
 import { execFile } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { join, normalize, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
+  applyVisibilitySwitch,
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
   type CodexAvailability,
@@ -18,6 +20,7 @@ import {
   defaultCodexDiscoveryDeps,
   defaultCodexExecEffects,
   defaultDiscoveryDeps,
+  defaultGlobalConfigPath,
   defaultProjectDetailSourceDeps,
   defaultProjectDiscoveryDeps,
   deriveProjectDraft,
@@ -26,6 +29,7 @@ import {
   discoverProject,
   discoverWorktreeIdentities,
   execaGit,
+  FileConfigStore,
   FileProjectStore,
   type GhRunner,
   GitCaptureAdapter,
@@ -92,6 +96,7 @@ import { createOrchestratorTurnRunner } from "./orchestrator";
 import { createProcessProject } from "./process-project";
 import { createPublishConsentAuthority } from "./publish-consent-authority";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
+import { createSettingsComposition } from "./settings";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 
 const execFileAsync = promisify(execFile);
@@ -1065,8 +1070,15 @@ app.whenReady().then(async () => {
   // The ProjectSnapshot generator over the app-owned LOCAL-FIRST store under
   // `~/.rennet/projects/` (issue #188 default base dir). Drives the initial context
   // dump: `project.process` builds each included repo's snapshot through this, and
-  // its real stages become the processing screen's live narration.
-  const snapshotGenerator = new ProjectSnapshotGenerator({ store: snapshotStoreFor() });
+  // its real stages become the processing screen's live narration. The store is
+  // SHARED with the settings surface (below) so the per-project `config.json`
+  // (visibility/promotion) they read and write is the same one the generator keys.
+  const snapshotStore = snapshotStoreFor();
+  const snapshotGenerator = new ProjectSnapshotGenerator({ store: snapshotStore });
+  // The global (app-side, personal) config store — layer 1 of the settings ladder
+  // (wireframe #15). A plain document at `~/.rennet/config.json`, sibling to the
+  // project snapshot store; holds the reviewer's scheme, never a repo fact.
+  const configStore = new FileConfigStore(defaultGlobalConfigPath());
   // The publish egress port + its consent authority (issue #21). The port constructs
   // requests purely (dry-run) and posts only via the gated `publish.review` command.
   const publishPort = new GitHubPublishAdapter({
@@ -1263,6 +1275,59 @@ app.whenReady().then(async () => {
           ...(codex.version ? { harnessVersion: codex.version } : {}),
         });
         return createLiveCodexAsk({ executor })({ review, question });
+      },
+    }),
+    // The settings surface (wireframe #15): the config ladder over the REAL stores.
+    // `get` resolves the global appearance layer (`~/.rennet/config.json`) plus every
+    // project's repo-scope visibility/promotion (its `~/.rennet/projects/<key>/
+    // config.json`), each with provenance from the pure core resolver. `guidance`
+    // reads one project's `.rennet/conventions.json` house rules read-through.
+    // `setAppearance` writes only the app-side config (no repo write). `setRepoVisibility`
+    // runs the REAL map-visibility switch (the repo's Rennet-owned `.rennet/.gitignore`).
+    // The config-ladder composition (extracted to `./settings` so its logic is
+    // unit-tested off-Electron). MAIN injects the real effects: git top-level
+    // resolution (the same identity the snapshot generator keys on), legacy-
+    // workspace rediscovery, the two stores, the guidance reader, and the real
+    // visibility switch. The malformed refusals live in the stores themselves.
+    settings: createSettingsComposition({
+      listProjects: () => projectStore.list(),
+      loadConfigState: (repoKey) => snapshotStore.loadConfigState(repoKey),
+      readGlobalState: () => configStore.readState(),
+      updateGlobal: (update) => configStore.update(update),
+      gitTopLevel: async (workingPath) => {
+        let topLevel: string;
+        try {
+          topLevel = (
+            await execaGit(workingPath, ["rev-parse", "--show-toplevel"], { reject: true })
+          ).trim();
+        } catch {
+          return null;
+        }
+        if (!topLevel) return null;
+        try {
+          return realpathSync(topLevel);
+        } catch {
+          return null;
+        }
+      },
+      discoverWorkspaceRepos: async (project) => {
+        const result = await discoverProject(
+          defaultProjectDiscoveryDeps(execaGit),
+          project.path,
+          "workspace",
+        );
+        return result.repos.map((repo) => repo.path);
+      },
+      loadGuidance: (repoRoot) => loadConventionCatalogue(repoRoot),
+      applyVisibility: async ({ repoKey, repoRoot, target }) => {
+        const preview = await applyVisibilitySwitch(
+          snapshotStore,
+          repoKey,
+          repoRoot,
+          target,
+          execaGit,
+        );
+        return { changed: preview.changed, gitignorePath: preview.gitignorePath };
       },
     }),
   });

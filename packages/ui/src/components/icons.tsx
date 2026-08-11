@@ -166,6 +166,16 @@ export const GitBranchIcon = (p: IconProps) => (
   </Icon>
 );
 
+/** Sliders — the settings glyph (the config ladder's nav affordance, wireframe #15). */
+export const SlidersIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M2.5 4.5h7M11.5 4.5h2M2.5 8h2M6.5 8h7M2.5 11.5h7M11.5 11.5h2" />
+    <circle cx="10.5" cy="4.5" r="1.5" />
+    <circle cx="5.5" cy="8" r="1.5" />
+    <circle cx="10.5" cy="11.5" r="1.5" />
+  </Icon>
+);
+
 /** Sparkle / asterisk — the ambient harness-detection glyph (backlight). */
 export const SparkleIcon = (p: IconProps) => (
   <Icon {...p}>
@@ -243,6 +253,7 @@ export const ICON_LEGEND: Record<string, LegendEntry> = {
   ArrowLeftIcon: { entry: "Back", group: "structural" },
   CloseIcon: { entry: "Dismiss", group: "structural" },
   PlusIcon: { entry: "Add a project", group: "structural" },
+  SlidersIcon: { entry: "Settings", group: "structural" },
   // Brand
   RennetMark: { entry: "Rennet", group: "brand" },
 };

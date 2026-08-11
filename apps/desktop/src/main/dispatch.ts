@@ -18,8 +18,12 @@ import {
   type ProjectDetail,
   type ProjectKind,
   type ProjectProcessEvent,
+  type ProjectVisibility,
   parseCommandInput,
   parseCommandOutput,
+  type SetRepoVisibilityOutcome,
+  type SettingsGuidance,
+  type SettingsView,
 } from "@rennet/protocol";
 import type {
   Canvas,
@@ -220,6 +224,24 @@ export interface DispatchDeps {
     path: string;
     line?: number;
   }) => Promise<{ ok: boolean }>;
+  /**
+   * The settings surface (wireframe #15): the config ladder over the real stores.
+   * `get` resolves the global appearance layer + every project's repo-scope config
+   * with provenance; `guidance` reads one project's `.rennet/conventions.json`;
+   * `setAppearance` writes the personal, app-side scheme (no repo write);
+   * `setRepoVisibility` runs the real map-visibility switch (a repo `.gitignore`
+   * write). Optional: absent ⇒ the settings commands are simply unavailable.
+   */
+  readonly settings?: {
+    get(): Promise<SettingsView>;
+    guidance(projectId: string, repoPath: string): Promise<SettingsGuidance>;
+    setAppearance(scheme: SettingsView["scheme"]): SettingsView["scheme"];
+    setRepoVisibility(input: {
+      projectId: string;
+      repoPath: string;
+      visibility: ProjectVisibility;
+    }): Promise<SetRepoVisibilityOutcome>;
+  };
 }
 
 /** Lift the wire target shape into the core `ForgeReviewTarget` nouns. */
@@ -721,6 +743,83 @@ export function createDispatch(
         // input and acknowledge; the renderer holds the ephemeral view state.
         parseCommandInput(name, rawInput);
         return parseCommandOutput(name, { ok: true });
+      }
+      // ── Settings: the config ladder (wireframe #15) ───────────────────────────
+      case "settings.get": {
+        // Read-only: the global appearance layer + every project's resolved repo
+        // config with provenance. Absent settings dep ⇒ builtin-only view (no
+        // global override, no projects), never a throw.
+        parseCommandInput(name, rawInput);
+        if (!deps.settings) {
+          return parseCommandOutput(name, {
+            scheme: "system",
+            schemeProvenance: {
+              layer: "builtin",
+              contributions: [{ layer: "builtin", value: "system", effective: true }],
+            },
+            appearanceMalformed: false,
+            projects: [],
+          });
+        }
+        return parseCommandOutput(name, await deps.settings.get());
+      }
+      case "settings.guidance": {
+        // Read-only: one repo's `.rennet/conventions.json` house rules, shown
+        // read-through. Absent dep ⇒ the honest empty catalogue.
+        const input = parseCommandInput(name, rawInput);
+        if (!deps.settings) {
+          return parseCommandOutput(name, { rules: [], reason: "absent", dropped: 0 });
+        }
+        return parseCommandOutput(
+          name,
+          await deps.settings.guidance(input.projectId, input.repoPath),
+        );
+      }
+      case "settings.setAppearance": {
+        // Personal, app-side: writes only `~/.rennet/config.json`. No repo write.
+        // The dep REFUSES (throws) when the config is malformed; that error
+        // propagates to the renderer rather than overwriting unparseable bytes.
+        const input = parseCommandInput(name, rawInput);
+        if (!deps.settings) {
+          return parseCommandOutput(name, {
+            scheme: input.scheme,
+            schemeProvenance: {
+              layer: "global",
+              contributions: [
+                { layer: "builtin", value: "system", effective: false },
+                { layer: "global", value: input.scheme, effective: true },
+              ],
+            },
+          });
+        }
+        const scheme = deps.settings.setAppearance(input.scheme);
+        // Re-resolve so the surface renders the resolver's own provenance answer.
+        return parseCommandOutput(name, {
+          scheme,
+          schemeProvenance: (await deps.settings.get()).schemeProvenance,
+        });
+      }
+      case "settings.setRepoVisibility": {
+        // Genuinely consumed: runs the real visibility switch (a repo `.gitignore`
+        // write, exclusion state only) and records `visibility` in the repo's
+        // config. A `status` other than `applied` means NOTHING was written (an
+        // unresolved checkout or a refused-because-malformed config). Absent dep ⇒
+        // a typed `unresolved` no-op, mirroring `openInEditor`.
+        const input = parseCommandInput(name, rawInput);
+        if (!deps.settings) {
+          return parseCommandOutput(name, {
+            status: "unresolved",
+            visibility: input.visibility,
+            changed: false,
+            gitignorePath: "",
+          });
+        }
+        const result = await deps.settings.setRepoVisibility({
+          projectId: input.projectId,
+          repoPath: input.repoPath,
+          visibility: input.visibility,
+        });
+        return parseCommandOutput(name, result);
       }
       default: {
         // Exhaustiveness guard: every CommandName is routed above, so `name` is

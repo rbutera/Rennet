@@ -80,6 +80,35 @@ export interface ProjectConfig {
   readonly visibility?: ProjectVisibility;
 }
 
+/**
+ * Fully validate a parsed value as a {@link ProjectConfig}: `version` must be a
+ * number, and every OPTIONAL field, WHEN PRESENT, must hold its declared type —
+ * in particular `visibility` must be one of the two enum members, so a garbage
+ * `visibility: "bogus"` is rejected as malformed rather than flowing on as a value.
+ */
+function isValidProjectConfig(value: unknown): value is ProjectConfig {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  if (typeof record.version !== "number") return false;
+  if (record.path !== undefined && typeof record.path !== "string") return false;
+  if (record.promoted !== undefined && typeof record.promoted !== "boolean") return false;
+  if (record.relocatedFrom !== undefined && typeof record.relocatedFrom !== "string") return false;
+  if (
+    record.aliases !== undefined &&
+    (!Array.isArray(record.aliases) || record.aliases.some((a) => typeof a !== "string"))
+  ) {
+    return false;
+  }
+  if (
+    record.visibility !== undefined &&
+    record.visibility !== "local" &&
+    record.visibility !== "git-visible"
+  ) {
+    return false;
+  }
+  return true;
+}
+
 /** The resolved on-disk paths for one project's local store entry. */
 export interface ProjectPaths {
   /** `<baseDir>/<escaped-path>/` — the project root in the local store. */
@@ -302,16 +331,36 @@ export class ProjectSnapshotStore {
    * throwing — a project always has a usable, default-off config.
    */
   loadConfig(repoKey: string): ProjectConfig | null {
+    const state = this.loadConfigState(repoKey);
+    return state.status === "ok" ? state.config : null;
+  }
+
+  /**
+   * The DISTINCT on-disk config state, FULLY validated (not just `version`), so a
+   * caller can tell an absent config (safe to write) from a malformed one — an
+   * unparseable file OR a well-formed one carrying an invalid field, e.g.
+   * `visibility: "bogus"`. A malformed config must NOT be overwritten (Rule 75) and
+   * must NOT leak an invalid value into a resolver, so this is the reader the
+   * settings surface uses. `loadConfig`/`loadConfigOrDefault` keep their fail-safe
+   * "absent-or-default" contract for the map read paths by folding on `ok`.
+   */
+  loadConfigState(
+    repoKey: string,
+  ): { status: "absent" | "malformed"; config: null } | { status: "ok"; config: ProjectConfig } {
+    let raw: string;
     try {
-      const raw = readFileSync(this.paths(repoKey).configPath, "utf8");
-      const parsed = JSON.parse(raw) as ProjectConfig;
-      if (!parsed || typeof parsed !== "object" || typeof parsed.version !== "number") {
-        return null;
-      }
-      return parsed;
+      raw = readFileSync(this.paths(repoKey).configPath, "utf8");
     } catch {
-      return null;
+      return { status: "absent", config: null };
     }
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(raw);
+    } catch {
+      return { status: "malformed", config: null };
+    }
+    if (!isValidProjectConfig(parsed)) return { status: "malformed", config: null };
+    return { status: "ok", config: parsed };
   }
 
   /** The stored config, or a fresh default when none exists yet. */
@@ -328,11 +377,23 @@ export class ProjectSnapshotStore {
 
   /**
    * Read-modify-write a project's config atomically. The updater receives the
-   * current config (or a fresh default) and returns the next one. Returns the
-   * written config for the caller to act on.
+   * current config (an absent config folds to a fresh default) and returns the
+   * next one. Returns the written config for the caller to act on.
+   *
+   * REFUSES (throws) when the on-disk config is MALFORMED (Rule 75): read-modify-
+   * write over a default would silently discard the unparseable bytes, so the file
+   * is left byte-for-byte untouched and the caller gets a thrown error. The guard
+   * lives HERE, at the adapter, so EVERY writer (promotion, the visibility switch)
+   * is protected — not only the settings composition that happens to check first.
    */
   updateConfig(repoKey: string, update: (current: ProjectConfig) => ProjectConfig): ProjectConfig {
-    const next = update(this.loadConfigOrDefault(repoKey));
+    const state = this.loadConfigState(repoKey);
+    if (state.status === "malformed") {
+      throw new Error(
+        `refusing to overwrite a malformed project config at ${this.paths(repoKey).configPath}; fix or remove it first`,
+      );
+    }
+    const next = update(state.config ?? { version: PROJECT_CONFIG_VERSION });
     this.saveConfig(repoKey, next);
     return next;
   }
