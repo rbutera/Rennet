@@ -106,6 +106,12 @@ describe("deriveProjectDraft", () => {
     expect(result.primaryBranch).toBe("main");
   });
 
+  it("persists ONLY the included repo paths (an excluded repo is absent)", () => {
+    const result = deriveProjectDraft(discovery, ["atlas", "navcore"], "main");
+    // "atlas-docs" was excluded → its path must not survive into the stored selection.
+    expect(result.includedRepoPaths).toEqual(["/code/orbital/atlas", "/code/orbital/navcore"]);
+  });
+
   it("opens the repo itself for a project-repo kind", () => {
     const repo: DiscoveryResult = {
       path: "/code/atlas",

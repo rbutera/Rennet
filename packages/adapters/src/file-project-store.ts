@@ -23,6 +23,8 @@ export interface ProjectDraft {
   branchCount: number;
   primaryBranch: string;
   openPath: string;
+  /** The working-tree paths of the included repos, so live detail honours the selection. */
+  includedRepoPaths?: readonly string[];
 }
 
 const fileSchema = z.object({ projects: z.array(projectSchema) });
@@ -83,6 +85,7 @@ export class FileProjectStore {
       branchCount: draft.branchCount,
       primaryBranch: draft.primaryBranch,
       openPath: draft.openPath,
+      ...(draft.includedRepoPaths ? { includedRepoPaths: [...draft.includedRepoPaths] } : {}),
       addedAt: this.now(),
     });
     const existing = this.list();
@@ -118,5 +121,6 @@ export function deriveProjectDraft(
     branchCount,
     primaryBranch,
     openPath,
+    includedRepoPaths: included.map((repo) => repo.path),
   };
 }

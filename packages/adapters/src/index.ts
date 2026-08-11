@@ -250,6 +250,11 @@ export {
 } from "./project-context-reader";
 export { cleanupWorktreeFixture, projectDetailFixture } from "./project-detail-fixture";
 export {
+  defaultProjectDetailSourceDeps,
+  loadProjectDetail,
+  type ProjectDetailSourceDeps,
+} from "./project-detail-source";
+export {
   defaultProjectDiscoveryDeps,
   discoverProject,
   type ProjectDiscoveryDeps,
