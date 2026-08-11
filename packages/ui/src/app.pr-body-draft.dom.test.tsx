@@ -13,7 +13,7 @@ import type { CommandInput, CommandOutput, RennetBridge } from "@rennet/protocol
 import type { Review } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
-import { fireEvent, mount, waitFor } from "./test/dom";
+import { act, fireEvent, mount, waitFor } from "./test/dom";
 
 const review: Review = {
   id: "review",
@@ -194,6 +194,67 @@ describe("RennetApp — the drafted body flows to the composer + preview (#74 ME
     expect(container.querySelector(".publish-sheet-pr-title")?.textContent).toBe(
       "Bound the fail-open path",
     );
+  });
+});
+
+describe("RennetApp — a draft is voided when its inputs change mid-flight (#74 HIGH: input-identity)", () => {
+  // The blue-lane fix filters the INPUT to `inkDraft`, which settles what was ink AT
+  // REQUEST TIME. But a note that is ink when the turn STARTS (and so folded into the
+  // drafted body) and BLUE by the time it RESOLVES still lands its result on the paper
+  // — a time-of-check/time-of-use window, the same family as the sign-hold race. The
+  // fix binds the result to the input IDENTITY: unstaging changes the ink projection,
+  // which bumps the draft generation, so the stale turn is dropped on arrival.
+  const STALE: DraftOutput = {
+    status: "drafted",
+    title: "STALE_TITLE::drafted-from-a-since-unstaged-input",
+    body: "STALE_BODY::must-not-reach-the-paper-after-unstage",
+    model: "gpt-5.6-luna",
+  };
+
+  async function settle(): Promise<void> {
+    for (let i = 0; i < 12; i += 1) await Promise.resolve();
+  }
+
+  it("unstaging the ink note while a draft is in flight drops the stale result", async () => {
+    const { bridge, calls, release } = draftingBridge(review, STALE, true); // deferred
+    const { container } = await toDraftWithNote(bridge, "a note");
+    // Stage the note to ink so the turn has a drafting input.
+    const stage = () => container.querySelector<HTMLInputElement>(".collation-item-stage-box");
+    fireEvent.click(stage() as HTMLInputElement);
+    await waitFor(() => expect(stage()?.checked).toBe(true));
+    // Start the draft — in flight (deferred).
+    clickDraftWithAi(container);
+    await waitFor(() => expect(calls).toHaveLength(1));
+    // The spinner is up while the turn is pending.
+    await waitFor(() =>
+      expect(container.querySelector(".collation-pr-draft-btn")?.textContent).toContain("Drafting"),
+    );
+    // UNSTAGE the note while the turn is still pending — the ink projection changes, so
+    // the in-flight turn is now drafting against inputs that no longer exist. The
+    // generation bumps: the spinner clears immediately (observable), before the result.
+    fireEvent.click(stage() as HTMLInputElement);
+    await waitFor(() => expect(stage()?.checked).toBe(false));
+    await waitFor(() =>
+      expect(container.querySelector(".collation-pr-draft-btn")?.textContent).not.toContain(
+        "Drafting",
+      ),
+    );
+    // Now let the (stale) turn resolve — its generation no longer matches, so it drops.
+    // `act` flushes the continuation's state updates to the DOM, so the assertion is
+    // NOT vacuous: in the buggy build the stale body lands here and reddens the check.
+    await act(async () => {
+      release();
+      await settle();
+    });
+    // The stale body is NOWHERE in the composer, and no "drafted" status was pinned for
+    // the voided turn. RED-proof: delete the fingerprint effect (app.tsx) and the stale
+    // body lands in the composer here.
+    expect(
+      container.querySelector<HTMLTextAreaElement>('[data-testid="pr-draft-body"]')?.value ?? "",
+    ).not.toContain("STALE_BODY");
+    expect(
+      container.querySelector('[data-testid="pr-draft-status"]')?.textContent ?? "",
+    ).not.toContain("gpt-5.6-luna");
   });
 });
 

@@ -1010,6 +1010,49 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // still entered the payload and an approve-only draft still ran an APPROVE dry
   // run while the chrome said "Nothing to publish".
   const inkDraft = publishedItems(draft);
+  // #74 HIGH: bind the PR-body draft generation to the FULL drafting-input identity,
+  // not just the review id. Two things change the inputs WITHOUT changing `reviewId`,
+  // so the reviewId-keyed reset never fired and a stale turn overwrote the composer:
+  //   • REGENERATION activates a new `activePatchsetId` under the SAME review — a
+  //     turn drafted against patchset A would land its body on patchset B.
+  //   • a STAGE/UNSTAGE edit changes the ink projection — a note that was ink when
+  //     the turn started (and so folded into the drafted body) but is BLUE by the
+  //     time it resolves would still reach the paper. Filtering the input to `inkDraft`
+  //     settles what was ink AT REQUEST TIME; this closes the time-of-check/
+  //     time-of-use window by binding the RESULT to the input identity too.
+  // Fingerprint EXACTLY the inputs `draftPrBody` sends. When it changes, the effect
+  // below bumps the generation (so any in-flight turn is dropped on arrival) and
+  // clears the drafting STATUS. The composer's own text is the human's and is left
+  // untouched — only a turn drafting against inputs that no longer exist is voided.
+  const prDraftRollup = narration?.rollup;
+  const prDraftInputFingerprint = JSON.stringify({
+    patchsetId: activePatchsetId,
+    base: publishContext.submission.base,
+    head: publishContext.submission.head,
+    dispositions: inkDraft.map((item) => ({
+      type: item.type,
+      path: item.path,
+      resolution: effectiveBody(item),
+    })),
+    narration:
+      prDraftRollup?.status === "narrated"
+        ? { oneLine: prDraftRollup.oneLine, paragraph: prDraftRollup.paragraph }
+        : null,
+    requirements: (openSpecChange?.specDeltas ?? []).flatMap((delta) =>
+      delta.groups.flatMap((group) =>
+        group.requirements.map((requirement) => requirement.statement),
+      ),
+    ),
+  });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — the effect FIRES ON the fingerprint change to void an in-flight turn; its body reads only the stable generation ref + setter (never the fingerprint), so biome reads the dep as "unnecessary", but dropping it would stop the invalidation.
+  useEffect(() => {
+    // The drafting inputs changed (a regeneration, a stage/unstage, or a narration/
+    // spec refresh): void any in-flight turn by bumping the generation the async
+    // continuation checks, and clear a drafting status that no longer describes the
+    // current inputs. The composer text is left untouched — the human's edit is final.
+    prDraftGeneration.current += 1;
+    setPrDraftState(undefined);
+  }, [prDraftInputFingerprint]);
   const publishTargetForMode = publishTarget(destinationMode, inkDraft, publishContext);
   // The degradation ledger, sourced HONESTLY from the active patchset: a degraded
   // (REST-fallback) changeset really did flatten, so it gates the sign. A clean
