@@ -7,6 +7,8 @@ updated: 2026-08-06
 related: ["[[Rennet Navi Handoff]]", "[[Rennet Contracts and Rulings]]"]
 ---
 
+> 📜 **Historical evidence, not current authority.** Superseded wherever it conflicts with **RULE ZERO** (`CLAUDE.md`): no consent gates, no gates, no robustness for robustness' sake. Read for rationale and provenance only.
+
 # Rennet Backlog Archive
 
 The 2026-08-04 dependency-ordered 147-bead backlog, extracted verbatim from [[Rennet Navi Handoff]] §3 on 2026-08-06 when the backlog moved to the GitHub `openspec-seed` issue queue ([[Rennet Contracts and Rulings]] §7). **Historical: design rationale only, not the work queue.** Issues cite bead numbers here (e.g. #16, #27). Where a bead and an issue disagree, the issue wins. The PR-per-bead workflow described below is superseded by ship-to-main. ⚠️ Beads 76/104/105 still carry superseded salience/cap language — issue #27 owns that edit pass; see the strip list in [[Rennet Contracts and Rulings]] §8.

@@ -9,6 +9,8 @@ related: ["[[Rennet Contracts and Rulings]]", "[[Wingman Surfacing DSL and Model
 
 # Rennet Canvas Paradigm
 
+> ⚠️ **RULE ZERO (CLAUDE.md, 2026-08-11) outranks this document.** No consent gates, no gates, no robustness for robustness' sake. Passages below carrying a ⛔ SUPERSEDED marker are void where they conflict; everything else stands.
+
 *Design doc, 2026-08-06. Responds to Rai's framing: "Rennet is, at its core, a bunch of **canvases** that the agent can fill and manipulate and the user can interact with." Designed against the two reference models he pointed at — the MCP Apps extension (SEP-1865, `io.modelcontextprotocol/ui`) and mcp_excalidraw — both read firsthand for this doc. Honours the 2026-08-06 corrections: MIT throughout, roll-up hard-baked, logical ordering, decisions never capped, action-defined read state, the review→agent handoff loop (Master Plan §2.1).*
 
 **Headline recommendation up front: adopt the canvas paradigm as the product's interaction model — it is ~70% the existing architecture renamed, and the remaining 30% (the interaction contract and the primed orchestrator) is exactly the part OQ9 already says Rennet must build for itself. Implement it as a hybrid: a bespoke event-sourced canvas state model inside `core`, exposed to the orchestrator through an MCP tool surface that borrows the MCP Apps interaction grammar (tool visibility, context-update notifications) without adopting its iframe/`ui://` rendering layer, which solves a problem Rennet does not have.**
@@ -100,6 +102,8 @@ Through the operation contract in §3, transported as MCP tools (§5). The excal
 
 The heart of "how to interact with the canvas and what interactions mean." Four actors, four disjoint capability sets. The MCP Apps `visibility: ["model", "app"]` split (SEP-1865) is the right shape here: every operation below is tagged with who may invoke it, and the boundary is enforced structurally (the orchestrator's MCP surface simply does not contain the user-only or engine-only operations), never by prompt.
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The op vocabulary below stands as a *vocabulary*; withholding operations from the orchestrator's surface so it "structurally cannot" act does not — a capable agent is the product, and the user authoring and signing what publishes is the only line that matters.
+
 ### 3.1 Operations by actor
 
 **(a) Deterministic engine** (never exposed as tools; internal commands):
@@ -126,6 +130,8 @@ The heart of "how to interact with the canvas and what interactions mean." Four 
 | `context.query` | `(question about snapshot/knowledge)` | Read the base-branch context (§4) without re-deriving it |
 
 ⛔ **The orchestrator cannot:** write L2 (disposition, approve, mark read), edit or delete L1, reorder or re-cohort anything outside an accepted proposal, touch the publish sheet, or see canvases of another review. The safety line of Master Plan §2.1 — "the human still disposes" — becomes a structural property of the tool surface rather than an instruction.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. `canvas.recompute` is not budget-gated and model-backed regeneration is not "never automatic"; the orchestrator is not denied capability to make it structurally safe. The user still authors and signs what leaves the machine — that is a product feature, not a fence around the agent.
 
 **(d) User** (direct UI; some ops also emit context updates to the orchestrator, §3.2):
 
@@ -238,6 +244,8 @@ Assembly is deterministic, versioned like a base instruction, and inspectable in
 3. **Annotation lifetime:** ephemeral-by-default with user pinning — right default? The alternative (persistent-by-default) silts the canvas up with stale agent marks. (§2.2 L3)
 4. **May the orchestrator *draft* dispositions in bulk** (e.g. "propose approve for all 12 verified-noise groups") as one proposal element, or only per-anchor? Bulk is powerful and edges toward auto-approve territory; per-anchor is safer and slower. (§3.1)
 5. **`canvas.view` privacy line:** the orchestrator seeing the user's live viewport/selection is what enables deixis, and is also attention-surveillance of a mild kind. In-scope for a local-first single-user tool, but pace/coverage privacy is elsewhere "not a setting" — confirm the orchestrator seeing *view state* (never dwell/pace metrics) is on the acceptable side of that line. (§2.3)
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Questions 4 and 5 are closed in favour of capability: bulk proposals are allowed (the user still adjudicates), and `canvas.view` needs no privacy clearance in a local single-user tool — neither blocks build.
 6. **Primer budget:** the priming manifest competes with conversation for the orchestrator's context window. Cap it like an instruction budget (8KB-ish) with overflow behaviour defined, or let it scale with review size?
 7. **OQ17 closure ride-along:** this design assumes grouping hard-baked (correction 7); the Master Plan still records OQ17 as open — close it when adopting this doc.
 

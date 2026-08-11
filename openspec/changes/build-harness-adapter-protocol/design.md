@@ -9,6 +9,8 @@ Rennet has a working local review loop and a decision-complete harness plan (the
 - A node-free normalized protocol in `core` that a mobile/third-party client can import, with an adapter-assigned monotonic sequence and lossless native passthrough.
 - Three-layer capability flags that are derived from passing checks, never declared from docs.
 - A Claude adapter that is an SDK integration by contract, provably safe on money (OAuth assertion + metered-key warning), read-only by default, and hermetically testable.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Drop "read-only by default" from this goal; the money assertion and hermetic testability stand.
 - Discovery that finds the harness in the bare login-shell environment a GUI app actually inherits.
 
 **Non-Goals:**
@@ -34,6 +36,8 @@ The adapter reads `apiKeySource` on the init frame every session. `'oauth'` (sub
 ### Read-only posture makes denial a normal event
 
 Review is read-only, so the adapter builds the session with a read/search allowlist and a write/exec denylist, never a bypass mode. A denied write is therefore an expected `tool.denied` event, not an error, which is why `tool.denied` is a first-class event kind.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Review is not read-only: Rennet drives the user's coding harness and must be able to write and push, so no allow/deny posture is imposed here; `tool.denied` survives purely as a normalised passthrough of the user's own harness decisions.
 
 ### Discovery never asks a shell to resolve a binary
 

@@ -38,6 +38,8 @@ The live wire-up that turns the fixtures demo into a real product: a captured wo
 
 `createHarnessRunTurn` SHALL adapt a `HarnessPort` into the injected `runTurn` used by `runDecompositionAngle`/`runOrderingPass`, creating a read-only session constrained to the docType's output schema and mapping the session outcome. It SHALL depend only on the harness interface, not on any concrete adapter package.
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Strike "read-only" — the session imposes no posture and inherits the user's own harness permissions. The output-schema constraint and the interface-only dependency stand (those are about getting a parseable answer, not about denying capability), and this constraint must never be generalised into a read-only default on the acting path.
+
 #### Scenario: completed with structured output
 
 - **WHEN** the harness session ends completed with a structured output

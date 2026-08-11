@@ -10,6 +10,8 @@ source: architecture pass by a Navi Tatl (bead workspace-2qlsj), for Rai's revie
 
 # Rennet Modularization and Web App Architecture
 
+> ⚠️ **RULE ZERO (CLAUDE.md, 2026-08-11) outranks this document.** No consent gates, no gates, no robustness for robustness' sake. The kernel extraction (`@rennet/runtime`), the transport-typed bridge, the web shell, and the §6 DX list all stand; the consent gate and the read-only-monitor posture do not. Passages carrying a ⛔ SUPERSEDED marker are void where they conflict.
+
 **PROPOSAL — 2026-08-08, for Rai's review. Nothing here is ratified; the forks in §5 are explicitly his call.** Written against `main` at `a13cf82` (the #103 main-boundary consent gate). If adopted, reconcile the decisions into [[Rennet Contracts and Rulings]] as rulings and update [[Rennet Doc Architecture]]'s map; until then this document has no authority over any existing register.
 
 The ask (Rai, Discord 2026-08-08): modularize so the desktop Electron app **and** a locally-served web app can both be developed, the web app being a way to "keep an eye on the project"; plus any other monorepo / code-quality / agent-experience / developer-experience improvements.
@@ -27,6 +29,8 @@ This refactor is much smaller than it sounds, because the two hardest cuts were 
 What is *not* yet shared is the ~120 lines of **composition** in `apps/desktop/src/main/index.ts`: the lazily-memoized Claude harness, the Codex port + availability probe, the sqlite store, the settings store, `ReviewService`, and `buildCanvasesForReview` (the harness-backed pipeline wiring). That block is Node-only but not Electron-only — nothing in it touches `BrowserWindow`, `dialog`, or IPC. It is the kernel both hosts need, currently trapped inside the Electron shell.
 
 So the work is: **name the kernel, move it, and add a second shell.** Not a rewrite. The event-sourced canvas model, the layer discipline, and the consent architecture all stay exactly as they are.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The #103 main-boundary consent gate at the spend boundary (referenced here and in §1.2/§2.4/§6) is exactly the ceremony Rule Zero kills: it comes out rather than being inherited by every new host. The event-sourced model and the layer discipline stand.
 
 ## 2. Proposed shape
 
@@ -108,6 +112,8 @@ Post-MVP: add `GET /events` (SSE) fed by the change signals that already exist i
 
 ### 2.4 Security of the local server (this part is not optional)
 
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Binding `127.0.0.1` is ordinary correctness for a local server and stays; the rest of this section — the bearer-token dance, the origin/rebinding defence, the `read`/`write`/`spend` annotation with a **read-only allowlist that refuses commands before dispatch**, and the "independent second circuit / no-single-fault" defence-in-depth framing — is lockdown machinery on the acting path and goes. The web shell gets the same command surface the desktop shell has.
+
 The desktop IPC surface is protected by origin checks and context isolation. An HTTP listener has neither, and `review.canvases` **spends model tokens** while write commands mutate reviews. Any page in any browser can attempt requests against `localhost` (DNS-rebinding / CSRF class). Floor for the MVP, all four:
 
 1. **Bind `127.0.0.1` only.** Never `0.0.0.0`.
@@ -130,6 +136,8 @@ Note the #103 gate already protects the spend path a second time (dispatch resol
 The positive control in `check-boundaries.mjs` should gain a second control for the new browser rule (a fabricated `apps/web` import of `@rennet/runtime` must fail), so the new arrow is born with a check that can go red.
 
 ## 3. Web app scope — what "monitor" means concretely
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. "Monitor" may stay the first *slice* because it is small, but not on the stated grounds: a browser client that "can never spend tokens or run the harness" is capability denial, and F1's "full parity needs real security design now" is a build-blocked-until-ceremony rule. Ship read-first if it is faster; do not wire a posture that forbids acting.
 
 The MVP monitor page, built from existing `@rennet/ui` exports (no new canvas logic): the active review + patchset summary, freshness/dirty state, the disposition batch and staging state (`batchViewModel`, `stagedItems`), coverage (`CoverageMosaicView`), the publish/degradation ledger (`bucketLedgerEntries`), and the last-built canvases *if present* — **without ever triggering a build** (no `review.canvases` from the web in monitor mode, so the monitor can never spend tokens or run the harness). A small `MonitorApp` entry in `ui` (a read-mode composition of existing components) rather than reusing `RennetApp` with flags scattered through it; the components underneath are shared either way.
 
@@ -171,6 +179,8 @@ Effort: **S** ≤ half a day · **M** ≈ a day · **L** = multi-day.
 | 7 | **UI verification requires driving Electron** (Playwright-against-Electron e2e is the heaviest loop in the repo; screenshot-verification of UI slices is correspondingly expensive for agents). | Falls out of the web app: once `apps/web` serves the shared components over HTTP, agents verify UI slices with plain browser Playwright against a vite dev server — no Electron launch, no packaged app. Worth naming as an explicit benefit when weighing F1/F2. | free with §2 |
 
 **Deliberately not proposed:** splitting `ui` (its internal canvas/-components/ split is healthy); adopting an HTTP framework (§2.2); Nx Cloud/remote cache (privacy stance stands); any change to the event-sourced canvas model, the protocol envelope, or the consent architecture — those are the good bones this proposal builds on.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The consent architecture is not one of the good bones — removing it is now in scope. The event-sourced model and the protocol envelope stand.
 
 ---
 

@@ -9,6 +9,8 @@ related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Architecture Contracts]]
 
 # Rennet Local Review MVP
 
+> ⚠️ **RULE ZERO (CLAUDE.md, 2026-08-11) outranks this document.** No consent gates, no gates, no robustness for robustness' sake. This is a record of shipped code and stays accurate as a record; the ⛔ marker below governs what further work is warranted, not what already exists.
+
 This is the first executable Rennet slice, implemented through OpenSpec change `build-local-review-mvp`. It proves the local review lifecycle before introducing providers, LSPs, GitHub, or generated analysis.
 
 ## What works
@@ -33,6 +35,8 @@ Review state is stored in app-owned `node:sqlite` with WAL, a schema-version gat
 Nx tags plus ESLint enforce the arrows. A manifest checker rejects illegal workspace dependencies, and its forbidden `ui → core` import positive control must fail before the architecture gate passes.
 
 ## Security and external effects
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. What shipped stays shipped, but this section is not a mandate to extend: no further hardening, fuse work, permission denial, or lockdown is warranted for its own sake — and where hardening costs a real capability (the disabled CLI-inspect fuse that stops Playwright attaching to the packaged app), the capability wins.
 
 The renderer is sandboxed with context isolation and no Node integration. The preload exposes only `invoke(name, input)`. Main validates the exact `app://rennet` sender, parses every input and output, denies permission requests, external navigation, and new windows, and serves production assets through a restricted custom protocol with CSP.
 

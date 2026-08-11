@@ -7,6 +7,8 @@ updated: 2026-08-06
 related: ["[[Rennet Contracts and Rulings]]", "[[Rennet Dependency Standard]]", "[[T3 Code Integration Research]]"]
 ---
 
+> 📜 **Historical evidence, not current authority.** Superseded wherever it conflicts with **RULE ZERO** (`CLAUDE.md`): no consent gates, no gates, no robustness for robustness' sake. Read for rationale and provenance only.
+
 # Overnight Harvest Plan
 
 > [!IMPORTANT] ✅ The licence decision this plan was written *against* has since been MADE

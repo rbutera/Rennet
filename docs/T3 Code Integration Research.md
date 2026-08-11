@@ -7,6 +7,8 @@ updated: 2026-08-06
 related: ["[[Rennet Contracts and Rulings]]", "[[Wingman Harness Adapter Protocol]]", "[[Wingman Distribution and Licensing Plan]]"]
 ---
 
+> 📜 **Historical evidence, not current authority.** Superseded wherever it conflicts with **RULE ZERO** (`CLAUDE.md`): no consent gates, no gates, no robustness for robustness' sake. Read for rationale and provenance only.
+
 # T3 Code Integration Research
 
 > [!IMPORTANT] ✅ This investigation triggered a decision, and the decision has been MADE

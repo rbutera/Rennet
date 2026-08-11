@@ -10,6 +10,8 @@ source: codex
 
 # Rennet Spike: TypeScript LSP Ladder
 
+> ⚠️ **RULE ZERO (CLAUDE.md, 2026-08-11) outranks this document.** No consent gates, no gates, no robustness for robustness' sake. The measurements and the verdict are evidence and stand as recorded; only the gating language in *Limits* is superseded.
+
 ## Verdict
 
 **Promote native TypeScript 7 `tsgo --lsp --stdio` to the first Tier 1 choice for repositories that already select TypeScript 7.** Keep Tier 0 available and retain the existing fallback ladder for TypeScript 6 and earlier.
@@ -29,3 +31,5 @@ Driver and calibrated fixture: [lsp-ladder spike](../spikes/lsp-ladder/).
 ## Limits
 
 This proves protocol support and a cold-open operating point on one unusually large public repository. It does not justify enabling rename in Rennet's product surface, measure multiple concurrently active servers, or prove every monorepo/reference layout. Rennet should expose definition and hover first, keep references behind the same health gate, and continue to omit rename from v1 UI.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The measurements above are untouched; the closing sentence is not a permission slip — features are not withheld until a spike "justifies" them, and references ship when they are built. The readiness probe stays only as *honesty about degraded results*, never as a gate.

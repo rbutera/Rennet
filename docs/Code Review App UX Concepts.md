@@ -9,6 +9,8 @@ created: 2026-08-04
 updated: 2026-08-05
 ---
 
+> 📜 **Historical evidence, not current authority.** Superseded wherever it conflicts with **RULE ZERO** (`CLAUDE.md`): no consent gates, no gates, no robustness for robustness' sake. Read for rationale and provenance only.
+
 # Code Review App UX Concepts
 
 > [!IMPORTANT] Exploration, not current specification

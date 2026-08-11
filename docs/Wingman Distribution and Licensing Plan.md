@@ -23,6 +23,9 @@ updated: 2026-08-05
 >
 > Product name is **Rennet**. [[Rennet Contracts and Rulings]] and [[Rennet Dependency Standard]] override this plan wherever they differ. Historical Wingman artefact names and package inventories below are illustrative only.
 
+> [!IMPORTANT] ⛔ RULE ZERO (CLAUDE.md, added by Rai 2026-08-11) outranks this document
+> **No consent gates. No gates. No robustness for robustness' sake.** Rule Zero outranks every ruling number and every doctrine in `docs/`. It changes very little here, and that is worth stating plainly so nobody strips the wrong thing: **the entire licensing analysis, the MIT obligations, the attribution and NOTICE requirements, and every Apple signing / notarization / stapling / Gatekeeper requirement are legal and platform facts, not Rennet gates, and stand untouched.** So does the release pipeline's build-and-assert machinery. The one passage marked ⛔ inline below is the human-approval step on the release environment. Nothing has been deleted.
+
 Distribution, deployment, and licensing for [[Code Review Harness App]]. The product name is **Rennet**; the filename is retained only to preserve existing Obsidian links. Personal product, sole author Rai. Not the enterprise client work.
 
 ~~Ratified inputs I am building on, not relitigating: OSS core plus desktop app, paid mobile companion later; **AGPL-3.0-only** for core and desktop with Rai as sole author retaining dual-licensing rights; mobile app proprietary.~~ ⛔ **Superseded 2026-08-06: MIT throughout.** The OSS-core-plus-desktop and paid-mobile-companion shape survives; the licence structure under it does not.
@@ -229,6 +232,7 @@ Rules, in the order the boot path must apply them:
 - Secrets are **not** exposed to workflows triggered by `pull_request` from a fork. That is GitHub's default and it is the load-bearing protection.
 - **Never use `pull_request_target`** in this repo. It runs with the base repo's secrets against the fork's code, which is a credential-exfiltration primitive handed to any stranger who opens a PR. This is the single highest-severity thing to get wrong here and it is a one-line mistake.
 - Put the release job in a **protected GitHub Environment** with a required reviewer (Rai). Then even a compromised workflow file on a branch cannot mint a signed build without a human clicking approve.
+  > ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The **required-reviewer / human-clicking-approve step** on the release environment is an approval ceremony and does not bind; a tagged release may ship without anyone clearing a dialog. The two bullets around it are not ceremony and stand: secrets genuinely are not exposed to fork `pull_request` runs, and **`pull_request_target` stays banned** — that is a property of how GitHub hands out credentials, not a Rennet gate.
 - Prefer the **App Store Connect API key** over Apple ID plus app-specific password. electron-builder's own docs give the reason: "API keys don't expire and don't require two-factor authentication, making them ideal for CI." An app-specific password rots and takes a release with it.
 - The `.p8` must be written to disk for `notarytool`; write it to the runner's temp dir, never the workspace, and let the ephemeral runner be the cleanup.
 

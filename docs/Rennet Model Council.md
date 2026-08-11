@@ -10,7 +10,11 @@ source: 2026-08-07 job-catalogue synthesis (dashboard report) + routing plan §5
 
 # Rennet Model Council
 
+> ⚠️ **RULE ZERO (CLAUDE.md, 2026-08-11) outranks this document.** No consent gates, no gates, no robustness for robustness' sake. The job catalogue, the tier test, the resolver, and the assignment tables are unaffected; the refuse-at-runtime budget gate is not.
+
 **The Model Council is the named subsystem that decides which mind does which job.** Rennet runs ~45 discrete jobs per review; the council owns the versioned table of what each job is, a deterministic resolver that assigns every model-facing job a `(harness, model, effort)` before anything runs, the budget gate on the live path, and a resolution-trace ledger that can always answer "why did this job run on that model."
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The RoutePlan stays as *planning and accounting* — resolve the assignment, write the trace, show the spend in the ledger — but it does not refuse work at runtime; every "budget gate" in this document reads as a budget *ledger*.
 
 This document is the ratified extraction of [[Wingman Surfacing DSL and Model Routing Plan]] §5 (the plan-era source; its tier doctrine and matrix survive here, its per-harness collapse ladder is amended by R39) plus the 2026-08-07 job-catalogue synthesis. [[Rennet Product and Vision]] §4.11 carries the product framing; rulings live in [[Rennet Contracts and Rulings]].
 
@@ -179,6 +183,8 @@ The commitments:
 2. **Cross-harness routing is a council power (R39).** Light-tier work MAY route to a *different* installed harness than the one running the review sessions — Claude reviews while cheap Luna does the light thinking at $0. **Default-ON when both harnesses are installed; the user can pin any job or tier to a harness.** This amends the routing plan §5.4 degradation ladder, which collapsed tiers *within* one harness; per-run context disclosure (R31) already covers the egress honesty — the run ledger names every harness that saw material.
 3. **Session-riders are seats, not calls.** The resolver assigns per-session for riders, per-call for utility; effort is the intra-session knob.
 4. **The budget gate goes live (fixes bead p0wwp).** `buildRoutePlan` is merged and currently dead — zero non-test callers. v1 wires it: `runDecompositionAngle`, `runOrderingPass`, and every future runner consult the RoutePlan **before** invoking; **retries decrement the same budget**; a 6th invocation is **refused at runtime**, not just in a CI test. The CI test stays (it catches drift at build time); the live gate is what makes the ceiling real (money is a vital circuit).
+
+   > ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Wiring `buildRoutePlan` into the live runners is fine as *planning and measurement*; refusing the 6th invocation at runtime is a fail-closed money circuit and goes — the ≤5-invocation figure stays a performance target the CI test watches, not a runtime refusal.
 5. **Every invocation writes its resolution trace to the run ledger.** "This job ran on Luna-low because: tier=light, codex available, council row 9, no override" is a string the UI can show. This is what makes overrides *usable* — you can only override what you can see.
 6. **Static forever, measured always.** The calibration read (M27) is the only feedback loop, and it terminates in a **human editing the table**. The council never self-mutates; there is no adaptive routing, no bandit, no learned policy. A rejection-rate spike per model per doc-type ("Luna got promoted above its competence") is a surfaced table you read, and the response is a versioned table edit.
 
@@ -191,6 +197,8 @@ The commitments:
 - A harness with no per-call model selection collapses its tiers onto its default model; the batching discipline still protects the budget; the UI shows "one model tier on this harness". Unchanged.
 - **New (R39):** before collapsing, the resolver first tries the *other* installed harness for light-tier work — cross-harness routing is preferred over tier collapse, because it preserves both the cost shape and the model fit. Only when no installed harness offers the tier does the collapse ladder run.
 - Capability flags (`supportsPerCallModelSelection`, `advertisedModels`) start `false` and are earned by the conformance suite (R13). A flag nobody tested is a claim, not a capability.
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Use a harness capability when the harness advertises it and fall back when it fails; do not withhold a capability until a conformance ceremony is discharged. The conformance suite stays useful as a *test*, not as a permission slip.
 
 ## 7. The build
 

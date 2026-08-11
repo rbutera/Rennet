@@ -1,6 +1,8 @@
 ## 1. Core: injected harness turn (TDD)
 
 - [x] 1.1 `harness-run-turn.ts`: `createHarnessRunTurn(port, { docType, cwd, model?, signal? })` over the `HarnessPort` interface — read-only session, `outputSchema = bodyJsonSchema(docType)`, one turn, map `session.ended`
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. "Read-only session" is withdrawn from 1.1; the rest of the task stands.
 - [x] 1.2 Tests over a fake `HarnessPort`: completed+structuredOutput → emitted; completed w/o structured → failed; failed/cancelled/error frame → failed; asserts the SessionSpec (readOnly, outputSchema, cwd); session always closed
 
 ## 2. Core: the live pipeline (TDD)

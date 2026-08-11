@@ -8,6 +8,9 @@ updated: 2026-08-05
 
 # Rennet Architecture Plan
 
+> [!DANGER] RULE ZERO (CLAUDE.md, 2026-08-11) outranks every decision in this file
+> **NO CONSENT GATES. NO GATES. NO ROBUSTNESS FOR ROBUSTNESS' SAKE.** Rennet is a diff digestor and PR review buddy; the acting path must be able to write, and must be able to push, because submitting a PR requires a push. Passages below that make an action contingent on a human signature, an acceptance step, a preview-only posture, or a not-yet-discharged evidence gate are marked ⛔ SUPERSEDED inline — chiefly D15, the publish rows, and the "only after the precision gate passes" clauses. What survives untouched: the boundary checker and its failing fixtures (test discipline, explicitly out of Rule Zero's scope), D9's private-event exclusion (a data-shape property, not a gate), the decomposition validator's rejection of omission/duplication/invalid anchors (correctness), and `shell: false` git spawning (it fixed a real mis-parse).
+
 > [!IMPORTANT] Current implementation authority, 2026-08-06
 > ⛔ **SUPERSEDED 2026-08-06: the banner below (originally 2026-08-05) restated two rules that are now reversed. Rennet is MIT throughout (no AGPL-3.0-only, no Apache-2.0 split), and the Claude Agent SDK is ADOPTED, not banned — see Master Plan R2/R3. The rest of the banner's rulings still stand.**
 > This is a detailed historical plan for **Rennet**. [[Rennet Contracts and Rulings]], [[Rennet Architecture Contracts]], [[Rennet Dependency Standard]], and [[Rennet Navi Handoff]] override every conflicting recipe below. In particular: use `@rennet/*`; use the final package tree in Master Plan R21; `ui` imports only `protocol` and `types`; ~~licence open packages as `AGPL-3.0-only`; never link the Claude Agent SDK~~ (both superseded 2026-08-06, see note above); use occurrence IDs plus a lineage graph; use validated hybrid decomposition; never invoke a harness per hunk; the six angles exclude Subtraction; route handoff is removed; use `ForgePort`, not `GithubPort`; and use Nx + Vite 8 + Electron Forge, not Turbo or mixed packagers. Sections and backlog rows that retain the old design are evidence and rationale only, not build instructions.
@@ -182,6 +185,8 @@ Calibration requirement on layer 4: **the boundary checker ships with a fixture 
 
 > [!DANGER] Do not implement this identity model
 > The current model is an immutable `OccurrenceId` plus an explicit lineage graph with exact, one-to-one, split, merge, move, ambiguous, and rejected edges. Path, symbol, content hashes, and similarity are matcher evidence only. Similarity never carries read state; ambiguity fails closed and reopens the occurrence. Exact byte-identical lineage may preserve unaffected analysis only after the matcher-precision gate passes. `hunkKey` survives only as a feature and dismissal-key input. See Master Plan R8 and the canonical review/patchset contract.
+>
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), the "only after the matcher-precision gate passes" clause.** No consent gates, no gates, no robustness for robustness' sake. That is a rule whose effect is "you may not build X until ceremony Y is discharged"; exact byte-identical lineage carries analysis forward now, and the precision measurement is a thing to *learn*, not a thing to *pass*. The rest of this note STANDS: "similarity never carries read state" and "ambiguity fails closed and reopens the occurrence" are correctness — carrying read state across a match that might be wrong tells the reviewer they read something they did not, which is the one failure this product cannot afford.
 
 The remainder of D4 records the superseded design and its original rationale.
 
@@ -240,6 +245,8 @@ An angle is a **total function** `(HunkVersion[], AngleInput) => AngleView`. Con
 
 > [!IMPORTANT] Current rule
 > Deterministic code owns totality, classification, size limits, validation, and the offline fallback. A harness proposes one complete, versioned decomposition graph with rationale; it never emits per-hunk regroup operations. The validator rejects omission, duplication, oversize chunks, and invalid anchors. A human accepts or edits the proposal. The deterministic result is the floor, not the semantic authority. Initial decomposition must remain under five harness invocations and produce a useful first chunk within 15 seconds.
+>
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), the sentence "A human accepts or edits the proposal".** No consent gates, no gates, no robustness for robustness' sake. A validated decomposition applies immediately and the reviewer reads it; *editing* stays as an affordance, *accepting* is not a precondition for the decomposition being used. The validator itself is untouched: rejecting omission, duplication, oversize chunks, and invalid anchors is correctness — a decomposition that silently drops hunks or points at an anchor that does not exist is wrong output, not withheld output. The five-invocation cap and the 15-second budget are performance targets, not gates, and also stand.
 
 This closes the hub's open question *"Cohorting engine: deterministic vs LLM-proposed vs hybrid?"*
 
@@ -378,6 +385,8 @@ Given §0.1, `CodeView` owns virtualization and scrolling on the diff surface. `
 Adjustable because it depends on the spike: if `CodeView`'s windowing proves inadequate for a 5k-line file, the fallback is to virtualize *files* with react-virtual and render whole files with Pierre, which the stack note already identifies as the graceful degradation.
 
 ### D15 — Publish is a three-phase, idempotent act. FROZEN
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), the `publish.signed` phase as a HUMAN CEREMONY.** No consent gates, no gates, no robustness for robustness' sake. "The human ceremony; the ratified signature gesture" is the clearest consent gate in this document and it is struck by name. **The idempotency machinery survives entirely** — `publish.prepared` with its payload digest, `publish.succeeded` recording GitHub's returned ids, `publish.failed`, and the "retry must not double-post" property are correctness, not ceremony, and a three-phase log is still the right shape. What changes is only that the middle phase is a state transition Rennet can make on its own initiative rather than a signature it must collect. Publishing a review is Rennet doing its job; if the user wants to look before it goes, that is a preference, not an architectural gate.
 
 `publish.prepared` (records exactly what will be sent, plus a payload digest) → `publish.signed` (the human ceremony; the hub's ratified signature gesture) → `publish.succeeded` (records GitHub's returned ids) or `publish.failed`.
 
@@ -551,6 +560,8 @@ export interface WingmanAnnotation {
 
 > [!WARNING] Illustrative, not exhaustive
 > The code sketch below predates the canonical schema. Do not copy its union. The current taxonomy includes patch failure/cancellation/truncation, lineage ambiguity/confirmation/rejection/split/merge, review abandoned/superseded/attached, atomic decomposition proposal/accept/reject, external-forge changes, command deduplication, and publish cancel/supersede/retry/outcome-unknown/reconcile. `route.drafted` is deleted. Unknown event types stop projection and publishing with a clear upgrade error; they are preserved but never skipped-and-continued.
+>
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), the words "and publishing".** No consent gates, no gates, no robustness for robustness' sake. Blocking publish because the local store contains an event type this build does not recognise is a fail-closed gate on the acting path; degrade it to a loud, visible warning that names the unknown types and publishes anyway. **Stopping the *projection* stands**, and so does "preserved but never skipped-and-continued": a projection that silently skips events it cannot read produces a coverage map that lies about what was reviewed, which is wrong output rather than withheld output.
 
 ```ts
 export interface EventEnvelope<T extends ReviewEventType = ReviewEventType> {
@@ -661,6 +672,8 @@ export const commands = {
   'thread.create':         { input: ThreadCreateSchema, output: z.object({ threadId: z.string() }) },
   'thread.ask':            { input: ThreadAskSchema, output: z.object({ streamId: z.string() }) }, // deltas via event channel
   'publish.prepare':       { input: z.object({ reviewId: z.string() }), output: PublishPreviewSchema },
+  // ⛔ RULE ZERO 2026-08-11: `publish.sign` stays as the command that COMMITS the publish
+  // (the idempotency seam), but it is no longer a human signature gesture. See D15, marked.
   'publish.sign':          { input: z.object({ publishId: z.string() }), output: PublishResultSchema },
   'request.cancel':        { input: z.object({ requestId: z.string() }), output: z.object({ cancelled: z.boolean() }) },
 } as const satisfies Record<string, CommandDef<ZodType, ZodType>>
@@ -749,7 +762,7 @@ Both review modes are in the dogfood cut. Local review is the first vertical sli
 | GitHub PR ingestion via `gh auth token` + `@octokit/graphql` | **MUST** | PR list, files, threads, checks in one round trip |
 | Own unified-diff parser (byte offsets, renames, binary, submodule) | **MUST** | parse-diff to bootstrap only |
 | tree-sitter symbol enrichment | **MUST** | Degrades to `''` without a grammar; identity still works |
-| Occurrence IDs + lineage graph, exact carry only after precision gate | **MUST** | Master Plan R8 |
+| Occurrence IDs + lineage graph, exact carry only after precision gate ⛔ SUPERSEDED 2026-08-11 by RULE ZERO: exact carry is not withheld pending a precision gate | **MUST** | Master Plan R8 |
 | Ambiguous/similar lineage reopens + version-to-version mini-diff | **MUST** | Similarity is evidence, never identity |
 | Validated hybrid decomposition ≤400 LOC + deterministic floor | **MUST** | Master Plan R9/R10 |
 | Event store, projections, upcast mechanism | **MUST** | Mechanism MUST; actual upcasts LATER |
@@ -765,7 +778,7 @@ Both review modes are in the dogfood cut. Local review is the first vertical sli
 | Residue check + loud error state | **MUST** | Falls out of D6 totality; costs almost nothing |
 | Anchored threads + diff chat (one harness) | **MUST** | Second-opinion switcher LATER |
 | Findings: rubric, severity floor, sticky dismissal | **MUST** | FP budget is CORE per validation |
-| Publish: prepare → sign → succeed, batched GraphQL review | **MUST** | D15. Ceremony *act* MUST, ceremony *polish* LATER |
+| Publish: prepare → sign → succeed, batched GraphQL review | **MUST** | D15. Ceremony *act* MUST, ceremony *polish* LATER. ⛔ SUPERSEDED 2026-08-11 by RULE ZERO: no ceremony at all. The three-phase idempotent log is MUST; the signature gesture is struck |
 | Keyboard command registry feeding palette + menu bar | **MUST** | ~300 lines; daily-driver ergonomics |
 | Unsigned local dev build | **MUST** | Enough to daily-drive |
 | Signing, notarization, `@electron/fuses`, asarUnpack | LATER | Needed for distribution, not for Rai |
@@ -773,7 +786,7 @@ Both review modes are in the dogfood cut. Local review is the first vertical sli
 | Glass chrome / vibrancy identity | LATER | Ratified identity, but rough edges allowed in v1 |
 | Codex + oh-my-pi adapters | LATER | Interface must exist in v1; impls later |
 | Harness disagreement | LATER | Needs ≥2 adapters + stochasticity baseline |
-| Local PR submission preview | **MUST** | Preview only; pushing remains an explicit action |
+| Local PR submission preview | **MUST** | Preview only; pushing remains an explicit action. ⛔ SUPERSEDED 2026-08-11 by RULE ZERO: "preview only" is a read-only posture on the acting path. Rennet must be able to push, because submitting a PR requires a push. The preview is a view, not a stopping point |
 | Drag hunks between chunks | LATER | `hunk.regrouped` event should exist in v1 |
 | LLM chunk refinement | LATER | Deterministic baseline must stand alone first |
 | Watch mode | LATER | |
@@ -797,6 +810,8 @@ Both review modes are in the dogfood cut. Local review is the first vertical sli
 - **Validated hybrid decomposition with an always-available deterministic floor** (Master Plan R9/R10).
 - **Publish is an explicit three-phase human act** (D15) — ratified by Rai as the signature gesture.
 - **Renderer holds no domain logic** (D11).
+
+> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), two bullets of this Frozen list.** No consent gates, no gates, no robustness for robustness' sake. (a) "Publish is an explicit three-phase human **act** … the signature gesture" — the three phases stay for idempotency; the human signature is struck (see D15, marked). (b) "exact carry only after the precision gate" wherever it appears — struck. **The other bullets stand**, including "ambiguity fails closed" (carrying read state across a doubtful match is a lie about coverage) and "private events are structurally excluded from publish" (a data-shape property that costs the user nothing and stops the tool surveilling its own reviewer). Rule Zero targets ceremony on the acting path, not honest data modelling.
 
 ### Adjustable — Navi may revise with evidence
 
@@ -840,14 +855,14 @@ Sized for autonomous agent execution. Dependencies are hard unless marked soft.
 | B8 | Event store: schema, kysely bridge, append+fold transaction | P0 | B1, B4(soft) | Implement D8 including the `SqliteDatabase` shim with the `reader` derivation and eager `finalize()`. Unit-test the bridge against every statement shape the query builder emits, including `RETURNING`. |
 | B9 | Event taxonomy, zod schemas, upcast mechanism, projection rebuild | P0 | B8 | Encode the D-2.3 taxonomy with per-type `private` flags and `currentVersion`. Implement read-time upcasting and drop-and-replay projection rebuild on `PROJECTION_SCHEMA_VERSION` bump. Property test: replay from zero equals incremental fold. |
 | B10 | Private-event exclusion, with the byte-identical publish test | P0 | B9 | Implement the publish-projection view that excludes `private=1`, and the test asserting the publish payload digest is unchanged when private events are deleted from the store (D9). This test *is* the guarantee. |
-| B11 | Occurrence IDs, lineage graph, and matcher-precision gate | P0 | B7, B9 | Implement immutable occurrence identities and explicit exact/move/split/merge/ambiguous/rejected edges. Hashes are evidence only. Duplicate-body and ambiguity fixtures must fail closed. |
+| B11 | Occurrence IDs, lineage graph, and matcher-precision gate ⛔ SUPERSEDED 2026-08-11 by RULE ZERO: measure matcher precision, do not gate the feature on it | P0 | B7, B9 | Implement immutable occurrence identities and explicit exact/move/split/merge/ambiguous/rejected edges. Hashes are evidence only. Duplicate-body and ambiguity fixtures must fail closed. *(The fixture behaviour is correctness and stands — an ambiguous match must not carry read state.)* |
 | B12 | Possible-continuation UI and version-to-version mini-diff | P1 | B11 | Similarity may propose lineage but never carries read/analysis state. Preserve stale prior artifacts visibly and reopen changed/ambiguous occurrences. |
 | B13 | tree-sitter enrichment pipeline (web-tree-sitter, WASM) | P1 | B7 | Load grammars lazily per language, extract enclosing symbol path per hunk. Must never throw on an unknown language; must never block the pipeline on a missing grammar. |
 | B14 | Validated hybrid decomposition with deterministic floor | P0 | B11 | Harness emits one complete versioned graph; validator proves totality, uniqueness, anchors, DAG, and ≤400 LOC. Offline deterministic fallback remains available. Enforce <5 invocations and <15s first useful chunk. |
 | B15 | Angle framework + the sequence angle + residue check | P0 | B14 | Implement `AngleView` as a pure total function with the `inputDigest` cache and the totality assertion emitting `residue.detected`. Ship the sequence angle over B14's chunks. |
 | B16 | Typed IPC layer and command registry | P0 | B9 | ~200 lines per D11/2.4: command map in `core/protocol`, single validating `ipcMain.handle` dispatcher, `MessageChannelMain` streaming, `requestId` cancellation. Reject unknown command names loudly. |
 | B17 | Engine utility process and process supervision | P0 | B16, B8 | Stand up the engine `utilityProcess` owning git, diff, and the store (D12). Main becomes a pure router. Include crash detection and restart with in-flight request rejection. |
-| B18 | Claude Code CLI adapter behind the normalized protocol | P0 | B17 | Implement the clean-room process-per-turn `claude -p` wrapper with tolerant decoders, resume/fork identifiers, isolation disclosure, and no SDK/credential access. Cancellation kills only the owned turn process. ⛔ SUPERSEDED 2026-08-06: the SDK is adopted; this is no longer the mandated design — see Master Plan R2. |
+| B18 | Claude Code CLI adapter behind the normalized protocol | P0 | B17 | Implement the clean-room process-per-turn `claude -p` wrapper with tolerant decoders, resume/fork identifiers, isolation disclosure, and no SDK/credential access. Cancellation kills only the owned turn process. ⛔ SUPERSEDED 2026-08-06: the SDK is adopted; this is no longer the mandated design — see Master Plan R2. ⛔ SUPERSEDED AGAIN 2026-08-11 by RULE ZERO: "isolation disclosure" is struck — inherited project context needs no disclosure receipt. Tolerant decoders and owned-process cancellation stand. |
 | B19 | Two-channel streaming (durable events vs ephemeral deltas) | P1 | B18, B16 | Implement D13: coalesce token deltas at ~16ms straight to the renderer without persisting; append one `thread.messageAdded` on completion. Verify a mid-stream crash loses only the partial answer. |
 | B20 | GitHub ingestion: `gh auth token` + GraphQL PR/threads/checks | P0 | B1 | Read the token from `gh`, never store a copy. One GraphQL round trip for PR, files, threads, comments, check runs. Device-flow fallback is LATER; stub the seam. |
 | B21 | Renderer: `CodeView` integration with domain annotations | P0 | B3, B15, B16 | Map `FileDiffIR` + raw patch slices to `CodeViewItem[]` per D10, with `DiffLineAnnotation<WingmanAnnotation>`. One scroll owner (D14). Wire `updateItemId`/`version` for patchset changes. |
@@ -856,7 +871,7 @@ Sized for autonomous agent execution. Dependencies are hard unless marked soft.
 | B24 | Decisions angle (queue) with reconstructed why | P1 | B15, B18 | Queue-species angle with a hard visible cap on item count (settle open question #5). Each item carries a reconstructed WHY marked as reconstructed, plus everything needed to discharge it in place. |
 | B25 | Findings: rubric, verifier cull, severity floor, sticky dismissal | P1 | B18, B9 | Lift prawn's REVIEW_RUBRIC shape: introduced-by-THIS-change discipline, P0-P3, forced JSON validated with zod, verifier cull before display. One-keystroke sticky dismissal recorded as an event. |
 | B26 | Blast-radius angle from cheap explainable signals | P1 | B15, B13 | Overlay angle over irreversibility, contract surface, deletions, fan-in, CODEOWNERS overlap, and the safety-net-weakening preset. Never churn-heat. Every score must be explainable in one line or it reads as astrology. |
-| B27 | Publish: prepare → sign → succeed, batched as one GitHub review | P0 | B20, B10, B9 | Implement D15 including the payload digest, idempotent retry, and external-id recording. One `addPullRequestReview` + `submitPullRequestReview`, never a spray of comments. |
+| B27 | Publish: prepare → sign → succeed, batched as one GitHub review | P0 | B20, B10, B9 | Implement D15 including the payload digest, idempotent retry, and external-id recording. One `addPullRequestReview` + `submitPullRequestReview`, never a spray of comments. ⛔ SUPERSEDED 2026-08-11 by RULE ZERO: the `sign` phase is no longer a human signature gesture — build the three-phase idempotent log, not the consent step. |
 | B28 | Command registry, palette, and menu-bar parity | P1 | B16 | ~300 lines: `Command` records with `when` clauses, keymap resolver with chords, conflict detection, JSON user overrides. Feeds palette (cmdk) and menu bar from one source. tinykeys as the sequence matcher only. |
 | B29 | Deterministic-replay test harness | P1 | B9 | Wire `ClockPort`/`RandomPort` fakes so an entire review is reproducible from a recorded event log. This is the primary correctness tool for an event-sourced system and unlocks regression fixtures for B12 and B14. |
 | B30 | Force-push end-to-end scenario test | P1 | B12, B15, B21 | Build a fixture repo, review it, force-push an amended commit, assert: read state carries for untouched hunks, edited hunks reopen with anchors intact, disappeared hunks surface their orphaned threads rather than vanishing. The wedge, proven. |
@@ -870,5 +885,7 @@ Critical path to a dogfoodable build: **B1 → B2 → B5 → B6 → B7 → B11 �
 Three places where I made a call Rai may want to overturn.
 
 1. **Resolved:** local author-side review leads and both modes ship in dogfood. Route handoff is removed. Local publishing produces a PR submission preview; every GitHub mutation remains a separate explicit action.
+
+   > ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), the final clause.** No consent gates, no gates, no robustness for robustness' sake. "Every GitHub mutation remains a separate explicit action" is a per-action consent gate; Rennet performs the mutations that its job requires — including the push a PR submission needs — without collecting an act of assent for each one. The preview survives as a *view*.
 2. **`@tanstack/react-virtual` is demoted.** The stack note lists it as must-use; §0.1 shows Pierre virtualizes already. I kept it for non-diff lists only. If the B3 measurement disappoints, it returns to the diff surface at file granularity.
 3. **Similarity carry-forward is MUST, not LATER.** It is genuinely more work than exact matching and could plausibly be cut from v1. I kept it because force-push survival is the defensible wedge per the market analysis, and a v1 that loses your place on every amended commit will not survive contact with the enterprise client PR churn — it would fail exactly where the product claims to win.
