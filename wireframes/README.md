@@ -20,6 +20,9 @@ node wireframes/src/render.mjs 04a-projects-list   # one frame
 
 # 3. PNGs  ->  gallery.html
 node wireframes/gen-wireframe-gallery.mjs
+
+# 4. serve gallery.html at 127.0.0.1:8791 (sits behind `tailscale serve` on :9443)
+node wireframes/serve.mjs
 ```
 
 Badges are derived from each frame's filename prefix (`05-project-detail` → badge `05`), so a new screen can be inserted (e.g. `04a-projects-list`) without renumbering the frames after it.
