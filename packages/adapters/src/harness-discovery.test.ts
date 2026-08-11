@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   compareVersions,
   type DiscoveryDeps,
+  defaultCodexDiscoveryDeps,
   discoverClaude,
+  discoverCodex,
   type VersionRange,
 } from "./harness-discovery";
 
@@ -112,6 +114,134 @@ describe("discoverClaude", () => {
     });
     const result = await discoverClaude(deps, RANGE);
     expect(result.health).toEqual({ state: "degraded", version: "3.0.0", reason: "above-tested" });
+  });
+});
+
+describe("discoverCodex (bead workspace-6qp15)", () => {
+  const HOME = "/home/rai";
+  const INSTALLS = "/home/rai/.asdf/installs/nodejs";
+  const SHIMS = "/home/rai/.asdf/shims";
+  const goodInstall = "/home/rai/.asdf/installs/nodejs/24.16.0/bin/codex";
+  const brokenInstall = "/home/rai/.asdf/installs/nodejs/22.18.0/bin/codex";
+  const shim = "/home/rai/.asdf/shims/codex";
+
+  it("resolves the ABSOLUTE real install and prefers it over the on-PATH shim", async () => {
+    // The exact machine shape of the bug: the shim is what is on PATH, but the
+    // dependable binary is the absolute asdf install path. Both probe to the same
+    // version, so only the shim-demotion — not a version tiebreak — can pick the
+    // real install. That is precisely what stops the Codex seat launching a shim.
+    const { deps } = recordingDeps({
+      loginShellPath: `${SHIMS}:/usr/bin`,
+      envPath: `${SHIMS}:/usr/bin`,
+      home: HOME,
+      dirContents: {
+        [INSTALLS]: ["24.16.0", "22.18.0"],
+        "/home/rai/.asdf/installs/nodejs/24.16.0/bin": ["codex", "node"],
+        "/home/rai/.asdf/installs/nodejs/22.18.0/bin": ["codex"],
+        [SHIMS]: ["codex", "node"],
+      },
+      executables: new Set([goodInstall, brokenInstall, shim]),
+      // The broken install answers no version (the ENOENT-on-vendored-binary case);
+      // the good install and the shim both report the same version.
+      versions: { [goodInstall]: "0.144.1", [shim]: "0.144.1" },
+    });
+    const result = await discoverCodex(deps);
+    expect(result.chosen).toEqual({ path: goodInstall, version: "0.144.1" });
+    expect(result.chosen?.path).not.toBe(shim);
+    expect(result.health).toEqual({ state: "ready", version: "0.144.1" });
+  });
+
+  it("falls back to the shim when the only versioned candidate IS the shim", async () => {
+    // A broken install (no version, filtered out) plus a working shim: the shim is
+    // an absolute path too and is a legitimate last resort. Proves version-probing
+    // excludes the broken install rather than blindly picking the first on PATH.
+    const { deps } = recordingDeps({
+      loginShellPath: `${SHIMS}:/usr/bin`,
+      envPath: `${SHIMS}:/usr/bin`,
+      home: HOME,
+      dirContents: {
+        [INSTALLS]: ["22.18.0"],
+        "/home/rai/.asdf/installs/nodejs/22.18.0/bin": ["codex"],
+        [SHIMS]: ["codex"],
+      },
+      executables: new Set([brokenInstall, shim]),
+      versions: { [shim]: "0.144.1" },
+    });
+    const result = await discoverCodex(deps);
+    expect(result.chosen).toEqual({ path: shim, version: "0.144.1" });
+  });
+
+  it("fails LOUD (unavailable/not-found) when no codex exists anywhere", async () => {
+    // The honesty contract the composition root depends on: no resolvable codex →
+    // chosen is null → the desktop passes NO codex port → the pipeline degrades to
+    // single-Claude with the existing DEGRADED marker, never a silent single seat
+    // masquerading as a dual-model run. A null `chosen` means there is no path to
+    // bind an executor to at all.
+    const { deps } = recordingDeps({ home: HOME, dirContents: {} });
+    const result = await discoverCodex(deps);
+    expect(result.chosen).toBeNull();
+    expect(result.health).toEqual({
+      state: "unavailable",
+      reason: "not-found",
+      detail: expect.any(String),
+    });
+  });
+
+  it("fails LOUD (unavailable/spawn-failed) when a codex is found but reports no version", async () => {
+    // A present-but-unrunnable codex (the broken shim/install) must NOT be chosen:
+    // launching it is exactly the silent-degrade we are removing.
+    const { deps } = recordingDeps({
+      loginShellPath: `${SHIMS}:/usr/bin`,
+      envPath: `${SHIMS}:/usr/bin`,
+      home: HOME,
+      dirContents: { [SHIMS]: ["codex"] },
+      executables: new Set([shim]),
+      versions: {},
+    });
+    const result = await discoverCodex(deps);
+    expect(result.chosen).toBeNull();
+    expect(result.health).toEqual({
+      state: "unavailable",
+      reason: "spawn-failed",
+      detail: expect.any(String),
+    });
+  });
+
+  it("honours an explicit override path when it runs", async () => {
+    const custom = "/custom/bin/codex";
+    const { deps } = recordingDeps({
+      home: HOME,
+      dirContents: { [SHIMS]: ["codex"] },
+      executables: new Set([custom, shim]),
+      versions: { [custom]: "0.150.0", [shim]: "0.144.1" },
+    });
+    const result = await discoverCodex(deps, { explicitBin: custom });
+    expect(result.chosen).toEqual({ path: custom, version: "0.150.0" });
+  });
+
+  it("ignores a broken explicit override and falls through to discovery", async () => {
+    // A stale/broken RENNET_CODEX_BIN must not brick the app: it falls through to
+    // normal resolution rather than being trusted blindly.
+    const stale = "/custom/bin/codex";
+    const { deps } = recordingDeps({
+      loginShellPath: `${SHIMS}:/usr/bin`,
+      envPath: `${SHIMS}:/usr/bin`,
+      home: HOME,
+      dirContents: { [SHIMS]: ["codex"] },
+      executables: new Set([stale, shim]),
+      // The override is executable but answers no version (broken); the shim works.
+      versions: { [shim]: "0.144.1" },
+    });
+    const result = await discoverCodex(deps, { explicitBin: stale });
+    expect(result.chosen).toEqual({ path: shim, version: "0.144.1" });
+  });
+
+  it("the real probe returns null (never throws) on a missing binary", async () => {
+    // Exercises the codex-safe probe: stdin closed + a non-existent path resolves
+    // to null rather than hanging or throwing. (A broken install would ENOENT the
+    // same way; the closed stdin is what turns a would-be hang into this exit.)
+    const deps = defaultCodexDiscoveryDeps();
+    await expect(deps.probeVersion("/no/such/path/codex")).resolves.toBeNull();
   });
 });
 

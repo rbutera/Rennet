@@ -14,12 +14,14 @@ import {
   createRefPinner,
   createVerificationFileReaderForPatchset,
   createVerificationTurn,
+  defaultCodexDiscoveryDeps,
+  defaultCodexExecEffects,
   defaultDiscoveryDeps,
   defaultProjectDetailSourceDeps,
   defaultProjectDiscoveryDeps,
   deriveProjectDraft,
   discoverClaude,
-  discoverCodexAvailability,
+  discoverCodex,
   discoverProject,
   discoverWorktreeIdentities,
   execaGit,
@@ -122,22 +124,69 @@ function getClaudeHarness(): Promise<ClaudeHarnessResult> {
   return claudeHarness;
 }
 
-// The Codex seat, wired to the real `codex exec` executor (#66) and consulted by
-// the Model Council when a seat resolves to a Codex model (#69, R39). Composed
-// LAZILY and memoized like the Claude harness: the availability probe spawns
-// `codex --version`, so it runs on first use, not at launch. The INVARIANT the
-// composition root maintains — `codex` is in `installed` iff the port is passed
-// to the pipeline — is what makes a Codex resolution always executable live.
-let codexPort: CodexUtilityPort | null = null;
-function getCodexPort(): CodexUtilityPort {
-  codexPort ??= createCodexUtilityAdapter();
-  return codexPort;
+// The Codex seat, wired to a RESOLVED ABSOLUTE `codex` binary (#66, #69, R39;
+// bead workspace-6qp15). Bare `codex` on PATH is the asdf SHIM, which under
+// version drift launches a broken install, so the Codex seat silently fails to
+// start and dual-model degrades to single-Claude at the PROCESS layer (a layer
+// below the #212 schema fix). So the composition root resolves an absolute codex
+// ONCE — login-shell PATH + curated asdf-install locations, each PROVEN by
+// `codex --version`, preferring a real install over the shim — and binds the
+// executor to that path. Composed LAZILY and memoized like the Claude harness:
+// resolution spawns the login shell + a probe, so it runs on first use.
+//
+// The INVARIANT the composition root maintains — `codex` is `available` (and in
+// `installed`) IFF a resolvable binary was found and the port is passed to the
+// pipeline — is what makes a Codex resolution always executable. When nothing
+// resolves, `port` is null and `available` is false: the pipeline gets NO Codex
+// seat and falls to single-Claude with the EXISTING honest DEGRADED marker, never
+// a silent single-seat masquerading as a dual-model run.
+interface CodexResolution {
+  readonly availability: CodexAvailability;
+  readonly port: CodexUtilityPort | null;
+  /** The resolved absolute `codex` path (for the ask-AI executor), or null. */
+  readonly binPath: string | null;
+  /** The resolved codex version, stamped as harness provenance, or null. */
+  readonly version: string | null;
+}
+let codexResolution: Promise<CodexResolution> | null = null;
+function getCodexResolution(): Promise<CodexResolution> {
+  codexResolution ??= (async (): Promise<CodexResolution> => {
+    const explicitBin = process.env.RENNET_CODEX_BIN;
+    const result = await discoverCodex(defaultCodexDiscoveryDeps(), {
+      ...(explicitBin && explicitBin.length > 0 ? { explicitBin } : {}),
+    });
+    const chosen = result.chosen;
+    if (!chosen) {
+      return {
+        availability: { available: false, version: null },
+        port: null,
+        binPath: null,
+        version: null,
+      };
+    }
+    const executor = createCodexExecutor(defaultCodexExecEffects, {
+      bin: chosen.path,
+      harnessVersion: chosen.version,
+    });
+    return {
+      availability: { available: true, version: chosen.version },
+      port: createCodexUtilityAdapter({ executor }),
+      binPath: chosen.path,
+      version: chosen.version,
+    };
+  })();
+  return codexResolution;
 }
 
-let codexAvailability: Promise<CodexAvailability> | null = null;
 function getCodexAvailability(): Promise<CodexAvailability> {
-  codexAvailability ??= discoverCodexAvailability();
-  return codexAvailability;
+  return getCodexResolution().then((resolution) => resolution.availability);
+}
+
+/** The Codex utility port bound to the resolved absolute binary, or null when no
+ *  codex resolved. Null here is the pipeline's "no Codex seat" signal — it degrades
+ *  to single-Claude with the existing honest DEGRADED marker. */
+function getCodexPort(): Promise<CodexUtilityPort | null> {
+  return getCodexResolution().then((resolution) => resolution.port);
 }
 
 // The ambient first-run detection line (issue #29): which harnesses are on the
@@ -325,6 +374,7 @@ async function buildCanvasesForReview(review: Review): Promise<{
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
   const codex = await getCodexAvailability();
+  const codexPort = await getCodexPort();
   // KNOWN §7 DEVIATION (documented in the openspec change's design.md): the
   // read-only harness runs with `cwd` on the live mutable checkout rather than
   // an immutable materialisation, because that layer is not built yet and the
@@ -390,7 +440,7 @@ async function buildCanvasesForReview(review: Review): Promise<{
     // capture (PR title/body + spec frozen on the patchset) lands; the runner
     // FULLY supports intent (proven by the live dogfood over {diff, PR body}).
     decisionDocs: decisions.docs,
-    ...(codex.available ? { codexPort: getCodexPort() } : {}),
+    ...(codexPort ? { codexPort } : {}),
     ...(runDecompositionTurn ? { runDecompositionTurn } : {}),
     ...(runOrderingTurn ? { runOrderingTurn } : {}),
     ...(runNarrationTurn ? { runNarrationTurn } : {}),
@@ -655,6 +705,7 @@ async function runFlaggedReview(review: Review, deepReview = false): Promise<Fla
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
   const codex = await getCodexAvailability();
+  const codexPort = await getCodexPort();
   const decomposition = decompose(patchset);
   const manifest = buildOfferedManifest(decomposition);
   // KNOWN §7 DEVIATION (as in buildCanvasesForReview): the read-only harness runs
@@ -681,7 +732,7 @@ async function runFlaggedReview(review: Review, deepReview = false): Promise<Fla
     manifest,
     baseSeed: FINDING_PROVENANCE_SEED,
     ...(claudeTurn ? { claudeTurn } : {}),
-    ...(codex.available ? { codexPort: getCodexPort() } : {}),
+    ...(codexPort ? { codexPort } : {}),
   });
 
   // Each seat is its OWN live-budget-gated action (R10, fail-closed): the ceiling
@@ -1097,14 +1148,21 @@ app.whenReady().then(async () => {
         }),
       orchestratorTurn,
       askCodex: async ({ review, question }) => {
-        const codex = await getCodexAvailability();
-        if (!codex.available) {
+        // The ask executor is bound to the RESOLVED absolute codex, same as the
+        // pipeline seat (bead workspace-6qp15). A null binPath means no codex
+        // resolved — surface that honestly rather than shelling a bad `codex`.
+        const codex = await getCodexResolution();
+        if (codex.binPath === null) {
           return {
             model: CODEX_ASK_LABEL,
             answer: "Codex is not installed, so no second opinion is available.",
           };
         }
-        return createLiveCodexAsk({ executor: createCodexExecutor() })({ review, question });
+        const executor = createCodexExecutor(defaultCodexExecEffects, {
+          bin: codex.binPath,
+          ...(codex.version ? { harnessVersion: codex.version } : {}),
+        });
+        return createLiveCodexAsk({ executor })({ review, question });
       },
     }),
   });
