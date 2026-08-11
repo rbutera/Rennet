@@ -164,6 +164,7 @@ function harness(
     askCodex: ReturnType<typeof vi.fn>;
   };
   flaggedReviewSpy: ReturnType<typeof vi.fn>;
+  refineCommentSpy: ReturnType<typeof vi.fn>;
 } {
   const capture: PatchsetCapturePort = { capture: () => Promise.resolve(patchset()) };
   const service = new ReviewService(capture, new InMemoryStore());
@@ -204,6 +205,13 @@ function harness(
       findings: [],
     }),
   );
+  // The comment-refinement producer (issue #19) as a recording spy, so a test can
+  // assert the LIVE command path invokes it with the RESOLVED review + exact input —
+  // the boundary the "all-unavailable still-green" catch (P1-7) proved untested.
+  const refineCommentSpy = vi.fn<NonNullable<DispatchDeps["refineComment"]>>(async () => ({
+    status: "no-change" as const,
+    model: "test-model",
+  }));
   const deps: DispatchDeps = {
     service,
     allowedRoots,
@@ -259,6 +267,7 @@ function harness(
     flaggedReview: flaggedReviewSpy,
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
     reviewAsk,
+    refineComment: refineCommentSpy,
     symbolLookup: opts.symbolLookup,
     openInEditor: opts.openInEditor,
     openSpecChange: opts.openSpecChange,
@@ -274,6 +283,7 @@ function harness(
     publishConsent,
     reviewAsk,
     flaggedReviewSpy,
+    refineCommentSpy,
   };
 }
 
@@ -432,6 +442,55 @@ describe("createDispatch — flagged.review routing (the live finding runner, is
     const review = await capturedReview(dispatch);
     await dispatch("flagged.review", { reviewId: review.id, deepReview: false });
     expect(flaggedReviewSpy.mock.calls[0]?.[1]).toBe(false);
+  });
+});
+
+describe("createDispatch — review.refine routing (the live producer, issue #19)", () => {
+  it("invokes the producer with the RESOLVED review and the exact input, returning its result", async () => {
+    const { dispatch, refineCommentSpy } = harness();
+    const review = await capturedReview(dispatch);
+    const result = await dispatch("review.refine", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      itemId: "src/a.ts",
+      type: "request-change",
+      raw: "this breaks per-key clients?? add note",
+      lens: "flagged",
+      path: "src/a.ts",
+      span: { startLine: 3 },
+      side: "additions",
+    });
+    // The producer ran exactly once — handed the RESOLVED review (not a bare id) and
+    // the caller's exact input. This is the boundary P1-7 flagged: mutating the route
+    // to always answer `unavailable` left every test green because nothing asserted
+    // the producer was reached with real arguments. It is asserted now.
+    expect(refineCommentSpy).toHaveBeenCalledTimes(1);
+    const arg = refineCommentSpy.mock.calls[0]?.[0];
+    expect(arg.review.id).toBe(review.id);
+    expect(arg).toMatchObject({
+      type: "request-change",
+      raw: "this breaks per-key clients?? add note",
+      lens: "flagged",
+      path: "src/a.ts",
+      side: "additions",
+      span: { startLine: 3 },
+    });
+    // …and the route returns the producer's result verbatim.
+    expect(result).toEqual({ status: "no-change", model: "test-model" });
+  });
+
+  it("refuses review.refine for a stale or unknown review id (the producer spends a model turn)", async () => {
+    const { dispatch } = harness();
+    await capturedReview(dispatch);
+    await expect(
+      dispatch("review.refine", {
+        commandId: randomUUID(),
+        reviewId: randomUUID(),
+        itemId: "x",
+        type: "comment",
+        raw: "note",
+      }),
+    ).rejects.toThrow(/Review not found/);
   });
 });
 

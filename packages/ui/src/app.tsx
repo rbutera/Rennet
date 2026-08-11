@@ -18,7 +18,15 @@ import type {
   ReviewNarration,
 } from "@rennet/types";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { type CollationDraft, ingestWrites, withdrawPath } from "./canvas/collation";
+import {
+  type CollationDraft,
+  type CollationItem,
+  clearRefined,
+  ingestWrites,
+  itemRefineSignature,
+  setRefined,
+  withdrawPath,
+} from "./canvas/collation";
 import type { ConversationAnchor } from "./canvas/conversation";
 import { type DestinationMode, destinationVariant, type PublishLedger } from "./canvas/destination";
 import { flaggedForPatchset } from "./canvas/flagged";
@@ -39,7 +47,7 @@ import { publishedItems } from "./canvas/staging";
 import { createViewStore, useViewStore } from "./canvas/store";
 import { buildCommands, type CommandContext, type Screen } from "./command/commands";
 import { AskPanel } from "./components/ask-panel";
-import { CollationDraftCanvas } from "./components/collation-draft-canvas";
+import { CollationDraftCanvas, type RefineItemState } from "./components/collation-draft-canvas";
 import { CommandPalette } from "./components/command-palette";
 import { ConversationHost } from "./components/conversation-host";
 import { DestinationFrame } from "./components/destination-frame";
@@ -57,6 +65,7 @@ import { ProjectDetail } from "./components/project-detail";
 import { type PublishOutcome, PublishSheet } from "./components/publish-sheet";
 import { SettingsScreen } from "./components/settings-screen";
 import { CanvasWorkspace } from "./components/workspace";
+import { runBatched } from "./concurrency";
 import type { SmartRow } from "./project/smart-list";
 
 /**
@@ -102,6 +111,10 @@ function resolveProposal(canvases: CanvasSet, proposalId: string): CanvasSet {
 }
 
 const angles = ["Logic", "Security", "Tests", "Performance", "Maintainability", "Product"];
+
+/** Max concurrent refine turns fired by "Refine all" (#19) — bounds the model
+ *  subprocess fan-out on a large draft without the deferred budget machinery. */
+const REFINE_CONCURRENCY = 3;
 
 function activePatchset(review: Review): Patchset {
   const patchset = review.patchsets.find((candidate) => candidate.id === review.activePatchsetId);
@@ -379,6 +392,15 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // honest default for a local capture; the real mode arrives with the #20/#21
   // GitHub source. The publish sheet (#22 shell) is opened from the frame.
   const [draft, setDraft] = useState<CollationDraft>([]);
+  // The EPHEMERAL per-item refinement state (issue #19), keyed by collation-item
+  // id. An adopted refinement is durable on the item (`item.refined`); this map
+  // holds only the in-flight/failed/no-change states the refine turn produces.
+  const [refineStates, setRefineStates] = useState<Record<string, RefineItemState>>({});
+  // The latest draft, readable synchronously inside an async refine continuation so
+  // it can reject an outcome for a note that changed while the turn was in flight
+  // (the closure `draft` is stale by then).
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
   const [destinationMode, setDestinationMode] = useState<DestinationMode>("own-branch");
   // The forming-destination surface (R40): the frame opens the DRAFT (editable
   // glass collation canvas); signing the draft opens the PAPER; the paper signs or
@@ -1115,7 +1137,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         <CollationDraftCanvas
           draft={draft}
           variant={destinationVariantForMode}
-          onChange={setDraft}
+          onChange={handleDraftChange}
+          onRefine={(item) => void refineItem(item)}
+          onKeepRaw={keepRaw}
+          onRefineAll={refineAll}
+          refineStates={refineStates}
           onSign={() => {
             // Freezing a fresh paper drops any stale outcome from a prior sign.
             setPublishResult(undefined);
@@ -1170,6 +1196,140 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  /**
+   * The draft change handler wired to every edit (#19 invalidation). When any input
+   * a refinement is bound to changes — the raw body (reword / merge), the type
+   * (retype), the anchor (re-anchor), or the item's existence (withdraw) — its
+   * EPHEMERAL refine verdict is stale: a "no-change" / "failed" / "unavailable"
+   * message must not linger over a note the model never saw, and because the
+   * message branch renders AHEAD of the Refine button, a lingering message also
+   * hides the button for the new text. This is the SAME invalidation event as the
+   * DURABLE `refined` (which `rewordItem`/`retypeItem` clear); the ephemeral sibling
+   * is cleared on the same signal, keyed off the shared `itemRefineSignature`. A
+   * pure reorder leaves every signature unchanged, so nothing is dropped.
+   */
+  function handleDraftChange(next: CollationDraft): void {
+    setRefineStates((prev) => {
+      let changed = false;
+      const kept: Record<string, RefineItemState> = {};
+      for (const [id, state] of Object.entries(prev)) {
+        const before = draft.find((entry) => entry.id === id);
+        const after = next.find((entry) => entry.id === id);
+        // Keep a verdict only while its item still exists with the SAME refine inputs.
+        if (before && after && itemRefineSignature(before) === itemRefineSignature(after)) {
+          kept[id] = state;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? kept : prev;
+    });
+    setDraft(next);
+  }
+
+  /** Clear one item's ephemeral refine state (a landed refinement is durable on the item). */
+  function clearRefineState(itemId: string): void {
+    setRefineStates((prev) => {
+      if (prev[itemId] === undefined) return prev;
+      const next = { ...prev };
+      delete next[itemId];
+      return next;
+    });
+  }
+
+  /**
+   * Refine one raw note into a clean comment (#19): mark it refining, run the real
+   * council-routed model turn, and round the result back onto the draft. EVERY
+   * outcome — refined, no-change, unavailable, failed — is bound to the item's full
+   * refine inputs at request time (`itemRefineSignature`: raw + type + anchor) and
+   * DROPPED if any of them changed while the turn ran, so a verdict for a note the
+   * model never saw is never shown or adopted. A surviving outcome is surfaced
+   * HONESTLY; the sovereign raw stays the effective body unless a refinement lands.
+   */
+  async function refineItem(item: CollationItem): Promise<void> {
+    if (!review || item.raw.trim() === "") return;
+    const basedOn = itemRefineSignature(item);
+    // The outcome is stale once the item's refine inputs have changed since the turn
+    // began (reword / retype / re-anchor), or the item is gone. `draftRef` reads the
+    // LATEST draft; the closure `item` is the request-time snapshot.
+    const isStale = (): boolean => {
+      const current = draftRef.current.find((entry) => entry.id === item.id);
+      return current === undefined || itemRefineSignature(current) !== basedOn;
+    };
+    setRefineStates((prev) => ({ ...prev, [item.id]: { status: "refining" } }));
+    try {
+      const result = await bridge.invoke("review.refine", {
+        commandId: crypto.randomUUID(),
+        reviewId: review.id,
+        itemId: item.id,
+        type: item.type,
+        raw: item.raw,
+        lens: canvasAngle,
+        path: item.path,
+        // The anchor (#78) rides along so the producer grounds against the RIGHT
+        // hunk, not a truncation from the file's start (the Codex grounding catch).
+        ...(item.span === undefined ? {} : { span: item.span }),
+        ...(item.side === undefined ? {} : { side: item.side }),
+      });
+      if (isStale()) {
+        // The note changed or was withdrawn mid-turn — drop the outcome entirely and
+        // return the item to idle for its NEW content.
+        clearRefineState(item.id);
+        return;
+      }
+      if (result.status === "refined") {
+        setDraft((current) => setRefined(current, item.id, result.refined));
+        clearRefineState(item.id);
+      } else if (result.status === "no-change") {
+        setRefineStates((prev) => ({ ...prev, [item.id]: { status: "no-change" } }));
+      } else if (result.status === "unavailable") {
+        setRefineStates((prev) => ({
+          ...prev,
+          [item.id]: { status: "unavailable", reason: result.reason },
+        }));
+      } else {
+        setRefineStates((prev) => ({
+          ...prev,
+          [item.id]: { status: "failed", reason: result.reason },
+        }));
+      }
+    } catch (err) {
+      // A comms failure is also stale-gated: don't pin "failed" onto a note that has
+      // since changed (the message would sit over text the turn never concerned).
+      if (isStale()) {
+        clearRefineState(item.id);
+        return;
+      }
+      setRefineStates((prev) => ({
+        ...prev,
+        [item.id]: { status: "failed", reason: err instanceof Error ? err.message : String(err) },
+      }));
+    }
+  }
+
+  /** Keep the original note, dropping a landed refinement (#19 — the undo). */
+  function keepRaw(item: CollationItem): void {
+    setDraft((current) => clearRefined(current, item.id));
+    clearRefineState(item.id);
+  }
+
+  /**
+   * Refine every refinable, not-yet-refined, not-in-flight item — BOUNDED (#19).
+   * Each refine is a real model turn (a `codex exec` / Claude subprocess), so
+   * firing all of a large draft at once is real resource pressure; `runBatched`
+   * caps the fan-out to `REFINE_CONCURRENCY` at a time. The staleness gate in
+   * `refineItem` still handles a note edited between click and its batch.
+   */
+  async function refineAll(): Promise<void> {
+    const eligible = draft.filter(
+      (item) =>
+        item.raw.trim() !== "" &&
+        item.refined === undefined &&
+        refineStates[item.id]?.status !== "refining",
+    );
+    await runBatched(eligible, REFINE_CONCURRENCY, (item) => refineItem(item));
   }
 
   // Which top-level surface is showing — mirrors the branch order of the returns

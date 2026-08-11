@@ -12,6 +12,7 @@ import type {
   OpenSpecCoverage,
   OpenSpecCoverageEdge,
   Patchset,
+  RefinementResult,
   Review,
   ReviewEngine,
   ReviewHypothesis,
@@ -748,6 +749,21 @@ export const askReviewResultSchema: z.ZodType<AskReviewResult> = z.object({
   secondOpinion: askAnswerSchema.optional(),
 });
 
+// ── review.refine: the comment-refinement loop's result (issue #19) ───────────
+// A rough review note refined into a clean comment by a real model turn. The
+// producer guarantees `refined` carries a non-empty body that is NOT byte-
+// identical to the raw (a byte-identical "improvement" is `no-change`); an empty
+// or absent turn maps to `failed`/`unavailable`. The shape has NO field for the
+// raw dressed as refined, so "a failed refine never posts as refined" holds by
+// construction: the renderer keeps showing the raw until a `refined` result lands
+// and the user keeps it.
+export const refinementResultSchema: z.ZodType<RefinementResult> = z.discriminatedUnion("status", [
+  z.object({ status: z.literal("refined"), refined: z.string().min(1), model: z.string().min(1) }),
+  z.object({ status: z.literal("no-change"), model: z.string().min(1) }),
+  z.object({ status: z.literal("unavailable"), reason: z.string() }),
+  z.object({ status: z.literal("failed"), reason: z.string() }),
+]);
+
 // ── The Noise lens: grouped low-signal churn (issue #34) ──────────────────────
 // The low-signal churn a changeset touches, grouped away from the code that needs
 // eyes and tagged with how each group was judged (a deterministic mechanical RULE
@@ -1470,6 +1486,39 @@ export const commandDefinitions = {
       question: z.string().min(1),
     }),
     output: askReviewResultSchema,
+  },
+  // ── review.refine: refine one rough note into a clean comment (issue #19) ────
+  // Rai's headline feature. A real model turn cleans the user's raw note into a
+  // well-phrased comment in their own first-person voice; the renderer adopts it
+  // as the item's `refined` body (which `effectiveBody` prefers through to the
+  // published payload) ONLY when the user keeps it. `itemId` identifies the
+  // collation item the renderer round-trips the result onto; `raw` is the note
+  // (verbatim, never mutated by the turn); `type`/`lens`/`path` are the context
+  // (Q5) that disambiguates a terse note. The result is honest end to end — a
+  // failed/unavailable turn returns that state, never the raw dressed as refined.
+  "review.refine": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+      /** The collation item the refined body rounds back onto. */
+      itemId: z.string().min(1),
+      /** The disposition type — a request-change reads differently than a question. */
+      type: dispositionTypeSchema,
+      /** The user's raw note, refined VERBATIM (the turn reads it, never rewrites it here). */
+      raw: z.string().min(1),
+      /** Q5: the lens the user was on when they wrote it (disambiguates a terse note). */
+      lens: z.string().optional(),
+      /** The anchor path the note is attached to. */
+      path: z.string().optional(),
+      /**
+       * The span-grained anchor (#78), all-or-none with `side`. Present ⇒ the note
+       * anchors at a line span; the producer grounds against THAT hunk rather than a
+       * truncation from the file's start. Absent ⇒ a path-grained note (the diff lenses).
+       */
+      span: anchorSpanSchema.optional(),
+      side: anchorSideSchema.optional(),
+    }),
+    output: refinementResultSchema,
   },
   // ── The Noise lens (issue #34) ─────────────────────────────────────────────
   // The low-signal churn the changeset touches, grouped away and tagged with how

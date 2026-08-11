@@ -101,6 +101,7 @@ import {
 } from "./proactive-rehydration";
 import { createProcessProject } from "./process-project";
 import { createPublishConsentAuthority } from "./publish-consent-authority";
+import { createLiveRefinePort } from "./refine-comment-live";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
 import { createSettingsComposition } from "./settings";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
@@ -1330,6 +1331,24 @@ app.whenReady().then(async () => {
           ...(codex.version ? { harnessVersion: codex.version } : {}),
         });
         return createLiveCodexAsk({ executor })({ review, question });
+      },
+    }),
+    // review.refine (issue #19): the LIVE comment-refinement producer. Rai's
+    // headline feature — a rough note refined into a clean comment by a real,
+    // council-routed model turn. Runs on WHICHEVER seat the council resolves: Codex
+    // (Terra) when installed — the same absolute-binary resolution the ask-AI
+    // executor and pipeline seat use (bead workspace-6qp15) — else the Claude
+    // adapter (a light read-only session with the inline schema, the same
+    // structured-output mechanism every pipeline lens seat uses; no docType).
+    refineComment: createLiveRefinePort({
+      claudePort: async () => (await getClaudeHarness()).adapter ?? null,
+      codexExecutor: async () => {
+        const codex = await getCodexResolution();
+        if (codex.binPath === null) return null;
+        return createCodexExecutor(defaultCodexExecEffects, {
+          bin: codex.binPath,
+          ...(codex.version ? { harnessVersion: codex.version } : {}),
+        });
       },
     }),
     // The settings surface (wireframe #15): the config ladder over the REAL stores.

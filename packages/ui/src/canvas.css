@@ -991,12 +991,102 @@
   outline: none;
   border-color: var(--accent-soft-line);
 }
+/* The comment-refinement zone (#19), rendered per state under the raw note. */
 .collation-item-refine {
   margin: 0;
   font-size: 11px;
+}
+.collation-item-refine > p {
+  margin: 0;
+}
+/* Idle: the offer. A landed refinement posts your clean version. */
+.collation-refine,
+.collation-refine-retry {
+  border: 1px solid var(--accent-soft-line);
+  border-radius: var(--chip-radius);
+  padding: 5px 12px;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--accent);
+  background: var(--accent-surface);
+  cursor: pointer;
+}
+.collation-refine:hover,
+.collation-refine-retry:hover {
+  background: var(--accent-soft);
+}
+.collation-refine-retry {
+  margin-left: 8px;
+  padding: 2px 8px;
+}
+/* The bulk "Refine to post" — the prominent header act (wireframe #12). */
+.collation-refine-all {
+  border: 1px solid var(--accent);
+  border-radius: var(--chip-radius);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--accent-contrast);
+  background: var(--accent);
+  cursor: pointer;
+}
+.collation-refine-all:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+/* A landed refinement: the clean comment shown prominently; the raw stays above. */
+.collation-refined {
+  border: 1px solid var(--green-line);
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: var(--green-fill);
+}
+.collation-refined-label {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--green);
+}
+.collation-refined-body {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text);
+}
+.collation-keep-raw {
+  margin-top: 6px;
+  border: none;
+  padding: 0;
+  font-size: 11px;
+  color: var(--text-soft);
+  background: transparent;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.collation-refine-pending {
+  color: var(--accent);
+  font-style: italic;
+}
+.collation-refine-failed,
+.collation-refine-unavailable {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px;
+}
+/* Terse chrome label (§4) vs the model/system reason (content, breathes). */
+.collation-refine-chrome {
+  font-weight: 650;
+  color: var(--danger);
+}
+.collation-refine-unavailable .collation-refine-chrome {
+  color: var(--text-soft);
+}
+.collation-refine-reason {
   color: var(--text-faint);
 }
-.collation-item-refine[data-refining="false"] {
+.collation-refine-nochange {
   color: var(--green);
 }
 .collation-item-actions {

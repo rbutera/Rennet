@@ -151,13 +151,68 @@ export function rewordItem(draft: CollationDraft, id: string, raw: string): Coll
   );
 }
 
-/** Retype an item's disposition (no-op if the id is not on the draft). */
+/**
+ * Adopt an item's refined body (#19). The agent-cleaned form lands here after a
+ * refine turn; `effectiveBody` then prefers it through to the published payload,
+ * and the paper marks the comment refined. No-op if the id is not on the draft. A
+ * blank refinement is not a refinement (the producer never emits one), so an
+ * empty/whitespace body is ignored — the item stays raw rather than posting blank.
+ */
+export function setRefined(draft: CollationDraft, id: string, refined: string): CollationDraft {
+  if (refined.trim() === "") return draft;
+  return draft.map((item) => (item.id === id ? { ...item, refined } : item));
+}
+
+/**
+ * A stable signature of every input a refinement is bound to (#19): the raw body,
+ * the disposition type, and the full anchor (path + span + side). ALL of these ride
+ * in the refiner's prompt, so a refine outcome — refined, no-change, failed, or
+ * unavailable alike — is stale the moment ANY of them changes, and must be dropped
+ * rather than applied to a note the model never saw. The host captures this at
+ * request time and compares it at apply time; the ephemeral verdict is cleared on
+ * the same signal. (Lens is a request-time input carried in the prompt, but it is
+ * not a property OF the item, so it is not part of the item's identity here.)
+ */
+export function itemRefineSignature(item: CollationItem): string {
+  return JSON.stringify({
+    raw: item.raw,
+    type: item.type,
+    path: item.path,
+    span: item.span ?? null,
+    side: item.side ?? null,
+  });
+}
+
+/**
+ * Drop an item's refined form (#19 — "keep my original"). Refinement is an OFFER,
+ * never a replacement the user cannot undo: clearing `refined` returns the raw as
+ * the effective body. No-op if the id is not on the draft or already raw. This is
+ * the same field `rewordItem`/`ingestWrites` clear on a body change (#236); doing
+ * it explicitly lets the user reject a refinement without touching their note.
+ */
+export function clearRefined(draft: CollationDraft, id: string): CollationDraft {
+  return draft.map((item) =>
+    item.id === id && item.refined !== undefined ? { ...item, refined: undefined } : item,
+  );
+}
+
+/**
+ * Retype an item's disposition (no-op if the id is not on the draft). Retyping to a
+ * DIFFERENT type invalidates the derived refinement (#19): the disposition type is
+ * part of the refiner's input (wording for a `question` reads differently than for a
+ * `request-change`), so a refined body carried across a type change would post text
+ * generated for the wrong kind of comment. Same law `rewordItem` applies to a body
+ * change — clear `refined` here too. A retype to the SAME type keeps a still-valid
+ * refinement (no change ⇒ no invalidation).
+ */
 export function retypeItem(
   draft: CollationDraft,
   id: string,
   type: DispositionType,
 ): CollationDraft {
-  return draft.map((item) => (item.id === id ? { ...item, type } : item));
+  return draft.map((item) =>
+    item.id === id && item.type !== type ? { ...item, type, refined: undefined } : item,
+  );
 }
 
 /**
@@ -186,10 +241,17 @@ export function moveItem(
 
 /**
  * Merge item `sourceId` INTO `targetId`: the two become one item at the target's
- * position, carrying the target's id/path/type and both bodies joined (target
+ * position, carrying the target's id/path/type and both RAW bodies joined (target
  * first, blank halves dropped). The source is removed — zero residue. A merge of
  * an item into itself, or with an unknown id, is a no-op. Two adjacent comments
  * become one; the paper then carries one line where there were two.
+ *
+ * ⭐ The join folds the SOVEREIGN RAW bodies, NEVER `effectiveBody` (#19): folding
+ * the refined form would overwrite the user's original words with agent text and
+ * make BOTH originals unrecoverable (there is nothing left for `clearRefined` to
+ * restore). Keeping raw preserves what the user actually wrote on both halves. The
+ * derived `refined` is cleared — it was a refinement of the OLD single body, now
+ * stale for the merged note — so the merged item re-refines from its combined raw.
  */
 export function mergeItems(
   draft: CollationDraft,
@@ -200,7 +262,7 @@ export function mergeItems(
   const target = draft.find((item) => item.id === targetId);
   const source = draft.find((item) => item.id === sourceId);
   if (!target || !source) return draft;
-  const joined = [effectiveBody(target), effectiveBody(source)]
+  const joined = [target.raw, source.raw]
     .map((body) => body.trim())
     .filter((body) => body.length > 0)
     .join("\n");
