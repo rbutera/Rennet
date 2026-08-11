@@ -38,6 +38,23 @@ describe("refineComment — mapping the port outcome", () => {
     expect(result).toEqual({ status: "no-change", model: "gpt-5.6-terra" });
   });
 
+  it("PROVENANCE: reports the model the PORT actually ran, not the resolved plan", async () => {
+    // A seat that runs its own default must report THAT, not the council's planned
+    // pick. If refineComment used the passed `model` over `turn.model`, this reddens.
+    const port = portReturning({
+      status: "emitted",
+      verdict: "refined",
+      refinedBody: "The clean comment.",
+      model: "claude-sonnet-4-5-actual",
+    });
+    const result = await refineComment(RAW, port, "sonnet-5");
+    expect(result).toEqual({
+      status: "refined",
+      refined: "The clean comment.",
+      model: "claude-sonnet-4-5-actual",
+    });
+  });
+
   it("HONESTY FLOOR: a refined verdict whose body equals the raw (trimmed) is no-change, not refined", async () => {
     // The design-doc validator rule: a refinedBody byte-identical to the draft is
     // NOT a refinement. Without this branch the raw would post dressed as 'refined'.

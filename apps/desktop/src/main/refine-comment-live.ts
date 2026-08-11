@@ -255,7 +255,12 @@ export function claudeRefinePort(port: HarnessPort, cwd: string, model?: string)
     }
     try {
       await session.send({ prompt });
+      // The model the harness ACTUALLY started on — reported so provenance records
+      // what wrote the text, not the council's planned pick (a Claude seat runs its
+      // own default model, so claiming the resolved model would be a provenance lie).
+      let actualModel: string | undefined;
       for await (const event of session.events) {
+        if (event.kind === "session.started") actualModel = event.model;
         if (event.kind === "error") return { status: "failed", reason: event.error.message };
         if (event.kind === "session.ended") {
           const outcome = event.outcome;
@@ -263,7 +268,12 @@ export function claudeRefinePort(port: HarnessPort, cwd: string, model?: string)
             if (outcome.structuredOutput === undefined) {
               return { status: "failed", reason: "the refine turn produced no structured output" };
             }
-            return mapRefineOutput(outcome.structuredOutput);
+            const mapped = mapRefineOutput(outcome.structuredOutput);
+            // Attach the observed runtime model to a successful emit; leave the honest
+            // failure results untouched (they carry a reason, never a model).
+            return mapped.status === "emitted" && actualModel !== undefined
+              ? { ...mapped, model: actualModel }
+              : mapped;
           }
           if (outcome.status === "failed")
             return { status: "failed", reason: outcome.error.message };

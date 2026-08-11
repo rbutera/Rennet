@@ -57,12 +57,20 @@ export interface RefineCommentInput {
  * carries the model's structured verdict; `unavailable`/`failed` are the two
  * honest degradations (no seat installed / the turn ran and did not produce a
  * usable structured result). The port NEVER fabricates a success.
+ *
+ * `model` is the model that ACTUALLY ran, when the port can observe it (e.g. from
+ * a session-started frame). It exists because provenance must record what wrote
+ * text under the user's name, NOT what the council planned to route to — a seat
+ * that runs its harness default is honest only if it reports that default. When a
+ * port cannot observe the runtime model, it omits this and the caller falls back
+ * to the resolved model.
  */
 export type RefinePortResult =
   | {
       readonly status: "emitted";
       readonly verdict: "refined" | "no-change";
       readonly refinedBody?: string;
+      readonly model?: string;
     }
   | { readonly status: "unavailable"; readonly reason: string }
   | { readonly status: "failed"; readonly reason: string };
@@ -155,7 +163,11 @@ export async function refineComment(
   const turn = await port(buildRefinePrompt(input));
   if (turn.status === "unavailable") return { status: "unavailable", reason: turn.reason };
   if (turn.status === "failed") return { status: "failed", reason: turn.reason };
-  if (turn.verdict === "no-change") return { status: "no-change", model };
+  // Report the model that ACTUALLY ran when the port observed it; else the resolved
+  // model. A seat running its harness default must not claim the council's planned
+  // pick — that is a provenance lie about who wrote text under the user's name.
+  const reportedModel = turn.model ?? model;
+  if (turn.verdict === "no-change") return { status: "no-change", model: reportedModel };
   // verdict === "refined": the honesty floor the design doc's validator names.
   const refined = (turn.refinedBody ?? "").trim();
   if (refined.length === 0) {
@@ -163,6 +175,6 @@ export async function refineComment(
   }
   // Byte-identical (after trim) is not a refinement — it is `no-change`, so the
   // raw posts unchanged and nothing agent-authored is adopted without a real edit.
-  if (refined === input.raw.trim()) return { status: "no-change", model };
-  return { status: "refined", refined, model };
+  if (refined === input.raw.trim()) return { status: "no-change", model: reportedModel };
+  return { status: "refined", refined, model: reportedModel };
 }

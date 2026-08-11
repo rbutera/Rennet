@@ -71,6 +71,23 @@ function fakeExecutor(output: unknown, onCall?: (req: CodexExecRequest) => void)
   };
 }
 
+/** A `session.started` frame naming the model the harness actually started on. */
+function startedEvent(model: string): HarnessEvent {
+  return {
+    seq: 1,
+    harness: "claude-code",
+    sessionId: "s",
+    turnId: "t",
+    receivedAt: 0,
+    native: null,
+    kind: "session.started",
+    model,
+    cwd: "/repo",
+    tools: [],
+    apiKeySource: null,
+  } as unknown as HarnessEvent;
+}
+
 /** A `session.ended` completed frame carrying the given structured output. */
 function completedEvent(structuredOutput: unknown): HarnessEvent {
   return {
@@ -235,12 +252,15 @@ describe("createLiveRefinePort — Codex seat (council resolves Terra)", () => {
 });
 
 describe("createLiveRefinePort — Claude seat (Claude-only machine resolves Sonnet)", () => {
-  it("refines on the Claude adapter via a read-only session with the inline schema", async () => {
+  it("refines on the Claude adapter and reports the ACTUAL runtime model, not the planned one", async () => {
     let seenSpec: SessionSpec | undefined;
     const port = createLiveRefinePort({
       claudePort: async () =>
         fakeClaudePort(
           () => [
+            // The harness actually started on this model — different from the council's
+            // planned Sonnet-5, so a provenance lie (reporting the plan) reddens below.
+            startedEvent("claude-sonnet-4-5-20260101"),
             completedEvent({ verdict: "refined", refinedBody: "Please add a rollback path." }),
           ],
           (spec) => {
@@ -258,12 +278,23 @@ describe("createLiveRefinePort — Claude seat (Claude-only machine resolves Son
     expect(result).toEqual({
       status: "refined",
       refined: "Please add a rollback path.",
-      // Claude-only ⇒ council Table 2 assigns comment-refinement to Sonnet.
-      model: "sonnet-5",
+      // The model the session STARTED on — provenance records what wrote the text,
+      // not the council's planned "sonnet-5". Reporting the plan reddens this.
+      model: "claude-sonnet-4-5-20260101",
     });
     // The session is read-only and carries the structured-output schema (no docType).
     expect(seenSpec?.readOnly).toBe(true);
     expect(seenSpec?.outputSchema).toBeDefined();
+  });
+
+  it("falls back to the resolved model when the session reports no started frame", async () => {
+    const port = createLiveRefinePort({
+      claudePort: async () => fakeClaudePort(() => [completedEvent({ verdict: "no-change" })]),
+      codexExecutor: async () => null,
+    });
+    const result = await port({ review: review(), type: "comment", raw: "already clear" });
+    // No session-started frame observed ⇒ the honest fallback is the resolved model.
+    expect(result).toEqual({ status: "no-change", model: "sonnet-5" });
   });
 
   it("fails honestly when the Claude turn completes without structured output", async () => {
