@@ -82,7 +82,12 @@ interface Recorder {
 // `publish.requestConsent` mints a fresh token; `publish.review` records its input and
 // returns a real outcome for `dryRun:false`, a dry-run outcome otherwise. `failPost`
 // makes a REAL post throw (a GitHub auth/network error) so the honest-failure path shows.
-function recordingBridge(ready: Review, opts: { failPost?: boolean } = {}): Recorder {
+// `hangConsent` holds the mint until the caller resolves it, so a test can observe the
+// in-flight (pending) state — the renderer half of the double-sign guard.
+function recordingBridge(
+  ready: Review,
+  opts: { failPost?: boolean; hangConsent?: Promise<void> } = {},
+): Recorder {
   const consentCalls: CommandInput<"publish.requestConsent">[] = [];
   const publishCalls: CommandInput<"publish.review">[] = [];
   let minted = 0;
@@ -90,6 +95,7 @@ function recordingBridge(ready: Review, opts: { failPost?: boolean } = {}): Reco
     if (name === "publish.requestConsent") {
       consentCalls.push(input as CommandInput<"publish.requestConsent">);
       minted += 1;
+      if (opts.hangConsent) await opts.hangConsent; // hold the publish in flight
       const out: CommandOutput<"publish.requestConsent"> = { authorization: `token-${minted}` };
       return out;
     }
@@ -130,7 +136,7 @@ function recordingBridge(ready: Review, opts: { failPost?: boolean } = {}): Reco
 // handle + recorders. The review is a parameter so the local-vs-PR cases share it.
 async function reachPaper(
   ready: Review,
-  opts: { failPost?: boolean } = {},
+  opts: { failPost?: boolean; hangConsent?: Promise<void> } = {},
 ): Promise<ReturnType<typeof mount> & Recorder> {
   const rec = recordingBridge(ready, opts);
   const handle = mount(<RennetApp bridge={rec.bridge} />);
@@ -274,5 +280,27 @@ describe("real-post flip (issue #21) — a completed sign posts a real PR review
     expect(container.querySelector(".error-toast")?.textContent).toContain("GitHub post failed");
     const result = container.querySelector('[data-testid="publish-result"]');
     expect(result?.textContent ?? "").not.toContain("Posted");
+  });
+
+  it("(f) the sign control is DISABLED while a publish is in flight (double-sign guard, renderer half)", async () => {
+    // Hold the consent mint open so the publish stays in flight after a completed sign.
+    let release: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { container, consentCalls } = await reachPaper(reviewWith(POST_TARGET), {
+      hangConsent: gate,
+    });
+
+    await completeSign(container); // starts the publish; consent is awaited (hangs)
+    // The first sign reached the mint, and while it is in flight the control is disabled
+    // — a second completed sign cannot start, so no second token is minted.
+    await waitFor(() => expect(signButton(container).disabled).toBe(true));
+    expect(consentCalls).toHaveLength(1);
+
+    // Release: the publish completes and there is still exactly one consent mint.
+    release();
+    await waitFor(() => expect(signButton(container).disabled).toBe(false));
+    expect(consentCalls).toHaveLength(1);
   });
 });
