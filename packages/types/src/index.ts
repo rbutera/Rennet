@@ -2990,3 +2990,54 @@ export interface HandoffRunResult {
   readonly carriedFloor: number;
   readonly lineageCarry: "matcher-not-wired" | "applied";
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Handoff-bundle COMPOSITION (issue #72, Model Council job M24). The light-tier
+// authoring step OVER the mechanical `HandoffBundle`: order the asks for execution
+// sense, merge overlapping asks into coherent tasks, and write a connective
+// narrative — WITHOUT altering what was asked. Appended after the #18 handoff block
+// so it does not collide with that work.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * One addressable ask in a bundle — a `HandoffTask` given a stable `id` the
+ * composition trace cites (issue #73 maps delta-review results back through it).
+ * The id is the ask's ordinal in the mechanical bundle's DETERMINISTIC order, so
+ * the same disposition set always yields the same ids; the ask itself rides
+ * alongside, so an id always resolves to concrete path/anchor/body.
+ */
+export interface ComposableAsk extends HandoffTask {
+  readonly id: string;
+}
+
+/**
+ * One composed task: a group of asks the model judged should be executed as one
+ * coherent unit, with a model-authored connective `title`. ⭐ The member `asks` are
+ * carried VERBATIM from the trusted input — the model chooses order+grouping+title
+ * and cites ids, it NEVER rewrites a body — so a composition can neither drop nor
+ * alter what was asked (only how it reads). `title` is "" in the mechanical floor.
+ */
+export interface ComposedTask {
+  readonly title: string;
+  readonly sourceDispositions: readonly string[];
+  readonly asks: readonly ComposableAsk[];
+}
+
+/**
+ * The composed bundle handed toward the coding harness (previewed on the paper at
+ * journey stage 6). `composed` is TRUE when a validated model authoring was adopted
+ * and FALSE when the deterministic FLOOR ran (the model was unavailable, failed, or
+ * returned an incomplete/invalid partition — fail-closed to the pass-through list).
+ * `traceMap` maps every input ask id to its index in `tasks`; the invariant, asserted
+ * by the composer, is that EVERY id appears exactly once (no ask dropped, none
+ * invented) — the round-trip guarantee #72's acceptance names.
+ */
+export interface ComposedHandoffBundle {
+  readonly reviewId: string;
+  readonly patchsetId: string;
+  readonly tasks: readonly ComposedTask[];
+  readonly prompt: string;
+  readonly digest: string;
+  readonly composed: boolean;
+  readonly traceMap: Readonly<Record<string, number>>;
+}

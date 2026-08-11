@@ -36,6 +36,7 @@ export * from "./finding-generation";
 export * from "./finding-reconcile";
 export * from "./finding-verification";
 export * from "./forge-port";
+export * from "./handoff-compose";
 export * from "./handoff-loop";
 export * from "./harness";
 export * from "./harness-run-turn";
