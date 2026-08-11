@@ -2566,7 +2566,6 @@
 .ospec-task-item .disposition-cluster {
   margin-left: auto;
 }
-||||||| parent of 1f2cf2a (feat(review): symbol-click in-app inspector + impl/test button rewording (#8))
 
 /* ── The symbol inspector (Rai, wireframes #8) ──────────────────────────────── */
 /* An in-app preview beside the diff: where a clicked symbol is defined, where it is
