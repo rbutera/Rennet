@@ -469,6 +469,24 @@ function requireActivePatchset(
   return current;
 }
 
+/**
+ * Whether a review's PR post-target (issue #21) survives activating `patchset`.
+ * It survives ONLY while the activated patchset is still the forge PR's OWN patchset:
+ * a github source (`github-local`/`github-rest`) AT THE SAME reviewed head the target
+ * was minted for. A local working-tree recapture (source `local`/absent) or a moved
+ * head drops it — so a PR review recaptured locally cannot post its local diffs to the
+ * real PR. Returns the target unchanged when it survives, else `undefined`.
+ */
+function postTargetSurvivingActivation(
+  postTarget: ReviewPostTarget | undefined,
+  patchset: Patchset,
+): ReviewPostTarget | undefined {
+  if (!postTarget) return undefined;
+  const isForgePr = patchset.source === "github-local" || patchset.source === "github-rest";
+  if (isForgePr && patchset.repository.headOid === postTarget.headOid) return postTarget;
+  return undefined;
+}
+
 export function foldReview(current: Review | null, event: ReviewEvent): Review {
   switch (event.type) {
     case "ReviewCreated":
@@ -494,8 +512,19 @@ export function foldReview(current: Review | null, event: ReviewEvent): Review {
       const patchsets = current.patchsets.some((patchset) => patchset.id === event.patchset.id)
         ? current.patchsets
         : [...current.patchsets, event.patchset];
+      // Strip the PR post-target from the base and re-add it ONLY if it survives this
+      // activation (issue #21). A PR review can be locally recaptured under the same
+      // review id (`review.capture`/`regenerate` → PatchsetActivated), which would
+      // otherwise inherit the PR's egress target onto local working-tree content — so
+      // the human could sign local diffs that post to a real PR. The target survives
+      // ONLY while the activated patchset is still the forge PR's OWN patchset (a
+      // github source at the same reviewed head); otherwise it is dropped and the
+      // review becomes an unpostable local review (the "no postTarget → refused" gate
+      // then handles egress for free).
+      const { postTarget: priorTarget, ...base } = current;
+      const postTarget = postTargetSurvivingActivation(priorTarget, event.patchset);
       return {
-        ...current,
+        ...base,
         patchsets,
         activePatchsetId: event.patchset.id,
         pendingPatchsetId: undefined,
@@ -503,6 +532,7 @@ export function foldReview(current: Review | null, event: ReviewEvent): Review {
         // never a blanket wipe.
         dispositions: carryDispositions(current.dispositions, event.patchset),
         status: "current",
+        ...(postTarget ? { postTarget } : {}),
       };
     }
     case "DispositionSet": {

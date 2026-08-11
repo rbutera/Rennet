@@ -954,6 +954,55 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     expect(out1.outcome).not.toBeNull();
     expect(posts).toHaveLength(1);
   });
+
+  it("(k) a PR review recaptured LOCALLY loses its post-target — local diffs cannot post to the PR", async () => {
+    // The patchset-swap vector: open a postable PR review, then recapture LOCAL
+    // working-tree changes under the SAME review id. The activated local patchset must
+    // DROP the PR post-target (it is no longer the PR's own patchset), so both minting
+    // consent and posting are refused — local diffs can never reach the PR under the
+    // human sign, even though the review id is unchanged.
+    const port = fakePublishPort();
+    const { dispatch } = harness(port);
+    const review = await postableReview(dispatch); // postTarget = SANDBOX_TARGET
+    expect(review.postTarget).toEqual(SANDBOX_TARGET);
+
+    // Recapture local working-tree changes under the same review id (the exploit).
+    const recaptured = (await dispatch("review.capture", {
+      commandId: randomUUID(),
+      repoPath: review.repositoryRoot,
+      reviewId: review.id,
+    })) as { review: Review };
+    expect(recaptured.review.id).toBe(review.id); // same review id...
+    expect(recaptured.review.postTarget).toBeUndefined(); // ...but the PR target is gone
+
+    const comments = publishComments();
+    const payload = canonicalReviewPayload(comments);
+
+    // The mint is refused — the review no longer owns a pull request.
+    await expect(
+      dispatch("publish.requestConsent", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        target: SANDBOX_TARGET,
+        payload,
+        verdict: PUBLISH_VERDICT,
+      }),
+    ).rejects.toThrow(/no pull request/i);
+
+    // And a hand-crafted real post is refused structurally — nothing leaves.
+    await expect(
+      dispatch("publish.review", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        target: SANDBOX_TARGET,
+        comments,
+        payload,
+        authorization: "forged-token",
+        dryRun: false,
+      }),
+    ).rejects.toThrow(/no pull request/i);
+    expect(port.posts).toHaveLength(0);
+  });
 });
 
 describe("createDispatch — review.openPr (the GitHub PR front door)", () => {

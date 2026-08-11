@@ -61,6 +61,15 @@ function patchsetOf(id: string, files: PatchFile[]): Patchset {
   };
 }
 
+/** A patchset with an explicit source + head, for the activation-survival tests. */
+function patchsetSourced(id: string, source: Patchset["source"], headOid: string): Patchset {
+  return {
+    ...patchsetOf(id, [addedFile("src/a.ts")]),
+    source,
+    repository: { ...repository, headOid },
+  };
+}
+
 /** A one-review in-memory store with a working command receipt (idempotency). */
 function storeOf(initial: Review | null): ReviewStorePort {
   let current = initial;
@@ -160,5 +169,51 @@ describe("Review.postTarget — the real-post flip producer half (issue #21)", (
       postTarget: POST_TARGET,
     });
     expect(replay.id).toBe(first.id);
+  });
+});
+
+describe("Review.postTarget — survives a patchset swap ONLY as the forge PR's own (issue #21)", () => {
+  // POST_TARGET.headOid is "head"; the review below is minted against it.
+  function prReview(): Review {
+    return foldReview(null, {
+      type: "ReviewCreated",
+      version: 1,
+      reviewId: "review-1",
+      patchset: patchsetSourced("ps-pr", "github-local", "head"),
+      postTarget: POST_TARGET,
+    } satisfies ReviewEvent);
+  }
+
+  it("DROPS the post-target when a LOCAL working-tree patchset is activated (the exploit)", () => {
+    // A local recapture under the same review id — source absent/local. The PR target
+    // must not survive onto local content, or local diffs could post to the real PR.
+    const after = foldReview(prReview(), {
+      type: "PatchsetActivated",
+      version: 1,
+      reviewId: "review-1",
+      patchset: patchsetSourced("ps-local", undefined, "head"),
+    } satisfies ReviewEvent);
+    expect(after.postTarget).toBeUndefined();
+    expect("postTarget" in after).toBe(false); // the key is gone, not merely undefined
+  });
+
+  it("KEEPS the post-target when the SAME forge PR patchset (github source, same head) is re-activated", () => {
+    const after = foldReview(prReview(), {
+      type: "PatchsetActivated",
+      version: 1,
+      reviewId: "review-1",
+      patchset: patchsetSourced("ps-pr-2", "github-local", "head"),
+    } satisfies ReviewEvent);
+    expect(after.postTarget).toEqual(POST_TARGET);
+  });
+
+  it("DROPS the post-target when a github patchset at a DIFFERENT head is activated (a moved head)", () => {
+    const after = foldReview(prReview(), {
+      type: "PatchsetActivated",
+      version: 1,
+      reviewId: "review-1",
+      patchset: patchsetSourced("ps-moved", "github-local", "movedhead"),
+    } satisfies ReviewEvent);
+    expect(after.postTarget).toBeUndefined();
   });
 });
