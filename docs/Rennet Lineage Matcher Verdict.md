@@ -113,6 +113,17 @@ targeted non-ambiguous class, i.e. read state carried onto edited code.
   by path + content with no reliance on context. The moment ingest can hand the
   matcher stable occurrence ids, carry authority should move onto that
   deterministic provenance rather than the classifier at all.
+- ⭐ **A DELIBERATE recall-for-safety trade.** The uniqueness guard counts over the
+  WHOLE side, and is strictly more conservative than the near-tie rival guard: a
+  legitimate "one real occurrence plus one stale byte-identical duplicate at the
+  same path, with clearly different context" ALSO fails closed, even though the
+  contexts would let the rival guard separate them. That costs some recall — a
+  missed carry — to buy the safety. It is the correct call given the asymmetry: a
+  missed carry is a reopened chunk (the reviewer re-reads), while a wrong carry is
+  an approval on code nobody approved. Recorded here so it reads as an intended
+  trade, not a surprise. (Confirmed by adversarial review: asymmetric uniqueness on
+  either side fails closed even when contexts differ enough that the rival guard
+  would not fire — the guard is doing real work beyond the rival guard.)
 - The disposition seam is deterministic and does not depend on any of the above.
   Across a real (adapter-produced) git rename, a byte-identical span carries and a
   path-grained disposition reopens; it never wrong-carries.
