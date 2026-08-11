@@ -29,11 +29,13 @@ import type {
   Canvas,
   CanvasAngle,
   DecisionsRunStatus,
+  DispositionType,
   ElementDiffs,
   FlaggedReview,
   NoiseReview,
   OpenSpecChange,
   OpenSpecCoverage,
+  RefinementResult,
   Review,
   ReviewEngine,
   ReviewNarration,
@@ -189,6 +191,20 @@ export interface DispatchDeps {
     askOrchestrator(input: { review: Review; question: string }): Promise<AskAnswer>;
     askCodex(input: { review: Review; question: string }): Promise<AskAnswer>;
   };
+  /**
+   * The comment-refinement producer (issue #19): refine one raw review note into a
+   * clean comment via a real, council-routed model turn. Takes the ALREADY-RESOLVED
+   * review (dispatch freshness-pins it once). Optional so a composition without a
+   * refiner still constructs — dispatch then answers an honest `unavailable` rather
+   * than throwing, and the renderer keeps showing the raw note.
+   */
+  readonly refineComment?: (input: {
+    review: Review;
+    type: DispositionType;
+    raw: string;
+    lens?: string;
+    path?: string;
+  }) => Promise<RefinementResult>;
   /**
    * The symbol inspector port (Rai, wireframes #8): resolve one clicked identifier to
    * its definition + reference sites over the review's model-free symbolic surface.
@@ -648,6 +664,34 @@ export function createDispatch(
           askCodex: (question) => deps.reviewAsk.askCodex({ review, question }),
         });
         return parseCommandOutput(name, result);
+      }
+      // ── Refine a rough note into a clean comment (issue #19) ───────────────────
+      case "review.refine": {
+        // Rai's headline feature. Resolve the CURRENT review ONCE (a stale/unknown id
+        // is refused), then run the council-routed refine turn over the raw note +
+        // its context. Refining is a model turn — Rennet's whole job — so it just
+        // runs; there is no permission gate and no consent token (nothing leaves the
+        // machine here; the refined body only publishes later, through the same
+        // gated sign path as any other comment). With no refiner wired, answer an
+        // honest `unavailable` rather than throwing — the raw note stays effective.
+        const input = parseCommandInput(name, rawInput);
+        const review = requireLatestReview(input.reviewId);
+        if (!deps.refineComment) {
+          return parseCommandOutput(name, {
+            status: "unavailable",
+            reason: "refinement is not available in this build",
+          });
+        }
+        return parseCommandOutput(
+          name,
+          await deps.refineComment({
+            review,
+            type: input.type,
+            raw: input.raw,
+            ...(input.lens === undefined ? {} : { lens: input.lens }),
+            ...(input.path === undefined ? {} : { path: input.path }),
+          }),
+        );
       }
       // ── The Noise lens (issue #34) ────────────────────────────────────────────
       case "noise.review": {
