@@ -148,6 +148,22 @@ describe("ProjectSnapshotStore — config.json read/write (A.1)", () => {
     expect(store.loadConfig("-k")?.promoted).toBe(true);
   });
 
+  it("updateConfig REFUSES a malformed config, throwing and leaving the bytes byte-identical (Rule 75, red-proof)", () => {
+    const storeDir = mkdtempSync(join(tmpdir(), "rennet-cfg5-"));
+    scratch.push(storeDir);
+    const store = new ProjectSnapshotStore(storeDir);
+    const configPath = store.paths("-k").configPath;
+    mkdirSync(join(configPath, ".."), { recursive: true });
+    const before = '{ "version": 1, "promoted": tru'; // truncated, unparseable
+    writeFileSync(configPath, before);
+
+    // The read-modify-write over a fresh default would silently discard the bad
+    // bytes; the guard turns that into a loud throw instead. (Delete the guard in
+    // updateConfig → this test reddens: the file is overwritten with a default.)
+    expect(() => store.updateConfig("-k", (c) => ({ ...c, promoted: true }))).toThrow(/malformed/);
+    expect(readFileSync(configPath, "utf8")).toBe(before);
+  });
+
   it("a malformed config reads as null (fail-safe), never a throw", () => {
     const storeDir = mkdtempSync(join(tmpdir(), "rennet-cfg3-"));
     scratch.push(storeDir);

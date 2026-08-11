@@ -77,12 +77,12 @@ export interface CanvasWorkspaceProps {
   canvases: Record<CanvasAngle, Canvas>;
   store?: ViewStore;
   /**
-   * The resolved app appearance scheme, used to SEED the view store's scheme at
-   * creation so a review opens in the reviewer's chosen scheme (wireframe #15).
-   * The in-review scheme toggle still owns it afterwards — this is a starting
-   * value, not a live override, so toggling inside a review is preserved.
+   * The resolved app appearance scheme (wireframe #15). The canvas FOLLOWS it —
+   * seeded at creation and kept in sync as the app scheme changes (a delayed
+   * `settings.get`, a live OS `prefers-color-scheme` flip) — UNTIL the reviewer
+   * uses the in-review scheme toggle, after which their explicit choice holds.
    */
-  initialScheme?: "dark" | "light";
+  scheme?: "dark" | "light";
   feedSource?: CanvasFeedSource;
   bridge?: RennetBridge;
   /** Fan-out sink: the per-anchor L2 writes a single approve act produced. */
@@ -276,15 +276,25 @@ const ZOOM_LABELS = {
 } as const;
 
 export function CanvasWorkspace(props: CanvasWorkspaceProps) {
-  // Seed the view store's scheme from the app scheme ONCE (read from a ref so a
-  // later OS/appearance change never resets the review's own view state).
-  const initialSchemeRef = useRef(props.initialScheme);
+  // Seed the view store's scheme from the app scheme at creation (via a ref, so
+  // the store isn't recreated on later scheme changes — the sync effect below
+  // handles those without discarding view state).
+  const seedSchemeRef = useRef(props.scheme);
   const store = useMemo(
     () =>
       props.store ??
-      createViewStore(initialSchemeRef.current ? { scheme: initialSchemeRef.current } : undefined),
+      createViewStore(seedSchemeRef.current ? { scheme: seedSchemeRef.current } : undefined),
     [props.store],
   );
+  // The canvas FOLLOWS the app scheme (so the document-root theming reaches the
+  // nested `.canvas-app`, incl. a restored review and a live OS change) UNTIL the
+  // reviewer explicitly toggles the in-review override, after which it holds.
+  const schemeOverriddenRef = useRef(false);
+  useEffect(() => {
+    if (!schemeOverriddenRef.current && props.scheme) {
+      store.getState().setScheme(props.scheme);
+    }
+  }, [props.scheme, store]);
   const angle = useViewStore(store, (state) => state.angle);
   const overlayOn = useViewStore(store, (state) => state.overlayOn);
   const scheme = useViewStore(store, (state) => state.scheme);
@@ -743,7 +753,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         scheme={scheme}
         onSelectAngle={(next) => goToAngle(next)}
         onToggleOverlay={() => store.getState().toggleOverlay()}
-        onToggleScheme={() => store.getState().setScheme(scheme === "dark" ? "light" : "dark")}
+        onToggleScheme={() => {
+          // The reviewer took explicit control — stop following the app scheme.
+          schemeOverriddenRef.current = true;
+          store.getState().setScheme(scheme === "dark" ? "light" : "dark");
+        }}
       />
 
       <div className="zoom-bar" role="toolbar" aria-label="Zoom">

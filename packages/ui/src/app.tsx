@@ -1391,7 +1391,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
               store={viewStore}
               canvases={canvases}
               bridge={bridge}
-              initialScheme={effectiveScheme}
+              scheme={effectiveScheme}
               narration={narration}
               flaggedReview={flaggedReview}
               deepReview={{
