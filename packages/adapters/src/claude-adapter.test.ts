@@ -194,7 +194,7 @@ describe("ClaudeAdapter session", () => {
       version: "2.1.220",
       now: () => 1,
     });
-    const session = await adapter.createSession({ cwd: "/repo", readOnly: true });
+    const session = await adapter.createSession({ cwd: "/repo" });
     await session.send({ prompt: "hi" });
     const events = await drain(session);
     expect(events.map((event) => event.kind)).toEqual([
@@ -212,7 +212,7 @@ describe("ClaudeAdapter session", () => {
     ).toEqual({ ok: true });
   });
 
-  it("builds a read-only posture, sets the session env marker, and injects no key", async () => {
+  it("builds a capable-by-default posture, sets the session env marker, and injects no key", async () => {
     const capturedArgs: ClaudeQueryArgs[] = [];
     const adapter = new ClaudeAdapter({
       binaryPath: "/bin/claude",
@@ -223,18 +223,21 @@ describe("ClaudeAdapter session", () => {
     });
     const session = await adapter.createSession({
       cwd: "/repo",
-      readOnly: true,
       model: "haiku",
       outputSchema: { type: "object" },
     });
-    await session.send({ prompt: "review" });
+    await session.send({ prompt: "act" });
     const options: ClaudeQueryOptions | undefined = capturedArgs[0]?.options;
     if (!options) throw new Error("queryFn was not invoked with options");
     expect(options.pathToClaudeCodeExecutable).toBe("/bin/claude");
-    expect(options.permissionMode).toBe("default");
-    expect(options.allowedTools).toEqual(["Read", "Grep", "Glob", "LS"]);
-    expect(options.disallowedTools).toContain("Write");
-    expect(options.disallowedTools).toContain("Bash");
+    // Capable by default: one session shape — bypass mode, the full toolset,
+    // and NO deny list. RED-proof: restore a read-only branch (permissionMode
+    // "default" + a disallowedTools deny list) and the three assertions below redden.
+    expect(options.permissionMode).toBe("bypassPermissions");
+    expect(options.allowedTools).toContain("Read");
+    expect(options.allowedTools).toContain("Write");
+    expect(options.allowedTools).toContain("Bash");
+    expect(options.disallowedTools).toBeUndefined();
     expect(options.model).toBe("haiku");
     expect(options.outputSchema).toEqual({ type: "object" });
     // Full env spread (the SDK replaces the child env), plus the scoped marker.
@@ -256,7 +259,6 @@ describe("ClaudeAdapter session", () => {
     controller.abort(); // aborted BEFORE the session exists — a future-only listener would miss it
     const session = await adapter.createSession({
       cwd: "/repo",
-      readOnly: true,
       signal: controller.signal,
     });
     await session.send({ prompt: "hi" });

@@ -35,7 +35,7 @@ function baseOptions(overrides: Partial<ClaudeQueryOptions> = {}): ClaudeQueryOp
   return {
     cwd: "/repo",
     pathToClaudeCodeExecutable: "/home/rai/.local/bin/claude",
-    permissionMode: "default",
+    permissionMode: "bypassPermissions",
     env: { PATH: "/usr/bin", HOME: "/home/rai" },
     ...overrides,
   };
@@ -76,7 +76,7 @@ describe("toSdkOptions", () => {
     ) as Record<string, unknown>;
     expect(sdk.cwd).toBe("/repo");
     expect(sdk.pathToClaudeCodeExecutable).toBe("/home/rai/.local/bin/claude");
-    expect(sdk.permissionMode).toBe("default");
+    expect(sdk.permissionMode).toBe("bypassPermissions");
     expect(sdk.model).toBe("haiku");
     expect(sdk.allowedTools).toEqual(["Read", "Grep"]);
     expect(sdk.disallowedTools).toEqual(["Write", "Bash"]);
@@ -168,7 +168,6 @@ describe("ClaudeAdapter driven by the real-shaped query factory", () => {
     });
     const session = await adapter.createSession({
       cwd: "/repo",
-      readOnly: true,
       outputSchema: { type: "object" },
     });
     await session.send({ prompt: "review" });
@@ -195,7 +194,7 @@ describe("ClaudeAdapter driven by the real-shaped query factory", () => {
       queryFn: createClaudeQueryFn(fakeLoadQuery([initFrame("user")])),
       now: () => 1,
     });
-    const session = await adapter.createSession({ cwd: "/repo", readOnly: true });
+    const session = await adapter.createSession({ cwd: "/repo" });
     await session.send({ prompt: "review" });
     const events = await drain(session);
     const warning = events.find((event) => event.kind === "auth.metered-key-warning");

@@ -282,8 +282,7 @@ describe("createLiveRefinePort — Claude seat (Claude-only machine resolves Son
       // not the council's planned "sonnet-5". Reporting the plan reddens this.
       model: "claude-sonnet-4-5-20260101",
     });
-    // The session is read-only and carries the structured-output schema (no docType).
-    expect(seenSpec?.readOnly).toBe(true);
+    // The session carries the structured-output schema (no docType).
     expect(seenSpec?.outputSchema).toBeDefined();
   });
 

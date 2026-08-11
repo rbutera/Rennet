@@ -266,7 +266,6 @@ export function createVerificationTurn(
   return async function runVerificationTurn(prompt: string): Promise<VerificationTurnResult> {
     const session = await port.createSession({
       cwd: options.cwd,
-      readOnly: true,
       outputSchema,
       ...(options.model === undefined ? {} : { model: options.model }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),

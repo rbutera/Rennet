@@ -228,7 +228,6 @@ describe("createLiveDraftPrBodyPort — Claude seat (Claude-only machine resolve
       // not the council's planned "haiku". Reporting the plan reddens this.
       model: "claude-haiku-4-5-20260101",
     });
-    expect(seenSpec?.readOnly).toBe(true);
     expect(seenSpec?.outputSchema).toBeDefined();
   });
 

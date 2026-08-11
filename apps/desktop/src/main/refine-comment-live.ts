@@ -243,7 +243,6 @@ export function claudeRefinePort(port: HarnessPort, cwd: string, model?: string)
     try {
       session = await port.createSession({
         cwd,
-        readOnly: true,
         outputSchema: REFINE_OUTPUT_SCHEMA,
         ...(model === undefined ? {} : { model }),
       });
