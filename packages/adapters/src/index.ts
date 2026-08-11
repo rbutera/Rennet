@@ -87,9 +87,14 @@ export {
 } from "./file-project-store";
 export { FileSettingsStore } from "./file-settings-store";
 export {
+  createGitShowFileRead,
   createVerificationFileReader,
+  createVerificationFileReaderForPatchset,
   createVerificationTurn,
   DEFAULT_VERIFICATION_CONTEXT_LINES,
+  type GitShowFileReadOptions,
+  type VerificationFileRead,
+  type VerificationFileReaderForPatchsetOptions,
   type VerificationFileReaderOptions,
   type VerificationTurnOptions,
 } from "./finding-verification-backend";
