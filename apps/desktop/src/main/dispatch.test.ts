@@ -11,18 +11,11 @@ import {
   ReviewService,
   type ReviewStorePort,
 } from "@rennet/core";
-import type {
-  DetectedHarness,
-  DiscoveryResult,
-  PermissionMode,
-  Project,
-  ProjectKind,
-} from "@rennet/protocol";
+import type { DetectedHarness, DiscoveryResult, Project, ProjectKind } from "@rennet/protocol";
 import type { Canvas, CanvasAngle, Patchset, Review } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
 import { createDispatch, type DispatchDeps } from "./dispatch";
-import { createHarnessConsentAuthority } from "./harness-consent-authority";
 import {
   createPublishConsentAuthority,
   type PublishConsentAuthority,
@@ -141,11 +134,6 @@ function harness(
   service: ReviewService;
   allowedRoots: Set<string>;
   buildCanvases: ReturnType<typeof vi.fn>;
-  settings: { permissionMode(): PermissionMode; setPermissionMode(mode: PermissionMode): void };
-  consent: {
-    grant(reviewId: string): string;
-    consume(reviewId: string, authorization: string): boolean;
-  };
   publishPort: ForgePublishPort & { posts: ForgeReviewPost[] };
   publishConsent: PublishConsentAuthority;
   reviewAsk: {
@@ -164,17 +152,6 @@ function harness(
       engine: { aiReview: true, claudeAvailable: true, codexAvailable: true },
     }),
   );
-  // An in-memory permission-mode store defaulting to the safe `manual`.
-  let mode: PermissionMode = "manual";
-  const settings = {
-    permissionMode: () => mode,
-    setPermissionMode: (next: PermissionMode) => {
-      mode = next;
-    },
-  };
-  // The REAL main-owned consent authority (bead workspace-fyvxb): main mints a
-  // single-use, review-bound token and consumes it before the harness runs.
-  const consent = createHarnessConsentAuthority();
   const publishConsent = createPublishConsentAuthority();
   // review.ask ports (issue #139) as recording spies, so a test can assert the
   // orchestrator is asked exactly once and Codex only in "both" mode — the whole
@@ -202,8 +179,6 @@ function harness(
       dirty = value;
     },
     buildCanvases,
-    settings,
-    consent,
     publishPort,
     publishConsent,
     // Front-door deps (issue #29): a trivial in-memory projects capability plus
@@ -243,28 +218,10 @@ function harness(
     service,
     allowedRoots,
     buildCanvases,
-    settings,
-    consent,
     publishPort,
     publishConsent,
     reviewAsk,
   };
-}
-
-/**
- * Mint a single-use harness-run authorization the way the renderer does — via the
- * `harness.requestConsent` command MAIN owns. Returns the opaque token to relay on
- * `review.canvases`.
- */
-async function requestConsent(
-  dispatch: ReturnType<typeof createDispatch>,
-  reviewId: string,
-): Promise<string> {
-  const out = (await dispatch("harness.requestConsent", {
-    commandId: randomUUID(),
-    reviewId,
-  })) as { authorization: string };
-  return out.authorization;
 }
 
 async function capturedReview(dispatch: ReturnType<typeof createDispatch>): Promise<Review> {
@@ -341,14 +298,11 @@ describe("createDispatch — canvas.* routing (issue #54)", () => {
     const { dispatch, buildCanvases } = harness();
     const review = await capturedReview(dispatch);
 
-    // The default mode is `manual`, which asks: the renderer requests approval
-    // (#58/#103, bead workspace-fyvxb) and relays the single-use token MAIN minted.
-    const authorization = await requestConsent(dispatch, review.id);
+    // Running the harness just runs — no consent token, no permission mode.
     const result = (await dispatch("review.canvases", {
       commandId: randomUUID(),
       reviewId: review.id,
       repoPath: REPO,
-      authorization,
     })) as {
       canvases: Record<CanvasAngle, Canvas>;
       elementDiffs: Record<string, { path: string; diff: string }>;
@@ -409,218 +363,16 @@ describe("createDispatch — flagged.review routing (the live finding runner, is
   });
 });
 
-describe("createDispatch — permission-mode settings (issue #103)", () => {
-  it("reads the persisted workspace permission mode", async () => {
-    const { dispatch } = harness();
-    const out = (await dispatch("settings.permissionMode", {})) as { mode: PermissionMode };
-    expect(out.mode).toBe("manual"); // the safe default the store starts at
-  });
-
-  it("writes the workspace permission mode and reads it back", async () => {
-    const { dispatch, settings } = harness();
-    const written = (await dispatch("settings.setPermissionMode", { mode: "auto" })) as {
-      mode: PermissionMode;
-    };
-    expect(written.mode).toBe("auto");
-    // The store actually changed (not just the echoed output).
-    expect(settings.permissionMode()).toBe("auto");
-    const read = (await dispatch("settings.permissionMode", {})) as { mode: PermissionMode };
-    expect(read.mode).toBe("auto");
-  });
-
-  it("rejects an unrecognised mode at the command boundary", async () => {
-    const { dispatch, settings } = harness();
-    await expect(dispatch("settings.setPermissionMode", { mode: "yolo" })).rejects.toThrow();
-    // A rejected write must not mutate the store.
-    expect(settings.permissionMode()).toBe("manual");
-  });
-});
-
-describe("createDispatch — review.canvases harness-run consent gate (#58/#103)", () => {
-  // The vital circuit: the harness run (model spend) is gated at the MAIN
-  // boundary, resolving the effective mode from the persisted WORKSPACE store
-  // (the j98dt authority) AND, under a mode that asks, requiring a single-use,
-  // review-bound authorization MAIN itself minted (the fyvxb hardening). These
-  // tests pin the gate: they go RED if the mode guard is removed, if the single-
-  // use check is removed (a replay/forged boolean would then run the harness),
-  // AND if the gate over-blocks (auto/bypass would then be refused).
-
-  it("refuses the harness run under manual mode with NO authorization (buildCanvases never called)", async () => {
-    const { dispatch, buildCanvases, settings } = harness();
-    settings.setPermissionMode("manual"); // explicit; also the safe default
-    const review = await capturedReview(dispatch);
-
-    await expect(
-      dispatch("review.canvases", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        repoPath: REPO,
-      }),
-    ).rejects.toThrow(/authoriz/i);
-    // The model turn must not have run: the gate lives BEFORE buildCanvases.
-    expect(buildCanvases).not.toHaveBeenCalled();
-  });
-
-  it("refuses a FORGED authorization under manual mode (a token MAIN never minted)", async () => {
-    const { dispatch, buildCanvases } = harness();
-    const review = await capturedReview(dispatch);
-
-    await expect(
-      dispatch("review.canvases", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        repoPath: REPO,
-        // A caller-fabricated token — the exact attack the fyvxb hardening closes
-        // (the old `consent: true` boolean was forgeable this way).
-        authorization: "forged-not-minted-by-main",
-      }),
-    ).rejects.toThrow(/authoriz/i);
-    expect(buildCanvases).not.toHaveBeenCalled();
-  });
-
-  it("(1) legit single-use flow: approve review X → build X invokes the harness exactly once", async () => {
-    const { dispatch, buildCanvases } = harness();
-    const review = await capturedReview(dispatch);
-
-    const authorization = await requestConsent(dispatch, review.id);
-    const result = (await dispatch("review.canvases", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      repoPath: REPO,
-      authorization,
-    })) as { canvases: Record<CanvasAngle, Canvas> };
-
-    expect(buildCanvases).toHaveBeenCalledTimes(1);
-    expect(Object.keys(result.canvases).sort()).toEqual([...CANVAS_ANGLES].sort());
-  });
-
-  it("(2) REPLAY rejected: reusing the same authorization for a second build is refused, harness NOT re-invoked", async () => {
-    const { dispatch, buildCanvases } = harness();
-    const review = await capturedReview(dispatch);
-
-    const authorization = await requestConsent(dispatch, review.id);
-    // First build consumes the token → runs once.
-    await dispatch("review.canvases", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      repoPath: REPO,
-      authorization,
-    });
-    expect(buildCanvases).toHaveBeenCalledTimes(1);
-
-    // Replaying the SAME (now-consumed) token must be refused, and the harness
-    // must NOT run again. This is the property a plain boolean could never have.
-    await expect(
-      dispatch("review.canvases", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        repoPath: REPO,
-        authorization,
-      }),
-    ).rejects.toThrow(/authoriz/i);
-    expect(buildCanvases).toHaveBeenCalledTimes(1);
-  });
-
-  it("REPLAY across a different review is refused too (the token is review-BOUND)", async () => {
-    const { dispatch, buildCanvases } = harness();
-    const review = await capturedReview(dispatch);
-
-    const authorization = await requestConsent(dispatch, review.id);
-    // A token minted for THIS review cannot authorize a build claiming a different
-    // review id — the consume side keys on the review the token was bound to.
-    await expect(
-      dispatch("review.canvases", {
-        commandId: randomUUID(),
-        reviewId: "some-other-review",
-        repoPath: REPO,
-        authorization,
-      }),
-    ).rejects.toThrow(); // rejected (unknown review and/or unbound token)
-    expect(buildCanvases).not.toHaveBeenCalled();
-  });
-
-  it("(4) runs the harness under auto mode without any authorization (the mode allows)", async () => {
-    const { dispatch, buildCanvases, settings } = harness();
-    settings.setPermissionMode("auto");
-    const review = await capturedReview(dispatch);
-
-    await dispatch("review.canvases", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      repoPath: REPO,
-    });
-    expect(buildCanvases).toHaveBeenCalledTimes(1);
-  });
-
-  it("(4) runs the harness under bypass mode without any authorization", async () => {
-    const { dispatch, buildCanvases, settings } = harness();
-    settings.setPermissionMode("bypass");
-    const review = await capturedReview(dispatch);
-
-    await dispatch("review.canvases", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      repoPath: REPO,
-    });
-    expect(buildCanvases).toHaveBeenCalledTimes(1);
-  });
-
-  it("does NOT consume a token under auto mode (no spend of an unrelated grant)", async () => {
-    // A token minted while a prior manual approval happened must not be silently
-    // burned by an auto-mode run — the consume path is reached ONLY when the mode
-    // asks. So the token survives auto and still works if the mode flips back.
-    const { dispatch, buildCanvases, settings } = harness();
-    const review = await capturedReview(dispatch);
-    const authorization = await requestConsent(dispatch, review.id);
-
-    settings.setPermissionMode("auto");
-    await dispatch("review.canvases", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      repoPath: REPO,
-    });
-    expect(buildCanvases).toHaveBeenCalledTimes(1);
-
-    // Flip back to manual: the earlier token is still unspent and authorizes once.
-    settings.setPermissionMode("manual");
-    await dispatch("review.canvases", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      repoPath: REPO,
-      authorization,
-    });
-    expect(buildCanvases).toHaveBeenCalledTimes(2);
-  });
-
-  it("(3) resolves the effective mode from the WORKSPACE store, not a renderer-supplied value", async () => {
-    // Enforcement authority is the persisted workspace mode. Even though the
-    // input carries no mode field, flipping the store to `manual` (ask) blocks a
-    // run that `auto` would have allowed — proving the main reads the store, so a
-    // crafted IPC cannot smuggle a laxer mode. (j98dt authority, preserved.)
-    const { dispatch, buildCanvases, settings } = harness();
-    settings.setPermissionMode("manual");
-    const review = await capturedReview(dispatch);
-
-    await expect(
-      dispatch("review.canvases", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        repoPath: REPO,
-      }),
-    ).rejects.toThrow(/authoriz/i);
-    expect(buildCanvases).not.toHaveBeenCalled();
-  });
-});
-
 // ─────────────────────────────────────────────────────────────────────────────
 // publish.review — the FIRST real GitHub egress (issue #21).
 //
-// The egress is gated behind: (1) an egress-side "what you see is what leaves"
-// round-trip (payload/target fail-closed), (2) an explicit-target requirement,
-// (3) the effective mode resolved from the WORKSPACE store, and (4) a single-use,
-// (review+target+payload)-bound consent token consumed before ANY real post. The
-// dry-run posts nothing and needs no token. Every test names the gate it exercises
-// and is red-provable by neutralising exactly that gate.
+// Posting a review to GitHub is an EXTERNAL act, so unlike running a model (which
+// just runs) a real send stays explicitly confirmed. The egress is gated behind:
+// (1) an egress-side "what you see is what leaves" round-trip (payload/target
+// fail-closed), (2) an explicit-target requirement, and (3) a single-use,
+// (review+target+payload)-bound consent token ALWAYS consumed before ANY real post.
+// The dry-run posts nothing and needs no token. Every test names the gate it
+// exercises and is red-provable by neutralising exactly that gate.
 // ─────────────────────────────────────────────────────────────────────────────
 
 const SANDBOX_TARGET = {
@@ -743,10 +495,9 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     }
   });
 
-  it("(a) refuses a REAL post with no consent under manual mode", async () => {
+  it("(a) refuses a REAL post with no consent token (posting stays explicitly confirmed)", async () => {
     const port = fakePublishPort();
-    const { dispatch, settings } = harness(port);
-    settings.setPermissionMode("manual"); // ASK
+    const { dispatch } = harness(port);
     const review = await capturedReview(dispatch);
     const comments = publishComments();
     const payload = canonicalReviewPayload(comments);
@@ -766,8 +517,7 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
 
   it("(c) refuses a REAL post whose consent token was minted for a different payload", async () => {
     const port = fakePublishPort();
-    const { dispatch, settings } = harness(port);
-    settings.setPermissionMode("manual");
+    const { dispatch } = harness(port);
     const review = await capturedReview(dispatch);
     const comments = publishComments();
     const payload = canonicalReviewPayload(comments);
@@ -804,8 +554,7 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     // the one approved. Red-proof: dropping forgeRef from forgeTargetKey makes the two
     // keys equal and this post would be authorised.
     const port = fakePublishPort();
-    const { dispatch, settings } = harness(port);
-    settings.setPermissionMode("manual");
+    const { dispatch } = harness(port);
     const review = await capturedReview(dispatch);
     const comments = publishComments();
     const payload = canonicalReviewPayload(comments);
@@ -829,10 +578,9 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     expect(port.posts).toHaveLength(0);
   });
 
-  it("(e) happy path under manual: a matching single-use token authorizes exactly one post", async () => {
+  it("(e) happy path: a matching single-use token authorizes exactly one post", async () => {
     const port = fakePublishPort();
-    const { dispatch, settings } = harness(port);
-    settings.setPermissionMode("manual");
+    const { dispatch } = harness(port);
     const review = await capturedReview(dispatch);
     const comments = publishComments();
     const payload = canonicalReviewPayload(comments);
@@ -870,9 +618,9 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     expect(port.posts).toHaveLength(1); // still exactly one
   });
 
-  it("(e2) auto mode posts without a token; the request is byte-identical to the dry-run", async () => {
+  it("(e2) the real post's request is byte-identical to the dry-run's", async () => {
     const port = fakePublishPort();
-    const { dispatch, settings } = harness(port);
+    const { dispatch } = harness(port);
     const review = await capturedReview(dispatch);
     const comments = publishComments();
     const payload = canonicalReviewPayload(comments);
@@ -886,13 +634,15 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
       dryRun: true,
     })) as PublishResult;
 
-    settings.setPermissionMode("auto"); // no prompt, no token needed
+    // Posting stays explicitly confirmed: the real send consumes the single-use token.
+    const token = await requestPublishConsent(dispatch, review.id, SANDBOX_TARGET, payload);
     const real = (await dispatch("publish.review", {
       commandId: randomUUID(),
       reviewId: review.id,
       target: SANDBOX_TARGET,
       comments,
       payload,
+      authorization: token,
       dryRun: false,
     })) as PublishResult;
 
@@ -905,8 +655,7 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
 
   it("refuses an empty review (nothing to post is not a valid egress)", async () => {
     const port = fakePublishPort();
-    const { dispatch, settings } = harness(port);
-    settings.setPermissionMode("auto");
+    const { dispatch } = harness(port);
     const review = await capturedReview(dispatch);
     const empty: ReviewCommentInput[] = [];
 
@@ -1050,8 +799,6 @@ function frontDoorHarness(seed: {
         elementDiffs: {},
         engine: { aiReview: false, claudeAvailable: false, codexAvailable: false },
       }),
-    settings: { permissionMode: () => "manual", setPermissionMode: () => undefined },
-    consent: createHarnessConsentAuthority(),
     publishPort: fakePublishPort(),
     publishConsent: createPublishConsentAuthority(),
     projects: {
@@ -1181,23 +928,20 @@ describe("createDispatch — front door (issue #29)", () => {
 });
 
 describe("createDispatch — review.ask routing (issue #139)", () => {
-  // Open a real review and flip to `auto` so the model-spend gate does not ask —
-  // these tests pin ROUTING; the gate has its own regressions below.
+  // Open a real review. Asking a model just runs — no permission gate, no token —
+  // so these tests pin ROUTING directly.
   async function openReview(): Promise<{
     dispatch: ReturnType<typeof createDispatch>;
     reviewAsk: { askOrchestrator: ReturnType<typeof vi.fn>; askCodex: ReturnType<typeof vi.fn> };
     service: ReviewService;
-    settings: { permissionMode(): PermissionMode; setPermissionMode(mode: PermissionMode): void };
     review: Review;
   }> {
     const h = harness();
-    h.settings.setPermissionMode("auto");
     const review = await capturedReview(h.dispatch);
     return {
       dispatch: h.dispatch,
       reviewAsk: h.reviewAsk,
       service: h.service,
-      settings: h.settings,
       review,
     };
   }
@@ -1207,7 +951,6 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
     const out = (await dispatch("review.ask", {
       commandId: randomUUID(),
       reviewId: review.id,
-      patchsetId: review.activePatchsetId,
       mode: "orchestrator",
       question: "is the retry-after in seconds or ms?",
     })) as { mode: string; primary: { model: string }; secondOpinion?: unknown };
@@ -1223,7 +966,6 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
     const out = (await dispatch("review.ask", {
       commandId: randomUUID(),
       reviewId: review.id,
-      patchsetId: review.activePatchsetId,
       question: "no mode given",
     })) as { mode: string; secondOpinion?: unknown };
     expect(out.mode).toBe("orchestrator");
@@ -1236,7 +978,6 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
     const out = (await dispatch("review.ask", {
       commandId: randomUUID(),
       reviewId: review.id,
-      patchsetId: review.activePatchsetId,
       mode: "both",
       question: "does the client agree?",
     })) as {
@@ -1270,7 +1011,6 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
     await dispatch("review.ask", {
       commandId: randomUUID(),
       reviewId: review.id,
-      patchsetId: review.activePatchsetId,
       mode: "both",
       question: "q",
     });
@@ -1278,116 +1018,15 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
     expect(seen).toEqual([`o:${review.activePatchsetId}`, `c:${review.activePatchsetId}`]);
   });
 
-  it("refuses a question whose patchsetId is not the current active patchset (P1-2)", async () => {
-    const { dispatch, reviewAsk, review } = await openReview();
-    await expect(
-      dispatch("review.ask", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        patchsetId: "a-stale-patchset-id",
-        mode: "both",
-        question: "q",
-      }),
-    ).rejects.toThrow(/changed since/i);
-    expect(reviewAsk.askOrchestrator).not.toHaveBeenCalled();
-    expect(reviewAsk.askCodex).not.toHaveBeenCalled();
-  });
-
   it("threads the RESOLVED review to both ports (a question is ABOUT the open review)", async () => {
     const { dispatch, reviewAsk, review } = await openReview();
     await dispatch("review.ask", {
       commandId: randomUUID(),
       reviewId: review.id,
-      patchsetId: review.activePatchsetId,
       mode: "both",
       question: "q",
     });
     expect(reviewAsk.askOrchestrator).toHaveBeenCalledWith({ review, question: "q" });
     expect(reviewAsk.askCodex).toHaveBeenCalledWith({ review, question: "q" });
-  });
-});
-
-describe("createDispatch — review.ask model-spend gate (P1-1, mirrors review.canvases)", () => {
-  // These pin the vital model-spend circuit: under a mode that ASKS (manual, the
-  // default), a live ask requires a single-use token MAIN minted, and a missing /
-  // forged / replayed token calls NEITHER port. They go RED if the gate is removed,
-  // if the single-use check is dropped, or if the gate over-blocks auto/bypass.
-
-  it("refuses under manual mode with NO authorization — NEITHER port runs", async () => {
-    const { dispatch, reviewAsk, settings } = harness();
-    settings.setPermissionMode("manual"); // explicit; also the safe default
-    const review = await capturedReview(dispatch);
-    await expect(
-      dispatch("review.ask", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        patchsetId: review.activePatchsetId,
-        mode: "both",
-        question: "q",
-      }),
-    ).rejects.toThrow(/authoriz/i);
-    expect(reviewAsk.askOrchestrator).not.toHaveBeenCalled();
-    expect(reviewAsk.askCodex).not.toHaveBeenCalled();
-  });
-
-  it("refuses a FORGED authorization under manual mode — NEITHER port runs", async () => {
-    const { dispatch, reviewAsk } = harness();
-    const review = await capturedReview(dispatch);
-    await expect(
-      dispatch("review.ask", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        patchsetId: review.activePatchsetId,
-        mode: "both",
-        question: "q",
-        authorization: "forged-not-minted-by-main",
-      }),
-    ).rejects.toThrow(/authoriz/i);
-    expect(reviewAsk.askOrchestrator).not.toHaveBeenCalled();
-    expect(reviewAsk.askCodex).not.toHaveBeenCalled();
-  });
-
-  it("a legit single-use token authorizes ONE ask; a replay is refused (no re-spend)", async () => {
-    const { dispatch, reviewAsk } = harness();
-    const review = await capturedReview(dispatch);
-    const authorization = await requestConsent(dispatch, review.id);
-
-    await dispatch("review.ask", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      patchsetId: review.activePatchsetId,
-      mode: "orchestrator",
-      question: "q",
-      authorization,
-    });
-    expect(reviewAsk.askOrchestrator).toHaveBeenCalledTimes(1);
-
-    reviewAsk.askOrchestrator.mockClear();
-    // Replay the SAME token — single-use means it is already spent.
-    await expect(
-      dispatch("review.ask", {
-        commandId: randomUUID(),
-        reviewId: review.id,
-        patchsetId: review.activePatchsetId,
-        mode: "orchestrator",
-        question: "q again",
-        authorization,
-      }),
-    ).rejects.toThrow(/authoriz/i);
-    expect(reviewAsk.askOrchestrator).not.toHaveBeenCalled();
-  });
-
-  it("auto mode needs NO token — the ask runs (the gate does not over-block)", async () => {
-    const { dispatch, reviewAsk, settings } = harness();
-    settings.setPermissionMode("auto");
-    const review = await capturedReview(dispatch);
-    await dispatch("review.ask", {
-      commandId: randomUUID(),
-      reviewId: review.id,
-      patchsetId: review.activePatchsetId,
-      mode: "orchestrator",
-      question: "q",
-    });
-    expect(reviewAsk.askOrchestrator).toHaveBeenCalledTimes(1);
   });
 });

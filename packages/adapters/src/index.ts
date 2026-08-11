@@ -86,7 +86,6 @@ export {
   type FileProjectStoreDeps,
   type ProjectDraft,
 } from "./file-project-store";
-export { FileSettingsStore } from "./file-settings-store";
 export {
   createGitShowFileRead,
   createVerificationFileReader,

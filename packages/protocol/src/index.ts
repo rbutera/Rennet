@@ -12,10 +12,8 @@ import type {
   ReviewNarration,
 } from "@rennet/types";
 import { z } from "zod";
-import { permissionModeSchema } from "./permission-mode";
 
 export * from "./bodies";
-export * from "./permission-mode";
 export * from "./rsp";
 export * from "./sha256";
 
@@ -644,63 +642,17 @@ export const commandDefinitions = {
     }),
     output: z.object({ review: reviewSchema }),
   },
-  // ── Settings: permission modes (issue #103) ────────────────────────────────
-  // The workspace-level permission MODE (manual / auto / bypass) that governs
-  // gated actions. `settings.permissionMode` reads the persisted default;
-  // `settings.setPermissionMode` writes it. The renderer layers a per-run
-  // override over this (resolvePermissionMode); the persisted value is the
-  // workspace default. First consumer: the #58 Canvases harness-run gate.
-  "settings.permissionMode": {
-    input: z.object({}),
-    output: z.object({ mode: permissionModeSchema }),
-  },
-  "settings.setPermissionMode": {
-    input: z.object({ mode: permissionModeSchema }),
-    output: z.object({ mode: permissionModeSchema }),
-  },
-  // ── Harness-run consent, main-issued (issue #58 / #103, bead workspace-fyvxb) ─
-  // The renderer REQUESTS approval for a review's harness run; MAIN mints the
-  // authorization. This is the whole point of the fyvxb hardening: the per-run
-  // consent signal carried on `review.canvases` is no longer a renderer-supplied
-  // boolean (forgeable + replayable), but a single-use, review-BOUND token that
-  // only MAIN can issue and that MAIN consumes before the model spend. The
-  // renderer's role shrinks to asking; it can no longer ASSERT consent, only
-  // relay a token it obtained here. Minting is harmless under auto/bypass (the
-  // token is simply never checked); the enforcement lives entirely at consume
-  // time in `review.canvases`.
-  "harness.requestConsent": {
-    input: z.object({
-      commandId: commandIdSchema,
-      reviewId: z.string().min(1),
-    }),
-    output: z.object({
-      // The opaque, single-use authorization bound to `reviewId`. Present it once
-      // on `review.canvases`; MAIN consumes it and a replay is rejected.
-      authorization: z.string().min(1),
-    }),
-  },
   // ── Live canvases (issue #54) ──────────────────────────────────────────────
   // Runs the live pipeline (decompose → budget-gated angle → ordering → place)
   // for the review's active patchset and returns the five-angle canvas set the
   // renderer reads. On-demand (opened Canvases view), not on every capture.
+  // Running the harness (the model spend) is Rennet's whole job — it just runs;
+  // nothing gates or asks permission before the model turn composes.
   "review.canvases": {
     input: z.object({
       commandId: commandIdSchema,
       reviewId: z.string().min(1),
       repoPath: z.string().min(1),
-      // The #58/#103 harness-run authorization (bead workspace-fyvxb). Under a
-      // consent-requiring mode (`manual`) MAIN requires a single-use token that it
-      // ITSELF minted for THIS review via `harness.requestConsent`, verifies it
-      // matches the review and has not been used, and CONSUMES it before invoking
-      // the harness. Absent / forged / already-consumed ⇒ refused, no build. This
-      // REPLACES the old renderer-supplied `consent: boolean`, which was forgeable
-      // (any caller could assert `true`) and replayable (reusable across runs).
-      // Under `auto`/`bypass` no authorization is required. The effective mode is
-      // still resolved from the persisted WORKSPACE store (the j98dt authority),
-      // so the vital model-spend circuit has two independent guards (Rule 75: no
-      // single fault clears it — a laxer mode can't be smuggled, and the consent
-      // signal can no longer be forged or replayed).
-      authorization: z.string().min(1).optional(),
     }),
     // `elementDiffs` (issue #60): the real per-element diff map delivered with the
     // canvas set so zooming into an element shows real code, not the fixture.
@@ -717,11 +669,11 @@ export const commandDefinitions = {
       engine: reviewEngineSchema.optional(),
     }),
   },
-  // ── Publish consent request, main-issued (issue #21, bead workspace-fyvxb lineage) ─
-  // The renderer REQUESTS approval to POST a review to GitHub; MAIN mints the
-  // authorization. Like `harness.requestConsent`, MAIN is the sole issuer — but the
-  // egress is MORE vital than a model run, so the token is bound to MORE than the
-  // review: it is bound to the exact TARGET (PR + head) AND the exact PAYLOAD bytes.
+  // ── Publish consent request, main-issued (issue #21) ───────────────────────
+  // Posting to GitHub is an EXTERNAL act, so it stays explicitly confirmed (running
+  // a model, by contrast, just runs). The renderer REQUESTS approval to POST a
+  // review; MAIN is the sole issuer of the authorization, and the token is bound to
+  // the exact TARGET (PR + head) AND the exact PAYLOAD bytes.
   // A token minted to post payload P to PR#5@head-A cannot authorise a different
   // payload, a different PR, or a different head. Single-use, consumed at egress.
   "publish.requestConsent": {
@@ -745,10 +697,11 @@ export const commandDefinitions = {
   //   • MAIN re-derives the canonical payload from `comments` and refuses on any
   //     disagreement with `payload` (byte-exact), and refuses an ill-formed target —
   //     both on dry-run and real, so the dry-run surfaces integrity faults too.
-  //   • Under a consent-requiring mode (`manual`) a real send requires the
-  //     single-use token from `publish.requestConsent`, bound to THIS review, target,
-  //     and payload; absent / forged / replayed ⇒ refused, nothing leaves. Dry-run
-  //     needs no token (it posts nothing).
+  //   • A real send ALWAYS requires the single-use token from `publish.requestConsent`,
+  //     bound to THIS review, target, and payload; absent / forged / replayed ⇒
+  //     refused, nothing leaves. Posting to GitHub is an external act — it stays
+  //     explicitly confirmed — unlike running a model, which just runs. Dry-run needs
+  //     no token (it posts nothing).
   //   • The review event is always a neutral COMMENT — the outbound request has no
   //     shape for APPROVE (R33/#80).
   "publish.review": {
@@ -933,24 +886,18 @@ export const commandDefinitions = {
   //     "no synthesis, ever" is a property of the schema, not just the router.
   // The routing law — orchestrator once, both adds Codex, never a synthesis — lives
   // in `@rennet/core`'s `askReview`. The ports are LIVE (a real orchestrator turn +
-  // an optional `codex exec`), so an ask IS metered model spend and MAIN gates it
-  // like `review.canvases`: `patchsetId` pins the exact snapshot the question is
-  // ABOUT (a mismatch with the current active patchset is refused, so a stale-view
-  // question is never silently answered against regenerated code), and
-  // `authorization` is the single-use, review-bound token MAIN minted — required
-  // under a mode that ASKS (manual), unused under auto/bypass.
+  // an optional `codex exec`); asking a model is Rennet's whole job, so it just runs
+  // — no permission check, no consent token. Dispatch resolves the current review
+  // ONCE and hands the SAME snapshot to both legs, so a "both" ask can never cross
+  // two patchsets.
   "review.ask": {
     input: z.object({
       commandId: commandIdSchema,
       reviewId: z.string().min(1),
-      /** The active patchset the question is ABOUT — dispatch refuses a mismatch. */
-      patchsetId: z.string().min(1),
       /** Default "orchestrator": an omitted mode never fires a second model. */
       mode: askModeSchema.default("orchestrator"),
       /** The reviewer's question about the review. */
       question: z.string().min(1),
-      /** The single-use main-minted harness authorization; required under manual. */
-      authorization: z.string().optional(),
     }),
     output: askReviewResultSchema,
   },

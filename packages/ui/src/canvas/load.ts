@@ -39,19 +39,14 @@ export interface LoadedCanvases {
 export async function loadCanvases(
   bridge: RennetBridge,
   review: Review,
-  authorization: string | null,
 ): Promise<LoadedCanvases | null> {
   try {
+    // Running the harness is Rennet's whole job — it just runs. No consent token,
+    // no permission mode: opening Canvases composes the model turn directly.
     const { canvases, elementDiffs, narration, engine } = await bridge.invoke("review.canvases", {
       commandId: crypto.randomUUID(),
       reviewId: review.id,
       repoPath: review.repositoryRoot,
-      // The #58/#103 harness-run authorization (bead workspace-fyvxb): under a
-      // mode that asks, the caller relays the single-use token MAIN minted for
-      // THIS review via `harness.requestConsent`; MAIN consumes it before the
-      // spend. Omitted under auto/bypass (no token required) — the field is only
-      // included when the caller holds one, never asserted as a bare boolean.
-      ...(authorization ? { authorization } : {}),
     });
     return {
       canvases,

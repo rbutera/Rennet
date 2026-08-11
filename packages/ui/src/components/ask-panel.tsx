@@ -29,16 +29,6 @@ export interface AskPanelProps {
   bridge: RennetBridge;
   /** The open review a question is ABOUT. */
   reviewId: string;
-  /** The active patchset the question is ABOUT — MAIN refuses a mismatch. */
-  patchsetId: string;
-  /**
-   * Obtain the single-use, review-bound authorization for THIS ask, or `null` when
-   * the effective mode does not require one (auto/bypass). The parent owns the mode
-   * and the `harness.requestConsent` mint, so the panel never fabricates consent — it
-   * relays a token MAIN issued, which MAIN consumes once. A rejection surfaces as the
-   * ask error (the model spend never runs unauthorized).
-   */
-  authorize(): Promise<string | null>;
   /** UI timeout for a single ask; defaults to {@link DEFAULT_ASK_TIMEOUT_MS}. */
   timeoutMs?: number;
 }
@@ -47,13 +37,12 @@ export interface AskPanelProps {
  * A self-contained ask surface: a question box + the one-model/both split, and the
  * side-by-side answer cards for the last question. Holds only its own draft/mode/
  * result state, so mounting it next to the canvases needs nothing from the parent
- * but the bridge, the review+patchset id, and the authorize hook.
+ * but the bridge and the review id. Asking a model is Rennet's whole job — the ask
+ * just runs, with no consent hook.
  */
 export function AskPanel({
   bridge,
   reviewId,
-  patchsetId,
-  authorize,
   timeoutMs = DEFAULT_ASK_TIMEOUT_MS,
 }: AskPanelProps) {
   // The routing for the next question. Defaults to "orchestrator" so pressing Ask
@@ -76,16 +65,11 @@ export function AskPanel({
     setError(undefined);
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      // Authorize BEFORE the spend: under manual mode this mints the single-use
-      // token MAIN consumes; under auto/bypass it resolves null and MAIN needs none.
-      const authorization = await authorize();
       const invocation = bridge.invoke("review.ask", {
         commandId: crypto.randomUUID(),
         reviewId,
-        patchsetId,
         mode,
         question: trimmed,
-        ...(authorization === null ? {} : { authorization }),
       });
       // Race the invocation against a UI timeout so a turn that never settles cannot
       // leave the panel permanently pending (and blocking every later ask).
