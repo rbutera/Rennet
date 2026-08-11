@@ -128,6 +128,12 @@ export function crossCheckRisks(
         findingIds.push(finding.id);
       }
     }
+    // ⚠️ LAMP: `confirmed` here means only that a finding shares >= 2 salient tokens
+    // with this risk — a LEXICAL overlap, which can pair two unrelated statements. It
+    // is NOT proof the risk was resolved. This is why the reading frame deliberately
+    // renders `confirmed` as "possibly related" (a weak pointer), never "addressed":
+    // do not read this status as a resolution. Binding to real per-finding risk
+    // provenance would let it mean what its name says; there is none today.
     return findingIds.length > 0
       ? { riskId: risk.riskId, status: "confirmed", findingIds }
       : { riskId: risk.riskId, status: "open", findingIds: [] };

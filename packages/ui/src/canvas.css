@@ -1424,6 +1424,18 @@
 .hypothesis-count-confirmed {
   color: var(--text-faint);
 }
+/* The all-matched caveat (P0-1): shown only when every predicted risk drew a weak
+   lexical match and none is open — so "0 open" never reads as an all-clear. */
+.hypothesis-all-related {
+  margin: 0 0 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--amber-line);
+  background: var(--amber-surface);
+  color: var(--amber);
+  font-size: 12px;
+  line-height: 1.4;
+}
 .hypothesis-risk-list {
   list-style: none;
   margin: 0;

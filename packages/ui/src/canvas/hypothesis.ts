@@ -66,12 +66,14 @@ function compareCodeUnits(left: string, right: string): number {
 
 /**
  * Fold a committed hypothesis + its risk cross-check into the ordered reading
- * frame the surface renders. Risks are ordered by severity (high → medium → low),
- * then OPEN before confirmed within a severity (the un-cleared risks first, where
- * the human's attention should go), then by riskId — a pure function of the input
- * set, independent of input order. A risk absent from the cross-check defaults to
- * open (never confirmed), so a missing or partial cross-check can never make a
- * risk look handled.
+ * frame the surface renders. Risks are ordered OPEN before confirmed FIRST (the
+ * un-cleared, predicted-but-unflagged risks are the anti-rubber-stamp payoff and
+ * must lead — a screenful of weak lexical "possibly related" matches must never push
+ * the genuine "check yourself" rows below the fold, P0-1), then by severity (high →
+ * medium → low) within each group, then by riskId — a pure function of the input set,
+ * independent of input order. A risk absent from the cross-check defaults to open
+ * (never confirmed), so a missing or partial cross-check can never make a risk look
+ * handled.
  */
 export function buildHypothesisFrame(
   hypothesis: ReviewHypothesis,
@@ -96,9 +98,11 @@ export function buildHypothesisFrame(
     })
     .sort(
       (left, right) =>
-        SEVERITY_RANK[left.severity] - SEVERITY_RANK[right.severity] ||
-        // Open before confirmed within a severity — the un-cleared risks first.
+        // OPEN before confirmed GLOBALLY — the un-cleared "check yourself" rows lead, so a
+        // screenful of weak "possibly related" matches can never bury them (P0-1 ordering).
         (left.status === right.status ? 0 : left.status === "open" ? -1 : 1) ||
+        // Then severity within each group (the most-severe unchecked prediction first).
+        SEVERITY_RANK[left.severity] - SEVERITY_RANK[right.severity] ||
         compareCodeUnits(left.riskId, right.riskId),
     );
 

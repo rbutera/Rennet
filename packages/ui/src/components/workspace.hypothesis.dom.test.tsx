@@ -169,6 +169,46 @@ describe("CanvasWorkspace — the hypothesis reading frame (#178/#181)", () => {
     }
   });
 
+  it("warns when EVERY risk is only a lexical match — '0 open' must not read as all-clear (P0-1)", () => {
+    // All risks confirmed (0 open). Without the caveat, "0 open · N related" could read
+    // as "nothing to worry about"; the honest reading is "weak overlap for everything,
+    // verified nothing." (Red-proof: remove the caveat block and this reddens.)
+    const allMatched: FlaggedReview = {
+      status: "ok",
+      findings: [
+        {
+          findingId: "f1",
+          anchor: "rennet:hunk/h1",
+          summary: "a finding",
+          severity: "high",
+          agreement: { kind: "concur", agree: 1, total: 1 },
+        },
+      ],
+      crossChecks: [{ riskId: "R1", status: "confirmed", findingIds: ["f1"] }],
+      hypothesis: {
+        domain: "d",
+        scope: { inScope: [], outOfScope: [] },
+        designExpectation: "e",
+        risks: [{ riskId: "R1", statement: "the only risk", severity: "high", disconfirmer: "x" }],
+        repoContextPresent: true,
+      },
+    };
+    const { container } = mount(
+      <CanvasWorkspace canvases={canvasSet()} flaggedReview={allMatched} />,
+    );
+    const caveat = container.querySelector(".hypothesis-all-related");
+    expect(caveat).toBeTruthy();
+    expect(caveat?.textContent).toMatch(/none was verified/i);
+  });
+
+  it("shows NO all-matched caveat while any risk is still open", () => {
+    // reviewWithHypothesis has an open risk → the "0 open" caveat must not appear.
+    const { container } = mount(
+      <CanvasWorkspace canvases={canvasSet()} flaggedReview={reviewWithHypothesis()} />,
+    );
+    expect(container.querySelector(".hypothesis-all-related")).toBeNull();
+  });
+
   it("collapses the frame with the terse chrome toggle (narrative-first, never a trap)", async () => {
     const { container, user } = mount(
       <CanvasWorkspace canvases={canvasSet()} flaggedReview={reviewWithHypothesis()} />,

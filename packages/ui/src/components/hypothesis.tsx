@@ -115,6 +115,15 @@ export function HypothesisReadingFrame({
             </span>
           </span>
         </div>
+        {/* The all-matched caveat (P0-1): "0 open" must never read as "nothing to worry
+            about." When EVERY predicted risk drew only a lexical match, say plainly that
+            none was verified — a content caveat (it breathes, like the failed-runner
+            banners) so a screen of "possibly related" is not mistaken for an all-clear. */}
+        {frame.counts.open === 0 && frame.counts.confirmed > 0 ? (
+          <p className="hypothesis-all-related" role="note">
+            Every predicted risk drew only a lexical match — none was verified. Judge each yourself.
+          </p>
+        ) : null}
         <ol className="hypothesis-risk-list">
           {frame.risks.map((risk) => (
             <RiskRow key={risk.riskId} risk={risk} onJumpToFinding={onJumpToFinding} />
