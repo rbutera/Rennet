@@ -108,7 +108,16 @@ export function codexDraftPrBodyPort(
   return async (prompt) => {
     try {
       const result = await executor({ model, effort, prompt, outputSchema: PR_BODY_OUTPUT_SCHEMA });
-      return mapDraftOutput(result.output);
+      const mapped = mapDraftOutput(result.output);
+      // Report the model Codex OBSERVABLY ran (from its session log, #74 MED-3), not
+      // the requested/planned `model`. Codex honors `-m`, so the two usually agree —
+      // but a subscription that silently substitutes a model would make the requested
+      // pick a lie about what wrote the draft, and the core must not render config as
+      // runtime provenance. When the log named no model, `result.model` is absent and
+      // the core falls back to the requested model (the best remaining truth).
+      return mapped.status === "emitted" && result.model !== undefined
+        ? { ...mapped, model: result.model }
+        : mapped;
     } catch (error) {
       return { status: "failed", reason: `the PR-body draft turn failed: ${describeThrow(error)}` };
     }

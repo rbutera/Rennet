@@ -58,11 +58,18 @@ const INPUT: LiveDraftPrBodyInput = {
   requirements: ["The limiter MUST bound the fail-open path"],
 };
 
-/** A fake codex executor capturing the request and returning a canned output. */
-function fakeExecutor(output: unknown, onCall?: (req: CodexExecRequest) => void): CodexExecutor {
+/** A fake codex executor capturing the request and returning a canned output. An
+ *  `observedModel` stands in for the model the real executor reads from the session
+ *  log (#74 MED-3) — distinct from the REQUESTED model to prove the port reports what
+ *  ran, not the plan. */
+function fakeExecutor(
+  output: unknown,
+  onCall?: (req: CodexExecRequest) => void,
+  observedModel?: string,
+): CodexExecutor {
   return async (req: CodexExecRequest): Promise<CodexExecResult> => {
     onCall?.(req);
-    return { output };
+    return { output, ...(observedModel === undefined ? {} : { model: observedModel }) };
   };
 }
 
@@ -124,7 +131,7 @@ function fakeClaudePort(
 }
 
 describe("createLiveDraftPrBodyPort — Codex seat (council resolves Luna)", () => {
-  it("drafts on Codex, returns the council-resolved model, and grounds the prompt on the review", async () => {
+  it("drafts on Codex, reports the OBSERVED runtime model (not the requested pick), and grounds the prompt", async () => {
     let seenPrompt = "";
     const port = createLiveDraftPrBodyPort({
       claudePort: async () => null,
@@ -134,6 +141,9 @@ describe("createLiveDraftPrBodyPort — Codex seat (council resolves Luna)", () 
           (req) => {
             seenPrompt = req.prompt;
           },
+          // What Codex ACTUALLY ran (from its session log) — a runtime-versioned id
+          // DISTINCT from the requested "gpt-5.6-luna", so reporting the plan reddens.
+          "gpt-5.6-luna-2026-06-01",
         ),
     });
     const result = await port(INPUT);
@@ -141,8 +151,8 @@ describe("createLiveDraftPrBodyPort — Codex seat (council resolves Luna)", () 
       status: "drafted",
       title: "Bound the rate limiter's fail-open path",
       body: "Adds a fallback bucket.",
-      // pr-body-draft resolves to Luna when Codex is installed (Table 1 / Table 3).
-      model: "gpt-5.6-luna",
+      // The OBSERVED model, not the council-resolved plan — provenance is what wrote it.
+      model: "gpt-5.6-luna-2026-06-01",
     });
     // The real drafting material reached the model — the honest-account inputs, not
     // a diffstat. This is the citing contract on the LIVE path.
@@ -150,6 +160,22 @@ describe("createLiveDraftPrBodyPort — Codex seat (council resolves Luna)", () 
     expect(seenPrompt).toContain("process-local fallback bucket");
     expect(seenPrompt).toContain("The limiter MUST bound the fail-open path");
     expect(seenPrompt).toContain("Document the migration note.");
+  });
+
+  it("falls back to the requested model when the session log named none (best remaining truth)", async () => {
+    const port = createLiveDraftPrBodyPort({
+      claudePort: async () => null,
+      // No observed model from the executor (an uncorrelated / model-less session log).
+      codexExecutor: async () => fakeExecutor({ title: "A clean title", body: "A clean body." }),
+    });
+    const result = await port(INPUT);
+    // pr-body-draft resolves to Luna when Codex is installed (Table 1 / Table 3).
+    expect(result).toEqual({
+      status: "drafted",
+      title: "A clean title",
+      body: "A clean body.",
+      model: "gpt-5.6-luna",
+    });
   });
 
   it("returns an honest `failed` when the Codex turn throws — never a fabricated draft", async () => {
