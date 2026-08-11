@@ -39,7 +39,7 @@ Then, for depth:
 4. `docs/Rennet Dependency Standard.md`
 5. `docs/Rennet Navi Handoff.md`
 
-Every one of these is subordinate to Rule Zero. `docs/Rennet Evidence Gate Status.md` was removed from this list on 2026-08-11: gating implementation on an open evidence gate is exactly the ceremony Rule Zero forbids.
+Every one of these is subordinate to Rule Zero.
 
 The Contracts and Rulings document (formerly titled the Master Plan; ruling numbers unchanged) wins on general product and architecture conflicts, and the Product and Vision document is the canonical statement of intent. The Architecture Contracts win within project context, immutable patchsets, invalidation, persistence, privacy, and publication. The Dependency Standard wins on package selection, versions, toolchain ownership, package licensing, and dependency overlap. Historical Wingman documents are evidence and rationale only where a current authority supersedes them.
 

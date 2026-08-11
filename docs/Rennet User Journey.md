@@ -10,8 +10,6 @@ source: 2026-08-07 journey synthesis (dashboard report) over the prototype UX do
 
 # Rennet User Journey
 
-> ⚠️ **RULE ZERO (CLAUDE.md, 2026-08-11) outranks this document.** No consent gates, no gates, no robustness for robustness' sake. The journey's shape and ordering are unaffected, and the explicit sign-before-anything-posts act is a product feature that stays; passages carrying a ⛔ SUPERSEDED marker are void where they conflict.
-
 > **Resteer 2026-08-09:** rewritten to the v3 prototype after Rai's wireframe feedback. Authority: [[Rennet v3 Resteer 2026-08-09]] and the v3 frames (gallery https://nimbus.piranha-wyvern.ts.net:9443/). The old wizard-and-home shape is gone; the shape below is the one Rai approved.
 
 **The canonical, ordered account of the user's day in Rennet.** Every step below was designed somewhere (the prototype, the plans, the issue queue), but no single ratified document told the journey *in order*, and the ordering is itself a constraint no single issue owns: the product is a road from pointing at code to **signing the paper**, and every UI slice must know where on that road it sits.
@@ -74,9 +72,7 @@ Clicking a Yours row, a Team PR, or **refresh** opens a review. One engine, two 
 
 The review heart is the **sequence canvas**, the surface Rai kept from the old prototype and asked to see everywhere after a click or a refresh. In v3 it is **tall**: it scrolls the whole changeset with real scroll and **no viewport-fold theatre**; the order rail holds your place.
 
-**Diff/code-view affordances [R45].** Each hunk carries a single **context-labeled button**: it reads **`view test`** on an implementation hunk and **`view implementation`** on a test, with an honest disabled **`no tests`** when nothing references it. **Open-in-editor** deep-links to the exact line (copy disclosure before it opens a materialised ref copy).
-
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Open-in-editor opens; the disclosure step in front of the click is ceremony and goes.
+**Diff/code-view affordances [R45].** Each hunk carries a single **context-labeled button**: it reads **`view test`** on an implementation hunk and **`view implementation`** on a test, with an honest disabled **`no tests`** when nothing references it. **Open-in-editor** deep-links to the exact line.
 
 **The inline conversation cluster [R46].** Reading is not read-only. On any anchor (a diff line, a dragged range, a chunk header, a conversation fragment) the same universal cluster works: **verbs × anchors**, Comment / Change / Question / Discuss, plus **Approve chunk**. The mark lives at its anchor (Design Doctrine); threads live in the **right margin aligned to their line**, and the composer opens there, so **the diff column is a fixed point that never reflows**. **Ink publishes; backlight (blue) stays local** is rendered inside the cluster, so a private note can never be mistaken for a publish-bound one.
 
@@ -108,9 +104,7 @@ Every disposition (approve / request-change / comment / question, at any granula
 
 ### Stage 8: The collation draft canvas
 
-The **forming destination** (R40): a **glass** (working, translucent, yours) canvas whose substrate is the L2 disposition set across every lens. Every disposition collates here into one coherent, still-modifiable working draft of the outbound artifact, one click back to each anchor. You collate, reword (the raw note becomes a **refined** comment; the strikethrough keeps what you actually typed visible), reorder, **merge** and **split** dispositions, and withdraw. **Every staged item carries the inline conversation cluster**, so you can question or discuss a staged chunk before signing. **The orchestrator proposes; you dispose:** it can suggest refinements and accept or dismiss, but it never writes the draft.
-
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The orchestrator may write into the draft — it is your private working glass, everything on it is editable and reversible, and the sign is where your authorship lands. The mode frames the labels: **own-branch** leans composition-heavy (a **handoff** bundle), **other-PR** leans per-item refinement (a review to post). Same canvas, mode-framed.
+The **forming destination** (R40): a **glass** (working, translucent, yours) canvas whose substrate is the L2 disposition set across every lens. Every disposition collates here into one coherent, still-modifiable working draft of the outbound artifact, one click back to each anchor. You collate, reword (the raw note becomes a **refined** comment; the strikethrough keeps what you actually typed visible), reorder, **merge** and **split** dispositions, and withdraw. **Every staged item carries the inline conversation cluster**, so you can question or discuss a staged chunk before signing. **The orchestrator works the draft with you** — it can reword, merge, reorder, and compose, and everything it does is editable and reversible, because the draft is your private working glass and the sign downstream is where your authorship lands. The mode frames the labels: **own-branch** leans composition-heavy (a **handoff** bundle), **other-PR** leans per-item refinement (a review to post). Same canvas, mode-framed.
 
 - **Owned by:** the collation draft canvas owner issue (R40), #17 (seed), #19 (other-PR refinement), #72 (own-branch composition).
 

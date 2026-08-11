@@ -9,8 +9,6 @@ related: ["[[Rennet Contracts and Rulings]]", "[[Wingman Surfacing DSL and Model
 
 # Rennet Canvas Paradigm
 
-> ⚠️ **RULE ZERO (CLAUDE.md, 2026-08-11) outranks this document.** No consent gates, no gates, no robustness for robustness' sake. Passages below carrying a ⛔ SUPERSEDED marker are void where they conflict; everything else stands.
-
 *Design doc, 2026-08-06. Responds to Rai's framing: "Rennet is, at its core, a bunch of **canvases** that the agent can fill and manipulate and the user can interact with." Designed against the two reference models he pointed at — the MCP Apps extension (SEP-1865, `io.modelcontextprotocol/ui`) and mcp_excalidraw — both read firsthand for this doc. Honours the 2026-08-06 corrections: MIT throughout, roll-up hard-baked, logical ordering, decisions never capped, action-defined read state, the review→agent handoff loop (Master Plan §2.1).*
 
 **Headline recommendation up front: adopt the canvas paradigm as the product's interaction model — it is ~70% the existing architecture renamed, and the remaining 30% (the interaction contract and the primed orchestrator) is exactly the part OQ9 already says Rennet must build for itself. Implement it as a hybrid: a bespoke event-sourced canvas state model inside `core`, exposed to the orchestrator through an MCP tool surface that borrows the MCP Apps interaction grammar (tool visibility, context-update notifications) without adopting its iframe/`ui://` rendering layer, which solves a problem Rennet does not have.**
@@ -64,8 +62,8 @@ interface Canvas {
   layers: {
     substrate:  SubstrateLayer       // L0 — read-only
     analysis:   AnalysisLayer        // L1 — deterministically placed
-    disposition: DispositionLayer    // L2 — user-sovereign
-    annotation: AnnotationLayer      // L3 — orchestrator-writable, visually distinct
+    disposition: DispositionLayer    // L2 — the user's review judgment
+    annotation: AnnotationLayer      // L3 — orchestrator marks, visually distinct
   }
   overlay: BlastRadiusPaint[]        // amber paint from the overlay angle; never a layer
                                      // the orchestrator or user writes
@@ -88,9 +86,9 @@ Element shapes per canvas (all reference admitted docs by `docId` + anchor; canv
 | flagged | finding elements: severity, agreement state (both concur / models disagree), anchor | from admitted `finding` docs; an index whose flags render as marks at their anchors on the other canvases (the automated-review layer's own lens, not a house) |
 | noise | verified groups, SUSPECTED groups, anomaly callouts | deterministic checkers admit VERIFIED; the floor renders the residue guarantee |
 
-**L2 Disposition** — the user's dispositions, in the one settled model: `{anchor, type: approve | request-change | comment | question, body}` (Master Plan §2.1). This layer is **user-sovereign**: no agent, including the orchestrator, may write to it. It is simultaneously (a) read state (OQ4: read is action-defined), (b) the publish payload on someone else's PR, and (c) the handoff bundle on your own branch. The canvas is therefore also *where the handoff loop lives*: batching L2 to a coding harness, receiving the new patchset, and opening the successor canvas whose lineage-carried approved elements arrive pre-settled is the loop of §2.1 expressed as canvas state.
+**L2 Disposition** — the user's dispositions, in the one settled model: `{anchor, type: approve | request-change | comment | question, body}` (Master Plan §2.1). It is simultaneously (a) read state (OQ4: read is action-defined), (b) the publish payload on someone else's PR, and (c) the handoff bundle on your own branch. The canvas is therefore also *where the handoff loop lives*: batching L2 to a coding harness, receiving the new patchset, and opening the successor canvas whose lineage-carried approved elements arrive pre-settled is the loop of §2.1 expressed as canvas state.
 
-**L3 Annotation** — the orchestrator's marks: highlights, callouts, links between elements, proposals. Visually distinct (glass doctrine: this is chrome, and it must *look* like the agent's hand, never like L1 analysis or L2 human judgment). Every L3 element is ephemeral-by-default (cleared when the conversation turn that motivated it is superseded) unless the user pins it. L3 can never alter L1 content, L2 state, cohort membership, or ordering.
+**L3 Annotation** — the orchestrator's marks: highlights, callouts, links between elements, proposals. Visually distinct (glass doctrine: this is chrome, and it must *look* like the agent's hand, never like L1 analysis or L2 human judgment). Every L3 element is ephemeral-by-default (cleared when the conversation turn that motivated it is superseded) unless the user pins it.
 
 ### 2.3 How the orchestrator reads and manipulates it
 
@@ -100,9 +98,7 @@ Through the operation contract in §3, transported as MCP tools (§5). The excal
 
 ## 3. The interaction contract
 
-The heart of "how to interact with the canvas and what interactions mean." Four actors, four disjoint capability sets. The MCP Apps `visibility: ["model", "app"]` split (SEP-1865) is the right shape here: every operation below is tagged with who may invoke it, and the boundary is enforced structurally (the orchestrator's MCP surface simply does not contain the user-only or engine-only operations), never by prompt.
-
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The op vocabulary below stands as a *vocabulary*; withholding operations from the orchestrator's surface so it "structurally cannot" act does not — a capable agent is the product, and the user authoring and signing what publishes is the only line that matters.
+The heart of "how to interact with the canvas and what interactions mean." Four actors and the vocabulary each one speaks. The MCP Apps `visibility: ["model", "app"]` split (SEP-1865) is the right shape here: every operation below is tagged with who normally invokes it, so a tool surface and a UI can be generated from the same table.
 
 ### 3.1 Operations by actor
 
@@ -115,7 +111,7 @@ The heart of "how to interact with the canvas and what interactions mean." Four 
 | `carry(lineage)` | On a new patchset: build the successor canvas; `exact`/`one-to-one` lineage carries L2 approvals forward; ambiguity fails closed (R8) — the element arrives unread |
 | `order(cohorts)` | Recompute logical-dependency order. Deterministic, hard-baked (corrections 7+8): neither agent nor project config can change the grouping behaviour |
 
-**(b) Fleet agents:** exactly one operation — **emit RSP documents**. No canvas access, no read-back, no placement influence beyond what their admitted documents contain. This is deliberate and is the existing "agents surface, the validator decides" doctrine unchanged.
+**(b) Fleet agents:** one operation — **emit RSP documents**. Placement follows from what the validator admits, so a fleet agent influences a canvas by writing a better document. This is the existing "agents surface, the validator decides" data flow unchanged.
 
 **(c) Orchestrator** (MCP tools, `visibility: model`):
 
@@ -125,13 +121,11 @@ The heart of "how to interact with the canvas and what interactions mean." Four 
 | `canvas.view` | `()` → open canvas, expanded cohorts, viewport anchor, selection | "Tell me what the user is looking at." Read-only deixis |
 | `canvas.focus` | `(anchor \| elementId)` | "Look here." Scrolls/opens the target for the user. Purely presentational: **no state changes, nothing becomes read.** The user's attention is invited, never spent on their behalf |
 | `canvas.annotate` | `(target, kind: highlight \| callout \| link, body?)` → L3 element | "I am marking this for our conversation." Ephemeral by default; pinnable by the user only |
-| `canvas.propose` | `(kind: disposition \| regroup \| split, payload)` → proposal element | "I suggest — you decide." A proposed disposition renders on L3 *next to* the target with an accept/edit/dismiss affordance; **accepting is a user act and only then does it become L2** (and thereby read). A regroup/split proposal follows the R9 pattern exactly: complete proposal, deterministic validation, user accepts/edits. ⛔ Under hard-baked grouping the orchestrator may propose regroups within the deterministic rules for *this review*; it cannot change grouping *behaviour* |
-| `canvas.recompute` | `(scope, angle?)` | "Re-run the fleet on this slice." Explicit, budget-gated by the same RoutePlan machinery (R10); maps to R29's explicit affected-only regeneration — model-backed regeneration stays never-automatic, and an orchestrator tool call is an explicit act the user sees |
+| `canvas.propose` | `(kind: disposition \| regroup \| split, payload)` → proposal element | "I suggest — you decide." A proposed disposition renders on L3 *next to* the target with an accept/edit/dismiss affordance, so the user can take it as written, reword it, or bin it. A regroup/split proposal follows the R9 pattern exactly: complete proposal, deterministic validation, user accepts/edits. Under hard-baked grouping the orchestrator proposes regroups within the deterministic rules for *this review*; it does not change grouping *behaviour* |
+| `canvas.recompute` | `(scope, angle?)` | "Re-run the fleet on this slice." Maps to R29's affected-only regeneration; the spend lands in the run ledger like every other invocation |
 | `context.query` | `(question about snapshot/knowledge)` | Read the base-branch context (§4) without re-deriving it |
 
-⛔ **The orchestrator cannot:** write L2 (disposition, approve, mark read), edit or delete L1, reorder or re-cohort anything outside an accepted proposal, touch the publish sheet, or see canvases of another review. The safety line of Master Plan §2.1 — "the human still disposes" — becomes a structural property of the tool surface rather than an instruction.
-
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. `canvas.recompute` is not budget-gated and model-backed regeneration is not "never automatic"; the orchestrator is not denied capability to make it structurally safe. The user still authors and signs what leaves the machine — that is a product feature, not a fence around the agent.
+The one line that matters, from Master Plan §2.1: **the user authors and signs what leaves the machine.** Everything upstream of the sign is working state the orchestrator can help with.
 
 **(d) User** (direct UI; some ops also emit context updates to the orchestrator, §3.2):
 
@@ -216,10 +210,9 @@ Assembly is deterministic, versioned like a base instruction, and inspectable in
 
 | Borrowed from MCP Apps | Rennet form |
 |---|---|
-| `visibility: ["model", "app"]` tool split | actor-partitioned op sets (§3.1), enforced structurally |
+| `visibility: ["model", "app"]` tool split | actor-tagged op sets (§3.1) |
 | `ui/update-model-context` | the user-interaction → orchestrator context-update stream (§3.2) |
 | `ui/notifications/tool-input` / `tool-result` streaming into a live surface | fleet/orchestrator activity rendering onto canvases as it happens |
-| host controls capability exposure | Rennet decides per-session which canvas tools the orchestrator gets |
 
 **The aspirational third leg (LATER, and worth keeping alive):** because the interface is already MCP-shaped, publishing **read-only Rennet canvases as genuine MCP Apps** — a `ui://` canvas resource another host (Claude Desktop et al.) renders — becomes a distribution option rather than a rewrite: same op vocabulary, apps transport bolted on at the edge. Under MIT (correction 1) the canvas op vocabulary can ship as part of the open RSP spec family. Not in any near-term cut; the design just should not foreclose it, and this one does not.
 
@@ -242,12 +235,7 @@ Assembly is deterministic, versioned like a base instruction, and inspectable in
 1. **Vocabulary:** confirm *angle* = lens, *canvas* = per-review stateful surface; five canvases + blast-radius overlay (not six canvases). (§1)
 2. **The decisions-cohort ordering mechanism** (carried from the C-report, now load-bearing for canvas placement): deterministic post-pass ordering decisions by their anchored chunk's DAG position is this doc's assumed answer — confirm, or pick agent-emitted decision edges instead; and does `salience` survive as a within-cohort tiebreak? (§2.2)
 3. **Annotation lifetime:** ephemeral-by-default with user pinning — right default? The alternative (persistent-by-default) silts the canvas up with stale agent marks. (§2.2 L3)
-4. **May the orchestrator *draft* dispositions in bulk** (e.g. "propose approve for all 12 verified-noise groups") as one proposal element, or only per-anchor? Bulk is powerful and edges toward auto-approve territory; per-anchor is safer and slower. (§3.1)
-5. **`canvas.view` privacy line:** the orchestrator seeing the user's live viewport/selection is what enables deixis, and is also attention-surveillance of a mild kind. In-scope for a local-first single-user tool, but pace/coverage privacy is elsewhere "not a setting" — confirm the orchestrator seeing *view state* (never dwell/pace metrics) is on the acceptable side of that line. (§2.3)
-
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Questions 4 and 5 are closed in favour of capability: bulk proposals are allowed (the user still adjudicates), and `canvas.view` needs no privacy clearance in a local single-user tool — neither blocks build.
-6. **Primer budget:** the priming manifest competes with conversation for the orchestrator's context window. Cap it like an instruction budget (8KB-ish) with overflow behaviour defined, or let it scale with review size?
-7. **OQ17 closure ride-along:** this design assumes grouping hard-baked (correction 7); the Master Plan still records OQ17 as open — close it when adopting this doc.
+4. **OQ17 closure ride-along:** this design assumes grouping hard-baked (correction 7); the Master Plan still records OQ17 as open — close it when adopting this doc.
 
 ## ⚠️ Where this reframes the existing plan
 

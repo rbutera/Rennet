@@ -9,11 +9,9 @@ related: ["[[Rennet Canvas Paradigm]]", "[[Rennet Contracts and Rulings]]", "[[R
 
 # Rennet Orchestrator Context Access
 
-> ⚠️ **RULE ZERO (CLAUDE.md, 2026-08-11) outranks this document.** No consent gates, no gates, no robustness for robustness' sake. The lean-bootstrap-plus-retrieval thesis, the tool surface, `context.ask`, and the protocol card all stand; passages carrying a ⛔ SUPERSEDED marker are void where they conflict.
+*Design doc, 2026-08-06. Answers Rai's superseding direction on the primer (voice, ~13:00): capping the primer is wrong, and dumping the whole context is wrong. The right design arms the orchestrator with tools and on-demand retrieval — possibly a background knowledge agent it can ask questions to — so it accesses what it needs without overloading its own context window, and it must know (a) that it CAN ask, (b) HOW to ask, and (c) WHAT KIND of answers come back. This doc supersedes the primer sketch in [[Rennet Canvas Paradigm]] §4.3.*
 
-*Design doc, 2026-08-06. Answers Rai's superseding direction on OQ6/primer-budget (voice, ~13:00): capping the primer is wrong, and dumping the whole context is wrong. The right design arms the orchestrator with tools and on-demand retrieval — possibly a background knowledge agent it can ask questions to — so it accesses what it needs without overloading its own context window, and it must know (a) that it CAN ask, (b) HOW to ask, and (c) WHAT KIND of answers come back. This doc supersedes the primer sketch in [[Rennet Canvas Paradigm]] §4.3 and its Open Question 6.*
-
-**Headline recommendation: turn the priming manifest from a container of context into a map of context. Boot the orchestrator with a lean, deterministic bootstrap (~2–4 KB: identity, freshness verdicts, count-level canvas state, and a protocol card that teaches it to ask) and put everything else behind a read-only retrieval tool family added to the existing in-process `canvasOps` MCP server (version the combined surface `canvasOps@2`). Build the background knowledge agent — but hide it behind ONE tool, `context.ask`, so from the orchestrator's side asking a sub-agent and calling a tool are the same act with the same schema-constrained contract. Nothing about the orchestrator's world changes if the answering machinery behind that tool is later upgraded, downgraded, or re-tiered. Settle the remaining unknowns (sync-vs-async ask, primer floor, should-ask rate) with the five experiments in §6.**
+**Headline recommendation: turn the priming manifest from a container of context into a map of context. Boot the orchestrator with a lean, deterministic bootstrap (~2–4 KB: identity, freshness verdicts, count-level canvas state, and a protocol card that teaches it to ask) and put everything else behind a read-only retrieval tool family added to the existing in-process `canvasOps` MCP server (version the combined surface `canvasOps@2`). Build the background knowledge agent — but hide it behind ONE tool, `context.ask`, so from the orchestrator's side asking a sub-agent and calling a tool are the same act with the same schema-constrained contract. Nothing about the orchestrator's world changes if the answering machinery behind that tool is later upgraded, downgraded, or re-tiered. Settle the remaining unknowns (sync-vs-async ask, primer floor, should-ask rate) with the experiments in §6.**
 
 **User-facing name (Rai, 2026-08-09): this whole baseline is the "Repo Map."** What this doc calls the ProjectSnapshot (deterministic, model-free), the knowledge layer (LLM, evidence-anchored), and the primer (this lean orientation map) is, to the user, one thing: the project's **Repo Map**, stored in its `.rennet` folder and mined once when the project is opened. It is the **baseline context pack**, fed alongside a **per-diff context pack** to the review agents and the orchestrator so neither spends its own window re-reading the codebase. The review agents' resulting PR review is what surfaces as the **Flagged lens** (R49). **Storage (R55), local-only by default:** the derived Repo Map lives in an app-owned store keyed by repo identity (`RepoRecord` / `realpath(git-common-dir)`, R19), so every worktree shares one entry and nothing "travels across branches" (the snapshot is pinned to main's OID); human-authored config stays committable in `.rennet/`; Rennet discovers a Repo Map committed into a repo, and mirroring your local map in is a per-project opt-in, default off. The other three directions are adopted (fable advice, folded 2026-08-09; R54): **nesting** composes by reference with an internal scope tree from workspace tooling and submodules pinned at the gitlink OID (the Canvas Paradigm §4.2 `WorkspaceContext` is promoted to adopted); **proactive update** keeps the deterministic snapshot rebuild and makes the knowledge layer log-structured (delta passes + periodic re-rollup), never blocking review; **net-novel** is a deterministic novelty ledger plus LLM judgment that must cite the baseline evidence it compared against. Rulings R54/R55; issues #141-#144. Source: `/Users/rai/notes/26-08-09 rennet feedback.md`.
 
@@ -43,7 +41,7 @@ Everything in this set shares one justification: **the orchestrator cannot know 
 | B1 | **Review identity**: workspace/repo, `reviewId`, `patchsetId`, lineage position ("delta re-review of ps_03; 14 of 19 elements carried approved"), mode (own-branch handoff vs someone-else's-PR publish) | It is the addressing scheme every tool call needs; nothing can be asked for without it | ~300 B |
 | B2 | **Freshness verdicts**, one line per repo: snapshot id + `current/updating/stale/failed` | R30: stale context is never consumed silently. The orchestrator must know *before* its first answer whether the ground it stands on is current — a rule enforced at tool-response level too (§2.4), but the headline verdict belongs in orientation | ~100 B/repo |
 | B3 | **Canvas state summary, count level only**: per canvas — element count, cohort count, disposition coverage (n approved / n request-changed / n unread), residue count | The shape of the review. Lets the orchestrator answer "where are we" and "what have you not looked at" without a call, and tells it where zooming is worthwhile. Counts, never contents — the decisions list is never capped (correction 4) and never inlined either; it is *reachable*, which is the actual requirement | ~400 B |
-| B4 | **The protocol card** (§4): the four-actor interaction contract in compressed form, the two product principles that govern its behaviour (logical ordering; roll-up/zoom), what it can never do, and the ask protocol — can-ask / how-to-ask / answer-shapes | This is the teaching layer. It is *about* the tools, so it cannot be behind them | ~1.5 KB |
+| B4 | **The protocol card** (§4): the four-actor interaction contract in compressed form, the two product principles that govern its behaviour (logical ordering; roll-up/zoom), and the ask protocol — can-ask / how-to-ask / answer-shapes | This is the teaching layer. It is *about* the tools, so it cannot be behind them | ~1.5 KB |
 | B5 | **Tool index**: tool names + one-line when-to-use descriptions. Full schemas stay deferred (§2.5) | "Know that it CAN ask" requires the menu in view. Schemas do not need to be — the Agent SDK's tool search defers them and loads on demand | ~500 B |
 | B6 | **Run-ledger headline**: one line — n fleet tasks ran, n docs admitted, n rejected, budget spent/remaining | Honest capability statement: whether analysis is complete, degraded, or budget-starved changes what the orchestrator should claim. Detail via `run.ledger` | ~150 B |
 
@@ -54,7 +52,7 @@ Assembly stays exactly as [[Rennet Canvas Paradigm]] §4.3 specified for the old
 Explicitly evicted from the old §4.3 sketch:
 
 - **The knowledge digest** ("top learned statements, confidence-labelled") — was in the fat primer; now `context.knowledge` / `context.ask`. A digest chosen at boot answers questions nobody asked; a retrieval answers the one that was.
-- **The full interaction contract text** — compressed to the protocol card; the long form is a resource the orchestrator can read if genuinely confused (`meta.contract`), which in practice it should never need because the *structural* enforcement (§2.6) does not depend on it having read anything.
+- **The full interaction contract text** — compressed to the protocol card; the long form is a resource the orchestrator can read if genuinely confused (`meta.contract`), which in practice it should rarely need.
 - RSP document bodies (decisions, claims, spec model, noise groups), disposition bodies and their inline clarification threads, annotation contents.
 - Diff hunks, file content at base ref, the occurrence manifest, the decomposition DAG.
 - Snapshot shards (symbols, dependency edges, entry points, test relationships), learned knowledge statements with their evidence.
@@ -67,9 +65,7 @@ Explicitly evicted from the old §4.3 sketch:
 
 Extend, don't reinvent: the canvas doc §5.1 already puts an in-process MCP server inside Rennet, attached to the orchestrator session (Claude slot via `@anthropic-ai/claude-agent-sdk` — `query()`'s `mcpServers` option takes in-process servers built with `createSdkMcpServer`; Codex and omp speak MCP externally, same contract, no `if (harness === X)`). The §3.1(c) operations stand unchanged. This design adds a **retrieval family** to the same server and versions the combined surface **`canvasOps@2`** — one version, one compatibility surface, because the interaction ops and the retrieval ops will be reasoned about together by every orchestrator prompt ever written.
 
-All retrieval tools are **read-only** (`readOnlyHint: true` — which also lets the harness parallelise them), **actor-tagged `visibility: model`**, and widen the write surface by exactly nothing: the ⛔ list of Canvas Paradigm §3.1c (no L2 writes, no L1 edits, no reordering, no publish sheet, no cross-review reads) is preserved because those operations simply do not exist on the surface.
-
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. `readOnlyHint` on a *retrieval* tool is just an accurate annotation and is fine; keeping the write surface empty so the orchestrator structurally cannot act is not — add the write ops the product needs and let the user sign what publishes.
+All retrieval tools are annotated **`readOnlyHint: true`** — accurate, and it lets the harness parallelise them — and **actor-tagged `visibility: model`**. They are additive: the interaction ops of Canvas Paradigm §3.1c are unchanged, and this family adds reads beside them.
 
 ### 2.1 Canvas bucket (the review's surfaces)
 
@@ -119,12 +115,6 @@ Byte-capped per response (settings-owned cap, same family as `context.totalBudge
 
 The obvious objection — "fifteen tools' schemas will eat the context you saved" — is already answered by the harness: **the Claude Agent SDK's tool search is on by default and defers in-process MCP tool schemas**; Claude sees a compact name list and loads a schema on demand (verified against the SDK's custom-tools doc, 2026-08-06). The bootstrap's B5 tool index plus deferred schemas is a few hundred bytes; only the schemas of tools actually used enter the window. Mark the always-hot trio — `canvas.describe`, `canvas.view`, `context.ask` — `alwaysLoad: true` so the core loop never pays a search round-trip. Codex/omp slots lack this exact mechanism; for them the schema set is the cost, which is one of the things E5 measures — and a reason to keep the tool *count* disciplined rather than the tool *reach*.
 
-### 2.6 What stays structural
-
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. This whole section is capability denial plus a budget gate: nothing "stays structural" — give the orchestrator the operations the product needs, keep `canvas.recompute` visible and accounted rather than budget-gated, and let the user's sign be the only line.
-
-The actor partition is enforced by surface composition, not by the protocol card: the orchestrator's MCP server contains no user-only or engine-only operation, so "the human still disposes" remains a property of the wiring. The retrieval family adds only reads. `canvas.recompute` (the one expensive escalation that *causes* model spend) stays exactly as §3.1c defined it — explicit, RoutePlan-budget-gated, visible to the user.
-
 ---
 
 ## 3. The background knowledge agent: yes — as the implementation of one tool
@@ -141,15 +131,15 @@ Three reasons, in order of weight:
 
 ### 3.2 The knowledge agent's contract
 
-**Position in the actor model: below the interaction contract, beside the fleet.** It is a consumer of the same substrate the fleet reads and it emits a validated document — it never touches a canvas, never sees dispositions-as-authority, never gets a write surface. (Fleet agents: "exactly one operation — emit RSP documents." The knowledge agent: exactly one operation — emit an `answer` document.)
+**Position in the actor model: below the interaction contract, beside the fleet.** It is a consumer of the same substrate the fleet reads and it emits a validated document. (Fleet agents: one operation — emit RSP documents. The knowledge agent: one operation — emit an `answer` document.)
 
 | Aspect | Contract |
 |---|---|
 | **Input** | `question` (free text), optional `scope` (anchors, paths, canvasId, angle — bounds the search and shrinks the prompt), optional `budgetHint` (`quick` / `thorough`) |
 | **Has access to** (that the orchestrator doesn't hold loaded) | Full snapshot shards; full knowledge layer; base-ref file contents; the admitted RSP corpus for this review; the occurrence manifest. All read-only |
-| **Does NOT have** | Canvas ops of any kind; the user's view state; the conversation between user and orchestrator (it gets the question, not the chat); any write path |
+| **Not in its input** | The user's view state, and the conversation between user and orchestrator — it gets the question, not the chat, which is what keeps its prompt small and its answers about the code |
 | **Output** | An **`answer` document**, validated like everything else: `{answer, evidence: [anchors/docIds/file:line], confidence: high\|medium\|low, consulted: [...], unanswered?: reason}` — byte-capped, provenance-carrying (model, tier, inputs digest). `unanswered` with a reason is a first-class success: an honest "the snapshot does not cover generated code" beats a fluent guess, and the schema makes refusal cheap |
-| **Routing** | Through the existing model-routing matrix: light tier default, heavy only via `budgetHint: thorough` + RoutePlan budget gate (R10). Spend appears in `run.ledger` like fleet spend — asking questions is analysis and is accounted as analysis |
+| **Routing** | Through the existing model-routing matrix: light tier default, heavy via `budgetHint: thorough`. Spend appears in `run.ledger` like fleet spend — asking questions is analysis and is accounted as analysis |
 | **Session model** | One **persistent warm session per review** (not per question): it accumulates map-knowledge of this reviewpatchset and gets prompt-cache reuse. Killed and re-warmed on patchset advance (its cached picture is exactly what R29 invalidates). E5 measures whether warm actually beats fresh |
 
 ### 3.3 Sync vs async
@@ -168,10 +158,10 @@ The (a)/(b)/(c) requirement, made concrete. The card is section B4 of the bootst
 ## How this session works
 You are the orchestrator for review {reviewId}. You converse with the reviewer
 about the code via the canvases. Four actors: the deterministic engine places
-analysis; fleet agents emitted it; YOU may describe, focus, annotate, propose,
-and ask; the USER alone dispositions. You cannot mark anything read, edit
-analysis, or reorder cohorts — your proposals become real only when the user
-accepts them.
+analysis; fleet agents emitted it; YOU describe, focus, annotate, propose, and
+ask; the USER reads, dispositions, and signs. Read state is theirs — it follows
+from their judgment on the code, not from your reading of it — and the sign is
+where their review leaves the machine.
 
 Two principles govern everything you present: content is grouped and ordered
 LOGICALLY so the review is understandable from first principles (never by
@@ -203,18 +193,14 @@ Why this lands the three requirements:
 - **(b) HOW** — the schemas are the contract (schema-constrained calls, loaded on demand per §2.5), and each tool's *description* carries its when-to-use trigger condition — prescriptive trigger conditions in tool descriptions measurably lift should-call rates on current models, which is precisely the lever this design leans on.
 - **(c) WHAT comes back** — the uniform envelope and the answer-document shape are stated once in the card and declared per-tool in the schemas. Crucially the card teaches the *semantics* the schema can't: cite evidence, surface staleness, respect cursors, honour `unanswered`.
 
-And the enforcement note that keeps this honest: the card is teaching, not security. Everything the orchestrator must not do is absent from its surface (§2.6), so a mis-taught or prompt-drifted orchestrator degrades to *unhelpful*, never to *unsafe*.
-
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The protocol card stands as teaching; the "unsafe is impossible because the surface is empty" guarantee it leans on does not — designing for a capable orchestrator is the point.
-
 ---
 
 ## 5. What this supersedes / touches
 
-1. **[[Rennet Canvas Paradigm]] §4.3**: the primer's role changes from container to map; the knowledge digest and inlined interaction contract leave the primer. Its OQ6 ("cap like an instruction budget?") is answered: neither cap nor scale — retrieve. Deterministic assembly + provenance digest survive unchanged.
+1. **[[Rennet Canvas Paradigm]] §4.3**: the primer's role changes from container to map; the knowledge digest and inlined interaction contract leave the primer. The old question of how big to make it is answered: neither cap nor scale — retrieve. Deterministic assembly + provenance digest survive unchanged.
 2. **`canvasOps@1` → `canvasOps@2`**: adds `canvas.read`, `canvas.thread`, the diff bucket, the context bucket (including `context.ask`, replacing §3.1c's thinner `context.query`), and the run bucket. One versioned surface, published under MIT alongside RSP as before.
 3. **[[Rennet Contracts and Rulings]] OQ9** gains its missing half: the orchestrator model now has a designed context-access subsystem, not just a session-shape ruling.
-4. **The routing matrix** (DSL §5.2) gains one row: `answer` (the knowledge agent's doc type), light tier default, heavy behind budget gate.
+4. **The routing matrix** (DSL §5.2) gains one row: `answer` (the knowledge agent's doc type), light tier default, heavy on `budgetHint: thorough`.
 5. **The validator/doc-type family** gains the `answer` schema — smallest doc type in the system, same envelope + provenance rules.
 
 ---
@@ -237,6 +223,5 @@ Instrument everything through the existing provenance machinery: every tool call
 
 ## OPEN QUESTIONS for Rai
 
-1. **`context.ask` spend visibility**: asking is model spend on your account. Ledger-only (visible in `run.ledger`, no ceremony), or a visible per-review ask-budget the way fleet budgets are surfaced? Recommendation: ledger-only in v1 — smooth-and-quick, and it is light-tier pennies — with the budget gate existing but generous.
-2. **Naming**: `canvasOps@2` as one surface vs splitting `retrievalOps@1` out. Doc recommends one surface (one contract to version and teach); flag if you want the retrieval family independently adoptable.
-3. **The protocol card's voice** (§4 draft) is written to be model-facing and terse — worth one read from you since it is the closest thing the orchestrator has to a constitution.
+1. **Naming**: `canvasOps@2` as one surface vs splitting `retrievalOps@1` out. Doc recommends one surface (one contract to version and teach); flag if you want the retrieval family independently adoptable.
+2. **The protocol card's voice** (§4 draft) is written to be model-facing and terse — worth one read from you since it is the closest thing the orchestrator has to a constitution.

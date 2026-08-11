@@ -13,8 +13,7 @@ Read these in order:
 9. [Rennet User Journey](./Rennet%20User%20Journey.md) — the ordered eight-stage journey (first run → sign), stage ownership, built-vs-open, the journey-fit convention.
 10. [Rennet Model Council](./Rennet%20Model%20Council.md) — the job catalogue, the three assignment tables, the resolver, the live budget gate, the ledger (R39).
 11. [Rennet Design Doctrine](./Rennet%20Design%20Doctrine.md) — the ratified design register: materials, colour law, interaction laws. Required reading for UI work.
-12. [Rennet Evidence Gate Status](./Rennet%20Evidence%20Gate%20Status.md) — what is proven vs. assumed.
-13. [Rennet Navi Handoff](./Rennet%20Navi%20Handoff.md) — orientation and working agreement for the building agent.
+12. [Rennet Navi Handoff](./Rennet%20Navi%20Handoff.md) — orientation and working agreement for the building agent.
 
 [Rennet Doc Architecture](./Rennet%20Doc%20Architecture.md) maps every document and its role.
 

@@ -9,12 +9,7 @@ updated: 2026-08-05
 # Rennet GitHub Integration Plan
 
 > [!IMPORTANT] Current implementation authority, 2026-08-05
-> Product name is **Rennet** and the forge-neutral boundary is `ForgePort`. [[Rennet Contracts and Rulings]] and [[Rennet Architecture Contracts]] override stale terminology below. Local author-side review produces a PR title/body preview and never pushes. Every GitHub mutation is a separate explicit, idempotent human action. Remote-head movement creates a new immutable patchset; Rennet updates only affected analyses and never mutates the prior synthesis in place. Route handoff is removed, Subtraction is not an angle, and content hashes are lineage evidence rather than identity.
-
-> [!IMPORTANT] ⛔ RULE ZERO (CLAUDE.md, added by Rai 2026-08-11) outranks this document
-> **No consent gates. No gates. No robustness for robustness' sake.** Rule Zero outranks every ruling number and every doctrine in `docs/`. Passages below specifying a publish ceremony, a hold-to-sign step, a human publish gate, or "never pushes" are superseded **in place** and marked ⛔ inline. Rennet may write and may push — submitting a PR requires a push, and publishing a review is the product doing its job. Nothing here has been deleted. **Everything empirical in this document stands unchanged**: the auth ladder, the rate-limit and 304 measurements, the anchoring finding, the `threads:` vs deprecated `comments` mutation shapes, the degradation *mapping*, and the polling design. Showing the user what will be sent is a feature; making them clear a screen before it sends is not.
->
-> ⛔ **The 2026-08-05 banner immediately above is superseded on two clauses**: "never pushes" and "every GitHub mutation is a separate explicit, idempotent human action". Rennet may push, and mutations need no per-act human ceremony. The rest of that banner (forge-neutral `ForgePort`, immutable patchsets on remote-head movement, no in-place synthesis mutation, content hashes as lineage evidence) stands.
+> Product name is **Rennet** and the forge-neutral boundary is `ForgePort`. [[Rennet Contracts and Rulings]] and [[Rennet Architecture Contracts]] override stale terminology below. Local author-side review produces a PR title/body preview. Remote-head movement creates a new immutable patchset; Rennet updates only affected analyses and never mutates the prior synthesis in place. Route handoff is removed, Subtraction is not an angle, and content hashes are lineage evidence rather than identity.
 
 The GitHub layer for [[Code Review Harness App]]. The product name is Rennet; the filename is retained only to preserve existing Obsidian links. Personal product, not the enterprise client work.
 
@@ -318,9 +313,7 @@ Concrete rules:
 2. **Multi-file threads split.** The first anchor carries the full text; the rest carry a one-line pointer back to it. Rennet keeps the single logical thread locally and re-joins on read, so the split is a publish-time artifact, not a data-model concession.
 3. **Non-contiguous same-file threads split** the same way, anchored on each hunk.
 4. **Out-of-diff anchors degrade to file-level threads** (`subjectType: FILE`) naming the line, or to the review body when the file is not in the changeset at all. Never silently drop.
-5. **Every degradation is visible in the publish sheet before signing.** The [[Code Review Harness App]] design already ratified an ink-vs-blue two-column ledger ("travels with the PR" vs "stays on this Mac"). Degradations belong in a third state on the ink side: published, but flattened. If a reviewer signs without seeing that a multi-file thread became three, the publish ceremony has lied to them, and the ceremony is the product's integrity mechanism.
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Rule 5 above is marked, not rules 1-4 or 6: the **degradation ledger survives as information** — showing that a multi-file thread became three anchors is honest and useful — but "**before signing**" and "the publish ceremony is the product's integrity mechanism" do not. There is no signing step and no ceremony to lie to. Display the ledger; do not gate the publish on someone reading it.
-
+5. **Every degradation is visible in the publish sheet.** The [[Code Review Harness App]] design already ratified an ink-vs-blue two-column ledger ("travels with the PR" vs "stays on this Mac"). Degradations belong in a third state on the ink side: published, but flattened. Showing that a multi-file thread became three anchors is information the reviewer wants; nothing waits on their reading it.
 6. **Round-trip loss is expected and must be modelled.** Re-reading a published review from GitHub will not reconstruct chunks, angles, or multi-file threads. The local event store is the only place the full structure exists. Do not attempt to parse the review body back into structure; keep the local record keyed by the returned thread IDs.
 
 ---
@@ -459,12 +452,9 @@ Which is the sharpest strategic point in this document: **at your primary daily 
 
 - GitHub App registration and device flow (rung 1). It does not unblock the dogfood case, and building it first would be optimising for a user who is not you.
 - Bot-comment ingestion (Codex, Greptile, gitStream). Read-only and additive; it can land after the publish pipeline is trusted.
-- Any write beyond the explicit publish act.
 - Webhooks. There is no callback endpoint and there should not be one.
 
-**Non-negotiable during dogfood:** every mutation is behind the human publish gate, and the enterprise client repos are client repos. No auto-anything.
-
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Two items above are struck: the out-of-v1 line "**any write beyond the explicit publish act**" (Rennet may write and may push; a PR cannot be submitted otherwise), and "**every mutation is behind the human publish gate ... no auto-anything**" (there is no publish gate). What remains non-negotiable here is not a Rennet gate at all but the client-repo authorization boundary — easyJet and other client repositories stay out of dogfood without written authorization, and that is untouched by Rule Zero. The rest of the v1 scope list stands.
+**Non-negotiable during dogfood:** the client-repo authorization boundary. easyJet and other client repositories stay out of dogfood without written authorization.
 
 ---
 
@@ -494,15 +484,13 @@ Which is the sharpest strategic point in this document: **at your primary daily 
 | 5 | Home surface GraphQL query set | Composed `involves:@me` / `review-requested:@me` / `org:` queries with dedup, explicit >1000 truncation state, `rateLimit { cost remaining }` surfaced in a debug pane. Answers open question 6. | P1 | 3 |
 | 6 | REST-first polling loop with conditional requests | Notifications ETag poll honouring `X-Poll-Interval`, per-PR ETag poll, GraphQL deep fetch only on change. Include a rate-limit consumption assertion in tests: N polls with no upstream change must consume zero quota. | P1 | 5 |
 | 7 | `ForgePort` capability-flag seam | Define the port in Rennet nouns with `supportsThreadResolution` / `supportsBatchedReview` / `supportsMultiLineAnchors` / `supportsFileLevelThreads`. Write the degradation logic against capabilities, not against `forge === 'github'`. | P1 | 1 |
-| 8 | Degradation ledger in the publish sheet | Third visual state on the ink side for "published but flattened": multi-file thread split into N, out-of-diff anchor demoted to file-level, angle flattened to body prose. The publish ceremony must not lie about what it sent. | P1 | 1, 7 |
+| 8 | Degradation ledger in the publish sheet | Third visual state on the ink side for "published but flattened": multi-file thread split into N, out-of-diff anchor demoted to file-level, angle flattened to body prose. Displayed as information; nothing waits on it. | P1 | 1, 7 |
 | 9 | Spike: re-anchor an outdated GitHub thread | Take a real force-pushed PR with `isOutdated: true, line: null` threads. Use `originalLine` plus base SHA plus the local object store to recompute a current anchor. Measure hit rate. Answers open question 10 and is a candidate demo moment. | P1 | none |
 | 10 | Local-git-vs-REST-diff source selection | Map GitHub repo clone URLs onto the discovered worktree set (repo identity via `git rev-parse --git-common-dir`, per the workspace model). Fetch `headRefOid`/`baseRefOid`, diff locally, fall back to REST diff with a visible degraded badge when the SHAs are not fetchable. | P1 | 5 |
 | 11 | Snapshot the old head SHA at review start | Fetch and pin the reviewed head SHA locally before any review work, so a later force-push cannot make the reviewed state unreachable. Prerequisite for the ratified snapshot plus auto-reopen model. | P1 | 10 |
 | 12 | Secondary rate limit backoff | Handle `Retry-After`, `X-RateLimit-Reset`, and 403-with-secondary-limit. Cap content-generating mutations against the 80/min and 500/hr ceilings, which a large decomposed review can approach. | P2 | 1 |
 | 13 | GitHub App registration and device flow (rung 1) | Register the app, enable device flow, implement the poll loop with `authorization_pending` / `slow_down` / `expired_token` / `access_denied`, refresh-token rotation at the 8-hour boundary. Deliberately after dogfood: it does not unblock the enterprise client. | P2 | 3 |
 | 14 | Calendar check on the `comments` deprecation | The `addPullRequestReview.comments` removal notice has been live and unenforced since 2023-10-01. Re-check the live schema periodically; ship on `threads:` regardless. Answers open question 3. | P3 | none |
-
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. **Bead 8's framing** ("the publish ceremony must not lie about what it sent") is struck — there is no publish ceremony. The bead itself survives rewritten as a display concern: show the flattening that publication applied, as information, with nothing gated on it. Every other bead is unaffected.
 
 ---
 

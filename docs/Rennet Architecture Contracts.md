@@ -13,8 +13,6 @@ source: codex
 
 # Rennet Architecture Contracts
 
-> ⚠️ **READ FIRST — RULE ZERO (CLAUDE.md, Rai, 2026-08-11) outranks every contract below.** No consent gates, no gates, no robustness for robustness' sake. Where a clause here denies the product a capability, demands an approval ceremony, or blocks work until something is discharged, Rule Zero wins and the clause is marked superseded in place.
-
 This note is the authoritative contract for project context, review snapshots, persistence, harness access, and publication in [[Code Review Harness App|Rennet]]. It records Rai's decisions from 2026-08-05 and resolves the relevant contradictions in [[Wingman Architecture Plan]], [[Wingman Settings and Setup Plan]], [[Wingman LSP Integration Plan]], [[Wingman Harness Adapter Protocol]], [[Wingman GitHub Integration Plan]], [[Wingman Surfacing DSL and Model Routing Plan]], and [[Wingman Repo Bootstrap Plan]].
 
 Where this note conflicts with those subordinate plans, **this note wins**. [[Rennet Contracts and Rulings]] remains authoritative outside this note's scope.
@@ -25,16 +23,14 @@ These are build constraints, not preferences:
 
 1. A review always targets an immutable `Patchset`. The working tree and a remote PR head may move; a `Patchset` may not.
 2. Every analysis artifact names the exact project snapshot, patchset, inputs, generator, and instructions that produced it.
-3. Stale project context is never silently used. It is refreshed, omitted with visible degradation, or the dependent operation is blocked.
-4. Rennet never runs a model merely because files changed. It may detect and classify invalidation automatically; model-backed regeneration is an explicit act.
-5. Rennet never mutates the user's Git index, creates a commit, pushes a branch, or publishes to GitHub without a distinct explicit act. It never commits on the user's behalf.
+3. Stale project context is never silently used. It is refreshed, or used with the degradation visible and named.
+4. Invalidation is detected and classified automatically, and Rennet may regenerate automatically where that makes the review better. Model spend is not gated (§7.2).
+5. Rennet writes, commits, and pushes on the acting path — handing work to a coding harness and submitting a PR both require it. It never stages its own `.rennet/` context into the user's Git index, and a review only reaches a forge on the user's explicit act.
 6. Persistent project knowledge lives under `.rennet/`. Temporary checkouts, prompt staging, language-server materialisations, and provider frames do not.
-7. A harness receives only an immutable review materialisation and explicitly assembled context by default. It does not run against the live source checkout.
+7. A harness receives an immutable review materialisation and explicitly assembled context by default, and may run against the live checkout when the task needs it.
 8. A repeated command cannot repeat an internal mutation or an external side effect.
-9. Unknown durable events are preserved but never skipped to produce a plausible projection. Unsupported history fails closed.
+9. Unknown durable events are preserved byte-for-byte and never skipped to produce a plausible projection. Projection of the affected review fails closed; what cannot be computed is named rather than guessed, and the warning travels with done, regeneration, and publish instead of refusing them.
 10. “Delete review” removes every Rennet-controlled copy of that review and states the limits of deletion outside Rennet's control.
-
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), for invariants 3, 4, 5, 7 and 9 only.** No consent gates, no gates, no robustness for robustness' sake. What applies instead: (3) stale context degrades visibly and says so, it never blocks the dependent operation; (4) Rennet may regenerate automatically when that makes the review better — no permission step (see §7.2, spend is not gated); (5) Rennet may write, commit, and push on the acting path, because handing work to a coding harness and submitting a PR both require it (R33 as amended by Rai 2026-08-11); (7) the harness is not confined to a read-only materialisation — a capable agent is the product, and it may run against the live checkout when the task needs it; (9) unknown events are still preserved byte-for-byte and reported honestly, but they no longer fail closed onto the whole review. Invariants 1, 2, 6, 8 and 10 stand unchanged — they make the product work, they do not police it.
 
 ## 2. Project context and `.rennet`
 
@@ -82,9 +78,7 @@ If `.rennet` files are already tracked, switching to `local` cannot make them un
 
 Rennet may create and incrementally maintain `.rennet/` after project context is enabled. This is the explicit exception to the older rule that Rennet never creates `.rennet/`. Discovery alone still writes nothing.
 
-Repo-supplied `.rennet` content is untrusted input. Existing shareable-key allowlists, repo-relative path escape checks, content-hash trust gates, and base-ref reading continue to apply. A branch may not change the context used to review itself unless the reviewer explicitly adopts that change for the review.
-
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), for the trust-gate and adoption ceremony.** No consent gates, no gates, no robustness for robustness' sake. Path-escape and key-shape checks stay (they stop real breakage); the content-hash trust gate and the "reviewer explicitly adopts" step go — read the repo's context, and say in the run ledger where it came from.
+Repo-supplied `.rennet` content is read as-is. Shareable-key allowlists and repo-relative path escape checks continue to apply because they stop real breakage, and the run ledger records which ref the context came from.
 
 ### 2.3 `ProjectSnapshot`
 
@@ -211,9 +205,7 @@ Every analysis artifact has one of these user-visible states:
 | `superseded` | A validated replacement succeeded. |
 | `failed` | Replacement failed; the old stale artifact remains visible with the failure. |
 
-Invalidation is automatic and deterministic. Regeneration that invokes a model is explicit because it may transmit code, spend money, and replace useful reasoning.
-
-The UX must support:
+Invalidation is automatic and deterministic, and regeneration is not gated on a permission step (§7.2). It can also be invoked directly, so the UX must support:
 
 - **Regenerate affected analysis** across the patchset;
 - regeneration of one angle;
@@ -303,31 +295,27 @@ Raw harness frames are off by default. If enabled for diagnostics, the setting s
 
 ### 7.2 Harness read authority and egress
 
-The default harness working directory is an app-cache-owned immutable materialisation of the patchset. The allowlist includes only:
+The default harness working directory is an app-cache-owned immutable materialisation of the patchset. By default it is given:
 
 - captured patchset content;
 - selected current project-snapshot shards and accepted knowledge;
 - explicitly assembled context documents and instructions;
 - the output-schema and occurrence manifest required by the task.
 
-Writes, arbitrary execution, inherited MCP servers, hooks, and ambient project settings are denied unless a capability-specific feature explicitly requires and discloses them. If a harness cannot be proven isolated, the `ContextManifest` sets `exhaustive: false`, names possible unmanaged sources, and the UI does not claim a complete egress manifest.
+Writes, execution, MCP servers, hooks, and ambient project settings are available to the harness — an agent that cannot run the tests it just wrote is not much use. Where a harness's inputs cannot be fully enumerated, the `ContextManifest` sets `exhaustive: false`, names the possible unmanaged sources, and the UI does not claim a complete egress manifest it does not have.
 
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The harness is not sandboxed by default: writes, execution, MCP servers and hooks are available to it, because an agent that cannot run the tests it just wrote is a gate wearing a lab coat. The honest half survives — a non-exhaustive manifest is still reported as non-exhaustive, and the UI still never claims a complete egress manifest it does not have.
-
-Before first use of each harness, and whenever its authority materially changes, Rennet shows:
+These facts stay available while a harness runs — in the title-bar execution-mode glyph, the per-run narration line, and the run ledger (R31):
 
 - executable, version, model-selection source, and provider;
-- exact read roots and denied capabilities;
+- exact read roots;
 - whether user configuration, hooks, MCP servers, or other ambient context may load;
 - that selected source/context may leave the machine for the harness's provider;
 - reported or estimated spend visibility and the applicable budget;
 - a link to the exact assembled prompt/context manifest for each run.
 
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), for the "before first use" interstitial only.** No consent gates, no gates, no robustness for robustness' sake. Every fact in the list above stays available and true — as the title-bar execution-mode glyph, the per-run narration line, and the run ledger (R31, v3 resteer item 1) — but it is never a screen the user has to get past before a harness may run.
-
 The truthful product claim is: **Rennet has no Rennet backend. Data is processed locally except for material explicitly sent through the user's selected harness/provider.** “Nothing leaves your machine” and unqualified “no cloud” are prohibited claims.
 
-Running a model to review code is Rennet's core function, so model spend is not gated: an initial generation or regeneration runs without any permission prompt or consent step, under the disclosure and budget above (deterministic refresh needs no model at all). A shared repository setting may never raise spend. Sending a review OUT to a forge is different — publishing to GitHub still requires a distinct explicit act (invariant 5), never a silent post.
+Running a model to review code is Rennet's core function, so model spend is not gated: an initial generation or regeneration just runs, under the disclosure and budget above (deterministic refresh needs no model at all). A shared repository setting may never raise spend. Sending a review OUT to a forge is different — publishing to GitHub is the user's own act (invariant 5), never a silent post.
 
 ### 7.3 Deleting a review
 
@@ -346,11 +334,9 @@ Rennet must disclose that it cannot erase copies already sent to a provider or G
 
 Events are immutable and upcast on read. Projections are disposable and rebuild from the event log.
 
-An unknown event type or unsupported event version is preserved byte-for-byte, but it blocks projection of the affected review and therefore blocks `done`, regeneration, and publish. The UI reports the exact unsupported type/version and required application version. It must never skip the event and present a partial projection as complete.
+An unknown event type or unsupported event version is preserved byte-for-byte. Projection of the affected review fails closed rather than skipping the event and presenting a plausible partial as complete; the UI reports the exact unsupported type/version and the application version that would understand it. Done, regeneration, and publish are not refused — they carry that warning with them, loudly, so nothing is published as though it were derived from state Rennet could compute.
 
-A store written by a newer schema is opened read-only only for safe metadata/export paths; normal review operations refuse. Migrations take a verified backup first and downgrade is refused.
-
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), for the blocking and refusal behaviour.** No consent gates, no gates, no robustness for robustness' sake. Preserve the bytes, show the partial projection *labelled as partial*, and let the user carry on reviewing; a version the app does not understand is a thing to report, not a reason to lock the review.
+A store written by a newer schema opens and says so. Migrations take a verified backup first.
 
 ## 8. GitHub secret ownership
 
@@ -369,9 +355,7 @@ GitHub credentials remain host-owned:
 
 Completing a local review creates a **PR submission preview** containing the proposed title, body, draft/base/head metadata, surfaced decisions, and publication/degradation ledger. Preview is a pure local projection. It does not push a branch, create a PR, update a PR, post comments, or resolve threads.
 
-The user may copy the preview. A future create/update-PR action is a separate, explicitly labelled GitHub mutation and is idempotent under §6. Rennet never pushes source code as part of that action; a remotely available head is a precondition.
-
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), for the never-push clause.** No consent gates, no gates, no robustness for robustness' sake. Pushing the branch is *part of* submitting the PR, not a precondition the user must satisfy first — R33 as amended by Rai on 2026-08-11 already says so. The preview stays pure; the submit act pushes.
+The user may copy the preview. Creating or updating the PR is a separate, explicitly labelled GitHub mutation, idempotent under §6, and it pushes the branch as part of that act (R33).
 
 ### 9.2 Reviewer-side publication
 
@@ -381,26 +365,23 @@ Submit is one explicit idempotent action pinned to the reviewed head SHA. It use
 
 ## 10. Acceptance criteria
 
-The contract is implemented only when all of these can fail and have been demonstrated to fail under a seeded violation:
+Every criterion below ships with a seeded violation that makes it fail — a check that cannot fail has not passed:
 
 - A clean full `ProjectSnapshot` and an incremental update at the same OID are byte-identical.
-- Changing a source/config/tool fingerprint makes dependent context unusable until regenerated; no harness request contains a stale shard.
+- Changing a source/config/tool fingerprint marks dependent context stale and shows the degradation; no harness request presents a stale shard as current.
 - Fresh local context updates leave `git status` unchanged in `local` mode, while `git-visible` mode exposes files without staging or committing them.
 - Opening or reviewing a repository does not change its working tree, index, refs, config, hooks, `.git/worktrees`, or other Git metadata, apart from the explicitly enabled `.rennet` context files.
 - A working-tree capture includes committed, staged, unstaged, and non-ignored untracked changes and remains inspectable after the live tree changes.
 - A PR head update creates a second patchset; the first remains byte-identical and inspectable.
 - Exact unchanged occurrences retain valid analysis; changed and ambiguous occurrences reopen and cannot inherit `read` through similarity.
-- Seeded direct and dependency changes produce `invalid` and `potentially-invalid` states respectively; no model call occurs until regeneration is invoked.
+- Seeded direct and dependency changes produce `invalid` and `potentially-invalid` states respectively.
 - A failed or cancelled regeneration leaves the stale prior artifact visible and does not mark it current.
 - Two identical commands yield one event range and one result; a duplicate publish yields one GitHub side effect under failure injection.
-- A harness attempting an unapproved read, write, execution, MCP call, or hook is denied or the run is visibly blocked as non-isolatable.
 - The displayed assembled prompt is byte-identical to the bytes supplied to the harness; unmanaged sources are never hidden.
 - A deleted review leaves no seeded identifier or content in any Rennet-controlled database, WAL, backup, blob store, or cache.
-- A seeded unknown event prevents projection, completion, regeneration, and publication.
+- A seeded unknown event survives byte-for-byte, fails its projection closed rather than producing a plausible partial, and warns on done, regeneration, and publish rather than blocking them.
 - `gh` tokens never appear in durable storage or renderer messages; persisted tokens are rejected when strong OS encryption is unavailable.
 - Author preview causes zero Git or GitHub mutations. Every external mutation requires a separate explicit act and survives timeout/retry without duplication.
-
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md), for the opening "implemented only when…" clause and for four bullets: the harness-denial bullet, the stale-context-unusable bullet, the seeded-unknown-event bullet, and the "no model call occurs until regeneration is invoked" half of the invalidation bullet.** No consent gates, no gates, no robustness for robustness' sake. These criteria assert gates this document no longer has, so a build is not held back for failing to demonstrate them; every other bullet here is a real product property (byte-identical rebuilds, immutable patchsets, honest read state, one side effect per command, real deletion, prompts shown as sent) and still holds.
 
 ## Related
 

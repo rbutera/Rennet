@@ -1,34 +1,24 @@
-# OpenSpec changes — status
+# OpenSpec changes
 
-**Read this before picking up a change directory.** Checkbox state in `tasks.md` is badly stale corpus-wide: several changes show 0 of N tasks ticked while their code is fully shipped on `main`. Do not infer "open" from unticked boxes. Verified 2026-08-11 by artifact existence.
+Two changes are active. Everything else shipped and was archived on 2026-08-11, with its requirements promoted into `openspec/specs/`.
 
-Rule Zero (`AGENTS.md`) outranks every spec in here. Several carry ⛔ supersession banners; the struck requirements are not work.
+Rule Zero (`AGENTS.md`) outranks every spec in here and in `openspec/specs/`.
 
-## Genuinely open
+## Active
 
-- **`build-repo-map-lifecycle`** — the only live one. Wave 1 landed (`knowledge.ts`, `escape-path.ts`); the delta-pass half has not. Tracked as #243.
-
-## Shipped — archive candidates
-
-All of the following have their code on `main`. Treat as done.
-
-`build-canvas-state-model`, `build-codex-utility-port`, `build-comprehension-ordering-pass`, `build-decomposition-angle-generation`, `build-decomposition-floor`, `build-github-changeset-source`, `build-harness-adapter-protocol`, `build-local-review-mvp`, `build-model-council-v1`, `build-orchestrator-session`, `build-publish-safety-gate`, `build-rsp-document-core`, `build-wire-claude-sdk`, `harden-nx-cache-hygiene`, `wire-live-review-pipeline`, `wire-model-council-live`.
-
-Shipped **despite unticked boxes** — these look open and are not:
-
-| change | shipped artifact |
+| change | state |
 |---|---|
-| `add-review-intelligence-core` (0/40) | `core/hypothesis-generation.ts`, `dual-seat.ts`, `finding-reconcile.ts`, `finding-verification.ts` |
-| `build-canvas-ui` | `ui/canvas/logic.ts` |
-| `build-canvasops-mcp-surface` | `core/canvas-ops.ts`, `adapters/canvas-ops-server.ts` |
-| `build-destination-frame` | `ui/canvas/destination.ts`, `ui/canvas/publish.ts` |
-| `build-disposition-ui` | `ui/canvas/authoring.ts` |
-| `build-inhabited-codeview` | `ui/components/code-view.tsx` |
-| `build-span-grained-dispositions` | `core/dispositions-span.test.ts` |
-| `deliver-real-diff-on-zoom` | `core/element-diffs.ts` |
-| `wire-live-end-to-end-review` | `core/project-snapshot.ts` |
+| `build-repo-map-lifecycle` | 4/30. Wave 1 landed (`knowledge.ts`, `escape-path.ts`); the delta-pass half has not. Tracked as #243. |
+| `add-review-intelligence-core` | 35/40. Verified task-by-task against `main`. The five open tasks are genuinely unbuilt: the per-review turn ceiling (0.5), the ProjectSnapshot projection into `runHypothesisPass` (5.2), and the `ReviewPipelineInput`/`Result` extension carrying hypothesis and cross-checks (6.1). |
 
-## Two specs that describe gates, not product
+## Archived
 
-- **`build-publish-safety-gate`** — roughly half is retired under Rule Zero: the acknowledge-control that blocks signing until run degradations are confirmed, and the framing that #21 may not land until this is green. The surviving half is good and worth keeping: emit-fidelity tests (published bytes byte-equal previewed bytes), hold-gate wiring tests, and the keyboard-accessibility fix, which unblocks a user who currently cannot publish by keyboard at all.
-- **`build-harness-adapter-protocol`** — the read-only harness posture is superseded. It is still live in code; tracked as **#259**.
+24 changes, under `archive/2026-08-11-*`. Their checkboxes were verified against the code on `main` before archiving, not ticked on trust — four changes were found to have real gaps, and those boxes were left open.
+
+Three things were deliberately **not** promoted into `openspec/specs/` during archiving, because archiving would have made retired doctrine canonical:
+
+- **The read-only harness posture** (`build-harness-adapter-protocol`) — capability denial. Still live in code; tracked as #259.
+- **"Signing is blocked until run degradations are acknowledged"** (`build-publish-safety-gate`) — a consent gate. The rest of that change is good and did land: emit fidelity (published bytes byte-equal previewed bytes), hold-gate wiring, and the keyboard-accessibility fix.
+- **The fail-closed invocation budget** — it appeared in four separate spec deltas (`invocation-budget-gate`, `comprehension-ordering-pass`, `decomposition-angle-generation`, `review-pipeline`), each specifying that an exhausted or absent budget refuses every turn and both phases fall to the deterministic floor. That renders a review with zero model turns as though it were real. Tracked as #260.
+
+`build-local-review-mvp`'s "MVP performs no external mutation or provider call" was also dropped — GitHub mutation, source push, and harness invocation have all since shipped deliberately.

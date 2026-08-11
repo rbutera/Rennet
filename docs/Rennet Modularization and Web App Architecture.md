@@ -10,9 +10,7 @@ source: architecture pass by a Navi Tatl (bead workspace-2qlsj), for Rai's revie
 
 # Rennet Modularization and Web App Architecture
 
-> ⚠️ **RULE ZERO (CLAUDE.md, 2026-08-11) outranks this document.** No consent gates, no gates, no robustness for robustness' sake. The kernel extraction (`@rennet/runtime`), the transport-typed bridge, the web shell, and the §6 DX list all stand; the consent gate and the read-only-monitor posture do not. Passages carrying a ⛔ SUPERSEDED marker are void where they conflict.
-
-**PROPOSAL — 2026-08-08, for Rai's review. Nothing here is ratified; the forks in §5 are explicitly his call.** Written against `main` at `a13cf82` (the #103 main-boundary consent gate). If adopted, reconcile the decisions into [[Rennet Contracts and Rulings]] as rulings and update [[Rennet Doc Architecture]]'s map; until then this document has no authority over any existing register.
+**PROPOSAL — 2026-08-08, for Rai's review. Nothing here is ratified; the forks in §5 are explicitly his call.** Written against `main` at `a13cf82`. If adopted, reconcile the decisions into [[Rennet Contracts and Rulings]] as rulings and update [[Rennet Doc Architecture]]'s map; until then this document has no authority over any existing register.
 
 The ask (Rai, Discord 2026-08-08): modularize so the desktop Electron app **and** a locally-served web app can both be developed, the web app being a way to "keep an eye on the project"; plus any other monorepo / code-quality / agent-experience / developer-experience improvements.
 
@@ -23,14 +21,12 @@ The ask (Rai, Discord 2026-08-08): modularize so the desktop Electron app **and*
 This refactor is much smaller than it sounds, because the two hardest cuts were already made:
 
 1. **The renderer is already transport-agnostic.** `RennetApp` takes a `bridge: RennetBridge` prop, and `RennetBridge` (defined in `@rennet/protocol`) is one method: `invoke<K extends CommandName>(name, input) → Promise<CommandOutput<K>>`, fully typed by the zod `commandDefinitions`. The Electron preload is eight lines: it implements `RennetBridge` over `ipcRenderer.invoke`. A web client is the same interface implemented over `fetch`. **`RennetBridge` is the platform-adapter boundary on the client side, and it is already named, typed, and enforced.**
-2. **The command router is already extracted from Electron.** `createDispatch(deps: DispatchDeps)` in `apps/desktop/src/main/dispatch.ts` is pure routing over `ReviewService` + protocol parsing, with every Electron-side effect injected (`chooseRepository`, `startWatching`, the dirty flag, `settings`, `buildCanvases`). The #103 consent gate lives *inside* dispatch, at the spend boundary — so any new host that mounts dispatch inherits the gate for free (exactly the property bead workspace-j98dt fought for). **`DispatchDeps` is the platform-adapter boundary on the host side.**
+2. **The command router is already extracted from Electron.** `createDispatch(deps: DispatchDeps)` in `apps/desktop/src/main/dispatch.ts` is pure routing over `ReviewService` + protocol parsing, with every Electron-side effect injected (`chooseRepository`, `startWatching`, the dirty flag, `settings`, `buildCanvases`). **`DispatchDeps` is the platform-adapter boundary on the host side.**
 3. **`@rennet/ui` is already browser-safe by enforcement.** The layer rules (eslint `@nx/enforce-module-boundaries` + `scripts/check-boundaries.mjs` with its positive control) forbid `ui` from importing `core`/`adapters`/Node. The whole canvas model in `ui/src/canvas/` is pure logic over `types`/`protocol`.
 
 What is *not* yet shared is the ~120 lines of **composition** in `apps/desktop/src/main/index.ts`: the lazily-memoized Claude harness, the Codex port + availability probe, the sqlite store, the settings store, `ReviewService`, and `buildCanvasesForReview` (the harness-backed pipeline wiring). That block is Node-only but not Electron-only — nothing in it touches `BrowserWindow`, `dialog`, or IPC. It is the kernel both hosts need, currently trapped inside the Electron shell.
 
-So the work is: **name the kernel, move it, and add a second shell.** Not a rewrite. The event-sourced canvas model, the layer discipline, and the consent architecture all stay exactly as they are.
-
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The #103 main-boundary consent gate at the spend boundary (referenced here and in §1.2/§2.4/§6) is exactly the ceremony Rule Zero kills: it comes out rather than being inherited by every new host. The event-sourced model and the layer discipline stand.
+So the work is: **name the kernel, move it, and add a second shell.** Not a rewrite. The event-sourced canvas model and the layer discipline stay exactly as they are.
 
 ## 2. Proposed shape
 
@@ -96,11 +92,11 @@ export function createRennetRuntime(options: RennetRuntimeOptions): {
 
 `DispatchDeps` stays as-is internally; `RuntimePlatform` is the *subset* a host must actually supply (today, only the repository picker — everything else in `DispatchDeps` is kernel-owned: watcher, dirty flag, settings, canvas builder). The desktop main shrinks to: Electron boilerplate + `createRennetRuntime` + the IPC handler forwarding to `runtime.dispatch`. Its behavior does not change; its tests move to `runtime` and keep passing.
 
-**Why a package and not "copy the wiring into the server":** the composition root maintains real invariants (the Codex `installed`-iff-port-passed invariant, lazy discovery so login-shell spawn happens on first use, the consent gate resolution from persisted settings). Two hand-maintained copies of that block is exactly the class of drift the boundary system exists to prevent.
+**Why a package and not "copy the wiring into the server":** the composition root maintains real invariants (the Codex `installed`-iff-port-passed invariant, lazy discovery so login-shell spawn happens on first use, settings resolution from the persisted store). Two hand-maintained copies of that block is exactly the class of drift the boundary system exists to prevent.
 
 ### 2.2 The transports
 
-- **Desktop keeps IPC.** The `app://rennet` origin check, `contextIsolation`, sandbox, and the trusted-frame guard are hardened and tested. Nothing about the web app requires touching them.
+- **Desktop keeps IPC.** It is built and tested; nothing about the web app requires touching it.
 - **The web transport is one endpoint mirroring the IPC envelope:** `POST /rpc` with body `{ name, input }`, response = the parsed command output. `HttpBridge` implements `RennetBridge` over `fetch` in ~15 lines and lives in `apps/web/src/` initially (extract to a package only when a second consumer appears — no speculative packages).
 - **No framework.** Given the [[Rennet Dependency Standard]] posture (7-day release floor, strict peers, licence gate), the server should be `node:http` + a hand-rolled route for `/rpc`, `/events`, and static files for the built web app. It is genuinely one screen of code; a framework buys nothing here and costs a dependency review. (If Rai prefers a framework anyway, Hono is the one to evaluate — but the recommendation is stdlib.)
 
@@ -110,18 +106,9 @@ MVP: the web monitor reuses the exact polling the desktop renderer already does 
 
 Post-MVP: add `GET /events` (SSE) fed by the change signals that already exist in core (`canvas-change-feed`, `context-update-stream`) and the `RepoWatcher` dirty flag. **Keep `RennetBridge` request/response** — push is an additive second channel (`RennetEvents`: `subscribe(listener): unsubscribe`), not a change to the bridge contract, so the desktop renderer can adopt the same channel later over IPC without a protocol fork. SSE over WebSocket because the flow is strictly server→client and SSE needs no dependency and auto-reconnects.
 
-### 2.4 Security of the local server (this part is not optional)
+### 2.4 The local server binds loopback
 
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. Binding `127.0.0.1` is ordinary correctness for a local server and stays; the rest of this section — the bearer-token dance, the origin/rebinding defence, the `read`/`write`/`spend` annotation with a **read-only allowlist that refuses commands before dispatch**, and the "independent second circuit / no-single-fault" defence-in-depth framing — is lockdown machinery on the acting path and goes. The web shell gets the same command surface the desktop shell has.
-
-The desktop IPC surface is protected by origin checks and context isolation. An HTTP listener has neither, and `review.canvases` **spends model tokens** while write commands mutate reviews. Any page in any browser can attempt requests against `localhost` (DNS-rebinding / CSRF class). Floor for the MVP, all four:
-
-1. **Bind `127.0.0.1` only.** Never `0.0.0.0`.
-2. **Bearer token**, generated per run, written into the served web app's boot HTML (same-origin), required on `/rpc` and `/events`. Browsers on other origins cannot read it.
-3. **Origin/Host check**: reject any request whose `Host` is not the bound address or whose `Origin` is present and foreign (rebinding defence).
-4. **Read-only command allowlist in shared code**: add to `@rennet/protocol` a per-command access annotation (e.g. `access: "read" | "write" | "spend"` alongside each `commandDefinitions` entry, plus `isReadOnlyCommand(name)`). The server, in monitor mode, refuses anything not `read` *before* dispatch. Putting the classification in protocol (not in the server) keeps it exhaustiveness-checked when commands are added — same pattern as `requiresConsent`.
-
-Note the #103 gate already protects the spend path a second time (dispatch resolves the persisted workspace mode and demands consent); the allowlist is the independent second circuit, in keeping with the no-single-fault rule the gate itself cites.
+The listener binds `127.0.0.1`, never `0.0.0.0` — a local tool serves the local machine. The web shell then gets the same command surface the desktop shell has, through the same `runtime.dispatch`.
 
 ### 2.5 Boundary rules after the change
 
@@ -137,30 +124,27 @@ The positive control in `check-boundaries.mjs` should gain a second control for 
 
 ## 3. Web app scope — what "monitor" means concretely
 
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. "Monitor" may stay the first *slice* because it is small, but not on the stated grounds: a browser client that "can never spend tokens or run the harness" is capability denial, and F1's "full parity needs real security design now" is a build-blocked-until-ceremony rule. Ship read-first if it is faster; do not wire a posture that forbids acting.
-
-The MVP monitor page, built from existing `@rennet/ui` exports (no new canvas logic): the active review + patchset summary, freshness/dirty state, the disposition batch and staging state (`batchViewModel`, `stagedItems`), coverage (`CoverageMosaicView`), the publish/degradation ledger (`bucketLedgerEntries`), and the last-built canvases *if present* — **without ever triggering a build** (no `review.canvases` from the web in monitor mode, so the monitor can never spend tokens or run the harness). A small `MonitorApp` entry in `ui` (a read-mode composition of existing components) rather than reusing `RennetApp` with flags scattered through it; the components underneath are shared either way.
+The first slice is a monitor page because it is the smallest thing that answers the stated want ("keep an eye on the project"), not because the browser is held back from acting. Built from existing `@rennet/ui` exports (no new canvas logic): the active review + patchset summary, freshness/dirty state, the disposition batch and staging state (`batchViewModel`, `stagedItems`), coverage (`CoverageMosaicView`), the publish/degradation ledger (`bucketLedgerEntries`), and the last-built canvases if present. A small `MonitorApp` entry in `ui` (a composition of existing components) rather than reusing `RennetApp` with flags scattered through it; the components underneath are shared either way, so growing the page toward full parity is adding components, not unlocking a posture.
 
 ## 4. Migration path (each step lands green on `main`, in order)
 
 1. **Extract `@rennet/runtime`.** Move dispatch + composition out of `apps/desktop/src/main/`; desktop main becomes a shell. Pure move — no behavior change, tests move with it. This step alone pays for itself even if the web app never ships (main-process logic becomes unit-testable without Electron).
 2. **Boundary bookkeeping.** New tags, `check-boundaries.mjs` rows, the new positive control.
-3. **Protocol access annotations** (`read`/`write`/`spend` + `isReadOnlyCommand`), with tests.
-4. **The server shell** inside `packages/runtime` or a thin `apps/server`: `/rpc`, static serving, token + origin + allowlist. (Whether it is embedded or standalone is fork F2 — the code is the same either way; only who starts it differs.)
-5. **`apps/web`**: vite React app, `HttpBridge`, `MonitorApp`. Playwright e2e against it (cheap, no Electron).
-6. **Post-MVP**: SSE events channel; then, only if wanted, write-parity (fork F1).
+3. **The server shell** inside `packages/runtime` or a thin `apps/server`: `/rpc` and static serving on loopback. (Whether it is embedded or standalone is fork F2 — the code is the same either way; only who starts it differs.)
+4. **`apps/web`**: vite React app, `HttpBridge`, `MonitorApp`. Playwright e2e against it (cheap, no Electron).
+5. **Post-MVP**: SSE events channel; then the rest of the surface (fork F1).
 
-Steps 1–3 are safe refactors with existing coverage; 4–5 are additive. Nothing here blocks or conflicts with the in-flight destination-wave issues (#21/#22 publish path) — the publish pipeline lives in core/adapters and is untouched.
+Steps 1–2 are safe refactors with existing coverage; 3–4 are additive. Nothing here blocks or conflicts with the in-flight destination-wave issues (#21/#22 publish path) — the publish pipeline lives in core/adapters and is untouched.
 
 ## 5. The forks — Rai's decisions, not mine
 
-**F1 — Web scope: read-only monitor first, or full parity?**
-- *Monitor-first (recommended):* zero token spend and zero writes reachable from a browser; smallest security surface; ships in days once the kernel is extracted; matches the stated want ("keep an eye on"). Full parity remains a shell-level addition later because the bridge is already transport-typed.
-- *Full parity now:* one client codebase to rule them all, desktop could eventually become "web app in an Electron frame". But: the repository picker, consent UX, and harness runs all become browser-reachable actions that need real security design *now*, and it front-loads exactly the hard part for a capability nobody asked for yet.
-- **Recommendation: monitor-first.** The architecture (bridge + allowlist annotations) makes parity a later flip, not a rebuild.
+**F1 — Web scope: monitor first, or full parity?**
+- *Monitor-first (recommended):* ships in days once the kernel is extracted and matches the stated want ("keep an eye on"). Parity is then incremental — more components over the same bridge.
+- *Full parity now:* one client codebase to rule them all, and desktop could eventually become "web app in an Electron frame". Costs more up front (the repository picker and harness runs need browser-side UX) for a capability nobody has asked for yet.
+- **Recommendation: monitor-first**, on schedule grounds only. The transport-typed bridge makes parity a later addition, not a rebuild.
 
 **F2 — Who runs the server: embedded in the desktop app, or a standalone process?**
-- *Embedded (recommended for MVP):* Electron main starts the HTTP listener alongside IPC, both forwarding into the **same** `runtime.dispatch`. One process owns `rennet.sqlite` (no cross-process sqlite locking question), one settings store, one consent state. Monitor is live whenever the desktop app runs — and the data only changes while it runs anyway.
+- *Embedded (recommended for MVP):* Electron main starts the HTTP listener alongside IPC, both forwarding into the **same** `runtime.dispatch`. One process owns `rennet.sqlite` (no cross-process sqlite locking question) and one settings store. Monitor is live whenever the desktop app runs — and the data only changes while it runs anyway.
 - *Standalone server:* monitoring without the desktop app open, and the long-term "local-first server, desktop is just a client" shape. But two processes on one `node:sqlite` DB needs WAL-mode care today, and it duplicates harness/runtime state for no MVP gain.
 - **Recommendation: embedded now.** The kernel extraction (step 1) is precisely what makes flipping to standalone later a shell swap rather than a refactor, so nothing is foreclosed.
 
@@ -178,9 +162,7 @@ Effort: **S** ≤ half a day · **M** ≈ a day · **L** = multi-day.
 | 6 | **Agent environment traps are documented but not executable** (RTK garbling → `sh -c` wrapping, `-i` aliases, `noclobber`, zsh `$pipestatus` — all prose in AGENTS.md that each agent must remember under pressure). | `scripts/preflight.mjs` (`pnpm preflight`): asserts node/pnpm versions, warns on stale worktrees/daemons, prints the five environment traps in ten lines. Cheap insurance that runs at the top of every agent brief instead of hoping the prose was read. | **S** |
 | 7 | **UI verification requires driving Electron** (Playwright-against-Electron e2e is the heaviest loop in the repo; screenshot-verification of UI slices is correspondingly expensive for agents). | Falls out of the web app: once `apps/web` serves the shared components over HTTP, agents verify UI slices with plain browser Playwright against a vite dev server — no Electron launch, no packaged app. Worth naming as an explicit benefit when weighing F1/F2. | free with §2 |
 
-**Deliberately not proposed:** splitting `ui` (its internal canvas/-components/ split is healthy); adopting an HTTP framework (§2.2); Nx Cloud/remote cache (privacy stance stands); any change to the event-sourced canvas model, the protocol envelope, or the consent architecture — those are the good bones this proposal builds on.
-
-> ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The consent architecture is not one of the good bones — removing it is now in scope. The event-sourced model and the protocol envelope stand.
+**Deliberately not proposed:** splitting `ui` (its internal canvas/-components/ split is healthy); adopting an HTTP framework (§2.2); Nx Cloud/remote cache (privacy stance stands); any change to the event-sourced canvas model or the protocol envelope — those are the good bones this proposal builds on.
 
 ---
 

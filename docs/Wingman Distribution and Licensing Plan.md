@@ -23,9 +23,6 @@ updated: 2026-08-05
 >
 > Product name is **Rennet**. [[Rennet Contracts and Rulings]] and [[Rennet Dependency Standard]] override this plan wherever they differ. Historical Wingman artefact names and package inventories below are illustrative only.
 
-> [!IMPORTANT] ⛔ RULE ZERO (CLAUDE.md, added by Rai 2026-08-11) outranks this document
-> **No consent gates. No gates. No robustness for robustness' sake.** Rule Zero outranks every ruling number and every doctrine in `docs/`. It changes very little here, and that is worth stating plainly so nobody strips the wrong thing: **the entire licensing analysis, the MIT obligations, the attribution and NOTICE requirements, and every Apple signing / notarization / stapling / Gatekeeper requirement are legal and platform facts, not Rennet gates, and stand untouched.** So does the release pipeline's build-and-assert machinery. The one passage marked ⛔ inline below is the human-approval step on the release environment. Nothing has been deleted.
-
 Distribution, deployment, and licensing for [[Code Review Harness App]]. The product name is **Rennet**; the filename is retained only to preserve existing Obsidian links. Personal product, sole author Rai. Not the enterprise client work.
 
 ~~Ratified inputs I am building on, not relitigating: OSS core plus desktop app, paid mobile companion later; **AGPL-3.0-only** for core and desktop with Rai as sole author retaining dual-licensing rights; mobile app proprietary.~~ ⛔ **Superseded 2026-08-06: MIT throughout.** The OSS-core-plus-desktop and paid-mobile-companion shape survives; the licence structure under it does not.
@@ -219,7 +216,7 @@ Rules, in the order the boot path must apply them:
 ### Decisions
 
 - **GitHub Actions**, `macos-latest` pinned by explicit label, not the floating alias.
-- **Secrets as repository secrets in a public repo**, with the release job gated on a **protected environment** so a fork PR can never reach them.
+- **Secrets as repository secrets in a public repo**, scoped to the release environment so a fork PR can never reach them.
 - **Two workflows**: `ci.yml` (every push and PR, no secrets, no signing) and `release.yml` (tag-triggered, signs, notarizes, publishes).
 - **Notarization wait is inline**, not a background poll. Budget 20 minutes of wall clock and set the job timeout to 45.
 
@@ -231,8 +228,7 @@ Rules, in the order the boot path must apply them:
 
 - Secrets are **not** exposed to workflows triggered by `pull_request` from a fork. That is GitHub's default and it is the load-bearing protection.
 - **Never use `pull_request_target`** in this repo. It runs with the base repo's secrets against the fork's code, which is a credential-exfiltration primitive handed to any stranger who opens a PR. This is the single highest-severity thing to get wrong here and it is a one-line mistake.
-- Put the release job in a **protected GitHub Environment** with a required reviewer (Rai). Then even a compromised workflow file on a branch cannot mint a signed build without a human clicking approve.
-  > ⛔ **SUPERSEDED 2026-08-11 by RULE ZERO (CLAUDE.md).** No consent gates, no gates, no robustness for robustness' sake. The **required-reviewer / human-clicking-approve step** on the release environment is an approval ceremony and does not bind; a tagged release may ship without anyone clearing a dialog. The two bullets around it are not ceremony and stand: secrets genuinely are not exposed to fork `pull_request` runs, and **`pull_request_target` stays banned** — that is a property of how GitHub hands out credentials, not a Rennet gate.
+- Put the release job in a **GitHub Environment** and scope the signing secrets to it, so they exist for tagged release runs and nowhere else.
 - Prefer the **App Store Connect API key** over Apple ID plus app-specific password. electron-builder's own docs give the reason: "API keys don't expire and don't require two-factor authentication, making them ideal for CI." An app-specific password rots and takes a release with it.
 - The `.p8` must be written to disk for `notarytool`; write it to the runner's temp dir, never the workspace, and let the ephemeral runner be the cleanup.
 
@@ -252,7 +248,7 @@ Rules, in the order the boot path must apply them:
 #   playwright _electron smoke test
 
 # release.yml  on: push tags 'v*'            runner: macos-latest-pinned
-#   environment: release            ← protected, requires Rai's approval
+#   environment: release            ← signing secrets scoped to this environment
 #   timeout-minutes: 45
 #   steps: build → electron-builder --mac --universal --publish always
 #          → the four assertions from §1's runbook
@@ -560,7 +556,7 @@ Brief, because at one user this is a cheap decision that should not consume a da
 | B4 | Apple Developer Program enrolment: decide individual vs Ltd, then enrol | RAI-ONLY before the first public release, not local dogfood. Decide before enrolling because migration is painful-to-impossible. Produces Team ID, Developer ID Application cert, App Store Connect API key. | **P2** | public-release phase |
 | B5 | Signing + notarization spike, end to end, on a hello-world Electron build | Prove the whole §1 runbook on a throwaway app before the real one exists: universal build, hardened runtime, minimal entitlements, notarytool, staple `.app` and DMG, all four assertions. **Include the deliberate-failure calibration** (build once with `hardenedRuntime: false` and confirm rejection). Was stack-note prototype #3; now much cheaper because there is no nested binary. | **P1** | B4 |
 | B6 | Event-store schema versioning and downgrade refusal | `schema_version` row read before any other query; refuse to open a store written by a newer build with a clear UI; per-event `v` field with unknown-type preservation; pre-migration backup keeping three. Design it into the first event-store commit; unretrofittable afterwards. See §2. | **P1** | — |
-| B7 | Release pipeline: `ci.yml` + protected-environment `release.yml` | Pinned runner label, secrets only in the protected release environment, **`pull_request_target` banned in this repo**, App Store Connect API key auth, the four post-build assertions, `gh release` upload of DMG + ZIP + `latest-mac.yml`. See §3. | **P1** | B5 |
+| B7 | Release pipeline: `ci.yml` + `release.yml` | Pinned runner label, signing secrets scoped to the release environment, **`pull_request_target` banned in this repo**, App Store Connect API key auth, the four post-build assertions, `gh release` upload of DMG + ZIP + `latest-mac.yml`. See §3. | **P1** | B5 |
 | B8 | `electron-updater` on GitHub Releases with a `dogfood` channel | `publish: github`, `generateUpdatesFilesForAllChannels: true`, `allowDowngrade: false`, dogfood as `X.Y.Z-dogfood.N`. Verify the update actually applies on a real signed build; an updater that silently no-ops is the canonical unfalsifiable check. See §2. | **P1** | B7 |
 | B9 | `THIRD-PARTY-NOTICES.md` generated at build and shipped in the bundle | Generated from the dependency tree plus vendored files, copied into `Resources/`, surfaced at About → Open Source Licences. MIT and BSD-3 obligations attach to the binary, not just the repo. Verify Electron's `LICENSES.chromium.html` survives packaging. See §4.4, §5. | **P2** | B1 |
 | B10 | `TRADEMARK.md` and asset registration on name ratification | Buy `.dev` + `.app`, claim GitHub org and npm scope, write the two-paragraph trademark policy, use ™ not ®. Do not register a mark yet. **If the name lands on Digestif rather than Rennet, reopen the trademark analysis** (live USPTO Class 5 mark). See §6. | **P2** | name decision |

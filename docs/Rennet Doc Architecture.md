@@ -39,7 +39,6 @@ The map of every document in `docs/`: which role each plays, how they cross-link
 | [[Rennet Design Doctrine]] | **Deep spec** (doctrine, required reading for UI work) | The design register promoted from the prototype docs (added 2026-08-07): three materials (glass/code/paper), colour law (backlight `#85C4DC`, amber, no fourth hue), fixed-point rule, progressive-disclosure floor, never-a-spinner, smooth-and-quick. Prototype docs remain the full reasoning; this is the ratified floor. |
 | [[Rennet Navi Handoff]] | **Canonical** (orientation) | Who/what/why, never-do list, the issue-queue pointer, RAI-ONLY actions, working agreement (ship-to-main). The backlog it once carried is archived (below). |
 | [[Rennet Backlog Archive]] | **Historical** | The 2026-08-04 147-bead dependency-ordered backlog, verbatim (extracted from the Handoff 2026-08-06). Design rationale only; issues cite its bead numbers (e.g. #16, #27). The GitHub `openspec-seed` issue queue is the live backlog; where they disagree, the issue wins. |
-| [[Rennet Evidence Gate Status]] | **Status ledger** | What is proven vs. assumed; spike gates open/closed/blocked. |
 | [[Rennet Decision Integration Tasks]] | **Status ledger** | The 2026-08-05 doc-integration checklist; mostly complete. Fold remaining unchecked items into issues, then this can be archived. |
 | [[Rennet Local Review MVP]] | **Status ledger** | Implementation record of the merged MVP slice. |
 | [[Rennet Spike - Electron 43 node sqlite]], [[Rennet Spike - Event Store and Publish Failure Injection]], [[Rennet Spike - TypeScript LSP Ladder]] | **Status ledger** (verdicts) | Closed spike verdicts. Never edited after closing. |
@@ -63,7 +62,6 @@ The map of every document in `docs/`: which role each plays, how they cross-link
 ## Known staleness and reconciliation queue (2026-08-06)
 
 - **Issue #27** owns the remaining salience/danger-ordering strip pass across the Backlog Archive (beads 76/104/105) and the DSL plan §2.5 D11 — the strip list is Contracts and Rulings §8.
-- **[[Rennet Evidence Gate Status]]** rows marked "Blocked (possible spend)" for Claude CLI probes predate the SDK/subscription decision (R2 reversal): a `claude -p` probe on the user's own subscription may no longer be spend-shaped. **Reconcile, do not silently flip** — the codex half genuinely may cost. One-line review against R2 needed.
 - **[[Rennet Decision Integration Tasks]]** has two unchecked items (prototype validation with 5–8 engineers; remaining evidence gates). Fold into issues, then archive the doc.
 - **The hub's Feature Inventory (2026-08-04)** predates the canvas paradigm, both loops, and the orchestrator design. It is historical; do not "fix" it — Product and Vision §4 is the current inventory.
 - **`packages/ui` hardcoded stale angle set** (Logic/Security/Tests/… placeholders) is a code residue, not a doc one — a rename to lens set v4 rides the canvas UI issue (#11).
