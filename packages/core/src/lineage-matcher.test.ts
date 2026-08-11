@@ -115,7 +115,10 @@ describe("classifyLineage — the 1:1 classes", () => {
   });
 
   it("reports successors with no antecedent as added", () => {
-    const result = classifyLineage([occ("a", body)], [occ("a2", body), occ("new", "let brand = 1;")]);
+    const result = classifyLineage(
+      [occ("a", body)],
+      [occ("a2", body), occ("new", "let brand = 1;")],
+    );
     expect(result.added).toEqual(["new"]);
   });
 });

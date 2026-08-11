@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { LINEAGE_FIXTURES } from "./lineage-matcher-fixtures";
 import { classifyLineage, measure, renderMeasurementTables } from "./lineage-matcher";
+import { LINEAGE_FIXTURES } from "./lineage-matcher-fixtures";
 
 // The spike measurement, run as a reddening guard. The auto-carry precision bar
 // and the zero-wrong-carries invariant are the load-bearing claims the verdict
@@ -23,11 +23,13 @@ describe("lineage matcher measurement", () => {
   });
 
   it("scores every auto-carry class (exact, move) at 100% precision", () => {
-    expect(report.perClass.get("exact")!.precision).toBe(1);
-    expect(report.perClass.get("move")!.precision).toBe(1);
+    const exact = report.perClass.get("exact");
+    const move = report.perClass.get("move");
+    expect(exact?.precision).toBe(1);
+    expect(move?.precision).toBe(1);
     // And they are actually exercised (support > 0), so the 100% is not vacuous.
-    expect(report.perClass.get("exact")!.support).toBeGreaterThan(0);
-    expect(report.perClass.get("move")!.support).toBeGreaterThan(0);
+    expect(exact?.support).toBeGreaterThan(0);
+    expect(move?.support).toBeGreaterThan(0);
   });
 
   it("classifies every fixture prior correctly against ground truth (no misses)", () => {
@@ -45,7 +47,9 @@ describe("lineage matcher measurement", () => {
               ? true
               : pred?.toId === truth.toId;
         if (!pred || pred.lineage !== truth.lineage || !targetOk) {
-          misses.push(`${fixture.name}/${truth.fromId}: want ${truth.lineage}, got ${pred?.lineage}`);
+          misses.push(
+            `${fixture.name}/${truth.fromId}: want ${truth.lineage}, got ${pred?.lineage}`,
+          );
         }
       }
       // `added` correctness only where the fixture declares it (an ambiguous
@@ -58,8 +62,16 @@ describe("lineage matcher measurement", () => {
   });
 
   it("every class present in the corpus is measured (coverage of all seven edges)", () => {
-    for (const lineage of ["exact", "move", "one-to-one", "split", "merge", "ambiguous", "terminated"] as const) {
-      expect(report.perClass.get(lineage)!.support).toBeGreaterThan(0);
+    for (const lineage of [
+      "exact",
+      "move",
+      "one-to-one",
+      "split",
+      "merge",
+      "ambiguous",
+      "terminated",
+    ] as const) {
+      expect(report.perClass.get(lineage)?.support).toBeGreaterThan(0);
     }
   });
 

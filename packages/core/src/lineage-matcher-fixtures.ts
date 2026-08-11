@@ -75,7 +75,11 @@ export const LINEAGE_FIXTURES: readonly LineageFixture[] = [
     mutationClass: "one-to-one (edit)",
     prior: [occ("p1", "src/math.ts", ADD)],
     successor: [
-      occ("q1", "src/math.ts", "export function add(a: number, b: number): number {\n  const sum = a + b;\n  return sum;\n}\n"),
+      occ(
+        "q1",
+        "src/math.ts",
+        "export function add(a: number, b: number): number {\n  const sum = a + b;\n  return sum;\n}\n",
+      ),
     ],
     truth: [{ fromId: "p1", lineage: "one-to-one", toId: "q1" }],
   },
@@ -97,7 +101,12 @@ export const LINEAGE_FIXTURES: readonly LineageFixture[] = [
     mutationClass: "one-to-one (rename+edit)",
     prior: [occ("p1", "src/old.ts", ADD, { context: "helper" })],
     successor: [
-      occ("q1", "src/new.ts", "export function add(a: number, b: number): number {\n  return a + b + 0;\n}\n", { context: "helper" }),
+      occ(
+        "q1",
+        "src/new.ts",
+        "export function add(a: number, b: number): number {\n  return a + b + 0;\n}\n",
+        { context: "helper" },
+      ),
     ],
     truth: [{ fromId: "p1", lineage: "one-to-one", toId: "q1" }],
   },
@@ -130,13 +139,21 @@ export const LINEAGE_FIXTURES: readonly LineageFixture[] = [
     name: "twelve-identical-handlers",
     mutationClass: "exact (12 identical bodies)",
     prior: Array.from({ length: 12 }, (_, i) =>
-      occ(`p${i}`, `routes/r${i}.ts`, HANDLER, { context: `// route ${i}\nmount("/r${i}", handler);` }),
+      occ(`p${i}`, `routes/r${i}.ts`, HANDLER, {
+        context: `// route ${i}\nmount("/r${i}", handler);`,
+      }),
     ),
     // Successors shuffled + re-identified, same distinguishing context.
     successor: [11, 4, 0, 8, 2, 9, 5, 1, 10, 6, 3, 7].map((i) =>
-      occ(`q${i}`, `routes/r${i}.ts`, HANDLER, { context: `// route ${i}\nmount("/r${i}", handler);` }),
+      occ(`q${i}`, `routes/r${i}.ts`, HANDLER, {
+        context: `// route ${i}\nmount("/r${i}", handler);`,
+      }),
     ),
-    truth: Array.from({ length: 12 }, (_, i) => ({ fromId: `p${i}`, lineage: "exact" as const, toId: `q${i}` })),
+    truth: Array.from({ length: 12 }, (_, i) => ({
+      fromId: `p${i}`,
+      lineage: "exact" as const,
+      toId: `q${i}`,
+    })),
   },
 
   // 10. Identical body duplicated, context ALSO identical: genuinely ambiguous, must
@@ -186,12 +203,32 @@ export const LINEAGE_FIXTURES: readonly LineageFixture[] = [
     name: "near-duplicate-helpers",
     mutationClass: "one-to-one (near-duplicate)",
     prior: [
-      occ("p1", "src/fmt.ts", "export function fmtUser(u: User): string {\n  return `${u.first} ${u.last}`;\n}\n", { context: "user formatting" }),
-      occ("p2", "src/fmt.ts", "export function fmtOrg(o: Org): string {\n  return `${o.name} (${o.id})`;\n}\n", { context: "org formatting" }),
+      occ(
+        "p1",
+        "src/fmt.ts",
+        'export function fmtUser(u: User): string {\n  return u.first + " " + u.last;\n}\n',
+        { context: "user formatting" },
+      ),
+      occ(
+        "p2",
+        "src/fmt.ts",
+        'export function fmtOrg(o: Org): string {\n  return o.name + " (" + o.id + ")";\n}\n',
+        { context: "org formatting" },
+      ),
     ],
     successor: [
-      occ("q1", "src/fmt.ts", "export function fmtUser(u: User): string {\n  return `${u.first} ${u.last}`.trim();\n}\n", { context: "user formatting" }),
-      occ("q2", "src/fmt.ts", "export function fmtOrg(o: Org): string {\n  return `${o.name} (#${o.id})`;\n}\n", { context: "org formatting" }),
+      occ(
+        "q1",
+        "src/fmt.ts",
+        'export function fmtUser(u: User): string {\n  return (u.first + " " + u.last).trim();\n}\n',
+        { context: "user formatting" },
+      ),
+      occ(
+        "q2",
+        "src/fmt.ts",
+        'export function fmtOrg(o: Org): string {\n  return o.name + " (#" + o.id + ")";\n}\n',
+        { context: "org formatting" },
+      ),
     ],
     truth: [
       { fromId: "p1", lineage: "one-to-one", toId: "q1" },
@@ -232,7 +269,12 @@ export const LINEAGE_FIXTURES: readonly LineageFixture[] = [
     ],
     successor: [
       occ("q1", "src/svc.ts", ADD, { context: "kept" }),
-      occ("q2", "src/svc.ts", "export function sub(a: number, b: number): number {\n  return a - b - 0;\n}\n", { context: "edited" }),
+      occ(
+        "q2",
+        "src/svc.ts",
+        "export function sub(a: number, b: number): number {\n  return a - b - 0;\n}\n",
+        { context: "edited" },
+      ),
     ],
     truth: [
       { fromId: "p1", lineage: "exact", toId: "q1" },

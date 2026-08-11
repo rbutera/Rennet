@@ -96,7 +96,9 @@ describe("carry seam — the force-push criteria", () => {
   });
 
   it("the mixed force-push: one kept, one edited, one gone — carried, reopened, orphaned", () => {
-    let review = created(patchsetOf("p1", [file("k.ts", "K"), file("e.ts", "E"), file("g.ts", "G")]));
+    let review = created(
+      patchsetOf("p1", [file("k.ts", "K"), file("e.ts", "E"), file("g.ts", "G")]),
+    );
     review = withDisposition(review, "k.ts", "K");
     review = withDisposition(review, "e.ts", "E");
     review = withDisposition(review, "g.ts", "G");
@@ -144,8 +146,16 @@ describe("carry seam — orphan tray lifecycle", () => {
 describe("carryDispositionsByLineage", () => {
   it("partitions into carried and orphaned without dropping anything to void", () => {
     const dispositions: Disposition[] = [
-      { anchor: { path: "keep.ts", contentDigest: fileContentDigest(file("keep.ts", "K")) }, type: "approve", body: "" },
-      { anchor: { path: "gone.ts", contentDigest: fileContentDigest(file("gone.ts", "G")) }, type: "comment", body: "" },
+      {
+        anchor: { path: "keep.ts", contentDigest: fileContentDigest(file("keep.ts", "K")) },
+        type: "approve",
+        body: "",
+      },
+      {
+        anchor: { path: "gone.ts", contentDigest: fileContentDigest(file("gone.ts", "G")) },
+        type: "comment",
+        body: "",
+      },
     ];
     const next = patchsetOf("p2", [file("keep.ts", "K")]);
     const { carried, orphaned } = carryDispositionsByLineage(dispositions, next);

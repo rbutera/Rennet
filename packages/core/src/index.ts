@@ -366,11 +366,12 @@ export function carryDispositionsByLineage(
   next: Patchset,
 ): { carried: Disposition[]; orphaned: Disposition[] } {
   const fileByPath = new Map(next.files.map((file) => [file.path, file] as const));
-  const renameByPrevious = new Map(
-    next.files
-      .filter((file) => file.previousPath !== undefined && file.status === "renamed")
-      .map((file) => [file.previousPath!, file] as const),
-  );
+  const renameByPrevious = new Map<string, PatchFile>();
+  for (const file of next.files) {
+    if (file.status === "renamed" && file.previousPath !== undefined) {
+      renameByPrevious.set(file.previousPath, file);
+    }
+  }
   const carried: Disposition[] = [];
   const orphaned: Disposition[] = [];
   for (const disposition of previous) {
@@ -606,23 +607,27 @@ export function foldReview(current: Review | null, event: ReviewEvent): Review {
       // github source at the same reviewed head); otherwise it is dropped and the
       // review becomes an unpostable local review (the "no postTarget → refused" gate
       // then handles egress for free).
-      // Strip the prior orphan tray too — it is recomputed for THIS activation
-      // (a vanished-then-returned occurrence must not stay orphaned forever).
-      const { postTarget: priorTarget, orphaned: _priorOrphaned, ...base } = current;
+      const { postTarget: priorTarget, ...base } = current;
       const postTarget = postTargetSurvivingActivation(priorTarget, event.patchset);
       // Lineage-driven carry (issue #16): byte-identical exact carries (the #10
       // floor, unchanged), a byte-verifiable rename carries re-anchored, a vanished
       // occurrence orphans (surfaced, never dropped to void), everything else reopens.
-      const { carried, orphaned } = carryDispositionsByLineage(current.dispositions, event.patchset);
+      const { carried, orphaned } = carryDispositionsByLineage(
+        current.dispositions,
+        event.patchset,
+      );
       return {
         ...base,
         patchsets,
         activePatchsetId: event.patchset.id,
         pendingPatchsetId: undefined,
         dispositions: carried,
-        // Stamp the orphan tray ONLY when non-empty, so a review with no orphans
-        // stays byte-identical to before (back-compat with persisted snapshots).
-        ...(orphaned.length ? { orphaned } : {}),
+        // The orphan tray is recomputed for THIS activation and is authoritative:
+        // set the fresh set, or `undefined` to clear any stale tray inherited from
+        // `base` (a vanished-then-returned occurrence must not stay orphaned). An
+        // undefined field is absent for equality and nothing digests a Review, so
+        // an orphan-free review stays back-compatible with pre-feature snapshots.
+        orphaned: orphaned.length ? orphaned : undefined,
         status: "current",
         ...(postTarget ? { postTarget } : {}),
       };

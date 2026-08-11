@@ -203,76 +203,84 @@ function evidenceFor(prior: MatchOccurrence, successor: MatchOccurrence): Eviden
  */
 export function maxWeightMatching(scores: readonly (readonly number[])[], floor: number): number[] {
   const rows = scores.length;
-  const cols = rows === 0 ? 0 : scores[0]!.length;
+  const firstRow = scores[0];
+  const cols = firstRow ? firstRow.length : 0;
   const n = Math.max(rows, cols);
   if (n === 0) return [];
-  // Cost = -score, padded to n×n with 0 (a pad edge scores 0 and is filtered out
-  // below). Hungarian minimises cost ⟺ maximises score.
-  const cost: number[][] = [];
-  for (let r = 0; r < n; r += 1) {
-    const row: number[] = [];
-    for (let c = 0; c < n; c += 1) {
-      const s = r < rows && c < cols ? scores[r]![c]! : 0;
-      row.push(-s);
+  // Flattened cost = -score, padded to n×n with 0 (a pad edge scores 0 and is
+  // filtered out below). Hungarian minimises cost ⟺ maximises score. Every index
+  // here is in bounds by construction; reads use `?? fallback` so the O(n^3) loops
+  // satisfy `noUncheckedIndexedAccess` without non-null assertions.
+  const INF = Number.POSITIVE_INFINITY;
+  const cost = new Float64Array(n * n);
+  for (let r = 0; r < rows; r += 1) {
+    const scoreRow = scores[r];
+    if (!scoreRow) continue;
+    for (let c = 0; c < cols; c += 1) {
+      const s = scoreRow[c];
+      cost[r * n + c] = s === undefined ? 0 : -s;
     }
-    cost.push(row);
   }
 
   // Kuhn–Munkres with potentials (O(n^3)). `columnMatchRow[c]` = the row matched
-  // to column c (0-based; -1 unmatched). Standard 1-indexed potential arrays.
-  const INF = Number.POSITIVE_INFINITY;
-  const potentialRow = new Array<number>(n + 1).fill(0);
-  const potentialCol = new Array<number>(n + 1).fill(0);
-  const columnMatchRow = new Array<number>(n + 1).fill(0);
+  // to column c (1-indexed; 0 unmatched). Standard 1-indexed potential arrays.
+  const potentialRow = new Float64Array(n + 1);
+  const potentialCol = new Float64Array(n + 1);
+  const columnMatchRow = new Int32Array(n + 1);
   for (let r = 1; r <= n; r += 1) {
     columnMatchRow[0] = r;
     let currentCol = 0;
-    const minSlack = new Array<number>(n + 1).fill(INF);
-    const slackFromCol = new Array<number>(n + 1).fill(0);
-    const used = new Array<boolean>(n + 1).fill(false);
+    const minSlack = new Float64Array(n + 1).fill(INF);
+    const slackFromCol = new Int32Array(n + 1);
+    const used = new Uint8Array(n + 1);
     do {
-      used[currentCol] = true;
-      const currentRow = columnMatchRow[currentCol]!;
+      used[currentCol] = 1;
+      const currentRow = columnMatchRow[currentCol] ?? 0;
+      const rowBase = (currentRow - 1) * n;
+      const pr = potentialRow[currentRow] ?? 0;
       let delta = INF;
       let nextCol = -1;
       for (let c = 1; c <= n; c += 1) {
         if (used[c]) continue;
-        const reduced =
-          cost[currentRow - 1]![c - 1]! - potentialRow[currentRow]! - potentialCol[c]!;
-        if (reduced < minSlack[c]!) {
+        const reduced = (cost[rowBase + (c - 1)] ?? 0) - pr - (potentialCol[c] ?? 0);
+        if (reduced < (minSlack[c] ?? INF)) {
           minSlack[c] = reduced;
           slackFromCol[c] = currentCol;
         }
-        if (minSlack[c]! < delta) {
-          delta = minSlack[c]!;
+        const slackC = minSlack[c] ?? INF;
+        if (slackC < delta) {
+          delta = slackC;
           nextCol = c;
         }
       }
       for (let c = 0; c <= n; c += 1) {
         if (used[c]) {
-          potentialRow[columnMatchRow[c]!] += delta;
-          potentialCol[c] -= delta;
+          const matchedRow = columnMatchRow[c] ?? 0;
+          potentialRow[matchedRow] = (potentialRow[matchedRow] ?? 0) + delta;
+          potentialCol[c] = (potentialCol[c] ?? 0) - delta;
         } else {
-          minSlack[c]! -= delta;
+          minSlack[c] = (minSlack[c] ?? INF) - delta;
         }
       }
       currentCol = nextCol;
-    } while (columnMatchRow[currentCol] !== 0);
+    } while ((columnMatchRow[currentCol] ?? 0) !== 0);
     // Augment along the alternating path.
     while (currentCol !== 0) {
-      const previousCol = slackFromCol[currentCol]!;
-      columnMatchRow[currentCol] = columnMatchRow[previousCol]!;
+      const previousCol = slackFromCol[currentCol] ?? 0;
+      columnMatchRow[currentCol] = columnMatchRow[previousCol] ?? 0;
       currentCol = previousCol;
     }
   }
 
   const rowMatch = new Array<number>(rows).fill(-1);
   for (let c = 1; c <= n; c += 1) {
-    const r = columnMatchRow[c]! - 1;
+    const r = (columnMatchRow[c] ?? 0) - 1;
     const col = c - 1;
     if (r >= 0 && r < rows && col < cols) {
+      const scoreRow = scores[r];
+      const s = scoreRow ? scoreRow[col] : undefined;
       // Filter pad edges and any assignment that scored below the floor.
-      if (scores[r]![col]! >= floor) rowMatch[r] = col;
+      if (s !== undefined && s >= floor) rowMatch[r] = col;
     }
   }
   return rowMatch;
@@ -296,7 +304,8 @@ export function classifyLineage(
   const match = maxWeightMatching(scores, MATCH_FLOOR);
 
   // Which successors are the 1:1 partner of some prior (claimed by the matching).
-  const successorClaimedBy = new Array<number>(successor.length).fill(-1);
+  // Int32Array so index access is `number`, not `number | undefined`.
+  const successorClaimedBy = new Int32Array(successor.length).fill(-1);
   match.forEach((col, row) => {
     if (col >= 0) successorClaimedBy[col] = row;
   });
@@ -308,38 +317,54 @@ export function classifyLineage(
   // continued whole, it did not fold.
   const mergePartnersByPrior = new Map<number, number>(); // prior → successor it merges into
   for (let s = 0; s < successor.length; s += 1) {
-    const anchorPrior = successorClaimedBy[s];
+    const anchorPrior = successorClaimedBy[s] ?? -1;
     if (anchorPrior === -1) continue;
-    if (evidence[anchorPrior]![s]!.contentExact) continue; // a whole-survivor is not a merge
+    const anchorRow = evidence[anchorPrior];
+    const anchorEv = anchorRow ? anchorRow[s] : undefined;
+    if (!anchorEv || anchorEv.contentExact) continue; // a whole-survivor is not a merge
     const folders: number[] = [anchorPrior];
     for (let p = 0; p < prior.length; p += 1) {
       if (p === anchorPrior) continue;
-      if (match[p]! >= 0) continue; // a prior with its own 1:1 partner is not merging here
-      const e = evidence[p]![s]!;
-      const best = Math.max(...evidence[p]!.map((x) => x.score));
+      if ((match[p] ?? -1) >= 0) continue; // a prior with its own 1:1 partner is not merging here
+      const evP = evidence[p];
+      const e = evP ? evP[s] : undefined;
+      if (!evP || !e) continue;
+      const best = evP.reduce((m, x) => Math.max(m, x.score), 0);
       if (e.content >= FANOUT_CONTENT_FLOOR && e.score >= best - TIE_EPSILON) folders.push(p);
     }
     if (folders.length >= 2) for (const p of folders) mergePartnersByPrior.set(p, s);
   }
 
   const classifications: LineageClassification[] = prior.map((p, row) => {
-    const col = match[row]!;
+    const evidenceRow = evidence[row] ?? [];
+    const col = match[row] ?? -1;
 
     // Merge: this prior folds into a shared successor.
     const mergeInto = mergePartnersByPrior.get(row);
     if (mergeInto !== undefined) {
-      const e = evidence[row]![mergeInto]!;
-      return { fromId: p.id, lineage: "merge", toId: successor[mergeInto]!.id, confidence: e.score, evidence: e };
+      const me = evidenceRow[mergeInto];
+      const mtarget = successor[mergeInto];
+      if (me && mtarget) {
+        return {
+          fromId: p.id,
+          lineage: "merge",
+          toId: mtarget.id,
+          confidence: me.score,
+          evidence: me,
+        };
+      }
     }
 
     if (col < 0) {
       // No viable partner: terminated. Confidence carries the top rejected score.
-      const top = evidence[row]!.reduce((m, e) => Math.max(m, e.score), 0);
+      const top = evidenceRow.reduce((m, e) => Math.max(m, e.score), 0);
       return { fromId: p.id, lineage: "terminated", confidence: top };
     }
 
-    const e = evidence[row]![col]!;
-    const matchedBody = successor[col]!.body;
+    const e = evidenceRow[col];
+    const matched = successor[col];
+    if (!e || !matched) return { fromId: p.id, lineage: "terminated", confidence: 0 };
+    const matchedBody = matched.body;
 
     // Split: the prior fans out into the matched successor plus other unclaimed
     // successors that are DISTINCT slices of it (mutually dissimilar). Duplicate
@@ -350,37 +375,50 @@ export function classifyLineage(
       for (let s = 0; s < successor.length; s += 1) {
         if (s === col) continue;
         if (successorClaimedBy[s] !== -1) continue; // claimed by another prior's 1:1
-        if (evidence[row]![s]!.content < FANOUT_CONTENT_FLOOR) continue;
-        if (lineSimilarity(matchedBody, successor[s]!.body) <= SPLIT_DISTINCT_MAX) members.push(s);
+        const es = evidenceRow[s];
+        const cand = successor[s];
+        if (!es || !cand || es.content < FANOUT_CONTENT_FLOOR) continue;
+        if (lineSimilarity(matchedBody, cand.body) <= SPLIT_DISTINCT_MAX) members.push(s);
       }
       if (members.length >= 2) {
-        return {
-          fromId: p.id,
-          lineage: "split",
-          toIds: members.map((s) => successor[s]!.id),
-          confidence: e.score,
-          evidence: e,
-        };
+        const toIds: string[] = [];
+        for (const s of members) {
+          const cand = successor[s];
+          if (cand) toIds.push(cand.id);
+        }
+        return { fromId: p.id, lineage: "split", toIds, confidence: e.score, evidence: e };
       }
     }
 
     // Ambiguity guard (fail closed): a competing successor within TIE_EPSILON of
     // the matched score — a near-tie the matcher cannot defensibly separate (the
     // duplicate-body case that would otherwise be a false `move`).
-    const rival = evidence[row]!.some(
+    const rival = evidenceRow.some(
       (other, s) => s !== col && other.score >= e.score - TIE_EPSILON && other.score >= MATCH_FLOOR,
     );
     if (rival) {
-      return { fromId: p.id, lineage: "ambiguous", toId: successor[col]!.id, confidence: e.score, evidence: e };
+      return {
+        fromId: p.id,
+        lineage: "ambiguous",
+        toId: matched.id,
+        confidence: e.score,
+        evidence: e,
+      };
     }
 
     // 1:1 pair. Exact iff byte-identical body; the path splits exact vs move.
     if (e.contentExact) {
-      const lineage: Lineage = p.path === successor[col]!.path ? "exact" : "move";
-      return { fromId: p.id, lineage, toId: successor[col]!.id, confidence: e.score, evidence: e };
+      const lineage: Lineage = p.path === matched.path ? "exact" : "move";
+      return { fromId: p.id, lineage, toId: matched.id, confidence: e.score, evidence: e };
     }
     // Changed body, confident single continuation → reopens for review.
-    return { fromId: p.id, lineage: "one-to-one", toId: successor[col]!.id, confidence: e.score, evidence: e };
+    return {
+      fromId: p.id,
+      lineage: "one-to-one",
+      toId: matched.id,
+      confidence: e.score,
+      evidence: e,
+    };
   });
 
   // Successors that no prior maps to (1:1, split member, or merge target) are new.
@@ -396,7 +434,11 @@ export function classifyLineage(
     if (c.lineage === "split") {
       // Split is represented as one entry per member so the graph stays flat; a
       // split fromId never carries state (§3.4) regardless of member count.
-      return (c.toIds ?? []).map((toId) => ({ fromId: c.fromId, lineage: "split" as Lineage, toId }));
+      return (c.toIds ?? []).map((toId) => ({
+        fromId: c.fromId,
+        lineage: "split" as Lineage,
+        toId,
+      }));
     }
     return [{ fromId: c.fromId, lineage: c.lineage, ...(c.toId ? { toId: c.toId } : {}) }];
   });
@@ -521,21 +563,21 @@ export function measure(fixtures: readonly LineageFixture[]): MeasurementReport 
     const predByFrom = new Map(result.classifications.map((c) => [c.fromId, c]));
     for (const truth of fixture.truth) {
       totalPriors += 1;
-      support.set(truth.lineage, support.get(truth.lineage)! + 1);
+      support.set(truth.lineage, (support.get(truth.lineage) ?? 0) + 1);
       if (autoCarries(truth.lineage)) autoSupport += 1;
       const pred = predByFrom.get(truth.fromId);
       if (!pred) {
         // No classification emitted at all → a false negative for the true class.
-        fn.set(truth.lineage, fn.get(truth.lineage)! + 1);
+        fn.set(truth.lineage, (fn.get(truth.lineage) ?? 0) + 1);
         continue;
       }
       const correct = pred.lineage === truth.lineage && targetMatches(pred, truth);
       if (correct) {
-        tp.set(pred.lineage, tp.get(pred.lineage)! + 1);
+        tp.set(pred.lineage, (tp.get(pred.lineage) ?? 0) + 1);
         if (autoCarries(pred.lineage)) autoTp += 1;
       } else {
-        fp.set(pred.lineage, fp.get(pred.lineage)! + 1);
-        fn.set(truth.lineage, fn.get(truth.lineage)! + 1);
+        fp.set(pred.lineage, (fp.get(pred.lineage) ?? 0) + 1);
+        fn.set(truth.lineage, (fn.get(truth.lineage) ?? 0) + 1);
       }
       // Safety: an auto-carry prediction that is not a correct auto-carry landed
       // read state on the wrong code (wrong class OR wrong target).
@@ -555,14 +597,14 @@ export function measure(fixtures: readonly LineageFixture[]): MeasurementReport 
 
   const perClass = new Map<Lineage, ClassMetrics>();
   for (const l of ALL_LINEAGES) {
-    const t = tp.get(l)!;
-    const f = fp.get(l)!;
-    const n = fn.get(l)!;
+    const t = tp.get(l) ?? 0;
+    const f = fp.get(l) ?? 0;
+    const n = fn.get(l) ?? 0;
     perClass.set(l, {
       truePositive: t,
       falsePositive: f,
       falseNegative: n,
-      support: support.get(l)!,
+      support: support.get(l) ?? 0,
       precision: ratio(t, t + f),
       recall: ratio(t, t + n),
     });
@@ -583,9 +625,12 @@ export function measure(fixtures: readonly LineageFixture[]): MeasurementReport 
 /** Render the measurement as the markdown tables the verdict doc commits. */
 export function renderMeasurementTables(report: MeasurementReport): string {
   const pct = (v: number | null): string => (v === null ? "—" : `${(v * 100).toFixed(1)}%`);
-  const rows = ALL_LINEAGES.map((l) => {
-    const m = report.perClass.get(l)!;
-    return `| \`${l}\` | ${m.support} | ${m.truePositive} | ${m.falsePositive} | ${m.falseNegative} | ${pct(m.precision)} | ${pct(m.recall)} |`;
+  const rows = ALL_LINEAGES.flatMap((l) => {
+    const m = report.perClass.get(l);
+    if (!m) return [];
+    return [
+      `| \`${l}\` | ${m.support} | ${m.truePositive} | ${m.falsePositive} | ${m.falseNegative} | ${pct(m.precision)} | ${pct(m.recall)} |`,
+    ];
   });
   const a = report.autoCarry;
   return [
