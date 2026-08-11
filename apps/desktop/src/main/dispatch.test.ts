@@ -180,11 +180,14 @@ function harness(
   // orchestrator is asked exactly once and Codex only in "both" mode — the whole
   // point of the issue is that negative guarantee on the REAL command path.
   const reviewAsk = {
-    askOrchestrator: vi.fn<(input: { reviewId: string; question: string }) => Promise<AskAnswer>>(
+    askOrchestrator: vi.fn<(input: { review: Review; question: string }) => Promise<AskAnswer>>(
       async () => ({ model: "Orchestrator · Claude", answer: "orchestrator's answer" }),
     ),
-    askCodex: vi.fn<(input: { reviewId: string; question: string }) => Promise<AskAnswer>>(
-      async () => ({ model: "codex", answer: "codex's answer" }),
+    askCodex: vi.fn<(input: { review: Review; question: string }) => Promise<AskAnswer>>(
+      async () => ({
+        model: "codex",
+        answer: "codex's answer",
+      }),
     ),
   };
   const deps: DispatchDeps = {
@@ -1178,11 +1181,33 @@ describe("createDispatch — front door (issue #29)", () => {
 });
 
 describe("createDispatch — review.ask routing (issue #139)", () => {
+  // Open a real review and flip to `auto` so the model-spend gate does not ask —
+  // these tests pin ROUTING; the gate has its own regressions below.
+  async function openReview(): Promise<{
+    dispatch: ReturnType<typeof createDispatch>;
+    reviewAsk: { askOrchestrator: ReturnType<typeof vi.fn>; askCodex: ReturnType<typeof vi.fn> };
+    service: ReviewService;
+    settings: { permissionMode(): PermissionMode; setPermissionMode(mode: PermissionMode): void };
+    review: Review;
+  }> {
+    const h = harness();
+    h.settings.setPermissionMode("auto");
+    const review = await capturedReview(h.dispatch);
+    return {
+      dispatch: h.dispatch,
+      reviewAsk: h.reviewAsk,
+      service: h.service,
+      settings: h.settings,
+      review,
+    };
+  }
+
   it("orchestrator mode asks the orchestrator ONCE and Codex ZERO times", async () => {
-    const { dispatch, reviewAsk } = harness();
+    const { dispatch, reviewAsk, review } = await openReview();
     const out = (await dispatch("review.ask", {
       commandId: randomUUID(),
-      reviewId: "review-1",
+      reviewId: review.id,
+      patchsetId: review.activePatchsetId,
       mode: "orchestrator",
       question: "is the retry-after in seconds or ms?",
     })) as { mode: string; primary: { model: string }; secondOpinion?: unknown };
@@ -1194,10 +1219,11 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
   });
 
   it("an OMITTED mode defaults to orchestrator — never fires a second model", async () => {
-    const { dispatch, reviewAsk } = harness();
+    const { dispatch, reviewAsk, review } = await openReview();
     const out = (await dispatch("review.ask", {
       commandId: randomUUID(),
-      reviewId: "review-1",
+      reviewId: review.id,
+      patchsetId: review.activePatchsetId,
       question: "no mode given",
     })) as { mode: string; secondOpinion?: unknown };
     expect(out.mode).toBe("orchestrator");
@@ -1206,10 +1232,11 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
   });
 
   it("both mode asks the orchestrator ONCE and Codex ONCE — two labelled answers, no third", async () => {
-    const { dispatch, reviewAsk } = harness();
+    const { dispatch, reviewAsk, review } = await openReview();
     const out = (await dispatch("review.ask", {
       commandId: randomUUID(),
-      reviewId: "review-1",
+      reviewId: review.id,
+      patchsetId: review.activePatchsetId,
       mode: "both",
       question: "does the client agree?",
     })) as {
@@ -1226,18 +1253,141 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
     expect(Object.keys(out).sort()).toEqual(["mode", "primary", "secondOpinion"]);
   });
 
-  it("threads the reviewId to the ports (a question is ABOUT a review)", async () => {
-    const { dispatch, reviewAsk } = harness();
+  it("hands BOTH legs one resolved snapshot — a mid-ask patchset swap cannot cross them (P1-2)", async () => {
+    const { dispatch, reviewAsk, service, review } = await openReview();
+    // Resolution goes through `service.bootstrap()`; resolve-once means EXACTLY one
+    // call feeds both legs. Per-leg resolution (the bug) would call it twice.
+    const bootstrapSpy = vi.spyOn(service, "bootstrap");
+    const seen: string[] = [];
+    reviewAsk.askOrchestrator.mockImplementation(async ({ review: r }: { review: Review }) => {
+      seen.push(`o:${r.activePatchsetId}`);
+      return { model: "Orchestrator · Claude", answer: "a" };
+    });
+    reviewAsk.askCodex.mockImplementation(async ({ review: r }: { review: Review }) => {
+      seen.push(`c:${r.activePatchsetId}`);
+      return { model: "codex", answer: "b" };
+    });
     await dispatch("review.ask", {
       commandId: randomUUID(),
-      reviewId: "review-42",
+      reviewId: review.id,
+      patchsetId: review.activePatchsetId,
       mode: "both",
       question: "q",
     });
-    expect(reviewAsk.askOrchestrator).toHaveBeenCalledWith({
-      reviewId: "review-42",
+    expect(bootstrapSpy).toHaveBeenCalledTimes(1);
+    expect(seen).toEqual([`o:${review.activePatchsetId}`, `c:${review.activePatchsetId}`]);
+  });
+
+  it("refuses a question whose patchsetId is not the current active patchset (P1-2)", async () => {
+    const { dispatch, reviewAsk, review } = await openReview();
+    await expect(
+      dispatch("review.ask", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        patchsetId: "a-stale-patchset-id",
+        mode: "both",
+        question: "q",
+      }),
+    ).rejects.toThrow(/changed since/i);
+    expect(reviewAsk.askOrchestrator).not.toHaveBeenCalled();
+    expect(reviewAsk.askCodex).not.toHaveBeenCalled();
+  });
+
+  it("threads the RESOLVED review to both ports (a question is ABOUT the open review)", async () => {
+    const { dispatch, reviewAsk, review } = await openReview();
+    await dispatch("review.ask", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      patchsetId: review.activePatchsetId,
+      mode: "both",
       question: "q",
     });
-    expect(reviewAsk.askCodex).toHaveBeenCalledWith({ reviewId: "review-42", question: "q" });
+    expect(reviewAsk.askOrchestrator).toHaveBeenCalledWith({ review, question: "q" });
+    expect(reviewAsk.askCodex).toHaveBeenCalledWith({ review, question: "q" });
+  });
+});
+
+describe("createDispatch — review.ask model-spend gate (P1-1, mirrors review.canvases)", () => {
+  // These pin the vital model-spend circuit: under a mode that ASKS (manual, the
+  // default), a live ask requires a single-use token MAIN minted, and a missing /
+  // forged / replayed token calls NEITHER port. They go RED if the gate is removed,
+  // if the single-use check is dropped, or if the gate over-blocks auto/bypass.
+
+  it("refuses under manual mode with NO authorization — NEITHER port runs", async () => {
+    const { dispatch, reviewAsk, settings } = harness();
+    settings.setPermissionMode("manual"); // explicit; also the safe default
+    const review = await capturedReview(dispatch);
+    await expect(
+      dispatch("review.ask", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        patchsetId: review.activePatchsetId,
+        mode: "both",
+        question: "q",
+      }),
+    ).rejects.toThrow(/authoriz/i);
+    expect(reviewAsk.askOrchestrator).not.toHaveBeenCalled();
+    expect(reviewAsk.askCodex).not.toHaveBeenCalled();
+  });
+
+  it("refuses a FORGED authorization under manual mode — NEITHER port runs", async () => {
+    const { dispatch, reviewAsk } = harness();
+    const review = await capturedReview(dispatch);
+    await expect(
+      dispatch("review.ask", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        patchsetId: review.activePatchsetId,
+        mode: "both",
+        question: "q",
+        authorization: "forged-not-minted-by-main",
+      }),
+    ).rejects.toThrow(/authoriz/i);
+    expect(reviewAsk.askOrchestrator).not.toHaveBeenCalled();
+    expect(reviewAsk.askCodex).not.toHaveBeenCalled();
+  });
+
+  it("a legit single-use token authorizes ONE ask; a replay is refused (no re-spend)", async () => {
+    const { dispatch, reviewAsk } = harness();
+    const review = await capturedReview(dispatch);
+    const authorization = await requestConsent(dispatch, review.id);
+
+    await dispatch("review.ask", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      patchsetId: review.activePatchsetId,
+      mode: "orchestrator",
+      question: "q",
+      authorization,
+    });
+    expect(reviewAsk.askOrchestrator).toHaveBeenCalledTimes(1);
+
+    reviewAsk.askOrchestrator.mockClear();
+    // Replay the SAME token — single-use means it is already spent.
+    await expect(
+      dispatch("review.ask", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        patchsetId: review.activePatchsetId,
+        mode: "orchestrator",
+        question: "q again",
+        authorization,
+      }),
+    ).rejects.toThrow(/authoriz/i);
+    expect(reviewAsk.askOrchestrator).not.toHaveBeenCalled();
+  });
+
+  it("auto mode needs NO token — the ask runs (the gate does not over-block)", async () => {
+    const { dispatch, reviewAsk, settings } = harness();
+    settings.setPermissionMode("auto");
+    const review = await capturedReview(dispatch);
+    await dispatch("review.ask", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      patchsetId: review.activePatchsetId,
+      mode: "orchestrator",
+      question: "q",
+    });
+    expect(reviewAsk.askOrchestrator).toHaveBeenCalledTimes(1);
   });
 });

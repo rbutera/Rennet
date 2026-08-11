@@ -176,12 +176,16 @@ export interface DispatchDeps {
    * with (always asked); `askCodex` is the second opinion (asked ONLY in "both"
    * mode). Dispatch calls the core `askReview` router over these — the router owns
    * the orchestrator-once / both-adds-codex / never-synthesize law, so the invariant
-   * holds on the real command path, not only in an isolated unit test. A fixture
-   * stands behind these ports until the live orchestrator/Codex invocation lands.
+   * holds on the real command path, not only in an isolated unit test.
+   *
+   * Both ports take the ALREADY-RESOLVED `review` (not a bare id): dispatch resolves
+   * and freshness-pins the review+patchset ONCE, then hands the SAME snapshot to both
+   * legs, so a "both" ask can never answer from two different patchsets (a
+   * regeneration between the orchestrator and Codex legs cannot cross them).
    */
   readonly reviewAsk: {
-    askOrchestrator(input: { reviewId: string; question: string }): Promise<AskAnswer>;
-    askCodex(input: { reviewId: string; question: string }): Promise<AskAnswer>;
+    askOrchestrator(input: { review: Review; question: string }): Promise<AskAnswer>;
+    askCodex(input: { review: Review; question: string }): Promise<AskAnswer>;
   };
 }
 
@@ -526,19 +530,42 @@ export function createDispatch(
         // "both" mode; and the two answers come back side by side, NEVER merged. We
         // run it here — not a bespoke branch — so "orchestrator mode never touches
         // Codex, and no synthesis is ever produced" holds on the real command path.
-        // The ports are fixtured this wave (deferred live invocation); the routing is
-        // real. `mode` is defaulted to "orchestrator" by the schema, so an omitted
-        // mode never fires a second model.
+        // `mode` is defaulted to "orchestrator" by the schema, so an omitted mode
+        // never fires a second model.
         const input = parseCommandInput(name, rawInput);
-        // The schema defaults `mode` to "orchestrator", so an omitted mode never
-        // fires a second model at runtime; the `?? "orchestrator"` only narrows the
-        // `z.input` type (which keeps a defaulted field optional) and restates the
-        // same wrong-side-safe default.
+        // Resolve + freshness-pin ONCE (P1-2): a stale/unknown id is refused, AND the
+        // question must be ABOUT the CURRENT active patchset — a mismatch (the review
+        // regenerated since the renderer framed the question) is refused rather than
+        // silently answered against new code. The single resolved `review` is handed
+        // to BOTH legs below, so a "both" ask cannot cross two patchsets.
+        const review = requireLatestReview(input.reviewId);
+        if (review.activePatchsetId !== input.patchsetId) {
+          throw new Error(
+            "The review changed since this question was framed; reopen the review and ask again",
+          );
+        }
+        // The model-spend gate (P1-1), mirroring the `review.canvases` harness gate.
+        // The ports are LIVE model spend (a real orchestrator turn + optional `codex
+        // exec`), so under a mode that ASKS (manual) MAIN requires the single-use,
+        // review-bound token IT minted and CONSUMES it here — BEFORE `askReview`, so a
+        // missing / forged / already-spent token calls NEITHER port. Under auto/bypass
+        // the mode does not ask, no token is needed, and nothing is consumed.
+        const effectiveMode = resolvePermissionMode({ workspace: deps.settings.permissionMode() });
+        if (requiresConsent(effectiveMode, "model.spend")) {
+          const authorization = input.authorization;
+          if (
+            typeof authorization !== "string" ||
+            !deps.consent.consume(review.id, authorization)
+          ) {
+            throw new Error(
+              "The review question was not authorized under the current permission mode",
+            );
+          }
+        }
         const mode = input.mode ?? "orchestrator";
         const result = await askReview(mode, input.question, {
-          askOrchestrator: (question) =>
-            deps.reviewAsk.askOrchestrator({ reviewId: input.reviewId, question }),
-          askCodex: (question) => deps.reviewAsk.askCodex({ reviewId: input.reviewId, question }),
+          askOrchestrator: (question) => deps.reviewAsk.askOrchestrator({ review, question }),
+          askCodex: (question) => deps.reviewAsk.askCodex({ review, question }),
         });
         return parseCommandOutput(name, result);
       }
