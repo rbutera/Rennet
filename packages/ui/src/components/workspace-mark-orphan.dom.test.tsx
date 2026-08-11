@@ -127,3 +127,115 @@ describe("CanvasWorkspace mark index — authoritative placement surfaces fine o
     expect(container.querySelector('[data-jump="ann-1"]')).toBeNull();
   });
 });
+
+// ── #250: agent-authored PROPOSAL CHUNK elements ─────────────────────────────
+//
+// `projectSequence` regroups floor hunks into proposal-chunk elements whose chunk
+// anchor is NOT in the floor substrate. The old owner lookup resolved ownership
+// from substrate-chunk membership, so a mark on a regrouped floor hunk found no
+// owner, skipped the authoritative `placeMarks` pass, and rendered as placed on the
+// coarse "is the hunk in the changeset" verdict — even when it was unplaceable.
+//
+// The canvas shape below (proposal element anchor `rennet:chunk/agent-group` outside
+// the substrate; floor hunk `h1` inside it; the element's diff `hunkOccurrences`
+// carrying `h1`) is the LIVE producer output, pinned by the real-producer test
+// `element-diffs.test.ts › "REAL SHAPE (#250)"`. That test is the guarantee this
+// component fixture matches the pipeline rather than agreeing with itself.
+function proposalCanvasWith(annotationTarget: string): Record<CanvasAngle, Canvas> {
+  const build = (angle: CanvasAngle): Canvas => ({
+    canvasId: `cid-${angle}`,
+    reviewId: "r1",
+    patchsetId: "p1",
+    angle,
+    layers: {
+      // The floor substrate contains h1 (so the coarse verdict says "placed") but NOT
+      // the agent-group proposal chunk (proposal chunks never enter the floor substrate).
+      substrate:
+        angle === ACTIVE
+          ? { chunks: [{ chunkId: "c1", hunkIds: ["h1"], filePaths: ["src/a.ts"] }] }
+          : { chunks: [] },
+      analysis:
+        angle === ACTIVE
+          ? {
+              elements: [
+                {
+                  elementKey: "seq-el",
+                  docId: "pdoc",
+                  anchor: "rennet:chunk/agent-group",
+                  kind: "chunk",
+                  title: "Agent group",
+                },
+              ],
+              cohorts: [],
+              readingOrder: ["seq-el"],
+            }
+          : { elements: [], cohorts: [], readingOrder: [] },
+      disposition: { dispositions: [] },
+      annotation:
+        angle === ACTIVE
+          ? {
+              annotations: [
+                {
+                  annotationId: "ann-1",
+                  target: annotationTarget,
+                  kind: "callout",
+                  body: "look here",
+                  pinned: false,
+                },
+              ],
+              proposals: [],
+            }
+          : { annotations: [], proposals: [] },
+    },
+    overlay: [],
+  });
+  return Object.fromEntries(CANVAS_ANGLES.map((a) => [a, build(a)])) as Record<CanvasAngle, Canvas>;
+}
+
+/** The proposal element's real diff renders h1 (its `hunkOccurrences` carries it). */
+function renderProposal(
+  annotationTarget: string,
+  diffForImpl: (elementKey: string) => ElementDiff | undefined,
+) {
+  return mount(
+    <CanvasWorkspace
+      canvases={proposalCanvasWith(annotationTarget)}
+      store={createViewStore({ angle: ACTIVE })}
+      diffFor={diffForImpl}
+    />,
+  );
+}
+
+const PROPOSAL_DIFF_FOR = (): ElementDiff => ({
+  path: "src/a.ts",
+  paths: ["src/a.ts"],
+  diff: DIFF,
+  hunkOccurrences: H1_OCC,
+});
+
+describe("CanvasWorkspace mark index — proposal-chunk regrouped hunks (#250)", () => {
+  it("an OUT-of-slice mark on a regrouped hunk surfaces in the orphan tray, never as placed", () => {
+    // h1 is in the floor substrate (coarse → placed), but the proposal element's diff
+    // has one addition, so #L9@additions resolves to no row. Bug: shown as placed.
+    const { container } = renderProposal("rennet:hunk/h1#L9@additions", PROPOSAL_DIFF_FOR);
+    expect(container.querySelector('[data-orphan-mark="ann-1"]')).not.toBeNull();
+    expect(container.querySelector('[data-jump="ann-1"]')).toBeNull();
+    expect(container.textContent).toContain("could not be placed");
+  });
+
+  it("an IN-slice mark on a regrouped hunk shows as a placed jump (positive control — no over-orphaning)", () => {
+    const { container } = renderProposal("rennet:hunk/h1#L1@additions", PROPOSAL_DIFF_FOR);
+    expect(container.querySelector('[data-jump="ann-1"]')).not.toBeNull();
+    expect(container.querySelector('[data-orphan-mark="ann-1"]')).toBeNull();
+  });
+
+  it("keeps the coarse verdict (placed, NOT a false orphan) when the element diff cannot be resolved (#250 invariant)", () => {
+    // diffFor returns undefined (the demo host / an unresolved diff). Ownership can
+    // only be recovered from a resolved diff, so the mark keeps the coarse verdict —
+    // turning a hidden orphan into a false one would trade one lie for another. This
+    // reddens if a missing diff ever produces a false orphan.
+    const { container } = renderProposal("rennet:hunk/h1#L9@additions", () => undefined);
+    expect(container.querySelector('[data-orphan-mark="ann-1"]')).toBeNull();
+    expect(container.querySelector('[data-jump="ann-1"]')).not.toBeNull();
+  });
+});

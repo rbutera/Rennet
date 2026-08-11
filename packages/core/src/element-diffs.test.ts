@@ -9,7 +9,7 @@ import type {
 } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 import { describe, expect, it } from "vitest";
-import type { AdmittedDocument } from "./canvas";
+import { type AdmittedDocument, buildCanvas } from "./canvas";
 import { decompose } from "./decomposition";
 import { buildElementDiffs } from "./element-diffs";
 import { buildReviewCanvases } from "./pipeline";
@@ -216,6 +216,72 @@ describe("buildElementDiffs", () => {
     const diffs = buildElementDiffs(set, decomposition, patchset, admitted);
     expect(diffs["seq-el"]?.path).toBe("src/widget.ts");
     expect(diffs["seq-el"]?.diff).toBe(WIDGET);
+  });
+
+  // #250 real-shape PROVENANCE: this pins the exact producer output the workspace
+  // mark index (packages/ui) must own — a proposal chunk element whose anchor is
+  // NOT in the floor substrate, the floor hunk that IS in the substrate (so the
+  // coarse verdict says "placed"), and the diff's `hunkOccurrences` carrying that
+  // floor hunk (the ownership signal the fix reads). The UI component test
+  // (workspace-mark-orphan.dom.test.tsx) asserts the orphan behavior over exactly
+  // this shape; this test is why that fixture is faithful to the live pipeline and
+  // not a self-agreeing hand-shape.
+  it("REAL SHAPE (#250): a proposal element sits outside the substrate while its diff carries the floor hunk", () => {
+    const floorHunkId = decomposition.hunks[0]?.id ?? "";
+    expect(floorHunkId).not.toBe("");
+    const admitted: AdmittedDocument[] = [
+      {
+        docId: "pdoc",
+        docType: "decomposition.proposal",
+        body: {
+          chunks: [
+            {
+              chunkId: "agent-group",
+              title: "Agent group",
+              hunkIds: [floorHunkId],
+              angles: ["sequence"],
+              rationale: "regrouped",
+            },
+          ],
+          edges: [],
+          readingOrder: ["agent-group"],
+          residue: [],
+        },
+      },
+    ];
+    // The REAL sequence canvas from the REAL producer.
+    const sequence = buildCanvas({
+      reviewId: "r1",
+      patchsetId: "patch-1",
+      angle: "sequence",
+      admittedDocs: admitted,
+      decomposition,
+      dispositions: [],
+      canvasEvents: [],
+    });
+    const element = sequence.layers.analysis.elements[0];
+    // (1) The proposal element anchors to the agent chunk id — NOT a substrate chunk.
+    expect(element?.anchor).toBe("rennet:chunk/agent-group");
+    expect(sequence.layers.substrate.chunks.map((chunk) => chunk.chunkId)).not.toContain(
+      "agent-group",
+    );
+    // (2) The floor hunk IS in the substrate (so the workspace coarse verdict says placed).
+    expect(sequence.layers.substrate.chunks.flatMap((chunk) => chunk.hunkIds)).toContain(
+      floorHunkId,
+    );
+    // (3) The diff producer maps the regrouped floor hunk onto the proposal element —
+    // the ownership signal the mark index must read but the substrate lookup misses.
+    const set = Object.fromEntries(
+      CANVAS_ANGLES.map((angle) => [
+        angle,
+        angle === "sequence" ? sequence : blankCanvas(angle, []),
+      ]),
+    ) as Record<CanvasAngle, Canvas>;
+    const diffs = buildElementDiffs(set, decomposition, patchset, admitted);
+    const occurrenceIds = element
+      ? (diffs[element.elementKey]?.hunkOccurrences.flat().map((occ) => occ.id) ?? [])
+      : [];
+    expect(occurrenceIds).toContain(floorHunkId);
   });
 
   // Oversize-split fragments: two decomposition hunks (splitOf fragments) that

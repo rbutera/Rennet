@@ -443,20 +443,53 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   const authoritativePlaced = new Set<string>();
   const authoritativeOrphan = new Set<string>();
   if (props.diffFor) {
+    // Resolve which element OWNS each hunk in two passes. FIRST by element ANCHOR (a
+    // hunk-anchored element owns its hunk; a floor-chunk element owns its substrate
+    // chunk's hunks) — the original resolution, kept so the #84 empty-`hunkOccurrences`
+    // element still owns its hunk via its anchor and therefore still reaches
+    // `placeMarks` to orphan loudly. THEN, for any hunk no anchor claimed, by the
+    // element's REAL diff (`ElementDiff.hunkOccurrences`). That second pass is the #250
+    // fix: a proposal chunk (`projectSequence`) regroups floor hunks into an element
+    // whose chunk anchor is NOT in the floor substrate, so its anchor occurrence set is
+    // just its own chunk id — a mark on a regrouped hunk found no owner, never reached
+    // `placeMarks`, and silently rode the coarse "in changeset" verdict as a false
+    // "placed". `hunkOccurrences` is emitted with the diff text so it cannot drift from
+    // it (#84), which is what makes it a trustworthy ownership source.
+    const elementDiffByKey = new Map<string, ElementDiff>();
+    const hunkOwnerKey = new Map<string, string>();
+    for (const element of canvas.layers.analysis.elements) {
+      const elementDiff = props.diffFor(element.elementKey);
+      if (elementDiff) elementDiffByKey.set(element.elementKey, elementDiff);
+      for (const hunkId of occurrenceIdsForElement(element.anchor)) {
+        if (!hunkOwnerKey.has(hunkId)) hunkOwnerKey.set(hunkId, element.elementKey);
+      }
+    }
+    for (const element of canvas.layers.analysis.elements) {
+      const elementDiff = elementDiffByKey.get(element.elementKey);
+      if (!elementDiff) continue;
+      for (const hunk of elementDiff.hunkOccurrences) {
+        for (const occurrence of hunk) {
+          if (!hunkOwnerKey.has(occurrence.id)) hunkOwnerKey.set(occurrence.id, element.elementKey);
+        }
+      }
+    }
     const marksByElementKey = new Map<string, Mark[]>();
     for (const mark of marks) {
       const parsed = parseAnchor(mark.anchor);
       if (!parsed.ok) continue;
-      const owner = canvas.layers.analysis.elements.find((element) =>
-        occurrenceIdsForElement(element.anchor).includes(parsed.anchor.id),
-      );
-      if (!owner) continue;
-      const list = marksByElementKey.get(owner.elementKey) ?? [];
+      const ownerKey = hunkOwnerKey.get(parsed.anchor.id);
+      if (ownerKey === undefined) continue;
+      const list = marksByElementKey.get(ownerKey) ?? [];
       list.push(mark);
-      marksByElementKey.set(owner.elementKey, list);
+      marksByElementKey.set(ownerKey, list);
     }
     for (const [elementKey, elementMarks] of marksByElementKey) {
-      const elementDiff = props.diffFor(elementKey);
+      // Only an element whose diff RESOLVED can be adjudicated by `placeMarks`. An
+      // anchor-only owner (diffFor returned undefined) keeps the coarse verdict rather
+      // than false-orphaning a mark we simply could not place here — the invariant the
+      // #84 set relies on, which #250 must preserve (never trade a hidden orphan for a
+      // false one).
+      const elementDiff = elementDiffByKey.get(elementKey);
       if (!elementDiff) continue;
       const registry = buildRowRegistry({
         diff: elementDiff.diff,
