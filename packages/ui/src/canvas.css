@@ -2030,3 +2030,469 @@
   opacity: 0.5;
   cursor: default;
 }
+
+/* ───────────────────────────────────────────────────────────────────────────
+   The Spec angle: a structured OpenSpec change viewer (Rai, wireframes #9).
+   Tokens only (the glass-theme discipline). Structured, not a markdown dump:
+   proposal / spec deltas / tasks / design, each element carrying the shared
+   disposition cluster.
+   ─────────────────────────────────────────────────────────────────────────── */
+.openspec-view {
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 4px 2px 24px;
+  color: var(--text);
+}
+.ospec-header {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 16px;
+  border-bottom: 1px solid var(--hairline);
+}
+.ospec-header-title {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ospec-kicker {
+  font: 700 10px / 1.2 var(--sans);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.ospec-name {
+  font: 600 22px / 1.2 var(--mono);
+  color: var(--text);
+  margin: 0;
+}
+.ospec-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.ospec-stat {
+  color: var(--text-soft);
+  font-size: 13px;
+}
+.ospec-stat-num {
+  color: var(--text);
+  font-weight: 700;
+}
+.ospec-header-review {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.ospec-review-label {
+  font: 600 11px / 1.2 var(--sans);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+
+/* Sections share a heading row (title + a review affordance on the whole part). */
+.ospec-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+.ospec-section-title {
+  font: 600 15px / 1.2 var(--sans);
+  color: var(--text);
+  margin: 0;
+}
+.ospec-subhead {
+  font: 700 10px / 1.2 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin: 16px 0 6px;
+}
+.ospec-proposal,
+.ospec-deltas,
+.ospec-tasks,
+.ospec-design {
+  display: flex;
+  flex-direction: column;
+}
+
+/* Block renderer (paragraph / list / code / table). */
+.ospec-paragraph {
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 6px 0;
+}
+.ospec-list {
+  margin: 4px 0;
+  padding-left: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.ospec-list li {
+  color: var(--text-soft);
+  font-size: 14px;
+  line-height: 1.5;
+}
+.ospec-list-lead {
+  color: var(--text);
+  font-weight: 600;
+  margin-right: 6px;
+}
+.ospec-code {
+  margin: 8px 0;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: var(--code-bg);
+  border: 1px solid var(--hairline);
+  overflow-x: auto;
+  color: var(--code);
+  font: 500 12px / 1.5 var(--mono);
+  white-space: pre;
+}
+.ospec-table-wrap {
+  overflow-x: auto;
+  margin: 8px 0;
+}
+.ospec-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+.ospec-table th,
+.ospec-table td {
+  border: 1px solid var(--hairline);
+  padding: 6px 10px;
+  text-align: left;
+  color: var(--text-soft);
+}
+.ospec-table th {
+  color: var(--text);
+  font-weight: 600;
+  background: var(--surface-2);
+}
+
+/* Capabilities. */
+.ospec-capability-list {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ospec-capability {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 10px 12px;
+}
+.ospec-capability-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ospec-cap-nature {
+  flex: none;
+  border-radius: var(--chip-radius);
+  padding: 2px 8px;
+  font: 700 9px / 1.2 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border: 1px solid var(--hairline);
+}
+.ospec-cap-new {
+  color: var(--green);
+  background: var(--green-fill);
+  border-color: var(--green-line);
+}
+.ospec-cap-modified {
+  color: var(--amber);
+  background: var(--amber-surface);
+  border-color: var(--amber-line);
+}
+.ospec-cap-name {
+  color: var(--text);
+  font: 600 13px / 1.2 var(--mono);
+  margin-right: auto;
+}
+.ospec-cap-summary {
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 6px 0 0;
+}
+
+/* Impact rows. */
+.ospec-impact-list {
+  list-style: none;
+  margin: 4px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ospec-impact-row {
+  display: flex;
+  gap: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.ospec-impact-area {
+  flex: none;
+  color: var(--text);
+  font: 600 12px / 1.4 var(--mono);
+}
+.ospec-impact-detail {
+  color: var(--text-soft);
+}
+
+/* Spec deltas: requirement → scenario tree. */
+.ospec-delta {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface);
+  padding: 12px 14px;
+  margin-top: 10px;
+}
+.ospec-delta-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-bottom: 8px;
+  border-bottom: 1px solid var(--hairline);
+}
+.ospec-delta-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.ospec-delta-cap {
+  color: var(--text);
+  font: 600 14px / 1.2 var(--mono);
+}
+.ospec-delta-ops {
+  display: inline-flex;
+  gap: 6px;
+}
+.ospec-op {
+  border-radius: var(--chip-radius);
+  padding: 2px 8px;
+  font: 700 9px / 1.2 var(--sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  border: 1px solid var(--hairline);
+  color: var(--text-faint);
+}
+.ospec-op-added {
+  color: var(--green);
+  background: var(--green-fill);
+  border-color: var(--green-line);
+}
+.ospec-op-modified {
+  color: var(--amber);
+  background: var(--amber-surface);
+  border-color: var(--amber-line);
+}
+.ospec-op-removed {
+  color: var(--text-faint);
+}
+.ospec-requirements {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.ospec-requirement {
+  padding-top: 12px;
+}
+.ospec-requirement + .ospec-requirement {
+  border-top: 1px solid var(--hairline);
+}
+.ospec-requirement-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ospec-requirement-name {
+  color: var(--text);
+  font: 600 14px / 1.35 var(--sans);
+  margin: 0;
+}
+.ospec-requirement-statement {
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.55;
+  margin: 6px 0 0;
+}
+.ospec-scenarios {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.ospec-scenarios-count {
+  font: 700 9px / 1.2 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.ospec-scenario {
+  border-left: 2px solid var(--accent-soft-line);
+  padding-left: 12px;
+}
+.ospec-scenario-name {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0 0 4px;
+}
+.ospec-steps {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.ospec-step {
+  display: flex;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.45;
+}
+.ospec-step-keyword {
+  flex: none;
+  min-width: 44px;
+  color: var(--accent);
+  font: 700 11px / 1.4 var(--mono);
+  text-transform: uppercase;
+}
+.ospec-step-text {
+  color: var(--text-soft);
+}
+
+/* Tasks: checklist + progress. */
+.ospec-task-progress {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-weight: 600;
+}
+.ospec-progress {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--surface-2);
+  border: 1px solid var(--hairline);
+  overflow: hidden;
+  margin-bottom: 12px;
+}
+.ospec-progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--green);
+}
+.ospec-task-group {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 10px 12px;
+  margin-bottom: 8px;
+}
+.ospec-task-group-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+.ospec-task-group-title {
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  margin-right: auto;
+}
+.ospec-task-group-count {
+  color: var(--text-faint);
+  font: 600 11px / 1.2 var(--mono);
+}
+.ospec-task-items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.ospec-task-item {
+  display: flex;
+  gap: 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: var(--text-soft);
+}
+.ospec-task-item[data-status="done"] .ospec-task-text {
+  color: var(--text-faint);
+  text-decoration: line-through;
+}
+.ospec-task-check {
+  flex: none;
+  color: var(--green);
+}
+
+/* Design: table of contents + sections. */
+.ospec-toc {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 8px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+}
+.ospec-toc-link {
+  color: var(--text-soft);
+  font-size: 13px;
+  text-decoration: none;
+}
+.ospec-toc-link:hover {
+  color: var(--accent);
+}
+.ospec-toc-l3 {
+  padding-left: 14px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.ospec-design-section {
+  margin-top: 12px;
+}
+.ospec-design-l3 {
+  margin-left: 12px;
+  padding-left: 12px;
+  border-left: 1px solid var(--hairline);
+}
+.ospec-design-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.ospec-design-heading {
+  color: var(--text);
+  font: 600 14px / 1.3 var(--sans);
+  margin: 0;
+}
+.ospec-ask {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--surface-2);
+  padding: 12px;
+}

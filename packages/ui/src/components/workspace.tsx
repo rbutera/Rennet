@@ -7,6 +7,7 @@ import type {
   DispositionType,
   FlaggedReview,
   NoiseReview,
+  OpenSpecChange,
   Proposal,
   ReviewNarration,
 } from "@rennet/types";
@@ -33,6 +34,11 @@ import {
   zoomReducer,
 } from "../canvas/logic";
 import { buildNoiseIndex } from "../canvas/noise";
+import {
+  authorOpenSpecDisposition,
+  buildOpenSpecView,
+  type OpenSpecReviewAnchor,
+} from "../canvas/openspec";
 import type { CoverageMosaic } from "../canvas/read-state";
 import type { Mark } from "../canvas/registrar";
 import { createViewStore, useViewStore, type ViewStore } from "../canvas/store";
@@ -48,6 +54,7 @@ import { LensSwitcher } from "./lens";
 import { MarkIndex, type MarkIndexEntry } from "./mark-index";
 import { NarrationPanel } from "./narration";
 import { NoiseLens } from "./noise";
+import { OpenSpecView, type OpenSpecAskState } from "./openspec";
 import { OrphanTray } from "./orphan-tray";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,6 +121,23 @@ export interface CanvasWorkspaceProps {
    * nothing. Absent ⇒ `ok` (the live failed signal lands with the live runner).
    */
   decisionsRunStatus?: DecisionsRunStatus;
+
+  /**
+   * The parsed OpenSpec change the Spec angle renders (Rai, wireframes #9). When the
+   * `spec` angle is active and this is present, the workspace renders the structured
+   * `OpenSpecView` (proposal / design / tasks / spec deltas) instead of the flat
+   * canvas fallback. Its review affordances (comment / request-change / question)
+   * flow through the SAME disposition seam as the diff lenses (`emit`). Absent ⇒ the
+   * spec angle falls back to the flat canvas (no change loaded), never a blank.
+   */
+  openSpecChange?: OpenSpecChange;
+
+  /**
+   * The Spec view's ask surface (issue #139 seam): ask the orchestrator by default,
+   * opt in to ask both models, no synthesis. Absent ⇒ the Spec view renders without
+   * an ask panel (the disposition verbs still carry the question affordance).
+   */
+  openSpecAsk?: OpenSpecAskState;
 
   // ── Authoring depth (issue #17), additive and optional ──────────────────────
   // The dock renders only the sections whose props are supplied, so a host that
@@ -272,6 +296,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
 
   function approveScope(scope: ApprovalScope, type: DispositionType): void {
     emit(fanOutApproval(canvas, scope, type));
+  }
+
+  // A Spec-view disposition resolves to exactly one write (its anchor key is the
+  // path) and rides the SAME `emit` seam — sink + best-effort `canvas.disposition`
+  // bridge command — as every diff-lens disposition. Review lives on the spec too.
+  function disposeOpenSpec(anchor: OpenSpecReviewAnchor, type: DispositionType): void {
+    emit(authorOpenSpecDisposition(anchor, type).writes);
   }
 
   // Resolve an authoring act at any altitude to its per-anchor L2 writes and fan
@@ -495,7 +526,13 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         {narrationPlacement ? (
           <NarrationPanel altitude={ZOOM_LABELS[zoom.level]} placement={narrationPlacement} />
         ) : null}
-        {angle === "flagged" ? (
+        {angle === "spec" && props.openSpecChange ? (
+          <OpenSpecView
+            view={buildOpenSpecView(props.openSpecChange)}
+            onDispose={disposeOpenSpec}
+            ask={props.openSpecAsk}
+          />
+        ) : angle === "flagged" ? (
           <FlaggedLens
             index={buildFlaggedIndex(props.flaggedReview ?? { status: "ok", findings: [] })}
             onJumpToAnchor={jumpToAnchor}

@@ -44,6 +44,7 @@ export * from "./noise-generation";
 export * from "./novelty-ledger";
 export * from "./orchestrator-primer";
 export * from "./orchestrator-session";
+export * from "./openspec-change";
 export * from "./ordering-pass";
 export * from "./patchset-intent";
 export * from "./pipeline";

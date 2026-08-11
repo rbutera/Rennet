@@ -2353,3 +2353,170 @@ export interface KnowledgeSet {
   readonly generator: string;
   readonly statements: readonly KnowledgeStatement[];
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OpenSpec change artifact model (the "Spec" angle).
+//
+// An OpenSpec change is a directory of markdown artifacts with a KNOWN shape:
+// a `proposal.md` (Why / What Changes / Capabilities / Impact), a `design.md`
+// (sectioned prose), a `tasks.md` (grouped checklists with per-item state), and
+// a set of per-capability spec deltas (`specs/<cap>/spec.md`: ADDED / MODIFIED /
+// REMOVED requirements, each with SHALL statements and WHEN/THEN scenarios).
+//
+// Because the shape is known ahead of time, the Spec angle renders it STRUCTURED
+// rather than as a markdown dump: the requirement/scenario tree, the task
+// checklist with an honest progress roll-up, the capabilities, the spec deltas as
+// structured diffs. These types are the parsed model `parseOpenSpecChange`
+// (`@rennet/core`) produces and the reading surface (`@rennet/ui`) renders.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** One rendered block inside a section: a paragraph, a list, a fenced code block, or a table. */
+export type OpenSpecBlock =
+  | { readonly kind: "paragraph"; readonly text: string }
+  | {
+      readonly kind: "list";
+      readonly ordered: boolean;
+      readonly items: readonly OpenSpecListItem[];
+    }
+  | { readonly kind: "code"; readonly language: string; readonly code: string }
+  | {
+      readonly kind: "table";
+      readonly headers: readonly string[];
+      readonly rows: readonly (readonly string[])[];
+    };
+
+/**
+ * One list item. `lead` is a bolded lead-in phrase pulled out for emphasis
+ * (the `**Storage.** the rest…` idiom the artifacts use heavily); `text` is the
+ * remainder. When there is no bold lead, `lead` is absent and `text` is the whole
+ * item.
+ */
+export interface OpenSpecListItem {
+  readonly lead?: string;
+  readonly text: string;
+}
+
+/** A named capability noted in a proposal's Capabilities section. */
+export interface OpenSpecCapabilityNote {
+  /** The capability slug (the `code`-fenced name, e.g. `review-hypothesis-pass`). */
+  readonly name: string;
+  /** The prose after the colon. */
+  readonly summary: string;
+}
+
+/** One row of a proposal's Impact section (the area touched + what changes there). */
+export interface OpenSpecImpactEntry {
+  /** The impacted area — a package or seam (the bold/code lead, e.g. `packages/types`). */
+  readonly area: string;
+  readonly detail: string;
+}
+
+/** The structured proposal: why, the changes, the capabilities, and the impact. */
+export interface OpenSpecProposal {
+  /** The Why section, as ordered blocks (paragraphs, numbered sub-points). */
+  readonly why: readonly OpenSpecBlock[];
+  /** The What Changes bullet list. */
+  readonly whatChanges: readonly OpenSpecListItem[];
+  /** Capabilities introduced by the change. */
+  readonly newCapabilities: readonly OpenSpecCapabilityNote[];
+  /** Capabilities the change modifies. */
+  readonly modifiedCapabilities: readonly OpenSpecCapabilityNote[];
+  /** The per-area impact rows. */
+  readonly impact: readonly OpenSpecImpactEntry[];
+}
+
+/** A design-doc section (a `##` or `###` heading and its rendered blocks). */
+export interface OpenSpecDesignSection {
+  /** A slug anchor derived from the heading (for the table of contents + jumps). */
+  readonly id: string;
+  readonly level: 2 | 3;
+  readonly heading: string;
+  readonly blocks: readonly OpenSpecBlock[];
+}
+
+/** The design doc, as an ordered section list (a table of contents is derivable from it). */
+export interface OpenSpecDesign {
+  readonly sections: readonly OpenSpecDesignSection[];
+}
+
+/** Whether a checklist task is ticked. */
+export type OpenSpecTaskStatus = "todo" | "done";
+
+/** One checklist item and its state. */
+export interface OpenSpecTaskItem {
+  readonly text: string;
+  readonly status: OpenSpecTaskStatus;
+}
+
+/** One task group (`## N. Title`) and its checklist. */
+export interface OpenSpecTaskGroup {
+  /** A slug anchor derived from the title. */
+  readonly id: string;
+  readonly title: string;
+  readonly items: readonly OpenSpecTaskItem[];
+  /** Items in this group. */
+  readonly total: number;
+  /** Ticked items in this group. */
+  readonly done: number;
+}
+
+/** The tasks doc: the grouped checklists plus an honest whole-change roll-up. */
+export interface OpenSpecTasks {
+  readonly groups: readonly OpenSpecTaskGroup[];
+  /** Total checklist items across all groups. */
+  readonly total: number;
+  /** Ticked items across all groups. */
+  readonly done: number;
+}
+
+/** A spec-delta operation heading (`## ADDED Requirements`, etc.). */
+export type OpenSpecDeltaOperation = "added" | "modified" | "removed" | "renamed";
+
+/** A Gherkin-style scenario step keyword. */
+export type OpenSpecScenarioKeyword = "given" | "when" | "then" | "and";
+
+/** One scenario step (`- **WHEN** …`). */
+export interface OpenSpecScenarioStep {
+  readonly keyword: OpenSpecScenarioKeyword;
+  readonly text: string;
+}
+
+/** One scenario under a requirement (`#### Scenario: …`). */
+export interface OpenSpecScenario {
+  readonly name: string;
+  readonly steps: readonly OpenSpecScenarioStep[];
+}
+
+/** One requirement (`### Requirement: …`): its SHALL statement and its scenarios. */
+export interface OpenSpecRequirement {
+  readonly name: string;
+  /** The normative prose beneath the heading (the SHALL statement). */
+  readonly statement: string;
+  readonly scenarios: readonly OpenSpecScenario[];
+}
+
+/** The requirements under one delta operation (all the ADDED ones, all the MODIFIED ones, …). */
+export interface OpenSpecRequirementGroup {
+  readonly operation: OpenSpecDeltaOperation;
+  readonly requirements: readonly OpenSpecRequirement[];
+}
+
+/** One capability's spec delta (`specs/<capability>/spec.md`). */
+export interface OpenSpecSpecDelta {
+  /** The capability directory name under `specs/`. */
+  readonly capability: string;
+  readonly groups: readonly OpenSpecRequirementGroup[];
+}
+
+/**
+ * A whole parsed OpenSpec change. Any artifact may be absent (a change need not
+ * ship a design doc); `specDeltas` is empty rather than absent when there are no
+ * spec files. The `name` is the change directory name.
+ */
+export interface OpenSpecChange {
+  readonly name: string;
+  readonly proposal?: OpenSpecProposal;
+  readonly design?: OpenSpecDesign;
+  readonly tasks?: OpenSpecTasks;
+  readonly specDeltas: readonly OpenSpecSpecDelta[];
+}

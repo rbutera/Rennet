@@ -40,6 +40,7 @@ import {
 } from "./components/icons";
 import { ProjectDetail } from "./components/project-detail";
 import { type PublishOutcome, PublishSheet } from "./components/publish-sheet";
+import { openSpecChangeFixture } from "./canvas/openspec.fixture";
 import { CanvasWorkspace } from "./components/workspace";
 import type { SmartRow } from "./project/smart-list";
 
@@ -1065,6 +1066,12 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                 onRequest: () => setDeepReviewRequested(true),
               }}
               noiseReview={noiseReview}
+              // The Spec angle's structured OpenSpec viewer (Rai, wireframes #9).
+              // Fixture-backed today (a REAL parsed rennet change), matching how the
+              // other lenses shipped behind typed boundaries; the live half —
+              // parse-on-open of the change selected for this review — is the
+              // deferred wiring (bead).
+              openSpecChange={openSpecChangeFixture}
               onDispositions={(writes) => {
                 setCanvases((current) => (current ? applyWrites(current, writes) : current));
                 // dispose == staged: authoring a disposition collates it into the draft

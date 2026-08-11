@@ -1,0 +1,488 @@
+import type {
+  OpenSpecBlock,
+  OpenSpecCapabilityNote,
+  OpenSpecChange,
+  OpenSpecDeltaOperation,
+  OpenSpecDesign,
+  OpenSpecDesignSection,
+  OpenSpecImpactEntry,
+  OpenSpecListItem,
+  OpenSpecProposal,
+  OpenSpecRequirement,
+  OpenSpecRequirementGroup,
+  OpenSpecScenario,
+  OpenSpecScenarioKeyword,
+  OpenSpecScenarioStep,
+  OpenSpecSpecDelta,
+  OpenSpecTaskGroup,
+  OpenSpecTaskItem,
+  OpenSpecTasks,
+} from "@rennet/types";
+
+/**
+ * Parse an OpenSpec change's markdown artifacts into a STRUCTURED model.
+ *
+ * An OpenSpec change ships a fixed, known set of artifacts — a `proposal.md`, a
+ * `design.md`, a `tasks.md`, and per-capability spec deltas — and each has a known
+ * shape. Because the shape is known ahead of time, the Spec angle renders it
+ * structured (requirement/scenario tree, task checklist + progress, capabilities,
+ * spec deltas as structured diffs) rather than dumping the raw markdown. This
+ * module is that parser: it is node-free (pure string work, no fs), so the reader
+ * is a plain function of the artifact text and every rule is unit-testable.
+ *
+ * The parser is deliberately tolerant: any artifact may be absent, sections may be
+ * missing or empty, and the whole-change roll-up counts only what is present. It
+ * never throws on well-formed-but-sparse input; a change with only a `proposal.md`
+ * parses to a change whose `design`/`tasks` are absent and whose `specDeltas` is
+ * empty.
+ */
+
+/** The raw artifact text for one OpenSpec change (what an adapter reads off disk). */
+export interface OpenSpecChangeSource {
+  /** The change directory name. */
+  readonly name: string;
+  readonly proposalMd?: string;
+  readonly designMd?: string;
+  readonly tasksMd?: string;
+  /** Per-capability spec-delta files (`specs/<capability>/spec.md`). */
+  readonly specDeltas?: readonly { readonly capability: string; readonly md: string }[];
+}
+
+/** Split into lines, tolerating CRLF, with no trailing carriage returns. */
+function toLines(md: string): string[] {
+  return md.replace(/\r\n?/g, "\n").split("\n");
+}
+
+/** A URL/anchor slug from a heading (lowercase, non-alphanumerics collapsed to `-`). */
+function slugify(heading: string): string {
+  return heading
+    .toLowerCase()
+    .replace(/`/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+/** True for a `---`/`***`/`___` horizontal rule (a section separator we drop). */
+function isHorizontalRule(line: string): boolean {
+  return /^\s*([-*_])\1{2,}\s*$/.test(line);
+}
+
+/** A markdown table row (`| a | b |`). The separator row is `|---|:--:|`. */
+function isTableRow(line: string): boolean {
+  return /^\s*\|.*\|\s*$/.test(line.trimEnd());
+}
+
+function isTableSeparator(line: string): boolean {
+  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)*\|?\s*$/.test(line);
+}
+
+/** Split a table row into trimmed cell texts (dropping the leading/trailing pipes). */
+function tableCells(line: string): string[] {
+  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  return trimmed.split("|").map((cell) => cell.trim());
+}
+
+const LIST_MARKER = /^(\s*)([-*+]|\d+\.)\s+(.*)$/;
+
+/**
+ * Split one list line's body into an optional bolded lead-in and the remainder.
+ * The artifacts lean on the `**Lead.** the rest…` idiom; pulling the lead out lets
+ * the surface emphasise it. When there is no leading bold, the whole line is the
+ * text and there is no lead.
+ */
+function splitListItem(body: string): OpenSpecListItem {
+  const bold = /^\*\*(.+?)\*\*\s*(.*)$/.exec(body);
+  if (bold) {
+    const lead = bold[1].trim();
+    const rest = bold[2].replace(/^[—–:-]\s*/, "").trim();
+    // A wholly-bold item (no remainder) reads better as plain text than as an
+    // orphan lead with an empty body.
+    if (rest.length === 0) return { text: lead };
+    return { lead, text: rest };
+  }
+  return { text: body.trim() };
+}
+
+/**
+ * Walk a block of lines into ordered rendered blocks: paragraphs, lists, fenced
+ * code, and tables. A blank line separates blocks; a `---` rule is dropped. This is
+ * the shared renderer for design sections and the proposal's prose sections.
+ */
+function parseBlocks(lines: readonly string[]): OpenSpecBlock[] {
+  const blocks: OpenSpecBlock[] = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i];
+    if (line.trim().length === 0 || isHorizontalRule(line)) {
+      i += 1;
+      continue;
+    }
+
+    // Fenced code.
+    const fence = /^\s*```(.*)$/.exec(line);
+    if (fence) {
+      const language = fence[1].trim();
+      const body: string[] = [];
+      i += 1;
+      while (i < lines.length && !/^\s*```\s*$/.test(lines[i])) {
+        body.push(lines[i]);
+        i += 1;
+      }
+      i += 1; // consume the closing fence (if any)
+      blocks.push({ kind: "code", language, code: body.join("\n") });
+      continue;
+    }
+
+    // Table.
+    if (isTableRow(line) && i + 1 < lines.length && isTableSeparator(lines[i + 1])) {
+      const headers = tableCells(line);
+      const rows: string[][] = [];
+      i += 2; // header + separator
+      while (i < lines.length && isTableRow(lines[i]) && !isTableSeparator(lines[i])) {
+        rows.push(tableCells(lines[i]));
+        i += 1;
+      }
+      blocks.push({ kind: "table", headers, rows });
+      continue;
+    }
+
+    // List (a run of consecutive marker lines; a continuation line indented under
+    // an item is folded into it).
+    if (LIST_MARKER.test(line)) {
+      const items: OpenSpecListItem[] = [];
+      const ordered = /^\s*\d+\.\s/.test(line);
+      while (i < lines.length) {
+        const match = LIST_MARKER.exec(lines[i]);
+        if (match) {
+          let body = match[3];
+          // Fold plain continuation lines (indented, not a new marker, not blank).
+          while (
+            i + 1 < lines.length &&
+            lines[i + 1].trim().length > 0 &&
+            !LIST_MARKER.test(lines[i + 1]) &&
+            /^\s+/.test(lines[i + 1])
+          ) {
+            body += ` ${lines[i + 1].trim()}`;
+            i += 1;
+          }
+          items.push(splitListItem(body.trim()));
+          i += 1;
+          continue;
+        }
+        break;
+      }
+      blocks.push({ kind: "list", ordered, items });
+      continue;
+    }
+
+    // Paragraph (run to the next blank line or block-start).
+    const para: string[] = [];
+    while (i < lines.length) {
+      const cur = lines[i];
+      if (
+        cur.trim().length === 0 ||
+        isHorizontalRule(cur) ||
+        /^\s*```/.test(cur) ||
+        LIST_MARKER.test(cur) ||
+        (isTableRow(cur) && i + 1 < lines.length && isTableSeparator(lines[i + 1]))
+      ) {
+        break;
+      }
+      para.push(cur.trim());
+      i += 1;
+    }
+    if (para.length > 0) blocks.push({ kind: "paragraph", text: para.join(" ") });
+  }
+  return blocks;
+}
+
+/** A heading match: its level (number of `#`) and its trimmed text. */
+interface Heading {
+  readonly level: number;
+  readonly text: string;
+  readonly line: number;
+}
+
+function findHeadings(lines: readonly string[]): Heading[] {
+  const headings: Heading[] = [];
+  let inFence = false;
+  for (let i = 0; i < lines.length; i += 1) {
+    if (/^\s*```/.test(lines[i])) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) continue;
+    const match = /^(#{1,6})\s+(.*)$/.exec(lines[i]);
+    if (match) headings.push({ level: match[1].length, text: match[2].trim(), line: i });
+  }
+  return headings;
+}
+
+/** The lines of a section: everything after `heading.line` up to the next heading of level ≤ `heading.level`. */
+function sectionBody(
+  lines: readonly string[],
+  headings: readonly Heading[],
+  index: number,
+): string[] {
+  const heading = headings[index];
+  const next = headings.slice(index + 1).find((candidate) => candidate.level <= heading.level);
+  const end = next ? next.line : lines.length;
+  return lines.slice(heading.line + 1, end);
+}
+
+// ── proposal.md ──────────────────────────────────────────────────────────────
+
+/** Parse a Capabilities subsection's bullets into named capability notes. */
+function parseCapabilityNotes(lines: readonly string[]): OpenSpecCapabilityNote[] {
+  const notes: OpenSpecCapabilityNote[] = [];
+  for (const block of parseBlocks(lines)) {
+    if (block.kind !== "list") continue;
+    for (const item of block.items) {
+      const whole = item.lead ? `${item.lead} ${item.text}` : item.text;
+      const backticked = /^`([^`]+)`\s*[:—–-]?\s*(.*)$/.exec(whole);
+      if (backticked) {
+        notes.push({ name: backticked[1].trim(), summary: backticked[2].trim() });
+        continue;
+      }
+      const colon = whole.indexOf(":");
+      if (colon > 0) {
+        notes.push({ name: whole.slice(0, colon).trim(), summary: whole.slice(colon + 1).trim() });
+      } else {
+        notes.push({ name: whole.trim(), summary: "" });
+      }
+    }
+  }
+  return notes;
+}
+
+/** Strip inline code/emphasis markers from a short label (an impact area). */
+function plainLabel(text: string): string {
+  return text.replace(/[`*]/g, "").trim();
+}
+
+function parseProposal(md: string): OpenSpecProposal {
+  const lines = toLines(md);
+  const headings = findHeadings(lines);
+
+  const bySection = (predicate: (text: string) => boolean, level = 2): number =>
+    headings.findIndex((h) => h.level === level && predicate(h.text.toLowerCase()));
+
+  const whyIdx = bySection((t) => t.startsWith("why"));
+  const whatIdx = bySection((t) => t.includes("what changes"));
+  const capsIdx = bySection((t) => t.startsWith("capabilities"));
+  const impactIdx = bySection((t) => t.startsWith("impact"));
+
+  const why = whyIdx >= 0 ? parseBlocks(sectionBody(lines, headings, whyIdx)) : [];
+
+  const whatChanges: OpenSpecListItem[] = [];
+  if (whatIdx >= 0) {
+    for (const block of parseBlocks(sectionBody(lines, headings, whatIdx))) {
+      if (block.kind === "list") whatChanges.push(...block.items);
+    }
+  }
+
+  let newCapabilities: OpenSpecCapabilityNote[] = [];
+  let modifiedCapabilities: OpenSpecCapabilityNote[] = [];
+  if (capsIdx >= 0) {
+    const newIdx = headings.findIndex(
+      (h, idx) => idx > capsIdx && h.level === 3 && h.text.toLowerCase().includes("new"),
+    );
+    const modIdx = headings.findIndex(
+      (h, idx) => idx > capsIdx && h.level === 3 && h.text.toLowerCase().includes("modif"),
+    );
+    if (newIdx >= 0) newCapabilities = parseCapabilityNotes(sectionBody(lines, headings, newIdx));
+    if (modIdx >= 0) {
+      modifiedCapabilities = parseCapabilityNotes(sectionBody(lines, headings, modIdx));
+    }
+    // A Capabilities section with no New/Modified subsections: read its own bullets as new.
+    if (newIdx < 0 && modIdx < 0) {
+      newCapabilities = parseCapabilityNotes(sectionBody(lines, headings, capsIdx));
+    }
+  }
+
+  const impact: OpenSpecImpactEntry[] = [];
+  if (impactIdx >= 0) {
+    for (const block of parseBlocks(sectionBody(lines, headings, impactIdx))) {
+      if (block.kind !== "list") continue;
+      for (const item of block.items) {
+        if (item.lead) {
+          impact.push({ area: plainLabel(item.lead), detail: item.text });
+        } else {
+          // No bold lead: split on the first dash/colon so the area is still named.
+          const split = /^(.*?)\s*[—–:-]\s+(.*)$/.exec(item.text);
+          if (split) impact.push({ area: plainLabel(split[1]), detail: split[2].trim() });
+          else impact.push({ area: "", detail: item.text });
+        }
+      }
+    }
+  }
+
+  return { why, whatChanges, newCapabilities, modifiedCapabilities, impact };
+}
+
+// ── design.md ────────────────────────────────────────────────────────────────
+
+function parseDesign(md: string): OpenSpecDesign {
+  const lines = toLines(md);
+  const headings = findHeadings(lines);
+  const sections: OpenSpecDesignSection[] = [];
+  for (let i = 0; i < headings.length; i += 1) {
+    const heading = headings[i];
+    // The `#` title is the doc's name, not a section; the tree is `##`/`###`.
+    if (heading.level < 2 || heading.level > 3) continue;
+    sections.push({
+      id: slugify(heading.text),
+      level: heading.level as 2 | 3,
+      heading: heading.text,
+      blocks: parseBlocks(sectionBody(lines, headings, i)),
+    });
+  }
+  return { sections };
+}
+
+// ── tasks.md ─────────────────────────────────────────────────────────────────
+
+const TASK_ITEM = /^\s*[-*]\s+\[([ xX])\]\s+(.*)$/;
+
+function parseTaskGroup(title: string, lines: readonly string[]): OpenSpecTaskGroup {
+  const items: OpenSpecTaskItem[] = [];
+  for (const line of lines) {
+    const match = TASK_ITEM.exec(line);
+    if (!match) continue;
+    const status = match[1].toLowerCase() === "x" ? "done" : "todo";
+    items.push({ text: match[2].trim(), status });
+  }
+  const done = items.filter((item) => item.status === "done").length;
+  return { id: slugify(title), title, items, total: items.length, done };
+}
+
+function parseTasks(md: string): OpenSpecTasks {
+  const lines = toLines(md);
+  const headings = findHeadings(lines);
+  const groups: OpenSpecTaskGroup[] = [];
+  for (let i = 0; i < headings.length; i += 1) {
+    if (headings[i].level !== 2) continue;
+    const group = parseTaskGroup(headings[i].text, sectionBody(lines, headings, i));
+    // Keep only groups that actually carry checklist items.
+    if (group.items.length > 0) groups.push(group);
+  }
+  const total = groups.reduce((sum, group) => sum + group.total, 0);
+  const done = groups.reduce((sum, group) => sum + group.done, 0);
+  return { groups, total, done };
+}
+
+// ── spec deltas ──────────────────────────────────────────────────────────────
+
+const DELTA_OPERATIONS: Record<string, OpenSpecDeltaOperation> = {
+  added: "added",
+  modified: "modified",
+  removed: "removed",
+  renamed: "renamed",
+};
+
+const SCENARIO_STEP = /^\s*[-*]\s+\*\*(WHEN|THEN|AND|GIVEN)\*\*\s*(.*)$/i;
+
+function parseScenario(name: string, lines: readonly string[]): OpenSpecScenario {
+  const steps: OpenSpecScenarioStep[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = SCENARIO_STEP.exec(lines[i]);
+    if (!match) continue;
+    const keyword = match[1].toLowerCase() as OpenSpecScenarioKeyword;
+    let text = match[2].trim();
+    // Fold a plain continuation line into the step.
+    while (
+      i + 1 < lines.length &&
+      lines[i + 1].trim().length > 0 &&
+      !SCENARIO_STEP.test(lines[i + 1]) &&
+      !/^\s*#{1,6}\s/.test(lines[i + 1])
+    ) {
+      text += ` ${lines[i + 1].trim()}`;
+      i += 1;
+    }
+    steps.push({ keyword, text });
+  }
+  return { name, steps };
+}
+
+function parseRequirement(
+  name: string,
+  lines: readonly string[],
+  headings: readonly Heading[],
+  reqIndex: number,
+): OpenSpecRequirement {
+  // Statement = the prose between the requirement heading and its first scenario.
+  const scenarioHeadings = headings.filter(
+    (h) => h.level === 4 && /^scenario:/i.test(h.text) && h.line > headings[reqIndex].line,
+  );
+  const nextReq = headings.slice(reqIndex + 1).find((h) => h.level <= 3);
+  const reqEnd = nextReq ? nextReq.line : Number.POSITIVE_INFINITY;
+  const ownScenarios = scenarioHeadings.filter((h) => h.line < reqEnd);
+
+  const statementEnd =
+    ownScenarios.length > 0 ? ownScenarios[0].line : Math.min(reqEnd, lines.length);
+  const statementLines = lines.slice(headings[reqIndex].line + 1, statementEnd);
+  const statementBlocks = parseBlocks(statementLines);
+  const statement = statementBlocks
+    .filter(
+      (block): block is Extract<OpenSpecBlock, { kind: "paragraph" }> => block.kind === "paragraph",
+    )
+    .map((block) => block.text)
+    .join(" ")
+    .trim();
+
+  const scenarios: OpenSpecScenario[] = ownScenarios.map((heading) => {
+    const idx = headings.indexOf(heading);
+    const body = sectionBody(lines, headings, idx);
+    const scenarioName = heading.text.replace(/^scenario:\s*/i, "").trim();
+    return parseScenario(scenarioName, body);
+  });
+
+  return { name, statement, scenarios };
+}
+
+function parseSpecDelta(capability: string, md: string): OpenSpecSpecDelta {
+  const lines = toLines(md);
+  const headings = findHeadings(lines);
+  const groups: OpenSpecRequirementGroup[] = [];
+
+  for (let i = 0; i < headings.length; i += 1) {
+    const heading = headings[i];
+    if (heading.level !== 2) continue;
+    const opMatch = /^(added|modified|removed|renamed)\b/i.exec(heading.text.trim());
+    if (!opMatch) continue;
+    const operation = DELTA_OPERATIONS[opMatch[1].toLowerCase()];
+
+    // The requirement headings under this operation (level-3 `Requirement:`).
+    const opEnd = headings.slice(i + 1).find((h) => h.level === 2);
+    const opEndLine = opEnd ? opEnd.line : lines.length;
+    const requirements: OpenSpecRequirement[] = [];
+    for (let j = i + 1; j < headings.length; j += 1) {
+      const req = headings[j];
+      if (req.line >= opEndLine) break;
+      if (req.level !== 3 || !/^requirement:/i.test(req.text)) continue;
+      const reqName = req.text.replace(/^requirement:\s*/i, "").trim();
+      requirements.push(parseRequirement(reqName, lines, headings, j));
+    }
+    groups.push({ operation, requirements });
+  }
+
+  return { capability, groups };
+}
+
+/**
+ * Parse a whole OpenSpec change's artifact text into the structured model the Spec
+ * angle renders. Absent artifacts are simply absent on the result; `specDeltas` is
+ * empty (never absent) when no spec files were supplied.
+ */
+export function parseOpenSpecChange(source: OpenSpecChangeSource): OpenSpecChange {
+  const specDeltas = (source.specDeltas ?? []).map((delta) =>
+    parseSpecDelta(delta.capability, delta.md),
+  );
+  return {
+    name: source.name,
+    proposal: source.proposalMd !== undefined ? parseProposal(source.proposalMd) : undefined,
+    design: source.designMd !== undefined ? parseDesign(source.designMd) : undefined,
+    tasks: source.tasksMd !== undefined ? parseTasks(source.tasksMd) : undefined,
+    specDeltas,
+  };
+}
