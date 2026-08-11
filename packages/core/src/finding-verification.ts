@@ -95,6 +95,40 @@ export function classifyNonObvious(finding: FindingElement): boolean {
   return true;
 }
 
+/**
+ * The honest "deep review ran but had no verifier" caveat (issue #179, P0-3). Deep
+ * review with a Codex seat but NO Claude adapter still produces real findings, but the
+ * verification turn needs the Claude adapter — so those findings would otherwise
+ * surface with NO chip while deep review appears active, reading as "nothing to check"
+ * when the truth is "we never checked." Absence of evidence must announce itself.
+ */
+export const VERIFIER_UNAVAILABLE_CAVEAT =
+  "Not verified — no verifier was available for this review.";
+
+/**
+ * Stamp the verifier-unavailable caveat on every finding that WOULD have been verified
+ * (non-obvious) but was not, because deep review ran without a verifier. Obvious
+ * findings surface chip-less exactly as in the verified path (they never pay for a
+ * turn, so an absent chip is honest for them), and a finding already carrying a chip is
+ * left untouched. Pure over the review; a `failed` or non-ok review passes through. The
+ * asymmetry matches the rest of #179: an unverifiable claim of a PROBLEM surfaces WITH
+ * an honest inconclusive caveat, never a silent drop and never a false clear.
+ */
+export function markVerificationUnavailable(review: FlaggedReview): FlaggedReview {
+  if (review.status !== "ok") return review;
+  return {
+    ...review,
+    findings: review.findings.map((finding) =>
+      finding.verification === undefined && classifyNonObvious(finding)
+        ? {
+            ...finding,
+            verification: { verdict: "inconclusive", evidence: VERIFIER_UNAVAILABLE_CAVEAT },
+          }
+        : finding,
+    ),
+  };
+}
+
 // ── ② The verification pass ───────────────────────────────────────────────────
 
 /** The real file content around a finding's anchor — MORE than the offered hunk (§spec). */

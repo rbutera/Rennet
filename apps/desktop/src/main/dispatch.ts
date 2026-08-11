@@ -618,7 +618,13 @@ export function createDispatch(
         const review = requireLatestReview(input.reviewId);
         // Dual-model is the DEFAULT (Rai's mandate, 2026-08-11): an omitted flag runs
         // BOTH provider seats. Only an explicit `false` opts down to single-Claude.
-        return parseCommandOutput(name, await deps.flaggedReview(review, input.deepReview ?? true));
+        const flagged = await deps.flaggedReview(review, input.deepReview ?? true);
+        // Stamp the patchset this result was computed against (#160/P0-2) so the renderer
+        // can bind it to the canvases beside it and discard a regenerate-stale result.
+        return parseCommandOutput(
+          name,
+          flagged.status === "ok" ? { ...flagged, patchsetId: review.activePatchsetId } : flagged,
+        );
       }
       // ── Ask the AI a question about the review (issue #139) ────────────────────
       case "review.ask": {

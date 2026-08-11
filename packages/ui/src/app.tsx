@@ -21,6 +21,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { type CollationDraft, ingestWrites, withdrawPath } from "./canvas/collation";
 import type { ConversationAnchor } from "./canvas/conversation";
 import { type DestinationMode, destinationVariant, type PublishLedger } from "./canvas/destination";
+import { flaggedForPatchset } from "./canvas/flagged";
 import { type CanvasSet, loadCanvases } from "./canvas/load";
 import { type DispositionWrite, withoutProposal, zoomReducer } from "./canvas/logic";
 import type { OpenSpecCoverageIndex } from "./canvas/openspec";
@@ -482,6 +483,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // paper — the outcome was built from the prior review's draft. Clear it so a
   // stale dry-run summary never lingers over a different review.
   const reviewId = review?.id;
+  // The active patchset id, a stable string across the 1500ms freshness poll (which
+  // swaps a byte-identical Review behind a fresh object ref). A REGENERATE changes it
+  // under the SAME reviewId — the signal the flagged effect keys on so it refetches
+  // and the binding below discards a result computed against the old patchset (P0-2).
+  const activePatchsetId = review?.activePatchsetId;
   // The effective dual-model mode for the OPEN review, derived SYNCHRONOUSLY: the
   // opt-down choice only applies to the review it was made on, so any other review
   // (a fresh open, or one never opted down) reads the dual DEFAULT in the same render
@@ -496,6 +502,14 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // is a new set to enrich; a no-op freshness poll keeps the same string, so it does
   // NOT re-run the canvas effect. Null until a review is open.
   const canvasFetchKey = review ? `${review.id}::${review.activePatchsetId}` : null;
+  // Bind the flagged result to the active patchset (P0-2, structural belt-and-braces
+  // beside the effect-level clear): a result stamped with a superseded patchsetId is
+  // dropped so the new diff never renders beside stale findings. Pure + unit-tested in
+  // canvas/flagged.ts (independently red-provable, not masked by the effect fix).
+  const boundFlaggedReview = useMemo(
+    () => flaggedForPatchset(flaggedReview, activePatchsetId),
+    [flaggedReview, activePatchsetId],
+  );
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on review identity only.
   useEffect(() => {
     setPublishResult(undefined);
@@ -564,9 +578,18 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // the open review over the real command boundary. It carries NO model spend and
   // is independent of the harness-consent gate, so it loads on its own — and its
   // own try/catch means a flagged fetch failure never disturbs the canvas load.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the active patchset (#160/P0-2), not the churning review object.
   useEffect(() => {
     if (!reviewId) return;
     let cancelled = false;
+    // Clear any prior flagged result the instant this effect re-fires (P0-2). It re-fires
+    // on a REGENERATE too — a new active patchset under the SAME reviewId — and the old
+    // hypothesis/findings/cross-check are about the OLD diff. Without this clear (and the
+    // `activePatchsetId` dep below), the new canvases would render beside the stale flagged
+    // result: internally consistent, about the wrong diff. Clearing hides the frame until
+    // the new patchset's flagged review lands, and the `cancelled` guard drops any
+    // old-patchset fetch still in flight so it can never set state over the new diff.
+    setFlaggedReview(undefined);
     // `deepReview` selects the two-model reconcile (issue #191), which is now the
     // DEFAULT. We send the flag EXPLICITLY (never omit) because the command boundary
     // now defaults an omitted flag to DUAL — so an opt-down to quick has to travel as
@@ -606,7 +629,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     return () => {
       cancelled = true;
     };
-  }, [reviewId, bridge, deepReviewOn]);
+  }, [reviewId, activePatchsetId, bridge, deepReviewOn]);
 
   // The Spec angle (wireframes #9): parse-on-open of the change the reviewed patchset
   // selected, over the real command boundary. Deterministic — NO model spend. A missing
@@ -1401,7 +1424,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
               bridge={bridge}
               scheme={effectiveScheme}
               narration={narration}
-              flaggedReview={flaggedReview}
+              flaggedReview={boundFlaggedReview}
               deepReview={{
                 active: deepReviewOn,
                 // The opt-down/opt-up choice is stamped with THIS review's id, so it

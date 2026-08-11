@@ -2,10 +2,16 @@ import type { HypothesisFrame, HypothesisFrameRisk } from "../canvas/hypothesis"
 
 // The hypothesis reading frame (issue #178): the human's prior, shown BEFORE the
 // lenses. It renders what this change SHOULD be (domain), what is in and out of
-// scope, the design we would have chosen, and the risk list — each risk carrying
-// its confirmed/open status. An OPEN risk is the anti-rubber-stamp payoff: a risk
-// we predicted that the automated pass did not clear, so it is where the reviewer's
-// own attention should go. It jumps to any finding that addressed a confirmed risk.
+// scope, the design we would have chosen, and the risk list.
+//
+// The cross-check that pairs a predicted risk with a finding is a LEXICAL token
+// overlap, not a semantic proof (packages/core/src/risk-crosscheck.ts). It can pair
+// two unrelated things that share words, so a match is a WEAK pointer, never a claim
+// the risk was resolved. So a matched ("confirmed") risk renders as "possibly
+// related" with a jump to the finding for the reviewer to judge — it must NEVER read
+// as "addressed" (a false-verdict trap). An UNMATCHED ("open") risk is the
+// anti-rubber-stamp payoff — predicted, and no finding even mentioned it — so it
+// carries the loud "check yourself" weight where the reviewer's attention should go.
 
 const SEVERITY_LABEL = { high: "high", medium: "medium", low: "low" } as const;
 
@@ -23,7 +29,7 @@ function RiskRow({
           {SEVERITY_LABEL[risk.severity]}
         </span>
         <span className={`hypothesis-status hypothesis-status-${risk.status}`}>
-          {risk.status === "open" ? "open · check yourself" : "addressed"}
+          {risk.status === "open" ? "check yourself" : "possibly related"}
         </span>
       </div>
       <p className="hypothesis-risk-statement">{risk.statement}</p>
@@ -105,7 +111,7 @@ export function HypothesisReadingFrame({
           <span className="hypothesis-risk-counts">
             <span className="hypothesis-count hypothesis-count-open">{frame.counts.open} open</span>
             <span className="hypothesis-count hypothesis-count-confirmed">
-              {frame.counts.confirmed} addressed
+              {frame.counts.confirmed} related
             </span>
           </span>
         </div>

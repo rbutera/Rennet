@@ -1130,6 +1130,17 @@ export type FlaggedReview =
        * with no hypothesis omits it, exactly the pre-#178 shape.
        */
       hypothesis?: ReviewHypothesis;
+      /**
+       * The active patchset this flagged result was computed against (issue #160/P0-2),
+       * stamped by the command boundary. The renderer binds the result to the canvases
+       * it is displayed beside: a REGENERATE activates a new patchset under the same
+       * review id, and the flagged result (findings, hypothesis, cross-check) goes stale
+       * as a unit. Without this the new diff could render beside the OLD flagged result —
+       * internally consistent, about the wrong diff. Additive: absent ⇒ unbound (the
+       * pre-#160 shape); the effect-level clear-and-refetch is the primary guard, this is
+       * the structural belt-and-braces.
+       */
+      patchsetId?: string;
     }
   | { status: "failed"; reason: string };
 

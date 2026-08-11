@@ -35,9 +35,13 @@ export interface HypothesisFrameRisk {
   statement: string;
   severity: FindingSeverity;
   disconfirmer: string;
-  /** `confirmed` — a finding addressed it; `open` — the human must check it themselves. */
+  /**
+   * `confirmed` — a finding LEXICALLY relates to this risk (a weak pointer, NOT a
+   * proof the risk was resolved; the surface renders it as "possibly related", never
+   * "addressed"). `open` — no finding even mentioned it, so the human must check it.
+   */
   status: "confirmed" | "open";
-  /** The findings that addressed this risk (empty when open). */
+  /** The findings the lexical cross-check paired with this risk (empty when open). */
   findingIds: string[];
 }
 

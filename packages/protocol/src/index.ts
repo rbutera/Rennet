@@ -708,6 +708,10 @@ export const flaggedReviewSchema: z.ZodType<FlaggedReview> = z.union([
     dual: dualReviewNoteSchema.optional(),
     crossChecks: z.array(riskCrossCheckSchema).optional(),
     hypothesis: reviewHypothesisSchema.optional(),
+    // The patchset this result was computed against (#160/P0-2), so the renderer can
+    // bind it to the canvases it is shown beside and drop a result that regenerate
+    // left stale. Additive optional — absent ⇒ unbound (pre-#160 shape).
+    patchsetId: z.string().min(1).optional(),
   }),
   z.object({ status: z.literal("failed"), reason: z.string() }),
 ]);

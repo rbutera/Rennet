@@ -97,10 +97,19 @@ function sharedCount(a: ReadonlySet<string>, b: ReadonlySet<string>): number {
 
 /**
  * Cross-check every hypothesised risk against the produced findings. Each risk
- * becomes a `RiskCrossCheck`: `confirmed` with the ids of the findings that
- * address it, or `open` with an empty finding list. Deterministic and total —
- * every risk is accounted for exactly once, in order, and no finding match can
- * cause a risk to be dropped.
+ * becomes a `RiskCrossCheck`: `confirmed` with the ids of the findings that match
+ * it, or `open` with an empty finding list. Deterministic and total — every risk is
+ * accounted for exactly once, in order, and no finding match can cause a risk to be
+ * dropped.
+ *
+ * ⚠️ The match is a LEXICAL salient-token overlap, not a semantic proof: it can pair
+ * two unrelated statements that happen to share words. So `confirmed` is a WEAK
+ * "possibly related" pointer, NEVER evidence a risk was resolved — the surface must
+ * render it as such and must never claim the risk is "addressed" (a false-verdict
+ * trap). Binding to real per-finding risk provenance would strengthen this; today
+ * there is none, so the safe direction is to under-claim: an `open` shown for a risk
+ * that was actually handled is a small annoyance; a `confirmed` read as resolved is
+ * a trap.
  */
 export function crossCheckRisks(
   hypothesis: ReviewHypothesis,

@@ -9,7 +9,7 @@
 // hypothesis shows no frame.
 import type { Canvas, CanvasAngle, FlaggedReview, ReviewHypothesis } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mount, waitFor } from "../test/dom";
 import { CanvasWorkspace } from "./workspace";
 
@@ -94,35 +94,79 @@ describe("CanvasWorkspace — the hypothesis reading frame (#178/#181)", () => {
     expect(open).toBeTruthy();
     expect(open?.textContent).toMatch(/unbounded fail-open/);
     expect(open?.textContent).toMatch(/check yourself/);
-    // The addressed risk is present too, but marked addressed — not "open".
-    const addressed = container.querySelector('.hypothesis-risk[data-status="confirmed"]');
-    expect(addressed?.textContent).toMatch(/addressed/);
+    // A matched risk is present too — but rendered as a WEAK "possibly related"
+    // pointer (the match is lexical, not a resolution), NEVER "addressed" (P0-1).
+    const related = container.querySelector('.hypothesis-risk[data-status="confirmed"]');
+    expect(related?.textContent).toMatch(/possibly related/);
+    expect(container.textContent ?? "").not.toMatch(/addressed/);
   });
 
-  it("orders OPEN risks before addressed ones within a severity (attention on the uncleared)", () => {
-    // R-open is HIGH, R-done is MEDIUM — high sorts first regardless; this asserts the
-    // open one leads the list, where the reviewer's attention should land.
+  it("orders an OPEN risk before a matched one at the SAME severity (status tiebreak, not riskId)", () => {
+    // BOTH risks are HIGH, so the severity sort is a tie and the STATUS tiebreak decides.
+    // riskId order alone would put R-a (confirmed) first; open-before-confirmed must
+    // override that so the uncleared risk leads. (Red-proof: drop the open-before-confirmed
+    // comparator in buildHypothesisFrame and this flips to ["confirmed","open"].)
+    const sameSeverity: FlaggedReview = {
+      status: "ok",
+      findings: [
+        {
+          findingId: "f1",
+          anchor: "rennet:hunk/h1",
+          summary: "a finding",
+          severity: "high",
+          agreement: { kind: "concur", agree: 1, total: 1 },
+        },
+      ],
+      crossChecks: [
+        { riskId: "R-a", status: "confirmed", findingIds: ["f1"] },
+        { riskId: "R-b", status: "open", findingIds: [] },
+      ],
+      hypothesis: {
+        domain: "d",
+        scope: { inScope: [], outOfScope: [] },
+        designExpectation: "e",
+        risks: [
+          { riskId: "R-a", statement: "a matched risk", severity: "high", disconfirmer: "x" },
+          { riskId: "R-b", statement: "an open risk", severity: "high", disconfirmer: "y" },
+        ],
+        repoContextPresent: true,
+      },
+    };
     const { container } = mount(
-      <CanvasWorkspace canvases={canvasSet()} flaggedReview={reviewWithHypothesis()} />,
+      <CanvasWorkspace canvases={canvasSet()} flaggedReview={sameSeverity} />,
     );
     const statuses = [...container.querySelectorAll(".hypothesis-risk")].map((el) =>
       el.getAttribute("data-status"),
     );
-    expect(statuses[0]).toBe("open");
+    expect(statuses).toEqual(["open", "confirmed"]);
   });
 
-  it("jumps a confirmed risk to its finding in the Flagged lens", async () => {
-    const { container, user } = mount(
-      <CanvasWorkspace canvases={canvasSet()} flaggedReview={reviewWithHypothesis()} />,
-    );
-    const jump = container.querySelector<HTMLButtonElement>("[data-jump-finding='f-retry']");
-    if (!jump) throw new Error("expected a view-finding jump for the addressed risk");
-    await user.click(jump);
-    // The jump switches to the Flagged lens, where the finding row (data-finding-id)
-    // now renders — proof the angle actually changed to where findings live.
-    await waitFor(() =>
-      expect(container.querySelector("[data-finding-id='f-retry']")).toBeTruthy(),
-    );
+  it("jumps a related risk to its finding row AND scrolls THAT row into view", async () => {
+    // Spy on the real scrollIntoView and capture which element it was called on, so the
+    // test proves the jump SCROLLS the target row — not merely that the row exists after
+    // the angle switch. (Red-proof: replace `scrollIntoView` with a bare query in
+    // jumpToFinding and `scrolled` stays empty, failing the toContain.)
+    const scrolled: Element[] = [];
+    const spy = vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(function (
+      this: Element,
+    ) {
+      scrolled.push(this);
+    });
+    try {
+      const { container, user } = mount(
+        <CanvasWorkspace canvases={canvasSet()} flaggedReview={reviewWithHypothesis()} />,
+      );
+      const jump = container.querySelector<HTMLButtonElement>("[data-jump-finding='f-retry']");
+      if (!jump) throw new Error("expected a view-finding jump for the matched risk");
+      await user.click(jump);
+      await waitFor(() => {
+        const row = container.querySelector("[data-finding-id='f-retry']");
+        expect(row).toBeTruthy();
+        expect(scrolled).toContain(row);
+      });
+    } finally {
+      spy.mockRestore();
+    }
   });
 
   it("collapses the frame with the terse chrome toggle (narrative-first, never a trap)", async () => {

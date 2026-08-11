@@ -1,6 +1,6 @@
 import type { FindingElement, FlaggedReview } from "@rennet/types";
 import { describe, expect, it } from "vitest";
-import { buildFlaggedIndex, isFinding } from "./flagged";
+import { buildFlaggedIndex, flaggedForPatchset, isFinding } from "./flagged";
 
 function finding(
   over: Partial<FindingElement> & Pick<FindingElement, "findingId">,
@@ -190,5 +190,38 @@ describe("isFinding — the strict flag guard", () => {
     expect(isFinding({ findingId: "x", anchor: "a", summary: "s", severity: "urgent" })).toBe(
       false,
     );
+  });
+});
+
+describe("flaggedForPatchset — bind the result to the active patchset (#160/P0-2)", () => {
+  const okFor = (patchsetId: string | undefined): FlaggedReview => ({
+    status: "ok",
+    findings: [finding({ findingId: "f1" })],
+    ...(patchsetId !== undefined ? { patchsetId } : {}),
+  });
+
+  it("DROPS an ok result computed against a superseded patchset (the regenerate trap)", () => {
+    // Result stamped for patch-one, but the active patchset is now patch-two → stale →
+    // hidden, so the new diff never renders beside the old findings/hypothesis.
+    expect(flaggedForPatchset(okFor("patch-one"), "patch-two")).toBeUndefined();
+  });
+
+  it("KEEPS an ok result whose patchset matches the active one", () => {
+    const review = okFor("patch-two");
+    expect(flaggedForPatchset(review, "patch-two")).toBe(review);
+  });
+
+  it("passes an UNSTAMPED ok result through (older host — unbound, pre-#160 behaviour)", () => {
+    const review = okFor(undefined);
+    expect(flaggedForPatchset(review, "patch-two")).toBe(review);
+  });
+
+  it("passes a FAILED result through (a failure is patchset-independent)", () => {
+    const failed: FlaggedReview = { status: "failed", reason: "both seats down" };
+    expect(flaggedForPatchset(failed, "patch-two")).toBe(failed);
+  });
+
+  it("returns undefined for an undefined result (nothing loaded yet)", () => {
+    expect(flaggedForPatchset(undefined, "patch-two")).toBeUndefined();
   });
 });

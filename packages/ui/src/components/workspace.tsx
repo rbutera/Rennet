@@ -571,11 +571,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     setFocusAnchor(anchor);
   }
 
-  // Jump from a confirmed risk in the reading frame to the finding that addressed it
-  // (issue #178): switch to the Flagged lens (where findings live) and scroll the
-  // matching finding row into view. The row carries `data-finding-id`; a no-match is a
-  // best-effort no-op (never a throw), and the scroll waits a frame for the lens to
-  // mount after the angle change.
+  // Jump from a possibly-related risk in the reading frame to the finding the lexical
+  // cross-check paired with it (issue #178): switch to the Flagged lens (where findings
+  // live) and scroll the matching finding row into view, so the reviewer can judge the
+  // relation themselves. The row carries `data-finding-id`; a no-match is a best-effort
+  // no-op (never a throw), and the scroll waits a frame for the lens to mount after the
+  // angle change.
   function jumpToFinding(findingId: string): void {
     goToAngle("flagged");
     if (typeof window === "undefined") return;
@@ -835,7 +836,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
               <span className="hypothesis-panel-counts">
                 <span className="hypothesis-panel-open">{hypothesisFrame.counts.open} open</span>
                 <span className="hypothesis-panel-addressed">
-                  {hypothesisFrame.counts.confirmed} addressed
+                  {hypothesisFrame.counts.confirmed} related
                 </span>
               </span>
             </button>
