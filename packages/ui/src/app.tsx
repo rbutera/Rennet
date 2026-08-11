@@ -1088,6 +1088,26 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
               // (a doc-anchored element with no entry → the zoom surface renders
               // nothing, never a fixture).
               diffFor={(elementKey) => elementDiffs[elementKey]}
+              // The symbol inspector (Rai, wireframes #8): clicking a code identifier
+              // resolves it over the review's model-free symbolic surface, and the
+              // inspector's sites open in the editor. Both are live once a review has
+              // loaded; absent → identifiers stay inert.
+              symbolLookup={
+                review
+                  ? (name) => bridge.invoke("review.symbolLookup", { reviewId: review.id, name })
+                  : undefined
+              }
+              onOpenInEditor={
+                review
+                  ? (path, line) => {
+                      void bridge.invoke("review.openInEditor", {
+                        reviewId: review.id,
+                        path,
+                        line,
+                      });
+                    }
+                  : undefined
+              }
             />
             {/* Ask the AI about this review (issue #139): the live conversational
                 affordance. Present once a real review has loaded, so a question is

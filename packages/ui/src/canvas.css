@@ -586,6 +586,20 @@
   text-transform: uppercase;
   letter-spacing: 0.06em;
 }
+/* The impl↔test counterpart jump (#7): a quiet pill in the code header. */
+.code-view-counterpart {
+  margin-left: auto;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--accent-soft-line);
+  background: var(--accent-soft);
+  color: var(--accent);
+  font: 11px / 1.2 var(--sans);
+  cursor: pointer;
+}
+.code-view-counterpart:hover {
+  background: var(--accent-surface);
+}
 /* Fully opaque: legibility never rides on the wallpaper. */
 .code-view-scroll {
   overflow: auto;
@@ -632,6 +646,24 @@
    highlighting. Header/meta rows are never tokenized (they stay muted chrome). */
 .rtok {
   color: inherit;
+}
+/* A clickable symbol token (#8): looks like a token, reads as a link on hover. The
+   button reset keeps it inline in the monospace code cell without a box. */
+.rtok-symbol {
+  appearance: none;
+  border: 0;
+  margin: 0;
+  padding: 0;
+  background: none;
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 2px;
+}
+.rtok-symbol:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  background: var(--accent-soft);
 }
 .rtok-keyword {
   color: var(--kw-color);
@@ -2533,4 +2565,130 @@
 }
 .ospec-task-item .disposition-cluster {
   margin-left: auto;
+}
+||||||| parent of 1f2cf2a (feat(review): symbol-click in-app inspector + impl/test button rewording (#8))
+
+/* ── The symbol inspector (Rai, wireframes #8) ──────────────────────────────── */
+/* An in-app preview beside the diff: where a clicked symbol is defined, where it is
+   used, and an open-in-editor jump on every site. Its own surface — the code stays
+   the code, never an inline-in-the-diff card. */
+.symbol-inspector {
+  margin-top: 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background: var(--side-bg);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
+  padding: 12px 14px;
+  font: 12px / 1.5 var(--sans);
+}
+.symbol-inspector-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+.symbol-inspector-eyebrow {
+  color: var(--text-faint);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.symbol-inspector-name {
+  font: 13px / 1.2 var(--mono);
+  color: var(--text);
+}
+.symbol-inspector-close {
+  margin-left: auto;
+  appearance: none;
+  border: 0;
+  background: none;
+  color: var(--text-faint);
+  font-size: 16px;
+  line-height: 1;
+  cursor: pointer;
+}
+.symbol-inspector-close:hover {
+  color: var(--text);
+}
+.symbol-section {
+  margin-top: 12px;
+}
+.symbol-section-head {
+  color: var(--text-faint);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  margin-bottom: 6px;
+}
+.symbol-ref-count {
+  text-transform: none;
+  letter-spacing: 0;
+}
+.symbol-sites,
+.symbol-ref-groups {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.symbol-site {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.symbol-site-kind {
+  font-size: 10px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  border: 1px solid var(--accent-soft-line);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+.symbol-site-scope,
+.symbol-ref-file {
+  color: var(--text-faint);
+  font: 11px / 1.2 var(--mono);
+}
+.symbol-site-open {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0;
+  color: var(--accent);
+  font: 12px / 1.2 var(--mono);
+  cursor: pointer;
+}
+.symbol-site-open:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.symbol-site-loc {
+  font: 12px / 1.2 var(--mono);
+  color: var(--text);
+}
+.symbol-ref-group {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.symbol-ref-lines {
+  display: inline-flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.symbol-empty,
+.symbol-unavailable,
+.symbol-pending,
+.symbol-error,
+.symbol-truncated,
+.symbol-scope-note {
+  color: var(--text-faint);
+  font-size: 11px;
+  margin-top: 4px;
+}
+.symbol-error {
+  color: var(--del-glyph);
 }
