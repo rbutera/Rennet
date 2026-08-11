@@ -12,6 +12,7 @@ import {
   type RegistryRow,
   resolveAnchorToRows,
 } from "../canvas/registrar";
+import { splitIdentifierRuns, tokenTextMayContainSymbol } from "../canvas/symbol";
 import { detectLanguage, type LanguageId, tokenizeLine } from "../syntax/highlight";
 import { DispositionCluster } from "./disposition-cluster";
 
@@ -68,6 +69,29 @@ export interface CodeViewProps {
    * canvas + the #36/#139 thread machinery; the header is this slice's floor.
    */
   onDispose?: (type: DispositionType) => void;
+
+  /**
+   * The impl↔test counterpart jump (Rai, wireframes #7). When the shown file has a
+   * counterpart in the review, the header carries ONE button — "View test" on an
+   * implementation, "View implementation" on its test — that navigates to it.
+   * Absent ⇒ no button (additive: the R16 node envelope is untouched; the button
+   * lives on the non-windowed header, never in the per-row window).
+   */
+  counterpart?: {
+    /** "View test" or "View implementation" — the label already resolved by the host. */
+    readonly label: string;
+    /** The counterpart file's path, for the button's tooltip. */
+    readonly path: string;
+    /** Navigate to the counterpart (the host selects its element). */
+    onView(): void;
+  };
+
+  /**
+   * A reviewer clicked a code identifier (Rai, wireframes #8). The host opens the
+   * in-app symbol inspector for that name. Absent ⇒ identifiers are inert plain
+   * tokens (additive: existing callers/tests render unchanged).
+   */
+  onSymbolClick?: (name: string) => void;
 }
 
 const SIDE_CLASS = { additions: "cv-add", deletions: "cv-del", context: "cv-ctx" } as const;
@@ -84,16 +108,55 @@ function rowClass(row: RegistryRow): string {
 // only semantic tokens (keyword/string/comment/number/type/function/…) take a
 // syntax hue. Header/meta rows stay muted chrome, untouched. Tokenization runs
 // only on the windowed rows the CodeView paints, so R16's node/perf envelope holds.
-function renderCode(row: RegistryRow, language: LanguageId | null): ReactNode {
+function renderCode(
+  row: RegistryRow,
+  language: LanguageId | null,
+  onSymbolClick?: (name: string) => void,
+): ReactNode {
   if (row.kind !== "content") return row.text;
   const nodes: ReactNode[] = [];
   let column = 0; // the token's start column — a stable, data-derived key (not an array index).
   for (const tok of tokenizeLine(row.text, language)) {
-    nodes.push(
-      <span className={`rtok rtok-${tok.type}`} key={column}>
-        {tok.text}
-      </span>,
-    );
+    // When the host wants symbol lookups, split a symbol-bearing token into its
+    // identifier RUNS and make each one clickable (Rai, wireframes #8). This does not
+    // key off the highlight class — an ordinary `plain` identifier, or several inside
+    // one whitespace-merged token, each resolve independently. Inert tokens (keyword,
+    // string, comment, number, operator, punctuation) render as one plain span, and a
+    // QUOTED property key (`"name":`) is a string, not a symbol, so it is inert too.
+    if (onSymbolClick && tokenTextMayContainSymbol(tok.type, tok.text)) {
+      let offset = 0;
+      for (const segment of splitIdentifierRuns(tok.text)) {
+        const key = column + offset;
+        if (segment.isIdentifier) {
+          const name = segment.text;
+          nodes.push(
+            <button
+              type="button"
+              className={`rtok rtok-${tok.type} rtok-symbol`}
+              key={key}
+              data-symbol={name}
+              title={`Inspect ${name}`}
+              onClick={() => onSymbolClick(name)}
+            >
+              {segment.text}
+            </button>,
+          );
+        } else {
+          nodes.push(
+            <span className={`rtok rtok-${tok.type}`} key={key}>
+              {segment.text}
+            </span>,
+          );
+        }
+        offset += segment.text.length;
+      }
+    } else {
+      nodes.push(
+        <span className={`rtok rtok-${tok.type}`} key={column}>
+          {tok.text}
+        </span>,
+      );
+    }
     column += tok.text.length;
   }
   return nodes;
@@ -114,6 +177,8 @@ export function CodeView({
   focusAnchor,
   onPlacement,
   onDispose,
+  counterpart,
+  onSymbolClick,
 }: CodeViewProps) {
   // The live scroll position: seeded from the prop (which the node-count control
   // test and any programmatic positioning inject), then advanced by the user's
@@ -168,6 +233,19 @@ export function CodeView({
         <span className="code-view-tier" title="Definition tier">
           {tier}
         </span>
+        {/* The impl↔test counterpart jump (Rai, wireframes #7): ONE button that
+            reads "View test" on an implementation and "View implementation" on its
+            test, present only when the counterpart is a file in this review. */}
+        {counterpart ? (
+          <button
+            type="button"
+            className="code-view-counterpart"
+            title={`Go to ${counterpart.path}`}
+            onClick={counterpart.onView}
+          >
+            {counterpart.label}
+          </button>
+        ) : null}
         {/* The chunk-header disposition cluster (issue #109) — the four verbs
             anchored to this file/chunk. Progressively disclosed (calm roll-up, #62)
             by the header's hover/focus, so the surface reads quiet until engaged. */}
@@ -226,7 +304,7 @@ export function CodeView({
                 </span>
               ) : null}
               <span className="code-view-ln">{row.fileLine ?? ""}</span>
-              <code className="code-view-code">{renderCode(row, language)}</code>
+              <code className="code-view-code">{renderCode(row, language, onSymbolClick)}</code>
               {/* The mark's card renders inline AT its span (its home row), not in a strip. */}
               {gutterMarks && renderMarkCard
                 ? gutterMarks.map((placed) => (

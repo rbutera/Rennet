@@ -5,6 +5,7 @@ import type {
   CanvasChangeNotification,
   DecisionsRunStatus,
   DispositionType,
+  ElementDiff,
   FlaggedReview,
   NoiseReview,
   OpenSpecChange,
@@ -18,6 +19,7 @@ import {
   type DispositionBatch,
   type OrphanedDisposition,
 } from "../canvas/authoring";
+import { type CounterpartTarget, resolveCounterpart } from "../canvas/counterpart";
 import type { CanvasFeedSource } from "../canvas/feed";
 import { useCanvasFeed } from "../canvas/feed";
 import { buildFlaggedIndex } from "../canvas/flagged";
@@ -42,6 +44,7 @@ import {
 import type { CoverageMosaic } from "../canvas/read-state";
 import type { Mark } from "../canvas/registrar";
 import { createViewStore, useViewStore, type ViewStore } from "../canvas/store";
+import type { SymbolInspection, SymbolLookupPort } from "../canvas/symbol";
 import { BatchView } from "./batch-view";
 import { CodeView } from "./code-view";
 import { CoverageMosaicView } from "./coverage";
@@ -56,6 +59,7 @@ import { NarrationPanel } from "./narration";
 import { NoiseLens } from "./noise";
 import { type OpenSpecAskState, OpenSpecView } from "./openspec";
 import { OrphanTray } from "./orphan-tray";
+import { SymbolInspector } from "./symbol-inspector";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // CanvasWorkspace — the container. It holds the ephemeral view store, binds the
@@ -66,7 +70,7 @@ import { OrphanTray } from "./orphan-tray";
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A per-element diff resolver (the real product wires the patchset; demo injects one). */
-export type DiffResolver = (elementKey: string) => { path: string; diff: string } | undefined;
+export type DiffResolver = (elementKey: string) => ElementDiff | undefined;
 
 export interface CanvasWorkspaceProps {
   canvases: Record<CanvasAngle, Canvas>;
@@ -166,6 +170,28 @@ export interface CanvasWorkspaceProps {
   /** The read/skimmed/unread coverage mosaic over the whole changeset. */
   mosaic?: CoverageMosaic;
   onGotoNextUnread?: (fromIndex: number) => void;
+
+  /**
+   * The symbol lookup port (Rai, wireframes #8). When present, code identifiers in
+   * the diff become clickable and open the in-app SymbolInspector (definitions +
+   * references from the model-free symbolic surface). Absent ⇒ identifiers are inert
+   * (additive: hosts/tests without a symbolic backend render unchanged).
+   */
+  symbolLookup?: SymbolLookupPort;
+  /**
+   * Open a file+line in the reviewer's editor (from the inspector, and the natural
+   * home for #7's editor jump too). Absent ⇒ inspector sites are shown but not
+   * openable.
+   */
+  onOpenInEditor?: (path: string, line: number) => void;
+}
+
+/** The inspector's live state: which name, still loading, errored, or resolved. */
+interface SymbolInspectorState {
+  readonly name: string;
+  readonly pending: boolean;
+  readonly error?: string;
+  readonly inspection?: SymbolInspection;
 }
 
 function FeedBinder({
@@ -205,6 +231,35 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   // Deixis: the anchor the agent (or the index) is pointing at — the CodeView
   // pulses its span. Cleared as the user moves on.
   const [focusAnchor, setFocusAnchor] = useState<string | null>(null);
+  // The open symbol inspector (Rai, wireframes #8): null when closed. A newer click
+  // replaces it, so a late lookup for a name no longer showing is discarded.
+  const [symbolState, setSymbolState] = useState<SymbolInspectorState | null>(null);
+
+  // Click a code identifier → resolve it via the lookup port and open the inspector.
+  // A guard on the name means a stale in-flight lookup (the reviewer clicked another
+  // symbol meanwhile) cannot overwrite the newer one.
+  function inspectSymbol(name: string): void {
+    const lookup = props.symbolLookup;
+    if (!lookup) return;
+    setSymbolState({ name, pending: true });
+    lookup(name)
+      .then((inspection) => {
+        setSymbolState((current) =>
+          current && current.name === name ? { name, pending: false, inspection } : current,
+        );
+      })
+      .catch((reason) => {
+        setSymbolState((current) =>
+          current && current.name === name
+            ? {
+                name,
+                pending: false,
+                error: reason instanceof Error ? reason.message : String(reason),
+              }
+            : current,
+        );
+      });
+  }
 
   // The canvas's L3 marks, as anchor-addressed marks the CodeView can land in the
   // code. An annotation's `target` and a proposal's `target` are already anchors.
@@ -353,6 +408,22 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     store.getState().setZoom({ ...zoom, level: "element", elementKey });
   }
 
+  // Jump to the impl↔test counterpart (Rai, wireframes #7). The target element may
+  // live on ANOTHER lens (the current lens placed none for that file), so switch to
+  // the target lens first, then select the element from THAT canvas — reading the
+  // target canvas directly rather than the render-closure `canvas`, which would be
+  // stale straight after the angle change.
+  function navigateToCounterpart(target: CounterpartTarget): void {
+    const targetCanvas = props.canvases[target.angle];
+    if (target.angle !== angle) store.getState().setAngle(target.angle);
+    const element = targetCanvas?.layers.analysis.elements.find(
+      (el) => el.elementKey === target.elementKey,
+    );
+    store.getState().select(target.elementKey);
+    if (element) store.getState().setCursor(element.anchor);
+    store.getState().setZoom({ level: "element", elementKey: target.elementKey });
+  }
+
   // The Flagged lens is an INDEX: a row jumps to the mark at its anchor. The mark
   // still renders at its anchor on the code surface — the lens points at it, it
   // does not own it. Set the cursor + deixis focus so the span at the anchor
@@ -451,6 +522,20 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   // (honest empty), never a fixture.
   const codeAltitude = zoom.level === "diff" || zoom.level === "element";
   const diff = codeAltitude && selection ? props.diffFor?.(selection) : undefined;
+
+  // The impl↔test counterpart jump (Rai, wireframes #7): resolved for the shown file
+  // against this review's changed-file inventory, ACROSS lenses and by the SET of
+  // paths each element's diff renders (not analysis IDs, not a single path — so it is
+  // immune to both the floor-vs-proposal chunk-ID regrouping AND a proposal chunk that
+  // merges an impl and its test into one element). Null ⇒ no button.
+  const counterpart = diff
+    ? resolveCounterpart(
+        props.canvases,
+        angle,
+        diff.path,
+        (elementKey) => props.diffFor?.(elementKey)?.paths,
+      )
+    : null;
 
   // The narrated account for the altitude in view (#70): the whole-changeset
   // roll-up at roll-up zoom, the cohort's account at cohort zoom, nothing below.
@@ -597,7 +682,27 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
             marks={shownMarks}
             renderMarkCard={renderMarkCard}
             focusAnchor={focusAnchor ?? undefined}
+            counterpart={
+              counterpart
+                ? {
+                    label: counterpart.label,
+                    path: counterpart.path,
+                    onView: () => navigateToCounterpart(counterpart),
+                  }
+                : undefined
+            }
+            onSymbolClick={props.symbolLookup ? inspectSymbol : undefined}
           />
+          {symbolState ? (
+            <SymbolInspector
+              name={symbolState.name}
+              pending={symbolState.pending}
+              error={symbolState.error}
+              inspection={symbolState.inspection}
+              onOpenInEditor={props.onOpenInEditor}
+              onClose={() => setSymbolState(null)}
+            />
+          ) : null}
         </div>
       ) : null}
 

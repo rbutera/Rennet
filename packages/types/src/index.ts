@@ -1509,7 +1509,16 @@ export interface Canvas {
  * the real code, not a fixture.
  */
 export interface ElementDiff {
+  /** The primary/display path (the header shows this one). */
   path: string;
+  /**
+   * EVERY file this element's diff renders, in file order. Usually one, but a
+   * proposal chunk can regroup hunks from several files into ONE element (e.g. an
+   * implementation and its test), and then `diff` shows all of them — so a consumer
+   * asking "does this element render file X?" must test membership here, not just
+   * compare `path` (which is only the first file). Always contains `path`.
+   */
+  paths: readonly string[];
   diff: string;
 }
 
@@ -1967,6 +1976,54 @@ export interface ReferenceShard {
 export interface ShardRef {
   readonly digest: string;
   readonly entries: number;
+}
+
+// ── The symbol inspector's lookup answer (Rai, wireframes #8) ────────────────
+// The UI-facing shape the `review.symbolLookup` command returns and the in-app
+// SymbolInspector renders: definition sites (go-to-definition) + reference sites
+// (find-references), each gated so a snapshot that could not answer is a first-
+// class `unavailable`, never conflated with a real empty `ok`. It is a lossy
+// projection of the symbolic surface's own results (`querySymbolDefinition` /
+// `queryReferences`) onto the plain rows the panel shows — no shard digests, no
+// gate-failure internals cross this boundary.
+
+/** One definition site the inspector shows: where an exported symbol is declared. */
+export interface SymbolInspectorDefinitionRow {
+  /** Repo-relative POSIX path of the declaring file. */
+  readonly path: string;
+  /** 1-based line of the declaration. */
+  readonly line: number;
+  /** The declaration kind (e.g. "function", "class", "reexport"). */
+  readonly kind: string;
+  /** The owning workspace scope (most specific), or null. */
+  readonly scope: string | null;
+}
+
+/** One reference site the inspector shows: where an identifier occurs. */
+export interface SymbolInspectorReferenceRow {
+  /** Repo-relative POSIX path of the occurrence. */
+  readonly path: string;
+  /** 1-based line of the occurrence. */
+  readonly line: number;
+  /** The owning workspace scope (most specific), or null. */
+  readonly scope: string | null;
+}
+
+/**
+ * One gated section of a lookup: the sites, or an honest `unavailable` when the
+ * snapshot could not answer (stale/absent/corrupt) — NEVER conflated with an empty
+ * `ok` (a real "nothing found"). `truncated` marks a section capped for display.
+ */
+export type SymbolInspectorSection<Row> =
+  | { readonly status: "ok"; readonly sites: readonly Row[]; readonly truncated?: boolean }
+  | { readonly status: "unavailable"; readonly reason: string };
+
+/** The whole answer for one inspected name: its definition sites and its references. */
+export interface SymbolInspection {
+  /** The inspected identifier name. */
+  readonly name: string;
+  readonly definition: SymbolInspectorSection<SymbolInspectorDefinitionRow>;
+  readonly references: SymbolInspectorSection<SymbolInspectorReferenceRow>;
 }
 
 /** The logical structural shards a manifest points at (excluding per-file symbol shards). */

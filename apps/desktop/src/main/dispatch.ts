@@ -29,6 +29,7 @@ import type {
   Review,
   ReviewEngine,
   ReviewNarration,
+  SymbolInspection,
 } from "@rennet/types";
 import type { OrchestratorTurnRunner } from "./orchestrator";
 import { type PublishConsentAuthority, publishConsentKey } from "./publish-consent-authority";
@@ -179,6 +180,25 @@ export interface DispatchDeps {
     askOrchestrator(input: { review: Review; question: string }): Promise<AskAnswer>;
     askCodex(input: { review: Review; question: string }): Promise<AskAnswer>;
   };
+  /**
+   * The symbol inspector port (Rai, wireframes #8): resolve one clicked identifier to
+   * its definition + reference sites over the review's model-free symbolic surface.
+   * Takes the ALREADY-RESOLVED review (dispatch freshness-pins it once). Optional so a
+   * composition without a symbolic backend still constructs — dispatch then answers
+   * with an honest `unavailable` for both sections rather than throwing.
+   */
+  readonly symbolLookup?: (input: { review: Review; name: string }) => Promise<SymbolInspection>;
+  /**
+   * Open a review file (repo-relative, optionally at a line) in the reviewer's
+   * editor — the inspector's "open in editor" jump (Rai, wireframes #8). Takes the
+   * ALREADY-RESOLVED review (its root is the resolution base + traversal boundary).
+   * Optional; absent ⇒ dispatch answers `ok:false` rather than throwing.
+   */
+  readonly openInEditor?: (input: {
+    review: Review;
+    path: string;
+    line?: number;
+  }) => Promise<{ ok: boolean }>;
 }
 
 /** Lift the wire target shape into the core `ForgeReviewTarget` nouns. */
@@ -527,6 +547,39 @@ export function createDispatch(
         const input = parseCommandInput(name, rawInput);
         const review = requireLatestReview(input.reviewId);
         return parseCommandOutput(name, await deps.noiseReview(review));
+      }
+      // ── The symbol inspector (wireframes #8) ───────────────────────────────────
+      case "review.symbolLookup": {
+        // Resolve the addressed review ONCE (a stale/unknown id is refused), then read
+        // both symbolic ops for the clicked name. No model spend — deterministic index
+        // reads. With no symbolic backend wired, answer honestly `unavailable` for
+        // both sections rather than throwing (the UI degrades to a clear message).
+        const input = parseCommandInput(name, rawInput);
+        const review = requireLatestReview(input.reviewId);
+        if (!deps.symbolLookup) {
+          return parseCommandOutput(name, {
+            name: input.name,
+            definition: {
+              status: "unavailable",
+              reason: "the symbolic index is not available for this review",
+            },
+            references: {
+              status: "unavailable",
+              reason: "the symbolic index is not available for this review",
+            },
+          });
+        }
+        return parseCommandOutput(name, await deps.symbolLookup({ review, name: input.name }));
+      }
+      // ── Open a review file in the editor (wireframes #8) ───────────────────────
+      case "review.openInEditor": {
+        const input = parseCommandInput(name, rawInput);
+        const review = requireLatestReview(input.reviewId);
+        if (!deps.openInEditor) return parseCommandOutput(name, { ok: false });
+        return parseCommandOutput(
+          name,
+          await deps.openInEditor({ review, path: input.path, line: input.line }),
+        );
       }
       // ── Canvas user ops (issue #54 wires #10's command surface into dispatch) ──
       case "canvas.disposition": {

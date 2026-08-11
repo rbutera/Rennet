@@ -136,6 +136,7 @@ function fakePublishPort(
 
 function harness(
   publishPort: ForgePublishPort & { posts: ForgeReviewPost[] } = fakePublishPort(),
+  opts: Pick<DispatchDeps, "symbolLookup" | "openInEditor"> = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
   service: ReviewService;
@@ -155,7 +156,7 @@ function harness(
   const buildCanvases = vi.fn(() =>
     Promise.resolve({
       canvases: canvasSet(),
-      elementDiffs: { e1: { path: "src/a.ts", diff: "@@ -1,1 +1,2 @@\n+x" } },
+      elementDiffs: { e1: { path: "src/a.ts", paths: ["src/a.ts"], diff: "@@ -1,1 +1,2 @@\n+x" } },
       engine: { aiReview: true, claudeAvailable: true, codexAvailable: true },
     }),
   );
@@ -220,6 +221,8 @@ function harness(
     flaggedReview: () => Promise.resolve({ status: "ok", findings: [] }),
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
     reviewAsk,
+    symbolLookup: opts.symbolLookup,
+    openInEditor: opts.openInEditor,
   };
   return {
     dispatch: createDispatch(deps),
@@ -1107,5 +1110,77 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
     });
     expect(reviewAsk.askOrchestrator).toHaveBeenCalledWith({ review, question: "q" });
     expect(reviewAsk.askCodex).toHaveBeenCalledWith({ review, question: "q" });
+  });
+});
+
+describe("createDispatch — review.symbolLookup (the symbol inspector, wireframes #8)", () => {
+  it("resolves the review ONCE and threads it to the symbolLookup port", async () => {
+    const symbolLookup = vi.fn(async ({ name }: { review: Review; name: string }) => ({
+      name,
+      definition: {
+        status: "ok" as const,
+        sites: [{ path: "src/x.ts", line: 3, kind: "function", scope: null }],
+      },
+      references: { status: "ok" as const, sites: [{ path: "src/y.ts", line: 9, scope: null }] },
+    }));
+    const h = harness(undefined, { symbolLookup });
+    const review = await capturedReview(h.dispatch);
+
+    const out = (await h.dispatch("review.symbolLookup", {
+      reviewId: review.id,
+      name: "makeThing",
+    })) as { name: string; definition: { status: string }; references: { status: string } };
+
+    expect(symbolLookup).toHaveBeenCalledTimes(1);
+    expect(symbolLookup).toHaveBeenCalledWith({ review, name: "makeThing" });
+    expect(out.name).toBe("makeThing");
+    expect(out.definition.status).toBe("ok");
+    expect(out.references.status).toBe("ok");
+  });
+
+  it("refuses a stale/unknown reviewId", async () => {
+    const symbolLookup = vi.fn();
+    const h = harness(undefined, { symbolLookup });
+    await capturedReview(h.dispatch);
+    await expect(
+      h.dispatch("review.symbolLookup", { reviewId: "not-the-open-review", name: "x" }),
+    ).rejects.toThrow(/Review not found/);
+    expect(symbolLookup).not.toHaveBeenCalled();
+  });
+
+  it("with NO symbolic backend wired, answers unavailable for both sections (never throws)", async () => {
+    const h = harness(); // no symbolLookup dep
+    const review = await capturedReview(h.dispatch);
+    const out = (await h.dispatch("review.symbolLookup", {
+      reviewId: review.id,
+      name: "x",
+    })) as { definition: { status: string }; references: { status: string } };
+    expect(out.definition.status).toBe("unavailable");
+    expect(out.references.status).toBe("unavailable");
+  });
+});
+
+describe("createDispatch — review.openInEditor (wireframes #8)", () => {
+  it("resolves the review and threads it to the openInEditor port", async () => {
+    const openInEditor = vi.fn(async () => ({ ok: true }));
+    const h = harness(undefined, { openInEditor });
+    const review = await capturedReview(h.dispatch);
+    const out = (await h.dispatch("review.openInEditor", {
+      reviewId: review.id,
+      path: "src/x.ts",
+      line: 12,
+    })) as { ok: boolean };
+    expect(openInEditor).toHaveBeenCalledWith({ review, path: "src/x.ts", line: 12 });
+    expect(out.ok).toBe(true);
+  });
+
+  it("with NO editor port wired, answers ok:false (never throws)", async () => {
+    const h = harness();
+    const review = await capturedReview(h.dispatch);
+    const out = (await h.dispatch("review.openInEditor", {
+      reviewId: review.id,
+      path: "src/x.ts",
+    })) as { ok: boolean };
+    expect(out.ok).toBe(false);
   });
 });

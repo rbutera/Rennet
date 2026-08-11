@@ -77,12 +77,15 @@ import type {
   ReviewHypothesis,
   ReviewNarration,
 } from "@rennet/types";
-import { app, BrowserWindow, dialog, ipcMain, net, protocol, session } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell } from "electron";
 import { createDispatch } from "./dispatch";
+import { createDesktopReviewBackend } from "./live-review-backend";
+import { EDITOR_CLIS, performOpenInEditor } from "./open-in-editor";
 import { createOrchestratorTurnRunner } from "./orchestrator";
 import { createProcessProject } from "./process-project";
 import { createPublishConsentAuthority } from "./publish-consent-authority";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
+import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 
 const execFileAsync = promisify(execFile);
 
@@ -1031,6 +1034,50 @@ app.whenReady().then(async () => {
     //     honestly-probed `codex` availability; an absent binary yields a legible
     //     "unavailable" answer, never a crash, so a "both" ask still returns the
     //     orchestrator's answer).
+    // review.symbolLookup (Rai, wireframes #8): the LIVE symbol inspector port. It
+    // reads the review's OWN model-free symbolic surface (context.symbol +
+    // context.references) over a freshly composed backend — deterministic index
+    // reads, NO model spend. Dispatch resolves + freshness-pins the review before
+    // calling this, so the backend is built for the addressed review's active
+    // patchset. The pipeline is a deterministic-floor build (no lens/model turns).
+    symbolLookup: createLiveSymbolLookup({
+      buildBackend: async (review) => {
+        // Pin to the REVIEWED tree (base..head), not the base — so a symbol added,
+        // renamed, or moved in the PR resolves instead of reading stale/missing over
+        // the base snapshot. The pipeline is a deterministic-floor build; only the
+        // symbolic ops (context.symbol/references) are read from this backend.
+        const headReview = reviewPinnedToHead(review);
+        const pipeline = await buildReviewCanvases({
+          reviewId: headReview.id,
+          patchset: activePatchset(headReview),
+          dispositions: headReview.dispositions,
+        });
+        const live = await createDesktopReviewBackend(headReview, pipeline);
+        return live.backend;
+      },
+    }),
+    // review.openInEditor (Rai, wireframes #8): open a review file AT ITS LINE. Try a
+    // line-jumping editor CLI (`<cli> -g file:line`, VS Code / Cursor / Sublime
+    // family) first; fall back to an OS-level open (no line) only when none took it.
+    // Path resolution + the escape-the-root refusal live in `performOpenInEditor`.
+    openInEditor: ({ review, path, line }) =>
+      performOpenInEditor(
+        {
+          launchAtLine: async (absPath, ln) => {
+            for (const cli of EDITOR_CLIS) {
+              try {
+                await execFileAsync(cli, ["-g", `${absPath}:${ln}`]);
+                return true;
+              } catch {
+                // Not installed / refused — try the next candidate editor.
+              }
+            }
+            return false;
+          },
+          openPath: async (absPath) => (await shell.openPath(absPath)) === "",
+        },
+        { repositoryRoot: review.repositoryRoot, path, line },
+      ),
     reviewAsk: createLiveReviewAskPorts({
       // Dispatch resolves + freshness-pins the review (and its patchset) and hands the
       // SAME snapshot to both legs, so the ports never re-resolve. The pipeline is a

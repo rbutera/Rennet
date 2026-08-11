@@ -286,4 +286,73 @@ describe("buildElementDiffs", () => {
     const headerCount = (diffs.es?.diff.match(/@@ -1,6 \+1,6 @@/g) ?? []).length;
     expect(headerCount).toBe(1);
   });
+
+  // A proposal chunk that REGROUPS hunks from an implementation AND its test into ONE
+  // element (the real live shape). `path` is only the first file, but `paths` MUST
+  // carry BOTH — that is what lets the counterpart resolver find the test by
+  // membership instead of a single-path compare that would miss it.
+  it("carries EVERY rendered file path when a proposal chunk merges multiple files", () => {
+    const IMPL = `@@ -1,2 +1,3 @@
+ export function foo() {
+-  return 1;
++  return bar();
+ }`;
+    const TEST = `@@ -1,2 +1,3 @@
+ import { foo } from "./foo";
+-test("foo", () => {});
++test("foo", () => expect(foo()).toBe(2));
++test("bar", () => {});`;
+    const multiPatchset = patchsetOf("patch-4", [
+      file("src/foo.ts", IMPL),
+      file("src/foo.test.ts", TEST),
+    ]);
+    const decomp = decompose(multiPatchset);
+    const implHunk = decomp.hunks.find((h) => h.filePath === "src/foo.ts");
+    const testHunk = decomp.hunks.find((h) => h.filePath === "src/foo.test.ts");
+    expect(implHunk).toBeDefined();
+    expect(testHunk).toBeDefined();
+
+    // The admitted proposal merges both files' hunks into ONE chunk/element.
+    const admitted: AdmittedDocument[] = [
+      {
+        docId: "pdoc",
+        docType: "decomposition.proposal",
+        body: {
+          chunks: [
+            {
+              chunkId: "merged",
+              title: "Foo + its test",
+              hunkIds: [implHunk?.id ?? "", testHunk?.id ?? ""],
+              angles: ["sequence"],
+              rationale: "cohesive change",
+            },
+          ],
+          edges: [],
+          readingOrder: ["merged"],
+          residue: [],
+        },
+      },
+    ];
+    const set = setWith("sequence", [
+      {
+        elementKey: "merged-el",
+        docId: "pdoc",
+        anchor: "rennet:chunk/merged",
+        kind: "chunk",
+        title: "M",
+      },
+    ]);
+
+    const diffs = buildElementDiffs(set, decomp, multiPatchset, admitted);
+    const entry = diffs["merged-el"];
+    expect(entry).toBeDefined();
+    // `path` alone is only the first file — a single-path check would MISS the test.
+    expect(entry?.path).toBe("src/foo.ts");
+    // `paths` carries BOTH files, so membership resolution finds the test.
+    expect(entry?.paths).toEqual(["src/foo.test.ts", "src/foo.ts"]);
+    expect(entry?.paths).toContain("src/foo.test.ts");
+    // and the rendered diff really does include both files' hunks.
+    expect(entry?.diff).toContain("export function foo()");
+    expect(entry?.diff).toContain('import { foo } from "./foo"');
+  });
 });

@@ -10,6 +10,7 @@ import type {
   Review,
   ReviewEngine,
   ReviewNarration,
+  SymbolInspection,
 } from "@rennet/types";
 import { z } from "zod";
 
@@ -221,7 +222,11 @@ const canvasSetSchema = z.object({
 // doc-anchored element (flat angle, no code diff) simply has no entry. A full,
 // failing-capable schema (path + diff both required) so the IPC surface keeps a
 // real positive control.
-const elementDiffSchema = z.object({ path: z.string(), diff: z.string() });
+const elementDiffSchema = z.object({
+  path: z.string(),
+  paths: z.array(z.string()),
+  diff: z.string(),
+});
 const elementDiffsSchema: z.ZodType<ElementDiffs> = z.record(z.string(), elementDiffSchema);
 
 // ── Roll-up narration placement (issue #70) ──────────────────────────────────
@@ -672,6 +677,35 @@ export const noiseReviewSchema: z.ZodType<NoiseReview> = z.union([
   z.object({ status: z.literal("failed"), reason: z.string() }),
 ]);
 
+// ── review.symbolLookup: the in-app symbol inspector's answer (Rai, wireframes #8)
+// The wire shape the inspector renders: definition sites (go-to-definition) +
+// reference sites (find-references) from Rennet's OWN model-free symbolic surface.
+// Each section is gated so a snapshot that could not answer rides back as
+// `unavailable` — never conflated with an empty `ok` ("nothing found"). NO model
+// spend: this is deterministic index reads, not an LLM guess.
+const symbolDefinitionRowSchema = z.object({
+  path: z.string().min(1),
+  line: z.number().int().positive(),
+  kind: z.string().min(1),
+  scope: z.string().nullable(),
+});
+const symbolReferenceRowSchema = z.object({
+  path: z.string().min(1),
+  line: z.number().int().positive(),
+  scope: z.string().nullable(),
+});
+function symbolSectionSchema<T extends z.ZodTypeAny>(row: T) {
+  return z.union([
+    z.object({ status: z.literal("ok"), sites: z.array(row), truncated: z.boolean().optional() }),
+    z.object({ status: z.literal("unavailable"), reason: z.string() }),
+  ]);
+}
+export const symbolInspectionSchema: z.ZodType<SymbolInspection> = z.object({
+  name: z.string().min(1),
+  definition: symbolSectionSchema(symbolDefinitionRowSchema),
+  references: symbolSectionSchema(symbolReferenceRowSchema),
+});
+
 export const commandDefinitions = {
   "app.bootstrap": {
     input: z.object({}),
@@ -1032,6 +1066,27 @@ export const commandDefinitions = {
   "noise.review": {
     input: z.object({ reviewId: z.string().min(1) }),
     output: noiseReviewSchema,
+  },
+  // ── The symbol inspector (issue: wireframes #8) ────────────────────────────
+  // Resolve one clicked identifier to its definition + reference sites from the
+  // review's model-free symbolic surface (context.symbol / context.references).
+  // Read-only, deterministic, no model spend. Dispatch resolves the current review
+  // ONCE and reads both from the same snapshot.
+  "review.symbolLookup": {
+    input: z.object({ reviewId: z.string().min(1), name: z.string().min(1) }),
+    output: symbolInspectionSchema,
+  },
+  // ── Open a review file in the reviewer's editor (wireframes #8) ────────────
+  // The inspector's "open in editor" jump: open a repo-relative file (optionally at
+  // a line) via the OS. `ok:false` when it could not be opened (no path escape, an
+  // unavailable review, or the OS refusing the file). A best-effort side effect.
+  "review.openInEditor": {
+    input: z.object({
+      reviewId: z.string().min(1),
+      path: z.string().min(1),
+      line: z.number().int().positive().optional(),
+    }),
+    output: z.object({ ok: z.boolean() }),
   },
 } as const;
 
