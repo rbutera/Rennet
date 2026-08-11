@@ -121,3 +121,33 @@ lint, typecheck, test, build for all 8 projects.** Tests **2066 passed / 7 skipp
 exactly **+35** over the 2031/7 baseline (18 core handoff-loop + 6 checkpoint +
 5 handoff-run-live + 6 dispatch handoff). Dependency arrows hold (architecture control's
 deliberate forbidden-import negative "failed as expected"; core never imports adapters).
+
+## Codex FIX-THEN-MERGE round (2026-08-11)
+
+Reversal + six findings, all green (full gate, all 8 projects).
+
+- **Bash reversal (Rai's direct call):** the write session is fully capable (Bash
+  included) — removed the tool denylist, deleted the claude-adapter lamp, and rewrote
+  every comment/STATE line that claimed structural no-push (R33 is now an instruction,
+  not a wall). The four R33 doc files are owned by a separate scan; not touched here.
+- **F2 (human-act consent):** `prepare` records the disclosed digest+disclosure
+  main-side; `requestConsent` shows a NATIVE confirmation over the stored disclosure and
+  mints a token only on affirmative — the renderer supplies no digest, so a token proves
+  a human confirmed, not that renderer code called an IPC.
+- **F3 (digest binds the disclosed bundle):** the bundle digest now covers patchsetId +
+  every task's resolved context + the rendered prompt, so a bundle prepared on patch-1
+  cannot run after the review activated patch-2 (tested).
+- **F4 (failed-with-changes):** the post-checkpoint is ALWAYS taken; a failed turn carries
+  turnDiff + filesTouched so edits made before an error are surfaced, not hidden. The
+  run command surfaces `filesTouched` on failure.
+- **F5 (checkpoint cleanup):** `discard` on the CheckpointPort, cleaned after use (not in
+  a finally — a cleanup error never masks the primary result, but is surfaced, never
+  swallowed), `recoverHandoffCheckpoints` startup sweep (once per repo per process), and
+  refs created with `core.logAllRefUpdates=false` so no reflog even under `always`.
+- **F6 (submodules):** `repoHasSubmodules` refuses a handoff on a repo with submodules
+  (their internal edits leave the gitlink unchanged → invisible); recursive checkpointing
+  is the follow-up.
+- **F7 (quoted paths):** filesTouched comes from `git diff --name-only -z` (structural),
+  not the display-diff regex, so a tab/quoted path is not dropped (tested with a tab).
+
+⭐ Codex confirmed `notWiredLineageCarry()` survived unattacked — the #16 seam is honest.
