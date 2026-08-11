@@ -92,9 +92,12 @@ describe("ConversationCluster — the private thread panel", () => {
   });
 
   it("asks about these lines through the composer, then clears the draft", () => {
-    const asked: string[] = [];
+    const asked: Array<[string, string]> = [];
     const { container } = mount(
-      <ConversationCluster thread={demoConversationThread()} onAsk={(body) => asked.push(body)} />,
+      <ConversationCluster
+        thread={demoConversationThread()}
+        onAsk={(body, mode) => asked.push([body, mode])}
+      />,
     );
     const input = container.querySelector<HTMLTextAreaElement>(".conversation-composer-input");
     const send = container.querySelector<HTMLButtonElement>(".conversation-composer-send");
@@ -104,9 +107,39 @@ describe("ConversationCluster — the private thread panel", () => {
     fireEvent.change(input, { target: { value: "  does this cap the outage?  " } });
     expect(send.disabled).toBe(false);
     fireEvent.click(send);
-    expect(asked).toEqual(["does this cap the outage?"]);
+    // The default routing is the orchestrator — the caret was never touched.
+    expect(asked).toEqual([["does this cap the outage?", "orchestrator"]]);
     // The composer clears after asking.
     expect(input.value).toBe("");
+  });
+
+  it("opts a turn into 'both' via the caret and emits that mode on send", () => {
+    const asked: Array<[string, string]> = [];
+    const { container } = mount(
+      <ConversationCluster
+        thread={demoConversationThread()}
+        onAsk={(body, mode) => asked.push([body, mode])}
+      />,
+    );
+    const caret = container.querySelector<HTMLButtonElement>(".conversation-composer-caret");
+    if (!caret) throw new Error("no routing caret");
+    // No menu until the caret opens it.
+    expect(container.querySelector(".conversation-route-menu")).toBeNull();
+    fireEvent.click(caret);
+    const bothOption = container.querySelector<HTMLButtonElement>(
+      '.conversation-route-item[data-mode="both"]',
+    );
+    if (!bothOption) throw new Error("no 'both' menu item");
+    fireEvent.click(bothOption);
+    // Picking an option closes the menu.
+    expect(container.querySelector(".conversation-route-menu")).toBeNull();
+
+    const input = container.querySelector<HTMLTextAreaElement>(".conversation-composer-input");
+    const send = container.querySelector<HTMLButtonElement>(".conversation-composer-send");
+    if (!input || !send) throw new Error("no composer");
+    fireEvent.change(input, { target: { value: "seconds or ms?" } });
+    fireEvent.click(send);
+    expect(asked).toEqual([["seconds or ms?", "both"]]);
   });
 
   it("omits the composer entirely when no onAsk is given", () => {
