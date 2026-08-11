@@ -175,8 +175,9 @@ function harness(
   flaggedReviewSpy: ReturnType<typeof vi.fn>;
   refineCommentSpy: ReturnType<typeof vi.fn>;
 } {
-  const capture: PatchsetCapturePort =
-    extra.capturePort ?? { capture: () => Promise.resolve(patchset()) };
+  const capture: PatchsetCapturePort = extra.capturePort ?? {
+    capture: () => Promise.resolve(patchset()),
+  };
   const service = new ReviewService(capture, new InMemoryStore());
   const allowedRoots = new Set<string>();
   let dirty = false;
@@ -1791,9 +1792,23 @@ function twoPhaseCapture(): PatchsetCapturePort {
         ...patchset(),
         id: "patch-2",
         files: [
-          { path: "src/a.ts", status: "modified", additions: 2, deletions: 0, binary: false, patch: "XY" },
+          {
+            path: "src/a.ts",
+            status: "modified",
+            additions: 2,
+            deletions: 0,
+            binary: false,
+            patch: "XY",
+          },
           // An edit NO disposition mentioned — the totality guarantee must surface it.
-          { path: "src/unrelated.ts", status: "added", additions: 1, deletions: 0, binary: false, patch: "Z" },
+          {
+            path: "src/unrelated.ts",
+            status: "added",
+            additions: 1,
+            deletions: 0,
+            binary: false,
+            patch: "Z",
+          },
         ],
         rawDiff: "XYZ",
       });
@@ -1827,7 +1842,10 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
       commandId: randomUUID(),
       reviewId: review.id,
       dispositions: HANDOFF_DISPOSITIONS,
-    })) as { bundle: { digest: string; tasks: unknown[] }; disclosure: { writeEnabled: boolean; editsWorkingTree: boolean; taskCount: number } };
+    })) as {
+      bundle: { digest: string; tasks: unknown[] };
+      disclosure: { writeEnabled: boolean; editsWorkingTree: boolean; taskCount: number };
+    };
 
     expect(out.bundle.tasks).toHaveLength(1);
     expect(out.disclosure.writeEnabled).toBe(true);
@@ -1838,7 +1856,9 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
   });
 
   it("run REFUSES without a consent token — the loop is startable only by an explicit act", async () => {
-    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(async () => HANDOFF_TURN);
+    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
+      async () => HANDOFF_TURN,
+    );
     const { dispatch } = harness(undefined, {}, { capturePort: twoPhaseCapture(), runHandoffTurn });
     const review = await capturedReview(dispatch);
     const prep = (await dispatch("review.handoff.prepare", {
@@ -1861,7 +1881,9 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
   });
 
   it("run REFUSES when the bundle changed since it was disclosed (spend-disclosed gate)", async () => {
-    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(async () => HANDOFF_TURN);
+    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
+      async () => HANDOFF_TURN,
+    );
     const { dispatch } = harness(undefined, {}, { capturePort: twoPhaseCapture(), runHandoffTurn });
     const review = await capturedReview(dispatch);
     const prep = (await dispatch("review.handoff.prepare", {
@@ -1880,7 +1902,9 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
     const out = (await dispatch("review.handoff.run", {
       commandId: randomUUID(),
       reviewId: review.id,
-      dispositions: [{ path: "src/a.ts", type: "request-change" as const, body: "something ELSE entirely" }],
+      dispositions: [
+        { path: "src/a.ts", type: "request-change" as const, body: "something ELSE entirely" },
+      ],
       bundleDigest: prep.bundle.digest,
       authorization: consent.authorization,
     })) as { status: string };
@@ -1890,7 +1914,9 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
   });
 
   it("run captures a NEW patchset, preserves the prior byte-identical (R28), and proves totality", async () => {
-    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(async () => HANDOFF_TURN);
+    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
+      async () => HANDOFF_TURN,
+    );
     const { dispatch } = harness(undefined, {}, { capturePort: twoPhaseCapture(), runHandoffTurn });
     const review = await capturedReview(dispatch);
     const priorActiveId = review.activePatchsetId;
@@ -1961,7 +1987,9 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
   });
 
   it("the consent token is single-use — a replayed run is refused", async () => {
-    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(async () => HANDOFF_TURN);
+    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
+      async () => HANDOFF_TURN,
+    );
     const { dispatch } = harness(undefined, {}, { capturePort: twoPhaseCapture(), runHandoffTurn });
     const review = await capturedReview(dispatch);
     const prep = (await dispatch("review.handoff.prepare", {
@@ -1981,8 +2009,14 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
       authorization: consent.authorization,
     };
 
-    const first = (await dispatch("review.handoff.run", { commandId: randomUUID(), ...runInput })) as { status: string };
-    const second = (await dispatch("review.handoff.run", { commandId: randomUUID(), ...runInput })) as { status: string };
+    const first = (await dispatch("review.handoff.run", {
+      commandId: randomUUID(),
+      ...runInput,
+    })) as { status: string };
+    const second = (await dispatch("review.handoff.run", {
+      commandId: randomUUID(),
+      ...runInput,
+    })) as { status: string };
 
     expect(first.status).toBe("ran");
     expect(second.status).toBe("refused"); // the token was consumed on the first run

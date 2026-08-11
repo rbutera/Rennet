@@ -8,6 +8,7 @@ import {
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
   type CodexAvailability,
+  claudeHandoffRunPort,
   cleanupWorktree,
   createClaudeHarness,
   createCodexExecutor,
@@ -29,7 +30,6 @@ import {
   discoverProject,
   discoverWorktreeIdentities,
   execaGit,
-  claudeHandoffRunPort,
   FileConfigStore,
   FileProjectStore,
   type GhRunner,
@@ -66,10 +66,10 @@ import {
   patchsetIntentToReviewIntent,
   ReviewService,
   resolveDualSeat,
-  runHandoffTurn as runHandoffTurnCore,
   runCoverageMapping,
   runDecisionAngle,
   runDualFindingReview,
+  runHandoffTurn as runHandoffTurnCore,
   runHypothesisPass,
   runNoiseAngle,
   verifyFlaggedReview,
@@ -94,6 +94,7 @@ import type {
 } from "@rennet/types";
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell } from "electron";
 import { createDispatch } from "./dispatch";
+import { createHandoffConsentAuthority } from "./handoff-consent-authority";
 import { createDesktopReviewBackend } from "./live-review-backend";
 import { EDITOR_CLIS, performOpenInEditor } from "./open-in-editor";
 import { createOrchestratorTurnRunner } from "./orchestrator";
@@ -102,7 +103,6 @@ import {
   PROACTIVE_REHYDRATION_COMMAND_ID,
   type ProactiveRehydration,
 } from "./proactive-rehydration";
-import { createHandoffConsentAuthority } from "./handoff-consent-authority";
 import { createProcessProject } from "./process-project";
 import { createPublishConsentAuthority } from "./publish-consent-authority";
 import { createLiveRefinePort } from "./refine-comment-live";
@@ -1168,7 +1168,10 @@ app.whenReady().then(async () => {
     runHandoffTurn: async ({ repoRoot, bundle }) => {
       const { adapter } = await getClaudeHarness();
       if (!adapter) {
-        return { status: "failed", reason: "no coding harness (claude) is installed to run the handoff" };
+        return {
+          status: "failed",
+          reason: "no coding harness (claude) is installed to run the handoff",
+        };
       }
       return runHandoffTurnCore({
         repoRoot,

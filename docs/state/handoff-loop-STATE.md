@@ -82,7 +82,37 @@ You touch `packages/types`, `packages/protocol`, the carry seam. I ADD, additive
 - `packages/protocol/src/index.ts` (append): 3 command defs + schemas.
 - `apps/desktop/src/main/handoff-consent-authority.ts` (new) + `dispatch.ts` (3 cases).
 
-## Progress log
+## What shipped (all committed on `feat/handoff-loop`)
 
-- (in progress) Read the whole contract, adapter, capture, fold, refine, and UI-handoff
-  scaffolding. Design settled. Bundle builder first.
+- **Bundle** — `core/src/handoff-loop.ts` `buildHandoffBundle` + `renderHandoffPrompt` +
+  `disclosureFor`. Filters to request-change/comment, resolves anchors to hunk/file
+  context, deterministic digest. 18 tests.
+- **Checkpoint** — `adapters/src/checkpoint-store.ts` `GitCheckpointStore` (hidden
+  `refs/rennet/checkpoints/*`, temp-index snapshot, tree-to-tree turn diff). Vendored
+  T3 pattern, attributed. 6 real-git tests incl. "real index untouched" + "hidden refs".
+- **Run** — `core` `runHandoffTurn` (pure bracket over injected `CheckpointPort` +
+  `HandoffRunPort`) + `adapters/src/handoff-run-live.ts` `claudeHandoffRunPort`
+  (readOnly:false, exec DENIED so `git push` is unreachable). 5 tests.
+- **Capture + delta** — reuses `ReviewService.capture`/`PatchsetActivated` (floor carry).
+- **Seam (#16)** — `LineageCarryPort` + `notWiredLineageCarry` (honest `matcher-not-wired`).
+- **Protocol** — `review.handoff.prepare` / `requestConsent` / `run` + schemas.
+- **Consent** — `apps/desktop/src/main/handoff-consent-authority.ts` (single-use token
+  bound to reviewId+bundleDigest); `dispatch.ts` 3 cases; composed in `index.ts`.
+- **Adapter change** — `SessionSpec.disallowedTools` (additive) threaded through
+  `claude-adapter.ts` so a write session can deny exec.
+
+Invariants asserted (6 dispatch tests): explicit-act (refuse w/o token), spend-disclosed
+(refuse on digest drift), R28 immutability (prior patchset preserved), totality
+(unrelated edit in filesTouched), unavailable (no harness), single-use token.
+
+## Wiring #16 when it merges
+
+Replace `lineageCarry: "matcher-not-wired"` in `dispatch.ts` run case + pass a real
+`LineageCarryPort` (over #16's matcher) into a delta-carry step after `service.capture`.
+The matcher is DONE on `feat/lineage-matcher` (their tasks #15-17 complete) but not on
+this branch's base — so the seam stays honestly unwired here.
+
+## Gate
+
+Full `NX_DAEMON=false pnpm check` — see the run report; new tests reconcile against the
+2031/7 baseline.

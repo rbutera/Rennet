@@ -45,7 +45,10 @@ function endedEvent(outcome: unknown): HarnessEvent {
 }
 
 /** A fake harness port that records the last spec it was asked to create a session for. */
-function fakePort(events: HarnessEvent[]): { port: HarnessPort; lastSpec: () => SessionSpec | null } {
+function fakePort(events: HarnessEvent[]): {
+  port: HarnessPort;
+  lastSpec: () => SessionSpec | null;
+} {
   let last: SessionSpec | null = null;
   const port: HarnessPort = {
     descriptor: {} as HarnessDescriptor,
@@ -60,9 +63,7 @@ function fakePort(events: HarnessEvent[]): { port: HarnessPort; lastSpec: () => 
 
 describe("claudeHandoffRunPort", () => {
   it("creates a WRITE-enabled session with exec/network DENIED (git push unreachable)", async () => {
-    const { port, lastSpec } = fakePort([
-      endedEvent({ status: "completed", finalText: "did it" }),
-    ]);
+    const { port, lastSpec } = fakePort([endedEvent({ status: "completed", finalText: "did it" })]);
     await claudeHandoffRunPort(port)({ cwd: "/repo", prompt: "do the thing" });
     const spec = lastSpec();
     expect(spec?.readOnly).toBe(false);

@@ -16,6 +16,7 @@ export {
   createCanvasOpsServer,
   type LoadCanvasOpsSdk,
 } from "./canvas-ops-server";
+export { GitCheckpointStore } from "./checkpoint-store";
 export {
   CLAUDE_TESTED_RANGE,
   ClaudeAdapter,
@@ -110,12 +111,6 @@ export {
   failedFlaggedReviewFixture,
   flaggedReviewFixture,
 } from "./flagged-fixture";
-export { GitCheckpointStore } from "./checkpoint-store";
-export {
-  claudeHandoffRunPort,
-  HANDOFF_DENIED_TOOLS,
-  HANDOFF_WRITE_TOOLS,
-} from "./handoff-run-live";
 export { GitCaptureAdapter } from "./git-capture";
 export {
   type Counts,
@@ -158,6 +153,11 @@ export {
   type GitHubPublishConfig,
 } from "./github-publish";
 export { parseGitHubSso } from "./github-sso";
+export {
+  claudeHandoffRunPort,
+  HANDOFF_DENIED_TOOLS,
+  HANDOFF_WRITE_TOOLS,
+} from "./handoff-run-live";
 export {
   compareVersions,
   type DiscoverCodexOptions,

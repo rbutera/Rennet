@@ -1,4 +1,4 @@
-import type { HandoffDisposition, Patchset, PatchFile } from "@rennet/types";
+import type { HandoffDisposition, PatchFile, Patchset } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
 import {
   anchoredContext,
@@ -62,7 +62,9 @@ function patchsetOf(id: string, files: PatchFile[]): Patchset {
 
 const patchset = patchsetOf("ps-1", [file("src/bar.ts", BAR_PATCH), file("src/foo.ts", FOO_PATCH)]);
 
-function disposition(over: Partial<HandoffDisposition> & Pick<HandoffDisposition, "path" | "type">): HandoffDisposition {
+function disposition(
+  over: Partial<HandoffDisposition> & Pick<HandoffDisposition, "path" | "type">,
+): HandoffDisposition {
   return { body: "", ...over };
 }
 
@@ -181,7 +183,9 @@ describe("renderHandoffPrompt", () => {
     const bundle = buildHandoffBundle({
       reviewId: "r1",
       patchset,
-      dispositions: [disposition({ path: "src/foo.ts", type: "request-change", body: "add a guard" })],
+      dispositions: [
+        disposition({ path: "src/foo.ts", type: "request-change", body: "add a guard" }),
+      ],
     });
     expect(bundle.prompt).toContain("Address ONLY the items listed below");
     expect(bundle.prompt).toContain("do NOT push");
@@ -245,7 +249,10 @@ function checkpointReturning(diff: string): { port: CheckpointPort; captured: nu
   const port: CheckpointPort = {
     capture: () => {
       state.captured += 1;
-      return Promise.resolve({ ref: `refs/rennet/checkpoints/${state.captured}`, commit: `c${state.captured}` });
+      return Promise.resolve({
+        ref: `refs/rennet/checkpoints/${state.captured}`,
+        commit: `c${state.captured}`,
+      });
     },
     diff: (_from: CheckpointRef, _to: CheckpointRef) => Promise.resolve(diff),
   };
@@ -287,8 +294,12 @@ describe("runHandoffTurn", () => {
     expect(capture).toHaveBeenCalledTimes(2); // before AND after the turn
     expect(runPort).toHaveBeenCalledTimes(1);
     // The write turn ran AFTER the first checkpoint (the bracket order).
-    expect(capture.mock.invocationCallOrder[0]).toBeLessThan(runPort.mock.invocationCallOrder[0] ?? 0);
-    expect(runPort.mock.invocationCallOrder[0]).toBeLessThan(capture.mock.invocationCallOrder[1] ?? 0);
+    expect(capture.mock.invocationCallOrder[0]).toBeLessThan(
+      runPort.mock.invocationCallOrder[0] ?? 0,
+    );
+    expect(runPort.mock.invocationCallOrder[0]).toBeLessThan(
+      capture.mock.invocationCallOrder[1] ?? 0,
+    );
     expect(result.status).toBe("completed");
     if (result.status === "completed") {
       expect(result.turnDiff).toBe(turnDiff);

@@ -96,7 +96,8 @@ export function claudeHandoffRunPort(port: HarnessPort, model?: string): Handoff
             };
             return result;
           }
-          if (outcome.status === "failed") return { status: "failed", reason: outcome.error.message };
+          if (outcome.status === "failed")
+            return { status: "failed", reason: outcome.error.message };
           return { status: "failed", reason: "the handoff turn was cancelled" };
         }
       }

@@ -818,7 +818,9 @@ export function createDispatch(
         // present proves the content was never rewritten.
         const preserved = updated.patchsets.find((candidate) => candidate.id === priorActive.id);
         if (!preserved) {
-          throw new Error("Handoff violated patchset immutability: the prior patchset was rewritten");
+          throw new Error(
+            "Handoff violated patchset immutability: the prior patchset was rewritten",
+          );
         }
         const result: HandoffRunResult = {
           review: updated,

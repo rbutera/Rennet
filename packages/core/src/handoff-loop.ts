@@ -8,8 +8,8 @@ import type {
   HandoffDisclosure,
   HandoffDisposition,
   HandoffTask,
-  Patchset,
   PatchFile,
+  Patchset,
   RspTokenUsage,
 } from "@rennet/types";
 
@@ -132,7 +132,10 @@ const TYPE_LABEL: Record<DispositionType, string> = {
 function anchorLabel(task: HandoffTask): string {
   if (task.span === undefined) return "whole file";
   const end = task.span.endLine ?? task.span.startLine;
-  const range = end === task.span.startLine ? `line ${task.span.startLine}` : `lines ${task.span.startLine}–${end}`;
+  const range =
+    end === task.span.startLine
+      ? `line ${task.span.startLine}`
+      : `lines ${task.span.startLine}–${end}`;
   return task.side === undefined ? range : `${range}, ${task.side}`;
 }
 
@@ -165,7 +168,9 @@ export function renderHandoffPrompt(tasks: readonly HandoffTask[]): string {
       "",
       `### ${index + 1}. ${TYPE_LABEL[task.type]} — ${task.path} (${anchorLabel(task)})`,
       "",
-      task.instruction.trim() === "" ? "(no instruction body — infer from the context below)" : task.instruction.trim(),
+      task.instruction.trim() === ""
+        ? "(no instruction body — infer from the context below)"
+        : task.instruction.trim(),
     );
     if (task.context !== "") {
       out.push("", "Anchored diff context:", "```diff", task.context, "```");
