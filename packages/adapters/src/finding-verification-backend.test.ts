@@ -8,13 +8,16 @@ import type {
   SessionSpec,
   TurnInput,
 } from "@rennet/core";
-import type { Hunk } from "@rennet/types";
+import type { Hunk, Patchset, PatchsetIntentSurface } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import {
+  createGitShowFileRead,
   createVerificationFileReader,
+  createVerificationFileReaderForPatchset,
   createVerificationTurn,
   DEFAULT_VERIFICATION_CONTEXT_LINES,
 } from "./finding-verification-backend";
+import type { GitExec } from "./git-range-diff";
 
 // ── The real-file reader (hermetic: an injected read, no disk) ──────────────────
 
@@ -91,6 +94,151 @@ describe("createVerificationFileReader (#179)", () => {
       hunks: [hunk({ id: "h1", filePath: "a.ts" })],
       repositoryRoot: "/repo",
       readFile: () => undefined,
+    });
+    expect(await read("rennet:hunk/h1")).toBeUndefined();
+  });
+});
+
+// ── The git-show-at-head read + the by-review-kind selector (#179 → PR/retro) ───
+
+/** A fake git runner that answers `git show <oid>:<path>` from an in-memory tree. */
+function fakeGitShow(
+  filesAtHead: Record<string, string>,
+  expectedHeadOid: string,
+): { git: GitExec; calls: string[] } {
+  const calls: string[] = [];
+  const git: GitExec = (_root, arguments_) => {
+    calls.push(arguments_.join(" "));
+    const spec = arguments_[1] ?? "";
+    const colon = spec.indexOf(":");
+    const oid = spec.slice(0, colon);
+    const path = spec.slice(colon + 1);
+    if (arguments_[0] !== "show" || oid !== expectedHeadOid) {
+      return Promise.reject(new Error(`unexpected git invocation: ${spec}`));
+    }
+    if (!(path in filesAtHead)) {
+      // Mirror git: a missing path at an OID exits non-zero (execaGit would throw).
+      return Promise.reject(new Error(`fatal: path '${path}' does not exist in '${oid}'`));
+    }
+    return Promise.resolve(filesAtHead[path] as string);
+  };
+  return { git, calls };
+}
+
+/** A minimal `Patchset` carrying a repository root + head OID + captured surface. */
+function patchset(overrides: {
+  root?: string;
+  headOid?: string;
+  surface?: PatchsetIntentSurface;
+}): Patchset {
+  const root = overrides.root ?? "/repo";
+  return {
+    id: "ps1",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    repository: {
+      id: "r1",
+      root,
+      commonDir: `${root}/.git`,
+      baseRef: "origin/main",
+      baseOid: "basesha",
+      headOid: overrides.headOid ?? "headsha",
+    },
+    files: [],
+    rawDiff: "",
+    byteLength: 0,
+    truncated: false,
+    ...(overrides.surface === undefined ? {} : { intent: { surface: overrides.surface } }),
+  };
+}
+
+describe("createGitShowFileRead (#179 → PR/retrospective)", () => {
+  it("reads a file's content at the reviewed head OID via `git show <oid>:<path>`", async () => {
+    const { git, calls } = fakeGitShow({ "src/a.ts": FILE }, "headsha");
+    const read = createGitShowFileRead({ git, repositoryRoot: "/repo", headOid: "headsha" });
+    expect(await read("/repo/src/a.ts")).toBe(FILE);
+    expect(calls).toEqual(["show headsha:src/a.ts"]);
+  });
+
+  it("is fail-closed on a git error (unknown path / bad OID) → undefined", async () => {
+    const { git } = fakeGitShow({ "src/a.ts": FILE }, "headsha");
+    const read = createGitShowFileRead({ git, repositoryRoot: "/repo", headOid: "headsha" });
+    expect(await read("/repo/src/missing.ts")).toBeUndefined();
+  });
+
+  it("refuses a path escaping the repository root — fail-closed, no git call", async () => {
+    const calls: string[] = [];
+    const git: GitExec = (_root, arguments_) => {
+      calls.push(arguments_.join(" "));
+      return Promise.resolve("");
+    };
+    const read = createGitShowFileRead({ git, repositoryRoot: "/repo", headOid: "headsha" });
+    expect(await read("/etc/passwd")).toBeUndefined();
+    expect(calls).toEqual([]);
+  });
+
+  it("returns undefined for an empty head OID — never `git show :path` against the index", async () => {
+    const calls: string[] = [];
+    const git: GitExec = (_root, arguments_) => {
+      calls.push(arguments_.join(" "));
+      return Promise.resolve("");
+    };
+    const read = createGitShowFileRead({ git, repositoryRoot: "/repo", headOid: "" });
+    expect(await read("/repo/src/a.ts")).toBeUndefined();
+    expect(calls).toEqual([]);
+  });
+});
+
+describe("createVerificationFileReaderForPatchset (#179 → PR/retrospective)", () => {
+  it("PR review: reads the real window from the reviewed HEAD via git show, not disk", async () => {
+    const { git, calls } = fakeGitShow({ "src/a.ts": FILE }, "headsha");
+    const read = createVerificationFileReaderForPatchset({
+      patchset: patchset({ surface: "github-pr", root: "/repo", headOid: "headsha" }),
+      hunks: [hunk({ id: "h1", filePath: "src/a.ts", newStart: 100, newLines: 3 })],
+      git,
+      contextLines: 10,
+    });
+    const window = await read("rennet:hunk/h1");
+    expect(window?.path).toBe("src/a.ts");
+    // The SAME window math as the working-tree reader, over the git-show content.
+    expect(window?.startLine).toBe(90);
+    expect(window?.endLine).toBe(112);
+    expect(window?.text).toContain("line 100");
+    expect(calls).toEqual(["show headsha:src/a.ts"]);
+  });
+
+  it("retrospective/range review with NO captured intent surface still uses git show", async () => {
+    const { git, calls } = fakeGitShow({ "src/a.ts": FILE }, "headsha");
+    const read = createVerificationFileReaderForPatchset({
+      patchset: patchset({ surface: undefined, root: "/repo", headOid: "headsha" }),
+      hunks: [hunk({ id: "h1", filePath: "src/a.ts", newStart: 5, newLines: 1 })],
+      git,
+    });
+    expect((await read("rennet:hunk/h1"))?.text).toContain("line 5");
+    expect(calls).toEqual(["show headsha:src/a.ts"]);
+  });
+
+  it("working-tree review: reads on disk (injected), never shells out to git show", async () => {
+    const calls: string[] = [];
+    const git: GitExec = (_root, arguments_) => {
+      calls.push(arguments_.join(" "));
+      return Promise.resolve("");
+    };
+    const read = createVerificationFileReaderForPatchset({
+      patchset: patchset({ surface: "working-tree", root: "/repo", headOid: "headsha" }),
+      hunks: [hunk({ id: "h1", filePath: "src/a.ts", newStart: 1, newLines: 1 })],
+      git,
+      readFile: () => FILE,
+    });
+    expect((await read("rennet:hunk/h1"))?.text).toContain("line 1");
+    expect(calls).toEqual([]);
+  });
+
+  it("PR review is fail-closed when the file is absent at head → undefined (honest inconclusive)", async () => {
+    const { git } = fakeGitShow({}, "headsha");
+    const read = createVerificationFileReaderForPatchset({
+      patchset: patchset({ surface: "github-pr", root: "/repo", headOid: "headsha" }),
+      hunks: [hunk({ id: "h1", filePath: "src/a.ts" })],
+      git,
     });
     expect(await read("rennet:hunk/h1")).toBeUndefined();
   });
