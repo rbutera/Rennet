@@ -43,7 +43,7 @@ import {
   type OpenSpecReviewAnchor,
 } from "../canvas/openspec";
 import type { CoverageMosaic } from "../canvas/read-state";
-import type { Mark } from "../canvas/registrar";
+import { buildRowRegistry, type Mark, placeMarks } from "../canvas/registrar";
 import { createViewStore, useViewStore, type ViewStore } from "../canvas/store";
 import type { SymbolInspection, SymbolLookupPort } from "../canvas/symbol";
 import { BatchView } from "./batch-view";
@@ -390,11 +390,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     for (const hunkId of chunk.hunkIds) changesetHunkIds.add(hunkId);
   }
 
-  // The hunk occurrence ids an element's diff renders on a GIVEN canvas (positional,
-  // in hunk order): a hunk-anchored element is its own single hunk; a chunk-anchored
-  // one maps to THAT canvas's substrate chunk's ordered hunk ids. Parameterised over
-  // the canvas so cross-canvas navigation (the coverage-chip jump) can resolve an
-  // element on a canvas that is not the active one.
+  // The SET of hunk occurrence ids an element's diff renders on a GIVEN canvas: a
+  // hunk-anchored element is its own single hunk; a chunk-anchored one is THAT canvas's
+  // substrate chunk's hunk ids. Used ONLY as a membership set (which marks belong to
+  // this element, cross-canvas jump resolution) — NOT for mark PLACEMENT. Placement
+  // rides `ElementDiff.hunkOccurrences`, emitted with the diff text so it cannot drift
+  // (issue #84); do not reroute placement through this order-of-decomposition list.
   function occurrenceIdsForElementOn(targetCanvas: Canvas, elementAnchor: string): string[] {
     const parsed = parseAnchor(elementAnchor);
     if (!parsed.ok) return [];
@@ -410,18 +411,52 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     return occurrenceIdsForElementOn(canvas, elementAnchor);
   }
 
-  // The index orphans a mark on a COARSE, global check: a malformed anchor, or an
-  // occurrence that is not in the changeset at all (its code is gone / its lineage
-  // dropped). The FINE cases — an occurrence that exists but whose span is out of
-  // bounds or whose side is empty — need that element's rendered diff to decide,
-  // and the CodeView already reports them via `onPlacement` (the registrar's
-  // authoritative `placeMarks`). Lifting that per-element placement into this global
-  // index/tray is the follow-up (issue: index built from onPlacement), tracked with
-  // the render-interaction wiring this slice defers; until then a span-orphan on a
-  // present occurrence shows here as placed and renders nothing at its anchor.
+  // The index's orphan verdict is AUTHORITATIVE (issue #84 P0-2), not the old coarse
+  // "is the occurrence in the changeset" test. The coarse test misses the fine cases —
+  // a present occurrence whose span falls out of its slice, or an element whose mapping
+  // is empty — where `placeMarks` correctly returns an orphan while the mark renders on
+  // NO row. Surfacing those as "placed" was the exact silent-loss the registrar's loud
+  // failure was meant to prevent, discarded one layer up. So we run the SAME
+  // `placeMarks` the CodeView uses, over each element's REAL diff (`diffFor`), for
+  // EVERY mark — not just the mounted element's — and let it decide.
+  //
+  // We only OVERRIDE the coarse verdict when placeMarks actually produced one (element
+  // and its rendered diff both resolved). If `diffFor` is absent (the demo host) or an
+  // element's diff cannot be found, we keep the coarse verdict rather than false-orphan
+  // a valid mark we simply could not resolve here.
+  const authoritativePlaced = new Set<string>();
+  const authoritativeOrphan = new Set<string>();
+  if (props.diffFor) {
+    const marksByElementKey = new Map<string, Mark[]>();
+    for (const mark of marks) {
+      const parsed = parseAnchor(mark.anchor);
+      if (!parsed.ok) continue;
+      const owner = canvas.layers.analysis.elements.find((element) =>
+        occurrenceIdsForElement(element.anchor).includes(parsed.anchor.id),
+      );
+      if (!owner) continue;
+      const list = marksByElementKey.get(owner.elementKey) ?? [];
+      list.push(mark);
+      marksByElementKey.set(owner.elementKey, list);
+    }
+    for (const [elementKey, elementMarks] of marksByElementKey) {
+      const elementDiff = props.diffFor(elementKey);
+      if (!elementDiff) continue;
+      const registry = buildRowRegistry({
+        diff: elementDiff.diff,
+        hunkOccurrences: elementDiff.hunkOccurrences,
+      });
+      const placement = placeMarks(registry, elementMarks);
+      for (const placed of placement.placed) authoritativePlaced.add(placed.mark.markId);
+      for (const orphaned of placement.orphans) authoritativeOrphan.add(orphaned.mark.markId);
+    }
+  }
   const markEntries: MarkIndexEntry[] = marks.map((mark) => {
     const parsed = parseAnchor(mark.anchor);
-    const orphan = !parsed.ok || !changesetHunkIds.has(parsed.anchor.id);
+    const coarseOrphan = !parsed.ok || !changesetHunkIds.has(parsed.anchor.id);
+    let orphan = coarseOrphan;
+    if (authoritativeOrphan.has(mark.markId)) orphan = true;
+    else if (authoritativePlaced.has(mark.markId)) orphan = false;
     return {
       markId: mark.markId,
       markKind: mark.markKind,
@@ -869,7 +904,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
                   <CodeView
                     path={diff.path}
                     diff={diff.diff}
-                    occurrenceIds={shownOccurrenceIds}
+                    hunkOccurrences={diff.hunkOccurrences}
                     marks={shownMarks}
                     renderMarkCard={renderMarkCard}
                     focusAnchor={focusAnchor ?? undefined}

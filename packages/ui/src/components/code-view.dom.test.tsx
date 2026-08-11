@@ -7,6 +7,7 @@
 // absence let the #11 Canvas UI ship four interaction bugs past green SSR tests
 // (frozen CodeView scroll among them). The pattern established here is what #17,
 // #22, #35, #36 and #37 mount through.
+import type { RenderedHunkOccurrence } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import type { Mark } from "../canvas/registrar";
 import { fireEvent, mount, waitFor } from "../test/dom";
@@ -29,6 +30,12 @@ const ONE_HUNK = [
   "+  const c = 4;",
   "   return a;",
 ].join("\n");
+
+// The single-occurrence mapping for ONE_HUNK (`@@ -10,3 +10,4 @@`): one rendered hunk
+// = occurrence "H", with its REAL line range (rows are partitioned by containment).
+const OCC_H: RenderedHunkOccurrence[][] = [
+  [{ id: "H", oldStart: 10, oldLines: 3, newStart: 10, newLines: 4 }],
+];
 
 describe("CodeView — mounted scroll interaction (the #11 frozen-window bug)", () => {
   it("re-windows on a real scroll event: new rows are revealed, the top recycles out", () => {
@@ -61,7 +68,8 @@ describe("CodeView — mounted scroll interaction (the #11 frozen-window bug)", 
       <CodeView
         path="src/big.ts"
         diff={bigDiff(400)}
-        occurrenceIds="H"
+        // Occurrence "H" spans the whole 400-addition hunk (new lines 1..400).
+        hunkOccurrences={[[{ id: "H", oldStart: 1, oldLines: 400, newStart: 1, newLines: 400 }]]}
         rowHeight={18}
         viewportHeight={480}
         // A jump target deep in the hunk (new-file lines 200-201 → rows ~200).
@@ -106,7 +114,7 @@ describe("CodeView — mounted effect resolves (the #59 render-path proof)", () 
       <CodeView
         path="foo.ts"
         diff={ONE_HUNK}
-        occurrenceIds="H"
+        hunkOccurrences={OCC_H}
         marks={marks}
         viewportHeight={480}
         onPlacement={(placement) => {

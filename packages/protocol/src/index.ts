@@ -250,10 +250,25 @@ const canvasSetSchema = z.object({
 // doc-anchored element (flat angle, no code diff) simply has no entry. A full,
 // failing-capable schema (path + diff both required) so the IPC surface keeps a
 // real positive control.
+//
+// `hunkOccurrences` (issue #84) is REQUIRED, not optional — it is the mark↔row
+// mapping, and it MUST survive the IPC boundary or every content row reaches the
+// renderer identity-less and no occurrence mark can land. It was silently stripped
+// once because the field was absent from this schema; making it required (with `[]`
+// for genuinely identity-less patches) means the `z.ZodType<ElementDiffs>` annotation
+// below fails to compile if the schema ever omits it again.
+const renderedHunkOccurrenceSchema = z.object({
+  id: z.string(),
+  oldStart: z.number(),
+  oldLines: z.number(),
+  newStart: z.number(),
+  newLines: z.number(),
+});
 const elementDiffSchema = z.object({
   path: z.string(),
   paths: z.array(z.string()),
   diff: z.string(),
+  hunkOccurrences: z.array(z.array(renderedHunkOccurrenceSchema)),
 });
 const elementDiffsSchema: z.ZodType<ElementDiffs> = z.record(z.string(), elementDiffSchema);
 
