@@ -418,6 +418,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // create act). `prDraftState` is the ephemeral drafting status (idle when absent).
   const [prDraft, setPrDraft] = useState<PrDraftValues>({ title: "", body: "" });
   const [prDraftState, setPrDraftState] = useState<PrDraftState | undefined>(undefined);
+  // The generation of the current PR-body draft turn (#74 HIGH-2). Bumped on every
+  // new draft AND on a review switch, so a late result from a superseded turn is
+  // DROPPED rather than overwriting the current review's composer with another
+  // turn's title/body (a stale-result swap).
+  const prDraftGeneration = useRef(0);
   // The outcome of the last sign that ran the real `publish.review` engine (bead
   // wire-sign-publish). Signing the paper no longer clears the draft and closes —
   // it invokes the publish engine in DRY-RUN (builds the exact GitHub request,
@@ -595,9 +600,12 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setOpenSpecChange(undefined);
     setOpenSpecCoverage(undefined);
     // The PR-body draft (#74) is review-scoped: a fresh review starts with an empty,
-    // un-drafted composer so review A's account never lingers over review B.
+    // un-drafted composer so review A's account never lingers over review B. Bump the
+    // draft generation so a turn still in flight for the PREVIOUS review is dropped on
+    // arrival rather than landing on the new review's composer (#74 HIGH-2).
     setPrDraft({ title: "", body: "" });
     setPrDraftState(undefined);
+    prDraftGeneration.current += 1;
     // Reset the LIFTED view store's review-scoped state (lens/zoom/selection/cursor/
     // cohorts/overlay), preserving the scheme. The store now outlives a single review
     // (it was lifted here for the ⌘K palette), so without this reset, opening review B
@@ -1371,10 +1379,22 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
    */
   async function draftPrBody(): Promise<void> {
     if (!review) return;
+    // Claim a generation for THIS turn; a newer draft or a review switch bumps the
+    // ref, so a stale result is dropped on arrival rather than applied (#74 HIGH-2).
+    prDraftGeneration.current += 1;
+    const generation = prDraftGeneration.current;
     setPrDraftState({ status: "drafting" });
-    // The dispositions the reviewer staged, reduced to what the account reasons over:
-    // type + path + the effective body (refined once #19 landed, else the raw note).
-    const dispositions = draft.map((item) => ({
+    // The dispositions the reviewer STAGED (the ink subset), reduced to what the
+    // account reasons over: type + path + the effective body (refined once #19
+    // landed, else the raw note). ⭐ This MUST be `inkDraft`, never the full `draft`:
+    // a BLUE (unstaged, local-only) disposition is private reviewer reasoning that
+    // "stays on this machine and never leaves" (staging.ts contract). Drafting sends
+    // these to a Claude/Codex harness, so an unstaged blue note in the input would
+    // egress private notes AND could be woven into the posted PR body — the exact
+    // leak #74's HIGH-1 named. `inkDraft = publishedItems(draft)` is the same subset
+    // the paper previews and the sign wire posts, so what the model sees is exactly
+    // what would publish.
+    const dispositions = inkDraft.map((item) => ({
       type: item.type,
       path: item.path,
       resolution: effectiveBody(item),
@@ -1403,6 +1423,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         ...(narrationInput === undefined ? {} : { narration: narrationInput }),
         ...(requirements.length === 0 ? {} : { requirements }),
       });
+      // Drop a superseded result (#74 HIGH-2): a newer draft or a review switch bumped
+      // the generation while this turn was in flight, so applying its title/body would
+      // overwrite a composer that has since moved on.
+      if (generation !== prDraftGeneration.current) return;
       if (result.status === "drafted") {
         // The draft lands in the editable fields; the human's edit is final from here.
         setPrDraft({ title: result.title, body: result.body });
@@ -1413,6 +1437,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         setPrDraftState({ status: "failed", reason: result.reason });
       }
     } catch (err) {
+      // Same staleness gate on the failure path — a superseded turn must not pin a
+      // "failed" status onto a composer that has moved to another review/draft.
+      if (generation !== prDraftGeneration.current) return;
       setPrDraftState({
         status: "failed",
         reason: err instanceof Error ? err.message : String(err),

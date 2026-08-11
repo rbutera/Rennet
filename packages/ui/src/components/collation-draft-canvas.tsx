@@ -552,7 +552,17 @@ export function CollationDraftCanvas({
           <button
             type="button"
             className="collation-sign"
-            disabled={empty}
+            // Disabled while a PR-body draft is in flight (#74 HIGH-2): opening the
+            // paper mid-draft is the entry to the swap-during-hold hole — the model
+            // result would land while the paper is open and recompose its payload.
+            // Signing waits for the draft to SETTLE, so the paper freezes a stable
+            // account, and no new draft can start once the paper is open.
+            // Disabled while a PR-body draft is in flight (#74 HIGH-2): opening the
+            // paper mid-draft is the entry to the swap-during-hold hole — the model
+            // result would land while the paper is open and recompose its payload.
+            // Signing waits for the draft to SETTLE, so the paper freezes a stable
+            // account, and no new draft can start once the paper is open.
+            disabled={empty || prDraftState?.status === "drafting"}
             onClick={() => onSign?.()}
           >
             Sign the draft →
