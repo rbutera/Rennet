@@ -365,17 +365,24 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     for (const hunkId of chunk.hunkIds) changesetHunkIds.add(hunkId);
   }
 
-  // The hunk occurrence ids the given element's diff renders (positional, in hunk
-  // order): a hunk-anchored element is its own single hunk; a chunk-anchored one
-  // maps to the substrate chunk's ordered hunk ids.
-  function occurrenceIdsForElement(elementAnchor: string): string[] {
+  // The hunk occurrence ids an element's diff renders on a GIVEN canvas (positional,
+  // in hunk order): a hunk-anchored element is its own single hunk; a chunk-anchored
+  // one maps to THAT canvas's substrate chunk's ordered hunk ids. Parameterised over
+  // the canvas so cross-canvas navigation (the coverage-chip jump) can resolve an
+  // element on a canvas that is not the active one.
+  function occurrenceIdsForElementOn(targetCanvas: Canvas, elementAnchor: string): string[] {
     const parsed = parseAnchor(elementAnchor);
     if (!parsed.ok) return [];
     if (parsed.anchor.kind === "hunk") return [parsed.anchor.id];
-    const chunk = canvas.layers.substrate.chunks.find(
+    const chunk = targetCanvas.layers.substrate.chunks.find(
       (candidate) => candidate.chunkId === parsed.anchor.id,
     );
     return chunk ? [...chunk.hunkIds] : [parsed.anchor.id];
+  }
+
+  // The active-canvas convenience the shown-marks filter uses.
+  function occurrenceIdsForElement(elementAnchor: string): string[] {
+    return occurrenceIdsForElementOn(canvas, elementAnchor);
   }
 
   // The index orphans a mark on a COARSE, global check: a malformed anchor, or an
@@ -521,6 +528,42 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
       }
     }
     setFocusAnchor(anchor);
+  }
+
+  // Jump from a Spec-view coverage chip to its claiming hunk (Rai, wireframes #9 /
+  // R53). The chip lives on the SPEC angle, whose analysis elements are DOCUMENT-
+  // anchored — so the claiming hunk is never on the active canvas; it lives on a code
+  // lens. `jumpToAnchor` only searches the active canvas by a DIRECT hunk-anchor
+  // match, so it silently no-ops here. This resolves the owning element ACROSS the
+  // canvas set (a hunk-anchored element directly, OR a chunk-anchored one whose
+  // substrate chunk CONTAINS the hunk — the common case), switching to the current
+  // angle first, then the rest; then selects it and zooms to its diff so the claiming
+  // code actually shows. No canvas owns the hunk (its lineage dropped) ⇒ a best-effort
+  // cursor+focus point, never a throw.
+  function jumpToHunkAnchor(anchor: string): void {
+    store.getState().setCursor(anchor);
+    setFocusAnchor(anchor);
+    const parsed = parseAnchor(anchor);
+    if (!parsed.ok) return;
+    const targetId = parsed.anchor.id;
+    const orderedAngles: CanvasAngle[] = [
+      angle,
+      ...(Object.keys(props.canvases) as CanvasAngle[]).filter((candidate) => candidate !== angle),
+    ];
+    for (const candidateAngle of orderedAngles) {
+      const candidateCanvas = props.canvases[candidateAngle];
+      const element = candidateCanvas.layers.analysis.elements.find((el) =>
+        occurrenceIdsForElementOn(candidateCanvas, el.anchor).includes(targetId),
+      );
+      if (!element) continue;
+      // Read the TARGET canvas directly (not the render-closure `canvas`, stale right
+      // after an angle change), mirroring navigateToCounterpart.
+      if (candidateAngle !== angle) store.getState().setAngle(candidateAngle);
+      store.getState().select(element.elementKey);
+      store.getState().setCursor(element.anchor);
+      store.getState().setZoom({ level: "diff", elementKey: element.elementKey });
+      return;
+    }
   }
 
   function acceptProposal(proposal: Proposal): void {
@@ -723,10 +766,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
               view={buildOpenSpecView(props.openSpecChange, props.openSpecCoverage)}
               onDispose={disposeOpenSpec}
               ask={props.openSpecAsk}
-              // A coverage chip jumps to its claiming hunk through the SAME anchor
-              // navigation the Flagged/Noise index lenses use (issue #9 / R53): set
-              // the cursor, land on the hunk's element, zoom to its diff.
-              onJumpToHunk={jumpToAnchor}
+              // A coverage chip jumps to its claiming hunk. The hunk lives on a CODE
+              // lens, never the active Spec canvas, so this resolves the owning element
+              // ACROSS the canvas set, switches angle, and zooms to its diff (issue #9
+              // / R53) — jumpToAnchor alone would silently no-op on the Spec angle.
+              onJumpToHunk={jumpToHunkAnchor}
             />
           ) : (
             // The Spec angle is EXHAUSTIVE (wireframes #9): a change renders the viewer,

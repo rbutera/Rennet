@@ -6,11 +6,16 @@
 // an artifact file not in the reviewed patchset, or a wrong-side span), and proves
 // the rejection is SURFACED — `onDispositionError` fires and it is logged — never a
 // swallowed no-op that looks like the comment persisted.
-import type { CommandInput, RennetBridge } from "@rennet/protocol";
-import type { OpenSpecChange } from "@rennet/types";
+import {
+  type CommandInput,
+  openSpecRequirementCoverageKey,
+  type RennetBridge,
+} from "@rennet/protocol";
+import type { ElementDiff, OpenSpecChange } from "@rennet/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { demoCanvases } from "../canvas/fixtures";
 import type { DispositionWrite } from "../canvas/logic";
+import type { OpenSpecCoverageIndex } from "../canvas/openspec";
 import { createViewStore } from "../canvas/store";
 import { mount } from "../test/dom";
 import { CanvasWorkspace } from "./workspace";
@@ -85,5 +90,56 @@ describe("Spec disposition — fail loud on engine rejection (finding #1, guardr
     expect(onDispositionError.mock.calls[0]?.[1]).toBe(rejection);
     // The never-silent floor: even with a host handler, a rejection is logged.
     expect(errorLog).toHaveBeenCalled();
+  });
+});
+
+describe("Spec coverage chip — the jump reaches the claiming hunk's diff (wireframes #9 / R53)", () => {
+  it("clicking a covered chip switches to the owning code lens and renders the hunk diff", async () => {
+    // The requirement is covered by c1-h1, a hunk that lives in the SHARED substrate
+    // (the Spec canvas's own elements are doc-anchored, so the hunk is on a code lens).
+    const coverage: OpenSpecCoverageIndex = new Map([
+      [
+        openSpecRequirementCoverageKey(
+          "review-hypothesis-pass",
+          "A hypothesis is committed before the runners read the diff",
+        ),
+        { hunks: ["rennet:hunk/c1-h1"], tests: 1 },
+      ],
+    ]);
+    // A diff for whichever owning element the jump selects (the substrate resolves
+    // c1-h1 to a chunk/hunk element on a code lens; diffFor is keyed by element key).
+    const diff: ElementDiff = {
+      path: "src/module-1/file-1.ts",
+      paths: ["src/module-1/file-1.ts"],
+      diff: "@@ -1,1 +1,2 @@\n+const committed = true;",
+    };
+    const store = createViewStore({ angle: "spec" });
+
+    const { getByRole, container, user } = mount(
+      <CanvasWorkspace
+        canvases={demoCanvases()}
+        store={store}
+        openSpecChange={CHANGE}
+        openSpecCoverage={coverage}
+        diffFor={() => diff}
+      />,
+    );
+
+    // On the Spec angle, no code diff is shown yet.
+    expect(container.querySelector(".diff-zoom")).toBeNull();
+    expect(store.getState().angle).toBe("spec");
+
+    // Click the covered chip → it must reach the claiming hunk's diff.
+    await user.click(
+      getByRole("button", { name: "covered by 1 hunk · 1 test — jump to the claiming hunk" }),
+    );
+
+    // The jump left the Spec angle for the code lens that OWNS the hunk, zoomed to the
+    // diff, and the CodeView actually rendered it — not a silent no-op on the Spec canvas.
+    expect(store.getState().angle).not.toBe("spec");
+    expect(store.getState().zoom.level).toBe("diff");
+    expect(store.getState().selection).toBeTruthy();
+    expect(container.querySelector(".diff-zoom")).not.toBeNull();
+    expect(container.textContent).toContain("const committed = true;");
   });
 });
