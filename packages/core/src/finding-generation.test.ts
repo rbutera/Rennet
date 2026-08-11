@@ -232,4 +232,42 @@ describe("runFindingAngle — the live finding runner (issue #32)", () => {
     expect(result.budgetRefused).toBe(true);
     expect(turns).toBe(0);
   });
+
+  it("reasons over the change's stated intent — the PR body reaches the prompt (#136/#210)", async () => {
+    let seenPrompt = "";
+    await runFindingAngle({
+      patchsetId: PATCHSET.id,
+      manifest: MANIFEST,
+      provenance: SEED,
+      intent: {
+        prTitle: "Guard the loop bound",
+        prBody: "UNIQUE_FINDING_INTENT_MARKER: add a bound check before the copy loop.",
+      },
+      runTurn: (prompt) => {
+        seenPrompt = prompt;
+        return Promise.resolve({ status: "emitted", body: { findings: [] } });
+      },
+      budget: createInvocationBudget(5),
+    });
+    // The intent rides the `task` slot, so both the marker and the title reach the prompt.
+    expect(seenPrompt).toContain("<<<rennet:layer task>>>");
+    expect(seenPrompt).toContain("UNIQUE_FINDING_INTENT_MARKER");
+    expect(seenPrompt).toContain("Guard the loop bound");
+  });
+
+  it("assembles NO task layer when no intent is supplied (byte-identical to before #210)", async () => {
+    let seenPrompt = "";
+    await runFindingAngle({
+      patchsetId: PATCHSET.id,
+      manifest: MANIFEST,
+      provenance: SEED,
+      runTurn: (prompt) => {
+        seenPrompt = prompt;
+        return Promise.resolve({ status: "emitted", body: { findings: [] } });
+      },
+      budget: createInvocationBudget(5),
+    });
+    // Absent intent (and no retry report on the first attempt), the task slot is empty.
+    expect(seenPrompt).not.toContain("<<<rennet:layer task>>>");
+  });
 });

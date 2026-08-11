@@ -661,12 +661,27 @@ async function runFlaggedReview(review: Review, deepReview = false): Promise<Fla
   // layer. Absent (no catalogue file), each seat assembles exactly as before.
   const conventions = loadReviewConventions(review);
 
+  // The committed hypothesis (#178) and the change's stated intent (#136), fed to
+  // BOTH finding seats so the Flagged lens reasons over the same disconfirmation
+  // prior + PR intent the Decisions runner already gets (issue #210) — the whole
+  // point of hypothesis-first is that it shapes EVERY finding, not just decisions.
+  // The hypothesis is produced ONCE here for the flagged path (its own budget-gated
+  // action, from the change's structure + intent + repo context, never the hunk
+  // bodies, so the prior stays genuine); absent an adapter or on a failed pass it is
+  // undefined. The intent is projected from the frozen capture on the patchset;
+  // absent a captured surface it is undefined. With BOTH undefined the finding
+  // assembly is byte-identical to before this change (no regression).
+  const hypothesis = await computeReviewHypothesis(review, patchset, adapter);
+  const intent = patchsetIntentToReviewIntent(patchset.intent);
+
   const { review: flagged } = await runDualFindingReview({
     deepReview,
     patchsetId: patchset.id,
     manifest,
     seats,
     makeBudget: () => createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS),
+    ...(intent ? { intent } : {}),
+    ...(hypothesis ? { hypothesis } : {}),
     ...(conventions ? { conventions } : {}),
   });
 

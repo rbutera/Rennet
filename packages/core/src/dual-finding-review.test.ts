@@ -228,4 +228,47 @@ describe("runDualFindingReview — dual-model Flagged orchestration (#41)", () =
     expect(promptA).toContain("UNIQUEBOUNDCHECK");
     expect(promptB).toContain("UNIQUEBOUNDCHECK");
   });
+
+  it("feeds the intent AND hypothesis to BOTH seats (the Flagged lens matches the Decisions bar, #210)", async () => {
+    let promptA = "";
+    let promptB = "";
+    const claude = vi.fn((p: string, a: number) => {
+      promptA = p;
+      return emits([finding("x", "high")])(p, a);
+    });
+    const codex = vi.fn((p: string, a: number) => {
+      promptB = p;
+      return emits([finding("y", "high")])(p, a);
+    });
+    const seats = [seat("claude-code", "Claude", claude), seat("codex", "Codex", codex)];
+    await runDualFindingReview({
+      ...baseInput(seats, true),
+      intent: {
+        prTitle: "add a UNIQUEINTENTMARKER guard",
+        prBody: "the change should refuse to proceed without the guard",
+      },
+      hypothesis: {
+        domain: "the change should add a UNIQUEHYPMARKER before the loop",
+        scope: { inScope: ["src/a.ts"], outOfScope: [] },
+        designExpectation: "a guard before the loop",
+        risks: [
+          {
+            riskId: "R1",
+            statement: "no bound check",
+            severity: "high",
+            disconfirmer: "did they add one",
+          },
+        ],
+        repoContextPresent: false,
+      },
+      makeBudget: () => createInvocationBudget(5),
+    });
+    // Both independent seats receive the projected intent (task slot) AND the hypothesis prior.
+    expect(promptA).toContain("<<<rennet:layer task>>>");
+    expect(promptA).toContain("UNIQUEINTENTMARKER");
+    expect(promptA).toContain("UNIQUEHYPMARKER");
+    expect(promptB).toContain("<<<rennet:layer task>>>");
+    expect(promptB).toContain("UNIQUEINTENTMARKER");
+    expect(promptB).toContain("UNIQUEHYPMARKER");
+  });
 });
