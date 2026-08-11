@@ -1126,7 +1126,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         <CollationDraftCanvas
           draft={draft}
           variant={destinationVariantForMode}
-          onChange={setDraft}
+          onChange={handleDraftChange}
           onRefine={(item) => void refineItem(item)}
           onKeepRaw={keepRaw}
           onRefineAll={refineAll}
@@ -1185,6 +1185,36 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  /**
+   * The draft change handler wired to every edit (#19 invalidation). When an item's
+   * raw note changes (reword / merge) or the item is removed (withdraw), its
+   * EPHEMERAL refine verdict is stale: a "no-change" / "failed" / "unavailable"
+   * message must not linger over text that has since changed — and because the
+   * message branch renders AHEAD of the Refine button, a lingering message also
+   * hides the button for the new text. This is the SAME invalidation event as
+   * #236's DURABLE `refined` (which `rewordItem` clears); here its ephemeral
+   * sibling is cleared on the same event. A pure reorder / retype leaves every raw
+   * unchanged, so nothing is dropped.
+   */
+  function handleDraftChange(next: CollationDraft): void {
+    setRefineStates((prev) => {
+      let changed = false;
+      const kept: Record<string, RefineItemState> = {};
+      for (const [id, state] of Object.entries(prev)) {
+        const before = draft.find((entry) => entry.id === id);
+        const after = next.find((entry) => entry.id === id);
+        // Keep a verdict only while its item still exists with the SAME raw body.
+        if (before && after && after.raw === before.raw) {
+          kept[id] = state;
+        } else {
+          changed = true;
+        }
+      }
+      return changed ? kept : prev;
+    });
+    setDraft(next);
   }
 
   /** Clear one item's ephemeral refine state (a landed refinement is durable on the item). */
