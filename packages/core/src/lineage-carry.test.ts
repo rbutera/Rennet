@@ -1,3 +1,4 @@
+import { parseCommandOutput } from "@rennet/protocol";
 import type { Disposition, PatchFile, Patchset, Review } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { carryDispositionsByLineage, fileContentDigest, foldReview } from "./index";
@@ -139,6 +140,37 @@ describe("carry seam — orphan tray lifecycle", () => {
     // NOT resurrect the approval — but the stale orphan tray must not persist.
     const back = activate(gone, patchsetOf("p3", [file("a.ts", "X")]));
     expect(back.orphaned).toBeUndefined();
+  });
+});
+
+// ── The IPC boundary: orphaned must survive the real command-output schema ────
+// `Review.orphaned` is an OPTIONAL field, and the `z.ZodType<Review>` annotation
+// only guards REQUIRED fields — an optional one satisfies the type by being
+// absent, so it can be omitted from `reviewSchema` and Zod strips it at IPC with
+// every fold-level test still green (the hole that ate hunkOccurrences /
+// verification / tier). This test crosses the REAL boundary: a real fold produces
+// an orphan, then `parseCommandOutput` (the exact function dispatch validates
+// command outputs with) round-trips it, and the tray must survive.
+describe("carry seam — orphaned survives the IPC command-output boundary", () => {
+  it("round-trips a foldReview-produced orphan tray through parseCommandOutput('review.capture')", () => {
+    const review = withDisposition(created(patchsetOf("p1", [file("a.ts", "X")])), "a.ts", "X");
+    const orphanedReview = activate(review, patchsetOf("p2", [file("b.ts", "Z")]));
+    // Precondition: the fold really produced an orphan (else the test is vacuous).
+    expect(paths(orphanedReview.orphaned ?? [])).toEqual(["a.ts"]);
+
+    // The real output-validation path. If `orphaned` were absent from reviewSchema,
+    // Zod would strip it here and the assertion below would fail.
+    const parsed = parseCommandOutput("review.capture", { review: orphanedReview });
+    expect(parsed.review.orphaned).toBeDefined();
+    expect(paths(parsed.review.orphaned ?? [])).toEqual(["a.ts"]);
+    expect(parsed.review.orphaned).toEqual(orphanedReview.orphaned);
+  });
+
+  it("carries an orphan-free review through the boundary with orphaned absent (back-compat)", () => {
+    const review = withDisposition(created(patchsetOf("p1", [file("a.ts", "X")])), "a.ts", "X");
+    const carried = activate(review, patchsetOf("p2", [file("a.ts", "X")]));
+    const parsed = parseCommandOutput("review.capture", { review: carried });
+    expect(parsed.review.orphaned).toBeUndefined();
   });
 });
 
