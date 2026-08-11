@@ -3,7 +3,9 @@ import type {
   ProjectFileResult,
   ProjectMapResult,
   ProjectMapScope,
+  ProjectReferenceResult,
   ProjectSymbolDefinitionResult,
+  ReferenceLookup,
   SymbolLookup,
 } from "@rennet/core";
 import type { ProjectContextReader } from "./project-context-reader";
@@ -49,6 +51,7 @@ export interface ProjectContextBackendPart {
   fileContext(path: string): ProjectFileResult;
   fileOverview(path: string): ProjectFileOverviewResult;
   symbolDefinition(query: SymbolLookup): ProjectSymbolDefinitionResult;
+  references(query: ReferenceLookup): ProjectReferenceResult;
 }
 
 /**
@@ -81,6 +84,10 @@ export function projectContextBackend(
     symbolDefinition(query: SymbolLookup): ProjectSymbolDefinitionResult {
       const { repoKey, baseOid } = resolve();
       return reader.readSymbolDefinition(repoKey, baseOid, query);
+    },
+    references(query: ReferenceLookup): ProjectReferenceResult {
+      const { repoKey, baseOid } = resolve();
+      return reader.readReferences(repoKey, baseOid, query);
     },
   };
 }

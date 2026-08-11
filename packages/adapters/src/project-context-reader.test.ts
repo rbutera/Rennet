@@ -203,6 +203,63 @@ describe("ProjectContextReader — context.symbol over a real generated snapshot
   });
 });
 
+describe("ProjectContextReader — context.references over a real generated snapshot", () => {
+  it("resolves an identifier's occurrence sites through the gate, ranked by (path, line)", async () => {
+    const { store, manifest } = await generate();
+    const reader = new ProjectContextReader(store);
+    // `a` is declared in packages/a/src/index.ts (line 1) and imported in its test.
+    const result = reader.readReferences(manifest.repoKey, manifest.baseOid, { name: "a" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const paths = result.references.sites.map((s) => s.path);
+    expect(paths).toContain("packages/a/src/index.ts");
+    expect(paths).toContain("packages/a/src/index.test.ts");
+    // Ranked deterministically: paths sorted, so the test file (…index.test.ts)
+    // precedes the source file it imports from is NOT assumed — assert monotonic order.
+    const sorted = [...result.references.sites].sort((l, r) =>
+      l.path === r.path ? l.line - r.line : l.path < r.path ? -1 : 1,
+    );
+    expect(result.references.sites).toEqual(sorted);
+  });
+
+  it("returns an empty site set for a name absent from the index", async () => {
+    const { store, manifest } = await generate();
+    const reader = new ProjectContextReader(store);
+    const result = reader.readReferences(manifest.repoKey, manifest.baseOid, {
+      name: "noSuchIdentifier",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.references.sites).toEqual([]);
+  });
+
+  it("narrows to a workspace scope", async () => {
+    const { store, manifest } = await generate();
+    const reader = new ProjectContextReader(store);
+    const result = reader.readReferences(manifest.repoKey, manifest.baseOid, {
+      name: "a",
+      scope: "@t/b",
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // `a` occurs only in @t/a's files, so narrowing to @t/b yields nothing.
+    expect(result.references.sites).toEqual([]);
+  });
+
+  it("surfaces a stale pin as snapshot-unavailable, never served sites", async () => {
+    const { store, manifest } = await generate();
+    const reader = new ProjectContextReader(store);
+    const result = reader.readReferences(
+      manifest.repoKey,
+      "0000000000000000000000000000000000000000",
+      { name: "a" },
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("snapshot-unavailable");
+  });
+});
+
 describe("ProjectContextReader — the fail-closed staleness/integrity gate", () => {
   it("refuses an ABSENT snapshot (no map served)", async () => {
     const { store, manifest } = await generate();

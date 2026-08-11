@@ -39,12 +39,13 @@ export const PROTOCOL_CARD_VERSION = "protocol-card@1";
 /**
  * The hard byte ceiling for the assembled primer (Orchestrator Context Access
  * §1.1). Raised from 4096 to 4352 (4.25 KiB) when the symbolic ops `context.overview`
- * and `context.symbol` (repo-map-symbolic-surface) joined the surface: 18 tools no
- * longer fit the 4 KiB guard, and advertising the "navigate before dumping" ops in
- * the boot primer is what makes an agent reach for them. Still a hard boundary — an
- * oversized state throws rather than assembling a fat primer.
+ * and `context.symbol` (repo-map-symbolic-surface) joined the surface, then to 4608
+ * (4.5 KiB) when `context.references` (#200) completed the trio: advertising the
+ * "navigate before dumping" ops in the boot primer is what makes an agent reach for
+ * them. Still a hard boundary — an oversized state throws rather than assembling a
+ * fat primer.
  */
-export const PRIMER_MAX_BYTES = 4352;
+export const PRIMER_MAX_BYTES = 4608;
 
 /**
  * B4 — the protocol card. A versioned base instruction teaching the four-actor
@@ -181,6 +182,7 @@ const TOOL_WHEN_TO_USE: Readonly<Record<string, string>> = {
   "context.novelty": "the change vs base: novel/extends/conforms",
   "context.overview": "a file's exported symbols (don't read the file)",
   "context.symbol": "go-to-definition: where an exported name is defined",
+  "context.references": "find-references: where a name is used (blast radius)",
   "context.knowledge": "learned WHY of a module (labelled hypothesis/confirmed)",
 };
 

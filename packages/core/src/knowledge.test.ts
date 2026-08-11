@@ -31,6 +31,7 @@ function loadedSnapshot(files: readonly SnapshotFileEntry[]): LoadedSnapshot {
     fingerprint: "fp-current",
     shards: {} as ProjectSnapshotManifest["shards"],
     symbols: [],
+    references: [],
   };
   return {
     manifest,
@@ -42,6 +43,7 @@ function loadedSnapshot(files: readonly SnapshotFileEntry[]): LoadedSnapshot {
     ownership: [],
     conventions: [],
     symbolDigestByBlob: new Map(),
+    referenceDigestByBlob: new Map(),
     load: () => undefined,
   };
 }

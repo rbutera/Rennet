@@ -22,7 +22,9 @@ import type {
   ProjectFileResult,
   ProjectMapResult,
   ProjectMapScope,
+  ProjectReferenceResult,
   ProjectSymbolDefinitionResult,
+  ReferenceLookup,
   SnapshotGateFailure,
   SymbolLookup,
 } from "./project-context";
@@ -260,6 +262,17 @@ export interface CanvasOpsBackend {
    * stale/absent/corrupt snapshot is a typed refusal, never a served-but-wrong site.
    */
   symbolDefinition(query: SymbolLookup): ProjectSymbolDefinitionResult;
+  /**
+   * `context.references` (repo-map-symbolic-surface, layer b — #200): Rennet's OWN
+   * model-free find-references, the blast-radius third op completing `context.overview`
+   * + `context.symbol`. Resolves an identifier NAME to its occurrence site(s) across
+   * the snapshot's `structural-refs-v1` reference index (path + line + owning scope),
+   * pinned to the review's base OID. NO model and NO LSP. Honest scope: NAME-based and
+   * TEXTUAL (a mention in a comment/string counts; two distinct symbols sharing a name
+   * are indistinct). The backend resolves the base OID and passes the same fail-closed
+   * gate, so a stale/absent/corrupt snapshot is a typed refusal, never a served-but-wrong site.
+   */
+  references(query: ReferenceLookup): ProjectReferenceResult;
   /**
    * `context.knowledge` (repo-map-knowledge, layer c): the LLM-reconstructed
    * understanding of the base branch — what a module does, the conventions it
@@ -1098,10 +1111,15 @@ const contextNoveltyTool: CanvasOpsTool = {
 //   • `context.symbol`  — go-to-definition: resolve an exported symbol NAME to its
 //     definition site(s) across the same exported-symbol index.
 //
-// Both are honest about the index's reach: EXPORTED top-level symbols only (the
-// `structural-ts-v1` extractor's scope). Identifier-level `context.references`
-// needs occurrence data this index does not carry (identifier usages / file text)
-// and is a deliberate follow-up, not a half-built tool here.
+//   • `context.references` — find-references (#200): resolve an identifier NAME to
+//     every occurrence SITE across the tree, for blast radius. Completes the trio.
+//
+// `context.overview`/`context.symbol` are honest about the exported-symbol index's
+// reach: EXPORTED top-level symbols only (the `structural-ts-v1` extractor's scope).
+// `context.references` rides a SEPARATE per-file index (`structural-refs-v1`) that
+// records identifier occurrences, so it reaches further — but is honest that its
+// matching is NAME-BASED and TEXTUAL (regex, not a parse): two distinct symbols that
+// share a name are indistinct, and a mention in a comment/string counts.
 
 const contextOverviewTool: CanvasOpsTool = {
   name: "context.overview",
@@ -1275,6 +1293,91 @@ const contextSymbolTool: CanvasOpsTool = {
   },
 };
 
+const contextReferencesTool: CanvasOpsTool = {
+  name: "context.references",
+  description:
+    "Find-references, model-free: resolve an identifier NAME to every occurrence SITE across the base branch at the pinned base OID — each site's file path, 1-based line, and owning workspace scope, from Rennet's deterministic identifier-occurrence index (the third symbolic op, alongside context.overview and context.symbol). NO model, NO LSP. Use this for BLAST RADIUS — 'where is X used?' — instead of grepping whole files. Honest scope: matching is NAME-BASED and TEXTUAL (the index is regex-built, not a parse), so two DISTINCT symbols that share a name are indistinguishable, a mention in a line comment or string literal is a real occurrence (block comments are skipped), and the declaration site is included — this is 'every place the token appears', not a semantic use-set. Every occurrence is returned, so an empty `sites` is a real 'no occurrence found', never a hidden error. Optionally narrow by workspace `scope` and/or a repo-relative `path` subtree. Paginated with totality — a cursor means more exists. A stale/absent/corrupt snapshot rides back as a freshness verdict with an `unavailable` payload.",
+  kind: "retrieval",
+  readOnly: true,
+  alwaysLoad: false,
+  params: [
+    {
+      name: "name",
+      type: "string",
+      optional: false,
+      description: "The identifier name to find occurrences of (e.g. `buildCanvas`).",
+    },
+    {
+      name: "scope",
+      type: "string",
+      optional: true,
+      description: "Restrict to occurrences inside this workspace scope name.",
+    },
+    {
+      name: "path",
+      type: "string",
+      optional: true,
+      description: "Restrict to occurrences under this repo-relative POSIX subtree prefix.",
+    },
+    {
+      name: "limit",
+      type: "number",
+      optional: true,
+      description: "Max occurrence sites per page (default 50, max 200).",
+    },
+    {
+      name: "cursor",
+      type: "string",
+      optional: true,
+      description: "The next-page offset returned by a previous call, or omit for the first page.",
+    },
+  ],
+  handle(args, backend) {
+    const name = requireString(args, "name");
+    if (!name) return fail("invalid-input", "context.references requires a name");
+    const scope = optString(args, "scope");
+    const path = optString(args, "path");
+    const query: ReferenceLookup = {
+      name,
+      ...(scope !== undefined ? { scope } : {}),
+      ...(path !== undefined ? { path } : {}),
+    };
+    const result = backend.references(query);
+    if (result.ok) {
+      const { page, total, cursor } = paginate(
+        result.references.sites,
+        optString(args, "cursor"),
+        pageLimit(args),
+      );
+      // Evidence is the concrete occurrence set (path:line per site); an empty set is
+      // an honest "no occurrence", carried by total:0, not a fake hit.
+      return ok(
+        { name: result.references.name, sites: page },
+        {
+          freshness: "current",
+          evidence: page.map((site) => `${site.path}:${site.line}`),
+          total,
+          cursor,
+        },
+      );
+    }
+    switch (result.reason) {
+      case "shard-unavailable":
+        return ok(
+          unavailable(
+            { reason: "corrupt", missing: [], mismatched: [result.digest] },
+            { scope: `context.references:${name}` },
+          ),
+          { freshness: "failed" },
+        );
+      case "snapshot-unavailable":
+        return ok(unavailable(result.failure, { scope: `context.references:${name}` }), {
+          freshness: snapshotFreshness(result.failure),
+        });
+    }
+  },
+};
+
 // ── LLM knowledge surface (repo-map-knowledge, layer c) ──────────────────────
 //
 // The ONE model-backed Repo Map layer, exposed as a read-only retrieval tool. The
@@ -1385,10 +1488,10 @@ const contextKnowledgeTool: CanvasOpsTool = {
  * / `context.file`, issue #14, the context #12 left riding it; `context.novelty`,
  * issue #144 — the deterministic novelty ledger for the change), then the model-free
  * "IDE for the agent" symbolic ops (`context.overview` — a file's exported-symbol
- * overview; `context.symbol` — go-to-definition over the same exported-symbol index),
- * both riding Rennet's OWN deterministic shards (no LSP, no bundled engine).
- * Identifier-level `context.references` needs occurrence data this index does not
- * carry and is a deliberate follow-up. Last, the ONE model-backed read
+ * overview; `context.symbol` — go-to-definition over the same exported-symbol index;
+ * `context.references` — find-references over the identifier-occurrence index, for
+ * blast radius, #200), all riding Rennet's OWN deterministic shards (no LSP, no
+ * bundled engine). Last, the ONE model-backed read
  * (`context.knowledge`, repo-map-knowledge layer c) — the LLM-reconstructed WHY,
  * served verbatim off the enriched set, off the review's critical path. This list IS
  * the structural actor partition: no user-only op
@@ -1416,6 +1519,7 @@ export const CANVAS_OPS_TOOLS: readonly CanvasOpsTool[] = [
   contextNoveltyTool,
   contextOverviewTool,
   contextSymbolTool,
+  contextReferencesTool,
   contextKnowledgeTool,
 ] as const;
 

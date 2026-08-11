@@ -53,6 +53,11 @@ function stubBackend(): CanvasOpsBackend {
       reason: "snapshot-unavailable" as const,
       failure: { reason: "absent" as const },
     }),
+    references: () => ({
+      ok: false as const,
+      reason: "snapshot-unavailable" as const,
+      failure: { reason: "absent" as const },
+    }),
     novelty: () => ({ ok: false as const, failure: { reason: "absent" as const } }),
     knowledge: () => ({ ok: false as const, failure: { reason: "absent" as const } }),
     applyEffects: (effects: readonly CanvasOpsEffect[]) => {

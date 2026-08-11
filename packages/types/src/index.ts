@@ -1793,8 +1793,14 @@ export interface InvocationBudget {
 // promotion, the knowledge layer, context.* tools, and multi-repo WorkspaceContext
 // are deliberate follow-ups.
 
-/** The current ProjectSnapshot schema version. Bumped on any breaking shard shape change. */
-export const PROJECT_SNAPSHOT_SCHEMA_VERSION = 1;
+/**
+ * The current ProjectSnapshot schema version. Bumped on any breaking shard shape
+ * change. v2 (repo-map-symbolic-surface, #200) added the per-file REFERENCE index
+ * (`manifest.references` + reference shards), a new manifest field the fingerprint
+ * covers — so every v1 snapshot is stale under v2 and re-derives (the freshness
+ * gate keys on `schemaVersion`), never served with a missing reference dimension.
+ */
+export const PROJECT_SNAPSHOT_SCHEMA_VERSION = 2;
 
 /** How the pinned default-branch ref was resolved (most-authoritative first). */
 export type BaseRefResolution =
@@ -1925,6 +1931,38 @@ export interface SymbolShard {
   readonly symbols: readonly SnapshotSymbol[];
 }
 
+/**
+ * One identifier's occurrences within a single file: the identifier `name` and the
+ * 1-based `lines` it appears on (sorted ascending, de-duplicated). This is the unit
+ * of the model-free reference index (#200) that backs `context.references`.
+ */
+export interface ReferenceOccurrence {
+  /** The identifier token (e.g. `buildCanvas`). */
+  readonly name: string;
+  /** 1-based line numbers the identifier occurs on, sorted ascending and de-duplicated. */
+  readonly lines: readonly number[];
+}
+
+/**
+ * The per-file REFERENCE shard, addressed by `blobOid` and content-addressed as a
+ * PURE FUNCTION OF BLOB CONTENT — it carries no path, exactly like {@link SymbolShard}.
+ * It records every identifier's textual occurrences in the blob (name → lines),
+ * so `context.references` can answer "where is this name used?" (blast radius)
+ * WITHOUT file text at query time. Because the bytes are a pure function of the
+ * blob, an unchanged blob reuses its shard verbatim across an incremental rebuild
+ * (renames/copies resolve to the same shard); path is recovered from the `files`
+ * shard. Honest scope: NAME-based and textual (regex, not a parse), so it cannot
+ * tell two distinct symbols that share a name apart — a documented limit surfaced
+ * on the read.
+ */
+export interface ReferenceShard {
+  readonly blobOid: string;
+  /** The reference-extractor identity, so a future upgrade invalidates old shards honestly. */
+  readonly extractor: string;
+  /** Every identifier's occurrences in the blob, sorted by `name`. */
+  readonly references: readonly ReferenceOccurrence[];
+}
+
 /** A pointer from the manifest to a content-addressed structural shard. */
 export interface ShardRef {
   readonly digest: string;
@@ -1958,12 +1996,19 @@ export interface ProjectSnapshotManifest {
   readonly baseRefResolution: BaseRefResolution;
   /** The pinned default-branch commit OID. */
   readonly baseOid: string;
-  /** Digest over all canonical manifest content: `{ schemaVersion, repoKey, baseRef, baseRefResolution, baseOid, structural shard digests, symbol shard digests }`. */
+  /** Digest over all canonical manifest content: `{ schemaVersion, repoKey, baseRef, baseRefResolution, baseOid, structural shard digests, symbol shard digests, reference shard digests }`. */
   readonly fingerprint: string;
   /** The structural shard pointers, keyed by slot. */
   readonly shards: Readonly<Record<StructuralShardSlot, ShardRef>>;
   /** Per-file symbol shard pointers, sorted by `blobOid`. */
   readonly symbols: readonly (readonly [blobOid: string, digest: string])[];
+  /**
+   * Per-file REFERENCE shard pointers (the identifier-occurrence index, #200),
+   * sorted by `blobOid`. Always present (empty when nothing was indexed); the
+   * fingerprint covers these digests, so a dropped/tampered reference shard fails
+   * the integrity gate closed exactly as a symbol shard does.
+   */
+  readonly references: readonly (readonly [blobOid: string, digest: string])[];
 }
 
 /** A built shard: its canonical bytes and their content digest. */
@@ -1975,7 +2020,7 @@ export interface BuiltShard {
 /** The full result of a snapshot build: the manifest plus every shard's bytes by digest. */
 export interface BuiltSnapshot {
   readonly manifest: ProjectSnapshotManifest;
-  /** digest → canonical bytes, for every structural and symbol shard the manifest references. */
+  /** digest → canonical bytes, for every structural, symbol, and reference shard the manifest references. */
   readonly shards: ReadonlyMap<string, string>;
 }
 
@@ -1995,8 +2040,14 @@ export interface BuiltSnapshot {
 // default side, since the fingerprint covers `baseOid`) + `targetBaseOid` — so
 // when the default base advances the overlay is stale and re-derives.
 
-/** The current overlay schema version. Bumped on any breaking overlay shape change. */
-export const SNAPSHOT_OVERLAY_SCHEMA_VERSION = 1;
+/**
+ * The current overlay schema version. Bumped on any breaking overlay shape change.
+ * v2 (#200) added the reference-shard delta (`referenceUpserts` /
+ * `referenceTombstones`), mirroring the symbol delta, so a merged non-default-base
+ * view reconstructs the target's reference index byte-identically. A v1 overlay is
+ * stale under v2 and re-derives.
+ */
+export const SNAPSHOT_OVERLAY_SCHEMA_VERSION = 2;
 
 /**
  * A base+overlay delta pinning a non-default-base review's effective snapshot.
@@ -2044,6 +2095,16 @@ export interface SnapshotOverlay {
    * read omits (e.g. a file deleted on the non-default base). Sorted.
    */
   readonly symbolTombstones: readonly string[];
+  /**
+   * Per-file REFERENCE shard pointers new-or-changed vs the base (overlay-wins),
+   * sorted by `blobOid` — the reference-index analogue of `symbolUpserts` (#200).
+   */
+  readonly referenceUpserts: readonly (readonly [blobOid: string, digest: string])[];
+  /**
+   * blobOids whose reference shard is present in the base but ABSENT from the
+   * target — tombstones the merged reference index omits. Sorted.
+   */
+  readonly referenceTombstones: readonly string[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

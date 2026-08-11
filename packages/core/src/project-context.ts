@@ -38,6 +38,7 @@ import type {
   EntryPoint,
   OwnershipRule,
   ProjectSnapshotManifest,
+  ReferenceShard,
   SnapshotFileEntry,
   SnapshotSymbol,
   StructuralShardSlot,
@@ -110,6 +111,28 @@ function loadSymbolShard(load: ShardLoader, digest: string): SymbolShard | undef
   return { blobOid: shard.blobOid, extractor: shard.extractor, symbols: shard.symbols };
 }
 
+/**
+ * Load, hash-verify, and parse a per-file REFERENCE shard, or `undefined` on any
+ * problem (absent, hash mismatch, malformed JSON, wrong shape). Addressed by
+ * `blobOid`; carries no path — the exact analogue of {@link loadSymbolShard}.
+ */
+function loadReferenceShard(load: ShardLoader, digest: string): ReferenceShard | undefined {
+  const bytes = load(digest);
+  if (bytes === undefined) return undefined;
+  if (sha256Hex(bytes) !== digest) return undefined;
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(bytes);
+  } catch {
+    return undefined;
+  }
+  if (!parsed || typeof parsed !== "object") return undefined;
+  const shard = parsed as Partial<ReferenceShard>;
+  if (typeof shard.blobOid !== "string" || typeof shard.extractor !== "string") return undefined;
+  if (!Array.isArray(shard.references)) return undefined;
+  return { blobOid: shard.blobOid, extractor: shard.extractor, references: shard.references };
+}
+
 // ── Materialization ──────────────────────────────────────────────────────────
 
 /**
@@ -129,7 +152,9 @@ export interface LoadedSnapshot {
   readonly conventions: readonly ConventionEntry[];
   /** `blobOid → symbol-shard digest`, from `manifest.symbols`. */
   readonly symbolDigestByBlob: ReadonlyMap<string, string>;
-  /** The shard loader, retained for lazy per-file symbol resolution. */
+  /** `blobOid → reference-shard digest`, from `manifest.references` (#200). */
+  readonly referenceDigestByBlob: ReadonlyMap<string, string>;
+  /** The shard loader, retained for lazy per-file symbol/reference resolution. */
   readonly load: ShardLoader;
 }
 
@@ -174,6 +199,13 @@ export function materializeSnapshot(
   const symbolDigestByBlob = new Map<string, string>();
   for (const [blobOid, digest] of manifest.symbols) symbolDigestByBlob.set(blobOid, digest);
 
+  const referenceDigestByBlob = new Map<string, string>();
+  // `references` is required in v2, but tolerate a defensively-parsed manifest that
+  // lacks it (⇒ an empty reference index, an honest "no references known").
+  for (const [blobOid, digest] of manifest.references ?? []) {
+    referenceDigestByBlob.set(blobOid, digest);
+  }
+
   return {
     ok: true,
     snapshot: {
@@ -186,6 +218,7 @@ export function materializeSnapshot(
       ownership: decoded.ownership as readonly OwnershipRule[],
       conventions: decoded.conventions as readonly ConventionEntry[],
       symbolDigestByBlob,
+      referenceDigestByBlob,
       load,
     },
   };
@@ -717,6 +750,110 @@ export function querySymbolDefinition(
   // Deterministic rank: by path, then by line (stable across identical snapshots).
   sites.sort((a, b) => (a.path === b.path ? a.line - b.line : a.path < b.path ? -1 : 1));
   return { ok: true, definitions: { name: query.name, sites } };
+}
+
+// ── context.references (find-references over the identifier-occurrence index) ──
+//
+// Rennet's OWN model-free find-references (#200 — the third symbolic op, completing
+// `context.overview` + `context.symbol`). The snapshot's `structural-refs-v1`
+// extractor records each blob's identifier occurrences (`name → lines`); this
+// resolves a NAME to every occurrence SITE across the tree: `name → (every blob
+// whose reference shard lists it) → path (via blobOid) + line + owning scope`. An
+// agent reading a diff asks "where is `X` used?" (blast radius) without dumping a
+// file. Deterministic and fail-closed, on the same shard model `context.symbol` uses.
+//
+// HONEST SCOPE, stated in the reply, never papered over: matching is NAME-BASED and
+// TEXTUAL (the extractor is regex, not a parse), so two DISTINCT symbols that share
+// a name are indistinguishable, and a mention in a line comment or a string literal
+// is a real occurrence (block comments ARE skipped). It returns EVERY occurrence,
+// including the declaration site — the honest "here are the N places the token
+// appears", never a semantic guarantee. Optionally narrowed by workspace `scope`
+// and/or a repo-relative `path` subtree.
+
+/** One occurrence site of an identifier: where the token appears. */
+export interface ReferenceSite {
+  /** Repo-relative POSIX path of the file the occurrence is in. */
+  readonly path: string;
+  /** 1-based line of the occurrence within the file. */
+  readonly line: number;
+  /** The owning workspace scope (most specific), or null. */
+  readonly scope: string | null;
+}
+
+/** A find-references answer: every occurrence site matching the queried name. */
+export interface SymbolReferences {
+  /** The queried identifier name. */
+  readonly name: string;
+  /** Every matching occurrence site, ranked deterministically by (path, line). May be empty. */
+  readonly sites: readonly ReferenceSite[];
+}
+
+/** A `context.references` lookup: a name, optionally narrowed by workspace scope and/or path subtree. */
+export interface ReferenceLookup {
+  /** The identifier name to find occurrences of. */
+  readonly name: string;
+  /** Restrict to occurrences inside this workspace scope, if given. */
+  readonly scope?: string;
+  /** Restrict to occurrences under this repo-relative POSIX subtree prefix, if given. */
+  readonly path?: string;
+}
+
+export type ReferenceResult =
+  | { readonly ok: true; readonly references: SymbolReferences }
+  | {
+      readonly ok: false;
+      readonly reason: "shard-unavailable";
+      readonly digest: string;
+    };
+
+/**
+ * `context.references` gated result: the occurrence sites, a shard-decode failure,
+ * or a whole-snapshot gate failure wrapped as `snapshot-unavailable` — one result
+ * type so a single call has one shape (mirrors {@link ProjectSymbolDefinitionResult}).
+ */
+export type ProjectReferenceResult =
+  | ReferenceResult
+  | {
+      readonly ok: false;
+      readonly reason: "snapshot-unavailable";
+      readonly failure: SnapshotGateFailure;
+    };
+
+/**
+ * Resolve an identifier name to its occurrence site(s) across the snapshot's
+ * per-file reference shards. Deterministic and fail-closed: a reference shard the
+ * manifest references but the loader cannot produce intact ⇒ `shard-unavailable`
+ * (never a silent partial answer). Each blob's shard is decoded at most once even
+ * when several paths share the blob; a shared blob contributes a site per path per
+ * occurrence line. Optionally narrowed by workspace `scope` and/or a `path` subtree.
+ */
+export function queryReferences(snapshot: LoadedSnapshot, query: ReferenceLookup): ReferenceResult {
+  const shardByDigest = new Map<string, ReferenceShard>();
+  const sites: ReferenceSite[] = [];
+
+  for (const file of snapshot.files) {
+    if (query.path !== undefined && !underPrefix(file.path, query.path)) continue;
+    const scope = mostSpecificScope(snapshot.scopes, file.path);
+    if (query.scope !== undefined && scope !== query.scope) continue;
+
+    const digest = snapshot.referenceDigestByBlob.get(file.blobOid);
+    if (digest === undefined) continue;
+
+    let shard = shardByDigest.get(digest);
+    if (shard === undefined) {
+      const loaded = loadReferenceShard(snapshot.load, digest);
+      if (loaded === undefined) return { ok: false, reason: "shard-unavailable", digest };
+      shard = loaded;
+      shardByDigest.set(digest, shard);
+    }
+
+    const occurrence = shard.references.find((r) => r.name === query.name);
+    if (occurrence === undefined) continue;
+    for (const line of occurrence.lines) sites.push({ path: file.path, line, scope });
+  }
+
+  sites.sort((a, b) => (a.path === b.path ? a.line - b.line : a.path < b.path ? -1 : 1));
+  return { ok: true, references: { name: query.name, sites } };
 }
 
 /** The name of the most specific (longest-root) scope that contains `path`, or null. */

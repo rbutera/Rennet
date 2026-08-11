@@ -139,6 +139,7 @@ function makeBackend(): { backend: CanvasOpsBackend; applied: CanvasOpsEffect[] 
       },
     }),
     symbolDefinition: (query) => ({ ok: true, definitions: { name: query.name, sites: [] } }),
+    references: (query) => ({ ok: true, references: { name: query.name, sites: [] } }),
     novelty: () => ({
       ok: true,
       ledger: {
@@ -239,6 +240,7 @@ describe("canvasOps@2 SDK server", () => {
       "context.novelty",
       "context.overview",
       "context.symbol",
+      "context.references",
       "context.knowledge",
     ]);
     const byName = new Map(defs.map((d) => [d.name, d]));
@@ -256,6 +258,7 @@ describe("canvasOps@2 SDK server", () => {
     expect(byName.get("context.novelty")?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get("context.overview")?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get("context.symbol")?.annotations?.readOnlyHint).toBe(true);
+    expect(byName.get("context.references")?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get("context.knowledge")?.annotations?.readOnlyHint).toBe(true);
     expect(byName.get("canvas.propose")?.annotations?.readOnlyHint).toBe(false);
     // Structural: no user-only op is exposed as a tool.

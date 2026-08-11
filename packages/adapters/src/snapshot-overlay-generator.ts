@@ -106,6 +106,11 @@ export class SnapshotOverlayGenerator {
       const bytes = target.built.shards.get(digest);
       if (bytes !== undefined) deltaBytes.set(digest, bytes);
     }
+    // Reference-shard upserts are genuinely new bytes vs the base too (#200).
+    for (const [, digest] of overlay.referenceUpserts) {
+      const bytes = target.built.shards.get(digest);
+      if (bytes !== undefined) deltaBytes.set(digest, bytes);
+    }
 
     this.deps.overlayStore.write(overlay, deltaBytes);
     await this.reapOverlays(repoRoot, repoKey);

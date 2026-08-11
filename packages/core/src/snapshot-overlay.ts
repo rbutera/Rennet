@@ -70,17 +70,14 @@ export function composeOverlay(
     if (!b || b.digest !== t.digest) structuralDelta[slot] = t;
   }
 
-  const baseByBlob = new Map(base.symbols.map(([blob, digest]) => [blob, digest] as const));
-  const targetBlobs = new Set(target.symbols.map(([blob]) => blob));
-
-  const symbolUpserts: [string, string][] = [];
-  for (const [blob, digest] of target.symbols) {
-    // new blob, or same blob with a different shard digest ⇒ overlay-wins.
-    if (baseByBlob.get(blob) !== digest) symbolUpserts.push([blob, digest]);
-  }
-  symbolUpserts.sort((l, r) => byString(l[0], r[0]));
-
-  const symbolTombstones = [...baseByBlob.keys()].filter((blob) => !targetBlobs.has(blob)).sort();
+  const { upserts: symbolUpserts, tombstones: symbolTombstones } = shardDelta(
+    base.symbols,
+    target.symbols,
+  );
+  const { upserts: referenceUpserts, tombstones: referenceTombstones } = shardDelta(
+    base.references ?? [],
+    target.references ?? [],
+  );
 
   return {
     schemaVersion: SNAPSHOT_OVERLAY_SCHEMA_VERSION,
@@ -95,7 +92,29 @@ export function composeOverlay(
     structuralDelta,
     symbolUpserts,
     symbolTombstones,
+    referenceUpserts,
+    referenceTombstones,
   };
+}
+
+/**
+ * The `base → target` delta for a per-blob shard family (symbols or references):
+ * upserts = every `(blobOid, digest)` new-or-changed vs the base (overlay-wins,
+ * sorted by blobOid); tombstones = base blobOids absent from the target (sorted).
+ */
+function shardDelta(
+  baseShards: readonly (readonly [string, string])[],
+  targetShards: readonly (readonly [string, string])[],
+): { upserts: [string, string][]; tombstones: string[] } {
+  const baseByBlob = new Map(baseShards.map(([blob, digest]) => [blob, digest] as const));
+  const targetBlobs = new Set(targetShards.map(([blob]) => blob));
+  const upserts: [string, string][] = [];
+  for (const [blob, digest] of targetShards) {
+    if (baseByBlob.get(blob) !== digest) upserts.push([blob, digest]);
+  }
+  upserts.sort((l, r) => byString(l[0], r[0]));
+  const tombstones = [...baseByBlob.keys()].filter((blob) => !targetBlobs.has(blob)).sort();
+  return { upserts, tombstones };
 }
 
 /**
@@ -115,10 +134,12 @@ export function mergeOverlay(
     ShardRef
   >;
 
-  const byBlob = new Map(base.symbols.map(([blob, digest]) => [blob, digest] as const));
-  for (const blob of overlay.symbolTombstones) byBlob.delete(blob);
-  for (const [blob, digest] of overlay.symbolUpserts) byBlob.set(blob, digest);
-  const symbols = [...byBlob.entries()].sort((l, r) => byString(l[0], r[0]));
+  const symbols = applyShardDelta(base.symbols, overlay.symbolTombstones, overlay.symbolUpserts);
+  const references = applyShardDelta(
+    base.references ?? [],
+    overlay.referenceTombstones,
+    overlay.referenceUpserts,
+  );
 
   return {
     schemaVersion: PROJECT_SNAPSHOT_SCHEMA_VERSION,
@@ -129,7 +150,20 @@ export function mergeOverlay(
     fingerprint: overlay.targetFingerprint,
     shards,
     symbols,
+    references,
   };
+}
+
+/** Apply a per-blob shard delta (tombstones removed, upserts set) over a base set, re-sorted by blobOid. */
+function applyShardDelta(
+  baseShards: readonly (readonly [string, string])[],
+  tombstones: readonly string[],
+  upserts: readonly (readonly [string, string])[],
+): [string, string][] {
+  const byBlob = new Map(baseShards.map(([blob, digest]) => [blob, digest] as const));
+  for (const blob of tombstones) byBlob.delete(blob);
+  for (const [blob, digest] of upserts) byBlob.set(blob, digest);
+  return [...byBlob.entries()].sort((l, r) => byString(l[0], r[0]));
 }
 
 /**
