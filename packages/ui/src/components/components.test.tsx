@@ -153,11 +153,26 @@ describe("CanvasWorkspace — the six canvases, on screen", () => {
     expect(html).toContain('data-scheme="dark"');
   });
 
-  it("switches to a flat canvas when the active lens is not decisions", () => {
-    const store = createViewStore({ angle: "spec" });
+  it("switches to a flat canvas for a lens with no dedicated view", () => {
+    // "claims" has no dedicated lens (flagged/noise/decisions/spec do), so it falls
+    // through to the FlatCanvas. ("spec" is now exhaustive — the viewer for a change or
+    // the explicit no-change empty state; see the spec-angle empty-state test.)
+    const store = createViewStore({ angle: "claims" });
     const html = renderToStaticMarkup(<CanvasWorkspace canvases={demoCanvases()} store={store} />);
-    expect(html).toContain("flat-spec");
+    expect(html).toContain("flat-claims");
     expect(html).not.toContain("decisions-canvas");
+  });
+
+  it("renders an honest empty Spec angle for no change — never a fixture, never the flat diff", () => {
+    const store = createViewStore({ angle: "spec" });
+    // No `openSpecChange` prop: the review touches no OpenSpec change.
+    const html = renderToStaticMarkup(<CanvasWorkspace canvases={demoCanvases()} store={store} />);
+    expect(html).toContain("openspec-empty");
+    expect(html).toContain("No OpenSpec change in this review");
+    // The two failure modes this closes: no structured viewer (its `ospec-*` markup),
+    // and no silent FlatCanvas fall-through.
+    expect(html).not.toContain("ospec-");
+    expect(html).not.toContain("flat-spec");
   });
 });
 
