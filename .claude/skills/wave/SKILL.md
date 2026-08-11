@@ -5,7 +5,7 @@ description: Use when dispatching implementer agents and review agents on Rennet
 
 # Wave — implementer dispatch and review for Rennet
 
-**The loop:** `openspec propose` (issue + wireframes + docs + AGENTS.md as input) → the same agent applies its own proposal → the orchestrator gates it and hands off to review → findings are **sorted** before any reach the implementer.
+**The loop:** `openspec propose` (issue + wireframes + docs + AGENTS.md as input) → the same agent applies its own proposal → the orchestrator gates it and hands off to review → findings are **sorted** before any reach the implementer → the change is **archived** once it merges.
 
 
 This exists because on 2026-08-11 a night of parallel agent work burned roughly half of Rai's Claude capacity, and **most of the burn was not building. It was ceremony around building** — reviewing, verifying, re-verifying, and fixing things nobody needed fixed. Every rule below is a specific thing that went wrong.
@@ -63,7 +63,7 @@ Before sending any finding to an implementer, sort it:
 
 A review is evidence. It is not a work order.
 
-## 5. The implementer lifecycle: propose → apply → hand off
+## 5. The implementer lifecycle: propose → apply → review → archive
 
 **The implementer starts with an OpenSpec proposal, applies it itself, and then this skill hands the result to review.** Do not let an agent start editing code from a bare issue title.
 
@@ -97,6 +97,14 @@ The same agent applies its own proposal (`openspec-apply-change`), working throu
 The orchestrator, never the implementer, dispatches review at the pushed tip per §2 and §3. Verify the gate yourself first, on a clean tree, at the exact sha the agent reported — a self-reported green has been wrong more than once.
 
 Then §4: **sort the findings before any of them reach the implementer.**
+
+### Step 4 — archive the change
+
+**Once the review fixes are done and the branch has merged, archive the OpenSpec change** (`openspec-archive-change`). This is the last step of the loop and it is not optional.
+
+An un-archived change stays in `openspec/changes/` looking like live in-flight work. The next agent proposing against the same area reads it as a pending intention rather than a shipped fact, and either duplicates it or designs around a constraint that no longer exists. That is the same "correct in a place that cannot produce action" rot this repo keeps producing in new costumes.
+
+⛔ **Archive on the real outcome, not the intended one.** If the change shipped narrower than proposed — a task cut, a seam left deliberately unwired, a finding deferred to its own issue — say so as you archive and make sure the issue or a follow-up carries what did not land. **An archived change asserts "this happened"; if part of it did not, that assertion is a lie the next reader inherits.**
 
 ## 6. What good work looks like, from the night this file came from
 
