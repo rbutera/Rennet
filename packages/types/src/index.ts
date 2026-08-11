@@ -2353,3 +2353,209 @@ export interface KnowledgeSet {
   readonly generator: string;
   readonly statements: readonly KnowledgeStatement[];
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OpenSpec change model — the structured, review-anchored view of one
+// `openspec/changes/<name>/` artifact set (proposal + optional design + tasks +
+// per-capability spec deltas), for the change viewer.
+//
+// Additive and parser-facing: a deterministic parser (core) fills these from the
+// on-disk markdown; the viewer (ui) renders them; a reviewer pins a comment to any
+// node through its `OpenSpecReviewAnchor`. Node-free and transport-neutral
+// (`layer:types` imports nothing). Every node carries a structural anchor — never a
+// line number, so an anchored comment survives prose edits above it.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** Which artifact of a change a node came from — the root segment of its anchor. */
+export type OpenSpecArtifact = "proposal" | "design" | "tasks" | "spec";
+
+/**
+ * A stable, addressable handle to ONE node of a parsed change, so a reviewer can
+ * pin a comment to exactly that node and have it survive a re-parse. `path` is a
+ * slash-joined STRUCTURAL address within the artifact (e.g. `capabilities/2`,
+ * `groups/1/items/3`, `live-review/operations/0/requirements/1/scenarios/0`); the
+ * empty string addresses the artifact root. `id` is `${artifact}:${path}` — the
+ * stable join. Structural, never a line span: a line moves when prose above it is
+ * edited; a structural address does not.
+ */
+export interface OpenSpecReviewAnchor {
+  /** `${artifact}:${path}` — stable across re-parses of the same structure. */
+  readonly id: string;
+  readonly artifact: OpenSpecArtifact;
+  /** Slash-joined structural path within the artifact; "" is the artifact root. */
+  readonly path: string;
+  /** A human label for the node (heading text, requirement name, task ordinal). */
+  readonly label?: string;
+}
+
+/** A parsed prose block: a markdown heading and its body, carrying its anchor. */
+export interface OpenSpecProseSection {
+  /** The heading text with the leading `#`s stripped (e.g. "Why", "The resolvers"). */
+  readonly heading: string;
+  /** The markdown heading level: 2 for `##`, 3 for `###`, and so on. */
+  readonly level: number;
+  /** The section body as raw markdown, excluding the heading line. */
+  readonly body: string;
+  readonly anchor: OpenSpecReviewAnchor;
+  /** Deeper headings nested under this one, if the parser nests them. */
+  readonly subsections?: readonly OpenSpecProseSection[];
+}
+
+// ── proposal.md ───────────────────────────────────────────────────────────────
+
+/** The delta a change declares against ONE capability in the proposal's `## Capabilities`. */
+export type OpenSpecCapabilityDeltaKind = "new" | "modified" | "removed";
+
+/** One capability the change adds, modifies, or removes (a `## Capabilities` entry). */
+export interface OpenSpecCapabilityDelta {
+  readonly kind: OpenSpecCapabilityDeltaKind;
+  /** The capability identifier (e.g. `live-review-pipeline`). */
+  readonly name: string;
+  /** The one-line description that follows the name. */
+  readonly description: string;
+  readonly anchor: OpenSpecReviewAnchor;
+}
+
+/**
+ * The parsed `proposal.md`: the four canonical sections. `why`, `whatChanges`, and
+ * `impact` are prose; `capabilities` is the structured capability-delta list. Any
+ * non-canonical section the parser found is preserved in `extraSections` so nothing
+ * is silently dropped.
+ */
+export interface OpenSpecProposal {
+  readonly why: OpenSpecProseSection;
+  readonly whatChanges: OpenSpecProseSection;
+  readonly capabilities: readonly OpenSpecCapabilityDelta[];
+  readonly impact: OpenSpecProseSection;
+  /** Sections present in the file that are not one of the four canonical ones. */
+  readonly extraSections?: readonly OpenSpecProseSection[];
+  readonly anchor: OpenSpecReviewAnchor;
+}
+
+// ── design.md (optional; free-form) ───────────────────────────────────────────
+
+/** The parsed `design.md`: an ordered list of prose sections (design.md is free-form). */
+export interface OpenSpecDesign {
+  readonly sections: readonly OpenSpecProseSection[];
+  readonly anchor: OpenSpecReviewAnchor;
+}
+
+// ── tasks.md ──────────────────────────────────────────────────────────────────
+
+/** One `- [ ]` / `- [x]` checklist line under a task group. */
+export interface OpenSpecTaskItem {
+  /** The item ordinal as written (e.g. "1.1", "2.3"); undefined if unnumbered. */
+  readonly ordinal?: string;
+  /** The item text, excluding the checkbox and the ordinal. */
+  readonly text: string;
+  /** The checklist state: `[x]` is true, `[ ]` is false. */
+  readonly checked: boolean;
+  readonly anchor: OpenSpecReviewAnchor;
+}
+
+/** A `## N. Title` group of checklist items in `tasks.md`. */
+export interface OpenSpecTaskGroup {
+  /** The group ordinal as written (e.g. "1", "7"); undefined if unnumbered. */
+  readonly ordinal?: string;
+  readonly title: string;
+  readonly items: readonly OpenSpecTaskItem[];
+  readonly anchor: OpenSpecReviewAnchor;
+}
+
+/**
+ * The parsed `tasks.md`: the ordered groups plus the rolled-up checklist counts
+ * (`completed`/`total`) so a viewer can show progress without re-walking the tree.
+ */
+export interface OpenSpecTasks {
+  readonly groups: readonly OpenSpecTaskGroup[];
+  /** Total checklist items across all groups. */
+  readonly total: number;
+  /** Items whose box is checked. */
+  readonly completed: number;
+  readonly anchor: OpenSpecReviewAnchor;
+}
+
+// ── spec deltas: specs/<capability>/spec.md ───────────────────────────────────
+
+/** The delta operation a requirement group declares (its `## <OP> Requirements` heading). */
+export type OpenSpecDeltaOperation = "added" | "modified" | "removed" | "renamed";
+
+/** One `WHEN` / `THEN` / `AND` / `GIVEN` step line of a scenario. */
+export interface OpenSpecScenarioStep {
+  /** The step keyword upper-cased (`WHEN` | `THEN` | `AND` | `GIVEN`), if present. */
+  readonly keyword?: string;
+  /** The step text after the keyword. */
+  readonly text: string;
+}
+
+/** A `#### Scenario:` under a requirement — its name and its ordered steps. */
+export interface OpenSpecScenario {
+  readonly name: string;
+  readonly steps: readonly OpenSpecScenarioStep[];
+  readonly anchor: OpenSpecReviewAnchor;
+}
+
+/**
+ * A `### Requirement:` — the SHALL statement and its scenarios. The requirement's
+ * delta operation is carried by the `OpenSpecDeltaGroup` it sits under, not
+ * duplicated here.
+ */
+export interface OpenSpecRequirement {
+  /** The requirement name (the `### Requirement: <name>` text). */
+  readonly name: string;
+  /** The requirement body: the SHALL statement(s) between the heading and the first scenario. */
+  readonly text: string;
+  readonly scenarios: readonly OpenSpecScenario[];
+  readonly anchor: OpenSpecReviewAnchor;
+}
+
+/** A `## <OP> Requirements` group within one capability's spec delta. */
+export interface OpenSpecDeltaGroup {
+  readonly operation: OpenSpecDeltaOperation;
+  readonly requirements: readonly OpenSpecRequirement[];
+  readonly anchor: OpenSpecReviewAnchor;
+}
+
+/**
+ * The spec delta for ONE capability (`specs/<capability>/spec.md`): its intro prose
+ * and the operation groups (added/modified/removed/renamed), each holding the
+ * requirements it changes. The `capability` keys the delta to the capability the
+ * proposal declared.
+ */
+export interface OpenSpecSpecDelta {
+  /** The capability this delta targets (the spec file's directory name and H1). */
+  readonly capability: string;
+  /** The prose between the H1 and the first `## <OP> Requirements` heading. */
+  readonly intro?: string;
+  readonly operations: readonly OpenSpecDeltaGroup[];
+  /** Requirements across all operation groups (rolled up for the viewer). */
+  readonly requirementCount: number;
+  readonly anchor: OpenSpecReviewAnchor;
+}
+
+// ── the whole change ──────────────────────────────────────────────────────────
+
+/** The `.openspec.yaml` sidecar of a change. */
+export interface OpenSpecChangeMeta {
+  /** The `schema:` value (e.g. "spec-driven"). */
+  readonly schema?: string;
+  /** The `created:` value, as written (ISO date). */
+  readonly created?: string;
+}
+
+/**
+ * The fully parsed structured model of one `openspec/changes/<name>/` set —
+ * proposal, optional design, tasks, and the per-capability spec deltas — with a
+ * review anchor on every node so a viewer can render it and a reviewer can pin a
+ * comment to any part of it. `design` is optional (not every change ships one);
+ * `specDeltas` is empty for a change with no spec files.
+ */
+export interface OpenSpecChange {
+  /** The change directory name — its identifier (e.g. `wire-live-end-to-end-review`). */
+  readonly name: string;
+  readonly meta?: OpenSpecChangeMeta;
+  readonly proposal: OpenSpecProposal;
+  readonly design?: OpenSpecDesign;
+  readonly tasks: OpenSpecTasks;
+  readonly specDeltas: readonly OpenSpecSpecDelta[];
+}
