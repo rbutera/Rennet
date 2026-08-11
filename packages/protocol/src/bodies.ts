@@ -207,6 +207,58 @@ export function findingVerificationJsonSchema(): unknown {
 }
 
 /**
+ * The requirement→hunk COVERAGE MAPPING turn's structured-output shape (Rai,
+ * wireframes #9 / R53). Like the per-finding verification turn (#179), coverage is a
+ * DERIVED, display-time signal attached to the Spec view — NOT a stored RSP document
+ * — so it lives here as a standalone projected schema rather than in `RSP_DOC_TYPES`,
+ * and the runner GROUNDS it itself (drops any hunk the model names that was not
+ * offered) rather than leaning on the RSP validator. Each mapping carries the
+ * requirement's identity (`capability` + `requirement` name, echoed back so the
+ * runner joins it to the real requirement), the `hunks` that implement it, and the
+ * `testHunks` that test it — BOTH as hunk ids from the offered set; the runner keeps
+ * only the grounded ones, shapes `hunks` into `rennet:hunk/<id>` jump anchors, and
+ * DERIVES the shown test count from the distinct grounded `testHunks` files (never a
+ * free scalar). An empty `hunks` is an honest "unimplemented" — a computed zero.
+ */
+const coverageMappingTurnItemSchema = z
+  .object({
+    capability: z.string().min(1),
+    requirement: z.string().min(1),
+    hunks: z.array(z.string()),
+    testHunks: z.array(z.string()),
+  })
+  .loose();
+
+const coverageMappingTurnBodySchema = z
+  .object({ mappings: z.array(coverageMappingTurnItemSchema) })
+  .loose();
+
+/**
+ * The JSON Schema the coverage-mapping turn is constrained to (wireframes #9 / R53).
+ * Projected from the Zod shape with the meta-schema `$schema` stripped for the same
+ * reason `bodyJsonSchema` strips it (the `claude` CLI validator cannot resolve the
+ * 2020-12 meta-schema ref). Standalone — coverage is not an `RspDocType`, so it is
+ * not reachable through `bodyJsonSchema`.
+ */
+export function coverageMappingJsonSchema(): unknown {
+  const projected = z.toJSONSchema(coverageMappingTurnBodySchema) as Record<string, unknown>;
+  delete projected.$schema;
+  return projected;
+}
+
+/**
+ * The stable join key for one requirement's coverage: its capability plus its exact
+ * requirement name. The coverage producer (core) and the Spec view (ui) both compute
+ * this from the same raw values, so the produced mapping keys to the rendered
+ * requirement without either side depending on the other's anchor-slug logic. The
+ * NUL delimiter cannot occur in a capability directory name or a requirement
+ * heading, so the key is collision-free; it is an internal identity, never displayed.
+ */
+export function openSpecRequirementCoverageKey(capability: string, requirement: string): string {
+  return `${capability}\u0000${requirement}`;
+}
+
+/**
  * The `decision.record` body (issue #137): the Decisions lens's data — the calls
  * the implementer made, discerned from the change's stated intent and its diff.
  * Each decision carries a plain-language `title`, an `anchor` to exactly one

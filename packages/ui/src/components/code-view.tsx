@@ -1,6 +1,6 @@
 import { parseAnchor } from "@rennet/protocol";
 import type { DispositionType } from "@rennet/types";
-import { type ReactNode, useEffect, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type WindowRange, windowRows } from "../canvas/logic";
 import {
   buildRowRegistry,
@@ -184,6 +184,9 @@ export function CodeView({
   // test and any programmatic positioning inject), then advanced by the user's
   // own scrolling so the window tracks the viewport instead of freezing at row 0.
   const [scroll, setScroll] = useState(scrollTop);
+  // The scroll container, so a focus-driven jump can move the REAL viewport (setting
+  // window state alone leaves the DOM at scrollTop 0, painting blank spacer).
+  const scrollRef = useRef<HTMLDivElement>(null);
 
   // Language for syntax highlighting, inferred once from the path extension.
   // Unknown/absent extension → null → plain text (fail-closed, no fabricated colour).
@@ -219,6 +222,25 @@ export function CodeView({
   useEffect(() => {
     if (placement && onPlacement) onPlacement(placement);
   }, [placementKey, onPlacement]);
+
+  // Bring the deixis focus into view. A jump — a coverage chip to a later hunk in a
+  // multi-hunk chunk, a Flagged/Noise index row — resolves rows ANYWHERE in the diff,
+  // but the window is seeded from `scrollTop` and would otherwise leave the pulsed row
+  // scrolled off-screen (the CSS focus is then useless). When the FIRST focused row
+  // CHANGES, move BOTH the window state AND the real scroll container so that row sits
+  // near the top (a small margin), clamped into range. Setting `scroll` alone would
+  // repaint the right rows but leave the DOM at scrollTop 0 showing blank spacer, so we
+  // also move the element's scrollTop through its ref. Keyed on the row index (a
+  // number) — user scrolling does not change it, so this never fights the reviewer's
+  // own scroll, only a fresh jump target.
+  const firstFocusRow = focusRows.size > 0 ? Math.min(...focusRows) : -1;
+  useEffect(() => {
+    if (firstFocusRow < 0 || renderAll) return;
+    const margin = Math.min(overscan, 4) * rowHeight;
+    const target = Math.max(0, firstFocusRow * rowHeight - margin);
+    setScroll(target);
+    if (scrollRef.current) scrollRef.current.scrollTop = target;
+  }, [firstFocusRow, renderAll, rowHeight, overscan]);
 
   const total = registry.rows.length;
   const range: WindowRange = renderAll
@@ -259,6 +281,7 @@ export function CodeView({
         ) : null}
       </header>
       <div
+        ref={scrollRef}
         className="code-view-scroll"
         style={{ height: `${viewportHeight}px` }}
         onScroll={(event) => setScroll(event.currentTarget.scrollTop)}

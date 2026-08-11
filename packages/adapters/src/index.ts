@@ -75,6 +75,7 @@ export {
   type ConventionLoadReason,
   loadConventionCatalogue,
 } from "./convention-catalogue-reader";
+export { type CoverageTurnOptions, createCoverageTurn } from "./coverage-turn-backend";
 export {
   decisionsRecordFixture,
   emptyDecisionsRecordFixture,

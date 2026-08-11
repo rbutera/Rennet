@@ -2497,6 +2497,50 @@
   color: var(--text-soft);
 }
 
+/* Coverage foot: the requirement's tie to the diff (wireframes #9 / R53). */
+.ospec-requirement-foot {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 9px;
+}
+.ospec-covchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  /* Proportional UI face — the Design Doctrine reserves monospace for actual CODE,
+     never a label/count/chip (docs/Rennet Design Doctrine.md §mono). */
+  font: 500 11.5px / 1.2 var(--sans);
+  padding: 4px 8px;
+  border-radius: 6px;
+  color: var(--green);
+  background: var(--green-fill);
+  border: 1px solid var(--green-line);
+}
+/* The covered chip is a jump button when navigation is wired — keep it a chip, not
+   a default button, and give it the affordance cues without shifting layout. */
+button.ospec-covchip {
+  cursor: pointer;
+  font-family: var(--sans);
+}
+button.ospec-covchip:hover {
+  border-color: var(--green);
+}
+button.ospec-covchip:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: 1px;
+}
+.ospec-covchip-zero {
+  color: var(--amber);
+  background: var(--amber-surface);
+  border-color: var(--amber-line);
+}
+.ospec-covchip-icon {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
 /* Tasks: checklist + progress. */
 .ospec-task-progress {
   color: var(--text-faint);

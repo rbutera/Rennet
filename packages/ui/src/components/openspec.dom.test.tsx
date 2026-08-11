@@ -7,9 +7,14 @@
 // and that the review affordances reuse the shared seams: a per-requirement
 // DispositionCluster fires `onDispose` with the right anchor + verb, and the
 // AskControl fires `onAsk`. Assertions are behavioural, not presence-only.
+import { openSpecRequirementCoverageKey } from "@rennet/protocol";
 import type { OpenSpecChange } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
-import { buildOpenSpecView, type OpenSpecReviewAnchor } from "../canvas/openspec";
+import {
+  buildOpenSpecView,
+  type OpenSpecCoverageIndex,
+  type OpenSpecReviewAnchor,
+} from "../canvas/openspec";
 import { mount } from "../test/dom";
 import { OpenSpecView } from "./openspec";
 
@@ -252,6 +257,12 @@ describe("OpenSpecView — review affordances reuse the seams", () => {
     expect(onAsk).toHaveBeenCalledTimes(1);
   });
 
+  it("renders no coverage chip when the mapping was not computed (no fabricated number)", () => {
+    const view = buildOpenSpecView(CHANGE);
+    const { container } = mount(<OpenSpecView view={view} onDispose={vi.fn()} />);
+    expect(container.querySelector(".ospec-covchip")).toBeNull();
+  });
+
   it("renders side-by-side answers with no synthesis when both models were asked", () => {
     const view = buildOpenSpecView(CHANGE);
     const { getByText } = mount(
@@ -275,5 +286,64 @@ describe("OpenSpecView — review affordances reuse the seams", () => {
     getByText("yes, the budget is fail-closed");
     getByText("agreed, with a caveat on retries");
     getByText("no synthesis block · two answers, side by side · you decide");
+  });
+});
+
+describe("OpenSpecView — coverage chips (issue #9 / R53)", () => {
+  // The runner's GROUNDED output for THIS change: the added requirement is covered by
+  // one implementing hunk and two tests — `hunks` and `tests` are INDEPENDENT grounded
+  // counts (one impl hunk + two distinct test files), so 1-hunk·2-tests is a real
+  // producible state, not a contradiction. The modified requirement is a computed
+  // zero. Keyed by (capability, name) — the SAME key a real mapping producer emits.
+  const cap = "review-hypothesis-pass";
+  const coverage: OpenSpecCoverageIndex = new Map([
+    [
+      openSpecRequirementCoverageKey(
+        cap,
+        "A hypothesis is committed before the runners read the diff",
+      ),
+      { hunks: ["rennet:hunk/claim-1"], tests: 2 },
+    ],
+    [
+      openSpecRequirementCoverageKey(cap, "The validator admits the new doc type"),
+      { hunks: [], tests: 0 },
+    ],
+  ]);
+
+  it("renders 'covered by N hunks · M tests' (honest singular/plural) and 'unimplemented · 0 hunks'", () => {
+    const view = buildOpenSpecView(CHANGE, coverage);
+    const { getByText, container } = mount(<OpenSpecView view={view} onDispose={vi.fn()} />);
+
+    // Covered: one hunk (singular), two tests (plural).
+    getByText("covered by 1 hunk · 2 tests");
+    // The honest computed zero reads as the amber unimplemented chip.
+    const zero = getByText("unimplemented · 0 hunks");
+    expect(zero.closest(".ospec-covchip-zero")).not.toBeNull();
+    expect(zero.getAttribute("data-coverage")).toBe("unimplemented");
+    // The zero chip is a plain label, never an actionable button.
+    expect(zero.closest("button")).toBeNull();
+    // Exactly two chips render (one per requirement that had a mapping entry).
+    expect(container.querySelectorAll(".ospec-covchip")).toHaveLength(2);
+  });
+
+  it("jumps to the FIRST claiming hunk when a covered chip is clicked", async () => {
+    const view = buildOpenSpecView(CHANGE, coverage);
+    const onJumpToHunk = vi.fn<(anchor: string) => void>();
+    const { getByRole, user } = mount(
+      <OpenSpecView view={view} onDispose={vi.fn()} onJumpToHunk={onJumpToHunk} />,
+    );
+    await user.click(
+      getByRole("button", { name: "covered by 1 hunk · 2 tests — jump to the claiming hunk" }),
+    );
+    expect(onJumpToHunk).toHaveBeenCalledTimes(1);
+    expect(onJumpToHunk).toHaveBeenCalledWith("rennet:hunk/claim-1");
+  });
+
+  it("renders a covered chip as a STATIC label when no jump is wired (still honest)", () => {
+    const view = buildOpenSpecView(CHANGE, coverage);
+    const { getByText } = mount(<OpenSpecView view={view} onDispose={vi.fn()} />);
+    const covered = getByText("covered by 1 hunk · 2 tests");
+    expect(covered.closest("button")).toBeNull();
+    expect(covered.closest(".ospec-covchip")?.getAttribute("data-coverage")).toBe("covered");
   });
 });

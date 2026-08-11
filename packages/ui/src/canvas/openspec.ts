@@ -1,3 +1,4 @@
+import { openSpecRequirementCoverageKey } from "@rennet/protocol";
 import type {
   AnchorSide,
   AnchorSpan,
@@ -9,6 +10,7 @@ import type {
   OpenSpecDesignSection,
   OpenSpecProposal,
   OpenSpecRequirement,
+  OpenSpecRequirementCoverage,
   OpenSpecSource,
   OpenSpecSpecDelta,
   OpenSpecTaskGroup,
@@ -246,11 +248,50 @@ export interface OpenSpecCapabilityView {
   readonly anchor: OpenSpecReviewAnchor;
 }
 
+export type { OpenSpecRequirementCoverage } from "@rennet/types";
+
+/**
+ * The coverage index a build consumes: per-requirement coverage keyed by
+ * `openSpecRequirementCoverageKey(capability, requirementName)` — the SAME key the
+ * core producer emits its edges under, so neither side depends on the other's slug
+ * logic. It is a PRODUCED artifact — a mapping runner's output — never inferred here;
+ * the view attaches whatever the runner emitted for a requirement, or nothing when the
+ * runner emitted nothing for it. Absent index entirely ⇒ coverage was not computed and
+ * no chip renders; a present entry with `hunks.length === 0` is an honest computed zero
+ * (`unimplemented`). These two must never collapse into one another.
+ */
+export type OpenSpecCoverageIndex = ReadonlyMap<string, OpenSpecRequirementCoverage>;
+
+/** The chip a requirement's coverage renders as (absent ⇒ no chip). */
+export type CoverageChip =
+  | { readonly kind: "covered"; readonly hunks: readonly string[]; readonly tests: number }
+  | { readonly kind: "unimplemented" };
+
+/**
+ * Classify a requirement's coverage into its chip, purely. Undefined coverage ⇒ no
+ * chip (the mapping was not computed — never a fake `unimplemented`). Zero claiming
+ * hunks ⇒ the honest `unimplemented` state (the computed zero). One or more ⇒ the
+ * `covered` chip carrying the claiming hunks (the first is the jump target) and the
+ * test count.
+ */
+export function classifyCoverage(
+  coverage: OpenSpecRequirementCoverage | undefined,
+): CoverageChip | undefined {
+  if (!coverage) return undefined;
+  if (coverage.hunks.length === 0) return { kind: "unimplemented" };
+  return { kind: "covered", hunks: coverage.hunks, tests: coverage.tests };
+}
+
 export interface OpenSpecRequirementView {
   readonly requirement: OpenSpecRequirement;
   readonly anchor: OpenSpecReviewAnchor;
   /** Anchors for each scenario, index-aligned with `requirement.scenarios`. */
   readonly scenarioAnchors: readonly OpenSpecReviewAnchor[];
+  /**
+   * The requirement's produced coverage, when a mapping was computed for it. Absent
+   * ⇒ no mapping (no chip); present with `hunks.length === 0` ⇒ honest `unimplemented`.
+   */
+  readonly coverage?: OpenSpecRequirementCoverage;
 }
 
 /** One delta operation group (ADDED / MODIFIED / …) with its requirements (issue #4). */
@@ -309,9 +350,20 @@ export interface OpenSpecViewModel {
 /**
  * Fold a parsed change into the render-ready Spec view model: the structured
  * artifacts, each addressable element carrying a stable review anchor (structural
- * key + durable target), and a whole-change summary. A pure function of its input.
+ * key + durable target), and a whole-change summary. A pure function of its inputs.
+ *
+ * `coverage` (optional) is the produced hunk↔requirement mapping (from the live
+ * `runCoverageMapping` runner, over the `openspec.coverage` boundary), keyed by
+ * `openSpecRequirementCoverageKey(capability, name)`: each requirement view is handed
+ * exactly the coverage the runner emitted for it, or none. Omitting it (a host with no
+ * producer, or a run that FAILED — the app passes it only on a completed `ok` mapping)
+ * leaves every requirement's `coverage` absent, so the Spec view renders no chips
+ * rather than a fabricated one.
  */
-export function buildOpenSpecView(change: OpenSpecChange): OpenSpecViewModel {
+export function buildOpenSpecView(
+  change: OpenSpecChange,
+  coverage?: OpenSpecCoverageIndex,
+): OpenSpecViewModel {
   const proposal: OpenSpecProposalView | undefined = change.proposal
     ? {
         proposal: change.proposal,
@@ -351,15 +403,23 @@ export function buildOpenSpecView(change: OpenSpecChange): OpenSpecViewModel {
     groups: delta.groups.map(
       (group): OpenSpecDeltaGroupView => ({
         operation: group.operation,
-        requirements: group.requirements.map(
-          (requirement): OpenSpecRequirementView => ({
+        requirements: group.requirements.map((requirement): OpenSpecRequirementView => {
+          const anchor = requirementAnchor(change, delta, requirement);
+          // Attach ONLY what the runner produced for this requirement, keyed by
+          // (capability, name) — the same key the producer emits. Absent ⇒ no chip;
+          // present-with-zero-hunks ⇒ honest unimplemented.
+          const requirementCoverage = coverage?.get(
+            openSpecRequirementCoverageKey(delta.capability, requirement.name),
+          );
+          return {
             requirement,
-            anchor: requirementAnchor(change, delta, requirement),
+            anchor,
             scenarioAnchors: requirement.scenarios.map((scenario) =>
               scenarioAnchor(change, delta, requirement, scenario.name, scenario.source),
             ),
-          }),
-        ),
+            ...(requirementCoverage ? { coverage: requirementCoverage } : {}),
+          };
+        }),
       }),
     ),
   }));

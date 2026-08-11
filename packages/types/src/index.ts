@@ -2682,3 +2682,49 @@ export interface OpenSpecChange {
   readonly tasks?: OpenSpecTasks;
   readonly specDeltas: readonly OpenSpecSpecDelta[];
 }
+
+/**
+ * The coverage of ONE requirement: which changeset hunks CLAIM it, and how many
+ * tests exercise it (the requirements-side mouth of the hunk↔requirement mapping,
+ * Rai wireframes #9 / R53). `hunks` are diff-anchor strings the Spec view jumps to
+ * (the same anchor grammar the diff lenses navigate by); `hunks.length === 0` is a
+ * COMPUTED zero — the requirement is genuinely unimplemented, distinct from coverage
+ * that was never computed at all (which the view represents by having NO entry). This
+ * is a produced signal, never inferred at render time: the derivation attaches
+ * exactly what a mapping runner emitted, so the honest zero and an absent mapping
+ * stay distinguishable.
+ */
+export interface OpenSpecRequirementCoverage {
+  /** The changeset hunk anchors that claim this requirement (jump targets). */
+  readonly hunks: readonly string[];
+  /** The count of tests that exercise this requirement. */
+  readonly tests: number;
+}
+
+/**
+ * One produced coverage edge: a requirement (identified by its capability + exact
+ * name, so a consumer can key it without the ui's anchor-slug logic) mapped to the
+ * grounded hunks that implement it and the count of tests that exercise it. `hunks`
+ * are `rennet:hunk/<id>` anchors already grounded against the offered manifest (the
+ * producer dropped any the model hallucinated); an empty `hunks` is a computed zero
+ * (`unimplemented`), never a fabrication.
+ */
+export interface OpenSpecCoverageEdge {
+  readonly capability: string;
+  readonly requirement: string;
+  readonly hunks: readonly string[];
+  readonly tests: number;
+}
+
+/**
+ * The coverage producer's result over a whole change. `status: "ok"` means the
+ * mapping RAN — every requirement has an edge (covered or an honest zero), so the
+ * Spec view can render every chip. `status: "failed"` means the runner did not
+ * complete (no model available, budget refused, every turn failed): `edges` is empty
+ * and the Spec view renders NO chips, keeping "not computed" distinct from a real
+ * zero. Never a fabricated edge on failure.
+ */
+export interface OpenSpecCoverage {
+  readonly status: "ok" | "failed";
+  readonly edges: readonly OpenSpecCoverageEdge[];
+}

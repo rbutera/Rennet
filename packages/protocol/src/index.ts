@@ -7,6 +7,8 @@ import type {
   FlaggedReview,
   NoiseReview,
   OpenSpecChange,
+  OpenSpecCoverage,
+  OpenSpecCoverageEdge,
   Patchset,
   Review,
   ReviewEngine,
@@ -865,6 +867,19 @@ export const openSpecChangeSchema: z.ZodType<OpenSpecChange> = z.object({
   specDeltas: z.array(openSpecSpecDeltaSchema),
 });
 
+// ── The Spec view's requirement→hunk coverage (wireframes #9 / R53) ────────────
+const openSpecCoverageEdgeSchema: z.ZodType<OpenSpecCoverageEdge> = z.object({
+  capability: z.string(),
+  requirement: z.string(),
+  hunks: z.array(z.string()),
+  tests: z.number(),
+});
+
+export const openSpecCoverageSchema: z.ZodType<OpenSpecCoverage> = z.object({
+  status: z.enum(["ok", "failed"]),
+  edges: z.array(openSpecCoverageEdgeSchema),
+});
+
 export const commandDefinitions = {
   "app.bootstrap": {
     input: z.object({}),
@@ -1243,6 +1258,16 @@ export const commandDefinitions = {
   "openspec.change": {
     input: z.object({ reviewId: z.string().min(1) }),
     output: openSpecChangeSchema.nullable(),
+  },
+  // ── The Spec view's requirement→hunk coverage (wireframes #9 / R53) ──────────
+  // The produced hunk↔requirement mapping over the review's OpenSpec change: a model
+  // turn grounds each requirement to the offered hunks that implement it plus a test
+  // count, budget-gated. `status: "failed"` (no model / budget refused / turn failed)
+  // OR `null` (no change in the review) ⇒ the Spec view renders NO coverage chips —
+  // an uncomputed mapping never masquerades as a real zero.
+  "openspec.coverage": {
+    input: z.object({ reviewId: z.string().min(1) }),
+    output: openSpecCoverageSchema.nullable(),
   },
   // ── Open a review file in the reviewer's editor (wireframes #8) ────────────
   // The inspector's "open in editor" jump: open a repo-relative file (optionally at

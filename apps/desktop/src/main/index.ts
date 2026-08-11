@@ -10,6 +10,7 @@ import {
   createClaudeHarness,
   createCodexExecutor,
   createCodexUtilityAdapter,
+  createCoverageTurn,
   createGitHubProjectPrSource,
   createRefPinner,
   createVerificationFileReaderForPatchset,
@@ -58,6 +59,7 @@ import {
   patchsetIntentToReviewIntent,
   ReviewService,
   resolveDualSeat,
+  runCoverageMapping,
   runDecisionAngle,
   runDualFindingReview,
   runHypothesisPass,
@@ -75,6 +77,7 @@ import type {
   FlaggedReview,
   HypothesisStructure,
   NoiseReview,
+  OpenSpecCoverage,
   Patchset,
   Review,
   ReviewEngine,
@@ -812,6 +815,71 @@ async function runFlaggedReview(review: Review, deepReview = true): Promise<Flag
   return attachRiskCrossCheck(flagged, hypothesis);
 }
 
+/**
+ * The live requirement→hunk coverage producer (Rai, wireframes #9 / R53), behind the
+ * `openspec.coverage` boundary. Reads the review's OpenSpec change, decomposes the
+ * active patchset into the offered hunks, and runs the coverage-mapping turn on the
+ * user's `claude` seat, budget-gated — grounding each requirement to the offered hunks
+ * that implement it (any hallucinated hunk dropped) and completing every requirement,
+ * so `ok` yields covered-or-honest-zero per requirement. NO change ⇒ `null` (no chips).
+ * NO adapter, a budget refusal, or a failed turn ⇒ `status: "failed"` with no edges
+ * (the Spec view renders no chips) — an uncomputed mapping never becomes a fake zero.
+ */
+async function runLiveCoverage(review: Review): Promise<OpenSpecCoverage | null> {
+  const patchset = activePatchset(review);
+  const change = await readOpenSpecChange(patchset, execaGit);
+  if (!change) return null;
+
+  // The requirements are the authority — the producer iterates and completes them, so
+  // the model can neither invent a requirement nor silently drop one.
+  const requirements = change.specDeltas.flatMap((delta) =>
+    delta.groups.flatMap((group) =>
+      group.requirements.map((requirement) => ({
+        capability: delta.capability,
+        name: requirement.name,
+        statement: requirement.statement,
+        scenarios: requirement.scenarios.map((scenario) => scenario.name),
+      })),
+    ),
+  );
+  // No requirements ⇒ an honest empty OK (nothing to map, no chips).
+  if (requirements.length === 0) return { status: "ok", edges: [] };
+
+  const { adapter } = await getClaudeHarness();
+  // No model seat ⇒ cannot compute; honest failed (no chips), never a fabricated zero.
+  if (!adapter) return { status: "failed", edges: [] };
+
+  // The offered hunks (the model may cite ONLY these; the runner grounds against them).
+  // KNOWN §7 DEVIATION (as in runFlaggedReview): the read-only harness runs with `cwd`
+  // on the live checkout rather than an immutable materialisation (that layer is not
+  // built yet). Named so it is not read as satisfied.
+  const decomposition = decompose(patchset);
+  const manifest = buildOfferedManifest(decomposition);
+  const offeredIds = new Set(
+    manifest.occurrences.filter((occurrence) => occurrence.kind === "hunk").map((occ) => occ.id),
+  );
+  const hunks = decomposition.hunks
+    .filter((hunk) => offeredIds.has(hunk.id))
+    .map((hunk) => ({
+      id: hunk.id,
+      filePath: hunk.filePath,
+      addedLines: hunk.addedLines,
+      deletedLines: hunk.deletedLines,
+    }));
+
+  const runTurn = createCoverageTurn(adapter, { cwd: review.repositoryRoot });
+  const result = await runCoverageMapping({
+    patchsetId: patchset.id,
+    requirements,
+    hunks,
+    // Guard the seat (issue #96): a thrown session construction degrades to a failed
+    // turn (honest no-chips), never an uncaught crash of the coverage command.
+    runTurn: guardSeatTurn(runTurn),
+    budget: createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS),
+  });
+  return { status: result.status, edges: result.edges };
+}
+
 // The provenance seed for a live noise run (issue #34), mirroring the finding seed.
 // Provenance is stamped on the RSP document but not read by the Noise lens (groups
 // map straight to the lens), so a placeholder model is honest for placement; the
@@ -1089,6 +1157,10 @@ app.whenReady().then(async () => {
     // and model-free — no gate, no spend. `null` when the review touches no
     // `openspec/changes/<name>/`, replacing the frozen fixture with the real change.
     openSpecChange: (review) => readOpenSpecChange(activePatchset(review), execaGit),
+    // The Spec view's requirement→hunk coverage (wireframes #9 / R53): the produced
+    // mapping a budget-gated model turn grounds against the offered hunks. `null` (no
+    // change) or `status:"failed"` (no seat / refusal / failed turn) ⇒ no chips.
+    openSpecCoverage: runLiveCoverage,
     // review.ask (issue #139, bead workspace-alqow): the LIVE ports a review
     // question reaches. The core `askReview` router (invoked in dispatch) still owns
     // the orchestrator-once / both-adds-codex / never-synthesize law; these ports are
