@@ -117,6 +117,16 @@ export { demoCanvases, demoDiff } from "./canvas/fixtures";
 export type { HypothesisFrame, HypothesisFrameRisk } from "./canvas/hypothesis";
 export { buildHypothesisFrame } from "./canvas/hypothesis";
 export type { ApprovalScope, DispositionWrite } from "./canvas/logic";
+// The OpenSpec change view (#15): host-free derivation of a parsed `OpenSpecChange`
+// into a review-anchored view model + task progress, plus `authorOpenSpecDisposition`
+// — the seam that turns a disposition on any node into the existing `DispositionWrite`.
+export type { OpenSpecTaskProgress, OpenSpecViewModel } from "./canvas/openspec";
+export {
+  authorOpenSpecDisposition,
+  buildOpenSpecView,
+  dispositionsForAnchor,
+  openSpecAnchors,
+} from "./canvas/openspec";
 // The publish target (issue #22): the two context-dependent outbound artifacts a
 // review produces — the own-branch PR submission and the other-pr line-anchored
 // review — both derived from the ONE collation draft. `publishTargetPayload` is the
@@ -220,6 +230,10 @@ export { GranularityAuthor } from "./components/granularity-author";
 export { HypothesisReadingFrame } from "./components/hypothesis";
 export type { MarkIndexEntry } from "./components/mark-index";
 export { MarkIndex } from "./components/mark-index";
+// The OpenSpec change view (#15): the reviewable change document, reusing the
+// DispositionCluster (the four verbs on every node) + AskControl/AskAnswers.
+export type { OpenSpecAskProps, OpenSpecViewProps } from "./components/openspec";
+export { OpenSpecView } from "./components/openspec";
 export { OrphanTray } from "./components/orphan-tray";
 export { PublishSheet } from "./components/publish-sheet";
 export type { CanvasWorkspaceProps, DiffResolver } from "./components/workspace";
