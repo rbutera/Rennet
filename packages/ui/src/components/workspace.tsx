@@ -75,6 +75,14 @@ export interface CanvasWorkspaceProps {
   bridge?: RennetBridge;
   /** Fan-out sink: the per-anchor L2 writes a single approve act produced. */
   onDispositions?: (writes: DispositionWrite[]) => void;
+  /**
+   * A disposition write the engine REJECTED (a real rejection now that
+   * `canvas.disposition` is wired — e.g. a Spec anchor whose artifact file is not in
+   * the reviewed patchset, or a wrong-`side` span). Surfaced so the host can tell the
+   * reviewer their comment did not persist, never silently swallowed. Absent ⇒ the
+   * rejection is still logged (never silent), just not host-surfaced.
+   */
+  onDispositionError?: (write: DispositionWrite, error: Error) => void;
   /** Proposal adjudication sink (accept/dismiss/structural). */
   onAdjudicate?: (adjudication: Adjudication) => void;
   /** Change-feed invalidation hint — where a re-query (TanStack invalidation) slots in. */
@@ -277,9 +285,6 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
 
   function emit(writes: DispositionWrite[]): void {
     props.onDispositions?.(writes);
-    // Best-effort bridge write. The engine may not yet handle canvas.* commands
-    // (the snapshot/dispatch wiring is a follow-up), so a failure must not crash
-    // the surface — the fan-out sink above is what the demo renders from.
     for (const write of writes) {
       props.bridge
         ?.invoke("canvas.disposition", {
@@ -293,7 +298,26 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
           // review). All-or-none; a diff-lens write has neither and stays path-grained.
           ...(write.span && write.side ? { span: write.span, side: write.side } : {}),
         })
-        .catch(() => undefined);
+        .catch((cause: unknown) => {
+          // FAIL LOUD, never silent. `canvas.disposition` IS wired to the engine
+          // (dispatch → setDisposition), so a rejection now means a REAL rejection —
+          // a path/span the engine refuses (a Spec node whose artifact file is not in
+          // the reviewed patchset, or a wrong-`side` span on a modified file). A
+          // silently-dropped review comment is the exact stub this whole change
+          // fights, so we surface it, never swallow it. Diff-lens writes hit valid
+          // patchset paths and never reject, so this path is dead for them — their
+          // behaviour is byte-for-byte unchanged.
+          const error = cause instanceof Error ? cause : new Error(String(cause));
+          props.onDispositionError?.(write, error);
+          // The never-silent floor even when no host surface is wired (the demo):
+          // a rejection is at least visible, never a no-op that looks like success.
+          console.error("canvas.disposition rejected — the review comment did NOT persist", {
+            path: write.path,
+            span: write.span,
+            side: write.side,
+            error: error.message,
+          });
+        });
     }
   }
 
