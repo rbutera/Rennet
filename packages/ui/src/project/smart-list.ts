@@ -48,6 +48,8 @@ export interface SmartRow {
   /** Present on a pull-request row. */
   pr?: {
     number: number;
+    /** The `owner/name` identity, so a click can target `owner/name#number`. */
+    repository: string;
     ci: SmartListCi;
     reviewRequested: boolean;
     additions: number;
@@ -138,6 +140,7 @@ function prRow(pr: PullRequest, viewer: string, checkout: LocalWork | undefined)
     lastActivityAt,
     pr: {
       number: pr.number,
+      repository: pr.repository,
       ci: pr.ci,
       reviewRequested: pr.reviewRequestedFromViewer,
       additions: pr.additions,

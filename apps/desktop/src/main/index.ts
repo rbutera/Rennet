@@ -6,10 +6,11 @@ import {
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
   type CodexAvailability,
-  cleanupWorktreeFixture,
+  cleanupWorktree,
   createClaudeHarness,
   createCodexExecutor,
   createCodexUtilityAdapter,
+  createGitHubProjectPrSource,
   createRefPinner,
   createVerificationFileReaderForPatchset,
   createVerificationTurn,
@@ -31,6 +32,7 @@ import {
   type HttpFetch,
   loadConventionCatalogue,
   loadProjectDetail,
+  type ProjectPrSource,
   parseGitHubPrRef,
   RepoWatcher,
   resolveGitHubAuth,
@@ -191,6 +193,25 @@ async function resolveGitHubToken(): Promise<string> {
   });
   if (!auth.ok) throw new Error(`GitHub authentication is unavailable (${auth.reason})`);
   return auth.token;
+}
+
+// The live project-detail PR source (issue #37, B2). Resolved from the SAME auth
+// ladder as egress, memoized so `project.detail` never re-runs `gh auth token`. When
+// auth is unavailable it stays `null` and `project.detail` degrades to the local-only
+// list (B1) — a missing token is a local-only surface, never a failed fetch rendered
+// as "zero PRs". Resolution is lazy (first `project.detail`), never at launch.
+let projectPrSource: Promise<ProjectPrSource | null> | null = null;
+function resolveProjectPrSource(): Promise<ProjectPrSource | null> {
+  projectPrSource ??= (async (): Promise<ProjectPrSource | null> => {
+    const auth = await resolveGitHubAuth({
+      gh: runGhAuthToken,
+      http: publishHttp,
+      secretStore: { getGitHubToken: async () => null },
+    });
+    if (!auth.ok) return null;
+    return createGitHubProjectPrSource({ http: publishHttp, token: auth.token });
+  })();
+  return projectPrSource;
 }
 
 let store: SqliteReviewStore;
@@ -920,19 +941,36 @@ app.whenReady().then(async () => {
     discoverProject: ({ path, kind }) =>
       discoverProject(defaultProjectDiscoveryDeps(execaGit), path, kind),
     detectHarnesses,
-    // Project detail (issue #37): the unified smart list's substrate. B1 wires the
-    // LOCAL half live — real worktrees/branches with dirty/ahead/behind from git,
-    // keyed off the stored project. `prs` is empty until B2 wires the live GitHub
-    // set behind the same boundary. An unknown projectId degrades to an empty detail
-    // (fail-safe, mirroring the project store) rather than throwing the surface down.
-    projectDetail: (projectId) => {
+    // Project detail (issue #37): the unified smart list's substrate. The LOCAL half
+    // is real worktrees/branches with dirty/ahead/behind from git; B2 wires the live
+    // GitHub OPEN-PR set behind the same boundary via the auth-ladder PR source (null
+    // when auth is unavailable → the local-only list). An unknown projectId degrades
+    // to an empty detail (fail-safe, mirroring the project store) rather than throwing.
+    projectDetail: async (projectId) => {
       const project = projectStore.list().find((entry) => entry.id === projectId);
       if (!project) {
-        return Promise.resolve({ viewer: { login: "you" }, locals: [], prs: [], truncated: false });
+        return { viewer: { login: "you" }, locals: [], prs: [], truncated: false };
       }
-      return loadProjectDetail(defaultProjectDetailSourceDeps(execaGit), project);
+      const prSource = await resolveProjectPrSource();
+      return loadProjectDetail(
+        defaultProjectDetailSourceDeps(execaGit, prSource ?? undefined),
+        project,
+      );
     },
-    cleanupWorktree: () => Promise.resolve(cleanupWorktreeFixture()),
+    // The merged-PR row's clean-up (B2), for real: `git worktree remove <path>` run
+    // from the project's root. Non-forcing — a dirty worktree is refused and reported
+    // ok:false, never swept. The `worktreeId` is the worktree path (LocalWork.id).
+    cleanupWorktree: ({ projectId, worktreeId }) =>
+      cleanupWorktree(
+        {
+          git: execaGit,
+          resolveProjectRoot: async (id) => {
+            const project = projectStore.list().find((entry) => entry.id === id);
+            return project ? project.openPath || project.path : null;
+          },
+        },
+        { projectId, worktreeId },
+      ),
     // The Flagged lens (issue #138): the automated review layer's findings. This is
     // the LIVE finding-generation runner (#32) — a real model turn over the review's
     // diff, replacing the fixture. Dual-review aggregation (#41) is still a follow-up

@@ -29,8 +29,9 @@ import {
  * status). A branch that has a PR appears once, as the PR row, with its worktree a
  * "checked out locally" annotation (dedupe). A merged PR is read-only with a clean-up
  * action. The derivation is the pure `../project/smart-list` module; this component is
- * the surface over it. The substrate is fixture-backed this wave behind the real
- * `project.detail` command; opening a row reaches the live review surface.
+ * the surface over it. The substrate is LIVE behind the real `project.detail` command:
+ * real local work from git plus live GitHub OPEN PRs. Opening a PR row reaches the live
+ * review over that specific `owner/name#number`; a local row captures the working tree.
  */
 export function ProjectDetail({
   bridge,

@@ -1,6 +1,7 @@
-import type { LocalWork, Project, ProjectDetail } from "@rennet/protocol";
+import type { LocalWork, Project, ProjectDetail, PullRequest } from "@rennet/protocol";
 import type { GitExec } from "./git-range-diff";
 import { defaultProjectDiscoveryDeps, discoverProject } from "./project-discovery";
+import { type ProjectPrSource, parseForgeRepository } from "./project-pr-source";
 import { parseRemoteIdentity } from "./worktree-discovery";
 
 /**
@@ -49,6 +50,12 @@ export interface ProjectDetailSourceDeps {
    * testable without a real workspace on disk.
    */
   resolveRepoRoots(project: Project): Promise<readonly string[]>;
+  /**
+   * The live remote-PR half (B2). Absent → `prs` stays empty and the surface is the
+   * B1 local-only list (also the honest degrade when GitHub auth is unavailable: no
+   * token ⇒ no source is wired here, never a failed fetch rendered as "zero PRs").
+   */
+  prSource?: ProjectPrSource;
 }
 
 /** Trim git stdout and read the first non-empty line. */
@@ -262,23 +269,49 @@ async function resolveViewerLogin(git: GitExec, roots: readonly string[]): Promi
 }
 
 /**
- * Build the live `ProjectDetail` for a project from real git. B1 fills the local
- * half; `prs` is empty and `truncated` false until B2/B3 extend this module.
+ * Build the live `ProjectDetail` for a project from real git and (B2) live GitHub.
+ * The local half is always real; the PR half fills when a `prSource` is wired (GitHub
+ * auth resolved). The viewer is pinned to the GitHub login when available so ownership
+ * reads correctly against both the PR author and — because local-work author is set to
+ * this same viewer — the local rows too.
  */
 export async function loadProjectDetail(
   deps: ProjectDetailSourceDeps,
   project: Project,
 ): Promise<ProjectDetail> {
   const roots = await deps.resolveRepoRoots(project);
-  const viewer = await resolveViewerLogin(deps.git, roots);
+  const gitViewer = await resolveViewerLogin(deps.git, roots);
+
+  // The forge repo identities among the roots (`owner/name`), deduped. A local-only
+  // repo's common-dir identity is not a forge identity → no PR fetch attempted.
+  const identities = await Promise.all(roots.map((root) => repositoryIdentity(deps.git, root)));
+  const forgeRepos = [...new Set(identities)].filter(
+    (identity) => parseForgeRepository(identity) !== null,
+  );
+
+  let viewer = gitViewer;
+  let prs: PullRequest[] = [];
+  let truncated = false;
+  const prSource = deps.prSource;
+  if (prSource && forgeRepos.length > 0) {
+    // The GitHub login pins ownership; a null viewer keeps the git identity.
+    const githubViewer = await prSource.resolveViewer();
+    if (githubViewer) viewer = githubViewer;
+    const results = await Promise.all(
+      forgeRepos.map((identity) => prSource.listOpenPullRequests(identity)),
+    );
+    prs = results.flatMap((result) => result.prs);
+    truncated = results.some((result) => result.truncated);
+  }
+
   const perRepo = await Promise.all(
     roots.map((root) => loadRepoLocalWork(deps.git, root, project.primaryBranch, viewer)),
   );
   return {
     viewer: { login: viewer },
     locals: perRepo.flat(),
-    prs: [],
-    truncated: false,
+    prs,
+    truncated,
   };
 }
 
@@ -288,9 +321,13 @@ export async function loadProjectDetail(
  * set (so an excluded repo never appears), falling back to discovering every repo
  * under the path only for a legacy project saved before the selection was persisted.
  */
-export function defaultProjectDetailSourceDeps(git: GitExec): ProjectDetailSourceDeps {
+export function defaultProjectDetailSourceDeps(
+  git: GitExec,
+  prSource?: ProjectPrSource,
+): ProjectDetailSourceDeps {
   return {
     git,
+    prSource,
     async resolveRepoRoots(project: Project): Promise<readonly string[]> {
       if (project.kind === "repo") return [project.openPath || project.path];
       // Honour the user's include/exclude choice, persisted at add time.

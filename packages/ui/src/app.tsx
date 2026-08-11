@@ -41,6 +41,7 @@ import {
 import { ProjectDetail } from "./components/project-detail";
 import { type PublishOutcome, PublishSheet } from "./components/publish-sheet";
 import { CanvasWorkspace } from "./components/workspace";
+import type { SmartRow } from "./project/smart-list";
 
 /**
  * Apply the fan-out writes from an approve act to the local canvases (the demo
@@ -587,11 +588,47 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     }
   }
 
-  // Open a review from a project-detail row (issue #37). Per-row targeting (a
-  // specific PR by number, a specific local branch) needs the owner/repo the fixture
-  // does not carry yet, so a row captures a review of the project's reviewable open
-  // target (MAIN granted the path when the project loaded/was added) — the surface
-  // reaches real work today. Per-row PR/branch targeting is a follow-up.
+  // Open a review from a project-detail row (issue #37).
+  //  • A PR row now targets the SPECIFIC pull request: `review.openPr` over
+  //    `owner/name#number` (B2 carries `repository` on the row). A merged/closed
+  //    (read-only) PR opens retrospectively — nothing can be posted. The local clone
+  //    is the project's own path; per-repo clone resolution for a workspace PR across
+  //    multiple repos is a follow-up.
+  //  • A local-work row captures the project's working tree (B1 behaviour). Per-branch
+  //    range targeting for a specific local branch is a follow-up.
+  async function openRow(project: Project, row: SmartRow): Promise<void> {
+    if (row.kind === "pr" && row.pr) {
+      await openProjectPr(project, `${row.pr.repository}#${row.pr.number}`, row.readOnly);
+      return;
+    }
+    await openProject(project);
+  }
+
+  async function openProjectPr(
+    project: Project,
+    ref: string,
+    retrospective: boolean,
+  ): Promise<void> {
+    setBusy(true);
+    setError(undefined);
+    try {
+      const result = await bridge.invoke("review.openPr", {
+        commandId: crypto.randomUUID(),
+        ref,
+        repoPath: project.openPath,
+        retrospective,
+      });
+      setReview(result.review);
+      setProjectDetail(null);
+      setAtFrontDoor(false);
+      setDirectEntry(false);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function openProject(project: Project): Promise<void> {
     setBusy(true);
     setError(undefined);
@@ -876,7 +913,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         <ProjectDetail
           bridge={bridge}
           project={projectDetail}
-          onOpenRow={() => void openProject(projectDetail)}
+          onOpenRow={(row) => void openRow(projectDetail, row)}
           onBack={() => setProjectDetail(null)}
         />
       </>
