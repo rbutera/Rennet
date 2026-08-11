@@ -112,7 +112,10 @@ Replace `lineageCarry: "matcher-not-wired"` in `dispatch.ts` run case + pass a r
 The matcher is DONE on `feat/lineage-matcher` (their tasks #15-17 complete) but not on
 this branch's base — so the seam stays honestly unwired here.
 
-## Gate
+## Gate — GREEN
 
-Full `NX_DAEMON=false pnpm check` — see the run report; new tests reconcile against the
-2031/7 baseline.
+Full `NX_DAEMON=false pnpm check`: **Successfully ran format, architecture, licenses,
+lint, typecheck, test, build for all 8 projects.** Tests **2066 passed / 7 skipped**,
+exactly **+35** over the 2031/7 baseline (18 core handoff-loop + 6 checkpoint +
+5 handoff-run-live + 6 dispatch handoff). Dependency arrows hold (architecture control's
+deliberate forbidden-import negative "failed as expected"; core never imports adapters).
