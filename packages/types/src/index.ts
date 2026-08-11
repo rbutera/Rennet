@@ -1074,9 +1074,23 @@ export interface DualReviewNote {
  * The optional `dual` note (issue #41) records how the review was produced — a
  * single seat, or two provider seats reconciled into agreement/disagreement. It is
  * additive: an `ok` review with no `dual` is exactly the pre-#41 shape.
+ *
+ * The optional `crossChecks` (issue #181) is the predicted-risk cross-check: each
+ * risk the hypothesis predicted, reconciled against the FINAL surfaced findings —
+ * `confirmed` (a finding addressed it) or `open` (predicted but no finding covered
+ * it, the anti-rubber-stamp payoff the human must check themselves). Computed by
+ * the deterministic `crossCheckRisks` (NO model turn), on the findings AFTER
+ * verification (a refuted, dropped finding must never mark a risk handled). It is
+ * additive and present only when a hypothesis was produced: a review with no
+ * hypothesis omits it, exactly the pre-#181 shape, and never fabricates coverage.
  */
 export type FlaggedReview =
-  | { status: "ok"; findings: FindingElement[]; dual?: DualReviewNote }
+  | {
+      status: "ok";
+      findings: FindingElement[];
+      dual?: DualReviewNote;
+      crossChecks?: readonly RiskCrossCheck[];
+    }
   | { status: "failed"; reason: string };
 
 // ─── review.ask: ask the AI a question, one model or both (issue #139) ────────

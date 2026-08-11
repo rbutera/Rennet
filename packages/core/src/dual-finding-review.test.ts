@@ -7,6 +7,7 @@ import type { DualSeat } from "./dual-seat";
 import type { FindingProvenanceSeed } from "./finding-generation";
 import type { HarnessTurnResult } from "./harness-run-turn";
 import { createInvocationBudget } from "./invocation-budget";
+import { attachRiskCrossCheck } from "./risk-crosscheck";
 
 function file(path: string, patch: string): PatchFile {
   return { path, status: "modified", additions: null, deletions: null, binary: false, patch };
@@ -200,6 +201,76 @@ describe("runDualFindingReview — dual-model Flagged orchestration (#41)", () =
     const { review, seatRuns } = await runDualFindingReview(baseInput([], true));
     expect(review.status).toBe("failed");
     expect(seatRuns).toHaveLength(0);
+  });
+
+  it("LIVE PATH (#181): the predicted-risk cross-check runs over the runner's OWN findings", async () => {
+    // Prove the cross-check runs on what the LIVE finding runner actually produced —
+    // the reconciled findings with runner-MINTED ids, not a hand-built set. Both seats
+    // concur on a store-key concern; a hypothesis predicts that risk (covered) and one
+    // more that no finding addresses (an OPEN gap the human must check themselves).
+    const summary =
+      "the store key is derived per branch, so worktrees collide on the repository root";
+    const codexSummary = "worktrees collide on the repository root store key";
+    const claude = vi.fn(emits([{ ...finding(summary, "high") }]));
+    const codex = vi.fn(emits([{ ...finding(codexSummary, "high") }]));
+    const seats = [seat("claude-code", "Claude", claude), seat("codex", "Codex", codex)];
+    const { review } = await runDualFindingReview({
+      ...baseInput(seats, true),
+      hypothesis: {
+        domain: "the change reworks the snapshot store keying",
+        scope: { inScope: ["src/a.ts"], outOfScope: [] },
+        designExpectation: "the store key is keyed per repository root",
+        risks: [
+          {
+            riskId: "R-keying",
+            statement: "the store key is keyed per branch instead of per repository root",
+            severity: "high",
+            disconfirmer: "check the keying is per repository root",
+          },
+          {
+            riskId: "R-migration",
+            statement: "a schema migration drops a column without a backfill step",
+            severity: "medium",
+            disconfirmer: "check the migration order",
+          },
+        ],
+        repoContextPresent: false,
+      },
+      makeBudget: () => createInvocationBudget(5),
+    });
+    if (review.status !== "ok") throw new Error("expected ok");
+
+    const hypothesis = {
+      domain: "the change reworks the snapshot store keying",
+      scope: { inScope: ["src/a.ts"], outOfScope: [] },
+      designExpectation: "the store key is keyed per repository root",
+      risks: [
+        {
+          riskId: "R-keying",
+          statement: "the store key is keyed per branch instead of per repository root",
+          severity: "high" as const,
+          disconfirmer: "check the keying is per repository root",
+        },
+        {
+          riskId: "R-migration",
+          statement: "a schema migration drops a column without a backfill step",
+          severity: "medium" as const,
+          disconfirmer: "check the migration order",
+        },
+      ],
+      repoContextPresent: false,
+    };
+    const withCross = attachRiskCrossCheck(review, hypothesis);
+    if (withCross.status !== "ok") throw new Error("expected ok");
+    const byRisk = new Map(withCross.crossChecks?.map((c) => [c.riskId, c]));
+    // The COVERED risk is confirmed and links the runner's real minted finding id(s).
+    const producedIds = withCross.findings.map((f) => f.findingId);
+    expect(producedIds.length).toBeGreaterThan(0);
+    expect(byRisk.get("R-keying")?.status).toBe("confirmed");
+    expect(byRisk.get("R-keying")?.findingIds).toEqual(producedIds);
+    // The PREDICTED-BUT-UNCOVERED risk is the OPEN gap — surfaced, empty, never faked.
+    expect(byRisk.get("R-migration")?.status).toBe("open");
+    expect(byRisk.get("R-migration")?.findingIds).toEqual([]);
   });
 
   it("feeds the hypothesis to BOTH seats (both prompts carry the disconfirmation layer)", async () => {
