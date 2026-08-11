@@ -7,6 +7,14 @@ const here = dirname(fileURLToPath(import.meta.url));
 
 export default defineConfig({
   resolve: { conditions: ["node", "import", "module", "default"] },
+  // The main bundle is CJS. A dependency that calls `createRequire(import.meta.url)`
+  // (the Claude Agent SDK does, in its lazily-loaded chunk) breaks, because Vite
+  // rewrites `import.meta.url` to `{}.url` — `undefined` in CJS — so the chunk throws
+  // `ERR_INVALID_ARG_VALUE` the moment it loads (i.e. on the first real model turn).
+  // Rewrite `import.meta.url` to the CJS-correct file URL of the chunk instead.
+  define: {
+    "import.meta.url": 'require("node:url").pathToFileURL(__filename).href',
+  },
   build: {
     emptyOutDir: true,
     lib: {
