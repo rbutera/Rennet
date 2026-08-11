@@ -36,6 +36,7 @@ import {
   ProjectSnapshotGenerator,
   parseGitHubPrRef,
   RepoWatcher,
+  readOpenSpecChange,
   resolveGitHubAuth,
   SqliteReviewStore,
   snapshotStoreFor,
@@ -1021,6 +1022,11 @@ app.whenReady().then(async () => {
     // admission authority for the `rule` groups) is a DEFERRED follow-up; the empty-
     // vs-failed distinction and the totality-floor ejection are honoured today.
     noiseReview: runNoiseReview,
+    // The Spec angle's live source (wireframes #9): parse-on-open of the change the
+    // reviewed patchset selected, read from the review's checked-out root. Deterministic
+    // and model-free — no gate, no spend. `null` when the review touches no
+    // `openspec/changes/<name>/`, replacing the frozen fixture with the real change.
+    openSpecChange: (review) => readOpenSpecChange(activePatchset(review), execaGit),
     // review.ask (issue #139, bead workspace-alqow): the LIVE ports a review
     // question reaches. The core `askReview` router (invoked in dispatch) still owns
     // the orchestrator-once / both-adds-codex / never-synthesize law; these ports are

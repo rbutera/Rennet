@@ -4,6 +4,7 @@ import type {
   ElementDiffs,
   FlaggedReview,
   NoiseReview,
+  OpenSpecChange,
   Patchset,
   Review,
   ReviewEngine,
@@ -14,7 +15,6 @@ import { type CollationDraft, ingestWrites, withdrawPath } from "./canvas/collat
 import { type DestinationMode, destinationVariant, type PublishLedger } from "./canvas/destination";
 import { type CanvasSet, loadCanvases } from "./canvas/load";
 import { type DispositionWrite, withoutProposal } from "./canvas/logic";
-import { openSpecChangeFixture } from "./canvas/openspec.fixture";
 import {
   deriveReviewEvent,
   type PublishContext,
@@ -296,6 +296,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // boundary (a fixture stands behind it until the finding-generation runner lands);
   // undefined until it loads, so the lens shows the honest empty state meanwhile.
   const [flaggedReview, setFlaggedReview] = useState<FlaggedReview | undefined>(undefined);
+  // The Spec angle's live OpenSpec change (wireframes #9): parse-on-open of the change
+  // the reviewed patchset selected, over the real command boundary. Undefined until it
+  // loads, or when the review touches no change — the Spec angle then shows its honest
+  // empty state, never a fixture.
+  const [openSpecChange, setOpenSpecChange] = useState<OpenSpecChange | undefined>(undefined);
   // Deep review (issue #191): the human opts THIS review into the two-model
   // reconcile. Off by default (quick review, single Claude seat); flipping it
   // re-runs the flagged fetch with `deepReview: true`. Reset per review below.
@@ -418,6 +423,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setLoadFailed(false);
     setFlaggedReview(undefined);
     setNoiseReview(undefined);
+    setOpenSpecChange(undefined);
     // A new review starts as a quick review — never inherit the prior review's
     // deep-review request (which would silently double-spend on open).
     setDeepReviewRequested(false);
@@ -470,6 +476,28 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       cancelled = true;
     };
   }, [reviewId, bridge, deepReviewRequested]);
+
+  // The Spec angle (wireframes #9): parse-on-open of the change the reviewed patchset
+  // selected, over the real command boundary. Deterministic — NO model spend. A missing
+  // change or a failed read leaves openSpecChange undefined (the Spec angle shows its
+  // honest empty state), never a fixture.
+  useEffect(() => {
+    if (!reviewId) return;
+    let cancelled = false;
+    void bridge
+      .invoke("openspec.change", { reviewId })
+      .then((result) => {
+        if (cancelled) return;
+        setOpenSpecChange((result as OpenSpecChange | null) ?? undefined);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setOpenSpecChange(undefined);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [reviewId, bridge]);
 
   // The Noise lens (issue #34): fetch the low-signal churn grouped away for the open
   // review over the real command boundary. Like the flagged fetch it carries NO
@@ -1066,12 +1094,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                 onRequest: () => setDeepReviewRequested(true),
               }}
               noiseReview={noiseReview}
-              // The Spec angle's structured OpenSpec viewer (Rai, wireframes #9).
-              // Fixture-backed today (a REAL parsed rennet change), matching how the
-              // other lenses shipped behind typed boundaries; the live half —
-              // parse-on-open of the change selected for this review — is the
-              // deferred wiring (bead).
-              openSpecChange={openSpecChangeFixture}
+              // The Spec angle's structured OpenSpec viewer (Rai, wireframes #9), LIVE:
+              // parse-on-open of the change the reviewed patchset selected, over the real
+              // command boundary (`openspec.change`). Undefined when the review touches no
+              // change — the Spec angle then shows its honest empty state, never a fixture.
+              openSpecChange={openSpecChange}
               onDispositions={(writes) => {
                 setCanvases((current) => (current ? applyWrites(current, writes) : current));
                 // dispose == staged: authoring a disposition collates it into the draft

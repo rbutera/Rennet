@@ -6,6 +6,7 @@ import type {
   ElementDiffs,
   FlaggedReview,
   NoiseReview,
+  OpenSpecChange,
   Patchset,
   Review,
   ReviewEngine,
@@ -706,6 +707,119 @@ export const symbolInspectionSchema: z.ZodType<SymbolInspection> = z.object({
   references: symbolSectionSchema(symbolReferenceRowSchema),
 });
 
+// ── The Spec angle's OpenSpec change (wireframes #9) ─────────────────────────
+// The structured model the parser emits, validated at the IPC boundary so the
+// live parse-on-open crosses to the renderer as the exact `OpenSpecChange` shape.
+// Every node's `source` (artifact + line) rides across — that is what makes a
+// Spec-view disposition durable against the real artifact file.
+const openSpecSourceSchema = z.object({
+  artifact: z.enum(["proposal", "design", "tasks", "spec"]),
+  capability: z.string().optional(),
+  line: z.number(),
+});
+const openSpecListItemSchema = z.object({
+  lead: z.string().optional(),
+  text: z.string(),
+  source: openSpecSourceSchema.optional(),
+});
+const openSpecBlockSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("paragraph"),
+    text: z.string(),
+    source: openSpecSourceSchema.optional(),
+  }),
+  z.object({
+    kind: z.literal("list"),
+    ordered: z.boolean(),
+    items: z.array(openSpecListItemSchema),
+    source: openSpecSourceSchema.optional(),
+  }),
+  z.object({
+    kind: z.literal("code"),
+    language: z.string(),
+    code: z.string(),
+    source: openSpecSourceSchema.optional(),
+  }),
+  z.object({
+    kind: z.literal("table"),
+    headers: z.array(z.string()),
+    rows: z.array(z.array(z.string())),
+    source: openSpecSourceSchema.optional(),
+  }),
+]);
+const openSpecCapabilityNoteSchema = z.object({
+  name: z.string(),
+  summary: z.string(),
+  source: openSpecSourceSchema.optional(),
+});
+const openSpecProposalSchema = z.object({
+  why: z.array(openSpecBlockSchema),
+  whatChanges: z.array(openSpecListItemSchema),
+  newCapabilities: z.array(openSpecCapabilityNoteSchema),
+  modifiedCapabilities: z.array(openSpecCapabilityNoteSchema),
+  impact: z.array(z.object({ area: z.string(), detail: z.string() })),
+});
+const openSpecDesignSchema = z.object({
+  sections: z.array(
+    z.object({
+      id: z.string(),
+      level: z.union([z.literal(2), z.literal(3)]),
+      heading: z.string(),
+      blocks: z.array(openSpecBlockSchema),
+      source: openSpecSourceSchema.optional(),
+    }),
+  ),
+});
+const openSpecTasksSchema = z.object({
+  groups: z.array(
+    z.object({
+      id: z.string(),
+      title: z.string(),
+      items: z.array(
+        z.object({
+          text: z.string(),
+          status: z.enum(["todo", "done"]),
+          source: openSpecSourceSchema.optional(),
+        }),
+      ),
+      total: z.number(),
+      done: z.number(),
+      source: openSpecSourceSchema.optional(),
+    }),
+  ),
+  total: z.number(),
+  done: z.number(),
+});
+const openSpecScenarioSchema = z.object({
+  name: z.string(),
+  steps: z.array(z.object({ keyword: z.enum(["given", "when", "then", "and"]), text: z.string() })),
+  source: openSpecSourceSchema.optional(),
+});
+const openSpecSpecDeltaSchema = z.object({
+  capability: z.string(),
+  groups: z.array(
+    z.object({
+      operation: z.enum(["added", "modified", "removed", "renamed"]),
+      requirements: z.array(
+        z.object({
+          name: z.string(),
+          statement: z.string(),
+          scenarios: z.array(openSpecScenarioSchema),
+          source: openSpecSourceSchema.optional(),
+        }),
+      ),
+    }),
+  ),
+  source: openSpecSourceSchema.optional(),
+});
+export const openSpecChangeSchema: z.ZodType<OpenSpecChange> = z.object({
+  name: z.string(),
+  proposal: openSpecProposalSchema.optional(),
+  design: openSpecDesignSchema.optional(),
+  tasks: openSpecTasksSchema.optional(),
+  specDeltas: z.array(openSpecSpecDeltaSchema),
+});
+
 export const commandDefinitions = {
   "app.bootstrap": {
     input: z.object({}),
@@ -1075,6 +1189,14 @@ export const commandDefinitions = {
   "review.symbolLookup": {
     input: z.object({ reviewId: z.string().min(1), name: z.string().min(1) }),
     output: symbolInspectionSchema,
+  },
+  // ── The Spec angle's live OpenSpec change (wireframes #9) ───────────────────
+  // Parse-on-open of the change the reviewed patchset selected. Deterministic and
+  // model-free — no gate, no spend. `null` when the review touches no
+  // `openspec/changes/<name>/` (the Spec angle then shows its honest empty state).
+  "openspec.change": {
+    input: z.object({ reviewId: z.string().min(1) }),
+    output: openSpecChangeSchema.nullable(),
   },
   // ── Open a review file in the reviewer's editor (wireframes #8) ────────────
   // The inspector's "open in editor" jump: open a repo-relative file (optionally at

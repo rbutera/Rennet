@@ -638,12 +638,21 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         {narrationPlacement ? (
           <NarrationPanel altitude={ZOOM_LABELS[zoom.level]} placement={narrationPlacement} />
         ) : null}
-        {angle === "spec" && props.openSpecChange ? (
-          <OpenSpecView
-            view={buildOpenSpecView(props.openSpecChange)}
-            onDispose={disposeOpenSpec}
-            ask={props.openSpecAsk}
-          />
+        {angle === "spec" ? (
+          props.openSpecChange ? (
+            <OpenSpecView
+              view={buildOpenSpecView(props.openSpecChange)}
+              onDispose={disposeOpenSpec}
+              ask={props.openSpecAsk}
+            />
+          ) : (
+            // The Spec angle is EXHAUSTIVE (wireframes #9): a change renders the viewer,
+            // no change renders this honest empty state — never a fixture, and never a
+            // silent fall-through to the FlatCanvas diff.
+            <div className="openspec-empty" role="status">
+              <p className="canvas-empty">No OpenSpec change in this review.</p>
+            </div>
+          )
         ) : angle === "flagged" ? (
           <FlaggedLens
             index={buildFlaggedIndex(props.flaggedReview ?? { status: "ok", findings: [] })}
