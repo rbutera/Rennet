@@ -21,6 +21,7 @@ import {
   type ProjectVisibility,
   parseCommandInput,
   parseCommandOutput,
+  type SetRepoVisibilityOutcome,
   type SettingsGuidance,
   type SettingsView,
 } from "@rennet/protocol";
@@ -232,14 +233,14 @@ export interface DispatchDeps {
    * write). Optional: absent ⇒ the settings commands are simply unavailable.
    */
   readonly settings?: {
-    get(): SettingsView;
-    guidance(projectId: string): SettingsGuidance;
+    get(): Promise<SettingsView>;
+    guidance(projectId: string, repoPath: string): Promise<SettingsGuidance>;
     setAppearance(scheme: SettingsView["scheme"]): SettingsView["scheme"];
-    setRepoVisibility(input: { projectId: string; visibility: ProjectVisibility }): Promise<{
+    setRepoVisibility(input: {
+      projectId: string;
+      repoPath: string;
       visibility: ProjectVisibility;
-      changed: boolean;
-      gitignorePath: string;
-    }>;
+    }): Promise<SetRepoVisibilityOutcome>;
   };
 }
 
@@ -756,22 +757,28 @@ export function createDispatch(
               layer: "builtin",
               contributions: [{ layer: "builtin", value: "system", effective: true }],
             },
+            appearanceMalformed: false,
             projects: [],
           });
         }
-        return parseCommandOutput(name, deps.settings.get());
+        return parseCommandOutput(name, await deps.settings.get());
       }
       case "settings.guidance": {
-        // Read-only: one project's `.rennet/conventions.json` house rules, shown
+        // Read-only: one repo's `.rennet/conventions.json` house rules, shown
         // read-through. Absent dep ⇒ the honest empty catalogue.
         const input = parseCommandInput(name, rawInput);
         if (!deps.settings) {
           return parseCommandOutput(name, { rules: [], reason: "absent", dropped: 0 });
         }
-        return parseCommandOutput(name, deps.settings.guidance(input.projectId));
+        return parseCommandOutput(
+          name,
+          await deps.settings.guidance(input.projectId, input.repoPath),
+        );
       }
       case "settings.setAppearance": {
         // Personal, app-side: writes only `~/.rennet/config.json`. No repo write.
+        // The dep REFUSES (throws) when the config is malformed; that error
+        // propagates to the renderer rather than overwriting unparseable bytes.
         const input = parseCommandInput(name, rawInput);
         if (!deps.settings) {
           return parseCommandOutput(name, {
@@ -789,16 +796,19 @@ export function createDispatch(
         // Re-resolve so the surface renders the resolver's own provenance answer.
         return parseCommandOutput(name, {
           scheme,
-          schemeProvenance: deps.settings.get().schemeProvenance,
+          schemeProvenance: (await deps.settings.get()).schemeProvenance,
         });
       }
       case "settings.setRepoVisibility": {
         // Genuinely consumed: runs the real visibility switch (a repo `.gitignore`
-        // write, exclusion state only) and records `visibility` in the project's
-        // config. Absent dep ⇒ a benign no-op result, mirroring `openInEditor`.
+        // write, exclusion state only) and records `visibility` in the repo's
+        // config. A `status` other than `applied` means NOTHING was written (an
+        // unresolved checkout or a refused-because-malformed config). Absent dep ⇒
+        // a typed `unresolved` no-op, mirroring `openInEditor`.
         const input = parseCommandInput(name, rawInput);
         if (!deps.settings) {
           return parseCommandOutput(name, {
+            status: "unresolved",
             visibility: input.visibility,
             changed: false,
             gitignorePath: "",
@@ -806,6 +816,7 @@ export function createDispatch(
         }
         const result = await deps.settings.setRepoVisibility({
           projectId: input.projectId,
+          repoPath: input.repoPath,
           visibility: input.visibility,
         });
         return parseCommandOutput(name, result);

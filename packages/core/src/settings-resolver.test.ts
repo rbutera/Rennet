@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   BUILTIN_SCHEME,
   BUILTIN_VISIBILITY,
+  resolvePromoted,
   resolveScheme,
   resolveVisibility,
 } from "./settings-resolver";
@@ -58,5 +59,39 @@ describe("resolveVisibility", () => {
     const effective = resolved.provenance.contributions.filter((c) => c.effective);
     expect(effective).toHaveLength(1);
     expect(effective[0]?.layer).toBe("repo");
+  });
+});
+
+describe("resolvePromoted", () => {
+  it("resolves to the builtin `false` when the project has no stored value, stringifying for display", () => {
+    const resolved = resolvePromoted(undefined);
+    expect(resolved.value).toBe(false);
+    expect(resolved.layer).toBe("builtin");
+    // A boolean setting renders its value as a string on the provenance surface.
+    expect(resolved.provenance.contributions).toEqual([
+      { layer: "builtin", value: "false", effective: true },
+    ]);
+  });
+
+  it("distinguishes a repo-set `false` from the builtin `false` (the wireframe's source rule)", () => {
+    const resolved = resolvePromoted(false);
+    // Value is the same `false`, but the LAYER is `repo` — an explicit set, not a default.
+    expect(resolved.value).toBe(false);
+    expect(resolved.layer).toBe("repo");
+    expect(resolved.provenance.contributions).toEqual([
+      { layer: "builtin", value: "false", effective: false },
+      { layer: "repo", value: "false", effective: true },
+    ]);
+  });
+
+  it("carries a repo-set `true` with provenance", () => {
+    const resolved = resolvePromoted(true);
+    expect(resolved.value).toBe(true);
+    expect(resolved.layer).toBe("repo");
+    expect(resolved.provenance.contributions.at(-1)).toEqual({
+      layer: "repo",
+      value: "true",
+      effective: true,
+    });
   });
 });

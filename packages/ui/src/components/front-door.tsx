@@ -42,8 +42,8 @@ export function FrontDoor({
   onOpenProject(project: Project): void;
   /** Open the settings screen (wireframe #15). Omitted ⇒ no settings affordance. */
   onOpenSettings?(): void;
-  /** The reviewer's chosen appearance scheme; drives `data-scheme`. */
-  scheme?: "dark" | "light" | "system";
+  /** The resolved appearance scheme (system already folded to dark/light upstream). */
+  scheme?: "dark" | "light";
 }) {
   const [projects, setProjects] = useState<Project[] | null>(null);
   const [detected, setDetected] = useState<DetectedHarness[] | null>(null);
@@ -74,7 +74,7 @@ export function FrontDoor({
   }
 
   return (
-    <div className="rennet-glass front-door" data-scheme={scheme === "light" ? "light" : "dark"}>
+    <div className="rennet-glass front-door" data-scheme={scheme ?? "dark"}>
       <header className="front-door-bar">
         <span className="front-door-mark" aria-hidden="true">
           {flow?.step === "processing" ? (

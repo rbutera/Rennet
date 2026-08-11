@@ -36,11 +36,14 @@ import {
 export function ProjectDetail({
   bridge,
   project,
+  scheme,
   onOpenRow,
   onBack,
 }: {
   bridge: RennetBridge;
   project: Project;
+  /** The resolved appearance scheme (system already folded to dark/light upstream). */
+  scheme?: "dark" | "light";
   onOpenRow(row: SmartRow): void;
   onBack(): void;
 }) {
@@ -111,7 +114,7 @@ export function ProjectDetail({
   }
 
   return (
-    <div className="rennet-glass project-detail" data-scheme="dark">
+    <div className="rennet-glass project-detail" data-scheme={scheme ?? "dark"}>
       <header className="project-detail-bar">
         <button type="button" className="project-detail-back" onClick={onBack}>
           <ArrowLeftIcon size={13} />

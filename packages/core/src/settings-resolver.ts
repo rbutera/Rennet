@@ -22,7 +22,7 @@ import type {
  */
 
 /** A resolved setting: the effective value plus where it came from. */
-export interface Resolved<T extends string> {
+export interface Resolved<T> {
   readonly value: T;
   readonly layer: SettingsLayer;
   readonly provenance: ResolvedProvenance;
@@ -31,22 +31,26 @@ export interface Resolved<T extends string> {
 /** The built-in defaults — the base of every ladder, owned by nobody, ever. */
 export const BUILTIN_SCHEME: AppearanceScheme = "system";
 export const BUILTIN_VISIBILITY: ProjectVisibility = "local";
+export const BUILTIN_PROMOTED = false;
 
 /**
  * Fold a lowest-first list of `(layer, value?)` offers into a `Resolved<T>`. The
  * last defined offer wins (specificity: later layers are more specific); every
  * offer that supplied a value becomes a contribution, exactly one flagged
- * effective. The builtin offer must always supply a value, so a result is total.
+ * effective. `render` stringifies a value for the provenance display (so a boolean
+ * setting like promotion carries `"true"`/`"false"` on the surface). The builtin
+ * offer must always supply a value, so a result is total.
  */
-function fold<T extends string>(
+function fold<T>(
   offers: ReadonlyArray<{ layer: SettingsLayer; value: T | undefined }>,
+  render: (value: T) => string,
 ): Resolved<T> {
   const contributions: ResolvedProvenance["contributions"] = [];
   let effectiveLayer: SettingsLayer = "builtin";
   let effectiveValue: T | undefined;
   for (const offer of offers) {
     if (offer.value === undefined) continue;
-    contributions.push({ layer: offer.layer, value: offer.value, effective: false });
+    contributions.push({ layer: offer.layer, value: render(offer.value), effective: false });
     effectiveLayer = offer.layer;
     effectiveValue = offer.value;
   }
@@ -64,15 +68,20 @@ function fold<T extends string>(
   };
 }
 
+const identity = (value: string): string => value;
+
 /**
  * Resolve the appearance scheme: builtin `system`, overridden by the global
  * personal config. There is no repo layer for a personal preference.
  */
 export function resolveScheme(global: GlobalConfig): Resolved<AppearanceScheme> {
-  return fold<AppearanceScheme>([
-    { layer: "builtin", value: BUILTIN_SCHEME },
-    { layer: "global", value: global.appearance?.scheme },
-  ]);
+  return fold<AppearanceScheme>(
+    [
+      { layer: "builtin", value: BUILTIN_SCHEME },
+      { layer: "global", value: global.appearance?.scheme },
+    ],
+    identity,
+  );
 }
 
 /**
@@ -84,8 +93,27 @@ export function resolveScheme(global: GlobalConfig): Resolved<AppearanceScheme> 
 export function resolveVisibility(
   repoVisibility: ProjectVisibility | undefined,
 ): Resolved<ProjectVisibility> {
-  return fold<ProjectVisibility>([
-    { layer: "builtin", value: BUILTIN_VISIBILITY },
-    { layer: "repo", value: repoVisibility },
-  ]);
+  return fold<ProjectVisibility>(
+    [
+      { layer: "builtin", value: BUILTIN_VISIBILITY },
+      { layer: "repo", value: repoVisibility },
+    ],
+    identity,
+  );
+}
+
+/**
+ * Resolve a project's map promotion state: builtin `false`, overridden by the
+ * project's own stored `promoted` flag (the repo layer). Carries provenance like
+ * every other row, so the surface can state whether `false` is the builtin default
+ * or an explicit repo-set value (the wireframe's "every row states its source").
+ */
+export function resolvePromoted(repoPromoted: boolean | undefined): Resolved<boolean> {
+  return fold<boolean>(
+    [
+      { layer: "builtin", value: BUILTIN_PROMOTED },
+      { layer: "repo", value: repoPromoted },
+    ],
+    (value) => String(value),
+  );
 }

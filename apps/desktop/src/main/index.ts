@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { realpathSync } from "node:fs";
-import { join, normalize, resolve } from "node:path";
+import { basename, join, normalize, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
@@ -64,6 +64,7 @@ import {
   patchsetIntentToReviewIntent,
   ReviewService,
   resolveDualSeat,
+  resolvePromoted,
   resolveScheme,
   resolveVisibility,
   runCoverageMapping,
@@ -1294,43 +1295,101 @@ app.whenReady().then(async () => {
     // `setAppearance` writes only the app-side config (no repo write). `setRepoVisibility`
     // runs the REAL map-visibility switch (the repo's Rennet-owned `.rennet/.gitignore`).
     settings: (() => {
-      // A project's snapshot-store key + real top-level path, or null when its
-      // `openPath` cannot be realpath'd (a since-removed checkout) — the settings
-      // surface then shows that project at builtin defaults rather than throwing.
-      const repoKeyFor = (openPath: string): { repoKey: string; repoRoot: string } | null => {
+      // Resolve a working path to the SAME repo identity the snapshot generator
+      // uses: the git TOP LEVEL (`git rev-parse --show-toplevel`), realpath-
+      // canonical, escaped into the store key (design §1.1). Keying off a bare
+      // `openPath` was wrong — a project opened at a nested subdir would read a
+      // different store entry and write the WRONG repo's `.rennet/.gitignore`.
+      // `null` when the path is not a git working tree (a since-removed checkout).
+      const resolveRepoTarget = async (
+        workingPath: string,
+      ): Promise<{ repoPath: string; repoKey: string; repoRoot: string } | null> => {
+        let topLevel: string;
         try {
-          const repoRoot = realpathSync(openPath);
-          return { repoKey: escapePath(repoRoot), repoRoot };
+          topLevel = (
+            await execaGit(workingPath, ["rev-parse", "--show-toplevel"], { reject: true })
+          ).trim();
         } catch {
           return null;
         }
+        if (!topLevel) return null;
+        let repoRoot: string;
+        try {
+          repoRoot = realpathSync(topLevel);
+        } catch {
+          return null;
+        }
+        return { repoPath: repoRoot, repoKey: escapePath(repoRoot), repoRoot };
       };
-      const settingsProjectFor = (project: Project): SettingsProject => {
-        const keyed = repoKeyFor(project.openPath);
-        const config = keyed ? snapshotStore.loadConfig(keyed.repoKey) : null;
-        const visibility = resolveVisibility(config?.visibility);
-        return {
-          projectId: project.id,
-          name: project.name,
-          openPath: project.openPath,
-          visibility: visibility.value,
-          visibilityProvenance: visibility.provenance,
-          promoted: config?.promoted ?? false,
-        };
+      // A project's included repos (a workspace can include several); fall back to
+      // the open target for a project stored before `includedRepoPaths` existed.
+      const includedWorkingPaths = (project: Project): string[] =>
+        project.includedRepoPaths && project.includedRepoPaths.length > 0
+          ? [...project.includedRepoPaths]
+          : [project.openPath];
+      // Every resolvable repo target for a project, deduped by top level.
+      const targetsFor = async (
+        project: Project,
+      ): Promise<{ repoPath: string; repoKey: string; repoRoot: string }[]> => {
+        const seen = new Set<string>();
+        const targets: { repoPath: string; repoKey: string; repoRoot: string }[] = [];
+        for (const workingPath of includedWorkingPaths(project)) {
+          const target = await resolveRepoTarget(workingPath);
+          if (target && !seen.has(target.repoPath)) {
+            seen.add(target.repoPath);
+            targets.push(target);
+          }
+        }
+        return targets;
       };
       return {
-        get: (): SettingsView => {
-          const scheme = resolveScheme(configStore.read());
+        get: async (): Promise<SettingsView> => {
+          const schemeState = configStore.readState();
+          const scheme = resolveScheme(schemeState.config);
+          const projects: SettingsProject[] = [];
+          const emittedRepoPaths = new Set<string>();
+          for (const project of projectStore.list()) {
+            const targets = await targetsFor(project);
+            const multiRepo = targets.length > 1;
+            for (const target of targets) {
+              // De-dupe a repo shared across projects: one row per top level.
+              if (emittedRepoPaths.has(target.repoPath)) continue;
+              emittedRepoPaths.add(target.repoPath);
+              const configState = snapshotStore.loadConfigState(target.repoKey);
+              const configMalformed = configState.status === "malformed";
+              // A malformed config never leaks its (unparseable) values into the
+              // resolver — the row shows builtin defaults and refuses edits.
+              const config = configState.status === "ok" ? configState.config : null;
+              const visibility = resolveVisibility(config?.visibility);
+              const promoted = resolvePromoted(config?.promoted);
+              projects.push({
+                projectId: project.id,
+                name: multiRepo ? `${project.name} · ${basename(target.repoPath)}` : project.name,
+                repoPath: target.repoPath,
+                visibility: visibility.value,
+                visibilityProvenance: visibility.provenance,
+                promoted: promoted.value,
+                promotedProvenance: promoted.provenance,
+                configMalformed,
+              });
+            }
+          }
           return {
             scheme: scheme.value,
             schemeProvenance: scheme.provenance,
-            projects: projectStore.list().map(settingsProjectFor),
+            appearanceMalformed: schemeState.status === "malformed",
+            projects,
           };
         },
-        guidance: (projectId: string) => {
+        guidance: async (projectId: string, repoPath: string) => {
           const project = projectStore.list().find((entry) => entry.id === projectId);
-          if (!project) return { rules: [], reason: "absent" as const, dropped: 0 };
-          const load = loadConventionCatalogue(project.openPath);
+          // Only a repo that genuinely belongs to the project may be read — the
+          // renderer-supplied `repoPath` is validated against the resolved targets.
+          const target = project
+            ? (await targetsFor(project)).find((entry) => entry.repoPath === repoPath)
+            : undefined;
+          if (!target) return { rules: [], reason: "absent" as const, dropped: 0 };
+          const load = loadConventionCatalogue(target.repoRoot);
           if (!load.catalogue) {
             return { rules: [], reason: load.reason ?? ("absent" as const), dropped: load.dropped };
           }
@@ -1346,6 +1405,8 @@ app.whenReady().then(async () => {
           };
         },
         setAppearance: (scheme: SettingsView["scheme"]) => {
+          // `update` REFUSES (throws) when the config is malformed, so an edit can
+          // never overwrite unparseable bytes; dispatch surfaces the error.
           configStore.update((current) => ({
             ...current,
             appearance: { ...current.appearance, scheme },
@@ -1354,23 +1415,43 @@ app.whenReady().then(async () => {
         },
         setRepoVisibility: async (input: {
           projectId: string;
+          repoPath: string;
           visibility: SettingsProject["visibility"];
         }) => {
           const project = projectStore.list().find((entry) => entry.id === input.projectId);
-          const keyed = project ? repoKeyFor(project.openPath) : null;
-          if (!keyed) {
-            // The project or its checkout is gone; report an honest no-op rather
-            // than writing a `.gitignore` into a path we could not resolve.
-            return { visibility: input.visibility, changed: false, gitignorePath: "" };
+          // Re-resolve the target from the LIVE project (a checkout may have gone
+          // between `get` and now), and reject a `repoPath` not in the project.
+          const target = project
+            ? (await targetsFor(project)).find((entry) => entry.repoPath === input.repoPath)
+            : undefined;
+          if (!target) {
+            // Nothing was written — a typed no-op, NOT a masquerading "success".
+            return {
+              status: "unresolved" as const,
+              visibility: input.visibility,
+              changed: false,
+              gitignorePath: "",
+            };
+          }
+          // Refuse to touch a repo whose config is malformed (Rule 75): the switch
+          // would rewrite it via `updateConfig`, silently discarding the bad bytes.
+          if (snapshotStore.loadConfigState(target.repoKey).status === "malformed") {
+            return {
+              status: "malformed" as const,
+              visibility: input.visibility,
+              changed: false,
+              gitignorePath: "",
+            };
           }
           const preview = await applyVisibilitySwitch(
             snapshotStore,
-            keyed.repoKey,
-            keyed.repoRoot,
+            target.repoKey,
+            target.repoRoot,
             input.visibility,
             execaGit,
           );
           return {
+            status: "applied" as const,
             visibility: preview.target,
             changed: preview.changed,
             gitignorePath: preview.gitignorePath,

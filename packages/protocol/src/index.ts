@@ -947,27 +947,61 @@ export const resolvedProvenanceSchema = z.object({
 });
 export type ResolvedProvenance = z.infer<typeof resolvedProvenanceSchema>;
 
-/** One project row on the settings ladder: its real, resolved repo-scope config. */
+/**
+ * One repo row on the settings ladder — its real, resolved repo-scope config. A
+ * single-repo project contributes ONE row; a workspace contributes one row PER
+ * included repo (each keyed by its own git top level), so a workspace's other
+ * repos are reachable, not collapsed onto the first. `repoPath` is the canonical
+ * git top-level path that addresses the row for reads and writes.
+ */
 export const settingsProjectSchema = z.object({
   projectId: z.string().min(1),
   name: z.string().min(1),
-  openPath: z.string().min(1),
+  /** The canonical git top-level path of THIS repo — the row's stable address. */
+  repoPath: z.string().min(1),
   /** The resolved effective visibility, with the layer it came from. */
   visibility: projectVisibilitySchema,
   visibilityProvenance: resolvedProvenanceSchema,
-  /** The real promotion state (read-through; changing it is a separate act). */
+  /** The resolved effective promotion state, with the layer it came from. */
   promoted: z.boolean(),
+  promotedProvenance: resolvedProvenanceSchema,
+  /**
+   * The repo's `config.json` exists but is malformed (or carries an invalid
+   * value). The row then shows builtin defaults and REFUSES edits, so a write can
+   * never overwrite bytes we could not parse (Rule 75). Absent config ⇒ `false`.
+   */
+  configMalformed: z.boolean(),
 });
 export type SettingsProject = z.infer<typeof settingsProjectSchema>;
 
-/** The whole settings view: the global layer plus every project's repo layer. */
+/** The whole settings view: the global layer plus every repo's repo layer. */
 export const settingsViewSchema = z.object({
   /** The resolved effective scheme (builtin `system`, overridden by global). */
   scheme: appearanceSchemeSchema,
   schemeProvenance: resolvedProvenanceSchema,
+  /**
+   * The global `~/.rennet/config.json` exists but is malformed. Appearance then
+   * shows the builtin default and the control REFUSES to write, so an edit can
+   * never overwrite unparseable bytes (Rule 75).
+   */
+  appearanceMalformed: z.boolean(),
   projects: z.array(settingsProjectSchema),
 });
 export type SettingsView = z.infer<typeof settingsViewSchema>;
+
+/** The outcome of a repo-visibility write — distinguishes a real apply from a no-op. */
+export const setRepoVisibilityOutcomeSchema = z.object({
+  /**
+   * `applied` — the switch ran (`changed`/`gitignorePath` describe the repo write).
+   * `unresolved` — the project/checkout could not be resolved; NOTHING was written.
+   * `malformed` — the repo config is malformed; the edit was REFUSED to protect it.
+   */
+  status: z.enum(["applied", "unresolved", "malformed"]),
+  visibility: projectVisibilitySchema,
+  changed: z.boolean(),
+  gitignorePath: z.string(),
+});
+export type SetRepoVisibilityOutcome = z.infer<typeof setRepoVisibilityOutcomeSchema>;
 
 /** One convention rule shown in the per-repo guidance panel (never model-facing). */
 export const settingsConventionRuleSchema = z.object({
@@ -1414,12 +1448,14 @@ export const commandDefinitions = {
     input: z.object({}),
     output: settingsViewSchema,
   },
-  // ── Settings: the per-repo guidance catalogue for one project (wireframe #15) ─
-  // The `.rennet/conventions.json` house rules the review runners read before every
-  // review, shown read-through. Absent/unreadable/empty degrade to an honest empty
-  // catalogue with a typed reason — never a throw, never a fabricated rule.
+  // ── Settings: the per-repo guidance catalogue for one repo (wireframe #15) ───
+  // The `<repoPath>/.rennet/conventions.json` house rules the review runners read
+  // before every review, shown read-through. `repoPath` is the row's canonical git
+  // top level (validated against the project's included repos in MAIN). Absent/
+  // unreadable/empty degrade to an honest empty catalogue with a typed reason —
+  // never a throw, never a fabricated rule.
   "settings.guidance": {
-    input: z.object({ projectId: z.string().min(1) }),
+    input: z.object({ projectId: z.string().min(1), repoPath: z.string().min(1) }),
     output: settingsGuidanceSchema,
   },
   // ── Settings: set the global appearance scheme (wireframe #15) ─────────────
@@ -1432,22 +1468,22 @@ export const commandDefinitions = {
       schemeProvenance: resolvedProvenanceSchema,
     }),
   },
-  // ── Settings: set a project's repo-scope map visibility (wireframe #15) ────
+  // ── Settings: set a repo's repo-scope map visibility (wireframe #15) ───────
   // Genuinely consumed: runs the real visibility switch, which writes the repo's
   // Rennet-owned `.rennet/.gitignore` (exclusion state only — never stages,
-  // un-stages, or commits) and records `visibility` in the project's config. This
-  // is a repo write, so `changed`/`gitignorePath` are returned for an honest note.
+  // un-stages, or commits) and records `visibility` in the repo's config. This is a
+  // repo write, so the outcome carries `status`/`changed`/`gitignorePath`: a
+  // `status` other than `applied` means NOTHING was written (an unresolved checkout
+  // or a refused-because-malformed config), and the renderer must not adopt it as
+  // done. `repoPath` addresses the row (validated against the project in MAIN).
   "settings.setRepoVisibility": {
     input: z.object({
       commandId: commandIdSchema,
       projectId: z.string().min(1),
+      repoPath: z.string().min(1),
       visibility: projectVisibilitySchema,
     }),
-    output: z.object({
-      visibility: projectVisibilitySchema,
-      changed: z.boolean(),
-      gitignorePath: z.string(),
-    }),
+    output: setRepoVisibilityOutcomeSchema,
   },
 } as const;
 

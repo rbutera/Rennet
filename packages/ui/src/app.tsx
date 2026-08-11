@@ -435,6 +435,25 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       .catch(() => undefined);
   }, [bridge]);
 
+  // `system` resolves through the OS via `prefers-color-scheme`, live: an OS
+  // appearance change re-themes the app without a reload. `matchMedia` is guarded
+  // for the (test / SSR) case where it is absent, defaulting to dark.
+  const [systemDark, setSystemDark] = useState(
+    () => typeof matchMedia === "undefined" || matchMedia("(prefers-color-scheme: dark)").matches,
+  );
+  useEffect(() => {
+    if (typeof matchMedia === "undefined") return;
+    const query = matchMedia("(prefers-color-scheme: dark)");
+    const onChange = (event: MediaQueryListEvent) => setSystemDark(event.matches);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+  // The single resolved scheme every app-level surface renders in. `system` folds
+  // to the live OS value here, so every screen inherits ONE answer (no screen
+  // hardcodes dark, and an explicit Light no longer reverts on navigation).
+  const effectiveScheme: "dark" | "light" =
+    scheme === "light" ? "light" : scheme === "dark" ? "dark" : systemDark ? "dark" : "light";
+
   const patchset = useMemo(() => (review ? activePatchset(review) : undefined), [review]);
   // A GitHub-PR review is a SNAPSHOT of a pinned range, not the working tree, so
   // the working-tree freshness watcher below must not run against it (it would
@@ -1035,7 +1054,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // the renderer half of the no-post guarantee; MAIN's `publish.review` refusal is the
   // structural half, so even without this the command cannot egress.
   const destinationChrome = review?.retrospective ? (
-    <div className="rennet-glass" data-scheme="dark">
+    <div className="rennet-glass" data-scheme={effectiveScheme}>
       <section className="retrospective-notice" role="note" data-testid="retrospective-notice">
         <p className="eyebrow">RETROSPECTIVE REVIEW</p>
         <p>
@@ -1045,7 +1064,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       </section>
     </div>
   ) : (
-    <div className="rennet-glass" data-scheme="dark">
+    <div className="rennet-glass" data-scheme={effectiveScheme}>
       <DestinationFrame
         draft={draft}
         mode={destinationMode}
@@ -1185,6 +1204,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         <ProjectDetail
           bridge={bridge}
           project={projectDetail}
+          scheme={effectiveScheme}
           onOpenRow={(row) => void openRow(projectDetail, row)}
           onBack={() => setProjectDetail(null)}
         />
@@ -1202,6 +1222,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         {error ? <div className="error-toast">{error}</div> : null}
         <SettingsScreen
           bridge={bridge}
+          scheme={effectiveScheme}
           onBack={() => setSettingsOpen(false)}
           onSchemeChange={setScheme}
         />
@@ -1222,7 +1243,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
             bridge={bridge}
             onOpenProject={(project) => setProjectDetail(project)}
             onOpenSettings={() => setSettingsOpen(true)}
-            scheme={scheme}
+            scheme={effectiveScheme}
           />
           <button
             type="button"
@@ -1361,6 +1382,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
               store={viewStore}
               canvases={canvases}
               bridge={bridge}
+              initialScheme={effectiveScheme}
               narration={narration}
               flaggedReview={flaggedReview}
               deepReview={{

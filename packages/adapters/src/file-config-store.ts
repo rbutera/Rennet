@@ -37,22 +37,33 @@ export class FileConfigStore {
     mkdirSync(dirname(path), { recursive: true });
   }
 
-  /** The stored config, or a fresh default when missing/unreadable/malformed. */
-  read(): GlobalConfig {
+  /**
+   * The DISTINCT on-disk state, so a caller can tell an absent config (safe to
+   * write) from a malformed one (must NOT be overwritten — Rule 75). `config` is
+   * the parsed value for `ok`, and the safe default for `absent`/`malformed`.
+   */
+  readState(): { status: "absent" | "ok" | "malformed"; config: GlobalConfig } {
     let raw: string;
     try {
       raw = readFileSync(this.path, "utf8");
     } catch {
-      return { version: GLOBAL_CONFIG_VERSION };
+      return { status: "absent", config: { version: GLOBAL_CONFIG_VERSION } };
     }
     let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
     } catch {
-      return { version: GLOBAL_CONFIG_VERSION };
+      return { status: "malformed", config: { version: GLOBAL_CONFIG_VERSION } };
     }
     const result = globalConfigSchema.safeParse(parsed);
-    return result.success ? result.data : { version: GLOBAL_CONFIG_VERSION };
+    return result.success
+      ? { status: "ok", config: result.data }
+      : { status: "malformed", config: { version: GLOBAL_CONFIG_VERSION } };
+  }
+
+  /** The stored config, or a fresh default when missing/unreadable/malformed. */
+  read(): GlobalConfig {
+    return this.readState().config;
   }
 
   /**
@@ -60,10 +71,20 @@ export class FileConfigStore {
    * config (or a fresh default) and returns the next one; the written config is
    * returned. Always stamps the current schema version so a legacy shape is
    * upgraded on first write.
+   *
+   * REFUSES to run when the on-disk file is malformed (Rule 75): overwriting
+   * unparseable bytes with a default is silent data loss, so a malformed file is
+   * left byte-for-byte untouched and the caller gets a thrown error to surface.
    */
   update(update: (current: GlobalConfig) => GlobalConfig): GlobalConfig {
+    const state = this.readState();
+    if (state.status === "malformed") {
+      throw new Error(
+        `refusing to overwrite a malformed config at ${this.path}; fix or remove it first`,
+      );
+    }
     const next = globalConfigSchema.parse({
-      ...update(this.read()),
+      ...update(state.config),
       version: GLOBAL_CONFIG_VERSION,
     });
     mkdirSync(dirname(this.path), { recursive: true });

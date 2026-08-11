@@ -3,9 +3,15 @@
 // The settings screen (wireframe #15): the config ladder over the real `~/.rennet`
 // store. This mounts the real `SettingsScreen` over a recording fake `RennetBridge`
 // and drives the surfaces that matter — the global scheme write, the repo-scope
-// visibility write, and the read-through guidance panel — asserting the recorded
-// command inputs (behavioural, not presence).
-import type { RennetBridge, SettingsGuidance, SettingsView } from "@rennet/protocol";
+// visibility write (addressed by repoPath), the read-through guidance panel, and
+// the honest handling of a malformed config and an unresolved write — asserting the
+// recorded command inputs (behavioural, not presence).
+import type {
+  RennetBridge,
+  SetRepoVisibilityOutcome,
+  SettingsGuidance,
+  SettingsView,
+} from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, mount, waitFor } from "../test/dom";
 import { SettingsScreen } from "./settings-screen";
@@ -16,17 +22,23 @@ const view: SettingsView = {
     layer: "builtin",
     contributions: [{ layer: "builtin", value: "system", effective: true }],
   },
+  appearanceMalformed: false,
   projects: [
     {
       projectId: "p1",
       name: "orbital",
-      openPath: "/orbital",
+      repoPath: "/orbital",
       visibility: "local",
       visibilityProvenance: {
         layer: "builtin",
         contributions: [{ layer: "builtin", value: "local", effective: true }],
       },
       promoted: false,
+      promotedProvenance: {
+        layer: "builtin",
+        contributions: [{ layer: "builtin", value: "false", effective: true }],
+      },
+      configMalformed: false,
     },
   ],
 };
@@ -69,8 +81,16 @@ function fakeBridge(overrides: Partial<Record<string, unknown>> = {}): {
         };
       }
       case "settings.setRepoVisibility": {
+        if (overrides["settings.setRepoVisibility"]) {
+          return overrides["settings.setRepoVisibility"] as SetRepoVisibilityOutcome;
+        }
         const visibility = (input as { visibility: "local" | "git-visible" }).visibility;
-        return { visibility, changed: true, gitignorePath: "/orbital/.rennet/.gitignore" };
+        return {
+          status: "applied",
+          visibility,
+          changed: true,
+          gitignorePath: "/orbital/.rennet/.gitignore",
+        } satisfies SetRepoVisibilityOutcome;
       }
       default:
         throw new Error(`unexpected command: ${name}`);
@@ -102,19 +122,24 @@ describe("SettingsScreen", () => {
     await waitFor(() => expect(container.querySelector(".settings-prov-set")).not.toBeNull());
   });
 
-  it("on the repo tab, shows guidance rules and writes a visibility switch with a commandId", async () => {
+  it("on the repo tab, shows guidance + promotion provenance and writes a visibility switch keyed by repoPath", async () => {
     const { bridge, calls } = fakeBridge();
     const { container, getByRole } = mount(<SettingsScreen bridge={bridge} onBack={vi.fn()} />);
 
     await waitFor(() => expect(container.querySelector(".settings-tab")).not.toBeNull());
     fireEvent.click(getByRole("tab", { name: "Repo" }));
 
-    // The guidance catalogue (the wireframe's central panel) is read-through.
+    // The guidance catalogue (the wireframe's central panel) is read-through, and the
+    // read reaches for the repo by its path.
     await waitFor(() => expect(container.querySelector(".settings-rule-k")).not.toBeNull());
     expect(container.querySelector(".settings-rule-k")?.textContent).toBe(
       "Prefer table-driven tests",
     );
-    expect(calls.some((c) => c.name === "settings.guidance")).toBe(true);
+    const guidanceCall = calls.find((c) => c.name === "settings.guidance");
+    expect(guidanceCall?.input).toEqual({ projectId: "p1", repoPath: "/orbital" });
+    // Promotion carries provenance (not a fixed "read-through" badge) — builtin false.
+    const provChips = [...container.querySelectorAll(".settings-prov")].map((n) => n.textContent);
+    expect(provChips).toContain("default");
 
     fireEvent.click(getByRole("button", { name: "Git-visible" }));
 
@@ -122,14 +147,59 @@ describe("SettingsScreen", () => {
       expect(calls.some((c) => c.name === "settings.setRepoVisibility")).toBe(true),
     );
     const write = calls.find((c) => c.name === "settings.setRepoVisibility");
-    const input = write?.input as { commandId: string; projectId: string; visibility: string };
+    const input = write?.input as {
+      commandId: string;
+      projectId: string;
+      repoPath: string;
+      visibility: string;
+    };
     expect(input.projectId).toBe("p1");
+    expect(input.repoPath).toBe("/orbital");
     expect(input.visibility).toBe("git-visible");
     expect(input.commandId).toMatch(/[0-9a-f-]{36}/);
-    // The applied note names the real file that was written.
     await waitFor(() =>
       expect(container.querySelector(".settings-applied")?.textContent).toContain(".gitignore"),
     );
+  });
+
+  it("does NOT report success when the write is unresolved (P2 #4)", async () => {
+    const { bridge } = fakeBridge({
+      "settings.setRepoVisibility": {
+        status: "unresolved",
+        visibility: "git-visible",
+        changed: false,
+        gitignorePath: "",
+      } satisfies SetRepoVisibilityOutcome,
+    });
+    const { container, getByRole } = mount(<SettingsScreen bridge={bridge} onBack={vi.fn()} />);
+    await waitFor(() => expect(container.querySelector(".settings-tab")).not.toBeNull());
+    fireEvent.click(getByRole("tab", { name: "Repo" }));
+    await waitFor(() => expect(container.querySelector(".settings-seg")).not.toBeNull());
+    fireEvent.click(getByRole("button", { name: "Git-visible" }));
+    // The error is shown, and NO "applied" note claims a write happened.
+    await waitFor(() =>
+      expect(container.querySelector(".settings-error-inline")?.textContent).toContain(
+        "could not be resolved",
+      ),
+    );
+    expect(container.querySelector(".settings-applied")).toBeNull();
+  });
+
+  it("disables editing and explains when a repo config is malformed (Rule 75)", async () => {
+    const malformedView: SettingsView = {
+      ...view,
+      projects: view.projects.map((project) => ({ ...project, configMalformed: true })),
+    };
+    const { bridge, calls } = fakeBridge({ "settings.get": malformedView });
+    const { container, getByRole } = mount(<SettingsScreen bridge={bridge} onBack={vi.fn()} />);
+    await waitFor(() => expect(container.querySelector(".settings-tab")).not.toBeNull());
+    fireEvent.click(getByRole("tab", { name: "Repo" }));
+    await waitFor(() => expect(container.querySelector(".settings-malformed")).not.toBeNull());
+    const gitVisible = getByRole("button", { name: "Git-visible" }) as HTMLButtonElement;
+    expect(gitVisible.disabled).toBe(true);
+    // A disabled control never fires the write.
+    fireEvent.click(gitVisible);
+    expect(calls.some((c) => c.name === "settings.setRepoVisibility")).toBe(false);
   });
 
   it("shows an honest empty guidance state when no catalogue exists", async () => {

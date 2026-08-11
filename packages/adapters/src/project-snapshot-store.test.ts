@@ -158,4 +158,31 @@ describe("ProjectSnapshotStore — config.json read/write (A.1)", () => {
     expect(store.loadConfig("-k")).toBeNull();
     expect(readFileSync(path, "utf8")).toBe("{ not json"); // untouched
   });
+
+  it("loadConfigState distinguishes absent / ok / malformed, and rejects an invalid visibility", () => {
+    const storeDir = mkdtempSync(join(tmpdir(), "rennet-cfg4-"));
+    scratch.push(storeDir);
+    const store = new ProjectSnapshotStore(storeDir);
+    const path = store.paths("-k").configPath;
+    mkdirSync(join(path, ".."), { recursive: true });
+
+    // Absent — no file yet.
+    expect(store.loadConfigState("-k")).toEqual({ status: "absent", config: null });
+
+    // OK — a valid config round-trips through the state reader.
+    store.saveConfig("-k", { version: 1, visibility: "git-visible" });
+    const ok = store.loadConfigState("-k");
+    expect(ok.status).toBe("ok");
+    expect(ok.config?.visibility).toBe("git-visible");
+
+    // Malformed — unparseable JSON.
+    writeFileSync(path, "{ broken");
+    expect(store.loadConfigState("-k").status).toBe("malformed");
+
+    // Malformed — well-formed JSON but an out-of-enum visibility (must NOT flow on
+    // as a value; `loadConfig` folds it to null so the map read paths stay safe).
+    writeFileSync(path, JSON.stringify({ version: 1, visibility: "bogus" }));
+    expect(store.loadConfigState("-k").status).toBe("malformed");
+    expect(store.loadConfig("-k")).toBeNull();
+  });
 });

@@ -49,10 +49,13 @@ function Provenance({ provenance }: { provenance: ResolvedProvenance }) {
 
 export function SettingsScreen({
   bridge,
+  scheme,
   onBack,
   onSchemeChange,
 }: {
   bridge: RennetBridge;
+  /** The resolved appearance scheme this screen renders in (system already folded). */
+  scheme?: "dark" | "light";
   onBack(): void;
   /** Lets the host consume the chosen scheme app-wide (as `data-scheme`). */
   onSchemeChange?(scheme: AppearanceScheme): void;
@@ -60,7 +63,9 @@ export function SettingsScreen({
   const [view, setView] = useState<SettingsView | null>(null);
   const [error, setError] = useState<string>();
   const [tab, setTab] = useState<"global" | "repo">("global");
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // A repo row is addressed by its canonical git top-level path — a workspace can
+  // contribute several rows, so a bare projectId cannot key the selection.
+  const [selectedRepoPath, setSelectedRepoPath] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -69,7 +74,7 @@ export function SettingsScreen({
       .then((loaded) => {
         setView(loaded);
         const first = loaded.projects[0];
-        if (first) setSelectedId((current) => current ?? first.projectId);
+        if (first) setSelectedRepoPath((current) => current ?? first.repoPath);
       })
       .catch((reason: unknown) => setError(messageFrom(reason)));
   }, [bridge]);
@@ -93,10 +98,10 @@ export function SettingsScreen({
     }
   }
 
-  const selected = view?.projects.find((project) => project.projectId === selectedId) ?? null;
+  const selected = view?.projects.find((project) => project.repoPath === selectedRepoPath) ?? null;
 
   return (
-    <div className="rennet-glass settings" data-scheme={schemeAttr(view?.scheme)}>
+    <div className="rennet-glass settings" data-scheme={scheme ?? "dark"}>
       <header className="settings-bar">
         <button type="button" className="settings-back" onClick={onBack}>
           <ArrowLeftIcon size={13} />
@@ -152,7 +157,7 @@ export function SettingsScreen({
                       aria-pressed={view.scheme === option.id}
                       className={`settings-seg-btn${view.scheme === option.id ? " on" : ""}`}
                       onClick={() => void chooseScheme(option.id)}
-                      disabled={busy}
+                      disabled={busy || view.appearanceMalformed}
                     >
                       {option.label}
                     </button>
@@ -161,10 +166,17 @@ export function SettingsScreen({
                 <Provenance provenance={view.schemeProvenance} />
               </div>
             </div>
-            <p className="settings-note">
-              A personal preference, stored on this machine only. It never leaves it and never
-              touches a repository.
-            </p>
+            {view.appearanceMalformed ? (
+              <p className="settings-malformed">
+                Your <code>~/.rennet/config.json</code> could not be parsed. Editing is disabled so
+                it is not overwritten — fix or remove the file, then reopen settings.
+              </p>
+            ) : (
+              <p className="settings-note">
+                A personal preference, stored on this machine only. It never leaves it and never
+                touches a repository.
+              </p>
+            )}
           </section>
         ) : null}
 
@@ -183,15 +195,15 @@ export function SettingsScreen({
               bridge={bridge}
               projects={view.projects}
               selected={selected}
-              selectedId={selectedId}
-              onSelect={setSelectedId}
-              onVisibilityResolved={(projectId, visibility) =>
+              selectedRepoPath={selectedRepoPath}
+              onSelect={setSelectedRepoPath}
+              onVisibilityResolved={(repoPath, visibility) =>
                 setView((current) =>
                   current
                     ? {
                         ...current,
                         projects: current.projects.map((project) =>
-                          project.projectId === projectId
+                          project.repoPath === repoPath
                             ? {
                                 ...project,
                                 visibility,
@@ -217,39 +229,40 @@ export function SettingsScreen({
   );
 }
 
-/** The repo scope: a project picker + the selected project's ladder + guidance. */
+/** The repo scope: a repo picker + the selected repo's ladder + guidance. */
 function RepoPanel({
   bridge,
   projects,
   selected,
-  selectedId,
+  selectedRepoPath,
   onSelect,
   onVisibilityResolved,
 }: {
   bridge: RennetBridge;
   projects: readonly SettingsProject[];
   selected: SettingsProject | null;
-  selectedId: string | null;
-  onSelect(id: string): void;
-  onVisibilityResolved(projectId: string, visibility: ProjectVisibility): void;
+  selectedRepoPath: string | null;
+  onSelect(repoPath: string): void;
+  onVisibilityResolved(repoPath: string, visibility: ProjectVisibility): void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [note, setNote] = useState<string>();
   const [guidance, setGuidance] = useState<SettingsGuidance | null>(null);
 
+  const selectedProjectId = selected?.projectId;
   useEffect(() => {
-    if (!selectedId) return;
+    if (!selectedProjectId || !selectedRepoPath) return;
     setGuidance(null);
     setNote(undefined);
     bridge
-      .invoke("settings.guidance", { projectId: selectedId })
+      .invoke("settings.guidance", { projectId: selectedProjectId, repoPath: selectedRepoPath })
       .then(setGuidance)
       .catch(() => setGuidance({ rules: [], reason: "unreadable", dropped: 0 }));
-  }, [bridge, selectedId]);
+  }, [bridge, selectedProjectId, selectedRepoPath]);
 
   async function chooseVisibility(visibility: ProjectVisibility): Promise<void> {
-    if (!selected || busy || selected.visibility === visibility) return;
+    if (!selected || busy || selected.visibility === visibility || selected.configMalformed) return;
     setBusy(true);
     setError(undefined);
     setNote(undefined);
@@ -257,14 +270,24 @@ function RepoPanel({
       const result = await bridge.invoke("settings.setRepoVisibility", {
         commandId: crypto.randomUUID(),
         projectId: selected.projectId,
+        repoPath: selected.repoPath,
         visibility,
       });
-      onVisibilityResolved(selected.projectId, result.visibility);
-      setNote(
-        result.changed
-          ? `Updated ${result.gitignorePath}`
-          : "Already excluded — no .gitignore change was needed.",
-      );
+      // Only a genuine apply mutates the row — an unresolved checkout or a
+      // refused-because-malformed config leaves the surface untouched (no false
+      // "success"), with target-neutral copy that never claims a write happened.
+      if (result.status === "applied") {
+        onVisibilityResolved(selected.repoPath, result.visibility);
+        setNote(
+          result.changed
+            ? `Updated ${result.gitignorePath}`
+            : "No .gitignore change was needed for that setting.",
+        );
+      } else if (result.status === "unresolved") {
+        setError("This repository could not be resolved — nothing was changed.");
+      } else {
+        setError("This repository's config is malformed — the change was refused to protect it.");
+      }
     } catch (reason) {
       setError(messageFrom(reason));
     } finally {
@@ -274,15 +297,15 @@ function RepoPanel({
 
   return (
     <section className="settings-panel" aria-label="Repository settings">
-      <div className="settings-picker" role="tablist" aria-label="Project">
+      <div className="settings-picker" role="tablist" aria-label="Repository">
         {projects.map((project) => (
           <button
-            key={project.projectId}
+            key={project.repoPath}
             type="button"
             role="tab"
-            aria-selected={project.projectId === selectedId}
-            className={`settings-pick${project.projectId === selectedId ? " on" : ""}`}
-            onClick={() => onSelect(project.projectId)}
+            aria-selected={project.repoPath === selectedRepoPath}
+            className={`settings-pick${project.repoPath === selectedRepoPath ? " on" : ""}`}
+            onClick={() => onSelect(project.repoPath)}
           >
             {project.name}
           </button>
@@ -306,7 +329,7 @@ function RepoPanel({
                     aria-pressed={selected.visibility === option.id}
                     className={`settings-seg-btn${selected.visibility === option.id ? " on" : ""}`}
                     onClick={() => void chooseVisibility(option.id)}
-                    disabled={busy}
+                    disabled={busy || selected.configMalformed}
                   >
                     {option.label}
                   </button>
@@ -325,10 +348,16 @@ function RepoPanel({
               <span className="settings-readthrough">
                 {selected.promoted ? "Promoted" : "Not promoted"}
               </span>
-              <span className="settings-prov">read-through</span>
+              <Provenance provenance={selected.promotedProvenance} />
             </div>
           </div>
 
+          {selected.configMalformed ? (
+            <p className="settings-malformed">
+              This repository's <code>~/.rennet</code> config could not be parsed. It shows built-in
+              defaults and editing is disabled so the file is not overwritten.
+            </p>
+          ) : null}
           {note ? <p className="settings-applied">{note}</p> : null}
           {error ? <p className="settings-error settings-error-inline">{error}</p> : null}
 
@@ -384,9 +413,4 @@ function Guidance({ guidance }: { guidance: SettingsGuidance | null }) {
       </div>
     </div>
   );
-}
-
-/** `data-scheme` only carries an EXPLICIT choice; `system` leaves it unset. */
-function schemeAttr(scheme: AppearanceScheme | undefined): "dark" | "light" | undefined {
-  return scheme === "dark" || scheme === "light" ? scheme : undefined;
 }

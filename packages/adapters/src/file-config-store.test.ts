@@ -55,4 +55,27 @@ describe("FileConfigStore", () => {
     );
     expect(new FileConfigStore(path).read()).toEqual({ version: GLOBAL_CONFIG_VERSION });
   });
+
+  it("reports distinct absent / ok / malformed states", () => {
+    const path = tmpConfigPath();
+    const store = new FileConfigStore(path);
+    expect(store.readState().status).toBe("absent");
+    store.update((current) => ({ ...current, appearance: { scheme: "dark" } }));
+    expect(store.readState().status).toBe("ok");
+    writeFileSync(path, "{ broken");
+    expect(store.readState().status).toBe("malformed");
+  });
+
+  it("REFUSES to overwrite a malformed config, leaving the bytes byte-identical (Rule 75 regression)", () => {
+    const path = tmpConfigPath();
+    const malformed = '{ "version": 1, "appearance": { "scheme": "dark" '; // truncated, unparseable
+    writeFileSync(path, malformed);
+    const store = new FileConfigStore(path);
+    // An attempted edit throws rather than silently discarding the unparseable file.
+    expect(() =>
+      store.update((current) => ({ ...current, appearance: { scheme: "light" } })),
+    ).toThrow(/malformed/);
+    // The malformed file is still exactly as it was — nothing was written over it.
+    expect(readFileSync(path, "utf8")).toBe(malformed);
+  });
 });

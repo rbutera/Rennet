@@ -76,6 +76,13 @@ export type DiffResolver = (elementKey: string) => ElementDiff | undefined;
 export interface CanvasWorkspaceProps {
   canvases: Record<CanvasAngle, Canvas>;
   store?: ViewStore;
+  /**
+   * The resolved app appearance scheme, used to SEED the view store's scheme at
+   * creation so a review opens in the reviewer's chosen scheme (wireframe #15).
+   * The in-review scheme toggle still owns it afterwards — this is a starting
+   * value, not a live override, so toggling inside a review is preserved.
+   */
+  initialScheme?: "dark" | "light";
   feedSource?: CanvasFeedSource;
   bridge?: RennetBridge;
   /** Fan-out sink: the per-anchor L2 writes a single approve act produced. */
@@ -269,7 +276,15 @@ const ZOOM_LABELS = {
 } as const;
 
 export function CanvasWorkspace(props: CanvasWorkspaceProps) {
-  const store = useMemo(() => props.store ?? createViewStore(), [props.store]);
+  // Seed the view store's scheme from the app scheme ONCE (read from a ref so a
+  // later OS/appearance change never resets the review's own view state).
+  const initialSchemeRef = useRef(props.initialScheme);
+  const store = useMemo(
+    () =>
+      props.store ??
+      createViewStore(initialSchemeRef.current ? { scheme: initialSchemeRef.current } : undefined),
+    [props.store],
+  );
   const angle = useViewStore(store, (state) => state.angle);
   const overlayOn = useViewStore(store, (state) => state.overlayOn);
   const scheme = useViewStore(store, (state) => state.scheme);
