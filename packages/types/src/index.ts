@@ -3013,9 +3013,12 @@ export interface ComposableAsk extends HandoffTask {
 /**
  * One composed task: a group of asks the model judged should be executed as one
  * coherent unit, with a model-authored connective `title`. ⭐ The member `asks` are
- * carried VERBATIM from the trusted input — the model chooses order+grouping+title
- * and cites ids, it NEVER rewrites a body — so a composition can neither drop nor
- * alter what was asked (only how it reads). `title` is "" in the mechanical floor.
+ * carried VERBATIM from the trusted input — the model chooses order+grouping and
+ * cites ids, it NEVER rewrites a body — so a composition can neither drop nor alter
+ * what was asked (only how it reads). `title` is PREVIEW-ONLY metadata (shown to the
+ * human on the paper); it is NEVER inserted into the executable handoff prompt, whose
+ * per-task heading is derived mechanically from the trusted ask paths. `title` is ""
+ * in the mechanical floor.
  */
 export interface ComposedTask {
   readonly title: string;

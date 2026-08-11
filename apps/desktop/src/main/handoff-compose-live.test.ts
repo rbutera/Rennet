@@ -196,3 +196,34 @@ describe("createLiveComposeBundle", () => {
     expect(composed.tasks).toHaveLength(3);
   });
 });
+
+describe("F3: rejections fall to the floor, never a rejected command", () => {
+  it("createLiveComposeBundle returns the mechanical floor when a seat probe throws", async () => {
+    const compose = createLiveComposeBundle({
+      claudePort: () => Promise.reject(new Error("claude discovery blew up")),
+      codexExecutor: () => Promise.resolve(null),
+    });
+    const composed = await compose({ bundle: bundle(), repoRoot: "/repo" });
+    expect(composed.composed).toBe(false);
+    expect(composed.tasks).toHaveLength(3); // one per ask, nothing lost
+    expect(Object.keys(composed.traceMap).sort()).toEqual(["d0", "d1", "d2"]);
+  });
+
+  it("claudeComposePort keeps the turn result when session.close() rejects", async () => {
+    const port: HarnessPort = {
+      descriptor: {} as HarnessDescriptor,
+      health: () => Promise.resolve({ state: "ready", version: "2.1.0" } as HarnessHealth),
+      createSession: () => {
+        const session = new FakeSession([ended(VALID_PROPOSAL)]);
+        // Teardown rejects AFTER a valid result was already produced.
+        Object.assign(session, { close: () => Promise.reject(new Error("close failed")) });
+        return Promise.resolve(
+          session as unknown as Awaited<ReturnType<HarnessPort["createSession"]>>,
+        );
+      },
+    };
+    // Must RESOLVE to the emitted result, not reject on the teardown error.
+    const result = await claudeComposePort(port, "/repo")("prompt");
+    expect(result.status).toBe("emitted");
+  });
+});

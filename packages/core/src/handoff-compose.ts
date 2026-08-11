@@ -19,11 +19,19 @@ import type {
 // the model is handed the asks WITH stable ids and asked to return ONLY a partition
 // — an ordered list of groups, each citing ids and carrying a one-line title. It
 // never returns bodies. The composer reconstructs every task's body VERBATIM from
-// the trusted input by id. So the model chooses order + grouping + prose; it is
+// the trusted input by id. So the model chooses order + grouping only; it is
 // structurally incapable of dropping or rewriting what was asked. A deterministic
 // validator then rejects any partition that is not a total cover of the ids (a
 // dropped id, a duplicated id, or an invented id), and on ANY doubt the composer
 // falls back to the mechanical pass-through list (the always-present floor, R9).
+//
+// ⭐ And NO model-authored prose reaches the executable prompt (F1): the group title
+// is PREVIEW-ONLY metadata (for the human's paper), while the coding agent's work
+// order is built from the human's verbatim bodies plus headings derived MECHANICALLY
+// from the trusted ask paths. So a partition that validates cannot smuggle an invented
+// instruction in through a title field — the executable contract can only ever carry
+// the reviewer's asks and facts derived from them. This is NOT a consent gate: nothing
+// is confirmed or withheld; the prompt simply contains the asks and nothing invented.
 //
 // Pure and node-free like `handoff-loop.ts`: `@rennet/types` + the node-free
 // `sha256Hex` only; the real council-routed model turn is injected as a `ComposePort`.
@@ -169,10 +177,28 @@ export function validateComposition(
 // ── Rendering + assembly ──────────────────────────────────────────────────────
 
 /**
+ * A group's executable heading, derived MECHANICALLY from the trusted asks — the
+ * distinct file paths it touches, in order. The model's `title` is NOT used here:
+ * it is preview metadata (shown to the human on the paper) and never reaches the
+ * prompt the coding agent executes. This is the structural half of F1's fix — the
+ * executable contract can carry only the human's asks + facts derived from them, so
+ * a model-authored line cannot inject an instruction the reviewer never wrote.
+ */
+function mechanicalHeading(task: ComposedTask): string {
+  const paths: string[] = [];
+  for (const ask of task.asks) {
+    if (!paths.includes(ask.path)) paths.push(ask.path);
+  }
+  return paths.length === 0 ? "task" : paths.join(", ");
+}
+
+/**
  * Render the coherent work-order prompt from the composed tasks. Each group leads
- * with its (model or empty) title, then lists its member asks VERBATIM with anchor
- * and context, so the coding agent reads one ordered narrative rather than N
- * disconnected comments — and every original instruction body is present unaltered.
+ * with a heading DERIVED MECHANICALLY from its asks' paths (never the model's title),
+ * then lists its member asks with anchor, the instruction body VERBATIM, and context,
+ * so the coding agent reads one ordered narrative rather than N disconnected comments
+ * — and every original instruction body is present, byte-for-byte unaltered. No
+ * model-authored prose enters this prompt: the title stays preview-only.
  */
 export function renderComposedPrompt(tasks: readonly ComposedTask[]): string {
   const askCount = tasks.reduce((total, task) => total + task.asks.length, 0);
@@ -192,17 +218,16 @@ export function renderComposedPrompt(tasks: readonly ComposedTask[]): string {
     `## Tasks (${tasks.length} — ${askCount} review note${askCount === 1 ? "" : "s"})`,
   ];
   tasks.forEach((task, index) => {
-    out.push(
-      "",
-      `### ${index + 1}. ${task.title.trim() === "" ? (task.asks[0]?.path ?? "task") : task.title.trim()}`,
-    );
+    out.push("", `### ${index + 1}. ${mechanicalHeading(task)}`);
     for (const ask of task.asks) {
+      out.push("", `- ${TYPE_LABEL[ask.type]} — ${ask.path} (${anchorLabel(ask)}):`);
+      // The instruction body VERBATIM (F2): trim only to DETECT an empty body; when it
+      // is non-empty, append `ask.instruction` UNCHANGED so indentation, code blocks
+      // and Markdown semantics survive exactly as the reviewer wrote them.
       out.push(
-        "",
-        `- ${TYPE_LABEL[ask.type]} — ${ask.path} (${anchorLabel(ask)}):`,
         ask.instruction.trim() === ""
           ? "  (no instruction body — infer from the context below)"
-          : `  ${ask.instruction.trim()}`,
+          : ask.instruction,
       );
       if (ask.context !== "") {
         out.push("", "  Anchored diff context:", "  ```diff", ask.context, "  ```");
@@ -285,7 +310,18 @@ export async function composeHandoffBundle(
   const asks = asksFromBundle(bundle);
   if (asks.length === 0) return mechanicalComposition(bundle, asks);
 
-  const turn = await port(buildComposePrompt(asks));
+  // F3: a compose port that REJECTS (throws) rather than resolving to a `failed`
+  // result must not escape as a rejected IPC command — the floor is the fail-closed
+  // contract. Catch the rejection at the composition boundary and return the floor.
+  // F3: a compose port that REJECTS (throws) rather than resolving to a `failed`
+  // result must not escape as a rejected IPC command — the floor is the fail-closed
+  // contract. Catch the rejection at the composition boundary and return the floor.
+  let turn: ComposePortResult;
+  try {
+    turn = await port(buildComposePrompt(asks));
+  } catch {
+    return mechanicalComposition(bundle, asks);
+  }
   if (turn.status !== "emitted") return mechanicalComposition(bundle, asks);
 
   const validation = validateComposition(asks, turn.proposal);
@@ -305,11 +341,11 @@ export async function composeHandoffBundle(
 
   const composed = assemble(bundle.reviewId, bundle.patchsetId, tasks, true);
   // Content-preservation guard: every original instruction body must be present in
-  // the rendered work order. Reconstruction guarantees it, but assert it rather than
-  // trust it — a mismatch means fall closed to the mechanical floor.
+  // the rendered work order VERBATIM. Reconstruction guarantees it, but assert it
+  // rather than trust it — a mismatch means fall closed to the mechanical floor.
   for (const ask of asks) {
-    const body = ask.instruction.trim();
-    if (body !== "" && !composed.prompt.includes(body)) {
+    if (ask.instruction.trim() === "") continue;
+    if (!composed.prompt.includes(ask.instruction)) {
       return mechanicalComposition(bundle, asks);
     }
   }

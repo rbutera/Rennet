@@ -161,7 +161,10 @@ export function claudeComposePort(port: HarnessPort, cwd: string, model?: string
     } catch (error) {
       return { status: "failed", reason: `the compose turn threw: ${describeThrow(error)}` };
     } finally {
-      await session.close();
+      // F3: a rejected close() must not override an already-handled turn result (a
+      // failed/empty outcome the try block returned). Swallow it — the compose result
+      // is already determined; a teardown error cannot change it.
+      await session.close().catch(() => undefined);
     }
   };
 }
@@ -192,22 +195,29 @@ export function createLiveComposeBundle(
   deps: LiveComposeDeps,
 ): (input: LiveComposeInput) => Promise<ComposedHandoffBundle> {
   return async ({ bundle, repoRoot }) => {
-    const [claudePort, executor] = await Promise.all([deps.claudePort(), deps.codexExecutor()]);
-    const installed: CouncilHarnessId[] = [];
-    if (claudePort !== null) installed.push("claude-code");
-    if (executor !== null) installed.push("codex");
-
-    const resolution = resolveAssignment(COMPOSE_JOB_ID, { availability: { installed } });
     let port: ComposePort | null = null;
-    if (resolution.kind === "model") {
-      const harness = providerHarness(resolution.model);
-      if (harness === "codex" && executor !== null) {
-        port = codexComposePort(executor, resolution.model, resolution.effort);
-      } else if (harness === "claude-code" && claudePort !== null) {
-        port = claudeComposePort(claudePort, repoRoot);
+    // F3: a seat probe that REJECTS (e.g. codex discovery throws) must not reject the
+    // whole IPC command — it sits OUTSIDE the core router's fallback boundary. Catch it
+    // here and fall to the deterministic mechanical floor (a real, complete bundle).
+    try {
+      const [claudePort, executor] = await Promise.all([deps.claudePort(), deps.codexExecutor()]);
+      const installed: CouncilHarnessId[] = [];
+      if (claudePort !== null) installed.push("claude-code");
+      if (executor !== null) installed.push("codex");
+
+      const resolution = resolveAssignment(COMPOSE_JOB_ID, { availability: { installed } });
+      if (resolution.kind === "model") {
+        const harness = providerHarness(resolution.model);
+        if (harness === "codex" && executor !== null) {
+          port = codexComposePort(executor, resolution.model, resolution.effort);
+        } else if (harness === "claude-code" && claudePort !== null) {
+          port = claudeComposePort(claudePort, repoRoot);
+        }
       }
+    } catch {
+      port = null;
     }
-    // No seat backs the resolved harness: compose with an unavailable port so the core
+    // No seat (or a probe rejected): compose with an unavailable port so the core
     // router returns the deterministic mechanical floor (a real, complete bundle).
     const composePort: ComposePort =
       port ??
