@@ -1,0 +1,2 @@
+# Build output — regenerate with `node build.mjs`.
+dist/

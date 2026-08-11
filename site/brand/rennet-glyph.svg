@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="Rennet">
+  <!--
+    The Rennet mark: a disc divided down its vertical axis.
+      · Left half  SOLID, filled bone (#EDEFF2 = tokens.css --mark-ink): the curd,
+                   the opaque thing, what leaves the machine.
+      · Right half OPEN ARC, stroked backlight blue (#85C4DC = tokens.css --private)
+                   with the system's single inner glow: the whey, translucent,
+                   what stays on your Mac.
+      · Between them a HAIRLINE of pure ground so the split reads as a cut (two
+        objects), never as a half-shaded circle (one progress meter).
+    No cheese. The material contrast (solid vs open) is what reads at 16px, so the
+    "something has been divided" survives shrinkage even when the cut goes sub-pixel.
+  -->
+  <defs>
+    <filter id="innerGlow" x="-40%" y="-40%" width="180%" height="180%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="1.4" result="blur"/>
+      <feFlood flood-color="#85C4DC" flood-opacity="0.55"/>
+      <feComposite in2="blur" operator="in" result="glow"/>
+      <feMerge>
+        <feMergeNode in="glow"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Left half: solid bone semicircle, its flat edge one unit left of centre. -->
+  <path d="M 31 8 A 24 24 0 0 0 31 56 Z" fill="#EDEFF2"/>
+
+  <!-- Right half: open arc, stroked backlight blue, lit. Flat edge one unit right
+       of centre, so a hairline of ground sits between the two halves. -->
+  <path d="M 33 8 A 24 24 0 0 1 33 56" fill="none" stroke="#85C4DC"
+        stroke-width="3.6" stroke-linecap="round" filter="url(#innerGlow)"/>
+</svg>
