@@ -229,7 +229,26 @@ const proposalSchema = z.object({
   status: z.enum(["pending", "accepted", "dismissed"]),
 });
 
-const blastRadiusPaintSchema = z.object({ target: z.string(), docId: z.string() });
+// Optional fields (issue #35) are declared BY HAND — a plain z.object strips any
+// unlisted key at the IPC boundary, so a deterministic signal paint would arrive
+// with `signal`/`reason`/`assessed` silently gone and the overlay would render
+// nothing but the target. `docId` is now optional (deterministic paints omit it).
+const blastRadiusPaintSchema = z.object({
+  target: z.string(),
+  docId: z.string().optional(),
+  signal: z
+    .enum([
+      "deletions",
+      "irreversibility",
+      "codeowners",
+      "safety-net",
+      "fan-in",
+      "contract-surface",
+    ])
+    .optional(),
+  reason: z.string().optional(),
+  assessed: z.boolean().optional(),
+});
 
 export const canvasSchema: z.ZodType<Canvas> = z.object({
   canvasId: z.string(),

@@ -1624,10 +1624,39 @@ export interface AnnotationLayer {
   proposals: Proposal[];
 }
 
-/** A single amber blast-radius paint, targeting an element or anchor. */
+/**
+ * The blast-radius signals (issue #35). A signal is a deterministic, one-line-
+ * explainable reason a change carries risk. Blast radius is PAINT: it MARKS these,
+ * it never gates, reorders, or withholds anything (Rule Zero). `fan-in` and
+ * `contract-surface` are deferred in the first slice and surfaced as NOT ASSESSED
+ * so their absence never reads as "checked and clear".
+ */
+export type BlastRadiusSignal =
+  | "deletions"
+  | "irreversibility"
+  | "codeowners"
+  | "safety-net"
+  | "fan-in"
+  | "contract-surface";
+
+/**
+ * A single amber blast-radius paint, targeting an element or anchor. The overlay
+ * renders `reason` as the one-line explanation next to the paint (issue #35 AC).
+ * `docId` is present only for the legacy model-angle paint source; deterministic
+ * signal paints omit it. `assessed: false` marks a signal that was NOT computed
+ * (deferred) — rendered visibly as "not assessed", never silently absent, so the
+ * reviewer never mistakes no-amber for no-risk.
+ */
 export interface BlastRadiusPaint {
   target: string;
-  docId: string;
+  /** Present only for the legacy model-assigned `blast-radius` chunk-angle source. */
+  docId?: string;
+  /** Which signal produced this paint (deterministic producer, issue #35). */
+  signal?: BlastRadiusSignal;
+  /** The one-line, human-readable explanation rendered with the paint. */
+  reason?: string;
+  /** False ⟺ this signal was NOT assessed (deferred); surfaced as such, not hidden. */
+  assessed?: boolean;
 }
 
 /**
