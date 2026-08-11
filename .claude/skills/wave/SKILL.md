@@ -5,6 +5,9 @@ description: Use when dispatching implementer agents and review agents on Rennet
 
 # Wave — implementer dispatch and review for Rennet
 
+**The loop:** `openspec propose` (issue + wireframes + docs + AGENTS.md as input) → the same agent applies its own proposal → the orchestrator gates it and hands off to review → findings are **sorted** before any reach the implementer.
+
+
 This exists because on 2026-08-11 a night of parallel agent work burned roughly half of Rai's Claude capacity, and **most of the burn was not building. It was ceremony around building** — reviewing, verifying, re-verifying, and fixing things nobody needed fixed. Every rule below is a specific thing that went wrong.
 
 ## ⛔ 0. Rule Zero governs everything here
@@ -60,15 +63,40 @@ Before sending any finding to an implementer, sort it:
 
 A review is evidence. It is not a work order.
 
-## 5. Implementer brief shape
+## 5. The implementer lifecycle: propose → apply → hand off
 
-Keep it short. The task, the worktree, the branch, the baseline count, and anything genuinely specific to this issue. Everything else is in this file.
+**The implementer starts with an OpenSpec proposal, applies it itself, and then this skill hands the result to review.** Do not let an agent start editing code from a bare issue title.
 
-Always include:
-- Worktree path, branch name, base commit, and the current gate baseline so nobody re-derives it.
-- ⛔ **Do not spawn review subagents.** The orchestrator owns the review gate. A reviewer spawned by an implementer is a separate session that cannot report back, so the implementer hangs forever.
+### Step 1 — propose
+
+The implementer runs the `openspec-propose` skill, with **four inputs named explicitly in the brief**:
+
+1. **The GitHub issue** — `gh issue view <n>`, in full, including its acceptance criteria.
+2. **The v3.2 wireframes** at `/Users/rai/dev/rennet/wireframes/` — **the canonical behavioural and visual spec.** Name the specific frames that bear on the issue; the agent should not read all of them.
+3. **The relevant `docs/`** — as rationale and history, never as law. See Rule Zero.
+4. **`AGENTS.md`** — the repo rules, which are law.
+
+⭐ **Where the wireframe and the issue prose disagree, the wireframe wins, and the agent must say so in the proposal** rather than silently picking one. This has already happened once: an issue said an editable draft rendered "on the paper", the wireframes said the paper is frozen and the collation draft is the one editable surface, and the wireframes were right.
+
+The proposal lands in `openspec/changes/<name>/` as `proposal.md`, `design.md`, `tasks.md` and `specs/`.
+
+⭐ **Read the existing model before scoping the build.** More than one issue here has read like a feature and turned out to be three integration points against an abstraction the types already fully expressed. The first move is to find out which.
+
+### Step 2 — apply
+
+The same agent applies its own proposal (`openspec-apply-change`), working through `tasks.md`.
+
+- Worktree path, branch name, base commit and the current gate baseline go in the brief so nobody re-derives them.
 - Red-proof every fix **with the prediction named before running it**, then restore and run the full green pass.
 - ⛔ Never derive a test's assertions by reading your own implementation. That can only confirm it, bugs included. Assert the contract.
+- ⛔ **Do not spawn review subagents.** The orchestrator owns the review gate. A reviewer spawned by an implementer is a separate session that cannot report back, so the implementer hangs forever waiting on a verdict that cannot arrive.
+- Commit and push. State the tip, the counted whole-branch diff, the gate total reconciled against the baseline, and **anything left undone, named specifically.**
+
+### Step 3 — hand off to review
+
+The orchestrator, never the implementer, dispatches review at the pushed tip per §2 and §3. Verify the gate yourself first, on a clean tree, at the exact sha the agent reported — a self-reported green has been wrong more than once.
+
+Then §4: **sort the findings before any of them reach the implementer.**
 
 ## 6. What good work looks like, from the night this file came from
 
