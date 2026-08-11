@@ -15,8 +15,11 @@
  *      reasoning beyond its hunk), and which are obvious (a low nit, or a mechanical
  *      claim the floor already settles) and surface directly with no chip.
  *   ② runFindingVerification — for each non-obvious finding, a FRESH verification
- *      pass fed the REAL file content around its anchor (more than the offered hunk),
- *      instructed to reproduce, refute, or return inconclusive.
+ *      pass fed the REAL file content around its anchor (more than the offered hunk)
+ *      AND a working shell in the repo (issue #259), so it can RUN the code — execute
+ *      the test, reproduce the failure — rather than only reason about it. The commands
+ *      it actually ran are observed and counted (`commandsRun`/`reproducedByExecution`),
+ *      so a reproduced-by-running verdict is told apart from a reproduced-by-reading one.
  *
  * The DISPOSITION is load-bearing and asymmetric (Rai + Rule 75/81ak, could-not-check
  * beats a false clear):
@@ -153,9 +156,35 @@ export type VerificationFileReader = (
   anchor: string,
 ) => Promise<VerificationFileWindow | undefined>;
 
+/**
+ * One command a verification turn ACTUALLY executed, as observed on the harness's
+ * tool stream (issue #259) — the independent proof that reproduction ran, distinct
+ * from whatever the model then wrote as its evidence. A turn that ran nothing carries
+ * no execution at all (absent, never an empty-list masquerading as "ran, found none").
+ */
+export interface VerificationCommand {
+  /** The command line the exec tool ran (e.g. the Bash `command`). */
+  readonly command: string;
+  /** Whether the harness reported the tool call succeeded. */
+  readonly ok: boolean;
+  /** A bounded tail of what the command printed — the executed evidence. */
+  readonly outputTail: string;
+}
+
+/** The executed evidence a verification turn carried: the commands it actually ran (#259). */
+export interface VerificationExecution {
+  readonly commands: readonly VerificationCommand[];
+}
+
 /** One batched verification turn's result (a fresh session emits `{ verifications }`). */
 export type VerificationTurnResult =
-  | { readonly status: "emitted"; readonly body: unknown; readonly tokens?: RspTokenUsage }
+  | {
+      readonly status: "emitted";
+      readonly body: unknown;
+      readonly tokens?: RspTokenUsage;
+      /** The commands the turn ran to reproduce (#259). Absent when it ran nothing. */
+      readonly execution?: VerificationExecution;
+    }
   | { readonly status: "failed"; readonly message: string };
 
 /** Injected (adapters): run ONE batched verification turn against the assembled prompt. */
@@ -191,6 +220,14 @@ export interface VerificationTelemetry {
   /** Model turns spent (one per file batch). The "+N turns" of the cost line. */
   readonly verificationTurns: number;
   readonly reproduced: number;
+  /**
+   * Commands the verification turns ACTUALLY executed (issue #259) — the real
+   * reproduce-by-running, observed on the harness tool stream rather than claimed in
+   * prose. Zero means every verdict was reasoned from read code, not executed.
+   */
+  readonly commandsRun: number;
+  /** Reproduced findings whose verification turn ran at least one command (#259). */
+  readonly reproducedByExecution: number;
   /** Refuted findings — DROPPED, never surfaced. */
   readonly refuted: number;
   /** Findings surfaced WITH a caveat (genuine uncertainty + capped + budget-refused + unreadable). */
@@ -259,6 +296,8 @@ export async function runFindingVerification(
   let inconclusive = 0;
   let verifiedFindings = 0;
   let verificationTurns = 0;
+  let commandsRun = 0;
+  let reproducedByExecution = 0;
   const cappedFindingIds: string[] = [];
   const budgetRefusedFindingIds: string[] = [];
   let tokensSpent: RspTokenUsage | null = null;
@@ -357,6 +396,12 @@ export async function runFindingVerification(
       continue;
     }
     if (turn.tokens) tokensSpent = addTokens(tokensSpent, turn.tokens);
+    // The commands this turn actually RAN (issue #259) — the executed reproduction,
+    // observed on the harness tool stream, not the model's self-report. A reproduced
+    // verdict from a turn that ran a command is proof-by-execution; one from a turn that
+    // ran nothing is proof-by-reading. Both surface; the telemetry keeps them apart.
+    const ranCommands = turn.execution?.commands ?? [];
+    commandsRun += ranCommands.length;
 
     const verdictByRef = parseVerifications(turn.body);
     for (const [ref, finding] of refByFinding) {
@@ -381,6 +426,7 @@ export async function runFindingVerification(
           verification: { verdict: "reproduced", evidence: parsed.evidence.trim() },
         });
         reproduced += 1;
+        if (ranCommands.length > 0) reproducedByExecution += 1;
         continue;
       }
       // inconclusive — or a reproduced with no evidence, which is a guess, not proof.
@@ -411,6 +457,8 @@ export async function runFindingVerification(
       verifiedFindings,
       verificationTurns,
       reproduced,
+      commandsRun,
+      reproducedByExecution,
       refuted,
       inconclusive,
       cappedFindingIds,
@@ -478,6 +526,8 @@ export function emptyVerificationTelemetry(): VerificationTelemetry {
     verifiedFindings: 0,
     verificationTurns: 0,
     reproduced: 0,
+    commandsRun: 0,
+    reproducedByExecution: 0,
     refuted: 0,
     inconclusive: 0,
     cappedFindingIds: [],

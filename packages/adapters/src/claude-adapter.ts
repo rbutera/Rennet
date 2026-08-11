@@ -109,6 +109,34 @@ function stringField(record: Record<string, unknown>, key: string): string | nul
   return typeof value === "string" ? value : null;
 }
 
+/**
+ * Render a `tool_result` block's `content` to plain text for a `tool.output` event.
+ * The Anthropic tool_result content is a string OR an array of blocks (usually
+ * `{ type: "text", text }`); concatenate the text of each, and for a non-text block
+ * fall back to a compact JSON so nothing a tool printed is silently lost.
+ */
+function renderToolResultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content))
+    return content === undefined || content === null ? "" : String(content);
+  const parts: string[] = [];
+  for (const block of content) {
+    const record = asRecord(block);
+    if (record && stringField(record, "type") === "text") {
+      parts.push(stringField(record, "text") ?? "");
+    } else if (typeof block === "string") {
+      parts.push(block);
+    } else {
+      try {
+        parts.push(JSON.stringify(block));
+      } catch {
+        parts.push("");
+      }
+    }
+  }
+  return parts.join("\n");
+}
+
 const API_KEY_SOURCES: readonly ApiKeySource[] = [
   "none",
   "user",
@@ -309,6 +337,33 @@ export function normalizeClaudeFrame(frame: unknown, context: EnvelopeContext): 
       }
     }
     return events;
+  }
+
+  if (type === "user") {
+    // A `user` frame carries the RESULTS of the tools the assistant called: each
+    // `tool_result` block echoes a `tool_use_id` back with its output. Slice 1 never
+    // parsed these, so `tool.output` — a declared event kind — was never emitted, and
+    // a consumer watching what a turn actually RAN (issue #259, verification's executed
+    // reproduction) saw the tool start but never its result. Emit one `tool.output` per
+    // tool_result; a user frame with no tool_result falls through to passthrough.
+    const message = asRecord(record.message);
+    const content = message && Array.isArray(message.content) ? message.content : [];
+    const events: HarnessEvent[] = [];
+    for (const block of content) {
+      const blockRecord = asRecord(block);
+      if (!blockRecord || stringField(blockRecord, "type") !== "tool_result") continue;
+      const callId = stringField(blockRecord, "tool_use_id");
+      if (callId === null) continue;
+      events.push({
+        ...envelope(context, frame),
+        kind: "tool.output",
+        callId,
+        ok: blockRecord.is_error !== true,
+        output: blockRecord.content ?? null,
+        text: renderToolResultText(blockRecord.content),
+      });
+    }
+    if (events.length > 0) return events;
   }
 
   if (type === "stream_event") {

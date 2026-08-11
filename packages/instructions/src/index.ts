@@ -403,14 +403,17 @@ export function renderConventionLayer(catalogue: ConventionCatalogue): string {
 // ── The per-finding verification contract (issue #179) ───────────────────────
 
 /**
- * The reproduce-or-refute verification contract (issue #179). NOT a `PromptContract`
- * (it does not elicit an RSP `docType` and does not surface a lens): it is the small
- * dedicated instruction that drives a FRESH session to check a finding another model
- * raised against the REAL code around it. Its four slots carry the whole discipline:
- * judge only from the shown code, produce a one-line evidence, and — the load-bearing
- * failure valve — return `inconclusive` rather than guess, because an inconclusive
- * finding surfaces to the human with a caveat (safe) while a guessed `reproduced` or
- * a wrongly-`refuted` finding is not (a refuted finding is DROPPED).
+ * The reproduce-or-refute verification contract (issue #179 + #259). NOT a
+ * `PromptContract` (it does not elicit an RSP `docType` and does not surface a lens):
+ * it is the small dedicated instruction that drives a FRESH session to check a finding
+ * another model raised against the REAL code. The session runs INSIDE the repository
+ * with a working shell, so the verifier may RUN the code — execute the test, reproduce
+ * the failure — not only reason about the shown lines (issue #259: a "reproduce" pass
+ * that cannot run anything was reproduce-in-name-only). Its four slots carry the whole
+ * discipline: prefer executed evidence, produce a one-line evidence, and — the
+ * load-bearing failure valve — return `inconclusive` rather than guess, because an
+ * inconclusive finding surfaces to the human with a caveat (safe) while a guessed
+ * `reproduced` or a wrongly-`refuted` finding is not (a refuted finding is DROPPED).
  */
 export interface VerificationContract {
   /** Bumped when the SLOT SET or its wording changes (A/B-able against verdict quality). */
@@ -422,13 +425,13 @@ export interface VerificationContract {
 }
 
 export const FINDING_VERIFICATION_CONTRACT: VerificationContract = {
-  version: 1,
-  role: "You verify a code-review finding against the REAL code; you do not run the review. Another model raised each concern below from a narrow view of one hunk. Your job is to check it against the actual file around it and say, honestly, whether it holds — so a hallucinated or mistaken concern never reaches the reviewer, and a real one arrives with proof.",
-  task: "For each finding you are given — its reference key, its severity, and its one-sentence concern — reproduce it or refute it against the file content shown. REPRODUCE: name the concrete failure path, or cite the exact lines, that make the concern true. REFUTE: show, from the shown code, why it does not hold. If you can honestly do neither, return INCONCLUSIVE. Emit exactly one verification per reference key you were given, echoing that key unchanged. The exact JSON shape is enforced separately as a structured-output constraint you must satisfy; do not describe or restate it.",
+  version: 2,
+  role: "You verify a code-review finding against the REAL code. You are working INSIDE the repository, with a shell, and you MAY run the code — execute the tests, run the build, reproduce the failure at the command line — to check whether each concern actually holds. Another model raised each concern below from a narrow view of one hunk; your job is to check it against the real system and say, honestly, whether it holds, so a hallucinated or mistaken concern never reaches the reviewer and a real one arrives with proof.",
+  task: "For each finding you are given — its reference key, its severity, and its one-sentence concern — reproduce it or refute it. PREFER EXECUTED EVIDENCE: when you can run the code to make the concern happen (or to show it cannot), do that, and cite the exact command you ran and what it printed. REPRODUCE: name the concrete failure — the command whose output shows it, the failing test, or the exact lines that make the concern true. REFUTE: show, by running it or from the code, why it does not hold. If you can honestly do neither, return INCONCLUSIVE. Emit exactly one verification per reference key you were given, echoing that key unchanged. The exact JSON shape is enforced separately as a structured-output constraint you must satisfy; do not describe or restate it.",
   discipline:
-    "Judge only from the file content you are shown, never from code you cannot see or assume. The evidence is ONE line: for a reproduced finding, the failure path or the lines that prove it; for a refuted or inconclusive one, the concrete reason. Do not soften a genuine bug into inconclusive to be safe, and do not upgrade a hunch into reproduced to look decisive.",
+    "Ground every verdict in evidence you actually have: what a command printed when you ran it, or the specific code you read. You are shown a file window to start from, but you are NOT confined to it — read more of the repository, and run it, when that is what it takes to know. The evidence is ONE line: for a reproduced finding, the command and its result or the lines that prove it; for a refuted or inconclusive one, the concrete reason. Do not soften a genuine bug into inconclusive to be safe, and do not upgrade a hunch into reproduced to look decisive.",
   failureValve:
-    "If the shown code does not let you establish reproduce OR refute — it is not enough, the claim reaches beyond what you can see, you are genuinely unsure — return inconclusive with the honest reason. Inconclusive is surfaced to the human with a 'could not verify' caveat, so it is a safe and honest answer. A refuted verdict DROPS the finding from the review, so refute a concern only when the shown code proves it wrong; never refute merely because you did not immediately see the problem.",
+    "If you can establish neither reproduce NOR refute — running it is impractical here, the claim reaches beyond what you can check, you are genuinely unsure — return inconclusive with the honest reason. Inconclusive is surfaced to the human with a 'could not verify' caveat, so it is a safe and honest answer. A refuted verdict DROPS the finding from the review, so refute a concern only when you have shown it wrong; never refute merely because you did not immediately see the problem.",
 };
 
 /** One finding handed to a batched verification turn: its ref key, severity, concern, and offered hunk. */

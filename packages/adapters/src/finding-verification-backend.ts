@@ -34,6 +34,9 @@ import { readFileSync } from "node:fs";
 import { isAbsolute, join, normalize, relative, sep } from "node:path";
 import type {
   HarnessPort,
+  ToolCall,
+  ToolCallId,
+  VerificationCommand,
   VerificationFileReader,
   VerificationFileWindow,
   VerificationTurnResult,
@@ -249,14 +252,37 @@ export interface VerificationTurnOptions {
   readonly signal?: AbortSignal;
 }
 
+/** Max chars of a command's output kept as executed evidence (issue #259). */
+export const VERIFICATION_OUTPUT_TAIL = 800;
+
+/** The command line an exec tool call ran; the Bash `command`, falling back to the tool name. */
+function execCommandLine(call: ToolCall): string {
+  const command = call.input.command;
+  if (typeof command === "string" && command.trim().length > 0) return command;
+  return call.name;
+}
+
+/** Keep the last {@link VERIFICATION_OUTPUT_TAIL} chars — the tail is where a test/build verdict prints. */
+function outputTail(text: string): string {
+  return text.length <= VERIFICATION_OUTPUT_TAIL ? text : text.slice(-VERIFICATION_OUTPUT_TAIL);
+}
+
 /**
  * Build the fresh-session verification turn core injects. Each call opens a NEW
- * read-only session (no contamination from the generating model's context),
+ * CAPABLE session (no contamination from the generating model's context, but the full
+ * default toolset — it may read, and it may RUN the code to reproduce, issue #259),
  * output-constrained to the verification schema, sends the prompt, drains to the
  * terminal frame, and maps it: a completed turn with `structuredOutput` is an
  * emitted body (threading the real token usage when the frame carried it); anything
  * else is a turn failure — which core turns into an honest inconclusive, never a
  * drop. The session is always closed.
+ *
+ * While draining, it OBSERVES the exec tool calls the turn actually made — every
+ * `tool.started` of kind `exec` paired with its `tool.output` — and threads them back
+ * as the turn's `execution`. This is the independent proof that reproduction RAN,
+ * separate from whatever the model wrote as its evidence: a reproduced verdict backed
+ * by an executed command is proof-by-running, and core counts it apart from a verdict
+ * reasoned off read code. A turn that ran nothing carries no `execution` at all.
  */
 export function createVerificationTurn(
   port: HarnessPort,
@@ -270,9 +296,34 @@ export function createVerificationTurn(
       ...(options.model === undefined ? {} : { model: options.model }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
+    // The exec commands this turn ran, keyed by call id in the order they started. A
+    // command is recorded the moment the exec STARTS — so a command that ran counts
+    // even if the turn ends before its result frame — and its ok/output are filled in
+    // when the matching `tool.output` arrives. Absent from the result when nothing ran.
+    const execByCall = new Map<ToolCallId, { command: string; ok: boolean; outputTail: string }>();
+    const execOrder: ToolCallId[] = [];
     try {
       await session.send({ prompt });
       for await (const event of session.events) {
+        if (event.kind === "tool.started" && event.call.kind === "exec") {
+          if (!execByCall.has(event.call.id)) {
+            execByCall.set(event.call.id, {
+              command: execCommandLine(event.call),
+              ok: true,
+              outputTail: "",
+            });
+            execOrder.push(event.call.id);
+          }
+          continue;
+        }
+        if (event.kind === "tool.output") {
+          const record = execByCall.get(event.callId);
+          if (record) {
+            record.ok = event.ok;
+            record.outputTail = outputTail(event.text);
+          }
+          continue;
+        }
         if (event.kind === "error") {
           return { status: "failed", message: event.error.message };
         }
@@ -285,10 +336,17 @@ export function createVerificationTurn(
                 message: "the harness completed the verification turn without structured output",
               };
             }
+            const ranCommands: VerificationCommand[] = execOrder.map((id) => {
+              const record = execByCall.get(id);
+              return record
+                ? { command: record.command, ok: record.ok, outputTail: record.outputTail }
+                : { command: id, ok: true, outputTail: "" };
+            });
             return {
               status: "emitted",
               body: outcome.structuredOutput,
               ...(outcome.usage === undefined ? {} : { tokens: outcome.usage }),
+              ...(ranCommands.length > 0 ? { execution: { commands: ranCommands } } : {}),
             };
           }
           if (outcome.status === "failed") {

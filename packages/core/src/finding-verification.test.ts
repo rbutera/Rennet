@@ -204,6 +204,74 @@ describe("runFindingVerification disposition (#179)", () => {
   });
 });
 
+// ── ② executed reproduction: proof it RAN, not just re-read (#259) ───────────────
+
+describe("runFindingVerification executed reproduction (#259)", () => {
+  /** A turn that returns one verdict AND (optionally) the commands it actually ran. */
+  function turnWith(
+    verdict: { verdict: string; evidence: string },
+    execution?: { commands: { command: string; ok: boolean; outputTail: string }[] },
+  ): VerificationTurn {
+    return async (): Promise<VerificationTurnResult> => ({
+      status: "emitted",
+      body: {
+        verifications: [{ ref: "f1", verdict: verdict.verdict, evidence: verdict.evidence }],
+      },
+      ...(execution ? { execution } : {}),
+    });
+  }
+
+  it("a reproduced verdict backed by a command the turn RAN counts as reproduced-by-execution", async () => {
+    const f = finding({ findingId: "F1" });
+    const result = await runFindingVerification({
+      findings: [f],
+      manifest: MANIFEST,
+      readFileWindow: readAll,
+      runTurn: turnWith(
+        { verdict: "reproduced", evidence: "ran the test — it threw on empty input" },
+        { commands: [{ command: "pnpm vitest run a.test.ts", ok: false, outputTail: "1 failed" }] },
+      ),
+      budget: budget(),
+    });
+    expect(result.findings[0]?.verification?.verdict).toBe("reproduced");
+    expect(result.telemetry.commandsRun).toBe(1);
+    expect(result.telemetry.reproducedByExecution).toBe(1);
+  });
+
+  it("a reproduced verdict from a turn that ran NOTHING is reproduced-by-reading, not by execution", async () => {
+    // Same verdict, same finding: the ONLY difference is whether a command executed —
+    // and that is exactly what the telemetry keeps apart, so "reproduced" can never
+    // silently mean "a model re-read it and still believed itself."
+    const f = finding({ findingId: "F1" });
+    const result = await runFindingVerification({
+      findings: [f],
+      manifest: MANIFEST,
+      readFileWindow: readAll,
+      runTurn: turnWith({ verdict: "reproduced", evidence: "line 2 dereferences a null x" }),
+      budget: budget(),
+    });
+    expect(result.findings[0]?.verification?.verdict).toBe("reproduced");
+    expect(result.telemetry.commandsRun).toBe(0);
+    expect(result.telemetry.reproducedByExecution).toBe(0);
+  });
+
+  it("counts commandsRun even when a run ends inconclusive, but not reproducedByExecution", async () => {
+    const f = finding({ findingId: "F1" });
+    const result = await runFindingVerification({
+      findings: [f],
+      manifest: MANIFEST,
+      readFileWindow: readAll,
+      runTurn: turnWith(
+        { verdict: "inconclusive", evidence: "the test harness would not build here" },
+        { commands: [{ command: "pnpm build", ok: false, outputTail: "error" }] },
+      ),
+      budget: budget(),
+    });
+    expect(result.telemetry.commandsRun).toBe(1);
+    expect(result.telemetry.reproducedByExecution).toBe(0);
+  });
+});
+
 // ── ② cost containment: cap + batching + budget ─────────────────────────────────
 
 describe("runFindingVerification cost containment (#179)", () => {

@@ -133,6 +133,50 @@ describe("normalizeClaudeFrame: passthrough and content", () => {
     expect(tool?.kind === "tool.started" && tool.call.name).toBe("Read");
     expect(tool?.kind === "tool.started" && tool.call.kind).toBe("read");
   });
+
+  it("emits tool.output from a user tool_result, echoing the tool_use_id (#259)", () => {
+    const frame = {
+      type: "user",
+      message: {
+        content: [{ type: "tool_result", tool_use_id: "u1", content: "1 failed | 0 passed" }],
+      },
+    };
+    const events = normalizeClaudeFrame(frame, context());
+    expect(events).toHaveLength(1);
+    const out = events[0];
+    expect(out?.kind).toBe("tool.output");
+    expect(out?.kind === "tool.output" && out.callId).toBe("u1");
+    expect(out?.kind === "tool.output" && out.ok).toBe(true);
+    expect(out?.kind === "tool.output" && out.text).toBe("1 failed | 0 passed");
+  });
+
+  it("renders array tool_result content to text and maps is_error to ok=false (#259)", () => {
+    const frame = {
+      type: "user",
+      message: {
+        content: [
+          {
+            type: "tool_result",
+            tool_use_id: "u2",
+            is_error: true,
+            content: [{ type: "text", text: "TypeError: boom" }],
+          },
+        ],
+      },
+    };
+    const events = normalizeClaudeFrame(frame, context());
+    const out = events[0];
+    expect(out?.kind === "tool.output" && out.callId).toBe("u2");
+    expect(out?.kind === "tool.output" && out.ok).toBe(false);
+    expect(out?.kind === "tool.output" && out.text).toBe("TypeError: boom");
+  });
+
+  it("passes a user frame with no tool_result through as passthrough (nothing lost)", () => {
+    const frame = { type: "user", message: { content: [{ type: "text", text: "hi" }] } };
+    const events = normalizeClaudeFrame(frame, context());
+    expect(events).toHaveLength(1);
+    expect(events[0]?.kind).toBe("passthrough");
+  });
 });
 
 describe("classifyToolKind", () => {

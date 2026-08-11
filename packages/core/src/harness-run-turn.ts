@@ -10,7 +10,8 @@
  * It depends ONLY on the `HarnessPort` interface (this package), never on
  * `@rennet/adapters`, so `core` never imports `adapters` — the concrete Claude
  * adapter is composed by `apps/desktop` and passed in as a `HarnessPort`. The
- * session is read-only (review never writes/execs) and constrained to the
+ * session is CAPABLE by default (the adapter withholds no tools; issue #259 removed
+ * the read-only posture that used to sit on the analysis path) and constrained to the
  * docType's output schema, so a completed turn carries a schema-shaped
  * `structuredOutput` the angle then validates. Anything else (no structured
  * output, a failure, a cancellation, an error frame) is a turn failure, so the
@@ -91,7 +92,7 @@ export interface HarnessRunTurnOptions {
 
 /**
  * Build the injected `runTurn` for one document type against a harness port.
- * Each call creates a fresh read-only session (slice-1 adapters are single-turn),
+ * Each call creates a fresh capable session (slice-1 adapters are single-turn),
  * sends the prompt, drains the event stream to the terminal frame, and maps it:
  * a completed outcome with `structuredOutput` becomes an emitted body; everything
  * else becomes a turn failure. The session is always closed.

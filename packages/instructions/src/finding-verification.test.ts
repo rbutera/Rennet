@@ -6,22 +6,34 @@ import { FINDING_VERIFICATION_CONTRACT, renderFindingVerificationPrompt } from "
 // window (line-numbered), each finding's ref/severity/concern, and the drop-on-
 // refute warning, so a fresh session can check the claim against the actual code.
 
-describe("FINDING_VERIFICATION_CONTRACT (#179)", () => {
+describe("FINDING_VERIFICATION_CONTRACT (#179 + #259)", () => {
+  const text = [
+    FINDING_VERIFICATION_CONTRACT.role,
+    FINDING_VERIFICATION_CONTRACT.task,
+    FINDING_VERIFICATION_CONTRACT.discipline,
+    FINDING_VERIFICATION_CONTRACT.failureValve,
+  ]
+    .join(" ")
+    .toLowerCase();
+
   it("names reproduce, refute, and inconclusive and warns that refute DROPS the finding", () => {
-    const text = [
-      FINDING_VERIFICATION_CONTRACT.role,
-      FINDING_VERIFICATION_CONTRACT.task,
-      FINDING_VERIFICATION_CONTRACT.discipline,
-      FINDING_VERIFICATION_CONTRACT.failureValve,
-    ]
-      .join(" ")
-      .toLowerCase();
     expect(text).toContain("reproduce");
     expect(text).toContain("refute");
     expect(text).toContain("inconclusive");
     // The load-bearing safety: refute drops the finding, so inconclusive is the safe honest answer.
     expect(FINDING_VERIFICATION_CONTRACT.failureValve.toLowerCase()).toContain("drop");
-    expect(FINDING_VERIFICATION_CONTRACT.discipline.toLowerCase()).toContain("shown");
+  });
+
+  it("invites the verifier to RUN the code, not just read the shown lines (#259)", () => {
+    // The pillar's whole point: a "reproduce" pass must be able to actually run
+    // something. The contract must say so — and must NOT carry the old read-only
+    // confinement that told the model to judge only from the file window.
+    expect(text).toContain("run");
+    expect(text).toMatch(/execut/);
+    expect(text).toContain("shell");
+    expect(text).not.toContain("judge only from the file content you are shown");
+    // The version moves when the wording moves (A/B-able against verdict quality).
+    expect(FINDING_VERIFICATION_CONTRACT.version).toBeGreaterThanOrEqual(2);
   });
 });
 

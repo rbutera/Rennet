@@ -373,3 +373,129 @@ describe("createVerificationTurn (#179)", () => {
     expect(result).toEqual({ status: "failed", message: "boom" });
   });
 });
+
+// ── The executed-reproduction observation (#259): the shell was invoked and printed ─
+
+function toolStartedExec(callId: string, command: string): HarnessEvent {
+  return {
+    seq: 1,
+    harness: "claude-code",
+    sessionId: "s1",
+    turnId: "t1",
+    receivedAt: 0,
+    native: {},
+    kind: "tool.started",
+    call: { id: callId, name: "Bash", input: { command }, parentToolCallId: null, kind: "exec" },
+  };
+}
+
+function toolOutputEvent(callId: string, ok: boolean, text: string): HarnessEvent {
+  return {
+    seq: 2,
+    harness: "claude-code",
+    sessionId: "s1",
+    turnId: "t1",
+    receivedAt: 0,
+    native: {},
+    kind: "tool.output",
+    callId,
+    ok,
+    output: {},
+    text,
+  };
+}
+
+function toolStartedRead(callId: string, path: string): HarnessEvent {
+  return {
+    seq: 1,
+    harness: "claude-code",
+    sessionId: "s1",
+    turnId: "t1",
+    receivedAt: 0,
+    native: {},
+    kind: "tool.started",
+    call: {
+      id: callId,
+      name: "Read",
+      input: { file_path: path },
+      parentToolCallId: null,
+      kind: "read",
+    },
+  };
+}
+
+describe("createVerificationTurn executed-reproduction observation (#259)", () => {
+  const reproducedBody = {
+    verifications: [{ ref: "f1", verdict: "reproduced", evidence: "the test fails" }],
+  };
+
+  it("records the exec commands the turn RAN, with their output tail, as executed evidence", async () => {
+    const state: FakeState = { sent: [], closed: false };
+    const port = fakePort(
+      [
+        toolStartedExec("c1", "pnpm vitest run empty.test.ts"),
+        toolOutputEvent("c1", false, "FAIL empty.test.ts\n 1 failed | 0 passed"),
+        endedEvent({ status: "completed", finalText: "ok", structuredOutput: reproducedBody }),
+      ],
+      state,
+    );
+    const turn = createVerificationTurn(port, { cwd: "/repo" });
+    const result = await turn("verify");
+    expect(result.status).toBe("emitted");
+    if (result.status === "emitted") {
+      expect(result.execution?.commands).toEqual([
+        {
+          command: "pnpm vitest run empty.test.ts",
+          ok: false,
+          outputTail: "FAIL empty.test.ts\n 1 failed | 0 passed",
+        },
+      ]);
+    }
+  });
+
+  it("carries NO execution when the turn ran nothing — a re-read is never dressed up as a run", async () => {
+    const state: FakeState = { sent: [], closed: false };
+    const port = fakePort(
+      [endedEvent({ status: "completed", finalText: "ok", structuredOutput: reproducedBody })],
+      state,
+    );
+    const turn = createVerificationTurn(port, { cwd: "/repo" });
+    const result = await turn("verify");
+    if (result.status === "emitted") expect(result.execution).toBeUndefined();
+  });
+
+  it("ignores non-exec tool calls — reading a file is not running the code", async () => {
+    const state: FakeState = { sent: [], closed: false };
+    const port = fakePort(
+      [
+        toolStartedRead("r1", "src/a.ts"),
+        toolOutputEvent("r1", true, "const x = load();"),
+        endedEvent({ status: "completed", finalText: "ok", structuredOutput: reproducedBody }),
+      ],
+      state,
+    );
+    const turn = createVerificationTurn(port, { cwd: "/repo" });
+    const result = await turn("verify");
+    if (result.status === "emitted") expect(result.execution).toBeUndefined();
+  });
+
+  it("truncates a long command output to the tail, where a test/build verdict prints", async () => {
+    const long = `${"x".repeat(2000)}\n=== 3 failed ===`;
+    const state: FakeState = { sent: [], closed: false };
+    const port = fakePort(
+      [
+        toolStartedExec("c1", "pnpm build"),
+        toolOutputEvent("c1", false, long),
+        endedEvent({ status: "completed", finalText: "ok", structuredOutput: reproducedBody }),
+      ],
+      state,
+    );
+    const turn = createVerificationTurn(port, { cwd: "/repo" });
+    const result = await turn("verify");
+    if (result.status === "emitted") {
+      const tail = result.execution?.commands[0]?.outputTail ?? "";
+      expect(tail.length).toBeLessThanOrEqual(800);
+      expect(tail.endsWith("=== 3 failed ===")).toBe(true);
+    }
+  });
+});
