@@ -1,5 +1,6 @@
-// Rennet icon set — a small, consistent stroke vocabulary matching the mood-board
-// (prototypes/moodboard: 1.6px currentColor stroke, round caps/joins, inline SVG).
+// Rennet icon set — a small, consistent stroke vocabulary matching the design
+// language (1.6px currentColor stroke, round caps/joins, inline SVG; see the
+// canonical wireframes in wireframes/src/kit.mjs).
 // Icons are decorative: each is aria-hidden so it never changes a control's
 // accessible name (the button text stays the label). No hardcoded hex — stroke and
 // fill ride currentColor, so an icon takes the colour of whatever it sits in.

@@ -1,0 +1,130 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>Rennet v3 · 03 Worktree config</title><style>
+:root{
+  --ground:#e7e9ec; --ink:#181b1f; --text:#1c1f24; --muted:#697079; --faint:#9aa1a9;
+  --win:#ffffff; --titlebar:#f4f5f7; --glass:#eceff2; --card:#ffffff;
+  --line:#e1e5e9; --line2:#d2d7dd;
+  --blue:#3d7cab; --blue-ink:#2f6491; --blue-bg:#e9f1f8; --blue-line:#c2d8e9;
+  --amber:#94690f; --amber-bg:#f6efdb; --amber-line:#e0cf98;
+  --green:#3c7a45; --green-bg:#e7f0e8; --green-line:#bdd8be;
+  --add:#3c7a45; --orange:#bf6a2f;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, sans-serif;
+  /* chrome is sans now (Rai: no monospace as UI elements). --mono aliases sans so every
+     existing chrome reference flips automatically; only real code/diff uses --code. */
+  --mono: var(--sans);
+  --code: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+}
+*{ box-sizing:border-box; }
+html,body{ margin:0; padding:0; }
+body{ background:var(--ground); color:var(--text); font-family:var(--sans);
+  -webkit-font-smoothing:antialiased; text-rendering:geometricPrecision; }
+.page{ width:1440px; margin:0 auto; padding:34px 40px 40px; }
+.mono{ font-family:var(--mono); }
+
+/* frame header */
+.fhead{ display:flex; align-items:center; gap:14px; margin:0 0 12px; }
+.badge{ flex:none; width:32px; height:32px; border-radius:8px; background:var(--ink); color:#fff;
+  font-family:var(--mono); font-weight:600; font-size:14px; display:flex; align-items:center; justify-content:center; }
+.ftitle{ font-size:23px; font-weight:650; letter-spacing:-.01em; margin:0; }
+.pill{ font-family:var(--mono); font-size:11px; letter-spacing:.11em; text-transform:uppercase;
+  color:var(--muted); border:1px solid var(--line2); background:#fff; border-radius:6px; padding:4px 9px; }
+.fref{ margin-left:auto; text-align:right; white-space:pre-line; font-family:var(--mono);
+  font-size:12px; line-height:1.5; color:var(--faint); }
+.fsub{ color:var(--muted); font-size:15px; line-height:1.5; max-width:1080px; margin:0 0 20px; }
+.fsub b{ color:var(--text); font-weight:600; }
+
+/* app window */
+.win{ background:var(--win); border:1px solid var(--line2); border-radius:14px; overflow:hidden;
+  box-shadow: 0 1px 0 rgba(255,255,255,.6), 0 24px 50px -34px rgba(20,26,33,.42); }
+.tbar{ display:flex; align-items:center; gap:12px; height:52px; padding:0 18px;
+  background:var(--titlebar); border-bottom:1px solid var(--line); }
+.tl{ width:12px; height:12px; border-radius:50%; border:1.5px solid #c3c9d1; }
+.tls{ display:flex; gap:8px; margin-right:6px; }
+.tname{ display:flex; align-items:center; gap:8px; font-weight:600; font-size:14.5px; }
+.tmeta{ margin-left:auto; display:flex; align-items:center; gap:12px; font-family:var(--mono);
+  font-size:12.5px; color:var(--muted); }
+.content{ padding:26px 28px; }
+
+/* icon box */
+.gly{ flex:none; width:34px; height:34px; border-radius:8px; border:1px solid var(--line2);
+  background:#fff; display:flex; align-items:center; justify-content:center; color:#2a2e34; }
+.gly svg{ width:19px; height:19px; }
+.gly.sm{ width:26px; height:26px; border-radius:7px; }
+.gly.sm svg{ width:15px; height:15px; }
+.gly.plain{ border:none; background:transparent; }
+svg{ display:block; width:16px; height:16px; }
+.i{ width:16px; height:16px; vertical-align:-3px; }
+
+/* chips + buttons */
+.chip{ font-family:var(--mono); font-size:12px; line-height:1; color:var(--muted);
+  border:1px solid var(--line2); background:#fff; border-radius:6px; padding:5px 8px; display:inline-flex;
+  align-items:center; gap:5px; white-space:nowrap; }
+.chip.blue{ color:var(--blue-ink); background:var(--blue-bg); border-color:var(--blue-line); }
+.chip.amber{ color:var(--amber); background:var(--amber-bg); border-color:var(--amber-line); }
+.chip.green{ color:var(--green); background:var(--green-bg); border-color:var(--green-line); }
+.chip.ghost{ background:transparent; }
+.btn{ font-family:var(--sans); font-size:13.5px; font-weight:550; color:var(--text); background:#fff;
+  border:1px solid var(--line2); border-radius:8px; padding:8px 13px; display:inline-flex; align-items:center;
+  gap:7px; cursor:default; white-space:nowrap; }
+.btn.ink{ background:var(--ink); color:#fff; border-color:var(--ink); }
+.btn.sm{ padding:6px 10px; font-size:12.5px; }
+.btn svg{ width:15px; height:15px; }
+
+/* generic rows/cards */
+.card{ background:var(--card); border:1px solid var(--line2); border-radius:11px; }
+.row{ display:flex; align-items:center; gap:14px; background:var(--card); border:1px solid var(--line2);
+  border-radius:11px; padding:15px 16px; }
+.row.backlight{ background:var(--blue-bg); border-color:var(--blue-line); box-shadow: inset 3px 0 0 var(--blue); }
+.muted{ color:var(--muted); } .faint{ color:var(--faint); }
+.k{ font-family:var(--mono); }
+
+/* designer notes footer */
+.notes{ border:1.5px dashed var(--line2); border-radius:12px; padding:20px 24px; margin-top:20px; }
+.notes-h{ font-family:var(--mono); font-size:12px; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--faint); margin:0 0 14px; }
+.notes-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px 40px; }
+.note{ display:flex; gap:11px; font-size:14px; line-height:1.5; color:var(--muted); }
+.note b{ color:var(--text); font-weight:600; }
+.dot{ flex:none; width:20px; height:20px; border-radius:50%; background:var(--orange); color:#fff;
+  font-family:var(--mono); font-size:11px; font-weight:600; display:inline-flex; align-items:center; justify-content:center; }
+.anno{ position:absolute; z-index:5; }
+.rel{ position:relative; }
+.sec-label{ font-family:var(--mono); font-size:11.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); }
+.modepill{ display:inline-flex; align-items:center; gap:7px; font-family:var(--sans); font-size:12.5px; color:var(--text);
+  border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
+.modepill svg{ width:14px; height:14px; }
+
+.disc-h{ display:flex; align-items:center; gap:9px; font-size:15px; font-weight:600; margin:2px 0 16px; }
+.disc-h .k{ font-family:var(--mono); color:var(--muted); font-weight:400; font-size:13.5px; }
+.togrow{ display:flex; align-items:center; gap:13px; border:1px solid var(--line2); border-radius:11px; padding:13px 15px; margin-bottom:10px; }
+.togrow .nm{ font-family:var(--mono); font-weight:600; font-size:13.5px; }
+.togrow .sub{ font-family:var(--mono); font-size:12px; color:var(--muted); }
+.togrow .tog{ margin-left:auto; width:40px; height:23px; border-radius:12px; background:var(--blue); position:relative; }
+.togrow .tog::after{ content:""; position:absolute; right:3px; top:3px; width:17px; height:17px; border-radius:50%; background:#fff; }
+.togrow .tog.off{ background:#cdd3da; } .togrow .tog.off::after{ right:auto; left:3px; }
+.primary{ display:flex; align-items:center; gap:13px; border:1px solid var(--line2); border-radius:11px; padding:13px 15px; margin-top:6px; background:var(--glass); }
+.primary .lbl{ font-family:var(--mono); font-size:12.5px; color:var(--muted); }
+.primary .val{ font-family:var(--mono); font-weight:600; font-size:13.5px; display:flex; align-items:center; gap:7px; }
+.foot{ display:flex; justify-content:space-between; align-items:center; margin-top:22px; }
+</style></head>
+<body><div class="page">
+  <div class="fhead">
+    <span class="badge">03</span>
+    <h1 class="ftitle">Worktree config: editable defaults</h1>
+    <span class="pill">Onboarding</span>
+    <div class="fref">step 2 of 2
+discovery, not an interrogation</div>
+  </div>
+  <p class="fsub">Discovery shows what it found as <b>editable defaults</b>, not questions: the repos and worktrees it detected, each with an include toggle (all on), and the primary branch confirmed. One Confirm. If nothing is odd, this screen is three rows tall.</p>
+  <div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="gly sm plain" style="width:20px;height:20px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></span>Add a project</span><span class="tmeta">step 2 of 2</span></div><div class="content"><div class="rel">
+    <div class="disc-h rel"><span class="anno" style="left:-30px;top:0"><span class="dot">1</span></span><span style="color:#4a5059"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span>Found in <span class="k">~/orbital</span></div>
+    <div class="togrow rel"><span class="anno" style="left:-30px;top:14px"><span class="dot">2</span></span><span class="gly sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="8" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 10.3c0 4-3.5 4.4-6.4 5.2"/></svg></span><div><div class="nm">atlas</div><div class="sub">3 branches · git.com/orbital/atlas</div></div><span class="tog"></span></div>
+    <div class="togrow"><span class="gly sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="8" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 10.3c0 4-3.5 4.4-6.4 5.2"/></svg></span><div><div class="nm">navcore</div><div class="sub">2 branches</div></div><span class="tog"></span></div>
+    <div class="togrow"><span class="gly sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="8" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 10.3c0 4-3.5 4.4-6.4 5.2"/></svg></span><div><div class="nm">atlas-docs</div><div class="sub">2 branches · docs only</div></div><span class="tog off"></span></div>
+    <div class="primary"><span class="lbl">Primary branch</span><span class="val"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="8" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 10.3c0 4-3.5 4.4-6.4 5.2"/></svg>main</span><span style="margin-left:auto;color:var(--blue-ink);font-family:var(--mono);font-size:12.5px">edit</span></div>
+    <div class="foot rel"><span class="anno" style="left:-30px;top:8px"><span class="dot">3</span></span><span class="mono" style="color:var(--faint);font-size:12.5px">2 of 3 included</span><button class="btn ink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5 10-11"/></svg>Confirm</button></div>
+  </div></div></div>
+  <div class="notes"><div class="notes-h">Designer notes &nbsp;/&nbsp; what to weigh in on</div>
+    <div class="notes-grid"><div class="note"><span class="dot">1</span><div><b>Defaults, not questions.</b> The old discovery tree is gone. What survives is the list of found worktrees as toggle rows you can adjust.</div></div><div class="note"><span class="dot">2</span><div><b>Toggles all on.</b> Everything detected is included by default; flip off what you do not want (atlas-docs here). The primary branch is confirmed, editable.</div></div><div class="note"><span class="dot">3</span><div><b>One Confirm.</b> Then it processes. There is no third step.</div></div></div>
+  </div>
+</div></body></html>

@@ -1,0 +1,257 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>Rennet v3 · 07 Spec view</title><style>
+:root{
+  --ground:#e7e9ec; --ink:#181b1f; --text:#1c1f24; --muted:#697079; --faint:#9aa1a9;
+  --win:#ffffff; --titlebar:#f4f5f7; --glass:#eceff2; --card:#ffffff;
+  --line:#e1e5e9; --line2:#d2d7dd;
+  --blue:#3d7cab; --blue-ink:#2f6491; --blue-bg:#e9f1f8; --blue-line:#c2d8e9;
+  --amber:#94690f; --amber-bg:#f6efdb; --amber-line:#e0cf98;
+  --green:#3c7a45; --green-bg:#e7f0e8; --green-line:#bdd8be;
+  --add:#3c7a45; --orange:#bf6a2f;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, sans-serif;
+  /* chrome is sans now (Rai: no monospace as UI elements). --mono aliases sans so every
+     existing chrome reference flips automatically; only real code/diff uses --code. */
+  --mono: var(--sans);
+  --code: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+}
+*{ box-sizing:border-box; }
+html,body{ margin:0; padding:0; }
+body{ background:var(--ground); color:var(--text); font-family:var(--sans);
+  -webkit-font-smoothing:antialiased; text-rendering:geometricPrecision; }
+.page{ width:1440px; margin:0 auto; padding:34px 40px 40px; }
+.mono{ font-family:var(--mono); }
+
+/* frame header */
+.fhead{ display:flex; align-items:center; gap:14px; margin:0 0 12px; }
+.badge{ flex:none; width:32px; height:32px; border-radius:8px; background:var(--ink); color:#fff;
+  font-family:var(--mono); font-weight:600; font-size:14px; display:flex; align-items:center; justify-content:center; }
+.ftitle{ font-size:23px; font-weight:650; letter-spacing:-.01em; margin:0; }
+.pill{ font-family:var(--mono); font-size:11px; letter-spacing:.11em; text-transform:uppercase;
+  color:var(--muted); border:1px solid var(--line2); background:#fff; border-radius:6px; padding:4px 9px; }
+.fref{ margin-left:auto; text-align:right; white-space:pre-line; font-family:var(--mono);
+  font-size:12px; line-height:1.5; color:var(--faint); }
+.fsub{ color:var(--muted); font-size:15px; line-height:1.5; max-width:1080px; margin:0 0 20px; }
+.fsub b{ color:var(--text); font-weight:600; }
+
+/* app window */
+.win{ background:var(--win); border:1px solid var(--line2); border-radius:14px; overflow:hidden;
+  box-shadow: 0 1px 0 rgba(255,255,255,.6), 0 24px 50px -34px rgba(20,26,33,.42); }
+.tbar{ display:flex; align-items:center; gap:12px; height:52px; padding:0 18px;
+  background:var(--titlebar); border-bottom:1px solid var(--line); }
+.tl{ width:12px; height:12px; border-radius:50%; border:1.5px solid #c3c9d1; }
+.tls{ display:flex; gap:8px; margin-right:6px; }
+.tname{ display:flex; align-items:center; gap:8px; font-weight:600; font-size:14.5px; }
+.tmeta{ margin-left:auto; display:flex; align-items:center; gap:12px; font-family:var(--mono);
+  font-size:12.5px; color:var(--muted); }
+.content{ padding:26px 28px; }
+
+/* icon box */
+.gly{ flex:none; width:34px; height:34px; border-radius:8px; border:1px solid var(--line2);
+  background:#fff; display:flex; align-items:center; justify-content:center; color:#2a2e34; }
+.gly svg{ width:19px; height:19px; }
+.gly.sm{ width:26px; height:26px; border-radius:7px; }
+.gly.sm svg{ width:15px; height:15px; }
+.gly.plain{ border:none; background:transparent; }
+svg{ display:block; width:16px; height:16px; }
+.i{ width:16px; height:16px; vertical-align:-3px; }
+
+/* chips + buttons */
+.chip{ font-family:var(--mono); font-size:12px; line-height:1; color:var(--muted);
+  border:1px solid var(--line2); background:#fff; border-radius:6px; padding:5px 8px; display:inline-flex;
+  align-items:center; gap:5px; white-space:nowrap; }
+.chip.blue{ color:var(--blue-ink); background:var(--blue-bg); border-color:var(--blue-line); }
+.chip.amber{ color:var(--amber); background:var(--amber-bg); border-color:var(--amber-line); }
+.chip.green{ color:var(--green); background:var(--green-bg); border-color:var(--green-line); }
+.chip.ghost{ background:transparent; }
+.btn{ font-family:var(--sans); font-size:13.5px; font-weight:550; color:var(--text); background:#fff;
+  border:1px solid var(--line2); border-radius:8px; padding:8px 13px; display:inline-flex; align-items:center;
+  gap:7px; cursor:default; white-space:nowrap; }
+.btn.ink{ background:var(--ink); color:#fff; border-color:var(--ink); }
+.btn.sm{ padding:6px 10px; font-size:12.5px; }
+.btn svg{ width:15px; height:15px; }
+
+/* generic rows/cards */
+.card{ background:var(--card); border:1px solid var(--line2); border-radius:11px; }
+.row{ display:flex; align-items:center; gap:14px; background:var(--card); border:1px solid var(--line2);
+  border-radius:11px; padding:15px 16px; }
+.row.backlight{ background:var(--blue-bg); border-color:var(--blue-line); box-shadow: inset 3px 0 0 var(--blue); }
+.muted{ color:var(--muted); } .faint{ color:var(--faint); }
+.k{ font-family:var(--mono); }
+
+/* designer notes footer */
+.notes{ border:1.5px dashed var(--line2); border-radius:12px; padding:20px 24px; margin-top:20px; }
+.notes-h{ font-family:var(--mono); font-size:12px; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--faint); margin:0 0 14px; }
+.notes-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px 40px; }
+.note{ display:flex; gap:11px; font-size:14px; line-height:1.5; color:var(--muted); }
+.note b{ color:var(--text); font-weight:600; }
+.dot{ flex:none; width:20px; height:20px; border-radius:50%; background:var(--orange); color:#fff;
+  font-family:var(--mono); font-size:11px; font-weight:600; display:inline-flex; align-items:center; justify-content:center; }
+.anno{ position:absolute; z-index:5; }
+.rel{ position:relative; }
+.sec-label{ font-family:var(--mono); font-size:11.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); }
+.modepill{ display:inline-flex; align-items:center; gap:7px; font-family:var(--sans); font-size:12.5px; color:var(--text);
+  border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
+.modepill svg{ width:14px; height:14px; }
+
+.lensbar{ display:flex; align-items:center; gap:8px; margin-bottom:16px; }
+.lens{ display:flex; align-items:center; gap:7px; font-family:var(--mono); font-size:12.5px; color:var(--muted);
+  border:1px solid var(--line2); border-radius:8px; padding:7px 11px; background:#fff; }
+.lens.on{ background:var(--ink); color:#fff; border-color:var(--ink); }
+.lens .n{ font-weight:600; }
+.lensbar .right{ margin-left:auto; display:flex; align-items:center; gap:8px; }
+.grid3{ display:grid; grid-template-columns:186px 1fr 320px; gap:0; }
+.orderrail{ border-right:1px solid var(--line); padding-right:18px; margin:-4px 0; }
+.orderrail .oh{ font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+.orow{ display:flex; align-items:center; gap:9px; padding:7px 0; font-size:13.5px; color:var(--muted); }
+.orow.on{ color:var(--text); font-weight:600; }
+.orow .cnt{ margin-left:auto; font-family:var(--mono); font-size:12px; color:var(--faint); }
+.orow .rd{ width:8px; height:8px; border-radius:50%; border:1.5px solid var(--muted); }
+.orow.on .rd{ background:var(--muted); }
+.orow .half{ background:linear-gradient(90deg,var(--muted) 50%,transparent 50%); }
+.orail-t{ margin-top:16px; font-family:var(--mono); font-size:11.5px; color:var(--faint); }
+.center{ padding:0 20px; min-width:0; }
+.margin{ border-left:1px solid var(--line); padding-left:18px; margin:-4px 0; }
+.margin-h{ font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+
+.chunk-h{ display:flex; align-items:center; gap:10px; margin:0 0 8px; }
+.chunk-h .nm{ font-size:16px; font-weight:650; }
+.chunk-desc{ font-size:14px; color:var(--muted); line-height:1.5; margin:0 0 14px; }
+.chunk-desc .more{ font-family:var(--mono); color:var(--blue-ink); font-size:12.5px; }
+
+.file{ border:1px solid var(--line2); border-radius:11px; overflow:hidden; margin-bottom:14px; }
+.file-h{ display:flex; align-items:center; gap:10px; padding:11px 14px; background:var(--glass); border-bottom:1px solid var(--line); position:sticky; top:0; }
+.file-h .p{ font-family:var(--mono); font-weight:600; font-size:13.5px; display:flex; align-items:center; gap:8px; }
+.file-h .d{ font-family:var(--mono); font-size:12.5px; color:var(--muted); }
+.file-h .fa{ margin-left:auto; display:flex; gap:8px; }
+.file-h.amber{ background:var(--amber-bg); border-color:var(--amber-line); }
+.dl{ display:flex; align-items:center; gap:12px; padding:2px 14px; font-family:var(--code); font-size:13px; line-height:1.9; }
+.dl .ln{ width:26px; text-align:right; color:var(--faint); flex:none; }
+.dl .pm{ width:10px; flex:none; }
+.dl .code{ white-space:pre; flex:1; min-width:0; }
+.dl.add{ background:#eef6ef; } .dl.add .pm{ color:var(--green); }
+.dl.del{ background:#fbeef0; } .dl.del .pm{ color:#a8434f; }
+.dl.on{ box-shadow:inset 2px 0 0 var(--orange); }
+.cluster{ display:inline-flex; gap:4px; margin-left:6px; }
+.cluster i{ width:20px; height:20px; border:1px solid var(--line2); border-radius:5px; display:flex; align-items:center; justify-content:center; color:#7c828a; background:#fff; }
+.cluster i svg{ width:12px; height:12px; }
+.cluster i.hot{ border-color:var(--orange); color:var(--orange); }
+.threadtag{ font-family:var(--mono); font-size:12px; color:var(--muted); display:inline-flex; align-items:center; gap:6px; margin-left:6px; }
+.reach{ border:1px dashed var(--blue-line); background:#f4f9fc; border-radius:9px; margin:8px 14px; padding:8px 12px; }
+.reach .rh{ font-family:var(--mono); font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--blue-ink); display:flex; align-items:center; gap:7px; margin-bottom:4px; }
+.reach .rl{ font-family:var(--code); font-size:12.5px; color:var(--muted); }
+.chunkact{ display:flex; gap:9px; margin:12px 14px 4px; }
+.fold{ text-align:center; font-family:var(--mono); font-size:12px; color:var(--faint); margin:16px 0; }
+
+.tcard{ border:1px solid var(--line2); border-radius:11px; padding:12px 13px; margin-bottom:11px; background:#fff; }
+.tcard.blue{ box-shadow:inset 3px 0 0 var(--blue); }
+.tcard .who{ font-size:12.5px; font-weight:600; display:flex; align-items:center; gap:7px; margin-bottom:6px; }
+.tcard .who .k{ font-family:var(--mono); font-weight:400; color:var(--muted); font-size:11.5px; margin-left:auto; }
+.tcard .msg{ font-size:13px; color:var(--text); line-height:1.5; }
+.tcard.amber{ background:var(--amber-bg); border-color:var(--amber-line); }
+.tcard .fragrow{ display:flex; gap:6px; margin-top:9px; flex-wrap:wrap; }
+.fragbtn{ font-family:var(--mono); font-size:11px; color:var(--muted); border:1px solid var(--line2); border-radius:6px; padding:4px 7px; display:inline-flex; align-items:center; gap:5px; background:#fff; }
+.composer{ display:flex; align-items:center; gap:9px; border:1px solid var(--line2); border-radius:9px; padding:9px 11px; margin-top:4px; }
+.composer .ph{ color:var(--faint); font-size:13px; flex:1; }
+
+.specband{ border:1px solid var(--line2); border-radius:12px; padding:16px 18px; margin-bottom:16px; background:var(--glass); }
+.specband .name{ font-family:var(--mono); font-size:16px; font-weight:650; display:flex; align-items:center; gap:9px; flex-wrap:wrap; }
+.specband .counts{ font-family:var(--mono); font-size:12.5px; color:var(--muted); }
+.specband .why{ font-size:14.5px; color:var(--text); line-height:1.55; margin:10px 0 0; }
+.specband .why b{ font-weight:600; }
+.spine{ display:grid; grid-template-columns:1.4fr 1fr; gap:20px; margin-bottom:18px; }
+.spine h4{ font-family:var(--mono); font-size:11.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); margin:0 0 8px; }
+.spine p{ font-size:14px; color:var(--muted); line-height:1.55; margin:0 0 10px; }
+.wc{ list-style:none; padding:0; margin:0; }
+.wc li{ font-size:13.5px; color:var(--text); padding:6px 0; border-bottom:1px solid var(--line); display:flex; gap:9px; align-items:flex-start; }
+.wc li:last-child{ border:none; }
+.wc .capchip{ font-family:var(--mono); font-size:11px; color:var(--blue-ink); background:var(--blue-bg); border:1px solid var(--blue-line); border-radius:5px; padding:2px 6px; flex:none; margin-top:1px; }
+.impact{ border:1px solid var(--line); border-radius:10px; padding:12px 13px; font-size:13px; color:var(--muted); }
+.impact b{ color:var(--text); }
+.grid-h{ font-family:var(--mono); font-size:11.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); margin:6px 0 10px; }
+.capgrid{ display:grid; grid-template-columns:repeat(3,1fr); gap:10px; margin-bottom:16px; }
+.capcard{ border:1px solid var(--line2); border-radius:10px; padding:12px 13px; }
+.capcard.new{ box-shadow:inset 3px 0 0 var(--add); }
+.capcard.open{ grid-column:1 / -1; }
+.capcard .cn{ font-family:var(--mono); font-weight:650; font-size:13.5px; display:flex; align-items:center; gap:8px; }
+.capcard .cn .tg{ font-family:var(--mono); font-size:10px; letter-spacing:.05em; text-transform:uppercase; color:var(--green); background:var(--green-bg); border:1px solid var(--green-line); border-radius:4px; padding:1px 5px; }
+.capcard .cm{ font-family:var(--mono); font-size:12px; color:var(--muted); margin-top:4px; }
+.req{ border-top:1px solid var(--line); padding:13px 2px 4px; margin-top:11px; }
+.req .rt{ font-size:14px; font-weight:600; display:flex; align-items:center; gap:9px; }
+.req .added{ font-family:var(--mono); font-size:10px; letter-spacing:.05em; text-transform:uppercase; color:var(--green); background:var(--green-bg); border:1px solid var(--green-line); border-radius:4px; padding:1px 6px; }
+.req .unimpl{ color:var(--amber); background:var(--amber-bg); border-color:var(--amber-line); }
+.req .shall{ font-size:13.5px; color:var(--muted); line-height:1.5; margin:6px 0 8px; }
+.scn{ display:flex; gap:9px; font-family:var(--mono); font-size:12.5px; color:var(--muted); padding:3px 0; }
+.scn .tri{ color:var(--faint); }
+.reqfoot{ display:flex; align-items:center; gap:8px; margin-top:9px; }
+.covchip{ font-family:var(--mono); font-size:11.5px; color:var(--green); background:var(--green-bg); border:1px solid var(--green-line); border-radius:6px; padding:4px 8px; display:inline-flex; align-items:center; gap:6px; }
+.covchip.zero{ color:var(--amber); background:var(--amber-bg); border-color:var(--amber-line); }
+.tasks{ border:1px solid var(--line2); border-radius:11px; overflow:hidden; margin-top:4px; }
+.tasks .th{ font-family:var(--mono); font-size:11.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); padding:9px 13px; background:var(--glass); border-bottom:1px solid var(--line); }
+.trow{ display:flex; align-items:center; gap:10px; padding:9px 13px; border-bottom:1px solid var(--line); font-family:var(--mono); font-size:12.5px; }
+.trow:last-child{ border:none; }
+.trow .bar{ margin-left:auto; width:120px; height:6px; border-radius:3px; background:var(--green-bg); position:relative; overflow:hidden; }
+.trow .bar i{ position:absolute; left:0; top:0; bottom:0; background:var(--green); }
+.trow .ct{ color:var(--muted); width:44px; text-align:right; }
+</style></head>
+<body><div class="page">
+  <div class="fhead">
+    <span class="badge">07</span>
+    <h1 class="ftitle">Spec view: the structured artifact viewer</h1>
+    <span class="pill">Review</span>
+    <div class="fref">the openspec shape, rendered
+worked on build-model-council-v1</div>
+  </div>
+  <p class="fsub">The artifact set has a known shape, so Rennet renders the <b>shape</b>, not the raw markdown: a header band, the distilled why, the why / what-changes spine, a capability grid, and requirements as structured rows with their WHEN/THEN scenarios and coverage. Requirements, scenarios and tasks are all disposition anchors. Raw markdown is one keystroke away.</p>
+  <div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="gly sm plain" style="width:20px;height:20px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 13.5l1.7 1.7L14 11.8"/></svg></span>build-model-council-v1</span><span class="tmeta"><span class="modepill"><span style="color:#2a2e34"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span>auto<span style="color:#aab0b8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></span><span>spec · ⌘R raw</span></span></div><div class="content"><div class="lensbar"><span class="lens on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 13.5l1.7 1.7L14 11.8"/></svg>Spec</span><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4.2" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="4.2" cy="12" r="1.3"/><path d="M3 17l1.2 1.2L6 16.4" /></svg>Sequence</span><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M6 8.4v7.2M8.3 6.9C13 7.5 15.6 8.9 16 10.6M8.2 17c4.8-.6 7.4-2 7.8-3.8"/></svg>Decisions</span><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/></svg>Flagged</span><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h3.5l2-6.5 3 13 2.4-9 1.6 3.5H22"/></svg>Noise</span><div class="right"><button class="btn">raw markdown ⌘R</button></div></div><div class="specband rel">
+    <span class="anno" style="left:-30px;top:14px"><span class="dot">1</span></span>
+    <div class="name"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 13.5l1.7 1.7L14 11.8"/></svg>build-model-council-v1 <span class="counts">· 2 new capabilities · 3 modified · tasks 34/34 ✓</span></div>
+    <p class="why"><b>Why:</b> the council exists only as prose, and the R10 budget ceiling is dead code. This slice gives it a body: the versioned job catalogue, the deterministic resolver, the live runtime budget that counts every invocation including retries, and a resolution trace that can always answer why a job ran on a given model.</p>
+  </div><div class="spine">
+    <div>
+      <h4>What changes</h4>
+      <ul class="wc">
+        <li><span class="capchip">model-council</span>A versioned JOB_CATALOGUE plus three availability tables and a pure resolveAssignment resolver.</li>
+        <li><span class="capchip">budget-gate</span>A shared runtime budget whose tryConsume counts retries and refuses over the ceiling.</li>
+        <li><span class="capchip">pipeline</span>buildReviewCanvases seeds one shared budget and stamps the resolved model into provenance.</li>
+      </ul>
+    </div>
+    <div>
+      <h4>Impact</h4>
+      <div class="impact"><b>packages/core</b> + types + protocol. <b>No new package</b>, no new dependency, no dependency-arrow change. The council is pure data plus pure functions; the budget is a pure closure. Out of scope: the settings UI keys (#28), the CodexUtilityPort (#66).</div>
+    </div>
+  </div><div class="grid-h">Capabilities</div>
+  <div class="capgrid">
+    <div class="capcard new"><div class="cn">model-council <span class="tg">new</span></div><div class="cm">4 requirements · 7 scenarios</div></div>
+    <div class="capcard new"><div class="cn">invocation-budget-gate <span class="tg">new</span></div><div class="cm">2 requirements · 3 scenarios</div></div>
+    <div class="capcard"><div class="cn">review-pipeline</div><div class="cm">modified · 1 requirement</div></div>
+    <div class="capcard open rel">
+      <span class="anno" style="left:-30px;top:14px"><span class="dot">2</span></span>
+      <div class="cn">model-council <span class="tg">new</span> <span class="cm" style="margin:0 0 0 auto">expanded</span></div>
+      <div class="req">
+        <div class="rt">resolveAssignment is pure and deterministic <span class="added">added</span></div>
+        <div class="shall">SHALL resolve in order: task-override › tier-override › council table (by availability) › harness default. A partial override keeps the table’s unset fields.</div>
+        <div class="scn"><span class="tri">▸</span>the table resolves each job under both / claude-only / codex-only</div>
+        <div class="scn"><span class="tri">▸</span>task beats tier beats table, and the trace records the winner</div>
+        <div class="scn"><span class="tri">▸</span>a deterministic-tier job resolves to no model</div>
+        <div class="reqfoot rel"><span class="anno" style="left:-30px;top:2px"><span class="dot">3</span></span><span class="covchip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 14.5l5-5"/><path d="M11 7l1.2-1.2a3.4 3.4 0 0 1 4.9 4.9L16 12"/><path d="M13 17l-1.2 1.2a3.4 3.4 0 0 1-4.9-4.9L8 12"/></svg>covered by 5 hunks · 4 tests</span><span class="chip">resolver.test.ts</span></div>
+      </div>
+      <div class="req">
+        <div class="rt">Cross-harness routing places light work off the reviewer (R39) <span class="added">added</span></div>
+        <div class="shall">Under both, light-tier work SHALL resolve to a different installed harness than the heavy review sessions.</div>
+        <div class="scn"><span class="tri">▸</span>chunk-titles resolves to codex while the reviewer resolves to claude-code</div>
+        <div class="reqfoot"><span class="covchip zero"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 14.5l5-5"/><path d="M11 7l1.2-1.2a3.4 3.4 0 0 1 4.9 4.9L16 12"/><path d="M13 17l-1.2 1.2a3.4 3.4 0 0 1-4.9-4.9L8 12"/></svg>unimplemented · 0 hunks</span></div>
+      </div>
+    </div>
+  </div><div class="grid-h">Tasks · 34 / 34</div>
+  <div class="tasks">
+    <div class="th">tasks.md · grouped progress</div>
+    <div class="trow">1 · Shared types<span class="bar"><i style="width:100%"></i></span><span class="ct">6/6</span></div>
+    <div class="trow">2 · The resolver<span class="bar"><i style="width:100%"></i></span><span class="ct">5/5</span></div>
+    <div class="trow">4 · Wire the budget onto the live runners<span class="bar"><i style="width:100%"></i></span><span class="ct">3/3</span></div>
+    <div class="trow">7 · Tests + gates<span class="bar"><i style="width:100%"></i></span><span class="ct">10/10</span></div>
+  </div></div></div>
+  <div class="notes"><div class="notes-h">Designer notes &nbsp;/&nbsp; what to weigh in on</div>
+    <div class="notes-grid"><div class="note"><span class="dot">1</span><div><b>Render the shape, not the markdown.</b> Header band, distilled why, spine, capability grid, requirement rows. The raw files are always one keystroke away, never the default.</div></div><div class="note"><span class="dot">2</span><div><b>The spec is reviewable material.</b> The same conversation cluster works on a requirement, a scenario, a task, or a why paragraph. A request-change on a requirement collates like any other disposition.</div></div><div class="note"><span class="dot">3</span><div><b>Coverage wires it to the diff.</b> Each requirement shows “covered by N hunks · N tests” from the existing mapping; click jumps to the claiming hunk. Zero hunks renders an honest “unimplemented”.</div></div><div class="note"><span class="dot">4</span><div><b>New capabilities are add-green.</b> A green edge on the card, matching the diff’s add semantics, so new versus modified reads without a word.</div></div></div>
+  </div>
+</div></body></html>

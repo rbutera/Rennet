@@ -12,7 +12,7 @@ The repository now contains the first runnable desktop MVP alongside the archite
 - [Local review MVP](./docs/Rennet%20Local%20Review%20MVP.md): what is implemented, how to run it, and the deliberately missing product layers.
 - [Evidence gates](./docs/Rennet%20Evidence%20Gate%20Status.md): what is proven, open, or approval-blocked before implementation.
 - [Build handoff](./docs/Rennet%20Navi%20Handoff.md): dependency-ordered implementation plan.
-- [Interactive prototype](./prototypes/moodboard/index.html): current product-state prototype.
+- [Wireframes](./wireframes/): the canonical lo-fi wireframe set (rendered PNGs + HTML sources in `wireframes/src/`). Open `wireframes/gallery.html` for the whole flow on one scroll.
 
 ## Repository shape
 
@@ -21,7 +21,8 @@ apps/          Electron desktop app and future clients
 packages/      Portable types, protocol, core, adapters, UI, and instructions
 scripts/       Repository gates and maintenance tooling
 docs/          Architecture, product research, decisions, and evidence verdicts
-prototypes/    Current moodboard and archived exploratory screens
+wireframes/    Canonical lo-fi wireframes (rendered PNGs + HTML sources + gallery)
+prototypes/    Archived exploratory screens (pre-wireframe)
 spikes/        Isolated evidence probes, never workspace packages
 ```
 

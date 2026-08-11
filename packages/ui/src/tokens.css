@@ -1,7 +1,8 @@
 /* Rennet glass design tokens (issue #11).
  *
- * Ported verbatim from the ratified mood board (prototypes/moodboard/assets/tokens.css,
- * the Glass direction + its bright-room scheme). This file is the ONLY place raw hex
+ * Ported verbatim from the ratified mood board's Glass direction + its bright-room
+ * scheme. That moodboard has since been superseded by the canonical wireframes in
+ * wireframes/ (see wireframes/src/kit.mjs). This file is the ONLY place raw hex
  * lives in packages/ui — every component references var(--token); a lint rule forbids
  * hardcoded hex anywhere else in the package.
  *

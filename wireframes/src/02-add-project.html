@@ -1,0 +1,144 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>Rennet v3 · 02 Add a project</title><style>
+:root{
+  --ground:#e7e9ec; --ink:#181b1f; --text:#1c1f24; --muted:#697079; --faint:#9aa1a9;
+  --win:#ffffff; --titlebar:#f4f5f7; --glass:#eceff2; --card:#ffffff;
+  --line:#e1e5e9; --line2:#d2d7dd;
+  --blue:#3d7cab; --blue-ink:#2f6491; --blue-bg:#e9f1f8; --blue-line:#c2d8e9;
+  --amber:#94690f; --amber-bg:#f6efdb; --amber-line:#e0cf98;
+  --green:#3c7a45; --green-bg:#e7f0e8; --green-line:#bdd8be;
+  --add:#3c7a45; --orange:#bf6a2f;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, sans-serif;
+  /* chrome is sans now (Rai: no monospace as UI elements). --mono aliases sans so every
+     existing chrome reference flips automatically; only real code/diff uses --code. */
+  --mono: var(--sans);
+  --code: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+}
+*{ box-sizing:border-box; }
+html,body{ margin:0; padding:0; }
+body{ background:var(--ground); color:var(--text); font-family:var(--sans);
+  -webkit-font-smoothing:antialiased; text-rendering:geometricPrecision; }
+.page{ width:1440px; margin:0 auto; padding:34px 40px 40px; }
+.mono{ font-family:var(--mono); }
+
+/* frame header */
+.fhead{ display:flex; align-items:center; gap:14px; margin:0 0 12px; }
+.badge{ flex:none; width:32px; height:32px; border-radius:8px; background:var(--ink); color:#fff;
+  font-family:var(--mono); font-weight:600; font-size:14px; display:flex; align-items:center; justify-content:center; }
+.ftitle{ font-size:23px; font-weight:650; letter-spacing:-.01em; margin:0; }
+.pill{ font-family:var(--mono); font-size:11px; letter-spacing:.11em; text-transform:uppercase;
+  color:var(--muted); border:1px solid var(--line2); background:#fff; border-radius:6px; padding:4px 9px; }
+.fref{ margin-left:auto; text-align:right; white-space:pre-line; font-family:var(--mono);
+  font-size:12px; line-height:1.5; color:var(--faint); }
+.fsub{ color:var(--muted); font-size:15px; line-height:1.5; max-width:1080px; margin:0 0 20px; }
+.fsub b{ color:var(--text); font-weight:600; }
+
+/* app window */
+.win{ background:var(--win); border:1px solid var(--line2); border-radius:14px; overflow:hidden;
+  box-shadow: 0 1px 0 rgba(255,255,255,.6), 0 24px 50px -34px rgba(20,26,33,.42); }
+.tbar{ display:flex; align-items:center; gap:12px; height:52px; padding:0 18px;
+  background:var(--titlebar); border-bottom:1px solid var(--line); }
+.tl{ width:12px; height:12px; border-radius:50%; border:1.5px solid #c3c9d1; }
+.tls{ display:flex; gap:8px; margin-right:6px; }
+.tname{ display:flex; align-items:center; gap:8px; font-weight:600; font-size:14.5px; }
+.tmeta{ margin-left:auto; display:flex; align-items:center; gap:12px; font-family:var(--mono);
+  font-size:12.5px; color:var(--muted); }
+.content{ padding:26px 28px; }
+
+/* icon box */
+.gly{ flex:none; width:34px; height:34px; border-radius:8px; border:1px solid var(--line2);
+  background:#fff; display:flex; align-items:center; justify-content:center; color:#2a2e34; }
+.gly svg{ width:19px; height:19px; }
+.gly.sm{ width:26px; height:26px; border-radius:7px; }
+.gly.sm svg{ width:15px; height:15px; }
+.gly.plain{ border:none; background:transparent; }
+svg{ display:block; width:16px; height:16px; }
+.i{ width:16px; height:16px; vertical-align:-3px; }
+
+/* chips + buttons */
+.chip{ font-family:var(--mono); font-size:12px; line-height:1; color:var(--muted);
+  border:1px solid var(--line2); background:#fff; border-radius:6px; padding:5px 8px; display:inline-flex;
+  align-items:center; gap:5px; white-space:nowrap; }
+.chip.blue{ color:var(--blue-ink); background:var(--blue-bg); border-color:var(--blue-line); }
+.chip.amber{ color:var(--amber); background:var(--amber-bg); border-color:var(--amber-line); }
+.chip.green{ color:var(--green); background:var(--green-bg); border-color:var(--green-line); }
+.chip.ghost{ background:transparent; }
+.btn{ font-family:var(--sans); font-size:13.5px; font-weight:550; color:var(--text); background:#fff;
+  border:1px solid var(--line2); border-radius:8px; padding:8px 13px; display:inline-flex; align-items:center;
+  gap:7px; cursor:default; white-space:nowrap; }
+.btn.ink{ background:var(--ink); color:#fff; border-color:var(--ink); }
+.btn.sm{ padding:6px 10px; font-size:12.5px; }
+.btn svg{ width:15px; height:15px; }
+
+/* generic rows/cards */
+.card{ background:var(--card); border:1px solid var(--line2); border-radius:11px; }
+.row{ display:flex; align-items:center; gap:14px; background:var(--card); border:1px solid var(--line2);
+  border-radius:11px; padding:15px 16px; }
+.row.backlight{ background:var(--blue-bg); border-color:var(--blue-line); box-shadow: inset 3px 0 0 var(--blue); }
+.muted{ color:var(--muted); } .faint{ color:var(--faint); }
+.k{ font-family:var(--mono); }
+
+/* designer notes footer */
+.notes{ border:1.5px dashed var(--line2); border-radius:12px; padding:20px 24px; margin-top:20px; }
+.notes-h{ font-family:var(--mono); font-size:12px; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--faint); margin:0 0 14px; }
+.notes-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px 40px; }
+.note{ display:flex; gap:11px; font-size:14px; line-height:1.5; color:var(--muted); }
+.note b{ color:var(--text); font-weight:600; }
+.dot{ flex:none; width:20px; height:20px; border-radius:50%; background:var(--orange); color:#fff;
+  font-family:var(--mono); font-size:11px; font-weight:600; display:inline-flex; align-items:center; justify-content:center; }
+.anno{ position:absolute; z-index:5; }
+.rel{ position:relative; }
+.sec-label{ font-family:var(--mono); font-size:11.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); }
+.modepill{ display:inline-flex; align-items:center; gap:7px; font-family:var(--sans); font-size:12.5px; color:var(--text);
+  border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
+.modepill svg{ width:14px; height:14px; }
+
+.seg{ display:flex; gap:12px; margin:4px 0 22px; }
+.segcard{ flex:1; border:1px solid var(--line2); border-radius:12px; padding:16px; background:#fff; display:flex; gap:12px; align-items:flex-start; }
+.segcard.on{ border-color:var(--blue); box-shadow:inset 0 0 0 1px var(--blue), 0 0 0 3px var(--blue-bg); }
+.segcard .gly{ margin-top:1px; }
+.segcard h3{ font-size:15px; margin:0 0 3px; font-weight:650; }
+.segcard p{ margin:0; font-size:13px; color:var(--muted); }
+.fld-h{ font-family:var(--mono); font-size:11.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); margin:0 0 8px; }
+.pathrow{ display:flex; gap:10px; margin-bottom:18px; }
+.pathfield{ flex:1; display:flex; align-items:center; gap:9px; border:1px solid var(--line2); border-radius:9px; padding:11px 13px; font-family:var(--mono); font-size:13.5px; color:var(--text); background:#fff; }
+.recents{ border:1px solid var(--line); border-radius:11px; overflow:hidden; }
+.recents .rh{ font-family:var(--mono); font-size:11.5px; letter-spacing:.08em; text-transform:uppercase; color:var(--faint); padding:9px 13px; background:var(--glass); border-bottom:1px solid var(--line); }
+.recrow{ display:flex; align-items:center; gap:10px; padding:11px 13px; border-bottom:1px solid var(--line); font-family:var(--mono); font-size:13px; }
+.recrow:last-child{ border-bottom:none; }
+.recrow .det{ margin-left:auto; }
+.foot{ display:flex; justify-content:flex-end; margin-top:22px; }
+</style></head>
+<body><div class="page">
+  <div class="fhead">
+    <span class="badge">02</span>
+    <h1 class="ftitle">Add a project: type and path</h1>
+    <span class="pill">Onboarding</span>
+    <div class="fref">step 1 of 2
+two nouns, then a path</div>
+  </div>
+  <p class="fsub">The only vocabulary you meet is <b>workspace</b> (a folder holding several repos) and <b>project repo</b> (one repo), one line of explanation each. Everything else is inference. Pick the type, point at the path, continue.</p>
+  <div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="gly sm plain" style="width:20px;height:20px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg></span>Add a project</span><span class="tmeta">step 1 of 2</span></div><div class="content"><div class="rel">
+    <div class="fld-h rel"><span class="anno" style="left:-30px;top:-4px"><span class="dot">1</span></span>What are you pointing at</div>
+    <div class="seg">
+      <div class="segcard on"><span class="gly" style="color:var(--blue)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span><div><h3>Workspace</h3><p>a folder holding several repos</p></div></div>
+      <div class="segcard"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="8" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 10.3c0 4-3.5 4.4-6.4 5.2"/></svg></span><div><h3>Project repo</h3><p>one repo</p></div></div>
+    </div>
+    <div class="fld-h rel"><span class="anno" style="left:-30px;top:-4px"><span class="dot">2</span></span>Path</div>
+    <div class="pathrow">
+      <div class="pathfield"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg><span>~/orbital</span></div>
+      <button class="btn">Browse</button>
+    </div>
+    <div class="recents">
+      <div class="rh">Recent · detected nearby</div>
+      <div class="recrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg>~/orbital<span class="chip blue det">3 repos</span></div>
+      <div class="recrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="8" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 10.3c0 4-3.5 4.4-6.4 5.2"/></svg>~/code/atlas<span class="chip det">1 repo</span></div>
+      <div class="recrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg>~/work/navcore-mono<span class="chip blue det">5 repos</span></div>
+    </div>
+    <div class="foot"><button class="btn ink">Continue <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></button></div>
+  </div></div></div>
+  <div class="notes"><div class="notes-h">Designer notes &nbsp;/&nbsp; what to weigh in on</div>
+    <div class="notes-grid"><div class="note"><span class="dot">1</span><div><b>Two nouns, no four-noun model.</b> The old component is gone. Workspace or project repo, one line each, and the rest is discovered.</div></div><div class="note"><span class="dot">2</span><div><b>Native dialog plus recents.</b> Browse opens the OS picker; the list below is dirs Rennet cheaply detected near where you pointed.</div></div><div class="note"><span class="dot">3</span><div><b>Terse by construction.</b> No questions it can answer itself. If discovery finds nothing odd, the next screen is three rows tall.</div></div></div>
+  </div>
+</div></body></html>

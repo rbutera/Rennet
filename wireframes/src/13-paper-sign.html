@@ -1,0 +1,166 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>Rennet v3 · 12 Paper / sign</title><style>
+:root{
+  --ground:#e7e9ec; --ink:#181b1f; --text:#1c1f24; --muted:#697079; --faint:#9aa1a9;
+  --win:#ffffff; --titlebar:#f4f5f7; --glass:#eceff2; --card:#ffffff;
+  --line:#e1e5e9; --line2:#d2d7dd;
+  --blue:#3d7cab; --blue-ink:#2f6491; --blue-bg:#e9f1f8; --blue-line:#c2d8e9;
+  --amber:#94690f; --amber-bg:#f6efdb; --amber-line:#e0cf98;
+  --green:#3c7a45; --green-bg:#e7f0e8; --green-line:#bdd8be;
+  --add:#3c7a45; --orange:#bf6a2f;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, sans-serif;
+  /* chrome is sans now (Rai: no monospace as UI elements). --mono aliases sans so every
+     existing chrome reference flips automatically; only real code/diff uses --code. */
+  --mono: var(--sans);
+  --code: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+}
+*{ box-sizing:border-box; }
+html,body{ margin:0; padding:0; }
+body{ background:var(--ground); color:var(--text); font-family:var(--sans);
+  -webkit-font-smoothing:antialiased; text-rendering:geometricPrecision; }
+.page{ width:1440px; margin:0 auto; padding:34px 40px 40px; }
+.mono{ font-family:var(--mono); }
+
+/* frame header */
+.fhead{ display:flex; align-items:center; gap:14px; margin:0 0 12px; }
+.badge{ flex:none; width:32px; height:32px; border-radius:8px; background:var(--ink); color:#fff;
+  font-family:var(--mono); font-weight:600; font-size:14px; display:flex; align-items:center; justify-content:center; }
+.ftitle{ font-size:23px; font-weight:650; letter-spacing:-.01em; margin:0; }
+.pill{ font-family:var(--mono); font-size:11px; letter-spacing:.11em; text-transform:uppercase;
+  color:var(--muted); border:1px solid var(--line2); background:#fff; border-radius:6px; padding:4px 9px; }
+.fref{ margin-left:auto; text-align:right; white-space:pre-line; font-family:var(--mono);
+  font-size:12px; line-height:1.5; color:var(--faint); }
+.fsub{ color:var(--muted); font-size:15px; line-height:1.5; max-width:1080px; margin:0 0 20px; }
+.fsub b{ color:var(--text); font-weight:600; }
+
+/* app window */
+.win{ background:var(--win); border:1px solid var(--line2); border-radius:14px; overflow:hidden;
+  box-shadow: 0 1px 0 rgba(255,255,255,.6), 0 24px 50px -34px rgba(20,26,33,.42); }
+.tbar{ display:flex; align-items:center; gap:12px; height:52px; padding:0 18px;
+  background:var(--titlebar); border-bottom:1px solid var(--line); }
+.tl{ width:12px; height:12px; border-radius:50%; border:1.5px solid #c3c9d1; }
+.tls{ display:flex; gap:8px; margin-right:6px; }
+.tname{ display:flex; align-items:center; gap:8px; font-weight:600; font-size:14.5px; }
+.tmeta{ margin-left:auto; display:flex; align-items:center; gap:12px; font-family:var(--mono);
+  font-size:12.5px; color:var(--muted); }
+.content{ padding:26px 28px; }
+
+/* icon box */
+.gly{ flex:none; width:34px; height:34px; border-radius:8px; border:1px solid var(--line2);
+  background:#fff; display:flex; align-items:center; justify-content:center; color:#2a2e34; }
+.gly svg{ width:19px; height:19px; }
+.gly.sm{ width:26px; height:26px; border-radius:7px; }
+.gly.sm svg{ width:15px; height:15px; }
+.gly.plain{ border:none; background:transparent; }
+svg{ display:block; width:16px; height:16px; }
+.i{ width:16px; height:16px; vertical-align:-3px; }
+
+/* chips + buttons */
+.chip{ font-family:var(--mono); font-size:12px; line-height:1; color:var(--muted);
+  border:1px solid var(--line2); background:#fff; border-radius:6px; padding:5px 8px; display:inline-flex;
+  align-items:center; gap:5px; white-space:nowrap; }
+.chip.blue{ color:var(--blue-ink); background:var(--blue-bg); border-color:var(--blue-line); }
+.chip.amber{ color:var(--amber); background:var(--amber-bg); border-color:var(--amber-line); }
+.chip.green{ color:var(--green); background:var(--green-bg); border-color:var(--green-line); }
+.chip.ghost{ background:transparent; }
+.btn{ font-family:var(--sans); font-size:13.5px; font-weight:550; color:var(--text); background:#fff;
+  border:1px solid var(--line2); border-radius:8px; padding:8px 13px; display:inline-flex; align-items:center;
+  gap:7px; cursor:default; white-space:nowrap; }
+.btn.ink{ background:var(--ink); color:#fff; border-color:var(--ink); }
+.btn.sm{ padding:6px 10px; font-size:12.5px; }
+.btn svg{ width:15px; height:15px; }
+
+/* generic rows/cards */
+.card{ background:var(--card); border:1px solid var(--line2); border-radius:11px; }
+.row{ display:flex; align-items:center; gap:14px; background:var(--card); border:1px solid var(--line2);
+  border-radius:11px; padding:15px 16px; }
+.row.backlight{ background:var(--blue-bg); border-color:var(--blue-line); box-shadow: inset 3px 0 0 var(--blue); }
+.muted{ color:var(--muted); } .faint{ color:var(--faint); }
+.k{ font-family:var(--mono); }
+
+/* designer notes footer */
+.notes{ border:1.5px dashed var(--line2); border-radius:12px; padding:20px 24px; margin-top:20px; }
+.notes-h{ font-family:var(--mono); font-size:12px; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--faint); margin:0 0 14px; }
+.notes-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px 40px; }
+.note{ display:flex; gap:11px; font-size:14px; line-height:1.5; color:var(--muted); }
+.note b{ color:var(--text); font-weight:600; }
+.dot{ flex:none; width:20px; height:20px; border-radius:50%; background:var(--orange); color:#fff;
+  font-family:var(--mono); font-size:11px; font-weight:600; display:inline-flex; align-items:center; justify-content:center; }
+.anno{ position:absolute; z-index:5; }
+.rel{ position:relative; }
+.sec-label{ font-family:var(--mono); font-size:11.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); }
+.modepill{ display:inline-flex; align-items:center; gap:7px; font-family:var(--sans); font-size:12.5px; color:var(--text);
+  border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
+.modepill svg{ width:14px; height:14px; }
+
+.draftgrid{ display:grid; grid-template-columns:1fr 262px; gap:20px; }
+.draft-top{ display:flex; align-items:center; gap:10px; margin-bottom:16px; }
+.draft-top .right{ margin-left:auto; display:flex; gap:9px; }
+.ditem{ border:1px solid var(--line2); border-radius:11px; padding:13px 15px; margin-bottom:11px; display:flex; gap:12px; }
+.ditem .drag{ color:#b7bec6; flex:none; margin-top:2px; }
+.ditem .db{ flex:1; min-width:0; }
+.ditem .dh{ display:flex; align-items:center; gap:9px; margin-bottom:7px; }
+.ditem .verb{ font-family:var(--mono); font-size:11.5px; border-radius:6px; padding:3px 8px; }
+.verb.rc{ color:var(--amber); background:var(--amber-bg); border:1px solid var(--amber-line); }
+.verb.cm{ color:var(--muted); background:#fff; border:1px solid var(--line2); }
+.ditem .loc{ font-family:var(--mono); font-size:12px; color:var(--muted); }
+.ditem .refined{ font-size:14px; line-height:1.5; }
+.ditem .refined b{ font-weight:600; }
+.ditem .raw{ font-size:12.5px; color:var(--faint); text-decoration:line-through; margin-top:4px; }
+.ditem .cl-right{ margin-left:auto; }
+.ask-draft{ display:flex; align-items:center; gap:10px; border:1px dashed var(--line2); border-radius:11px; padding:13px 15px; margin-top:2px; }
+.ask-draft .k{ margin-left:auto; font-family:var(--mono); font-size:12px; color:var(--faint); }
+.dpanel .pblock{ border:1px solid var(--line2); border-radius:11px; padding:13px 14px; margin-bottom:11px; }
+.dpanel .pl{ font-family:var(--mono); font-size:11px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); margin-bottom:5px; }
+.dpanel .pv{ font-size:20px; font-weight:650; font-family:var(--mono); }
+.dpanel .pv.sm{ font-size:15px; }
+.dpanel .pblock.ok{ background:var(--amber-bg); border-color:var(--amber-line); }
+.dpanel .next{ background:#fbf6ea; border:1px solid var(--amber-line); border-radius:11px; padding:14px; }
+.dpanel .next .nh{ font-size:13.5px; font-weight:600; display:flex; align-items:center; gap:8px; margin-bottom:5px; }
+.dpanel .next p{ font-size:12.5px; color:var(--muted); margin:0 0 11px; line-height:1.45; }
+
+.papergrid{ display:grid; grid-template-columns:1fr 292px; gap:20px; }
+.paper{ background:#fdfdfb; border:1px solid #e6e2d6; border-radius:12px; box-shadow:0 1px 0 #fff inset, 0 14px 30px -22px rgba(90,80,50,.35); padding:20px 22px; }
+.paper .ph{ display:flex; align-items:center; gap:10px; border-bottom:1px solid #ece7d8; padding-bottom:13px; margin-bottom:14px; }
+.paper .ph .vd{ font-size:16px; font-weight:650; }
+.paper .ph .tg{ margin-left:auto; font-family:var(--mono); font-size:11.5px; color:var(--amber); background:var(--amber-bg); border:1px solid var(--amber-line); border-radius:6px; padding:3px 8px; }
+.paper .cmt{ padding:11px 0; border-bottom:1px solid #ece7d8; }
+.paper .cmt:last-child{ border:none; }
+.paper .cmt .ch{ font-family:var(--mono); font-size:12px; color:var(--muted); display:flex; align-items:center; gap:8px; margin-bottom:4px; }
+.paper .cmt .cb{ font-size:13.5px; line-height:1.5; }
+.signpanel .vblock{ border:1px solid var(--line2); border-radius:12px; padding:15px; margin-bottom:12px; }
+.signpanel .pl{ font-family:var(--mono); font-size:11px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); margin-bottom:6px; }
+.signpanel .derived{ font-size:17px; font-weight:650; margin-bottom:8px; }
+.signpanel .deriv-note{ font-size:12.5px; color:var(--muted); line-height:1.5; }
+.signpanel .override{ display:flex; align-items:center; gap:8px; margin-top:11px; font-family:var(--mono); font-size:12.5px; border:1px solid var(--line2); border-radius:8px; padding:9px 11px; }
+.signpanel .override .k{ margin-left:auto; color:var(--faint); }
+.holdsign{ margin-top:2px; border:1px solid var(--ink); background:var(--ink); color:#fff; border-radius:12px; padding:15px; text-align:center; }
+.holdsign .hs{ font-size:15px; font-weight:600; display:flex; align-items:center; justify-content:center; gap:9px; }
+.holdsign .track{ height:6px; border-radius:3px; background:rgba(255,255,255,.22); margin-top:11px; overflow:hidden; }
+.holdsign .track i{ display:block; height:100%; width:38%; background:#fff; border-radius:3px; }
+.holdsign .hint{ font-family:var(--mono); font-size:11px; color:rgba(255,255,255,.7); margin-top:8px; }
+</style></head>
+<body><div class="page">
+  <div class="fhead">
+    <span class="badge">13</span>
+    <h1 class="ftitle">Paper: the one thing you sign</h1>
+    <span class="pill">Sign</span>
+    <div class="fref">the derived verdict + the human sign
+sign in the loop IS the safety</div>
+  </div>
+  <p class="fsub">The one solid object. It previews <b>exactly</b> what will post, nothing editable. The verdict is derived from your dispositions (here, request changes) and shown with its derivation, and you can override it. The human sign carries the real verdict: the sign in the loop is the safety, not a forced-neutral event.</p>
+  <div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="gly sm plain" style="width:20px;height:20px;color:#8a7f5a"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l3 3v15H6z"/><path d="M15 3v3h3"/><path d="M9 12h6M9 15.5h6M9 8.5h3"/></svg></span>#482 · Paper</span><span class="tmeta"><span class="modepill"><span style="color:#2a2e34"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span>auto<span style="color:#aab0b8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></span><span>sign to post</span></span></div><div class="content"><div class="draft-top" style="margin-bottom:16px"><span class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l3 3v15H6z"/><path d="M15 3v3h3"/><path d="M9 12h6M9 15.5h6M9 8.5h3"/></svg>paper · solid</span><span class="chip">nothing editable here</span></div><div class="papergrid"><div class="paper rel">
+    <span class="anno" style="left:-30px;top:14px"><span class="dot">1</span></span>
+    <div class="ph"><span style="color:#8a7f5a"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l3 3v15H6z"/><path d="M15 3v3h3"/><path d="M9 12h6M9 15.5h6M9 8.5h3"/></svg></span><span class="vd">Review · #482</span><span class="tg">exactly what will post</span></div>
+    <div class="cmt"><div class="ch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-.6 4"/><path d="M20 5v4h-4"/></svg>keys.ts · L18-19 · request change</div><div class="cb">Re-keying from API key to org changes what a 429 means for existing clients; document the migration note in the PR body.</div></div>
+    <div class="cmt"><div class="ch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v10H9l-4 3.5v-3.5H4z"/></svg>rate-limit.ts · L44 · comment</div><div class="cb">The fail-open path is defensible but unbounded: consider a process-local fallback bucket (see decision 2).</div></div>
+    <div class="cmt"><div class="ch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-.6 4"/><path d="M20 5v4h-4"/></svg>migrations/0042 · request change</div><div class="cb">The backfill is irreversible and has no down migration. Please add a rollback path before merge.</div></div>
+  </div><div class="signpanel">
+    <div class="vblock rel"><span class="anno" style="left:-30px;top:14px"><span class="dot">2</span></span><div class="pl">Verdict · derived from dispositions</div><div class="derived">Request changes</div><div class="deriv-note">2 request-changes · 1 comment. Rennet derives the verdict; you can override it, and your sign is what makes it real.</div><div class="override rel"><span class="anno" style="left:-30px;top:8px"><span class="dot">3</span></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5 10-11"/></svg>override<span class="k">Approve · Request changes · Comment <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></div></div>
+    <div class="holdsign rel"><span class="anno" style="left:-30px;top:16px"><span class="dot">4</span></span><div class="hs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20.5h18"/><path d="M15.5 4.6l3.9 3.9L9.6 18.3l-4.6 1 1-4.6z"/></svg>Hold to sign</div><div class="track"><i></i></div><div class="hint">the deliberate act · nothing posts until you do</div></div>
+  </div></div></div></div>
+  <div class="notes"><div class="notes-h">Designer notes &nbsp;/&nbsp; what to weigh in on</div>
+    <div class="notes-grid"><div class="note"><span class="dot">1</span><div><b>The one solid object.</b> Paper is opaque: it shows precisely the comments that will land on the PR, in the order they will land. Editing happened on the draft; here it is frozen.</div></div><div class="note"><span class="dot">2</span><div><b>The verdict is derived.</b> Rennet reads your dispositions and derives Approve / Request changes / Comment, and shows the arithmetic (2 request-changes, 1 comment).</div></div><div class="note"><span class="dot">3</span><div><b>Override is yours.</b> The derived verdict is a default, not a lock. You can change it before signing; the review carries whatever you sign.</div></div><div class="note"><span class="dot">4</span><div><b>The sign is the safety.</b> Rennet never forces a neutral event. The human sign in the loop is the safeguard, and it publishes the real verdict.</div></div></div>
+  </div>
+</div></body></html>

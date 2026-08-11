@@ -67,7 +67,6 @@
     "check": "nx run-many -t format,architecture,licenses,lint,typecheck,test,build",
     "check:affected": "nx affected -t lint,typecheck,test,build",
     "check:event-store": "nx run event-store-publish-failure:check",
-    "check:prototype": "nx run rennet-prototype:check",
     "dev": "nx run rennet-desktop:dev",
     "e2e": "nx run rennet-desktop:e2e",
     "graph": "nx graph",

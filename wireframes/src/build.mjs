@@ -1,0 +1,45 @@
+// Emit self-contained wireframe HTML frames into src/ (one .html each).
+// Badges are assigned by flow position so renumbering never touches frame code.
+import { writeFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, resolve } from 'node:path';
+import { doc } from './kit.mjs';
+import { frame00 } from './frame00.mjs';
+import { frame01, frame02, frame03, frame04 } from './onboarding.mjs';
+import { frame05 } from './frame05.mjs';
+import { frame06, frame07, frame08, frame09, frame10, frameNoise } from './review.mjs';
+import { frame11, frame12, frame13, frame14, frame15, frame16 } from './finalize.mjs';
+
+const __dir = dirname(fileURLToPath(import.meta.url)); // .../src
+
+// flow order (Noise slots in at 10, alongside the other review lenses)
+const FRAMES = {
+  '00-legend': frame00,
+  '01-first-run': frame01,
+  '02-add-project': frame02,
+  '03-worktree-config': frame03,
+  '04-processing': frame04,
+  '05-project-detail': frame05,
+  '06-review-heart': frame06,
+  '07-spec-view': frame07,
+  '08-decisions': frame08,
+  '09-flagged': frame09,
+  '10-noise-lens': frameNoise,
+  '11-symbol-inspector': frame10,
+  '12-collation-draft': frame11,
+  '13-paper-sign': frame12,
+  '14-questions': frame13,
+  '15-settings': frame14,
+  '16-command-palette': frame15,
+  '17-flow-overview': frame16,
+};
+
+export const NAMES = Object.keys(FRAMES);
+
+Object.entries(FRAMES).forEach(([name, fn], i) => {
+  const spec = fn();
+  spec.head.badge = String(i).padStart(2, '0'); // badge follows flow position
+  const html = doc(spec);
+  writeFileSync(resolve(__dir, `${name}.html`), html);
+  console.log('wrote', `${name}.html`, `(${Math.round(html.length / 1024)} KB)`);
+});

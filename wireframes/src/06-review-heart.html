@@ -1,0 +1,213 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>Rennet v3 · 06 The review heart</title><style>
+:root{
+  --ground:#e7e9ec; --ink:#181b1f; --text:#1c1f24; --muted:#697079; --faint:#9aa1a9;
+  --win:#ffffff; --titlebar:#f4f5f7; --glass:#eceff2; --card:#ffffff;
+  --line:#e1e5e9; --line2:#d2d7dd;
+  --blue:#3d7cab; --blue-ink:#2f6491; --blue-bg:#e9f1f8; --blue-line:#c2d8e9;
+  --amber:#94690f; --amber-bg:#f6efdb; --amber-line:#e0cf98;
+  --green:#3c7a45; --green-bg:#e7f0e8; --green-line:#bdd8be;
+  --add:#3c7a45; --orange:#bf6a2f;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, sans-serif;
+  /* chrome is sans now (Rai: no monospace as UI elements). --mono aliases sans so every
+     existing chrome reference flips automatically; only real code/diff uses --code. */
+  --mono: var(--sans);
+  --code: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+}
+*{ box-sizing:border-box; }
+html,body{ margin:0; padding:0; }
+body{ background:var(--ground); color:var(--text); font-family:var(--sans);
+  -webkit-font-smoothing:antialiased; text-rendering:geometricPrecision; }
+.page{ width:1440px; margin:0 auto; padding:34px 40px 40px; }
+.mono{ font-family:var(--mono); }
+
+/* frame header */
+.fhead{ display:flex; align-items:center; gap:14px; margin:0 0 12px; }
+.badge{ flex:none; width:32px; height:32px; border-radius:8px; background:var(--ink); color:#fff;
+  font-family:var(--mono); font-weight:600; font-size:14px; display:flex; align-items:center; justify-content:center; }
+.ftitle{ font-size:23px; font-weight:650; letter-spacing:-.01em; margin:0; }
+.pill{ font-family:var(--mono); font-size:11px; letter-spacing:.11em; text-transform:uppercase;
+  color:var(--muted); border:1px solid var(--line2); background:#fff; border-radius:6px; padding:4px 9px; }
+.fref{ margin-left:auto; text-align:right; white-space:pre-line; font-family:var(--mono);
+  font-size:12px; line-height:1.5; color:var(--faint); }
+.fsub{ color:var(--muted); font-size:15px; line-height:1.5; max-width:1080px; margin:0 0 20px; }
+.fsub b{ color:var(--text); font-weight:600; }
+
+/* app window */
+.win{ background:var(--win); border:1px solid var(--line2); border-radius:14px; overflow:hidden;
+  box-shadow: 0 1px 0 rgba(255,255,255,.6), 0 24px 50px -34px rgba(20,26,33,.42); }
+.tbar{ display:flex; align-items:center; gap:12px; height:52px; padding:0 18px;
+  background:var(--titlebar); border-bottom:1px solid var(--line); }
+.tl{ width:12px; height:12px; border-radius:50%; border:1.5px solid #c3c9d1; }
+.tls{ display:flex; gap:8px; margin-right:6px; }
+.tname{ display:flex; align-items:center; gap:8px; font-weight:600; font-size:14.5px; }
+.tmeta{ margin-left:auto; display:flex; align-items:center; gap:12px; font-family:var(--mono);
+  font-size:12.5px; color:var(--muted); }
+.content{ padding:26px 28px; }
+
+/* icon box */
+.gly{ flex:none; width:34px; height:34px; border-radius:8px; border:1px solid var(--line2);
+  background:#fff; display:flex; align-items:center; justify-content:center; color:#2a2e34; }
+.gly svg{ width:19px; height:19px; }
+.gly.sm{ width:26px; height:26px; border-radius:7px; }
+.gly.sm svg{ width:15px; height:15px; }
+.gly.plain{ border:none; background:transparent; }
+svg{ display:block; width:16px; height:16px; }
+.i{ width:16px; height:16px; vertical-align:-3px; }
+
+/* chips + buttons */
+.chip{ font-family:var(--mono); font-size:12px; line-height:1; color:var(--muted);
+  border:1px solid var(--line2); background:#fff; border-radius:6px; padding:5px 8px; display:inline-flex;
+  align-items:center; gap:5px; white-space:nowrap; }
+.chip.blue{ color:var(--blue-ink); background:var(--blue-bg); border-color:var(--blue-line); }
+.chip.amber{ color:var(--amber); background:var(--amber-bg); border-color:var(--amber-line); }
+.chip.green{ color:var(--green); background:var(--green-bg); border-color:var(--green-line); }
+.chip.ghost{ background:transparent; }
+.btn{ font-family:var(--sans); font-size:13.5px; font-weight:550; color:var(--text); background:#fff;
+  border:1px solid var(--line2); border-radius:8px; padding:8px 13px; display:inline-flex; align-items:center;
+  gap:7px; cursor:default; white-space:nowrap; }
+.btn.ink{ background:var(--ink); color:#fff; border-color:var(--ink); }
+.btn.sm{ padding:6px 10px; font-size:12.5px; }
+.btn svg{ width:15px; height:15px; }
+
+/* generic rows/cards */
+.card{ background:var(--card); border:1px solid var(--line2); border-radius:11px; }
+.row{ display:flex; align-items:center; gap:14px; background:var(--card); border:1px solid var(--line2);
+  border-radius:11px; padding:15px 16px; }
+.row.backlight{ background:var(--blue-bg); border-color:var(--blue-line); box-shadow: inset 3px 0 0 var(--blue); }
+.muted{ color:var(--muted); } .faint{ color:var(--faint); }
+.k{ font-family:var(--mono); }
+
+/* designer notes footer */
+.notes{ border:1.5px dashed var(--line2); border-radius:12px; padding:20px 24px; margin-top:20px; }
+.notes-h{ font-family:var(--mono); font-size:12px; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--faint); margin:0 0 14px; }
+.notes-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px 40px; }
+.note{ display:flex; gap:11px; font-size:14px; line-height:1.5; color:var(--muted); }
+.note b{ color:var(--text); font-weight:600; }
+.dot{ flex:none; width:20px; height:20px; border-radius:50%; background:var(--orange); color:#fff;
+  font-family:var(--mono); font-size:11px; font-weight:600; display:inline-flex; align-items:center; justify-content:center; }
+.anno{ position:absolute; z-index:5; }
+.rel{ position:relative; }
+.sec-label{ font-family:var(--mono); font-size:11.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); }
+.modepill{ display:inline-flex; align-items:center; gap:7px; font-family:var(--sans); font-size:12.5px; color:var(--text);
+  border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
+.modepill svg{ width:14px; height:14px; }
+
+.lensbar{ display:flex; align-items:center; gap:8px; margin-bottom:16px; }
+.lens{ display:flex; align-items:center; gap:7px; font-family:var(--mono); font-size:12.5px; color:var(--muted);
+  border:1px solid var(--line2); border-radius:8px; padding:7px 11px; background:#fff; }
+.lens.on{ background:var(--ink); color:#fff; border-color:var(--ink); }
+.lens .n{ font-weight:600; }
+.lensbar .right{ margin-left:auto; display:flex; align-items:center; gap:8px; }
+.grid3{ display:grid; grid-template-columns:186px 1fr 320px; gap:0; }
+.orderrail{ border-right:1px solid var(--line); padding-right:18px; margin:-4px 0; }
+.orderrail .oh{ font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+.orow{ display:flex; align-items:center; gap:9px; padding:7px 0; font-size:13.5px; color:var(--muted); }
+.orow.on{ color:var(--text); font-weight:600; }
+.orow .cnt{ margin-left:auto; font-family:var(--mono); font-size:12px; color:var(--faint); }
+.orow .rd{ width:8px; height:8px; border-radius:50%; border:1.5px solid var(--muted); }
+.orow.on .rd{ background:var(--muted); }
+.orow .half{ background:linear-gradient(90deg,var(--muted) 50%,transparent 50%); }
+.orail-t{ margin-top:16px; font-family:var(--mono); font-size:11.5px; color:var(--faint); }
+.center{ padding:0 20px; min-width:0; }
+.margin{ border-left:1px solid var(--line); padding-left:18px; margin:-4px 0; }
+.margin-h{ font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); display:flex; align-items:center; gap:8px; margin-bottom:12px; }
+
+.chunk-h{ display:flex; align-items:center; gap:10px; margin:0 0 8px; }
+.chunk-h .nm{ font-size:16px; font-weight:650; }
+.chunk-desc{ font-size:14px; color:var(--muted); line-height:1.5; margin:0 0 14px; }
+.chunk-desc .more{ font-family:var(--mono); color:var(--blue-ink); font-size:12.5px; }
+
+.file{ border:1px solid var(--line2); border-radius:11px; overflow:hidden; margin-bottom:14px; }
+.file-h{ display:flex; align-items:center; gap:10px; padding:11px 14px; background:var(--glass); border-bottom:1px solid var(--line); position:sticky; top:0; }
+.file-h .p{ font-family:var(--mono); font-weight:600; font-size:13.5px; display:flex; align-items:center; gap:8px; }
+.file-h .d{ font-family:var(--mono); font-size:12.5px; color:var(--muted); }
+.file-h .fa{ margin-left:auto; display:flex; gap:8px; }
+.file-h.amber{ background:var(--amber-bg); border-color:var(--amber-line); }
+.dl{ display:flex; align-items:center; gap:12px; padding:2px 14px; font-family:var(--code); font-size:13px; line-height:1.9; }
+.dl .ln{ width:26px; text-align:right; color:var(--faint); flex:none; }
+.dl .pm{ width:10px; flex:none; }
+.dl .code{ white-space:pre; flex:1; min-width:0; }
+.dl.add{ background:#eef6ef; } .dl.add .pm{ color:var(--green); }
+.dl.del{ background:#fbeef0; } .dl.del .pm{ color:#a8434f; }
+.dl.on{ box-shadow:inset 2px 0 0 var(--orange); }
+.cluster{ display:inline-flex; gap:4px; margin-left:6px; }
+.cluster i{ width:20px; height:20px; border:1px solid var(--line2); border-radius:5px; display:flex; align-items:center; justify-content:center; color:#7c828a; background:#fff; }
+.cluster i svg{ width:12px; height:12px; }
+.cluster i.hot{ border-color:var(--orange); color:var(--orange); }
+.threadtag{ font-family:var(--mono); font-size:12px; color:var(--muted); display:inline-flex; align-items:center; gap:6px; margin-left:6px; }
+.reach{ border:1px dashed var(--blue-line); background:#f4f9fc; border-radius:9px; margin:8px 14px; padding:8px 12px; }
+.reach .rh{ font-family:var(--mono); font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:var(--blue-ink); display:flex; align-items:center; gap:7px; margin-bottom:4px; }
+.reach .rl{ font-family:var(--code); font-size:12.5px; color:var(--muted); }
+.chunkact{ display:flex; gap:9px; margin:12px 14px 4px; }
+.fold{ text-align:center; font-family:var(--mono); font-size:12px; color:var(--faint); margin:16px 0; }
+
+.tcard{ border:1px solid var(--line2); border-radius:11px; padding:12px 13px; margin-bottom:11px; background:#fff; }
+.tcard.blue{ box-shadow:inset 3px 0 0 var(--blue); }
+.tcard .who{ font-size:12.5px; font-weight:600; display:flex; align-items:center; gap:7px; margin-bottom:6px; }
+.tcard .who .k{ font-family:var(--mono); font-weight:400; color:var(--muted); font-size:11.5px; margin-left:auto; }
+.tcard .msg{ font-size:13px; color:var(--text); line-height:1.5; }
+.tcard.amber{ background:var(--amber-bg); border-color:var(--amber-line); }
+.tcard .fragrow{ display:flex; gap:6px; margin-top:9px; flex-wrap:wrap; }
+.fragbtn{ font-family:var(--mono); font-size:11px; color:var(--muted); border:1px solid var(--line2); border-radius:6px; padding:4px 7px; display:inline-flex; align-items:center; gap:5px; background:#fff; }
+.composer{ display:flex; align-items:center; gap:9px; border:1px solid var(--line2); border-radius:9px; padding:9px 11px; margin-top:4px; }
+.composer .ph{ color:var(--faint); font-size:13px; flex:1; }
+</style></head>
+<body><div class="page">
+  <div class="fhead">
+    <span class="badge">06</span>
+    <h1 class="ftitle">The review heart: the sequence canvas</h1>
+    <span class="pill">Review</span>
+    <div class="fref">the tall, scrolling surface
+no viewport-fold element</div>
+  </div>
+  <p class="fsub">The code, in-diff dispositions, and the inline conversation cluster on every line. The surface is genuinely <b>tall</b> and scrolls the whole changeset, with no fold theatre. Threads live in the right margin aligned to their line; the diff column never reflows. The sticky chunk header keeps “view test” and open-in-editor reachable.</p>
+  <div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="gly sm plain" style="width:20px;height:20px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="8" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 10.3c0 4-3.5 4.4-6.4 5.2"/></svg></span>atlas · feat/rate-limiting</span><span class="tmeta"><span class="modepill"><span style="color:#2a2e34"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span>auto<span style="color:#aab0b8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></span><span>patchset 8 · snapshot</span></span></div><div class="content"><div class="lensbar"><span class="lens"><span style="color:#5a6069"><></span>12</span><span class="lens on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4.2" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="4.2" cy="12" r="1.3"/><path d="M3 17l1.2 1.2L6 16.4" /></svg>Sequence</span><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M6 8.4v7.2M8.3 6.9C13 7.5 15.6 8.9 16 10.6M8.2 17c4.8-.6 7.4-2 7.8-3.8"/></svg>4</span><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/></svg>2</span><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h3.5l2-6.5 3 13 2.4-9 1.6 3.5H22"/></svg>Noise</span><div class="right"><span class="chip blue">● 4 private</span><button class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l3 3v15H6z"/><path d="M15 3v3h3"/><path d="M9 12h6M9 15.5h6M9 8.5h3"/></svg>Preview</button></div></div><div class="grid3"><div class="orderrail">
+    <div class="oh"><span>Order</span><span style="display:flex;gap:6px;color:#aab0b8">spine<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></div>
+    <div class="orow"><span class="rd"></span>Limit schema<span class="cnt">96</span></div>
+    <div class="orow on"><span class="rd"></span>Token bucket<span class="cnt">121</span></div>
+    <div class="orow"><span class="rd"></span>Middleware<span class="cnt">214</span></div>
+    <div class="orow"><span class="rd"></span>Call sites<span class="cnt">187</span></div>
+    <div class="orow"><span class="rd"></span>Tests<span class="cnt">640</span></div>
+    <div class="orow"><span class="rd half"></span>Noise<span class="cnt">592</span></div>
+    <div class="orail-t">held 47m · your place</div>
+  </div><div class="center rel">
+    <span class="anno" style="left:6px;top:-2px"><span class="dot">1</span></span>
+    <div class="chunk-h"><span class="nm">Token bucket</span><span class="chip">opaque</span></div>
+    <p class="chunk-desc">One refill-on-read bucket per org, stored behind RateStore. No timers, so state advances only when a request arrives. <span class="more">full reasoning ▾</span></p>
+
+    <div class="file">
+      <div class="file-h"><span class="p"><span style="color:#5a6069"><></span> src/rate/bucket.ts</span><span class="d">+74 −0</span>
+        <span class="fa rel"><span class="anno" style="right:112px;top:-30px"><span class="dot">2</span></span><button class="btn sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6"/><path d="M10 3v6.2L5.6 17a2 2 0 0 0 1.8 3h9.2a2 2 0 0 0 1.8-3L14 9.2V3"/><path d="M8 14.5h8"/></svg>view test</button><button class="btn sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-7"/><path d="M14 4h6v6"/><path d="M11 13L20 4"/></svg></button></span>
+      </div>
+      <div class="dl add on"><span class="ln">14</span><span class="pm">+</span><span class="code">async take(key: string, cost = 1): Promise&lt;TakeResult&gt; {</span><span class="cluster"><i class="hot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v10H9l-4 3.5v-3.5H4z"/></svg></i><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-.6 4"/><path d="M20 5v4h-4"/></svg></i><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.4"/><path d="M9.5 9.4a2.6 2.6 0 0 1 4.9 1.1c0 1.7-2.4 2-2.4 3.6"/><circle cx="12" cy="17.2" r=".7" fill="currentColor" stroke="none"/></svg></i><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h12v8H8l-3 2.6V12.5H3z"/><path d="M8.5 8.5h12v8h-2v2.6l-3-2.6H12"/></svg></i></span></div>
+      <div class="dl add"><span class="ln">15</span><span class="pm">+</span><span class="code">  const now = Date.now()</span></div>
+      <div class="dl add on"><span class="ln">16</span><span class="pm">+</span><span class="code">  const prior = (await this.store.get(key)) ?? this.full(now)</span><span class="cluster"><i><svg viewBox="0 0 24 24" fill="ne" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v10H9l-4 3.5v-3.5H4z"/></svg></i><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-.6 4"/><path d="M20 5v4h-4"/></svg></i><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.4"/><path d="M9.5 9.4a2.6 2.6 0 0 1 4.9 1.1c0 1.7-2.4 2-2.4 3.6"/><circle cx="12" cy="17.2" r=".7" fill="currentColor" stroke="none"/></svg></i><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h12v8H8l-3 2.6V12.5H3z"/><path d="M8.5 8.5h12v8h-2v2.6l-3-2.6H12"/></svg></i></span></div>
+      <div class="dl add"><span class="ln">17</span><span class="pm">+</span><span class="code">  const tokens = Math.min(this.capacity, prior.tokens + elapsed * this.refillPerSec)</span></div>
+      <div class="dl add"><span class="ln">20</span><span class="pm">+</span><span class="code">    return { allowed: false, retryAfterMs: ((cost - tokens) / this.refillPerSec) * 1000 }</span></div>
+      <div class="reach rel"><span class="anno" style="left:-30px;top:6px"><span class="dot">3</span></span><div class="rh"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 14.5l5-5"/><path d="M11 7l1.2-1.2a3.4 3.4 0 0 1 4.9 4.9L16 12"/><path d="M13 17l-1.2 1.2a3.4 3.4 0 0 1-4.9-4.9L8 12"/></svg>reach · unchanged · referenced · src/rate/store.ts</div><div class="rl">get(key): Promise&lt;BucketState | null&gt;   ·   set(key, state): Promise&lt;void&gt;</div></div>
+      <div class="dl add"><span class="ln">23</span><span class="pm">+</span><span class="code">  return { allowed: true, remaining: Math.floor(tokens - cost) }</span></div>
+      <div class="chunkact"><button class="btn ink sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5 10-11"/></svg>Approve chunk</button><button class="btn sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-.6 4"/><path d="M20 5v4h-4"/></svg>Change</button><button class="btn sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v10H9l-4 3.5v-3.5H4z"/></svg>Comment</button><button class="btn sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.4"/><path d="M9.5 9.4a2.6 2.6 0 0 1 4.9 1.1c0 1.7-2.4 2-2.4 3.6"/><circle cx="12" cy="17.2" r=".7" fill="currentColor" stroke="none"/></svg>Question</button></div>
+    </div>
+
+    <div class="file">
+      <div class="file-h amber"><span class="p"><span style="color:#5a6069"><></span> src/rate/keys.ts</span><span class="d">+31 −13</span><span class="chip amber"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/></svg>public contract</span><span class="fa"><button class="btn sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6"/><path d="M10 3v6.2L5.6 17a2 2 0 0 0 1.8 3h9.2a2 2 0 0 0 1.8-3L14 9.2V3"/><path d="M8 14.5h8"/></svg>view test</button><button class="btn sm"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-7"/><path d="M14 4h6v6"/><path d="M11 13L20 4"/></svg></button></span></div>
+      <div class="dl "><span class="ln">17</span><span class="pm"> </span><span class="code">export function orgKey(ctx: RequestContext): string {</span></div>
+      <div class="dl del"><span class="ln">18</span><span class="pm">-</span><span class="code">  return `rl:${ctx.apiKey.id}`</span></div>
+      <div class="dl add on"><span class="ln">18</span><span class="pm">+</span><span class="code">  return `rl:org:${ctx.org.id}`</span><span class="threadtag"><svg viewBox="0 0 24 24" fill="ne" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h12v8H8l-3 2.6V12.5H3z"/><path d="M8.5 8.5h12v8h-2v2.6l-3-2.6H12"/></svg> thread · 2</span><span class="cluster"><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v10H9l-4 3.5v-3.5H4z"/></svg></i><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-.6 4"/><path d="M20 5v4h-4"/></svg></i><i><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.4"/><path d="M9.5 9.4a2.6 2.6 0 0 1 4.9 1.1c0 1.7-2.4 2-2.4 3.6"/><circle cx="12" cy="17.2" r=".7" fill="currentColor" stroke="none"/></svg></i><i class="hot"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h12v8H8l-3 2.6V12.5H3z"/><path d="M8.5 8.5h12v8h-2v2.6l-3-2.6H12"/></svg></i></span></div>
+      <div class="dl "><span class="ln">19</span><span class="pm"> </span><span class="code">}</span></div>
+    </div>
+    <div class="fold rel"><span class="anno" style="left:6px;top:-2px"><span class="dot">4</span></span>more files below · call sites, tests, noise · this surface scrolls the whole changeset</div>
+  </div><div class="margin rel">
+    <span class="anno" style="left:-2px;top:-2px"><span class="dot">5</span></span>
+    <div class="margin-h"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg>Thread · fail-open path <span style="margin-left:auto" class="chip">L44-47</span></div>
+    <div class="tcard"><div class="who"><span style="width:8px;height:8px;border-radius:50%;background:#8a9099;display:inline-block"></span>You</div><div class="msg">Why fail open? If the store is down, doesn’t this switch off limiting exactly when load is weirdest?</div></div>
+    <div class="tcard blue"><div class="who"><span style="color:var(--blue)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span>Claude Code</div><div class="msg">It follows the plan: “limiter outage must never become API outage.” Failing closed turns every store blip into a 5xx storm for all 4,112 orgs. The window is observable via rate.store_error.</div><div class="fragrow"><span class="fragbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/></svg>finding</span><span class="fragbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v10H9l-4 3.5v-3.5H4z"/></svg>draft comment</span><span class="fragbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h12v8H8l-3 2.6V12.5H3z"/><path d="M8.5 8.5h12v8h-2v2.6l-3-2.6H12"/></svg>sub-thread</span></div></div>
+    <div class="tcard amber"><div class="who"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/></svg>Harnesses disagree</div><div class="msg">Unbounded fail-open is not defensible: an outage lets any org scrape without limit. A process-local bucket at 5x the org limit caps it.</div><div class="fragrow"><span class="chip">claude 3/3</span><span class="chip">codex 3/3</span><span class="chip amber">substantive</span></div></div>
+    <div class="composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v9H9l-4 3v-3H4z"/><path d="M15 2.4l.8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7L12.5 5l1.7-.9z"/></svg><span class="ph">Ask about these lines</span><button class="btn sm ink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v9H9l-4 3v-3H4z"/><path d="M15 2.4l.8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7L12.5 5l1.7-.9z"/></svg></button></div>
+  </div></div></div></div>
+  <div class="notes"><div class="notes-h">Designer notes &nbsp;/&nbsp; what to weigh in on</div>
+    <div class="notes-grid"><div class="note"><span class="dot">1</span><div><b>Tall and real, no fold.</b> The viewport-fold element is gone (Rai’s note). The surface scrolls the whole changeset; the order rail holds your place.</div></div><div class="note"><span class="dot">2</span><div><b>View test, context-labeled.</b> One button reads “view test” on an implementation hunk and “view implementation” on a test; disabled “no tests” when none reference it.</div></div><div class="note"><span class="dot">3</span><div><b>The cluster is verbs times anchors.</b> Comment / request-change / question / discuss, on a line, a dragged range, a chunk header, or a fragment. Ink publishes; blue stays local.</div></div><div class="note"><span class="dot">4</span><div><b>Threads in the margin.</b> Conversation aligns to its line in the right margin and the composer opens there, so the diff column is a fixed point that never moves.</div></div></div>
+  </div>
+</div></body></html>

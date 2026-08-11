@@ -1,0 +1,181 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>Rennet v3 · 00 Legend</title><style>
+:root{
+  --ground:#e7e9ec; --ink:#181b1f; --text:#1c1f24; --muted:#697079; --faint:#9aa1a9;
+  --win:#ffffff; --titlebar:#f4f5f7; --glass:#eceff2; --card:#ffffff;
+  --line:#e1e5e9; --line2:#d2d7dd;
+  --blue:#3d7cab; --blue-ink:#2f6491; --blue-bg:#e9f1f8; --blue-line:#c2d8e9;
+  --amber:#94690f; --amber-bg:#f6efdb; --amber-line:#e0cf98;
+  --green:#3c7a45; --green-bg:#e7f0e8; --green-line:#bdd8be;
+  --add:#3c7a45; --orange:#bf6a2f;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, sans-serif;
+  /* chrome is sans now (Rai: no monospace as UI elements). --mono aliases sans so every
+     existing chrome reference flips automatically; only real code/diff uses --code. */
+  --mono: var(--sans);
+  --code: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+}
+*{ box-sizing:border-box; }
+html,body{ margin:0; padding:0; }
+body{ background:var(--ground); color:var(--text); font-family:var(--sans);
+  -webkit-font-smoothing:antialiased; text-rendering:geometricPrecision; }
+.page{ width:1440px; margin:0 auto; padding:34px 40px 40px; }
+.mono{ font-family:var(--mono); }
+
+/* frame header */
+.fhead{ display:flex; align-items:center; gap:14px; margin:0 0 12px; }
+.badge{ flex:none; width:32px; height:32px; border-radius:8px; background:var(--ink); color:#fff;
+  font-family:var(--mono); font-weight:600; font-size:14px; display:flex; align-items:center; justify-content:center; }
+.ftitle{ font-size:23px; font-weight:650; letter-spacing:-.01em; margin:0; }
+.pill{ font-family:var(--mono); font-size:11px; letter-spacing:.11em; text-transform:uppercase;
+  color:var(--muted); border:1px solid var(--line2); background:#fff; border-radius:6px; padding:4px 9px; }
+.fref{ margin-left:auto; text-align:right; white-space:pre-line; font-family:var(--mono);
+  font-size:12px; line-height:1.5; color:var(--faint); }
+.fsub{ color:var(--muted); font-size:15px; line-height:1.5; max-width:1080px; margin:0 0 20px; }
+.fsub b{ color:var(--text); font-weight:600; }
+
+/* app window */
+.win{ background:var(--win); border:1px solid var(--line2); border-radius:14px; overflow:hidden;
+  box-shadow: 0 1px 0 rgba(255,255,255,.6), 0 24px 50px -34px rgba(20,26,33,.42); }
+.tbar{ display:flex; align-items:center; gap:12px; height:52px; padding:0 18px;
+  background:var(--titlebar); border-bottom:1px solid var(--line); }
+.tl{ width:12px; height:12px; border-radius:50%; border:1.5px solid #c3c9d1; }
+.tls{ display:flex; gap:8px; margin-right:6px; }
+.tname{ display:flex; align-items:center; gap:8px; font-weight:600; font-size:14.5px; }
+.tmeta{ margin-left:auto; display:flex; align-items:center; gap:12px; font-family:var(--mono);
+  font-size:12.5px; color:var(--muted); }
+.content{ padding:26px 28px; }
+
+/* icon box */
+.gly{ flex:none; width:34px; height:34px; border-radius:8px; border:1px solid var(--line2);
+  background:#fff; display:flex; align-items:center; justify-content:center; color:#2a2e34; }
+.gly svg{ width:19px; height:19px; }
+.gly.sm{ width:26px; height:26px; border-radius:7px; }
+.gly.sm svg{ width:15px; height:15px; }
+.gly.plain{ border:none; background:transparent; }
+svg{ display:block; width:16px; height:16px; }
+.i{ width:16px; height:16px; vertical-align:-3px; }
+
+/* chips + buttons */
+.chip{ font-family:var(--mono); font-size:12px; line-height:1; color:var(--muted);
+  border:1px solid var(--line2); background:#fff; border-radius:6px; padding:5px 8px; display:inline-flex;
+  align-items:center; gap:5px; white-space:nowrap; }
+.chip.blue{ color:var(--blue-ink); background:var(--blue-bg); border-color:var(--blue-line); }
+.chip.amber{ color:var(--amber); background:var(--amber-bg); border-color:var(--amber-line); }
+.chip.green{ color:var(--green); background:var(--green-bg); border-color:var(--green-line); }
+.chip.ghost{ background:transparent; }
+.btn{ font-family:var(--sans); font-size:13.5px; font-weight:550; color:var(--text); background:#fff;
+  border:1px solid var(--line2); border-radius:8px; padding:8px 13px; display:inline-flex; align-items:center;
+  gap:7px; cursor:default; white-space:nowrap; }
+.btn.ink{ background:var(--ink); color:#fff; border-color:var(--ink); }
+.btn.sm{ padding:6px 10px; font-size:12.5px; }
+.btn svg{ width:15px; height:15px; }
+
+/* generic rows/cards */
+.card{ background:var(--card); border:1px solid var(--line2); border-radius:11px; }
+.row{ display:flex; align-items:center; gap:14px; background:var(--card); border:1px solid var(--line2);
+  border-radius:11px; padding:15px 16px; }
+.row.backlight{ background:var(--blue-bg); border-color:var(--blue-line); box-shadow: inset 3px 0 0 var(--blue); }
+.muted{ color:var(--muted); } .faint{ color:var(--faint); }
+.k{ font-family:var(--mono); }
+
+/* designer notes footer */
+.notes{ border:1.5px dashed var(--line2); border-radius:12px; padding:20px 24px; margin-top:20px; }
+.notes-h{ font-family:var(--mono); font-size:12px; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--faint); margin:0 0 14px; }
+.notes-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px 40px; }
+.note{ display:flex; gap:11px; font-size:14px; line-height:1.5; color:var(--muted); }
+.note b{ color:var(--text); font-weight:600; }
+.dot{ flex:none; width:20px; height:20px; border-radius:50%; background:var(--orange); color:#fff;
+  font-family:var(--mono); font-size:11px; font-weight:600; display:inline-flex; align-items:center; justify-content:center; }
+.anno{ position:absolute; z-index:5; }
+.rel{ position:relative; }
+.sec-label{ font-family:var(--mono); font-size:11.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); }
+.modepill{ display:inline-flex; align-items:center; gap:7px; font-family:var(--sans); font-size:12.5px; color:var(--text);
+  border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
+.modepill svg{ width:14px; height:14px; }
+
+.legend-grid{ display:grid; grid-template-columns:1fr 1fr 1fr; gap:0 34px; }
+.legend-col{ display:flex; flex-direction:column; }
+.col-h{ font-family:var(--mono); font-size:11.5px; letter-spacing:.1em; text-transform:uppercase;
+  color:var(--faint); margin:6px 0 4px; padding-top:14px; }
+.legend-col > .col-h:first-child{ padding-top:0; }
+.lg{ display:flex; align-items:center; gap:13px; padding:9px 0; border-bottom:1px solid var(--line); }
+.lg:last-child{ border-bottom:none; }
+.lg-n{ font-size:14px; font-weight:600; letter-spacing:-.005em; }
+.lg-d{ font-size:12.5px; color:var(--muted); margin-top:1px; line-height:1.35; }
+.tag-new{ font-family:var(--mono); font-size:9.5px; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--green); background:var(--green-bg); border:1px solid var(--green-line); border-radius:4px; padding:1px 5px; vertical-align:1px; }
+.matlaw{ display:flex; gap:10px; margin-top:10px; }
+.matlaw .m{ flex:1; border:1px solid var(--line2); border-radius:9px; padding:11px 12px; }
+.matlaw .m.blue{ background:var(--blue-bg); border-color:var(--blue-line); }
+.matlaw .m.ink{ background:var(--ink); }
+.matlaw .m.ink .mh, .matlaw .m.ink .md{ color:#fff; }
+.matlaw .m.ink .md{ opacity:.72; }
+.mh{ font-size:13px; font-weight:600; display:flex; align-items:center; gap:7px; }
+.md{ font-size:12px; color:var(--muted); margin-top:3px; line-height:1.4; }
+.mh .swatch{ width:13px; height:13px; border-radius:4px; }
+.blue .swatch{ background:var(--blue); } .ink .swatch{ background:#e7ebf0; }
+.modebar{ display:flex; gap:9px; margin-top:9px; }
+.mode{ flex:1; display:flex; align-items:center; gap:9px; border:1px solid var(--line2); border-radius:9px; padding:9px 11px; background:#fff; }
+.mode .lg-n{ font-size:13px; } .mode .lg-d{ font-size:11.5px; }
+.mode-gly{ position:relative; width:30px; height:30px; flex:none; border:1px solid var(--line2); border-radius:7px; display:flex; align-items:center; justify-content:center; }
+.mode-gly svg{ width:16px; height:16px; }
+.mode-gly .pin{ position:absolute; right:-4px; bottom:-4px; width:15px; height:15px; border-radius:50%;
+  background:#fff; border:1px solid var(--line2); display:flex; align-items:center; justify-content:center; }
+.mode-gly .pin svg{ width:10px; height:10px; }
+</style></head>
+<body><div class="page">
+  <div class="fhead">
+    <span class="badge">00</span>
+    <h1 class="ftitle">Legend: the icon language</h1>
+    <span class="pill">Reference</span>
+    <div class="fref">v3 · icon-forward chrome
+defines every glyph used across 01-17</div>
+  </div>
+  <p class="fsub">Rennet’s own chrome speaks in icons where they save noise; the words that remain are terse labels. This key defines every glyph. The <b>LLM-generated canvas content</b> (narration, a model’s answer, a distilled why) is exempt from the terse rule and lives by its own voice.</p>
+  <div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="gly sm plain" style="width:20px;height:20px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2.5M12 19.5V22M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2 12h2.5M19.5 12H22M4.2 19.8L6 18M18 6l1.8-1.8"/></svg></span>Legend</span><span class="tmeta">lo-fi greyscale · glyphs are indicative</span></div><div class="content"><div class="legend-grid"><div class="legend-col">
+    <div class="col-h">Conversation cluster · verbs</div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5 10-11"/></svg></span><div><div class="lg-n">Approve</div><div class="lg-d">accept this line, chunk or roll-up</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-.6 4"/><path d="M20 5v4h-4"/></svg></span><div><div class="lg-n">Request change</div><div class="lg-d">ask for a change, inline or staged</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v10H9l-4 3.5v-3.5H4z"/></svg></span><div><div class="lg-n">Comment</div><div class="lg-d">a note that lands as a PR comment</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.4"/><path d="M9.5 9.4a2.6 2.6 0 0 1 4.9 1.1c0 1.7-2.4 2-2.4 3.6"/><circle cx="12" cy="17.2" r=".7" fill="currentColor" stroke="none"/></svg></span><div><div class="lg-n">Question</div><div class="lg-d">ask the orchestrator, on the anchor</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h12v8H8l-3 2.6V12.5H3z"/><path d="M8.5 8.5h12v8h-2v2.6l-3-2.6H12"/></svg></span><div><div class="lg-n">Discuss</div><div class="lg-d">open a thread on a line, range or chunk</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v9H9l-4 3v-3H4z"/><path d="M15 2.4l.8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7L12.5 5l1.7-.9z"/></svg></span><div><div class="lg-n">Ask the harness</div><div class="lg-d">private chat about these lines</div></div></div>
+    <div class="col-h">Travels vs stays · the material law</div>
+    <div class="matlaw">
+      <div class="m ink"><div class="mh"><span class="swatch"></span>Ink</div><div class="md">publishes. Travels to the PR.</div></div>
+      <div class="m blue"><div class="mh"><span class="swatch"></span>Blue</div><div class="md">stays local. Never leaves this machine.</div></div>
+    </div>
+  </div><div class="legend-col">
+    <div class="col-h">The lenses</div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 13.5l1.7 1.7L14 11.8"/></svg></span><div><div class="lg-n">Spec</div><div class="lg-d">the change intent, structured</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4.2" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="4.2" cy="12" r="1.3"/><path d="M3 17l1.2 1.2L6 16.4" /></svg></span><div><div class="lg-n">Sequence</div><div class="lg-d">the reading order: the review heart</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M6 8.4v7.2M8.3 6.9C13 7.5 15.6 8.9 16 10.6M8.2 17c4.8-.6 7.4-2 7.8-3.8"/></svg></span><div><div class="lg-n">Decisions</div><div class="lg-d">the calls the implementer made</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/></svg></span><div><div class="lg-n">Flagged <span class="tag-new">new</span></div><div class="lg-d">what the automated review raised</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h3.5l2-6.5 3 13 2.4-9 1.6 3.5H22"/></svg></span><div><div class="lg-n">Noise <span class="tag-new">new</span></div><div class="lg-d">touched, but not for you</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 14.5l5-5"/><path d="M11 7l1.2-1.2a3.4 3.4 0 0 1 4.9 4.9L16 12"/><path d="M13 17l-1.2 1.2a3.4 3.4 0 0 1-4.9-4.9L8 12"/></svg></span><div><div class="lg-n">Coverage</div><div class="lg-d">requirement to hunk and test mapping</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.4"/><path d="M11 6.8v8.4M6.8 11h8.4" opacity=".55"/><path d="M15.8 15.8L20 20"/></svg></span><div><div class="lg-n">Symbol peek <span class="tag-new">new</span></div><div class="lg-d">a floating look at a definition</div></div></div>
+    <div class="col-h">Execution mode · in the title bar</div>
+    <div class="modebar">
+      <div class="mode"><span class="mode-gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span><div><div class="lg-n">Auto</div><div class="lg-d">runs jobs</div></div></div>
+      <div class="mode"><span class="mode-gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg><span class="pin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="2.3" fill="currentColor" stroke="none"/></svg></span></span><div><div class="lg-n">Ask</div><div class="lg-d">confirms first</div></div></div>
+      <div class="mode"><span class="mode-gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg><span class="pin"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg></span></span><div><div class="lg-n">Read-only</div><div class="lg-d">never invokes</div></div></div>
+    </div>
+  </div><div class="legend-col">
+    <div class="col-h">Actions & objects</div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6"/><path d="M10 3v6.2L5.6 17a2 2 0 0 0 1.8 3h9.2a2 2 0 0 0 1.8-3L14 9.2V3"/><path d="M8 14.5h8"/></svg></span><div><div class="lg-n">View test / impl <span class="tag-new">new</span></div><div class="lg-d">flip a hunk to the tests that exercise it</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-7"/><path d="M14 4h6v6"/><path d="M11 13L20 4"/></svg></span><div><div class="lg-n">Open in editor</div><div class="lg-d">$EDITOR at the exact line</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="15" rx="2"/><path d="M14 4.5v15"/><path d="M16.4 9l2 2-2 2" opacity=".7"/></svg></span><div><div class="lg-n">Symbol inspector</div><div class="lg-d">pin the peek into the right rail</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="7" r="2.1"/><circle cx="18" cy="7" r="2.1"/><circle cx="12" cy="18" r="2.1"/><path d="M7.7 8.4l3 8M16.3 8.4l-3 8M8 7h8"/></svg></span><div><div class="lg-n">Orchestrator</div><div class="lg-d">the one harness you converse with</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span><div><div class="lg-n">Harness / LLM</div><div class="lg-d">an installed coding agent</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18L18 6"/><path d="M9 6h9v9"/></svg></span><div><div class="lg-n">Make PR</div><div class="lg-d">the local review becomes a PR</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 5.5A8.3 8.3 0 1 0 21 12"/><path d="M20 4.5V9h-4.5"/><path d="M9 12l2.5 2.5L16 10" opacity=".6"/></svg></span><div><div class="lg-n">Re-steer</div><div class="lg-d">hand changes back to the harness</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20.5h18"/><path d="M15.5 4.6l3.9 3.9L9.6 18.3l-4.6 1 1-4.6z"/></svg></span><div><div class="lg-n">Sign</div><div class="lg-d">the deliberate hold-to-sign act</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="18" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 15.7V10a3 3 0 0 0-3-3h-3M13 4.5L10.5 7 13 9.5"/></svg></span><div><div class="lg-n">Pull request</div><div class="lg-d">one changeset source, one publish target</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="8" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 10.3c0 4-3.5 4.4-6.4 5.2"/></svg></span><div><div class="lg-n">Branch / worktree</div><div class="lg-d">a local checkout, becoming a PR</div></div></div>
+    <div class="lg"><span class="gly"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M7 9.5h.01M10.5 9.5h.01M14 9.5h.01M7.5 13.5h9" /></svg></span><div><div class="lg-n">Command palette</div><div class="lg-d">every action, from the keyboard</div></div></div>
+  </div></div></div></div>
+  <div class="notes"><div class="notes-h">Designer notes &nbsp;/&nbsp; what to weigh in on</div>
+    <div class="notes-grid"><div class="note"><span class="dot">1</span><div><b>This is the vocabulary contract.</b> If a glyph is unclear here, it is unclear in the app. Flag any that don’t read instantly.</div></div><div class="note"><span class="dot">2</span><div><b>Two tiers.</b> About eight glyphs earn standalone use (approve, request-change, the lens tabs, the mode glyph); everything denser carries a one-word label, never a sentence.</div></div><div class="note"><span class="dot">3</span><div><b>Flagged and symbol-peek are new.</b> Flagged indexes the automated review; peek is the plain-click look at a symbol. Both replace older ideas Rai flagged as drift.</div></div><div class="note"><span class="dot">4</span><div><b>The flask replaces the arrow toggle.</b> v2’s impl/test arrows collided with other glyphs. One context-labeled button now reads “view test” on impl, “view implementation” on a test.</div></div></div>
+  </div>
+</div></body></html>

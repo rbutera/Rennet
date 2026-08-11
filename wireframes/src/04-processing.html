@@ -1,0 +1,144 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8">
+<title>Rennet v3 · 04 Processing</title><style>
+:root{
+  --ground:#e7e9ec; --ink:#181b1f; --text:#1c1f24; --muted:#697079; --faint:#9aa1a9;
+  --win:#ffffff; --titlebar:#f4f5f7; --glass:#eceff2; --card:#ffffff;
+  --line:#e1e5e9; --line2:#d2d7dd;
+  --blue:#3d7cab; --blue-ink:#2f6491; --blue-bg:#e9f1f8; --blue-line:#c2d8e9;
+  --amber:#94690f; --amber-bg:#f6efdb; --amber-line:#e0cf98;
+  --green:#3c7a45; --green-bg:#e7f0e8; --green-line:#bdd8be;
+  --add:#3c7a45; --orange:#bf6a2f;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, Roboto, sans-serif;
+  /* chrome is sans now (Rai: no monospace as UI elements). --mono aliases sans so every
+     existing chrome reference flips automatically; only real code/diff uses --code. */
+  --mono: var(--sans);
+  --code: ui-monospace, "SF Mono", SFMono-Regular, Menlo, monospace;
+}
+*{ box-sizing:border-box; }
+html,body{ margin:0; padding:0; }
+body{ background:var(--ground); color:var(--text); font-family:var(--sans);
+  -webkit-font-smoothing:antialiased; text-rendering:geometricPrecision; }
+.page{ width:1440px; margin:0 auto; padding:34px 40px 40px; }
+.mono{ font-family:var(--mono); }
+
+/* frame header */
+.fhead{ display:flex; align-items:center; gap:14px; margin:0 0 12px; }
+.badge{ flex:none; width:32px; height:32px; border-radius:8px; background:var(--ink); color:#fff;
+  font-family:var(--mono); font-weight:600; font-size:14px; display:flex; align-items:center; justify-content:center; }
+.ftitle{ font-size:23px; font-weight:650; letter-spacing:-.01em; margin:0; }
+.pill{ font-family:var(--mono); font-size:11px; letter-spacing:.11em; text-transform:uppercase;
+  color:var(--muted); border:1px solid var(--line2); background:#fff; border-radius:6px; padding:4px 9px; }
+.fref{ margin-left:auto; text-align:right; white-space:pre-line; font-family:var(--mono);
+  font-size:12px; line-height:1.5; color:var(--faint); }
+.fsub{ color:var(--muted); font-size:15px; line-height:1.5; max-width:1080px; margin:0 0 20px; }
+.fsub b{ color:var(--text); font-weight:600; }
+
+/* app window */
+.win{ background:var(--win); border:1px solid var(--line2); border-radius:14px; overflow:hidden;
+  box-shadow: 0 1px 0 rgba(255,255,255,.6), 0 24px 50px -34px rgba(20,26,33,.42); }
+.tbar{ display:flex; align-items:center; gap:12px; height:52px; padding:0 18px;
+  background:var(--titlebar); border-bottom:1px solid var(--line); }
+.tl{ width:12px; height:12px; border-radius:50%; border:1.5px solid #c3c9d1; }
+.tls{ display:flex; gap:8px; margin-right:6px; }
+.tname{ display:flex; align-items:center; gap:8px; font-weight:600; font-size:14.5px; }
+.tmeta{ margin-left:auto; display:flex; align-items:center; gap:12px; font-family:var(--mono);
+  font-size:12.5px; color:var(--muted); }
+.content{ padding:26px 28px; }
+
+/* icon box */
+.gly{ flex:none; width:34px; height:34px; border-radius:8px; border:1px solid var(--line2);
+  background:#fff; display:flex; align-items:center; justify-content:center; color:#2a2e34; }
+.gly svg{ width:19px; height:19px; }
+.gly.sm{ width:26px; height:26px; border-radius:7px; }
+.gly.sm svg{ width:15px; height:15px; }
+.gly.plain{ border:none; background:transparent; }
+svg{ display:block; width:16px; height:16px; }
+.i{ width:16px; height:16px; vertical-align:-3px; }
+
+/* chips + buttons */
+.chip{ font-family:var(--mono); font-size:12px; line-height:1; color:var(--muted);
+  border:1px solid var(--line2); background:#fff; border-radius:6px; padding:5px 8px; display:inline-flex;
+  align-items:center; gap:5px; white-space:nowrap; }
+.chip.blue{ color:var(--blue-ink); background:var(--blue-bg); border-color:var(--blue-line); }
+.chip.amber{ color:var(--amber); background:var(--amber-bg); border-color:var(--amber-line); }
+.chip.green{ color:var(--green); background:var(--green-bg); border-color:var(--green-line); }
+.chip.ghost{ background:transparent; }
+.btn{ font-family:var(--sans); font-size:13.5px; font-weight:550; color:var(--text); background:#fff;
+  border:1px solid var(--line2); border-radius:8px; padding:8px 13px; display:inline-flex; align-items:center;
+  gap:7px; cursor:default; white-space:nowrap; }
+.btn.ink{ background:var(--ink); color:#fff; border-color:var(--ink); }
+.btn.sm{ padding:6px 10px; font-size:12.5px; }
+.btn svg{ width:15px; height:15px; }
+
+/* generic rows/cards */
+.card{ background:var(--card); border:1px solid var(--line2); border-radius:11px; }
+.row{ display:flex; align-items:center; gap:14px; background:var(--card); border:1px solid var(--line2);
+  border-radius:11px; padding:15px 16px; }
+.row.backlight{ background:var(--blue-bg); border-color:var(--blue-line); box-shadow: inset 3px 0 0 var(--blue); }
+.muted{ color:var(--muted); } .faint{ color:var(--faint); }
+.k{ font-family:var(--mono); }
+
+/* designer notes footer */
+.notes{ border:1.5px dashed var(--line2); border-radius:12px; padding:20px 24px; margin-top:20px; }
+.notes-h{ font-family:var(--mono); font-size:12px; letter-spacing:.13em; text-transform:uppercase;
+  color:var(--faint); margin:0 0 14px; }
+.notes-grid{ display:grid; grid-template-columns:1fr 1fr; gap:14px 40px; }
+.note{ display:flex; gap:11px; font-size:14px; line-height:1.5; color:var(--muted); }
+.note b{ color:var(--text); font-weight:600; }
+.dot{ flex:none; width:20px; height:20px; border-radius:50%; background:var(--orange); color:#fff;
+  font-family:var(--mono); font-size:11px; font-weight:600; display:inline-flex; align-items:center; justify-content:center; }
+.anno{ position:absolute; z-index:5; }
+.rel{ position:relative; }
+.sec-label{ font-family:var(--mono); font-size:11.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); }
+.modepill{ display:inline-flex; align-items:center; gap:7px; font-family:var(--sans); font-size:12.5px; color:var(--text);
+  border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
+.modepill svg{ width:14px; height:14px; }
+
+.proc{ padding:16px 10px 8px; text-align:center; }
+.prism-wrap{ height:150px; display:flex; align-items:center; justify-content:center; position:relative; }
+.spinner{ width:60px; height:60px; border-radius:50%; border:5px solid var(--line); border-top-color:#5a6069; transform:rotate(40deg); }
+.prism-cap{ font-size:12px; color:var(--faint); margin-top:2px; }
+.feed{ max-width:560px; margin:22px auto 0; text-align:left; }
+.ledger{ border:1px solid var(--line); border-radius:11px; overflow:hidden; margin-bottom:10px; }
+.ledrow{ display:flex; align-items:center; gap:10px; padding:9px 13px; border-bottom:1px solid var(--line); font-size:13.5px; color:var(--muted); }
+.ledrow:last-child{ border-bottom:none; }
+.ledrow .ct{ margin-left:auto; font-family:var(--mono); font-size:12px; color:var(--faint); }
+.ledrow .ck{ color:var(--green); }
+.active{ display:flex; align-items:center; gap:11px; border:1px solid var(--blue-line); background:var(--blue-bg); border-radius:11px; padding:13px 15px; }
+.active .pulse{ width:9px; height:9px; border-radius:50%; background:var(--blue); box-shadow:0 0 0 4px rgba(61,124,171,.18); flex:none; }
+.active .txt{ font-size:14px; } .active .txt b{ font-weight:600; }
+.active .t{ margin-left:auto; font-family:var(--mono); font-size:12px; color:var(--muted); }
+.morph{ max-width:560px; margin:20px auto 0; border-top:1px dashed var(--line2); padding-top:16px; }
+.morph .mh{ font-family:var(--mono); font-size:11px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint); margin-bottom:9px; text-align:center; }
+.ghosthead{ display:flex; align-items:center; gap:10px; opacity:.5; border:1px solid var(--line2); border-radius:11px; padding:12px 15px; }
+.ghosthead .nm{ font-weight:650; } .ghosthead .k{ font-family:var(--mono); font-size:12px; color:var(--muted); }
+</style></head>
+<body><div class="page">
+  <div class="fhead">
+    <span class="badge">04</span>
+    <h1 class="ftitle">Processing: the narrated context dump</h1>
+    <span class="pill">Onboarding</span>
+    <div class="fref">the narrated context dump
+honest spinner for the MVP</div>
+  </div>
+  <p class="fsub">The initial context dump, narrated. A plain spinner (the MVP placeholder) sits over a real feed of pipeline events in plain speech. Completed lines collapse into a done-ledger; the current line is always the bottom line. When it finishes it <b>becomes</b> the project.</p>
+  <div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="gly sm plain" style="width:20px;height:20px;color:#4a5059"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span>orbital</span><span class="tmeta"><span class="modepill"><span style="color:#2a2e34"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span>auto<span style="color:#aab0b8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></span><span>reading</span></span></div><div class="content"><div class="proc rel">
+    <div class="prism-wrap rel"><span class="anno" style="left:calc(50% + 52px);top:18px"><span class="dot">1</span></span><div class="spinner"></div></div>
+    <div class="prism-cap">spinner · MVP placeholder</div>
+    <div class="feed">
+      <div class="ledger rel"><span class="anno" style="left:-30px;top:14px"><span class="dot">2</span></span>
+        <div class="ledrow"><span class="ck"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5 10-11"/></svg></span>Walked 3 repos<span class="ct">16 worktrees</span></div>
+        <div class="ledrow"><span class="ck"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5 10-11"/></svg></span>Read the commit graph<span class="ct">1,204 commits</span></div>
+        <div class="ledrow"><span class="ck"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5 10-11"/></svg></span>Mapped open PRs<span class="ct">6 · 2 yours</span></div>
+      </div>
+      <div class="active"><span class="pulse"></span><span class="txt"><b>Building the context index</b> · 214 files, 38 modules</span><span class="t">now</span></div>
+    </div>
+    <div class="morph rel"><span class="anno" style="left:-30px;top:16px"><span class="dot">3</span></span>
+      <div class="mh">then it becomes the project</div>
+      <div class="ghosthead"><span style="color:#4a5059"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span><span class="nm">orbital</span><span class="k">~/orbital · 3 repos · 11 branches</span></div>
+    </div>
+  </div></div></div>
+  <div class="notes"><div class="notes-h">Designer notes &nbsp;/&nbsp; what to weigh in on</div>
+    <div class="notes-grid"><div class="note"><span class="dot">1</span><div><b>An honest spinner, for now.</b> The MVP shows a plain spinner over the real narration feed. The lines are real events in plain speech, and the model’s voice fills them, exempt from the terse rule. No fake delight before the substance is right.</div></div><div class="note"><span class="dot">2</span><div><b>Lines collapse as they land.</b> Completed work folds into a compact done-ledger (glyph plus count) so a long dump never becomes a wall.</div></div><div class="note"><span class="dot">3</span><div><b>It ends by becoming the project.</b> The final frame morphs into the project-detail header: continuity of object, not a cut. The dump feels like it produced the project.</div></div><div class="note"><span class="dot">4</span><div><b>The delight comes later.</b> Post-MVP, the spinner becomes a real animation: little agents going out to fetch each repo’s history and dumping it into context, so the dump you are watching is literally drawn. Promoted once the rest of the app is worked out.</div></div><div class="note"><span class="dot">5</span><div><b>One narration organ, reused.</b> The same component drives stage-3 refresh and review-capture narration. Interruptible: leave and it continues, with a progress glyph on the project card.</div></div></div>
+  </div>
+</div></body></html>
