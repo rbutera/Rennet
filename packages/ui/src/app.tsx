@@ -31,6 +31,7 @@ import {
   reviewCommentsPayload,
 } from "./canvas/publish";
 import { publishedItems } from "./canvas/staging";
+import { AskPanel } from "./components/ask-panel";
 import { CollationDraftCanvas } from "./components/collation-draft-canvas";
 import { DestinationFrame } from "./components/destination-frame";
 import { FrontDoor } from "./components/front-door";
@@ -1143,6 +1144,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
               // nothing, never a fixture).
               diffFor={(elementKey) => elementDiffs[elementKey]}
             />
+            {/* Ask the AI about this review (issue #139): the live conversational
+                affordance. Present once a real review has loaded, so a question is
+                always ABOUT the open review. */}
+            {review ? <AskPanel bridge={bridge} reviewId={review.id} /> : null}
           </>
         ) : awaitingHarnessConsent ? (
           // The one-tap consent gate (the fixed overlay above) is the primary CTA;

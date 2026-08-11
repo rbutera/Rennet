@@ -1,0 +1,289 @@
+import {
+  type AskAnswer,
+  askReview,
+  type CodexExecRequest,
+  type CodexExecResult,
+  type ReviewPipelineResult,
+} from "@rennet/core";
+import type { Patchset, Review } from "@rennet/types";
+import { describe, expect, it, vi } from "vitest";
+import type { OrchestratorTurnOutcome, OrchestratorTurnRunner } from "./orchestrator";
+import {
+  buildCodexAskPrompt,
+  CODEX_ASK_DIFF_CEILING,
+  CODEX_ASK_LABEL,
+  CODEX_ASK_OUTPUT_SCHEMA,
+  createLiveCodexAsk,
+  createLiveReviewAskPorts,
+  ORCHESTRATOR_ASK_LABEL,
+} from "./review-ask-live";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The LIVE review.ask ports (issue #139, bead workspace-alqow). Driven with NO
+// model and NO codex: fakes stand in for the orchestrator turn runner and the
+// codex executor, so the whole mapping + the no-synthesis contract are proven
+// hermetically. The gated real-turn proof (orchestrator-live.real.test.ts) covers
+// the actual model path.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function review(id = "review-1"): Review {
+  const patchset: Patchset = {
+    id: "ps-1",
+    createdAt: "2026-08-11T00:00:00.000Z",
+    repository: {
+      id: "repo",
+      root: "/repo",
+      commonDir: "/repo/.git",
+      baseRef: "abc",
+      baseOid: "abc",
+      headOid: "def",
+    },
+    files: [],
+    rawDiff: "@@ -1,1 +1,2 @@\n export const a = 1;\n+export const b = 2;",
+    byteLength: 10,
+    truncated: false,
+  };
+  return {
+    id,
+    repositoryRoot: "/repo",
+    patchsets: [patchset],
+    activePatchsetId: patchset.id,
+    dispositions: [],
+    status: "current",
+  };
+}
+
+/** A minimal `OrchestratorTurnResult` for a completed turn with the given text. */
+function completed(finalText: string): OrchestratorTurnOutcome {
+  return {
+    available: true,
+    result: {
+      session: {} as never,
+      toolCalls: [],
+      finalText,
+      outcome: "completed",
+    },
+  };
+}
+
+const pipeline = {} as ReviewPipelineResult;
+const buildPipeline = () => Promise.resolve(pipeline);
+
+describe("createLiveReviewAskPorts — askOrchestrator", () => {
+  it("resolves the review, builds the pipeline, drives the turn, and returns its final text", async () => {
+    const turn = vi.fn<OrchestratorTurnRunner>(() =>
+      Promise.resolve(completed("the retry-after is in milliseconds")),
+    );
+    const resolveReview = vi.fn((id: string) => review(id));
+    const ports = createLiveReviewAskPorts({
+      resolveReview,
+      buildPipeline,
+      orchestratorTurn: turn,
+    });
+    const answer = await ports.askOrchestrator({
+      reviewId: "review-9",
+      question: "seconds or ms?",
+    });
+
+    expect(resolveReview).toHaveBeenCalledWith("review-9");
+    // The turn is driven over the resolved review + built pipeline + the question.
+    expect(turn).toHaveBeenCalledWith(review("review-9"), pipeline, "seconds or ms?");
+    expect(answer).toEqual({
+      model: ORCHESTRATOR_ASK_LABEL,
+      answer: "the retry-after is in milliseconds",
+    });
+  });
+
+  it("returns an HONEST unavailable answer (never a fabricated one) when no claude is present", async () => {
+    const ports = createLiveReviewAskPorts({
+      resolveReview: (id) => review(id),
+      buildPipeline,
+      orchestratorTurn: () =>
+        Promise.resolve({ available: false, reason: "no claude binary is available" }),
+    });
+    const answer = await ports.askOrchestrator({ reviewId: "review-1", question: "q" });
+    expect(answer.model).toBe(ORCHESTRATOR_ASK_LABEL);
+    expect(answer.answer).toMatch(/unavailable: no claude/i);
+  });
+
+  it("returns an HONEST failed answer carrying the harness error when the turn fails", async () => {
+    const ports = createLiveReviewAskPorts({
+      resolveReview: (id) => review(id),
+      buildPipeline,
+      orchestratorTurn: () =>
+        Promise.resolve({
+          available: true,
+          result: {
+            session: {} as never,
+            toolCalls: [],
+            finalText: "",
+            outcome: "failed",
+            error: {
+              class: "unknown",
+              origin: "harness",
+              message: "the model rejected the turn",
+              retryable: false,
+              retryableSource: "inferred",
+              nativeCode: null,
+            },
+          },
+        }),
+    });
+    const answer = await ports.askOrchestrator({ reviewId: "review-1", question: "q" });
+    expect(answer.answer).toMatch(/failed: the model rejected the turn/i);
+  });
+
+  it("does not pass an empty final answer off as the model's reply", async () => {
+    const ports = createLiveReviewAskPorts({
+      resolveReview: (id) => review(id),
+      buildPipeline,
+      orchestratorTurn: () => Promise.resolve(completed("   ")),
+    });
+    const answer = await ports.askOrchestrator({ reviewId: "review-1", question: "q" });
+    expect(answer.answer).toMatch(/without a final answer/i);
+  });
+
+  it("propagates a stale/unknown review id (a question is ABOUT the open review)", async () => {
+    const ports = createLiveReviewAskPorts({
+      resolveReview: () => {
+        throw new Error("Review not found");
+      },
+      buildPipeline,
+      orchestratorTurn: () => Promise.resolve(completed("x")),
+    });
+    await expect(ports.askOrchestrator({ reviewId: "gone", question: "q" })).rejects.toThrow(
+      /Review not found/,
+    );
+  });
+});
+
+describe("createLiveReviewAskPorts — askCodex", () => {
+  it("delegates to the live codex port with the resolved review + question", async () => {
+    const askCodex = vi.fn(
+      async (): Promise<AskAnswer> => ({ model: CODEX_ASK_LABEL, answer: "codex says ms" }),
+    );
+    const ports = createLiveReviewAskPorts({
+      resolveReview: (id) => review(id),
+      buildPipeline,
+      orchestratorTurn: () => Promise.resolve(completed("x")),
+      askCodex,
+    });
+    const answer = await ports.askCodex({ reviewId: "review-7", question: "seconds or ms?" });
+    expect(askCodex).toHaveBeenCalledWith({
+      review: review("review-7"),
+      question: "seconds or ms?",
+    });
+    expect(answer).toEqual({ model: CODEX_ASK_LABEL, answer: "codex says ms" });
+  });
+
+  it("returns an honest unavailable answer when no codex port is wired", async () => {
+    const ports = createLiveReviewAskPorts({
+      resolveReview: (id) => review(id),
+      buildPipeline,
+      orchestratorTurn: () => Promise.resolve(completed("x")),
+    });
+    const answer = await ports.askCodex({ reviewId: "review-1", question: "q" });
+    expect(answer.model).toBe(CODEX_ASK_LABEL);
+    expect(answer.answer).toMatch(/not installed/i);
+  });
+});
+
+describe("the LIVE ports preserve the no-synthesis law through the real askReview router", () => {
+  function livePorts(): {
+    askOrchestrator: (i: { reviewId: string; question: string }) => Promise<AskAnswer>;
+    askCodex: (i: { reviewId: string; question: string }) => Promise<AskAnswer>;
+  } {
+    return createLiveReviewAskPorts({
+      resolveReview: (id) => review(id),
+      buildPipeline,
+      orchestratorTurn: () => Promise.resolve(completed("orchestrator answer")),
+      askCodex: async () => ({ model: CODEX_ASK_LABEL, answer: "codex answer" }),
+    });
+  }
+
+  it("orchestrator mode asks the orchestrator ONCE and Codex ZERO times", async () => {
+    const ports = livePorts();
+    const orchestrator = vi.fn((question: string) =>
+      ports.askOrchestrator({ reviewId: "review-1", question }),
+    );
+    const codex = vi.fn((question: string) => ports.askCodex({ reviewId: "review-1", question }));
+    const result = await askReview("orchestrator", "seconds or ms?", {
+      askOrchestrator: orchestrator,
+      askCodex: codex,
+    });
+    expect(orchestrator).toHaveBeenCalledTimes(1);
+    expect(codex).not.toHaveBeenCalled();
+    expect(result.mode).toBe("orchestrator");
+    expect(result.primary.model).toBe(ORCHESTRATOR_ASK_LABEL);
+    expect(result.secondOpinion).toBeUndefined();
+  });
+
+  it("both mode returns two labelled answers side by side and NO third (merged) field", async () => {
+    const ports = livePorts();
+    const result = await askReview("both", "does the client agree?", {
+      askOrchestrator: (question) => ports.askOrchestrator({ reviewId: "review-1", question }),
+      askCodex: (question) => ports.askCodex({ reviewId: "review-1", question }),
+    });
+    expect(result.mode).toBe("both");
+    expect(result.primary.model).toBe(ORCHESTRATOR_ASK_LABEL);
+    expect(result.secondOpinion?.model).toBe(CODEX_ASK_LABEL);
+    // The shape itself cannot express a synthesized answer — exactly these keys.
+    expect(Object.keys(result).sort()).toEqual(["mode", "primary", "secondOpinion"]);
+  });
+});
+
+describe("createLiveCodexAsk", () => {
+  function execResult(output: unknown): CodexExecResult {
+    return { output };
+  }
+
+  it("shells the executor with the question + diff constrained to the answer schema", async () => {
+    const executor = vi.fn<(req: CodexExecRequest) => Promise<CodexExecResult>>(() =>
+      Promise.resolve(execResult({ answer: "milliseconds; the wrapper divides by 1000" })),
+    );
+    const ask = createLiveCodexAsk({ executor });
+    const answer = await ask({ review: review(), question: "seconds or ms?" });
+
+    const req = executor.mock.calls[0]?.[0];
+    expect(req?.outputSchema).toBe(CODEX_ASK_OUTPUT_SCHEMA);
+    expect(req?.prompt).toContain("seconds or ms?");
+    expect(req?.prompt).toContain("export const b = 2;"); // the diff is inlined
+    expect(answer).toEqual({
+      model: CODEX_ASK_LABEL,
+      answer: "milliseconds; the wrapper divides by 1000",
+    });
+  });
+
+  it("reports an honest 'no answer' when codex returns an empty/absent answer", async () => {
+    const ask = createLiveCodexAsk({
+      executor: () => Promise.resolve(execResult({ answer: "  " })),
+    });
+    const answer = await ask({ review: review(), question: "q" });
+    expect(answer.answer).toMatch(/no answer/i);
+  });
+
+  it("degrades honestly (never crashes) when the codex exec throws", async () => {
+    const ask = createLiveCodexAsk({
+      executor: () => Promise.reject(new Error("codex exec exited 1: no stderr")),
+    });
+    const answer = await ask({ review: review(), question: "q" });
+    expect(answer.model).toBe(CODEX_ASK_LABEL);
+    expect(answer.answer).toMatch(/could not answer: codex exec exited 1/i);
+  });
+});
+
+describe("buildCodexAskPrompt", () => {
+  it("inlines the question and the diff", () => {
+    const prompt = buildCodexAskPrompt("@@ diff @@\n+line", "why?");
+    expect(prompt).toContain("why?");
+    expect(prompt).toContain("+line");
+  });
+
+  it("bounds a huge diff with a truncation marker", () => {
+    const huge = "x".repeat(CODEX_ASK_DIFF_CEILING + 500);
+    const prompt = buildCodexAskPrompt(huge, "q");
+    expect(prompt).toContain("diff truncated");
+    // The inlined diff body never exceeds the ceiling (+ the marker line).
+    expect(prompt.length).toBeLessThan(CODEX_ASK_DIFF_CEILING + 300);
+  });
+});

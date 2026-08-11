@@ -8,6 +8,7 @@ import {
   type CodexAvailability,
   cleanupWorktreeFixture,
   createClaudeHarness,
+  createCodexExecutor,
   createCodexUtilityAdapter,
   createRefPinner,
   createVerificationFileReaderForPatchset,
@@ -33,7 +34,6 @@ import {
   projectDetailFixture,
   RepoWatcher,
   resolveGitHubAuth,
-  reviewAskFixturePorts,
   SqliteReviewStore,
 } from "@rennet/adapters";
 import {
@@ -78,6 +78,7 @@ import { createDispatch } from "./dispatch";
 import { createHarnessConsentAuthority } from "./harness-consent-authority";
 import { createOrchestratorTurnRunner } from "./orchestrator";
 import { createPublishConsentAuthority } from "./publish-consent-authority";
+import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
 
 const execFileAsync = promisify(execFile);
 
@@ -946,13 +947,45 @@ app.whenReady().then(async () => {
     // admission authority for the `rule` groups) is a DEFERRED follow-up; the empty-
     // vs-failed distinction and the totality-floor ejection are honoured today.
     noiseReview: runNoiseReview,
-    // review.ask (issue #139): the ports a review question reaches. The core
-    // `askReview` router (invoked in dispatch) owns the orchestrator-once /
-    // both-adds-codex / never-synthesize law; these ports are the deferred half —
-    // canned answers stand behind the real typed boundary until the live
-    // orchestrator/Codex sessions are wired, exactly as the flagged/noise fixtures
-    // stand behind their read boundaries.
-    reviewAsk: reviewAskFixturePorts(),
+    // review.ask (issue #139, bead workspace-alqow): the LIVE ports a review
+    // question reaches. The core `askReview` router (invoked in dispatch) still owns
+    // the orchestrator-once / both-adds-codex / never-synthesize law; these ports are
+    // now the REAL invocation behind that law (replacing `reviewAskFixturePorts()`):
+    //   • askOrchestrator drives the live `claude` turn over the in-process
+    //     canvasOps@2 MCP server (`orchestratorTurn`) — the orchestrator reads the
+    //     review through context.map/file/novelty and answers. The pipeline it turns
+    //     over is a DETERMINISTIC-FLOOR build (no lens/model turns): the ask's model
+    //     spend is the one orchestrator turn, not a fresh lens review.
+    //   • askCodex shells one `codex exec` over the diff + question (gated on the
+    //     honestly-probed `codex` availability; an absent binary yields a legible
+    //     "unavailable" answer, never a crash, so a "both" ask still returns the
+    //     orchestrator's answer).
+    reviewAsk: createLiveReviewAskPorts({
+      // The freshness-checked resolution mirrors dispatch's `requireLatestReview`:
+      // a question is ABOUT the open review, and a stale/unknown id is refused.
+      resolveReview: (reviewId) => {
+        const current = service.bootstrap();
+        if (!current || current.id !== reviewId) throw new Error("Review not found");
+        return current;
+      },
+      buildPipeline: (review) =>
+        buildReviewCanvases({
+          reviewId: review.id,
+          patchset: activePatchset(review),
+          dispositions: review.dispositions,
+        }),
+      orchestratorTurn,
+      askCodex: async ({ review, question }) => {
+        const codex = await getCodexAvailability();
+        if (!codex.available) {
+          return {
+            model: CODEX_ASK_LABEL,
+            answer: "Codex is not installed, so no second opinion is available.",
+          };
+        }
+        return createLiveCodexAsk({ executor: createCodexExecutor() })({ review, question });
+      },
+    }),
   });
   session.defaultSession.setPermissionRequestHandler((_webContents, _permission, callback) => {
     callback(false);
