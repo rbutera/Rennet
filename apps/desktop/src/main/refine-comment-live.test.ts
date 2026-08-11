@@ -8,7 +8,12 @@ import type {
 } from "@rennet/core";
 import type { Patchset, Review } from "@rennet/types";
 import { describe, expect, it } from "vitest";
-import { createLiveRefinePort, extractFileDiff, REFINE_DIFF_CEILING } from "./refine-comment-live";
+import {
+  createLiveRefinePort,
+  extractAnchoredDiff,
+  extractFileDiff,
+  REFINE_DIFF_CEILING,
+} from "./refine-comment-live";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The LIVE review.refine producer (issue #19). Driven with NO real codex and NO
@@ -126,6 +131,51 @@ describe("extractFileDiff", () => {
     const section = extractFileDiff(DIFF, "src/keys.ts", 20);
     expect(section.length).toBeLessThanOrEqual(20 + "\n… (diff truncated at 20 bytes)".length);
     expect(section).toContain("truncated");
+  });
+});
+
+describe("extractAnchoredDiff — grounds on the anchored hunk, not a start-truncation", () => {
+  const bigFirst = "x".repeat(500);
+  const diff = [
+    "diff --git a/src/f.ts b/src/f.ts",
+    "--- a/src/f.ts",
+    "+++ b/src/f.ts",
+    "@@ -1,3 +1,3 @@",
+    `-const a = "${bigFirst}";`,
+    '+const a = "changed";',
+    " const b = 1;",
+    "@@ -40,2 +40,3 @@",
+    " const y = 1;",
+    "+const z = 2;",
+    " const w = 3;",
+  ].join("\n");
+
+  it("returns the hunk covering a span PAST the byte ceiling, not the file's first bytes", () => {
+    // Anchor at new-file line 41 (the +const z), side additions. With a tiny ceiling,
+    // a start-truncation would hand back the first (huge) hunk truncated — unrelated
+    // code labelled as the note's. The anchored extraction returns the SECOND hunk.
+    const out = extractAnchoredDiff(diff, "src/f.ts", 200, { startLine: 41 }, "additions");
+    expect(out).toContain("+const z = 2;");
+    // The first hunk's content is NOT what we get — a start-truncation reddens this.
+    expect(out).not.toContain("const a");
+  });
+
+  it("matches a deletions anchor against OLD-file lines", () => {
+    // Old line 1 (the -const a) on the deletions side → the first hunk.
+    const out = extractAnchoredDiff(diff, "src/f.ts", 10_000, { startLine: 1 }, "deletions");
+    expect(out).toContain('+const a = "changed";');
+  });
+
+  it("falls back to the whole file section when there is no span (path-grained)", () => {
+    const out = extractAnchoredDiff(diff, "src/f.ts", 10_000);
+    expect(out).toContain('+const a = "changed";');
+    expect(out).toContain("+const z = 2;");
+  });
+
+  it("returns '' when the file is not in the diff", () => {
+    expect(extractAnchoredDiff(diff, "src/missing.ts", 10_000, { startLine: 1 }, "additions")).toBe(
+      "",
+    );
   });
 });
 

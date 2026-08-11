@@ -8,6 +8,8 @@ import {
   resolveAssignment,
 } from "@rennet/core";
 import type {
+  AnchorSide,
+  AnchorSpan,
   CouncilHarnessId,
   DispositionType,
   Patchset,
@@ -85,15 +87,18 @@ function activePatchsetOf(review: Review): Patchset {
   return patchset;
 }
 
+/** Bound a diff string to `maxBytes`, marking the cut honestly. "" stays "". */
+function boundToBytes(section: string, maxBytes: number): string {
+  if (section.length <= maxBytes) return section;
+  return `${section.slice(0, maxBytes)}\n… (diff truncated at ${maxBytes} bytes)`;
+}
+
 /**
- * Extract the section of a unified diff for one file, bounded to `maxBytes`. A
- * unified diff opens each file with `diff --git a/<path> b/<path>`; this returns
- * from that header to the next `diff --git` (or EOF). Returns "" when the path is
- * not in the diff (a path-grained note with no single hunk, or an unmatched path)
- * — the refiner then cleans from the note alone, which is honest and still the
- * whole "messy in, clean out" promise. Pure and string-only (testable).
+ * The whole (unbounded) section of a unified diff for one file. A unified diff
+ * opens each file with `diff --git a/<path> b/<path>`; this returns from that
+ * header to the next `diff --git` (or EOF). "" when the path is not in the diff.
  */
-export function extractFileDiff(rawDiff: string, path: string, maxBytes: number): string {
+function fileSection(rawDiff: string, path: string): string {
   const lines = rawDiff.split("\n");
   let start = -1;
   for (let i = 0; i < lines.length; i += 1) {
@@ -111,9 +116,65 @@ export function extractFileDiff(rawDiff: string, path: string, maxBytes: number)
       break;
     }
   }
-  const section = lines.slice(start, end).join("\n");
-  if (section.length <= maxBytes) return section;
-  return `${section.slice(0, maxBytes)}\n… (diff truncated at ${maxBytes} bytes)`;
+  return lines.slice(start, end).join("\n");
+}
+
+const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
+
+/**
+ * The single hunk of a file's diff section whose line range CONTAINS the anchored
+ * span, plus the file's header lines (so `--- / +++` context rides along). The
+ * span's `startLine` is a file line: for `deletions` it is an OLD-file line
+ * (matched against `-oldStart,oldLen`); for `additions`/`context` a NEW-file line
+ * (matched against `+newStart,newLen`). `null` when no hunk covers the span (e.g.
+ * the anchored file is not in the diff at that line) — the caller then falls back
+ * to the whole file section rather than guessing.
+ */
+function hunkForSpan(section: string, span: AnchorSpan, side?: AnchorSide): string | null {
+  const lines = section.split("\n");
+  const firstHunk = lines.findIndex((line) => HUNK_HEADER.test(line));
+  if (firstHunk === -1) return null;
+  const header = lines.slice(0, firstHunk);
+  const useOld = side === "deletions";
+  for (let i = firstHunk; i < lines.length; i += 1) {
+    const match = lines[i]?.match(HUNK_HEADER);
+    if (!match) continue;
+    const start = Number(useOld ? match[1] : match[3]);
+    const len = Number((useOld ? match[2] : match[4]) ?? "1");
+    const end = start + Math.max(len, 1) - 1;
+    if (span.startLine >= start && span.startLine <= end) {
+      let next = i + 1;
+      while (next < lines.length && !HUNK_HEADER.test(lines[next] ?? "")) next += 1;
+      return [...header, ...lines.slice(i, next)].join("\n");
+    }
+  }
+  return null;
+}
+
+/**
+ * Extract the diff context the note refers to, bounded to `maxBytes`. With a span
+ * anchor, return the HUNK covering it (so a note anchored past byte `maxBytes`
+ * still gets its own code, not an unrelated truncation from the file's start — the
+ * grounding catch). Without a span (a path-grained note), the whole file section,
+ * bounded and honestly marked. "" when the file is not in the diff — the refiner
+ * then cleans from the note alone (still the whole "messy in, clean out" promise).
+ */
+export function extractAnchoredDiff(
+  rawDiff: string,
+  path: string,
+  maxBytes: number,
+  span?: AnchorSpan,
+  side?: AnchorSide,
+): string {
+  const section = fileSection(rawDiff, path);
+  if (section === "") return "";
+  if (span === undefined) return boundToBytes(section, maxBytes);
+  return boundToBytes(hunkForSpan(section, span, side) ?? section, maxBytes);
+}
+
+/** Back-compat whole-file extraction (path-grained). Prefer `extractAnchoredDiff`. */
+export function extractFileDiff(rawDiff: string, path: string, maxBytes: number): string {
+  return boundToBytes(fileSection(rawDiff, path), maxBytes);
 }
 
 /** Render a thrown value into a turn-failure message (mirrors harness-run-turn). */
@@ -225,6 +286,9 @@ export interface LiveRefineInput {
   readonly raw: string;
   readonly lens?: string;
   readonly path?: string;
+  /** The span-grained anchor (#78) — grounds the refiner against the right hunk. */
+  readonly span?: AnchorSpan;
+  readonly side?: AnchorSide;
 }
 
 /** The deps the live port is bound to (all injected so the module stays testable). */
@@ -288,7 +352,13 @@ export function createLiveRefinePort(
     }
 
     const context = input.path
-      ? extractFileDiff(activePatchsetOf(input.review).rawDiff, input.path, REFINE_DIFF_CEILING)
+      ? extractAnchoredDiff(
+          activePatchsetOf(input.review).rawDiff,
+          input.path,
+          REFINE_DIFF_CEILING,
+          input.span,
+          input.side,
+        )
       : "";
     return refineComment(
       {

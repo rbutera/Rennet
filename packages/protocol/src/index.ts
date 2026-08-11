@@ -1510,6 +1510,13 @@ export const commandDefinitions = {
       lens: z.string().optional(),
       /** The anchor path the note is attached to. */
       path: z.string().optional(),
+      /**
+       * The span-grained anchor (#78), all-or-none with `side`. Present ⇒ the note
+       * anchors at a line span; the producer grounds against THAT hunk rather than a
+       * truncation from the file's start. Absent ⇒ a path-grained note (the diff lenses).
+       */
+      span: anchorSpanSchema.optional(),
+      side: anchorSideSchema.optional(),
     }),
     output: refinementResultSchema,
   },
