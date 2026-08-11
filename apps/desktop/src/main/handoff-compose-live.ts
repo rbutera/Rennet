@@ -1,15 +1,14 @@
 import {
   type CodexExecutor,
+  type ComposeGroup,
   type ComposePort,
   type ComposePortResult,
-  type ComposeProposal,
   composeHandoffBundle,
-  type CouncilHarnessId,
   type HarnessPort,
   providerHarness,
   resolveAssignment,
 } from "@rennet/core";
-import type { ComposedHandoffBundle, HandoffBundle } from "@rennet/types";
+import type { ComposedHandoffBundle, CouncilHarnessId, HandoffBundle } from "@rennet/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.handoff.compose — the LIVE producer (issue #72, Model Council job M24).
@@ -82,7 +81,7 @@ export function mapComposeOutput(output: unknown): ComposePortResult {
   if (record === null || typeof record !== "object" || !Array.isArray(record.groups)) {
     return { status: "failed", reason: "the compose turn returned no groups array" };
   }
-  const groups: ComposeProposal["groups"] = [];
+  const groups: ComposeGroup[] = [];
   for (const raw of record.groups) {
     const group = raw as { title?: unknown; dispositionIds?: unknown } | null;
     if (
