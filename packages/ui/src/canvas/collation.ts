@@ -116,9 +116,17 @@ export function ingestWrites(draft: CollationDraft, writes: DispositionWrite[]):
     const index = next.findIndex((item) => item.id === id);
     const span = write.span && write.side ? { span: write.span, side: write.side } : {};
     if (index >= 0) {
-      next = next.map((item, at) =>
-        at === index ? { ...item, type: write.type, raw: write.body, ...span } : item,
-      );
+      next = next.map((item, at) => {
+        if (at !== index) return item;
+        // A re-disposition that changes the body invalidates the derived
+        // refinement (same law as rewordItem/mergeItems): the cached `refined`
+        // was of the OLD raw and `effectiveBody` prefers it, so a re-ingest over a
+        // refined item would keep a stale refined form. Clear it only when the
+        // body actually changes, so re-anchoring or retyping an unchanged body
+        // keeps a still-valid refinement.
+        const invalidateRefined = item.raw !== write.body ? { refined: undefined } : {};
+        return { ...item, type: write.type, raw: write.body, ...span, ...invalidateRefined };
+      });
     } else {
       next = [...next, { id, path: write.path, type: write.type, raw: write.body, ...span }];
     }
@@ -128,9 +136,19 @@ export function ingestWrites(draft: CollationDraft, writes: DispositionWrite[]):
 
 // ── Editing on the draft: reword / retype / reorder / merge / split / withdraw ─
 
-/** Reword an item's raw body (no-op if the id is not on the draft). */
+/**
+ * Reword an item's raw body (no-op if the id is not on the draft). Rewording to a
+ * NEW body invalidates the derived refinement: `refined` is a §2.5 cache of the
+ * OLD raw, and `effectiveBody` prefers it, so keeping it would show and publish a
+ * stale refined form over the body the user just typed. So clear it here — the
+ * same law `mergeItems` already applies — leaving the effective body to fall back
+ * to the new raw until #19 re-refines. A reword to the SAME text keeps a still-
+ * valid refinement (no body change ⇒ no invalidation).
+ */
 export function rewordItem(draft: CollationDraft, id: string, raw: string): CollationDraft {
-  return draft.map((item) => (item.id === id ? { ...item, raw } : item));
+  return draft.map((item) =>
+    item.id === id && item.raw !== raw ? { ...item, raw, refined: undefined } : item,
+  );
 }
 
 /** Retype an item's disposition (no-op if the id is not on the draft). */
