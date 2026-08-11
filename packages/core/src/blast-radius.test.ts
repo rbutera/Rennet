@@ -26,6 +26,42 @@ function run(
 const of = (paint: ReturnType<typeof computeBlastRadius>, signal: string) =>
   paint.filter((p) => p.signal === signal);
 
+// ── neighbour cases: renames (probed, issue #35 / the #16 habit) ──────────────
+describe("blast radius — rename neighbour cases", () => {
+  it("deletions fires on a RENAME — the old path is gone, importers must update", () => {
+    const paint = run([
+      file("packages/b/new.ts", { status: "renamed", previousPath: "packages/a/old.ts" }),
+    ]);
+    const del = of(paint, "deletions");
+    expect(del).toHaveLength(1);
+    expect(del[0]?.target).toBe("rennet:file/packages/b/new.ts");
+    expect(del[0]?.reason).toMatch(/renamed from packages\/a\/old\.ts/i);
+  });
+
+  it("codeowners counts BOTH owners on a cross-owner rename (single file spans two groups)", () => {
+    const ownership: OwnershipRule[] = [
+      { pattern: "packages/a/**", owners: ["@team-a"] },
+      { pattern: "packages/b/**", owners: ["@team-b"] },
+    ];
+    const paint = run(
+      [file("packages/b/new.ts", { status: "renamed", previousPath: "packages/a/old.ts" })],
+      ownership,
+    );
+    const co = of(paint, "codeowners");
+    expect(co).toHaveLength(1);
+    expect(co[0]?.reason).toContain("@team-a");
+    expect(co[0]?.reason).toContain("@team-b");
+    expect(co[0]?.reason).toContain("2 code-owner groups");
+  });
+
+  it("a renamed TEST file does NOT fire safety-net (coverage moved, not lost)", () => {
+    const paint = run([
+      file("src/new.test.ts", { status: "renamed", previousPath: "src/old.test.ts" }),
+    ]);
+    expect(of(paint, "safety-net")).toHaveLength(0);
+  });
+});
+
 // ── deletions ─────────────────────────────────────────────────────────────────
 describe("blast radius — deletions", () => {
   it("marks a deleted file, with its own one-line reason and target", () => {

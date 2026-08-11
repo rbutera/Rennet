@@ -103,6 +103,17 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusPaint[] 
       paint.push(
         filePaint("deletions", file.path, `File deleted${lines}; anything importing it breaks.`),
       );
+    } else if (file.status === "renamed" && file.previousPath && file.previousPath !== file.path) {
+      // A rename removes the OLD path (neighbour case, probed): importers of the
+      // old path break exactly as for a deletion. Painted on the NEW path (a
+      // visible element), naming the old path so the reviewer checks its importers.
+      paint.push(
+        filePaint(
+          "deletions",
+          file.path,
+          `Renamed from ${file.previousPath}; importers of the old path must be updated.`,
+        ),
+      );
     }
   }
 
@@ -134,9 +145,15 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusPaint[] 
   const ownerByFile = new Map<string, readonly string[]>();
   const distinctOwners = new Set<string>();
   for (const file of input.files) {
-    const owners = resolveOwners(file.path, input.ownership);
-    if (owners.length > 0) {
-      ownerByFile.set(file.path, owners);
+    // Resolve the new path AND, for a rename, the OLD path (neighbour case,
+    // probed): a file renamed across an ownership boundary touches BOTH owner
+    // groups, so counting only the new path would undercount the overlap.
+    const owners = new Set<string>(resolveOwners(file.path, input.ownership));
+    if (file.status === "renamed" && file.previousPath && file.previousPath !== file.path) {
+      for (const owner of resolveOwners(file.previousPath, input.ownership)) owners.add(owner);
+    }
+    if (owners.size > 0) {
+      ownerByFile.set(file.path, [...owners]);
       for (const owner of owners) distinctOwners.add(owner);
     }
   }
