@@ -148,11 +148,14 @@ export {
 export { parseGitHubSso } from "./github-sso";
 export {
   compareVersions,
+  type DiscoverCodexOptions,
   type DiscoveredCandidate,
   type DiscoveryDeps,
   type DiscoveryResult,
+  defaultCodexDiscoveryDeps,
   defaultDiscoveryDeps,
   discoverClaude,
+  discoverCodex,
   type VersionRange,
 } from "./harness-discovery";
 export {
