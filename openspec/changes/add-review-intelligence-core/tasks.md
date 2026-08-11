@@ -1,6 +1,6 @@
 # Tasks — Review Intelligence Core
 
-This change is DESIGN ONLY. The tasks below scope the eventual build; none are implemented here. They are ordered by dependency (types → protocol → instructions → core → adapters → ui → pipeline) so the boundary graph stays acyclic.
+35 of these shipped and were verified against `main` on 2026-08-11; the open boxes are genuinely unbuilt. Ordered by dependency (types → protocol → instructions → core → adapters → ui → pipeline) so the boundary graph stays acyclic.
 
 ## 0. Rai decisions (gate the build)
 
