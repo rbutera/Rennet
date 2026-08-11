@@ -11,7 +11,14 @@ import {
   ReviewService,
   type ReviewStorePort,
 } from "@rennet/core";
-import type { DetectedHarness, DiscoveryResult, Project, ProjectKind } from "@rennet/protocol";
+import type {
+  DetectedHarness,
+  DiscoveryResult,
+  ProcessedRepoSummary,
+  Project,
+  ProjectKind,
+  ProjectProcessEvent,
+} from "@rennet/protocol";
 import type { Canvas, CanvasAngle, Patchset, Review } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
@@ -201,6 +208,7 @@ function harness(
         return { project, projects: [project] };
       },
     },
+    processProject: () => Promise.resolve({ repos: [] }),
     discoverProject: ({ path, kind }) =>
       Promise.resolve({ path, kind, repos: [], primaryBranch: "main" }),
     detectHarnesses: () => Promise.resolve([]),
@@ -766,11 +774,14 @@ function frontDoorHarness(seed: {
   projects?: Project[];
   discovery?: DiscoveryResult;
   detected?: DetectedHarness[];
+  processEvents?: ProjectProcessEvent[];
+  processedRepos?: ProcessedRepoSummary[];
 }): {
   dispatch: ReturnType<typeof createDispatch>;
   allowedRoots: Set<string>;
   addCalls: { discovery: DiscoveryResult; includedRepos: string[]; primaryBranch: string }[];
   discoverCalls: { path: string; kind: ProjectKind }[];
+  processCalls: { projectId: string }[];
 } {
   const capture: PatchsetCapturePort = { capture: () => Promise.resolve(patchset()) };
   const service = new ReviewService(capture, new InMemoryStore());
@@ -779,6 +790,7 @@ function frontDoorHarness(seed: {
   const addCalls: { discovery: DiscoveryResult; includedRepos: string[]; primaryBranch: string }[] =
     [];
   const discoverCalls: { path: string; kind: ProjectKind }[] = [];
+  const processCalls: { projectId: string }[] = [];
   const discovery: DiscoveryResult = seed.discovery ?? {
     path: "/orbital",
     kind: "workspace",
@@ -820,6 +832,11 @@ function frontDoorHarness(seed: {
         return { project, projects: [...stored] };
       },
     },
+    processProject: (input, emit) => {
+      processCalls.push(input);
+      for (const event of seed.processEvents ?? []) emit(event);
+      return Promise.resolve({ repos: seed.processedRepos ?? [] });
+    },
     discoverProject: (input) => {
       discoverCalls.push(input);
       return Promise.resolve({ ...discovery, path: input.path, kind: input.kind });
@@ -836,7 +853,7 @@ function frontDoorHarness(seed: {
       askCodex: () => Promise.resolve({ model: "codex", answer: "codex" }),
     },
   };
-  return { dispatch: createDispatch(deps), allowedRoots, addCalls, discoverCalls };
+  return { dispatch: createDispatch(deps), allowedRoots, addCalls, discoverCalls, processCalls };
 }
 
 function persistedProject(overrides: Partial<Project> = {}): Project {
@@ -924,6 +941,68 @@ describe("createDispatch — front door (issue #29)", () => {
     });
     const out = (await dispatch("harness.detect", {})) as { detected: DetectedHarness[] };
     expect(out.detected.map((harness) => harness.id)).toEqual(["claude", "gh"]);
+  });
+
+  it("project.process streams the host's narration, then emits a terminal done, and returns the summary", async () => {
+    const summary: ProcessedRepoSummary = {
+      repo: "atlas",
+      path: "/orbital/atlas",
+      ok: true,
+      files: 12,
+      symbols: 8,
+      references: 20,
+    };
+    const { dispatch, processCalls } = frontDoorHarness({
+      processEvents: [
+        { kind: "repo-start", repo: "atlas", index: 1, total: 1 },
+        {
+          kind: "stage",
+          repo: "atlas",
+          stage: "tree",
+          note: "Reading the file tree",
+          detail: "12 files",
+        },
+        { kind: "repo-done", repo: "atlas", summary },
+      ],
+      processedRepos: [summary],
+    });
+
+    const streamed: ProjectProcessEvent[] = [];
+    const out = (await dispatch(
+      "project.process",
+      { commandId: randomUUID(), projectId: "p1" },
+      { emitProgress: (event) => streamed.push(event) },
+    )) as { repos: ProcessedRepoSummary[] };
+
+    expect(processCalls).toEqual([{ projectId: "p1" }]);
+    // The host's three narration events reached the sink, and dispatch appended the
+    // terminal `done` carrying the same summaries it resolves with.
+    expect(streamed.map((event) => event.kind)).toEqual([
+      "repo-start",
+      "stage",
+      "repo-done",
+      "done",
+    ]);
+    const done = streamed.at(-1);
+    expect(done).toMatchObject({ kind: "done", repos: [summary] });
+    expect(out.repos).toEqual([summary]);
+  });
+
+  it("project.process without a progress sink still resolves with the summary (no push channel)", async () => {
+    const summary: ProcessedRepoSummary = {
+      repo: "atlas",
+      path: "/orbital/atlas",
+      ok: true,
+      files: 3,
+      symbols: 1,
+    };
+    const { dispatch } = frontDoorHarness({ processedRepos: [summary] });
+    // No `ctx` at all — the request/response path, exactly like a bridge with no onProgress.
+    const out = (await dispatch("project.process", {
+      commandId: randomUUID(),
+      projectId: "p1",
+    })) as { repos: ProcessedRepoSummary[] };
+    expect(out.repos).toEqual([summary]);
   });
 });
 

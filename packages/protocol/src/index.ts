@@ -381,6 +381,100 @@ export const detectedHarnessSchema = z.object({
 });
 export type DetectedHarness = z.infer<typeof detectedHarnessSchema>;
 
+// ── Processing a freshly-added project: the initial context dump ─────────────
+// After `projects.add` persists a project, Rennet PROCESSES each included repo —
+// building the deterministic ProjectSnapshot / repo-map that every later review
+// reads. It is the "initial context dump" (Rai's wireframe #2): a delightful
+// spinner with LIVE narration that explains what it is doing in real time. The
+// narration is wired to the REAL generator stages (below), not scripted text.
+//
+// Progress is pushed main→renderer over the `onProgress` channel keyed by the
+// `commandId`; the `project.process` command resolves with the final per-repo
+// summary once every repo has been built (or has failed softly). No gate, no
+// model spend: the snapshot build is pure over git.
+
+/**
+ * The real stages of a single repo's snapshot build, in order. Each maps 1:1 to
+ * a step the {@link https://ProjectSnapshotGenerator} actually performs, so the
+ * narration is honest: `resolve` (find the default branch) → `tree` (read the
+ * file tree at the base OID) → `workspace` (map scopes/edges/entry points) →
+ * `conventions` (learn conventions, ownership, tests) → `symbols` (extract
+ * symbols + references from the changed closure) → `build` (assemble the map) →
+ * `verify` (integrity check) → `store` (persist as current).
+ */
+export const snapshotStageSchema = z.enum([
+  "resolve",
+  "tree",
+  "workspace",
+  "conventions",
+  "symbols",
+  "build",
+  "verify",
+  "store",
+]);
+export type SnapshotStage = z.infer<typeof snapshotStageSchema>;
+
+/** The outcome of processing one repo — real counts from the built snapshot. */
+export const processedRepoSummarySchema = z.object({
+  repo: z.string().min(1),
+  path: z.string().min(1),
+  ok: z.boolean(),
+  /** Files in the tree at the base OID (present on success). */
+  files: z.number().int().nonnegative().optional(),
+  /** Symbol shards in the built snapshot (present on success). */
+  symbols: z.number().int().nonnegative().optional(),
+  /** Reference shards in the built snapshot (present on success). */
+  references: z.number().int().nonnegative().optional(),
+  /** Symbol shards reused verbatim from a previous snapshot (incremental builds). */
+  reusedSymbols: z.number().int().nonnegative().optional(),
+  /** The resolved primary branch the snapshot was taken at (present on success). */
+  baseRef: z.string().optional(),
+  /** A legible failure message (present on failure); the other repos still process. */
+  error: z.string().optional(),
+});
+export type ProcessedRepoSummary = z.infer<typeof processedRepoSummarySchema>;
+
+/**
+ * A single live-narration event pushed while a project processes. `repo-start`
+ * and `repo-done` bracket each repo; `stage` fires as the build advances, each
+ * carrying a real `note` (and often a real `detail`, e.g. "412 files"); `done`
+ * fires once at the end with the full per-repo summary. `repo-error` is a SOFT
+ * failure for one repo — processing continues, and `done` still fires.
+ */
+export const projectProcessEventSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("repo-start"),
+    repo: z.string().min(1),
+    /** 1-based position in the workspace's included repos. */
+    index: z.number().int().positive(),
+    total: z.number().int().positive(),
+  }),
+  z.object({
+    kind: z.literal("stage"),
+    repo: z.string().min(1),
+    stage: snapshotStageSchema,
+    /** The friendly, present-tense line ("Reading the file tree"). */
+    note: z.string().min(1),
+    /** A real, specific detail when known ("412 files", "main"). */
+    detail: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("repo-done"),
+    repo: z.string().min(1),
+    summary: processedRepoSummarySchema,
+  }),
+  z.object({
+    kind: z.literal("repo-error"),
+    repo: z.string().min(1),
+    message: z.string().min(1),
+  }),
+  z.object({
+    kind: z.literal("done"),
+    repos: z.array(processedRepoSummarySchema),
+  }),
+]);
+export type ProjectProcessEvent = z.infer<typeof projectProcessEventSchema>;
+
 // ── Project detail: the unified smart list (issue #37) ───────────────────────
 // Clicking a project opens ONE scrolling surface: local work AND every pull
 // request in a single list, rows visually distinct by state, filterable, HOT-sorted
@@ -836,6 +930,18 @@ export const commandDefinitions = {
     }),
     output: z.object({ project: projectSchema, projects: z.array(projectSchema) }),
   },
+  "project.process": {
+    // The initial context dump: build the ProjectSnapshot / repo-map for every
+    // included repo of a freshly-added project. LIVE narration is pushed over the
+    // `onProgress` channel keyed by `commandId` as the real generator stages
+    // advance; this command RESOLVES with the final per-repo summary once every
+    // repo has built (or failed softly). Pure over git — no gate, no model spend.
+    input: z.object({
+      commandId: commandIdSchema,
+      projectId: z.string().min(1),
+    }),
+    output: z.object({ repos: z.array(processedRepoSummarySchema) }),
+  },
   // ── Project detail: the unified smart list (issue #37) ─────────────────────
   // The raw substrate a project row opens into: local work + pull requests +
   // viewer, which the renderer folds into one deduped, sorted, filterable list.
@@ -936,4 +1042,12 @@ export function parseCommandOutput<K extends CommandName>(
 
 export interface RennetBridge {
   invoke<K extends CommandName>(name: K, input: CommandInput<K>): Promise<CommandOutput<K>>;
+  /**
+   * Subscribe to live progress events pushed by a long-running command, keyed by
+   * the `commandId` the caller passes to `invoke`. Returns an unsubscribe. Today
+   * this carries `project.process`'s snapshot-build narration. Optional: a bridge
+   * without a push channel simply omits it, and a subscriber degrades to the
+   * command's final resolved value with no live narration.
+   */
+  onProgress?(commandId: string, listener: (event: ProjectProcessEvent) => void): () => void;
 }

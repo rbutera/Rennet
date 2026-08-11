@@ -33,10 +33,12 @@ import {
   loadConventionCatalogue,
   loadProjectDetail,
   type ProjectPrSource,
+  ProjectSnapshotGenerator,
   parseGitHubPrRef,
   RepoWatcher,
   resolveGitHubAuth,
   SqliteReviewStore,
+  snapshotStoreFor,
 } from "@rennet/adapters";
 import {
   type AdmittedDocument,
@@ -58,7 +60,7 @@ import {
   runNoiseAngle,
   verifyFlaggedReview,
 } from "@rennet/core";
-import { type CommandName, type DetectedHarness, isCommandName } from "@rennet/protocol";
+import { type DetectedHarness, isCommandName, type ProjectProcessEvent } from "@rennet/protocol";
 import type {
   Canvas,
   CanvasAngle,
@@ -78,12 +80,17 @@ import type {
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session } from "electron";
 import { createDispatch } from "./dispatch";
 import { createOrchestratorTurnRunner } from "./orchestrator";
+import { createProcessProject } from "./process-project";
 import { createPublishConsentAuthority } from "./publish-consent-authority";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
 
 const execFileAsync = promisify(execFile);
 
 const IPC_CHANNEL = "rennet:invoke";
+// The push channel a long-running command streams live progress on (today
+// `project.process`'s snapshot-build narration). The renderer's `onProgress`
+// bridge filters by the `commandId` it passed to `invoke`.
+const PROGRESS_CHANNEL = "rennet:progress";
 const APP_ORIGIN = "app://rennet";
 
 protocol.registerSchemesAsPrivileged([
@@ -219,7 +226,7 @@ let projectStore: FileProjectStore;
 let service: ReviewService;
 let repositoryDirty = false;
 const allowedRoots = new Set<string>();
-let dispatch: ((name: CommandName, input: unknown) => Promise<unknown>) | null = null;
+let dispatch: ReturnType<typeof createDispatch> | null = null;
 
 function isTrustedAppUrl(value: string): boolean {
   const url = new URL(value);
@@ -833,7 +840,22 @@ function registerCommandHandler(): void {
     const { name, input } = request as { name?: unknown; input?: unknown };
     if (typeof name !== "string" || !isCommandName(name)) throw new Error("Unknown command");
     if (!dispatch) throw new Error("The command router is not ready");
-    return dispatch(name, input);
+    // A command that carries a `commandId` may stream live progress; push each
+    // event on the progress channel keyed by that id so the renderer can filter to
+    // its own invocation. `sender.isDestroyed()` guards a window closed mid-build.
+    const commandId =
+      input &&
+      typeof input === "object" &&
+      typeof (input as { commandId?: unknown }).commandId === "string"
+        ? (input as { commandId: string }).commandId
+        : undefined;
+    const emitProgress = commandId
+      ? (progress: ProjectProcessEvent): void => {
+          if (!event.sender.isDestroyed())
+            event.sender.send(PROGRESS_CHANNEL, { commandId, event: progress });
+        }
+      : undefined;
+    return dispatch(name, input, { emitProgress });
   });
 }
 
@@ -890,6 +912,11 @@ app.whenReady().then(async () => {
   store = new SqliteReviewStore(join(app.getPath("userData"), "rennet.sqlite"));
   projectStore = new FileProjectStore(join(app.getPath("userData"), "projects.json"));
   service = new ReviewService(capture, store);
+  // The ProjectSnapshot generator over the app-owned LOCAL-FIRST store under
+  // `~/.rennet/projects/` (issue #188 default base dir). Drives the initial context
+  // dump: `project.process` builds each included repo's snapshot through this, and
+  // its real stages become the processing screen's live narration.
+  const snapshotGenerator = new ProjectSnapshotGenerator({ store: snapshotStoreFor() });
   // The publish egress port + its consent authority (issue #21). The port constructs
   // requests purely (dry-run) and posts only via the gated `publish.review` command.
   const publishPort = new GitHubPublishAdapter({
@@ -938,6 +965,14 @@ app.whenReady().then(async () => {
         return { project, projects: projectStore.list() };
       },
     },
+    // The initial context dump (issue #29, wireframe #2): build every included
+    // repo's ProjectSnapshot at the CONFIRMED primary branch, streaming the real
+    // generator stages as live narration. Extracted to `process-project.ts` so the
+    // branch-selection + real-count wiring is unit-tested off-Electron.
+    processProject: createProcessProject({
+      generate: (repoRoot, options) => snapshotGenerator.generate(repoRoot, options),
+      listProjects: () => projectStore.list(),
+    }),
     discoverProject: ({ path, kind }) =>
       discoverProject(defaultProjectDiscoveryDeps(execaGit), path, kind),
     detectHarnesses,

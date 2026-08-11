@@ -1844,6 +1844,235 @@ button {
   margin-top: 2px;
 }
 
+/* ── The processing screen: the initial context dump (#29, wireframe #2) ─────
+   A delightful spinner with LIVE narration wired to the real snapshot-build
+   stages. Reads as calm motion, not a progress bar. */
+.processing {
+  align-self: center;
+  width: min(520px, 100%);
+  margin-top: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+.processing-hero {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  gap: 8px;
+  padding: 20px 0 6px;
+}
+.processing-orb {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 50%;
+  color: var(--accent);
+  background: var(--accent-surface);
+}
+/* The rotating light ring — the "orb" motif, felt not ceremonial. */
+.processing-orb::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, transparent 0deg, var(--accent) 90deg, transparent 200deg);
+  -webkit-mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 3px),
+    black calc(100% - 3px)
+  );
+  mask: radial-gradient(farthest-side, transparent calc(100% - 3px), black calc(100% - 3px));
+  animation: processing-spin 1.1s linear infinite;
+}
+.processing-orb > * {
+  position: relative;
+  animation: processing-pulse 1.6s ease-in-out infinite;
+}
+.processing-orb.is-done {
+  color: var(--accent-contrast);
+  background: var(--accent);
+}
+.processing-orb.is-failed {
+  color: var(--amber);
+  background: var(--amber-surface);
+}
+.processing-orb.is-failed::before {
+  animation: none;
+  background: none;
+}
+.processing-orb.is-failed > * {
+  animation: none;
+}
+.processing-orb.is-done::before {
+  animation: none;
+  background: none;
+}
+.processing-orb.is-done > * {
+  animation: none;
+}
+@keyframes processing-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes processing-pulse {
+  0%,
+  100% {
+    opacity: 0.65;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .processing-orb::before,
+  .processing-orb > * {
+    animation: none;
+  }
+}
+.processing-headline {
+  margin: 6px 0 0;
+  font: 600 17px / 1.35 var(--sans);
+  color: var(--text);
+}
+.processing-sub {
+  margin: 0;
+  font-size: 13px;
+  color: var(--text-faint);
+}
+.processing-repos {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.processing-repo {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 12px 14px;
+  background: var(--side-bg, transparent);
+}
+.processing-repo[data-state="processing"] {
+  border-color: var(--accent-soft-line);
+}
+.processing-repo[data-state="error"] {
+  border-color: var(--amber-line);
+  background: var(--amber-surface);
+}
+.processing-repo-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 14px;
+  color: var(--text);
+}
+.processing-repo-icon {
+  display: inline-flex;
+  color: var(--text-soft);
+}
+.processing-repo[data-state="error"] .processing-repo-icon {
+  color: var(--amber);
+}
+.processing-repo-name {
+  font-weight: 600;
+}
+.processing-repo-counts {
+  margin-left: auto;
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.processing-repo-counts.is-error {
+  color: var(--amber);
+}
+.processing-trail {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.processing-step {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-faint);
+}
+.processing-step.is-active {
+  color: var(--text);
+}
+.processing-step-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 14px;
+  color: var(--accent);
+}
+.processing-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: processing-pulse 1s ease-in-out infinite;
+}
+.processing-step-note {
+  flex: 0 1 auto;
+}
+.processing-step-detail {
+  margin-left: auto;
+  font: 500 12px / 1.2 var(--mono);
+  color: var(--text-faint);
+}
+.processing-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 4px;
+}
+.processing-actions .primary {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 11px 18px;
+  border: 0;
+  border-radius: var(--chip-radius);
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  font-weight: 700;
+  cursor: pointer;
+}
+.processing-actions .ghost {
+  padding: 11px 15px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: transparent;
+  color: var(--text-soft);
+  font-weight: 600;
+  cursor: pointer;
+}
+.processing-actions .ghost:hover {
+  color: var(--text);
+}
+.processing-failed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 20px 0 0;
+  padding: 12px 14px;
+  border: 1px solid var(--amber-line);
+  border-radius: var(--chip-radius);
+  background: var(--amber-surface);
+  color: var(--amber);
+  font-size: 13px;
+}
+
 /* The terse escape hatch to the legacy repo/PR entry, and the back controls. */
 .front-door-direct {
   position: fixed;

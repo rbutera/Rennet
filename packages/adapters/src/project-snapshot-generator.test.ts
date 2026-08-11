@@ -448,3 +448,90 @@ describe("ProjectSnapshotGenerator — dogfood over the REAL rennet repo", () =>
     expect(step2.reusedSymbolShards).toBeGreaterThan(0);
   }, 180000);
 });
+
+describe("ProjectSnapshotGenerator — live build progress", () => {
+  it("emits the real stages in order with concrete details, and reports the file count", async () => {
+    const { root, oid2, storeDir } = workspaceRepo();
+    const store = new ProjectSnapshotStore(storeDir);
+    const events: { stage: string; note: string; detail?: string }[] = [];
+    const result = await new ProjectSnapshotGenerator({ store }).generate(root, {
+      explicitBaseRef: oid2,
+      onProgress: (progress) => events.push({ ...progress }),
+    });
+
+    // Every stage the generator actually performs fired, in build order.
+    const stages = events.map((event) => event.stage);
+    for (const stage of [
+      "resolve",
+      "tree",
+      "workspace",
+      "conventions",
+      "symbols",
+      "build",
+      "verify",
+      "store",
+    ]) {
+      expect(stages).toContain(stage);
+    }
+    expect(stages.indexOf("resolve")).toBeLessThan(stages.indexOf("tree"));
+    expect(stages.indexOf("tree")).toBeLessThan(stages.indexOf("symbols"));
+    expect(stages.indexOf("build")).toBeLessThan(stages.indexOf("verify"));
+    expect(stages.indexOf("verify")).toBeLessThan(stages.indexOf("store"));
+
+    // The narration carries real, specific detail — not scripted text.
+    const tree = events.find((event) => event.stage === "tree" && event.detail);
+    expect(tree?.detail).toMatch(/^\d+ files?$/);
+    const resolve = events.find((event) => event.stage === "resolve" && event.detail);
+    expect(resolve?.detail).toBeTruthy();
+
+    // The reported file count matches the tree the snapshot was built over.
+    expect(result.fileCount).toBeGreaterThan(0);
+    expect(tree?.detail).toBe(`${result.fileCount} ${result.fileCount === 1 ? "file" : "files"}`);
+  }, 180000);
+
+  it("emits no store stage when no store is configured (nothing is persisted)", async () => {
+    const { root, oid2 } = workspaceRepo();
+    const stages: string[] = [];
+    await new ProjectSnapshotGenerator().generate(root, {
+      explicitBaseRef: oid2,
+      previousSymbols: [],
+      onProgress: (progress) => stages.push(progress.stage),
+    });
+    expect(stages).toContain("build");
+    expect(stages).not.toContain("store");
+  }, 180000);
+});
+
+describe("ProjectSnapshotGenerator — real symbol/reference totals (not shard counts)", () => {
+  function singleFileRepo(source: string): { root: string; oid: string } {
+    const root = mkdtempSync(join(tmpdir(), "rennet-onefile-"));
+    scratch.push(root);
+    git(root, "init", "-q", "-b", "main");
+    git(root, "config", "user.email", "rennet@example.test");
+    git(root, "config", "user.name", "Rennet Test");
+    write(root, "package.json", JSON.stringify({ name: "one", private: true }));
+    write(root, "src/index.ts", source);
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "one");
+    return { root, oid: git(root, "rev-parse", "HEAD") };
+  }
+
+  it("sums declared symbols across a shard instead of counting the per-blob pointer", async () => {
+    // One source file → ONE symbol shard pointer, but THREE declared symbols. The
+    // old bug reported `manifest.symbols.length` (= 1) as the symbol count.
+    const { root, oid } = singleFileRepo(
+      "export const one = 1;\nexport function two() {}\nexport class Three {}\n",
+    );
+    const result = await new ProjectSnapshotGenerator().generate(root, {
+      explicitBaseRef: oid,
+      previousSymbols: [],
+      previousReferences: [],
+    });
+    expect(result.manifest.symbols.length).toBe(1);
+    expect(result.symbolCount).toBe(3);
+    // References are identifier OCCURRENCES, so with a repeated identifier the total
+    // exceeds the per-blob reference-shard pointer count (= 1 here).
+    expect(result.manifest.references.length).toBe(1);
+    expect(result.referenceCount).toBeGreaterThan(1);
+  }, 180000);
+});

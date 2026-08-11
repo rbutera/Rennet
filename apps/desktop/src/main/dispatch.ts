@@ -11,9 +11,11 @@ import {
   type CommandName,
   type DetectedHarness,
   type DiscoveryResult,
+  type ProcessedRepoSummary,
   type Project,
   type ProjectDetail,
   type ProjectKind,
+  type ProjectProcessEvent,
   parseCommandInput,
   parseCommandOutput,
 } from "@rennet/protocol";
@@ -114,6 +116,18 @@ export interface DispatchDeps {
       projects: Project[];
     };
   };
+  /**
+   * Process a freshly-added project (issue #29, wireframe #2): build the
+   * ProjectSnapshot / repo-map for every included repo — the initial context
+   * dump. `emit` receives the LIVE narration events as the real generator stages
+   * advance (bracketed per repo by `repo-start`/`repo-done`, a soft `repo-error`
+   * on failure); the promise resolves with the final per-repo summary once every
+   * repo has built. Pure over git: no gate, no model spend.
+   */
+  processProject(
+    input: { projectId: string },
+    emit: (event: ProjectProcessEvent) => void,
+  ): Promise<{ repos: ProcessedRepoSummary[] }>;
   /** Read-only discovery over an already-granted path → editable defaults. */
   discoverProject(input: { path: string; kind: ProjectKind }): Promise<DiscoveryResult>;
   /** The harnesses found on the machine, for the ambient first-run detection line. */
@@ -181,9 +195,19 @@ function toForgeReviewTarget(target: {
   };
 }
 
+/**
+ * Per-invocation context the transport supplies. `emitProgress` is the push sink
+ * a long-running command (today `project.process`) streams live narration to; the
+ * transport binds it to the renderer's `onProgress` channel. Absent for every
+ * request/response command, and for callers (tests) with no push channel.
+ */
+export interface DispatchContext {
+  emitProgress?(event: ProjectProcessEvent): void;
+}
+
 export function createDispatch(
   deps: DispatchDeps,
-): (name: CommandName, rawInput: unknown) => Promise<unknown> {
+): (name: CommandName, rawInput: unknown, ctx?: DispatchContext) => Promise<unknown> {
   const { service, allowedRoots } = deps;
 
   function assertAllowedRepository(repositoryPath: string): void {
@@ -197,7 +221,11 @@ export function createDispatch(
     return current;
   }
 
-  return async function dispatch(name: CommandName, rawInput: unknown): Promise<unknown> {
+  return async function dispatch(
+    name: CommandName,
+    rawInput: unknown,
+    ctx?: DispatchContext,
+  ): Promise<unknown> {
     switch (name) {
       case "app.bootstrap": {
         parseCommandInput(name, rawInput);
@@ -420,6 +448,18 @@ export function createDispatch(
         });
         allowedRoots.add(project.openPath);
         return parseCommandOutput(name, { project, projects });
+      }
+      case "project.process": {
+        // The initial context dump: build each included repo's ProjectSnapshot,
+        // streaming the real generator stages as live narration. The host owns the
+        // generator + store; dispatch owns the terminal `done` event and the
+        // resolved value, so both always agree. Soft per-repo failures are carried
+        // in the summaries (never a throw), so one bad repo never aborts the rest.
+        const input = parseCommandInput(name, rawInput);
+        const emit = ctx?.emitProgress ?? (() => undefined);
+        const { repos } = await deps.processProject({ projectId: input.projectId }, emit);
+        emit({ kind: "done", repos });
+        return parseCommandOutput(name, { repos });
       }
       // ── Project detail: the unified smart list (issue #37) ────────────────────
       case "project.detail": {
