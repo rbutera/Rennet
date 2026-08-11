@@ -294,8 +294,9 @@ let service: ReviewService;
 let repositoryDirty = false;
 const allowedRoots = new Set<string>();
 let dispatch: ReturnType<typeof createDispatch> | null = null;
-// Proactive knowledge rehydration (#143): keeps each built project's Repo Map warm
-// as its reference branch advances. Assigned in `whenReady`, torn down on quit.
+// Proactive snapshot rehydration (#143, the snapshot half): keeps each built
+// project's Repo Map (ProjectSnapshot) warm as its reference branch advances — NOT
+// the LLM knowledge layer. Assigned in `whenReady`, torn down on quit.
 let rehydration: ProactiveRehydration | null = null;
 
 function isTrustedAppUrl(value: string): boolean {
@@ -1083,12 +1084,13 @@ app.whenReady().then(async () => {
   // (visibility/promotion) they read and write is the same one the generator keys.
   const snapshotStore = snapshotStoreFor();
   const snapshotGenerator = new ProjectSnapshotGenerator({ store: snapshotStore });
-  // Proactive knowledge rehydration (#143): keep each already-built project's Repo Map
-  // warm as its reference branch advances (a fetch, a local commit, a rebase). The
-  // background pass narrates on the SAME `rennet:progress` push the processing screen
-  // uses, under a stable command id, so the mechanism is visible-capable with no new
-  // protocol surface. It only warms repos that already have a snapshot — it never
-  // cold-builds in the background.
+  // Proactive snapshot rehydration (#143, the snapshot half): keep each already-built
+  // project's Repo Map (ProjectSnapshot) warm as its reference branch advances (a
+  // fetch, a local commit, a rebase). This does NOT refresh the LLM knowledge layer
+  // (context.knowledge) — that stays unwired. The background pass narrates on the SAME
+  // `rennet:progress` push the processing screen uses, under a stable command id, so
+  // the mechanism is visible-capable with no new protocol surface. It only warms repos
+  // that already have a snapshot — it never cold-builds in the background.
   rehydration = createProactiveRehydration({
     store: snapshotStore,
     generator: snapshotGenerator,
