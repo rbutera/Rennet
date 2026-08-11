@@ -1,8 +1,8 @@
 import type { DispositionType } from "@rennet/types";
 import {
   type CollationDraft,
+  type CollationItem,
   collationItems,
-  effectiveBody,
   mergeItems,
   moveItem,
   retypeItem,
@@ -54,12 +54,34 @@ const EDIT_FRAMING: Record<DestinationVariant["mode"], string> = {
     "Refine each comment into the review you'll post — reword, group related ones, and drop the ones you've decided against.",
 };
 
+/**
+ * The EPHEMERAL per-item refinement state (issue #19) the host tracks while a
+ * refine turn is in flight or after a non-adopting outcome. The ADOPTED state is
+ * durable on the item itself (`item.refined`), so it is NOT here — this map holds
+ * only the transient/honest-failure states. Absent entry + no `item.refined` ⇒
+ * idle (offer a Refine button).
+ */
+export type RefineItemState =
+  | { readonly status: "refining" }
+  | { readonly status: "no-change" }
+  | { readonly status: "unavailable"; readonly reason: string }
+  | { readonly status: "failed"; readonly reason: string };
+
+/** A raw note is refinable when it has actual text (an empty item cannot be cleaned). */
+function isRefinable(item: CollationItem): boolean {
+  return item.raw.trim() !== "";
+}
+
 export function CollationDraftCanvas({
   draft,
   variant,
   onChange,
   onSign,
   onBack,
+  onRefine,
+  onKeepRaw,
+  onRefineAll,
+  refineStates,
 }: {
   /** The editable collation draft — the L2 disposition set across every angle. */
   draft: CollationDraft;
@@ -71,6 +93,18 @@ export function CollationDraftCanvas({
   onSign?: () => void;
   /** Back to the lenses — the draft is not lost, it stays yours. */
   onBack?: () => void;
+  /**
+   * Refine ONE item's raw note into a clean comment (#19). The host runs the real
+   * model turn and rounds the result back onto the draft. Absent ⇒ no refine
+   * affordance renders (a composition without the producer wired).
+   */
+  onRefine?: (item: CollationItem) => void;
+  /** Keep the original raw note, dropping a landed refinement (#19 — the undo). */
+  onKeepRaw?: (item: CollationItem) => void;
+  /** Refine every refinable, not-yet-refined item in one act ("Refine to post"). */
+  onRefineAll?: () => void;
+  /** The ephemeral per-item refine state, keyed by item id (idle when absent). */
+  refineStates?: Readonly<Record<string, RefineItemState>>;
 }) {
   const items = collationItems(draft);
   const empty = draft.length === 0;
@@ -79,6 +113,16 @@ export function CollationDraftCanvas({
   // subset only (request-changes / comments / nothing) — approve never appears.
   const lanes = laneCounts(draft);
   const rollup = publishReviewType(draft);
+  // The bulk "Refine to post" affordance is live when the producer is wired and at
+  // least one item is refinable, not already refined, and not mid-flight.
+  const anyRefinable =
+    onRefineAll !== undefined &&
+    draft.some(
+      (item) =>
+        isRefinable(item) &&
+        item.refined === undefined &&
+        refineStates?.[item.id]?.status !== "refining",
+    );
 
   return (
     <div
@@ -98,6 +142,18 @@ export function CollationDraftCanvas({
             <span className="collation-count">
               <strong>{draft.length}</strong> collated
             </span>
+            {onRefineAll ? (
+              <button
+                type="button"
+                className="collation-refine-all"
+                onClick={() => onRefineAll()}
+                disabled={!anyRefinable}
+                aria-label="Refine all notes to post"
+                title="Clean every rough note into a well-phrased comment — your originals are kept"
+              >
+                ✦ Refine to post
+              </button>
+            ) : null}
             <button
               type="button"
               className="collation-back"
@@ -131,9 +187,13 @@ export function CollationDraftCanvas({
         ) : (
           <ol className="collation-items" aria-label="Collated dispositions">
             {draft.map((item, index) => {
-              const refining = item.refined === undefined;
               const lane = itemLane(item);
               const stageable = isStageable(item.type);
+              // The refine state (#19): a durable adopted refinement lives on the
+              // item; the ephemeral in-flight/failed states come from the host map.
+              const refineState = refineStates?.[item.id];
+              const refined = item.refined !== undefined;
+              const refinable = isRefinable(item);
               return (
                 <li
                   className="collation-item"
@@ -203,20 +263,85 @@ export function CollationDraftCanvas({
                     </label>
                   ) : null}
 
+                  {/* The sovereign raw note is ALWAYS what you edit (#19 / R40):
+                      the textarea binds to `raw`, so a landed refinement never
+                      hijacks the field you type in, and editing it invalidates a
+                      stale refinement (rewordItem clears `refined`, #236). */}
                   <textarea
                     className="collation-item-body"
                     aria-label={`Body for item ${index + 1}`}
-                    value={effectiveBody(item)}
-                    placeholder="Raw note — lazy is fine; the refiner cleans it up."
+                    value={item.raw}
+                    placeholder="Rough note — lazy is fine; refine it into a clean comment."
                     onChange={(event) => onChange(rewordItem(draft, item.id, event.target.value))}
                   />
 
-                  {/* The §2.5 refiner seam: the cleaned form arrives in the
-                      background. Until the loop is wired (#19), the raw is the
-                      effective body and this states so honestly — never a spinner. */}
-                  <p className="collation-item-refine" data-refining={refining}>
-                    {refining ? "Raw — the refiner will clean this in the background." : "Refined."}
-                  </p>
+                  {/* The comment-refinement loop (#19), rendered per state. A landed
+                      refinement is an OFFER (keep-my-original always available), a
+                      failed/unavailable turn is stated PLAINLY and the raw still
+                      posts — the loop failing is worse prose, never a silent rewrite
+                      and never a spinner masking absence. */}
+                  <div
+                    className="collation-item-refine"
+                    data-refine-state={refineState?.status ?? (refined ? "refined" : "idle")}
+                  >
+                    {refined ? (
+                      <div className="collation-refined" role="note">
+                        <p className="collation-refined-label">
+                          Refined — this posts instead of your note
+                        </p>
+                        <p className="collation-refined-body">{item.refined}</p>
+                        {onKeepRaw ? (
+                          <button
+                            type="button"
+                            className="collation-keep-raw"
+                            aria-label={`Keep my original note for item ${index + 1}`}
+                            onClick={() => onKeepRaw(item)}
+                          >
+                            Keep my original
+                          </button>
+                        ) : null}
+                      </div>
+                    ) : refineState?.status === "refining" ? (
+                      <p className="collation-refine-pending" aria-live="polite">
+                        Refining your note…
+                      </p>
+                    ) : refineState?.status === "failed" ? (
+                      <p className="collation-refine-failed" role="alert">
+                        Couldn't refine this note: {refineState.reason}. Your original will post.
+                        {onRefine ? (
+                          <button
+                            type="button"
+                            className="collation-refine-retry"
+                            aria-label={`Retry refining item ${index + 1}`}
+                            onClick={() => onRefine(item)}
+                          >
+                            Retry
+                          </button>
+                        ) : null}
+                      </p>
+                    ) : refineState?.status === "unavailable" ? (
+                      <p className="collation-refine-unavailable" role="note">
+                        {refineState.reason}. Your original will post.
+                      </p>
+                    ) : refineState?.status === "no-change" ? (
+                      <p className="collation-refine-nochange" role="note">
+                        Already clear — nothing to refine. Your note posts as written.
+                      </p>
+                    ) : onRefine && refinable ? (
+                      <button
+                        type="button"
+                        className="collation-refine"
+                        aria-label={`Refine item ${index + 1}`}
+                        onClick={() => onRefine(item)}
+                      >
+                        ✦ Refine to post
+                      </button>
+                    ) : (
+                      <p className="collation-refine-raw" role="note">
+                        Posts as your note, unchanged.
+                      </p>
+                    )}
+                  </div>
 
                   <div className="collation-item-actions">
                     <button

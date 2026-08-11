@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { DispositionBatch } from "./authoring";
 import {
   type CollationDraft,
+  clearRefined,
   collationItems,
   collationPayload,
   draftFromBatch,
@@ -11,6 +12,7 @@ import {
   moveItem,
   retypeItem,
   rewordItem,
+  setRefined,
   splitItem,
   withdrawItem,
   withdrawPath,
@@ -136,6 +138,41 @@ describe("rewordItem / retypeItem — edit by stable id, never touching order", 
     ];
     const next = rewordItem(draft, "a", "same");
     expect(next[0]?.refined).toBe("clean");
+  });
+});
+
+describe("setRefined / clearRefined — adopt and undo a refinement (#19)", () => {
+  const base: CollationDraft = [
+    { id: "a", path: "src/a.ts", type: "comment", raw: "messy note" },
+    { id: "b", path: "src/b.ts", type: "comment", raw: "other" },
+  ];
+
+  it("setRefined adopts the refined form; effectiveBody then prefers it", () => {
+    const next = setRefined(base, "a", "clean comment");
+    expect(next.find((item) => item.id === "a")?.refined).toBe("clean comment");
+    const target = next.find((item) => item.id === "a");
+    if (!target) throw new Error("item missing");
+    expect(effectiveBody(target)).toBe("clean comment");
+    // Untargeted item unchanged — a setter wired to the wrong id reddens this.
+    expect(next.find((item) => item.id === "b")?.refined).toBeUndefined();
+  });
+
+  it("setRefined ignores a blank refinement (never posts a blank over the raw)", () => {
+    expect(setRefined(base, "a", "   ")).toEqual(base);
+  });
+
+  it("setRefined is a no-op for an unknown id", () => {
+    expect(setRefined(base, "zzz", "x")).toEqual(base);
+  });
+
+  it("clearRefined drops a landed refinement, returning the raw as the effective body", () => {
+    const refined = setRefined(base, "a", "clean comment");
+    const cleared = clearRefined(refined, "a");
+    const target = cleared.find((item) => item.id === "a");
+    if (!target) throw new Error("item missing");
+    expect(target.refined).toBeUndefined();
+    // The undo returns to the sovereign raw — the "keep my original" guarantee.
+    expect(effectiveBody(target)).toBe("messy note");
   });
 });
 

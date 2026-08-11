@@ -151,6 +151,31 @@ export function rewordItem(draft: CollationDraft, id: string, raw: string): Coll
   );
 }
 
+/**
+ * Adopt an item's refined body (#19). The agent-cleaned form lands here after a
+ * refine turn; `effectiveBody` then prefers it through to the published payload,
+ * and the paper marks the comment refined. No-op if the id is not on the draft. A
+ * blank refinement is not a refinement (the producer never emits one), so an
+ * empty/whitespace body is ignored — the item stays raw rather than posting blank.
+ */
+export function setRefined(draft: CollationDraft, id: string, refined: string): CollationDraft {
+  if (refined.trim() === "") return draft;
+  return draft.map((item) => (item.id === id ? { ...item, refined } : item));
+}
+
+/**
+ * Drop an item's refined form (#19 — "keep my original"). Refinement is an OFFER,
+ * never a replacement the user cannot undo: clearing `refined` returns the raw as
+ * the effective body. No-op if the id is not on the draft or already raw. This is
+ * the same field `rewordItem`/`ingestWrites` clear on a body change (#236); doing
+ * it explicitly lets the user reject a refinement without touching their note.
+ */
+export function clearRefined(draft: CollationDraft, id: string): CollationDraft {
+  return draft.map((item) =>
+    item.id === id && item.refined !== undefined ? { ...item, refined: undefined } : item,
+  );
+}
+
 /** Retype an item's disposition (no-op if the id is not on the draft). */
 export function retypeItem(
   draft: CollationDraft,

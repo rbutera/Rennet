@@ -18,7 +18,14 @@ import type {
   ReviewNarration,
 } from "@rennet/types";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { type CollationDraft, ingestWrites, withdrawPath } from "./canvas/collation";
+import {
+  type CollationDraft,
+  type CollationItem,
+  clearRefined,
+  ingestWrites,
+  setRefined,
+  withdrawPath,
+} from "./canvas/collation";
 import type { ConversationAnchor } from "./canvas/conversation";
 import { type DestinationMode, destinationVariant, type PublishLedger } from "./canvas/destination";
 import { flaggedForPatchset } from "./canvas/flagged";
@@ -39,7 +46,7 @@ import { publishedItems } from "./canvas/staging";
 import { createViewStore, useViewStore } from "./canvas/store";
 import { buildCommands, type CommandContext, type Screen } from "./command/commands";
 import { AskPanel } from "./components/ask-panel";
-import { CollationDraftCanvas } from "./components/collation-draft-canvas";
+import { CollationDraftCanvas, type RefineItemState } from "./components/collation-draft-canvas";
 import { CommandPalette } from "./components/command-palette";
 import { ConversationHost } from "./components/conversation-host";
 import { DestinationFrame } from "./components/destination-frame";
@@ -379,6 +386,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // honest default for a local capture; the real mode arrives with the #20/#21
   // GitHub source. The publish sheet (#22 shell) is opened from the frame.
   const [draft, setDraft] = useState<CollationDraft>([]);
+  // The EPHEMERAL per-item refinement state (issue #19), keyed by collation-item
+  // id. An adopted refinement is durable on the item (`item.refined`); this map
+  // holds only the in-flight/failed/no-change states the refine turn produces.
+  const [refineStates, setRefineStates] = useState<Record<string, RefineItemState>>({});
   const [destinationMode, setDestinationMode] = useState<DestinationMode>("own-branch");
   // The forming-destination surface (R40): the frame opens the DRAFT (editable
   // glass collation canvas); signing the draft opens the PAPER; the paper signs or
@@ -1116,6 +1127,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           draft={draft}
           variant={destinationVariantForMode}
           onChange={setDraft}
+          onRefine={(item) => void refineItem(item)}
+          onKeepRaw={keepRaw}
+          onRefineAll={refineAll}
+          refineStates={refineStates}
           onSign={() => {
             // Freezing a fresh paper drops any stale outcome from a prior sign.
             setPublishResult(undefined);
@@ -1169,6 +1184,87 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       setReview(result.review);
     } finally {
       setBusy(false);
+    }
+  }
+
+  /** Clear one item's ephemeral refine state (a landed refinement is durable on the item). */
+  function clearRefineState(itemId: string): void {
+    setRefineStates((prev) => {
+      if (prev[itemId] === undefined) return prev;
+      const next = { ...prev };
+      delete next[itemId];
+      return next;
+    });
+  }
+
+  /**
+   * Refine one raw note into a clean comment (#19): mark it refining, run the real
+   * council-routed model turn, and round the result back onto the draft. A refined
+   * result is ADOPTED only if the note has not been edited meanwhile (a refinement
+   * of a stale raw is dropped, never shown over the new text — the #236 law); a
+   * no-change / unavailable / failed outcome is surfaced HONESTLY and the raw stays
+   * the effective body.
+   */
+  async function refineItem(item: CollationItem): Promise<void> {
+    if (!review || item.raw.trim() === "") return;
+    const refinedFrom = item.raw;
+    setRefineStates((prev) => ({ ...prev, [item.id]: { status: "refining" } }));
+    try {
+      const result = await bridge.invoke("review.refine", {
+        commandId: crypto.randomUUID(),
+        reviewId: review.id,
+        itemId: item.id,
+        type: item.type,
+        raw: item.raw,
+        lens: canvasAngle,
+        path: item.path,
+      });
+      if (result.status === "refined") {
+        setDraft((current) => {
+          const target = current.find((entry) => entry.id === item.id);
+          // The note was edited or withdrawn while the turn ran — drop the stale
+          // refinement rather than post a clean version of text that no longer exists.
+          if (!target || target.raw !== refinedFrom) return current;
+          return setRefined(current, item.id, result.refined);
+        });
+        clearRefineState(item.id);
+      } else if (result.status === "no-change") {
+        setRefineStates((prev) => ({ ...prev, [item.id]: { status: "no-change" } }));
+      } else if (result.status === "unavailable") {
+        setRefineStates((prev) => ({
+          ...prev,
+          [item.id]: { status: "unavailable", reason: result.reason },
+        }));
+      } else {
+        setRefineStates((prev) => ({
+          ...prev,
+          [item.id]: { status: "failed", reason: result.reason },
+        }));
+      }
+    } catch (err) {
+      setRefineStates((prev) => ({
+        ...prev,
+        [item.id]: { status: "failed", reason: err instanceof Error ? err.message : String(err) },
+      }));
+    }
+  }
+
+  /** Keep the original note, dropping a landed refinement (#19 — the undo). */
+  function keepRaw(item: CollationItem): void {
+    setDraft((current) => clearRefined(current, item.id));
+    clearRefineState(item.id);
+  }
+
+  /** Refine every refinable, not-yet-refined, not-in-flight item in one act. */
+  function refineAll(): void {
+    for (const item of draft) {
+      if (
+        item.raw.trim() !== "" &&
+        item.refined === undefined &&
+        refineStates[item.id]?.status !== "refining"
+      ) {
+        void refineItem(item);
+      }
     }
   }
 

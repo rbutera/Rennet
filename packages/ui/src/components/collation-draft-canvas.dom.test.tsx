@@ -9,7 +9,7 @@ import { describe, expect, it } from "vitest";
 import { type CollationDraft, collationItems, collationPayload } from "../canvas/collation";
 import { destinationVariant } from "../canvas/destination";
 import { fireEvent, mount, within } from "../test/dom";
-import { CollationDraftCanvas } from "./collation-draft-canvas";
+import { CollationDraftCanvas, type RefineItemState } from "./collation-draft-canvas";
 
 const variant = destinationVariant("other-pr");
 
@@ -169,6 +169,97 @@ describe("sign — freezes the glass draft into the paper (the phase transition)
     // The canvas does not sign itself — it hands off to the paper. onSign is the
     // transition; a button wired to onChange or nothing reddens this.
     expect(signCount()).toBe(1);
+  });
+});
+
+describe("refine control (#19) — the comment-refinement loop", () => {
+  function mountRefine(draft: CollationDraft, refineStates?: Record<string, RefineItemState>) {
+    const changes: CollationDraft[] = [];
+    const refines: string[] = [];
+    const keeps: string[] = [];
+    const alls: number[] = [];
+    const result = mount(
+      <CollationDraftCanvas
+        draft={draft}
+        variant={variant}
+        onChange={(next) => changes.push(next)}
+        onRefine={(item) => refines.push(item.id)}
+        onKeepRaw={(item) => keeps.push(item.id)}
+        onRefineAll={() => alls.push(1)}
+        {...(refineStates ? { refineStates } : {})}
+      />,
+    );
+    return { ...result, changes, refines, keeps, alls };
+  }
+
+  it("offers a per-item Refine button that fires onRefine with that item", () => {
+    const { container, refines } = mountRefine(draftOf("src/a.ts", "src/b.ts"));
+    fireEvent.click(within(itemAt(container, 1)).getByLabelText("Refine item 2"));
+    // The button is wired to the SECOND item; a handler bound to the wrong id reddens this.
+    expect(refines).toEqual(["src/b.ts"]);
+  });
+
+  it("does not offer Refine on an empty note (nothing to clean)", () => {
+    const draft: CollationDraft = [{ id: "a", path: "src/a.ts", type: "approve", raw: "" }];
+    const { container } = mountRefine(draft);
+    expect(within(itemAt(container, 0)).queryByLabelText("Refine item 1")).toBeNull();
+  });
+
+  it("renders a landed refinement prominently and Keep-my-original undoes it", () => {
+    const draft: CollationDraft = [
+      { id: "a", path: "src/a.ts", type: "comment", raw: "messy", refined: "the clean comment" },
+    ];
+    const { container, keeps } = mountRefine(draft);
+    // The refined body is shown; the raw is still the editable textarea (sovereign).
+    expect(container.textContent).toContain("the clean comment");
+    expect(
+      within(itemAt(container, 0)).getByLabelText<HTMLTextAreaElement>("Body for item 1").value,
+    ).toBe("messy");
+    fireEvent.click(
+      within(itemAt(container, 0)).getByLabelText("Keep my original note for item 1"),
+    );
+    expect(keeps).toEqual(["a"]);
+  });
+
+  it("shows the in-flight state and hides the Refine button while refining", () => {
+    const { container } = mountRefine(draftOf("src/a.ts"), {
+      "src/a.ts": { status: "refining" },
+    });
+    expect(container.textContent).toContain("Refining your note");
+    expect(within(itemAt(container, 0)).queryByLabelText("Refine item 1")).toBeNull();
+  });
+
+  it("states a failed turn honestly (keeps the raw) and offers Retry", () => {
+    const { container, refines } = mountRefine(draftOf("src/a.ts"), {
+      "src/a.ts": { status: "failed", reason: "codex exited 1" },
+    });
+    expect(container.textContent).toContain("codex exited 1");
+    expect(container.textContent).toContain("Your original will post");
+    fireEvent.click(within(itemAt(container, 0)).getByLabelText("Retry refining item 1"));
+    expect(refines).toEqual(["src/a.ts"]);
+  });
+
+  it("states no-change honestly (the note posts as written)", () => {
+    const { container } = mountRefine(draftOf("src/a.ts"), {
+      "src/a.ts": { status: "no-change" },
+    });
+    expect(container.textContent).toContain("Already clear");
+  });
+
+  it("Refine-to-post fires onRefineAll, and disables when nothing is refinable", () => {
+    const { container, alls } = mountRefine(draftOf("src/a.ts"));
+    const all = container.querySelector<HTMLButtonElement>(".collation-refine-all");
+    if (!all) throw new Error("refine-all control missing");
+    expect(all.disabled).toBe(false);
+    fireEvent.click(all);
+    expect(alls).toEqual([1]);
+
+    // A draft whose only item is already refined has nothing to bulk-refine.
+    const refinedDraft: CollationDraft = [
+      { id: "a", path: "src/a.ts", type: "comment", raw: "m", refined: "c" },
+    ];
+    const { container: c2 } = mountRefine(refinedDraft);
+    expect(c2.querySelector<HTMLButtonElement>(".collation-refine-all")?.disabled).toBe(true);
   });
 });
 
