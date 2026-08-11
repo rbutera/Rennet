@@ -9,6 +9,7 @@ import {
   type ForgeReviewTarget,
   forgeTargetKey,
   type HandoffTurnOutcome,
+  mechanicalComposition,
   type ReviewService,
   resolveReviewEvent,
 } from "@rennet/core";
@@ -33,6 +34,7 @@ import type {
   AnchorSpan,
   Canvas,
   CanvasAngle,
+  ComposedHandoffBundle,
   DecisionsRunStatus,
   DispositionType,
   ElementDiffs,
@@ -135,6 +137,17 @@ export interface DispatchDeps {
     repoRoot: string;
     bundle: HandoffBundle;
   }) => Promise<HandoffTurnOutcome>;
+  /**
+   * The handoff-bundle composer (issue #72, Model Council M24): the light-tier
+   * authoring step that orders + merges + narrates the mechanical bundle. Composed by
+   * the root as `createLiveComposeBundle` (council-routed). Optional so a composition
+   * WITHOUT it still constructs — the dispatch then returns the mechanical floor
+   * (`composed:false`) rather than throwing, so the command is always answerable.
+   */
+  readonly composeBundle?: (input: {
+    bundle: HandoffBundle;
+    repoRoot: string;
+  }) => Promise<ComposedHandoffBundle>;
   /**
    * The front door (issue #29): the persisted projects list and the read-only
    * discovery + harness-detection that feed the add-a-project flow. `add` takes the
@@ -845,6 +858,26 @@ export function createDispatch(
             ...(input.decisions === undefined ? {} : { decisions: input.decisions }),
           }),
         );
+      }
+      // ── Compose the handoff bundle (issue #72, Model Council M24) ───────────────
+      case "review.handoff.compose": {
+        // The light-tier authoring step over the mechanical bundle: build the
+        // deterministic bundle from the addressed dispositions, then let the composer
+        // order + merge + narrate it. The core composer owns the safety law (partition
+        // validation, verbatim-body reconstruction, fail-closed to the mechanical
+        // floor), so a failed/absent composer yields `composed:false` — a real,
+        // complete bundle — never a throw and never a lossy authoring.
+        const input = parseCommandInput(name, rawInput);
+        const review = requireLatestReview(input.reviewId);
+        const mechanical = buildHandoffBundle({
+          reviewId: review.id,
+          patchset: activePatchsetOf(review),
+          dispositions: input.dispositions,
+        });
+        const bundle = deps.composeBundle
+          ? await deps.composeBundle({ bundle: mechanical, repoRoot: review.repositoryRoot })
+          : mechanicalComposition(mechanical);
+        return parseCommandOutput(name, { bundle });
       }
       // ── The Noise lens (issue #34) ────────────────────────────────────────────
       case "noise.review": {

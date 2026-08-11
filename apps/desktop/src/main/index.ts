@@ -96,6 +96,7 @@ import type {
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell } from "electron";
 import { createDispatch } from "./dispatch";
 import { createLiveDraftPrBodyPort } from "./draft-pr-body-live";
+import { createLiveComposeBundle } from "./handoff-compose-live";
 import { createDesktopReviewBackend } from "./live-review-backend";
 import { EDITOR_CLIS, performOpenInEditor } from "./open-in-editor";
 import { createOrchestratorTurnRunner } from "./orchestrator";
@@ -1395,6 +1396,21 @@ app.whenReady().then(async () => {
     // workspace-6qp15). Degrades to an honest `unavailable` (the deterministic
     // composed body still previews) when neither seat is installed. Posts NOTHING.
     draftPrBody: createLiveDraftPrBodyPort({
+      claudePort: async () => (await getClaudeHarness()).adapter ?? null,
+      codexExecutor: async () => {
+        const codex = await getCodexResolution();
+        if (codex.binPath === null) return null;
+        return createCodexExecutor(defaultCodexExecEffects, {
+          bin: codex.binPath,
+          ...(codex.version ? { harnessVersion: codex.version } : {}),
+        });
+      },
+    }),
+    // The handoff-bundle composer (issue #72, M24): the light-tier authoring step over
+    // the mechanical bundle. Council-routed over the SAME probes the refiner uses
+    // (claude adapter + codex executor); one batched turn, exec-free (read-only). No
+    // seat installed ⇒ the core router returns the mechanical floor.
+    composeBundle: createLiveComposeBundle({
       claudePort: async () => (await getClaudeHarness()).adapter ?? null,
       codexExecutor: async () => {
         const codex = await getCodexResolution();
