@@ -65,14 +65,39 @@ function fakeBridge(config: FakeConfig = {}): {
 
 const singleRepoRun: ProjectProcessEvent[] = [
   { kind: "repo-start", repo: "orbital", index: 1, total: 1 },
-  { kind: "stage", repo: "orbital", stage: "resolve", note: "Finding the default branch", detail: "main" },
-  { kind: "stage", repo: "orbital", stage: "tree", note: "Reading the file tree", detail: "412 files" },
-  { kind: "stage", repo: "orbital", stage: "symbols", note: "Extracting symbols & references", detail: "88 files to parse" },
+  {
+    kind: "stage",
+    repo: "orbital",
+    stage: "resolve",
+    note: "Finding the default branch",
+    detail: "main",
+  },
+  {
+    kind: "stage",
+    repo: "orbital",
+    stage: "tree",
+    note: "Reading the file tree",
+    detail: "412 files",
+  },
+  {
+    kind: "stage",
+    repo: "orbital",
+    stage: "symbols",
+    note: "Extracting symbols & references",
+    detail: "88 files to parse",
+  },
   { kind: "stage", repo: "orbital", stage: "build", note: "Building the repo map" },
   {
     kind: "repo-done",
     repo: "orbital",
-    summary: { repo: "orbital", path: "/orbital", ok: true, files: 412, symbols: 260, references: 900 },
+    summary: {
+      repo: "orbital",
+      path: "/orbital",
+      ok: true,
+      files: 412,
+      symbols: 260,
+      references: 900,
+    },
   },
 ];
 
@@ -80,7 +105,9 @@ describe("ProjectProcessing — the initial context dump with live narration", (
   it("renders the real streamed stages as narration, then a done summary with real counts", async () => {
     const { bridge, calls } = fakeBridge({
       events: singleRepoRun,
-      repos: [{ repo: "orbital", path: "/orbital", ok: true, files: 412, symbols: 260, references: 900 }],
+      repos: [
+        { repo: "orbital", path: "/orbital", ok: true, files: 412, symbols: 260, references: 900 },
+      ],
     });
     const onOpen = vi.fn();
     const { container, getByRole } = mount(
@@ -90,8 +117,10 @@ describe("ProjectProcessing — the initial context dump with live narration", (
     // It invoked the real command with a commandId.
     await waitFor(() => expect(calls.some((call) => call.name === "project.process")).toBe(true));
     const call = calls.find((entry) => entry.name === "project.process");
-    expect((call?.input as { projectId: string }).projectId).toBe("p1");
-    expect((call?.input as { commandId?: string }).commandId).toBeTruthy();
+    if (!call) throw new Error("project.process was not invoked");
+    const processInput = call.input as { projectId: string; commandId?: string };
+    expect(processInput.projectId).toBe("p1");
+    expect(processInput.commandId).toBeTruthy();
 
     // The narration trail shows the REAL stage notes + details that were streamed.
     await waitFor(() =>
@@ -116,11 +145,24 @@ describe("ProjectProcessing — the initial context dump with live narration", (
   it("streams a workspace's repos separately and marks a failed repo softly", async () => {
     const events: ProjectProcessEvent[] = [
       { kind: "repo-start", repo: "atlas", index: 1, total: 2 },
-      { kind: "stage", repo: "atlas", stage: "tree", note: "Reading the file tree", detail: "10 files" },
+      {
+        kind: "stage",
+        repo: "atlas",
+        stage: "tree",
+        note: "Reading the file tree",
+        detail: "10 files",
+      },
       {
         kind: "repo-done",
         repo: "atlas",
-        summary: { repo: "atlas", path: "/ws/atlas", ok: true, files: 10, symbols: 4, references: 6 },
+        summary: {
+          repo: "atlas",
+          path: "/ws/atlas",
+          ok: true,
+          files: 10,
+          symbols: 4,
+          references: 6,
+        },
       },
       { kind: "repo-start", repo: "atlas-docs", index: 2, total: 2 },
       { kind: "repo-error", repo: "atlas-docs", message: "not a git repository" },

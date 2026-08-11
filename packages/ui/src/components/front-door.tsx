@@ -79,18 +79,12 @@ export function FrontDoor({
           )}
         </span>
         <h1>
-          {flow?.step === "processing"
-            ? flow.project.name
-            : flow
-              ? "Add a project"
-              : "Rennet"}
+          {flow?.step === "processing" ? flow.project.name : flow ? "Add a project" : "Rennet"}
         </h1>
         {flow && flow.step !== "processing" ? (
           <span className="front-door-step">step {flow.step === "type-path" ? 1 : 2} of 2</span>
         ) : null}
-        {flow?.step === "processing" ? (
-          <span className="front-door-step">processing</span>
-        ) : null}
+        {flow?.step === "processing" ? <span className="front-door-step">processing</span> : null}
       </header>
 
       {error ? <p className="front-door-error">{error}</p> : null}
@@ -260,14 +254,7 @@ function AddProject({
       />
     );
   }
-  return (
-    <WorktreeConfig
-      bridge={bridge}
-      flow={flow}
-      onFlow={onFlow}
-      onError={onError}
-    />
-  );
+  return <WorktreeConfig bridge={bridge} flow={flow} onFlow={onFlow} onError={onError} />;
 }
 
 function TypeAndPath({

@@ -955,7 +955,13 @@ describe("createDispatch — front door (issue #29)", () => {
     const { dispatch, processCalls } = frontDoorHarness({
       processEvents: [
         { kind: "repo-start", repo: "atlas", index: 1, total: 1 },
-        { kind: "stage", repo: "atlas", stage: "tree", note: "Reading the file tree", detail: "12 files" },
+        {
+          kind: "stage",
+          repo: "atlas",
+          stage: "tree",
+          note: "Reading the file tree",
+          detail: "12 files",
+        },
         { kind: "repo-done", repo: "atlas", summary },
       ],
       processedRepos: [summary],
@@ -983,7 +989,13 @@ describe("createDispatch — front door (issue #29)", () => {
   });
 
   it("project.process without a progress sink still resolves with the summary (no push channel)", async () => {
-    const summary: ProcessedRepoSummary = { repo: "atlas", path: "/orbital/atlas", ok: true, files: 3, symbols: 1 };
+    const summary: ProcessedRepoSummary = {
+      repo: "atlas",
+      path: "/orbital/atlas",
+      ok: true,
+      files: 3,
+      symbols: 1,
+    };
     const { dispatch } = frontDoorHarness({ processedRepos: [summary] });
     // No `ctx` at all — the request/response path, exactly like a bridge with no onProgress.
     const out = (await dispatch("project.process", {

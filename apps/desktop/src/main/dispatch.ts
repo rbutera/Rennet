@@ -456,7 +456,7 @@ export function createDispatch(
         // resolved value, so both always agree. Soft per-repo failures are carried
         // in the summaries (never a throw), so one bad repo never aborts the rest.
         const input = parseCommandInput(name, rawInput);
-        const emit = ctx?.emitProgress ?? (() => {});
+        const emit = ctx?.emitProgress ?? (() => undefined);
         const { repos } = await deps.processProject({ projectId: input.projectId }, emit);
         emit({ kind: "done", repos });
         return parseCommandOutput(name, { repos });

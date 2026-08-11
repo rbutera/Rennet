@@ -92,9 +92,7 @@ export function ProjectProcessing({
         <p className="processing-headline" aria-live="polite">
           {done ? `${project.name} is ready` : view.headline}
         </p>
-        <p className="processing-sub">
-          {done ? view.doneSummary : view.sub}
-        </p>
+        <p className="processing-sub">{done ? view.doneSummary : view.sub}</p>
       </div>
 
       {view.repoBlocks.length > 0 ? (
@@ -152,10 +150,7 @@ function RepoBlock({ block }: { block: RepoBlockView }) {
             const last = index === block.trail.length - 1;
             const active = block.state === "processing" && last;
             return (
-              <li
-                key={`${entry.stage}-${index}`}
-                className={`processing-step${active ? " is-active" : ""}`}
-              >
+              <li key={entry.stage} className={`processing-step${active ? " is-active" : ""}`}>
                 <span className="processing-step-mark" aria-hidden="true">
                   {active ? <span className="processing-dot" /> : <CheckIcon size={12} />}
                 </span>

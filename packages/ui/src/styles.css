@@ -1880,13 +1880,12 @@ button {
   position: absolute;
   inset: -3px;
   border-radius: 50%;
-  background: conic-gradient(
-    from 0deg,
-    transparent 0deg,
-    var(--accent) 90deg,
-    transparent 200deg
+  background: conic-gradient(from 0deg, transparent 0deg, var(--accent) 90deg, transparent 200deg);
+  -webkit-mask: radial-gradient(
+    farthest-side,
+    transparent calc(100% - 3px),
+    black calc(100% - 3px)
   );
-  -webkit-mask: radial-gradient(farthest-side, transparent calc(100% - 3px), black calc(100% - 3px));
   mask: radial-gradient(farthest-side, transparent calc(100% - 3px), black calc(100% - 3px));
   animation: processing-spin 1.1s linear infinite;
 }

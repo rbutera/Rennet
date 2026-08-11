@@ -461,7 +461,16 @@ describe("ProjectSnapshotGenerator — live build progress", () => {
 
     // Every stage the generator actually performs fired, in build order.
     const stages = events.map((event) => event.stage);
-    for (const stage of ["resolve", "tree", "workspace", "conventions", "symbols", "build", "verify", "store"]) {
+    for (const stage of [
+      "resolve",
+      "tree",
+      "workspace",
+      "conventions",
+      "symbols",
+      "build",
+      "verify",
+      "store",
+    ]) {
       expect(stages).toContain(stage);
     }
     expect(stages.indexOf("resolve")).toBeLessThan(stages.indexOf("tree"));

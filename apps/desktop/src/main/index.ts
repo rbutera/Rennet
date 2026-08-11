@@ -33,13 +33,13 @@ import {
   loadConventionCatalogue,
   loadProjectDetail,
   type ProjectPrSource,
-  parseGitHubPrRef,
   ProjectSnapshotGenerator,
+  parseGitHubPrRef,
   RepoWatcher,
   resolveGitHubAuth,
   type SnapshotBuildProgress,
-  snapshotStoreFor,
   SqliteReviewStore,
+  snapshotStoreFor,
 } from "@rennet/adapters";
 import {
   type AdmittedDocument,
@@ -62,7 +62,6 @@ import {
   verifyFlaggedReview,
 } from "@rennet/core";
 import {
-  type CommandName,
   type DetectedHarness,
   isCommandName,
   type ProcessedRepoSummary,
@@ -850,7 +849,9 @@ function registerCommandHandler(): void {
     // event on the progress channel keyed by that id so the renderer can filter to
     // its own invocation. `sender.isDestroyed()` guards a window closed mid-build.
     const commandId =
-      input && typeof input === "object" && typeof (input as { commandId?: unknown }).commandId === "string"
+      input &&
+      typeof input === "object" &&
+      typeof (input as { commandId?: unknown }).commandId === "string"
         ? (input as { commandId: string }).commandId
         : undefined;
     const emitProgress = commandId
