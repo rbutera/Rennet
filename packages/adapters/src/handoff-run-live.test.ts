@@ -7,11 +7,7 @@ import type {
   SessionSpec,
 } from "@rennet/core";
 import { describe, expect, it } from "vitest";
-import {
-  claudeHandoffRunPort,
-  HANDOFF_DENIED_TOOLS,
-  HANDOFF_WRITE_TOOLS,
-} from "./handoff-run-live";
+import { claudeHandoffRunPort } from "./handoff-run-live";
 
 /** A fake session that records the spec and yields a scripted event stream. */
 class FakeSession implements HarnessSession {
@@ -61,16 +57,14 @@ function fakePort(events: HarnessEvent[]): {
 }
 
 describe("claudeHandoffRunPort", () => {
-  it("creates a WRITE-enabled session with exec/network DENIED (git push unreachable)", async () => {
+  it("creates a WRITE-enabled session with the FULL default tool surface (no policy, Bash included)", async () => {
     const { port, lastSpec } = fakePort([endedEvent({ status: "completed", finalText: "did it" })]);
     await claudeHandoffRunPort(port)({ cwd: "/repo", prompt: "do the thing" });
     const spec = lastSpec();
     expect(spec?.readOnly).toBe(false);
-    expect(spec?.allowedTools).toEqual(HANDOFF_WRITE_TOOLS);
-    expect(spec?.disallowedTools).toEqual(HANDOFF_DENIED_TOOLS);
-    // The one that could push MUST be denied and MUST NOT be allowed.
-    expect(spec?.disallowedTools).toContain("Bash");
-    expect(spec?.allowedTools).not.toContain("Bash");
+    // A capable coding agent gets no tool restriction — Rai's call (2026-08-11).
+    expect(spec?.allowedTools).toBeUndefined();
+    expect(spec?.disallowedTools).toBeUndefined();
   });
 
   it("returns the completed final text (with usage when reported)", async () => {

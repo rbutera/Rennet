@@ -65,9 +65,11 @@ You touch `packages/types`, `packages/protocol`, the carry seam. I ADD, additive
   bundle. Test: token bound to bundle A cannot run bundle B.
 - ⛔ Active patchset byte-identical before/after — the pre-handoff patchset object is
   unchanged in `review.patchsets` after capture (event-sourced append, never rewrite).
-- ⛔ Nothing pushed — the write session's tool set is Read/Grep/Glob/LS/Write/Edit/
-  MultiEdit, **NO Bash/exec**, so `git push` is structurally unreachable (R33). Capture
-  never pushes. (Follow-up: a sandboxed exec policy for tests/formatters.)
+- R33 ("Rennet never pushes") — RENNET's own capture path only reads; it never pushes.
+  The write session itself is FULLY CAPABLE (Bash included, Rai's call 2026-08-11), so
+  "don't push" is an INSTRUCTION to the agent, not a structural wall. The enforced
+  safety is at the START of a run (human authorises, spend disclosed), not in the
+  model's post-go tool surface.
 - **Totality** — an agent edit unrelated to any disposition still appears in the new
   patchset (whole-tree capture) and the turn diff. Test asserts it.
 
@@ -92,7 +94,7 @@ You touch `packages/types`, `packages/protocol`, the carry seam. I ADD, additive
   T3 pattern, attributed. 6 real-git tests incl. "real index untouched" + "hidden refs".
 - **Run** — `core` `runHandoffTurn` (pure bracket over injected `CheckpointPort` +
   `HandoffRunPort`) + `adapters/src/handoff-run-live.ts` `claudeHandoffRunPort`
-  (readOnly:false, exec DENIED so `git push` is unreachable). 5 tests.
+  (readOnly:false, FULL default tool surface — Bash included, Rai's call). 5 tests.
 - **Capture + delta** — reuses `ReviewService.capture`/`PatchsetActivated` (floor carry).
 - **Seam (#16)** — `LineageCarryPort` + `notWiredLineageCarry` (honest `matcher-not-wired`).
 - **Protocol** — `review.handoff.prepare` / `requestConsent` / `run` + schemas.

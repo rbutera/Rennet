@@ -513,19 +513,8 @@ export class ClaudeAdapter implements HarnessPort {
       ? (spec.allowedTools ?? READ_ONLY_ALLOWED_TOOLS)
       : spec.allowedTools;
     // A read-only session denies the fixed write/exec set; a write-enabled session
-    // denies whatever the caller specified (the handoff passes the exec/network tools
-    // so the coding agent can edit files but cannot push, R33). Absent on a write
-    // session ⇒ no policy denial (back-compat with the existing write callers).
-    // ⚠️ LAMP (Rule 75 most-permissive-fault): this default points the PERMISSIVE way
-    // for write sessions. A read-only session is denied automatically; a write session
-    // gets full Bash/exec UNLESS the caller passes `disallowedTools`. So exec-denial is
-    // opt-in PER CALLER, structural for the handoff call site (which passes both an
-    // allowlist AND `HANDOFF_DENIED_TOOLS`), NOT for write sessions in general. The
-    // single fault that widens this is a FUTURE write caller that omits both lists —
-    // it silently gets Bash, and nothing goes red. New write caller: pass an explicit
-    // `disallowedTools` (deny at least Bash) unless you truly intend an exec-capable
-    // session. Not restructured here: `undefined ⇒ no denial` is a real back-compat
-    // constraint, so this is a lamp, not a fix.
+    // takes whatever the caller specified in `disallowedTools` (absent ⇒ the full
+    // default tool surface, which is what a coding agent wants — Bash included).
     const disallowedTools = spec.readOnly ? WRITE_EXEC_DENIED_TOOLS : spec.disallowedTools;
     return {
       cwd: spec.cwd,

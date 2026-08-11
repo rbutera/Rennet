@@ -153,11 +153,7 @@ export {
   type GitHubPublishConfig,
 } from "./github-publish";
 export { parseGitHubSso } from "./github-sso";
-export {
-  claudeHandoffRunPort,
-  HANDOFF_DENIED_TOOLS,
-  HANDOFF_WRITE_TOOLS,
-} from "./handoff-run-live";
+export { claudeHandoffRunPort } from "./handoff-run-live";
 export {
   compareVersions,
   type DiscoverCodexOptions,

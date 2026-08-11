@@ -134,8 +134,8 @@ export interface DispatchDeps {
   /**
    * The write-enabled handoff turn (issue #18): brackets a coding-harness write turn
    * with workspace checkpoints and returns the turn diff. Composed by the root as
-   * `runHandoffTurn` over the live Claude adapter (exec-denied) + the git checkpoint
-   * store. Optional so a composition WITHOUT a coding harness still constructs — the
+   * `runHandoffTurn` over the live Claude adapter (fully capable, Bash included) + the
+   * git checkpoint store. Optional so a composition WITHOUT a coding harness still constructs — the
    * `run` command then answers an honest `unavailable` rather than throwing.
    */
   readonly runHandoffTurn?: (input: {
@@ -762,14 +762,15 @@ export function createDispatch(
         return parseCommandOutput(name, { authorization });
       }
       case "review.handoff.run": {
-        // The write-enabled turn. Every gate is STRUCTURAL:
+        // The write-enabled turn. The START of a run is gated:
         //   • rebuild the bundle from the SAME dispositions and refuse unless its
         //     digest matches the disclosed one (spend-disclosed: the run cannot
         //     execute a bundle the user never saw).
         //   • consume the single-use token (explicit-act: no token ⇒ no run).
-        //   • the write session denies exec, so `git push` is unreachable (R33).
         //   • capture appends a NEW patchset; the prior one stays byte-identical
         //     (R28), asserted below.
+        // The write session itself is fully capable (Bash included, Rai's call); R33
+        // ("Rennet never pushes") is an instruction to the agent, not a wall here.
         const input = parseCommandInput(name, rawInput);
         const review = requireLatestReview(input.reviewId);
         assertAllowedRepository(review.repositoryRoot);

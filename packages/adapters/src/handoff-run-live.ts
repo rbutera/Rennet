@@ -3,48 +3,26 @@ import type { HandoffRunOutcome, HandoffRunPort, HarnessPort } from "@rennet/cor
 // ─────────────────────────────────────────────────────────────────────────────
 // review.handoff.run — the LIVE write-enabled turn (issue #18).
 //
-// The structural sibling of `claudeRefinePort`, but WRITE-enabled: one `claude`
-// session with `readOnly: false` over the reviewed repo root, handed the bundle
-// prompt. The SDK's `query()` drives the whole agentic loop internally (read, edit,
-// finish) in that one turn, so a single `send()` addresses every disposition.
+// The sibling of `claudeRefinePort`, but WRITE-enabled: one `claude` session with
+// `readOnly: false` over the reviewed repo root, handed the bundle prompt. The SDK's
+// `query()` drives the whole agentic loop internally (read, edit, run tests, finish)
+// in that one turn, so a single `send()` addresses every disposition.
 //
-// ⛔ R33 — Rennet never pushes source code — is upheld STRUCTURALLY here: the tool
-// policy allows the file read/write tools and DENIES every exec/network tool, so the
-// agent physically cannot run `git push` (or any shell). The allowlist pre-approves
-// the write tools (no human sits behind this headless session to approve prompts);
-// the denylist is the belt-and-suspenders that makes exec unreachable rather than
-// merely un-approved.
+// The session is FULLY CAPABLE by design (Rai's call, 2026-08-11): a coding agent
+// that cannot run the tests, formatters, and linters it just changed produces worse
+// code, so the write session imposes NO tool policy of its own — the model gets the
+// harness's full default tool surface, Bash included.
+//
+// ⚠️ R33 ("Rennet never pushes source code") is therefore an INSTRUCTION carried in
+// the bundle prompt ("do NOT commit, do NOT push"), NOT a structural wall: with Bash
+// available the agent technically CAN run git. Rennet itself performs no push (the
+// capture path only reads); the guarantee that survives an adversary is at the
+// START of a run (the human authorises it, spend is disclosed) — see the consent +
+// disclosure gates — not in what the model may reach after go is pressed.
 //
 // A failed/unavailable turn NEVER fabricates success — it returns the honest failure
-// the core orchestrator surfaces, and no patchset is captured from a turn that did
-// not complete.
+// the core orchestrator surfaces.
 // ─────────────────────────────────────────────────────────────────────────────
-
-/** The file read/write tools the coding agent may use — NO exec, NO network. */
-export const HANDOFF_WRITE_TOOLS: readonly string[] = [
-  "Read",
-  "Grep",
-  "Glob",
-  "LS",
-  "Write",
-  "Edit",
-  "MultiEdit",
-];
-
-/**
- * The exec/network tools the write session DENIES by policy — so the agent can edit
- * files but cannot push, fetch, spawn a subagent, or run arbitrary shell. `Bash` is
- * the one that could `git push`; denying it is the structural half of R33.
- */
-export const HANDOFF_DENIED_TOOLS: readonly string[] = [
-  "Bash",
-  "BashOutput",
-  "KillShell",
-  "NotebookEdit",
-  "Task",
-  "WebFetch",
-  "WebSearch",
-];
 
 /** Render a thrown value into a turn-failure message (mirrors harness-run-turn). */
 function describeThrow(error: unknown): string {
@@ -59,10 +37,11 @@ function describeThrow(error: unknown): string {
 
 /**
  * Build the LIVE write-enabled `HandoffRunPort` over the Claude harness adapter. One
- * `readOnly: false` session per run, tool-gated to file writes with exec/network
- * denied. The drain mirrors `createHarnessRunTurn`: a completed outcome emits the
- * final text (+ usage when reported); a construction throw, an error frame, or a
- * failed/cancelled outcome is an honest turn failure. The session is always closed.
+ * `readOnly: false` session per run, with the harness's FULL default tool surface (no
+ * tool policy imposed, Bash included — Rai's call). The drain mirrors
+ * `createHarnessRunTurn`: a completed outcome emits the final text (+ usage when
+ * reported); a construction throw, an error frame, or a failed/cancelled outcome is
+ * an honest turn failure. The session is always closed.
  */
 export function claudeHandoffRunPort(port: HarnessPort, model?: string): HandoffRunPort {
   return async (input) => {
@@ -71,8 +50,6 @@ export function claudeHandoffRunPort(port: HarnessPort, model?: string): Handoff
       session = await port.createSession({
         cwd: input.cwd,
         readOnly: false,
-        allowedTools: HANDOFF_WRITE_TOOLS,
-        disallowedTools: HANDOFF_DENIED_TOOLS,
         ...(model === undefined ? {} : { model }),
         ...(input.signal === undefined ? {} : { signal: input.signal }),
       });

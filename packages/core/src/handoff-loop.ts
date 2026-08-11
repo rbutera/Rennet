@@ -34,9 +34,12 @@ import type {
 //     moves/splits; explicitly UNIMPLEMENTED here (never a fabricated carry).
 //
 // ⛔ Safety properties do NOT relax inside the loop (§2.1): the human still
-// disposes; the agent addresses dispositions and nothing else; Rennet never pushes
-// (the write session denies exec, so `git push` is unreachable — enforced by the
-// caller's tool policy); a new patchset never rewrites the active one (R28).
+// disposes; the agent addresses dispositions and nothing else; a new patchset never
+// rewrites the active one (R28). R33 ("Rennet never pushes source code") holds for
+// RENNET's own code (the capture path only reads); the write session itself is fully
+// capable (Bash included, Rai's call), so "don't push" is an INSTRUCTION to the
+// agent, not a wall — the enforced safety is at the START of a run (human authorises,
+// spend disclosed), not in what the model may reach after go is pressed.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -274,8 +277,8 @@ export type HandoffRunOutcome =
 
 /**
  * The injected write-enabled turn. The caller owns the harness wiring (the real
- * `claude` adapter with `readOnly:false` and an exec-DENIED tool policy so `git
- * push` is unreachable; or a fake in tests), keeping this module pure.
+ * `claude` adapter with `readOnly:false` and the full default tool surface; or a
+ * fake in tests), keeping this module pure.
  */
 export type HandoffRunPort = (input: HandoffRunInput) => Promise<HandoffRunOutcome>;
 
