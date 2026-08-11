@@ -1,8 +1,11 @@
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   BaselineAdvanceCoordinator,
   type BaselineAdvanceDeps,
+  startBaselineWatch,
   type Timers,
+  type WatchFn,
 } from "./baseline-advance-watcher";
 
 /** A manual timer: `notify` schedules one pending callback; `flush` fires it. */
@@ -168,5 +171,47 @@ describe("BaselineAdvanceCoordinator — debounce + coalesce", () => {
     t.flush();
     await coord.whenIdle();
     expect(runDeltaPass).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("startBaselineWatch — watched ref targets", () => {
+  it("watches local refs/heads (+ origin + packed-refs) and a change there drives a pass", async () => {
+    const listeners: { path: string; fn: () => void }[] = [];
+    const watch: WatchFn = (path, listener) => {
+      listeners.push({ path, fn: listener });
+      return {
+        close: () => {
+          /* no teardown needed */
+        },
+      };
+    };
+    const t = fakeTimers();
+    const runDeltaPass = vi.fn(async () => {
+      /* recorded by vi.fn */
+    });
+    const coord = new BaselineAdvanceCoordinator({
+      resolveCurrentBaseOid: async () => "oidTip",
+      storedBaseOid: () => "oid0",
+      runDeltaPass,
+      timers: t.timers,
+    });
+
+    const handle = startBaselineWatch("/repo/.git", coord, { watch });
+    const paths = listeners.map((l) => l.path);
+    // The LOCAL branch tip is now watched — a commit/rebase/reset on main fires, not
+    // only a fetch that moves the remote ref.
+    expect(paths).toContain(join("/repo/.git", "refs", "heads"));
+    expect(paths).toContain(join("/repo/.git", "refs", "remotes", "origin"));
+    expect(paths).toContain(join("/repo/.git", "packed-refs"));
+
+    // Firing the refs/heads listener (a local advance) drives notify → debounce → pass.
+    const heads = listeners.find((l) => l.path.endsWith(join("refs", "heads")));
+    heads?.fn();
+    expect(t.pending()).toBe(true);
+    t.flush();
+    await coord.whenIdle();
+    expect(runDeltaPass).toHaveBeenCalledTimes(1);
+
+    handle.close();
   });
 });
