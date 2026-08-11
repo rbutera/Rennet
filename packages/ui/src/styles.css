@@ -1897,6 +1897,17 @@ button {
   color: var(--accent-contrast);
   background: var(--accent);
 }
+.processing-orb.is-failed {
+  color: var(--amber);
+  background: var(--amber-surface);
+}
+.processing-orb.is-failed::before {
+  animation: none;
+  background: none;
+}
+.processing-orb.is-failed > * {
+  animation: none;
+}
 .processing-orb.is-done::before {
   animation: none;
   background: none;

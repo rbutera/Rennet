@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { basename, join, normalize, resolve } from "node:path";
+import { join, normalize, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
@@ -37,7 +37,6 @@ import {
   parseGitHubPrRef,
   RepoWatcher,
   resolveGitHubAuth,
-  type SnapshotBuildProgress,
   SqliteReviewStore,
   snapshotStoreFor,
 } from "@rennet/adapters";
@@ -61,12 +60,7 @@ import {
   runNoiseAngle,
   verifyFlaggedReview,
 } from "@rennet/core";
-import {
-  type DetectedHarness,
-  isCommandName,
-  type ProcessedRepoSummary,
-  type ProjectProcessEvent,
-} from "@rennet/protocol";
+import { type DetectedHarness, isCommandName, type ProjectProcessEvent } from "@rennet/protocol";
 import type {
   Canvas,
   CanvasAngle,
@@ -86,6 +80,7 @@ import type {
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session } from "electron";
 import { createDispatch } from "./dispatch";
 import { createOrchestratorTurnRunner } from "./orchestrator";
+import { createProcessProject } from "./process-project";
 import { createPublishConsentAuthority } from "./publish-consent-authority";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
 
@@ -971,51 +966,13 @@ app.whenReady().then(async () => {
       },
     },
     // The initial context dump (issue #29, wireframe #2): build every included
-    // repo's ProjectSnapshot, streaming the real generator stages as live
-    // narration. Soft per-repo failure is carried in the summary, never thrown, so
-    // one bad repo cannot abort a workspace's remaining repos. Pure over git.
-    processProject: async ({ projectId }, emit) => {
-      const project = projectStore.list().find((entry) => entry.id === projectId);
-      if (!project) return { repos: [] };
-      const repoPaths =
-        project.includedRepoPaths && project.includedRepoPaths.length > 0
-          ? project.includedRepoPaths
-          : [project.openPath || project.path];
-      const repos: ProcessedRepoSummary[] = [];
-      for (const [index, path] of repoPaths.entries()) {
-        const repo = basename(path) || path;
-        emit({ kind: "repo-start", repo, index: index + 1, total: repoPaths.length });
-        try {
-          const result = await snapshotGenerator.generate(path, {
-            onProgress: (progress: SnapshotBuildProgress) =>
-              emit({
-                kind: "stage",
-                repo,
-                stage: progress.stage,
-                note: progress.note,
-                detail: progress.detail,
-              }),
-          });
-          const summary: ProcessedRepoSummary = {
-            repo,
-            path,
-            ok: true,
-            files: result.fileCount,
-            symbols: result.manifest.symbols.length,
-            references: result.manifest.references.length,
-            reusedSymbols: result.reusedSymbolShards,
-            baseRef: result.manifest.baseRef,
-          };
-          repos.push(summary);
-          emit({ kind: "repo-done", repo, summary });
-        } catch (reason) {
-          const message = reason instanceof Error ? reason.message : String(reason);
-          repos.push({ repo, path, ok: false, error: message });
-          emit({ kind: "repo-error", repo, message });
-        }
-      }
-      return { repos };
-    },
+    // repo's ProjectSnapshot at the CONFIRMED primary branch, streaming the real
+    // generator stages as live narration. Extracted to `process-project.ts` so the
+    // branch-selection + real-count wiring is unit-tested off-Electron.
+    processProject: createProcessProject({
+      generate: (repoRoot, options) => snapshotGenerator.generate(repoRoot, options),
+      listProjects: () => projectStore.list(),
+    }),
     discoverProject: ({ path, kind }) =>
       discoverProject(defaultProjectDiscoveryDeps(execaGit), path, kind),
     detectHarnesses,

@@ -119,6 +119,10 @@ export interface GenerateResult {
   readonly extractedReferenceShards: number;
   /** Total files in the tree at the base OID (the whole snapshot's breadth). */
   readonly fileCount: number;
+  /** Total DECLARED SYMBOLS across all shards (not the shard/file count). */
+  readonly symbolCount: number;
+  /** Total identifier OCCURRENCES across all reference shards (not the shard count). */
+  readonly referenceCount: number;
 }
 
 export class ProjectSnapshotGenerator {
@@ -245,10 +249,19 @@ export class ProjectSnapshotGenerator {
     }
 
     progress?.({ stage: "build", note: "Building the repo map" });
-    const built = buildSnapshot(
-      inputs,
-      [...plan.reuse, ...extracted],
-      [...refPlan.reuse, ...extractedReferences],
+    const symbolShards = [...plan.reuse, ...extracted];
+    const referenceShards = [...refPlan.reuse, ...extractedReferences];
+    const built = buildSnapshot(inputs, symbolShards, referenceShards);
+
+    // Real totals over the built shards — NOT shard COUNTS. `manifest.symbols` is
+    // a per-blob pointer array (one entry per file), so its length is a file count;
+    // the honest "symbols indexed" is the sum of each shard's declared symbols, and
+    // "references indexed" is the sum of every identifier's occurrences.
+    const symbolCount = symbolShards.reduce((sum, shard) => sum + shard.symbols.length, 0);
+    const referenceCount = referenceShards.reduce(
+      (sum, shard) =>
+        sum + shard.references.reduce((refSum, occurrence) => refSum + occurrence.lines.length, 0),
+      0,
     );
 
     // Verify BEFORE advancing: a stale/corrupt/tampered shard fails closed here
@@ -274,6 +287,8 @@ export class ProjectSnapshotGenerator {
       reusedReferenceShards: refPlan.reuse.length,
       extractedReferenceShards: refPlan.toExtract.length,
       fileCount: inputs.files.length,
+      symbolCount,
+      referenceCount,
     };
   }
 

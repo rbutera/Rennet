@@ -501,3 +501,37 @@ describe("ProjectSnapshotGenerator — live build progress", () => {
     expect(stages).not.toContain("store");
   }, 180000);
 });
+
+describe("ProjectSnapshotGenerator — real symbol/reference totals (not shard counts)", () => {
+  function singleFileRepo(source: string): { root: string; oid: string } {
+    const root = mkdtempSync(join(tmpdir(), "rennet-onefile-"));
+    scratch.push(root);
+    git(root, "init", "-q", "-b", "main");
+    git(root, "config", "user.email", "rennet@example.test");
+    git(root, "config", "user.name", "Rennet Test");
+    write(root, "package.json", JSON.stringify({ name: "one", private: true }));
+    write(root, "src/index.ts", source);
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "one");
+    return { root, oid: git(root, "rev-parse", "HEAD") };
+  }
+
+  it("sums declared symbols across a shard instead of counting the per-blob pointer", async () => {
+    // One source file → ONE symbol shard pointer, but THREE declared symbols. The
+    // old bug reported `manifest.symbols.length` (= 1) as the symbol count.
+    const { root, oid } = singleFileRepo(
+      "export const one = 1;\nexport function two() {}\nexport class Three {}\n",
+    );
+    const result = await new ProjectSnapshotGenerator().generate(root, {
+      explicitBaseRef: oid,
+      previousSymbols: [],
+      previousReferences: [],
+    });
+    expect(result.manifest.symbols.length).toBe(1);
+    expect(result.symbolCount).toBe(3);
+    // References are identifier OCCURRENCES, so with a repeated identifier the total
+    // exceeds the per-blob reference-shard pointer count (= 1 here).
+    expect(result.manifest.references.length).toBe(1);
+    expect(result.referenceCount).toBeGreaterThan(1);
+  }, 180000);
+});

@@ -83,16 +83,36 @@ export function ProjectProcessing({
   }
 
   const done = phase === "done";
+  // A context dump where EVERY repo failed is not a success: no "ready", no Open.
+  // A workspace with at least one good repo is still a (partial) success.
+  const allFailed = done && repos.length > 0 && repos.every((repo) => !repo.ok);
+  const succeeded = done && !allFailed;
+  const outcome = done ? (allFailed ? "failed" : "ok") : undefined;
   return (
-    <div className="processing" data-phase={phase}>
+    <div className="processing" data-phase={phase} data-outcome={outcome}>
       <div className="processing-hero">
-        <span className={`processing-orb${done ? " is-done" : ""}`} aria-hidden="true">
-          {done ? <CheckIcon size={22} /> : <SparkleIcon size={20} />}
+        <span
+          className={`processing-orb${succeeded ? " is-done" : ""}${allFailed ? " is-failed" : ""}`}
+          aria-hidden="true"
+        >
+          {allFailed ? (
+            <TriangleIcon size={20} />
+          ) : succeeded ? (
+            <CheckIcon size={22} />
+          ) : (
+            <SparkleIcon size={20} />
+          )}
         </span>
         <p className="processing-headline" aria-live="polite">
-          {done ? `${project.name} is ready` : view.headline}
+          {allFailed
+            ? `Couldn't process ${project.name}`
+            : succeeded
+              ? `${project.name} is ready`
+              : view.headline}
         </p>
-        <p className="processing-sub">{done ? view.doneSummary : view.sub}</p>
+        <p className="processing-sub">
+          {allFailed ? view.failedSummary : done ? view.doneSummary : view.sub}
+        </p>
       </div>
 
       {view.repoBlocks.length > 0 ? (
@@ -108,10 +128,12 @@ export function ProjectProcessing({
           <button type="button" className="ghost" onClick={onDone}>
             Back to projects
           </button>
-          <button type="button" className="primary" onClick={onOpen}>
-            Open {project.name}
-            <ArrowRightIcon size={13} />
-          </button>
+          {succeeded ? (
+            <button type="button" className="primary" onClick={onOpen}>
+              Open {project.name}
+              <ArrowRightIcon size={13} />
+            </button>
+          ) : null}
         </div>
       ) : null}
     </div>
@@ -173,6 +195,8 @@ interface ProcessingView {
   headline: string;
   sub: string;
   doneSummary: string;
+  /** The sub-line for the all-repos-failed completion state. */
+  failedSummary: string;
   repoBlocks: RepoBlockView[];
 }
 
@@ -272,8 +296,18 @@ function deriveView(
     headline,
     sub,
     doneSummary: doneSummaryLine(repos, project),
+    failedSummary: failedSummaryLine(repos, project),
     repoBlocks: [...blocks.values()],
   };
+}
+
+function failedSummaryLine(repos: readonly ProcessedRepoSummary[], project: Project): string {
+  const noun = project.kind === "workspace" ? "repositories" : "repository";
+  if (repos.length > 1) return `None of the ${repos.length} ${noun} could be read.`;
+  const only = repos[0];
+  return only?.error
+    ? `The ${noun} could not be read: ${only.error}`
+    : `The ${noun} could not be read.`;
 }
 
 function doneSummaryLine(repos: readonly ProcessedRepoSummary[], project: Project): string {

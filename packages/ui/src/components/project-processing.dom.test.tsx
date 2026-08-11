@@ -222,4 +222,52 @@ describe("ProjectProcessing — the initial context dump with live narration", (
     fireEvent.click(getByRole("button", { name: /Back to projects/ }));
     expect(onDone).toHaveBeenCalledTimes(1);
   });
+
+  it("renders a FAILED completion (no 'ready', no Open) when every repo failed", async () => {
+    // The command fulfilled, but every repo summary is ok:false — a completely
+    // failed context dump must NOT read as success.
+    const { bridge, calls } = fakeBridge({
+      events: [
+        { kind: "repo-start", repo: "orbital", index: 1, total: 1 },
+        { kind: "repo-error", repo: "orbital", message: "not a git repository" },
+      ],
+      repos: [{ repo: "orbital", path: "/orbital", ok: false, error: "not a git repository" }],
+    });
+    const onOpen = vi.fn();
+    const { container, queryByRole } = mount(
+      <ProjectProcessing bridge={bridge} project={project} onDone={vi.fn()} onOpen={onOpen} />,
+    );
+
+    await waitFor(() => expect(calls.some((call) => call.name === "project.process")).toBe(true));
+    await waitFor(() =>
+      expect(container.querySelector(".processing[data-outcome='failed']")).not.toBeNull(),
+    );
+    const text = container.textContent ?? "";
+    expect(text).not.toContain("is ready");
+    expect(text).toContain("Couldn't process orbital");
+    expect(text).toContain("could not be read");
+    // No Open affordance on a failed dump; Back to projects remains.
+    expect(queryByRole("button", { name: /Open/ })).toBeNull();
+    expect(queryByRole("button", { name: /Back to projects/ })).not.toBeNull();
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("still succeeds (Open enabled) when a workspace has at least one good repo", async () => {
+    const { bridge } = fakeBridge({
+      repos: [
+        { repo: "atlas", path: "/ws/atlas", ok: true, files: 10, symbols: 4 },
+        { repo: "atlas-docs", path: "/ws/atlas-docs", ok: false, error: "not a git repository" },
+      ],
+    });
+    const workspace: Project = { ...project, name: "ws", kind: "workspace", repoCount: 2 };
+    const { container, queryByRole } = mount(
+      <ProjectProcessing bridge={bridge} project={workspace} onDone={vi.fn()} onOpen={vi.fn()} />,
+    );
+
+    await waitFor(() =>
+      expect(container.querySelector(".processing[data-outcome='ok']")).not.toBeNull(),
+    );
+    expect(container.textContent).toContain("ws is ready");
+    expect(queryByRole("button", { name: /Open ws/ })).not.toBeNull();
+  });
 });
