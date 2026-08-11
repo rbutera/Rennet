@@ -144,10 +144,11 @@ describe("mapComposeOutput", () => {
 });
 
 describe("claudeComposePort", () => {
-  it("runs a READ-ONLY session (composition reads, never writes)", async () => {
+  it("binds the compose session to the repo with the structured-output schema", async () => {
     const { port, lastSpec } = fakeClaude(VALID_PROPOSAL);
     await claudeComposePort(port, "/repo")("prompt");
-    expect(lastSpec()?.readOnly).toBe(true);
+    expect(lastSpec()?.cwd).toBe("/repo");
+    expect(lastSpec()?.outputSchema).toBeDefined();
   });
 });
 

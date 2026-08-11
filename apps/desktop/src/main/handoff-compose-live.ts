@@ -119,11 +119,11 @@ export function codexComposePort(
 }
 
 /**
- * Build a `ComposePort` over the Claude harness adapter. One light READ-ONLY session
- * with `COMPOSE_OUTPUT_SCHEMA` passed to the SDK's `json_schema` output format — the
- * same structured-output mechanism every pipeline lens seat uses, so no docType is
- * needed. Composition READS the diff and asks; it never writes, so the session stays
- * read-only. The drain mirrors `claudeRefinePort`.
+ * Build a `ComposePort` over the Claude harness adapter. One light session with
+ * `COMPOSE_OUTPUT_SCHEMA` passed to the SDK's `json_schema` output format — the same
+ * structured-output mechanism every pipeline lens seat uses, so no docType is needed.
+ * The compose turn only asks the model for an ordering/grouping partition; it performs
+ * no file edits of its own. The drain mirrors `claudeRefinePort`.
  */
 export function claudeComposePort(port: HarnessPort, cwd: string, model?: string): ComposePort {
   return async (prompt) => {
@@ -131,7 +131,6 @@ export function claudeComposePort(port: HarnessPort, cwd: string, model?: string
     try {
       session = await port.createSession({
         cwd,
-        readOnly: true,
         outputSchema: COMPOSE_OUTPUT_SCHEMA,
         ...(model === undefined ? {} : { model }),
       });
