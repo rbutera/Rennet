@@ -2980,13 +2980,19 @@ export interface HandoffDisclosure {
  * byte-identical (R28). `turnDiff` is the exact diff the agent's turn produced
  * (bracketed by workspace checkpoints); `filesTouched` is every path the turn
  * changed — including edits unrelated to any disposition (the totality guarantee).
- * `carriedFloor` counts the dispositions the byte-identical floor carried forward;
- * `lineageCarry` reports whether the #16 matcher upgraded that carry or is not wired.
  */
 export interface HandoffRunResult {
   readonly review: Review;
   readonly turnDiff: string;
   readonly filesTouched: readonly string[];
-  readonly carriedFloor: number;
-  readonly lineageCarry: "matcher-not-wired" | "applied";
+  /**
+   * How the delta re-review's DETERMINISTIC carry (`carryDispositionsByLineage`, run
+   * in `service.capture`) landed the prior approvals (issue #254). `carriedForward` is
+   * the number kept on the new patchset (byte-identical at the same path, or a
+   * byte-verified git rename re-anchored); `orphaned` is the number surfaced for
+   * re-review because their code vanished or changed — surfaced, never silently
+   * dropped. The fuzzy occurrence matcher deliberately does NOT drive this carry.
+   */
+  readonly carriedForward: number;
+  readonly orphaned: number;
 }

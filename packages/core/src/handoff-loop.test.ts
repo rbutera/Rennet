@@ -10,7 +10,6 @@ import {
   type HandoffRunOutcome,
   type HandoffRunPort,
   isAddressedByHandoff,
-  notWiredLineageCarry,
   renderHandoffPrompt,
   runHandoffTurn,
 } from "./handoff-loop";
@@ -356,16 +355,5 @@ describe("runHandoffTurn", () => {
     });
     expect(result.status).toBe("completed");
     expect(cp.discard).toHaveBeenCalledTimes(2);
-  });
-});
-
-describe("notWiredLineageCarry (the #16 seam)", () => {
-  it("reports the matcher is not wired rather than fabricating a carry", async () => {
-    const result = await notWiredLineageCarry().carry({
-      previous: [],
-      previousPatchset: patchset,
-      nextPatchset: patchset,
-    });
-    expect(result).toEqual({ status: "matcher-not-wired" });
   });
 });

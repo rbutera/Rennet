@@ -1946,7 +1946,8 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
         review: Review;
         turnDiff: string;
         filesTouched: string[];
-        lineageCarry: string;
+        carriedForward: number;
+        orphaned: number;
       };
     };
 
@@ -1959,7 +1960,10 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
     expect(preserved?.files).toEqual(patchset().files);
     // Totality: the agent's edit to a file no disposition mentioned still appears.
     expect(out.result.filesTouched).toContain("src/unrelated.ts");
-    expect(out.result.lineageCarry).toBe("matcher-not-wired");
+    // The deterministic carry ran and is reported honestly (issue #254): counts, not a
+    // fuzzy "matcher-not-wired" placeholder.
+    expect(typeof out.result.carriedForward).toBe("number");
+    expect(typeof out.result.orphaned).toBe("number");
   });
 
   it("run surfaces the files a FAILED turn changed before erroring (Codex F4)", async () => {

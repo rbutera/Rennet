@@ -792,9 +792,11 @@ export function createDispatch(
           });
         }
         // Capture the agent's result as a NEW patchset — the delta re-review. The
-        // PatchsetActivated fold appends it and runs the byte-identical floor carry
-        // (approved-unchanged dispositions survive); the #16 matcher would upgrade
-        // that carry, and is not wired here (honest `matcher-not-wired`).
+        // PatchsetActivated fold runs the DETERMINISTIC lineage carry
+        // (`carryDispositionsByLineage`): a byte-identical occurrence at the same path
+        // carries, a byte-verified git rename carries re-anchored, everything else
+        // orphans (surfaced for re-review, never dropped). The fuzzy occurrence matcher
+        // deliberately does NOT drive this carry (issue #254 / #16).
         const updated = await service.capture(input.commandId, review.repositoryRoot, review.id);
         deps.setRepositoryDirty(false);
         // R28 immutability: the pre-handoff patchset must survive byte-identical. Its
@@ -810,8 +812,8 @@ export function createDispatch(
           review: updated,
           turnDiff: turn.turnDiff,
           filesTouched: [...turn.filesTouched],
-          carriedFloor: updated.dispositions.length,
-          lineageCarry: "matcher-not-wired",
+          carriedForward: updated.dispositions.length,
+          orphaned: updated.orphaned?.length ?? 0,
         };
         return parseCommandOutput(name, { status: "ran", result });
       }
