@@ -1,3 +1,4 @@
+import { bodyJsonSchema } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import {
   buildCodexExecArgs,
@@ -8,6 +9,7 @@ import {
   createCodexExecutor,
   discoverCodexAvailability,
   sanitizeSchemaForCodex,
+  stripNullDeep,
 } from "./codex-exec";
 
 // ── buildCodexExecArgs — the four load-bearing gotchas live in the argv ────────
@@ -262,6 +264,86 @@ describe("createCodexExecutor", () => {
     expect(result.tokens).toBeUndefined();
     expect(measurements).toEqual(["unmeasured"]);
   });
+
+  // ── The anti-silent-degrade guard (bead workspace-vk1qk) ────────────────────
+  // A Codex seat that never produces a document must record a LEGIBLE failure
+  // measurement — not an empty `measurements: []` a harness reports as an
+  // indistinguishable "UNMEASURED (no measurement recorded)".
+
+  it("fires a legible failure measurement on a non-zero exit (not a silent [])", async () => {
+    const { effects } = fakeEffects({
+      outContent: "{}",
+      runResult: { exitCode: 1, stderr: "invalid_json_schema" },
+    });
+    const seen: { status: string; reason?: string }[] = [];
+    const executor = createCodexExecutor(effects, {
+      onUsageMeasurement: (m) =>
+        seen.push({ status: m.status, ...(m.reason ? { reason: m.reason } : {}) }),
+    });
+    await expect(executor({ model: "gpt-5.6-luna", effort: "low", prompt: "p" })).rejects.toThrow(
+      /exited 1/,
+    );
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.status).toBe("unmeasured");
+    expect(seen[0]?.reason).toMatch(/exited 1: invalid_json_schema/);
+  });
+
+  it("fires a legible failure measurement on non-JSON output", async () => {
+    const { effects } = fakeEffects({ outContent: "not json" });
+    const seen: string[] = [];
+    const executor = createCodexExecutor(effects, {
+      onUsageMeasurement: (m) => seen.push(m.reason ?? m.status),
+    });
+    await expect(executor({ model: "gpt-5.6-luna", effort: "low", prompt: "p" })).rejects.toThrow(
+      /not valid JSON/,
+    );
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatch(/not valid JSON/);
+  });
+
+  it("fires a legible failure measurement when the -o output file is missing", async () => {
+    // codex accepted the request but wrote no final message — the exact shape the
+    // empty-Codex-seat dogfood saw. readFile throws; the guard must make it visible.
+    const state: FakeState = { writes: [], dirsRemoved: [] };
+    const effects: CodexExecEffects = {
+      mkdtemp: async (prefix) => `${prefix}XXXX`,
+      writeFile: async (path, data) => {
+        state.writes.push({ path, data });
+      },
+      readFile: async () => {
+        throw new Error("ENOENT: no such file or directory, open 'out.json'");
+      },
+      rm: async (path) => {
+        state.dirsRemoved.push(path);
+      },
+      run: async () => ({ exitCode: 0, stderr: "" }),
+    };
+    const seen: { status: string; reason?: string }[] = [];
+    const executor = createCodexExecutor(effects, {
+      onUsageMeasurement: (m) =>
+        seen.push({ status: m.status, ...(m.reason ? { reason: m.reason } : {}) }),
+    });
+    await expect(executor({ model: "gpt-5.6-luna", effort: "low", prompt: "p" })).rejects.toThrow(
+      /produced no output file/,
+    );
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.status).toBe("unmeasured");
+    expect(seen[0]?.reason).toMatch(/produced no output file/);
+    // The scratch dir is still cleaned up on this path.
+    expect(state.dirsRemoved).toHaveLength(1);
+  });
+
+  it("strips a null-valued optional field from the parsed output (undoes the nullable rewrite)", async () => {
+    // sanitizeSchemaForCodex forces an optional field to required+nullable so
+    // OpenAI-strict accepts the schema; the model then emits `null` for absence.
+    // The executor strips it so the RSP body validator sees an ABSENT field.
+    const { effects } = fakeEffects({
+      outContent: '{"findings":[{"findingId":"f1","summary":"x","verification":null}]}',
+    });
+    const executor = createCodexExecutor(effects);
+    const result = await executor({ model: "gpt-5.6-luna", effort: "low", prompt: "p" });
+    expect(result.output).toEqual({ findings: [{ findingId: "f1", summary: "x" }] });
+  });
 });
 
 // ── discoverCodexAvailability — the composition root's honest codex probe ──────
@@ -350,5 +432,109 @@ describe("sanitizeSchemaForCodex", () => {
     const out = sanitizeSchemaForCodex(schema) as { anyOf: Record<string, unknown>[] };
     expect(out.anyOf[0]?.additionalProperties).toBe(false);
     expect(out.anyOf[1]?.additionalProperties).toBe(false);
+  });
+
+  // ── Strict `required` completeness (the empty-Codex-seat root cause) ─────────
+  // OpenAI structured outputs demand EVERY property appear in `required`. A Zod
+  // `.optional()` projects a property that is absent from `required` → HTTP 400
+  // `invalid_json_schema` ("Missing '<prop>'"), which is why the Codex finding
+  // seat returned nothing until this transform.
+
+  it("adds every property to `required` and makes a previously-optional one nullable", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        id: { type: "string" },
+        note: { type: "string" }, // optional: present in properties, absent from required
+      },
+      required: ["id"],
+      additionalProperties: false,
+    };
+    const out = JSON.parse(JSON.stringify(sanitizeSchemaForCodex(schema)));
+    // Every property is now required (OpenAI-strict).
+    expect(new Set(out.required)).toEqual(new Set(["id", "note"]));
+    // The already-required, non-optional property is untouched.
+    expect(out.properties.id).toEqual({ type: "string" });
+    // The previously-optional property is now nullable so the model can still
+    // signal absence (which the executor then strips back to "absent").
+    expect(out.properties.note).toEqual({ anyOf: [{ type: "string" }, { type: "null" }] });
+  });
+
+  it("leaves an already-nullable optional idempotent (no double-null branch)", () => {
+    const schema = {
+      type: "object",
+      properties: {
+        maybe: { anyOf: [{ type: "string" }, { type: "null" }] },
+      },
+      required: [],
+    };
+    const out = JSON.parse(JSON.stringify(sanitizeSchemaForCodex(schema)));
+    expect(out.required).toEqual(["maybe"]);
+    const nullBranches = out.properties.maybe.anyOf.filter(
+      (b: { type?: string }) => b.type === "null",
+    );
+    expect(nullBranches).toHaveLength(1);
+  });
+
+  it("sets additionalProperties:false on an object that omits it", () => {
+    const schema = { type: "object", properties: { a: { type: "string" } }, required: ["a"] };
+    const out = sanitizeSchemaForCodex(schema) as Record<string, unknown>;
+    expect(out.additionalProperties).toBe(false);
+  });
+
+  it("makes the REAL finding schema OpenAI-strict compliant (every object: required == property keys)", () => {
+    // The contract, not the implementation: the projected + sanitized finding
+    // schema must have no object node whose `required` omits a declared property.
+    // This is exactly the shape OpenAI 400'd on ("Missing 'verification'").
+    const sanitized = sanitizeSchemaForCodex(bodyJsonSchema("finding"));
+    const offenders: string[] = [];
+    const walk = (node: unknown, path: string): void => {
+      if (Array.isArray(node)) {
+        node.forEach((child, i) => {
+          walk(child, `${path}[${i}]`);
+        });
+        return;
+      }
+      if (node === null || typeof node !== "object") return;
+      const obj = node as Record<string, unknown>;
+      const props = obj.properties;
+      if (props !== null && typeof props === "object" && !Array.isArray(props)) {
+        const keys = Object.keys(props as Record<string, unknown>);
+        const required = new Set(Array.isArray(obj.required) ? (obj.required as string[]) : []);
+        for (const key of keys) {
+          if (!required.has(key)) offenders.push(`${path}.properties.${key}`);
+        }
+        // OpenAI-strict also needs additionalProperties:false on every object.
+        if (obj.additionalProperties !== false) offenders.push(`${path}.additionalProperties`);
+      }
+      for (const [key, value] of Object.entries(obj)) walk(value, `${path}.${key}`);
+    };
+    walk(sanitized, "$");
+    expect(offenders).toEqual([]);
+  });
+});
+
+// ── stripNullDeep — undo the optional→required-nullable rewrite on the OUTPUT ──
+
+describe("stripNullDeep", () => {
+  it("drops null-valued object keys, deeply", () => {
+    const input = {
+      findings: [
+        { findingId: "f1", verification: null, nested: { keep: 1, drop: null } },
+        { findingId: "f2", verification: { verdict: "reproduced", evidence: "e" } },
+      ],
+    };
+    expect(stripNullDeep(input)).toEqual({
+      findings: [
+        { findingId: "f1", nested: { keep: 1 } },
+        { findingId: "f2", verification: { verdict: "reproduced", evidence: "e" } },
+      ],
+    });
+  });
+
+  it("preserves array elements and primitives (only object keys are dropped)", () => {
+    expect(stripNullDeep([1, "a", true])).toEqual([1, "a", true]);
+    expect(stripNullDeep("x")).toBe("x");
+    expect(stripNullDeep(null)).toBe(null);
   });
 });

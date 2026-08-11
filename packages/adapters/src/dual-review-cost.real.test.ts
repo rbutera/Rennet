@@ -243,8 +243,27 @@ describe("rennet dual-model Flagged review — cost (gated real turns)", () => {
           ? review.findings.filter((f) => f.agreement.kind === "concur").length
           : 0;
       const disagree = reconciled - concur;
+      // Make degradation UNMISSABLE: "concur N" counts findings of concur-KIND, and
+      // on a single surviving seat every finding is trivially `concur 1/1`, so the
+      // bare count reads exactly like "two models agreed" when in fact only one ran.
+      // Surface WHO actually contributed and any degradation reason on their own
+      // lines so the concur count can never be misread (bead workspace-vk1qk).
+      const dualNote = review.status === "ok" ? review.dual : undefined;
+      const seatsRan = dualNote?.seats ?? [];
+      const degraded = dualNote?.secondSeatUnavailable;
       line(
-        `reconciled findings: ${reconciled} (concur ${concur}, disagree ${disagree}); review status: ${review.status}`,
+        `seats that contributed findings: ${seatsRan.length > 0 ? seatsRan.join(" + ") : "(single seat)"}`,
+      );
+      if (degraded) {
+        line(
+          `⚠️  DUAL-MODEL DEGRADED — a second opinion was requested but not obtained: ${degraded}`,
+        );
+        line(
+          "    → the 'concur' count below is a SINGLE seat's findings, NOT two models agreeing.",
+        );
+      }
+      line(
+        `reconciled findings: ${reconciled} (concur ${concur}, disagree ${disagree}); review status: ${review.status}${degraded ? " [SINGLE-SEAT]" : ""}`,
       );
       line("");
 
@@ -269,7 +288,14 @@ describe("rennet dual-model Flagged review — cost (gated real turns)", () => {
                 measurements: codexMeasurements,
                 latencyMs: codexLatencyMs,
               },
-              reconcile: { reconciled, concur, disagree, status: review.status },
+              reconcile: {
+                reconciled,
+                concur,
+                disagree,
+                status: review.status,
+                seatsContributed: seatsRan,
+                degraded: degraded ?? null,
+              },
               baselineFindingTurnTokens: BASELINE_FINDING_TOTAL_TOKENS,
             },
             null,

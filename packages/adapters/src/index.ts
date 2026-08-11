@@ -53,6 +53,7 @@ export {
   defaultCodexVersionProbe,
   discoverCodexAvailability,
   sanitizeSchemaForCodex,
+  stripNullDeep,
 } from "./codex-exec";
 export {
   type CodexSessionReadDeps,
