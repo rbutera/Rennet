@@ -222,6 +222,7 @@ export {
   NoveltyLedgerReader,
   type NoveltyLedgerResult,
 } from "./novelty-ledger-reader";
+export { readOpenSpecChange, selectedOpenSpecChangeName } from "./openspec-change-reader";
 export {
   type AttachedOrchestratorSession,
   attachOrchestratorSession,

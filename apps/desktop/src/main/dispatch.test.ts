@@ -136,7 +136,7 @@ function fakePublishPort(
 
 function harness(
   publishPort: ForgePublishPort & { posts: ForgeReviewPost[] } = fakePublishPort(),
-  opts: Pick<DispatchDeps, "symbolLookup" | "openInEditor"> = {},
+  opts: Pick<DispatchDeps, "symbolLookup" | "openInEditor" | "openSpecChange"> = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
   service: ReviewService;
@@ -223,6 +223,7 @@ function harness(
     reviewAsk,
     symbolLookup: opts.symbolLookup,
     openInEditor: opts.openInEditor,
+    openSpecChange: opts.openSpecChange,
   };
   return {
     dispatch: createDispatch(deps),
@@ -369,6 +370,29 @@ describe("createDispatch — flagged.review routing (the live finding runner, is
     const { dispatch } = harness();
     await capturedReview(dispatch);
     await expect(dispatch("flagged.review", { reviewId: randomUUID() })).rejects.toThrow(
+      /Review not found/,
+    );
+  });
+});
+
+describe("createDispatch — openspec.change routing (the live Spec source, wireframes #9)", () => {
+  it("resolves the addressed review and returns the reader's parsed change", async () => {
+    const change = { name: "my-change", specDeltas: [] };
+    const { dispatch } = harness(undefined, { openSpecChange: () => Promise.resolve(change) });
+    const review = await capturedReview(dispatch);
+    expect(await dispatch("openspec.change", { reviewId: review.id })).toEqual(change);
+  });
+
+  it("returns null when no reader is wired (the honest empty Spec angle, never a fixture)", async () => {
+    const { dispatch } = harness();
+    const review = await capturedReview(dispatch);
+    expect(await dispatch("openspec.change", { reviewId: review.id })).toBeNull();
+  });
+
+  it("refuses openspec.change for a stale or unknown review id", async () => {
+    const { dispatch } = harness();
+    await capturedReview(dispatch);
+    await expect(dispatch("openspec.change", { reviewId: randomUUID() })).rejects.toThrow(
       /Review not found/,
     );
   });

@@ -26,6 +26,7 @@ import type {
   ElementDiffs,
   FlaggedReview,
   NoiseReview,
+  OpenSpecChange,
   Review,
   ReviewEngine,
   ReviewNarration,
@@ -188,6 +189,14 @@ export interface DispatchDeps {
    * with an honest `unavailable` for both sections rather than throwing.
    */
   readonly symbolLookup?: (input: { review: Review; name: string }) => Promise<SymbolInspection>;
+  /**
+   * The Spec angle's live OpenSpec change (wireframes #9): parse-on-open of the
+   * change the reviewed patchset selected, read from the review's checked-out root.
+   * Deterministic and model-free — no gate, no spend. `null` when the patchset
+   * touches no `openspec/changes/<name>/`; unwired ⇒ also `null` (the Spec angle
+   * shows its honest empty state rather than a fixture).
+   */
+  readonly openSpecChange?: (review: Review) => Promise<OpenSpecChange | null>;
   /**
    * Open a review file (repo-relative, optionally at a line) in the reviewer's
    * editor — the inspector's "open in editor" jump (Rai, wireframes #8). Takes the
@@ -570,6 +579,19 @@ export function createDispatch(
           });
         }
         return parseCommandOutput(name, await deps.symbolLookup({ review, name: input.name }));
+      }
+      // ── The Spec angle's live OpenSpec change (wireframes #9) ──────────────────
+      case "openspec.change": {
+        // Parse-on-open of the change the reviewed patchset selected. Deterministic —
+        // no model spend. Resolve the addressed review (a stale/unknown id is refused),
+        // then read + parse. No reader wired, or no change in the patchset ⇒ `null`,
+        // and the Spec angle shows its honest empty state.
+        const input = parseCommandInput(name, rawInput);
+        const review = requireLatestReview(input.reviewId);
+        return parseCommandOutput(
+          name,
+          deps.openSpecChange ? await deps.openSpecChange(review) : null,
+        );
       }
       // ── Open a review file in the editor (wireframes #8) ───────────────────────
       case "review.openInEditor": {
