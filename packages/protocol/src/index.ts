@@ -1820,12 +1820,14 @@ export const commandDefinitions = {
   // execution sense, merge overlapping asks, write a connective narrative — WITHOUT
   // altering what was asked (the model returns only a partition of ask ids; the
   // bodies are reconstructed verbatim). ⚠️ ORDERING CONTRACT for a future wiring:
-  // composition must run BEFORE the spend disclosure, and the DISCLOSED artifact must
-  // BE the composed bundle (its `digest`), because #18's run refuses on digest drift.
-  // Composing AFTER disclosure would either dead-refuse every run (digest drift) or —
-  // worse — let a `composed:false` fallback run the mechanical form the human never
-  // authorised. This command produces the composed bundle to disclose; it does NOT
-  // itself spend beyond the one light-tier compose turn, and posts nothing.
+  // compose ONCE, then run THE composed bundle — the exact one this command returns.
+  // The ordering matters because the bundle the run turn executes must correspond to
+  // the bundle that was composed; nothing is withheld from anyone. Recomposing between
+  // compose and run, or letting a `composed:false` mechanical fallback stand in after
+  // the composed bundle was prepared, makes the write session execute different work
+  // than was composed. So: compose, then run that same bundle. This command only
+  // produces the composed bundle; it does NOT itself spend beyond the one light-tier
+  // compose turn, and posts nothing.
   "review.handoff.compose": {
     input: z.object({
       commandId: commandIdSchema,
