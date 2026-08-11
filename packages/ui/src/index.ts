@@ -127,6 +127,8 @@ export {
   dispositionsForAnchor,
   openSpecAnchors,
 } from "./canvas/openspec";
+// A real OpenSpec change frozen from the parser — the demo the spec angle renders.
+export { demoOpenSpecChange, OPENSPEC_FIXTURE } from "./canvas/openspec-fixture";
 // The publish target (issue #22): the two context-dependent outbound artifacts a
 // review produces — the own-branch PR submission and the other-pr line-anchored
 // review — both derived from the ONE collation draft. `publishTargetPayload` is the

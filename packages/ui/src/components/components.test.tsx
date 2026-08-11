@@ -153,10 +153,13 @@ describe("CanvasWorkspace — the six canvases, on screen", () => {
     expect(html).toContain('data-scheme="dark"');
   });
 
-  it("switches to a flat canvas when the active lens is not decisions", () => {
-    const store = createViewStore({ angle: "spec" });
+  it("switches to a flat canvas when the active lens has no dedicated view", () => {
+    // "claims" has no dedicated lens (flagged/noise/decisions/spec do), so it falls
+    // through to the FlatCanvas. ("spec" now renders OpenSpecView — see
+    // workspace-openspec.dom.test.tsx.)
+    const store = createViewStore({ angle: "claims" });
     const html = renderToStaticMarkup(<CanvasWorkspace canvases={demoCanvases()} store={store} />);
-    expect(html).toContain("flat-spec");
+    expect(html).toContain("flat-claims");
     expect(html).not.toContain("decisions-canvas");
   });
 });

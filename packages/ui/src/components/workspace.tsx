@@ -7,6 +7,7 @@ import type {
   DispositionType,
   FlaggedReview,
   NoiseReview,
+  OpenSpecChange,
   Proposal,
   ReviewNarration,
 } from "@rennet/types";
@@ -33,6 +34,8 @@ import {
   zoomReducer,
 } from "../canvas/logic";
 import { buildNoiseIndex } from "../canvas/noise";
+import { buildOpenSpecView } from "../canvas/openspec";
+import { demoOpenSpecChange } from "../canvas/openspec-fixture";
 import type { CoverageMosaic } from "../canvas/read-state";
 import type { Mark } from "../canvas/registrar";
 import { createViewStore, useViewStore, type ViewStore } from "../canvas/store";
@@ -48,6 +51,7 @@ import { LensSwitcher } from "./lens";
 import { MarkIndex, type MarkIndexEntry } from "./mark-index";
 import { NarrationPanel } from "./narration";
 import { NoiseLens } from "./noise";
+import { OpenSpecView } from "./openspec";
 import { OrphanTray } from "./orphan-tray";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -106,6 +110,16 @@ export interface CanvasWorkspaceProps {
    * never a silent blank.
    */
   noiseReview?: NoiseReview;
+
+  /**
+   * The spec angle's input (issue #15): a parsed OpenSpec change. When the spec
+   * angle is active the workspace renders THIS as a reviewable document
+   * (`OpenSpecView`). Absent ⇒ the demo fixture (a real change frozen from the
+   * parser) is rendered, so the angle is never a silent blank.
+   */
+  openSpecChange?: OpenSpecChange;
+  /** Sink for a disposition authored on an OpenSpec node (the spec angle's review seam). */
+  onOpenSpecDisposition?: (write: DispositionWrite) => void;
 
   /**
    * The Decisions runner's status (issue #137). The grouped decisions themselves
@@ -514,6 +528,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
             onApproveScope={approveScope}
             onSelectElement={selectElement}
             runStatus={props.decisionsRunStatus ?? { status: "ok" }}
+          />
+        ) : angle === "spec" ? (
+          <OpenSpecView
+            view={buildOpenSpecView(props.openSpecChange ?? demoOpenSpecChange())}
+            onAuthorDisposition={props.onOpenSpecDisposition ?? (() => undefined)}
           />
         ) : (
           <FlatCanvas
