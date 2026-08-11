@@ -93,15 +93,37 @@ out entirely on Rai's ruling, 2026-08-11.)
   (readOnly:false, FULL default tool surface — Bash included, Rai's call). 5 tests.
 - **Capture + delta** — reuses `ReviewService.capture`/`PatchsetActivated` (floor carry).
 - **Seam (#16)** — `LineageCarryPort` + `notWiredLineageCarry` (honest `matcher-not-wired`).
-- **Protocol** — `review.handoff.prepare` / `requestConsent` / `run` + schemas.
-- **Consent** — `apps/desktop/src/main/handoff-consent-authority.ts` (single-use token
-  bound to reviewId+bundleDigest); `dispatch.ts` 3 cases; composed in `index.ts`.
-- **Adapter change** — `SessionSpec.disallowedTools` (additive) threaded through
-  `claude-adapter.ts` so a write session can deny exec.
+- **Protocol** — `review.handoff.prepare` / `run` + schemas.
 
-Invariants asserted (6 dispatch tests): explicit-act (refuse w/o token), spend-disclosed
-(refuse on digest drift), R28 immutability (prior patchset preserved), totality
-(unrelated edit in filesTouched), unavailable (no harness), single-use token.
+> ⛔ **CORRECTED 2026-08-12 — this section previously described machinery that was
+> deliberately DELETED before merge, and a reader who trusted it would rebuild it.**
+> It claimed a `handoff-consent-authority.ts` holding a single-use token bound to
+> reviewId+bundleDigest, a `requestConsent` command, and a write session that denies
+> exec via `SessionSpec.disallowedTools`. **None of that is on main.** The consent
+> token, the digest binding, the disclosure store and the confirmation dialog were all
+> removed under RULE ZERO (`AGENTS.md`): no consent gates, no gates, no robustness for
+> robustness' sake. A reviewer separately proposed locking down the SDK tool surface so
+> the agent structurally could not push; that is the impotent agent this project
+> rejects, and it was not built.
+>
+> **What is actually true on main:**
+> - There is **no handoff consent token and no `requestConsent` handoff command.**
+>   Pressing the button is the human act. (`publish.requestConsent` still exists and is
+>   a *different* thing — the publish egress path, which is real and stays.)
+> - The bundle **`digest` is a stable identity, not a gate** — the code says so at
+>   `packages/core/src/handoff-loop.ts:223`, "same tasks ⇒ same digest ... Not a gate."
+>   **Nothing refuses on digest drift.** Any doc or brief saying otherwise is stale.
+> - The handoff write session is **capable by default and sets no deny list.** The
+>   adapter still *offers* an optional `SessionSpec.disallowedTools` as a general
+>   capability, but handoff does not use it, and `claude-adapter.test.ts:240` asserts
+>   it is `undefined`.
+>
+> The invariants that ARE asserted: R28 immutability (the prior patchset is preserved
+> byte-identically), totality (an agent edit no disposition asked for still surfaces),
+> nothing is pushed as a side effect, and unavailable (no harness). A failed turn
+> carries both its diff and its file list; a submodule-only edit is refused with a
+> reason; the file list comes from `git diff --name-only -z`, not a parse of the
+> display diff.
 
 ## Wiring #16 when it merges
 
