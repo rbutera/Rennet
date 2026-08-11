@@ -56,9 +56,14 @@ describe("CanvasWorkspace — the canvas follows the app scheme", () => {
     fireEvent.click(toggle);
     await waitFor(() => expect(app()?.getAttribute("data-scheme")).toBe("light"));
 
-    // The app scheme now changes to dark — the override HOLDS (canvas stays light).
+    // The app scheme now REALLY changes — dark → light → dark — so the sync effect
+    // genuinely reruns (its dep is `props.scheme`). The override must HOLD across
+    // both transitions: the canvas stays LIGHT even as the app scheme lands on dark.
+    // (Red-proof: remove the `!schemeOverriddenRef.current` condition and the final
+    // dark prop drives the canvas to dark, failing this assertion.)
+    rerender(<CanvasWorkspace canvases={canvasSet()} scheme="light" />);
+    await new Promise((resolve) => setTimeout(resolve, 0));
     rerender(<CanvasWorkspace canvases={canvasSet()} scheme="dark" />);
-    // Give the sync effect a chance to (not) run.
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(app()?.getAttribute("data-scheme")).toBe("light");
   });
