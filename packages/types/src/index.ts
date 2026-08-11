@@ -1244,6 +1244,55 @@ export interface RiskCrossCheck {
   readonly findingIds: readonly string[];
 }
 
+// ─── The per-project convention / anti-pattern catalogue (issue #180) ─────────
+//
+// Florence's /review-pr agents carry an injected anti-pattern + convention
+// checklist that shapes what they flag; Rennet's lens runners did not. This is
+// the per-project catalogue, injected into every lens runner as a labelled
+// checklist layer (mirroring the hypothesis disconfirmation layer, #178). It is
+// sourced from an OPTIONAL per-project file by an adapter; absent or empty it
+// degrades honestly to no layer and the runners assemble byte-identically to
+// before. The load-bearing product rule (#180): a finding that fires on a
+// convention reports the underlying REASON in plain language, never a rule
+// number — so the catalogue carries the reason next to the convention, and the
+// author-facing `id` is NEVER shown to the model (surfacing it would invite a
+// rule-number citation).
+
+/**
+ * One project convention or anti-pattern a lens runner checks the change against.
+ * `convention` states, in plain language, what the project expects; `rationale`
+ * is WHY it matters — the underlying reason a finding reports instead of a rule
+ * number. `severity` reuses the findings vocabulary (how heavily a violation
+ * weighs); `antiPattern` names what a violation looks like, when the author
+ * states it. `id` is for authoring / dedup only and is deliberately NOT injected
+ * into the prompt.
+ */
+export interface ConventionRule {
+  /** Author-facing stable id for dedup / reference. NOT rendered into the prompt. */
+  readonly id?: string;
+  /** The convention in plain language: what the project expects. */
+  readonly convention: string;
+  /** Why it matters — the underlying reason a finding reports (never a rule number). */
+  readonly rationale: string;
+  /** The findings severity vocabulary: how heavily a violation weighs. */
+  readonly severity: FindingSeverity;
+  /** What a violation looks like, when the author states it. Optional. */
+  readonly antiPattern?: string;
+}
+
+/**
+ * The per-project convention / anti-pattern catalogue (#180), injected into every
+ * lens runner as a labelled checklist layer. Sourced from an optional per-project
+ * file; absent, empty, or with no valid rules it degrades honestly to no layer.
+ * `source` is a human-readable provenance note (e.g. the file path it was read
+ * from), for the reading frame and telemetry — never model-facing.
+ */
+export interface ConventionCatalogue {
+  readonly rules: readonly ConventionRule[];
+  /** Where the catalogue came from (e.g. the file path). Optional provenance. */
+  readonly source?: string;
+}
+
 // ─── The `noise` doc family + the Noise lens (issue #34) ──────────────────────
 //
 // The Noise lens groups the low-signal churn a changeset touches — formatting,

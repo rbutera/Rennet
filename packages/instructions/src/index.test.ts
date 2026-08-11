@@ -1,3 +1,4 @@
+import type { ConventionCatalogue } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import {
   assemblePrompt,
@@ -10,6 +11,7 @@ import {
   PROMPT_LAYER_ORDER,
   type PromptLayers,
   renderBaseInstruction,
+  renderConventionLayer,
 } from "./index";
 
 describe("renderBaseInstruction", () => {
@@ -124,6 +126,48 @@ describe("an instruction never restates the JSON schema", () => {
   });
 });
 
+describe("renderConventionLayer (#180)", () => {
+  const catalogue: ConventionCatalogue = {
+    rules: [
+      {
+        id: "arch-boundary",
+        convention: "file I/O lives only in the adapters package",
+        rationale: "the core package must stay pure",
+        severity: "high",
+        antiPattern: "importing node:fs from packages/core",
+      },
+      {
+        convention: "tests assert the contract, never the implementation",
+        rationale: "an implementation-derived assertion only confirms the code",
+        severity: "medium",
+      },
+    ],
+  };
+
+  it("renders each convention with its rationale and severity, deterministically", () => {
+    const first = renderConventionLayer(catalogue);
+    const second = renderConventionLayer(catalogue);
+    expect(first).toBe(second);
+    expect(first).toContain("1. [high] file I/O lives only in the adapters package");
+    expect(first).toContain("why: the core package must stay pure");
+    expect(first).toContain("2. [medium] tests assert the contract, never the implementation");
+  });
+
+  it("renders the anti-pattern only when the author stated one", () => {
+    const rendered = renderConventionLayer(catalogue);
+    expect(rendered).toContain("anti-pattern: importing node:fs from packages/core");
+    // The second rule has no anti-pattern, so no stray anti-pattern line follows it.
+    const secondRuleIdx = rendered.indexOf("2. [medium]");
+    expect(rendered.slice(secondRuleIdx)).not.toContain("anti-pattern:");
+  });
+
+  it("never renders the author-facing id and carries the report-the-reason rule", () => {
+    const rendered = renderConventionLayer(catalogue);
+    expect(rendered).not.toContain("arch-boundary");
+    expect(rendered).toContain("NEVER a rule id or number");
+  });
+});
+
 describe("assemblePrompt", () => {
   const layers: PromptLayers = {
     base: renderBaseInstruction(DECOMPOSITION_SKELETON_CONTRACT),
@@ -131,6 +175,26 @@ describe("assemblePrompt", () => {
     angle: "ANGLE guidance layer",
     payload: "PAYLOAD: the offered manifest and the diff",
   };
+
+  it("places the conventions layer after hypothesis and before general in the fixed order", () => {
+    const hypIdx = PROMPT_LAYER_ORDER.indexOf("hypothesis");
+    const convIdx = PROMPT_LAYER_ORDER.indexOf("conventions");
+    const generalIdx = PROMPT_LAYER_ORDER.indexOf("general");
+    expect(hypIdx).toBeGreaterThanOrEqual(0);
+    expect(convIdx).toBe(hypIdx + 1);
+    expect(convIdx).toBeLessThan(generalIdx);
+  });
+
+  it("includes a present conventions layer in order and labelled", () => {
+    const result = assemblePrompt({
+      base: renderBaseInstruction(DECOMPOSITION_SKELETON_CONTRACT),
+      conventions: "CONVENTIONS checklist layer",
+      payload: "PAYLOAD",
+    });
+    const order = result.layers.filter((c) => c.included).map((c) => c.layer);
+    expect(order).toEqual(["base", "conventions", "payload"]);
+    expect(result.text).toContain("<<<rennet:layer conventions>>>");
+  });
 
   it("composes present layers in the fixed order, labelled, deterministically", () => {
     const first = assemblePrompt(layers);

@@ -16,7 +16,7 @@
  * SHA-256), so nothing here needs a hash or the filesystem.
  */
 
-import type { ReviewHypothesis, RspDocType } from "@rennet/types";
+import type { ConventionCatalogue, ReviewHypothesis, RspDocType } from "@rennet/types";
 
 /** The contract template version. Bumped when the SLOT SET changes, not the content. */
 export const PROMPT_CONTRACT_VERSION = 1;
@@ -363,6 +363,43 @@ export function renderHypothesisLayer(hypothesis: ReviewHypothesis): string {
   ].join("\n");
 }
 
+/**
+ * Render a per-project convention / anti-pattern catalogue (#180) into the
+ * checklist layer a lens runner assembles after its base instruction (and any
+ * committed hypothesis) and before its general guidance. It carries each
+ * convention with its plain-language rationale, its severity, and — when the
+ * author stated one — what a violation looks like, numbered for the model's
+ * legibility. The standing instruction is the load-bearing product rule: when the
+ * change violates a convention, surface a finding that states the convention and
+ * WHY it matters (the underlying reason), NEVER a rule number or id (there is no
+ * rule-number vocabulary to cite; the reason IS the finding). The author-facing
+ * `id` is deliberately never rendered, so the model has no number to reach for.
+ * Pure and deterministic — the same catalogue renders byte-for-byte identically,
+ * so a runner's assembled prompt stays a stable function of its inputs. Mirrors
+ * Florence's injected anti-pattern checklist, ported into Rennet's runners.
+ */
+export function renderConventionLayer(catalogue: ConventionCatalogue): string {
+  const rules = catalogue.rules
+    .map((rule, index) => {
+      const lines = [`${index + 1}. [${rule.severity}] ${rule.convention}`];
+      lines.push(`   why: ${rule.rationale}`);
+      if (rule.antiPattern !== undefined && rule.antiPattern.trim().length > 0) {
+        lines.push(`   anti-pattern: ${rule.antiPattern}`);
+      }
+      return lines.join("\n");
+    })
+    .join("\n");
+  return [
+    "# Project conventions and anti-patterns (established for this repo)",
+    "",
+    "These are the project's established conventions and known anti-patterns. Check whether this change violates any of them. When it does, surface a finding that states the convention and WHY it matters in plain language — the underlying reason below — and NEVER a rule id or number (there is no rule-number vocabulary; the reason IS the finding). A change that honors every convention is a clean result on this axis, not something to flag.",
+    "",
+    "## Conventions to check",
+    rules,
+    "",
+  ].join("\n");
+}
+
 // ── The per-finding verification contract (issue #179) ───────────────────────
 
 /**
@@ -475,6 +512,7 @@ export function renderFindingVerificationPrompt(
 export const PROMPT_LAYER_ORDER = [
   "base",
   "hypothesis",
+  "conventions",
   "general",
   "angle",
   "task",
@@ -499,6 +537,14 @@ export interface PromptLayers {
    * when no hypothesis pass ran — the layer is simply not part of the assembly.
    */
   readonly hypothesis?: string;
+  /**
+   * The per-project convention / anti-pattern catalogue rendered as a checklist
+   * layer (#180). Positioned right after the hypothesis — high priority, so it
+   * survives budget trimming (dropped after the hypothesis but before the general
+   * guidance and payload). Absent when no catalogue was sourced — the layer is
+   * simply not part of the assembly.
+   */
+  readonly conventions?: string;
   readonly general?: string;
   readonly angle?: string;
   readonly task?: string;
