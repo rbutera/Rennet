@@ -302,4 +302,59 @@ export const LINEAGE_FIXTURES: readonly LineageFixture[] = [
       { fromId: "p2", lineage: "exact", toId: "q2" },
     ],
   },
+
+  // ── Adversarial: the cases that disproved `move` auto-carry (issue #16) ───────
+  // These reproduce the Codex critical mutations. Their ground truth is the REAL
+  // transformation; the classifier's confident answer is WRONG, which is exactly
+  // why `move` is excluded from auto-carry and why a duplicate-(body,path) match
+  // fails closed. The next reader inherits the adversarial cases here rather than
+  // re-deriving them.
+
+  // 17. Delete-plus-copy: an occurrence is DELETED, and an unrelated occurrence is
+  //     ADDED that happens to carry a byte-identical body. Content + context cannot
+  //     tell this apart from a relocation, so the matcher confidently says `move` —
+  //     but the truth is `terminated` (a wrong carry, if move carried, onto q1).
+  {
+    name: "delete-plus-copy",
+    mutationClass: "terminated (delete, decoy copy)",
+    prior: [occ("p1", "src/gone.ts", ADD, { context: "the deleted call site" })],
+    successor: [occ("q1", "src/unrelated.ts", ADD, { context: "a different, new call site" })],
+    truth: [{ fromId: "p1", lineage: "terminated" }],
+  },
+
+  // 18. Move with changed context + a decoy that kept the old context. The real
+  //     relocation `pnew` changed its surroundings; a coincidental copy `decoy`
+  //     kept them. The matcher follows the (lying) context and maps to the DECOY —
+  //     a confident `move` onto the WRONG target.
+  {
+    name: "move-context-decoy",
+    mutationClass: "move (context decoy steals it)",
+    prior: [occ("p1", "src/orig.ts", HANDLER, { context: "mounted under /alpha" })],
+    successor: [
+      occ("pnew", "src/moved.ts", HANDLER, { context: "now mounted under /beta" }),
+      occ("decoy", "src/copy.ts", HANDLER, { context: "mounted under /alpha" }),
+    ],
+    truth: [{ fromId: "p1", lineage: "move", toId: "pnew" }],
+  },
+
+  // 19. Six identical bodies at the SAME path with contexts CYCLICALLY ROTATED.
+  //     Content is identical, path cannot disambiguate (all one file), and context
+  //     lies (rotated). The honest classification is `ambiguous` for all six — the
+  //     matcher cannot know which twin is which. WITHOUT the (body,path)-uniqueness
+  //     guard these were confident `exact`s that auto-carry (six wrong carries); the
+  //     guard makes them fail closed.
+  {
+    name: "same-path-rotated-context",
+    mutationClass: "ambiguous (identical twins, rotated context)",
+    prior: Array.from({ length: 6 }, (_, i) =>
+      occ(`p${i}`, "src/handlers.ts", HANDLER, { context: `// registers route ${i}` }),
+    ),
+    successor: Array.from({ length: 6 }, (_, i) =>
+      occ(`q${i}`, "src/handlers.ts", HANDLER, { context: `// registers route ${(i + 1) % 6}` }),
+    ),
+    truth: Array.from({ length: 6 }, (_, i) => ({
+      fromId: `p${i}`,
+      lineage: "ambiguous" as const,
+    })),
+  },
 ];

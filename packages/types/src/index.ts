@@ -478,6 +478,30 @@ export type Lineage =
   | "ambiguous"
   | "terminated";
 
+/**
+ * The auto-carry authority (issue #16, frozen contract §3.4). The SINGLE source
+ * of truth for which lineage classes may carry analysis and read state forward
+ * WITHOUT re-review — read by both the disposition carry seam (`@rennet/core`)
+ * AND the graph consumer `resolveAnchor` (`@rennet/protocol`), so the policy
+ * cannot be advisory in one place and binding in another. It lives in the lowest
+ * layer precisely so no consumer can drift from it.
+ *
+ * ⭐ `exact` ONLY. §3.4: "Only an exact, byte-identical occurrence with matching
+ * contextual disambiguators may carry." `move` was REMOVED after measurement
+ * (`docs/Rennet Lineage Matcher Verdict.md`): content + optional context cannot
+ * distinguish a move from a delete-plus-copy or a context-rotated reassignment,
+ * so a confidently-labelled `move` can point at the WRONG occurrence — the
+ * product's worst failure. `move` returns as a carry class only behind
+ * deterministic provenance that PROVES continuation. Everything else
+ * (`one-to-one`, `split`, `merge`, `ambiguous`, `terminated`) reopens or orphans.
+ */
+export const AUTO_CARRY_LINEAGES: ReadonlySet<Lineage> = new Set<Lineage>(["exact"]);
+
+/** Whether a lineage class auto-carries analysis and read state (exact only). */
+export function autoCarries(lineage: Lineage): boolean {
+  return AUTO_CARRY_LINEAGES.has(lineage);
+}
+
 /** The four (and only four) resolution outcomes. */
 export type ResolutionOutcome = "resolved" | "unresolved" | "superseded" | "orphaned";
 

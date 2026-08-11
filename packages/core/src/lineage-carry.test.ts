@@ -3,10 +3,11 @@ import type { Disposition, PatchFile, Patchset, Review } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { carryDispositionsByLineage, fileContentDigest, foldReview } from "./index";
 
-// The application half of issue #16: the successor-canvas carry seam upgraded
-// from #10's exact-only v1. These are the force-push acceptance criteria as live
-// behaviour — approved-unchanged carries, edited reopens, disappeared surfaces
-// orphaned (never vanishes) — plus the new byte-verifiable move carry.
+// The application half of issue #16: the deterministic disposition carry seam.
+// The force-push acceptance criteria as live behaviour — approved-unchanged
+// carries (the preserved #10 byte-identical floor), edited reopens, disappeared
+// surfaces orphaned (never vanishes). A rename reopens (move carry was removed —
+// see the verdict doc). No fuzzy matching decides a carry here.
 
 const repository = {
   id: "repo",
@@ -111,22 +112,26 @@ describe("carry seam — the force-push criteria", () => {
   });
 });
 
-// ── Move carry: byte-verifiable renames carry, unverifiable renames reopen ─────
-describe("carry seam — move (rename)", () => {
-  it("carries a disposition across a byte-identical rename, re-anchored to the new path", () => {
+// ── Renames REOPEN, never carry and never orphan (issue #16 Critical/High) ────
+// Move carry was removed: the fuzzy `move` class was disproven, and even git's
+// deterministic rename does not byte-verify continuation at this seam (a real
+// rename's patch differs in its diff/index headers). A rename is a relocation, so
+// it reopens (dropped) — NOT orphaned (it did not vanish) and NOT carried.
+describe("carry seam — rename reopens", () => {
+  it("a rename REOPENS the disposition (dropped), never carrying it onto the new path", () => {
     const review = withDisposition(created(patchsetOf("p1", [file("old.ts", "X")])), "old.ts", "X");
     const renamed = file("new.ts", "X", { status: "renamed", previousPath: "old.ts" });
     const next = activate(review, patchsetOf("p2", [renamed]));
-    expect(paths(next.dispositions)).toEqual(["new.ts"]); // re-anchored, not orphaned
-    expect(next.orphaned).toBeUndefined();
+    expect(next.dispositions).toEqual([]); // reopens at the new location
+    expect(next.orphaned).toBeUndefined(); // moved, not vanished — so not orphaned
   });
 
-  it("a rename that ALSO changed content REOPENS (patch-digest cannot certify it), never a wrong carry", () => {
+  it("a rename that ALSO changed content REOPENS, never a wrong carry", () => {
     const review = withDisposition(created(patchsetOf("p1", [file("old.ts", "X")])), "old.ts", "X");
     const renamedEdited = file("new.ts", "Y", { status: "renamed", previousPath: "old.ts" });
     const next = activate(review, patchsetOf("p2", [renamedEdited]));
-    expect(next.dispositions).toEqual([]); // reopens at the new location
-    expect(next.orphaned).toBeUndefined(); // moved, not vanished
+    expect(next.dispositions).toEqual([]);
+    expect(next.orphaned).toBeUndefined();
   });
 });
 

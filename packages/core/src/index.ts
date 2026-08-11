@@ -16,7 +16,6 @@ import {
   type ReviewPostTarget,
 } from "@rennet/types";
 import { v7 as uuidv7 } from "uuid";
-import { autoCarries } from "./lineage-matcher";
 
 export * from "./angle-generation";
 export * from "./canvas";
@@ -306,70 +305,42 @@ function anchorCarries(anchor: DispositionAnchor, file: PatchFile | undefined): 
 }
 
 /**
- * Re-anchor and carry a disposition across a file RENAME (a `move` in the lineage
- * graph, issue #16), or return null when the move cannot be BYTE-VERIFIED — in
- * which case it reopens (dropped), never a wrong carry. The disposition carries
- * only when the successor renamed file certifies the SAME content the reviewer
- * disposed on:
- *
- *  - span-grained: the side-text at the same file-line span is byte-identical
- *    (re-extracted from the renamed file's patch, truncation fails closed),
- *    re-anchored to the new path with a refreshed whole-file `contentDigest`;
- *  - path-grained: the renamed file's patch is byte-identical to the original
- *    (a header-only rename with unchanged hunks), so the whole-file digest still
- *    matches; re-anchored to the new path.
- *
- * Because the whole-file key is patch-based, a rename that ALSO changed content
- * does not carry path-grained here — it reopens (safe). Gated on the matcher's
- * calibrated `autoCarries("move")` policy, so narrowing the policy to exact-only
- * disables move carry with no other change.
- */
-function carryMoveOntoRename(disposition: Disposition, renamed: PatchFile): Disposition | null {
-  if (!autoCarries("move")) return null;
-  const { anchor } = disposition;
-  if (anchor.span && anchor.side && anchor.spanDigest) {
-    if (patchTruncated(renamed)) return null; // a truncated successor cannot certify
-    const text = extractSpanText(renamed, anchor.span, anchor.side);
-    if (text === undefined || sha256Hex(text) !== anchor.spanDigest) return null;
-    return {
-      ...disposition,
-      anchor: { ...anchor, path: renamed.path, contentDigest: fileContentDigest(renamed) },
-    };
-  }
-  if (!patchCertifiesContent(renamed)) return null;
-  if (fileContentDigest(renamed) !== anchor.contentDigest) return null;
-  return { ...disposition, anchor: { ...anchor, path: renamed.path } };
-}
-
-/**
- * Carry dispositions across a re-capture (issue #16), by the FILE-level lineage,
- * gated by the matcher's calibrated auto-carry policy. Returns the carried set
- * AND the orphan tray:
+ * Carry dispositions across a re-capture (issue #16), by the FILE-level lineage.
+ * Returns the carried set AND the orphan tray:
  *
  *  - EXACT (same path, byte-identical): carries unchanged — the preserved #10
  *    byte-identical floor (`anchorCarries`), including its lossy-patch and
  *    span-truncation fail-closed. This branch is byte-for-byte the old behaviour.
- *  - MOVE (git rename, byte-verifiable): carries re-anchored to the new path.
+ *  - MOVED (git rename, `previousPath`): REOPENS (dropped). A rename is not a
+ *    disappearance (the code relocated), so it is NOT orphaned; but it does not
+ *    carry either. ⭐ Move carry was REMOVED (issue #16 Critical/High): the fuzzy
+ *    `move` class was disproven (content+context cannot separate a move from a
+ *    delete-plus-copy — see the verdict doc), and even git's deterministic rename
+ *    does not byte-verify continuation here, because a real rename's patch differs
+ *    from the original in its `diff --git`/`index` headers, so a patch-digest
+ *    carry never actually fired on adapter output. Reopening is the honest, safe
+ *    result: the reviewer re-reads the moved file. Move returns as a carry only
+ *    behind deterministic provenance that PROVES continuation (post-image content
+ *    identity, not available at this seam).
  *  - VANISHED (file deleted, or gone from the changeset with no rename link):
  *    ORPHANED — surfaced against its last-known version, NEVER dropped to void
  *    (§3.4: "a vanished occurrence orphans, surfaced").
- *  - PRESENT-BUT-CHANGED (or an unverifiable move): dropped → reopens for review.
+ *  - PRESENT-BUT-CHANGED: dropped → reopens for review.
  *
- * At FILE granularity git's own rename detection (`previousPath`) is ground-truth
- * lineage, so the seam uses it directly; the fuzzy occurrence matcher
- * (`lineage-matcher`, the spike) is the SUB-FILE engine #18's delta re-review
- * consumes. Both share the one policy, `autoCarries`. No fuzzy matching decides a
- * carry here — a carry is always a byte-verified identity, never a similarity.
+ * No fuzzy matching decides a carry here — a carry is always a byte-verified
+ * same-path identity, never a similarity or a rename. The fuzzy occurrence matcher
+ * (`lineage-matcher`, the spike) is a SEPARATE mechanism for sub-file occurrence
+ * lineage (#18's delta re-review consumes it); it does NOT drive this seam.
  */
 export function carryDispositionsByLineage(
   previous: Disposition[],
   next: Patchset,
 ): { carried: Disposition[]; orphaned: Disposition[] } {
   const fileByPath = new Map(next.files.map((file) => [file.path, file] as const));
-  const renameByPrevious = new Map<string, PatchFile>();
+  const renamedFrom = new Set<string>();
   for (const file of next.files) {
     if (file.status === "renamed" && file.previousPath !== undefined) {
-      renameByPrevious.set(file.previousPath, file);
+      renamedFrom.add(file.previousPath);
     }
   }
   const carried: Disposition[] = [];
@@ -387,11 +358,9 @@ export function carryDispositionsByLineage(
       // else: present but changed → reopen (dropped, not orphaned)
       continue;
     }
-    const renamed = renameByPrevious.get(path);
-    if (renamed) {
-      const moved = carryMoveOntoRename(disposition, renamed);
-      if (moved) carried.push(moved);
-      // else: moved+changed / unverifiable → reopen (dropped, not orphaned)
+    if (renamedFrom.has(path)) {
+      // Moved to a new path → reopen (dropped). Not orphaned (it relocated, did
+      // not vanish) and not carried (continuation is not byte-verifiable here).
       continue;
     }
     // Truly vanished from the changeset → orphaned; surfaced, never vanishes.

@@ -78,7 +78,11 @@ describe("classifyLineage — the 1:1 classes", () => {
     expect(autoCarries(c.lineage)).toBe(true);
   });
 
-  it("byte-identical body at a NEW path is a MOVE and auto-carries", () => {
+  it("byte-identical body at a NEW path is classified MOVE but does NOT auto-carry", () => {
+    // The classifier still LABELS a relocated identical body `move` (informational,
+    // for the graph). But `move` was REMOVED from the auto-carry authority (#16):
+    // content + optional context cannot distinguish this from a delete-plus-copy,
+    // so a confident `move` can point at the wrong occurrence. It never carries.
     const result = classifyLineage(
       [occ("a", body, { path: "src/old.ts" })],
       [occ("a2", body, { path: "src/new.ts" })],
@@ -86,7 +90,7 @@ describe("classifyLineage — the 1:1 classes", () => {
     const c = byFrom(result, "a");
     expect(c.lineage).toBe("move");
     expect(c.toId).toBe("a2");
-    expect(autoCarries(c.lineage)).toBe(true);
+    expect(autoCarries(c.lineage)).toBe(false);
   });
 
   it("a trivially-changed body (added line) is ONE-TO-ONE and does NOT auto-carry", () => {
@@ -169,9 +173,13 @@ describe("classifyLineage — ambiguity fails closed", () => {
     expect(autoCarries(c.lineage)).toBe(false);
   });
 
-  it("the SAME duplicated body becomes a confident move once context disambiguates", () => {
-    // Identical body, but now the successor at b.ts shares the prior's context and
-    // c.ts does not. The tie breaks → a unique, contextually-disambiguated move.
+  it("context breaks a duplicate tie into a MOVE classification — but it STILL does not auto-carry", () => {
+    // Identical body; the successor at b.ts shares the prior's context, c.ts does
+    // not. The tie breaks, so the classifier emits `move` rather than `ambiguous`.
+    // ⭐ This "confident move via context" is EXACTLY the case #16 proved unsafe:
+    // context can be rotated or coincidental (a copy that kept the old context
+    // steals the lineage), so the confidence is not trustworthy. `move` therefore
+    // does NOT auto-carry — the classification is informational only.
     const body = "const noop = () => {};\n";
     const prior = [occ("p", body, { path: "a.ts", context: "// used by widget\nwidget()" })];
     const successor = [
@@ -181,7 +189,7 @@ describe("classifyLineage — ambiguity fails closed", () => {
     const c = byFrom(classifyLineage(prior, successor), "p");
     expect(c.lineage).toBe("move");
     expect(c.toId).toBe("s1");
-    expect(autoCarries(c.lineage)).toBe(true);
+    expect(autoCarries(c.lineage)).toBe(false);
   });
 });
 

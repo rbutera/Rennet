@@ -1,5 +1,5 @@
 import { normalizeQuote, sha256Hex } from "@rennet/protocol";
-import type { Lineage, LineageEntry } from "@rennet/types";
+import { AUTO_CARRY_LINEAGES, autoCarries, type Lineage, type LineageEntry } from "@rennet/types";
 
 // ── The lineage matcher (issue #16, pre-build spike 1) ───────────────────────
 //
@@ -303,6 +303,27 @@ export function classifyLineage(
   const scores = evidence.map((row) => row.map((e) => e.score));
   const match = maxWeightMatching(scores, MATCH_FLOOR);
 
+  // (body, path) frequency on each side. A byte-identical match is only carry-safe
+  // when its (body, path) is UNIQUE — then PATH deterministically pins which
+  // occurrence it is and content confirms it. When several occurrences share one
+  // (body, path), path cannot disambiguate and only CONTEXT can, which is
+  // fallible: a rotated or coincidental context reassigns the identity to the
+  // wrong twin (proven — issue #16 Critical, the same hole that disqualified
+  // `move`). Such a match is `exact` in shape but NOT safe to carry, so it is
+  // downgraded to `ambiguous` (fail closed). Uniqueness is measured over the whole
+  // side, not just the matched candidates, so an unclaimed identical twin still
+  // blocks the carry.
+  const bodyPathKey = (o: MatchOccurrence): string => `${sha256Hex(o.body)} ${o.path}`;
+  const priorKeyCount = new Map<string, number>();
+  for (const p of prior)
+    priorKeyCount.set(bodyPathKey(p), (priorKeyCount.get(bodyPathKey(p)) ?? 0) + 1);
+  const successorKeyCount = new Map<string, number>();
+  for (const s of successor)
+    successorKeyCount.set(bodyPathKey(s), (successorKeyCount.get(bodyPathKey(s)) ?? 0) + 1);
+  const bodyPathUnique = (p: MatchOccurrence, s: MatchOccurrence): boolean =>
+    (priorKeyCount.get(bodyPathKey(p)) ?? 0) <= 1 &&
+    (successorKeyCount.get(bodyPathKey(s)) ?? 0) <= 1;
+
   // Which successors are the 1:1 partner of some prior (claimed by the matching).
   // Int32Array so index access is `number`, not `number | undefined`.
   const successorClaimedBy = new Int32Array(successor.length).fill(-1);
@@ -408,7 +429,20 @@ export function classifyLineage(
 
     // 1:1 pair. Exact iff byte-identical body; the path splits exact vs move.
     if (e.contentExact) {
-      const lineage: Lineage = p.path === matched.path ? "exact" : "move";
+      const samePath = p.path === matched.path;
+      // A same-path byte-identical match is `exact` and carry-safe ONLY when its
+      // (body, path) is unique; a duplicated (body, path) was disambiguated by
+      // fallible context, so it fails closed to `ambiguous` (never a wrong carry).
+      if (samePath && !bodyPathUnique(p, matched)) {
+        return {
+          fromId: p.id,
+          lineage: "ambiguous",
+          toId: matched.id,
+          confidence: e.score,
+          evidence: e,
+        };
+      }
+      const lineage: Lineage = samePath ? "exact" : "move";
       return { fromId: p.id, lineage, toId: matched.id, confidence: e.score, evidence: e };
     }
     // Changed body, confident single continuation → reopens for review.
@@ -446,26 +480,13 @@ export function classifyLineage(
   return { classifications, added, lineage };
 }
 
-/**
- * The calibrated auto-carry policy (issue #16). CALIBRATED FROM MEASUREMENT
- * (`lineage-matcher.measurement.test.ts` + `docs/Rennet Lineage Matcher
- * Verdict.md`), never assumption. Only classifications proven at ~100% precision
- * auto-carry read state and dispositions; everything else fails closed and
- * reopens (a changed occurrence) or orphans (a vanished one).
- *
- * The measured verdict: `exact` carries (byte-identical, precision 100% by
- * construction). `move` carries ONLY as a UNIQUE, contextually-disambiguated
- * match — the matcher already downgrades a non-unique / context-tied identical
- * body to `ambiguous`, so a surviving `move` is exactly the safe case. Every
- * other class (`one-to-one`, `split`, `merge`, `ambiguous`, `terminated`) does
- * NOT auto-carry.
- */
-export const AUTO_CARRY_LINEAGES: ReadonlySet<Lineage> = new Set<Lineage>(["exact", "move"]);
-
-/** Whether a classification's lineage auto-carries read state / dispositions. */
-export function autoCarries(lineage: Lineage): boolean {
-  return AUTO_CARRY_LINEAGES.has(lineage);
-}
+// The auto-carry authority is DEFINED ONCE in `@rennet/types` (`AUTO_CARRY_LINEAGES`
+// / `autoCarries`) so the disposition seam here and the graph consumer
+// `resolveAnchor` in `@rennet/protocol` share one binding policy — a local copy
+// here is exactly how the policy drifted from `resolveAnchor` (issue #16
+// Critical 2). Re-exported for the existing import sites; `exact` only, after
+// measurement disproved `move` (see the verdict doc).
+export { AUTO_CARRY_LINEAGES, autoCarries };
 
 // ── Measurement (the spike verdict) ───────────────────────────────────────────
 //
@@ -496,23 +517,49 @@ export interface LineageFixture {
   readonly addedTruth?: readonly string[];
 }
 
-/** Per-class precision/recall tallies. */
+/** Per-class tallies. `support` is per-OBSERVATION; `fixturePairs` counts the
+ *  distinct fixture pairs contributing observations (12 identical-body rows from
+ *  one fixture are one INDEPENDENT pair, not twelve — issue #16 Medium 4). */
 export interface ClassMetrics {
   readonly truePositive: number;
   readonly falsePositive: number;
   readonly falseNegative: number;
   readonly support: number;
-  readonly precision: number | null;
+  readonly fixturePairs: number;
+  /** Observed pass rate on this SYNTHETIC corpus (TP/(TP+FP)). NOT a precision
+   *  guarantee — see `renderMeasurementTables` for the uncertainty and the note
+   *  that `exact` safety rests on a structural argument, not this number. */
+  readonly passRate: number | null;
   readonly recall: number | null;
 }
 
 export interface MeasurementReport {
   readonly perClass: ReadonlyMap<Lineage, ClassMetrics>;
-  /** The safety aggregate over the auto-carry classes (exact + move). */
+  /** The safety aggregate over the auto-carry classes (exact only, after #16). */
   readonly autoCarry: ClassMetrics;
-  /** Auto-carries landed on the WRONG code — the product's worst failure. MUST be 0. */
+  /** Auto-carries that landed on the WRONG code under the LIVE policy — the
+   *  product's worst failure. MUST be 0. */
   readonly wrongCarries: number;
+  /** Counterfactual: wrong carries that WOULD occur if `move` were auto-carried.
+   *  The measured evidence for excluding it (delete-plus-copy, decoy-stolen). */
+  readonly moveCounterfactualWrongCarries: number;
+  /** Correct moves on the corpus — the benefit forgone by excluding `move`,
+   *  shown alongside the counterfactual harm so the tradeoff is explicit. */
+  readonly moveCorrect: number;
   readonly totalPriors: number;
+}
+
+/** Wilson score interval lower bound (95%) for k successes in n trials — the
+ *  honest lower edge of a pass rate, so a small sample cannot masquerade as a
+ *  guarantee (issue #16 Medium 4: 4/4 has a ~39.8% lower bound). */
+export function wilsonLowerBound(successes: number, trials: number): number | null {
+  if (trials === 0) return null;
+  const z = 1.959963984540054;
+  const phat = successes / trials;
+  const z2 = z * z;
+  const centre = phat + z2 / (2 * trials);
+  const margin = z * Math.sqrt((phat * (1 - phat) + z2 / (4 * trials)) / trials);
+  return Math.max(0, (centre - margin) / (1 + z2 / trials));
 }
 
 const ALL_LINEAGES: readonly Lineage[] = [
@@ -540,23 +587,28 @@ function ratio(numerator: number, denominator: number): number | null {
   return denominator === 0 ? null : numerator / denominator;
 }
 
-/** Run the matcher over every fixture and tally precision/recall per class. */
+/** Run the matcher over every fixture and tally per class + the safety aggregate. */
 export function measure(fixtures: readonly LineageFixture[]): MeasurementReport {
   const tp = new Map<Lineage, number>();
   const fp = new Map<Lineage, number>();
   const fn = new Map<Lineage, number>();
   const support = new Map<Lineage, number>();
+  const fixturePairs = new Map<Lineage, Set<string>>();
   for (const l of ALL_LINEAGES) {
     tp.set(l, 0);
     fp.set(l, 0);
     fn.set(l, 0);
     support.set(l, 0);
+    fixturePairs.set(l, new Set<string>());
   }
   let autoTp = 0;
   let autoFp = 0;
   let autoSupport = 0;
   let wrongCarries = 0;
+  let moveCounterfactualWrongCarries = 0;
+  let moveCorrect = 0;
   let totalPriors = 0;
+  const autoFixturePairs = new Set<string>();
 
   for (const fixture of fixtures) {
     const result = classifyLineage(fixture.prior, fixture.successor);
@@ -564,10 +616,13 @@ export function measure(fixtures: readonly LineageFixture[]): MeasurementReport 
     for (const truth of fixture.truth) {
       totalPriors += 1;
       support.set(truth.lineage, (support.get(truth.lineage) ?? 0) + 1);
-      if (autoCarries(truth.lineage)) autoSupport += 1;
+      fixturePairs.get(truth.lineage)?.add(fixture.name);
+      if (autoCarries(truth.lineage)) {
+        autoSupport += 1;
+        autoFixturePairs.add(fixture.name);
+      }
       const pred = predByFrom.get(truth.fromId);
       if (!pred) {
-        // No classification emitted at all → a false negative for the true class.
         fn.set(truth.lineage, (fn.get(truth.lineage) ?? 0) + 1);
         continue;
       }
@@ -579,18 +634,18 @@ export function measure(fixtures: readonly LineageFixture[]): MeasurementReport 
         fp.set(pred.lineage, (fp.get(pred.lineage) ?? 0) + 1);
         fn.set(truth.lineage, (fn.get(truth.lineage) ?? 0) + 1);
       }
-      // Safety: an auto-carry prediction that is not a correct auto-carry landed
-      // read state on the wrong code (wrong class OR wrong target).
-      if (autoCarries(pred.lineage)) {
-        if (autoCarries(truth.lineage)) {
-          if (!correct) {
-            autoFp += 1;
-            wrongCarries += 1;
-          }
-        } else {
-          autoFp += 1;
-          wrongCarries += 1;
-        }
+      // LIVE-policy safety: an auto-carry (exact) prediction that is not a correct
+      // auto-carry landed read state on the wrong code.
+      if (autoCarries(pred.lineage) && !(autoCarries(truth.lineage) && correct)) {
+        autoFp += 1;
+        wrongCarries += 1;
+      }
+      // COUNTERFACTUAL: if `move` were auto-carried, every predicted `move` that
+      // is not a correct move-to-the-same-target would be a wrong carry. This is
+      // the measured reason `move` is excluded.
+      if (pred.lineage === "move") {
+        if (truth.lineage === "move" && correct) moveCorrect += 1;
+        else moveCounterfactualWrongCarries += 1;
       }
     }
   }
@@ -605,7 +660,8 @@ export function measure(fixtures: readonly LineageFixture[]): MeasurementReport 
       falsePositive: f,
       falseNegative: n,
       support: support.get(l) ?? 0,
-      precision: ratio(t, t + f),
+      fixturePairs: fixturePairs.get(l)?.size ?? 0,
+      passRate: ratio(t, t + f),
       recall: ratio(t, t + n),
     });
   }
@@ -615,11 +671,19 @@ export function measure(fixtures: readonly LineageFixture[]): MeasurementReport 
     falsePositive: autoFp,
     falseNegative: autoSupport - autoTp,
     support: autoSupport,
-    precision: ratio(autoTp, autoTp + autoFp),
+    fixturePairs: autoFixturePairs.size,
+    passRate: ratio(autoTp, autoTp + autoFp),
     recall: ratio(autoTp, autoSupport),
   };
 
-  return { perClass, autoCarry, wrongCarries, totalPriors };
+  return {
+    perClass,
+    autoCarry,
+    wrongCarries,
+    moveCounterfactualWrongCarries,
+    moveCorrect,
+    totalPriors,
+  };
 }
 
 /** Render the measurement as the markdown tables the verdict doc commits. */
@@ -629,15 +693,18 @@ export function renderMeasurementTables(report: MeasurementReport): string {
     const m = report.perClass.get(l);
     if (!m) return [];
     return [
-      `| \`${l}\` | ${m.support} | ${m.truePositive} | ${m.falsePositive} | ${m.falseNegative} | ${pct(m.precision)} | ${pct(m.recall)} |`,
+      `| \`${l}\` | ${m.support} | ${m.fixturePairs} | ${m.truePositive} | ${m.falsePositive} | ${m.falseNegative} | ${pct(m.passRate)} | ${pct(m.recall)} |`,
     ];
   });
   const a = report.autoCarry;
+  const wilson = wilsonLowerBound(a.truePositive, a.truePositive + a.falsePositive);
   return [
-    "| Class | Support | TP | FP | FN | Precision | Recall |",
-    "|---|---|---|---|---|---|---|",
+    "| Class | Obs | Fixture pairs | TP | FP | FN | Fixture pass rate | Recall |",
+    "|---|---|---|---|---|---|---|---|",
     ...rows,
     "",
-    `**Auto-carry aggregate (exact + move):** precision ${pct(a.precision)}, recall ${pct(a.recall)} over ${a.support} carryable priors. **Wrong carries: ${report.wrongCarries}** (must be 0).`,
+    `**Auto-carry (exact only):** fixture pass rate ${pct(a.passRate)} over ${a.support} observations from ${a.fixturePairs} independent fixture pairs (95% Wilson lower bound ${pct(wilson)}). **Wrong carries under the live policy: ${report.wrongCarries}** (must be 0).`,
+    "",
+    `**Why not \`move\`:** enabling \`move\` auto-carry would produce **${report.moveCounterfactualWrongCarries} wrong carries** on this corpus (delete-plus-copy read as relocation; a decoy that kept the old context stealing the lineage) against ${report.moveCorrect} correct moves — so it is excluded. \`exact\` carry safety does NOT rest on the pass rate above (a synthetic-corpus statistic): it rests on the STRUCTURAL argument that a byte-identical body at a UNIQUE (body, path) can only be mismatched by a SHA-256 collision, and a duplicated (body, path) fails closed to \`ambiguous\`.`,
   ].join("\n");
 }
