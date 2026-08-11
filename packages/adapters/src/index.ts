@@ -110,6 +110,7 @@ export {
   failedFlaggedReviewFixture,
   flaggedReviewFixture,
 } from "./flagged-fixture";
+export { GitCheckpointStore } from "./checkpoint-store";
 export { GitCaptureAdapter } from "./git-capture";
 export {
   type Counts,
