@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { access, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import type { HarnessHealth } from "@rennet/core";
 import { execa } from "execa";
 
@@ -308,7 +308,10 @@ export async function discoverCodex(
 ): Promise<DiscoveryResult> {
   // (1) Explicit override wins, but only if it truly runs.
   if (options.explicitBin !== undefined && options.explicitBin.length > 0) {
-    const path = options.explicitBin;
+    // Normalize to ABSOLUTE: codex-exec spawns from a fresh scratch cwd, so a
+    // relative override (e.g. "codex") must be anchored against the app's cwd
+    // HERE, at resolution time, not left to resolve against the wrong dir later.
+    const path = resolve(options.explicitBin);
     if (await deps.isExecutable(path)) {
       const version = await deps.probeVersion(path);
       if (version !== null) {
@@ -338,7 +341,9 @@ export async function discoverCodex(
   for (const directory of directories) {
     const entries = await deps.listDir(directory);
     if (!entries.includes(CODEX_BINARY)) continue;
-    const path = join(directory, CODEX_BINARY);
+    // Normalize to ABSOLUTE so a relative PATH entry (e.g. ".") never yields a
+    // relative `chosen.path` that codex-exec would resolve against its scratch cwd.
+    const path = resolve(join(directory, CODEX_BINARY));
     if (resolved.has(path)) continue;
     if (!(await deps.isExecutable(path))) continue;
     resolved.add(path);

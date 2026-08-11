@@ -1,3 +1,4 @@
+import { isAbsolute, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   compareVersions,
@@ -234,6 +235,39 @@ describe("discoverCodex (bead workspace-6qp15)", () => {
     });
     const result = await discoverCodex(deps, { explicitBin: stale });
     expect(result.chosen).toEqual({ path: shim, version: "0.144.1" });
+  });
+
+  it("normalizes a RELATIVE explicit override to an absolute chosen.path", async () => {
+    // codex-exec spawns from a fresh scratch cwd, so a relative "codex" must be
+    // anchored to an absolute path at resolution time — else the "executable port"
+    // isn't reliably executable. resolve() mirrors what discoverCodex does.
+    const abs = resolve("codex");
+    const { deps } = recordingDeps({
+      home: HOME,
+      executables: new Set([abs]),
+      versions: { [abs]: "0.150.0" },
+    });
+    const result = await discoverCodex(deps, { explicitBin: "codex" });
+    expect(result.chosen).not.toBeNull();
+    expect(isAbsolute(result.chosen?.path ?? "")).toBe(true);
+    expect(result.chosen?.path).toBe(abs);
+  });
+
+  it("normalizes a RELATIVE PATH entry to an absolute chosen.path", async () => {
+    // A PATH entry of "." must not yield a relative "codex" candidate.
+    const abs = resolve("codex");
+    const { deps } = recordingDeps({
+      loginShellPath: ".",
+      envPath: ".",
+      home: HOME,
+      dirContents: { ".": ["codex"] },
+      executables: new Set([abs]),
+      versions: { [abs]: "0.144.1" },
+    });
+    const result = await discoverCodex(deps);
+    expect(result.chosen).not.toBeNull();
+    expect(isAbsolute(result.chosen?.path ?? "")).toBe(true);
+    expect(result.chosen?.path).toBe(abs);
   });
 
   it("the real probe returns null (never throws) on a missing binary", async () => {
