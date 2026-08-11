@@ -260,4 +260,57 @@ describe("#84 real projector — marks land on the right rows within an oversize
     expect(alphaText).toContain("alpha");
     expect(charlieText).toContain("charlie");
   });
+
+  // #84 P1-3 — the case discovered mid-implementation and previously unguarded: the
+  // floor puts each split fragment in its OWN chunk, so an element can own a SINGLE
+  // fragment yet render the whole parent `@@` around it. The occurrence must still be
+  // sliced to its own lines — a "lone occurrence owns every row" shortcut would put its
+  // mark on the wrong line while every focused test stayed green. This locks it: the
+  // element is anchored to just the MIDDLE fragment (a hunk anchor, no regroup), the
+  // whole parent hunk renders, and the mark must land on bravo, with alpha/charlie rows
+  // identity-less (they belong to fragments this element does not own).
+  it("a lone-fragment element renders the whole parent hunk but slices its mark to its own line", () => {
+    const bravo = fragByNewStart(3);
+    expect(bravo?.splitOf).toBeDefined();
+    const loneSet = setWith("sequence", [
+      {
+        elementKey: "lone-el",
+        docId: "d",
+        anchor: `rennet:hunk/${bravo?.id ?? ""}`,
+        kind: "hunk",
+        title: "B",
+      },
+    ]);
+    const loneEntry = buildElementDiffs(loneSet, decomposition, patchset)["lone-el"];
+    expect(loneEntry).toBeDefined();
+    // The whole parent hunk renders (all three fragments' lines are visible)…
+    expect(loneEntry?.diff).toContain("alpha");
+    expect(loneEntry?.diff).toContain("charlie");
+    // …but the element owns ONLY the middle fragment (single occurrence on one hunk).
+    expect(loneEntry?.hunkOccurrences).toHaveLength(1);
+    expect(loneEntry?.hunkOccurrences?.[0]).toHaveLength(1);
+    expect(loneEntry?.hunkOccurrences?.[0]?.[0]?.id).toBe(bravo?.id);
+
+    // The mark on bravo lands on bravo's line, NOT the parent hunk's first addition.
+    const mark: Mark = {
+      markId: "on-lone-bravo",
+      markKind: "annotation",
+      anchor: `rennet:hunk/${bravo?.id ?? ""}#L1@additions`,
+      body: "lone middle fragment",
+    };
+    expect(resolvedRowText(loneEntry as NonNullable<typeof loneEntry>, mark)).toContain("bravo");
+
+    // Foreign fragments' rows stay identity-less — they are rendered but not owned, so
+    // no stray mark could ever anchor onto alpha/charlie through this element.
+    const registry = buildRowRegistry({
+      diff: (loneEntry as NonNullable<typeof loneEntry>).diff,
+      hunkOccurrences: (loneEntry as NonNullable<typeof loneEntry>).hunkOccurrences,
+    });
+    const alphaRow = registry.rows.find((r) => r.text.includes("alpha"));
+    const charlieRow = registry.rows.find((r) => r.text.includes("charlie"));
+    const bravoRow = registry.rows.find((r) => r.text.includes("bravo"));
+    expect(alphaRow?.occurrenceId).toBeNull();
+    expect(charlieRow?.occurrenceId).toBeNull();
+    expect(bravoRow?.occurrenceId).toBe(bravo?.id);
+  });
 });

@@ -112,6 +112,7 @@ describe("Spec coverage chip — the jump reaches the claiming hunk's diff (wire
       path: "src/module-1/file-1.ts",
       paths: ["src/module-1/file-1.ts"],
       diff: "@@ -1,1 +1,2 @@\n+const committed = true;",
+      hunkOccurrences: [[{ id: "c1-h1", oldStart: 1, oldLines: 1, newStart: 1, newLines: 2 }]],
     };
     const store = createViewStore({ angle: "spec" });
 

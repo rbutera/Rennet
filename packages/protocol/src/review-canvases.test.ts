@@ -41,13 +41,39 @@ describe("review.canvases command", () => {
     const output = parseCommandOutput("review.canvases", {
       canvases: canvasSet(),
       elementDiffs: {
-        e1: { path: "src/a.ts", paths: ["src/a.ts"], diff: "@@ -1,1 +1,2 @@\n+added" },
+        e1: {
+          path: "src/a.ts",
+          paths: ["src/a.ts"],
+          diff: "@@ -1,1 +1,2 @@\n+added",
+          hunkOccurrences: [],
+        },
       },
     });
     expect(Object.keys(output.canvases).sort()).toEqual([...CANVAS_ANGLES].sort());
     expect(output.canvases.sequence.layers.analysis.elements[0]?.title).toBe("A");
     expect(output.elementDiffs.e1?.path).toBe("src/a.ts");
     expect(output.elementDiffs.e1?.diff).toContain("+added");
+  });
+
+  it("preserves hunkOccurrences on each element diff across the boundary (#84 P0)", () => {
+    // The mark↔row mapping is what makes occurrence marks land. If the output schema
+    // omits the field, Zod STRIPS it here and every content row reaches the renderer
+    // identity-less — no mark can place. This is the boundary the projector/registrar
+    // unit tests cannot see, so it is asserted directly against the real IPC parse.
+    const output = parseCommandOutput("review.canvases", {
+      canvases: canvasSet(),
+      elementDiffs: {
+        e1: {
+          path: "src/a.ts",
+          paths: ["src/a.ts"],
+          diff: "@@ -1,1 +1,2 @@\n+added",
+          hunkOccurrences: [[{ id: "h1", oldStart: 1, oldLines: 1, newStart: 1, newLines: 2 }]],
+        },
+      },
+    });
+    expect(output.elementDiffs.e1?.hunkOccurrences).toEqual([
+      [{ id: "h1", oldStart: 1, oldLines: 1, newStart: 1, newLines: 2 }],
+    ]);
   });
 
   it("rejects a malformed element diff entry (positive control)", () => {

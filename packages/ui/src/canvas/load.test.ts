@@ -49,7 +49,12 @@ describe("loadCanvases", () => {
   it("returns the live canvas set + real element diffs the engine produced", async () => {
     const canvases = liveSet();
     const elementDiffs = {
-      e: { path: "src/a.ts", paths: ["src/a.ts"], diff: "@@ -1,1 +1,2 @@\n+real" },
+      e: {
+        path: "src/a.ts",
+        paths: ["src/a.ts"],
+        diff: "@@ -1,1 +1,2 @@\n+real",
+        hunkOccurrences: [],
+      },
     };
     const bridge = bridgeReturning((name) => {
       expect(name).toBe("review.canvases");

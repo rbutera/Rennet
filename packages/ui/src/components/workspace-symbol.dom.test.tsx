@@ -22,7 +22,12 @@ const DIFF = [
 ].join("\n");
 
 function diffFor() {
-  return { path: "packages/ui/src/review.ts", paths: ["packages/ui/src/review.ts"], diff: DIFF };
+  return {
+    path: "packages/ui/src/review.ts",
+    paths: ["packages/ui/src/review.ts"],
+    diff: DIFF,
+    hunkOccurrences: [],
+  };
 }
 
 /** A resolved inspection whose definition site path is a caller-chosen marker. */

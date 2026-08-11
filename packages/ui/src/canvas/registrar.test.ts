@@ -375,6 +375,25 @@ describe("placeMarks — L3 marks land AT their anchors; unresolvable ones orpha
     expect(gutter.get(6) ?? []).toHaveLength(0);
   });
 
+  it("a spanless side-only anchor on an EMPTY side orphans, never a phantom placement (#84 P2)", () => {
+    // `rennet:hunk/H1@context` resolves (H1 exists) but to ZERO rows — H1 has no
+    // context lines. resolveAnchorToRows returns `resolved` with an empty rawIndices,
+    // so the mark has no home row. placeMarks MUST route it to the tray; the guard that
+    // catches a resolved-but-empty span is what stops it rendering as `placed: true`
+    // with an undefined gutter row (deleting that guard reddens exactly this).
+    const emptySideMark: Mark = {
+      markId: "empty-side",
+      markKind: "annotation",
+      anchor: "rennet:hunk/H1@context",
+      body: "whole context side (which is empty)",
+    };
+    const placement = placeMarks(reg, [emptySideMark]);
+    expect(placement.placed.map((p) => p.mark.markId)).not.toContain("empty-side");
+    const orphan = placement.orphans.find((o) => o.mark.markId === "empty-side");
+    expect(orphan).toBeDefined();
+    expect(orphan?.reason).toBe("out-of-bounds");
+  });
+
   it("markIndexItems builds a navigating index: placed marks carry a target row, orphans are flagged", () => {
     const placement = placeMarks(reg, marks);
     const items = markIndexItems(placement);

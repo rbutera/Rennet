@@ -1588,12 +1588,16 @@ export interface ElementDiff {
    *
    * This is the structural cure for positional hunk↔occurrence matching: the diff
    * text and the identity are ONE artifact, so a multi-file reorder or a split's
-   * count mismatch cannot silently land a mark on the wrong row. Optional only so
-   * hand-built test/fixture `ElementDiff`s that render no marks stay terse; the real
-   * projector always emits it, and its ABSENCE degrades to unplaced (visible in the
-   * tray), never to a misplaced mark.
+   * count mismatch cannot silently land a mark on the wrong row.
+   *
+   * REQUIRED, with `[]` for a genuinely identity-less patch (a synthetic-only
+   * element). It was optional at first, and that is exactly how it hid: the IPC
+   * output schema omitted the field, Zod silently stripped it, and every content row
+   * reached the renderer identity-less. Required means the protocol's
+   * `z.ZodType<ElementDiffs>` annotation cannot compile unless the boundary schema
+   * carries the field too — the strip is now a build error, not a runtime surprise.
    */
-  hunkOccurrences?: readonly (readonly RenderedHunkOccurrence[])[];
+  hunkOccurrences: readonly (readonly RenderedHunkOccurrence[])[];
 }
 
 /** The per-element real diff map, keyed by `AnalysisElement.elementKey` (issue #60). */
