@@ -187,12 +187,42 @@ export interface CanvasWorkspaceProps {
   onOpenInEditor?: (path: string, line: number) => void;
 }
 
-/** The inspector's live state: which name, still loading, errored, or resolved. */
-interface SymbolInspectorState {
+/** One inspected name in the navigation history: loading, errored, or resolved. */
+interface InspectorEntry {
   readonly name: string;
   readonly pending: boolean;
   readonly error?: string;
   readonly inspection?: SymbolInspection;
+}
+
+/**
+ * The inspector's live state (Rai, wireframes #8 + #11). A floating peek is a
+ * single-entry history; PINNED, it becomes a mini-browser — `history` is the
+ * breadcrumb chain and `cursor` the current crumb, so back / forward / crumb-jump
+ * all move the cursor while the diff never moves.
+ */
+interface SymbolInspectorState {
+  readonly pinned: boolean;
+  readonly history: readonly InspectorEntry[];
+  readonly cursor: number;
+}
+
+/** Fill a still-pending entry's result in by name (a stale one no longer in view is a harmless no-op). */
+function applyLookupResult(
+  state: SymbolInspectorState,
+  name: string,
+  patch: {
+    readonly pending: false;
+    readonly inspection?: SymbolInspection;
+    readonly error?: string;
+  },
+): SymbolInspectorState {
+  return {
+    ...state,
+    history: state.history.map((entry) =>
+      entry.name === name && entry.pending ? { ...entry, ...patch } : entry,
+    ),
+  };
 }
 
 function FeedBinder({
@@ -232,34 +262,58 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   // Deixis: the anchor the agent (or the index) is pointing at — the CodeView
   // pulses its span. Cleared as the user moves on.
   const [focusAnchor, setFocusAnchor] = useState<string | null>(null);
-  // The open symbol inspector (Rai, wireframes #8): null when closed. A newer click
-  // replaces it, so a late lookup for a name no longer showing is discarded.
+  // The open symbol inspector (Rai, wireframes #8 + #11): null when closed. When
+  // FLOATING a newer click retargets it (single-entry history); when PINNED a click
+  // pushes onto the breadcrumb chain so the reviewer navigates deeper in the rail.
   const [symbolState, setSymbolState] = useState<SymbolInspectorState | null>(null);
 
-  // Click a code identifier → resolve it via the lookup port and open the inspector.
-  // A guard on the name means a stale in-flight lookup (the reviewer clicked another
-  // symbol meanwhile) cannot overwrite the newer one.
+  // Click a code identifier (in the diff or a pinned neighbour) → resolve it via the
+  // lookup port and show it. Floating: retarget. Pinned: truncate any forward history
+  // and push the new name as the current crumb. A late lookup fills its entry in by
+  // name, so a stale one the reviewer navigated away from cannot overwrite the view.
   function inspectSymbol(name: string): void {
     const lookup = props.symbolLookup;
     if (!lookup) return;
-    setSymbolState({ name, pending: true });
+    setSymbolState((current) => {
+      const entry: InspectorEntry = { name, pending: true };
+      if (!current?.pinned) return { pinned: false, history: [entry], cursor: 0 };
+      const kept = current.history.slice(0, current.cursor + 1);
+      const history = [...kept, entry];
+      return { pinned: true, history, cursor: history.length - 1 };
+    });
     lookup(name)
       .then((inspection) => {
         setSymbolState((current) =>
-          current && current.name === name ? { name, pending: false, inspection } : current,
+          current ? applyLookupResult(current, name, { pending: false, inspection }) : current,
         );
       })
       .catch((reason) => {
+        const error = reason instanceof Error ? reason.message : String(reason);
         setSymbolState((current) =>
-          current && current.name === name
-            ? {
-                name,
-                pending: false,
-                error: reason instanceof Error ? reason.message : String(reason),
-              }
-            : current,
+          current ? applyLookupResult(current, name, { pending: false, error }) : current,
         );
       });
+  }
+
+  // Pin toggles float ⇄ dock. Unpinning collapses the chain to just the current
+  // crumb (a floating peek is single-target); pinning keeps the chain to grow.
+  function togglePin(): void {
+    setSymbolState((current) => {
+      if (!current) return current;
+      if (current.pinned) {
+        const shown = current.history[current.cursor];
+        return { pinned: false, history: shown ? [shown] : [], cursor: 0 };
+      }
+      return { ...current, pinned: true };
+    });
+  }
+
+  function moveCursor(next: number): void {
+    setSymbolState((current) =>
+      current && next >= 0 && next < current.history.length
+        ? { ...current, cursor: next }
+        : current,
+    );
   }
 
   // The canvas's L3 marks, as anchor-addressed marks the CodeView can land in the
@@ -683,38 +737,59 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         )}
       </main>
 
-      {diff ? (
-        <div className="diff-zoom">
-          <CodeView
-            path={diff.path}
-            diff={diff.diff}
-            occurrenceIds={shownOccurrenceIds}
-            marks={shownMarks}
-            renderMarkCard={renderMarkCard}
-            focusAnchor={focusAnchor ?? undefined}
-            counterpart={
-              counterpart
-                ? {
-                    label: counterpart.label,
-                    path: counterpart.path,
-                    onView: () => navigateToCounterpart(counterpart),
-                  }
-                : undefined
-            }
-            onSymbolClick={props.symbolLookup ? inspectSymbol : undefined}
-          />
-          {symbolState ? (
-            <SymbolInspector
-              name={symbolState.name}
-              pending={symbolState.pending}
-              error={symbolState.error}
-              inspection={symbolState.inspection}
-              onOpenInEditor={props.onOpenInEditor}
-              onClose={() => setSymbolState(null)}
-            />
-          ) : null}
-        </div>
-      ) : null}
+      {diff
+        ? (() => {
+            const shown = symbolState ? symbolState.history[symbolState.cursor] : undefined;
+            const pinned = symbolState?.pinned === true;
+            const inspector =
+              symbolState && shown ? (
+                <SymbolInspector
+                  name={shown.name}
+                  pending={shown.pending}
+                  error={shown.error}
+                  inspection={shown.inspection}
+                  onOpenInEditor={props.onOpenInEditor}
+                  onClose={() => setSymbolState(null)}
+                  pinned={pinned}
+                  onTogglePin={togglePin}
+                  breadcrumb={symbolState.history.map((entry) => entry.name)}
+                  cursor={symbolState.cursor}
+                  onCrumb={moveCursor}
+                  onBack={() => moveCursor(symbolState.cursor - 1)}
+                  onForward={() => moveCursor(symbolState.cursor + 1)}
+                  canBack={symbolState.cursor > 0}
+                  canForward={symbolState.cursor < symbolState.history.length - 1}
+                  onNavigate={inspectSymbol}
+                />
+              ) : null;
+            return (
+              <div className={`diff-zoom${pinned ? " diff-zoom--split" : ""}`}>
+                <div className="diff-zoom-main">
+                  <CodeView
+                    path={diff.path}
+                    diff={diff.diff}
+                    occurrenceIds={shownOccurrenceIds}
+                    marks={shownMarks}
+                    renderMarkCard={renderMarkCard}
+                    focusAnchor={focusAnchor ?? undefined}
+                    counterpart={
+                      counterpart
+                        ? {
+                            label: counterpart.label,
+                            path: counterpart.path,
+                            onView: () => navigateToCounterpart(counterpart),
+                          }
+                        : undefined
+                    }
+                    onSymbolClick={props.symbolLookup ? inspectSymbol : undefined}
+                  />
+                  {pinned ? null : inspector}
+                </div>
+                {pinned ? <div className="diff-zoom-rail">{inspector}</div> : null}
+              </div>
+            );
+          })()
+        : null}
 
       {hasAuthoringDock ? (
         <aside className="authoring-dock" aria-label="Disposition authoring">

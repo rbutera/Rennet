@@ -2024,13 +2024,63 @@ export interface SymbolInspectorReferenceRow {
 }
 
 /**
+ * How confident a section's answer is — the LSP-honesty doctrine made a discrete
+ * signal (Rai, wireframes #11), NOT a decorative label. It is a projection of what
+ * the model-free symbolic surface ACTUALLY did, never an LLM guess:
+ *  - `exact` / `structural`: go-to-definition resolved the queried name to a SINGLE
+ *    exported declaration by structural extraction (`context.symbol`). Unambiguous.
+ *    (Honest scope: a structural parse of exported top-level declarations, NOT a
+ *    TypeScript LSP type-resolution — Rennet has no LSP. The chip says `exact`, its
+ *    method says `structural`, so it never overclaims an LSP answer.)
+ *  - `guess` / `structural` with `candidates > 1`: several files export the name, so
+ *    the index cannot pick one — the N sites ARE the candidate list, surfaced.
+ *  - `guess` / `textual`: find-references is NAME-BASED and textual (`context.references`
+ *    is regex, not a parse), so two distinct symbols that share a name are
+ *    indistinguishable. Always a guess.
+ * Never fabricated: a textual result can never carry `exact`.
+ */
+export interface SymbolTier {
+  readonly kind: "exact" | "guess";
+  readonly method: "structural" | "textual";
+  /** When guessing among several structural definition sites, how many candidates. */
+  readonly candidates?: number;
+}
+
+/**
  * One gated section of a lookup: the sites, or an honest `unavailable` when the
  * snapshot could not answer (stale/absent/corrupt) — NEVER conflated with an empty
  * `ok` (a real "nothing found"). `truncated` marks a section capped for display.
+ * `tier` labels the answer's confidence (present only for a non-empty `ok`).
  */
 export type SymbolInspectorSection<Row> =
-  | { readonly status: "ok"; readonly sites: readonly Row[]; readonly truncated?: boolean }
+  | {
+      readonly status: "ok";
+      readonly sites: readonly Row[];
+      readonly truncated?: boolean;
+      readonly tier?: SymbolTier;
+    }
   | { readonly status: "unavailable"; readonly reason: string };
+
+/**
+ * One neighbouring top-level symbol declared in a definition's file — the real
+ * `context.overview` symbols (name, kind, line), NOT fabricated code text. These
+ * are the clickable rungs of the pinned mini-browser: clicking one re-runs the
+ * lookup for that name, so a reviewer walks declaration→declaration in the rail
+ * while the diff stays put (Rai, wireframes #11).
+ */
+export interface SymbolNeighbor {
+  readonly name: string;
+  readonly kind: string;
+  readonly line: number;
+}
+
+/** The sibling symbols of a definition's file, for the pinned mini-browser preview. */
+export interface SymbolNeighbors {
+  /** Repo-relative POSIX path of the file whose symbols these are. */
+  readonly path: string;
+  /** The file's declared top-level symbols, ranked by line. May be empty. */
+  readonly symbols: readonly SymbolNeighbor[];
+}
 
 /** The whole answer for one inspected name: its definition sites and its references. */
 export interface SymbolInspection {
@@ -2038,6 +2088,12 @@ export interface SymbolInspection {
   readonly name: string;
   readonly definition: SymbolInspectorSection<SymbolInspectorDefinitionRow>;
   readonly references: SymbolInspectorSection<SymbolInspectorReferenceRow>;
+  /**
+   * The sibling top-level symbols of the PRIMARY definition site's file (from the
+   * model-free `context.overview`), for the pinned mini-browser. Absent when there
+   * is no definition site or the overview could not be read.
+   */
+  readonly neighbors?: SymbolNeighbors;
 }
 
 /** The logical structural shards a manifest points at (excluding per-file symbol shards). */
