@@ -11,7 +11,8 @@ import {
   openSpecRequirementCoverageKey,
   type RennetBridge,
 } from "@rennet/protocol";
-import type { ElementDiff, OpenSpecChange } from "@rennet/types";
+import type { Canvas, CanvasAngle, ElementDiff, OpenSpecChange } from "@rennet/types";
+import { CANVAS_ANGLES } from "@rennet/types";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { demoCanvases } from "../canvas/fixtures";
 import type { DispositionWrite } from "../canvas/logic";
@@ -140,6 +141,90 @@ describe("Spec coverage chip — the jump reaches the claiming hunk's diff (wire
     expect(store.getState().angle).not.toBe("spec");
     expect(store.getState().zoom.level).toBe("diff");
     expect(store.getState().selection).toBeTruthy();
+    expect(container.querySelector(".diff-zoom")).not.toBeNull();
+    expect(container.textContent).toContain("const committed = true;");
+  });
+
+  it("a covered chip whose hunk is owned by a PROPOSAL chunk (outside the substrate) still jumps to it (#250 r2 F2)", async () => {
+    // The claiming hunk h1 is in the sequence substrate but REGROUPED under a proposal
+    // element anchored `rennet:chunk/agent-group`, which is NOT a substrate chunk. The
+    // cross-canvas jump resolved element membership from substrate ids only, so it could
+    // not find the proposal element and silently stayed on Spec. Membership must come
+    // from the element's real diff (`hunkOccurrences`) so the regrouped hunk is found.
+    const proposalCoverageCanvases = (): Record<CanvasAngle, Canvas> => {
+      const build = (angle: CanvasAngle): Canvas => ({
+        canvasId: `cid-${angle}`,
+        reviewId: "r1",
+        patchsetId: "p1",
+        angle,
+        layers: {
+          substrate:
+            angle === "sequence"
+              ? { chunks: [{ chunkId: "c1", hunkIds: ["h1"], filePaths: ["src/a.ts"] }] }
+              : { chunks: [] },
+          analysis:
+            angle === "sequence"
+              ? {
+                  elements: [
+                    {
+                      elementKey: "seq-el",
+                      docId: "pdoc",
+                      anchor: "rennet:chunk/agent-group",
+                      kind: "chunk",
+                      title: "Agent group",
+                    },
+                  ],
+                  cohorts: [],
+                  readingOrder: ["seq-el"],
+                }
+              : { elements: [], cohorts: [], readingOrder: [] },
+          disposition: { dispositions: [] },
+          annotation: { annotations: [], proposals: [] },
+        },
+        overlay: [],
+      });
+      return Object.fromEntries(CANVAS_ANGLES.map((a) => [a, build(a)])) as Record<
+        CanvasAngle,
+        Canvas
+      >;
+    };
+    const coverage: OpenSpecCoverageIndex = new Map([
+      [
+        openSpecRequirementCoverageKey(
+          "review-hypothesis-pass",
+          "A hypothesis is committed before the runners read the diff",
+        ),
+        { hunks: ["rennet:hunk/h1"], tests: 1 },
+      ],
+    ]);
+    const proposalDiff: ElementDiff = {
+      path: "src/a.ts",
+      paths: ["src/a.ts"],
+      diff: "@@ -1,1 +1,2 @@\n+const committed = true;",
+      hunkOccurrences: [[{ id: "h1", oldStart: 1, oldLines: 1, newStart: 1, newLines: 2 }]],
+    };
+    const store = createViewStore({ angle: "spec" });
+
+    const { getByRole, container, user } = mount(
+      <CanvasWorkspace
+        canvases={proposalCoverageCanvases()}
+        store={store}
+        openSpecChange={CHANGE}
+        openSpecCoverage={coverage}
+        diffFor={() => proposalDiff}
+      />,
+    );
+
+    expect(store.getState().angle).toBe("spec");
+    await user.click(
+      getByRole("button", { name: "covered by 1 hunk · 1 test — jump to the claiming hunk" }),
+    );
+
+    // The jump left Spec for the sequence lens whose PROPOSAL element owns h1, zoomed to
+    // its diff, and rendered it — not a silent no-op on the Spec canvas.
+    expect(store.getState().angle).toBe("sequence");
+    expect(store.getState().zoom.level).toBe("diff");
+    expect(store.getState().selection).toBe("seq-el");
     expect(container.querySelector(".diff-zoom")).not.toBeNull();
     expect(container.textContent).toContain("const committed = true;");
   });

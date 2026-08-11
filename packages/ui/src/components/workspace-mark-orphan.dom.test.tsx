@@ -238,4 +238,37 @@ describe("CanvasWorkspace mark index — proposal-chunk regrouped hunks (#250)",
     expect(container.querySelector('[data-orphan-mark="ann-1"]')).toBeNull();
     expect(container.querySelector('[data-jump="ann-1"]')).not.toBeNull();
   });
+
+  it("an IN-slice mark on a regrouped hunk RENDERS its inline card and its jump zooms the element (#250 r2 F1)", async () => {
+    // The prior positive control (:226) only checked that an index button exists. Two
+    // separate call sites were still broken for a placeable proposal-chunk mark: the
+    // shown-marks filter (substrate-derived ids) dropped the card, and navigateToMark
+    // (anchor-id equality) could not resolve the owning element, so the jump was dead.
+    const { container, user } = renderProposal("rennet:hunk/h1#L1@additions", PROPOSAL_DIFF_FOR);
+    const jump = container.querySelector('[data-jump="ann-1"]');
+    expect(jump).not.toBeNull();
+    await user.click(jump as Element);
+    // navigateToMark resolved the proposal element that RENDERS h1 and zoomed to its diff…
+    expect(container.querySelector(".diff-zoom")).not.toBeNull();
+    // …and the shown-marks filter now carries the h1 mark, so its inline card is present.
+    expect(container.querySelector('[data-mark-card="ann-1"]')).not.toBeNull();
+  });
+
+  it("keeps the coarse verdict when a hunk-ANCHORED owner's diff is unresolved (#250 r2 F4, exercises the resolved-owner branch)", () => {
+    // The prior invariant test (:232) used a proposal element and NO anchor ownership of
+    // h1, so the mark found no owner and stopped at the missing-owner `continue`, never
+    // reaching the resolved-owner branch it claimed to guard (mutating that branch to
+    // orphan every owned mark left it green). Here h1 IS owned by a hunk-anchored element,
+    // so the mark reaches the branch; diffFor returns undefined, so placeMarks cannot
+    // adjudicate and the mark must keep the coarse verdict (placed), never a FALSE orphan.
+    const { container } = mount(
+      <CanvasWorkspace
+        canvases={canvasWith("rennet:hunk/h1#L9@additions")}
+        store={createViewStore({ angle: ACTIVE })}
+        diffFor={() => undefined}
+      />,
+    );
+    expect(container.querySelector('[data-orphan-mark="ann-1"]')).toBeNull();
+    expect(container.querySelector('[data-jump="ann-1"]')).not.toBeNull();
+  });
 });

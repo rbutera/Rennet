@@ -278,10 +278,24 @@ describe("buildElementDiffs", () => {
       ]),
     ) as Record<CanvasAngle, Canvas>;
     const diffs = buildElementDiffs(set, decomposition, patchset, admitted);
-    const occurrenceIds = element
-      ? (diffs[element.elementKey]?.hunkOccurrences.flat().map((occ) => occ.id) ?? [])
-      : [];
-    expect(occurrenceIds).toContain(floorHunkId);
+    // Pin the COMPLETE occurrence descriptor (ranges included), derived from the source
+    // hunk, not just its id. The prior `.map(occ => occ.id)` reduction let a producer
+    // GEOMETRY drift stay green (a `newStart + 10` at the emission keeps the id, so both
+    // this test and the UI's own hard-coded-geometry fixture agreed) while a real
+    // cross-layer probe false-orphaned a valid mark. Deriving the expected ranges from
+    // the source hunk makes any geometry drift at the producer redden here. #250 r2 F3.
+    const floorHunk = decomposition.hunks.find((hunk) => hunk.id === floorHunkId);
+    expect(floorHunk).toBeDefined();
+    const occurrence = element
+      ? diffs[element.elementKey]?.hunkOccurrences.flat().find((occ) => occ.id === floorHunkId)
+      : undefined;
+    expect(occurrence).toEqual({
+      id: floorHunkId,
+      oldStart: floorHunk?.oldStart,
+      oldLines: floorHunk?.oldLines,
+      newStart: floorHunk?.newStart,
+      newLines: floorHunk?.newLines,
+    });
   });
 
   // Oversize-split fragments: two decomposition hunks (splitOf fragments) that
