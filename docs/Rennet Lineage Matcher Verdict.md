@@ -21,14 +21,26 @@ Source: `packages/core/src/lineage-matcher.ts`; fixtures
    that #18's delta re-review will use. It classifies at sub-file occurrence
    granularity, where git gives no lineage.
 2. **The disposition / read-state carry seam** (`carryDispositionsByLineage`,
-   `@rennet/core`) — DETERMINISTIC. It keys on same-path patch-digest and
-   same-file-line span byte-identity; it does NOT run the fuzzy matcher. A rename
-   REOPENS (git's `previousPath` distinguishes moved from vanished, but a real
-   rename's patch bytes differ in the `diff --git`/`index` headers, so
-   continuation cannot be byte-verified at this seam — reopening is the safe
-   result). A vanished file orphans.
+   `@rennet/core`) — DETERMINISTIC, and it does NOT run the fuzzy matcher. It keys
+   on same-path patch-digest and same-file-line span byte-identity. Across a git
+   rename (`previousPath` distinguishes moved from vanished):
+   - a **span-grained** disposition whose side-text is byte-identical at the new
+     path **carries**, re-anchored (`carrySpanMoveOntoRename`) — safe because it is
+     the same bytes, targeted by git's deterministic rename link, not a similarity
+     match. A pure rename renders the new file as a full-add with byte-identical
+     additions (verified against the git-capture adapter), which is this shape.
+   - a **path-grained** disposition **reopens**: a real rename's whole-file patch
+     differs from the original in its `diff --git`/`index`/`+++` headers, so the
+     whole-file digest never matches — the path-grained move-carry was a dead branch
+     and was removed (Opus F1). A vanished file orphans.
 
-Both share ONE binding authority: `AUTO_CARRY_LINEAGES` / `autoCarries` in
+   ⭐ This seam's move-carry is git provenance + byte-identity, DECOUPLED from
+   `AUTO_CARRY_LINEAGES` (which stays exact-only for the fuzzy graph). The two carry
+   decisions were conflated behind one flag; keeping `move` in the allowlist to
+   preserve this safe capability would also have made `resolveAnchor` carry fuzzy
+   `move` edges — the Critical-2 bug. Decoupling fixes the graph and keeps the seam.
+
+The fuzzy-graph consumer's authority is `AUTO_CARRY_LINEAGES` / `autoCarries` in
 `@rennet/types` (the lowest layer, so a consumer cannot drift from it — the flaw
 that let `resolveAnchor` carry `one-to-one` state while the policy said otherwise).
 
@@ -102,4 +114,5 @@ targeted non-ambiguous class, i.e. read state carried onto edited code.
   matcher stable occurrence ids, carry authority should move onto that
   deterministic provenance rather than the classifier at all.
 - The disposition seam is deterministic and does not depend on any of the above.
-  A real (adapter-produced) git rename reopens; it never wrong-carries.
+  Across a real (adapter-produced) git rename, a byte-identical span carries and a
+  path-grained disposition reopens; it never wrong-carries.

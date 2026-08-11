@@ -305,42 +305,65 @@ function anchorCarries(anchor: DispositionAnchor, file: PatchFile | undefined): 
 }
 
 /**
+/**
+ * Carry a SPAN-grained disposition across a git RENAME, byte-verified — or return
+ * null (reopen) when it cannot be certified. This is the ONE safe move-carry: the
+ * renamed file's side-text at the SAME file-line span is byte-identical to what the
+ * reviewer approved (`spanDigest` matches), so the approval re-anchors to the new
+ * path. Safety is the byte-identity, not the fuzzy `move` class — it is decoupled
+ * from `AUTO_CARRY_LINEAGES` (which stays exact-only for the graph consumer) on
+ * purpose. The target is git's DETERMINISTIC rename link (`previousPath`), never a
+ * similarity match, so a duplicated span elsewhere cannot steal it.
+ *
+ * PATH-grained renames are NOT carried: a real rename's whole-file patch differs
+ * from the original in its `diff --git`/`index`/`+++` headers, so `fileContentDigest`
+ * never matches on adapter output (issue #16, Opus F1 — a dead branch, removed).
+ * A path-grained disposition on a rename therefore reopens.
+ */
+function carrySpanMoveOntoRename(disposition: Disposition, renamed: PatchFile): Disposition | null {
+  const { anchor } = disposition;
+  if (!(anchor.span && anchor.side && anchor.spanDigest)) return null; // path-grained → reopen
+  if (patchTruncated(renamed)) return null; // a truncated successor cannot certify
+  const text = extractSpanText(renamed, anchor.span, anchor.side);
+  if (text === undefined || sha256Hex(text) !== anchor.spanDigest) return null;
+  return {
+    ...disposition,
+    anchor: { ...anchor, path: renamed.path, contentDigest: fileContentDigest(renamed) },
+  };
+}
+
+/**
  * Carry dispositions across a re-capture (issue #16), by the FILE-level lineage.
- * Returns the carried set AND the orphan tray:
+ * DETERMINISTIC — no fuzzy matching decides a carry here. Returns the carried set
+ * AND the orphan tray:
  *
  *  - EXACT (same path, byte-identical): carries unchanged — the preserved #10
  *    byte-identical floor (`anchorCarries`), including its lossy-patch and
  *    span-truncation fail-closed. This branch is byte-for-byte the old behaviour.
- *  - MOVED (git rename, `previousPath`): REOPENS (dropped). A rename is not a
- *    disappearance (the code relocated), so it is NOT orphaned; but it does not
- *    carry either. ⭐ Move carry was REMOVED (issue #16 Critical/High): the fuzzy
- *    `move` class was disproven (content+context cannot separate a move from a
- *    delete-plus-copy — see the verdict doc), and even git's deterministic rename
- *    does not byte-verify continuation here, because a real rename's patch differs
- *    from the original in its `diff --git`/`index` headers, so a patch-digest
- *    carry never actually fired on adapter output. Reopening is the honest, safe
- *    result: the reviewer re-reads the moved file. Move returns as a carry only
- *    behind deterministic provenance that PROVES continuation (post-image content
- *    identity, not available at this seam).
+ *  - MOVED (git rename, `previousPath`): a SPAN-grained disposition whose side-text
+ *    is byte-identical at the new path CARRIES, re-anchored (`carrySpanMoveOntoRename`);
+ *    a path-grained disposition, or a span whose text changed, REOPENS (dropped).
+ *    A rename is a relocation, so it is never orphaned. Move carry here is git's
+ *    deterministic rename link + byte-identity, NOT the fuzzy `move` class (which
+ *    was disproven and excluded from the graph auto-carry — see the verdict doc).
  *  - VANISHED (file deleted, or gone from the changeset with no rename link):
  *    ORPHANED — surfaced against its last-known version, NEVER dropped to void
  *    (§3.4: "a vanished occurrence orphans, surfaced").
  *  - PRESENT-BUT-CHANGED: dropped → reopens for review.
  *
- * No fuzzy matching decides a carry here — a carry is always a byte-verified
- * same-path identity, never a similarity or a rename. The fuzzy occurrence matcher
- * (`lineage-matcher`, the spike) is a SEPARATE mechanism for sub-file occurrence
- * lineage (#18's delta re-review consumes it); it does NOT drive this seam.
+ * The fuzzy occurrence matcher (`lineage-matcher`, the spike) is a SEPARATE
+ * mechanism for sub-file occurrence lineage (#18's delta re-review consumes it via
+ * `resolveAnchor`); it does NOT drive this seam.
  */
 export function carryDispositionsByLineage(
   previous: Disposition[],
   next: Patchset,
 ): { carried: Disposition[]; orphaned: Disposition[] } {
   const fileByPath = new Map(next.files.map((file) => [file.path, file] as const));
-  const renamedFrom = new Set<string>();
+  const renameByPrevious = new Map<string, PatchFile>();
   for (const file of next.files) {
     if (file.status === "renamed" && file.previousPath !== undefined) {
-      renamedFrom.add(file.previousPath);
+      renameByPrevious.set(file.previousPath, file);
     }
   }
   const carried: Disposition[] = [];
@@ -358,9 +381,11 @@ export function carryDispositionsByLineage(
       // else: present but changed → reopen (dropped, not orphaned)
       continue;
     }
-    if (renamedFrom.has(path)) {
-      // Moved to a new path → reopen (dropped). Not orphaned (it relocated, did
-      // not vanish) and not carried (continuation is not byte-verifiable here).
+    const renamed = renameByPrevious.get(path);
+    if (renamed) {
+      // Byte-verified span move-carry, else reopen. Never orphaned (it relocated).
+      const moved = carrySpanMoveOntoRename(disposition, renamed);
+      if (moved) carried.push(moved);
       continue;
     }
     // Truly vanished from the changeset → orphaned; surfaced, never vanishes.

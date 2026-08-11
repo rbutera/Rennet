@@ -112,13 +112,14 @@ describe("carry seam — the force-push criteria", () => {
   });
 });
 
-// ── Renames REOPEN, never carry and never orphan (issue #16 Critical/High) ────
-// Move carry was removed: the fuzzy `move` class was disproven, and even git's
-// deterministic rename does not byte-verify continuation at this seam (a real
-// rename's patch differs in its diff/index headers). A rename is a relocation, so
-// it reopens (dropped) — NOT orphaned (it did not vanish) and NOT carried.
-describe("carry seam — rename reopens", () => {
-  it("a rename REOPENS the disposition (dropped), never carrying it onto the new path", () => {
+// ── PATH-grained renames REOPEN; never orphan (issue #16) ─────────────────────
+// The path-grained move-carry branch was removed (a real rename's whole-file patch
+// differs in its diff/index headers, so it never carried in production — F1). A
+// path-grained disposition on a rename therefore reopens, and a rename is never
+// orphaned (it relocated, did not vanish). The one safe move-carry — a byte-
+// identical SPAN — is covered in dispositions-span.test.ts (F4).
+describe("carry seam — path-grained rename reopens", () => {
+  it("a path-grained rename REOPENS the disposition (dropped), never carrying it onto the new path", () => {
     const review = withDisposition(created(patchsetOf("p1", [file("old.ts", "X")])), "old.ts", "X");
     const renamed = file("new.ts", "X", { status: "renamed", previousPath: "old.ts" });
     const next = activate(review, patchsetOf("p2", [renamed]));
