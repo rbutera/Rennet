@@ -6,11 +6,14 @@ import {
   type ProjectFileResult,
   type ProjectMapResult,
   type ProjectMapScope,
+  type ProjectReferenceResult,
   type ProjectSymbolDefinitionResult,
   queryFileContext,
   queryFileOverview,
   queryProjectMap,
+  queryReferences,
   querySymbolDefinition,
+  type ReferenceLookup,
   type SnapshotGateFailure,
   type SymbolLookup,
   verifySnapshotIntegrity,
@@ -26,6 +29,7 @@ export type {
   ProjectFileOverviewResult,
   ProjectFileResult,
   ProjectMapResult,
+  ProjectReferenceResult,
   ProjectSymbolDefinitionResult,
   SnapshotGateFailure,
 } from "@rennet/core";
@@ -173,5 +177,21 @@ export class ProjectContextReader {
     const gated = this.loadFresh(repoKey, requestedBaseOid);
     if (!gated.ok) return { ok: false, reason: "snapshot-unavailable", failure: gated.failure };
     return querySymbolDefinition(gated.snapshot, query);
+  }
+
+  /**
+   * `context.references` at the adapter boundary: resolve an identifier name to its
+   * occurrence site(s) at the requested base OID, over the snapshot's per-file
+   * reference shards. Passes through the SAME fail-closed gate first; a gate failure
+   * is surfaced as a `snapshot-unavailable` refusal so a single call has one shape.
+   */
+  readReferences(
+    repoKey: string,
+    requestedBaseOid: string,
+    query: ReferenceLookup,
+  ): ProjectReferenceResult {
+    const gated = this.loadFresh(repoKey, requestedBaseOid);
+    if (!gated.ok) return { ok: false, reason: "snapshot-unavailable", failure: gated.failure };
+    return queryReferences(gated.snapshot, query);
   }
 }

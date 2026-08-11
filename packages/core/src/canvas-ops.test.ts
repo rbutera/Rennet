@@ -43,7 +43,9 @@ import type {
   ProjectMap,
   ProjectMapResult,
   ProjectMapScope,
+  ProjectReferenceResult,
   ProjectSymbolDefinitionResult,
+  ReferenceLookup,
   SymbolLookup,
 } from "./project-context";
 
@@ -105,6 +107,10 @@ interface FixtureOptions {
   symbolDefinition?: ProjectSymbolDefinitionResult;
   /** Capture the lookup the last `context.symbol` call passed the backend. */
   onSymbolDefinition?: (query: SymbolLookup) => void;
+  /** Override the deterministic find-references gate result (default: two served sites). */
+  references?: ProjectReferenceResult;
+  /** Capture the lookup the last `context.references` call passed the backend. */
+  onReferences?: (query: ReferenceLookup) => void;
   /** Override the deterministic novelty-ledger gate result (default: a fresh served ledger). */
   novelty?: NoveltyResult;
   /** Fires when a `context.novelty` call reaches the backend (default served ledger). */
@@ -346,6 +352,21 @@ function makeFixture(options: FixtureOptions = {}): Fixture {
         }
       );
     },
+    references: (query: ReferenceLookup): ProjectReferenceResult => {
+      options.onReferences?.(query);
+      return (
+        options.references ?? {
+          ok: true,
+          references: {
+            name: query.name,
+            sites: [
+              { path: "packages/a/src/index.ts", line: 2, scope: "@t/a" },
+              { path: "packages/b/src/index.ts", line: 9, scope: "@t/b" },
+            ],
+          },
+        }
+      );
+    },
     novelty: (): NoveltyResult => {
       options.onNovelty?.();
       return options.novelty ?? { ok: true, ledger: freshNoveltyLedger() };
@@ -427,20 +448,21 @@ describe("canvasOps@2 tool surface", () => {
       "context.novelty",
       "context.overview",
       "context.symbol",
+      "context.references",
       "context.knowledge",
     ]);
     // The base-branch context reads (issue #14) + the deterministic novelty ledger
-    // (issue #144) + the model-free symbolic ops (repo-map-symbolic-surface:
-    // context.overview + context.symbol) ride this surface, and the ONE model-backed
-    // read (context.knowledge, repo-map-knowledge layer c) now joins them. Identifier-
-    // level context.references is still a follow-up (the index carries no occurrence data).
+    // (issue #144) + the model-free symbolic trio (repo-map-symbolic-surface:
+    // context.overview + context.symbol + context.references, #200) ride this
+    // surface, and the ONE model-backed read (context.knowledge, repo-map-knowledge
+    // layer c) joins them.
     expect(names).toContain("context.map");
     expect(names).toContain("context.file");
     expect(names).toContain("context.novelty");
     expect(names).toContain("context.overview");
     expect(names).toContain("context.symbol");
+    expect(names).toContain("context.references");
     expect(names).toContain("context.knowledge");
-    expect(names).not.toContain("context.references");
   });
 
   it("marks the hot trio always-loaded and read tools read-only", () => {
@@ -1113,6 +1135,88 @@ describe("canvasOps@2 tool surface", () => {
         },
       });
       const env = expectOk(run(canvasOpsTool("context.symbol"), { name: "makeA" }, backend));
+      expect(env.freshness).toBe("stale");
+      expect((env.data as { unavailable: { reason: string } }).unavailable.reason).toBe("stale");
+      expect((env.data as { sites?: unknown }).sites).toBeUndefined();
+    });
+  });
+
+  describe("context.references — find-references over the occurrence index (no LSP)", () => {
+    it("serves occurrence sites with path:line evidence, all model-free", () => {
+      const { backend } = makeFixture();
+      const env = expectOk(run(canvasOpsTool("context.references"), { name: "makeA" }, backend));
+      expect(env.freshness).toBe("current");
+      const data = env.data as { name: string; sites: { path: string; line: number }[] };
+      expect(data.name).toBe("makeA");
+      expect(data.sites).toEqual([
+        { path: "packages/a/src/index.ts", line: 2, scope: "@t/a" },
+        { path: "packages/b/src/index.ts", line: 9, scope: "@t/b" },
+      ]);
+      expect(env.evidence).toEqual(["packages/a/src/index.ts:2", "packages/b/src/index.ts:9"]);
+      expect(env.total).toBe(2);
+    });
+
+    it("passes name/scope/path through to the backend port", () => {
+      let seen: ReferenceLookup | undefined;
+      const { backend } = makeFixture({ onReferences: (q) => (seen = q) });
+      run(
+        canvasOpsTool("context.references"),
+        { name: "foo", scope: "@t/a", path: "packages/a" },
+        backend,
+      );
+      expect(seen).toEqual({ name: "foo", scope: "@t/a", path: "packages/a" });
+    });
+
+    it("paginates the sites with totality", () => {
+      const { backend } = makeFixture();
+      const first = expectOk(
+        run(canvasOpsTool("context.references"), { name: "foo", limit: 1 }, backend),
+      );
+      expect((first.data as { sites: unknown[] }).sites).toHaveLength(1);
+      expect(first.total).toBe(2);
+      expect(first.cursor).toBe("1");
+    });
+
+    it("returns an honest empty site set (total 0), never an error, when nothing matches", () => {
+      const { backend } = makeFixture({
+        references: { ok: true, references: { name: "ghost", sites: [] } },
+      });
+      const env = expectOk(run(canvasOpsTool("context.references"), { name: "ghost" }, backend));
+      const data = env.data as { name: string; sites: unknown[] };
+      expect(data.name).toBe("ghost");
+      expect(data.sites).toEqual([]);
+      expect(env.total).toBe(0);
+      expect(env.freshness).toBe("current");
+    });
+
+    it("refuses a missing name arg as invalid-input", () => {
+      const { backend } = makeFixture();
+      const outcome = run(canvasOpsTool("context.references"), {}, backend);
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) return;
+      expect(outcome.error.code).toBe("invalid-input");
+    });
+
+    it("surfaces a corrupt reference shard as a `failed` read with an `unavailable` payload", () => {
+      const { backend } = makeFixture({
+        references: { ok: false, reason: "shard-unavailable", digest: "deadbeef" },
+      });
+      const env = expectOk(run(canvasOpsTool("context.references"), { name: "makeA" }, backend));
+      expect(env.freshness).toBe("failed");
+      const data = env.data as { unavailable: { reason: string; mismatched: string[] } };
+      expect(data.unavailable.reason).toBe("corrupt");
+      expect(data.unavailable.mismatched).toEqual(["deadbeef"]);
+    });
+
+    it("rides a whole-snapshot stale gate back as freshness `stale`, not served sites", () => {
+      const { backend } = makeFixture({
+        references: {
+          ok: false,
+          reason: "snapshot-unavailable",
+          failure: { reason: "stale", storedBaseOid: "old", requestedBaseOid: "new" },
+        },
+      });
+      const env = expectOk(run(canvasOpsTool("context.references"), { name: "makeA" }, backend));
       expect(env.freshness).toBe("stale");
       expect((env.data as { unavailable: { reason: string } }).unavailable.reason).toBe("stale");
       expect((env.data as { sites?: unknown }).sites).toBeUndefined();

@@ -38,6 +38,8 @@ function overlay(
     structuralDelta: {},
     symbolUpserts: [],
     symbolTombstones: [],
+    referenceUpserts: [],
+    referenceTombstones: [],
     ...over,
   };
 }

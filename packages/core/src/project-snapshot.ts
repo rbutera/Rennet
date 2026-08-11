@@ -37,6 +37,8 @@ import type {
   EntryPoint,
   OwnershipRule,
   ProjectSnapshotManifest,
+  ReferenceOccurrence,
+  ReferenceShard,
   ShardRef,
   SnapshotFileEntry,
   SnapshotSymbol,
@@ -142,6 +144,20 @@ export function symbolShardBytes(shard: SymbolShard): BuiltShard {
   });
 }
 
+/**
+ * Content-address a per-file REFERENCE shard. Like {@link symbolShardBytes}, the
+ * bytes are a PURE FUNCTION OF BLOB CONTENT (blobOid + extractor + references) and
+ * carry NO path, so a blob that is renamed or copied resolves to the same shard
+ * digest and an incremental rebuild reuses it verbatim.
+ */
+export function referenceShardBytes(shard: ReferenceShard): BuiltShard {
+  return contentAddress({
+    blobOid: shard.blobOid,
+    extractor: shard.extractor,
+    references: shard.references,
+  });
+}
+
 // ── The fingerprint ──────────────────────────────────────────────────────────
 
 /**
@@ -161,24 +177,32 @@ export interface FingerprintPin {
 
 /**
  * The freshness/integrity fingerprint: a digest over the pin (`schemaVersion`,
- * `repoKey`, `baseRef`, `baseRefResolution`, `baseOid`) plus every shard digest.
- * It covers all canonical manifest content (#4), so the fingerprint alone
- * identifies the snapshot's content. Deterministic and clock-free, so two builds
- * of the same tree on the same repo share a fingerprint; two snapshots are the
- * same content iff their fingerprints match.
+ * `repoKey`, `baseRef`, `baseRefResolution`, `baseOid`) plus every shard digest
+ * (structural, symbol, AND reference). It covers all canonical manifest content
+ * (#4), so the fingerprint alone identifies the snapshot's content. Deterministic
+ * and clock-free, so two builds of the same tree on the same repo share a
+ * fingerprint; two snapshots are the same content iff their fingerprints match.
+ *
+ * `references` is required so a caller cannot silently omit the reference dimension
+ * and compute a fingerprint that agrees with a reference-less build — pass `[]` for
+ * a snapshot with no reference index.
  */
 export function computeFingerprint(
   pin: FingerprintPin,
   shards: Readonly<Record<StructuralShardSlot, ShardRef>>,
   symbols: readonly (readonly [string, string])[],
+  references: readonly (readonly [string, string])[],
 ): string {
   const structural: Record<string, string> = {};
   for (const slot of Object.keys(shards).sort() as StructuralShardSlot[]) {
     structural[slot] = shards[slot].digest;
   }
-  const symbolDigests = [...symbols]
-    .map(([blobOid, digest]) => [blobOid, digest] as const)
-    .sort((l, r) => byString(l[0], r[0]));
+  const sortByBlob = (
+    pairs: readonly (readonly [string, string])[],
+  ): (readonly [string, string])[] =>
+    [...pairs]
+      .map(([blobOid, digest]) => [blobOid, digest] as const)
+      .sort((l, r) => byString(l[0], r[0]));
   return sha256Hex(
     canonicalize({
       schemaVersion: PROJECT_SNAPSHOT_SCHEMA_VERSION,
@@ -187,7 +211,8 @@ export function computeFingerprint(
       baseRefResolution: pin.baseRefResolution,
       baseOid: pin.baseOid,
       structural,
-      symbols: symbolDigests,
+      symbols: sortByBlob(symbols),
+      references: sortByBlob(references),
     }),
   );
 }
@@ -207,6 +232,7 @@ export function computeFingerprint(
 export function buildSnapshot(
   inputs: SnapshotStructuralInputs,
   symbolShards: readonly SymbolShard[],
+  referenceShards: readonly ReferenceShard[] = [],
 ): BuiltSnapshot {
   const shardBytes = new Map<string, string>();
 
@@ -250,6 +276,20 @@ export function buildSnapshot(
     shardBytes.set(built.digest, built.bytes);
   }
 
+  // Reference shards, de-duplicated by blobOid and sorted, exactly like symbols.
+  const refsByBlob = new Map<string, ReferenceShard>();
+  for (const shard of referenceShards) {
+    if (!refsByBlob.has(shard.blobOid)) refsByBlob.set(shard.blobOid, shard);
+  }
+  const references: (readonly [string, string])[] = [];
+  for (const blobOid of [...refsByBlob.keys()].sort(byString)) {
+    const shard = refsByBlob.get(blobOid);
+    if (!shard) continue;
+    const built = referenceShardBytes(shard);
+    references.push([blobOid, built.digest] as const);
+    shardBytes.set(built.digest, built.bytes);
+  }
+
   const fingerprint = computeFingerprint(
     {
       repoKey: inputs.repoKey,
@@ -259,6 +299,7 @@ export function buildSnapshot(
     },
     shards,
     symbols,
+    references,
   );
 
   const manifest: ProjectSnapshotManifest = {
@@ -270,6 +311,7 @@ export function buildSnapshot(
     fingerprint,
     shards,
     symbols,
+    references,
   };
 
   return { manifest, shards: shardBytes };
@@ -326,6 +368,9 @@ export function verifySnapshotIntegrity(
     digests.add(manifest.shards[slot].digest);
   }
   for (const [, digest] of manifest.symbols) digests.add(digest);
+  // A tolerant read for a defensively-parsed manifest: `references` is required in
+  // v2, but coerce an absent value to `[]` so this never throws on a malformed input.
+  for (const [, digest] of manifest.references ?? []) digests.add(digest);
 
   for (const digest of digests) {
     const bytes = load(digest);
@@ -346,6 +391,7 @@ export function verifySnapshotIntegrity(
       },
       manifest.shards,
       manifest.symbols,
+      manifest.references ?? [],
     ) === manifest.fingerprint;
 
   return {
@@ -532,4 +578,218 @@ export function extractSymbolShard(
     // function of blob content, so its path is recovered from the `files` shard.
     symbols: extract(file.path, text),
   };
+}
+
+// ── The default deterministic REFERENCE extractor (structural-refs-v1) ─────────
+//
+// The occurrence-index analogue of the symbol extractor, for `context.references`
+// (#200). Deliberately SHALLOW and TEXTUAL, in the same spirit as the symbol
+// extractor: it records every identifier token's 1-based line occurrences, skipping
+// block comments and a small set of language keywords, but does NOT parse. That is
+// what keeps it a pure, byte-reproducible function of the blob (so an unchanged blob
+// reuses its shard for free). Its honest, documented limits:
+//   - NAME-based, not semantic: two distinct symbols that share a name are indistinct.
+//   - TEXTUAL: a mention in a line comment or a string literal is recorded as an
+//     occurrence (an accepted false-positive; block comments ARE skipped).
+//   - It records the declaration site too — every textual occurrence of the name.
+// Richer, scope-aware references are a follow-on that swaps this extractor; the id
+// below invalidates old reference shards honestly when that lands.
+
+export const DEFAULT_REFERENCE_EXTRACTOR_ID = "structural-refs-v1";
+
+/** Extract a source file's identifier occurrences. Same bytes ⇒ same references, always. */
+export type SnapshotReferenceExtractor = (path: string, text: string) => ReferenceOccurrence[];
+
+// JavaScript/TypeScript reserved words and primitive-type keywords. Excluded so the
+// index holds referenceable identifiers, not language syntax — a query is never for
+// `const` or `return`, and keeping them out bounds the index without hurting the
+// blast-radius use case. A fixed, finite set, so the exclusion is deterministic.
+const REFERENCE_STOPWORDS: ReadonlySet<string> = new Set([
+  "abstract",
+  "any",
+  "as",
+  "asserts",
+  "async",
+  "await",
+  "bigint",
+  "boolean",
+  "break",
+  "case",
+  "catch",
+  "class",
+  "const",
+  "continue",
+  "debugger",
+  "declare",
+  "default",
+  "delete",
+  "do",
+  "else",
+  "enum",
+  "export",
+  "extends",
+  "false",
+  "finally",
+  "for",
+  "from",
+  "function",
+  "get",
+  "if",
+  "implements",
+  "import",
+  "in",
+  "infer",
+  "instanceof",
+  "interface",
+  "is",
+  "keyof",
+  "let",
+  "namespace",
+  "never",
+  "new",
+  "null",
+  "number",
+  "object",
+  "of",
+  "override",
+  "package",
+  "private",
+  "protected",
+  "public",
+  "readonly",
+  "return",
+  "satisfies",
+  "set",
+  "static",
+  "string",
+  "super",
+  "switch",
+  "symbol",
+  "this",
+  "throw",
+  "true",
+  "try",
+  "type",
+  "typeof",
+  "undefined",
+  "unique",
+  "unknown",
+  "var",
+  "void",
+  "while",
+  "with",
+  "yield",
+]);
+
+const IDENTIFIER_TOKEN = /[A-Za-z_$][\w$]*/g;
+
+/**
+ * The default reference extractor. Walks physical lines, skipping block comments
+ * (like the symbol extractor), and records every identifier token's 1-based line,
+ * minus the language keywords in {@link REFERENCE_STOPWORDS}. Returns one
+ * {@link ReferenceOccurrence} per distinct name, `lines` sorted ascending and
+ * de-duplicated, the whole list sorted by name — a deterministic pure function of
+ * the bytes.
+ */
+export const structuralReferenceExtractor: SnapshotReferenceExtractor = (path, text) => {
+  const ext = extensionOf(path);
+  if (!SYMBOL_EXTENSIONS.has(ext)) return [];
+  const linesByName = new Map<string, Set<number>>();
+  const lines = text.split("\n");
+  let inBlockComment = false;
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index] ?? "";
+    const lineNumber = index + 1;
+    let scan = raw;
+
+    if (inBlockComment) {
+      const close = raw.indexOf("*/");
+      if (close === -1) continue;
+      inBlockComment = false;
+      scan = raw.slice(close + 2);
+    }
+    // Strip any block comment that opens on this line; if it never closes, index the
+    // prefix before it and enter block-comment mode for the following lines.
+    for (;;) {
+      const open = scan.indexOf("/*");
+      if (open === -1) break;
+      const close = scan.indexOf("*/", open + 2);
+      if (close === -1) {
+        scan = scan.slice(0, open);
+        inBlockComment = true;
+        break;
+      }
+      scan = `${scan.slice(0, open)} ${scan.slice(close + 2)}`;
+    }
+
+    for (const match of scan.matchAll(IDENTIFIER_TOKEN)) {
+      const name = match[0];
+      if (REFERENCE_STOPWORDS.has(name)) continue;
+      let set = linesByName.get(name);
+      if (set === undefined) {
+        set = new Set<number>();
+        linesByName.set(name, set);
+      }
+      set.add(lineNumber);
+    }
+  }
+
+  return [...linesByName.keys()].sort(byString).map((name) => ({
+    name,
+    lines: [...(linesByName.get(name) ?? new Set<number>())].sort((a, b) => a - b),
+  }));
+};
+
+/** Build a reference shard for a file from its content and an extractor. */
+export function extractReferenceShard(
+  file: SnapshotFileEntry,
+  text: string,
+  extract: SnapshotReferenceExtractor = structuralReferenceExtractor,
+  extractorId: string = DEFAULT_REFERENCE_EXTRACTOR_ID,
+): ReferenceShard {
+  return {
+    blobOid: file.blobOid,
+    extractor: extractorId,
+    references: extract(file.path, text),
+  };
+}
+
+export interface ReferencePlan {
+  /** Reference shards carried verbatim from the previous snapshot (blob unchanged). */
+  readonly reuse: readonly ReferenceShard[];
+  /** Files whose references must be freshly extracted (blob new or previously absent). */
+  readonly toExtract: readonly SnapshotFileEntry[];
+}
+
+/**
+ * Plan an incremental reference extraction — the exact analogue of
+ * {@link planIncrementalSymbols}. A file whose `blobOid` already has a reference
+ * shard from the same extractor is reused; otherwise it is queued for extraction.
+ */
+export function planIncrementalReferences(
+  eligible: readonly SnapshotFileEntry[],
+  previousByBlob: ReadonlyMap<string, ReferenceShard>,
+  extractorId: string,
+): ReferencePlan {
+  const reuse: ReferenceShard[] = [];
+  const toExtract: SnapshotFileEntry[] = [];
+  const seen = new Set<string>();
+  for (const file of eligible) {
+    if (seen.has(file.blobOid)) continue;
+    seen.add(file.blobOid);
+    const prior = previousByBlob.get(file.blobOid);
+    if (prior && prior.extractor === extractorId) reuse.push(prior);
+    else toExtract.push(file);
+  }
+  return { reuse, toExtract };
+}
+
+/** Index a previous snapshot's reference shards by blobOid, for reuse planning. */
+export function indexReferenceShards(
+  shards: readonly ReferenceShard[],
+): Map<string, ReferenceShard> {
+  const index = new Map<string, ReferenceShard>();
+  for (const shard of shards) if (!index.has(shard.blobOid)) index.set(shard.blobOid, shard);
+  return index;
 }

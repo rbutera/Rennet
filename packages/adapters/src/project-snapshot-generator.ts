@@ -1,16 +1,27 @@
 import {
   buildSnapshot,
+  DEFAULT_REFERENCE_EXTRACTOR_ID,
   DEFAULT_SYMBOL_EXTRACTOR_ID,
   eligibleSymbolFiles,
+  extractReferenceShard,
   extractSymbolShard,
+  indexReferenceShards,
   indexSymbolShards,
+  planIncrementalReferences,
   planIncrementalSymbols,
+  type SnapshotReferenceExtractor,
   type SnapshotStructuralInputs,
   type SnapshotSymbolExtractor,
+  structuralReferenceExtractor,
   structuralTsExtractor,
   verifySnapshotIntegrity,
 } from "@rennet/core";
-import type { BuiltSnapshot, ProjectSnapshotManifest, SymbolShard } from "@rennet/types";
+import type {
+  BuiltSnapshot,
+  ProjectSnapshotManifest,
+  ReferenceShard,
+  SymbolShard,
+} from "@rennet/types";
 import { execaGit, type GitExec } from "./git-range-diff";
 import {
   listTree,
@@ -53,6 +64,15 @@ export interface GenerateOptions {
    * store.
    */
   readonly previousSymbols?: readonly SymbolShard[];
+  /** The reference extractor (defaults to the structural identifier-occurrence extractor). */
+  readonly referenceExtractor?: SnapshotReferenceExtractor;
+  /** The reference-extractor identity, stamped on reference shards for honest invalidation. */
+  readonly referenceExtractorId?: string;
+  /**
+   * A source of previous REFERENCE shards to reuse (the store's current snapshot by
+   * default). Pass an empty array to force a clean full reference build.
+   */
+  readonly previousReferences?: readonly ReferenceShard[];
 }
 
 export interface GenerateResult {
@@ -62,6 +82,10 @@ export interface GenerateResult {
   readonly reusedSymbolShards: number;
   /** How many files had their symbols freshly extracted (the changed closure). */
   readonly extractedSymbolShards: number;
+  /** How many reference shards were reused verbatim from the previous snapshot. */
+  readonly reusedReferenceShards: number;
+  /** How many files had their references freshly extracted (the changed closure). */
+  readonly extractedReferenceShards: number;
 }
 
 export class ProjectSnapshotGenerator {
@@ -118,18 +142,52 @@ export class ProjectSnapshotGenerator {
   async generate(repoRoot: string, options: GenerateOptions = {}): Promise<GenerateResult> {
     const extractor = options.extractor ?? structuralTsExtractor;
     const extractorId = options.extractorId ?? DEFAULT_SYMBOL_EXTRACTOR_ID;
+    const referenceExtractor = options.referenceExtractor ?? structuralReferenceExtractor;
+    const referenceExtractorId = options.referenceExtractorId ?? DEFAULT_REFERENCE_EXTRACTOR_ID;
     const { inputs, eligible, root } = await this.gather(repoRoot, options);
 
-    const previous = options.previousSymbols ?? this.loadPreviousSymbols(inputs.repoKey);
-    const plan = planIncrementalSymbols(eligible, indexSymbolShards(previous), extractorId);
+    const previousSymbolShards =
+      options.previousSymbols ?? this.loadPreviousSymbols(inputs.repoKey);
+    const previousReferenceShards =
+      options.previousReferences ?? this.loadPreviousReferences(inputs.repoKey);
+    const plan = planIncrementalSymbols(
+      eligible,
+      indexSymbolShards(previousSymbolShards),
+      extractorId,
+    );
+    const refPlan = planIncrementalReferences(
+      eligible,
+      indexReferenceShards(previousReferenceShards),
+      referenceExtractorId,
+    );
+
+    // Read each blob's text ONCE for the union of files that need symbol OR reference
+    // extraction, and derive whichever shard(s) are missing from that single read.
+    const symbolToExtract = new Map(plan.toExtract.map((f) => [f.blobOid, f] as const));
+    const referenceToExtract = new Map(refPlan.toExtract.map((f) => [f.blobOid, f] as const));
+    const toRead = new Map<string, (typeof plan.toExtract)[number]>();
+    for (const file of plan.toExtract) toRead.set(file.blobOid, file);
+    for (const file of refPlan.toExtract) toRead.set(file.blobOid, file);
 
     const extracted: SymbolShard[] = [];
-    for (const file of plan.toExtract) {
+    const extractedReferences: ReferenceShard[] = [];
+    for (const file of toRead.values()) {
       const text = await readBlobText(root, file.blobOid, this.git);
-      extracted.push(extractSymbolShard(file, text, extractor, extractorId));
+      if (symbolToExtract.has(file.blobOid)) {
+        extracted.push(extractSymbolShard(file, text, extractor, extractorId));
+      }
+      if (referenceToExtract.has(file.blobOid)) {
+        extractedReferences.push(
+          extractReferenceShard(file, text, referenceExtractor, referenceExtractorId),
+        );
+      }
     }
 
-    const built = buildSnapshot(inputs, [...plan.reuse, ...extracted]);
+    const built = buildSnapshot(
+      inputs,
+      [...plan.reuse, ...extracted],
+      [...refPlan.reuse, ...extractedReferences],
+    );
 
     // Verify BEFORE advancing: a stale/corrupt/tampered shard fails closed here
     // and is never committed as the current snapshot.
@@ -147,6 +205,8 @@ export class ProjectSnapshotGenerator {
       manifest: built.manifest,
       reusedSymbolShards: plan.reuse.length,
       extractedSymbolShards: plan.toExtract.length,
+      reusedReferenceShards: refPlan.reuse.length,
+      extractedReferenceShards: refPlan.toExtract.length,
     };
   }
 
@@ -156,5 +216,13 @@ export class ProjectSnapshotGenerator {
     const manifest = store.loadManifest(repoKey);
     if (!manifest) return [];
     return store.loadSymbolShards(manifest);
+  }
+
+  private loadPreviousReferences(repoKey: string): readonly ReferenceShard[] {
+    const store = this.deps.store;
+    if (!store) return [];
+    const manifest = store.loadManifest(repoKey);
+    if (!manifest) return [];
+    return store.loadReferenceShards(manifest);
   }
 }

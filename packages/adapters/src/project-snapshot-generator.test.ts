@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isSnapshotFresh, serializeManifest, verifySnapshotIntegrity } from "@rennet/core";
 import { sha256Hex } from "@rennet/protocol";
+import { PROJECT_SNAPSHOT_SCHEMA_VERSION } from "@rennet/types";
 import { afterEach, describe, expect, it } from "vitest";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
 import { matchesGlob, parseWorkspaceGlobs } from "./project-snapshot-source";
@@ -148,7 +149,7 @@ describe("ProjectSnapshotGenerator — end-to-end over a real git repo", () => {
     });
 
     expect(manifest.baseOid).toBe(oid2);
-    expect(manifest.schemaVersion).toBe(1);
+    expect(manifest.schemaVersion).toBe(PROJECT_SNAPSHOT_SCHEMA_VERSION);
 
     const scopes = JSON.parse(built.shards.get(manifest.shards.scopes.digest) ?? "{}");
     const names = scopes.entries.map((s: { name: string }) => s.name).sort();
@@ -414,7 +415,7 @@ describe("ProjectSnapshotGenerator — dogfood over the REAL rennet repo", () =>
     });
 
     expect(manifest.baseOid).toBe(mainOid);
-    expect(manifest.schemaVersion).toBe(1);
+    expect(manifest.schemaVersion).toBe(PROJECT_SNAPSHOT_SCHEMA_VERSION);
     // Self-consistent: every referenced shard is present and hashes back.
     expect(verifySnapshotIntegrity(manifest, (d) => built.shards.get(d)).ok).toBe(true);
     expect(isSnapshotFresh(manifest, mainOid)).toBe(true);

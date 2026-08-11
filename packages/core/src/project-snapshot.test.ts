@@ -16,11 +16,14 @@ import {
   DEFAULT_SYMBOL_EXTRACTOR_ID,
   eligibleSymbolFiles,
   extractSymbolShard,
+  indexReferenceShards,
   indexSymbolShards,
   isSnapshotFresh,
+  planIncrementalReferences,
   planIncrementalSymbols,
   type SnapshotStructuralInputs,
   serializeManifest,
+  structuralReferenceExtractor,
   structuralTsExtractor,
   verifySnapshotIntegrity,
 } from "./project-snapshot";
@@ -360,6 +363,7 @@ describe("the staleness gate: a stale or corrupt shard cannot be served", () => 
         },
         a.shards,
         a.symbols,
+        a.references,
       ),
     ).toBe(a.fingerprint);
   });
@@ -460,5 +464,88 @@ describe("structuralTsExtractor — deterministic, best-effort TS/JS exports", (
   it("is a pure function of bytes (same in ⇒ same out)", () => {
     const text = "export const a = 1;\nexport function b() {}\n";
     expect(structuralTsExtractor("f.ts", text)).toEqual(structuralTsExtractor("f.ts", text));
+  });
+});
+
+describe("structuralReferenceExtractor — deterministic identifier occurrences", () => {
+  it("records each identifier's 1-based lines, sorted and de-duplicated, keyed by name", () => {
+    const text = ["const foo = makeThing();", "foo(foo);", "", "return foo;"].join("\n");
+    const refs = structuralReferenceExtractor("f.ts", text);
+    const byName = new Map(refs.map((r) => [r.name, r.lines]));
+    // `foo`: declaration line 1, two uses on line 2 (de-duped to one), and line 4.
+    expect(byName.get("foo")).toEqual([1, 2, 4]);
+    expect(byName.get("makeThing")).toEqual([1]);
+    // The whole list is sorted by name for stable, content-addressable bytes.
+    expect(refs.map((r) => r.name)).toEqual([...refs.map((r) => r.name)].sort());
+  });
+
+  it("excludes language keywords and primitive-type words (stopwords)", () => {
+    const names = structuralReferenceExtractor(
+      "f.ts",
+      "const x: string = returnValue;\nreturn x;\n",
+    ).map((r) => r.name);
+    // `const`, `string`, `return` are stopwords; `x` and `returnValue` are indexed.
+    expect(names).toContain("x");
+    expect(names).toContain("returnValue");
+    expect(names).not.toContain("const");
+    expect(names).not.toContain("string");
+    expect(names).not.toContain("return");
+  });
+
+  it("skips block comments but (honestly) indexes line comments and strings", () => {
+    const text = [
+      "/* widget lives here */",
+      "const s = 'widget';",
+      "call(widget); // widget again",
+    ].join("\n");
+    const lines = new Map(
+      structuralReferenceExtractor("f.ts", text).map((r) => [r.name, r.lines]),
+    ).get("widget");
+    // Block-comment occurrence on line 1 is skipped; the string literal (line 2) and
+    // the code + line-comment (line 3) ARE recorded — the documented textual limit.
+    expect(lines).toEqual([2, 3]);
+  });
+
+  it("returns nothing for non-source files", () => {
+    expect(structuralReferenceExtractor("README.md", "foo bar baz")).toHaveLength(0);
+  });
+
+  it("is a pure function of bytes (same in ⇒ same out)", () => {
+    const text = "const a = b + c;\nfn(a, b);\n";
+    expect(structuralReferenceExtractor("f.ts", text)).toEqual(
+      structuralReferenceExtractor("f.ts", text),
+    );
+  });
+});
+
+describe("planIncrementalReferences — reuse by blob, extract the changed closure", () => {
+  it("reuses a shard for an unchanged blob and queues a new/changed blob for extraction", () => {
+    const unchanged: SnapshotFileEntry = {
+      path: "a.ts",
+      blobOid: "blob-a",
+      size: 1,
+      mode: "100644",
+    };
+    const fresh: SnapshotFileEntry = { path: "b.ts", blobOid: "blob-b", size: 1, mode: "100644" };
+    const previous = indexReferenceShards([
+      {
+        blobOid: "blob-a",
+        extractor: "structural-refs-v1",
+        references: [{ name: "x", lines: [1] }],
+      },
+    ]);
+    const plan = planIncrementalReferences([unchanged, fresh], previous, "structural-refs-v1");
+    expect(plan.reuse.map((s) => s.blobOid)).toEqual(["blob-a"]);
+    expect(plan.toExtract.map((f) => f.blobOid)).toEqual(["blob-b"]);
+  });
+
+  it("re-extracts when the previous shard came from a different extractor id", () => {
+    const file: SnapshotFileEntry = { path: "a.ts", blobOid: "blob-a", size: 1, mode: "100644" };
+    const previous = indexReferenceShards([
+      { blobOid: "blob-a", extractor: "OLD", references: [] },
+    ]);
+    const plan = planIncrementalReferences([file], previous, "structural-refs-v1");
+    expect(plan.reuse).toHaveLength(0);
+    expect(plan.toExtract.map((f) => f.blobOid)).toEqual(["blob-a"]);
   });
 });

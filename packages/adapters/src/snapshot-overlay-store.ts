@@ -232,6 +232,8 @@ function isWellFormedOverlay(value: unknown): value is SnapshotOverlay {
     !!o.structuralDelta &&
     typeof o.structuralDelta === "object" &&
     Array.isArray(o.symbolUpserts) &&
-    Array.isArray(o.symbolTombstones)
+    Array.isArray(o.symbolTombstones) &&
+    Array.isArray(o.referenceUpserts) &&
+    Array.isArray(o.referenceTombstones)
   );
 }

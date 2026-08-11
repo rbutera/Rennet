@@ -2,7 +2,12 @@ import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { canonicalize, sha256Hex } from "@rennet/protocol";
-import type { BuiltSnapshot, ProjectSnapshotManifest, SymbolShard } from "@rennet/types";
+import type {
+  BuiltSnapshot,
+  ProjectSnapshotManifest,
+  ReferenceShard,
+  SymbolShard,
+} from "@rennet/types";
 
 /**
  * The app-owned, LOCAL-FIRST ProjectSnapshot store (R27/R55, #141).
@@ -157,7 +162,13 @@ export class ProjectSnapshotStore {
         typeof parsed.fingerprint !== "string" ||
         typeof parsed.shards !== "object" ||
         parsed.shards === null ||
-        !Array.isArray(parsed.symbols)
+        !Array.isArray(parsed.symbols) ||
+        // v2: `references` is a required manifest field. A manifest lacking it (a v1
+        // snapshot on disk, or a malformed write) degrades to "no snapshot" HERE, so
+        // the freshness gate re-derives rather than serving without the reference
+        // dimension — and the downstream integrity/materialize never sees a
+        // reference-less v2 manifest from the store.
+        !Array.isArray(parsed.references)
       ) {
         return null;
       }
@@ -179,6 +190,12 @@ export class ProjectSnapshotStore {
         }
       }
       for (const entry of parsed.symbols) {
+        if (!Array.isArray(entry) || entry.length < 2 || typeof entry[1] !== "string") {
+          return null;
+        }
+      }
+      // Same deep-validation for the reference-shard pointers (v2).
+      for (const entry of parsed.references) {
         if (!Array.isArray(entry) || entry.length < 2 || typeof entry[1] !== "string") {
           return null;
         }
@@ -213,6 +230,31 @@ export class ProjectSnapshotStore {
       try {
         const parsed = JSON.parse(bytes) as SymbolShard;
         if (parsed && typeof parsed.blobOid === "string" && Array.isArray(parsed.symbols)) {
+          shards.push(parsed);
+        }
+      } catch {
+        // skip malformed
+      }
+    }
+    return shards;
+  }
+
+  /**
+   * The per-file REFERENCE shards a stored manifest references, parsed back into
+   * {@link ReferenceShard}s for incremental-reuse planning (#200). A shard that is
+   * missing or malformed is skipped (it will simply be re-extracted). The exact
+   * analogue of {@link loadSymbolShards}. `manifest.references` is coerced to `[]`
+   * defensively so a manifest that somehow lacks it never throws here.
+   */
+  loadReferenceShards(manifest: ProjectSnapshotManifest): ReferenceShard[] {
+    const shards: ReferenceShard[] = [];
+    for (const [, digest] of manifest.references ?? []) {
+      const bytes = this.loadShard(manifest.repoKey, digest);
+      if (bytes === undefined) continue;
+      if (sha256Hex(bytes) !== digest) continue;
+      try {
+        const parsed = JSON.parse(bytes) as ReferenceShard;
+        if (parsed && typeof parsed.blobOid === "string" && Array.isArray(parsed.references)) {
           shards.push(parsed);
         }
       } catch {

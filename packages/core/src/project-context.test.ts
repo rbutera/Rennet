@@ -6,6 +6,7 @@ import type {
   EntryPoint,
   OwnershipRule,
   ProjectSnapshotManifest,
+  ReferenceShard,
   SnapshotFileEntry,
   SymbolShard,
   TestEntry,
@@ -19,6 +20,7 @@ import {
   queryFileContext,
   queryFileOverview,
   queryProjectMap,
+  queryReferences,
   querySymbolDefinition,
 } from "./project-context";
 import { buildSnapshot, type SnapshotStructuralInputs } from "./project-snapshot";
@@ -111,6 +113,28 @@ const inputs: SnapshotStructuralInputs = {
   conventions,
 };
 
+// Reference shards for the SAME two source blobs. `foo` occurs in BOTH blobs, so a
+// find-references over it yields sites in @x/core (two paths: a.ts + its copy) AND
+// @x/app — the join-and-rank the query is responsible for.
+const referenceShards: ReferenceShard[] = [
+  {
+    blobOid: B_A,
+    extractor: "structural-refs-v1",
+    references: [
+      { name: "Bar", lines: [5] },
+      { name: "foo", lines: [1, 3] },
+    ],
+  },
+  {
+    blobOid: B_M,
+    extractor: "structural-refs-v1",
+    references: [
+      { name: "foo", lines: [2] },
+      { name: "main", lines: [1] },
+    ],
+  },
+];
+
 function build(): { manifest: ProjectSnapshotManifest; load: ShardLoader } {
   const built = buildSnapshot(inputs, symbolShards);
   return { manifest: built.manifest, load: (digest) => built.shards.get(digest) };
@@ -118,6 +142,18 @@ function build(): { manifest: ProjectSnapshotManifest; load: ShardLoader } {
 
 function loaded(): LoadedSnapshot {
   const { manifest, load } = build();
+  const result = materializeSnapshot(manifest, load);
+  if (!result.ok) throw new Error(`materialize failed: ${result.slots.join(",")}`);
+  return result.snapshot;
+}
+
+function buildWithRefs(): { manifest: ProjectSnapshotManifest; load: ShardLoader } {
+  const built = buildSnapshot(inputs, symbolShards, referenceShards);
+  return { manifest: built.manifest, load: (digest) => built.shards.get(digest) };
+}
+
+function loadedWithRefs(): LoadedSnapshot {
+  const { manifest, load } = buildWithRefs();
   const result = materializeSnapshot(manifest, load);
   if (!result.ok) throw new Error(`materialize failed: ${result.slots.join(",")}`);
   return result.snapshot;
@@ -449,6 +485,72 @@ describe("querySymbolDefinition", () => {
       load: (digest) => (digest === aDigest ? undefined : load(digest)),
     };
     const result = querySymbolDefinition(holed, { name: "foo" });
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reason).toBe("shard-unavailable");
+    expect(result.digest).toBe(aDigest);
+  });
+});
+
+describe("queryReferences", () => {
+  it("returns every occurrence site, ranked by (path, line), across shared blobs", () => {
+    const result = queryReferences(loadedWithRefs(), { name: "foo" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    // `foo`: B_A (a.ts lines 1,3 + copy-of-a.ts lines 1,3) + B_M (main.ts line 2).
+    // A blob shared by two paths contributes a site PER PATH per occurrence line.
+    expect(result.references.sites).toEqual([
+      { path: "packages/app/src/main.ts", line: 2, scope: "@x/app" },
+      { path: "packages/core/src/a.ts", line: 1, scope: "@x/core" },
+      { path: "packages/core/src/a.ts", line: 3, scope: "@x/core" },
+      { path: "packages/core/src/copy-of-a.ts", line: 1, scope: "@x/core" },
+      { path: "packages/core/src/copy-of-a.ts", line: 3, scope: "@x/core" },
+    ]);
+  });
+
+  it("filters by workspace scope", () => {
+    const inApp = queryReferences(loadedWithRefs(), { name: "foo", scope: "@x/app" });
+    const inCore = queryReferences(loadedWithRefs(), { name: "foo", scope: "@x/core" });
+    expect(inApp.ok && inCore.ok).toBe(true);
+    if (!inApp.ok || !inCore.ok) return;
+    expect(inApp.references.sites).toEqual([
+      { path: "packages/app/src/main.ts", line: 2, scope: "@x/app" },
+    ]);
+    expect(inCore.references.sites.map((s) => s.path)).toEqual([
+      "packages/core/src/a.ts",
+      "packages/core/src/a.ts",
+      "packages/core/src/copy-of-a.ts",
+      "packages/core/src/copy-of-a.ts",
+    ]);
+  });
+
+  it("filters by a repo-relative path subtree", () => {
+    const result = queryReferences(loadedWithRefs(), { name: "foo", path: "packages/app" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.references.sites).toEqual([
+      { path: "packages/app/src/main.ts", line: 2, scope: "@x/app" },
+    ]);
+  });
+
+  it("returns an empty site set for a name with no occurrence (honest, not an error)", () => {
+    const result = queryReferences(loadedWithRefs(), { name: "doesNotExist" });
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.references.sites).toEqual([]);
+  });
+
+  it("fails closed when a referenced reference shard cannot be produced", () => {
+    const { manifest, load } = buildWithRefs();
+    const materialized = materializeSnapshot(manifest, load);
+    expect(materialized.ok).toBe(true);
+    if (!materialized.ok) return;
+    const aDigest = materialized.snapshot.referenceDigestByBlob.get(B_A);
+    const holed: LoadedSnapshot = {
+      ...materialized.snapshot,
+      load: (digest) => (digest === aDigest ? undefined : load(digest)),
+    };
+    const result = queryReferences(holed, { name: "foo" });
     expect(result.ok).toBe(false);
     if (result.ok) return;
     expect(result.reason).toBe("shard-unavailable");
