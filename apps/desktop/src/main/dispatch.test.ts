@@ -20,7 +20,14 @@ import type {
   ProjectKind,
   ProjectProcessEvent,
 } from "@rennet/protocol";
-import type { Canvas, CanvasAngle, FlaggedReview, Patchset, Review } from "@rennet/types";
+import type {
+  Canvas,
+  CanvasAngle,
+  FlaggedReview,
+  PatchFile,
+  Patchset,
+  Review,
+} from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
 import { createDispatch, type DispatchDeps } from "./dispatch";
@@ -1960,10 +1967,80 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
     expect(preserved?.files).toEqual(patchset().files);
     // Totality: the agent's edit to a file no disposition mentioned still appears.
     expect(out.result.filesTouched).toContain("src/unrelated.ts");
-    // The deterministic carry ran and is reported honestly (issue #254): counts, not a
-    // fuzzy "matcher-not-wired" placeholder.
-    expect(typeof out.result.carriedForward).toBe("number");
-    expect(typeof out.result.orphaned).toBe("number");
+    // The reported counts are the REAL post-capture review state (issue #254), not a
+    // fabricated constant: they equal the actual carried/orphaned sets on `updated`.
+    expect(out.result.carriedForward).toBe(out.result.review.dispositions.length);
+    expect(out.result.orphaned).toBe(out.result.review.orphaned?.length ?? 0);
+  });
+
+  it("run reports the deterministic carry's REAL non-zero count, not a fabricated constant (issue #254)", async () => {
+    // A file that stays BYTE-IDENTICAL across the handoff capture — its approval MUST
+    // carry, so the reported `carriedForward` must be a real 1, pinned to the outcome.
+    const keep: PatchFile = {
+      path: "src/keep.ts",
+      status: "modified",
+      additions: 1,
+      deletions: 0,
+      binary: false,
+      patch: "KEEP",
+    };
+    let calls = 0;
+    const capturePort: PatchsetCapturePort = {
+      capture: () => {
+        calls += 1;
+        return Promise.resolve(
+          calls === 1
+            ? { ...patchset(), id: "pv1", files: [keep], rawDiff: "KEEP" }
+            : {
+                ...patchset(),
+                id: "pv2",
+                files: [
+                  keep, // byte-identical → carries
+                  {
+                    path: "src/new.ts",
+                    status: "added",
+                    additions: 1,
+                    deletions: 0,
+                    binary: false,
+                    patch: "N",
+                  },
+                ],
+                rawDiff: "KEEPN",
+              },
+        );
+      },
+    };
+    const { dispatch } = harness(
+      undefined,
+      {},
+      {
+        capturePort,
+        runHandoffTurn: async () => HANDOFF_TURN,
+      },
+    );
+    const review = await capturedReview(dispatch);
+    // Approve the byte-identical file.
+    await dispatch("review.setDisposition", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      patchsetId: review.activePatchsetId,
+      path: "src/keep.ts",
+      disposition: "approve",
+      body: "",
+    });
+
+    const out = (await dispatch("review.handoff.run", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      dispositions: HANDOFF_DISPOSITIONS,
+    })) as { status: string; result: { review: Review; carriedForward: number; orphaned: number } };
+
+    expect(out.status).toBe("ran");
+    // The approval carried: a REAL 1, and it equals the review's actual carried set — a
+    // hardcoded 0 (or any constant) fails here.
+    expect(out.result.carriedForward).toBe(1);
+    expect(out.result.carriedForward).toBe(out.result.review.dispositions.length);
+    expect(out.result.orphaned).toBe(out.result.review.orphaned?.length ?? 0);
   });
 
   it("run surfaces the files a FAILED turn changed before erroring (Codex F4)", async () => {
