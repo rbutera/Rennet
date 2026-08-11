@@ -54,6 +54,7 @@ function stubBackend(): CanvasOpsBackend {
       failure: { reason: "absent" as const },
     }),
     novelty: () => ({ ok: false as const, failure: { reason: "absent" as const } }),
+    knowledge: () => ({ ok: false as const, failure: { reason: "absent" as const } }),
     applyEffects: (effects: readonly CanvasOpsEffect[]) => {
       void effects;
     },

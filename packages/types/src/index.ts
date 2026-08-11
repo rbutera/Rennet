@@ -2140,3 +2140,106 @@ export interface NoveltyLedger {
   readonly patchsetId: string;
   readonly entries: readonly LedgerEntry[];
 }
+
+// ── LLM knowledge layer (layer c, #14 knowledge half — design §6) ─────────────
+//
+// The ONLY Repo Map layer a model writes; it never enters the structural map (a)
+// or the symbolic surface (b). Each learned statement about what a module does,
+// the conventions it embodies, and the reconstructed WHY carries EVIDENCE ANCHORS
+// that resolve against a snapshot, PROVENANCE, a CONFIDENCE, and the snapshot it
+// was learned against. A model-derived statement is a LABELLED HYPOTHESIS until
+// confirmed; a statement whose anchors do not resolve is INVALID and is never
+// served. It is invalidated with its snapshot inputs, and disclosed as
+// invalidated-pending (never silently dropped) when a delta pass invalidated it.
+
+/** How sure the generator is of a knowledge statement. */
+export type KnowledgeConfidence = "high" | "medium" | "low";
+
+/**
+ * Whether a statement is a model-derived HYPOTHESIS or a CONFIRMED fact. A
+ * model-derived statement is a hypothesis until confirmed — the same honesty
+ * contract as the symbolic surface's `exact`/`guess` tier label (a `guess` is
+ * never rendered as exact; a hypothesis is never rendered as an asserted fact).
+ */
+export type KnowledgeStatus = "hypothesis" | "confirmed";
+
+/** Which aspect of understanding a statement reconstructs. */
+export type KnowledgeAspect = "purpose" | "convention" | "why";
+
+/**
+ * An evidence anchor: the concrete code a knowledge statement is DRAWN FROM. It
+ * RESOLVES against a snapshot iff the file at `path` still carries `blobOid` in
+ * that snapshot's file inventory — so a statement is invalidated exactly when the
+ * bytes it cited change. `symbol`/`lines` narrow WHICH part of the file the claim
+ * is drawn from, but the `(path, blobOid)` pair is the resolution key (content
+ * identity, the same join the symbol shards use).
+ */
+export interface KnowledgeAnchor {
+  /** Repo-relative POSIX path of the cited file. */
+  readonly path: string;
+  /** The git blob OID of that file at the snapshot the statement was learned against. */
+  readonly blobOid: string;
+  /** The cited exported symbol name, when the claim is about one symbol. */
+  readonly symbol?: string;
+  /** A 1-based line span within the file the claim is drawn from. */
+  readonly lines?: AnchorSpan;
+}
+
+/** Who/what produced a knowledge statement (the generator + credential facts). */
+export interface KnowledgeProvenance {
+  /** The generator identity (prompt+schema version); a generator change invalidates old statements honestly. */
+  readonly generator: string;
+  /** The model the harness reported, or null when unseen / deterministic. */
+  readonly model: string | null;
+  /** The credential source; `oauth`/`none` are the unmetered subscription path, a metered source is money. */
+  readonly apiKeySource: string | null;
+}
+
+/**
+ * One learned statement. `learnedAgainst` pins the snapshot it was reconstructed
+ * from (baseOid + fingerprint) so it is invalidated with its inputs. `evidence`
+ * is non-empty by contract — an unanchored statement is INVALID and never served.
+ */
+export interface KnowledgeStatement {
+  /** Stable id: a content hash over {subject, aspect, claim, sorted anchors}. */
+  readonly id: string;
+  /** What the statement is about — a workspace scope name or a repo-relative path/subtree. */
+  readonly subject: string;
+  /** Which aspect of understanding this reconstructs. */
+  readonly aspect: KnowledgeAspect;
+  /** The reconstructed statement, served verbatim. */
+  readonly claim: string;
+  /** The code this claim is drawn from — at least one anchor, each resolvable against the snapshot. */
+  readonly evidence: readonly KnowledgeAnchor[];
+  readonly confidence: KnowledgeConfidence;
+  /** `hypothesis` until confirmed — a model-derived statement is never served as an asserted fact. */
+  readonly status: KnowledgeStatus;
+  readonly provenance: KnowledgeProvenance;
+  /** The snapshot this statement was learned against (freshness/content pin). */
+  readonly learnedAgainst: {
+    readonly baseOid: string;
+    readonly snapshotFingerprint: string;
+  };
+}
+
+/** The current knowledge-set schema version. Bumped on a breaking statement-shape change. */
+export const KNOWLEDGE_SCHEMA_VERSION = 1;
+
+/**
+ * The stored knowledge set for one repo, pinned to the snapshot it was generated
+ * against. This is the on-disk shape under `knowledge/knowledge.json` locally and
+ * the promoted `<repo>/.rennet/knowledge/knowledge.json`. Statements are in a
+ * deterministic total order (by id), so the file is byte-reproducible.
+ */
+export interface KnowledgeSet {
+  readonly schemaVersion: number;
+  /** The store key the set belongs to. */
+  readonly repoKey: string;
+  /** The base OID the set was generated against. */
+  readonly baseOid: string;
+  /** The snapshot fingerprint the set was generated against. */
+  readonly snapshotFingerprint: string;
+  /** The generator identity that produced the set. */
+  readonly generator: string;
+  readonly statements: readonly KnowledgeStatement[];
+}

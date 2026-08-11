@@ -15,6 +15,7 @@ import type {
 } from "@rennet/types";
 import { v7 as uuidv7 } from "uuid";
 import { type CanvasEvent, dispatchOrchestratorCanvasOp } from "./canvas";
+import type { KnowledgeQuery, KnowledgeResult } from "./knowledge";
 import type { NoveltyResult } from "./novelty-ledger";
 import type {
   ProjectFileOverviewResult,
@@ -259,6 +260,19 @@ export interface CanvasOpsBackend {
    * stale/absent/corrupt snapshot is a typed refusal, never a served-but-wrong site.
    */
   symbolDefinition(query: SymbolLookup): ProjectSymbolDefinitionResult;
+  /**
+   * `context.knowledge` (repo-map-knowledge, layer c): the LLM-reconstructed
+   * understanding of the base branch — what a module does, the conventions it
+   * embodies, the reconstructed WHY — served VERBATIM with each statement's
+   * evidence, confidence, and hypothesis label intact. The ONLY model-backed
+   * layer, and it is OFF the review's critical path: it degrades to an empty view
+   * (not-yet-enriched) honestly rather than blocking. The backend resolves the
+   * base OID and passes the SAME fail-closed snapshot gate the other context reads
+   * use (so a stale/absent/corrupt snapshot is a typed refusal); a statement whose
+   * cited bytes the current snapshot changed is disclosed as invalidated-pending,
+   * never silently dropped. Model turns happen on enrichment, NEVER on this read.
+   */
+  knowledge(query?: KnowledgeQuery): KnowledgeResult;
   /** Apply the effects a write op emitted. Never receives an L2 write. */
   applyEffects(effects: readonly CanvasOpsEffect[]): void;
 }
@@ -1261,6 +1275,108 @@ const contextSymbolTool: CanvasOpsTool = {
   },
 };
 
+// ── LLM knowledge surface (repo-map-knowledge, layer c) ──────────────────────
+//
+// The ONE model-backed Repo Map layer, exposed as a read-only retrieval tool. The
+// model turns happen on ENRICHMENT (project-open + baseline-advance delta pass),
+// never on this read — `context.knowledge` serves the already-reconstructed set
+// verbatim. It is OFF the review's fail-closed critical path (a review requires
+// the structural map + symbolic surface, both model-free; knowledge is best-effort
+// and degrades to an empty view when not yet enriched). Every statement carries
+// its evidence, confidence, and hypothesis label; a statement the current snapshot
+// invalidated is DISCLOSED as invalidated-pending, never silently absent.
+
+const KNOWLEDGE_ASPECTS = ["purpose", "convention", "why"] as const;
+
+const contextKnowledgeTool: CanvasOpsTool = {
+  name: "context.knowledge",
+  description:
+    "The LLM-reconstructed KNOWLEDGE of the base branch: what a module does, the conventions it embodies, and the reconstructed WHY — each statement anchored to the code it is drawn from, with a `confidence` and a `status` label (`hypothesis` for a model-derived inference, `confirmed` for an established fact). Served VERBATIM from the already-enriched set — this read runs NO model. Use it to learn a module's intent WITHOUT re-deriving it from the code. Optionally narrow by `subject` (a scope name or path), `aspect` (purpose | convention | why), or a `path` subtree. Honesty: a `hypothesis` is never presented as fact; a statement whose cited bytes the current snapshot changed rides in `invalidatedPending` (disclosed, awaiting re-adjudication), never dropped; an empty result is an honest 'not yet enriched', not an error. Paginated with totality — a cursor means more exists. A stale/absent/corrupt snapshot rides back as a freshness verdict with an `unavailable` payload.",
+  kind: "retrieval",
+  readOnly: true,
+  alwaysLoad: false,
+  params: [
+    {
+      name: "subject",
+      type: "string",
+      optional: true,
+      description: "Restrict to statements about this subject (a workspace scope name or a path).",
+    },
+    {
+      name: "aspect",
+      type: "enum",
+      optional: true,
+      enum: KNOWLEDGE_ASPECTS,
+      description: "Restrict to this aspect of understanding.",
+    },
+    {
+      name: "path",
+      type: "string",
+      optional: true,
+      description:
+        "Restrict to statements citing evidence under this repo-relative subtree prefix.",
+    },
+    {
+      name: "limit",
+      type: "number",
+      optional: true,
+      description: "Max statements per page (default 50, max 200).",
+    },
+    {
+      name: "cursor",
+      type: "string",
+      optional: true,
+      description: "The next-page offset returned by a previous call, or omit for the first page.",
+    },
+  ],
+  handle(args, backend) {
+    const subject = optString(args, "subject");
+    const aspect = enumArg(args, "aspect", KNOWLEDGE_ASPECTS);
+    const path = optString(args, "path");
+    const query: KnowledgeQuery | undefined =
+      subject === undefined && aspect === undefined && path === undefined
+        ? undefined
+        : {
+            ...(subject !== undefined ? { subject } : {}),
+            ...(aspect !== undefined ? { aspect } : {}),
+            ...(path !== undefined ? { path } : {}),
+          };
+    const result = backend.knowledge(query);
+    if (result.ok) {
+      const view = result.knowledge;
+      const { page, total, cursor } = paginate(
+        view.statements,
+        optString(args, "cursor"),
+        pageLimit(args),
+      );
+      // Evidence is the concrete anchor set of the served page (path:blobOid), so a
+      // reader can prove which bytes each statement was drawn from. The disclosed
+      // `invalidatedPending` ids ride alongside — never a silent omission.
+      return ok(
+        {
+          baseOid: view.baseOid,
+          fingerprint: view.snapshotFingerprint,
+          generator: view.generator,
+          statements: page,
+          invalidatedPending: view.invalidatedPending.map((s) => ({
+            id: s.id,
+            subject: s.subject,
+          })),
+        },
+        {
+          freshness: "current",
+          evidence: page.flatMap((s) => s.evidence.map((a) => `${a.path}:${a.blobOid}`)),
+          total,
+          cursor,
+        },
+      );
+    }
+    return ok(unavailable(result.failure, { scope: "context.knowledge" }), {
+      freshness: snapshotFreshness(result.failure),
+    });
+  },
+};
+
 // ── The surface ──────────────────────────────────────────────────────────────
 
 /**
@@ -1272,8 +1388,9 @@ const contextSymbolTool: CanvasOpsTool = {
  * overview; `context.symbol` — go-to-definition over the same exported-symbol index),
  * both riding Rennet's OWN deterministic shards (no LSP, no bundled engine).
  * Identifier-level `context.references` needs occurrence data this index does not
- * carry and is a deliberate follow-up. `context.knowledge` + the LLM knowledge/
- * novelty layers are a later wave and are NOT here. This list IS
+ * carry and is a deliberate follow-up. Last, the ONE model-backed read
+ * (`context.knowledge`, repo-map-knowledge layer c) — the LLM-reconstructed WHY,
+ * served verbatim off the enriched set, off the review's critical path. This list IS
  * the structural actor partition: no user-only op
  * (disposition/adjudicate/expand/select/pin) and no engine-only op
  * (project/invalidate/carry/order) appears here, so "the human still disposes" is
@@ -1299,6 +1416,7 @@ export const CANVAS_OPS_TOOLS: readonly CanvasOpsTool[] = [
   contextNoveltyTool,
   contextOverviewTool,
   contextSymbolTool,
+  contextKnowledgeTool,
 ] as const;
 
 const TOOLS_BY_NAME: ReadonlyMap<string, CanvasOpsTool> = new Map(

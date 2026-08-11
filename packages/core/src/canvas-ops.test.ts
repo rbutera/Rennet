@@ -35,6 +35,7 @@ import {
   type ToolOutcome,
   type ViewState,
 } from "./canvas-ops";
+import type { KnowledgeQuery, KnowledgeResult } from "./knowledge";
 import type { NoveltyResult } from "./novelty-ledger";
 import type {
   ProjectFileOverviewResult,
@@ -108,6 +109,10 @@ interface FixtureOptions {
   novelty?: NoveltyResult;
   /** Fires when a `context.novelty` call reaches the backend (default served ledger). */
   onNovelty?: () => void;
+  /** Override the knowledge gate result (default: a served view with one statement). */
+  knowledge?: KnowledgeResult;
+  /** Capture the query the last `context.knowledge` call passed the backend. */
+  onKnowledge?: (query?: KnowledgeQuery) => void;
 }
 
 const FIXTURE_BASE_OID = "a".repeat(40);
@@ -345,6 +350,33 @@ function makeFixture(options: FixtureOptions = {}): Fixture {
       options.onNovelty?.();
       return options.novelty ?? { ok: true, ledger: freshNoveltyLedger() };
     },
+    knowledge: (query?: KnowledgeQuery): KnowledgeResult => {
+      options.onKnowledge?.(query);
+      return (
+        options.knowledge ?? {
+          ok: true,
+          knowledge: {
+            baseOid: "base-oid",
+            snapshotFingerprint: "fp-1",
+            generator: "knowledge-gen@1",
+            statements: [
+              {
+                id: "k1",
+                subject: "@t/a",
+                aspect: "purpose",
+                claim: "scope a is the deterministic source",
+                evidence: [{ path: "packages/a/src/index.ts", blobOid: "blob-a" }],
+                confidence: "high",
+                status: "hypothesis",
+                provenance: { generator: "knowledge-gen@1", model: null, apiKeySource: null },
+                learnedAgainst: { baseOid: "base-oid", snapshotFingerprint: "fp-1" },
+              },
+            ],
+            invalidatedPending: [],
+          },
+        }
+      );
+    },
     applyEffects: (effects) => {
       for (const effect of effects) {
         applied.push(effect);
@@ -395,19 +427,20 @@ describe("canvasOps@2 tool surface", () => {
       "context.novelty",
       "context.overview",
       "context.symbol",
+      "context.knowledge",
     ]);
     // The base-branch context reads (issue #14) + the deterministic novelty ledger
     // (issue #144) + the model-free symbolic ops (repo-map-symbolic-surface:
-    // context.overview + context.symbol) ride this surface. Identifier-level
-    // context.references is a follow-up (the index carries no occurrence data); the
-    // LLM knowledge read (context.knowledge) is a later wave.
+    // context.overview + context.symbol) ride this surface, and the ONE model-backed
+    // read (context.knowledge, repo-map-knowledge layer c) now joins them. Identifier-
+    // level context.references is still a follow-up (the index carries no occurrence data).
     expect(names).toContain("context.map");
     expect(names).toContain("context.file");
     expect(names).toContain("context.novelty");
     expect(names).toContain("context.overview");
     expect(names).toContain("context.symbol");
+    expect(names).toContain("context.knowledge");
     expect(names).not.toContain("context.references");
-    expect(names).not.toContain("context.knowledge");
   });
 
   it("marks the hot trio always-loaded and read tools read-only", () => {
@@ -1083,6 +1116,94 @@ describe("canvasOps@2 tool surface", () => {
       expect(env.freshness).toBe("stale");
       expect((env.data as { unavailable: { reason: string } }).unavailable.reason).toBe("stale");
       expect((env.data as { sites?: unknown }).sites).toBeUndefined();
+    });
+  });
+
+  describe("context.knowledge — LLM-reconstructed knowledge, served verbatim, no model on read", () => {
+    it("serves current statements verbatim with their hypothesis label + evidence intact", () => {
+      const { backend } = makeFixture();
+      const env = expectOk(run(canvasOpsTool("context.knowledge"), {}, backend));
+      expect(env.freshness).toBe("current");
+      const data = env.data as {
+        statements: { id: string; status: string; claim: string; evidence: unknown[] }[];
+      };
+      expect(data.statements).toHaveLength(1);
+      expect(data.statements[0]?.status).toBe("hypothesis");
+      expect(data.statements[0]?.claim).toBe("scope a is the deterministic source");
+      // Evidence cites path:blobOid so a reader can prove which bytes it was drawn from.
+      expect(env.evidence).toEqual(["packages/a/src/index.ts:blob-a"]);
+      expect(env.total).toBe(1);
+    });
+
+    it("passes the query (subject/aspect/path) through to the backend", () => {
+      let seen: unknown;
+      const { backend } = makeFixture({ onKnowledge: (q) => (seen = q) });
+      run(
+        canvasOpsTool("context.knowledge"),
+        { subject: "@t/a", aspect: "purpose", path: "packages/a" },
+        backend,
+      );
+      expect(seen).toEqual({ subject: "@t/a", aspect: "purpose", path: "packages/a" });
+    });
+
+    it("discloses invalidated-pending statements rather than dropping them silently", () => {
+      const { backend } = makeFixture({
+        knowledge: {
+          ok: true,
+          knowledge: {
+            baseOid: "b",
+            snapshotFingerprint: "fp2",
+            generator: "knowledge-gen@1",
+            statements: [],
+            invalidatedPending: [
+              {
+                id: "stale-1",
+                subject: "packages/a",
+                aspect: "why",
+                claim: "the old rationale",
+                evidence: [{ path: "packages/a/src/old.ts", blobOid: "gone" }],
+                confidence: "medium",
+                status: "hypothesis",
+                provenance: { generator: "knowledge-gen@1", model: null, apiKeySource: null },
+                learnedAgainst: { baseOid: "a", snapshotFingerprint: "fp1" },
+              },
+            ],
+          },
+        },
+      });
+      const env = expectOk(run(canvasOpsTool("context.knowledge"), {}, backend));
+      const data = env.data as { invalidatedPending: { id: string; subject: string }[] };
+      expect(data.invalidatedPending).toEqual([{ id: "stale-1", subject: "packages/a" }]);
+    });
+
+    it("returns an honest empty view (not an error) when knowledge is not yet enriched", () => {
+      const { backend } = makeFixture({
+        knowledge: {
+          ok: true,
+          knowledge: {
+            baseOid: "b",
+            snapshotFingerprint: "fp",
+            generator: null,
+            statements: [],
+            invalidatedPending: [],
+          },
+        },
+      });
+      const env = expectOk(run(canvasOpsTool("context.knowledge"), {}, backend));
+      expect(env.freshness).toBe("current");
+      expect((env.data as { statements: unknown[] }).statements).toEqual([]);
+      expect((env.data as { generator: string | null }).generator).toBeNull();
+    });
+
+    it("rides a stale/absent snapshot gate back as a freshness verdict with an unavailable payload", () => {
+      const { backend } = makeFixture({
+        knowledge: { ok: false, failure: { reason: "absent" } },
+      });
+      const env = expectOk(run(canvasOpsTool("context.knowledge"), {}, backend));
+      expect(env.freshness).toBe("failed");
+      const data = env.data as { unavailable: { reason: string }; statements?: unknown };
+      expect(data.unavailable.reason).toBe("absent");
+      expect(data.statements).toBeUndefined();
     });
   });
 });
