@@ -28,6 +28,7 @@ import type {
   ElementDiffs,
   Hunk,
   Patchset,
+  RenderedHunkOccurrence,
 } from "@rennet/types";
 import { type AdmittedDocument, isProposalBody } from "./canvas";
 
@@ -197,13 +198,38 @@ function renderDiff(
     });
   }
   if (selected.length > 0) {
+    // The occurrence identity of each rendered `@@` hunk, built in the SAME order the
+    // hunks are joined into `diff` (issue #84). Every occurrence overlapping a raw
+    // hunk maps onto it — one for an ordinary hunk, several for an oversize split (R18)
+    // — so a mark anchored to any of them resolves within THIS hunk, never a
+    // positionally-guessed neighbour. The rendered text and this mapping come from one
+    // iteration over `selected`, so they cannot drift.
+    const hunkOccurrences: RenderedHunkOccurrence[][] = selected.map((raw) =>
+      resolved.hunks
+        .filter((hunk) => hunk.filePath === raw.filePath && overlaps(hunk, raw))
+        .sort((a, b) => a.newStart - b.newStart || a.oldStart - b.oldStart)
+        .map((hunk) => ({
+          id: hunk.id,
+          oldStart: hunk.oldStart,
+          oldLines: hunk.oldLines,
+          newStart: hunk.newStart,
+          newLines: hunk.newLines,
+        })),
+    );
     // `files` is EVERY file this element's hunks span (a proposal chunk can regroup
     // several) — carried so a consumer can test file membership, not just `path`.
-    return { path: resolved.path, paths: files, diff: selected.map((raw) => raw.text).join("\n") };
+    return {
+      path: resolved.path,
+      paths: files,
+      diff: selected.map((raw) => raw.text).join("\n"),
+      hunkOccurrences,
+    };
   }
   const patch = patchByFile.get(resolved.path);
   if (patch && patch.trim().length > 0) {
-    return { path: resolved.path, paths: [resolved.path], diff: patch };
+    // A synthetic-only element (pure rename / mode-only / binary): its hunks overlap
+    // no raw `@@`, so the whole-file patch is shown but no occurrence anchors onto it.
+    return { path: resolved.path, paths: [resolved.path], diff: patch, hunkOccurrences: [] };
   }
   return null;
 }

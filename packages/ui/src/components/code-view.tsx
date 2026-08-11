@@ -1,5 +1,5 @@
 import { parseAnchor } from "@rennet/protocol";
-import type { DispositionType } from "@rennet/types";
+import type { DispositionType, RenderedHunkOccurrence } from "@rennet/types";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type WindowRange, windowRows } from "../canvas/logic";
 import {
@@ -48,8 +48,14 @@ export interface CodeViewProps {
   renderAll?: boolean;
 
   // ── The inhabited canvas (issue #77), additive and optional ─────────────────
-  /** Occurrence id(s) for the diff's hunks; a single-occurrence element view passes one. */
-  occurrenceIds?: readonly string[] | string;
+  /**
+   * The occurrence identity of each rendered `@@` hunk, in diff order (issue #84).
+   * Passed straight from `ElementDiff.hunkOccurrences` — the SAME artifact that
+   * produced `diff` — so a mark's row can never drift from the text. Outer index is
+   * the Nth `@@` hunk; the inner list is the occurrence(s) it carries (several under
+   * one raw hunk for an oversize split).
+   */
+  hunkOccurrences?: readonly (readonly RenderedHunkOccurrence[])[];
   /** L3 marks to render AT their anchors (annotations glow; proposals get a card). */
   marks?: readonly Mark[];
   /** Renders a mark's interactive card inline at its span (the host owns adjudication/pinning). */
@@ -171,7 +177,7 @@ export function CodeView({
   scrollTop = 0,
   overscan = 8,
   renderAll = false,
-  occurrenceIds,
+  hunkOccurrences,
   marks,
   renderMarkCard,
   focusAnchor,
@@ -193,9 +199,9 @@ export function CodeView({
   const language: LanguageId | null = detectLanguage(path);
 
   // The registry + placement are computed over the FULL diff, never the window —
-  // so a mark's home row is a fixed function of (diff, occurrenceIds, marks) and
+  // so a mark's home row is a fixed function of (diff, hunkOccurrences, marks) and
   // cannot move when a row recycles. Windowing only chooses which rows to paint.
-  const registry = buildRowRegistry({ diff, occurrenceIds });
+  const registry = buildRowRegistry({ diff, hunkOccurrences });
   const placement = marks && marks.length > 0 ? placeMarks(registry, marks) : null;
   const { glow, gutter } = placement
     ? indexPlacements(placement)

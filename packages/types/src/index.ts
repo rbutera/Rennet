@@ -1552,6 +1552,21 @@ export interface Canvas {
  * patchset — the exact hunk text git produced — so zooming into an element shows
  * the real code, not a fixture.
  */
+/**
+ * One occurrence (decomposition hunk) mapped onto a rendered `@@` hunk. `id` is the
+ * hunk id an anchor references; the line range is the occurrence's own span, so a
+ * mark anchored to an oversize-split (R18) FRAGMENT resolves within its slice of the
+ * shared raw hunk, never the whole hunk. `oldStart`/`newStart` are 1-based file
+ * lines; `oldLines`/`newLines` the side counts — the same shape as `Hunk`.
+ */
+export interface RenderedHunkOccurrence {
+  id: string;
+  oldStart: number;
+  oldLines: number;
+  newStart: number;
+  newLines: number;
+}
+
 export interface ElementDiff {
   /** The primary/display path (the header shows this one). */
   path: string;
@@ -1564,6 +1579,21 @@ export interface ElementDiff {
    */
   paths: readonly string[];
   diff: string;
+  /**
+   * The occurrence identity of each rendered `@@` hunk, in diff order — emitted by
+   * the SAME pass that assembles `diff`, so the mark↔row mapping can never drift
+   * from the text (issue #84). Outer index aligns to the Nth `@@` hunk in `diff`;
+   * the inner list is every occurrence carried by that hunk (usually one; an
+   * oversize split renders several fragments under one raw `@@`, in file order).
+   *
+   * This is the structural cure for positional hunk↔occurrence matching: the diff
+   * text and the identity are ONE artifact, so a multi-file reorder or a split's
+   * count mismatch cannot silently land a mark on the wrong row. Optional only so
+   * hand-built test/fixture `ElementDiff`s that render no marks stay terse; the real
+   * projector always emits it, and its ABSENCE degrades to unplaced (visible in the
+   * tray), never to a misplaced mark.
+   */
+  hunkOccurrences?: readonly (readonly RenderedHunkOccurrence[])[];
 }
 
 /** The per-element real diff map, keyed by `AnalysisElement.elementKey` (issue #60). */

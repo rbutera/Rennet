@@ -390,11 +390,12 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     for (const hunkId of chunk.hunkIds) changesetHunkIds.add(hunkId);
   }
 
-  // The hunk occurrence ids an element's diff renders on a GIVEN canvas (positional,
-  // in hunk order): a hunk-anchored element is its own single hunk; a chunk-anchored
-  // one maps to THAT canvas's substrate chunk's ordered hunk ids. Parameterised over
-  // the canvas so cross-canvas navigation (the coverage-chip jump) can resolve an
-  // element on a canvas that is not the active one.
+  // The SET of hunk occurrence ids an element's diff renders on a GIVEN canvas: a
+  // hunk-anchored element is its own single hunk; a chunk-anchored one is THAT canvas's
+  // substrate chunk's hunk ids. Used ONLY as a membership set (which marks belong to
+  // this element, cross-canvas jump resolution) — NOT for mark PLACEMENT. Placement
+  // rides `ElementDiff.hunkOccurrences`, emitted with the diff text so it cannot drift
+  // (issue #84); do not reroute placement through this order-of-decomposition list.
   function occurrenceIdsForElementOn(targetCanvas: Canvas, elementAnchor: string): string[] {
     const parsed = parseAnchor(elementAnchor);
     if (!parsed.ok) return [];
@@ -869,7 +870,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
                   <CodeView
                     path={diff.path}
                     diff={diff.diff}
-                    occurrenceIds={shownOccurrenceIds}
+                    hunkOccurrences={diff.hunkOccurrences}
                     marks={shownMarks}
                     renderMarkCard={renderMarkCard}
                     focusAnchor={focusAnchor ?? undefined}

@@ -285,6 +285,16 @@ describe("buildElementDiffs", () => {
     expect(diffs.es?.diff).toBe(BIG);
     const headerCount = (diffs.es?.diff.match(/@@ -1,6 \+1,6 @@/g) ?? []).length;
     expect(headerCount).toBe(1);
+    // #84 — the ONE rendered @@ hunk carries BOTH fragments, in file order, each with
+    // its own line range so a mark on either lands within its slice. A positional
+    // `occurrenceIds` array (2 ids, 1 rendered hunk) could not express this.
+    expect(diffs.es?.hunkOccurrences).toHaveLength(1);
+    expect(diffs.es?.hunkOccurrences?.[0]?.map((o) => o.id)).toEqual(["frag-a", "frag-b"]);
+    expect(diffs.es?.hunkOccurrences?.[0]?.[1]).toMatchObject({
+      id: "frag-b",
+      oldStart: 4,
+      newStart: 4,
+    });
   });
 
   // A proposal chunk that REGROUPS hunks from an implementation AND its test into ONE
@@ -354,5 +364,13 @@ describe("buildElementDiffs", () => {
     // and the rendered diff really does include both files' hunks.
     expect(entry?.diff).toContain("export function foo()");
     expect(entry?.diff).toContain('import { foo } from "./foo"');
+    // #84 — the crux: `hunkOccurrences` is in RENDERED (sorted-file) order, NOT the
+    // chunk's `hunkIds` order. `hunkIds` is [impl, test] but files sort test-first, so
+    // rendered hunk 0 is the TEST and hunk 1 is the impl. A positional array that
+    // reused `hunkIds` would tag the test's rows with the impl's id — the multi-file
+    // misplacement bug. Here the mapping tracks the text.
+    expect(entry?.hunkOccurrences).toHaveLength(2);
+    expect(entry?.hunkOccurrences?.[0]?.[0]?.id).toBe(testHunk?.id);
+    expect(entry?.hunkOccurrences?.[1]?.[0]?.id).toBe(implHunk?.id);
   });
 });

@@ -1,5 +1,5 @@
 import { parseAnchor } from "@rennet/protocol";
-import type { AnchorSide, ParsedAnchor } from "@rennet/types";
+import type { AnchorSide, ParsedAnchor, RenderedHunkOccurrence } from "@rennet/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The anchor↔row registrar — the coordinate system that turns the CodeView from
@@ -47,20 +47,32 @@ export interface HunkHeader {
   newCount: number | null;
 }
 
+/**
+ * One occurrence's slice of a rendered `@@` hunk. A hunk carries one occurrence in
+ * the ordinary case; an oversize-split (R18) raw hunk carries several fragments, and
+ * each gets its OWN per-side row arrays so a span (`#L4@additions`) indexes into the
+ * fragment, never the whole raw hunk. Side arrays hold raw indices in order; a side
+ * key is present only when that side has a row (a missing key is a genuine "no such
+ * side"), mirroring the substrate's `occurrence.sides`.
+ */
+export interface RegistryOccurrence {
+  occurrenceId: string;
+  sides: Partial<Record<AnchorSide, number[]>>;
+  /** All content rows of the occurrence, in order (for spanless whole-occurrence marks). */
+  contentRawIndices: number[];
+}
+
 export interface RegistryHunk {
   hunkIndex: number;
-  occurrenceId: string | null;
   /** null for the implicit hunk of a header-less diff. */
   header: HunkHeader | null;
   headerRawIndex: number | null;
   /**
-   * Per-side raw-index arrays in order. A side key is present only when that side
-   * has at least one row (mirrors the manifest's `Partial<Record<AnchorSide,…>>`),
-   * so a missing key is a genuine "no such side" for resolution.
+   * The occurrence(s) this rendered hunk carries, each with its own row slice, in the
+   * order the producer emitted them. Empty when the caller supplied no mapping for
+   * this hunk (identity-less rows — marks cannot resolve here).
    */
-  sides: Partial<Record<AnchorSide, number[]>>;
-  /** All content rows of the hunk, in order (for spanless whole-occurrence marks). */
-  contentRawIndices: number[];
+  occurrences: RegistryOccurrence[];
 }
 
 export interface RowRegistry {
@@ -71,11 +83,20 @@ export interface RowRegistry {
 export interface BuildRegistryInput {
   diff: string;
   /**
-   * Occurrence id per hunk in diff order. A single string maps every hunk to it
-   * (the single-occurrence element view, where the anchor id names one hunk); an
-   * array maps hunk `i` to `occurrenceIds[i]`. Omit for identity-less rows.
+   * The occurrence identity of each rendered `@@` hunk, in diff order (issue #84).
+   * Outer index aligns to the Nth `@@` hunk; the inner list is every occurrence that
+   * hunk carries — one ordinarily, several for an oversize split. Emitted by the same
+   * pass that assembles the diff text (`ElementDiff.hunkOccurrences`), so the mapping
+   * cannot drift from the text the way a separately-derived positional array could.
+   * Omit for identity-less rows.
+   *
+   * Rows are partitioned to their occurrence by line-range containment. An unsplit
+   * whole hunk has one occurrence whose range is the hunk header's own extent, so it
+   * claims every row. An oversize split has several occurrences, each claiming only
+   * its own lines — and a fragment claims only its slice even when it is the element's
+   * ONLY occurrence but the whole parent `@@` is rendered around it.
    */
-  occurrenceIds?: readonly string[] | string;
+  hunkOccurrences?: readonly (readonly RenderedHunkOccurrence[])[];
 }
 
 const HUNK_HEADER_RE = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
@@ -96,15 +117,6 @@ function isFileHeader(text: string): boolean {
   );
 }
 
-function occurrenceForHunk(
-  occurrenceIds: readonly string[] | string | undefined,
-  hunkIndex: number,
-): string | null {
-  if (occurrenceIds === undefined) return null;
-  if (typeof occurrenceIds === "string") return occurrenceIds;
-  return occurrenceIds[hunkIndex] ?? null;
-}
-
 /**
  * Parse a diff string into a registry: every row gets a kind, side, real file
  * line, per-side ordinal, and occurrence identity. A header-less diff (the demo/
@@ -119,38 +131,61 @@ export function buildRowRegistry(input: BuildRegistryInput): RowRegistry {
   let hunk: RegistryHunk | null = null;
   let oldLine = 1;
   let newLine = 1;
-  const sideCount: Record<AnchorSide, number> = { additions: 0, deletions: 0, context: 0 };
 
-  // Returns the new hunk (assigned to `hunk` in the main body so control-flow
-  // narrows it), and resets the per-hunk line counters + side ordinals.
+  // Open a rendered-hunk registry entry, wiring in the occurrence(s) the producer
+  // mapped to this hunk index (`input.hunkOccurrences[hunkIndex]`) and resetting the
+  // per-hunk line cursors. Assigned to `hunk` in the main body so control-flow narrows it.
   function openHunk(header: HunkHeader | null, headerRawIndex: number | null): RegistryHunk {
-    const created: RegistryHunk = {
-      hunkIndex: hunks.length,
-      occurrenceId: occurrenceForHunk(input.occurrenceIds, hunks.length),
-      header,
-      headerRawIndex,
+    const mapped = input.hunkOccurrences?.[hunks.length] ?? [];
+    const occurrences: RegistryOccurrence[] = mapped.map((occ) => ({
+      occurrenceId: occ.id,
       sides: {},
       contentRawIndices: [],
+    }));
+    const created: RegistryHunk = {
+      hunkIndex: hunks.length,
+      header,
+      headerRawIndex,
+      occurrences,
     };
     hunks.push(created);
     oldLine = header ? header.oldStart : 1;
     newLine = header ? header.newStart : 1;
-    sideCount.additions = 0;
-    sideCount.deletions = 0;
-    sideCount.context = 0;
     return created;
   }
 
-  function pushSide(currentHunk: RegistryHunk, side: AnchorSide, rawIndex: number): number {
-    let arr = currentHunk.sides[side];
+  // Which occurrence of hunk `hunkIndex` owns a content row on `side` at the current
+  // (oldLine, newLine) cursor, by line-range containment: a deletion tests the OLD-side
+  // range, an addition/context the NEW-side. Containment is used even for a lone
+  // occurrence, because an element can render a raw hunk it only PARTLY owns — an
+  // oversize split (R18) puts each fragment in its own floor chunk, yet the element
+  // still renders the whole parent `@@` — so a fragment's span must land within ITS
+  // slice, never the whole hunk. A row no occurrence claims (rendered context outside
+  // this element's fragment) returns -1 and becomes identity-less, rather than
+  // borrowing a neighbour's identity. An unsplit whole hunk has one occurrence whose
+  // range is the header's own extent, so it claims every row — identical to before.
+  function occurrenceIndexFor(hunkIndex: number, side: AnchorSide): number {
+    const mapped = input.hunkOccurrences?.[hunkIndex] ?? [];
+    const line = side === "deletions" ? oldLine : newLine;
+    for (let i = 0; i < mapped.length; i += 1) {
+      const occ = mapped[i];
+      if (!occ) continue;
+      const start = side === "deletions" ? occ.oldStart : occ.newStart;
+      const count = side === "deletions" ? occ.oldLines : occ.newLines;
+      if (line >= start && line < start + count) return i;
+    }
+    return -1;
+  }
+
+  function pushSide(occurrence: RegistryOccurrence, side: AnchorSide, rawIndex: number): number {
+    let arr = occurrence.sides[side];
     if (!arr) {
       arr = [];
-      currentHunk.sides[side] = arr;
+      occurrence.sides[side] = arr;
     }
     arr.push(rawIndex);
-    currentHunk.contentRawIndices.push(rawIndex);
-    sideCount[side] += 1;
-    return sideCount[side];
+    occurrence.contentRawIndices.push(rawIndex);
+    return arr.length;
   }
 
   for (let rawIndex = 0; rawIndex < lines.length; rawIndex += 1) {
@@ -170,7 +205,7 @@ export function buildRowRegistry(input: BuildRegistryInput): RowRegistry {
         text,
         kind: "hunk-header",
         hunkIndex: hunk.hunkIndex,
-        occurrenceId: hunk.occurrenceId,
+        occurrenceId: null,
         side: null,
         fileLine: null,
         sideOrdinal: null,
@@ -218,7 +253,7 @@ export function buildRowRegistry(input: BuildRegistryInput): RowRegistry {
         text,
         kind: "meta",
         hunkIndex: hunk.hunkIndex,
-        occurrenceId: hunk.occurrenceId,
+        occurrenceId: null,
         side: null,
         fileLine: null,
         sideOrdinal: null,
@@ -226,10 +261,18 @@ export function buildRowRegistry(input: BuildRegistryInput): RowRegistry {
       continue;
     }
 
-    // Content (hunk is non-null and `first` is one of `+`/`-`/space).
+    // Content (hunk is non-null and `first` is one of `+`/`-`/space). Assign the row
+    // to its owning occurrence (a single occurrence owns all; a split partitions by
+    // line range), then push it into THAT occurrence's side array so its ordinal is
+    // 1-based within the occurrence — exactly what `#Ln@side` addresses. A row no
+    // occurrence claims (defensive: the producer should map every rendered row) gets
+    // a null occurrence + ordinal rather than shifting a neighbour's index.
     const side: AnchorSide = first === "+" ? "additions" : first === "-" ? "deletions" : "context";
     const fileLine = side === "deletions" ? oldLine : newLine;
-    const sideOrdinal = pushSide(hunk, side, rawIndex);
+    const occIndex = occurrenceIndexFor(hunk.hunkIndex, side);
+    const occurrence = occIndex >= 0 ? hunk.occurrences[occIndex] : undefined;
+    const occurrenceId = occurrence?.occurrenceId ?? null;
+    const sideOrdinal = occurrence ? pushSide(occurrence, side, rawIndex) : null;
     if (side === "additions") newLine += 1;
     else if (side === "deletions") oldLine += 1;
     else {
@@ -242,7 +285,7 @@ export function buildRowRegistry(input: BuildRegistryInput): RowRegistry {
       text,
       kind: "content",
       hunkIndex: hunk.hunkIndex,
-      occurrenceId: hunk.occurrenceId,
+      occurrenceId,
       side,
       fileLine,
       sideOrdinal,
@@ -271,8 +314,22 @@ export type RowResolution =
 
 /** Resolve a parsed anchor onto the registry's rendered rows, side-aware. */
 export function resolveAnchorToRows(registry: RowRegistry, anchor: ParsedAnchor): RowResolution {
-  const hunk = registry.hunks.find((h) => h.occurrenceId !== null && h.occurrenceId === anchor.id);
-  if (!hunk) return { outcome: "orphan", reason: "no-occurrence" };
+  // Find the occurrence SLICE whose id the anchor names, across every rendered hunk.
+  // A rendered hunk can carry several occurrences (an oversize split), so the id — not
+  // the hunk position — is the identity, and the span resolves within that slice's own
+  // side arrays. This is the structural cure for #84: the anchor's id, not a positional
+  // guess, decides where a mark lands.
+  let hunkIndex = -1;
+  let occurrence: RegistryOccurrence | undefined;
+  for (const h of registry.hunks) {
+    const found = h.occurrences.find((o) => o.occurrenceId === anchor.id);
+    if (found) {
+      hunkIndex = h.hunkIndex;
+      occurrence = found;
+      break;
+    }
+  }
+  if (!occurrence) return { outcome: "orphan", reason: "no-occurrence" };
 
   if (anchor.span) {
     // Spans are always side-qualified (§3.2) — a span without a side cannot land;
@@ -281,7 +338,7 @@ export function resolveAnchorToRows(registry: RowRegistry, anchor: ParsedAnchor)
     // EMPTY side (the substrate builds all three side arrays, empty or not), so an
     // out-of-range span there is `out-of-bounds`, never `no-such-side`.
     if (!anchor.side) return { outcome: "orphan", reason: "no-such-side" };
-    const sideRows = hunk.sides[anchor.side] ?? [];
+    const sideRows = occurrence.sides[anchor.side] ?? [];
     const start = anchor.span.startLine;
     const end = anchor.span.endLine ?? start;
     if (start > sideRows.length || end > sideRows.length) {
@@ -289,7 +346,7 @@ export function resolveAnchorToRows(registry: RowRegistry, anchor: ParsedAnchor)
     }
     return {
       outcome: "resolved",
-      hunkIndex: hunk.hunkIndex,
+      hunkIndex,
       side: anchor.side,
       rawIndices: sideRows.slice(start - 1, end),
       startOrdinal: start,
@@ -299,22 +356,22 @@ export function resolveAnchorToRows(registry: RowRegistry, anchor: ParsedAnchor)
 
   // Spanless. A side-only anchor glows that whole side (an empty side resolves to
   // no rows — placeMarks then routes such a mark to the tray, never silently); a
-  // bare occurrence anchor marks all the hunk's content rows.
+  // bare occurrence anchor marks all the occurrence's content rows.
   if (anchor.side) {
     return {
       outcome: "resolved",
-      hunkIndex: hunk.hunkIndex,
+      hunkIndex,
       side: anchor.side,
-      rawIndices: [...(hunk.sides[anchor.side] ?? [])],
+      rawIndices: [...(occurrence.sides[anchor.side] ?? [])],
       startOrdinal: null,
       endOrdinal: null,
     };
   }
   return {
     outcome: "resolved",
-    hunkIndex: hunk.hunkIndex,
+    hunkIndex,
     side: null,
-    rawIndices: [...hunk.contentRawIndices],
+    rawIndices: [...occurrence.contentRawIndices],
     startOrdinal: null,
     endOrdinal: null,
   };

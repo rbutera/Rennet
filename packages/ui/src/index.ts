@@ -164,6 +164,7 @@ export type {
   PlacedMark,
   PlacementIndex,
   RegistryHunk,
+  RegistryOccurrence,
   RegistryRow,
   RowKind,
   RowRegistry,

@@ -1,3 +1,4 @@
+import type { RenderedHunkOccurrence } from "@rennet/types";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { demoDiff } from "../canvas/fixtures";
@@ -8,6 +9,13 @@ import { CodeView } from "./code-view";
 function nodeCount(html: string): number {
   return (html.match(/<[a-zA-Z]/g) ?? []).length;
 }
+
+// The single-occurrence mapping for ONE_HUNK (`@@ -10,3 +10,4 @@`): one rendered hunk
+// = occurrence "H", with its REAL line range (rows are partitioned by containment, so
+// the range must cover them).
+const OCC_H: RenderedHunkOccurrence[][] = [
+  [{ id: "H", oldStart: 10, oldLines: 3, newStart: 10, newLines: 4 }],
+];
 
 // A single-hunk diff with a real @@ header, so file lines and spans are meaningful.
 //  raw  text                     side  fileLine sideOrd
@@ -78,7 +86,7 @@ describe("CodeView — windowed diff holds the Pierre node-count envelope", () =
 describe("CodeView — rows carry real identity from the @@ headers", () => {
   it("assigns real file lines + side + occurrence per row, side-aware", () => {
     const html = renderToStaticMarkup(
-      <CodeView path="foo.ts" diff={ONE_HUNK} occurrenceIds="H" viewportHeight={480} />,
+      <CodeView path="foo.ts" diff={ONE_HUNK} hunkOccurrences={OCC_H} viewportHeight={480} />,
     );
     // Context row shows the new-file line 10; the deletion shows old-file line 11.
     expect(html).toContain('data-file-line="10"');
@@ -106,7 +114,7 @@ describe("CodeView — L3 marks render AT their anchors, never in a strip", () =
       <CodeView
         path="foo.ts"
         diff={ONE_HUNK}
-        occurrenceIds="H"
+        hunkOccurrences={OCC_H}
         marks={marks}
         viewportHeight={480}
       />,
@@ -133,7 +141,7 @@ describe("CodeView — L3 marks render AT their anchors, never in a strip", () =
       <CodeView
         path="foo.ts"
         diff={ONE_HUNK}
-        occurrenceIds="H"
+        hunkOccurrences={OCC_H}
         marks={marks}
         renderMarkCard={card}
         viewportHeight={480}
@@ -158,7 +166,7 @@ describe("CodeView — L3 marks render AT their anchors, never in a strip", () =
       <CodeView
         path="foo.ts"
         diff={ONE_HUNK}
-        occurrenceIds="H"
+        hunkOccurrences={OCC_H}
         marks={marks}
         viewportHeight={480}
       />,
@@ -177,6 +185,10 @@ describe("CodeView — L3 marks render AT their anchors, never in a strip", () =
       "@@ -1,1 +1,200 @@",
       ...Array.from({ length: 200 }, (_unused, i) => `+  line ${i + 1}`),
     ].join("\n");
+    // The occurrence "H" spans the whole 200-addition hunk (new lines 1..200).
+    const occBig: RenderedHunkOccurrence[][] = [
+      [{ id: "H", oldStart: 1, oldLines: 1, newStart: 1, newLines: 200 }],
+    ];
     const marks: Mark[] = [
       {
         markId: "ann1",
@@ -185,7 +197,13 @@ describe("CodeView — L3 marks render AT their anchors, never in a strip", () =
         body: "deep mark",
       },
     ];
-    const props = { path: "big.ts", diff: bigDiff, occurrenceIds: "H", marks, viewportHeight: 480 };
+    const props = {
+      path: "big.ts",
+      diff: bigDiff,
+      hunkOccurrences: occBig,
+      marks,
+      viewportHeight: 480,
+    };
 
     // Scrolled to the top: raw 150 is far below the window, so it is NOT rendered —
     // and crucially the mark glows on NO other (visible) row.
@@ -209,7 +227,7 @@ describe("CodeView — L3 marks render AT their anchors, never in a strip", () =
       <CodeView
         path="foo.ts"
         diff={ONE_HUNK}
-        occurrenceIds="H"
+        hunkOccurrences={OCC_H}
         focusAnchor="rennet:hunk/H#L1@deletions"
         viewportHeight={480}
       />,
@@ -221,7 +239,7 @@ describe("CodeView — L3 marks render AT their anchors, never in a strip", () =
 describe("CodeView — syntax highlighting rides UNDER the diff colouring (issue #68)", () => {
   it("wraps code in token spans for a known language, on both context and diff rows", () => {
     const html = renderToStaticMarkup(
-      <CodeView path="src/x.ts" diff={ONE_HUNK} occurrenceIds="H" viewportHeight={480} />,
+      <CodeView path="src/x.ts" diff={ONE_HUNK} hunkOccurrences={OCC_H} viewportHeight={480} />,
     );
     // A keyword on the context row and on the changed rows is highlighted.
     expect(html).toContain('rtok-keyword">const</span>');
@@ -232,7 +250,7 @@ describe("CodeView — syntax highlighting rides UNDER the diff colouring (issue
   it("a highlighted token on an added line STILL reads as added (diff colour dominant)", () => {
     const diff = ["@@ -1,1 +1,2 @@", "   const a = 1;", "+  return a;"].join("\n");
     const html = renderToStaticMarkup(
-      <CodeView path="src/x.ts" diff={diff} occurrenceIds="H" viewportHeight={480} />,
+      <CodeView path="src/x.ts" diff={diff} hunkOccurrences={OCC_H} viewportHeight={480} />,
     );
     // The add row carries BOTH the diff class (dominant, full-row) AND the syntax
     // highlight for `return` — the highlight composes under the diff semantic. The
@@ -246,7 +264,7 @@ describe("CodeView — syntax highlighting rides UNDER the diff colouring (issue
 
   it("fails closed for an unknown extension: plain text, no fabricated colouring", () => {
     const html = renderToStaticMarkup(
-      <CodeView path="Makefile" diff={ONE_HUNK} occurrenceIds="H" viewportHeight={480} />,
+      <CodeView path="Makefile" diff={ONE_HUNK} hunkOccurrences={OCC_H} viewportHeight={480} />,
     );
     // No semantic token classes, and the code text stays contiguous (never split
     // into keyword/number spans) — proof the tokenizer did not run.
@@ -256,7 +274,7 @@ describe("CodeView — syntax highlighting rides UNDER the diff colouring (issue
 
   it("never tokenizes the @@ hunk header — it stays muted chrome, uncoloured", () => {
     const html = renderToStaticMarkup(
-      <CodeView path="src/x.ts" diff={ONE_HUNK} occurrenceIds="H" viewportHeight={480} />,
+      <CodeView path="src/x.ts" diff={ONE_HUNK} hunkOccurrences={OCC_H} viewportHeight={480} />,
     );
     // The header text is emitted whole INSIDE its <code> element, with NO token
     // spans — if it were tokenized, the raw string would be shredded across
