@@ -1188,6 +1188,22 @@ export interface AskReviewResult {
   secondOpinion?: AskAnswer;
 }
 
+// ─── review.refine: the comment-refinement loop's result (issue #19) ──────────
+//
+// Rai's headline feature: a rough review note refined into a clean comment by a
+// real model turn. The wire result the renderer adopts (or doesn't). `refined`
+// carries a body GUARANTEED non-empty and not byte-identical to the raw (the
+// producer enforces it); `no-change` means the raw was already clear (it posts
+// unchanged); `unavailable`/`failed` are honest states the UI shows plainly while
+// the raw stays the effective body — the loop failing means worse prose, never a
+// silent rewrite and never lost review work. `model` rides the two success states
+// for provenance (there is NO AI-attribution marker on the POSTED comment).
+export type RefinementResult =
+  | { readonly status: "refined"; readonly refined: string; readonly model: string }
+  | { readonly status: "no-change"; readonly model: string }
+  | { readonly status: "unavailable"; readonly reason: string }
+  | { readonly status: "failed"; readonly reason: string };
+
 // ─── review.hypothesis: the hypothesis-first pre-read pass (issue #178) ────────
 //
 // Florence's single most load-bearing anti-rubber-stamp move: BEFORE the lens
