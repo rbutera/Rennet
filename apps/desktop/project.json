@@ -27,6 +27,11 @@
       "cache": false,
       "dependsOn": ["package"],
       "command": "node scripts/smoke-packaged-app.mjs apps/desktop/out/Rennet-darwin-arm64/Rennet.app"
+    },
+    "make": {
+      "cache": false,
+      "dependsOn": ["build"],
+      "command": "pnpm --dir apps/desktop exec electron-forge make"
     }
   }
 }

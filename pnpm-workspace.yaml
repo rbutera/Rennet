@@ -41,6 +41,19 @@ blockExoticSubdeps: false
 strictPeerDependencies: true
 saveExact: true
 
+# pnpm 10 blocks dependency build (lifecycle/gyp) scripts by default. The macOS
+# DMG maker (@electron-forge/maker-dmg -> electron-installer-dmg -> appdmg) needs
+# two native node-gyp addons compiled at install time; without them `nx run
+# rennet-desktop:make` fails with "Cannot find module '../build/Release/*.node'".
+# These are the ONLY two packages in the tree with a binding.gyp, and both are
+# build-only tooling used at packaging time (never shipped inside the app), so
+# approving their builds is scoped and safe. Every other package stays blocked.
+#   - macos-alias: writes the DMG's .DS_Store icon layout (volume.node)
+#   - fs-xattr:    reads/writes extended attributes on the DMG (xattr.node)
+onlyBuiltDependencies:
+  - macos-alias
+  - fs-xattr
+
 # @anthropic-ai/claude-agent-sdk declares three NON-optional peers
 # (zod, @anthropic-ai/sdk, @modelcontextprotocol/sdk). Its main entry (sdk.mjs,
 # which exports query()) imports NONE of them at module scope — verified by
