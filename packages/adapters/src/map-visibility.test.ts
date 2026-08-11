@@ -79,4 +79,31 @@ describe("map-visibility switch (A.2)", () => {
     expect(written).not.toContain("map/");
     expect(store.loadConfig("-k")?.visibility).toBe("git-visible");
   });
+
+  it("REFUSES the real switch when the project config is malformed, leaving BOTH files byte-identical (Rule 75, non-vacuous)", async () => {
+    const repo = mkdtempSync(join(tmpdir(), "rennet-vis4-"));
+    const storeDir = mkdtempSync(join(tmpdir(), "rennet-vis4-store-"));
+    scratch.push(repo, storeDir);
+    const store = new ProjectSnapshotStore(storeDir);
+
+    // A user-authored .gitignore that the switch WOULD rewrite, and a malformed
+    // project config that the switch WOULD overwrite via updateConfig.
+    mkdirSync(join(repo, ".rennet"), { recursive: true });
+    const gitignore = join(repo, ".rennet", ".gitignore");
+    const gitignoreBefore = "# untouched\nkeep.local\n";
+    writeFileSync(gitignore, gitignoreBefore);
+    const configPath = store.paths("-k").configPath;
+    mkdirSync(join(configPath, ".."), { recursive: true });
+    const configBefore = '{ "version": 1, "visibility": "loc'; // truncated, unparseable
+    writeFileSync(configPath, configBefore);
+
+    // The REAL write path throws rather than half-applying.
+    await expect(
+      applyVisibilitySwitch(store, "-k", repo, "git-visible", readOnlyGit()),
+    ).rejects.toThrow(/malformed/);
+
+    // Neither file was touched — this is what makes the guard non-vacuous.
+    expect(readFileSync(gitignore, "utf8")).toBe(gitignoreBefore);
+    expect(readFileSync(configPath, "utf8")).toBe(configBefore);
+  });
 });

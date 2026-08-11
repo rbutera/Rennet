@@ -454,6 +454,15 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const effectiveScheme: "dark" | "light" =
     scheme === "light" ? "light" : scheme === "dark" ? "dark" : systemDark ? "dark" : "light";
 
+  // Apply the resolved scheme to the document ROOT, so every surface inherits it —
+  // including screens that carry no `.rennet-glass`/`.canvas-app` scope of their own
+  // (the restore + direct-entry screens, the review-level chrome). The self-scoping
+  // components re-declare the base tokens locally, so they ALSO receive the resolved
+  // scheme as a prop; this root attribute is what themes everything in between.
+  useEffect(() => {
+    document.documentElement.setAttribute("data-scheme", effectiveScheme);
+  }, [effectiveScheme]);
+
   const patchset = useMemo(() => (review ? activePatchset(review) : undefined), [review]);
   // A GitHub-PR review is a SNAPSHOT of a pinned range, not the working tree, so
   // the working-tree freshness watcher below must not run against it (it would
