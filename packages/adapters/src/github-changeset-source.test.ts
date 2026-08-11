@@ -122,6 +122,11 @@ describe("GitHubChangesetSource — local-diff-first (acceptance #1, #4)", () =>
     const decomposition = decompose(result.patchset);
     expect(decomposition.hunks.length).toBeGreaterThan(0);
     expect(result.pin).not.toBeNull();
+    // The deep-fetched PR is carried (issue #21) so the caller can build the real
+    // post-target: the forge node id (`forgeRef`) a real GitHub egress posts against.
+    expect(result.pullRequest.forgeRef).toBe("PR_7");
+    expect(result.pullRequest.ref).toEqual(ref);
+    expect(result.pullRequest.headOid).toBe(headOid);
   });
 
   it("pins the reviewed head at review start (proves the OIDs are reachable locally)", async () => {

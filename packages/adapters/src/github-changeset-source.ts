@@ -80,6 +80,13 @@ export interface GitHubChangesetResult {
   sso: SsoState;
   /** The pin for force-push-proof reproduction; null on the degraded REST path. */
   pin: ReviewedHeadPin | null;
+  /**
+   * The deep-fetched PR (issue #21). Carried so the caller can build the real
+   * post-target (repo + number + `forgeRef` node id + `headOid`) that a real GitHub
+   * egress needs, without a second `fetchPullRequest`. Identity only — content still
+   * comes from the local diff / REST fallback in `patchset`.
+   */
+  pullRequest: ForgePullRequest;
 }
 
 export interface GitHubChangesetSourceDeps {
@@ -159,6 +166,7 @@ export class GitHubChangesetSource {
         patchset: { ...patchset, intent },
         sso: pr.sso,
         pin: { root: match.root, baseOid: pr.baseOid, headOid: pr.headOid, baseRef: pr.baseRef },
+        pullRequest: pr,
       };
     }
 
@@ -173,6 +181,7 @@ export class GitHubChangesetSource {
       patchset: { ...restPatchset, intent: forgePrIntent("github-rest", pr, []) },
       sso: combinedSso,
       pin: null,
+      pullRequest: pr,
     };
   }
 

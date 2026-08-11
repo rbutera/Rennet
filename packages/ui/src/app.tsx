@@ -806,14 +806,23 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         ],
       }
     : undefined;
-  // Sign the paper by running the real publish engine (bead wire-sign-publish).
-  // Builds the review-comments outbound form from the collated draft, then invokes
-  // `publish.review` in DRY-RUN (the default): MAIN constructs the exact GitHub
-  // request, re-derives the canonical payload and fails CLOSED on any mismatch
-  // ("what you see is what leaves", R33), and posts NOTHING. The verdict is derived
-  // from the dispositions and passed explicitly, so what the paper SHOWS is exactly
-  // what the engine would post. The outcome is surfaced on the paper; the real,
-  // consented, non-dry-run send is a later, deliberately gated act (#21).
+  // Sign the paper by running the real publish engine (bead wire-sign-publish; the
+  // real-post flip, issue #21). Builds the review-comments outbound form from the
+  // collated draft — the SAME `inkDraft` bytes the paper previewed — then invokes
+  // `publish.review`:
+  //   • A review opened from a REAL pull request carries `review.postTarget` (the
+  //     repo + PR number + forge node id + reviewed head). On a completed hold-to-sign
+  //     THIS function runs, mints the single-use consent token bound to exactly
+  //     (review, target, payload) via `publish.requestConsent`, then sends the review
+  //     for REAL (`dryRun: false`, carrying that token). MAIN re-derives the canonical
+  //     payload and fails CLOSED on any drift (R33), so what the paper showed is what
+  //     leaves — byte-for-byte.
+  //   • A LOCAL working-tree review has no `postTarget` (there is no PR to post to),
+  //     so the sign stays a DRY RUN against the local-preview target: MAIN builds the
+  //     exact request and posts NOTHING, honestly.
+  // The consent token is minted ONLY here, ONLY inside the completed sign — never
+  // autonomously, never by any other path — so a real post cannot happen without the
+  // human's hold-to-sign. A partial/absent hold never calls this function.
   async function publishReview(): Promise<void> {
     if (!review || !patchset) return;
     // Publish the INK subset only (issue #109), never the full draft — the same
@@ -824,28 +833,48 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     if (comments.length === 0) return; // the paper's sign is already disabled when empty
     const payload = reviewCommentsPayload(comments);
     const verdict = deriveReviewEvent(comments);
-    const target = previewPublishTarget(patchset.repository);
+    // The REAL post-target lives on the review iff it was opened from a real PR and is
+    // not retrospective; its presence is exactly "this review may post to a real PR".
+    // Absent ⇒ a local capture: fall to the local-preview dry-run target (posts nothing).
+    const realTarget = review.retrospective ? undefined : review.postTarget;
+    const target = realTarget ?? previewPublishTarget(patchset.repository);
+    // The canonical review-comment shape MAIN validates against `payload` (the ui
+    // `ReviewComment` carries a `refined` flag the command schema does not — drop it,
+    // and omit an absent line so `line ?? null` matches on both sides).
+    const commentsInput = comments.map((comment) => ({
+      path: comment.path,
+      ...(comment.line !== undefined ? { line: comment.line } : {}),
+      side: comment.side,
+      type: comment.type,
+      body: comment.body,
+    }));
     setBusy(true);
     setError(undefined);
     try {
+      // Mint the single-use consent token ONLY for a real post (real target present).
+      // Bound to (review, target, payload): MAIN consumes it at egress and any drift
+      // in target or payload voids it. This is the sole minting site, reached only on
+      // a completed hold-to-sign.
+      let authorization: string | undefined;
+      if (realTarget) {
+        const consent = await bridge.invoke("publish.requestConsent", {
+          commandId: crypto.randomUUID(),
+          reviewId: review.id,
+          target: realTarget,
+          payload,
+        });
+        authorization = consent.authorization;
+      }
       const outcome = await bridge.invoke("publish.review", {
         commandId: crypto.randomUUID(),
         reviewId: review.id,
         target,
-        // The canonical review-comment shape MAIN validates against `payload` (the
-        // ui `ReviewComment` carries a `refined` flag the command schema does not —
-        // drop it, and omit an absent line so `line ?? null` matches on both sides).
-        comments: comments.map((comment) => ({
-          path: comment.path,
-          ...(comment.line !== undefined ? { line: comment.line } : {}),
-          side: comment.side,
-          type: comment.type,
-          body: comment.body,
-        })),
+        comments: commentsInput,
         payload,
         verdict,
-        // Explicit true (the schema default). Real posting must opt in with false.
-        dryRun: true,
+        // Real post iff we hold a consent token (real target); otherwise a dry run.
+        // An omitted flag never posts — the real path opts in explicitly with false.
+        ...(authorization ? { authorization, dryRun: false } : { dryRun: true }),
       });
       setPublishResult({
         kind: "review",
@@ -857,7 +886,8 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         method: outcome.request.method,
         marker: outcome.marker,
         ledgerCount: outcome.ledger.length,
-        preview: true,
+        // A real post targets a real PR; only the local-capture path is a preview.
+        preview: realTarget === undefined,
       });
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -923,6 +953,16 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           variant={destinationVariantForMode}
           ledger={publishLedger}
           result={publishResult}
+          // A completed sign performs a REAL post only when this review was opened
+          // from a real PR (`postTarget` present), is not retrospective, and we are
+          // posting the review (other-pr). The flag changes ONLY the pre-sign copy;
+          // the actual post is still gated by the consent token minted on sign.
+          willPost={
+            destinationMode === "other-pr" &&
+            review?.retrospective !== true &&
+            review?.postTarget !== undefined
+          }
+          postLabel={review?.postTarget ? previewTargetLabel(review.postTarget) : undefined}
           onBack={() => {
             // Editing lives on the draft; a returned-to edit invalidates the outcome.
             setPublishResult(undefined);

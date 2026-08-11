@@ -95,6 +95,8 @@ export function PublishSheet({
   holdToSignMs = 800,
   ledger,
   result,
+  willPost = false,
+  postLabel,
   onSign,
   onBack,
   onClose,
@@ -134,6 +136,17 @@ export function PublishSheet({
    * pre-sign notice. Absent ⇒ the pre-sign notice describes what a sign will do.
    */
   result?: PublishOutcome;
+  /**
+   * True when a completed hold-to-sign will perform a REAL GitHub post (issue #21):
+   * the review was opened from a real pull request. It changes ONLY the pre-sign
+   * copy — the notice states honestly that signing posts to GitHub, rather than the
+   * dry-run copy — so a real post is never described as "posts nothing". The gate
+   * mechanics are unchanged: the human's hold is still the sole trigger. Default
+   * false ⇒ the local-capture dry-run copy (the existing behaviour).
+   */
+  willPost?: boolean;
+  /** The real post destination label (`owner/name#number`), shown in the real-post notice. */
+  postLabel?: string;
   onSign?: (payload: string) => void;
   /** Back to the collation draft — editing lives there, never here (R40). */
   onBack?: () => void;
@@ -402,10 +415,16 @@ export function PublishSheet({
             Hold to hand off records this PR submission as ready. Creating the pull request is a
             separate, gated step (#21) — nothing is pushed from here.
           </p>
+        ) : willPost ? (
+          <p className="publish-sheet-shell-notice" data-testid="will-post-notice" role="note">
+            Hold to sign posts this review to {postLabel ?? "the pull request"} on GitHub, as you.
+            This is the one action that leaves the machine — nothing posts until you complete the
+            hold.
+          </p>
         ) : (
           <p className="publish-sheet-shell-notice" role="note">
             Hold to sign runs the publish engine in dry run: it builds the exact GitHub request and
-            posts nothing. Real posting lands with #21.
+            posts nothing (this review has no pull request to post to).
           </p>
         )}
 

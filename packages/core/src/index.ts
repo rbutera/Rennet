@@ -13,6 +13,7 @@ import {
   type RelevanceCandidate,
   type RelevanceVerdict,
   type Review,
+  type ReviewPostTarget,
 } from "@rennet/types";
 import { v7 as uuidv7 } from "uuid";
 
@@ -66,6 +67,8 @@ export type ReviewEvent =
       patchset: Patchset;
       /** Opened read-only, over a merged/any PR: MAIN refuses egress (see `Review.retrospective`). */
       retrospective?: boolean;
+      /** The real PR post-target (issue #21); present only on a non-retrospective PR review. */
+      postTarget?: ReviewPostTarget;
     }
   | { type: "PatchsetActivated"; version: 1; reviewId: string; patchset: Patchset }
   | {
@@ -479,6 +482,10 @@ export function foldReview(current: Review | null, event: ReviewEvent): Review {
         // Only stamp the flag when the review is retrospective, so a normal review's
         // snapshot is byte-identical to before (back-compat with persisted state).
         ...(event.retrospective ? { retrospective: true } : {}),
+        // Only stamp the post-target when one was supplied (a non-retrospective PR
+        // review). A local capture / retrospective review omits it, so its snapshot
+        // stays byte-identical to before (back-compat with persisted state).
+        ...(event.postTarget ? { postTarget: event.postTarget } : {}),
       };
     case "PatchsetActivated": {
       if (!current || current.id !== event.reviewId) {
@@ -616,10 +623,20 @@ export class ReviewService {
   async createReviewFromPatchset(
     commandId: string,
     patchset: Patchset,
-    options?: { retrospective?: boolean },
+    options?: { retrospective?: boolean; postTarget?: ReviewPostTarget },
   ): Promise<Review> {
     const retrospective = options?.retrospective ?? false;
-    const digest = payloadDigest({ patchsetId: patchset.id, mode: "open-pr", retrospective });
+    // A retrospective review must never carry a post-target (nothing may be posted
+    // from it), so drop it defensively even if a caller supplied both.
+    const postTarget = retrospective ? undefined : options?.postTarget;
+    const digest = payloadDigest({
+      patchsetId: patchset.id,
+      mode: "open-pr",
+      retrospective,
+      // The post-target is part of the review's identity: two opens of the same
+      // patchset against different PR coordinates are different reviews.
+      postTarget: postTarget ?? null,
+    });
     const receipt = this.store.receipt(commandId, digest);
     if (receipt) return receipt;
     const event: ReviewEvent = {
@@ -628,6 +645,7 @@ export class ReviewService {
       reviewId: uuidv7(),
       patchset,
       ...(retrospective ? { retrospective: true } : {}),
+      ...(postTarget ? { postTarget } : {}),
     };
     const review = foldReview(null, event);
     return this.store.commit(commandId, digest, [event], review);
