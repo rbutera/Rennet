@@ -17,6 +17,11 @@ export default defineConfig({
     outDir: resolve(here, "dist/main"),
     rollupOptions: {
       external: ["electron", ...builtinModules, ...builtinModules.map((name) => `node:${name}`)],
+      // The main is CJS, but `apps/desktop/package.json` is `"type": "module"`, so a
+      // split chunk emitted with the default `.js` extension is loaded as ESM and
+      // crashes with "exports is not defined". Force every shared/dynamic-import
+      // chunk to `.cjs` so it is loaded as CommonJS, matching `index.cjs`.
+      output: { chunkFileNames: "[name]-[hash].cjs" },
     },
     sourcemap: true,
     target: "node24",

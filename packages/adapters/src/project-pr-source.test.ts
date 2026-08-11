@@ -238,7 +238,7 @@ describe("createGitHubProjectPrSource — listOpenPullRequests", () => {
   it("marks truncated when SSO returns partial-results even on a single page", async () => {
     const { http } = makeHttp({ viewer: "octocat" });
     // Override: the PR page carries an SSO partial-results header.
-    const partialHttp: HttpFetch = async (url, init) => {
+    const partialHttp: HttpFetch = async (_url, init) => {
       const body = JSON.parse(init?.body ?? "{}") as { query: string };
       if (!body.query.includes("pullRequests"))
         return response({ data: { viewer: { login: "octocat" } } });

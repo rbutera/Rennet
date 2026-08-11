@@ -54,7 +54,7 @@ function patchsetOf(opts: {
 
 /** A git runner backed by an in-memory tree at `headOid` (`git show` + `git ls-tree`). */
 function fakeGit(
-  headOid: string,
+  _headOid: string,
   tree: Record<string, string>,
   specs: Record<string, string[]>,
 ): GitExec {
