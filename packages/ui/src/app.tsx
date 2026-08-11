@@ -567,7 +567,6 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setReloadNonce((nonce) => nonce + 1);
   }
 
-
   async function chooseRepository(): Promise<void> {
     setBusy(true);
     setError(undefined);

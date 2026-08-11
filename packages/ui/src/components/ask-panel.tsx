@@ -40,11 +40,7 @@ export interface AskPanelProps {
  * but the bridge and the review id. Asking a model is Rennet's whole job — the ask
  * just runs, with no consent hook.
  */
-export function AskPanel({
-  bridge,
-  reviewId,
-  timeoutMs = DEFAULT_ASK_TIMEOUT_MS,
-}: AskPanelProps) {
+export function AskPanel({ bridge, reviewId, timeoutMs = DEFAULT_ASK_TIMEOUT_MS }: AskPanelProps) {
   // The routing for the next question. Defaults to "orchestrator" so pressing Ask
   // without touching the caret NEVER fires a second model (the same wrong-side-safe
   // default the schema and router enforce).
