@@ -1335,12 +1335,13 @@ app.whenReady().then(async () => {
     }),
     // review.refine (issue #19): the LIVE comment-refinement producer. Rai's
     // headline feature — a rough note refined into a clean comment by a real,
-    // council-routed model turn. Runs on the Codex seat (the council's refinement
-    // assignment when Codex is installed; a Claude-only machine gets an honest
-    // `unavailable` in this slice). Same absolute-binary resolution the ask-AI
-    // executor and pipeline seat use (bead workspace-6qp15).
+    // council-routed model turn. Runs on WHICHEVER seat the council resolves: Codex
+    // (Terra) when installed — the same absolute-binary resolution the ask-AI
+    // executor and pipeline seat use (bead workspace-6qp15) — else the Claude
+    // adapter (a light read-only session with the inline schema, the same
+    // structured-output mechanism every pipeline lens seat uses; no docType).
     refineComment: createLiveRefinePort({
-      claudeInstalled: async () => (await getClaudeHarness()).discovery.chosen?.path != null,
+      claudePort: async () => (await getClaudeHarness()).adapter ?? null,
       codexExecutor: async () => {
         const codex = await getCodexResolution();
         if (codex.binPath === null) return null;

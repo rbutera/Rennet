@@ -1,7 +1,9 @@
 import {
   type CodexExecutor,
+  type HarnessPort,
   providerHarness,
   type RefinePort,
+  type RefinePortResult,
   refineComment,
   resolveAssignment,
 } from "@rennet/core";
@@ -21,18 +23,24 @@ import type {
 // empty/byte-identical honesty floor) and is unit-proven; this module supplies
 // the ONE real turn behind it. Council-routed: `resolveAssignment` picks the
 // model + effort for the `comment-refinement` job (the previously-dead catalogue
-// row goes live here), and the turn runs on the resolved Codex seat — the same
-// `codex exec` executor `review.ask`'s Codex leg uses.
+// row goes live here), and the turn runs on WHICHEVER harness the council resolves.
 //
-// Slice A runs the refiner on the Codex seat only. A machine with no Codex
-// installed (the council then resolves a Claude model) has no refiner in this
-// slice: the port returns an HONEST `unavailable`, and the renderer keeps showing
-// the user's raw note — the loop failing is worse prose, never lost work, never a
-// silent rewrite. Wiring a Claude structured seat (a `comment-refinement` RSP
-// docType) is the documented follow-up.
+// BOTH seats are live:
+//   • Codex — one `codex exec` constrained to the inline `{verdict, refinedBody}`
+//     schema (the executor `review.ask`'s Codex leg uses). The council's
+//     refinement assignment whenever Codex is installed (Terra).
+//   • Claude — one light read-only adapter session with the SAME inline schema
+//     passed straight through to the SDK's `json_schema` output format. This is
+//     the exact structured-output mechanism every pipeline lens seat already uses
+//     live — it needs NO `comment-refinement` RSP docType. It carries a
+//     Claude-only machine (the council resolves Sonnet there).
+//
+// A refine only degrades to an honest `unavailable` when NEITHER seat is
+// installed. A failed/unavailable turn NEVER returns the raw dressed as refined —
+// the renderer keeps the user's note as the effective body.
 //
 // Electron-free by construction (injected functions as values), so it is
-// unit-testable with fakes — no Electron, no real `codex`.
+// unit-testable with fakes — no Electron, no real `codex`, no real `claude`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The council job id for comment refinement (light tier, §2.2 row 14). */
@@ -108,6 +116,34 @@ export function extractFileDiff(rawDiff: string, path: string, maxBytes: number)
   return `${section.slice(0, maxBytes)}\n… (diff truncated at ${maxBytes} bytes)`;
 }
 
+/** Render a thrown value into a turn-failure message (mirrors harness-run-turn). */
+function describeThrow(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === "string") return error;
+  try {
+    return String(error);
+  } catch {
+    return "an uncoercible non-Error value";
+  }
+}
+
+/**
+ * Map a model's structured output to a `RefinePortResult` — shared by both seats,
+ * so Codex and Claude produce byte-identical results for the core router. An
+ * unrecognised verdict is a failure (never a fabricated refine); a `no-change`
+ * with an absent body is honest; a `refined` verdict's body (if any) rides
+ * through and the core router enforces the empty/byte-identical floor over it.
+ */
+function mapRefineOutput(output: unknown): RefinePortResult {
+  const record = output as { verdict?: unknown; refinedBody?: unknown } | null;
+  const verdict = record?.verdict;
+  if (verdict !== "refined" && verdict !== "no-change") {
+    return { status: "failed", reason: "the refiner returned an unrecognised verdict" };
+  }
+  const refinedBody = typeof record?.refinedBody === "string" ? record.refinedBody : undefined;
+  return { status: "emitted", verdict, ...(refinedBody === undefined ? {} : { refinedBody }) };
+}
+
 /**
  * Build a `RefinePort` over a Codex executor bound to the council-resolved model +
  * effort. One `codex exec` per refine, constrained to `REFINE_OUTPUT_SCHEMA`. A
@@ -123,16 +159,61 @@ export function codexRefinePort(
   return async (prompt) => {
     try {
       const result = await executor({ model, effort, prompt, outputSchema: REFINE_OUTPUT_SCHEMA });
-      const output = result.output as { verdict?: unknown; refinedBody?: unknown } | null;
-      const verdict = output?.verdict;
-      if (verdict !== "refined" && verdict !== "no-change") {
-        return { status: "failed", reason: "the refiner returned an unrecognised verdict" };
-      }
-      const refinedBody = typeof output?.refinedBody === "string" ? output.refinedBody : undefined;
-      return { status: "emitted", verdict, ...(refinedBody === undefined ? {} : { refinedBody }) };
+      return mapRefineOutput(result.output);
     } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      return { status: "failed", reason: `the refine turn failed: ${detail}` };
+      return { status: "failed", reason: `the refine turn failed: ${describeThrow(error)}` };
+    }
+  };
+}
+
+/**
+ * Build a `RefinePort` over the Claude harness adapter. One light READ-ONLY
+ * session per refine, with `REFINE_OUTPUT_SCHEMA` passed straight to the SDK's
+ * `json_schema` output format — the SAME structured-output mechanism every
+ * pipeline lens seat uses, so no `comment-refinement` docType is needed. The drain
+ * mirrors `createHarnessRunTurn`: a completed turn with structured output emits;
+ * everything else (a construction throw, an error frame, a failed/cancelled
+ * outcome, no structured output) is an honest turn failure. The session is always
+ * closed. `cwd` is the reviewed repo root; the session never writes or execs.
+ */
+export function claudeRefinePort(port: HarnessPort, cwd: string, model?: string): RefinePort {
+  return async (prompt) => {
+    let session: Awaited<ReturnType<HarnessPort["createSession"]>>;
+    try {
+      session = await port.createSession({
+        cwd,
+        readOnly: true,
+        outputSchema: REFINE_OUTPUT_SCHEMA,
+        ...(model === undefined ? {} : { model }),
+      });
+    } catch (error) {
+      return {
+        status: "failed",
+        reason: `the refine session failed to start: ${describeThrow(error)}`,
+      };
+    }
+    try {
+      await session.send({ prompt });
+      for await (const event of session.events) {
+        if (event.kind === "error") return { status: "failed", reason: event.error.message };
+        if (event.kind === "session.ended") {
+          const outcome = event.outcome;
+          if (outcome.status === "completed") {
+            if (outcome.structuredOutput === undefined) {
+              return { status: "failed", reason: "the refine turn produced no structured output" };
+            }
+            return mapRefineOutput(outcome.structuredOutput);
+          }
+          if (outcome.status === "failed")
+            return { status: "failed", reason: outcome.error.message };
+          return { status: "failed", reason: "the refine turn was cancelled" };
+        }
+      }
+      return { status: "failed", reason: "the refine turn ended without a terminal frame" };
+    } catch (error) {
+      return { status: "failed", reason: `the refine turn threw: ${describeThrow(error)}` };
+    } finally {
+      await session.close();
     }
   };
 }
@@ -148,13 +229,17 @@ export interface LiveRefineInput {
 
 /** The deps the live port is bound to (all injected so the module stays testable). */
 export interface LiveRefineDeps {
-  /** Whether the Claude adapter is installed — one half of the council availability. */
-  claudeInstalled(): Promise<boolean>;
+  /**
+   * The Claude harness adapter, or null when no `claude` is installed. Null is both
+   * the "Claude not installed" half of the council availability and the "no Claude
+   * seat to run" signal.
+   */
+  claudePort(): Promise<HarnessPort | null>;
   /**
    * The Codex executor, resolved to the absolute binary (bead workspace-6qp15),
-   * or null when no `codex` is installed. Null is BOTH the "Codex not installed"
-   * half of the council availability AND the "no seat to run" signal — the port
-   * returns an honest `unavailable` rather than shelling a bad `codex`.
+   * or null when no `codex` is installed. Null is both the "Codex not installed"
+   * half of the council availability and the "no Codex seat to run" signal — the
+   * port returns an honest `unavailable` rather than shelling a bad `codex`.
    */
   codexExecutor(): Promise<CodexExecutor | null>;
 }
@@ -162,40 +247,49 @@ export interface LiveRefineDeps {
 /**
  * Build the LIVE `review.refine` port. Derives the council availability from the
  * same probes it executes on (claude adapter + codex executor), resolves the
- * model/effort through the council, runs the one real Codex turn on the resolved
- * seat, and returns the router's honest result. Degrades to `unavailable` (never a
- * throw, never a fabricated refine) when the Codex seat is not resolvable.
+ * model/effort through the council, and runs the one real turn on WHICHEVER
+ * harness the council picked. Degrades to an honest `unavailable` (never a throw,
+ * never a fabricated refine) only when NEITHER seat backs the resolved harness.
  */
 export function createLiveRefinePort(
   deps: LiveRefineDeps,
 ): (input: LiveRefineInput) => Promise<RefinementResult> {
   return async (input) => {
-    // Probe both seats once; the Codex probe is both the availability signal and
-    // the executor. (Refinement resolves to the Codex seat whenever Codex is
-    // installed — Table 1 and Table 3 both assign it to Terra — so a Claude-only
-    // machine is the only `unavailable` case; the claude probe keeps the trace honest.)
-    const [claude, executor] = await Promise.all([deps.claudeInstalled(), deps.codexExecutor()]);
+    // Probe both seats once; each probe is both an availability signal and the
+    // executable. The council resolves comment-refinement to Codex (Terra) whenever
+    // Codex is installed (Table 1 + Table 3), and to Claude (Sonnet) on a
+    // Claude-only machine (Table 2); both are now live.
+    const [claudePort, executor] = await Promise.all([deps.claudePort(), deps.codexExecutor()]);
     const installed: CouncilHarnessId[] = [];
-    if (claude) installed.push("claude-code");
+    if (claudePort !== null) installed.push("claude-code");
     if (executor !== null) installed.push("codex");
 
     const resolution = resolveAssignment(REFINE_JOB_ID, { availability: { installed } });
     if (resolution.kind !== "model") {
       return { status: "unavailable", reason: "comment refinement resolved to no model seat" };
     }
-    if (executor === null || providerHarness(resolution.model) !== "codex") {
-      // No Codex seat resolvable in this slice: either `codex` is not installed, or
-      // the council resolved a Claude seat (a Claude-only machine, or a pin). Slice
-      // A has no Claude refiner; say so plainly rather than fake or crash.
+
+    const harness = providerHarness(resolution.model);
+    let port: RefinePort | null = null;
+    if (harness === "codex" && executor !== null) {
+      port = codexRefinePort(executor, resolution.model, resolution.effort);
+    } else if (harness === "claude-code" && claudePort !== null) {
+      // Follow the pipeline's Claude-seat convention: the council model rides the
+      // result as provenance, but the session runs on the adapter's own default
+      // model (the pipeline does not re-model its Claude seats either).
+      port = claudeRefinePort(claudePort, input.review.repositoryRoot);
+    }
+    if (port === null) {
+      // Neither seat backs the resolved harness — no model to refine with.
       return {
         status: "unavailable",
-        reason: "comment refinement needs the Codex seat, which is not installed",
+        reason: "comment refinement has no model seat installed",
       };
     }
+
     const context = input.path
       ? extractFileDiff(activePatchsetOf(input.review).rawDiff, input.path, REFINE_DIFF_CEILING)
       : "";
-    const port = codexRefinePort(executor, resolution.model, resolution.effort);
     return refineComment(
       {
         raw: input.raw,
