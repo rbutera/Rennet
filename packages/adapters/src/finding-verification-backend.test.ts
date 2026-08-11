@@ -307,8 +307,7 @@ describe("createVerificationTurn (#179)", () => {
     const turn = createVerificationTurn(port, { cwd: "/repo", model: "claude-opus-4-8" });
     const result = await turn("verify this");
     expect(result).toEqual({ status: "emitted", body });
-    // A fresh, read-only, schema-constrained session on the requested (different) seat.
-    expect(state.spec?.readOnly).toBe(true);
+    // A fresh, schema-constrained session on the requested (different) seat.
     expect(state.spec?.outputSchema).toBeDefined();
     expect(state.spec?.model).toBe("claude-opus-4-8");
     expect(state.sent).toHaveLength(1);

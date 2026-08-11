@@ -288,8 +288,6 @@ export interface SessionSpec {
   readonly cwd: string;
   readonly model?: string;
   readonly systemPrompt?: { readonly mode: "replace" | "append"; readonly text: string };
-  /** The review default. Read-only means every write/exec is denied by policy. */
-  readonly readOnly: boolean;
   readonly allowedTools?: readonly string[];
   readonly outputSchema?: unknown;
   readonly signal?: AbortSignal;
