@@ -49,11 +49,13 @@ import {
   DECISION_CONTRACT,
   type PromptContract,
   renderBaseInstruction,
+  renderConventionLayer,
   renderHypothesisLayer,
 } from "@rennet/instructions";
 import { computeInputDigest, parseAnchor, resolveAnchor, validateDocument } from "@rennet/protocol";
 import type {
   BudgetGrant,
+  ConventionCatalogue,
   DecisionEvidence,
   DecisionRecordBody,
   DecisionRecordElement,
@@ -117,6 +119,15 @@ export interface RunDecisionAngleInput {
    * have chosen. Absent, the runner assembles exactly as it does today.
    */
   readonly hypothesis?: ReviewHypothesis;
+  /**
+   * The per-project convention / anti-pattern catalogue (#180). When present with
+   * at least one rule, it is rendered as a labelled checklist layer after the
+   * hypothesis and before the general guidance — so the runner can surface a
+   * decision where the change diverges from an established convention, reporting
+   * the underlying REASON (never a rule number). Absent or empty, the runner
+   * assembles exactly as it does today.
+   */
+  readonly conventions?: ConventionCatalogue;
   /** The `decision.record` contract; defaults to the shipped `DECISION_CONTRACT` (#137). */
   readonly contract?: PromptContract;
   readonly provenance: DecisionProvenanceSeed;
@@ -444,6 +455,12 @@ export async function runDecisionAngle(
   const intentText = renderIntent(intent);
   const hypothesisLayer =
     input.hypothesis === undefined ? undefined : renderHypothesisLayer(input.hypothesis);
+  // The per-project convention checklist (#180). An absent catalogue, or one with
+  // no rules, yields no layer — the assembled prompt is byte-identical to today.
+  const conventionLayer =
+    input.conventions === undefined || input.conventions.rules.length === 0
+      ? undefined
+      : renderConventionLayer(input.conventions);
 
   const attempts: DecisionAttempt[] = [];
   let lastReportText: string | undefined;
@@ -472,6 +489,7 @@ export async function runDecisionAngle(
       {
         base,
         ...(hypothesisLayer === undefined ? {} : { hypothesis: hypothesisLayer }),
+        ...(conventionLayer === undefined ? {} : { conventions: conventionLayer }),
         ...(guidance?.general === undefined ? {} : { general: guidance.general }),
         ...(guidance?.files === undefined ? {} : { files: guidance.files }),
         ...(taskText.length === 0 ? {} : { task: taskText }),

@@ -54,11 +54,13 @@ import {
   NOISE_CONTRACT,
   type PromptContract,
   renderBaseInstruction,
+  renderConventionLayer,
   renderHypothesisLayer,
 } from "@rennet/instructions";
 import { computeInputDigest, parseAnchor, resolveAnchor, validateDocument } from "@rennet/protocol";
 import type {
   BudgetGrant,
+  ConventionCatalogue,
   InvocationBudget,
   NoiseBody,
   NoiseCategory,
@@ -107,6 +109,15 @@ export interface RunNoiseAngleInput {
    * Absent, the runner assembles exactly as it does today.
    */
   readonly hypothesis?: ReviewHypothesis;
+  /**
+   * The per-project convention / anti-pattern catalogue (#180). When present with
+   * at least one rule, it is rendered as a labelled checklist layer after the
+   * hypothesis and before the general guidance. It is fed here for parity across
+   * all three lenses (a repo convention can bear on what counts as noise, e.g. a
+   * project that treats a generated file as reviewable). Absent or empty, the
+   * runner assembles exactly as it does today.
+   */
+  readonly conventions?: ConventionCatalogue;
   /** The `noise` contract; defaults to the shipped `NOISE_CONTRACT` (#34). */
   readonly contract?: PromptContract;
   readonly provenance: NoiseProvenanceSeed;
@@ -425,6 +436,12 @@ export async function runNoiseAngle(input: RunNoiseAngleInput): Promise<RunNoise
   const payload = renderPayload(manifest, patchsetId);
   const hypothesisLayer =
     input.hypothesis === undefined ? undefined : renderHypothesisLayer(input.hypothesis);
+  // The per-project convention checklist (#180). An absent catalogue, or one with
+  // no rules, yields no layer — the assembled prompt is byte-identical to today.
+  const conventionLayer =
+    input.conventions === undefined || input.conventions.rules.length === 0
+      ? undefined
+      : renderConventionLayer(input.conventions);
 
   const attempts: NoiseAttempt[] = [];
   let lastReportText: string | undefined;
@@ -450,6 +467,7 @@ export async function runNoiseAngle(input: RunNoiseAngleInput): Promise<RunNoise
       {
         base,
         ...(hypothesisLayer === undefined ? {} : { hypothesis: hypothesisLayer }),
+        ...(conventionLayer === undefined ? {} : { conventions: conventionLayer }),
         ...(guidance?.general === undefined ? {} : { general: guidance.general }),
         ...(guidance?.files === undefined ? {} : { files: guidance.files }),
         ...(lastReportText === undefined ? {} : { task: lastReportText }),

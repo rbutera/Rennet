@@ -36,11 +36,13 @@ import {
   FINDING_CONTRACT,
   type PromptContract,
   renderBaseInstruction,
+  renderConventionLayer,
   renderHypothesisLayer,
 } from "@rennet/instructions";
 import { computeInputDigest, parseAnchor, resolveAnchor, validateDocument } from "@rennet/protocol";
 import type {
   BudgetGrant,
+  ConventionCatalogue,
   FindingBody,
   FindingElement,
   FindingSeverity,
@@ -89,6 +91,15 @@ export interface RunFindingAngleInput {
    * as it does today, with no hypothesis layer.
    */
   readonly hypothesis?: ReviewHypothesis;
+  /**
+   * The per-project convention / anti-pattern catalogue (#180). When present with
+   * at least one rule, it is rendered as a labelled checklist layer positioned
+   * after the hypothesis and before the general guidance — so the runner checks
+   * the change against the project's established conventions and reports the
+   * underlying REASON (never a rule number) when it diverges. Absent or empty, the
+   * runner assembles exactly as it does today, with no conventions layer.
+   */
+  readonly conventions?: ConventionCatalogue;
   /** The `finding` contract; defaults to the shipped `FINDING_CONTRACT` (#32). */
   readonly contract?: PromptContract;
   readonly provenance: FindingProvenanceSeed;
@@ -321,6 +332,12 @@ export async function runFindingAngle(input: RunFindingAngleInput): Promise<RunF
   const payload = renderPayload(manifest, patchsetId);
   const hypothesisLayer =
     input.hypothesis === undefined ? undefined : renderHypothesisLayer(input.hypothesis);
+  // The per-project convention checklist (#180). An absent catalogue, or one with
+  // no rules, yields no layer — the assembled prompt is byte-identical to today.
+  const conventionLayer =
+    input.conventions === undefined || input.conventions.rules.length === 0
+      ? undefined
+      : renderConventionLayer(input.conventions);
 
   const attempts: FindingAttempt[] = [];
   let lastReportText: string | undefined;
@@ -346,6 +363,7 @@ export async function runFindingAngle(input: RunFindingAngleInput): Promise<RunF
       {
         base,
         ...(hypothesisLayer === undefined ? {} : { hypothesis: hypothesisLayer }),
+        ...(conventionLayer === undefined ? {} : { conventions: conventionLayer }),
         ...(guidance?.general === undefined ? {} : { general: guidance.general }),
         ...(guidance?.files === undefined ? {} : { files: guidance.files }),
         ...(lastReportText === undefined ? {} : { task: lastReportText }),

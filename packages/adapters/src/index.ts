@@ -68,6 +68,12 @@ export {
   ZERO_CODEX_USAGE,
 } from "./codex-session-usage";
 export {
+  CONVENTIONS_FILE,
+  type ConventionCatalogueLoad,
+  type ConventionLoadReason,
+  loadConventionCatalogue,
+} from "./convention-catalogue-reader";
+export {
   decisionsRecordFixture,
   emptyDecisionsRecordFixture,
   failedDecisionsRunStatus,

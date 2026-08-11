@@ -26,6 +26,7 @@ import {
   GitHubForgeAdapter,
   GitHubPublishAdapter,
   type HttpFetch,
+  loadConventionCatalogue,
   parseGitHubPrRef,
   projectDetailFixture,
   RepoWatcher,
@@ -55,6 +56,7 @@ import { type CommandName, type DetectedHarness, isCommandName } from "@rennet/p
 import type {
   Canvas,
   CanvasAngle,
+  ConventionCatalogue,
   CouncilHarnessId,
   DecisionsRunStatus,
   ElementDiffs,
@@ -335,7 +337,12 @@ async function buildCanvasesForReview(review: Review): Promise<{
   // and every lens runs exactly as before.
   const hypothesis = await computeReviewHypothesis(review, patchset, adapter);
 
-  const decisions = await runDecisionsForReview(review, patchset, adapter, hypothesis);
+  // The per-project convention checklist (#180), sourced once and fed to the
+  // Decisions runner as a labelled layer. Absent (no catalogue file), the runner
+  // reasons exactly as before.
+  const conventions = loadReviewConventions(review);
+
+  const decisions = await runDecisionsForReview(review, patchset, adapter, hypothesis, conventions);
 
   const result = await buildReviewCanvases({
     reviewId: review.id,
@@ -396,6 +403,19 @@ const HYPOTHESIS_PROVENANCE_SEED = {
     },
   },
 };
+
+/**
+ * Source the per-project convention / anti-pattern catalogue (#180) for a review
+ * from `<repositoryRoot>/.rennet/conventions.json`. Honest degradation: an absent,
+ * unreadable, empty, or all-malformed file yields `undefined` and every lens runs
+ * exactly as before — the catalogue is threaded into the runners ONLY when at
+ * least one valid rule was found. Read once per lens command (a small JSON file),
+ * matching each command's existing self-contained setup (its own decompose +
+ * manifest + budget).
+ */
+function loadReviewConventions(review: Review): ConventionCatalogue | undefined {
+  return loadConventionCatalogue(review.repositoryRoot).catalogue;
+}
 
 /**
  * Produce the committed hypothesis for a review (issue #178), once, before the
@@ -495,6 +515,7 @@ async function runDecisionsForReview(
   patchset: Patchset,
   adapter: Awaited<ReturnType<typeof getClaudeHarness>>["adapter"],
   hypothesis?: ReviewHypothesis,
+  conventions?: ConventionCatalogue,
 ): Promise<{ docs: AdmittedDocument[]; status: DecisionsRunStatus }> {
   if (!adapter) {
     return {
@@ -526,6 +547,10 @@ async function runDecisionsForReview(
     // disconfirmation criteria — so a decision can surface where the change diverges
     // from what we'd have chosen. Absent, the runner reasons exactly as before.
     ...(hypothesis ? { hypothesis } : {}),
+    // The per-project convention catalogue (#180), when sourced, feeds the runner
+    // as a checklist layer — a decision can surface where the change diverges from
+    // an established convention, reporting the reason (never a rule number).
+    ...(conventions ? { conventions } : {}),
     provenance: DECISION_PROVENANCE_SEED,
     // A thrown/rejected turn (a session/transport construction exception, #96)
     // degrades to a turn-failure rather than crashing the command.
@@ -628,12 +653,17 @@ async function runFlaggedReview(review: Review, deepReview = false): Promise<Fla
   // stops spend, never the review. The dual runner guards each seat's turn (a
   // thrown Codex spawn degrades to a failed seat, then the reconcile degrades) and
   // owns the reconcile + the honest single-provider degradation.
+  // The per-project convention checklist (#180), fed to BOTH seats as a labelled
+  // layer. Absent (no catalogue file), each seat assembles exactly as before.
+  const conventions = loadReviewConventions(review);
+
   const { review: flagged } = await runDualFindingReview({
     deepReview,
     patchsetId: patchset.id,
     manifest,
     seats,
     makeBudget: () => createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS),
+    ...(conventions ? { conventions } : {}),
   });
   return flagged;
 }
@@ -699,9 +729,13 @@ async function runNoiseReview(review: Review): Promise<NoiseReview> {
   // A noise run is its own live-budget-gated user action, distinct from
   // review.canvases; the ceiling stops spend, never the review (R10, fail-closed).
   const budget = createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS);
+  // The per-project convention checklist (#180). Absent (no catalogue file), the
+  // runner classifies churn exactly as before.
+  const conventions = loadReviewConventions(review);
   const result = await runNoiseAngle({
     patchsetId: patchset.id,
     manifest,
+    ...(conventions ? { conventions } : {}),
     provenance: NOISE_PROVENANCE_SEED,
     // The runner OWNS the noise-job chip's model label; we ran the Claude harness.
     noiseJobModel: "Claude",

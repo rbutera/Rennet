@@ -23,6 +23,7 @@
 
 import type { AssembleOptions, PromptContract } from "@rennet/instructions";
 import type {
+  ConventionCatalogue,
   CouncilHarnessId,
   DualReviewNote,
   FlaggedReview,
@@ -47,6 +48,8 @@ export interface RunDualFindingReviewInput {
   readonly seats: readonly DualSeat[];
   /** The committed hypothesis (#178), fed to BOTH seats as disconfirmation criteria. */
   readonly hypothesis?: ReviewHypothesis;
+  /** The per-project convention catalogue (#180), fed to BOTH seats as a checklist layer. */
+  readonly conventions?: ConventionCatalogue;
   readonly contract?: PromptContract;
   /** Builds one fresh invocation budget per seat run (each seat its own ceiling). */
   readonly makeBudget: () => InvocationBudget;
@@ -83,6 +86,7 @@ async function runSeat(seat: DualSeat, input: RunDualFindingReviewInput): Promis
     runTurn: guardSeatTurn(seat.runTurn),
     budget: input.makeBudget(),
     ...(input.hypothesis ? { hypothesis: input.hypothesis } : {}),
+    ...(input.conventions ? { conventions: input.conventions } : {}),
     ...(input.contract ? { contract: input.contract } : {}),
     ...(input.guidance ? { guidance: input.guidance } : {}),
     ...(input.assembleOptions ? { assembleOptions: input.assembleOptions } : {}),
