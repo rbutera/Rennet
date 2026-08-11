@@ -27,6 +27,7 @@ export * from "./context-update-stream";
 export * from "./coverage-mapping";
 export * from "./decision-generation";
 export * from "./decomposition";
+export * from "./draft-pr-body";
 export * from "./dual-finding-review";
 export * from "./dual-seat";
 export * from "./element-diffs";

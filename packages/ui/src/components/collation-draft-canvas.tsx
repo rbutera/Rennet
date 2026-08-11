@@ -67,6 +67,25 @@ export type RefineItemState =
   | { readonly status: "unavailable"; readonly reason: string }
   | { readonly status: "failed"; readonly reason: string };
 
+/**
+ * The EPHEMERAL PR-body drafting state (issue #74, M26), tracked by the host while a
+ * drafting turn is in flight or after its outcome. The DRAFTED title+body are durable
+ * in the host's `prDraft` state (the editable fields), so they are NOT here — this
+ * carries only the transient/outcome status the composer shows beside the fields.
+ * Absent ⇒ idle (offer the "Draft with AI" affordance).
+ */
+export type PrDraftState =
+  | { readonly status: "drafting" }
+  | { readonly status: "drafted"; readonly model: string }
+  | { readonly status: "unavailable"; readonly reason: string }
+  | { readonly status: "failed"; readonly reason: string };
+
+/** The editable PR submission the own-branch composer holds (issue #74). */
+export interface PrDraftValues {
+  readonly title: string;
+  readonly body: string;
+}
+
 /** A raw note is refinable when it has actual text (an empty item cannot be cleaned). */
 function isRefinable(item: CollationItem): boolean {
   return item.raw.trim() !== "";
@@ -82,6 +101,10 @@ export function CollationDraftCanvas({
   onKeepRaw,
   onRefineAll,
   refineStates,
+  prDraft,
+  onPrDraftChange,
+  onDraftPrBody,
+  prDraftState,
 }: {
   /** The editable collation draft — the L2 disposition set across every angle. */
   draft: CollationDraft;
@@ -105,6 +128,24 @@ export function CollationDraftCanvas({
   onRefineAll?: () => void;
   /** The ephemeral per-item refine state, keyed by item id (idle when absent). */
   refineStates?: Readonly<Record<string, RefineItemState>>;
+  /**
+   * The editable PR submission draft (issue #74, M26) — own-branch composition only.
+   * The composer renders `prDraft.title`/`prDraft.body` as editable fields and rounds
+   * every keystroke back through `onPrDraftChange`. Absent ⇒ no composer renders (the
+   * other-PR mode, or a host that does not carry it).
+   */
+  prDraft?: PrDraftValues;
+  /** A PR-draft field was edited — the host owns the state (the human's edit is final). */
+  onPrDraftChange?: (next: PrDraftValues) => void;
+  /**
+   * Draft the PR title + body with the model (#74). The host runs the real council-
+   * routed turn and rounds the result into `prDraft`. Absent ⇒ no "Draft with AI"
+   * affordance renders (a composition without the producer wired) — the fields stay
+   * editable and the deterministic body still previews on the paper.
+   */
+  onDraftPrBody?: () => void;
+  /** The ephemeral PR-draft status (idle when absent). */
+  prDraftState?: PrDraftState;
 }) {
   const items = collationItems(draft);
   const empty = draft.length === 0;
@@ -178,6 +219,77 @@ export function CollationDraftCanvas({
             lands with #15/#19.)
           </span>
         </div>
+
+        {/* The PR-submission composer (issue #74, M26) — own-branch composition only.
+            Rennet drafts an honest title + body from the reviewed changeset; the
+            fields are editable and the human's edit is final. This is a DRAFT into a
+            preview: nothing is pushed here (creating the PR is the gated #21 act). */}
+        {variant.mode === "own-branch" && prDraft !== undefined ? (
+          <div className="collation-pr-draft" data-testid="pr-draft-composer">
+            <div className="collation-pr-draft-head">
+              <p className="collation-pr-draft-label">PR submission</p>
+              {onDraftPrBody ? (
+                <button
+                  type="button"
+                  className="collation-pr-draft-btn"
+                  onClick={() => onDraftPrBody()}
+                  disabled={prDraftState?.status === "drafting"}
+                  aria-label="Draft the PR title and description with AI"
+                  title="Draft the PR title and body from your review"
+                >
+                  {prDraftState?.status === "drafting" ? "Drafting…" : "Draft with AI"}
+                </button>
+              ) : null}
+            </div>
+            <label className="collation-pr-draft-field">
+              <span className="collation-pr-draft-field-label">Title</span>
+              <input
+                type="text"
+                className="collation-pr-draft-title"
+                data-testid="pr-draft-title"
+                value={prDraft.title}
+                placeholder="A concise PR title"
+                onChange={(event) => onPrDraftChange?.({ ...prDraft, title: event.target.value })}
+              />
+            </label>
+            <label className="collation-pr-draft-field">
+              <span className="collation-pr-draft-field-label">Description</span>
+              <textarea
+                className="collation-pr-draft-body"
+                data-testid="pr-draft-body"
+                value={prDraft.body}
+                rows={6}
+                placeholder="An honest account of the change — Rennet can draft this from your review."
+                onChange={(event) => onPrDraftChange?.({ ...prDraft, body: event.target.value })}
+              />
+            </label>
+            {prDraftState?.status === "drafted" ? (
+              <p className="collation-pr-draft-status" data-testid="pr-draft-status" role="note">
+                Drafted with {prDraftState.model}. Edit freely — your version is what the PR would
+                use.
+              </p>
+            ) : prDraftState?.status === "unavailable" ? (
+              <p
+                className="collation-pr-draft-status"
+                data-testid="pr-draft-status"
+                data-status="unavailable"
+                role="note"
+              >
+                No model seat is installed to draft with, so the description falls back to your
+                dispositions. {prDraftState.reason}
+              </p>
+            ) : prDraftState?.status === "failed" ? (
+              <p
+                className="collation-pr-draft-status"
+                data-testid="pr-draft-status"
+                data-status="failed"
+                role="alert"
+              >
+                The draft didn't land: {prDraftState.reason}. Your text is untouched — write or retry.
+              </p>
+            ) : null}
+          </div>
+        ) : null}
 
         {empty ? (
           <p className="collation-empty">

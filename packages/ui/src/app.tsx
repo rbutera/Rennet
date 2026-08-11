@@ -22,6 +22,7 @@ import {
   type CollationDraft,
   type CollationItem,
   clearRefined,
+  effectiveBody,
   ingestWrites,
   itemRefineSignature,
   setRefined,
@@ -47,7 +48,12 @@ import { publishedItems } from "./canvas/staging";
 import { createViewStore, useViewStore } from "./canvas/store";
 import { buildCommands, type CommandContext, type Screen } from "./command/commands";
 import { AskPanel } from "./components/ask-panel";
-import { CollationDraftCanvas, type RefineItemState } from "./components/collation-draft-canvas";
+import {
+  CollationDraftCanvas,
+  type PrDraftState,
+  type PrDraftValues,
+  type RefineItemState,
+} from "./components/collation-draft-canvas";
 import { CommandPalette } from "./components/command-palette";
 import { ConversationHost } from "./components/conversation-host";
 import { DestinationFrame } from "./components/destination-frame";
@@ -406,6 +412,12 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // glass collation canvas); signing the draft opens the PAPER; the paper signs or
   // goes back to the draft. frame → draft → paper.
   const [destinationView, setDestinationView] = useState<"closed" | "draft" | "paper">("closed");
+  // The editable PR submission draft (issue #74, M26) — the own-branch composer's
+  // title + body. Rennet drafts an honest account from the review; the human edits
+  // it, and the edited form is what flows into the paper's preview (and a later
+  // create act). `prDraftState` is the ephemeral drafting status (idle when absent).
+  const [prDraft, setPrDraft] = useState<PrDraftValues>({ title: "", body: "" });
+  const [prDraftState, setPrDraftState] = useState<PrDraftState | undefined>(undefined);
   // The outcome of the last sign that ran the real `publish.review` engine (bead
   // wire-sign-publish). Signing the paper no longer clears the draft and closes —
   // it invokes the publish engine in DRY-RUN (builds the exact GitHub request,
@@ -582,6 +594,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setNoiseReview(undefined);
     setOpenSpecChange(undefined);
     setOpenSpecCoverage(undefined);
+    // The PR-body draft (#74) is review-scoped: a fresh review starts with an empty,
+    // un-drafted composer so review A's account never lingers over review B.
+    setPrDraft({ title: "", body: "" });
+    setPrDraftState(undefined);
     // Reset the LIFTED view store's review-scoped state (lens/zoom/selection/cursor/
     // cohorts/overlay), preserving the scheme. The store now outlives a single review
     // (it was lifted here for the ⌘K palette), so without this reset, opening review B
@@ -959,11 +975,19 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // GitHub source supplies real branch names later. No span anchors yet on the
   // local-capture path (#78 feeds them), so other-pr comments post file-level —
   // honest, because a path-grained disposition genuinely has no single line.
+  // The drafted-then-edited PR title/body (#74, M26) override the deterministic
+  // derivation when the human has one: a non-empty title/body from the composer
+  // flows into the submission the paper previews and signs, so what leaves is the
+  // human's account. Empty ⇒ the pre-M26 behaviour (title from head, composed body).
+  const prTitle = prDraft.title.trim();
+  const prBody = prDraft.body.trim();
   const publishContext: PublishContext = {
     submission: {
       base: patchset?.repository.baseRef ?? "main",
       head: patchset ? patchset.repository.headOid.slice(0, 7) : "(working tree)",
       draftDefault: true,
+      ...(prTitle === "" ? {} : { title: prTitle }),
+      ...(prBody === "" ? {} : { body: prBody }),
     },
   };
   // The SINGLE source of truth for what publishes (issue #109). The human's
@@ -1142,6 +1166,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           onKeepRaw={keepRaw}
           onRefineAll={refineAll}
           refineStates={refineStates}
+          prDraft={prDraft}
+          onPrDraftChange={setPrDraft}
+          onDraftPrBody={() => void draftPrBody()}
+          prDraftState={prDraftState}
           onSign={() => {
             // Freezing a fresh paper drops any stale outcome from a prior sign.
             setPublishResult(undefined);
@@ -1330,6 +1358,66 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         refineStates[item.id]?.status !== "refining",
     );
     await runBatched(eligible, REFINE_CONCURRENCY, (item) => refineItem(item));
+  }
+
+  /**
+   * Draft the PR title + body from the reviewed changeset (issue #74, M26). Hands the
+   * live producer the material the renderer already holds — the branch shape, the
+   * roll-up narration (when narrated), the staged dispositions' resolutions, and the
+   * spec angle's requirements — and rounds the drafted title+body into the editable
+   * composer (the human then edits; their version is what the paper previews). A
+   * failed/unavailable turn leaves the fields untouched and shows the honest state;
+   * the deterministic composed body still previews on the paper. Posts NOTHING.
+   */
+  async function draftPrBody(): Promise<void> {
+    if (!review) return;
+    setPrDraftState({ status: "drafting" });
+    // The dispositions the reviewer staged, reduced to what the account reasons over:
+    // type + path + the effective body (refined once #19 landed, else the raw note).
+    const dispositions = draft.map((item) => ({
+      type: item.type,
+      path: item.path,
+      resolution: effectiveBody(item),
+    }));
+    // The spec angle's requirements (the SHALL statements the change was meant to
+    // satisfy), flattened from the parsed OpenSpec change the Spec lens loaded.
+    const requirements = (openSpecChange?.specDeltas ?? []).flatMap((delta) =>
+      delta.groups.flatMap((group) =>
+        group.requirements.map((requirement) => requirement.statement),
+      ),
+    );
+    // The roll-up narration (M22), when one was actually narrated — the changeset's
+    // own voice. A pending/failed placement carries no account, so it is omitted.
+    const rollup = narration?.rollup;
+    const narrationInput =
+      rollup?.status === "narrated"
+        ? { oneLine: rollup.oneLine, paragraph: rollup.paragraph }
+        : undefined;
+    try {
+      const result = await bridge.invoke("review.draftPrBody", {
+        commandId: crypto.randomUUID(),
+        reviewId: review.id,
+        base: publishContext.submission.base,
+        head: publishContext.submission.head,
+        dispositions,
+        ...(narrationInput === undefined ? {} : { narration: narrationInput }),
+        ...(requirements.length === 0 ? {} : { requirements }),
+      });
+      if (result.status === "drafted") {
+        // The draft lands in the editable fields; the human's edit is final from here.
+        setPrDraft({ title: result.title, body: result.body });
+        setPrDraftState({ status: "drafted", model: result.model });
+      } else if (result.status === "unavailable") {
+        setPrDraftState({ status: "unavailable", reason: result.reason });
+      } else {
+        setPrDraftState({ status: "failed", reason: result.reason });
+      }
+    } catch (err) {
+      setPrDraftState({
+        status: "failed",
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // Which top-level surface is showing — mirrors the branch order of the returns
