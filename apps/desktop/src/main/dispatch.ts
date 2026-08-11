@@ -26,6 +26,8 @@ import {
   type SettingsView,
 } from "@rennet/protocol";
 import type {
+  AnchorSide,
+  AnchorSpan,
   Canvas,
   CanvasAngle,
   DecisionsRunStatus,
@@ -204,6 +206,8 @@ export interface DispatchDeps {
     raw: string;
     lens?: string;
     path?: string;
+    span?: AnchorSpan;
+    side?: AnchorSide;
   }) => Promise<RefinementResult>;
   /**
    * The symbol inspector port (Rai, wireframes #8): resolve one clicked identifier to
@@ -669,11 +673,13 @@ export function createDispatch(
       case "review.refine": {
         // Rai's headline feature. Resolve the CURRENT review ONCE (a stale/unknown id
         // is refused), then run the council-routed refine turn over the raw note +
-        // its context. Refining is a model turn — Rennet's whole job — so it just
-        // runs; there is no permission gate and no consent token (nothing leaves the
-        // machine here; the refined body only publishes later, through the same
-        // gated sign path as any other comment). With no refiner wired, answer an
-        // honest `unavailable` rather than throwing — the raw note stays effective.
+        // its anchored code. Refining is a model turn — Rennet's whole job — so it
+        // just runs; there is no permission gate and no consent token. ⚠️ EGRESS: the
+        // raw note plus the anchored diff context IS sent to the harness (codex/claude)
+        // — the same per-turn egress every review lens makes; it is NOT "nothing
+        // leaves the machine". What is gated is the PUBLISH: the refined body only
+        // reaches GitHub later, through the same hold-to-sign path as any comment.
+        // With no refiner wired, answer an honest `unavailable` rather than throwing.
         const input = parseCommandInput(name, rawInput);
         const review = requireLatestReview(input.reviewId);
         if (!deps.refineComment) {
@@ -690,6 +696,8 @@ export function createDispatch(
             raw: input.raw,
             ...(input.lens === undefined ? {} : { lens: input.lens }),
             ...(input.path === undefined ? {} : { path: input.path }),
+            ...(input.span === undefined ? {} : { span: input.span }),
+            ...(input.side === undefined ? {} : { side: input.side }),
           }),
         );
       }
