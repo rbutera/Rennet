@@ -3,8 +3,9 @@ import type { OpenSpecChange } from "@rennet/types";
 // A REAL Rennet OpenSpec change, parsed by `@rennet/core parseOpenSpecChange`
 // (`openspec/changes/add-review-intelligence-core/`) and frozen here as the Spec
 // angle worked example. It is the exact structured model the parser emits from the
-// on-disk artifacts, so the surface renders the genuine change, not a mock. The
-// live source (parse-on-open of a selected change) is the deferred wiring half.
+// on-disk artifacts — including each node`s `source` (artifact + line) that makes a
+// Spec-view review disposition DURABLE. The live source (parse-on-open of a selected
+// change) is the deferred wiring half.
 export const openSpecChangeFixture: OpenSpecChange = {
   name: "add-review-intelligence-core",
   proposal: {
@@ -12,10 +13,18 @@ export const openSpecChangeFixture: OpenSpecChange = {
       {
         kind: "paragraph",
         text: "Rennet exists to REPLACE and SUPERSEDE the `/review-pr` skill Florence runs. A study of that skill against Rennet's code (`~/expedition/Rennet Review Intelligence Bar.md`) found the exact shape of the problem: **Rennet's surfaces are ahead of the skill, but its review INTELLIGENCE is behind, and the intelligence is the actual product.** The lenses today render single-model, context-starved, unverified-beyond-anchor findings. A beautiful roll-up over one unverified model is \"a prettier rubber stamp, not a supersede\" — the very failure mode Rai is trying to escape (over-relying on an autonomous verdict, never reading the code).",
+        source: {
+          artifact: "proposal",
+          line: 3,
+        },
       },
       {
         kind: "paragraph",
         text: "Three of the skill's LLM-intelligence moves are the load-bearing gaps, and they INTERLOCK — a hypothesis that nobody checks against, a second model with nobody to reconcile it, and a verification pass with no findings to verify are each half a mechanism. This change designs them as one layer laid ON the existing engine (decomposition, the three live lens runners, the Model Council, `canvasOps@2`, the reading surfaces), rebuilding none of it.",
+        source: {
+          artifact: "proposal",
+          line: 5,
+        },
       },
       {
         kind: "list",
@@ -24,42 +33,82 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             lead: "Hypothesis-first pre-read pass (#178).",
             text: "Before the lens runners read hunks, produce a committed hypothesis (Domain / Scope / Design-we-would-choose / Risks 5–10) from the change's intent and the repo context. It feeds every runner as **disconfirmation criteria** (\"did the author diverge from what we'd have done\") and surfaces to the human as their reading frame. Rennet has no analog today; this is the single most load-bearing anti-rubber-stamp move.",
+            source: {
+              artifact: "proposal",
+              line: 7,
+            },
           },
           {
             lead: "Dual-model per-lens + disagreement-as-signal (#41).",
             text: "Run two independent minds (Claude + Codex) per lens, feed both the same hypothesis disconfirmers, and surface their **disagreement as its own mark — never averaged into consensus.** The `FindingAgreement` data model (`concur` | `disagree` with side-by-side answers) and the Flagged lens that renders it already exist; what is missing is the second seat and the deterministic reconcile that populates the `disagree` state.",
+            source: {
+              artifact: "proposal",
+              line: 8,
+            },
           },
           {
             lead: "Per-finding reproduce-or-refute verification (#179).",
             text: "Every non-obvious finding goes to a fresh verification pass that must reproduce-or-refute it against the real code before it can surface, attaching a one-line evidence chip. Today Rennet culls only hallucinated anchor LOCATIONS (grounding); it never reproduces a finding's SUBSTANCE.",
+            source: {
+              artifact: "proposal",
+              line: 9,
+            },
           },
         ],
+        source: {
+          artifact: "proposal",
+          line: 7,
+        },
       },
       {
         kind: "paragraph",
         text: "This proposal is design only. It ships no implementation — it is a spec for Navi + Rai to review, with the cost/latency envelope and the always-on-vs-opt-in questions surfaced explicitly for Rai's decision.",
+        source: {
+          artifact: "proposal",
+          line: 11,
+        },
       },
     ],
     whatChanges: [
       {
         lead: "A hypothesis pre-read pass (`review.hypothesis`), a new pipeline stage that runs before the lens runners.",
         text: "A node-free core runner mirroring the existing runner shape (offered manifest + prompt contract + injected `runTurn` + shared `InvocationBudget` + validator-admitted RSP envelope) produces one atomic `review.hypothesis` document from the change's INTENT (`ReviewIntent` — PR title/body/spec, widening the live `DecisionIntent` seam) and the REPO CONTEXT (the ProjectSnapshot the Repo-Map already builds, read through the existing `context.map`/`context.file` backend). Its Domain/Scope/Design/Risks are (a) injected into every lens runner as a labelled disconfirmation layer via the existing `assemblePrompt`, and (b) delivered as a first-class pipeline output rendered as the human's reading frame. A deterministic post-runner **predicted-risk cross-check** reconciles each hypothesised risk against the findings (predicted-and-found = strong signal; predicted-but-unflagged = an open risk the human is told to check).",
+        source: {
+          artifact: "proposal",
+          line: 15,
+        },
       },
       {
         lead: "Dual-model execution per lens plus a deterministic reconcile.",
         text: "The pipeline's seat resolver is widened to resolve TWO seats for a dual-model lens (one per installed provider), run the SAME lens runner on each independently (same hypothesis disconfirmers, never merged), and a pure `reconcileFindings` folds the two `FindingBody` sets into one `FindingElement[]` with a POPULATED `agreement`: same-anchor overlap → `concur` (2 of 2); a solo or conflicting finding → `disagree` with each model's answer side by side. No synthesis, ever (Rai's #139 invariant). Under a single installed provider it degrades honestly to single-model with a visible \"no second opinion\" badge.",
+        source: {
+          artifact: "proposal",
+          line: 16,
+        },
       },
       {
         lead: "A per-finding reproduce-or-refute verification pass.",
         text: 'A deterministic classifier marks the non-obvious findings (a behavioural/correctness claim, not a mechanically-settled or low-severity nit); each is sent to a FRESH verification session fed the real file content around its anchor (via `context.file`, more than the offered hunk) with a reproduce-or-refute contract. `refuted` findings are dropped; `reproduced` findings surface with an evidence chip; `inconclusive` findings surface with an honest "could not verify" chip (never silently dropped — could-not-check must not read as clean). The evidence chip is an ADDITIVE optional field on `FindingElement`.',
+        source: {
+          artifact: "proposal",
+          line: 17,
+        },
       },
       {
         lead: "Additive schema + validator work.",
         text: "A new `review.hypothesis` RSP doc type (atomic) with its body schema and rules; an additive optional `verification` field on the `finding` body. The RSP validator gains the new body dispatch; the anchor/quote/identity guarantees are unchanged.",
+        source: {
+          artifact: "proposal",
+          line: 18,
+        },
       },
       {
         lead: "New reading-surface derivations (host-free `@rennet/ui`):",
         text: "a hypothesis reading-frame derivation + component, and the risk-cross-check status rendered against each risk. The Flagged lens's disagreement rendering and empty-vs-failed distinction already exist and are reused as-is.",
+        source: {
+          artifact: "proposal",
+          line: 19,
+        },
       },
     ],
     newCapabilities: [
@@ -67,16 +116,28 @@ export const openSpecChangeFixture: OpenSpecChange = {
         name: "review-hypothesis-pass",
         summary:
           "The pre-read hypothesis runner (Domain/Scope/Design/Risks), its injection into every lens runner as disconfirmation criteria, the reading-frame output, and the deterministic predicted-risk cross-check.",
+        source: {
+          artifact: "proposal",
+          line: 25,
+        },
       },
       {
         name: "dual-model-lens-review",
         summary:
           "Two-seat resolution per dual-model lens, independent runs fed the same disconfirmers, the deterministic cross-model reconcile that populates `concur`/`disagree`, and the honest single-provider degradation.",
+        source: {
+          artifact: "proposal",
+          line: 26,
+        },
       },
       {
         name: "per-finding-verification",
         summary:
           "The non-obvious classifier, the reproduce-or-refute contract over the real code in a fresh session, the drop/surface/caveat disposition, and the evidence chip on the finding.",
+        source: {
+          artifact: "proposal",
+          line: 27,
+        },
       },
     ],
     modifiedCapabilities: [
@@ -84,6 +145,10 @@ export const openSpecChangeFixture: OpenSpecChange = {
         name: "rsp-validator",
         summary:
           "Gains the `review.hypothesis` doc type (body schema + rules for totality/scope/risk-count/severity vocabulary) dispatched from the existing generic gate, and admits the additive optional `verification` field on a `finding` element. The existing anchor/quote/vocabulary/identity guarantees are unchanged.",
+        source: {
+          artifact: "proposal",
+          line: 31,
+        },
       },
     ],
     impact: [
@@ -144,10 +209,18 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             kind: "paragraph",
             text: "Rennet's engine is genuinely live. The three lens runners — `runFindingAngle` (`finding-generation.ts`), `runDecisionAngle` (`decision-generation.ts`), `runNoiseAngle` (`noise-generation.ts`) — each take an offered manifest, a `PromptContract` from `@rennet/instructions`, a provenance seed, an injected `runTurn`, and a shared `InvocationBudget`; they cull emitted items to the grounded set, stamp a trustworthy RSP envelope (the agent never mints identity), validate through `@rennet/protocol`, retry, and resolve to an honest `failed` state on terminal failure. The Model Council (`resolveAssignment`) decides which mind runs which job and stamps a resolution trace. `buildReviewCanvases` (`pipeline.ts`) sequences decompose → route-plan Brita gate → shared budget → seat resolution → decomposition/ordering/narration → canvas projection, all as a pure function of its inputs plus injected turns.",
+            source: {
+              artifact: "design",
+              line: 5,
+            },
           },
           {
             kind: "paragraph",
             text: "Three facts make this change small rather than large:",
+            source: {
+              artifact: "design",
+              line: 7,
+            },
           },
           {
             kind: "list",
@@ -156,118 +229,73 @@ export const openSpecChangeFixture: OpenSpecChange = {
               {
                 lead: "The disagreement data model already exists.",
                 text: '`FindingElement.agreement` is `FindingAgreement = { kind: "concur"; agree; total } | { kind: "disagree"; answers: FindingModelAnswer[] }`, and `buildFlaggedIndex` (`packages/ui/src/canvas/flagged.ts`) already renders the `disagree` state side by side, labelled, in the index. #41 does not need a new surface — it needs the second seat and the reconcile that POPULATES `disagree`.',
+                source: {
+                  artifact: "design",
+                  line: 9,
+                },
               },
               {
                 lead: "The council already names the pieces.",
                 text: "`finding-generation` (row 21) resolves to one seat; `providerHarness` maps every council model to exactly one provider→harness; `adjudication` (row 25) and `self-consistency` (row 26) are already in the catalogue as the divergence hooks. Cross-harness routing (R39) already runs a Codex seat via `createCodexRunTurn`.",
+                source: {
+                  artifact: "design",
+                  line: 10,
+                },
               },
               {
                 lead: "The intent + repo-context seams exist.",
                 text: "`runDecisionAngle` already takes `intent?: DecisionIntent` (prTitle/prBody/spec). The ProjectSnapshot the Repo-Map builds is already read, model-free and fail-closed, through `context.map`/`context.file` (`live-review-backend.ts`, `ProjectContextReader`). The hypothesis pass consumes the SAME two seams.",
+                source: {
+                  artifact: "design",
+                  line: 11,
+                },
               },
             ],
+            source: {
+              artifact: "design",
+              line: 9,
+            },
           },
           {
             kind: "paragraph",
             text: "Everything below is laid ON these. No runner is rebuilt; the finding schema grows only by ADDITIVE optional fields; no dependency arrow is added.",
+            source: {
+              artifact: "design",
+              line: 13,
+            },
           },
           {
             kind: "code",
             language: "",
             code: "   INTENT (ReviewIntent)  +  REPO CONTEXT (ProjectSnapshot via context.map/file)\n                       │\n                       ▼\n        ① runHypothesisPass  → review.hypothesis  (Domain/Scope/Design/Risks)\n                       │                         │\n        injected as disconfirmers                └──► reading FRAME (ui)\n                       ▼\n        ② dual-model lens run  (seatA ∥ seatB, same disconfirmers, never merged)\n                       │\n             reconcileFindings → FindingElement[] with concur | disagree\n                       ▼\n        ③ per-finding verification (non-obvious → reproduce-or-refute, fresh session)\n                       │\n        drop refuted · chip reproduced · caveat inconclusive\n                       ▼\n             Flagged / Decisions / Noise lenses  +  crossCheckRisks on the frame",
+            source: {
+              artifact: "design",
+              line: 15,
+            },
           },
           {
             kind: "paragraph",
             text: "The three stages share ONE `InvocationBudget` (the vital money circuit, Rule 75, fail-closed on an absent budget), so the total model turns per review are bounded regardless of retries.",
+            source: {
+              artifact: "design",
+              line: 34,
+            },
           },
         ],
+        source: {
+          artifact: "design",
+          line: 3,
+        },
       },
       {
         id: "hypothesis-first-pre-read-pass-178",
         level: 2,
         heading: "① Hypothesis-first pre-read pass (#178)",
-        blocks: [
-          {
-            kind: "paragraph",
-            text: "### Where it is produced and stored",
-          },
-          {
-            kind: "paragraph",
-            text: "A new node-free core module `hypothesis-generation.ts` exports `runHypothesisPass(input)`, shaped exactly like the existing runners:",
-          },
-          {
-            kind: "code",
-            language: "",
-            code: 'runHypothesisPass({\n  patchsetId, manifest,               // the offered manifest (identity + inputDigest)\n  intent?: ReviewIntent,              // PR title/body/committed spec (degraded-but-honest when absent)\n  repoContext?: HypothesisRepoContext,// a compact projection of the ProjectSnapshot (see below)\n  structure: HypothesisStructure,     // file list + decomposition chunk titles (NOT hunk bodies)\n  contract = REVIEW_HYPOTHESIS_CONTRACT,\n  provenance, runTurn, budget, guidance?, maxRetries?\n}) : Promise<RunHypothesisResult>     // { status: "ok"|"failed"; hypothesis?; document?; attempts; budgetRefused }',
-          },
-          {
-            kind: "paragraph",
-            text: "The pass emits an atomic `review.hypothesis` RSP document. Its body:",
-          },
-          {
-            kind: "code",
-            language: "",
-            code: "ReviewHypothesisBody {\n  domain: string                       // what this change should do\n  scope: { inScope: string[]; outOfScope: string[] }\n  designExpectation: string            // the shape/layer/tests/alternatives we'd have chosen\n  risks: HypothesisRisk[]              // 5–10 (validator-bounded)\n}\nHypothesisRisk {\n  riskId: string                       // minted by the pass, referenced by the cross-check\n  statement: string                    // the concrete failure mode we'd look for\n  severity: FindingSeverity            // reuse the closed high|medium|low vocabulary\n  disconfirmer: string                 // the check a runner applies: \"did the author diverge from what we'd have done\"\n}",
-          },
-          {
-            kind: "paragraph",
-            text: "The document is a first-class `hypothesis` field on `ReviewPipelineResult` (alongside `narration` — NOT embedded on a `Canvas`, so canvas projection stays byte-identical for replay). It is not a lens of findings; it is the reading frame.",
-          },
-          {
-            kind: "paragraph",
-            text: '### The "genuine prior" decision (what the pass sees)',
-          },
-          {
-            kind: "paragraph",
-            text: 'To be a real prior rather than a summary of the diff, the pass is fed **intent + structure + repo context**, deliberately NOT the full hunk line text. It sees the PR title/body/spec, the changed file list, the decomposition chunk titles, and the repo context (what these files are, their neighbours, the local conventions). It commits Domain/Scope/Design/Risks from THAT, before any runner reads a hunk. This is the faithful analog of Florence\'s "before reading a single line of the diff." It is a design decision Rai should confirm (§Decisions), because the cheaper alternative — let the pass see the hunks too — is easier to build but produces a prior contaminated by the very code it is supposed to check against.',
-          },
-          {
-            kind: "paragraph",
-            text: '`repoContext` is a compact, node-free projection built by `core` from the ProjectSnapshot the adapter already serves (`ProjectMap`/`FileContext` via `context.map`/`context.file`). The pass never touches the store — the composition root (`live-review-backend.ts`) reads the snapshot and hands `core` a plain projection, exactly as the pipeline already keeps `core` node-free. When the snapshot backend refuses (oversize repo, stale, corrupt — all already typed), the pass runs on intent + structure alone and stamps a "repo context absent" note; it degrades, it never fabricates.',
-          },
-          {
-            kind: "paragraph",
-            text: "### How a runner consumes it as disconfirmation criteria",
-          },
-          {
-            kind: "paragraph",
-            text: "The lens runners already assemble their prompt with `assemblePrompt`, which composes labelled, byte-budgeted layers and wraps untrusted repo text as material. We add an optional `hypothesis?: ReviewHypothesis` input to `RunFindingAngleInput` / `RunDecisionAngleInput` / `RunNoiseAngleInput`. When present, the runner renders it into a NEW labelled layer (`hypothesis`) carrying the Domain/Scope/Design and the numbered risks-with-disconfirmers, positioned in the fixed assembly order after the base instruction and before the payload. The instruction slot for each contract is amended (versioned, so it is A/B-able against rejection rate) to say: *treat the hypothesis as expectations to disconfirm — for each risk, check whether the change diverges from it; surface a finding when it does.* This is why intent reaches EVERY runner without plumbing `intent` into each one: the hypothesis is derived from intent, and the hypothesis is what the runners consume.",
-          },
-          {
-            kind: "paragraph",
-            text: "### Predicted-risk cross-check (the downstream half)",
-          },
-          {
-            kind: "paragraph",
-            text: "A pure core function `crossCheckRisks(hypothesis, findings) : RiskCrossCheck[]` runs AFTER the lens runners (deterministic, no model turn). For each `HypothesisRisk` it matches findings by anchor proximity and semantic overlap of the disconfirmer:",
-          },
-          {
-            kind: "list",
-            ordered: false,
-            items: [
-              {
-                lead: "predicted-and-found",
-                text: 'a finding addresses the risk → the risk is marked confirmed and the finding badged "predicted."',
-              },
-              {
-                lead: "predicted-but-unflagged",
-                text: "no finding addresses the risk → surfaced on the frame as an OPEN risk the human is explicitly told to check themselves (a \"manual finding,\" Florence's stage 6). This is the anti-rubber-stamp payoff: a risk we predicted that the automated pass did not clear is exactly what the human's attention should go to.",
-              },
-            ],
-          },
-          {
-            kind: "paragraph",
-            text: '`RiskCrossCheck { riskId; status: "confirmed" | "open"; findingIds: string[] }` rides the pipeline result next to the hypothesis.',
-          },
-          {
-            kind: "paragraph",
-            text: "### UI reading frame",
-          },
-          {
-            kind: "paragraph",
-            text: "A host-free derivation `packages/ui/src/canvas/hypothesis.ts` → `buildHypothesisFrame(hypothesis, crossChecks)` folds the document + cross-check into a `HypothesisFrame` the surface renders (Domain, Scope in/out, Design, and the risk list each showing confirmed/open + jump-to-finding anchors). `components/hypothesis.tsx` renders it as the reading frame. The UX shape (a frame the human reads BEFORE the lenses vs. a collapsible panel alongside) is a Rai decision.",
-          },
-        ],
+        blocks: [],
+        source: {
+          artifact: "design",
+          line: 38,
+        },
       },
       {
         id: "where-it-is-produced-and-stored",
@@ -277,26 +305,50 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             kind: "paragraph",
             text: "A new node-free core module `hypothesis-generation.ts` exports `runHypothesisPass(input)`, shaped exactly like the existing runners:",
+            source: {
+              artifact: "design",
+              line: 42,
+            },
           },
           {
             kind: "code",
             language: "",
             code: 'runHypothesisPass({\n  patchsetId, manifest,               // the offered manifest (identity + inputDigest)\n  intent?: ReviewIntent,              // PR title/body/committed spec (degraded-but-honest when absent)\n  repoContext?: HypothesisRepoContext,// a compact projection of the ProjectSnapshot (see below)\n  structure: HypothesisStructure,     // file list + decomposition chunk titles (NOT hunk bodies)\n  contract = REVIEW_HYPOTHESIS_CONTRACT,\n  provenance, runTurn, budget, guidance?, maxRetries?\n}) : Promise<RunHypothesisResult>     // { status: "ok"|"failed"; hypothesis?; document?; attempts; budgetRefused }',
+            source: {
+              artifact: "design",
+              line: 44,
+            },
           },
           {
             kind: "paragraph",
             text: "The pass emits an atomic `review.hypothesis` RSP document. Its body:",
+            source: {
+              artifact: "design",
+              line: 55,
+            },
           },
           {
             kind: "code",
             language: "",
             code: "ReviewHypothesisBody {\n  domain: string                       // what this change should do\n  scope: { inScope: string[]; outOfScope: string[] }\n  designExpectation: string            // the shape/layer/tests/alternatives we'd have chosen\n  risks: HypothesisRisk[]              // 5–10 (validator-bounded)\n}\nHypothesisRisk {\n  riskId: string                       // minted by the pass, referenced by the cross-check\n  statement: string                    // the concrete failure mode we'd look for\n  severity: FindingSeverity            // reuse the closed high|medium|low vocabulary\n  disconfirmer: string                 // the check a runner applies: \"did the author diverge from what we'd have done\"\n}",
+            source: {
+              artifact: "design",
+              line: 57,
+            },
           },
           {
             kind: "paragraph",
             text: "The document is a first-class `hypothesis` field on `ReviewPipelineResult` (alongside `narration` — NOT embedded on a `Canvas`, so canvas projection stays byte-identical for replay). It is not a lens of findings; it is the reading frame.",
+            source: {
+              artifact: "design",
+              line: 72,
+            },
           },
         ],
+        source: {
+          artifact: "design",
+          line: 40,
+        },
       },
       {
         id: "the-genuine-prior-decision-what-the-pass-sees",
@@ -306,12 +358,24 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             kind: "paragraph",
             text: 'To be a real prior rather than a summary of the diff, the pass is fed **intent + structure + repo context**, deliberately NOT the full hunk line text. It sees the PR title/body/spec, the changed file list, the decomposition chunk titles, and the repo context (what these files are, their neighbours, the local conventions). It commits Domain/Scope/Design/Risks from THAT, before any runner reads a hunk. This is the faithful analog of Florence\'s "before reading a single line of the diff." It is a design decision Rai should confirm (§Decisions), because the cheaper alternative — let the pass see the hunks too — is easier to build but produces a prior contaminated by the very code it is supposed to check against.',
+            source: {
+              artifact: "design",
+              line: 76,
+            },
           },
           {
             kind: "paragraph",
             text: '`repoContext` is a compact, node-free projection built by `core` from the ProjectSnapshot the adapter already serves (`ProjectMap`/`FileContext` via `context.map`/`context.file`). The pass never touches the store — the composition root (`live-review-backend.ts`) reads the snapshot and hands `core` a plain projection, exactly as the pipeline already keeps `core` node-free. When the snapshot backend refuses (oversize repo, stale, corrupt — all already typed), the pass runs on intent + structure alone and stamps a "repo context absent" note; it degrades, it never fabricates.',
+            source: {
+              artifact: "design",
+              line: 78,
+            },
           },
         ],
+        source: {
+          artifact: "design",
+          line: 74,
+        },
       },
       {
         id: "how-a-runner-consumes-it-as-disconfirmation-criteria",
@@ -321,8 +385,16 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             kind: "paragraph",
             text: "The lens runners already assemble their prompt with `assemblePrompt`, which composes labelled, byte-budgeted layers and wraps untrusted repo text as material. We add an optional `hypothesis?: ReviewHypothesis` input to `RunFindingAngleInput` / `RunDecisionAngleInput` / `RunNoiseAngleInput`. When present, the runner renders it into a NEW labelled layer (`hypothesis`) carrying the Domain/Scope/Design and the numbered risks-with-disconfirmers, positioned in the fixed assembly order after the base instruction and before the payload. The instruction slot for each contract is amended (versioned, so it is A/B-able against rejection rate) to say: *treat the hypothesis as expectations to disconfirm — for each risk, check whether the change diverges from it; surface a finding when it does.* This is why intent reaches EVERY runner without plumbing `intent` into each one: the hypothesis is derived from intent, and the hypothesis is what the runners consume.",
+            source: {
+              artifact: "design",
+              line: 82,
+            },
           },
         ],
+        source: {
+          artifact: "design",
+          line: 80,
+        },
       },
       {
         id: "predicted-risk-cross-check-the-downstream-half",
@@ -332,6 +404,10 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             kind: "paragraph",
             text: "A pure core function `crossCheckRisks(hypothesis, findings) : RiskCrossCheck[]` runs AFTER the lens runners (deterministic, no model turn). For each `HypothesisRisk` it matches findings by anchor proximity and semantic overlap of the disconfirmer:",
+            source: {
+              artifact: "design",
+              line: 86,
+            },
           },
           {
             kind: "list",
@@ -340,18 +416,38 @@ export const openSpecChangeFixture: OpenSpecChange = {
               {
                 lead: "predicted-and-found",
                 text: 'a finding addresses the risk → the risk is marked confirmed and the finding badged "predicted."',
+                source: {
+                  artifact: "design",
+                  line: 88,
+                },
               },
               {
                 lead: "predicted-but-unflagged",
                 text: "no finding addresses the risk → surfaced on the frame as an OPEN risk the human is explicitly told to check themselves (a \"manual finding,\" Florence's stage 6). This is the anti-rubber-stamp payoff: a risk we predicted that the automated pass did not clear is exactly what the human's attention should go to.",
+                source: {
+                  artifact: "design",
+                  line: 89,
+                },
               },
             ],
+            source: {
+              artifact: "design",
+              line: 88,
+            },
           },
           {
             kind: "paragraph",
             text: '`RiskCrossCheck { riskId; status: "confirmed" | "open"; findingIds: string[] }` rides the pipeline result next to the hypothesis.',
+            source: {
+              artifact: "design",
+              line: 91,
+            },
           },
         ],
+        source: {
+          artifact: "design",
+          line: 84,
+        },
       },
       {
         id: "ui-reading-frame",
@@ -361,83 +457,26 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             kind: "paragraph",
             text: "A host-free derivation `packages/ui/src/canvas/hypothesis.ts` → `buildHypothesisFrame(hypothesis, crossChecks)` folds the document + cross-check into a `HypothesisFrame` the surface renders (Domain, Scope in/out, Design, and the risk list each showing confirmed/open + jump-to-finding anchors). `components/hypothesis.tsx` renders it as the reading frame. The UX shape (a frame the human reads BEFORE the lenses vs. a collapsible panel alongside) is a Rai decision.",
+            source: {
+              artifact: "design",
+              line: 95,
+            },
           },
         ],
+        source: {
+          artifact: "design",
+          line: 93,
+        },
       },
       {
         id: "dual-model-per-lens-disagreement-as-signal-41",
         level: 2,
         heading: "② Dual-model per-lens + disagreement-as-signal (#41)",
-        blocks: [
-          {
-            kind: "paragraph",
-            text: "### Execution: two seats, one runner, run twice",
-          },
-          {
-            kind: "paragraph",
-            text: "`pipeline.ts` already has an internal `resolveSeat(jobId, docType, manifest, claudeTurn)` that returns `{ seed, runTurn }` from the council. We add `resolveDualSeat(jobId, docType, manifest, turns)` that returns an ORDERED pair of resolved seats, one per installed provider, using the same `providerHarness` mapping the single resolver uses. Under `both` availability that is one Claude seat (Opus/Sonnet) and one Codex seat (Sol/GPT-5.5, executed through the existing `createCodexRunTurn` port). The same lens runner (`runFindingAngle`) is invoked once per seat, INDEPENDENTLY, each fed the SAME hypothesis disconfirmers and the same manifest. Neither sees the other's output. Two `FindingBody` sets come back, each already grounded and validator-admitted by its own runner.",
-          },
-          {
-            kind: "paragraph",
-            text: "### Reconcile: deterministic, never averaged",
-          },
-          {
-            kind: "paragraph",
-            text: "A pure core function `reconcileFindings(seatAFindings, seatBFindings, labels) : FindingElement[]` folds the two sets into one, populating `agreement`:",
-          },
-          {
-            kind: "list",
-            ordered: false,
-            items: [
-              {
-                lead: "Match",
-                text: "two findings by anchor resolution + proximity (±N lines, the same matching primitive the `finding-dedupe` job uses, applied CROSS-model rather than within one model's output) and comparable severity → one `concur` row (`agree: 2, total: 2`), keeping the higher severity and the clearer summary.",
-              },
-              {
-                lead: "Solo",
-                text: 'a finding only one seat raised → a `disagree` row: `answers = [{ model: labelA, answer: <the raiser\'s summary> }, { model: labelB, answer: "no concern raised here" }]`. The reviewer sees that one model flagged it and the other did not, and decides.',
-              },
-              {
-                lead: "Conflict",
-                text: "both raise at the same anchor with materially different verdicts → a `disagree` row carrying BOTH answers side by side.",
-              },
-            ],
-          },
-          {
-            kind: "paragraph",
-            text: "The reconcile is arithmetic over anchors and vocabularies; it NEVER produces a third merged summary. This is the structural guarantee behind Rai's #139 invariant, and it matches how `AskReviewResult` already refuses a synthesis field by construction. Provenance: each contributing seat's `resolutionTrace` is retained, so a `disagree` row is auditable to the two minds that produced it.",
-          },
-          {
-            kind: "paragraph",
-            text: "### The seam to Repo-Map / #41 / adjudication",
-          },
-          {
-            kind: "list",
-            ordered: false,
-            items: [
-              {
-                lead: "#41",
-                text: "is this reconcile plus the second seat; the `FindingAgreement`/`FindingModelAnswer` types and the Flagged renderer are the parts #41 already shipped, so this WIDENS #41 rather than duplicating it.",
-              },
-              {
-                lead: "Repo-Map seam",
-                text: "both seats read the same ProjectSnapshot-derived context (through the hypothesis and, for verification, `context.file`), so as the Repo-Map (#14/#141–144) enriches, both minds get richer context symmetrically — the disagreement stays a signal about the CODE, not an artifact of asymmetric context.",
-              },
-              {
-                lead: "Adjudication",
-                text: '(`adjudication` doc type + council row 25) stays OPT-IN and additive. When (and only when) Rai wants it, a genuine same-anchor conflict can trigger one extra `adjudication` turn that appends a labelled "which is more likely" note — it NEVER collapses the two answers into one. Default off; the default is to show the disagreement.',
-              },
-            ],
-          },
-          {
-            kind: "paragraph",
-            text: "### Single-provider degradation",
-          },
-          {
-            kind: "paragraph",
-            text: '`resolveDualSeat` under `claude-only` or `codex-only` returns one real seat and marks the lens `singleProvider`. The runner runs once; every finding keeps its existing `concur { agree: 1, total: 1 }`, and the lens header carries a visible "single provider — no second opinion" badge (the same honest-degradation family as the council\'s existing "degraded single-provider self-consistency" note). Dual-model is a capability that lights up when two providers are installed, never a hard requirement.',
-          },
-        ],
+        blocks: [],
+        source: {
+          artifact: "design",
+          line: 99,
+        },
       },
       {
         id: "execution-two-seats-one-runner-run-twice",
@@ -447,8 +486,16 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             kind: "paragraph",
             text: "`pipeline.ts` already has an internal `resolveSeat(jobId, docType, manifest, claudeTurn)` that returns `{ seed, runTurn }` from the council. We add `resolveDualSeat(jobId, docType, manifest, turns)` that returns an ORDERED pair of resolved seats, one per installed provider, using the same `providerHarness` mapping the single resolver uses. Under `both` availability that is one Claude seat (Opus/Sonnet) and one Codex seat (Sol/GPT-5.5, executed through the existing `createCodexRunTurn` port). The same lens runner (`runFindingAngle`) is invoked once per seat, INDEPENDENTLY, each fed the SAME hypothesis disconfirmers and the same manifest. Neither sees the other's output. Two `FindingBody` sets come back, each already grounded and validator-admitted by its own runner.",
+            source: {
+              artifact: "design",
+              line: 103,
+            },
           },
         ],
+        source: {
+          artifact: "design",
+          line: 101,
+        },
       },
       {
         id: "reconcile-deterministic-never-averaged",
@@ -458,6 +505,10 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             kind: "paragraph",
             text: "A pure core function `reconcileFindings(seatAFindings, seatBFindings, labels) : FindingElement[]` folds the two sets into one, populating `agreement`:",
+            source: {
+              artifact: "design",
+              line: 107,
+            },
           },
           {
             kind: "list",
@@ -466,22 +517,46 @@ export const openSpecChangeFixture: OpenSpecChange = {
               {
                 lead: "Match",
                 text: "two findings by anchor resolution + proximity (±N lines, the same matching primitive the `finding-dedupe` job uses, applied CROSS-model rather than within one model's output) and comparable severity → one `concur` row (`agree: 2, total: 2`), keeping the higher severity and the clearer summary.",
+                source: {
+                  artifact: "design",
+                  line: 109,
+                },
               },
               {
                 lead: "Solo",
                 text: 'a finding only one seat raised → a `disagree` row: `answers = [{ model: labelA, answer: <the raiser\'s summary> }, { model: labelB, answer: "no concern raised here" }]`. The reviewer sees that one model flagged it and the other did not, and decides.',
+                source: {
+                  artifact: "design",
+                  line: 110,
+                },
               },
               {
                 lead: "Conflict",
                 text: "both raise at the same anchor with materially different verdicts → a `disagree` row carrying BOTH answers side by side.",
+                source: {
+                  artifact: "design",
+                  line: 111,
+                },
               },
             ],
+            source: {
+              artifact: "design",
+              line: 109,
+            },
           },
           {
             kind: "paragraph",
             text: "The reconcile is arithmetic over anchors and vocabularies; it NEVER produces a third merged summary. This is the structural guarantee behind Rai's #139 invariant, and it matches how `AskReviewResult` already refuses a synthesis field by construction. Provenance: each contributing seat's `resolutionTrace` is retained, so a `disagree` row is auditable to the two minds that produced it.",
+            source: {
+              artifact: "design",
+              line: 113,
+            },
           },
         ],
+        source: {
+          artifact: "design",
+          line: 105,
+        },
       },
       {
         id: "the-seam-to-repo-map-41-adjudication",
@@ -495,18 +570,38 @@ export const openSpecChangeFixture: OpenSpecChange = {
               {
                 lead: "#41",
                 text: "is this reconcile plus the second seat; the `FindingAgreement`/`FindingModelAnswer` types and the Flagged renderer are the parts #41 already shipped, so this WIDENS #41 rather than duplicating it.",
+                source: {
+                  artifact: "design",
+                  line: 117,
+                },
               },
               {
                 lead: "Repo-Map seam",
                 text: "both seats read the same ProjectSnapshot-derived context (through the hypothesis and, for verification, `context.file`), so as the Repo-Map (#14/#141–144) enriches, both minds get richer context symmetrically — the disagreement stays a signal about the CODE, not an artifact of asymmetric context.",
+                source: {
+                  artifact: "design",
+                  line: 118,
+                },
               },
               {
                 lead: "Adjudication",
                 text: '(`adjudication` doc type + council row 25) stays OPT-IN and additive. When (and only when) Rai wants it, a genuine same-anchor conflict can trigger one extra `adjudication` turn that appends a labelled "which is more likely" note — it NEVER collapses the two answers into one. Default off; the default is to show the disagreement.',
+                source: {
+                  artifact: "design",
+                  line: 119,
+                },
               },
             ],
+            source: {
+              artifact: "design",
+              line: 117,
+            },
           },
         ],
+        source: {
+          artifact: "design",
+          line: 115,
+        },
       },
       {
         id: "single-provider-degradation",
@@ -516,89 +611,26 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             kind: "paragraph",
             text: '`resolveDualSeat` under `claude-only` or `codex-only` returns one real seat and marks the lens `singleProvider`. The runner runs once; every finding keeps its existing `concur { agree: 1, total: 1 }`, and the lens header carries a visible "single provider — no second opinion" badge (the same honest-degradation family as the council\'s existing "degraded single-provider self-consistency" note). Dual-model is a capability that lights up when two providers are installed, never a hard requirement.',
+            source: {
+              artifact: "design",
+              line: 123,
+            },
           },
         ],
+        source: {
+          artifact: "design",
+          line: 121,
+        },
       },
       {
         id: "per-finding-reproduce-or-refute-verification-179",
         level: 2,
         heading: "③ Per-finding reproduce-or-refute verification (#179)",
-        blocks: [
-          {
-            kind: "paragraph",
-            text: '### Trigger: which findings are "non-obvious"',
-          },
-          {
-            kind: "paragraph",
-            text: 'A deterministic classifier `classifyNonObvious(finding) : boolean` (pure, in `finding-verification.ts`) decides which findings pay for a verification turn. A finding is **obvious** (skip verification, surface directly, no chip) when it is a low-severity nit or a claim already mechanically settled by the deterministic floor (e.g. "this import is now unused," which the floor\'s own signals confirm). A finding is **non-obvious** (verify) when it is a high/medium-severity BEHAVIOURAL or CORRECTNESS claim that requires reasoning beyond the anchored hunk — a null deref, a broken invariant, a race, a missing guard. The rule set is small, versioned, and testable against a fixture corpus; it is the cost knob, and its exact shape is a Rai decision.',
-          },
-          {
-            kind: "paragraph",
-            text: "### The reproduce-or-refute contract",
-          },
-          {
-            kind: "paragraph",
-            text: "For each non-obvious finding, `runFindingVerification` drives a FRESH session (a new provenance/runId — no contamination from the generating model's context, and by default a different seat than the one that raised it, so a model is not asked to certify its own claim). The session is fed:",
-          },
-          {
-            kind: "list",
-            ordered: false,
-            items: [
-              {
-                text: "the finding (anchor, summary, severity),",
-              },
-              {
-                text: "the REAL file content around the anchor — via the existing `context.file` reader, which serves MORE than the offered hunk, so the verifier can trace the claim through the actual code — and",
-              },
-              {
-                text: "the `FINDING_VERIFICATION_CONTRACT` instruction: reproduce (construct the concrete failure path / cite the exact lines that make the claim true) OR refute (show why it does not hold). Output body:",
-              },
-            ],
-          },
-          {
-            kind: "code",
-            language: "",
-            code: 'FindingVerification {\n  verdict: "reproduced" | "refuted" | "inconclusive"\n  evidence: string          // one-line "we dug into it and found Y" (reproduced) or why-not (refuted/inconclusive)\n}',
-          },
-          {
-            kind: "paragraph",
-            text: "### Disposition",
-          },
-          {
-            kind: "list",
-            ordered: false,
-            items: [
-              {
-                lead: "refuted",
-                text: "→ the finding is DROPPED. It never surfaces (the anti-hallucination-of-substance gate).",
-              },
-              {
-                lead: "reproduced",
-                text: "→ the finding surfaces with `verification` attached; the Flagged lens renders the evidence chip at its anchor.",
-              },
-              {
-                lead: "inconclusive",
-                text: '→ the finding surfaces with an honest "could not verify" chip, NEVER silently dropped. Rationale (Rule 75/81ak, could-not-check beats a false clear): for a claim of a PROBLEM, a dead/uncertain verifier that silently dropped the finding would fail toward hiding a real bug — the worse direction, and exactly the "prettier rubber stamp" this whole change fights. The human decides on a caveated flag. Whether inconclusive surfaces-with-caveat or is dropped is a Rai decision; the design defaults to surface-with-caveat.',
-              },
-            ],
-          },
-          {
-            kind: "paragraph",
-            text: "### The evidence chip in the schema",
-          },
-          {
-            kind: "paragraph",
-            text: "`FindingElement` gains an optional `verification?: FindingVerification`. This is an ADDITIVE superset (the note names the #32 finding schema an additive superset), so existing `finding` documents validate unchanged, and a finding with no verification (obvious, or the pass did not run) renders exactly as today. The protocol `finding` body schema is widened to accept the optional field; the itemwise admission and grounding are untouched.",
-          },
-          {
-            kind: "paragraph",
-            text: "### Cost containment for verification",
-          },
-          {
-            kind: "paragraph",
-            text: 'Verification is the biggest multiplier (up to one turn per non-obvious finding), so it is bounded three ways, all consuming the shared budget: (a) only non-obvious findings, (b) a per-review cap `maxVerifications` — verify the top-K by severity, the rest surface with a "not verified" chip, and (c) batching — multiple findings in the same file/region are verified in one turn (the light-tier batched shape the council already uses). Default tier is light; a high-severity finding may be escalated to heavy.',
-          },
-        ],
+        blocks: [],
+        source: {
+          artifact: "design",
+          line: 127,
+        },
       },
       {
         id: "trigger-which-findings-are-non-obvious",
@@ -608,8 +640,16 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             kind: "paragraph",
             text: 'A deterministic classifier `classifyNonObvious(finding) : boolean` (pure, in `finding-verification.ts`) decides which findings pay for a verification turn. A finding is **obvious** (skip verification, surface directly, no chip) when it is a low-severity nit or a claim already mechanically settled by the deterministic floor (e.g. "this import is now unused," which the floor\'s own signals confirm). A finding is **non-obvious** (verify) when it is a high/medium-severity BEHAVIOURAL or CORRECTNESS claim that requires reasoning beyond the anchored hunk — a null deref, a broken invariant, a race, a missing guard. The rule set is small, versioned, and testable against a fixture corpus; it is the cost knob, and its exact shape is a Rai decision.',
+            source: {
+              artifact: "design",
+              line: 131,
+            },
           },
         ],
+        source: {
+          artifact: "design",
+          line: 129,
+        },
       },
       {
         id: "the-reproduce-or-refute-contract",
@@ -619,6 +659,10 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             kind: "paragraph",
             text: "For each non-obvious finding, `runFindingVerification` drives a FRESH session (a new provenance/runId — no contamination from the generating model's context, and by default a different seat than the one that raised it, so a model is not asked to certify its own claim). The session is fed:",
+            source: {
+              artifact: "design",
+              line: 135,
+            },
           },
           {
             kind: "list",
@@ -626,21 +670,45 @@ export const openSpecChangeFixture: OpenSpecChange = {
             items: [
               {
                 text: "the finding (anchor, summary, severity),",
+                source: {
+                  artifact: "design",
+                  line: 137,
+                },
               },
               {
                 text: "the REAL file content around the anchor — via the existing `context.file` reader, which serves MORE than the offered hunk, so the verifier can trace the claim through the actual code — and",
+                source: {
+                  artifact: "design",
+                  line: 138,
+                },
               },
               {
                 text: "the `FINDING_VERIFICATION_CONTRACT` instruction: reproduce (construct the concrete failure path / cite the exact lines that make the claim true) OR refute (show why it does not hold). Output body:",
+                source: {
+                  artifact: "design",
+                  line: 139,
+                },
               },
             ],
+            source: {
+              artifact: "design",
+              line: 137,
+            },
           },
           {
             kind: "code",
             language: "",
             code: 'FindingVerification {\n  verdict: "reproduced" | "refuted" | "inconclusive"\n  evidence: string          // one-line "we dug into it and found Y" (reproduced) or why-not (refuted/inconclusive)\n}',
+            source: {
+              artifact: "design",
+              line: 141,
+            },
           },
         ],
+        source: {
+          artifact: "design",
+          line: 133,
+        },
       },
       {
         id: "disposition",
@@ -654,18 +722,38 @@ export const openSpecChangeFixture: OpenSpecChange = {
               {
                 lead: "refuted",
                 text: "→ the finding is DROPPED. It never surfaces (the anti-hallucination-of-substance gate).",
+                source: {
+                  artifact: "design",
+                  line: 150,
+                },
               },
               {
                 lead: "reproduced",
                 text: "→ the finding surfaces with `verification` attached; the Flagged lens renders the evidence chip at its anchor.",
+                source: {
+                  artifact: "design",
+                  line: 151,
+                },
               },
               {
                 lead: "inconclusive",
                 text: '→ the finding surfaces with an honest "could not verify" chip, NEVER silently dropped. Rationale (Rule 75/81ak, could-not-check beats a false clear): for a claim of a PROBLEM, a dead/uncertain verifier that silently dropped the finding would fail toward hiding a real bug — the worse direction, and exactly the "prettier rubber stamp" this whole change fights. The human decides on a caveated flag. Whether inconclusive surfaces-with-caveat or is dropped is a Rai decision; the design defaults to surface-with-caveat.',
+                source: {
+                  artifact: "design",
+                  line: 152,
+                },
               },
             ],
+            source: {
+              artifact: "design",
+              line: 150,
+            },
           },
         ],
+        source: {
+          artifact: "design",
+          line: 148,
+        },
       },
       {
         id: "the-evidence-chip-in-the-schema",
@@ -675,8 +763,16 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             kind: "paragraph",
             text: "`FindingElement` gains an optional `verification?: FindingVerification`. This is an ADDITIVE superset (the note names the #32 finding schema an additive superset), so existing `finding` documents validate unchanged, and a finding with no verification (obvious, or the pass did not run) renders exactly as today. The protocol `finding` body schema is widened to accept the optional field; the itemwise admission and grounding are untouched.",
+            source: {
+              artifact: "design",
+              line: 156,
+            },
           },
         ],
+        source: {
+          artifact: "design",
+          line: 154,
+        },
       },
       {
         id: "cost-containment-for-verification",
@@ -686,8 +782,16 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             kind: "paragraph",
             text: 'Verification is the biggest multiplier (up to one turn per non-obvious finding), so it is bounded three ways, all consuming the shared budget: (a) only non-obvious findings, (b) a per-review cap `maxVerifications` — verify the top-K by severity, the rest surface with a "not verified" chip, and (c) batching — multiple findings in the same file/region are verified in one turn (the light-tier batched shape the council already uses). Default tier is light; a high-severity finding may be escalated to heavy.',
+            source: {
+              artifact: "design",
+              line: 160,
+            },
           },
         ],
+        source: {
+          artifact: "design",
+          line: 158,
+        },
       },
       {
         id: "cost-latency-envelope",
@@ -697,10 +801,18 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             kind: "paragraph",
             text: "Everything runs on the user's own subscription, so the cost is **latency + quota, not dollars**. The bounding is a turn budget, and it is the vital money circuit (Rule 75): ONE shared `InvocationBudget`, fail-closed on absence, threaded through every new stage exactly as it is through decomposition/ordering/narration today. A refused turn falls to that stage's honest floor (hypothesis absent, single-model, or unverified chip) — the ceiling stops spend, never the review.",
+            source: {
+              artifact: "design",
+              line: 166,
+            },
           },
           {
             kind: "paragraph",
             text: "Per-review turn accounting (heavy H, light L), on top of today's structural turns (decompose + ordering + narration ≈ 3):",
+            source: {
+              artifact: "design",
+              line: 168,
+            },
           },
           {
             kind: "table",
@@ -719,16 +831,32 @@ export const openSpecChangeFixture: OpenSpecChange = {
               ],
               ["①b Cross-check", "0", "deterministic"],
             ],
+            source: {
+              artifact: "design",
+              line: 170,
+            },
           },
           {
             kind: "paragraph",
             text: "Worst case with defaults (hypothesis on, dual-model Flagged-only, verify top-K=6 batched by ~3): ≈ 1 + 1 + 2 = 4 turns above today's baseline. All-on (dual-model all three lenses, K=12): materially higher, which is exactly why the scope switches below are Rai's to set. The single shared ceiling makes the worst case a hard bound, not a hope.",
+            source: {
+              artifact: "design",
+              line: 177,
+            },
           },
           {
             kind: "paragraph",
             text: "**Budget model.** A per-review `ReviewIntelligenceBudget` names sub-ceilings (hypothesis: 1; dual-model: on/off + which lenses; verification: `maxVerifications` + batch size) but all draw from ONE underlying `createInvocationBudget` counter, so the TOTAL is the single number Rai sets and the fail-closed guarantee is unchanged. The default ceiling is a Rai decision (§below).",
+            source: {
+              artifact: "design",
+              line: 179,
+            },
           },
         ],
+        source: {
+          artifact: "design",
+          line: 164,
+        },
       },
       {
         id: "decisions-that-need-rai-before-build",
@@ -742,30 +870,62 @@ export const openSpecChangeFixture: OpenSpecChange = {
               {
                 lead: "Hypothesis-first UX (the reading frame).",
                 text: 'Is the frame a surface the human reads BEFORE the lenses unlock (a soft gate that enforces "read the frame first," matching the anti-rubber-stamp intent), or a collapsible panel alongside the lenses they can glance at? The former is truer to the mission; the latter is lighter. This shapes `components/hypothesis.tsx` and the workspace layout.',
+                source: {
+                  artifact: "design",
+                  line: 185,
+                },
               },
               {
                 lead: "Always-on vs opt-in per review.",
                 text: 'Proposed default: hypothesis-first ALWAYS ON (it is the cheapest, +1 turn, and the load-bearing move); dual-model and verification opt-in via a "deep review" toggle vs a "quick review." Confirm, or set a different split (e.g. all three behind one deep-review mode).',
+                source: {
+                  artifact: "design",
+                  line: 186,
+                },
               },
               {
                 lead: "Dual-model scope.",
                 text: "Flagged lens only (default — disagreement is most valuable on concerns), or all three lenses (Flagged + Decisions + Noise)? This is the ×2 cost line.",
+                source: {
+                  artifact: "design",
+                  line: 187,
+                },
               },
               {
                 lead: "Verification cap + inconclusive policy.",
                 text: "`maxVerifications` (default proposal: top 6–8 by severity, batched) and whether `inconclusive` findings surface-with-caveat (default) or are dropped. Also: the non-obvious classifier's rule set (which severities/claim-kinds always verify).",
+                source: {
+                  artifact: "design",
+                  line: 188,
+                },
               },
               {
                 lead: "The total turn ceiling per review.",
                 text: 'The single number that bounds latency/quota. Propose a default (e.g. 12) and a "quick review" lower value.',
+                source: {
+                  artifact: "design",
+                  line: 189,
+                },
               },
               {
                 lead: "The genuine-prior decision.",
                 text: 'Confirm the hypothesis pass sees intent + structure + repo context but NOT the full hunk bodies (a true prior), accepting the extra plumbing over the cheaper "let it see the diff too" (a contaminated prior).',
+                source: {
+                  artifact: "design",
+                  line: 190,
+                },
               },
             ],
+            source: {
+              artifact: "design",
+              line: 185,
+            },
           },
         ],
+        source: {
+          artifact: "design",
+          line: 183,
+        },
       },
       {
         id: "testing-strategy-for-the-eventual-build",
@@ -775,8 +935,16 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             kind: "paragraph",
             text: "TDD, hermetic. Every new core unit is pure or driven by an injected `FakeSession`, so the default gate spends nothing: the hypothesis runner (admit / reject-retry / terminal-failed-honest), `reconcileFindings` (concur match, solo → disagree, conflict → disagree, never a third summary), `crossCheckRisks` (predicted-and-found, predicted-but-unflagged), `classifyNonObvious` (a fixture corpus in both directions), and `runFindingVerification` (reproduced surfaces + chip, refuted dropped, inconclusive caveated). Red-then-green proofs on the load-bearing invariants: the reconcile never emits a merged answer; a refuted finding never reaches the index; an absent budget refuses every new-stage turn (fail-closed). Protocol: one fixture per new `review.hypothesis` rule in both directions, and a `finding` with `verification` admits while the anchor/quote guarantees stay green. UI: `buildHypothesisFrame` derivation is unit-tested host-free; the Flagged lens's disagreement + chip rendering is exercised through the existing DOM tests. A gated real-turn integration test (the existing `RENNET_LIVE_CLAUDE` pattern, plus a Codex seat) drives one tiny end-to-end dual-model review and is excluded from the default gate.",
+            source: {
+              artifact: "design",
+              line: 196,
+            },
           },
         ],
+        source: {
+          artifact: "design",
+          line: 194,
+        },
       },
     ],
   },
@@ -789,30 +957,58 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             text: "0.1 Confirm the hypothesis-first UX: reading frame BEFORE the lenses (soft gate) vs. collapsible panel alongside",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 7,
+            },
           },
           {
             text: '0.2 Confirm always-on vs opt-in: hypothesis always-on; dual-model + verification behind a "deep review" toggle (or a different split)',
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 8,
+            },
           },
           {
             text: "0.3 Confirm dual-model scope: Flagged lens only vs. all three lenses",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 9,
+            },
           },
           {
             text: "0.4 Confirm the verification cap `maxVerifications`, the inconclusive policy (surface-with-caveat vs. drop), and the non-obvious classifier rule set",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 10,
+            },
           },
           {
             text: '0.5 Confirm the total per-review turn ceiling (and a "quick review" lower value)',
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 11,
+            },
           },
           {
             text: "0.6 Confirm the genuine-prior decision: hypothesis sees intent + structure + repo context, NOT full hunk bodies",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 12,
+            },
           },
         ],
         total: 6,
         done: 0,
+        source: {
+          artifact: "tasks",
+          line: 5,
+        },
       },
       {
         id: "1-shared-types-types",
@@ -821,26 +1017,50 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             text: "1.1 Add `ReviewIntent` (prTitle/prBody/spec), widening the live `DecisionIntent` seam",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 16,
+            },
           },
           {
             text: "1.2 Add `ReviewHypothesisBody` + `HypothesisRisk` (riskId, statement, severity, disconfirmer) and the `ReviewHypothesis` envelope alias",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 17,
+            },
           },
           {
             text: "1.3 Add `RiskCrossCheck` (riskId, status confirmed|open, findingIds)",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 18,
+            },
           },
           {
             text: "1.4 Add `FindingVerification` (verdict reproduced|refuted|inconclusive, evidence) and the optional `FindingElement.verification`",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 19,
+            },
           },
           {
             text: "1.5 Add the dual-model result shapes (per-seat result pair + reconcile output), reusing `FindingAgreement`/`FindingModelAnswer`",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 20,
+            },
           },
         ],
         total: 5,
         done: 0,
+        source: {
+          artifact: "tasks",
+          line: 14,
+        },
       },
       {
         id: "2-protocol-rsp-validator",
@@ -849,22 +1069,42 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             text: "2.1 Add `review.hypothesis` to `RSP_DOC_TYPES` and `DOC_TYPE_REGISTRY` (atomic)",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 24,
+            },
           },
           {
             text: "2.2 Add the `review.hypothesis` body schema + rules in `bodies.ts` (domain non-empty, scope in/out, design, risks bounded 5–10, per-risk severity vocabulary + non-empty disconfirmer); dispatch from `validateDocument`",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 25,
+            },
           },
           {
             text: "2.3 Widen the `finding` body schema to accept the optional `verification` field; keep itemwise admission + grounding unchanged",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 26,
+            },
           },
           {
             text: "2.4 Add `bodyJsonSchema` projections for the new/changed bodies (structured-output constraint)",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 27,
+            },
           },
         ],
         total: 4,
         done: 0,
+        source: {
+          artifact: "tasks",
+          line: 22,
+        },
       },
       {
         id: "3-prompt-contracts-instructions",
@@ -873,22 +1113,42 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             text: "3.1 Author `REVIEW_HYPOTHESIS_CONTRACT` (seven-slot; EMIT `review.hypothesis`; ORDERING = logical/first-principles; FAILURE VALVE = honest-null), register in `CONTRACTS`",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 31,
+            },
           },
           {
             text: "3.2 Author `FINDING_VERIFICATION_CONTRACT` (reproduce-or-refute; verdict + one-line evidence; refuse to guess)",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 32,
+            },
           },
           {
             text: "3.3 Amend the three lens contracts' instruction slots (versioned) to consume the hypothesis layer as disconfirmation criteria",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 33,
+            },
           },
           {
             text: "3.4 Ensure `assemblePrompt` renders the hypothesis as a labelled layer after base, before payload, base never truncated",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 34,
+            },
           },
         ],
         total: 4,
         done: 0,
+        source: {
+          artifact: "tasks",
+          line: 29,
+        },
       },
       {
         id: "4-core-intelligence-modules-core-node-free",
@@ -897,26 +1157,50 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             text: "4.1 `hypothesis-generation.ts` → `runHypothesisPass` (manifest + intent + repoContext + structure → admitted `review.hypothesis`, retry, honest `failed`); a compact `HypothesisRepoContext` projection built from `ProjectMap`/`FileContext`",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 38,
+            },
           },
           {
             text: "4.2 Add optional `hypothesis` input to `runFindingAngle`/`runDecisionAngle`/`runNoiseAngle` and render it as the disconfirmation layer",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 39,
+            },
           },
           {
             text: "4.3 `risk-crosscheck.ts` → `crossCheckRisks(hypothesis, findings)` (deterministic; predicted-and-found vs predicted-but-unflagged)",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 40,
+            },
           },
           {
             text: "4.4 `finding-reconcile.ts` → `reconcileFindings(seatA, seatB, labels)` (concur match / solo → disagree / conflict → disagree; never a merged summary)",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 41,
+            },
           },
           {
             text: "4.5 `finding-verification.ts` → `classifyNonObvious` + `runFindingVerification` (fresh session, real file content, verdict + evidence; drop/surface/caveat; cap + batching)",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 42,
+            },
           },
         ],
         total: 5,
         done: 0,
+        source: {
+          artifact: "tasks",
+          line: 36,
+        },
       },
       {
         id: "5-adapters-store-model-i-o",
@@ -925,18 +1209,34 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             text: "5.1 Second seat executor for dual-model via the existing `createCodexRunTurn` port; provider→harness follows the resolved model",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 46,
+            },
           },
           {
             text: "5.2 Feed `runHypothesisPass` the ProjectSnapshot projection through `ProjectContextReader`/`context.map`; keep `core` node-free",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 47,
+            },
           },
           {
             text: "5.3 Feed `runFindingVerification` real file content through `context.file`; a fresh session per verification (default a different seat)",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 48,
+            },
           },
         ],
         total: 3,
         done: 0,
+        source: {
+          artifact: "tasks",
+          line: 44,
+        },
       },
       {
         id: "6-pipeline-wiring-core",
@@ -945,22 +1245,42 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             text: "6.1 Extend `ReviewPipelineInput`/`Result` with hypothesis, cross-checks, dual-model config, and verification config",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 52,
+            },
           },
           {
             text: "6.2 Sequence in `buildReviewCanvases`: hypothesis pass → dual-model lens runs (`resolveDualSeat`) → reconcile → verification → cross-check, all drawing from the ONE shared `InvocationBudget`",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 53,
+            },
           },
           {
             text: "6.3 A per-review `ReviewIntelligenceBudget` over one `createInvocationBudget` counter (sub-ceilings for hypothesis/dual/verification); fail-closed on absence",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 54,
+            },
           },
           {
             text: "6.4 Honest degradation paths: no hypothesis, single-provider, unverified-caveat — each on a budget refusal or a missing provider",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 55,
+            },
           },
         ],
         total: 4,
         done: 0,
+        source: {
+          artifact: "tasks",
+          line: 50,
+        },
       },
       {
         id: "7-reading-surface-ui-host-free",
@@ -969,18 +1289,34 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             text: "7.1 `canvas/hypothesis.ts` → `buildHypothesisFrame(hypothesis, crossChecks)` (domain/scope/design/risks + confirmed|open + jump anchors)",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 59,
+            },
           },
           {
             text: "7.2 `components/hypothesis.tsx` per the confirmed UX (frame vs panel)",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 60,
+            },
           },
           {
             text: "7.3 Reuse `buildFlaggedIndex` for disagreement + render the verification evidence chip at the finding's anchor",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 61,
+            },
           },
         ],
         total: 3,
         done: 0,
+        source: {
+          artifact: "tasks",
+          line: 57,
+        },
       },
       {
         id: "8-tests-gates",
@@ -989,30 +1325,58 @@ export const openSpecChangeFixture: OpenSpecChange = {
           {
             text: "8.1 Hermetic FakeSession suites: hypothesis (admit/reject-retry/failed), reconcile (concur/solo/conflict/no-synthesis), cross-check (found/open), classifier (both directions), verification (reproduced/refuted/inconclusive)",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 65,
+            },
           },
           {
             text: "8.2 Protocol: one fixture per new `review.hypothesis` rule both directions; `finding` with `verification` admits; grounding/anchor guarantees stay green",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 66,
+            },
           },
           {
             text: "8.3 Red-then-green invariants: reconcile never merges; a refuted finding never reaches the index; an absent budget refuses every new-stage turn",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 67,
+            },
           },
           {
             text: "8.4 UI: `buildHypothesisFrame` host-free tests; Flagged disagreement + chip through the existing DOM tests",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 68,
+            },
           },
           {
             text: "8.5 Gated real-turn E2E (`RENNET_LIVE_CLAUDE` + a Codex seat) for one tiny dual-model+verified review; excluded from the default gate",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 69,
+            },
           },
           {
             text: "8.6 Full `pnpm check` green (format, boundaries, licenses, lint, typecheck, test, build); no new dependency arrows",
             status: "todo",
+            source: {
+              artifact: "tasks",
+              line: 70,
+            },
           },
         ],
         total: 6,
         done: 0,
+        source: {
+          artifact: "tasks",
+          line: 63,
+        },
       },
     ],
     total: 40,
@@ -1042,6 +1406,11 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "the runner executes once per provider, each fed the same disconfirmers, and returns two independently grounded, validator-admitted finding sets",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "dual-model-lens-review",
+                    line: 6,
+                  },
                 },
                 {
                   name: "The executing harness follows the resolved model",
@@ -1055,8 +1424,18 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "that seat's turn runs through the Codex port and its provenance records the Codex harness, never a Codex model stamped as a Claude run",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "dual-model-lens-review",
+                    line: 10,
+                  },
                 },
               ],
+              source: {
+                artifact: "spec",
+                capability: "dual-model-lens-review",
+                line: 3,
+              },
             },
             {
               name: "Disagreement is reconciled deterministically and never averaged",
@@ -1075,6 +1454,11 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "the reconcile emits one finding with `concur` and a vote of two of two",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "dual-model-lens-review",
+                    line: 17,
+                  },
                 },
                 {
                   name: "A solo finding becomes a labelled disagreement",
@@ -1088,6 +1472,11 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "the reconcile emits a `disagree` finding whose answers show the raising model's summary and the other model's absence of concern, each labelled by model",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "dual-model-lens-review",
+                    line: 21,
+                  },
                 },
                 {
                   name: "No synthesis is ever produced",
@@ -1101,8 +1490,18 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "both answers are carried side by side and no averaged or merged verdict is generated",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "dual-model-lens-review",
+                    line: 25,
+                  },
                 },
               ],
+              source: {
+                artifact: "spec",
+                capability: "dual-model-lens-review",
+                line: 14,
+              },
             },
             {
               name: "Disagreement surfaces as a first-class mark in the lens",
@@ -1121,8 +1520,18 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "the row shows both models' answers side by side, labelled, at the finding's anchor",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "dual-model-lens-review",
+                    line: 32,
+                  },
                 },
               ],
+              source: {
+                artifact: "spec",
+                capability: "dual-model-lens-review",
+                line: 29,
+              },
             },
             {
               name: "Single-provider availability degrades honestly",
@@ -1141,8 +1550,18 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "the lens runs once, findings keep a one-of-one concur agreement, and the lens is marked single-provider",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "dual-model-lens-review",
+                    line: 39,
+                  },
                 },
               ],
+              source: {
+                artifact: "spec",
+                capability: "dual-model-lens-review",
+                line: 36,
+              },
             },
             {
               name: "Optional adjudication only adds a note, never a verdict",
@@ -1161,12 +1580,27 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "the disagreement is shown with both answers and no adjudication turn runs",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "dual-model-lens-review",
+                    line: 46,
+                  },
                 },
               ],
+              source: {
+                artifact: "spec",
+                capability: "dual-model-lens-review",
+                line: 43,
+              },
             },
           ],
         },
       ],
+      source: {
+        artifact: "spec",
+        capability: "dual-model-lens-review",
+        line: 1,
+      },
     },
     {
       capability: "per-finding-verification",
@@ -1191,6 +1625,11 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "the classifier marks it non-obvious and it is routed to verification",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "per-finding-verification",
+                    line: 6,
+                  },
                 },
                 {
                   name: "A low-severity nit is surfaced without verification",
@@ -1204,8 +1643,18 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "the classifier marks it obvious and it surfaces directly with no verification chip",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "per-finding-verification",
+                    line: 10,
+                  },
                 },
               ],
+              source: {
+                artifact: "spec",
+                capability: "per-finding-verification",
+                line: 3,
+              },
             },
             {
               name: "Each non-obvious finding is reproduced or refuted against the real code",
@@ -1224,6 +1673,11 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "the verification runs in a fresh session with its own provenance, and by default on a seat other than the one that raised the finding",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "per-finding-verification",
+                    line: 17,
+                  },
                 },
                 {
                   name: "The verifier reads more than the offered hunk",
@@ -1237,8 +1691,18 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "it is fed the real file content around the anchor via the context reader, so it can trace the claim through the actual code rather than the hunk alone",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "per-finding-verification",
+                    line: 21,
+                  },
                 },
               ],
+              source: {
+                artifact: "spec",
+                capability: "per-finding-verification",
+                line: 14,
+              },
             },
             {
               name: "Verification disposition — drop refuted, chip reproduced, caveat inconclusive",
@@ -1257,6 +1721,11 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "the finding is dropped and does not appear in the lens",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "per-finding-verification",
+                    line: 28,
+                  },
                 },
                 {
                   name: "A reproduced finding carries its evidence chip",
@@ -1270,6 +1739,11 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "the finding surfaces with its verification verdict and evidence, and the lens renders the evidence chip at its anchor",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "per-finding-verification",
+                    line: 32,
+                  },
                 },
                 {
                   name: "An inconclusive finding surfaces caveated, not dropped",
@@ -1283,8 +1757,18 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: 'the finding surfaces with a "could not verify" caveat rather than being removed',
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "per-finding-verification",
+                    line: 36,
+                  },
                 },
               ],
+              source: {
+                artifact: "spec",
+                capability: "per-finding-verification",
+                line: 25,
+              },
             },
             {
               name: "The evidence chip is an additive optional field on a finding",
@@ -1303,6 +1787,11 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "it validates and renders exactly as it does today",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "per-finding-verification",
+                    line: 43,
+                  },
                 },
                 {
                   name: "A verified finding validates with the new field",
@@ -1316,8 +1805,18 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "the document is admitted and the field is preserved",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "per-finding-verification",
+                    line: 47,
+                  },
                 },
               ],
+              source: {
+                artifact: "spec",
+                capability: "per-finding-verification",
+                line: 40,
+              },
             },
             {
               name: "Verification is bounded by the shared budget and a per-review cap",
@@ -1336,6 +1835,11 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: 'the top findings by severity are verified and the remainder surface with a "not verified" caveat',
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "per-finding-verification",
+                    line: 54,
+                  },
                 },
                 {
                   name: "An exhausted budget stops verification spend, not the review",
@@ -1349,12 +1853,27 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: 'the affected finding surfaces with a "not verified" caveat and the review still completes',
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "per-finding-verification",
+                    line: 58,
+                  },
                 },
               ],
+              source: {
+                artifact: "spec",
+                capability: "per-finding-verification",
+                line: 51,
+              },
             },
           ],
         },
       ],
+      source: {
+        artifact: "spec",
+        capability: "per-finding-verification",
+        line: 1,
+      },
     },
     {
       capability: "review-hypothesis-pass",
@@ -1379,6 +1898,11 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "it emits an admitted `review.hypothesis` document carrying a domain, an in/out scope, a design expectation, and between five and ten risks, each with a severity and a disconfirmer",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "review-hypothesis-pass",
+                    line: 6,
+                  },
                 },
                 {
                   name: "The pass forms a prior, not a diff summary",
@@ -1392,8 +1916,18 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "it is fed the intent, the changed-file list, and the decomposition chunk titles plus repo context, and it is NOT fed the full hunk line text, so its risks are expectations to check rather than a restatement of the code",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "review-hypothesis-pass",
+                    line: 10,
+                  },
                 },
               ],
+              source: {
+                artifact: "spec",
+                capability: "review-hypothesis-pass",
+                line: 3,
+              },
             },
             {
               name: "The pass degrades honestly when intent or repo context is absent",
@@ -1412,6 +1946,11 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "the pass still produces a hypothesis from intent and structure and marks the repo context as absent, and no snapshot is fabricated",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "review-hypothesis-pass",
+                    line: 17,
+                  },
                 },
                 {
                   name: "A failed pass is not conflated with an empty one",
@@ -1425,8 +1964,18 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: 'the result carries `failed` with a reason, and downstream stages treat that as "no hypothesis," never as an empty-but-successful hypothesis',
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "review-hypothesis-pass",
+                    line: 21,
+                  },
                 },
               ],
+              source: {
+                artifact: "spec",
+                capability: "review-hypothesis-pass",
+                line: 14,
+              },
             },
             {
               name: "The hypothesis feeds every lens runner as disconfirmation criteria",
@@ -1445,6 +1994,11 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "the assembled prompt contains a labelled hypothesis layer carrying the risks and their disconfirmers, and the base instruction is never truncated to fit it",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "review-hypothesis-pass",
+                    line: 28,
+                  },
                 },
                 {
                   name: "Absent hypothesis leaves runner behaviour unchanged",
@@ -1458,8 +2012,18 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "it assembles and runs exactly as it does today, with no hypothesis layer",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "review-hypothesis-pass",
+                    line: 32,
+                  },
                 },
               ],
+              source: {
+                artifact: "spec",
+                capability: "review-hypothesis-pass",
+                line: 25,
+              },
             },
             {
               name: "The predicted-risk cross-check reconciles risks against findings",
@@ -1478,6 +2042,11 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "that risk is marked confirmed and the finding is associated with the risk",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "review-hypothesis-pass",
+                    line: 39,
+                  },
                 },
                 {
                   name: "A predicted-but-unflagged risk is surfaced as open",
@@ -1491,8 +2060,18 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "that risk is marked open and presented as a manual check for the human, and it is not dropped",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "review-hypothesis-pass",
+                    line: 43,
+                  },
                 },
               ],
+              source: {
+                artifact: "spec",
+                capability: "review-hypothesis-pass",
+                line: 36,
+              },
             },
             {
               name: "The hypothesis is the human's reading frame",
@@ -1511,12 +2090,27 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "the reading frame shows the domain, scope, design expectation, and each risk with its confirmed or open status and any linked finding anchors",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "review-hypothesis-pass",
+                    line: 50,
+                  },
                 },
               ],
+              source: {
+                artifact: "spec",
+                capability: "review-hypothesis-pass",
+                line: 47,
+              },
             },
           ],
         },
       ],
+      source: {
+        artifact: "spec",
+        capability: "review-hypothesis-pass",
+        line: 1,
+      },
     },
     {
       capability: "rsp-validator",
@@ -1541,6 +2135,11 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "it is admitted with no errors",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "rsp-validator",
+                    line: 6,
+                  },
                 },
                 {
                   name: "A risk count outside the bound rejects the document",
@@ -1554,6 +2153,11 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "the document is rejected atomically with an error naming the bound",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "rsp-validator",
+                    line: 10,
+                  },
                 },
                 {
                   name: "A risk with an out-of-vocabulary severity rejects the document",
@@ -1567,8 +2171,18 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "the document is rejected atomically",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "rsp-validator",
+                    line: 14,
+                  },
                 },
               ],
+              source: {
+                artifact: "spec",
+                capability: "rsp-validator",
+                line: 3,
+              },
             },
             {
               name: "The `finding` body admits an additive optional verification field",
@@ -1587,6 +2201,11 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "the item is admitted and the field is preserved",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "rsp-validator",
+                    line: 21,
+                  },
                 },
                 {
                   name: "A finding without a verification field is unchanged",
@@ -1600,6 +2219,11 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "it is admitted exactly as it is today",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "rsp-validator",
+                    line: 25,
+                  },
                 },
                 {
                   name: "A malformed verification verdict is rejected without sinking grounded findings",
@@ -1613,12 +2237,27 @@ export const openSpecChangeFixture: OpenSpecChange = {
                       text: "that item is dropped by the itemwise gate with a visible rejected count, and the grounded findings in the same document are still admitted",
                     },
                   ],
+                  source: {
+                    artifact: "spec",
+                    capability: "rsp-validator",
+                    line: 29,
+                  },
                 },
               ],
+              source: {
+                artifact: "spec",
+                capability: "rsp-validator",
+                line: 18,
+              },
             },
           ],
         },
       ],
+      source: {
+        artifact: "spec",
+        capability: "rsp-validator",
+        line: 1,
+      },
     },
   ],
 };

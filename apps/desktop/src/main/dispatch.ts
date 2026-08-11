@@ -492,6 +492,8 @@ export function createDispatch(
       case "canvas.disposition": {
         // The sovereign L2 write maps directly onto the review's disposition path
         // (#49 item 1/2 — the protocol input already uses `path`/`disposition`).
+        // A span/side (issue #78) makes it span-grained (the Spec view's per-node
+        // review); absent, it stays path-grained exactly as before.
         const input = parseCommandInput(name, rawInput);
         const review = service.setDisposition(
           input.commandId,
@@ -500,6 +502,8 @@ export function createDispatch(
           input.path,
           input.disposition,
           input.body,
+          input.span,
+          input.side,
         );
         return parseCommandOutput(name, { review });
       }

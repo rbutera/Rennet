@@ -2370,19 +2370,45 @@ export interface KnowledgeSet {
 // (`@rennet/core`) produces and the reading surface (`@rennet/ui`) renders.
 // ─────────────────────────────────────────────────────────────────────────────
 
+/** Which artifact file a reviewable node came from. */
+export type OpenSpecArtifact = "proposal" | "design" | "tasks" | "spec";
+
+/**
+ * Where a reviewable node lives in its source artifact — the file it came from and
+ * its 1-based start line. This is what turns a Spec-view review affordance into a
+ * DURABLE disposition: the disposition is written against the REAL artifact file
+ * path (`openspec/changes/<name>/<artifact>`) at this line span, so the engine (a
+ * patchset-file-scoped store) accepts it, and distinct nodes on the same file carry
+ * distinct line spans rather than colliding. Absent only on hand-built fixtures.
+ */
+export interface OpenSpecSource {
+  readonly artifact: OpenSpecArtifact;
+  /** For a spec delta, the capability dir — so the file is `specs/<capability>/spec.md`. */
+  readonly capability?: string;
+  /** 1-based line of the node's start in its artifact file. */
+  readonly line: number;
+}
+
 /** One rendered block inside a section: a paragraph, a list, a fenced code block, or a table. */
 export type OpenSpecBlock =
-  | { readonly kind: "paragraph"; readonly text: string }
+  | { readonly kind: "paragraph"; readonly text: string; readonly source?: OpenSpecSource }
   | {
       readonly kind: "list";
       readonly ordered: boolean;
       readonly items: readonly OpenSpecListItem[];
+      readonly source?: OpenSpecSource;
     }
-  | { readonly kind: "code"; readonly language: string; readonly code: string }
+  | {
+      readonly kind: "code";
+      readonly language: string;
+      readonly code: string;
+      readonly source?: OpenSpecSource;
+    }
   | {
       readonly kind: "table";
       readonly headers: readonly string[];
       readonly rows: readonly (readonly string[])[];
+      readonly source?: OpenSpecSource;
     };
 
 /**
@@ -2394,6 +2420,7 @@ export type OpenSpecBlock =
 export interface OpenSpecListItem {
   readonly lead?: string;
   readonly text: string;
+  readonly source?: OpenSpecSource;
 }
 
 /** A named capability noted in a proposal's Capabilities section. */
@@ -2402,6 +2429,7 @@ export interface OpenSpecCapabilityNote {
   readonly name: string;
   /** The prose after the colon. */
   readonly summary: string;
+  readonly source?: OpenSpecSource;
 }
 
 /** One row of a proposal's Impact section (the area touched + what changes there). */
@@ -2432,6 +2460,7 @@ export interface OpenSpecDesignSection {
   readonly level: 2 | 3;
   readonly heading: string;
   readonly blocks: readonly OpenSpecBlock[];
+  readonly source?: OpenSpecSource;
 }
 
 /** The design doc, as an ordered section list (a table of contents is derivable from it). */
@@ -2446,6 +2475,7 @@ export type OpenSpecTaskStatus = "todo" | "done";
 export interface OpenSpecTaskItem {
   readonly text: string;
   readonly status: OpenSpecTaskStatus;
+  readonly source?: OpenSpecSource;
 }
 
 /** One task group (`## N. Title`) and its checklist. */
@@ -2458,6 +2488,7 @@ export interface OpenSpecTaskGroup {
   readonly total: number;
   /** Ticked items in this group. */
   readonly done: number;
+  readonly source?: OpenSpecSource;
 }
 
 /** The tasks doc: the grouped checklists plus an honest whole-change roll-up. */
@@ -2485,6 +2516,7 @@ export interface OpenSpecScenarioStep {
 export interface OpenSpecScenario {
   readonly name: string;
   readonly steps: readonly OpenSpecScenarioStep[];
+  readonly source?: OpenSpecSource;
 }
 
 /** One requirement (`### Requirement: …`): its SHALL statement and its scenarios. */
@@ -2493,6 +2525,7 @@ export interface OpenSpecRequirement {
   /** The normative prose beneath the heading (the SHALL statement). */
   readonly statement: string;
   readonly scenarios: readonly OpenSpecScenario[];
+  readonly source?: OpenSpecSource;
 }
 
 /** The requirements under one delta operation (all the ADDED ones, all the MODIFIED ones, …). */
@@ -2506,6 +2539,7 @@ export interface OpenSpecSpecDelta {
   /** The capability directory name under `specs/`. */
   readonly capability: string;
   readonly groups: readonly OpenSpecRequirementGroup[];
+  readonly source?: OpenSpecSource;
 }
 
 /**

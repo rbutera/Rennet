@@ -1,51 +1,78 @@
 import type {
+  AnchorSide,
+  AnchorSpan,
   DispositionType,
+  OpenSpecArtifact,
   OpenSpecCapabilityNote,
   OpenSpecChange,
+  OpenSpecDeltaOperation,
   OpenSpecDesignSection,
   OpenSpecProposal,
   OpenSpecRequirement,
+  OpenSpecSource,
   OpenSpecSpecDelta,
   OpenSpecTaskGroup,
+  OpenSpecTaskItem,
 } from "@rennet/types";
 import type { AuthoringTrace } from "./authoring";
-import type { DispositionWrite } from "./logic";
+import { anchorPathKey, type DispositionWrite } from "./logic";
 
 /**
  * The OpenSpec Spec-angle reading model (the "Spec" lens), pure derivation.
  *
  * The parser (`@rennet/core parseOpenSpecChange`) turns the change's markdown into
  * a structured `OpenSpecChange`; this module folds that into a render-ready view
- * model. Its one load-bearing job beyond shaping is REVIEW ANCHORING: every
- * addressable element (the whole change, the proposal, each capability, each design
- * section, each task group, each spec delta, each requirement, each scenario) gets
- * a STABLE anchor key. Those keys are the `path` a disposition is written against,
- * so comment / request-change / question on the Spec view flow through the SAME
- * `DispositionWrite` seam the diff lenses use — one disposition vocabulary, a wider
- * reach (the same "verbs × anchors" the disposition cluster is built for).
+ * model. Its load-bearing job beyond shaping is REVIEW ANCHORING: every addressable
+ * element gets a stable anchor with TWO parts —
+ *   • `key`: a structural id (React keys, jump targets, local identity), and
+ *   • `target`: the DURABLE disposition address — the REAL artifact file path
+ *     (`openspec/changes/<name>/<artifact>`) plus a single-line span at the node's
+ *     source line.
+ * The target is what makes a Spec review affordance persist: a disposition is
+ * written against the real file (which is in the reviewed patchset when the PR
+ * edits the change) at a per-node line span, so the engine accepts it and distinct
+ * nodes on the same file (e.g. five requirements in one `spec.md`) get distinct
+ * spans rather than colliding on one path. Diff-lens behaviour is unchanged (they
+ * carry no span → path-grained, exactly as before).
  *
- * Host-free by construction (`@rennet/ui` imports only types), so every keying and
- * counting rule here is unit-testable without Electron.
+ * Host-free by construction (`@rennet/ui` imports only types + protocol), so every
+ * keying and targeting rule here is unit-testable without Electron.
  */
 
 /** The species of thing a Spec-view disposition is anchored to. */
 export type OpenSpecAnchorKind =
   | "change"
-  | "proposal"
   | "capability"
+  | "why-block"
   | "design-section"
   | "task-group"
+  | "task-item"
   | "spec-delta"
   | "requirement"
   | "scenario";
 
-/** A stable review anchor: its kind, the disposition `path`, and a human label. */
+/**
+ * The durable disposition address for an anchor: the real artifact file path and,
+ * when the node has a known source line, a single-line span (with `side`) so
+ * distinct nodes on one file don't collide. Absent only when the node carries no
+ * source (a hand-built fixture) — then the affordance degrades to the structural
+ * key, which is honest-but-non-durable.
+ */
+export interface OpenSpecAnchorTarget {
+  readonly path: string;
+  readonly span?: AnchorSpan;
+  readonly side?: AnchorSide;
+}
+
+/** A stable review anchor: its kind, a structural `key`, a label, and a durable target. */
 export interface OpenSpecReviewAnchor {
   readonly kind: OpenSpecAnchorKind;
-  /** The stable key a disposition writes against (the `DispositionWrite.path`). */
+  /** A structural id — React keys, jumps, local identity. NOT the disposition path. */
   readonly key: string;
   /** The accessible label the disposition cluster announces. */
   readonly label: string;
+  /** The durable disposition address (real file path + line span). Absent ⇒ no source. */
+  readonly target?: OpenSpecAnchorTarget;
 }
 
 /** A slug for a key segment (lowercase, non-alphanumerics collapsed to `-`). */
@@ -62,14 +89,52 @@ function changeKey(name: string): string {
   return `openspec:${slug(name)}`;
 }
 
-// ── anchor builders (pure, the single source of every Spec-view key) ──────────
-
-export function changeAnchor(change: OpenSpecChange): OpenSpecReviewAnchor {
-  return { kind: "change", key: changeKey(change.name), label: change.name };
+/** The repo-relative artifact file path a node's source points at. */
+function artifactPath(name: string, source: OpenSpecSource): string {
+  const base = `openspec/changes/${name}`;
+  const byArtifact: Record<OpenSpecArtifact, string> = {
+    proposal: `${base}/proposal.md`,
+    design: `${base}/design.md`,
+    tasks: `${base}/tasks.md`,
+    spec: `${base}/specs/${source.capability ?? ""}/spec.md`,
+  };
+  return byArtifact[source.artifact];
 }
 
-export function proposalAnchor(change: OpenSpecChange): OpenSpecReviewAnchor {
-  return { kind: "proposal", key: `${changeKey(change.name)}/proposal`, label: "proposal" };
+/**
+ * The durable target for a node: its real file path + a single-line span at the
+ * node's source line. `side` is `additions` — the node's line reads on the new-file
+ * image, correct for an added/edited artifact (a review of a PR that ships the
+ * change). Absent source ⇒ no durable target (honest degradation).
+ */
+function targetFrom(
+  name: string,
+  source: OpenSpecSource | undefined,
+): OpenSpecAnchorTarget | undefined {
+  if (!source) return undefined;
+  return { path: artifactPath(name, source), span: { startLine: source.line }, side: "additions" };
+}
+
+/** A path-grained target on a change's headline artifact (proposal → design → first spec). */
+function headlineTarget(change: OpenSpecChange): OpenSpecAnchorTarget | undefined {
+  const base = `openspec/changes/${change.name}`;
+  if (change.proposal) return { path: `${base}/proposal.md` };
+  if (change.design) return { path: `${base}/design.md` };
+  const firstDelta = change.specDeltas[0];
+  if (firstDelta) return { path: `${base}/specs/${firstDelta.capability}/spec.md` };
+  return undefined;
+}
+
+// ── anchor builders (pure, the single source of every Spec-view key + target) ──
+
+export function changeAnchor(change: OpenSpecChange): OpenSpecReviewAnchor {
+  return {
+    kind: "change",
+    key: changeKey(change.name),
+    label: change.name,
+    // The whole change ≈ its headline doc, path-grained (a change-wide comment).
+    target: headlineTarget(change),
+  };
 }
 
 export function capabilityAnchor(
@@ -80,6 +145,17 @@ export function capabilityAnchor(
     kind: "capability",
     key: `${changeKey(change.name)}/capability/${slug(note.name)}`,
     label: note.name,
+    target: targetFrom(change.name, note.source),
+  };
+}
+
+export function whyBlockAnchor(change: OpenSpecChange, index: number): OpenSpecReviewAnchor {
+  const block = change.proposal?.why[index];
+  return {
+    kind: "why-block",
+    key: `${changeKey(change.name)}/proposal/why/${index}`,
+    label: `why · block ${index + 1}`,
+    target: targetFrom(change.name, block?.source),
   };
 }
 
@@ -91,6 +167,7 @@ export function designSectionAnchor(
     kind: "design-section",
     key: `${changeKey(change.name)}/design/${section.id}`,
     label: section.heading,
+    target: targetFrom(change.name, section.source),
   };
 }
 
@@ -102,6 +179,21 @@ export function taskGroupAnchor(
     kind: "task-group",
     key: `${changeKey(change.name)}/tasks/${group.id}`,
     label: group.title,
+    target: targetFrom(change.name, group.source),
+  };
+}
+
+export function taskItemAnchor(
+  change: OpenSpecChange,
+  group: OpenSpecTaskGroup,
+  item: OpenSpecTaskItem,
+  index: number,
+): OpenSpecReviewAnchor {
+  return {
+    kind: "task-item",
+    key: `${changeKey(change.name)}/tasks/${group.id}/item/${index}`,
+    label: item.text,
+    target: targetFrom(change.name, item.source),
   };
 }
 
@@ -113,6 +205,7 @@ export function specDeltaAnchor(
     kind: "spec-delta",
     key: `${changeKey(change.name)}/spec/${slug(delta.capability)}`,
     label: delta.capability,
+    target: targetFrom(change.name, delta.source),
   };
 }
 
@@ -125,6 +218,7 @@ export function requirementAnchor(
     kind: "requirement",
     key: `${changeKey(change.name)}/spec/${slug(delta.capability)}/${slug(requirement.name)}`,
     label: requirement.name,
+    target: targetFrom(change.name, requirement.source),
   };
 }
 
@@ -133,11 +227,13 @@ export function scenarioAnchor(
   delta: OpenSpecSpecDelta,
   requirement: OpenSpecRequirement,
   scenarioName: string,
+  source: OpenSpecSource | undefined,
 ): OpenSpecReviewAnchor {
   return {
     kind: "scenario",
     key: `${changeKey(change.name)}/spec/${slug(delta.capability)}/${slug(requirement.name)}/${slug(scenarioName)}`,
     label: scenarioName,
+    target: targetFrom(change.name, source),
   };
 }
 
@@ -157,10 +253,17 @@ export interface OpenSpecRequirementView {
   readonly scenarioAnchors: readonly OpenSpecReviewAnchor[];
 }
 
+/** One delta operation group (ADDED / MODIFIED / …) with its requirements (issue #4). */
+export interface OpenSpecDeltaGroupView {
+  readonly operation: OpenSpecDeltaOperation;
+  readonly requirements: readonly OpenSpecRequirementView[];
+}
+
 export interface OpenSpecDeltaView {
   readonly delta: OpenSpecSpecDelta;
   readonly anchor: OpenSpecReviewAnchor;
-  readonly requirements: readonly OpenSpecRequirementView[];
+  /** Operation groups preserved (never flattened), so per-requirement operation is kept. */
+  readonly groups: readonly OpenSpecDeltaGroupView[];
 }
 
 export interface OpenSpecDesignSectionView {
@@ -171,12 +274,15 @@ export interface OpenSpecDesignSectionView {
 export interface OpenSpecTaskGroupView {
   readonly group: OpenSpecTaskGroup;
   readonly anchor: OpenSpecReviewAnchor;
+  /** Anchors for each checklist item, index-aligned with `group.items`. */
+  readonly itemAnchors: readonly OpenSpecReviewAnchor[];
 }
 
 export interface OpenSpecProposalView {
   readonly proposal: OpenSpecProposal;
-  readonly anchor: OpenSpecReviewAnchor;
   readonly capabilities: readonly OpenSpecCapabilityView[];
+  /** Anchors for each Why block, index-aligned with `proposal.why`. */
+  readonly whyAnchors: readonly OpenSpecReviewAnchor[];
 }
 
 /** Whole-change counts for the view header (an honest, at-a-glance roll-up). */
@@ -202,14 +308,13 @@ export interface OpenSpecViewModel {
 
 /**
  * Fold a parsed change into the render-ready Spec view model: the structured
- * artifacts, each addressable element carrying a stable review anchor, and a
- * whole-change summary. A pure function of its input — no host, no order-dependence.
+ * artifacts, each addressable element carrying a stable review anchor (structural
+ * key + durable target), and a whole-change summary. A pure function of its input.
  */
 export function buildOpenSpecView(change: OpenSpecChange): OpenSpecViewModel {
   const proposal: OpenSpecProposalView | undefined = change.proposal
     ? {
         proposal: change.proposal,
-        anchor: proposalAnchor(change),
         capabilities: [
           ...change.proposal.newCapabilities.map(
             (note): OpenSpecCapabilityView => ({
@@ -226,6 +331,7 @@ export function buildOpenSpecView(change: OpenSpecChange): OpenSpecViewModel {
             }),
           ),
         ],
+        whyAnchors: change.proposal.why.map((_block, index) => whyBlockAnchor(change, index)),
       }
     : undefined;
 
@@ -236,21 +342,25 @@ export function buildOpenSpecView(change: OpenSpecChange): OpenSpecViewModel {
   const taskGroups: OpenSpecTaskGroupView[] = (change.tasks?.groups ?? []).map((group) => ({
     group,
     anchor: taskGroupAnchor(change, group),
+    itemAnchors: group.items.map((item, index) => taskItemAnchor(change, group, item, index)),
   }));
 
   const specDeltas: OpenSpecDeltaView[] = change.specDeltas.map((delta) => ({
     delta,
     anchor: specDeltaAnchor(change, delta),
-    requirements: delta.groups.flatMap((group) =>
-      group.requirements.map(
-        (requirement): OpenSpecRequirementView => ({
-          requirement,
-          anchor: requirementAnchor(change, delta, requirement),
-          scenarioAnchors: requirement.scenarios.map((scenario) =>
-            scenarioAnchor(change, delta, requirement, scenario.name),
-          ),
-        }),
-      ),
+    groups: delta.groups.map(
+      (group): OpenSpecDeltaGroupView => ({
+        operation: group.operation,
+        requirements: group.requirements.map(
+          (requirement): OpenSpecRequirementView => ({
+            requirement,
+            anchor: requirementAnchor(change, delta, requirement),
+            scenarioAnchors: requirement.scenarios.map((scenario) =>
+              scenarioAnchor(change, delta, requirement, scenario.name, scenario.source),
+            ),
+          }),
+        ),
+      }),
     ),
   }));
 
@@ -285,18 +395,32 @@ export function buildOpenSpecView(change: OpenSpecChange): OpenSpecViewModel {
 }
 
 /**
- * Author a disposition against a Spec-view anchor. A Spec anchor resolves to
- * exactly ONE `DispositionWrite` (its `key` is the path), so unlike the diff
- * lenses' cohort/roll-up fan-out this is a single write — but it produces the
- * IDENTICAL `DispositionWrite` shape and an `AuthoringTrace`, so a Spec disposition
- * rides the same staging/publish batch as any other. `body` is the reviewer's
- * sovereign text, carried verbatim (empty for a bare verb press).
+ * Author a disposition against a Spec-view anchor. When the anchor has a durable
+ * `target` (the common case — the node carries a source), the write goes to the
+ * REAL artifact file path at the node's line span, so the engine accepts it and it
+ * persists; distinct nodes on one file carry distinct spans and never collide. With
+ * no target (a source-less fixture) it degrades to the structural key path-grained
+ * — honest, but non-durable. Either way it produces the IDENTICAL `DispositionWrite`
+ * shape + `AuthoringTrace`, so a Spec disposition rides the same staging/publish
+ * batch as any diff-lens one. `body` is the reviewer's sovereign text.
  */
 export function authorOpenSpecDisposition(
   anchor: OpenSpecReviewAnchor,
   type: DispositionType,
   body = "",
 ): { writes: DispositionWrite[]; trace: AuthoringTrace } {
-  const writes: DispositionWrite[] = [{ path: anchor.key, type, body }];
-  return { writes, trace: { granularity: "element", source: anchor.key, writes } };
+  const target = anchor.target;
+  const write: DispositionWrite = target
+    ? {
+        path: target.path,
+        type,
+        body,
+        ...(target.span && target.side ? { span: target.span, side: target.side } : {}),
+      }
+    : { path: anchor.key, type, body };
+  // The trace `source` is the anchor identity (path + span), stable per node.
+  return {
+    writes: [write],
+    trace: { granularity: "element", source: anchorPathKey(write), writes: [write] },
+  };
 }

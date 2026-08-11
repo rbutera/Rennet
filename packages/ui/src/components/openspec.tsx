@@ -1,6 +1,7 @@
 import type { DispositionType, OpenSpecBlock, OpenSpecScenario } from "@rennet/types";
 import type { AskMode, AskReviewResult } from "../canvas/ask";
 import type {
+  OpenSpecDeltaGroupView,
   OpenSpecDeltaView,
   OpenSpecRequirementView,
   OpenSpecReviewAnchor,
@@ -142,10 +143,21 @@ function Blocks({ blocks }: { blocks: readonly OpenSpecBlock[] }) {
   );
 }
 
-function Scenario({ scenario }: { scenario: OpenSpecScenario }) {
+function Scenario({
+  scenario,
+  anchor,
+  onDispose,
+}: {
+  scenario: OpenSpecScenario;
+  anchor: OpenSpecReviewAnchor | undefined;
+  onDispose(anchor: OpenSpecReviewAnchor, type: DispositionType): void;
+}) {
   return (
     <div className="ospec-scenario">
-      <p className="ospec-scenario-name">{scenario.name}</p>
+      <div className="ospec-scenario-head">
+        <p className="ospec-scenario-name">{scenario.name}</p>
+        {anchor ? <AnchorReview anchor={anchor} onDispose={onDispose} /> : null}
+      </div>
       <ol className="ospec-steps">
         {scenario.steps.map((step, index) => (
           // biome-ignore lint/suspicious/noArrayIndexKey: steps are an ordered Gherkin sequence
@@ -161,15 +173,23 @@ function Scenario({ scenario }: { scenario: OpenSpecScenario }) {
 
 function Requirement({
   view,
+  operation,
   onDispose,
 }: {
   view: OpenSpecRequirementView;
+  operation: OpenSpecDeltaGroupView["operation"];
   onDispose(anchor: OpenSpecReviewAnchor, type: DispositionType): void;
 }) {
   const { requirement } = view;
   return (
-    <li className="ospec-requirement" data-anchor={view.anchor.key}>
+    <li className="ospec-requirement" data-anchor={view.anchor.key} data-operation={operation}>
       <div className="ospec-requirement-head">
+        {/* The requirement carries its OWN operation badge (issue #4): a delta mixing
+            MODIFIED + ADDED requirements stays legible per-requirement, not just at
+            the capability header. */}
+        <span className={`ospec-op ospec-op-${operation}`} data-operation={operation}>
+          {OPERATION_LABEL[operation]}
+        </span>
         <h4 className="ospec-requirement-name">{requirement.name}</h4>
         <AnchorReview anchor={view.anchor} onDispose={onDispose} />
       </div>
@@ -183,7 +203,12 @@ function Requirement({
             {requirement.scenarios.length === 1 ? "scenario" : "scenarios"}
           </span>
           {requirement.scenarios.map((scenario, index) => (
-            <Scenario key={view.scenarioAnchors[index]?.key ?? scenario.name} scenario={scenario} />
+            <Scenario
+              key={view.scenarioAnchors[index]?.key ?? scenario.name}
+              scenario={scenario}
+              anchor={view.scenarioAnchors[index]}
+              onDispose={onDispose}
+            />
           ))}
         </div>
       ) : null}
@@ -198,31 +223,48 @@ function SpecDelta({
   view: OpenSpecDeltaView;
   onDispose(anchor: OpenSpecReviewAnchor, type: DispositionType): void;
 }) {
-  const operations = view.delta.groups.map((group) => group.operation);
   return (
     <section className="ospec-delta" data-capability={view.delta.capability}>
       <header className="ospec-delta-head">
         <div className="ospec-delta-title">
           <span className="ospec-delta-cap">{view.delta.capability}</span>
           <span className="ospec-delta-ops">
-            {operations.map((operation) => (
+            {view.groups.map((group, index) => (
               <span
-                className={`ospec-op ospec-op-${operation}`}
-                data-operation={operation}
-                key={operation}
+                className={`ospec-op ospec-op-${group.operation}`}
+                data-operation={group.operation}
+                // biome-ignore lint/suspicious/noArrayIndexKey: groups are positional; operation+index disambiguates a rare repeat
+                key={`${group.operation}-${index}`}
               >
-                {OPERATION_LABEL[operation]}
+                {OPERATION_LABEL[group.operation]} ({group.requirements.length})
               </span>
             ))}
           </span>
         </div>
         <AnchorReview anchor={view.anchor} onDispose={onDispose} />
       </header>
-      <ol className="ospec-requirements">
-        {view.requirements.map((requirement) => (
-          <Requirement key={requirement.anchor.key} view={requirement} onDispose={onDispose} />
-        ))}
-      </ol>
+      {/* Operation groups are preserved (issue #4): each requirement renders under
+          its operation, so attribution is never flattened away. */}
+      {view.groups.map((group, index) => (
+        <div
+          className="ospec-op-group"
+          data-operation={group.operation}
+          // biome-ignore lint/suspicious/noArrayIndexKey: groups are positional; operation+index disambiguates a rare repeat
+          key={`${group.operation}-${index}`}
+        >
+          <h5 className="ospec-op-group-head">{OPERATION_LABEL[group.operation]} requirements</h5>
+          <ol className="ospec-requirements">
+            {group.requirements.map((requirement) => (
+              <Requirement
+                key={requirement.anchor.key}
+                view={requirement}
+                operation={group.operation}
+                onDispose={onDispose}
+              />
+            ))}
+          </ol>
+        </div>
+      ))}
     </section>
   );
 }
@@ -290,13 +332,26 @@ export function OpenSpecView({
         <section className="ospec-proposal" aria-label="Proposal">
           <div className="ospec-section-head">
             <h3 className="ospec-section-title">Proposal</h3>
-            <AnchorReview anchor={proposal.anchor} onDispose={onDispose} />
           </div>
 
           {proposal.proposal.why.length > 0 ? (
             <div className="ospec-why">
               <h4 className="ospec-subhead">Why</h4>
-              <Blocks blocks={proposal.proposal.why} />
+              {/* Each Why block carries its own review cluster (issue #3), anchored
+                  to its source line in proposal.md. */}
+              {proposal.proposal.why.map((block, index) => {
+                const whyAnchor = proposal.whyAnchors[index];
+                return (
+                  <div
+                    className="ospec-why-block"
+                    // biome-ignore lint/suspicious/noArrayIndexKey: why blocks are positional prose
+                    key={index}
+                  >
+                    <Block block={block} />
+                    {whyAnchor ? <AnchorReview anchor={whyAnchor} onDispose={onDispose} /> : null}
+                  </div>
+                );
+              })}
             </div>
           ) : null}
 
@@ -402,15 +457,26 @@ export function OpenSpecView({
                 <AnchorReview anchor={groupView.anchor} onDispose={onDispose} />
               </header>
               <ul className="ospec-task-items">
-                {groupView.group.items.map((item, index) => (
-                  // biome-ignore lint/suspicious/noArrayIndexKey: task items are positional
-                  <li className="ospec-task-item" data-status={item.status} key={index}>
-                    <span className="ospec-task-check" aria-hidden="true">
-                      {item.status === "done" ? "☑" : "☐"}
-                    </span>
-                    <span className="ospec-task-text">{item.text}</span>
-                  </li>
-                ))}
+                {groupView.group.items.map((item, index) => {
+                  const itemAnchor = groupView.itemAnchors[index];
+                  return (
+                    <li
+                      className="ospec-task-item"
+                      data-status={item.status}
+                      // biome-ignore lint/suspicious/noArrayIndexKey: task items are positional
+                      key={index}
+                    >
+                      <span className="ospec-task-check" aria-hidden="true">
+                        {item.status === "done" ? "☑" : "☐"}
+                      </span>
+                      <span className="ospec-task-text">{item.text}</span>
+                      {/* Per-item review cluster (issue #3), anchored to the item's line. */}
+                      {itemAnchor ? (
+                        <AnchorReview anchor={itemAnchor} onDispose={onDispose} />
+                      ) : null}
+                    </li>
+                  );
+                })}
               </ul>
             </section>
           ))}

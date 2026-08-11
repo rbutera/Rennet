@@ -59,6 +59,13 @@ export const patchsetSchema: z.ZodType<Patchset> = z.object({
 
 export const dispositionTypeSchema = z.enum(["approve", "request-change", "comment", "question"]);
 
+/** A 1-based file-line span (issue #78). Shared by the disposition anchor + command inputs. */
+const anchorSpanSchema = z.object({
+  startLine: z.number().int().min(1),
+  endLine: z.number().int().min(1).optional(),
+});
+const anchorSideSchema = z.enum(["additions", "deletions", "context"]);
+
 const dispositionAnchorSchema: z.ZodType<DispositionAnchor> = z
   .object({
     path: z.string(),
@@ -744,15 +751,24 @@ export const commandDefinitions = {
   // the orchestrator's ops are MCP tools (canvasOps@2), NOT commands here, so no
   // agent-reachable path can write L2 by construction (structural, see the test).
   "canvas.disposition": {
-    input: z.object({
-      commandId: commandIdSchema,
-      reviewId: z.string().min(1),
-      patchsetId: z.string().min(1),
-      path: z.string(),
-      /** A disposition type sets/replaces the disposition; `null` clears it. */
-      disposition: dispositionTypeSchema.nullable(),
-      body: z.string(),
-    }),
+    input: z
+      .object({
+        commandId: commandIdSchema,
+        reviewId: z.string().min(1),
+        patchsetId: z.string().min(1),
+        path: z.string(),
+        /** A disposition type sets/replaces the disposition; `null` clears it. */
+        disposition: dispositionTypeSchema.nullable(),
+        body: z.string(),
+        // Optional span-grained anchor (issue #78): the Spec view (and any future
+        // line-grained lens) disposes at a `path`+line span so distinct nodes on one
+        // file coexist. All-or-none; absent ⇒ path-grained (the diff lenses' default).
+        span: anchorSpanSchema.optional(),
+        side: anchorSideSchema.optional(),
+      })
+      .refine((input) => (input.span === undefined) === (input.side === undefined), {
+        message: "span and side must both be present (span anchor) or both absent",
+      }),
     output: z.object({ review: reviewSchema }),
   },
   "canvas.adjudicateProposal": {

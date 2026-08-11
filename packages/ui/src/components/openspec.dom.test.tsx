@@ -16,10 +16,28 @@ import { OpenSpecView } from "./openspec";
 const CHANGE: OpenSpecChange = {
   name: "add-review-intelligence-core",
   proposal: {
-    why: [{ kind: "paragraph", text: "Rennet must supersede /review-pr." }],
+    why: [
+      {
+        kind: "paragraph",
+        text: "Rennet must supersede /review-pr.",
+        source: { artifact: "proposal", line: 3 },
+      },
+    ],
     whatChanges: [{ lead: "A hypothesis pass", text: "runs before the lenses." }],
-    newCapabilities: [{ name: "review-hypothesis-pass", summary: "the pre-read runner" }],
-    modifiedCapabilities: [{ name: "rsp-validator", summary: "gains a doc type" }],
+    newCapabilities: [
+      {
+        name: "review-hypothesis-pass",
+        summary: "the pre-read runner",
+        source: { artifact: "proposal", line: 20 },
+      },
+    ],
+    modifiedCapabilities: [
+      {
+        name: "rsp-validator",
+        summary: "gains a doc type",
+        source: { artifact: "proposal", line: 26 },
+      },
+    ],
     impact: [{ area: "packages/types", detail: "additive only" }],
   },
   design: {
@@ -46,11 +64,16 @@ const CHANGE: OpenSpecChange = {
         id: "1-types",
         title: "1. Shared types",
         items: [
-          { text: "1.1 Add ReviewIntent", status: "done" },
-          { text: "1.2 Add HypothesisRisk", status: "todo" },
+          { text: "1.1 Add ReviewIntent", status: "done", source: { artifact: "tasks", line: 6 } },
+          {
+            text: "1.2 Add HypothesisRisk",
+            status: "todo",
+            source: { artifact: "tasks", line: 7 },
+          },
         ],
         total: 2,
         done: 1,
+        source: { artifact: "tasks", line: 5 },
       },
     ],
     total: 2,
@@ -59,6 +82,7 @@ const CHANGE: OpenSpecChange = {
   specDeltas: [
     {
       capability: "review-hypothesis-pass",
+      source: { artifact: "spec", capability: "review-hypothesis-pass", line: 1 },
       groups: [
         {
           operation: "added",
@@ -66,15 +90,28 @@ const CHANGE: OpenSpecChange = {
             {
               name: "A hypothesis is committed before the runners read the diff",
               statement: "The system SHALL run a hypothesis pre-read pass.",
+              source: { artifact: "spec", capability: "review-hypothesis-pass", line: 3 },
               scenarios: [
                 {
                   name: "The hypothesis is produced from intent",
+                  source: { artifact: "spec", capability: "review-hypothesis-pass", line: 6 },
                   steps: [
                     { keyword: "when", text: "the pass runs" },
                     { keyword: "then", text: "it emits a document" },
                   ],
                 },
               ],
+            },
+          ],
+        },
+        {
+          operation: "modified",
+          requirements: [
+            {
+              name: "The validator admits the new doc type",
+              statement: "The validator SHALL admit review.hypothesis.",
+              source: { artifact: "spec", capability: "review-hypothesis-pass", line: 12 },
+              scenarios: [],
             },
           ],
         },
@@ -100,12 +137,18 @@ describe("OpenSpecView — structured rendering", () => {
     expect(steps[1]?.getAttribute("data-keyword")).toBe("then");
   });
 
-  it("renders the added-operation badge on the spec delta", () => {
+  it("keeps operation attribution per requirement (issue #4): added + modified groups", () => {
     const view = buildOpenSpecView(CHANGE);
     const { container } = mount(<OpenSpecView view={view} onDispose={vi.fn()} />);
-    const op = container.querySelector(".ospec-op");
-    expect(op?.getAttribute("data-operation")).toBe("added");
-    expect(op?.textContent).toBe("Added");
+    // Two operation groups render, each as its own subsection.
+    const groups = container.querySelectorAll(".ospec-op-group");
+    expect(groups).toHaveLength(2);
+    expect(groups[0]?.getAttribute("data-operation")).toBe("added");
+    expect(groups[1]?.getAttribute("data-operation")).toBe("modified");
+    // Each requirement carries its OWN operation, so a mixed delta is legible.
+    const requirements = container.querySelectorAll(".ospec-requirement");
+    expect(requirements[0]?.getAttribute("data-operation")).toBe("added");
+    expect(requirements[1]?.getAttribute("data-operation")).toBe("modified");
   });
 
   it("renders task checklist state and a progress roll-up", () => {
@@ -142,7 +185,7 @@ describe("OpenSpecView — review affordances reuse the seams", () => {
     const { getByRole, user } = mount(<OpenSpecView view={view} onDispose={onDispose} />);
 
     // The requirement's compact cluster: "Request change on element <requirement>".
-    const requirementAnchor = view.specDeltas[0]?.requirements[0]?.anchor;
+    const requirementAnchor = view.specDeltas[0]?.groups[0]?.requirements[0]?.anchor;
     expect(requirementAnchor).toBeDefined();
     const button = getByRole("button", {
       name: `Request change on element ${requirementAnchor?.label}`,
@@ -151,7 +194,33 @@ describe("OpenSpecView — review affordances reuse the seams", () => {
 
     expect(onDispose).toHaveBeenCalledTimes(1);
     expect(onDispose.mock.calls[0]?.[0].key).toBe(requirementAnchor?.key);
+    // The write goes to the REAL spec.md file + span, not the structural key (issue #1).
+    expect(onDispose.mock.calls[0]?.[0].target?.path).toContain(
+      "specs/review-hypothesis-pass/spec.md",
+    );
     expect(onDispose.mock.calls[0]?.[1]).toBe("request-change");
+  });
+
+  it("renders review clusters on scenarios, task items, and Why blocks (issue #3)", async () => {
+    const view = buildOpenSpecView(CHANGE);
+    const onDispose = vi.fn<(anchor: OpenSpecReviewAnchor, type: string) => void>();
+    const { getByRole, user } = mount(<OpenSpecView view={view} onDispose={onDispose} />);
+
+    // A scenario now carries its own cluster (was React-key-only before).
+    await user.click(
+      getByRole("button", { name: "Comment on element The hypothesis is produced from intent" }),
+    );
+    expect(onDispose.mock.calls[0]?.[0].kind).toBe("scenario");
+
+    // A task item carries a cluster, anchored to its tasks.md line.
+    await user.click(getByRole("button", { name: "Question on element 1.1 Add ReviewIntent" }));
+    expect(onDispose.mock.calls[1]?.[0].kind).toBe("task-item");
+    expect(onDispose.mock.calls[1]?.[0].target?.path).toContain("tasks.md");
+
+    // A Why block carries a cluster, anchored to proposal.md.
+    await user.click(getByRole("button", { name: "Comment on element why · block 1" }));
+    expect(onDispose.mock.calls[2]?.[0].kind).toBe("why-block");
+    expect(onDispose.mock.calls[2]?.[0].target?.path).toContain("proposal.md");
   });
 
   it("fires onDispose with the whole-change rollup anchor from the header cluster", async () => {

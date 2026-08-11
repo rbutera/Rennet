@@ -1,4 +1,5 @@
 import type {
+  OpenSpecArtifact,
   OpenSpecBlock,
   OpenSpecCapabilityNote,
   OpenSpecChange,
@@ -13,11 +14,33 @@ import type {
   OpenSpecScenario,
   OpenSpecScenarioKeyword,
   OpenSpecScenarioStep,
+  OpenSpecSource,
   OpenSpecSpecDelta,
   OpenSpecTaskGroup,
   OpenSpecTaskItem,
   OpenSpecTasks,
 } from "@rennet/types";
+
+/**
+ * The source-origin base for a run of lines handed to `parseBlocks`: which
+ * artifact they came from and the 1-based file line of the FIRST line in the run.
+ * A node's `source.line` is `baseLine + itsLocalIndex`, so every reviewable node
+ * carries the real artifact file + line a durable disposition anchors to.
+ */
+interface SourceBase {
+  readonly artifact: OpenSpecArtifact;
+  readonly capability?: string;
+  /** 1-based file line of `lines[0]` in the slice being parsed. */
+  readonly baseLine: number;
+}
+
+/** Build a node source from a base + the node's local (0-based) offset in the slice. */
+function sourceAt(base: SourceBase | undefined, localIndex: number): OpenSpecSource | undefined {
+  if (!base) return undefined;
+  return base.capability !== undefined
+    ? { artifact: base.artifact, capability: base.capability, line: base.baseLine + localIndex }
+    : { artifact: base.artifact, line: base.baseLine + localIndex };
+}
 
 /**
  * Parse an OpenSpec change's markdown artifacts into a STRUCTURED model.
@@ -90,17 +113,17 @@ const LIST_MARKER = /^(\s*)([-*+]|\d+\.)\s+(.*)$/;
  * the surface emphasise it. When there is no leading bold, the whole line is the
  * text and there is no lead.
  */
-function splitListItem(body: string): OpenSpecListItem {
+function splitListItem(body: string, source: OpenSpecSource | undefined): OpenSpecListItem {
   const bold = /^\*\*(.+?)\*\*\s*(.*)$/.exec(body);
   if (bold) {
     const lead = (bold[1] ?? "").trim();
     const rest = (bold[2] ?? "").replace(/^[—–:-]\s*/, "").trim();
     // A wholly-bold item (no remainder) reads better as plain text than as an
     // orphan lead with an empty body.
-    if (rest.length === 0) return { text: lead };
-    return { lead, text: rest };
+    if (rest.length === 0) return source ? { text: lead, source } : { text: lead };
+    return source ? { lead, text: rest, source } : { lead, text: rest };
   }
-  return { text: body.trim() };
+  return source ? { text: body.trim(), source } : { text: body.trim() };
 }
 
 /** True for the opening/closing of a fenced code block. */
@@ -117,15 +140,17 @@ function isClosingFence(line: string): boolean {
  * code, and tables. A blank line separates blocks; a `---` rule is dropped. This is
  * the shared renderer for design sections and the proposal's prose sections.
  */
-function parseBlocks(lines: readonly string[]): OpenSpecBlock[] {
+function parseBlocks(lines: readonly string[], base?: SourceBase): OpenSpecBlock[] {
   const blocks: OpenSpecBlock[] = [];
   let i = 0;
+  const src = (start: number) => sourceAt(base, start);
   while (i < lines.length) {
     const line = lines[i] ?? "";
     if (line.trim().length === 0 || isHorizontalRule(line)) {
       i += 1;
       continue;
     }
+    const start = i;
 
     // Fenced code.
     const fence = /^\s*```(.*)$/.exec(line);
@@ -138,7 +163,7 @@ function parseBlocks(lines: readonly string[]): OpenSpecBlock[] {
         i += 1;
       }
       i += 1; // consume the closing fence (if any)
-      blocks.push({ kind: "code", language, code: body.join("\n") });
+      blocks.push({ kind: "code", language, code: body.join("\n"), source: src(start) });
       continue;
     }
 
@@ -154,7 +179,7 @@ function parseBlocks(lines: readonly string[]): OpenSpecBlock[] {
         rows.push(tableCells(rowLine));
         i += 1;
       }
-      blocks.push({ kind: "table", headers, rows });
+      blocks.push({ kind: "table", headers, rows, source: src(start) });
       continue;
     }
 
@@ -166,6 +191,7 @@ function parseBlocks(lines: readonly string[]): OpenSpecBlock[] {
       while (i < lines.length) {
         const match = LIST_MARKER.exec(lines[i] ?? "");
         if (!match) break;
+        const itemStart = i;
         let body = match[3] ?? "";
         // Fold plain continuation lines (indented, not a new marker, not blank).
         while (i + 1 < lines.length) {
@@ -174,10 +200,10 @@ function parseBlocks(lines: readonly string[]): OpenSpecBlock[] {
           body += ` ${cont.trim()}`;
           i += 1;
         }
-        items.push(splitListItem(body.trim()));
+        items.push(splitListItem(body.trim(), src(itemStart)));
         i += 1;
       }
-      blocks.push({ kind: "list", ordered, items });
+      blocks.push({ kind: "list", ordered, items, source: src(start) });
       continue;
     }
 
@@ -198,7 +224,8 @@ function parseBlocks(lines: readonly string[]): OpenSpecBlock[] {
       para.push(cur.trim());
       i += 1;
     }
-    if (para.length > 0) blocks.push({ kind: "paragraph", text: para.join(" ") });
+    if (para.length > 0)
+      blocks.push({ kind: "paragraph", text: para.join(" "), source: src(start) });
   }
   return blocks;
 }
@@ -241,25 +268,67 @@ function sectionBody(
   return lines.slice(heading.line + 1, end);
 }
 
+/**
+ * The lines OWNED by a heading, stopping at the NEXT heading of ANY level (not
+ * just level ≤ its own). A parent `##` therefore ends where its first `###` child
+ * begins, so a nested-section document renders each heading exactly once — the
+ * child's prose belongs to the child, never duplicated into the parent's body.
+ * (`sectionBody` deliberately nests; this one deliberately does not.)
+ */
+function ownBody(lines: readonly string[], headings: readonly Heading[], index: number): string[] {
+  const heading = headings[index];
+  if (!heading) return [];
+  const next = headings[index + 1];
+  const end = next ? next.line : lines.length;
+  return lines.slice(heading.line + 1, end);
+}
+
 // ── proposal.md ──────────────────────────────────────────────────────────────
 
+/** The source base for a heading's body: its artifact + the 1-based line of the first body line. */
+function bodyBase(
+  headings: readonly Heading[],
+  index: number,
+  artifact: OpenSpecArtifact,
+  capability?: string,
+): SourceBase | undefined {
+  const heading = headings[index];
+  if (!heading) return undefined;
+  return capability !== undefined
+    ? { artifact, capability, baseLine: heading.line + 2 }
+    : { artifact, baseLine: heading.line + 2 };
+}
+
 /** Parse a Capabilities subsection's bullets into named capability notes. */
-function parseCapabilityNotes(lines: readonly string[]): OpenSpecCapabilityNote[] {
+function parseCapabilityNotes(
+  lines: readonly string[],
+  base: SourceBase | undefined,
+): OpenSpecCapabilityNote[] {
   const notes: OpenSpecCapabilityNote[] = [];
-  for (const block of parseBlocks(lines)) {
+  for (const block of parseBlocks(lines, base)) {
     if (block.kind !== "list") continue;
     for (const item of block.items) {
       const whole = item.lead ? `${item.lead} ${item.text}` : item.text;
+      const source = item.source;
       const backticked = /^`([^`]+)`\s*[:—–-]?\s*(.*)$/.exec(whole);
       if (backticked) {
-        notes.push({ name: (backticked[1] ?? "").trim(), summary: (backticked[2] ?? "").trim() });
+        const note: OpenSpecCapabilityNote = {
+          name: (backticked[1] ?? "").trim(),
+          summary: (backticked[2] ?? "").trim(),
+          ...(source ? { source } : {}),
+        };
+        notes.push(note);
         continue;
       }
       const colon = whole.indexOf(":");
       if (colon > 0) {
-        notes.push({ name: whole.slice(0, colon).trim(), summary: whole.slice(colon + 1).trim() });
+        notes.push({
+          name: whole.slice(0, colon).trim(),
+          summary: whole.slice(colon + 1).trim(),
+          ...(source ? { source } : {}),
+        });
       } else {
-        notes.push({ name: whole.trim(), summary: "" });
+        notes.push({ name: whole.trim(), summary: "", ...(source ? { source } : {}) });
       }
     }
   }
@@ -283,11 +352,17 @@ function parseProposal(md: string): OpenSpecProposal {
   const capsIdx = bySection((t) => t.startsWith("capabilities"));
   const impactIdx = bySection((t) => t.startsWith("impact"));
 
-  const why = whyIdx >= 0 ? parseBlocks(sectionBody(lines, headings, whyIdx)) : [];
+  const why =
+    whyIdx >= 0
+      ? parseBlocks(sectionBody(lines, headings, whyIdx), bodyBase(headings, whyIdx, "proposal"))
+      : [];
 
   const whatChanges: OpenSpecListItem[] = [];
   if (whatIdx >= 0) {
-    for (const block of parseBlocks(sectionBody(lines, headings, whatIdx))) {
+    for (const block of parseBlocks(
+      sectionBody(lines, headings, whatIdx),
+      bodyBase(headings, whatIdx, "proposal"),
+    )) {
       if (block.kind === "list") whatChanges.push(...block.items);
     }
   }
@@ -301,13 +376,23 @@ function parseProposal(md: string): OpenSpecProposal {
     const modIdx = headings.findIndex(
       (h, idx) => idx > capsIdx && h.level === 3 && h.text.toLowerCase().includes("modif"),
     );
-    if (newIdx >= 0) newCapabilities = parseCapabilityNotes(sectionBody(lines, headings, newIdx));
+    if (newIdx >= 0)
+      newCapabilities = parseCapabilityNotes(
+        sectionBody(lines, headings, newIdx),
+        bodyBase(headings, newIdx, "proposal"),
+      );
     if (modIdx >= 0) {
-      modifiedCapabilities = parseCapabilityNotes(sectionBody(lines, headings, modIdx));
+      modifiedCapabilities = parseCapabilityNotes(
+        sectionBody(lines, headings, modIdx),
+        bodyBase(headings, modIdx, "proposal"),
+      );
     }
     // A Capabilities section with no New/Modified subsections: read its own bullets as new.
     if (newIdx < 0 && modIdx < 0) {
-      newCapabilities = parseCapabilityNotes(sectionBody(lines, headings, capsIdx));
+      newCapabilities = parseCapabilityNotes(
+        sectionBody(lines, headings, capsIdx),
+        bodyBase(headings, capsIdx, "proposal"),
+      );
     }
   }
 
@@ -347,7 +432,10 @@ function parseDesign(md: string): OpenSpecDesign {
       id: slugify(heading.text),
       level: heading.level as 2 | 3,
       heading: heading.text,
-      blocks: parseBlocks(sectionBody(lines, headings, i)),
+      // `ownBody`, not `sectionBody`: a `##` section stops at its first `###`
+      // child, so nested headings render once (no duplicated child prose).
+      blocks: parseBlocks(ownBody(lines, headings, i), bodyBase(headings, i, "design")),
+      source: { artifact: "design", line: heading.line + 1 },
     });
   }
   return { sections };
@@ -357,16 +445,34 @@ function parseDesign(md: string): OpenSpecDesign {
 
 const TASK_ITEM = /^\s*[-*]\s+\[([ xX])\]\s+(.*)$/;
 
-function parseTaskGroup(title: string, lines: readonly string[]): OpenSpecTaskGroup {
+/** `headingLine` is the group heading's 0-based line; body lines start at `headingLine + 1`. */
+function parseTaskGroup(
+  title: string,
+  lines: readonly string[],
+  headingLine: number,
+): OpenSpecTaskGroup {
   const items: OpenSpecTaskItem[] = [];
-  for (const line of lines) {
-    const match = TASK_ITEM.exec(line);
+  for (let i = 0; i < lines.length; i += 1) {
+    const match = TASK_ITEM.exec(lines[i] ?? "");
     if (!match) continue;
     const status = (match[1] ?? "").toLowerCase() === "x" ? "done" : "todo";
-    items.push({ text: (match[2] ?? "").trim(), status });
+    // Body line i is 0-based within the slice; its 1-based file line is
+    // headingLine + 1 (first body line) + i.
+    items.push({
+      text: (match[2] ?? "").trim(),
+      status,
+      source: { artifact: "tasks", line: headingLine + 2 + i },
+    });
   }
   const done = items.filter((item) => item.status === "done").length;
-  return { id: slugify(title), title, items, total: items.length, done };
+  return {
+    id: slugify(title),
+    title,
+    items,
+    total: items.length,
+    done,
+    source: { artifact: "tasks", line: headingLine + 1 },
+  };
 }
 
 function parseTasks(md: string): OpenSpecTasks {
@@ -376,7 +482,7 @@ function parseTasks(md: string): OpenSpecTasks {
   for (let i = 0; i < headings.length; i += 1) {
     const heading = headings[i];
     if (heading?.level !== 2) continue;
-    const group = parseTaskGroup(heading.text, sectionBody(lines, headings, i));
+    const group = parseTaskGroup(heading.text, sectionBody(lines, headings, i), heading.line);
     // Keep only groups that actually carry checklist items.
     if (group.items.length > 0) groups.push(group);
   }
@@ -396,7 +502,11 @@ const DELTA_OPERATIONS: Record<string, OpenSpecDeltaOperation> = {
 
 const SCENARIO_STEP = /^\s*[-*]\s+\*\*(WHEN|THEN|AND|GIVEN)\*\*\s*(.*)$/i;
 
-function parseScenario(name: string, lines: readonly string[]): OpenSpecScenario {
+function parseScenario(
+  name: string,
+  lines: readonly string[],
+  source: OpenSpecSource,
+): OpenSpecScenario {
   const steps: OpenSpecScenarioStep[] = [];
   for (let i = 0; i < lines.length; i += 1) {
     const match = SCENARIO_STEP.exec(lines[i] ?? "");
@@ -412,7 +522,7 @@ function parseScenario(name: string, lines: readonly string[]): OpenSpecScenario
     }
     steps.push({ keyword, text });
   }
-  return { name, steps };
+  return { name, steps, source };
 }
 
 function parseRequirement(
@@ -420,9 +530,11 @@ function parseRequirement(
   lines: readonly string[],
   headings: readonly Heading[],
   reqIndex: number,
+  capability: string,
 ): OpenSpecRequirement {
   const reqHeading = headings[reqIndex];
-  if (!reqHeading) return { name, statement: "", scenarios: [] };
+  const specSource = (line: number): OpenSpecSource => ({ artifact: "spec", capability, line });
+  if (!reqHeading) return { name, statement: "", scenarios: [], source: specSource(1) };
 
   // Statement = the prose between the requirement heading and its first scenario.
   const scenarioHeadings = headings.filter(
@@ -447,10 +559,10 @@ function parseRequirement(
     const idx = headings.indexOf(heading);
     const body = sectionBody(lines, headings, idx);
     const scenarioName = heading.text.replace(/^scenario:\s*/i, "").trim();
-    return parseScenario(scenarioName, body);
+    return parseScenario(scenarioName, body, specSource(heading.line + 1));
   });
 
-  return { name, statement, scenarios };
+  return { name, statement, scenarios, source: specSource(reqHeading.line + 1) };
 }
 
 function parseSpecDelta(capability: string, md: string): OpenSpecSpecDelta {
@@ -475,12 +587,12 @@ function parseSpecDelta(capability: string, md: string): OpenSpecSpecDelta {
       if (!req || req.line >= opEndLine) break;
       if (req.level !== 3 || !/^requirement:/i.test(req.text)) continue;
       const reqName = req.text.replace(/^requirement:\s*/i, "").trim();
-      requirements.push(parseRequirement(reqName, lines, headings, j));
+      requirements.push(parseRequirement(reqName, lines, headings, j, capability));
     }
     groups.push({ operation, requirements });
   }
 
-  return { capability, groups };
+  return { capability, groups, source: { artifact: "spec", capability, line: 1 } };
 }
 
 /**

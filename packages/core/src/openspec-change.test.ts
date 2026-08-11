@@ -130,10 +130,12 @@ describe("parseOpenSpecChange — proposal", () => {
 
   it("parses the Why section as ordered blocks with a numbered list", () => {
     const { why } = present(parseOpenSpecChange(SOURCE).proposal);
-    expect(why[0]).toEqual({
+    expect(why[0]).toMatchObject({
       kind: "paragraph",
       text: expect.stringContaining("REPLACE and SUPERSEDE"),
     });
+    // Every reviewable block carries its source origin (artifact + 1-based line).
+    expect(why[0]?.source).toMatchObject({ artifact: "proposal" });
     const list = why.find((block) => block.kind === "list");
     expect(list).toBeDefined();
     if (list?.kind === "list") {
@@ -196,6 +198,37 @@ describe("parseOpenSpecChange — design", () => {
       expect(table.rows).toHaveLength(3);
       expect(table.rows[0]?.[0]).toContain("Hypothesis pass");
     }
+  });
+
+  it("does NOT duplicate a nested ### child into its ## parent's body (regression #2)", () => {
+    const design = present(parseOpenSpecChange(SOURCE).design);
+    // `## Cost/latency envelope` owns `### Budget model` as a child. The parent's
+    // body must STOP at the child — no literal `### Budget model` paragraph, and
+    // none of the child's prose ("draw from ONE counter") bleeds up.
+    const cost = present(design.sections.find((s) => s.heading === "Cost/latency envelope"));
+    const parentText = cost.blocks
+      .flatMap((b) => (b.kind === "paragraph" ? [b.text] : []))
+      .join(" ");
+    expect(parentText).not.toContain("Budget model");
+    expect(parentText).not.toContain("draw from ONE counter");
+    // The child section carries its own prose, exactly once.
+    const budget = present(design.sections.find((s) => s.heading === "Budget model"));
+    const childText = budget.blocks
+      .flatMap((b) => (b.kind === "paragraph" ? [b.text] : []))
+      .join(" ");
+    expect(childText).toContain("draw from ONE counter");
+    // No section renders the raw `### Budget model` heading text as body prose.
+    const anyLiteralHeading = design.sections.some((section) =>
+      section.blocks.some((b) => b.kind === "paragraph" && b.text.startsWith("### ")),
+    );
+    expect(anyLiteralHeading).toBe(false);
+  });
+
+  it("stamps each design section with its source (artifact + 1-based line)", () => {
+    const design = present(parseOpenSpecChange(SOURCE).design);
+    const context = present(design.sections[0]);
+    expect(context.source).toMatchObject({ artifact: "design" });
+    expect(context.source?.line).toBeGreaterThan(0);
   });
 });
 

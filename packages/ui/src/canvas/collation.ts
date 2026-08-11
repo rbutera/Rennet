@@ -1,6 +1,6 @@
-import type { DispositionType } from "@rennet/types";
+import type { AnchorSide, AnchorSpan, DispositionType } from "@rennet/types";
 import type { DispositionBatch } from "./authoring";
-import type { DispositionWrite } from "./logic";
+import { anchorPathKey, type DispositionWrite } from "./logic";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The COLLATION DRAFT model (issue #101; ruling R40) — pure functions, no React,
@@ -46,6 +46,14 @@ export interface CollationItem {
   path: string;
   type: DispositionType;
   raw: string;
+  /**
+   * Span-grained anchor (all-or-none with `side`). Present ⇒ this item disposes on
+   * `path` at a line span (a Spec-view per-node review); absent ⇒ path-grained, the
+   * diff lenses' unchanged behaviour. The item's `id` already encodes it (see
+   * `ingestWrites`), so span-carrying items never collapse a distinct sibling away.
+   */
+  span?: AnchorSpan;
+  side?: AnchorSide;
   /** §2.5 seam: the refined form. `effectiveBody` prefers it once present. */
   refined?: string;
   /**
@@ -100,13 +108,19 @@ export function draftFromBatch(batch: DispositionBatch): CollationDraft {
 export function ingestWrites(draft: CollationDraft, writes: DispositionWrite[]): CollationDraft {
   let next = draft;
   for (const write of writes) {
-    const index = next.findIndex((item) => item.path === write.path);
+    // Key by the FULL anchor identity (path, or path#L…@side), not the bare path,
+    // so span-grained writes coexist: five requirements in one `spec.md` become five
+    // draft items, not one that overwrites the rest. Path-grained writes reduce to
+    // the path exactly as before (the diff lenses are untouched).
+    const id = anchorPathKey(write);
+    const index = next.findIndex((item) => item.id === id);
+    const span = write.span && write.side ? { span: write.span, side: write.side } : {};
     if (index >= 0) {
       next = next.map((item, at) =>
-        at === index ? { ...item, type: write.type, raw: write.body } : item,
+        at === index ? { ...item, type: write.type, raw: write.body, ...span } : item,
       );
     } else {
-      next = [...next, { id: write.path, path: write.path, type: write.type, raw: write.body }];
+      next = [...next, { id, path: write.path, type: write.type, raw: write.body, ...span }];
     }
   }
   return next;
@@ -245,7 +259,12 @@ export function withdrawPath(draft: CollationDraft, path: string): CollationDraf
  * construction.
  */
 export function collationItems(draft: CollationDraft): DispositionWrite[] {
-  return draft.map((item) => ({ path: item.path, type: item.type, body: effectiveBody(item) }));
+  return draft.map((item) => ({
+    path: item.path,
+    type: item.type,
+    body: effectiveBody(item),
+    ...(item.span && item.side ? { span: item.span, side: item.side } : {}),
+  }));
 }
 
 /**

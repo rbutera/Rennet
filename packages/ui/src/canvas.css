@@ -2496,3 +2496,41 @@
   background: var(--surface-2);
   padding: 12px;
 }
+
+/* Spec angle — review-fidelity additions (findings #3/#4): operation groups,
+   per-scenario / per-task-item / per-why-block clusters. Tokens only. */
+.ospec-op-group {
+  margin-top: 10px;
+}
+.ospec-op-group-head {
+  font: 700 10px / 1.2 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+  margin: 8px 0 4px;
+}
+.ospec-requirement-head {
+  flex-wrap: wrap;
+}
+.ospec-scenario-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.ospec-why-block {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+}
+.ospec-why-block > :first-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ospec-task-item {
+  align-items: center;
+}
+.ospec-task-item .disposition-cluster {
+  margin-left: auto;
+}

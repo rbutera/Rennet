@@ -289,6 +289,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
           path: write.path,
           disposition: write.type,
           body: write.body,
+          // Span-grained when the write carries one (the Spec view's per-node
+          // review). All-or-none; a diff-lens write has neither and stays path-grained.
+          ...(write.span && write.side ? { span: write.span, side: write.side } : {}),
         })
         .catch(() => undefined);
     }
