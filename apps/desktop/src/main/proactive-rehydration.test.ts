@@ -125,7 +125,7 @@ function capturingWatch(): { watch: WatchFn; targets: string[]; fire: (needle: s
 }
 
 describe("proactive rehydration — end to end over a real git repo", () => {
-  it("a reference-branch advance runs exactly one coalesced delta pass at the new tip", async () => {
+  it("a reference-branch advance runs exactly one coalesced snapshot regeneration at the new tip", async () => {
     const { root, storeDir, oid1, advance } = repoOnMain();
     const store = new ProjectSnapshotStore(storeDir);
     const generator = new ProjectSnapshotGenerator({ store });

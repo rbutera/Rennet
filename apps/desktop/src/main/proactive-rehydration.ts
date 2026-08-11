@@ -16,8 +16,14 @@ import {
 import type { ProcessedRepoSummary, Project, ProjectProcessEvent } from "@rennet/protocol";
 
 /**
- * Proactive knowledge rehydration (issue #143): keep a project's Repo Map warm as
- * its reference branch moves, so a review never reasons from a stale picture.
+ * Proactive rehydration — the SNAPSHOT half of issue #143. Keep a project's
+ * deterministic Repo Map (the model-free ProjectSnapshot) warm as its reference
+ * branch moves, so a review opened at the new tip reads a fresh structural picture
+ * (context.map / context.file) without an on-open rebuild.
+ *
+ * ⚠️ SCOPE: this makes the SNAPSHOT proactive. It does NOT keep the LLM knowledge
+ * layer (context.knowledge) warm — that layer is not wired into desktop at all, so
+ * there is no set to delta from. #143's knowledge half is untouched by this.
  *
  * The delta-pass ENGINE (`BaselineAdvanceCoordinator` debounce+coalesce,
  * `startBaselineWatch` fs.watch over the ref tree, and the ProjectSnapshot regen
