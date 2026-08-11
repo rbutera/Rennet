@@ -22,6 +22,7 @@ import {
   type CollationDraft,
   type CollationItem,
   clearRefined,
+  effectiveBody,
   ingestWrites,
   itemRefineSignature,
   setRefined,
@@ -47,7 +48,12 @@ import { publishedItems } from "./canvas/staging";
 import { createViewStore, useViewStore } from "./canvas/store";
 import { buildCommands, type CommandContext, type Screen } from "./command/commands";
 import { AskPanel } from "./components/ask-panel";
-import { CollationDraftCanvas, type RefineItemState } from "./components/collation-draft-canvas";
+import {
+  CollationDraftCanvas,
+  type PrDraftState,
+  type PrDraftValues,
+  type RefineItemState,
+} from "./components/collation-draft-canvas";
 import { CommandPalette } from "./components/command-palette";
 import { ConversationHost } from "./components/conversation-host";
 import { DestinationFrame } from "./components/destination-frame";
@@ -406,6 +412,17 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // glass collation canvas); signing the draft opens the PAPER; the paper signs or
   // goes back to the draft. frame → draft → paper.
   const [destinationView, setDestinationView] = useState<"closed" | "draft" | "paper">("closed");
+  // The editable PR submission draft (issue #74, M26) — the own-branch composer's
+  // title + body. Rennet drafts an honest account from the review; the human edits
+  // it, and the edited form is what flows into the paper's preview (and a later
+  // create act). `prDraftState` is the ephemeral drafting status (idle when absent).
+  const [prDraft, setPrDraft] = useState<PrDraftValues>({ title: "", body: "" });
+  const [prDraftState, setPrDraftState] = useState<PrDraftState | undefined>(undefined);
+  // The generation of the current PR-body draft turn (#74 HIGH-2). Bumped on every
+  // new draft AND on a review switch, so a late result from a superseded turn is
+  // DROPPED rather than overwriting the current review's composer with another
+  // turn's title/body (a stale-result swap).
+  const prDraftGeneration = useRef(0);
   // The outcome of the last sign that ran the real `publish.review` engine (bead
   // wire-sign-publish). Signing the paper no longer clears the draft and closes —
   // it invokes the publish engine in DRY-RUN (builds the exact GitHub request,
@@ -582,6 +599,13 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setNoiseReview(undefined);
     setOpenSpecChange(undefined);
     setOpenSpecCoverage(undefined);
+    // The PR-body draft (#74) is review-scoped: a fresh review starts with an empty,
+    // un-drafted composer so review A's account never lingers over review B. Bump the
+    // draft generation so a turn still in flight for the PREVIOUS review is dropped on
+    // arrival rather than landing on the new review's composer (#74 HIGH-2).
+    setPrDraft({ title: "", body: "" });
+    setPrDraftState(undefined);
+    prDraftGeneration.current += 1;
     // Reset the LIFTED view store's review-scoped state (lens/zoom/selection/cursor/
     // cohorts/overlay), preserving the scheme. The store now outlives a single review
     // (it was lifted here for the ⌘K palette), so without this reset, opening review B
@@ -959,11 +983,19 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // GitHub source supplies real branch names later. No span anchors yet on the
   // local-capture path (#78 feeds them), so other-pr comments post file-level —
   // honest, because a path-grained disposition genuinely has no single line.
+  // The drafted-then-edited PR title/body (#74, M26) override the deterministic
+  // derivation when the human has one: a non-empty title/body from the composer
+  // flows into the submission the paper previews and signs, so what leaves is the
+  // human's account. Empty ⇒ the pre-M26 behaviour (title from head, composed body).
+  const prTitle = prDraft.title.trim();
+  const prBody = prDraft.body.trim();
   const publishContext: PublishContext = {
     submission: {
       base: patchset?.repository.baseRef ?? "main",
       head: patchset ? patchset.repository.headOid.slice(0, 7) : "(working tree)",
       draftDefault: true,
+      ...(prTitle === "" ? {} : { title: prTitle }),
+      ...(prBody === "" ? {} : { body: prBody }),
     },
   };
   // The SINGLE source of truth for what publishes (issue #109). The human's
@@ -978,6 +1010,49 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // still entered the payload and an approve-only draft still ran an APPROVE dry
   // run while the chrome said "Nothing to publish".
   const inkDraft = publishedItems(draft);
+  // #74 HIGH: bind the PR-body draft generation to the FULL drafting-input identity,
+  // not just the review id. Two things change the inputs WITHOUT changing `reviewId`,
+  // so the reviewId-keyed reset never fired and a stale turn overwrote the composer:
+  //   • REGENERATION activates a new `activePatchsetId` under the SAME review — a
+  //     turn drafted against patchset A would land its body on patchset B.
+  //   • a STAGE/UNSTAGE edit changes the ink projection — a note that was ink when
+  //     the turn started (and so folded into the drafted body) but is BLUE by the
+  //     time it resolves would still reach the paper. Filtering the input to `inkDraft`
+  //     settles what was ink AT REQUEST TIME; this closes the time-of-check/
+  //     time-of-use window by binding the RESULT to the input identity too.
+  // Fingerprint EXACTLY the inputs `draftPrBody` sends. When it changes, the effect
+  // below bumps the generation (so any in-flight turn is dropped on arrival) and
+  // clears the drafting STATUS. The composer's own text is the human's and is left
+  // untouched — only a turn drafting against inputs that no longer exist is voided.
+  const prDraftRollup = narration?.rollup;
+  const prDraftInputFingerprint = JSON.stringify({
+    patchsetId: activePatchsetId,
+    base: publishContext.submission.base,
+    head: publishContext.submission.head,
+    dispositions: inkDraft.map((item) => ({
+      type: item.type,
+      path: item.path,
+      resolution: effectiveBody(item),
+    })),
+    narration:
+      prDraftRollup?.status === "narrated"
+        ? { oneLine: prDraftRollup.oneLine, paragraph: prDraftRollup.paragraph }
+        : null,
+    requirements: (openSpecChange?.specDeltas ?? []).flatMap((delta) =>
+      delta.groups.flatMap((group) =>
+        group.requirements.map((requirement) => requirement.statement),
+      ),
+    ),
+  });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — the effect FIRES ON the fingerprint change to void an in-flight turn; its body reads only the stable generation ref + setter (never the fingerprint), so biome reads the dep as "unnecessary", but dropping it would stop the invalidation.
+  useEffect(() => {
+    // The drafting inputs changed (a regeneration, a stage/unstage, or a narration/
+    // spec refresh): void any in-flight turn by bumping the generation the async
+    // continuation checks, and clear a drafting status that no longer describes the
+    // current inputs. The composer text is left untouched — the human's edit is final.
+    prDraftGeneration.current += 1;
+    setPrDraftState(undefined);
+  }, [prDraftInputFingerprint]);
   const publishTargetForMode = publishTarget(destinationMode, inkDraft, publishContext);
   // The degradation ledger, sourced HONESTLY from the active patchset: a degraded
   // (REST-fallback) changeset really did flatten, so it gates the sign. A clean
@@ -1142,6 +1217,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           onKeepRaw={keepRaw}
           onRefineAll={refineAll}
           refineStates={refineStates}
+          prDraft={prDraft}
+          onPrDraftChange={setPrDraft}
+          onDraftPrBody={() => void draftPrBody()}
+          prDraftState={prDraftState}
           onSign={() => {
             // Freezing a fresh paper drops any stale outcome from a prior sign.
             setPublishResult(undefined);
@@ -1330,6 +1409,85 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         refineStates[item.id]?.status !== "refining",
     );
     await runBatched(eligible, REFINE_CONCURRENCY, (item) => refineItem(item));
+  }
+
+  /**
+   * Draft the PR title + body from the reviewed changeset (issue #74, M26). Hands the
+   * live producer the material the renderer already holds — the branch shape, the
+   * roll-up narration (when narrated), the staged dispositions' resolutions, and the
+   * spec angle's requirements — and rounds the drafted title+body into the editable
+   * composer (the human then edits; their version is what the paper previews). A
+   * failed/unavailable turn leaves the fields untouched and shows the honest state;
+   * the deterministic composed body still previews on the paper. Posts NOTHING.
+   */
+  async function draftPrBody(): Promise<void> {
+    if (!review) return;
+    // Claim a generation for THIS turn; a newer draft or a review switch bumps the
+    // ref, so a stale result is dropped on arrival rather than applied (#74 HIGH-2).
+    prDraftGeneration.current += 1;
+    const generation = prDraftGeneration.current;
+    setPrDraftState({ status: "drafting" });
+    // The dispositions the reviewer STAGED (the ink subset), reduced to what the
+    // account reasons over: type + path + the effective body (refined once #19
+    // landed, else the raw note). ⭐ This MUST be `inkDraft`, never the full `draft`:
+    // a BLUE (unstaged, local-only) disposition is private reviewer reasoning that
+    // "stays on this machine and never leaves" (staging.ts contract). Drafting sends
+    // these to a Claude/Codex harness, so an unstaged blue note in the input would
+    // egress private notes AND could be woven into the posted PR body — the exact
+    // leak #74's HIGH-1 named. `inkDraft = publishedItems(draft)` is the same subset
+    // the paper previews and the sign wire posts, so what the model sees is exactly
+    // what would publish.
+    const dispositions = inkDraft.map((item) => ({
+      type: item.type,
+      path: item.path,
+      resolution: effectiveBody(item),
+    }));
+    // The spec angle's requirements (the SHALL statements the change was meant to
+    // satisfy), flattened from the parsed OpenSpec change the Spec lens loaded.
+    const requirements = (openSpecChange?.specDeltas ?? []).flatMap((delta) =>
+      delta.groups.flatMap((group) =>
+        group.requirements.map((requirement) => requirement.statement),
+      ),
+    );
+    // The roll-up narration (M22), when one was actually narrated — the changeset's
+    // own voice. A pending/failed placement carries no account, so it is omitted.
+    const rollup = narration?.rollup;
+    const narrationInput =
+      rollup?.status === "narrated"
+        ? { oneLine: rollup.oneLine, paragraph: rollup.paragraph }
+        : undefined;
+    try {
+      const result = await bridge.invoke("review.draftPrBody", {
+        commandId: crypto.randomUUID(),
+        reviewId: review.id,
+        base: publishContext.submission.base,
+        head: publishContext.submission.head,
+        dispositions,
+        ...(narrationInput === undefined ? {} : { narration: narrationInput }),
+        ...(requirements.length === 0 ? {} : { requirements }),
+      });
+      // Drop a superseded result (#74 HIGH-2): a newer draft or a review switch bumped
+      // the generation while this turn was in flight, so applying its title/body would
+      // overwrite a composer that has since moved on.
+      if (generation !== prDraftGeneration.current) return;
+      if (result.status === "drafted") {
+        // The draft lands in the editable fields; the human's edit is final from here.
+        setPrDraft({ title: result.title, body: result.body });
+        setPrDraftState({ status: "drafted", model: result.model });
+      } else if (result.status === "unavailable") {
+        setPrDraftState({ status: "unavailable", reason: result.reason });
+      } else {
+        setPrDraftState({ status: "failed", reason: result.reason });
+      }
+    } catch (err) {
+      // Same staleness gate on the failure path — a superseded turn must not pin a
+      // "failed" status onto a composer that has moved to another review/draft.
+      if (generation !== prDraftGeneration.current) return;
+      setPrDraftState({
+        status: "failed",
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
   }
 
   // Which top-level surface is showing — mirrors the branch order of the returns

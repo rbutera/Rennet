@@ -160,7 +160,25 @@ export function PublishSheet({
   onClose?: () => void;
 }) {
   const holdStart = useRef<number | null>(null);
+  // The exact bytes the CURRENT hold began over (#74 HIGH-2). The paper is a freeze,
+  // but its `payload` prop can still be recomposed by the host while the sheet stays
+  // mounted — a late "Draft with AI" result changes `prDraft`, which recomposes the
+  // target and re-renders the paper with NEW bytes. `holdStart` is a ref that
+  // survives that re-render, so without this a hold begun over payload A would sign
+  // payload B on release, with no fresh hold over B. Binding the hold to the bytes it
+  // started over makes signing emit ONLY what the reviewer actually held over.
+  const holdPayload = useRef<string | null>(null);
   const [armed, setArmed] = useState(false);
+  // A hold begun over a stale payload is voided at release by the `endHold` guard
+  // (below), which is timing-independent and load-bearing. As a render-time visual,
+  // disarm the button the moment the payload identity changes so it does not look
+  // held over bytes the reviewer can no longer see — React's "adjust state during
+  // render" pattern (the same one the ledger-swap gate uses), not an effect.
+  if (armed && holdStart.current !== null && holdPayload.current !== payload) {
+    holdStart.current = null;
+    holdPayload.current = null;
+    setArmed(false);
+  }
   // The degradation-ledger acknowledgement, owned locally. A gate that clears the
   // instant the ledger renders is no gate — signing a degraded review requires an
   // explicit acknowledging act.
@@ -214,6 +232,9 @@ export function PublishSheet({
 
   function beginHold(): void {
     holdStart.current = Date.now();
+    // Bind this hold to the exact bytes on screen NOW (#74 HIGH-2), so a later
+    // recomposition cannot make the release sign different bytes.
+    holdPayload.current = payload;
     // A zero (or negative) budget is an immediate sign; arm synchronously so the
     // accessibility floor never forces a hold the user cannot perform.
     if (canSign(0, holdToSignMs)) setArmed(true);
@@ -221,9 +242,15 @@ export function PublishSheet({
 
   function endHold(): void {
     const started = holdStart.current;
+    const heldOver = holdPayload.current;
     holdStart.current = null;
+    holdPayload.current = null;
     setArmed(false);
     if (started === null) return;
+    // The bytes changed between the press and the release (#74 HIGH-2): the hold was
+    // over a payload the reviewer is no longer looking at. Sign NOTHING — a new hold
+    // over the current bytes is required. Timing-independent backstop to the effect.
+    if (heldOver !== payload) return;
     // The target-disagreement gate is checked FIRST (issue #106): if the signed
     // `payload`/`variant` disagree with the rendered `target`, no sign path emits —
     // the paper fails closed rather than publish a mismatched artifact.

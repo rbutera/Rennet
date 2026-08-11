@@ -1240,6 +1240,37 @@ export type RefinementResult =
   | { readonly status: "unavailable"; readonly reason: string }
   | { readonly status: "failed"; readonly reason: string };
 
+// ─── review.draftPrBody: the PR title/body drafting result (issue #74, M26) ────
+//
+// The own-branch destination's PR-submission preview (#22) needs a title + body.
+// A light-tier, council-routed model turn drafts them from the reviewed changeset
+// — the roll-up narration, the staged dispositions' resolutions, the spec angle's
+// requirements, the decisions surfaced — so the body reads as an HONEST ACCOUNT of
+// the change rather than a diffstat. The draft is a STARTING POINT handed to the
+// human, never an act: the human edits it, and the edited form is what a later,
+// separate, explicit create act (#21) would use. Nothing here posts, pushes, or
+// otherwise egresses (R33) — drafting only produces text into a preview.
+//
+//   - `drafted`      — the turn produced a non-empty title AND body (the producer
+//                      enforces both non-empty; an empty title or body is `failed`,
+//                      never a blank preview). `model` records who wrote the draft.
+//   - `unavailable`  — no model seat is installed to draft with (the deterministic
+//                      fallback body still previews; the UI says so plainly).
+//   - `failed`       — a turn ran and did not produce a usable title+body.
+//
+// Like `RefinementResult`, the shape has NO field for a fabricated success: a
+// failed draft returns an honest state, and the preview keeps the deterministic
+// composed body, never a blank the human might sign unread.
+export type PrBodyDraftResult =
+  | {
+      readonly status: "drafted";
+      readonly title: string;
+      readonly body: string;
+      readonly model: string;
+    }
+  | { readonly status: "unavailable"; readonly reason: string }
+  | { readonly status: "failed"; readonly reason: string };
+
 // ─── review.hypothesis: the hypothesis-first pre-read pass (issue #178) ────────
 //
 // Florence's single most load-bearing anti-rubber-stamp move: BEFORE the lens

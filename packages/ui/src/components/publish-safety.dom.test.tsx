@@ -155,6 +155,69 @@ describe("emit fidelity (MUT A′): the sheet signs the HANDED payload, never a 
   });
 });
 
+describe("paper freeze (MUT #74 HIGH-2): a payload swap mid-hold voids the hold", () => {
+  const items: DispositionWrite[] = [{ path: "src/x.ts", type: "comment", body: "note" }];
+  const A = "PAYLOAD-A::draft-before-the-model-result";
+  const B = "PAYLOAD-B::draft-after-the-model-result";
+
+  it("a late result recomposing the payload DURING a hold signs NOTHING", () => {
+    const signed: string[] = [];
+    const onSign = (payload: string) => signed.push(payload);
+    const { container, rerender } = mount(
+      <PublishSheet
+        items={items}
+        payload={A}
+        variant={destinationVariant("other-pr")}
+        onSign={onSign}
+      />,
+    );
+    const base = 1_000_000;
+    vi.setSystemTime(base);
+    fireEvent.mouseDown(signButton(container)); // begin the hold over payload A
+    // The "Draft with AI" turn resolves, recomposing the target → the paper re-renders
+    // with NEW bytes B while the hold is still in progress (the reproduced scenario).
+    rerender(
+      <PublishSheet
+        items={items}
+        payload={B}
+        variant={destinationVariant("other-pr")}
+        onSign={onSign}
+      />,
+    );
+    vi.setSystemTime(base + 850); // a duration that WOULD sign an unbroken hold
+    fireEvent.mouseUp(signButton(container));
+    // Signing B off a hold begun over A is the HIGH-2 hole. The hold is bound to the
+    // bytes it started over, so nothing is signed. RED-proof: remove the payload
+    // binding in publish-sheet and this reddens with signed === [B].
+    expect(signed).toEqual([]);
+  });
+
+  it("a fresh hold AFTER the swap signs the new bytes (the void is not a permanent block)", () => {
+    const signed: string[] = [];
+    const onSign = (payload: string) => signed.push(payload);
+    const { container, rerender } = mount(
+      <PublishSheet
+        items={items}
+        payload={A}
+        variant={destinationVariant("other-pr")}
+        onSign={onSign}
+      />,
+    );
+    rerender(
+      <PublishSheet
+        items={items}
+        payload={B}
+        variant={destinationVariant("other-pr")}
+        onSign={onSign}
+      />,
+    );
+    // A deliberate fresh hold over the CURRENT bytes B signs B — the fix voids a
+    // stale hold, it does not disable signing.
+    pointerHold(signButton(container), 850);
+    expect(signed).toEqual([B]);
+  });
+});
+
 describe("hold-gate wiring (MUT C): a hold below the budget never signs", () => {
   it("a too-short hold does NOT sign; a second sufficient hold does", () => {
     const draft = stagedDraft(...writes);

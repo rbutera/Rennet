@@ -12,6 +12,7 @@ import type {
   OpenSpecCoverage,
   OpenSpecCoverageEdge,
   Patchset,
+  PrBodyDraftResult,
   RefinementResult,
   Review,
   ReviewEngine,
@@ -771,6 +772,27 @@ export const refinementResultSchema: z.ZodType<RefinementResult> = z.discriminat
   z.object({ status: z.literal("failed"), reason: z.string() }),
 ]);
 
+// ── review.draftPrBody: the PR title/body drafting result (issue #74, M26) ────
+// A light-tier model turn drafts a PR title + body from the reviewed changeset so
+// the own-branch submission preview (#22) opens with an honest account rather than
+// a bare diffstat. The producer guarantees `drafted` carries a non-empty title AND
+// body (an empty either way is `failed`); the shape has NO field for a fabricated
+// draft, so a failed turn keeps the deterministic composed body — never a blank the
+// human might sign unread. The draft is human-editable and posts NOTHING (R33).
+export const prBodyDraftResultSchema: z.ZodType<PrBodyDraftResult> = z.discriminatedUnion(
+  "status",
+  [
+    z.object({
+      status: z.literal("drafted"),
+      title: z.string().min(1),
+      body: z.string().min(1),
+      model: z.string().min(1),
+    }),
+    z.object({ status: z.literal("unavailable"), reason: z.string() }),
+    z.object({ status: z.literal("failed"), reason: z.string() }),
+  ],
+);
+
 // ── The Noise lens: grouped low-signal churn (issue #34) ──────────────────────
 // The low-signal churn a changeset touches, grouped away from the code that needs
 // eyes and tagged with how each group was judged (a deterministic mechanical RULE
@@ -1526,6 +1548,41 @@ export const commandDefinitions = {
       side: anchorSideSchema.optional(),
     }),
     output: refinementResultSchema,
+  },
+  // ── review.draftPrBody: draft the PR title + body (issue #74, M26) ───────────
+  // The own-branch destination's paper (#22) previews a PR submission; M26 drafts
+  // its title + body from the reviewed changeset so it opens with an honest account
+  // rather than a diffstat. The renderer already holds the drafting material (it
+  // rendered the lenses), so it hands it in: the branch shape, the roll-up
+  // narration if one was produced, the staged dispositions' resolutions, the spec
+  // angle's requirements, and the decisions surfaced. `reviewId` freshness-pins the
+  // review (a stale/unknown id is refused). The result is human-editable and posts
+  // NOTHING — drafting produces text into a preview; creating the PR is a separate
+  // explicit act (#21), and Rennet never pushes source (R33).
+  "review.draftPrBody": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+      /** The base branch the PR would target. */
+      base: z.string().min(1),
+      /** The head branch/ref the PR submits. */
+      head: z.string().min(1),
+      /** The roll-up narration (M22), when one was produced — the changeset's own voice. */
+      narration: z.object({ oneLine: z.string(), paragraph: z.string() }).optional(),
+      /** The staged dispositions' resolutions — what the reviewer asked for and approved. */
+      dispositions: z.array(
+        z.object({
+          type: dispositionTypeSchema,
+          path: z.string(),
+          resolution: z.string(),
+        }),
+      ),
+      /** The spec angle's requirements — what the change was meant to satisfy. */
+      requirements: z.array(z.string()).optional(),
+      /** The decisions the review surfaced — the WHY behind the change. */
+      decisions: z.array(z.string()).optional(),
+    }),
+    output: prBodyDraftResultSchema,
   },
   // ── The Noise lens (issue #34) ─────────────────────────────────────────────
   // The low-signal churn the changeset touches, grouped away and tagged with how

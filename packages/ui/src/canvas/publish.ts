@@ -57,6 +57,13 @@ export interface PrSubmissionContext {
   readonly draftDefault: boolean;
   /** An explicit title override; when absent, one is derived from the head branch. */
   readonly title?: string;
+  /**
+   * An explicit body override (issue #74, M26). When present it REPLACES the
+   * deterministic disposition-grouped body — this is where the drafted-then-edited
+   * PR body lands, so the paper previews and signs the human's edited account.
+   * When absent, the body is composed from the draft (the pre-M26 behaviour).
+   */
+  readonly body?: string;
 }
 
 /** The PR submission the own-branch paper previews and (via #21) would create. */
@@ -120,9 +127,14 @@ export function composePrSubmission(
   draft: CollationDraft,
   context: PrSubmissionContext,
 ): PrSubmission {
+  // The body is the drafted-then-edited account (M26 override) when the host supplies
+  // one, else the deterministic disposition grouping. A non-empty override wins; an
+  // empty/whitespace override falls back to the composed body so the preview is never
+  // blank (the same honesty floor the drafting producer enforces upstream).
+  const overrideBody = context.body?.trim();
   return {
     title: context.title ?? titleFromHead(context.head),
-    body: composePrSubmissionBody(draft),
+    body: overrideBody && overrideBody !== "" ? overrideBody : composePrSubmissionBody(draft),
     base: context.base,
     head: context.head,
     draft: context.draftDefault,

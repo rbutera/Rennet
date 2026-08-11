@@ -92,6 +92,36 @@ describe("both variants render from the same review state", () => {
     );
   });
 
+  it("own-branch previews the DRAFTED title + body (M26 override) — the draft reaches the paper", () => {
+    // The whole #74 chain end to end: a drafted-then-edited title+body flows through
+    // the submission context, and the paper — the publish preview — shows exactly the
+    // human's account, not the deterministic disposition grouping. This is the DoD's
+    // "a working PR title+body draft reaching the publish preview".
+    const drafted =
+      "## What\nBounds the rate limiter's fail-open path with a process-local bucket (decision 2).";
+    const target = publishTarget("own-branch", draft, {
+      submission: { ...context.submission, title: "Bound the fail-open path", body: drafted },
+    });
+    const { container } = mount(
+      <PublishSheet
+        target={target}
+        payload={publishTargetPayload(target)}
+        variant={destinationVariant("own-branch")}
+      />,
+    );
+    expect(container.querySelector(".publish-sheet-pr-title")?.textContent).toBe(
+      "Bound the fail-open path",
+    );
+    const body = container.querySelector('[data-testid="pr-body"]')?.textContent ?? "";
+    expect(body).toContain("process-local bucket (decision 2)");
+    // The deterministic grouping did NOT leak in alongside the drafted account.
+    expect(body).not.toContain("Requested changes");
+    // And the SIGNED bytes carry the drafted body — what you see is what leaves (R33).
+    expect(container.querySelector('[data-testid="publish-preview"]')?.textContent).toContain(
+      "process-local bucket (decision 2)",
+    );
+  });
+
   it("other-pr renders the line-anchored review comments (not a PR submission)", () => {
     const target = publishTarget("other-pr", draft, context);
     const { container } = mount(

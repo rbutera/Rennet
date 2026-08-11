@@ -912,6 +912,77 @@
   color: var(--private);
   font-size: 14px;
 }
+/* The PR-body composer (issue #74, M26) — own-branch composition only. Editable
+   glass fields on the draft; Rennet drafts an honest account you then edit. */
+.collation-pr-draft {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--private-line);
+  border-radius: var(--chip-radius);
+  background: var(--private-surface);
+  box-shadow: var(--private-glow);
+}
+.collation-pr-draft-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.collation-pr-draft-label {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+.collation-pr-draft-btn {
+  padding: 4px 10px;
+  border: 1px solid var(--private-line);
+  border-radius: var(--chip-radius);
+  background: var(--private-surface);
+  color: var(--private);
+  font-size: 12px;
+  cursor: pointer;
+}
+.collation-pr-draft-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.collation-pr-draft-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.collation-pr-draft-field-label {
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.collation-pr-draft-title,
+.collation-pr-draft-body {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--private-line);
+  border-radius: var(--chip-radius);
+  background: var(--surface);
+  color: var(--text);
+  font-size: 13px;
+  font-family: inherit;
+}
+.collation-pr-draft-body {
+  resize: vertical;
+  line-height: 1.5;
+}
+.collation-pr-draft-status {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-soft);
+}
+.collation-pr-draft-status[data-status="failed"] {
+  color: var(--danger, #c0392b);
+}
 .collation-empty {
   margin: 0;
   padding: 28px 8px;

@@ -162,6 +162,14 @@ export interface CodexSessionReadResult {
   readonly status: "measured" | "unmeasured" | "ambiguous";
   /** The real usage on `measured`; `null` otherwise (never a fabricated number). */
   readonly usage: RspTokenUsage | null;
+  /**
+   * The model Codex ACTUALLY ran, read from the correlated session log's
+   * `turn_context.payload.model`, on `measured`; `null` when the log carried none or
+   * on the non-`measured` paths. This is the OBSERVED model — what wrote the output —
+   * used so provenance reflects the runtime pick, not the requested one (#74 MED-3).
+   * Optional so existing readers/fakes that omit it are unaffected.
+   */
+  readonly model?: string | null;
   /** The correlated rollout path on `measured`; `null` otherwise. */
   readonly sessionFile: string | null;
   /** A human-readable reason on the non-`measured` paths. */
@@ -323,6 +331,7 @@ export async function readCodexSessionUsage(
   return {
     status: "measured",
     usage: only.parsed.usage,
+    model: only.parsed.model,
     sessionFile: only.file,
     scanned: files.length,
     matched: 1,

@@ -53,6 +53,23 @@ describe("own-branch: the PR submission preview", () => {
     expect(submission.title).toBe("Ship it");
   });
 
+  it("uses the drafted body override (M26) in place of the composed grouping", () => {
+    // The own-branch composer's drafted-then-edited body REPLACES the deterministic
+    // disposition grouping — this is the whole #74 feature. Dropping the override
+    // wiring in `composePrSubmission` reddens this.
+    const drafted = "## What\nBounds the fail-open path with a local bucket (decision 2).";
+    const submission = composePrSubmission(draft, { ...context.submission, body: drafted });
+    expect(submission.body).toBe(drafted);
+    // The composed grouping did NOT leak through alongside the override.
+    expect(submission.body).not.toContain("Requested changes");
+  });
+
+  it("falls back to the composed body when the override is empty/whitespace (never a blank preview)", () => {
+    const submission = composePrSubmission(draft, { ...context.submission, body: "   " });
+    // An empty override must not blank the preview — the deterministic grouping stands.
+    expect(submission.body).toContain("Requested changes");
+  });
+
   it("carries base, head, and the draft default verbatim", () => {
     const submission = composePrSubmission(draft, context.submission);
     expect(submission.base).toBe("main");
