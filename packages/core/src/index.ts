@@ -632,6 +632,14 @@ export function foldReview(current: Review | null, event: ReviewEvent): Review {
               asks: current.dispositions,
               carried,
               changedPaths: changedPathsBetween(priorPatchset, event.patchset),
+              // The successor's git rename links (old→new), so a rename target of an
+              // asked/carried file is recognised as the ask's own relocated content and
+              // never mistaken for scope-creep.
+              renames: event.patchset.files.flatMap((file) =>
+                file.status === "renamed" && file.previousPath !== undefined
+                  ? [{ from: file.previousPath, to: file.path }]
+                  : [],
+              ),
             })
           : undefined;
       return {

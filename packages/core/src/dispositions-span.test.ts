@@ -383,6 +383,25 @@ describe("span move-carry across a rename (issue #16)", () => {
     expect(next.orphaned).toBeUndefined();
   });
 
+  it("the delta account (#73) reports a rename-carried ask as UNTOUCHED, not addressed", () => {
+    // The fold's delta account must not lie when the agent renames a flagged file
+    // without touching the span: the concern is still live (untouched), reported at
+    // the new path, and the renamed file is NOT flagged beyond-asks.
+    const original = file("old.ts", PATCH_A);
+    const review = setDisposition(
+      created(patchsetOf("p1", [original])),
+      spanAnchor(original, { startLine: 2, endLine: 3 }, "additions"),
+      "approve",
+    );
+    const next = activate(review, patchsetOf("p2", [renamedFile("old.ts", "new.ts", PATCH_A)]));
+    const account = next.deltaAccount;
+    expect(account).toBeDefined();
+    expect(account?.asks).toHaveLength(1);
+    expect(account?.asks[0]?.status).toBe("untouched"); // NOT "addressed"
+    expect(account?.asks[0]?.path).toBe("new.ts"); // anchored where the concern lives now
+    expect(account?.beyondAsks).toEqual([]); // the rename target is not scope-creep
+  });
+
   it("REOPENS a span rename whose side-text changed by one byte (never a wrong carry)", () => {
     const original = file("old.ts", PATCH_A);
     const review = setDisposition(

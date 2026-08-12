@@ -33,14 +33,19 @@ import type {
  * Node-free at module scope: no `node:*`, so a mobile/third-party client can import it.
  */
 
-/** A stable identity for a disposition's anchor: path + side + span bounds. */
-function anchorKey(anchor: DispositionAnchor): string {
-  return [
-    anchor.path,
-    anchor.side ?? "",
-    anchor.span?.startLine ?? "",
-    anchor.span?.endLine ?? "",
-  ].join("|");
+/**
+ * A RENAME-SURVIVING identity for matching an ask to its carried descendant. The carry
+ * re-anchors a span-grained disposition onto the new path across a git rename
+ * (`carrySpanMoveOntoRename`), changing `path` and `contentDigest` but PRESERVING
+ * `spanDigest` (the byte-identity of the flagged span). So a span-grained ask keys on
+ * its `spanDigest`; a path-grained ask (which never carries across a rename) keys on
+ * `path + contentDigest`. Keying on the raw path here would sever the lineage on every
+ * rename and report an untouched concern as "addressed" — a UI lie (the original bug).
+ */
+function carryIdentity(anchor: DispositionAnchor): string {
+  return anchor.spanDigest !== undefined
+    ? `span:${anchor.side ?? ""}:${anchor.spanDigest}`
+    : `path:${anchor.path}:${anchor.contentDigest}`;
 }
 
 /** A short, single-line excerpt of an ask body for the "what moved" line. */
@@ -54,6 +59,12 @@ function summarise(body: string): string {
  * deterministic "what the successor touched" signal, computed by comparing each file's
  * diff text (`PatchFile.patch`). A path counts as changed when the successor's diff for
  * it differs from the prior's (new file, removed file, or a different patch body).
+ *
+ * ⚠️ Substrate ceiling (documented, not a defect): the compare is over the raw patch
+ * text, so (i) a change confined BEYOND a file's truncation marker is invisible (large
+ * files only), and (ii) a re-review whose base OID moved reports content-unchanged files
+ * as changed (their hunk line-numbers shift). Both are rare in the re-review loop and
+ * the account is informational, so they are accepted rather than papered over.
  */
 export function changedPathsBetween(prior: Patchset, successor: Patchset): string[] {
   const priorByPath = new Map(prior.files.map((file) => [file.path, file.patch] as const));
@@ -74,60 +85,79 @@ export function changedPathsBetween(prior: Patchset, successor: Patchset): strin
  * Build the deterministic delta account from the carry result + the changed-path set.
  *
  * `asks` are the prior staged dispositions; `carried` are the ones the lineage carry
- * kept byte-identical; `changedPaths` are the successor's changed paths
- * (`changedPathsBetween`, or the handoff turn's `filesTouched`). Pure — no I/O, no model.
+ * kept byte-identical (RE-ANCHORED to the new path when it carried across a rename);
+ * `changedPaths` are the successor's changed paths (`changedPathsBetween`, or the
+ * handoff turn's `filesTouched`); `renames` are the successor's git rename links
+ * (old→new), so a rename target of an asked/carried file is not mistaken for
+ * scope-creep. Pure — no I/O, no model.
  *
- * The partition is TOTAL by construction: `beyondAsks = changedPaths \ askedPaths`, so
- * every changed path is exactly one of an ask's path or a beyond-asks path. The
- * assertion guards the skeleton: a changed path in neither bucket is a bug, never a
- * silent drop.
+ * Per ask: an ask whose flagged span CARRIED (matched by rename-surviving identity) is
+ * reported at its CURRENT location — untouched (its file was not otherwise changed) or
+ * partially-addressed (the file was changed elsewhere). An ask that did NOT carry
+ * (reopened, or its file deleted) is addressed. Beyond-asks is every changed path not
+ * covered by an ask — including an ask's own rename target, which is never scope-creep.
+ *
+ * The partition is total BY CONSTRUCTION: `beyondAsks = changedPaths \ coveredPaths`, so
+ * every changed path is either covered by an ask or beyond it, never dropped. (An
+ * earlier `asked === beyond` assertion was removed: it was tautological — `beyond` is
+ * defined as `!covered`, so it could never fire, and a dead guard is false confidence.)
  */
 export function buildDeltaAccount(input: {
   asks: readonly Disposition[];
   carried: readonly Disposition[];
   changedPaths: readonly string[];
+  renames?: ReadonlyArray<{ from: string; to: string }>;
 }): DeltaAccount {
-  const { asks, carried, changedPaths } = input;
-  const carriedKeys = new Set(carried.map((disposition) => anchorKey(disposition.anchor)));
+  const { asks, carried, changedPaths, renames = [] } = input;
   const changed = new Set(changedPaths);
+  // Map each carried disposition by its rename-surviving identity → its CURRENT path
+  // (the new path when it carried across a rename), so a carried ask is reported and
+  // anchored where the concern lives NOW, not at a stale pre-rename path.
+  const carriedPathByIdentity = new Map(
+    carried.map((disposition) => [carryIdentity(disposition.anchor), disposition.anchor.path]),
+  );
+  // A rename's TARGET is the ask's own relocated content, never scope-creep — so it is
+  // covered when its source was asked. Also covers a carried ask's new path directly.
+  const renameTargetOf = new Map(renames.map((rename) => [rename.from, rename.to]));
+  const renameTargets = new Set(renames.map((rename) => rename.to));
+
   const askedPaths = new Set(asks.map((ask) => ask.anchor.path));
+  const coveredPaths = new Set<string>(askedPaths);
+  for (const path of askedPaths) {
+    const target = renameTargetOf.get(path);
+    if (target !== undefined) coveredPaths.add(target);
+  }
+  for (const path of carriedPathByIdentity.values()) coveredPaths.add(path);
 
   const accountedAsks: DeltaAskAccount[] = asks.map((ask) => {
-    const carriedByLineage = carriedKeys.has(anchorKey(ask.anchor));
-    const fileChanged = changed.has(ask.anchor.path);
-    // Carried (target byte-identical): untouched, unless the agent changed the file
-    // ELSEWHERE — then the flagged span survived but the file moved: partially addressed.
-    // Not carried: the flagged target itself changed (reopened) or its file vanished
-    // (orphaned/deleted) — either way the ask was addressed.
-    const status = carriedByLineage
-      ? fileChanged
-        ? "partially-addressed"
-        : "untouched"
-      : "addressed";
+    const carriedPath = carriedPathByIdentity.get(carryIdentity(ask.anchor));
+    if (carriedPath === undefined) {
+      // Did not carry: the flagged target changed (reopened) or its file was deleted —
+      // either way the ask was addressed. Reported at its original (asked) path.
+      return {
+        path: ask.anchor.path,
+        ...(ask.anchor.span !== undefined ? { span: ask.anchor.span } : {}),
+        ...(ask.anchor.side !== undefined ? { side: ask.anchor.side } : {}),
+        type: ask.type,
+        summary: summarise(ask.body),
+        status: "addressed",
+      };
+    }
+    // Carried (flagged span byte-identical): reported at its CURRENT location. Untouched
+    // unless the file was changed in CONTENT beyond the span — a pure rename (the file's
+    // only change is the move) is NOT such a content change, so it stays untouched.
+    const fileChangedInContent = changed.has(carriedPath) && !renameTargets.has(carriedPath);
     return {
-      path: ask.anchor.path,
+      path: carriedPath,
       ...(ask.anchor.span !== undefined ? { span: ask.anchor.span } : {}),
       ...(ask.anchor.side !== undefined ? { side: ask.anchor.side } : {}),
       type: ask.type,
       summary: summarise(ask.body),
-      status,
+      status: fileChangedInContent ? "partially-addressed" : "untouched",
     };
   });
 
-  const beyondAsks = [...changed].filter((path) => !askedPaths.has(path)).sort();
-
-  // The total-partition invariant: every changed path is an asked path or a beyond-ask
-  // path, never both, never neither. This holds by construction; the assertion makes a
-  // skeleton bug LOUD rather than a silent drop (issue #73's reconciliation invariant).
-  for (const path of changed) {
-    const asked = askedPaths.has(path);
-    const beyond = beyondAsks.includes(path);
-    if (asked === beyond) {
-      throw new Error(
-        `Delta account partition invariant violated for "${path}": asked=${asked} beyond=${beyond}`,
-      );
-    }
-  }
+  const beyondAsks = [...changed].filter((path) => !coveredPaths.has(path)).sort();
 
   return { asks: accountedAsks, beyondAsks };
 }

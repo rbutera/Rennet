@@ -99,6 +99,32 @@ describe("buildDeltaAccount — the deterministic delta re-review account (#73)"
     expect(account.asks[0]?.status).toBe("untouched");
   });
 
+  it("RENAME-CARRY is NOT a lie: a span carried onto a renamed path is untouched, not addressed", () => {
+    // The bug both reviewers caught: the carry re-anchors a span-grained disposition
+    // onto the NEW path across a rename (preserving spanDigest), so a path-keyed match
+    // failed and reported the untouched concern as "addressed" + flagged the new path
+    // as scope-creep. Match by rename-surviving identity (spanDigest) instead.
+    const askOnOld = ask("old.ts", "Guard this loop", { startLine: 2, endLine: 3 });
+    // What `carrySpanMoveOntoRename` returns: same spanDigest, re-anchored to new.ts.
+    const carriedOnNew: Disposition = {
+      ...askOnOld,
+      anchor: { ...askOnOld.anchor, path: "new.ts", contentDigest: "digest-new.ts" },
+    };
+    const account = buildDeltaAccount({
+      asks: [askOnOld],
+      carried: [carriedOnNew],
+      changedPaths: ["old.ts", "new.ts"], // old vanished, new appeared (the rename)
+      renames: [{ from: "old.ts", to: "new.ts" }],
+    });
+    // The concern is UNTOUCHED (the flagged code survived byte-identically) — never
+    // "addressed".
+    expect(account.asks[0]?.status).toBe("untouched");
+    // It is reported/anchored at its CURRENT location, not the stale old path.
+    expect(account.asks[0]?.path).toBe("new.ts");
+    // The renamed file is the ask's own relocated content — NOT scope-creep.
+    expect(account.beyondAsks).toEqual([]);
+  });
+
   it("is MODEL-FREE: the account is a pure function of the carry + changed paths (no model input)", () => {
     // The signature admits no model/seat/budget dependency — the guarantee is that the
     // full account computes with nothing but the shipped carry data. Running it twice on
