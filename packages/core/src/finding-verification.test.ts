@@ -319,6 +319,54 @@ describe("runFindingVerification executed reproduction (#259 + #268 F2)", () => 
     expect(result.telemetry.commandsRun).toBe(1);
     expect(result.telemetry.reproducedByExecution).toBe(0);
   });
+
+  it("a SHORT citation does not match a longer observed command — exact only, no substring (#268 Gap B)", async () => {
+    // The literal bug: the model cites `test`, the harness observed `pnpm test --filter
+    // unrelated-finding` (run for a DIFFERENT finding). Substring matching credited it;
+    // exact matching does not, so this falls to reproduced-by-reading.
+    const f = finding({ findingId: "F1" });
+    const result = await runFindingVerification({
+      findings: [f],
+      manifest: MANIFEST,
+      readFileWindow: readAll,
+      runTurn: turnOf(
+        [{ ref: "f1", verdict: "reproduced", evidence: "it fails", command: "test" }],
+        {
+          commands: [
+            { command: "pnpm test --filter unrelated-finding", ok: false, outputTail: "x" },
+          ],
+        },
+      ),
+      budget: budget(),
+    });
+    expect(result.findings[0]?.verification?.verdict).toBe("reproduced");
+    expect(result.telemetry.reproducedByExecution).toBe(0);
+    expect(result.findings[0]?.verification?.evidence).not.toContain("ran `");
+  });
+
+  it("one observed command backs at most ONE finding — two findings citing it are not both credited (#268 Gap B)", async () => {
+    // The literal bug: two findings in a batch both cite the same single observed command;
+    // the non-consuming matcher credited BOTH. Consuming the match means the first binds
+    // and the second falls to reproduced-by-reading. reproducedByExecution is 1, not 2.
+    const f1 = finding({ findingId: "F1", anchor: "rennet:hunk/h1", summary: "first" });
+    const f2 = finding({ findingId: "F2", anchor: "rennet:hunk/h2", summary: "second" });
+    const result = await runFindingVerification({
+      findings: [f1, f2],
+      manifest: MANIFEST,
+      readFileWindow: readAll,
+      runTurn: turnOf(
+        [
+          { ref: "f1", verdict: "reproduced", evidence: "a", command: "node repro.js" },
+          { ref: "f2", verdict: "reproduced", evidence: "b", command: "node repro.js" },
+        ],
+        { commands: [{ command: "node repro.js", ok: false, outputTail: "TypeError" }] },
+      ),
+      budget: budget(),
+    });
+    expect(result.telemetry.reproduced).toBe(2);
+    expect(result.telemetry.commandsRun).toBe(1);
+    expect(result.telemetry.reproducedByExecution).toBe(1);
+  });
 });
 
 // ── ② cost containment: cap + batching + budget ─────────────────────────────────

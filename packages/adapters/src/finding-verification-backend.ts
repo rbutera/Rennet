@@ -302,21 +302,32 @@ export function createVerificationTurn(
     // become `execution.commands`. A call that started but was denied or interrupted
     // before any output stays `paired: false` with `ok: false` — kept separate, never
     // reported as a clean run. Default `ok: false` so an un-paired call never reads as fine.
+    //
+    // A SECOND `tool.started` bearing an id already seen (#268 fix round, Gap A) marks the
+    // record `ambiguous`: the same id now covers two different commands, so its
+    // `tool.output` cannot be attributed to either. An ambiguous record is excluded from
+    // BOTH `commands` and `incomplete` — we know something ran, we cannot say what, so it
+    // is never surfaced as proof (fail closed). Overwriting the command text (or trusting
+    // the first) would print one command with another's output.
     const execByCall = new Map<
       ToolCallId,
-      { command: string; ok: boolean; outputTail: string; paired: boolean }
+      { command: string; ok: boolean; outputTail: string; paired: boolean; ambiguous: boolean }
     >();
     const execOrder: ToolCallId[] = [];
     try {
       await session.send({ prompt });
       for await (const event of session.events) {
         if (event.kind === "tool.started" && event.call.kind === "exec") {
-          if (!execByCall.has(event.call.id)) {
+          const existing = execByCall.get(event.call.id);
+          if (existing) {
+            existing.ambiguous = true;
+          } else {
             execByCall.set(event.call.id, {
               command: execCommandLine(event.call),
               ok: false,
               outputTail: "",
               paired: false,
+              ambiguous: false,
             });
             execOrder.push(event.call.id);
           }
@@ -349,7 +360,7 @@ export function createVerificationTurn(
             const incomplete: VerificationCommand[] = [];
             for (const id of execOrder) {
               const record = execByCall.get(id);
-              if (!record) continue;
+              if (!record || record.ambiguous) continue; // ambiguous: something ran, unattributable
               const command: VerificationCommand = {
                 command: record.command,
                 ok: record.ok,

@@ -420,6 +420,9 @@ export async function runFindingVerification(
     // (#268 F2), never merely because the batch ran something.
     const observedCommands = turn.execution?.commands ?? [];
     commandsRun += observedCommands.length;
+    // Each observed command backs AT MOST ONE finding (#268 F2 fix): a matched command
+    // is consumed so two findings citing it cannot both claim the same single run.
+    const consumedCommands: boolean[] = observedCommands.map(() => false);
 
     const verdictByRef = parseVerifications(turn.body);
     for (const [ref, finding] of refByFinding) {
@@ -445,7 +448,12 @@ export async function runFindingVerification(
         // GROUNDED in the observed command + its real output, not the model's prose; an
         // unmatched claim falls back to a reading-based reproduced (still surfaces, not
         // counted as executed). Fail-closed: no citation or no match ⇒ not executed.
-        const backing = matchObservedCommand(parsed.command, observedCommands);
+        const backingIndex = matchObservedCommandIndex(
+          parsed.command,
+          observedCommands,
+          consumedCommands,
+        );
+        const backing = backingIndex === -1 ? undefined : observedCommands[backingIndex];
         const evidence = backing
           ? executedEvidence(parsed.evidence.trim(), backing)
           : parsed.evidence.trim();
@@ -454,7 +462,10 @@ export async function runFindingVerification(
           verification: { verdict: "reproduced", evidence },
         });
         reproduced += 1;
-        if (backing) reproducedByExecution += 1;
+        if (backing) {
+          consumedCommands[backingIndex] = true; // this run is now spent
+          reproducedByExecution += 1;
+        }
         continue;
       }
       // inconclusive — or a reproduced with no evidence, which is a guess, not proof.
@@ -665,24 +676,40 @@ function normalizeCommand(command: string): string {
 }
 
 /**
- * The observed command that backs a model's reproduced-by-running claim (#268 F2), or
- * undefined when the claim is not grounded. The model cites the command it says it ran;
- * this returns the harness-OBSERVED command that matches it (exact, or one containing
- * the other after whitespace-normalization, since a model may quote a sub- or super-
- * string of what actually ran). No citation, or no observed command matches ⇒ undefined,
- * so an unbacked claim is never counted as executed. Fails closed.
+ * Index of the observed command that backs a model's reproduced-by-running claim
+ * (#268 F2), or -1 when the claim is not grounded. Three properties, all fail-closed
+ * (#268 fix round), because both looser directions overstated in the flattering
+ * direction — the exact thing this branch exists to remove:
+ *
+ *   • EXACT after whitespace-normalization — never substring-either-way. A short
+ *     citation ("test") must not match a longer observed command ("pnpm test --filter
+ *     core"), and an observed "ls" must not match any longer cited line. The contract
+ *     tells the model to cite the command VERBATIM, so exact is the honest bar.
+ *   • UNAMBIGUOUS — if more than one still-unconsumed observed command matches, the
+ *     citation cannot identify which ran, so it is not proof (returns -1 → reading).
+ *   • EXCLUSIVE — the caller marks the returned index consumed, so a second finding
+ *     citing the same command cannot claim the same single run twice.
+ *
+ * No citation, no match, ambiguous match, or already-consumed ⇒ -1.
  */
-function matchObservedCommand(
+function matchObservedCommandIndex(
   cited: string | undefined,
   observed: readonly VerificationCommand[],
-): VerificationCommand | undefined {
-  if (cited === undefined) return undefined;
+  consumed: readonly boolean[],
+): number {
+  if (cited === undefined) return -1;
   const needle = normalizeCommand(cited);
-  if (needle.length === 0) return undefined;
-  return observed.find((candidate) => {
-    const hay = normalizeCommand(candidate.command);
-    return hay.length > 0 && (hay === needle || hay.includes(needle) || needle.includes(hay));
-  });
+  if (needle.length === 0) return -1;
+  let match = -1;
+  for (let i = 0; i < observed.length; i += 1) {
+    const candidate = observed[i];
+    if (consumed[i] || candidate === undefined) continue;
+    if (normalizeCommand(candidate.command) === needle) {
+      if (match !== -1) return -1; // ambiguous: matches more than one unconsumed command
+      match = i;
+    }
+  }
+  return match;
 }
 
 /** A compact one-line excerpt of a command's output tail, for the evidence chip. */
