@@ -1241,6 +1241,25 @@ button {
   text-transform: uppercase;
   color: var(--text-faint);
 }
+/* The light-tier LLM digest (#73 / M25): the one-glance TL;DR on top of the facts. */
+.delta-account-digest {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 2px 0 2px;
+}
+.delta-account-digest-lead {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.delta-account-digest-tag {
+  margin: 0;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  color: var(--text-faint);
+}
 .delta-account-asks {
   display: flex;
   flex-direction: column;

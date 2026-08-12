@@ -44,6 +44,8 @@ import type {
   CanvasAngle,
   ComposedHandoffBundle,
   DecisionsRunStatus,
+  DeltaAccount,
+  DeltaDigestResult,
   DispositionType,
   ElementDiffs,
   FlaggedReview,
@@ -311,6 +313,18 @@ export interface DispatchDeps {
     requirements?: readonly string[];
     decisions?: readonly string[];
   }) => Promise<PrBodyDraftResult>;
+  /**
+   * The delta re-review digest producer (issue #73 / M25): rephrase a successor
+   * review's deterministic `deltaAccount` into a one/two-sentence TL;DR shown ON TOP
+   * of the facts. Optional so a composition without it (no coding harness) answers an
+   * honest `unavailable` and the panel simply shows no headline. Built from ONLY the
+   * account, it can add no fact the facts don't carry; it posts NOTHING and gates
+   * nothing.
+   */
+  readonly draftDeltaDigest?: (input: {
+    review: Review;
+    account: DeltaAccount;
+  }) => Promise<DeltaDigestResult>;
   /**
    * Reload the persisted conversation threads for a review, plus any turn still
    * streaming in a surviving main process (issue #251). Optional so a composition with
@@ -1162,6 +1176,32 @@ export function createDispatch(
             ...(input.decisions === undefined ? {} : { decisions: input.decisions }),
           }),
         );
+      }
+      case "review.deltaDigest": {
+        // Rephrase the successor review's DETERMINISTIC delta account into a one-glance
+        // TL;DR. Resolve the CURRENT review ONCE (stale/unknown id refused), read its
+        // OWN `deltaAccount` (absent ⇒ honest `unavailable` — a first capture carries
+        // no account), and run the council-routed light turn. ⚠️ EGRESS: the account's
+        // paths/statuses ARE sent to the harness (a per-turn egress) — but ONLY the
+        // account, never diff or repo content, so the digest can add no fact the facts
+        // don't carry. The RESULT posts NOTHING. With no producer wired, or on any
+        // failed/absent turn, the renderer shows the facts with no headline.
+        const input = parseCommandInput(name, rawInput);
+        const review = requireLatestReview(input.reviewId);
+        const account = review.deltaAccount;
+        if (account === undefined) {
+          return parseCommandOutput(name, {
+            status: "unavailable",
+            reason: "this review carries no delta account to summarise",
+          });
+        }
+        if (!deps.draftDeltaDigest) {
+          return parseCommandOutput(name, {
+            status: "unavailable",
+            reason: "delta-digest summarising is not available in this build",
+          });
+        }
+        return parseCommandOutput(name, await deps.draftDeltaDigest({ review, account }));
       }
       // ── Compose the handoff bundle (issue #72, Model Council M24) ───────────────
       case "review.handoff.compose": {

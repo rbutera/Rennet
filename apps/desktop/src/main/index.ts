@@ -116,6 +116,7 @@ import type {
   ReviewNarration,
 } from "@rennet/types";
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell } from "electron";
+import { createLiveDeltaDigestPort } from "./delta-digest-live";
 import { createDispatch } from "./dispatch";
 import { createLiveDraftPrBodyPort } from "./draft-pr-body-live";
 import { createLiveComposeBundle } from "./handoff-compose-live";
@@ -1617,6 +1618,24 @@ app.whenReady().then(async () => {
     // workspace-6qp15). Degrades to an honest `unavailable` (the deterministic
     // composed body still previews) when neither seat is installed. Posts NOTHING.
     draftPrBody: createLiveDraftPrBodyPort({
+      claudePort: async () => (await getClaudeHarness()).adapter ?? null,
+      codexExecutor: async () => {
+        const codex = await getCodexResolution();
+        if (codex.binPath === null) return null;
+        return createCodexExecutor(defaultCodexExecEffects, {
+          bin: codex.binPath,
+          ...(codex.version ? { harnessVersion: codex.version } : {}),
+        });
+      },
+    }),
+    // review.deltaDigest (issue #73 / M25): the LIVE delta re-review digest producer.
+    // Rephrases the successor review's DETERMINISTIC delta account into a one-glance
+    // TL;DR shown ON TOP of the facts, on WHICHEVER seat the council resolves for
+    // `delta-rereview-summary` — the SAME probes the drafter uses. Degrades to an honest
+    // `unavailable` (the facts still render, no headline) when neither seat is installed.
+    // Fed ONLY the structured account, it can add no fact the facts don't carry. Posts
+    // NOTHING and gates nothing.
+    draftDeltaDigest: createLiveDeltaDigestPort({
       claudePort: async () => (await getClaudeHarness()).adapter ?? null,
       codexExecutor: async () => {
         const codex = await getCodexResolution();

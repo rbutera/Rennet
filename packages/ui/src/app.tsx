@@ -559,6 +559,43 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // is a new set to enrich; a no-op freshness poll keeps the same string, so it does
   // NOT re-run the canvas effect. Null until a review is open.
   const canvasFetchKey = review ? `${review.id}::${review.activePatchsetId}` : null;
+  // The delta re-review digest (issue #73 / M25): when a successor review carries a
+  // delta account, request the light-tier LLM TL;DR ONCE per (review, patchset) and
+  // slot it atop the panel. The facts render immediately regardless; the digest is
+  // optional garnish, simply absent on unavailable/failed — never a blank, never a
+  // guess. Keyed like the canvas fetch so a regenerate re-requests and a no-op
+  // freshness poll does not.
+  const deltaDigestKey = review?.deltaAccount ? `${review.id}::${review.activePatchsetId}` : null;
+  const [deltaDigest, setDeltaDigest] = useState<string | undefined>(undefined);
+  const deltaDigestRequestedKey = useRef<string | null>(null);
+  useEffect(() => {
+    if (deltaDigestKey === null) {
+      deltaDigestRequestedKey.current = null;
+      setDeltaDigest(undefined);
+      return;
+    }
+    // Fire at most once per (review, patchset): a re-render must not re-request; a new
+    // re-review (a fresh key) requests afresh.
+    if (deltaDigestRequestedKey.current === deltaDigestKey) return;
+    deltaDigestRequestedKey.current = deltaDigestKey;
+    setDeltaDigest(undefined); // facts first; the headline pops in when the turn returns
+    const key = deltaDigestKey;
+    const rid = review?.id;
+    if (rid === undefined) return;
+    void (async () => {
+      try {
+        const result = await bridge.invoke("review.deltaDigest", {
+          commandId: crypto.randomUUID(),
+          reviewId: rid,
+        });
+        // Drop a stale response if a newer successor superseded this request.
+        if (deltaDigestRequestedKey.current !== key) return;
+        if (result.status === "drafted") setDeltaDigest(result.text);
+      } catch {
+        // An honest absence: the facts stand on their own, never a fabricated digest.
+      }
+    })();
+  }, [deltaDigestKey, review?.id, bridge]);
   // Bind the flagged result to the active patchset (P0-2, structural belt-and-braces
   // beside the effect-level clear): a result stamped with a superseded patchsetId is
   // dropped so the new diff never renders beside stale findings. Pure + unit-tested in
@@ -1779,6 +1816,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       {review?.deltaAccount ? (
         <DeltaAccountPanel
           account={review.deltaAccount}
+          digest={deltaDigest}
           onAnchor={(path) => {
             setView("review");
             setSelectedPath(path);

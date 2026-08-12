@@ -34,6 +34,32 @@ describe("DeltaAccountPanel (#73)", () => {
     expect(beyond?.textContent).toContain("d.ts");
   });
 
+  it("renders the LLM digest as a headline ABOVE the facts when present (#73/M25)", () => {
+    const { container } = mount(
+      <DeltaAccountPanel
+        account={account}
+        onAnchor={vi.fn()}
+        digest="Addressed two, left one, and touched a file nobody asked about."
+      />,
+    );
+    const digest = container.querySelector('[data-testid="delta-account-digest"]');
+    expect(digest?.textContent).toContain("touched a file nobody asked about");
+    // It sits ABOVE the facts: the digest node precedes the asks list in document order.
+    const asks = container.querySelector(".delta-account-asks");
+    expect(
+      digest && asks && digest.compareDocumentPosition(asks) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+  });
+
+  it("MODEL-FREE FLOOR at the UI: with no digest, the facts render in full and no headline appears", () => {
+    const { container } = mount(<DeltaAccountPanel account={account} onAnchor={vi.fn()} />);
+    // No digest headline…
+    expect(container.querySelector('[data-testid="delta-account-digest"]')).toBeNull();
+    // …but every fact is present and the beyond-asks alert still surfaces.
+    expect(container.querySelectorAll(".delta-account-status")).toHaveLength(3);
+    expect(container.querySelector('[data-testid="delta-account-beyond"]')).not.toBeNull();
+  });
+
   it("anchors: activating an item navigates to that path (the moved hunk)", () => {
     const onAnchor = vi.fn();
     const { container } = mount(<DeltaAccountPanel account={account} onAnchor={onAnchor} />);

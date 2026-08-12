@@ -16,6 +16,7 @@ import type {
   DecisionWhy,
   DeltaAccount,
   DeltaAskAccount,
+  DeltaDigestResult,
   Disposition,
   DispositionAnchor,
   DualReviewNote,
@@ -1052,6 +1053,22 @@ export const prBodyDraftResultSchema: z.ZodType<PrBodyDraftResult> = z.discrimin
   ],
 );
 
+// ── review.deltaDigest: the light-tier prose over the delta account (#73/M25) ──
+// A light-tier model turn rephrases the DETERMINISTIC delta account (per-ask
+// addressed/partially/untouched + beyond-asks) into a one/two-sentence TL;DR shown
+// ON TOP of the facts. The producer guarantees `drafted` carries non-empty text (an
+// empty turn is `failed`); the shape has NO field for a fabricated digest, so on
+// anything but `drafted` the panel shows no headline and the facts are unchanged.
+// The digest posts NOTHING and gates nothing.
+export const deltaDigestResultSchema: z.ZodType<DeltaDigestResult> = z.discriminatedUnion(
+  "status",
+  [
+    z.object({ status: z.literal("drafted"), text: z.string().min(1), model: z.string().min(1) }),
+    z.object({ status: z.literal("unavailable"), reason: z.string() }),
+    z.object({ status: z.literal("failed"), reason: z.string() }),
+  ],
+);
+
 // ── The Noise lens: grouped low-signal churn (issue #34) ──────────────────────
 // The low-signal churn a changeset touches, grouped away from the code that needs
 // eyes and tagged with how each group was judged (a deterministic mechanical RULE
@@ -1999,6 +2016,19 @@ export const commandDefinitions = {
       decisions: z.array(z.string()).optional(),
     }),
     output: prBodyDraftResultSchema,
+  },
+  // ── review.deltaDigest: the light-tier prose over the delta account (#73/M25) ─
+  // The renderer holds the successor review's `deltaAccount` (it rendered the facts);
+  // it asks MAIN to rephrase it into a one-glance TL;DR. `reviewId` freshness-pins the
+  // review (a stale/unknown id is refused); MAIN reads that review's own deltaAccount
+  // (absent ⇒ an honest `unavailable`). The digest is built from ONLY the account, so
+  // it can add no fact the facts don't carry; it posts NOTHING and gates nothing.
+  "review.deltaDigest": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+    }),
+    output: deltaDigestResultSchema,
   },
   // ── The Noise lens (issue #34) ─────────────────────────────────────────────
   // The low-signal churn the changeset touches, grouped away and tagged with how

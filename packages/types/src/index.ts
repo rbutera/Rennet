@@ -1324,6 +1324,25 @@ export type PrBodyDraftResult =
   | { readonly status: "unavailable"; readonly reason: string }
   | { readonly status: "failed"; readonly reason: string };
 
+// ─── review.deltaDigest: the light-tier prose over the delta account (#73/M25) ─
+//
+// The deterministic delta account (N2, `DeltaAccount`) is the ground truth: per-ask
+// addressed/partially/untouched + the paths changed beyond the asks. This is the
+// optional light-tier LLM rephrasing of that account into a one/two-sentence
+// plain-English TL;DR, rendered ON TOP of the facts (never replacing them). The
+// prose adds NO fact the account does not carry — it is built only from the account,
+// so a scope-creep detector's headline cannot hallucinate. Like `PrBodyDraftResult`,
+// the shape has NO field for a fabricated success:
+//   - `drafted`     — the turn produced a non-empty digest. `model` records who wrote it.
+//   - `unavailable` — no model seat is installed / the review carries no delta account.
+//   - `failed`      — a turn ran and produced no usable text.
+// On anything but `drafted` the panel simply shows no headline and the facts are
+// unchanged — an honest "no summary this time", never a blank card and never a guess.
+export type DeltaDigestResult =
+  | { readonly status: "drafted"; readonly text: string; readonly model: string }
+  | { readonly status: "unavailable"; readonly reason: string }
+  | { readonly status: "failed"; readonly reason: string };
+
 // ─── review.hypothesis: the hypothesis-first pre-read pass (issue #178) ────────
 //
 // Florence's single most load-bearing anti-rubber-stamp move: BEFORE the lens

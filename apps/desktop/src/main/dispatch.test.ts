@@ -167,6 +167,7 @@ function harness(
     composeBundle?: DispatchDeps["composeBundle"];
     liveTurns?: DispatchDeps["liveTurns"];
     submitPullRequest?: DispatchDeps["submitPullRequest"];
+    draftDeltaDigest?: DispatchDeps["draftDeltaDigest"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -272,6 +273,7 @@ function harness(
     publishPort,
     publishConsent,
     ...(extra.submitPullRequest ? { submitPullRequest: extra.submitPullRequest } : {}),
+    ...(extra.draftDeltaDigest ? { draftDeltaDigest: extra.draftDeltaDigest } : {}),
     ...(extra.runHandoffTurn ? { runHandoffTurn: extra.runHandoffTurn } : {}),
     ...(extra.composeBundle ? { composeBundle: extra.composeBundle } : {}),
     ...(extra.liveTurns ? { liveTurns: extra.liveTurns } : {}),
@@ -342,6 +344,112 @@ async function capturedReview(dispatch: ReturnType<typeof createDispatch>): Prom
   })) as { review: Review };
   return result.review;
 }
+
+describe("createDispatch — review.deltaDigest (#73 / M25)", () => {
+  // A capture port that yields a DISTINCT successor on regenerate, so the fold stamps a
+  // delta account: a.ts changes (addressed), b.ts is new (beyond-asks).
+  function twoPatchsetCapture(): PatchsetCapturePort {
+    let n = 0;
+    const file = (path: string, patch: string, status: "modified" | "added" = "modified") => ({
+      path,
+      status,
+      additions: 1,
+      deletions: 0,
+      binary: false,
+      patch,
+    });
+    return {
+      capture: () => {
+        n += 1;
+        return Promise.resolve(
+          n === 1
+            ? { ...patchset(), id: "p1", files: [file("src/a.ts", "X")] }
+            : {
+                ...patchset(),
+                id: "p2",
+                files: [file("src/a.ts", "Y"), file("src/b.ts", "Z", "added")],
+              },
+        );
+      },
+    };
+  }
+
+  async function successorReview(dispatch: ReturnType<typeof createDispatch>): Promise<Review> {
+    await dispatch("repository.choose", {});
+    const first = (await dispatch("review.capture", {
+      commandId: randomUUID(),
+      repoPath: REPO,
+    })) as { review: Review };
+    await dispatch("canvas.disposition", {
+      commandId: randomUUID(),
+      reviewId: first.review.id,
+      patchsetId: first.review.activePatchsetId,
+      path: "src/a.ts",
+      disposition: "request-change",
+      body: "fix a",
+    });
+    const regen = (await dispatch("review.regenerate", {
+      commandId: randomUUID(),
+      reviewId: first.review.id,
+      repoPath: REPO,
+    })) as { review: Review };
+    return regen.review;
+  }
+
+  it("calls the producer with the review's delta account and returns its digest", async () => {
+    const draftDeltaDigest = vi.fn<NonNullable<DispatchDeps["draftDeltaDigest"]>>(async () => ({
+      status: "drafted",
+      text: "Fixed a, and also touched b nobody asked about.",
+      model: "haiku",
+    }));
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        capturePort: twoPatchsetCapture(),
+        draftDeltaDigest,
+      },
+    );
+    const review = await successorReview(dispatch);
+    expect(review.deltaAccount).toBeDefined(); // precondition: the fold stamped an account
+
+    const out = await dispatch("review.deltaDigest", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+    });
+    expect(out).toEqual({
+      status: "drafted",
+      text: "Fixed a, and also touched b nobody asked about.",
+      model: "haiku",
+    });
+    expect(draftDeltaDigest).toHaveBeenCalledOnce();
+    expect(draftDeltaDigest.mock.calls[0]?.[0].account).toEqual(review.deltaAccount);
+  });
+
+  it("answers unavailable when the review carries no delta account (a first capture)", async () => {
+    const draftDeltaDigest = vi.fn<NonNullable<DispatchDeps["draftDeltaDigest"]>>();
+    const { dispatch } = harness(fakePublishPort(), {}, { draftDeltaDigest });
+    const review = await capturedReview(dispatch); // one capture, no predecessor → no account
+    expect(review.deltaAccount).toBeUndefined();
+    const out = (await dispatch("review.deltaDigest", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+    })) as { status: string };
+    expect(out.status).toBe("unavailable");
+    expect(draftDeltaDigest).not.toHaveBeenCalled();
+  });
+
+  it("answers unavailable (never throws) when no producer is wired but an account exists", async () => {
+    const { dispatch } = harness(fakePublishPort(), {}, { capturePort: twoPatchsetCapture() });
+    const review = await successorReview(dispatch);
+    expect(review.deltaAccount).toBeDefined();
+    const out = (await dispatch("review.deltaDigest", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+    })) as { status: string };
+    expect(out.status).toBe("unavailable");
+  });
+});
 
 describe("createDispatch — canvas.* routing (issue #54)", () => {
   it("routes canvas.disposition onto the review and returns the updated review", async () => {

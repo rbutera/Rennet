@@ -23,10 +23,19 @@ const STATUS_LABEL: Record<DeltaAskStatus, string> = {
 export function DeltaAccountPanel({
   account,
   onAnchor,
+  digest,
 }: {
   account: DeltaAccount;
   /** Navigate the diff to `path` (the moved hunk[s]) — the account's anchor. */
   onAnchor: (path: string) => void;
+  /**
+   * The optional light-tier LLM digest (issue #73 / M25): a one/two-sentence TL;DR of
+   * the account below, shown ON TOP of the facts as the one-glance read. Absent ⇒ no
+   * headline and the facts are unchanged — the model-free floor (the facts are the
+   * authoritative ground truth and render with or without it). It adds no fact the
+   * facts don't carry, and gates nothing.
+   */
+  digest?: string;
 }) {
   const hasAsks = account.asks.length > 0;
   const hasBeyond = account.beyondAsks.length > 0;
@@ -39,6 +48,13 @@ export function DeltaAccountPanel({
       aria-label="Delta re-review account"
     >
       <p className="delta-account-eyebrow">Since you last reviewed</p>
+
+      {digest ? (
+        <div className="delta-account-digest" data-testid="delta-account-digest">
+          <p className="delta-account-digest-lead">{digest}</p>
+          <p className="delta-account-digest-tag">written from the facts below · light model</p>
+        </div>
+      ) : null}
 
       {hasAsks ? (
         <ul className="delta-account-asks">
