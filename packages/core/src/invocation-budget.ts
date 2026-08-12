@@ -1,42 +1,59 @@
 /**
- * The live invocation budget (issue #69, fixes bead p0wwp).
+ * The live invocation budget (issue #69; the money circuit made HONEST, #260).
  *
- * R10's <5-invocation ceiling is the money circuit, and money is vital: it must
- * be enforced at runtime, not asserted once in a CI test. `buildRoutePlan` (the
- * Brita filter) computes a PRE-FLIGHT plan and refuses an over-budget diff SHAPE
- * before any spend — but its static count never sees the retries inside a runner
- * or the ordering phase, so a proposal that fails twice then an ordering pass
- * that fails twice can issue six model turns while the plan counted three.
+ * A CONFIGURED finite ceiling is enforced at runtime: `tryConsume` grants one
+ * invocation per call while the count is below the ceiling and refuses once it
+ * is reached, counting retries across every runner from the ONE shared counter
+ * (the live enforcement the pre-flight route-plan count never provided, bead
+ * p0wwp). A refused turn falls to the runner's deterministic floor rather than
+ * crashing, and `refused` latches so the pipeline can surface an out-of-budget
+ * review as degraded — a review that ran out of budget must SAY so, never floor
+ * silently into a review that looks complete (#260).
  *
- * This budget closes that gap. It is ONE stateful counter, created per review
- * and threaded through every runner, consumed once per ACTUAL model turn. The
- * first attempt and every retry across decomposition AND ordering draw from the
- * same ceiling, so the total number of turns cannot exceed it regardless of
- * retries. A refusal is fail-closed and typed (`R10_BUDGET_EXHAUSTED`): a runner
- * that is refused falls to its deterministic floor rather than crash, so a
- * review still renders real canvases — the ceiling stops spend, never the review.
+ * The circuit no longer FAILS CLOSED on a malformed ceiling — but it does not
+ * swing to the opposite extreme either. Per #260, "no budget means no ceiling, not
+ * no spend"; but a malformed CEILING is a caller defect, not an instruction to
+ * remove all limits. So a non-finite (`NaN`/`Infinity`) or negative `max` falls
+ * back to the DEFAULT ceiling (`DEFAULT_MAX_HARNESS_INVOCATIONS`), the normal
+ * configured behaviour every correctly-wired caller already gets: the review runs
+ * and the model is used, but a wiring bug upstream cannot spend Rai's money without
+ * limit. The old clamp-to-zero (which silently produced a review of pure
+ * deterministic fallbacks) is dead in both directions — never a fake review, never
+ * unbounded. An absent budget OBJECT at a runner (see `absentBudgetGrant`) still
+ * runs the review ungated. R10's <5 survives as a latency/quality target in the
+ * pre-flight route plan (the Brita filter), not as a silent runtime floor. A finite
+ * `max >= 0` is honored exactly, including a configured `0` — a deliberate "spend
+ * nothing" that refuses every turn, visibly, through `refused`. A malformed value
+ * is NOT a `0`; the distinction (defect vs instruction) is the whole point.
  */
 
 import { type BudgetGrant, type InvocationBudget, R10_BUDGET_EXHAUSTED } from "@rennet/types";
+import { DEFAULT_MAX_HARNESS_INVOCATIONS } from "./route-plan";
 
 /**
- * Create a shared invocation budget with the given ceiling. `tryConsume` grants
- * one invocation and increments the count while the count is below `max`, and
- * refuses once the ceiling is reached — a refusal never increments the count.
- * `consumed` and `remaining` reflect the live count.
+ * Normalize a raw invocation ceiling to a real, spendable one. A finite,
+ * non-negative `max` is a genuine ceiling (0 = a deliberate "spend nothing",
+ * honored); anything else — `NaN`, `±Infinity`, a negative — is a caller DEFECT
+ * that falls back to the DEFAULT ceiling (#260): the review still runs, but a
+ * wiring bug upstream cannot spend without limit. Never the old fail-closed zero,
+ * never unbounded.
  *
- * A `max` below zero is clamped to zero (a non-positive ceiling refuses every
- * invocation, which is the honest reading of "no budget"). `max` is floored to
- * an integer so a fractional ceiling cannot smuggle a partial invocation. A
- * non-finite `max` (`NaN`/`Infinity`) FAILS CLOSED to zero: money is a vital
- * circuit (R10, Rule 75), and `consumed >= NaN`/`consumed >= Infinity` is always
- * false, so an unvalidated non-finite ceiling would grant unlimited turns — the
- * exact wrong-side failure a vital gate must never take. "No valid budget" reads
- * as "no spend": every turn is refused and the runner falls to the floor.
+ * ⭐ Call this ONCE, at the point the raw config is read, and hand the result to
+ * BOTH the pre-flight route plan AND the runtime budget. #269: the route planner
+ * read the raw value one hop before the budget applied this fallback, so a
+ * negative/`-Infinity` ceiling refused pre-flight and rendered a completed review
+ * with zero model turns — the exact fake review this circuit exists to prevent.
+ * Idempotent, so a second consumer that re-normalizes is a harmless no-op, never
+ * a second place to get it wrong.
  */
+export function normalizeMaxInvocations(max: number): number {
+  return Number.isFinite(max) && max >= 0 ? Math.floor(max) : DEFAULT_MAX_HARNESS_INVOCATIONS;
+}
+
 export function createInvocationBudget(max: number): InvocationBudget {
-  const ceiling = Number.isFinite(max) ? Math.max(0, Math.floor(max)) : 0;
+  const ceiling = normalizeMaxInvocations(max);
   let consumed = 0;
+  let refused = false;
 
   return {
     max: ceiling,
@@ -46,8 +63,15 @@ export function createInvocationBudget(max: number): InvocationBudget {
     get remaining(): number {
       return ceiling - consumed;
     },
+    get refused(): boolean {
+      return refused;
+    },
     tryConsume(purpose: string): BudgetGrant {
       if (consumed >= ceiling) {
+        // The ceiling is always finite (a malformed max fell back to the default),
+        // so a genuine exhaustion latches `refused` — the pipeline reads it to
+        // surface an out-of-budget review as degraded rather than complete.
+        refused = true;
         return {
           granted: false,
           code: R10_BUDGET_EXHAUSTED,
@@ -64,26 +88,11 @@ export function createInvocationBudget(max: number): InvocationBudget {
 }
 
 /**
- * The fail-closed refusal for an ABSENT invocation budget (issue #95, #70
- * follow-up). A money-critical runner (decomposition, ordering, narration) that
- * is handed no budget has NO authorization to spend: an absent budget is treated
- * exactly like an exhausted one (a zero ceiling), refusing every turn.
- *
- * Rule 75, the vital money circuit: a single fault must fail toward LESS spend,
- * never more. A future caller that omits the budget — a JS caller, an `as any`,
- * a deserialized options object the type system never saw — must spend NOTHING,
- * not run ungated. The type marking `budget` optional is a test ergonomic; this
- * runtime refusal is the switch that actually closes the circuit, so no caller,
- * typed or not, can spend without a budget in hand. Shape mirrors a zero-ceiling
- * refusal (`consumed: 0`, `max: 0`) so downstream refusal handling is uniform.
+ * The grant for an ABSENT invocation budget (#260, replaces the fail-closed
+ * `budgetAbsentRefusal` from #95). A runner handed no budget runs UNGATED: an
+ * absent budget is no ceiling, not no spend. Shape mirrors an unlimited grant
+ * (`remaining: Infinity`) so a caller's `grant.granted` branch stays uniform.
  */
-export function budgetAbsentRefusal(purpose: string): Extract<BudgetGrant, { granted: false }> {
-  return {
-    granted: false,
-    code: R10_BUDGET_EXHAUSTED,
-    purpose,
-    consumed: 0,
-    max: 0,
-    reason: `no invocation budget provided; refusing "${purpose}" — an absent budget is not authorization to spend (R10, fail-closed #95)`,
-  };
+export function absentBudgetGrant(purpose: string): Extract<BudgetGrant, { granted: true }> {
+  return { granted: true, purpose, consumed: 0, remaining: Number.POSITIVE_INFINITY };
 }

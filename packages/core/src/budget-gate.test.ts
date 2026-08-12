@@ -136,11 +136,10 @@ describe("runDecompositionAngle — the live budget gate (acceptance 2)", () => 
     expect(result.usedFallback).toBe(true);
   });
 
-  it("an ABSENT budget fails CLOSED — no turn runs at all (#95)", async () => {
-    // #95: an absent budget is NOT authorization to spend. The old gate skipped
-    // when `budget === undefined` and ran every turn ungated (fail-open); it now
-    // refuses exactly like a zero ceiling. Red-provable: restore the old skip and
-    // this reds (the turn would run three times, budgetRefused false).
+  it("an ABSENT budget runs UNGATED — every turn runs, no ceiling (#260)", async () => {
+    // #260 inverts #95: an absent budget is no ceiling, not no spend. The runner
+    // spends turns ungated. Red-provable: restore the fail-closed absent refusal
+    // and this reds (no turn would run, budgetRefused would flip true).
     const alwaysReject = vi.fn(
       async (): Promise<DecompositionTurnResult> => ({
         status: "emitted",
@@ -154,11 +153,12 @@ describe("runDecompositionAngle — the live budget gate (acceptance 2)", () => 
       provenance: SEED,
       runTurn: alwaysReject,
       maxRetries: 2,
-      // budget deliberately omitted — must fail closed, not run ungated.
+      // budget deliberately omitted — no ceiling, so every attempt runs.
     });
-    // No turn ran; the runner fell straight to the deterministic floor.
-    expect(alwaysReject).not.toHaveBeenCalled();
-    expect(result.budgetRefused).toBe(true);
+    // Every attempt ran (first + two retries): the absent budget imposed no ceiling.
+    expect(alwaysReject).toHaveBeenCalledTimes(3);
+    expect(result.budgetRefused).toBe(false);
+    // The floor still stands — but because the bodies were invalid, NOT the budget.
     expect(result.usedFallback).toBe(true);
   });
 });
@@ -190,7 +190,7 @@ describe("runOrderingPass — the live budget gate", () => {
     expect((result.document.body as { readingOrder: string[] }).readingOrder).toEqual(["c1", "c2"]);
   });
 
-  it("an ABSENT budget fails CLOSED — no ordering turn runs (#95)", async () => {
+  it("an ABSENT budget runs UNGATED — the ordering turn runs and its reorder stands (#260)", async () => {
     const turn = vi.fn(
       async (): Promise<OrderingTurnResult> => ({
         status: "emitted",
@@ -203,13 +203,39 @@ describe("runOrderingPass — the live budget gate", () => {
       contract: ORDERING_CONTRACT,
       provenance: SEED,
       runTurn: turn,
-      // budget deliberately omitted — must fail closed, not run ungated.
+      // budget deliberately omitted — no ceiling, so the turn runs.
     });
-    expect(turn).not.toHaveBeenCalled();
-    expect(result.budgetRefused).toBe(true);
-    expect(result.usedFallback).toBe(true);
-    // The deterministic baseline stands.
-    expect((result.document.body as { readingOrder: string[] }).readingOrder).toEqual(["c1", "c2"]);
+    expect(turn).toHaveBeenCalledTimes(1);
+    expect(result.budgetRefused).toBe(false);
+    // The model turn ran and its reorder was admitted — NOT the deterministic baseline.
+    expect(result.usedFallback).toBe(false);
+    expect((result.document.body as { readingOrder: string[] }).readingOrder).toEqual(["c2", "c1"]);
+  });
+
+  it("a MALFORMED budget produces REAL work — the turn runs and its order is admitted (#260)", async () => {
+    // The lead's guard for #260: a malformed budget must produce a real review, not
+    // merely the absence of a refusal. A NaN ceiling falls back to the default, so
+    // the ordering turn RUNS and its reorder is ADMITTED (usedFallback false) — work
+    // actually happened, it is not the deterministic baseline and it is not a no-op.
+    const turn = vi.fn(
+      async (): Promise<OrderingTurnResult> => ({
+        status: "emitted",
+        body: { readingOrder: ["c2", "c1"], rationale: "reorder" },
+      }),
+    );
+    const budget = createInvocationBudget(Number.NaN);
+    const result = await runOrderingPass({
+      proposal: PROPOSAL,
+      patchsetId: "ps_1",
+      contract: ORDERING_CONTRACT,
+      provenance: SEED,
+      runTurn: turn,
+      budget,
+    });
+    expect(turn).toHaveBeenCalledTimes(1);
+    expect(result.budgetRefused).toBe(false);
+    expect(result.usedFallback).toBe(false);
+    expect((result.document.body as { readingOrder: string[] }).readingOrder).toEqual(["c2", "c1"]);
   });
 
   it("shares one budget across a decomposition retry and an ordering turn", async () => {

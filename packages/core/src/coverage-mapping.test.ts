@@ -224,14 +224,21 @@ describe("runCoverageMapping — the ran / did-not-run boundary (honest chips)",
     expect(called).toBe(false);
   });
 
-  it("FAILS (no fabricated zeros) when an ABSENT budget refuses the turn", async () => {
+  it("runs the turn UNGATED when NO budget is provided (#260) — no short-circuit refusal", async () => {
+    let ran = false;
     const result = await runCoverageMapping({
       patchsetId: "ps-1",
       requirements: REQUIREMENTS,
       hunks: HUNKS,
-      // No budget: fail-closed money circuit (Rule 75). No turn runs.
-      runTurn: emit({ mappings: [] }),
+      // #260: no budget means no ceiling, so the turn RUNS. An empty mappings body
+      // still fails the garbled-zero guard, but because it ran and produced nothing
+      // real — NOT because an absent budget short-circuited it.
+      runTurn: () => {
+        ran = true;
+        return Promise.resolve({ status: "emitted", body: { mappings: [] } });
+      },
     });
+    expect(ran).toBe(true);
     expect(result.status).toBe("failed");
     expect(result.edges).toEqual([]);
   });

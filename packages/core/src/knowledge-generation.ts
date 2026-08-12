@@ -38,7 +38,7 @@ import type {
 } from "@rennet/types";
 import { KNOWLEDGE_SCHEMA_VERSION } from "@rennet/types";
 import type { HarnessTurnResult } from "./harness-run-turn";
-import { budgetAbsentRefusal } from "./invocation-budget";
+import { absentBudgetGrant } from "./invocation-budget";
 import { fileBlobIndex, knowledgeStatementId } from "./knowledge";
 
 /** The generator identity: bump on any prompt/schema change (invalidates old statements honestly). */
@@ -356,7 +356,7 @@ export async function runKnowledgeEnrichment(
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     const purpose = `knowledge:initial:attempt-${attempt}`;
-    const grant = budget?.tryConsume(purpose) ?? budgetAbsentRefusal(purpose);
+    const grant = budget?.tryConsume(purpose) ?? absentBudgetGrant(purpose);
     if (!grant.granted) {
       budgetRefused = true;
       lastFailure = grant.reason;
@@ -488,7 +488,7 @@ export async function runKnowledgeDeltaPass(
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
     const purpose = `knowledge:delta:attempt-${attempt}`;
-    const grant = budget?.tryConsume(purpose) ?? budgetAbsentRefusal(purpose);
+    const grant = budget?.tryConsume(purpose) ?? absentBudgetGrant(purpose);
     if (!grant.granted) {
       budgetRefused = true;
       lastFailure = grant.reason;

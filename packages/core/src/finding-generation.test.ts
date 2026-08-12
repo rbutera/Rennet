@@ -217,7 +217,7 @@ describe("runFindingAngle — the live finding runner (issue #32)", () => {
     expect(turns).toBe(0);
   });
 
-  it("refuses fail-closed when NO budget is provided (an absent budget is not authorization)", async () => {
+  it("runs UNGATED when NO budget is provided — an absent budget is no ceiling, not no spend (#260)", async () => {
     let turns = 0;
     const result = await runFindingAngle({
       patchsetId: PATCHSET.id,
@@ -227,10 +227,11 @@ describe("runFindingAngle — the live finding runner (issue #32)", () => {
         turns += 1;
         return Promise.resolve({ status: "emitted", body: { findings: [modelFinding()] } });
       },
+      // budget omitted — #260: no ceiling, the turn runs.
     });
-    expect(result.status).toBe("failed");
-    expect(result.budgetRefused).toBe(true);
-    expect(turns).toBe(0);
+    expect(result.status).toBe("ok");
+    expect(result.budgetRefused).toBe(false);
+    expect(turns).toBe(1);
   });
 
   it("reasons over the change's stated intent — the PR body reaches the prompt (#136/#210)", async () => {

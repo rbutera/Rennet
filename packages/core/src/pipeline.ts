@@ -70,7 +70,7 @@ import {
   type RunHypothesisResult,
   runHypothesisPass,
 } from "./hypothesis-generation";
-import { createInvocationBudget } from "./invocation-budget";
+import { createInvocationBudget, normalizeMaxInvocations } from "./invocation-budget";
 import { providerHarness, resolveAssignment } from "./model-council";
 import {
   buildChunkManifest,
@@ -228,7 +228,13 @@ export interface ReviewPipelineResult {
   readonly elementDiffs: ElementDiffs;
   readonly decomposition: Decomposition;
   readonly routePlan: RoutePlanResult;
-  /** True when the Brita budget refused and no model turn ran. */
+  /**
+   * True when the model budget refused — pre-flight (the Brita route plan judged
+   * the diff shape over budget before any spend) OR at runtime (the shared
+   * ceiling was exhausted mid-review by retries). Either way the model phase did
+   * not complete, so the surface must present the review as degraded, never as a
+   * completed AI review (#260).
+   */
   readonly budgetRefused: boolean;
   readonly decompositionResult?: RunDecompositionAngleResult;
   readonly orderingResult?: RunOrderingPassResult;
@@ -264,16 +270,28 @@ export async function buildReviewCanvases(
   input: ReviewPipelineInput,
 ): Promise<ReviewPipelineResult> {
   const decomposition = decompose(input.patchset, input.decomposeOptions ?? {});
-  const routePlan = buildRoutePlan(decomposition, input.routePlanOptions ?? {});
+  // Normalize the ceiling ONCE, at the point the raw config is read, and hand the
+  // SAME value to the pre-flight route plan AND the runtime budget below — so no
+  // consumer ever sees an un-normalized ceiling (#269). A malformed value
+  // (NaN/±Infinity/negative) is a caller defect → the default; a literal 0 is
+  // preserved. Before this, `buildRoutePlan` read the RAW `maxHarnessInvocations`
+  // one hop before the budget's fallback applied, so a negative/`-Infinity` ceiling
+  // refused pre-flight and rendered a COMPLETED review with zero model turns — the
+  // exact fake review the circuit exists to prevent.
+  const maxInvocations = normalizeMaxInvocations(
+    input.routePlanOptions?.maxHarnessInvocations ?? DEFAULT_MAX_HARNESS_INVOCATIONS,
+  );
+  const routePlan = buildRoutePlan(decomposition, {
+    ...(input.routePlanOptions ?? {}),
+    maxHarnessInvocations: maxInvocations,
+  });
   const seed = input.provenance ?? DEFAULT_PROVENANCE_SEED;
 
   // ONE shared live invocation budget for the whole model phase (issue #69, bead
-  // p0wwp). Seeded from the same ceiling the pre-flight route plan uses, threaded
-  // through BOTH runners, consumed once per actual turn — so the proposal's
+  // p0wwp). Seeded from the SAME normalized ceiling the pre-flight route plan uses,
+  // threaded through BOTH runners, consumed once per actual turn — so the proposal's
   // retries AND the ordering pass draw from a single ceiling and a turn over it
   // is refused at runtime, not merely counted once in a static pre-flight plan.
-  const maxInvocations =
-    input.routePlanOptions?.maxHarnessInvocations ?? DEFAULT_MAX_HARNESS_INVOCATIONS;
   const budget = createInvocationBudget(maxInvocations);
   const manifest = buildOfferedManifest(decomposition);
 
@@ -513,7 +531,10 @@ export async function buildReviewCanvases(
     elementDiffs,
     decomposition,
     routePlan,
-    budgetRefused,
+    // Pre-flight refusal (the route plan gated it before any spend) OR a runtime
+    // exhaustion of the shared ceiling by retries (#260). Either means no complete
+    // model phase ran, so the surface degrades the review rather than faking done.
+    budgetRefused: budgetRefused || budget.refused,
     ...(decompositionResult ? { decompositionResult } : {}),
     ...(orderingResult ? { orderingResult } : {}),
     admittedDocs,

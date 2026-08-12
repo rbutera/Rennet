@@ -203,7 +203,7 @@ describe("runHypothesisPass — the hypothesis-first pre-read (issue #178)", () 
     expect(result.failureReason).toContain("transport");
   });
 
-  it("refuses fail-closed when NO budget is provided — no turn runs (R10)", async () => {
+  it("runs UNGATED when NO budget is provided — an absent budget is no ceiling, not no spend (#260)", async () => {
     let turns = 0;
     const result = await runHypothesisPass({
       patchsetId: PATCHSET.id,
@@ -214,10 +214,11 @@ describe("runHypothesisPass — the hypothesis-first pre-read (issue #178)", () 
         turns += 1;
         return Promise.resolve({ status: "emitted", body: modelHypothesis() });
       },
+      // budget omitted — #260: no ceiling, the turn runs.
     });
-    expect(result.status).toBe("failed");
-    expect(result.budgetRefused).toBe(true);
-    expect(turns).toBe(0);
+    expect(result.status).toBe("ok");
+    expect(result.budgetRefused).toBe(false);
+    expect(turns).toBe(1);
   });
 
   it("threads real token usage into provenance when the turn reports it (issue #186)", async () => {

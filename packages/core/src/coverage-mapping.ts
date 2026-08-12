@@ -27,13 +27,13 @@
  *      refusal or a turn failure) the runner yields `failed` with an empty edge set,
  *      and the Spec view renders NO chips rather than a fabricated all-unimplemented.
  *      A genuine all-unimplemented (entries that DO join real requirements, with empty
- *      hunk lists) passes the gate and yields `ok`. Fail-closed on the money circuit
- *      (Rule 75): an ABSENT budget is a refusal.
+ *      hunk lists) passes the gate and yields `ok`. Money circuit (#260): a turn over a
+ *      configured ceiling is refused; an ABSENT budget runs ungated (no ceiling, not no spend).
  */
 
 import type { InvocationBudget, OpenSpecCoverageEdge } from "@rennet/types";
 import type { HarnessTurnResult } from "./harness-run-turn";
-import { budgetAbsentRefusal } from "./invocation-budget";
+import { absentBudgetGrant } from "./invocation-budget";
 import { classifyTestGlob } from "./novelty-ledger";
 
 /** One requirement the mapping is produced for (the AUTHORITY the runner iterates). */
@@ -63,10 +63,10 @@ export interface RunCoverageMappingInput {
   /** Runs one turn against the assembled prompt; the caller owns the session wiring. */
   readonly runTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
   /**
-   * The shared live invocation budget (Rule 75, vital money circuit). Consulted
-   * before EVERY turn — a turn over the ceiling, or an ABSENT budget, is refused
-   * fail-closed. A refusal is terminal: the runner resolves to `failed` (no chips),
-   * never a fabricated coverage. Optional only as a test ergonomic.
+   * The shared live invocation budget (#260). Consulted before EVERY turn — a
+   * turn over a CONFIGURED ceiling is refused; an ABSENT budget runs UNGATED (no
+   * ceiling, not no spend). A refusal is terminal: the runner resolves to `failed`
+   * (no chips), never a fabricated coverage. Optional only as a test ergonomic.
    */
   readonly budget?: InvocationBudget;
   /** Retries after the first attempt. Default 1 (two attempts total). */
@@ -268,9 +268,10 @@ export async function runCoverageMapping(
   let lastFailure = "the coverage mapping runner did not complete";
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-    // Fail-closed money circuit (Rule 75): an absent budget is a refusal, terminal.
+    // Money circuit (#260): a turn over a configured ceiling is refused; an
+    // absent budget runs ungated (no budget means no ceiling, not no spend).
     const purpose = `coverage:attempt-${attempt}`;
-    const grant = input.budget?.tryConsume(purpose) ?? budgetAbsentRefusal(purpose);
+    const grant = input.budget?.tryConsume(purpose) ?? absentBudgetGrant(purpose);
     if (!grant.granted) {
       return { status: "failed", edges: [], failureReason: grant.reason };
     }

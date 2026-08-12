@@ -268,14 +268,18 @@ export function ReviewWorkspace({
 
 /**
  * The loud, honest copy for the mechanical-outline fallback (real-AI-default).
- * `engine.aiReview` is false only when no model turn ran, so the title always says
- * plainly that the user is NOT looking at an AI review; when the `claude` binary
- * was the missing piece it names that, so the fix is obvious rather than a generic
- * apology. The mechanical outline is real diff STRUCTURE, never AI findings.
+ * `engine.aiReview` is false when the model phase did not complete — no model
+ * installed, or the invocation budget refused it (#260) — so the title always
+ * says plainly that the user is NOT looking at a full AI review, and names the
+ * real cause (missing CLI vs spent budget). The outline is real diff STRUCTURE,
+ * never AI findings.
  */
 function mechanicalFallbackTitle(engine: ReviewEngine): string {
-  return engine.claudeAvailable
-    ? "The AI review didn't run — showing a basic structural outline."
+  // `aiReview` is false for exactly two reasons: no model was available, or the
+  // model-invocation budget refused (#260). If ANY model is installed, the cause
+  // was the budget, so name it — never blame a missing CLI that is right there.
+  return engine.claudeAvailable || engine.codexAvailable
+    ? "Not a full AI review — it hit the model-invocation budget. Showing a structural outline."
     : "Couldn't find your Claude CLI — this is a basic structural outline, not an AI review.";
 }
 
@@ -283,9 +287,10 @@ function mechanicalFallbackDetail(engine: ReviewEngine): string {
   if (!engine.claudeAvailable && !engine.codexAvailable) {
     return "Install the Claude CLI (or Codex) and retry to get the real AI review of this diff.";
   }
-  // A model was installed but no turn ran for this changeset (e.g. the review budget
-  // was exhausted before any spend), so what's on screen is structure, not findings.
-  return "No model turn ran for this changeset, so these are the diff's structure, not AI findings.";
+  // A model was available but the review's invocation budget was spent — the diff
+  // was over budget pre-flight, or retries exhausted the shared ceiling mid-review
+  // (#260) — so parts of what's on screen are the diff's structure, not findings.
+  return "This review's model-invocation budget was spent before it finished, so parts of what you see are the diff's structure, not AI findings.";
 }
 
 export function RennetApp({ bridge }: { bridge: RennetBridge }) {
@@ -331,7 +336,8 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const [narration, setNarration] = useState<ReviewNarration | undefined>(undefined);
   // The engine provenance (real-AI-default): how the live set was produced. When
   // `engine.aiReview` is false the set is the DETERMINISTIC mechanical outline (no
-  // model installed) and the UI says so loudly, never passing it off as AI.
+  // model installed, or the invocation budget refused it — #260) and the UI says
+  // so loudly, never passing it off as AI.
   const [engine, setEngine] = useState<ReviewEngine | undefined>(undefined);
   // The Decisions runner's status (issue #137/#160), delivered with the canvas set.
   // Undefined until a live load sets it (or on an older engine that omits it) →

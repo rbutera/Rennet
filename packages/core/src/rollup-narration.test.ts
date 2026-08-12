@@ -218,11 +218,10 @@ describe("runRollupNarration — budget gate (Rule 75, the money circuit)", () =
     expect(budget.consumed).toBe(1); // exactly one turn drew from the shared ceiling
   });
 
-  it("ABSENT budget fails CLOSED — no turn runs (#95, the fail-open hole)", async () => {
-    // The #95 defect: when NO budget is threaded, the old gate (`if (budget !==
-    // undefined)`) skipped entirely and the turn ran UNGATED. An absent budget is
-    // not authorization to spend — it must be a refusal, exactly like a zero
-    // ceiling. This is the red-provable proof: restore the old skip and this reds.
+  it("an ABSENT budget runs UNGATED — the narration turn runs, no ceiling (#260)", async () => {
+    // #260 inverts the #95 fail-closed default: no budget means no ceiling, not no
+    // spend. Red-provable: restore the fail-closed absent refusal and this reds
+    // (the turn would not run and the outcome would be pending).
     const nodes = offeredNarrationNodes(canvases());
     const turn = vi.fn(async () => emit(bodyFor(nodes)));
     const result = await runRollupNarration({
@@ -232,18 +231,15 @@ describe("runRollupNarration — budget gate (Rule 75, the money circuit)", () =
       contract: ROLLUP_NARRATION_CONTRACT,
       provenance: SEED,
       runTurn: turn,
-      // budget deliberately omitted — an absent budget must fail closed.
+      // budget deliberately omitted — no ceiling, so the turn runs.
     });
-    expect(turn).not.toHaveBeenCalled();
-    expect(result.budgetRefused).toBe(true);
-    expect(result.outcome).toBe("pending");
-    expect(result.document).toBeUndefined();
-    // The refusal carries the honest reason, not a fabricated exhaustion.
-    expect(result.attempts.at(-1)?.outcome).toBe("budget-refused");
-    expect(result.attempts.at(-1)?.budgetRefusal?.reason).toContain("no invocation budget");
+    expect(turn).toHaveBeenCalledTimes(1);
+    expect(result.outcome).toBe("narrated");
   });
 
-  it("a non-finite ceiling fails CLOSED (no narration turn runs)", async () => {
+  it("a non-finite ceiling falls back to the default — the narration turn still runs (#260)", async () => {
+    // A malformed ceiling is a caller defect → default ceiling (not fail-closed,
+    // not unbounded), so the single narration turn runs well within it and narrates.
     const nodes = offeredNarrationNodes(canvases());
     const turn = vi.fn(async () => emit(bodyFor(nodes)));
     const budget = createInvocationBudget(Number.POSITIVE_INFINITY);
@@ -256,8 +252,8 @@ describe("runRollupNarration — budget gate (Rule 75, the money circuit)", () =
       runTurn: turn,
       budget,
     });
-    expect(turn).not.toHaveBeenCalled();
-    expect(result.outcome).toBe("pending");
+    expect(turn).toHaveBeenCalledTimes(1);
+    expect(result.outcome).toBe("narrated");
   });
 });
 

@@ -84,8 +84,8 @@ function base(input: Partial<Parameters<typeof runOrderingPass>[0]> = {}) {
     contract: ORDERING_CONTRACT,
     provenance: SEED,
     runTurn: scriptedTurn([AGENT_ORDER]),
-    // Explicit budget by default: an absent budget now fails closed (#95), so an
-    // ordering-logic test that omits it would refuse every turn. Overridable via input.
+    // Explicit budget by default so ordering-logic tests exercise a real ceiling.
+    // (An absent budget runs ungated per #260 — no ceiling.) Overridable via input.
     budget: createInvocationBudget(10),
     ...input,
   };
