@@ -1,3 +1,11 @@
+> **SUPERSEDED (2026-08-12) on the read-only posture** (see proposal.md banner). The
+> "Read-only posture makes denial a normal event" section below described the shipped
+> behaviour; Rule Zero retired that posture (#261 adapter, #259 analysis/verification
+> path). Analysis sessions are now capable by default and verification may run the code.
+> `tool.denied` remains a first-class event kind — it is still the right shape for a
+> harness- or user-side denial — it is simply no longer produced by a Rennet-imposed
+> review denylist. The body is left as the historical account of what shipped.
+
 ## Context
 
 Rennet has a working local review loop and a decision-complete harness plan (the Wingman Harness Adapter Protocol, Master Plan R2/R13, the T3 auth trace). The plan is larger than this slice: it covers three harnesses, disagreement/N=3, session persistence, the utility tier, and a cross-adapter conformance runner. This change implements only the consumed subset that unblocks angle generation, the canvasOps session, and the handoff loop, and it does so without adopting the proprietary Claude SDK as a workspace dependency, because that adoption conflicts with three ratified repository policies.

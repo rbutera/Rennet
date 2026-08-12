@@ -1,3 +1,14 @@
+> **SUPERSEDED (2026-08-12) on the read-only posture.** This change shipped a
+> "read-only review posture" — a read/search allowlist plus a write/exec denylist on
+> every analysis session. Rule Zero retired it: Rennet drives the user's own harness and
+> must not be more restrictive than the tool it drives. #261 made the adapter capable by
+> default (full toolset, `bypassPermissions`, no denylist), and #259 carried that through
+> to the analysis path so per-finding verification (#179) can actually RUN the code it is
+> reasoning about — "reproduce or refute" that could not run anything was reproduce in
+> name only. The rest of this change (frame normalization, OAuth money safety, the
+> event taxonomy, the `tool.denied` event kind) still stands. This banner records the
+> supersession; the body below is left as the historical account of what shipped.
+
 ## Why
 
 The local review MVP proved the package boundaries and the disposition model, but Rennet still cannot ask a harness anything. Angle generation (#8), the canvasOps server session (#12), and the review-to-agent handoff loop all sit behind one missing seam: a normalized harness adapter protocol and the first real adapter for Claude Code. This slice builds that seam and the Claude adapter, right-sized to what those consumers need now, without settling deferred product choices (disagreement/N=3, session persistence, the utility tier, fork/resume, the cross-adapter conformance runner).

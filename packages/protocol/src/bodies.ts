@@ -175,11 +175,11 @@ const findingBodySchema = z.object({ findings: z.array(findingBodyElementSchema)
  * The per-finding VERIFICATION TURN's structured-output shape (issue #179): NOT an
  * RSP document type (verification is a micro-judgment attached to a finding, never
  * a stored doc), so it lives here as a standalone projected schema rather than in
- * `RSP_DOC_TYPES`. A batched verify turn covers every finding sharing a file, so it
- * emits an array of `{ ref, verdict, evidence }` — `ref` is the per-batch reference
- * key the runner fed in (an ordinal, e.g. "f1"), echoed back so the runner maps
- * each verdict to the finding it belongs to. The runner parses this defensively and
- * a missing/garbled entry falls to an honest `inconclusive` (never a drop).
+ * `RSP_DOC_TYPES`. A verify turn covers ONE finding (#268 fix round 2: one finding per
+ * turn, so execution attribution is true by construction), emitting an array with a
+ * single `{ ref, verdict, evidence }` — `ref` is the reference key the runner fed in
+ * ("f1"), echoed back. The runner parses this defensively and a missing/garbled entry
+ * falls to an honest `inconclusive` (never a drop).
  */
 const findingVerificationTurnItemSchema = z
   .object({

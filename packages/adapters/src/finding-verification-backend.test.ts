@@ -373,3 +373,189 @@ describe("createVerificationTurn (#179)", () => {
     expect(result).toEqual({ status: "failed", message: "boom" });
   });
 });
+
+// ── The executed-reproduction observation (#259): the shell was invoked and printed ─
+
+function toolStartedExec(callId: string, command: string): HarnessEvent {
+  return {
+    seq: 1,
+    harness: "claude-code",
+    sessionId: "s1",
+    turnId: "t1",
+    receivedAt: 0,
+    native: {},
+    kind: "tool.started",
+    call: { id: callId, name: "Bash", input: { command }, parentToolCallId: null, kind: "exec" },
+  };
+}
+
+function toolOutputEvent(callId: string, ok: boolean, text: string): HarnessEvent {
+  return {
+    seq: 2,
+    harness: "claude-code",
+    sessionId: "s1",
+    turnId: "t1",
+    receivedAt: 0,
+    native: {},
+    kind: "tool.output",
+    callId,
+    ok,
+    output: {},
+    text,
+  };
+}
+
+function toolStartedRead(callId: string, path: string): HarnessEvent {
+  return {
+    seq: 1,
+    harness: "claude-code",
+    sessionId: "s1",
+    turnId: "t1",
+    receivedAt: 0,
+    native: {},
+    kind: "tool.started",
+    call: {
+      id: callId,
+      name: "Read",
+      input: { file_path: path },
+      parentToolCallId: null,
+      kind: "read",
+    },
+  };
+}
+
+describe("createVerificationTurn executed-reproduction observation (#259)", () => {
+  const reproducedBody = {
+    verifications: [{ ref: "f1", verdict: "reproduced", evidence: "the test fails" }],
+  };
+
+  it("records the exec commands the turn RAN, with their output tail, as executed evidence", async () => {
+    const state: FakeState = { sent: [], closed: false };
+    const port = fakePort(
+      [
+        toolStartedExec("c1", "pnpm vitest run empty.test.ts"),
+        toolOutputEvent("c1", false, "FAIL empty.test.ts\n 1 failed | 0 passed"),
+        endedEvent({ status: "completed", finalText: "ok", structuredOutput: reproducedBody }),
+      ],
+      state,
+    );
+    const turn = createVerificationTurn(port, { cwd: "/repo" });
+    const result = await turn("verify");
+    expect(result.status).toBe("emitted");
+    if (result.status === "emitted") {
+      expect(result.execution?.commands).toEqual([
+        {
+          command: "pnpm vitest run empty.test.ts",
+          ok: false,
+          outputTail: "FAIL empty.test.ts\n 1 failed | 0 passed",
+        },
+      ]);
+    }
+  });
+
+  it("carries NO execution when the turn ran nothing — a re-read is never dressed up as a run", async () => {
+    const state: FakeState = { sent: [], closed: false };
+    const port = fakePort(
+      [endedEvent({ status: "completed", finalText: "ok", structuredOutput: reproducedBody })],
+      state,
+    );
+    const turn = createVerificationTurn(port, { cwd: "/repo" });
+    const result = await turn("verify");
+    if (result.status === "emitted") expect(result.execution).toBeUndefined();
+  });
+
+  it("ignores non-exec tool calls — reading a file is not running the code", async () => {
+    const state: FakeState = { sent: [], closed: false };
+    const port = fakePort(
+      [
+        toolStartedRead("r1", "src/a.ts"),
+        toolOutputEvent("r1", true, "const x = load();"),
+        endedEvent({ status: "completed", finalText: "ok", structuredOutput: reproducedBody }),
+      ],
+      state,
+    );
+    const turn = createVerificationTurn(port, { cwd: "/repo" });
+    const result = await turn("verify");
+    if (result.status === "emitted") expect(result.execution).toBeUndefined();
+  });
+
+  it("truncates a long command output to the tail, where a test/build verdict prints", async () => {
+    const long = `${"x".repeat(2000)}\n=== 3 failed ===`;
+    const state: FakeState = { sent: [], closed: false };
+    const port = fakePort(
+      [
+        toolStartedExec("c1", "pnpm build"),
+        toolOutputEvent("c1", false, long),
+        endedEvent({ status: "completed", finalText: "ok", structuredOutput: reproducedBody }),
+      ],
+      state,
+    );
+    const turn = createVerificationTurn(port, { cwd: "/repo" });
+    const result = await turn("verify");
+    if (result.status === "emitted") {
+      const tail = result.execution?.commands[0]?.outputTail ?? "";
+      expect(tail.length).toBeLessThanOrEqual(800);
+      expect(tail.endsWith("=== 3 failed ===")).toBe(true);
+    }
+  });
+
+  it("a DUPLICATE tool-call id is excluded, never misattributing one command's output to another (#268 Gap A)", async () => {
+    // The literal bug: two exec starts share id c1, then one output arrives. The old
+    // `if (!has)` guard dropped the second command and wrote c1's output onto the FIRST
+    // record — surfacing `pnpm test first.test.ts` with `node second-repro.js`'s output.
+    const state: FakeState = { sent: [], closed: false };
+    const port = fakePort(
+      [
+        toolStartedExec("c1", "pnpm test first.test.ts"),
+        toolStartedExec("c1", "node second-repro.js"),
+        toolOutputEvent("c1", false, "SECOND_ONLY"),
+        // A distinct-id command in the same turn is still recorded normally (control).
+        toolStartedExec("c2", "node good.js"),
+        toolOutputEvent("c2", false, "GOOD"),
+        endedEvent({ status: "completed", finalText: "ok", structuredOutput: reproducedBody }),
+      ],
+      state,
+    );
+    const turn = createVerificationTurn(port, { cwd: "/repo" });
+    const result = await turn("verify");
+    expect(result.status).toBe("emitted");
+    if (result.status === "emitted") {
+      // The ambiguous c1 record surfaces NOWHERE — not as a command, not as incomplete.
+      const commands = result.execution?.commands ?? [];
+      const incomplete = result.execution?.incomplete ?? [];
+      const all = [...commands, ...incomplete];
+      expect(all.some((c) => c.command === "pnpm test first.test.ts")).toBe(false);
+      expect(all.some((c) => c.command === "node second-repro.js")).toBe(false);
+      expect(all.some((c) => c.outputTail.includes("SECOND_ONLY"))).toBe(false);
+      // The unambiguous control command is still recorded with its own output.
+      expect(commands.map((c) => c.command)).toEqual(["node good.js"]);
+      expect(commands[0]?.outputTail).toBe("GOOD");
+    }
+  });
+
+  it("a started-but-unpaired exec is NOT a run: it stays out of commands, kept as incomplete (#268 F1)", async () => {
+    // A command that STARTED but was denied/interrupted before any output used to be
+    // recorded as {ok: true} — an unrun command reported as a clean one. It must not
+    // count as executed: it belongs in `incomplete`, never in `commands`.
+    const state: FakeState = { sent: [], closed: false };
+    const port = fakePort(
+      [
+        toolStartedExec("c1", "pnpm test"), // no matching tool.output → never ran to completion
+        toolStartedExec("c2", "node repro.js"),
+        toolOutputEvent("c2", false, "TypeError"), // this one completed
+        endedEvent({ status: "completed", finalText: "ok", structuredOutput: reproducedBody }),
+      ],
+      state,
+    );
+    const turn = createVerificationTurn(port, { cwd: "/repo" });
+    const result = await turn("verify");
+    expect(result.status).toBe("emitted");
+    if (result.status === "emitted") {
+      // Only the completed command is proof of a run.
+      expect(result.execution?.commands.map((c) => c.command)).toEqual(["node repro.js"]);
+      // The unpaired one is kept separately, never reported as ok.
+      expect(result.execution?.incomplete?.map((c) => c.command)).toEqual(["pnpm test"]);
+      expect(result.execution?.incomplete?.[0]?.ok).toBe(false);
+    }
+  });
+});

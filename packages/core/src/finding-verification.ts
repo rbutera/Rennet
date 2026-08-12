@@ -15,8 +15,11 @@
  *      reasoning beyond its hunk), and which are obvious (a low nit, or a mechanical
  *      claim the floor already settles) and surface directly with no chip.
  *   ② runFindingVerification — for each non-obvious finding, a FRESH verification
- *      pass fed the REAL file content around its anchor (more than the offered hunk),
- *      instructed to reproduce, refute, or return inconclusive.
+ *      pass fed the REAL file content around its anchor (more than the offered hunk)
+ *      AND a working shell in the repo (issue #259), so it can RUN the code — execute
+ *      the test, reproduce the failure — rather than only reason about it. The commands
+ *      it actually ran are observed and counted (`commandsRun`/`reproducedByExecution`),
+ *      so a reproduced-by-running verdict is told apart from a reproduced-by-reading one.
  *
  * The DISPOSITION is load-bearing and asymmetric (Rai + Rule 75/81ak, could-not-check
  * beats a false clear):
@@ -28,17 +31,17 @@
  *                   fights. Uncertainty, the per-review cap, an exhausted budget, and
  *                   unreadable code all land here (never as a drop, never as a clear).
  *
- * Cost is bounded three ways, all consuming the shared invocation budget: only
- * non-obvious findings, a per-review `maxVerifications` cap (verify the top-K by
- * severity, the rest surface caveated), and batching (findings sharing a file are
- * one turn). Every bound is a caveat, never a silent truncation.
+ * Cost is bounded two ways, both consuming the shared invocation budget: only
+ * non-obvious findings, and a per-review `maxVerifications` cap (verify the top-K by
+ * severity, the rest surface caveated). Each verified finding is its own turn (#268
+ * fix round 2), so the cap is also the ceiling on turns. Every bound is a caveat,
+ * never a silent truncation.
  */
 
 import {
   FINDING_VERIFICATION_CONTRACT,
   renderFindingVerificationPrompt,
   type VerificationContract,
-  type VerificationPromptFinding,
 } from "@rennet/instructions";
 import { parseAnchor, resolveAnchor } from "@rennet/protocol";
 import type {
@@ -153,9 +156,45 @@ export type VerificationFileReader = (
   anchor: string,
 ) => Promise<VerificationFileWindow | undefined>;
 
+/**
+ * One command a verification turn ACTUALLY executed, as observed on the harness's
+ * tool stream (issue #259) — the independent proof that reproduction ran, distinct
+ * from whatever the model then wrote as its evidence. A turn that ran nothing carries
+ * no execution at all (absent, never an empty-list masquerading as "ran, found none").
+ */
+export interface VerificationCommand {
+  /** The command line the exec tool ran (e.g. the Bash `command`). */
+  readonly command: string;
+  /** Whether the harness reported the tool call succeeded. */
+  readonly ok: boolean;
+  /** A bounded tail of what the command printed — the executed evidence. */
+  readonly outputTail: string;
+}
+
+/**
+ * The executed evidence a verification turn carried (#259). `commands` are the exec
+ * calls that COMPLETED — a `tool.started` paired with its `tool.output`, so the
+ * command genuinely ran and produced output. `incomplete` are exec calls that started
+ * but were denied or interrupted before any output (issue #268 F1): they are kept
+ * separate and NEVER counted as a successful run, because a started-but-unpaired call
+ * used to be recorded as `{ok: true}` — an unrun command reported as a clean one, the
+ * permissive direction. Only `commands` are proof that anything executed.
+ */
+export interface VerificationExecution {
+  readonly commands: readonly VerificationCommand[];
+  /** Exec calls that started but never produced output (denied/interrupted) — not a run. */
+  readonly incomplete?: readonly VerificationCommand[];
+}
+
 /** One batched verification turn's result (a fresh session emits `{ verifications }`). */
 export type VerificationTurnResult =
-  | { readonly status: "emitted"; readonly body: unknown; readonly tokens?: RspTokenUsage }
+  | {
+      readonly status: "emitted";
+      readonly body: unknown;
+      readonly tokens?: RspTokenUsage;
+      /** The commands the turn ran to reproduce (#259). Absent when it ran nothing. */
+      readonly execution?: VerificationExecution;
+    }
   | { readonly status: "failed"; readonly message: string };
 
 /** Injected (adapters): run ONE batched verification turn against the assembled prompt. */
@@ -191,6 +230,19 @@ export interface VerificationTelemetry {
   /** Model turns spent (one per file batch). The "+N turns" of the cost line. */
   readonly verificationTurns: number;
   readonly reproduced: number;
+  /**
+   * Completed exec commands the harness OBSERVED across the verification turns (#259;
+   * #268 F1: completed only — a denied/interrupted call is not counted). This is a
+   * turn-level count of what actually ran, not a per-finding attribution.
+   */
+  readonly commandsRun: number;
+  /**
+   * Reproduced findings whose model-cited command MATCHED a command the harness
+   * actually observed run (#268 F2). This is a per-FINDING count bound to observed
+   * execution — NOT "the batch ran something", which is what the earlier turn-level
+   * version wrongly credited to every reproduced finding in a file batch.
+   */
+  readonly reproducedByExecution: number;
   /** Refuted findings — DROPPED, never surfaced. */
   readonly refuted: number;
   /** Findings surfaced WITH a caveat (genuine uncertainty + capped + budget-refused + unreadable). */
@@ -259,6 +311,8 @@ export async function runFindingVerification(
   let inconclusive = 0;
   let verifiedFindings = 0;
   let verificationTurns = 0;
+  let commandsRun = 0;
+  let reproducedByExecution = 0;
   const cappedFindingIds: string[] = [];
   const budgetRefusedFindingIds: string[] = [];
   let tokensSpent: RspTokenUsage | null = null;
@@ -302,96 +356,93 @@ export async function runFindingVerification(
     resolved.push({ finding, window });
   }
 
-  // 4. Batch by file — findings sharing a file are ONE turn (the cost-bounding unit).
-  const groups = new Map<string, ResolvedFinding[]>();
-  for (const item of resolved) {
-    const list = groups.get(item.window.path);
-    if (list) list.push(item);
-    else groups.set(item.window.path, [item]);
-  }
-
-  // 5. One budget-gated verification turn per file batch, in deterministic path order.
-  for (const [path, members] of [...groups.entries()].sort((a, b) => compareIds(a[0], b[0]))) {
-    const purpose = `finding-verification:${path}`;
+  // 4. One budget-gated verification turn PER FINDING (#268 fix round 2, option 2).
+  //    Attribution is true BY CONSTRUCTION: every command a turn runs belongs to the ONE
+  //    finding it verifies, so there is nothing to attribute between findings — no
+  //    command-string matching, no consumption order, no misattribution. A reproduced
+  //    verdict from a turn that ran a command is reproduced-by-execution; one whose own
+  //    turn ran nothing is reproduced-by-reading. Deterministic order (rank, then id).
+  for (const { finding, window } of resolved) {
+    const purpose = `finding-verification:${finding.findingId}`;
     const grant: BudgetGrant = input.budget?.tryConsume(purpose) ?? absentBudgetGrant(purpose);
     if (!grant.granted) {
-      for (const { finding } of members) {
-        decisions.set(finding.findingId, {
-          kind: "attach",
-          verification: { verdict: "inconclusive", evidence: BUDGET_CAVEAT },
-        });
-        budgetRefusedFindingIds.push(finding.findingId);
-        inconclusive += 1;
-      }
+      decisions.set(finding.findingId, {
+        kind: "attach",
+        verification: { verdict: "inconclusive", evidence: BUDGET_CAVEAT },
+      });
+      budgetRefusedFindingIds.push(finding.findingId);
+      inconclusive += 1;
       continue;
     }
 
-    const refByFinding = new Map<string, FindingElement>();
-    const promptFindings: VerificationPromptFinding[] = members.map(({ finding }, index) => {
-      const ref = `f${index + 1}`;
-      refByFinding.set(ref, finding);
-      return {
-        ref,
-        severity: finding.severity,
-        summary: finding.summary,
-        hunk: hunkTextForAnchor(finding.anchor, input.manifest),
-      };
-    });
     const prompt = renderFindingVerificationPrompt(contract, {
-      file: widestWindow(members),
-      findings: promptFindings,
+      file: window,
+      findings: [
+        {
+          ref: "f1",
+          severity: finding.severity,
+          summary: finding.summary,
+          hunk: hunkTextForAnchor(finding.anchor, input.manifest),
+        },
+      ],
     });
 
     const turn = await input.runTurn(prompt);
     verificationTurns += 1;
+    verifiedFindings += 1;
 
     if (turn.status === "failed") {
-      for (const { finding } of members) {
-        decisions.set(finding.findingId, {
-          kind: "attach",
-          verification: { verdict: "inconclusive", evidence: turnFailedCaveat(turn.message) },
-        });
-        verifiedFindings += 1;
-        inconclusive += 1;
-      }
+      decisions.set(finding.findingId, {
+        kind: "attach",
+        verification: { verdict: "inconclusive", evidence: turnFailedCaveat(turn.message) },
+      });
+      inconclusive += 1;
       continue;
     }
     if (turn.tokens) tokensSpent = addTokens(tokensSpent, turn.tokens);
+    // The commands the harness OBSERVED this turn run (issue #259) — completed exec calls
+    // only (a started-but-denied call is not here, #268 F1). Because the turn verified
+    // exactly THIS finding, every observed command was run for it: a reproduced verdict
+    // from a turn that ran ≥1 command is execution-backed, no matching required.
+    const ranCommands = turn.execution?.commands ?? [];
+    commandsRun += ranCommands.length;
 
-    const verdictByRef = parseVerifications(turn.body);
-    for (const [ref, finding] of refByFinding) {
-      verifiedFindings += 1;
-      const parsed = verdictByRef.get(ref);
-      if (!parsed) {
-        decisions.set(finding.findingId, {
-          kind: "attach",
-          verification: { verdict: "inconclusive", evidence: NO_VERDICT_CAVEAT },
-        });
-        inconclusive += 1;
-        continue;
-      }
-      if (parsed.verdict === "refuted") {
-        decisions.set(finding.findingId, { kind: "drop" });
-        refuted += 1;
-        continue;
-      }
-      if (parsed.verdict === "reproduced" && parsed.evidence.trim().length > 0) {
-        decisions.set(finding.findingId, {
-          kind: "attach",
-          verification: { verdict: "reproduced", evidence: parsed.evidence.trim() },
-        });
-        reproduced += 1;
-        continue;
-      }
-      // inconclusive — or a reproduced with no evidence, which is a guess, not proof.
-      const evidence =
-        parsed.evidence.trim().length > 0 ? parsed.evidence.trim() : NO_VERDICT_CAVEAT;
+    const parsed = parseSingleVerification(turn.body);
+    if (!parsed) {
       decisions.set(finding.findingId, {
         kind: "attach",
-        verification: { verdict: "inconclusive", evidence },
+        verification: { verdict: "inconclusive", evidence: NO_VERDICT_CAVEAT },
       });
       inconclusive += 1;
+      continue;
     }
+    if (parsed.verdict === "refuted") {
+      decisions.set(finding.findingId, { kind: "drop" });
+      refuted += 1;
+      continue;
+    }
+    if (parsed.verdict === "reproduced" && parsed.evidence.trim().length > 0) {
+      // Executed-backed when THIS finding's own turn ran a command; the surfaced evidence
+      // is then GROUNDED in the observed command + its real output, not the model's prose.
+      const evidence =
+        ranCommands.length > 0
+          ? executedEvidence(parsed.evidence.trim(), ranCommands)
+          : parsed.evidence.trim();
+      decisions.set(finding.findingId, {
+        kind: "attach",
+        verification: { verdict: "reproduced", evidence },
+      });
+      reproduced += 1;
+      if (ranCommands.length > 0) reproducedByExecution += 1;
+      continue;
+    }
+    // inconclusive — or a reproduced with no evidence, which is a guess, not proof.
+    const evidence = parsed.evidence.trim().length > 0 ? parsed.evidence.trim() : NO_VERDICT_CAVEAT;
+    decisions.set(finding.findingId, {
+      kind: "attach",
+      verification: { verdict: "inconclusive", evidence },
+    });
+    inconclusive += 1;
   }
 
   // 6. Reassemble in ORIGINAL order: drop refuted, attach chips/caveats, keep the rest.
@@ -411,6 +462,8 @@ export async function runFindingVerification(
       verifiedFindings,
       verificationTurns,
       reproduced,
+      commandsRun,
+      reproducedByExecution,
       refuted,
       inconclusive,
       cappedFindingIds,
@@ -478,6 +531,8 @@ export function emptyVerificationTelemetry(): VerificationTelemetry {
     verifiedFindings: 0,
     verificationTurns: 0,
     reproduced: 0,
+    commandsRun: 0,
+    reproducedByExecution: 0,
     refuted: 0,
     inconclusive: 0,
     cappedFindingIds: [],
@@ -514,23 +569,6 @@ async function readWindowSafely(
   }
 }
 
-/** The widest member window in a file batch (a real window from the file the batch shares). */
-function widestWindow(members: readonly ResolvedFinding[]): VerificationFileWindow {
-  let widest: VerificationFileWindow | undefined;
-  for (const { window } of members) {
-    if (
-      widest === undefined ||
-      window.endLine - window.startLine > widest.endLine - widest.startLine
-    ) {
-      widest = window;
-    }
-  }
-  // Callers only invoke this on a non-empty file batch; the guard makes the
-  // invariant explicit rather than reading an undefined index.
-  if (widest === undefined) throw new Error("widestWindow requires at least one member");
-  return widest;
-}
-
 /** Render a finding's own offered hunk (from the manifest) into the verifier's prompt; best-effort. */
 function hunkTextForAnchor(anchor: string, manifest: OfferedManifest): string {
   const parsed = parseAnchor(anchor);
@@ -553,26 +591,48 @@ function renderSides(occurrence: ManifestOccurrence): string {
 }
 
 /**
- * Parse a verification turn's emitted body into a ref → verdict map, defensively. A
- * malformed item is skipped (its finding then falls to the "no usable verdict"
- * caveat rather than being dropped), so a garbled emission never silently removes a
- * finding — only a clean `refuted` drops one.
+ * Parse the single verdict from a one-finding verification turn's emitted body,
+ * defensively (#268 fix round 2: one finding per turn, so there is exactly one verdict
+ * to read). Returns the FIRST well-formed verification; a garbled/empty emission returns
+ * `undefined`, so the finding falls to the "no usable verdict" caveat rather than being
+ * dropped — only a clean `refuted` drops one.
  */
-function parseVerifications(body: unknown): Map<string, ParsedVerdict> {
-  const map = new Map<string, ParsedVerdict>();
-  if (typeof body !== "object" || body === null) return map;
+function parseSingleVerification(body: unknown): ParsedVerdict | undefined {
+  if (typeof body !== "object" || body === null) return undefined;
   const list = (body as { verifications?: unknown }).verifications;
-  if (!Array.isArray(list)) return map;
+  if (!Array.isArray(list)) return undefined;
   for (const item of list) {
     if (typeof item !== "object" || item === null) continue;
     const record = item as Record<string, unknown>;
-    const ref = record.ref;
     const verdict = record.verdict;
-    if (typeof ref !== "string") continue;
     if (verdict !== "reproduced" && verdict !== "refuted" && verdict !== "inconclusive") continue;
-    map.set(ref, { verdict, evidence: typeof record.evidence === "string" ? record.evidence : "" });
+    return { verdict, evidence: typeof record.evidence === "string" ? record.evidence : "" };
   }
-  return map;
+  return undefined;
+}
+
+/** A compact one-line excerpt of a command's output tail, for the evidence chip. */
+function outputExcerpt(text: string, max = 160): string {
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  return collapsed.length <= max ? collapsed : `${collapsed.slice(0, max)}…`;
+}
+
+/**
+ * The surfaced evidence for a reproduced-by-EXECUTION finding: the model's one-line
+ * reasoning GROUNDED in a command the harness actually observed this finding's turn run
+ * and what it printed — the executed proof comes from observed data, not from the model's
+ * prose (#268 F2), and needs no attribution because the turn verified this finding alone
+ * (#268 fix round 2). Uses the turn's LAST observed command, which is typically the
+ * reproduction after any exploration.
+ */
+function executedEvidence(reasoning: string, ran: readonly VerificationCommand[]): string {
+  const observed = ran[ran.length - 1];
+  if (observed === undefined) return reasoning;
+  const command =
+    observed.command.length <= 200 ? observed.command : `${observed.command.slice(0, 200)}…`;
+  const excerpt = outputExcerpt(observed.outputTail);
+  const proof = excerpt.length > 0 ? `ran \`${command}\` → ${excerpt}` : `ran \`${command}\``;
+  return reasoning.length > 0 ? `${reasoning} (${proof})` : proof;
 }
 
 function sumNullable(a: number | null, b: number | null): number | null {

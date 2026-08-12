@@ -204,6 +204,125 @@ describe("runFindingVerification disposition (#179)", () => {
   });
 });
 
+// ── ② executed reproduction: proof it RAN, not just re-read (#259) ───────────────
+
+describe("runFindingVerification executed reproduction (#259 + #268 option 2)", () => {
+  type Resp = {
+    verdict: string;
+    evidence: string;
+    commands?: { command: string; ok: boolean; outputTail: string }[];
+  };
+  /**
+   * A turn keyed by the finding's summary in the prompt — since each verification turn
+   * covers ONE finding (#268 fix round 2), the turn responds with that finding's verdict
+   * and the commands the harness observed for ITS turn.
+   */
+  function turnByFinding(bySummary: Record<string, Resp>): VerificationTurn {
+    return async (prompt: string): Promise<VerificationTurnResult> => {
+      const hit = Object.entries(bySummary).find(([summary]) => prompt.includes(summary));
+      if (!hit) return { status: "emitted", body: { verifications: [] } };
+      const resp = hit[1];
+      return {
+        status: "emitted",
+        body: { verifications: [{ ref: "f1", verdict: resp.verdict, evidence: resp.evidence }] },
+        ...(resp.commands ? { execution: { commands: resp.commands } } : {}),
+      };
+    };
+  }
+
+  it("counts reproduced-by-execution when the finding's OWN turn ran a command", async () => {
+    const f = finding({ findingId: "F1", summary: "sum([]) throws" });
+    const result = await runFindingVerification({
+      findings: [f],
+      manifest: MANIFEST,
+      readFileWindow: readAll,
+      runTurn: turnByFinding({
+        "sum([]) throws": {
+          verdict: "reproduced",
+          evidence: "it throws",
+          commands: [{ command: "pnpm vitest run a.test.ts", ok: false, outputTail: "1 failed" }],
+        },
+      }),
+      budget: budget(),
+    });
+    expect(result.findings[0]?.verification?.verdict).toBe("reproduced");
+    expect(result.telemetry.commandsRun).toBe(1);
+    expect(result.telemetry.reproducedByExecution).toBe(1);
+    // The surfaced evidence is GROUNDED in the observed command + its real output.
+    expect(result.findings[0]?.verification?.evidence).toContain("pnpm vitest run a.test.ts");
+    expect(result.findings[0]?.verification?.evidence).toContain("1 failed");
+  });
+
+  it("a reproduced finding whose OWN turn ran nothing is reproduced-by-reading, not by execution", async () => {
+    const f = finding({ findingId: "F1", summary: "line 2 derefs null" });
+    const result = await runFindingVerification({
+      findings: [f],
+      manifest: MANIFEST,
+      readFileWindow: readAll,
+      runTurn: turnByFinding({
+        "line 2 derefs null": { verdict: "reproduced", evidence: "line 2 dereferences a null x" },
+      }),
+      budget: budget(),
+    });
+    expect(result.findings[0]?.verification?.verdict).toBe("reproduced");
+    expect(result.telemetry.commandsRun).toBe(0);
+    expect(result.telemetry.reproducedByExecution).toBe(0);
+    expect(result.findings[0]?.verification?.evidence).not.toContain("ran `");
+  });
+
+  it("attributes execution PER FINDING by construction — one turn each, no cross-finding leakage (#268 option 2)", async () => {
+    // Two findings in the SAME file. Under the old batching they shared one turn and one
+    // command could be credited to the wrong finding. Now each gets its own turn: only the
+    // finding whose OWN turn ran a command is execution-backed, structurally.
+    const f1 = finding({ findingId: "F1", anchor: "rennet:hunk/h1", summary: "first concern" });
+    const f2 = finding({ findingId: "F2", anchor: "rennet:hunk/h2", summary: "second concern" });
+    const result = await runFindingVerification({
+      findings: [f1, f2],
+      manifest: MANIFEST,
+      readFileWindow: readAll,
+      runTurn: turnByFinding({
+        "first concern": {
+          verdict: "reproduced",
+          evidence: "ran it",
+          commands: [{ command: "node repro.js", ok: false, outputTail: "TypeError" }],
+        },
+        // F2's OWN turn runs nothing — it reproduced by reading.
+        "second concern": { verdict: "reproduced", evidence: "line 20 is unguarded" },
+      }),
+      budget: budget(),
+    });
+    expect(result.telemetry.reproduced).toBe(2);
+    expect(result.telemetry.commandsRun).toBe(1);
+    // Only F1's own turn ran a command; F2's did not. Nothing to leak across.
+    expect(result.telemetry.reproducedByExecution).toBe(1);
+    // One turn PER finding, not one batched turn for the shared file.
+    expect(result.telemetry.verificationTurns).toBe(2);
+    // F1's evidence is grounded in its run; F2's is not.
+    const byId = new Map(result.findings.map((f) => [f.findingId, f.verification?.evidence ?? ""]));
+    expect(byId.get("F1")).toContain("node repro.js");
+    expect(byId.get("F2")).not.toContain("ran `");
+  });
+
+  it("counts commandsRun even when a run ends inconclusive, but not reproducedByExecution", async () => {
+    const f = finding({ findingId: "F1", summary: "would not build" });
+    const result = await runFindingVerification({
+      findings: [f],
+      manifest: MANIFEST,
+      readFileWindow: readAll,
+      runTurn: turnByFinding({
+        "would not build": {
+          verdict: "inconclusive",
+          evidence: "the harness would not build here",
+          commands: [{ command: "pnpm build", ok: false, outputTail: "error" }],
+        },
+      }),
+      budget: budget(),
+    });
+    expect(result.telemetry.commandsRun).toBe(1);
+    expect(result.telemetry.reproducedByExecution).toBe(0);
+  });
+});
+
 // ── ② cost containment: cap + batching + budget ─────────────────────────────────
 
 describe("runFindingVerification cost containment (#179)", () => {
@@ -239,7 +358,10 @@ describe("runFindingVerification cost containment (#179)", () => {
     expect(byId.get("F3")?.verification?.evidence.toLowerCase()).toContain("not verified");
   });
 
-  it("BATCHES findings that share a file into ONE turn", async () => {
+  it("verifies ONE finding per turn — even findings sharing a file (#268 option 2)", async () => {
+    // Attribution is true by construction: batching was removed so a command a turn ran
+    // can only belong to that turn's single finding. Three findings → three turns, even
+    // when two share a file.
     let turns = 0;
     const counting: VerificationTurn = async (prompt) => {
       turns += 1;
@@ -261,9 +383,9 @@ describe("runFindingVerification cost containment (#179)", () => {
       runTurn: counting,
       budget: budget(),
     });
-    // Two files → two turns (not three), and all three findings got a verdict.
-    expect(turns).toBe(2);
-    expect(result.telemetry.verificationTurns).toBe(2);
+    // One turn per finding, and all three got a verdict.
+    expect(turns).toBe(3);
+    expect(result.telemetry.verificationTurns).toBe(3);
     expect(result.telemetry.verifiedFindings).toBe(3);
   });
 
