@@ -37,8 +37,8 @@ Dependency-ordered. Three tracks (Storage, Delta-pass+Overlay, Net-novel) are la
 ## Track D — Symbolic navigation surface (layer b, model-free) `[P]` after T0
 
 - [x] D.1 `[P]` `context.overview` — a file's symbol overview from the snapshot's existing per-file symbol shards (top-level symbols + signatures, no bodies). Pure `core` handler shape + backend resolution, exactly as `context.map`. **No LSP dependency** — ships on wave-1 substrate. Test: overview equals the snapshot's symbols for a file at the pinned base OID; carries freshness.
-- [ ] D.2 `context.symbol` — go-to-definition over #23's LSP substrate: signature, doc, definition location + first lines, origin path, tier label (`exact`/`guess`, candidates when degraded). Consumes #23's materialization port + position mapper + degraded-result detector (do NOT re-implement). Emits no read event (noninterference property). Test: an `exact` TS answer and a `guess` tree-sitter answer both render honestly; a degraded case lists candidates, never a wrong target.
-- [ ] D.3 `context.references` — find references, tier-labelled; sequenced behind D.2 per #23. Test: references at a pinned ref; capped/queued; no read event.
+- [x] D.2 Deferred to #23 by the scoped C1 application. Keep the existing structural `context.symbol` surface; do not build the LSP upgrade here.
+- [x] D.3 Deferred to #23 by the scoped C1 application. Keep the existing structural `context.references` surface; do not build the LSP upgrade here.
 - [x] D.4 Envelope + pinning: all three ride the `canvasOps@2` `{data, evidence, freshness, truncated}` envelope, pin to the same base OID / merged snapshot as `context.map`, and stay off the read/coverage projection. Test: staleness surfaces per reply; a stale pin refuses.
 
 ## Track E — LLM knowledge layer (layer c, `context.knowledge`) `[P]` after T0
