@@ -19,6 +19,7 @@ import {
   type DispositionBatch,
   type OrphanedDisposition,
 } from "../canvas/authoring";
+import type { ConversationAnchor } from "../canvas/conversation";
 import { type CounterpartTarget, resolveCounterpart } from "../canvas/counterpart";
 import type { CanvasFeedSource } from "../canvas/feed";
 import { useCanvasFeed } from "../canvas/feed";
@@ -207,6 +208,14 @@ export interface CanvasWorkspaceProps {
    * openable.
    */
   onOpenInEditor?: (path: string, line: number) => void;
+  /**
+   * Open a private conversation thread (issue #36) anchored inside the diff — the
+   * discuss glyph on a line (plain-click), a range (shift-click), or the chunk
+   * header. Forwarded straight to the `CodeView`; the host materialises the thread in
+   * the right-margin conversation column. Absent ⇒ no discuss affordance renders
+   * (additive: existing callers/tests unchanged).
+   */
+  onDiscuss?: (anchor: ConversationAnchor) => void;
 }
 
 /** One inspected name in the navigation history: loading, errored, or resolved. */
@@ -1065,6 +1074,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
                         : undefined
                     }
                     onSymbolClick={props.symbolLookup ? inspectSymbol : undefined}
+                    onDiscuss={props.onDiscuss}
                   />
                   {pinned ? null : inspector}
                 </div>

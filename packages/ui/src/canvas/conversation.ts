@@ -1,4 +1,4 @@
-import type { AskMode } from "@rennet/types";
+import type { AnchorSide, AskMode } from "@rennet/types";
 import { DEFAULT_ASK_MODE } from "./ask";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -32,12 +32,18 @@ import { DEFAULT_ASK_MODE } from "./ask";
 //     consults it — so opening or growing a thread changes only the margin, and the
 //     diff column stays a fixed point.
 //
-// SCOPE (issue #36, this slice): the thread/message MODEL + the anchored UI, driven
-// by FIXTURE messages behind the real typed boundary (mirroring #138/#139). The
-// LIVE streaming machinery — real token streaming from the orchestrator/harness,
-// session persistence, re-attach, orphan reaping — is the DEFERRED follow-up. The
-// model is shaped so that live streaming appends real `ThreadMessage`s later with
-// no change here.
+// SCOPE (issue #36, this slice): the thread/message MODEL + the anchored UI. Live
+// answers are real (`review.ask` per turn); the anchoring facet (line/range/chunk/
+// fragment discuss + right-margin threads) is wired.
+//
+// ⛔ DEFERRED, TRACKED AS ISSUE #251 (split from #36, criteria 3+4): the two-channel
+// token STREAMING machinery, `PersistedThread` session persistence, re-attach, and
+// orphan reaping. It is a separate branch, not an oversight — none of it exists in
+// the tree yet (the `orphan`/`PersistedThread` matches elsewhere are mark-orphans and
+// snapshot overlays, unrelated). The whole of #251 is only observable in the FAILURE
+// case (a crash mid-stream, a killed app), so its evidence must come from actually
+// interrupting things. The model is shaped so live streaming appends real
+// `ThreadMessage`s later with no change here — the streaming seam is `answerInThread`.
 //
 // The `layer:ui` boundary allows only `@rennet/types` + this package: nothing here
 // imports `@rennet/core`.
@@ -55,14 +61,75 @@ export type ConversationAnchorKind = "line" | "range" | "chunk" | "fragment";
 
 /**
  * The anchor a thread hangs on. `label` is the human string ("src/rate/bucket.ts");
- * `key` is the stable ALIGNMENT key the right margin lines a thread up against (a
- * line/range/chunk id). The diff column never reads `key`, so a thread opening or
- * growing cannot move the code.
+ * `key` is the stable ALIGNMENT key the right margin lines a thread up against. The
+ * diff column never reads `key`, so a thread opening or growing cannot move the code.
+ *
+ * `side` and `context` are SEMANTIC identity, not decoration (issue #36 F1/F2): the
+ * key alone is opaque to the model, so what actually reaches `review.ask` is these
+ * fields via `buildConversationQuestion`. Without them a question on a deleted line
+ * and a question on the added line at the same number are byte-identical, and a
+ * fragment thread cannot say which sentence it hangs off.
  */
 export interface ConversationAnchor {
   readonly kind: ConversationAnchorKind;
   readonly label: string;
   readonly key: string;
+  /** Which diff side a line/range anchors to (F1) — carried INTO the question, not just the key. */
+  readonly side?: AnchorSide;
+  /** The text this anchor refers to — the fragment's parent message (F2), so it travels with it. */
+  readonly context?: string;
+}
+
+// ── Injective anchor keys: the KIND is carried, never implied by shape (F4) ──────
+//
+// Why each key is collision-proof, precisely (not "paths never contain `|`" — they
+// can; `we|ird.ts` is a legal filename):
+//   • Cross-kind: every key is KIND-PREFIXED, so a chunk key can never equal a line
+//     key regardless of contents.
+//   • line / range: within their kind the trailing fields are FIXED-SHAPE — `side` is
+//     one of a closed set and the line numbers are digits — so the key right-parses
+//     unambiguously even when the path itself contains `|`.
+//   • fragment: BOTH components are unconstrained strings, so a raw `|` join WOULD
+//     collide (`("a|b","c")` == `("a","b|c")`). It is therefore JSON-encoded, which is
+//     unambiguous for any two strings — the key is INCAPABLE of colliding, not merely
+//     unlikely to (the callers happen to pass UUIDs today, but the key does not rely on
+//     that undocumented property).
+
+/** The alignment key for a diff-LINE anchor — injective over (kind, path, side, line). */
+export function lineAnchorKey(path: string, side: AnchorSide, line: number): string {
+  return `line|${path}|${side}|${line}`;
+}
+
+/** The alignment key for a RANGE anchor — injective over (kind, path, side, start, end). */
+export function rangeAnchorKey(path: string, side: AnchorSide, start: number, end: number): string {
+  return `range|${path}|${side}|${start}|${end}`;
+}
+
+/** The alignment key for a CHUNK anchor — injective over (kind, path). */
+export function chunkAnchorKey(path: string): string {
+  return `chunk|${path}`;
+}
+
+/**
+ * The alignment key for a FRAGMENT anchor — injective over (kind, parent thread,
+ * message). Both components are unconstrained strings, so the tuple is JSON-encoded
+ * rather than `|`-joined: `("a|b","c")` and `("a","b|c")` produce DIFFERENT keys.
+ */
+export function fragmentAnchorKey(parentThreadId: string, messageId: string): string {
+  return `fragment|${JSON.stringify([parentThreadId, messageId])}`;
+}
+
+/**
+ * A single discuss REQUEST — an anchor plus a unique occurrence `id` (issue #36). The
+ * id is what dedups an opening (idempotent under a re-passed list), NOT the anchor key:
+ * `anchor.key` is reserved for ALIGNMENT and GROUPING in the right margin. So two
+ * discuss actions on the SAME line are two requests with the same key and DIFFERENT
+ * ids, and each opens its own thread — a second discussion on a line is a real second
+ * thread, never silently collapsed into the first.
+ */
+export interface DiscussRequest {
+  readonly id: string;
+  readonly anchor: ConversationAnchor;
 }
 
 /** Who authored a message: the reviewer ("you") or the harness (a model). */
@@ -179,6 +246,30 @@ function messageSpeaker(message: ThreadMessage): string {
 }
 
 /**
+ * The scope sentence the model reads — the SEMANTIC anchor, not the opaque key (F1/F2).
+ * Carries the diff SIDE (so a question on a deleted line is not answered about the
+ * added line at the same number) and the fragment's referenced TEXT (so a sub-thread
+ * says which sentence it hangs off). These are the two hops where the value is finally
+ * consumed; encoding them only in the key never reached the model.
+ */
+function anchorScope(anchor: ConversationAnchor): string {
+  let scope = `The reviewer is discussing ${anchor.kind} ${anchor.label} in this code review.`;
+  if (anchor.side !== undefined) {
+    const sideName =
+      anchor.side === "deletions"
+        ? "the REMOVED (old / left) side of the diff"
+        : anchor.side === "additions"
+          ? "the ADDED (new / right) side of the diff"
+          : "the unchanged (context) side of the diff";
+    scope += ` The anchor is on ${sideName}.`;
+  }
+  if (anchor.context !== undefined && anchor.context.trim() !== "") {
+    scope += ` It refers to this specific text: "${anchor.context.trim()}".`;
+  }
+  return scope;
+}
+
+/**
  * Build the `review.ask` question for the next turn of a thread. Pure and
  * deterministic: the anchor scopes the question to the discussed lines, the prior
  * messages carry the conversation's context (so a follow-up is answered IN context),
@@ -192,7 +283,7 @@ export function buildConversationQuestion(
   priorMessages: readonly ThreadMessage[],
   body: string,
 ): string {
-  const scope = `The reviewer is discussing ${anchor.kind} ${anchor.label} in this code review.`;
+  const scope = anchorScope(anchor);
   if (priorMessages.length === 0) {
     return `${scope}\n\nThe reviewer asks: ${body}`;
   }
@@ -300,8 +391,9 @@ export function groupThreadsByAnchor(
 export function demoConversationThread(): ConversationThread {
   const anchor: ConversationAnchor = {
     kind: "range",
-    label: "src/rate/bucket.ts",
-    key: "src/rate/bucket.ts#L44-47",
+    label: "src/rate/bucket.ts:44-47",
+    key: rangeAnchorKey("src/rate/bucket.ts", "additions", 44, 47),
+    side: "additions",
   };
   let thread = openThread("thread-fail-open", anchor);
   thread = askInThread(

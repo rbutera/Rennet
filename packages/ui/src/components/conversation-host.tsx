@@ -1,5 +1,5 @@
 import type { RennetBridge } from "@rennet/protocol";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { AskMode } from "../canvas/ask";
 import {
   answerInThread,
@@ -7,6 +7,8 @@ import {
   buildConversationQuestion,
   type ConversationAnchor,
   type ConversationThread,
+  type DiscussRequest,
+  fragmentAnchorKey,
   openThread,
   type PromotionEvent,
   type PromotionKind,
@@ -32,9 +34,11 @@ import { ConversationMargin, DiscussControl } from "./conversation-cluster";
 // `AskPanel` fires (`askReview`: orchestrator once, "both" adds Codex, never a
 // synthesis). No new protocol command and no streaming transport are invented: the
 // answer arrives whole (the orchestrator turn resolves to its final text), exactly
-// as it does for `AskPanel`. Live token STREAMING and server-side session RESUME are
-// the honest follow-ups; a working, contextual, multi-turn-LIVE conversation lands
-// first.
+// as it does for `AskPanel`. ⛔ Live token STREAMING and server-side session RESUME /
+// orphan reaping are DEFERRED as issue #251 (split from #36, criteria 3+4) — a
+// separate branch, only observable in the crash/kill failure case; a working,
+// contextual, multi-turn-LIVE conversation lands here first. The streaming seam is
+// the `answerInThread` call below (where whole answers land, tokens would stream).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The UI-side ceiling on a single turn before the thread unblocks with an honest
@@ -48,11 +52,22 @@ export interface ConversationHostProps {
   /** The open review a conversation is ABOUT (each turn scopes to it). */
   reviewId: string;
   /**
-   * The anchors a thread can be opened on (a line / range / chunk / fragment). The
-   * host renders a `DiscussControl` for each anchor that has no open thread yet;
-   * pressing it opens the private thread the reviewer then converses in.
+   * The anchors a thread can be opened on from the MARGIN (a line / range / chunk /
+   * fragment). The host renders a `DiscussControl` for each anchor that has no open
+   * thread yet; pressing it opens the private thread the reviewer then converses in.
    */
   anchors: readonly ConversationAnchor[];
+  /**
+   * Discuss REQUESTS opened from ELSEWHERE — the diff surface's per-line / range /
+   * chunk discuss glyphs (issue #36). Each is a request to OPEN a thread directly: the
+   * diff is where the reviewer clicked, so the thread should already exist in the
+   * margin by the time they look. The host opens one thread per request `id` it has
+   * not seen, so re-passing the same list is idempotent — but a NEW request on the
+   * same anchor key (a second discussion of the same line) opens its OWN thread rather
+   * than being collapsed. `anchor.key` stays purely for alignment and grouping. Absent
+   * ⇒ margin-driven opening only (the existing behaviour; unchanged for old callers).
+   */
+  autoOpenRequests?: readonly DiscussRequest[];
   /** UI timeout for a single turn; defaults to {@link DEFAULT_CONVERSATION_TIMEOUT_MS}. */
   timeoutMs?: number;
   /**
@@ -74,6 +89,7 @@ export function ConversationHost({
   bridge,
   reviewId,
   anchors,
+  autoOpenRequests = [],
   timeoutMs = DEFAULT_CONVERSATION_TIMEOUT_MS,
   onPromote,
 }: ConversationHostProps) {
@@ -91,6 +107,46 @@ export function ConversationHost({
 
   function openConversation(anchor: ConversationAnchor): void {
     if (openAnchorKeys.has(anchor.key)) return;
+    setThreads((current) => [...current, openThread(crypto.randomUUID(), anchor)]);
+  }
+
+  // Open a thread for every diff-originated REQUEST we have not seen (issue #36). Dedup
+  // is on the request `id` (the occurrence), never the anchor key: the `seen` ref makes
+  // this react to NEW requests only, so a re-passed list is idempotent, while a second
+  // request on the SAME anchor key opens its OWN thread (a real second discussion of a
+  // line). `anchor.key` is left purely for margin alignment and grouping.
+  const autoOpenedIds = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const fresh = autoOpenRequests.filter((request) => !autoOpenedIds.current.has(request.id));
+    if (fresh.length === 0) return;
+    for (const request of fresh) autoOpenedIds.current.add(request.id);
+    setThreads((current) => [
+      ...current,
+      ...fresh.map((request) => openThread(crypto.randomUUID(), request.anchor)),
+    ]);
+  }, [autoOpenRequests]);
+
+  // Open a FRAGMENT thread on a message inside an existing thread (issue #36): the
+  // "discuss a fragment of the conversation itself" anchor. The new thread anchors to
+  // the message id (so the margin keys it distinctly) and is private like any other —
+  // a sub-thread never inherits ink, and the parent thread is not mutated.
+  function openSubThread(threadId: string, messageId: string): void {
+    const parent = threads.find((candidate) => candidate.id === threadId);
+    if (!parent) return;
+    // The fragment identity is the PARENT THREAD plus the message id (issue #36 F4),
+    // never the bare message id: message ids are unique per thread, so a bare id could
+    // collide across threads. AND — the load-bearing half (F2) — the fragment carries
+    // the referenced message TEXT as `context`, so `buildConversationQuestion` tells the
+    // orchestrator WHICH sentence the sub-thread hangs off. A key alone never reaches it.
+    const key = fragmentAnchorKey(parent.id, messageId);
+    if (openAnchorKeys.has(key)) return;
+    const referenced = parent.messages.find((message) => message.id === messageId);
+    const anchor: ConversationAnchor = {
+      kind: "fragment",
+      label: `${parent.anchor.label} · reply`,
+      key,
+      ...(referenced ? { context: referenced.body } : {}),
+    };
     setThreads((current) => [...current, openThread(crypto.randomUUID(), anchor)]);
   }
 
@@ -202,6 +258,7 @@ export function ConversationHost({
         threads={threads}
         onAsk={(threadId, body, mode) => void ask(threadId, body, mode)}
         onPromote={promote}
+        onSubThread={openSubThread}
         pendingThreadIds={pending}
         errorByThread={errors}
       />

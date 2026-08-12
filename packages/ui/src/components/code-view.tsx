@@ -1,6 +1,12 @@
 import { parseAnchor } from "@rennet/protocol";
-import type { DispositionType, RenderedHunkOccurrence } from "@rennet/types";
+import type { AnchorSide, DispositionType, RenderedHunkOccurrence } from "@rennet/types";
 import { type ReactNode, useEffect, useRef, useState } from "react";
+import {
+  type ConversationAnchor,
+  chunkAnchorKey,
+  lineAnchorKey,
+  rangeAnchorKey,
+} from "../canvas/conversation";
 import { type WindowRange, windowRows } from "../canvas/logic";
 import {
   buildRowRegistry,
@@ -14,6 +20,7 @@ import {
 } from "../canvas/registrar";
 import { splitIdentifierRuns, tokenTextMayContainSymbol } from "../canvas/symbol";
 import { detectLanguage, type LanguageId, tokenizeLine } from "../syntax/highlight";
+import { DiscussControl } from "./conversation-cluster";
 import { DispositionCluster } from "./disposition-cluster";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -98,6 +105,50 @@ export interface CodeViewProps {
    * tokens (additive: existing callers/tests render unchanged).
    */
   onSymbolClick?: (name: string) => void;
+
+  /**
+   * Open a private conversation thread (issue #36, the "discuss / ask-the-harness"
+   * verb) anchored INSIDE the diff — the felt gap the audit ranked first. ONE
+   * callback carries every anchor KIND, so the diff surface speaks the "verbs times
+   * anchors" abstraction rather than four one-off paths:
+   *   • a diff LINE — plain-click a row's discuss glyph;
+   *   • a RANGE — shift-click a second row's glyph, extending from the last line
+   *     whose glyph was clicked (the GitHub line-number idiom);
+   *   • the CHUNK — the discuss verb on the file/chunk header.
+   * The thread lands in the right-margin sibling column, so opening or growing it
+   * never reflows this diff. Absent ⇒ no discuss affordance renders (additive:
+   * existing callers/tests are untouched, and the R16 node envelope holds because
+   * the per-row glyph is one element on already-windowed rows).
+   */
+  onDiscuss?: (anchor: ConversationAnchor) => void;
+}
+
+/**
+ * Build a diff-LINE conversation anchor. The key is INJECTIVE and kind-prefixed
+ * (`line|path|side|line`, issue #36 F4), and — the load-bearing half — `side` rides as
+ * SEMANTIC DATA on the anchor (F1), so `buildConversationQuestion` tells the model
+ * WHICH SIDE the reviewer pointed at. Deletion old-L11 and addition new-L11 are then
+ * distinct threads AND distinct questions, not just distinct keys.
+ */
+function lineAnchor(path: string, line: number, side: AnchorSide): ConversationAnchor {
+  return { kind: "line", label: `${path}:${line}`, key: lineAnchorKey(path, side, line), side };
+}
+
+/**
+ * Build a RANGE conversation anchor spanning two file lines on ONE side (order-
+ * normalised). A range never spans pre- and post-image: the caller only forms one when
+ * both endpoints share a side, so the (kind-prefixed) key and the carried `side` are
+ * unambiguous.
+ */
+function rangeAnchor(path: string, a: number, b: number, side: AnchorSide): ConversationAnchor {
+  const start = Math.min(a, b);
+  const end = Math.max(a, b);
+  return {
+    kind: "range",
+    label: `${path}:${start}-${end}`,
+    key: rangeAnchorKey(path, side, start, end),
+    side,
+  };
 }
 
 const SIDE_CLASS = { additions: "cv-add", deletions: "cv-del", context: "cv-ctx" } as const;
@@ -185,11 +236,41 @@ export function CodeView({
   onDispose,
   counterpart,
   onSymbolClick,
+  onDiscuss,
 }: CodeViewProps) {
   // The live scroll position: seeded from the prop (which the node-count control
   // test and any programmatic positioning inject), then advanced by the user's
   // own scrolling so the window tracks the viewport instead of freezing at row 0.
   const [scroll, setScroll] = useState(scrollTop);
+  // The last file line whose discuss glyph was plain-clicked (issue #36). A
+  // subsequent SHIFT-click on another row's glyph extends a RANGE from here — the
+  // GitHub line-number idiom. Null until the first line is clicked; it does not gate
+  // a plain click (a line thread opens with no prior selection). This is UI-only
+  // ephemeral state: it never touches the diff registry, so the code column cannot
+  // move when a thread opens.
+  // The last line whose discuss glyph was plain-clicked, WITH its side (issue #36
+  // HIGH-2). A subsequent SHIFT-click on another row's glyph extends a RANGE from here
+  // — but only when the SIDES MATCH, so a range can never span pre- and post-image.
+  // Null until the first line is clicked. UI-only ephemeral state: it never touches the
+  // diff registry, so the code column cannot move when a thread opens.
+  const [rangeStart, setRangeStart] = useState<{ line: number; side: AnchorSide } | null>(null);
+
+  // Open a thread on the clicked row's line, or — on a same-side shift-click with a
+  // prior line recorded — on the RANGE from that prior line to this one. One handler,
+  // both anchor kinds, so the diff speaks the single "verbs times anchors" abstraction.
+  function discussLine(line: number, side: AnchorSide, shiftKey: boolean): void {
+    if (!onDiscuss) return;
+    // A range only forms across the SAME side (both new-file or both old-file); a
+    // cross-side shift-click starts a fresh single-line anchor instead of a nonsensical
+    // pre-to-post span.
+    if (shiftKey && rangeStart !== null && rangeStart.side === side && rangeStart.line !== line) {
+      onDiscuss(rangeAnchor(path, rangeStart.line, line, side));
+      setRangeStart(null);
+      return;
+    }
+    onDiscuss(lineAnchor(path, line, side));
+    setRangeStart({ line, side });
+  }
   // The scroll container, so a focus-driven jump can move the REAL viewport (setting
   // window state alone leaves the DOM at scrollTop 0, painting blank spacer).
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -285,6 +366,16 @@ export function CodeView({
             onDispose={onDispose}
           />
         ) : null}
+        {/* The discuss verb on the chunk header (issue #36) — open a private thread
+            on the whole chunk, the sibling of the four disposition verbs. Icon-only
+            to keep the header calm; the same `onDiscuss` the per-line glyphs use. */}
+        {onDiscuss ? (
+          <DiscussControl
+            anchor={{ kind: "chunk", label: path, key: chunkAnchorKey(path) }}
+            labelled={false}
+            onDiscuss={onDiscuss}
+          />
+        ) : null}
       </header>
       <div
         ref={scrollRef}
@@ -302,6 +393,37 @@ export function CodeView({
           const gutterMarks = gutter.get(row.rawIndex);
           const isGlow = glowMarks !== undefined && glowMarks.length > 0;
           const isFocus = focusRows.has(row.rawIndex);
+          // The file line this row can anchor a conversation to (issue #36): a real
+          // new/old-file line on a content row, else none (a meta/header row has
+          // nothing to discuss). Bound once so TS narrows it inside the glyph JSX.
+          // The (line, side) this row can anchor a conversation to (issue #36): a real
+          // new/old-file line on a content row with a side, else none (a meta/header row
+          // has nothing to discuss). Bound once so TS narrows them inside the glyph JSX.
+          const discussSide = row.kind === "content" ? (row.side ?? undefined) : undefined;
+          const discussLineNo =
+            row.kind === "content" && row.fileLine != null && discussSide !== undefined
+              ? row.fileLine
+              : undefined;
+          // The discuss glyph's title. A range preview only when the recorded start is on
+          // the SAME side as this row (a cross-side shift-click starts a fresh line).
+          let discussTitle = "";
+          if (discussLineNo !== undefined) {
+            if (
+              rangeStart !== null &&
+              rangeStart.side === discussSide &&
+              rangeStart.line !== discussLineNo
+            ) {
+              const lo = Math.min(rangeStart.line, discussLineNo);
+              const hi = Math.max(rangeStart.line, discussLineNo);
+              discussTitle = `Discuss lines ${lo}-${hi} (shift-click), or this line`;
+            } else {
+              discussTitle = `Discuss line ${discussLineNo} (shift-click a second line for a range)`;
+            }
+          }
+          const discussIsRangeStart =
+            rangeStart !== null &&
+            rangeStart.line === discussLineNo &&
+            rangeStart.side === discussSide;
           const className = [
             "code-view-row",
             rowClass(row),
@@ -331,6 +453,26 @@ export function CodeView({
                 >
                   ◇
                 </span>
+              ) : null}
+              {/* The per-line discuss glyph (issue #36): plain-click opens a thread
+                  on this line; shift-click extends a range from the last clicked
+                  line. Only content rows with a real file line carry it — a meta/
+                  header row has no line to anchor to. Hover-disclosed via CSS so the
+                  gutter reads calm. It is one absolutely-positioned element, so it
+                  cannot widen the row or reflow the code column. */}
+              {onDiscuss && discussLineNo !== undefined && discussSide !== undefined ? (
+                <button
+                  type="button"
+                  className="cv-discuss l3-hand"
+                  data-cv-discuss={discussLineNo}
+                  data-cv-discuss-side={discussSide}
+                  data-range-start={discussIsRangeStart ? "" : undefined}
+                  title={discussTitle}
+                  aria-label={`Discuss line ${discussLineNo}`}
+                  onClick={(event) => discussLine(discussLineNo, discussSide, event.shiftKey)}
+                >
+                  ◇
+                </button>
               ) : null}
               <span className="code-view-ln">{row.fileLine ?? ""}</span>
               <code className="code-view-code">{renderCode(row, language, onSymbolClick)}</code>

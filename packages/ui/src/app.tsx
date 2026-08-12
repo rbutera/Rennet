@@ -28,7 +28,11 @@ import {
   setRefined,
   withdrawPath,
 } from "./canvas/collation";
-import type { ConversationAnchor } from "./canvas/conversation";
+import {
+  type ConversationAnchor,
+  chunkAnchorKey,
+  type DiscussRequest,
+} from "./canvas/conversation";
 import { type DestinationMode, destinationVariant, type PublishLedger } from "./canvas/destination";
 import { flaggedForPatchset } from "./canvas/flagged";
 import { type CanvasSet, loadCanvases } from "./canvas/load";
@@ -398,6 +402,13 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // honest default for a local capture; the real mode arrives with the #20/#21
   // GitHub source. The publish sheet (#22 shell) is opened from the frame.
   const [draft, setDraft] = useState<CollationDraft>([]);
+  // Discuss REQUESTS opened from the diff surface's glyphs (issue #36): a line
+  // (plain-click), a range (shift-click), or the chunk header. Each click is a request
+  // with its OWN occurrence id, handed to the host as `autoOpenRequests`. The host
+  // dedups on the id (idempotent under re-render) while a second click on the SAME line
+  // opens its own thread — `anchor.key` is only for margin alignment/grouping. This is
+  // the felt gap: talk to the AI right on the line you are reading.
+  const [discussRequests, setDiscussRequests] = useState<readonly DiscussRequest[]>([]);
   // The EPHEMERAL per-item refinement state (issue #19), keyed by collation-item
   // id. An adopted refinement is durable on the item (`item.refined`); this map
   // holds only the in-flight/failed/no-change states the refine turn produces.
@@ -606,6 +617,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setPrDraft({ title: "", body: "" });
     setPrDraftState(undefined);
     prDraftGeneration.current += 1;
+    // The diff-opened discuss requests are review-scoped (issue #36): a fresh review
+    // starts with none, so a prior review's opened lines never reopen against the
+    // remounted (review-keyed) conversation host.
+    setDiscussRequests([]);
     // Reset the LIFTED view store's review-scoped state (lens/zoom/selection/cursor/
     // cohorts/overlay), preserving the scheme. The store now outlives a single review
     // (it was lifted here for the ⌘K palette), so without this reset, opening review B
@@ -1736,97 +1751,126 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                 </button>
               </div>
             ) : null}
-            <CanvasWorkspace
-              store={viewStore}
-              canvases={canvases}
-              bridge={bridge}
-              scheme={effectiveScheme}
-              narration={narration}
-              flaggedReview={boundFlaggedReview}
-              deepReview={{
-                active: deepReviewOn,
-                // The opt-down/opt-up choice is stamped with THIS review's id, so it
-                // applies only here and a later review reads the dual default.
-                onToggle: () => {
-                  if (reviewId) setDeepReviewChoice({ reviewId, on: !deepReviewOn });
-                },
-              }}
-              noiseReview={noiseReview}
-              // The Decisions runner's status (issue #137/#160): when the runner
-              // FAILED, the Decisions lens paints the failed banner instead of
-              // conflating a crashed pass with "no decisions". Absent ⇒ `ok`.
-              decisionsRunStatus={decisionsRun}
-              // The Spec angle's structured OpenSpec viewer (Rai, wireframes #9), LIVE:
-              // parse-on-open of the change the reviewed patchset selected, over the real
-              // command boundary (`openspec.change`). Undefined when the review touches no
-              // change — the Spec angle then shows its honest empty state, never a fixture.
-              openSpecChange={openSpecChange}
-              // The produced requirement→hunk coverage (wireframes #9 / R53): present
-              // only when the mapping ran; absent ⇒ the Spec view renders no chips.
-              openSpecCoverage={openSpecCoverage}
-              onDispositions={(writes) => {
-                setCanvases((current) => (current ? applyWrites(current, writes) : current));
-                // dispose == staged: authoring a disposition collates it into the draft
-                // in the same act (upsert-by-path, one act ingests all its fan-out writes).
-                setDraft((current) => ingestWrites(current, writes));
-              }}
-              onAdjudicate={(adjudication) =>
-                setCanvases((current) =>
-                  current ? resolveProposal(current, adjudication.proposalId) : current,
-                )
-              }
-              // Real code on the real path (issue #60): the workspace only renders
-              // once a live set has loaded, so zoom reads the real per-element diff
-              // (a doc-anchored element with no entry → the zoom surface renders
-              // nothing, never a fixture).
-              diffFor={(elementKey) => elementDiffs[elementKey]}
-              // The symbol inspector (Rai, wireframes #8): clicking a code identifier
-              // resolves it over the review's model-free symbolic surface, and the
-              // inspector's sites open in the editor. Both are live once a review has
-              // loaded; absent → identifiers stay inert.
-              symbolLookup={
-                review
-                  ? (name) => bridge.invoke("review.symbolLookup", { reviewId: review.id, name })
-                  : undefined
-              }
-              onOpenInEditor={
-                review
-                  ? (path, line) => {
-                      void bridge.invoke("review.openInEditor", {
-                        reviewId: review.id,
-                        path,
-                        line,
-                      });
-                    }
-                  : undefined
-              }
-            />
+            {/* The review-heart split (issue #36): the diff column and the
+                conversation margin are FLEX SIBLINGS, so opening or growing a thread
+                changes only the margin — the diff column is a fixed point that never
+                reflows. This is the shipped structure the `.review-heart-split` /
+                `.diff-column` contract needs; without it the margin stacked below. */}
+            <div className="review-heart-split">
+              <div className="diff-column">
+                <CanvasWorkspace
+                  store={viewStore}
+                  canvases={canvases}
+                  bridge={bridge}
+                  scheme={effectiveScheme}
+                  narration={narration}
+                  flaggedReview={boundFlaggedReview}
+                  deepReview={{
+                    active: deepReviewOn,
+                    // The opt-down/opt-up choice is stamped with THIS review's id, so it
+                    // applies only here and a later review reads the dual default.
+                    onToggle: () => {
+                      if (reviewId) setDeepReviewChoice({ reviewId, on: !deepReviewOn });
+                    },
+                  }}
+                  noiseReview={noiseReview}
+                  // The Decisions runner's status (issue #137/#160): when the runner
+                  // FAILED, the Decisions lens paints the failed banner instead of
+                  // conflating a crashed pass with "no decisions". Absent ⇒ `ok`.
+                  decisionsRunStatus={decisionsRun}
+                  // The Spec angle's structured OpenSpec viewer (Rai, wireframes #9), LIVE:
+                  // parse-on-open of the change the reviewed patchset selected, over the real
+                  // command boundary (`openspec.change`). Undefined when the review touches no
+                  // change — the Spec angle then shows its honest empty state, never a fixture.
+                  openSpecChange={openSpecChange}
+                  // The produced requirement→hunk coverage (wireframes #9 / R53): present
+                  // only when the mapping ran; absent ⇒ the Spec view renders no chips.
+                  openSpecCoverage={openSpecCoverage}
+                  onDispositions={(writes) => {
+                    setCanvases((current) => (current ? applyWrites(current, writes) : current));
+                    // dispose == staged: authoring a disposition collates it into the draft
+                    // in the same act (upsert-by-path, one act ingests all its fan-out writes).
+                    setDraft((current) => ingestWrites(current, writes));
+                  }}
+                  onAdjudicate={(adjudication) =>
+                    setCanvases((current) =>
+                      current ? resolveProposal(current, adjudication.proposalId) : current,
+                    )
+                  }
+                  // Real code on the real path (issue #60): the workspace only renders
+                  // once a live set has loaded, so zoom reads the real per-element diff
+                  // (a doc-anchored element with no entry → the zoom surface renders
+                  // nothing, never a fixture).
+                  diffFor={(elementKey) => elementDiffs[elementKey]}
+                  // The symbol inspector (Rai, wireframes #8): clicking a code identifier
+                  // resolves it over the review's model-free symbolic surface, and the
+                  // inspector's sites open in the editor. Both are live once a review has
+                  // loaded; absent → identifiers stay inert.
+                  symbolLookup={
+                    review
+                      ? (name) =>
+                          bridge.invoke("review.symbolLookup", { reviewId: review.id, name })
+                      : undefined
+                  }
+                  onOpenInEditor={
+                    review
+                      ? (path, line) => {
+                          void bridge.invoke("review.openInEditor", {
+                            reviewId: review.id,
+                            path,
+                            line,
+                          });
+                        }
+                      : undefined
+                  }
+                  // The inline conversation cluster (issue #36): a discuss glyph on a
+                  // diff line (plain-click), a range (shift-click), or the chunk header
+                  // opens a private thread in the right-margin sibling column, so the diff
+                  // column never reflows. Each click is its OWN request (a fresh occurrence
+                  // id), so a second discussion on the same line opens a real second thread
+                  // rather than being collapsed — the host dedups on the id, not the key.
+                  onDiscuss={
+                    review
+                      ? (anchor) =>
+                          setDiscussRequests((current) => [
+                            ...current,
+                            { id: crypto.randomUUID(), anchor },
+                          ])
+                      : undefined
+                  }
+                />
+              </div>
+              {/* The inline conversation cluster (issue #36), LIVE: open a private
+                thread on a diff LINE, a dragged RANGE, a CHUNK header, or a
+                conversation FRAGMENT, and converse with the orchestrator. Each turn
+                runs the real `review.ask` boundary and the orchestrator's OWN answer
+                populates the thread — no fixture. Keyed by review id so a new review
+                starts a fresh conversation. It is the diff column's FLEX SIBLING in the
+                split above, so opening or growing a thread never reflows the diff. */}
+              {review && patchset ? (
+                <ConversationHost
+                  key={review.id}
+                  bridge={bridge}
+                  reviewId={review.id}
+                  anchors={patchset.files.map(
+                    (file): ConversationAnchor => ({
+                      kind: "chunk",
+                      label: file.path,
+                      key: chunkAnchorKey(file.path),
+                    }),
+                  )}
+                  // The diff-opened requests (issue #36): a line / range / chunk the
+                  // reviewer clicked a discuss glyph on. The host opens a private thread
+                  // per new request in the margin — the code column never reflows.
+                  autoOpenRequests={discussRequests}
+                />
+              ) : null}
+            </div>
             {/* Ask the AI about this review (issue #139): the live conversational
-                affordance. Present once a real review has loaded, so a question is
-                always ABOUT the open review. Asking a model is Rennet's whole job —
-                the ask just runs, with no permission step. */}
+                affordance below the split. Present once a real review has loaded, so a
+                question is always ABOUT the open review. Asking a model is Rennet's
+                whole job — the ask just runs, with no permission step. */}
             {review ? <AskPanel bridge={bridge} reviewId={review.id} /> : null}
-            {/* The inline conversation (issue #36), LIVE: open a private thread on any
-                changed file and converse with the orchestrator. Each turn runs the
-                real `review.ask` boundary and the orchestrator's OWN answer populates
-                the thread — no fixture. Keyed by review id so a new review starts a
-                fresh conversation. Per-diff-LINE anchoring inside the diff renderer is
-                the remaining wireframe ambition; the conversation itself is live and
-                multi-turn-contextual now, anchored to the review's real files. */}
-            {review && patchset ? (
-              <ConversationHost
-                key={review.id}
-                bridge={bridge}
-                reviewId={review.id}
-                anchors={patchset.files.map(
-                  (file): ConversationAnchor => ({
-                    kind: "chunk",
-                    label: file.path,
-                    key: file.path,
-                  }),
-                )}
-              />
-            ) : null}
           </>
         ) : loadFailed ? (
           <section className="canvas-primer" role="alert">

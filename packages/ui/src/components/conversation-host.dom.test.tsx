@@ -215,3 +215,147 @@ describe("ConversationHost — the live in-diff conversation", () => {
     expect(send?.disabled).toBe(true);
   });
 });
+
+const LINE_ANCHOR: ConversationAnchor = {
+  kind: "line",
+  label: "src/rate/bucket.ts:L44",
+  key: "src/rate/bucket.ts#L44",
+};
+
+/** A discuss request wrapping an anchor with a fresh occurrence id (issue #36). */
+function req(anchor: ConversationAnchor, id: string = crypto.randomUUID()) {
+  return { id, anchor };
+}
+
+describe("ConversationHost — the anchoring facet (issue #36)", () => {
+  it("auto-opens a thread for a diff-originated request, with no discuss-control click", () => {
+    const { bridge } = fakeBridge([orchestratorAnswer("…")]);
+    const { container } = mount(
+      <ConversationHost
+        bridge={bridge}
+        reviewId="review-1"
+        anchors={[]}
+        autoOpenRequests={[req(LINE_ANCHOR)]}
+      />,
+    );
+    // The thread exists immediately — the diff is where the reviewer clicked, so the
+    // margin already holds the conversation. No `.discuss-control` press was needed.
+    const cluster = container.querySelector(".conversation-cluster");
+    expect(cluster).not.toBeNull();
+    expect(cluster?.getAttribute("data-anchor-key")).toBe("src/rate/bucket.ts#L44");
+    expect(container.querySelector(".conversation-composer-input")).not.toBeNull();
+  });
+
+  it("a SECOND request on the same anchor key opens its OWN thread (#36 MED — not collapsed)", () => {
+    // ⚠️ Exercise the ACCUMULATING path — `[r1]` then `[r1, r2]` — not one batched array
+    // (#36 F5). A single batch never collapses same-key duplicates regardless of the
+    // dedup key (the `seen` set is not updated mid-filter), so it could not fail under a
+    // `request.id`→`anchor.key` regression. Rendering the growing list the live host
+    // actually passes makes the guard bite: pre-fix (key dedup) the second stays absent.
+    const { bridge } = fakeBridge([orchestratorAnswer("…")]);
+    const first = req(LINE_ANCHOR, "req-1");
+    const second = req(LINE_ANCHOR, "req-2"); // SAME anchor key, different occurrence id
+    const { container, rerender } = mount(
+      <ConversationHost
+        bridge={bridge}
+        reviewId="review-1"
+        anchors={[]}
+        autoOpenRequests={[first]}
+      />,
+    );
+    expect(container.querySelectorAll(".conversation-cluster")).toHaveLength(1);
+    rerender(
+      <ConversationHost
+        bridge={bridge}
+        reviewId="review-1"
+        anchors={[]}
+        autoOpenRequests={[first, second]}
+      />,
+    );
+    expect(container.querySelectorAll(".conversation-cluster")).toHaveLength(2);
+    // Both align to the SAME margin key — anchor.key is grouping/alignment only.
+    for (const cluster of container.querySelectorAll(".conversation-cluster")) {
+      expect(cluster.getAttribute("data-anchor-key")).toBe("src/rate/bucket.ts#L44");
+    }
+  });
+
+  it("is idempotent across re-renders: re-passing the SAME request id never reopens a thread", () => {
+    const { bridge } = fakeBridge([orchestratorAnswer("…")]);
+    const stable = req(LINE_ANCHOR, "req-stable");
+    const { container, rerender } = mount(
+      <ConversationHost
+        bridge={bridge}
+        reviewId="review-1"
+        anchors={[]}
+        autoOpenRequests={[stable]}
+      />,
+    );
+    expect(container.querySelectorAll(".conversation-cluster")).toHaveLength(1);
+    // A fresh array carrying the SAME request id (what an accumulating host re-passes
+    // each render): the seen-ids ref makes this a no-op, never a duplicate thread.
+    rerender(
+      <ConversationHost
+        bridge={bridge}
+        reviewId="review-1"
+        anchors={[]}
+        autoOpenRequests={[{ ...stable }]}
+      />,
+    );
+    expect(container.querySelectorAll(".conversation-cluster")).toHaveLength(1);
+  });
+
+  it("a FRAGMENT sub-thread carries the referenced message TEXT into its question (#36 F2)", async () => {
+    // A distinctive parent answer so we can prove it TRAVELS into the sub-thread's turn.
+    const PARENT = "FRAGMENT_PARENT_TEXT a limiter outage must never spread";
+    const { bridge, calls } = fakeBridge([orchestratorAnswer(PARENT), orchestratorAnswer("Sure.")]);
+    const { container } = mount(
+      <ConversationHost
+        bridge={bridge}
+        reviewId="review-1"
+        anchors={[]}
+        autoOpenRequests={[req(LINE_ANCHOR)]}
+      />,
+    );
+    // Ask so the thread grows the harness message the sub-thread will anchor to.
+    const input = container.querySelector<HTMLTextAreaElement>(".conversation-composer-input");
+    const send = container.querySelector<HTMLButtonElement>(".conversation-composer-send");
+    if (!input || !send) throw new Error("no composer");
+    fireEvent.change(input, { target: { value: "why fail open?" } });
+    fireEvent.click(send);
+    await waitFor(() =>
+      expect(
+        container.querySelector('.thread-message[data-author="harness"]')?.textContent,
+      ).toContain(PARENT),
+    );
+    // Open the sub-thread on that harness answer → a SECOND thread.
+    const subThread = container.querySelector<HTMLButtonElement>(
+      ".thread-promote-btn.is-subthread",
+    );
+    if (!subThread) throw new Error("no sub-thread control on the harness message");
+    fireEvent.click(subThread);
+    await waitFor(() =>
+      expect(container.querySelectorAll(".conversation-cluster")).toHaveLength(2),
+    );
+    // The fragment key is kind-prefixed by parent thread + message (never a bare id).
+    const fragment = Array.from(container.querySelectorAll(".conversation-cluster")).find(
+      (node) => node.getAttribute("data-anchor-key") !== "src/rate/bucket.ts#L44",
+    );
+    expect(fragment).toBeDefined();
+    expect(fragment?.getAttribute("data-anchor-key")?.startsWith("fragment|")).toBe(true);
+
+    // ⭐ F2: ask a question IN the sub-thread and prove the referenced fragment text
+    // reaches `review.ask`. Without carrying the parent message into the anchor context,
+    // the orchestrator receives only "… · reply" and cannot know which sentence.
+    const subInput = fragment?.querySelector<HTMLTextAreaElement>(".conversation-composer-input");
+    const subSend = fragment?.querySelector<HTMLButtonElement>(".conversation-composer-send");
+    if (!subInput || !subSend) throw new Error("no sub-thread composer");
+    fireEvent.change(subInput, { target: { value: "what do you mean?" } });
+    fireEvent.click(subSend);
+    await waitFor(() => expect(calls.filter((c) => c.name === "review.ask")).toHaveLength(2));
+    const subAsk = calls.filter((c) => c.name === "review.ask").at(-1)?.input as
+      | CommandInput<"review.ask">
+      | undefined;
+    expect(subAsk?.question).toContain(PARENT);
+    expect(subAsk?.question).toContain("what do you mean?");
+  });
+});
