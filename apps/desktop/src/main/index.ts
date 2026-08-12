@@ -112,6 +112,7 @@ import { createPublishConsentAuthority } from "./publish-consent-authority";
 import { createLiveRefinePort } from "./refine-comment-live";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
 import { loadReviewOwnership } from "./review-ownership";
+import { buildReviewCanvasesInput } from "./review-pipeline-input";
 import { createSettingsComposition } from "./settings";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 
@@ -480,23 +481,26 @@ async function buildCanvasesForReview(review: Review): Promise<{
   // snapshot they are `[]` and the signal degrades honestly (never fires).
   const ownership = await loadReviewOwnershipRules(review);
 
-  const result = await buildReviewCanvases({
-    reviewId: review.id,
-    patchset,
-    dispositions: review.dispositions,
-    ownership,
-    council: { availability: { installed } },
-    // The Decisions lens (issue #137): the decision-extraction runner's real
-    // `decision.record` docs, placed on the decisions canvas by the existing
-    // projector. The runner reasons over the diff alone until the full #136 intent
-    // capture (PR title/body + spec frozen on the patchset) lands; the runner
-    // FULLY supports intent (proven by the live dogfood over {diff, PR body}).
-    decisionDocs: decisions.docs,
-    ...(codexPort ? { codexPort } : {}),
-    ...(runDecompositionTurn ? { runDecompositionTurn } : {}),
-    ...(runOrderingTurn ? { runOrderingTurn } : {}),
-    ...(runNarrationTurn ? { runNarrationTurn } : {}),
-  });
+  // Assemble the pipeline input at the ONE testable composition seam (F4): this is
+  // where `ownership` reaches the pipeline, so the guard against dropping it lives on
+  // `buildReviewCanvasesInput`, not on the loader beneath it. The Decisions lens
+  // (issue #137) rides `decisionDocs`: real `decision.record` docs placed by the
+  // existing projector; the runner reasons over the diff alone until #136 intent
+  // capture lands (it fully supports intent, proven by the live {diff, PR body} dogfood).
+  const result = await buildReviewCanvases(
+    buildReviewCanvasesInput({
+      reviewId: review.id,
+      patchset,
+      dispositions: review.dispositions,
+      ownership,
+      installed,
+      decisionDocs: decisions.docs,
+      ...(codexPort ? { codexPort } : {}),
+      ...(runDecompositionTurn ? { runDecompositionTurn } : {}),
+      ...(runOrderingTurn ? { runOrderingTurn } : {}),
+      ...(runNarrationTurn ? { runNarrationTurn } : {}),
+    }),
+  );
   // The honesty signal for the renderer (real-AI-default): a review is a REAL AI
   // review iff at least one model harness was installed AND the budget actually
   // let a turn run. With neither claude nor codex — or a refused budget — the set
