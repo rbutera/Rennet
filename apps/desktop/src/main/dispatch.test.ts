@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { buildGitHubReviewRequest } from "@rennet/adapters";
 import {
   type AskAnswer,
-  type ReviewAskStreamEvent,
   canonicalReviewPayload,
   type ForgePublishPort,
   type ForgeReviewEvent,
@@ -20,6 +19,7 @@ import type {
   Project,
   ProjectKind,
   ProjectProcessEvent,
+  ReviewAskStreamEvent,
 } from "@rennet/protocol";
 import type {
   Canvas,

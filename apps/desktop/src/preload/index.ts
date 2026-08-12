@@ -1,7 +1,12 @@
-import type { ProjectProcessEvent, RennetBridge } from "@rennet/protocol";
+import type {
+  ProjectProcessEvent,
+  RennetBridge,
+  ReviewAskStreamEvent,
+} from "@rennet/protocol";
 import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
 
 const PROGRESS_CHANNEL = "rennet:progress";
+const ASK_STREAM_CHANNEL = "rennet:ask-stream";
 
 const bridge: RennetBridge = {
   invoke: (name, input) => ipcRenderer.invoke("rennet:invoke", { name, input }),
@@ -17,6 +22,19 @@ const bridge: RennetBridge = {
     };
     ipcRenderer.on(PROGRESS_CHANNEL, handler);
     return () => ipcRenderer.removeListener(PROGRESS_CHANNEL, handler);
+  },
+  // Subscribe to a review's conversation token stream (#251), keyed by `reviewId` so
+  // it survives a renderer reload while the turn keeps running in main. Filters the
+  // shared channel to this review and detaches the exact listener on unsubscribe.
+  onAskStream: (reviewId, listener) => {
+    const handler = (
+      _event: IpcRendererEvent,
+      payload: { reviewId: string; event: ReviewAskStreamEvent },
+    ): void => {
+      if (payload.reviewId === reviewId) listener(payload.event);
+    };
+    ipcRenderer.on(ASK_STREAM_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(ASK_STREAM_CHANNEL, handler);
   },
 };
 

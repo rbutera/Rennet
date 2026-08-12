@@ -79,7 +79,12 @@ import {
   runNoiseAngle,
   verifyFlaggedReview,
 } from "@rennet/core";
-import { type DetectedHarness, isCommandName, type ProjectProcessEvent } from "@rennet/protocol";
+import {
+  type DetectedHarness,
+  isCommandName,
+  type ProjectProcessEvent,
+  type ReviewAskStreamEvent,
+} from "@rennet/protocol";
 import type {
   Canvas,
   CanvasAngle,
@@ -126,6 +131,10 @@ const IPC_CHANNEL = "rennet:invoke";
 // `project.process`'s snapshot-build narration). The renderer's `onProgress`
 // bridge filters by the `commandId` it passed to `invoke`.
 const PROGRESS_CHANNEL = "rennet:progress";
+// The push channel a review's conversation streams its token deltas on (#251). Keyed
+// by `reviewId` (NOT commandId) so the renderer's `onAskStream` re-attaches after a
+// reload while the turn keeps running in main. Each event carries its own turnId.
+const ASK_STREAM_CHANNEL = "rennet:ask-stream";
 const APP_ORIGIN = "app://rennet";
 
 protocol.registerSchemesAsPrivileged([
@@ -1112,7 +1121,22 @@ function registerCommandHandler(): void {
             event.sender.send(PROGRESS_CHANNEL, { commandId, event: progress });
         }
       : undefined;
-    return dispatch(name, input, { emitProgress });
+    // #251: a review.ask carrying a reviewId may stream its answer's tokens; push each
+    // event on the ask-stream channel keyed by that reviewId so the renderer filters to
+    // its own review (and can re-attach by reviewId after a reload).
+    const reviewId =
+      input &&
+      typeof input === "object" &&
+      typeof (input as { reviewId?: unknown }).reviewId === "string"
+        ? (input as { reviewId: string }).reviewId
+        : undefined;
+    const emitAskStream = reviewId
+      ? (streamEvent: ReviewAskStreamEvent): void => {
+          if (!event.sender.isDestroyed())
+            event.sender.send(ASK_STREAM_CHANNEL, { reviewId, event: streamEvent });
+        }
+      : undefined;
+    return dispatch(name, input, { emitProgress, emitAskStream });
   });
 }
 

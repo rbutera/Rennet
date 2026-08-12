@@ -31,7 +31,7 @@ test("captures a repository in a hardened renderer and invalidates safely", asyn
         process: typeof (globalThis as unknown as { process?: unknown }).process,
         bridge: Object.keys((globalThis as typeof globalThis & { rennet: object }).rennet).sort(),
       })),
-    ).toEqual({ process: "undefined", bridge: ["invoke", "onProgress"] });
+    ).toEqual({ process: "undefined", bridge: ["invoke", "onAskStream", "onProgress"] });
 
     // "Review directly" reveals the legacy repo/PR entry with "Choose a repository".
     await page.getByRole("button", { name: "Review directly" }).click();
