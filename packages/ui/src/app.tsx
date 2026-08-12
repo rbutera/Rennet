@@ -1863,6 +1863,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                       kind: "chunk",
                       label: file.path,
                       key: chunkAnchorKey(file.path),
+                      // #251 slice 3: the file this anchor hangs on, so a re-attached
+                      // thread whose file left the diff can be resolved as orphaned.
+                      path: file.path,
                     }),
                   )}
                   // The diff-opened requests (issue #36): a line / range / chunk the

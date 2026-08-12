@@ -244,13 +244,19 @@ export function ConversationCluster({
     setMenuOpen(false);
   }
 
+  // #251 slice 3: an ORPHANED thread — the code it was anchored to has left the diff.
+  // Surfaced honestly (a banner + `data-orphaned`), its content preserved, and it is NOT
+  // re-anchored onto whatever now occupies its old location. The refusal is structural
+  // (there is no re-anchor); this makes it VISIBLE to the reviewer.
+  const orphaned = thread.orphaned === true;
   return (
     <aside
-      className="conversation-cluster is-private"
+      className={`conversation-cluster is-private${orphaned ? " is-orphaned" : ""}`}
       data-lane={thread.lane}
       data-anchor-kind={thread.anchor.kind}
       data-anchor-key={thread.anchor.key}
       data-route={thread.route}
+      {...(orphaned ? { "data-orphaned": "true" } : {})}
       aria-label={`Private thread on ${thread.anchor.kind} ${thread.anchor.label}`}
     >
       <header className="conversation-head">
@@ -261,6 +267,12 @@ export function ConversationCluster({
         <span className="conversation-head-anchor">{thread.anchor.label}</span>
         <span className="conversation-head-pill">{pill}</span>
       </header>
+      {orphaned ? (
+        <p className="conversation-orphaned" role="note">
+          The code this thread was about is no longer in the diff. It is kept here, but not moved
+          onto other code.
+        </p>
+      ) : null}
 
       <div className="conversation-messages">
         {thread.messages.map((message) => (

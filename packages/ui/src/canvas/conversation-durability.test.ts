@@ -13,6 +13,7 @@ import {
   lineAnchorKey,
   markOrphaned,
   openThread,
+  orphanUnresolvedThreads,
   pushDelta,
   type StreamChannel,
   type ThreadMessage,
@@ -76,6 +77,38 @@ describe("orphaned threads (#251)", () => {
     expect(after.anchor.key).toBe(before.anchor.key);
     expect(after.anchor).toEqual(before.anchor);
     expect(after.messages).toBe(before.messages);
+  });
+});
+
+describe("orphanUnresolvedThreads — resolve placement against the current diff (#251 slice 3)", () => {
+  const threadOn = (id: string, path: string | undefined) =>
+    openThread(id, {
+      kind: path === undefined ? "fragment" : "chunk",
+      label: path ?? "on: a reply",
+      key: `k-${id}`,
+      ...(path !== undefined ? { path } : {}),
+    });
+
+  it("orphans a thread whose file is GONE from the current diff, leaves a present one placed", () => {
+    const threads = [threadOn("gone", "src/removed.ts"), threadOn("here", "src/kept.ts")];
+    const [gone, here] = orphanUnresolvedThreads(threads, new Set(["src/kept.ts"]));
+    expect(isOrphaned(gone as (typeof threads)[number])).toBe(true);
+    expect(isOrphaned(here as (typeof threads)[number])).toBe(false);
+  });
+
+  it("NEVER re-anchors an orphaned thread — the anchor is byte-for-byte unchanged", () => {
+    // RED-proof for the disposition-carry class: if resolution ever substituted a
+    // different anchor for an orphaned thread, this reddens.
+    const before = threadOn("gone", "src/removed.ts");
+    const [after] = orphanUnresolvedThreads([before], new Set(["src/other.ts"]));
+    expect(isOrphaned(after as typeof before)).toBe(true);
+    expect((after as typeof before).anchor).toEqual(before.anchor);
+  });
+
+  it("a path-less anchor (a conversation fragment) NEVER orphans — it hangs on a message, not code", () => {
+    const fragment = threadOn("frag", undefined);
+    const [after] = orphanUnresolvedThreads([fragment], new Set());
+    expect(isOrphaned(after as typeof fragment)).toBe(false);
   });
 });
 

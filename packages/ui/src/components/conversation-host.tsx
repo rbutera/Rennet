@@ -13,6 +13,7 @@ import {
   emptyCoalescerBook,
   fragmentAnchorKey,
   openThread,
+  orphanUnresolvedThreads,
   type PromotionEvent,
   type PromotionKind,
   promoteMessage,
@@ -175,6 +176,9 @@ export function ConversationHost({
   // reattach can never clobber a thread the reviewer just opened in this session.
   const reattachedRef = useRef(false);
   useEffect(() => {
+    // ONE-SHOT reattach guarded by reattachedRef: `anchors` is a real dependency (read for
+    // orphan resolution), but the ref makes every re-run after the first a no-op, so a new
+    // `anchors` array each render cannot double-reattach.
     if (reattachedRef.current) return;
     reattachedRef.current = true;
     let cancelled = false;
@@ -185,11 +189,30 @@ export function ConversationHost({
           reviewId,
         });
         if (cancelled || result.threads.length === 0) return;
+        // Orphan resolution has THREE outcomes, not two (#251 slice 3): a thread is PLACED
+        // (its file is in the current diff), ORPHANED (its file is confirmed GONE), or
+        // COULD-NOT-DETERMINE (we have no authoritative file list to check against — the
+        // diff has not loaded). The alarming failure is painting COULD-NOT-DETERMINE as
+        // ORPHANED: telling the reviewer their conversation is detached when it is merely
+        // not-loaded-yet, which asserts something false (worse than the silence it fixes).
+        // So orphaning runs ONLY with an authoritative basis. An empty file list is
+        // COULD-NOT-DETERMINE, NEVER "checked and found nothing" — that conflation is the
+        // fan-in collapse in a third costume. `anchors` is the review's COMPLETE current
+        // file list by the prop's contract, so a non-empty value is authoritative; an empty
+        // one means the diff is not yet loaded and every thread stays PLACED.
+        const currentPaths = new Set(
+          anchors.map((anchor) => anchor.path).filter((path): path is string => path !== undefined),
+        );
+        const canResolvePlacement = currentPaths.size > 0;
         setThreads((current) => {
           const present = new Set(current.map((thread) => thread.id));
-          const restored = result.threads
+          const mapped = result.threads
             .filter((wire) => !present.has(wire.threadId))
             .map(threadFromPersisted);
+          // COULD-NOT-DETERMINE ⇒ leave every thread PLACED, never falsely orphaned.
+          const restored = canResolvePlacement
+            ? orphanUnresolvedThreads(mapped, currentPaths)
+            : mapped;
           return restored.length > 0 ? [...restored, ...current] : current;
         });
       } catch {
@@ -200,7 +223,7 @@ export function ConversationHost({
     return () => {
       cancelled = true;
     };
-  }, [bridge, reviewId]);
+  }, [bridge, reviewId, anchors]);
 
   // Open a FRAGMENT thread on a message inside an existing thread (issue #36): the
   // "discuss a fragment of the conversation itself" anchor. The new thread anchors to
