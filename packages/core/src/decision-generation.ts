@@ -153,7 +153,14 @@ export interface RunDecisionAngleInput {
 
 export interface DecisionAttempt {
   readonly attempt: number;
-  readonly outcome: "admitted" | "rejected" | "turn-failed" | "budget-refused";
+  /**
+   * `malformed-body`: the turn emitted, but the body was not a decision document
+   * (not an object with a `decisions` array). It is recorded as its own fact —
+   * distinct from `turn-failed` (the turn never emitted) and from an admitted
+   * empty review — because a model that returned an unparseable shape has NOT
+   * reviewed the code, and must never be reported as a clean, empty review (#158).
+   */
+  readonly outcome: "admitted" | "rejected" | "turn-failed" | "malformed-body" | "budget-refused";
   /** The validation report for an attempt that produced a body; absent on a turn failure. */
   readonly report?: ValidationReport;
   readonly turnError?: string;
@@ -279,27 +286,49 @@ function reconstructWhy(raw: unknown): DecisionRecordElement["why"] {
 }
 
 /**
+ * The result of culling a model emission. `malformed` is the load-bearing
+ * distinction: a body that is not a decision document (not an object with a
+ * `decisions` array) is a fact APART from a well-formed body whose decisions
+ * happen to be empty. A model that discerned nothing has reviewed the code; a
+ * model that returned an unparseable shape has not — and only the first is a
+ * clean review. Returning a discriminated union removes the ambiguity
+ * STRUCTURALLY: the caller cannot read `decisions` off a malformed body, because
+ * there is none to read (#158).
+ */
+type CullResult =
+  | { readonly malformed: true }
+  | {
+      readonly malformed: false;
+      readonly decisions: DecisionRecordElement[];
+      readonly culled: number;
+    };
+
+/**
  * Cull the model's emitted decisions to the GROUNDED, well-formed ones and stamp
- * the runner-owned fields. Kept: a decision with a string `anchor` that resolves to
- * an offered hunk, a non-empty `title`, and no stray `rennet:` anchor in any other
- * field (which would reject the item at the validator's generic walk). Dropped:
- * anything else — never surfaced, so a lone bad decision cannot sink the grounded
- * ones. The `decisionId` is minted here (agents never mint identity); the `why` is
- * stamped `reconstructed: true` (structural, not the model's to assert); evidence
- * and alternatives are culled to well-formed entries; and NO triage bucket or
- * verdict is ever carried.
+ * the runner-owned fields. A body that is not a decision document is reported as
+ * `malformed` and NOT collapsed to an empty set (#158) — the caller routes it to
+ * the failed path, never to a clean review. Otherwise, kept: a decision with a
+ * string `anchor` that resolves to an offered hunk, a non-empty `title`, and no
+ * stray `rennet:` anchor in any other field (which would reject the item at the
+ * validator's generic walk). Dropped: anything else — never surfaced, so a lone
+ * bad decision cannot sink the grounded ones. The `decisionId` is minted here
+ * (agents never mint identity); the `why` is stamped `reconstructed: true`
+ * (structural, not the model's to assert); evidence and alternatives are culled
+ * to well-formed entries; and NO triage bucket or verdict is ever carried.
  */
 function cullDecisions(
   body: unknown,
   manifest: OfferedManifest,
   mintDocId: () => string,
-): { decisions: DecisionRecordElement[]; culled: number } {
-  const raw =
-    typeof body === "object" &&
-    body !== null &&
-    Array.isArray((body as DecisionRecordBody).decisions)
-      ? (body as { decisions: unknown[] }).decisions
-      : [];
+): CullResult {
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    !Array.isArray((body as { decisions?: unknown }).decisions)
+  ) {
+    return { malformed: true };
+  }
+  const raw = (body as { decisions: unknown[] }).decisions;
   const decisions: DecisionRecordElement[] = [];
   let culled = 0;
   for (const item of raw) {
@@ -338,7 +367,7 @@ function cullDecisions(
       ...(why ? { why } : {}),
     });
   }
-  return { decisions, culled };
+  return { malformed: false, decisions, culled };
 }
 
 function buildProvenance(
@@ -505,7 +534,21 @@ export async function runDecisionAngle(
       continue;
     }
 
-    const { decisions, culled } = cullDecisions(turn.body, manifest, mintDocId);
+    const cullResult = cullDecisions(turn.body, manifest, mintDocId);
+    if (cullResult.malformed) {
+      // A body that is not a decision document is NOT a clean review: the model
+      // did not review the code, it returned an unparseable shape. Route it to
+      // the failed path (retry, then the honest LOUD failed state) — never
+      // `{ decisions: [] }`, which would report a review that ran clean (#158).
+      attempts.push({
+        attempt,
+        outcome: "malformed-body",
+        turnError: "the model emitted a body that is not a decision document",
+      });
+      lastFailure = "the model emitted a malformed decision body";
+      continue;
+    }
+    const { decisions, culled } = cullResult;
     const body: DecisionRecordBody = { decisions };
     const provenance = buildProvenance(seed, inputDigest, newRunId(), turn.tokens ?? ZERO_TOKENS);
     const document = buildEnvelope(body, patchsetId, provenance, mintDocId());
