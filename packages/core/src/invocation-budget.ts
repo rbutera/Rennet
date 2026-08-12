@@ -30,14 +30,28 @@
 import { type BudgetGrant, type InvocationBudget, R10_BUDGET_EXHAUSTED } from "@rennet/types";
 import { DEFAULT_MAX_HARNESS_INVOCATIONS } from "./route-plan";
 
+/**
+ * Normalize a raw invocation ceiling to a real, spendable one. A finite,
+ * non-negative `max` is a genuine ceiling (0 = a deliberate "spend nothing",
+ * honored); anything else — `NaN`, `±Infinity`, a negative — is a caller DEFECT
+ * that falls back to the DEFAULT ceiling (#260): the review still runs, but a
+ * wiring bug upstream cannot spend without limit. Never the old fail-closed zero,
+ * never unbounded.
+ *
+ * ⭐ Call this ONCE, at the point the raw config is read, and hand the result to
+ * BOTH the pre-flight route plan AND the runtime budget. #269: the route planner
+ * read the raw value one hop before the budget applied this fallback, so a
+ * negative/`-Infinity` ceiling refused pre-flight and rendered a completed review
+ * with zero model turns — the exact fake review this circuit exists to prevent.
+ * Idempotent, so a second consumer that re-normalizes is a harmless no-op, never
+ * a second place to get it wrong.
+ */
+export function normalizeMaxInvocations(max: number): number {
+  return Number.isFinite(max) && max >= 0 ? Math.floor(max) : DEFAULT_MAX_HARNESS_INVOCATIONS;
+}
+
 export function createInvocationBudget(max: number): InvocationBudget {
-  // A finite, non-negative `max` is a real ceiling (0 = spend nothing, honored).
-  // Anything else — NaN, ±Infinity, a negative — is a caller DEFECT, not an
-  // instruction to lift all limits, so it falls back to the DEFAULT ceiling (#260):
-  // the review still runs and the model is used, but a wiring bug upstream cannot
-  // spend without limit. Never the old fail-closed zero, never unbounded.
-  const ceiling =
-    Number.isFinite(max) && max >= 0 ? Math.floor(max) : DEFAULT_MAX_HARNESS_INVOCATIONS;
+  const ceiling = normalizeMaxInvocations(max);
   let consumed = 0;
   let refused = false;
 

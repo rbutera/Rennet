@@ -281,6 +281,40 @@ describe("buildReviewCanvases", () => {
     expect(result.budgetRefused).toBe(false);
   });
 
+  it("normalizes a MALFORMED ceiling before BOTH route plan and budget — a real turn runs, no fake review (#269)", async () => {
+    // Before the fix, `buildRoutePlan` read the RAW `maxHarnessInvocations` one hop
+    // before `createInvocationBudget` applied its fallback. NaN/+Infinity were caught
+    // by the budget, but a negative or -Infinity slipped through: the route plan's
+    // count exceeds -1/-Infinity → pre-flight refusal → budgetRefused:true → a
+    // COMPLETED review with ZERO model turns (the fake review). Normalizing once,
+    // before both consumers, sends every malformed value to the default so the review
+    // actually runs. A unit test on the budget alone cannot catch the negative case:
+    // by the time a budget object exists, normalization has already happened — which
+    // is exactly why this guard lives at the pipeline.
+    for (const malformed of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -1]) {
+      const decomposition = decompose(edgedPatchset);
+      const runDecompositionTurn = vi.fn(
+        async (): Promise<DecompositionTurnResult> => ({
+          status: "emitted",
+          body: deterministicProposalBody(decomposition),
+        }),
+      );
+      const result = await buildReviewCanvases({
+        reviewId: "review-1",
+        patchset: edgedPatchset,
+        dispositions: [],
+        runDecompositionTurn,
+        routePlanOptions: { maxHarnessInvocations: malformed },
+      });
+      // A real model turn ran and the review is NOT budget-refused — no fake review.
+      expect(
+        runDecompositionTurn,
+        `malformed ceiling ${malformed} must run a real turn`,
+      ).toHaveBeenCalledTimes(1);
+      expect(result.budgetRefused, `malformed ceiling ${malformed} must not refuse`).toBe(false);
+    }
+  });
+
   it("stands on the deterministic floor when no harness turn is injected", async () => {
     const result = await buildReviewCanvases({
       reviewId: "review-1",
