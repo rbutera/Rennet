@@ -21,8 +21,13 @@ import type {
   ThreadDetail,
   ViewState,
 } from "./canvas-ops";
+import { normalizeMaxInvocations } from "./invocation-budget";
 import type { ReviewPipelineResult } from "./pipeline";
-import { buildRoutePlan, type RoutePlanOptions } from "./route-plan";
+import {
+  buildRoutePlan,
+  DEFAULT_MAX_HARNESS_INVOCATIONS,
+  type RoutePlanOptions,
+} from "./route-plan";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The production `CanvasOpsBackend` core (issue #13 — the live end-to-end review).
@@ -293,7 +298,19 @@ export function reviewBackendCore(state: ReviewBackendState): ReviewBackendCore 
     // The #8 Brita budget gate over the live decomposition. The `scope`/`angle`
     // args name the recompute target; the budget verdict is a pure function of the
     // decomposition, so a real refusal rides back before any model runs.
-    planRecompute: () => buildRoutePlan(decomposition, state.routePlanOptions),
+    //
+    // Normalize the ceiling before the gate (#269 follow-up): like `pipeline.ts`,
+    // this is a consumer of the raw `routePlanOptions`, so a malformed
+    // `maxHarnessInvocations` (NaN/±Infinity/negative) read raw here would refuse
+    // pre-flight and report a completed-but-empty recompute. `normalizeMaxInvocations`
+    // is the same idempotent function the pipeline uses; a literal 0 is preserved.
+    planRecompute: () =>
+      buildRoutePlan(decomposition, {
+        ...state.routePlanOptions,
+        maxHarnessInvocations: normalizeMaxInvocations(
+          state.routePlanOptions?.maxHarnessInvocations ?? DEFAULT_MAX_HARNESS_INVOCATIONS,
+        ),
+      }),
 
     applyEffects: (effects) => {
       state.applyEffects?.(effects);

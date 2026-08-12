@@ -192,6 +192,21 @@ describe("reviewBackendCore — the pure production backend over a real review",
     if (!plan.refused) expect(plan.invocations.length).toBeGreaterThan(0);
   });
 
+  it("planRecompute normalizes a malformed ceiling before the Brita gate — no fake refusal (#269 follow-up)", async () => {
+    // review-backend passed raw routePlanOptions to buildRoutePlan, so a malformed
+    // maxHarnessInvocations (-1) refused pre-flight — the same raw-read-one-hop-over
+    // shape as the pipeline bug (#269). Normalizing here sends it to the default, so a
+    // within-budget decomposition is NOT refused. Red-proved by reverting the fix.
+    const pipeline = await fixture();
+    const core = reviewBackendCore({
+      review: REVIEW,
+      pipeline,
+      routePlanOptions: { maxHarnessInvocations: -1 },
+    });
+    const plan = core.planRecompute("rennet:chunk/c1", "decisions");
+    expect(plan.refused).toBe(false);
+  });
+
   it("freshness defaults to current and honours an explicit stale override", async () => {
     const pipeline = await fixture();
     expect(reviewBackendCore({ review: REVIEW, pipeline }).freshness()).toBe("current");
