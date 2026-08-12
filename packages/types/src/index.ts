@@ -7,6 +7,14 @@ export interface RepositoryProvenance {
   baseRef: string;
   baseOid: string;
   headOid: string;
+  /**
+   * The captured head's BRANCH ref (the current branch name), when HEAD is on a
+   * branch. Absent on a detached HEAD, where there is no branch to submit from.
+   * This is the ref an own-branch PR opens its `head` against (#107) — a commit
+   * SHA (`headOid`) can never be a PR `head`, so the branch name is carried here
+   * distinctly rather than sliced out of the OID.
+   */
+  headRef?: string;
 }
 
 export interface PatchFile {

@@ -59,6 +59,7 @@ export * from "./pipeline";
 export * from "./project-context";
 export * from "./project-snapshot";
 export * from "./publish-review";
+export * from "./publish-submission";
 export * from "./refine-comment";
 export * from "./review-ask";
 export * from "./review-backend";

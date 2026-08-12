@@ -40,6 +40,7 @@ import {
   GitCheckpointStore,
   GitHubChangesetSource,
   GitHubForgeAdapter,
+  GitHubPrSubmissionAdapter,
   GitHubPublishAdapter,
   type HttpFetch,
   loadConventionCatalogue,
@@ -68,6 +69,8 @@ import {
   DEFAULT_MAX_VERIFICATIONS,
   decompose,
   type FanInIndex,
+  type ForgePrSubmission,
+  type ForgePrSubmissionOutcome,
   fanInIndexFromSnapshot,
   guardSeatTurn,
   markVerificationUnavailable,
@@ -1285,6 +1288,37 @@ app.whenReady().then(async () => {
     http: publishHttp,
     resolveToken: resolveGitHubToken,
   });
+  // The own-branch PR submission (issue #257 / #107): push the review's own branch,
+  // then open a real PR. Pushing your own branch is not publishing (AGENTS.md) — the
+  // agent loop pushes freely — so this is a plain git push + a REST create, with the
+  // repo's GitHub identity resolved from its own remotes (never a path-name guess).
+  const prSubmissionAdapter = new GitHubPrSubmissionAdapter({
+    http: publishHttp,
+    resolveToken: resolveGitHubToken,
+  });
+  const submitPullRequest = async (input: {
+    repoRoot: string;
+    headRef: string;
+    submission: ForgePrSubmission;
+  }): Promise<ForgePrSubmissionOutcome> => {
+    // Push the head branch to origin so GitHub can see it, then open the PR. The
+    // branch tracking is not assumed: `HEAD:refs/heads/<ref>` pushes the current head
+    // onto the named remote branch explicitly.
+    await execaGit(input.repoRoot, ["push", "origin", `HEAD:refs/heads/${input.headRef}`]);
+    const discovered = await discoverWorktreeIdentities(execaGit, input.repoRoot);
+    const identity =
+      discovered.identities.find((candidate) => candidate.host === "github.com") ??
+      discovered.identities[0];
+    if (!identity) {
+      throw new Error(
+        "No GitHub remote is configured for this repository, so there is nowhere to open a pull request.",
+      );
+    }
+    return prSubmissionAdapter.submitPullRequest({
+      target: { repo: { forge: "github", owner: identity.owner, name: identity.name } },
+      submission: input.submission,
+    });
+  };
   const publishConsent = createPublishConsentAuthority();
   // The live orchestrator turn runner (issue #13, wave 2): composes the wave-1 live
   // backend + the lean primer + a real `claude` turn over the in-process canvasOps@2
@@ -1307,6 +1341,7 @@ app.whenReady().then(async () => {
     allowedRoots,
     orchestratorTurn,
     publishPort,
+    submitPullRequest,
     publishConsent,
     // The write-enabled handoff turn (issue #18): brackets a live `claude` write turn
     // (fully capable, Bash included — Rai's call) with git checkpoints and returns the

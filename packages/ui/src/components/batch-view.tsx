@@ -13,7 +13,7 @@ export type { BatchDestination } from "../canvas/destination";
 
 const DESTINATION_COPY: Record<BatchDestination, string> = {
   publish: "Will publish to the pull request",
-  handoff: "Will hand off on your branch",
+  handoff: "Will open a pull request on your branch",
 };
 
 const TYPES: DispositionType[] = ["approve", "request-change", "comment", "question"];

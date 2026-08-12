@@ -105,6 +105,11 @@ const repositoryProvenanceSchema = objectSchemaFor<RepositoryProvenance>()({
   baseRef: z.string().min(1),
   baseOid: z.string().min(1),
   headOid: z.string().min(1),
+  // The head's branch ref (#107) — named in the schema so it survives IPC intact
+  // rather than being stripped (the type declares it, so the schema must carry it,
+  // the #242 discipline). Optional: a detached HEAD has no branch, so the field is
+  // absent, but when present it is the ref an own-branch PR `head` opens against.
+  headRef: z.string().min(1).optional(),
 });
 
 // The change's stated intent (#136), captured with the patchset. It reaches the
@@ -493,6 +498,20 @@ const publishOutcomeSchema = z.object({
   reviewRef: z.string(),
   url: z.string().nullable(),
   reused: z.boolean(),
+});
+
+/**
+ * The own-branch PR submission (#257 / #107) — the title/body/base/head/draft the
+ * paper previews and signs. `head` is a BRANCH ref, never a commit SHA: a GitHub PR
+ * cannot open with a bare SHA as `head`. Mirrors the ui `PrSubmission`; the bytes
+ * `prSubmissionPayload` serialises from it are what MAIN round-trips against `payload`.
+ */
+const prSubmissionSchema = z.object({
+  title: z.string(),
+  body: z.string(),
+  base: z.string().min(1),
+  head: z.string().min(1),
+  draft: z.boolean(),
 });
 
 // ── The front door: projects + discovery (issue #29 / #37) ───────────────────
@@ -1648,6 +1667,39 @@ export const commandDefinitions = {
       ledger: z.array(publishDegradationSchema),
       /** The real-post outcome, or `null` on a dry-run (nothing posted). */
       outcome: publishOutcomeSchema.nullable(),
+    }),
+  },
+  // ── Submit an own-branch PR (issue #257 / #107) — push + open the PR ─────────
+  // The action the product is named for: on a single human sign-click, push the
+  // review's OWN branch and open a real pull request with the drafted title/body.
+  // This is a different verb on the same GitHub egress the other-pr post travels —
+  // NOT a second submission path. There is no consent token here: pushing your own
+  // branch is not publishing (AGENTS.md), and the sign-click is the whole
+  // authorization — the review is the human's, over their signature.
+  //   • MAIN re-derives the canonical `pr-submission` bytes from `submission` and
+  //     refuses on any disagreement with `payload` (byte-exact) — the same "what you
+  //     see is what leaves" honesty (R33) the review egress holds, so the previewed
+  //     PR is exactly the one that opens.
+  //   • A retrospective review (read-only over a merged/any PR) is refused: there is
+  //     no own branch to submit.
+  //   • Idempotent by head branch: an open PR from the same head is reused, so a
+  //     retry (or a double sign) yields exactly one PR.
+  "publish.submitPr": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+      /** The PR to open — title/body (with the human's edits)/base/head/draft. */
+      submission: prSubmissionSchema,
+      /** The canonical `pr-submission` bytes the sheet previewed + signed (round-trip check). */
+      payload: z.string(),
+    }),
+    output: z.object({
+      /** The created (or reused) pull request's web URL. */
+      url: z.string(),
+      /** The pull request number. */
+      number: z.number().int(),
+      /** True when an open PR from this head already existed and was reused (idempotent). */
+      reused: z.boolean(),
     }),
   },
   // ── Canvas user ops (issue #10) ────────────────────────────────────────────

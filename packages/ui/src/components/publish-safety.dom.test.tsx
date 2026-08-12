@@ -513,8 +513,8 @@ describe("keyboard auto-repeat: a held sign key measures the hold from the FIRST
   });
 });
 
-describe("honesty affordance: the shell discloses that nothing is published", () => {
-  it("carries a persistent, aria-legible notice that the shell publishes nothing", () => {
+describe("honesty affordance: the own-branch shell discloses what the sign does", () => {
+  it("carries a persistent, aria-legible notice that signing pushes the branch and opens the PR", () => {
     const { container } = mount(
       <PublishSheet
         {...paper(stagedDraft(...writes))}
@@ -524,10 +524,11 @@ describe("honesty affordance: the shell discloses that nothing is published", ()
     const notice = container.querySelector(".publish-sheet-shell-notice");
     expect(notice).not.toBeNull();
     expect(notice?.getAttribute("role")).toBe("note");
-    // own-branch (issue #109, own-branch half): the shell discloses that creating the
-    // PR is the separate, gated #21 act and that NOTHING is pushed from here — the
-    // honest own-branch disclosure, not the review path's "posts nothing".
-    expect(notice?.textContent).toContain("nothing is pushed");
-    expect(notice?.textContent).toContain("#21");
+    // own-branch (issue #257 / #107): the shell states the TRUTH of the sign — it
+    // pushes the branch and opens the PR (the product does its job), and nothing
+    // leaves until the hold completes. No "#21 gated act" ceremony (Rule Zero).
+    expect(notice?.textContent).toContain("opens the pull request");
+    expect(notice?.textContent).toContain("nothing is pushed until you complete the hold");
+    expect(notice?.textContent).not.toContain("#21");
   });
 });

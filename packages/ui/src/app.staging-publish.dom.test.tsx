@@ -42,6 +42,7 @@ const review: Review = {
         baseRef: "main",
         baseOid: "1111111111111111",
         headOid: "2222222222222222",
+        headRef: "feat/reviewed",
       },
       files: [
         {
@@ -66,8 +67,10 @@ const review: Review = {
 function recordingBridge(ready: Review): {
   bridge: RennetBridge;
   calls: CommandInput<"publish.review">[];
+  submits: CommandInput<"publish.submitPr">[];
 } {
   const calls: CommandInput<"publish.review">[] = [];
+  const submits: CommandInput<"publish.submitPr">[] = [];
   const invoke = async (name: string, input: unknown): Promise<unknown> => {
     if (name === "publish.review") {
       calls.push(input as CommandInput<"publish.review">);
@@ -84,23 +87,35 @@ function recordingBridge(ready: Review): {
       };
       return output;
     }
+    if (name === "publish.submitPr") {
+      submits.push(input as CommandInput<"publish.submitPr">);
+      const output: CommandOutput<"publish.submitPr"> = {
+        url: "https://github.com/acme/rennet/pull/7",
+        number: 7,
+        reused: false,
+      };
+      return output;
+    }
     return { review: ready };
   };
-  return { bridge: { invoke: invoke as unknown as RennetBridge["invoke"] }, calls };
+  return { bridge: { invoke: invoke as unknown as RennetBridge["invoke"] }, calls, submits };
 }
 
 // Mount, mark the one file read (→ a `comment` in the draft), select the
 // destination framing, and open the draft canvas so a single item is present and
 // editable. Returns the RTL handle + the recorded publish calls.
 //
-// The mode is EXPLICIT (issue #109, own-branch half): `publish.review` is the
-// OTHER-PR act, so the publish-payload assertions run in `other-pr`; `own-branch`
-// previews a PR submission whose creation is the gated #21 act and never calls
-// publish.review, and has its own tests below.
-async function reachDraftCanvas(
-  mode: "own-branch" | "other-pr" = "other-pr",
-): Promise<ReturnType<typeof mount> & { calls: CommandInput<"publish.review">[] }> {
-  const { bridge, calls } = recordingBridge(review);
+// The mode is EXPLICIT (issue #109 / #257): `publish.review` is the OTHER-PR act, so
+// the publish-payload assertions run in `other-pr`; `own-branch` signs a PR submission
+// via `publish.submitPr` (push + open the PR) and never calls publish.review, and has
+// its own tests below.
+async function reachDraftCanvas(mode: "own-branch" | "other-pr" = "other-pr"): Promise<
+  ReturnType<typeof mount> & {
+    calls: CommandInput<"publish.review">[];
+    submits: CommandInput<"publish.submitPr">[];
+  }
+> {
+  const { bridge, calls, submits } = recordingBridge(review);
   const handle = mount(<RennetApp bridge={bridge} />);
   const { container, getByRole } = handle;
   await waitFor(() => expect(container.querySelector(".destination-frame")).not.toBeNull());
@@ -123,7 +138,7 @@ async function reachDraftCanvas(
   if (!openDraft) throw new Error("the open-draft control did not render");
   fireEvent.click(openDraft);
   await waitFor(() => expect(container.querySelector(".collation-canvas")).not.toBeNull());
-  return { ...handle, calls };
+  return { ...handle, calls, submits };
 }
 
 /** Retype the single draft item via the visible type <select>. */
@@ -340,33 +355,66 @@ describe("staging controls the publish payload (#109) — own-branch signs a sub
     expect(paperPreview(container)).not.toContain("pr-review");
   });
 
-  it("own-branch sign HANDS OFF and never calls publish.review (the own-branch trust half)", async () => {
-    // The P1 this closes: own-branch used to fall back to publish.review, emitting
-    // review comments the human never previewed. It must not — creating the PR is the
-    // separate, gated #21 act that no command wires yet, so signing is an honest
-    // handoff no-op that states the not-yet-wired step and sends nothing.
-    const { container, calls } = await reachDraftCanvas("own-branch");
+  it("own-branch sign SUBMITS a PR and never calls publish.review (#257 / #107)", async () => {
+    // The own-branch action the product is named for: signing pushes the branch and
+    // opens a real PR via publish.submitPr. It must NEVER fall back to publish.review
+    // (that would emit review comments the human never previewed), and the PR `head`
+    // must be a BRANCH ref — never a commit SHA (#107).
+    const { container, calls, submits } = await reachDraftCanvas("own-branch");
     retype(container, "request-change");
     await waitFor(() => expect(publishCount(container)).toBe("1"));
 
     await openPaper(container);
     expect(paperMode(container)).toBe("own-branch");
-    expect(signButton(container).disabled).toBe(false); // there IS a bundle to hand off
+    expect(signButton(container).disabled).toBe(false); // there IS a submission to sign
     await completeSign(container);
-    await flush();
+    await waitFor(() => expect(submits).toHaveLength(1));
 
-    // No review was ever posted — the whole point.
+    // No review was ever posted — own-branch signs a submission, not review comments.
     expect(calls).toHaveLength(0);
-    // The paper states the honest handoff outcome, not a dry-run review.
+    const submit = submits[0];
+    if (!submit) throw new Error("publish.submitPr was not invoked");
+    // #107 red-proof: the head is the branch ref, never the head SHA. Reverting the
+    // fix (head = headOid.slice(0,7)) makes this assertion fail.
+    expect(submit.submission.head).toBe("feat/reviewed");
+    expect(submit.submission.head).not.toBe(review.patchsets[0]?.repository.headOid.slice(0, 7));
+    expect(submit.submission.base).toBe("main");
+    // The signed payload round-trips the submission bytes (what you see is what leaves).
+    expect(submit.payload).toBe(
+      JSON.stringify({
+        kind: "pr-submission",
+        title: submit.submission.title,
+        body: submit.submission.body,
+        base: submit.submission.base,
+        head: submit.submission.head,
+        draft: submit.submission.draft,
+      }),
+    );
+    // The paper surfaces the opened PR, not a review dry run.
     const result = container.querySelector('[data-testid="publish-result"]');
     expect(result).not.toBeNull();
-    expect(result?.getAttribute("data-outcome")).toBe("handoff");
+    expect(result?.getAttribute("data-outcome")).toBe("submitted");
     expect(result?.getAttribute("data-dry-run")).toBeNull(); // never a review dry run
-    expect(result?.textContent).toContain("separate, gated step (#21)");
+    expect(result?.textContent).toContain("#7");
+    expect(result?.textContent).toContain("https://github.com/acme/rennet/pull/7");
   });
 
-  it("own-branch with an empty ink subset cannot sign (approve-only hands off nothing)", async () => {
-    const { container, calls } = await reachDraftCanvas("own-branch");
+  it("own-branch sign submits EXACTLY ONE PR per click (no double-fire on re-render)", async () => {
+    // The re-entry guard: a re-render during the async push/create must not start a
+    // second submit. One completed hold ⇒ exactly one publish.submitPr.
+    const { container, submits } = await reachDraftCanvas("own-branch");
+    retype(container, "request-change");
+    await waitFor(() => expect(publishCount(container)).toBe("1"));
+
+    await openPaper(container);
+    await completeSign(container);
+    await waitFor(() => expect(submits).toHaveLength(1));
+    await flush();
+    expect(submits).toHaveLength(1);
+  });
+
+  it("own-branch with an empty ink subset cannot sign (approve-only submits nothing)", async () => {
+    const { container, calls, submits } = await reachDraftCanvas("own-branch");
     retype(container, "approve"); // approve never travels → empty bundle
     await waitFor(() => expect(publishCount(container)).toBe("0"));
 
@@ -375,5 +423,6 @@ describe("staging controls the publish payload (#109) — own-branch signs a sub
     expect(signButton(container).disabled).toBe(true);
     await flush();
     expect(calls).toHaveLength(0);
+    expect(submits).toHaveLength(0);
   });
 });

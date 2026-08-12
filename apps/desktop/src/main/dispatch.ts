@@ -4,8 +4,11 @@ import {
   askReview,
   buildForgeReviewPost,
   buildHandoffBundle,
+  canonicalPrSubmissionPayload,
   canonicalReviewPayload,
   disclosureFor,
+  type ForgePrSubmission,
+  type ForgePrSubmissionOutcome,
   type ForgePublishPort,
   type ForgeReviewTarget,
   forgeTargetKey,
@@ -124,6 +127,21 @@ export interface DispatchDeps {
    * post. Read/egress are separate ports, so only the publish command can egress.
    */
   readonly publishPort: ForgePublishPort;
+  /**
+   * The own-branch PR submission action (issue #257 / #107): push the review's own
+   * branch and open a real pull request. Composed by the root over the host git push
+   * (`git push origin <headRef>`) + the GitHub create-PR adapter, with the repo's
+   * GitHub identity resolved from its remotes. Optional so a composition WITHOUT it
+   * (no coding harness / no auth) answers an honest failure rather than throwing.
+   * There is NO consent token: pushing your own branch is not publishing, and the
+   * sign-click is the whole authorization.
+   */
+  readonly submitPullRequest?: (input: {
+    repoRoot: string;
+    /** The head branch ref to push and open the PR against (#107). */
+    headRef: string;
+    submission: ForgePrSubmission;
+  }) => Promise<ForgePrSubmissionOutcome>;
   /**
    * The main-owned PUBLISH consent authority (issue #21). Mints a single-use token
    * bound to (review, target, payload) on the user's approval act
@@ -665,6 +683,57 @@ export function createDispatch(
           ledger: post.ledger,
           outcome: null,
         });
+      }
+      case "publish.submitPr": {
+        // The own-branch submission (issue #257 / #107): push the review's own branch
+        // and open a real PR. The sign-click is the whole authorization — no consent
+        // token: pushing your own branch is not publishing (AGENTS.md).
+        const input = parseCommandInput(name, rawInput);
+        const review = requireLatestReview(input.reviewId);
+
+        // (0) A retrospective review is read-only over a merged/any PR — there is no
+        // own branch to submit. Refuse the whole command, matching the review egress.
+        if (review.retrospective) {
+          throw new Error(
+            "Submit refused: this is a retrospective review — it is read-only and has no branch to open a PR from.",
+          );
+        }
+
+        // (1) "What you see is what leaves" (R33): the canonical bytes re-derived from
+        // `submission` must equal the signed `payload` EXACTLY. A disagreement fails
+        // CLOSED, so the PR that opens is exactly the one the paper previewed.
+        if (canonicalPrSubmissionPayload(input.submission) !== input.payload) {
+          throw new Error("Submit refused: the PR submission payload does not match its content");
+        }
+
+        // (2) The head must be a real BRANCH ref (#107) — a detached HEAD has no branch
+        // to open a PR from. MAIN is authoritative on the branch to push: the persisted
+        // provenance's `headRef`, which must match the previewed `submission.head`
+        // (else the paper showed a head that is not the review's own branch — a lie).
+        const patchset = activePatchsetOf(review);
+        const headRef = patchset.repository.headRef;
+        if (headRef === undefined) {
+          throw new Error(
+            "Submit refused: HEAD is detached — there is no branch to push and open a pull request from.",
+          );
+        }
+        if (input.submission.head !== headRef) {
+          throw new Error("Submit refused: the PR head does not match the review's own branch.");
+        }
+
+        // (3) Push the branch + open the PR. Absent action ⇒ an honest failure, never a
+        // fabricated success (no coding harness / no auth composed it).
+        if (!deps.submitPullRequest) {
+          throw new Error(
+            "Submit refused: no GitHub PR submission is available (authentication or the coding harness is not configured).",
+          );
+        }
+        const outcome = await deps.submitPullRequest({
+          repoRoot: patchset.repository.root,
+          headRef,
+          submission: input.submission,
+        });
+        return parseCommandOutput(name, outcome);
       }
       case "review.canvases": {
         const input = parseCommandInput(name, rawInput);

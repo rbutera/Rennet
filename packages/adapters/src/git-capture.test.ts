@@ -64,6 +64,26 @@ describe("GitCaptureAdapter", () => {
     expect(readFileSync(join(root, "tracked.txt"), "utf8")).toBe("after\n");
   });
 
+  it("captures the head BRANCH ref (#107) — the ref an own-branch PR opens against", async () => {
+    const root = repository();
+    git(root, "checkout", "-qb", "feat/reviewed");
+    writeFileSync(join(root, "tracked.txt"), "after\n");
+    const patchset = await new GitCaptureAdapter().capture(root);
+    // The branch name, not a slice of the head SHA.
+    expect(patchset.repository.headRef).toBe("feat/reviewed");
+    expect(patchset.repository.headRef).not.toBe(patchset.repository.headOid.slice(0, 7));
+  });
+
+  it("omits headRef honestly on a detached HEAD (no branch to submit from)", async () => {
+    const root = repository();
+    // Detach HEAD onto the commit itself — there is no branch ref.
+    const head = git(root, "rev-parse", "HEAD").trim();
+    git(root, "checkout", "-q", "--detach", head);
+    writeFileSync(join(root, "tracked.txt"), "after\n");
+    const patchset = await new GitCaptureAdapter().capture(root);
+    expect(patchset.repository.headRef).toBeUndefined();
+  });
+
   it("returns the same identity for unchanged repository content", async () => {
     const root = repository();
     writeFileSync(join(root, "tracked.txt"), "after\n");

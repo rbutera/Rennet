@@ -1013,7 +1013,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const publishContext: PublishContext = {
     submission: {
       base: patchset?.repository.baseRef ?? "main",
-      head: patchset ? patchset.repository.headOid.slice(0, 7) : "(working tree)",
+      // The head is a BRANCH ref (#107), never a commit SHA — a GitHub PR cannot open
+      // with a bare SHA as `head`. The capture records the current branch name
+      // (`headRef`); a detached HEAD has no branch and reads honestly as such, and the
+      // sign path refuses it rather than opening a PR against a non-branch.
+      head: patchset ? (patchset.repository.headRef ?? "(detached HEAD)") : "(working tree)",
       draftDefault: true,
       ...(prTitle === "" ? {} : { title: prTitle }),
       ...(prBody === "" ? {} : { body: prBody }),
@@ -1191,18 +1195,66 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       setBusy(false);
     }
   }
+  // Submit the own-branch PR (issue #257 / #107): on sign, push the review's own
+  // branch and open a real pull request with the drafted title/body. This is a
+  // DIFFERENT verb on the same GitHub egress the other-pr post travels — push +
+  // create, not comment — so it never falls back to `publish.review` (that would emit
+  // review comments the human never previewed). Pushing your own branch is not
+  // publishing (AGENTS.md); the sign-click is the whole authorization, so there is no
+  // consent token. On success the created PR's URL surfaces; on failure the failure
+  // surfaces honestly — never a fabricated success.
+  async function submitPullRequest(): Promise<void> {
+    if (!review || !patchset) return;
+    // Re-entry guard: a submit already in flight must not start a second, so a
+    // re-render during the async push/create cannot double-push or double-open. The
+    // ref is synchronous (state lags a render); the sign control is also disabled via
+    // `publishing` below.
+    if (publishingRef.current) return;
+    // The own-branch outbound artifact is the PR SUBMISSION — the SAME preview the
+    // paper shows and the SAME bytes it signs (`publishTargetPayload`), so what leaves
+    // is exactly what the human previewed.
+    const target = publishTargetForMode;
+    if (target.mode !== "own-branch") return;
+    const submission = target.submission;
+    const payload = publishTargetPayload(target);
+    publishingRef.current = true;
+    setPublishing(true);
+    setBusy(true);
+    setError(undefined);
+    try {
+      const outcome = await bridge.invoke("publish.submitPr", {
+        commandId: crypto.randomUUID(),
+        reviewId: review.id,
+        submission: {
+          title: submission.title,
+          body: submission.body,
+          base: submission.base,
+          head: submission.head,
+          draft: submission.draft,
+        },
+        payload,
+      });
+      setPublishResult({
+        kind: "submitted",
+        url: outcome.url,
+        number: outcome.number,
+        reused: outcome.reused,
+      });
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      publishingRef.current = false;
+      setPublishing(false);
+      setBusy(false);
+    }
+  }
   // Mode-split the sign so "what you preview is what signs" holds in BOTH modes
-  // (issue #109, own-branch half). other-pr previews line-anchored review comments
-  // and the wired `publish.review` engine emits exactly those. own-branch previews a
-  // PR SUBMISSION whose creation is the separate, GATED #21 act (`publish.egress`) —
-  // NO command wires it yet — so an own-branch sign must NOT fall back to
-  // `publish.review` (that would emit review comments the human never previewed).
-  // Until #21 lands, own-branch sign is an honest handoff no-op: it sends nothing and
-  // records the not-yet-wired handoff for the sheet to state plainly.
+  // (issue #109). other-pr previews line-anchored review comments and the wired
+  // `publish.review` engine emits exactly those; own-branch previews a PR submission
+  // and `submitPullRequest` pushes + opens exactly that.
   function signPaper(): void {
     if (destinationMode === "own-branch") {
-      setError(undefined);
-      setPublishResult({ kind: "handoff" });
+      void submitPullRequest();
       return;
     }
     void publishReview();

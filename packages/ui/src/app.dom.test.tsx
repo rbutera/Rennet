@@ -101,9 +101,9 @@ describe("RennetApp — the Sign button runs the real publish engine (wire-sign-
     fireEvent.click(getByRole("button", { name: "Mark read" }));
     await waitFor(() => expect(destination()?.getAttribute("data-staged-count")).toBe("1"));
 
-    // `publish.review` is the OTHER-PR act. own-branch (the default) previews a PR
-    // SUBMISSION whose creation is the gated #21 act and NEVER calls publish.review
-    // (issue #109, own-branch half), so switch to the other-pr framing first.
+    // `publish.review` is the OTHER-PR act. own-branch (the default) signs a PR
+    // SUBMISSION via publish.submitPr and NEVER calls publish.review (issue #109 /
+    // #257), so switch to the other-pr framing first to exercise the review wire.
     fireEvent.click(getByRole("tab", { name: "Review to post" }));
     await waitFor(() => expect(destination()?.getAttribute("data-mode")).toBe("other-pr"));
 

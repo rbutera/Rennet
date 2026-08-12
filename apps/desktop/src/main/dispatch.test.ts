@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { buildGitHubReviewRequest } from "@rennet/adapters";
 import {
   type AskAnswer,
+  canonicalPrSubmissionPayload,
   canonicalReviewPayload,
   type ForgePublishPort,
   type ForgeReviewEvent,
@@ -165,6 +166,7 @@ function harness(
     runHandoffTurn?: DispatchDeps["runHandoffTurn"];
     composeBundle?: DispatchDeps["composeBundle"];
     liveTurns?: DispatchDeps["liveTurns"];
+    submitPullRequest?: DispatchDeps["submitPullRequest"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -269,6 +271,7 @@ function harness(
     buildCanvases,
     publishPort,
     publishConsent,
+    ...(extra.submitPullRequest ? { submitPullRequest: extra.submitPullRequest } : {}),
     ...(extra.runHandoffTurn ? { runHandoffTurn: extra.runHandoffTurn } : {}),
     ...(extra.composeBundle ? { composeBundle: extra.composeBundle } : {}),
     ...(extra.liveTurns ? { liveTurns: extra.liveTurns } : {}),
@@ -1245,6 +1248,162 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
       }),
     ).rejects.toThrow(/no pull request/i);
     expect(port.posts).toHaveLength(0);
+  });
+});
+
+describe("createDispatch — publish.submitPr (own-branch submission, issue #257 / #107)", () => {
+  // A local capture whose head is on a branch — the own-branch submission's baseline.
+  function ownBranchCapture(): PatchsetCapturePort {
+    return {
+      capture: () =>
+        Promise.resolve({
+          ...patchset(),
+          repository: { ...patchset().repository, headRef: "feat/reviewed" },
+        }),
+    };
+  }
+
+  const SUBMISSION = {
+    title: "Reviewed change",
+    body: "## Requested changes\n- fix it",
+    base: "main",
+    head: "feat/reviewed",
+    draft: true,
+  };
+  const PAYLOAD = canonicalPrSubmissionPayload(SUBMISSION);
+
+  it("pushes the branch and opens the PR, returning the URL (the sign-click is the whole authorization)", async () => {
+    const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>(async () => ({
+      url: "https://github.com/acme/widget/pull/7",
+      number: 7,
+      reused: false,
+    }));
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        capturePort: ownBranchCapture(),
+        submitPullRequest,
+      },
+    );
+    const review = await capturedReview(dispatch);
+
+    const out = (await dispatch("publish.submitPr", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      submission: SUBMISSION,
+      payload: PAYLOAD,
+    })) as { url: string; number: number; reused: boolean };
+
+    expect(out).toEqual({ url: "https://github.com/acme/widget/pull/7", number: 7, reused: false });
+    // The dep is called ONCE with the review's own branch ref (#107) — never a SHA.
+    expect(submitPullRequest).toHaveBeenCalledTimes(1);
+    expect(submitPullRequest).toHaveBeenCalledWith({
+      repoRoot: REPO,
+      headRef: "feat/reviewed",
+      submission: SUBMISSION,
+    });
+  });
+
+  it("refuses when the signed payload does not match the submission (what you see is what leaves)", async () => {
+    const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>();
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        capturePort: ownBranchCapture(),
+        submitPullRequest,
+      },
+    );
+    const review = await capturedReview(dispatch);
+
+    await expect(
+      dispatch("publish.submitPr", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        submission: SUBMISSION,
+        payload: canonicalPrSubmissionPayload({ ...SUBMISSION, title: "A DIFFERENT title" }),
+      }),
+    ).rejects.toThrow(/does not match its content/i);
+    expect(submitPullRequest).not.toHaveBeenCalled();
+  });
+
+  it("refuses when the previewed head is not the review's own branch (no UI lie)", async () => {
+    const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>();
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        capturePort: ownBranchCapture(),
+        submitPullRequest,
+      },
+    );
+    const review = await capturedReview(dispatch);
+
+    const wrong = { ...SUBMISSION, head: "some/other-branch" };
+    await expect(
+      dispatch("publish.submitPr", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        submission: wrong,
+        payload: canonicalPrSubmissionPayload(wrong),
+      }),
+    ).rejects.toThrow(/does not match the review's own branch/i);
+    expect(submitPullRequest).not.toHaveBeenCalled();
+  });
+
+  it("refuses a detached HEAD (no branch to submit from)", async () => {
+    const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>();
+    // No headRef on the capture ⇒ a detached HEAD.
+    const { dispatch } = harness(fakePublishPort(), {}, { submitPullRequest });
+    const review = await capturedReview(dispatch);
+    const detached = { ...SUBMISSION, head: "(detached HEAD)" };
+    await expect(
+      dispatch("publish.submitPr", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        submission: detached,
+        payload: canonicalPrSubmissionPayload(detached),
+      }),
+    ).rejects.toThrow(/detached/i);
+    expect(submitPullRequest).not.toHaveBeenCalled();
+  });
+
+  it("refuses a retrospective review (read-only, no branch to submit)", async () => {
+    // A retrospective review is opened via the PR path with retrospective:true; it has
+    // no own branch to submit. Reuse the harness's openPullRequest which stamps it.
+    const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>();
+    const { dispatch } = harness(fakePublishPort(), {}, { submitPullRequest });
+    await dispatch("repository.choose", {});
+    const opened = (await dispatch("review.openPr", {
+      commandId: randomUUID(),
+      ref: "rbutera/rennet-egress-sandbox#1",
+      repoPath: REPO,
+      retrospective: true,
+    })) as { review: Review };
+
+    await expect(
+      dispatch("publish.submitPr", {
+        commandId: randomUUID(),
+        reviewId: opened.review.id,
+        submission: SUBMISSION,
+        payload: PAYLOAD,
+      }),
+    ).rejects.toThrow(/retrospective/i);
+    expect(submitPullRequest).not.toHaveBeenCalled();
+  });
+
+  it("fails honestly when no submission action is composed (never a fabricated success)", async () => {
+    const { dispatch } = harness(fakePublishPort(), {}, { capturePort: ownBranchCapture() });
+    const review = await capturedReview(dispatch);
+    await expect(
+      dispatch("publish.submitPr", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        submission: SUBMISSION,
+        payload: PAYLOAD,
+      }),
+    ).rejects.toThrow(/no GitHub PR submission is available/i);
   });
 });
 

@@ -99,6 +99,12 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
     const commonDirValue = (await git(root, ["rev-parse", "--git-common-dir"])).trim();
     const commonDir = isAbsolute(commonDirValue) ? commonDirValue : resolve(root, commonDirValue);
     const headOid = (await git(root, ["rev-parse", "HEAD"])).trim();
+    // The head's branch ref (the current branch name), for an own-branch PR `head`
+    // (#107). `symbolic-ref --short -q` prints the branch and exits 0 on a branch,
+    // and exits non-zero (empty, no throw with `reject=false`) on a detached HEAD —
+    // where there is no branch to submit from, so `headRef` stays absent honestly.
+    const headRef =
+      (await git(root, ["symbolic-ref", "--short", "-q", "HEAD"], false)).trim() || undefined;
     const { baseRef, baseOid } = await resolveBase(root);
 
     const trackedDiff = await git(root, [
@@ -164,6 +170,7 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
       baseRef,
       baseOid,
       headOid,
+      ...(headRef !== undefined ? { headRef } : {}),
     };
     const id = createHash("sha256")
       .update(

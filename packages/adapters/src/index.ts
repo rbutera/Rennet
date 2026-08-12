@@ -154,6 +154,10 @@ export {
 export { GitHubForgeAdapter, type GitHubForgeConfig } from "./github-forge";
 export { parseGitHubPrRef } from "./github-pr-ref";
 export {
+  GitHubPrSubmissionAdapter,
+  type GitHubPrSubmissionConfig,
+} from "./github-pr-submission";
+export {
   buildGitHubReviewRequest,
   GitHubPublishAdapter,
   type GitHubPublishConfig,

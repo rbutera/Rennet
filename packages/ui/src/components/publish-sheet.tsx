@@ -39,9 +39,9 @@ import {
 // it never re-derives or re-sorts them. The #80 sign-gate mechanics (`resolveSign`,
 // `ledgerBlocksSign`, hold budget, keyboard sign, auto-repeat guard, ledger-swap
 // fail-closed, honesty affordance) are reused UNCHANGED — only the CONTENT above
-// the gate grew. This slice performs ZERO Git/GitHub mutation: the own-branch PR
-// submission is a PREVIEW; creation is a separate explicit act (#21), and Rennet
-// never pushes source.
+// the gate grew. The own-branch sign is a REAL act (issue #257 / #107): a completed
+// hold pushes the branch and opens the PR — pushing your own branch is not
+// publishing (AGENTS.md), and the sign-click is the whole authorization.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -73,19 +73,30 @@ export interface PublishReviewResult {
 }
 
 /**
- * The outcome of a sign, discriminated by destination mode (issue #109, own-branch
- * half). The two modes sign two DIFFERENT artifacts, so their outcomes differ:
- *   • `review`  — an OTHER-PR sign that ran the wired `publish.review` engine. Carries
+ * The outcome of an own-branch sign (issue #257 / #107): the branch was pushed and a
+ * real pull request was opened. Carries the created PR's URL + number so the paper can
+ * surface it, and whether an already-open PR from the same head was reused (idempotent).
+ */
+export interface PrSubmittedResult {
+  /** The created (or reused) pull request's web URL. */
+  readonly url: string;
+  /** The pull request number. */
+  readonly number: number;
+  /** True when an open PR from this head already existed and was reused. */
+  readonly reused: boolean;
+}
+
+/**
+ * The outcome of a sign, discriminated by destination mode (issue #109). The two modes
+ * sign two DIFFERENT artifacts, so their outcomes differ:
+ *   • `review`    — an OTHER-PR sign that ran the wired `publish.review` engine. Carries
  *     the dry-run summary above.
- *   • `handoff` — an OWN-BRANCH sign. The paper previews a PR SUBMISSION whose creation
- *     is a separate, GATED act (#21 / `publish.egress`) that NO command wires yet, so
- *     signing sends NOTHING and must never fall back to `publish.review` (that would
- *     emit review comments the human never previewed). The bundle is recorded as
- *     ready and the not-yet-wired state is stated honestly.
+ *   • `submitted` — an OWN-BRANCH sign (issue #257). The branch was pushed and a real
+ *     pull request was opened with the drafted title/body; the PR URL surfaces here.
  */
 export type PublishOutcome =
   | ({ readonly kind: "review" } & PublishReviewResult)
-  | { readonly kind: "handoff" };
+  | ({ readonly kind: "submitted" } & PrSubmittedResult);
 
 export function PublishSheet({
   items = [],
@@ -443,26 +454,30 @@ export function PublishSheet({
               </p>
             ) : null}
           </div>
-        ) : result?.kind === "handoff" ? (
-          // OWN-BRANCH sign (issue #109, own-branch half): the PR submission above is
-          // ready, but creating the pull request is the separate, GATED #21 act that
-          // is not wired yet. Signing here sent NOTHING — it never falls back to
-          // publish.review — and the not-yet-wired state is stated plainly.
+        ) : result?.kind === "submitted" ? (
+          // OWN-BRANCH sign (issue #257 / #107): the branch was pushed and a real pull
+          // request was opened with the drafted title/body. The PR URL surfaces here.
           <div
             className="publish-sheet-result"
             data-testid="publish-result"
-            data-outcome="handoff"
+            data-outcome="submitted"
             role="status"
           >
             <p className="publish-sheet-result-line">
-              Handed off — the PR submission above is ready. Nothing was pushed: creating the pull
-              request is a separate, gated step (#21) that isn't wired yet.
+              {result.reused
+                ? `A pull request from this branch was already open — reused #${result.number}.`
+                : `Pushed your branch and opened pull request #${result.number}.`}
+            </p>
+            <p className="publish-sheet-result-detail">
+              <a href={result.url} target="_blank" rel="noreferrer">
+                {result.url}
+              </a>
             </p>
           </div>
         ) : variant.mode === "own-branch" ? (
           <p className="publish-sheet-shell-notice" role="note">
-            Hold to hand off records this PR submission as ready. Creating the pull request is a
-            separate, gated step (#21) — nothing is pushed from here.
+            Hold to sign pushes your branch and opens the pull request on GitHub, as you. This is
+            the one action that leaves the machine — nothing is pushed until you complete the hold.
           </p>
         ) : willPost ? (
           <p className="publish-sheet-shell-notice" data-testid="will-post-notice" role="note">
