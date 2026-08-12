@@ -19,6 +19,7 @@ const savedEnv = new Map(APPLE_VARS.map((key) => [key, process.env[key]]));
 
 type ForgeConfig = {
   packagerConfig: {
+    icon: string;
     osxSign: {
       identity: string;
       continueOnError?: boolean;
@@ -45,6 +46,11 @@ afterEach(() => {
 });
 
 describe("forge.config.cjs signing", () => {
+  it("packages the white-on-black brand icon", () => {
+    const { packagerConfig } = loadConfig({});
+    expect(packagerConfig.icon).toMatch(/brand\/exports\/app-icons\/macos\/rennet-white-on-black$/);
+  });
+
   it("default (no creds): ad-hoc signature, not hardened, no notarization", () => {
     const { packagerConfig } = loadConfig({});
     expect(packagerConfig.osxSign.identity).toBe("-");

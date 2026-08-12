@@ -6,8 +6,6 @@ The production mark is traced directly from the largest isolated mark in the sel
 
 The wordmark is traced directly from the largest option 3 lettering in the selected wordmark sheet. `trace-reference-wordmark.png` preserves the exact thresholded input. It is committed as paths in `sources/wordmark-outline.svg`; no substitute font was used and no font file is required at runtime.
 
-The colour application icon uses the generated optical-gradient reference at `sources/gradient-reference.png`, cropped and composited deterministically with the exact small-size vector mark. The monochrome variants contain no generated raster content.
-
-The three files under `explorations/color-icon-treatments/` are generated treatment studies. They may be used as references for colour, material, lighting, and contrast, but their mark geometry is not authoritative. Production work must apply a selected treatment to `sources/mark-master.svg`.
+The colour application icon uses the generated optical-gradient reference at `sources/gradient-reference.png`, cropped and composited deterministically with the exact vector mark in solid white. The monochrome variants contain no generated raster content.
 
 Run `python3 scripts/build-brand-assets.py` to reproduce the export pack and `manifest.json` checksums from the committed sources.

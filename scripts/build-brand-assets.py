@@ -25,8 +25,7 @@ PREVIEW = BRAND / "preview"
 
 INK = "#0B0D10"
 PAPER = "#F7F4EE"
-PEARL_TOP = (255, 253, 248)
-PEARL_BOTTOM = (216, 212, 205)
+WHITE = (255, 255, 255)
 
 
 @dataclass(frozen=True)
@@ -130,21 +129,15 @@ def color_icon_svg(mark: Vector) -> str:
     mark_width = mark_height * mark.width / mark.height
     x = (1024 - mark_width) / 2 + 44
     y = (1024 - mark_height) / 2
-    pearl = '''<linearGradient id="pearl" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#FFFDF8"/>
-      <stop offset="0.54" stop-color="#F3EFE7"/>
-      <stop offset="1" stop-color="#D8D4CD"/>
-    </linearGradient>'''
     return f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Rennet app icon">
   <defs>
     <clipPath id="squircle"><rect x="32" y="32" width="960" height="960" rx="214"/></clipPath>
-    {pearl}
   </defs>
   <image x="32" y="32" width="960" height="960" preserveAspectRatio="xMidYMid slice" clip-path="url(#squircle)" href="data:image/png;base64,{encoded}"/>
   <rect x="32" y="32" width="960" height="960" rx="214" fill="#080B2A" fill-opacity=".42"/>
   <rect x="33" y="33" width="958" height="958" rx="213" fill="none" stroke="#FFFFFF" stroke-opacity=".18" stroke-width="2"/>
   <g opacity=".25" transform="translate(0 20)">{nested(mark, x, y, mark_width, mark_height, "#090B25")}</g>
-  {nested(mark, x, y, mark_width, mark_height, "url(#pearl)")}
+  {nested(mark, x, y, mark_width, mark_height, "#FFFFFF")}
 </svg>
 '''
 
@@ -173,14 +166,8 @@ def build_color_master(mark_source: Path, destination: Path) -> None:
     mark = mark.crop(bbox)
     alpha = mark.getchannel("A")
 
-    pearl = Image.new("RGBA", mark.size, (0, 0, 0, 0))
-    pixels = pearl.load()
-    alpha_pixels = alpha.load()
-    for y in range(mark.height):
-        ratio = y / max(1, mark.height - 1)
-        rgb = tuple(round(PEARL_TOP[i] + (PEARL_BOTTOM[i] - PEARL_TOP[i]) * ratio) for i in range(3))
-        for x in range(mark.width):
-            pixels[x, y] = (*rgb, alpha_pixels[x, y])
+    white = Image.new("RGBA", mark.size, (*WHITE, 0))
+    white.putalpha(alpha)
 
     x = (1024 - mark.width) // 2 + 44
     y = (1024 - mark.height) // 2 - 4
@@ -188,7 +175,7 @@ def build_color_master(mark_source: Path, destination: Path) -> None:
     shadow = Image.new("RGBA", mark.size, (8, 9, 32, 0))
     shadow.putalpha(shadow_alpha)
     background.alpha_composite(shadow, (x, y + 22))
-    background.alpha_composite(pearl, (x, y))
+    background.alpha_composite(white, (x, y))
     highlight = Image.new("RGBA", (1024, 1024), (0, 0, 0, 0))
     ImageDraw.Draw(highlight).rounded_rectangle((34, 34, 990, 990), radius=212, outline=(255, 255, 255, 46), width=2)
     background.alpha_composite(highlight)

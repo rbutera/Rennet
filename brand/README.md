@@ -2,7 +2,7 @@
 
 Rennet’s identity is a compact, shallow cheese wheel whose right edge breaks into smaller, readable pieces. The mark carries the product idea directly: a large body of code becomes something a person can digest.
 
-This root-level directory is the canonical brand home for the monorepo. Agents should start here and treat `sources/` plus `exports/` as authoritative. Files under `explorations/` are references, not production assets.
+This root-level directory is the canonical brand home for the monorepo. Agents should start here and treat `sources/` plus `exports/` as authoritative.
 
 The primary identity is monochrome. The colour gradient is application-icon artwork, not a product-interface colour system.
 
@@ -20,7 +20,6 @@ The primary identity is monochrome. The colour gradient is application-icon artw
 - `exports/social/` — square colour and monochrome avatars.
 - `preview/brand-pack-overview.png` — quick visual index.
 - `preview/trace-fidelity.png` — selected raster artwork beside the production traces.
-- `explorations/color-icon-treatments/` — current material and colour studies for the gradient icon.
 - `manifest.json` — dimensions, byte sizes, and SHA-256 checksums for every file.
 
 ## Usage rules
@@ -31,7 +30,7 @@ Keep clear space around a lockup equal to at least the height of the lowercase `
 
 Use `mark-small` at 16–47 px. Use the full mark from 48 px upward. Do not use the horizontal lockup below 140 px wide.
 
-Use black artwork on light backgrounds and warm-white artwork on dark backgrounds. The colour app icon is the default packaged application icon; the two monochrome icons are first-class alternates.
+Use black artwork on light backgrounds and white artwork on dark backgrounds. The colour app icon uses the white mark and is the default packaged application icon; the two monochrome icons are first-class alternates.
 
 ## Regeneration
 
