@@ -70,7 +70,7 @@ module.exports = {
   packagerConfig: {
     asar: true,
     executableName: "Rennet",
-    icon: path.join(__dirname, "../../brand/exports/app-icons/platform/rennet-color"),
+    icon: path.join(__dirname, "../../brand/exports/app-icons/macos/rennet-white-on-black"),
     ignore: [
       /^\/node_modules/,
       /^\/src/,
