@@ -95,6 +95,10 @@ export interface GitHubChangesetSourceDeps {
   pin: GitObjectPinner;
   worktrees: WorktreeProvider;
   visibleByteLimit?: number;
+  resolveProjectSnapshotId?: (
+    repoRoot: string,
+    baseOid: string,
+  ) => Promise<string | undefined> | string | undefined;
 }
 
 const DEGRADED_REASON =
@@ -149,6 +153,7 @@ export class GitHubChangesetSource {
       await this.ensureReviewedOidsLocal(match.root, pr, ref.number);
       // Local-first: pin the OIDs (survives force-push), then diff locally.
       await this.deps.pin.pin(match.root, [pr.baseOid, pr.headOid]);
+      const projectSnapshotId = await this.deps.resolveProjectSnapshotId?.(match.root, pr.baseOid);
       const patchset = await captureRangePatchset(this.deps.git, {
         root: match.root,
         baseOid: pr.baseOid,
@@ -156,6 +161,7 @@ export class GitHubChangesetSource {
         baseRef: pr.baseRef,
         source: "github-local",
         visibleByteLimit: this.deps.visibleByteLimit,
+        projectSnapshotId,
       });
       // Freeze the stated intent onto the patchset (#136): PR title/body plus the
       // spec set snapshotted at the reviewed HEAD OID (the clone is on disk, so we
@@ -281,6 +287,7 @@ export class GitHubChangesetSource {
    * `open`, and it never rewrites this one).
    */
   async reproduce(pin: ReviewedHeadPin): Promise<Patchset> {
+    const projectSnapshotId = await this.deps.resolveProjectSnapshotId?.(pin.root, pin.baseOid);
     return captureRangePatchset(this.deps.git, {
       root: pin.root,
       baseOid: pin.baseOid,
@@ -288,6 +295,7 @@ export class GitHubChangesetSource {
       baseRef: pin.baseRef,
       source: "github-local",
       visibleByteLimit: this.deps.visibleByteLimit,
+      projectSnapshotId,
     });
   }
 

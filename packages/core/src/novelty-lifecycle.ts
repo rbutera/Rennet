@@ -1,8 +1,4 @@
-import type {
-  LedgerEntry,
-  NoveltyLedger,
-  Stage2NoveltyJudgment,
-} from "@rennet/types";
+import type { LedgerEntry, NoveltyLedger, Stage2NoveltyJudgment } from "@rennet/types";
 
 export interface NoveltyClassificationChange {
   readonly entryKey: string;
@@ -57,7 +53,8 @@ export type NoveltyJudgmentValidation =
   | { readonly ok: false; readonly reason: string };
 
 export function validateStage2NoveltyJudgment(value: unknown): NoveltyJudgmentValidation {
-  if (!value || typeof value !== "object") return { ok: false, reason: "judgment must be an object" };
+  if (!value || typeof value !== "object")
+    return { ok: false, reason: "judgment must be an object" };
   const judgment = value as Record<string, unknown>;
   if (judgment.status !== "finding" && judgment.status !== "hypothesis") {
     return { ok: false, reason: "status must be finding or hypothesis" };
@@ -85,8 +82,13 @@ function validEvidence(value: unknown): boolean {
   if (!value || typeof value !== "object") return false;
   const evidence = value as Record<string, unknown>;
   return evidence.kind === "snapshot-shard"
-    ? typeof evidence.projectSnapshotId === "string" && typeof evidence.shardRef === "string"
-    : evidence.kind === "knowledge" && typeof evidence.statementId === "string";
+    ? typeof evidence.projectSnapshotId === "string" &&
+        evidence.projectSnapshotId.length > 0 &&
+        typeof evidence.shardRef === "string" &&
+        evidence.shardRef.length > 0
+    : evidence.kind === "knowledge" &&
+        typeof evidence.statementId === "string" &&
+        evidence.statementId.length > 0;
 }
 
 export interface NoveltyLifecycleState {

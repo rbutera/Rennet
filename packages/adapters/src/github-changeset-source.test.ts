@@ -112,10 +112,16 @@ describe("GitHubChangesetSource — local-diff-first (acceptance #1, #4)", () =>
       git: execaGit,
       pin: provingPinner,
       worktrees: worktreesOf(root),
+      resolveProjectSnapshotId: async (repoRoot, oid) => {
+        expect(repoRoot).toBe(root);
+        expect(oid).toBe(baseOid);
+        return "project-snapshot";
+      },
     });
     const result = await source.open(ref);
     expect(result.patchset.source).toBe("github-local");
     expect(result.patchset.degraded).toBeUndefined();
+    expect(result.patchset.projectSnapshotId).toBe("project-snapshot");
     // Byte-identical to the local `git diff base...head`.
     expect(result.patchset.rawDiff).toBe(git(root, "diff", `${baseOid}...${headOid}`));
     // Feeds the same canvases: it decomposes like any patchset.

@@ -182,9 +182,13 @@ describe("NoveltyLedgerReader — projectSnapshotId pin + merged effective base"
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.snapshot.manifest.baseOid).toBe(s.featureOid);
-    expect(result.snapshot.files.some((file) => file.path === "packages/a/src/index.ts")).toBe(true);
+    expect(result.snapshot.files.some((file) => file.path === "packages/a/src/index.ts")).toBe(
+      true,
+    );
     expect(reader.readProjectMap(s.repoKey, s.featureOid).ok).toBe(true);
-    expect(reader.readFileContext(s.repoKey, s.featureOid, "packages/a/src/index.ts").ok).toBe(true);
+    expect(reader.readFileContext(s.repoKey, s.featureOid, "packages/a/src/index.ts").ok).toBe(
+      true,
+    );
     expect(reader.readFileOverview(s.repoKey, s.featureOid, "packages/a/src/index.ts").ok).toBe(
       true,
     );

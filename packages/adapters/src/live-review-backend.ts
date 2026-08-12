@@ -17,7 +17,7 @@ import { NoveltyLedgerReader } from "./novelty-ledger-reader";
 import { projectContextBackend, type ResolvedRepoContext } from "./project-context-backend";
 import { ProjectContextReader } from "./project-context-reader";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
-import { resolveBaseRef } from "./project-snapshot-source";
+import { type ResolvedBase, resolveBaseRef } from "./project-snapshot-source";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
 import { SnapshotOverlayGenerator, SnapshotOverlayReader } from "./snapshot-overlay-generator";
 import { SnapshotOverlayStore } from "./snapshot-overlay-store";
@@ -112,6 +112,7 @@ export interface LiveBackendDeps {
   readonly maxSnapshotFiles?: number;
   /** Optional model port; when present, missing knowledge is enriched in the background. */
   readonly knowledgePort?: HarnessPort;
+  readonly resolveKnowledgePort?: () => Promise<HarnessPort | null>;
   readonly onKnowledgeError?: (error: unknown) => void;
   /** Extra core state the composition root may supply (freshness, ledger, effect sink). */
   readonly core?: Omit<ReviewBackendState, "review" | "pipeline">;
@@ -168,7 +169,10 @@ export async function createLiveCanvasOpsBackend(
   // The fail-closed read gate is constructed regardless of the generation
   // outcome: with no fresh snapshot, every context read returns a typed refusal.
   const reader = new ProjectContextReader(deps.store, overlayReader);
-  const noveltyReader = new NoveltyLedgerReader(new ProjectContextReader(deps.store), overlayReader);
+  const noveltyReader = new NoveltyLedgerReader(
+    new ProjectContextReader(deps.store),
+    overlayReader,
+  );
 
   // Knowledge (layer c): seed a committed set into the local store if present (a
   // committed set is never trusted blind — `discoverCommitted` validates first),
@@ -177,15 +181,19 @@ export async function createLiveCanvasOpsBackend(
   const knowledgeStore = new KnowledgeStore(deps.store);
   knowledgeStore.discoverCommitted(repoKey, review.repositoryRoot);
   const currentBase = deps.store.loadManifest(repoKey);
-  if (!knowledgeStore.loadLocal(repoKey) && currentBase && deps.knowledgePort) {
-    void enrichKnowledgeForRepo({
-      reader: new ProjectContextReader(deps.store),
-      knowledgeStore,
-      port: deps.knowledgePort,
-      repoKey,
-      repoRoot: review.repositoryRoot,
-      baseOid: currentBase.baseOid,
-    }).catch((error) => deps.onKnowledgeError?.(error));
+  if (!knowledgeStore.loadLocal(repoKey) && currentBase) {
+    void (async () => {
+      const port = deps.knowledgePort ?? (await deps.resolveKnowledgePort?.());
+      if (!port) return;
+      await enrichKnowledgeForRepo({
+        reader: new ProjectContextReader(deps.store),
+        knowledgeStore,
+        port,
+        repoKey,
+        repoRoot: review.repositoryRoot,
+        baseOid: currentBase.baseOid,
+      });
+    })().catch((error) => deps.onKnowledgeError?.(error));
   }
 
   const core = reviewBackendCore({ review, pipeline, ...deps.core });
@@ -224,7 +232,7 @@ async function generateSnapshotOnOpen(
 ): Promise<{ generated: boolean; reason?: string }> {
   const generator = new ProjectSnapshotGenerator({ git: opts.git, store: opts.store });
   try {
-    let defaultBase;
+    let defaultBase: ResolvedBase;
     try {
       defaultBase = await resolveBaseRef(review.repositoryRoot, { git: opts.git });
     } catch {

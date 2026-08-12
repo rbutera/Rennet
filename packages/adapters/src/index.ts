@@ -239,14 +239,14 @@ export {
   type ResolvedNoveltyContext,
 } from "./novelty-ledger-backend";
 export {
-  type NoveltyLifecycleAdvanceResult,
-  NoveltyLifecycleReader,
-} from "./novelty-lifecycle-reader";
-export {
   type NoveltyLedgerFailure,
   NoveltyLedgerReader,
   type NoveltyLedgerResult,
 } from "./novelty-ledger-reader";
+export {
+  type NoveltyLifecycleAdvanceResult,
+  NoveltyLifecycleReader,
+} from "./novelty-lifecycle-reader";
 export { readOpenSpecChange, selectedOpenSpecChangeName } from "./openspec-change-reader";
 export {
   type AttachedOrchestratorSession,
@@ -304,6 +304,7 @@ export {
   type SnapshotBuildProgress,
   type SnapshotBuildStage,
 } from "./project-snapshot-generator";
+export { ensureProjectSnapshotPin, projectSnapshotPinResolver } from "./project-snapshot-pin";
 export {
   listTree,
   matchesGlob,
@@ -326,7 +327,6 @@ export {
   type ProjectVisibility,
   snapshotStoreFor,
 } from "./project-snapshot-store";
-export { projectSnapshotPinResolver } from "./project-snapshot-pin";
 export { RepoWatcher } from "./repo-watcher";
 export {
   codexAskFixture,

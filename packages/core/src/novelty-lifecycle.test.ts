@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
 import type { LedgerEntry, NoveltyLedger, Stage2NoveltyJudgment } from "@rennet/types";
+import { describe, expect, it } from "vitest";
 import {
   advanceNoveltyLifecycle,
   applyNoveltyRegeneration,
@@ -58,16 +58,24 @@ describe("novelty lifecycle", () => {
       classification: "conforms",
       rationale: "old output remains readable",
     };
-    const state = { ledger: ledger([oldEntry]), judgments: new Map([[oldJudgment.entryKey, oldJudgment]]) };
+    const state = {
+      ledger: ledger([oldEntry]),
+      judgments: new Map([[oldJudgment.entryKey, oldJudgment]]),
+    };
     const advanced = advanceNoveltyLifecycle(state, ledger([entry("novel")], "next"));
     expect(advanced.next.judgments.get(oldJudgment.entryKey)).toBe(oldJudgment);
     expect(advanced.pendingEntryKeys).toEqual([oldJudgment.entryKey]);
 
-    const replacement: Stage2NoveltyJudgment = { ...oldJudgment, classification: "novel", rationale: "new" };
+    const replacement: Stage2NoveltyJudgment = {
+      ...oldJudgment,
+      classification: "novel",
+      rationale: "new",
+    };
     expect(
-      applyNoveltyRegeneration(advanced.next, new Map([[oldJudgment.entryKey, replacement]])).judgments.get(
-        oldJudgment.entryKey,
-      ),
+      applyNoveltyRegeneration(
+        advanced.next,
+        new Map([[oldJudgment.entryKey, replacement]]),
+      ).judgments.get(oldJudgment.entryKey),
     ).toBe(replacement);
   });
 });
@@ -94,5 +102,19 @@ describe("novelty Stage-2 contract", () => {
       reason: "a finding must cite evidence",
     });
     expect(validateStage2NoveltyJudgment({ status: "hypothesis", ...uncited }).ok).toBe(true);
+    expect(
+      validateStage2NoveltyJudgment({
+        status: "finding",
+        ...uncited,
+        evidence: [{ kind: "snapshot-shard", projectSnapshotId: "snapshot", shardRef: "files" }],
+      }).ok,
+    ).toBe(true);
+    expect(
+      validateStage2NoveltyJudgment({
+        status: "finding",
+        ...uncited,
+        evidence: [{ kind: "knowledge", statementId: "" }],
+      }).ok,
+    ).toBe(false);
   });
 });

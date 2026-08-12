@@ -51,4 +51,4 @@ Dependency-ordered. Three tracks (Storage, Delta-pass+Overlay, Net-novel) are la
 ## T-final — Integration & validate
 
 - [x] TF.1 `openspec validate build-repo-map-lifecycle --strict` green.
-- [ ] TF.2 Cross-track integration: advance the baseline (B) → the structural refresh + uncapped knowledge pass run (B.5/B.6, E) → the pinned diff pack re-adjudicates (C) → the store the review reads is the advanced/merged one (A), the agent navigates via `context.overview/symbol/references` (D) and reads surviving knowledge via `context.knowledge` (E), none blocking a review; a non-default-base review reads base+overlay.
+- [x] TF.2 Cross-track integration: advance the baseline (B) → the structural refresh + uncapped knowledge pass run (B.5/B.6, E) → the pinned diff pack re-adjudicates (C) → the store the review reads is the advanced/merged one (A), the agent navigates via `context.overview/symbol/references` (D) and reads surviving knowledge via `context.knowledge` (E), none blocking a review; a non-default-base review reads base+overlay.
