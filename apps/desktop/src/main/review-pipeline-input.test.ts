@@ -59,6 +59,35 @@ describe("buildReviewCanvasesInput — the composition hands ownership to the pi
     expect(input.ownership).toEqual([]);
   });
 
+  it("threads a supplied fan-in index onto the pipeline input (#200 anti-dark-seam)", () => {
+    // Same class as the ownership wire: a fan-in index that never reaches the pipeline
+    // leaves fan-in permanently NOT-ASSESSED in the real app. Removing `fanIn` from the
+    // builder reddens this.
+    const fanIn = { definedSymbols: () => [], referencingFiles: () => [] };
+    const input = buildReviewCanvasesInput({
+      reviewId: "rv",
+      patchset: patchset(),
+      dispositions: [],
+      ownership: [],
+      fanIn,
+      installed: [],
+      decisionDocs: [],
+    });
+    expect(input.fanIn).toBe(fanIn);
+  });
+
+  it("omits fan-in when not supplied — absence stays absent (honest NOT-ASSESSED)", () => {
+    const input = buildReviewCanvasesInput({
+      reviewId: "rv",
+      patchset: patchset(),
+      dispositions: [],
+      ownership: [],
+      installed: [],
+      decisionDocs: [],
+    });
+    expect("fanIn" in input).toBe(false);
+  });
+
   it("spreads an optional model seat only when supplied", () => {
     const without = buildReviewCanvasesInput({
       reviewId: "rv",

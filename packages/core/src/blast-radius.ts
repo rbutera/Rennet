@@ -7,20 +7,45 @@ import type { BlastRadiusPaint, BlastRadiusSignal, OwnershipRule, PatchFile } fr
 // PAINT (Rule Zero): this computes DATA the overlay renders amber; it never gates
 // an action, never reorders what the reviewer sees, and never withholds a
 // capability. A blast-radius mark is a claim about danger, so every signal is
-// explicit about what it can and cannot see, and the two deferred signals
-// (`fan-in`, `contract-surface`) are emitted as visibly NOT ASSESSED rather than
-// left silently absent — otherwise "no amber" would read as "checked and clear".
+// explicit about what it can and cannot see, and a signal that cannot be computed
+// is emitted as visibly NOT ASSESSED rather than left silently absent — otherwise
+// "no amber" would read as "checked and clear".
 //
-// First slice: `deletions`, `irreversibility`, `codeowners`, `safety-net` — the
-// four that need only the changeset and ownership. `fan-in` waits on the #200
-// reference index being confirmed populated in a real snapshot; `contract-surface`
-// waits on exported-API extraction. Never churn-heat: the enum has no such member.
+// Signals: `deletions`, `irreversibility`, `codeowners`, `safety-net` compute from the
+// changeset + ownership. `fan-in` (#200) computes dependent counts when the reference
+// index is supplied (per-file), and stays NOT ASSESSED when it is not — never a silent
+// zero. `contract-surface` waits on exported-API extraction and stays NOT ASSESSED.
+// Never churn-heat: the enum has no such member.
 
-/** The inputs a blast-radius computation reads — the changeset and CODEOWNERS. */
+/**
+ * The identifier-occurrence lookups the FAN-IN signal needs (issue #200 → #35 follow-on).
+ * Two pure reads over the project snapshot's symbol + reference indices, injected so the
+ * producer stays pure and node-free (the composition root builds this from a LoadedSnapshot).
+ *
+ * ⭐ Providing this at all is the ASSESSED signal: the composition supplies it ONLY when
+ * the reference index is genuinely POPULATED. When it is absent, fan-in stays a NOT-ASSESSED
+ * chip — never a silent zero. A zero-dependents result must mean "we checked and nothing
+ * depends on this", provable, not "the index was missing" (the whole point of the overlay:
+ * unmeasured must look unmeasured, not clean).
+ */
+export interface FanInIndex {
+  /** Symbol names DEFINED in the given changed file (its exports/declarations). */
+  definedSymbols(path: string): readonly string[];
+  /** Repo-relative paths that REFERENCE the given identifier name (its occurrence sites' files). */
+  referencingFiles(name: string): readonly string[];
+}
+
+/** The inputs a blast-radius computation reads — the changeset, CODEOWNERS, and (optional) fan-in index. */
 export interface BlastRadiusInput {
   readonly files: readonly PatchFile[];
   /** CODEOWNERS rules in file order (last match wins, git semantics). */
   readonly ownership: readonly OwnershipRule[];
+  /**
+   * The fan-in index (#200). Present ⇒ fan-in is ASSESSED (per-file dependent counts);
+   * absent ⇒ fan-in stays a NOT-ASSESSED chip. The composition supplies it only when the
+   * reference index is populated, so absence is honest, never a masked empty.
+   */
+  readonly fanIn?: FanInIndex;
 }
 
 /** The added (post-image) content of a patch — the `+` hunk lines, header excluded. */
@@ -235,14 +260,41 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusPaint[] 
     }
   }
 
-  // DEFERRED — surfaced as NOT ASSESSED so their absence never reads as "clear".
-  paint.push({
-    target: "rennet:review/blast-radius",
-    signal: "fan-in",
-    assessed: false,
-    reason:
-      "Fan-in not assessed — the identifier-occurrence reference index (#200) is not wired into this overlay yet.",
-  });
+  // 5. FAN-IN (#200 → #35 follow-on) — how many OTHER files depend on each changed file,
+  //    counted from the snapshot's symbol + reference indices. ASSESSED only when the index
+  //    is supplied (the composition supplies it only when populated); otherwise a NOT-
+  //    ASSESSED chip, never a silent zero. A changed file with zero dependents gets no
+  //    paint — "checked, nothing depends on it" — exactly like the other per-file signals.
+  if (input.fanIn) {
+    const fanIn = input.fanIn;
+    for (const file of input.files) {
+      const dependents = new Set<string>();
+      for (const name of fanIn.definedSymbols(file.path)) {
+        for (const referencingPath of fanIn.referencingFiles(name)) {
+          if (referencingPath !== file.path) dependents.add(referencingPath);
+        }
+      }
+      if (dependents.size > 0) {
+        const n = dependents.size;
+        paint.push(
+          filePaint(
+            "fan-in",
+            file.path,
+            `${n} file${n === 1 ? "" : "s"} reference this file's symbols; changes here ripple to them.`,
+          ),
+        );
+      }
+    }
+  } else {
+    // DEFERRED — surfaced as NOT ASSESSED so its absence never reads as "clear".
+    paint.push({
+      target: "rennet:review/blast-radius",
+      signal: "fan-in",
+      assessed: false,
+      reason:
+        "Fan-in not assessed — the identifier-occurrence reference index (#200) is not available for this review.",
+    });
+  }
   paint.push({
     target: "rennet:review/blast-radius",
     signal: "contract-surface",

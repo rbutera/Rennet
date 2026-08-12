@@ -25,6 +25,13 @@ export interface ReviewPipelineInputParts {
   readonly dispositions: ReviewPipelineInput["dispositions"];
   /** The review's CODEOWNERS rules — REQUIRED so a dropped resolve is a type error. */
   readonly ownership: NonNullable<ReviewPipelineInput["ownership"]>;
+  /**
+   * The fan-in index (#200) — OPTIONAL, because absence is a HONEST state (the reference
+   * index is not populated for this review) that surfaces as a NOT-ASSESSED chip, not a
+   * silent zero. Unlike `ownership` it cannot be required; the wire is guarded by the
+   * seam test instead (a supplied index must reach the pipeline input).
+   */
+  readonly fanIn?: ReviewPipelineInput["fanIn"];
   /** The honestly-probed installed harness set (Claude / Codex). */
   readonly installed: readonly CouncilHarnessId[];
   readonly decisionDocs: ReviewPipelineInput["decisionDocs"];
@@ -45,6 +52,7 @@ export function buildReviewCanvasesInput(parts: ReviewPipelineInputParts): Revie
     patchset: parts.patchset,
     dispositions: parts.dispositions,
     ownership: parts.ownership,
+    ...(parts.fanIn ? { fanIn: parts.fanIn } : {}),
     council: { availability: { installed: [...parts.installed] } },
     decisionDocs: parts.decisionDocs,
     ...(parts.codexPort ? { codexPort: parts.codexPort } : {}),

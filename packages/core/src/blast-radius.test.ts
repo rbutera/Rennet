@@ -1,6 +1,17 @@
 import type { OwnershipRule, PatchFile } from "@rennet/types";
 import { describe, expect, it } from "vitest";
-import { type BlastRadiusInput, computeBlastRadius } from "./blast-radius";
+import { type BlastRadiusInput, computeBlastRadius, type FanInIndex } from "./blast-radius";
+
+/** A fake fan-in index: files' defined symbols, and which files reference each name. */
+function fakeFanIn(
+  defined: Record<string, string[]>,
+  referencedBy: Record<string, string[]>,
+): FanInIndex {
+  return {
+    definedSymbols: (path) => defined[path] ?? [],
+    referencingFiles: (name) => referencedBy[name] ?? [],
+  };
+}
 
 function file(path: string, over: Partial<PatchFile> = {}): PatchFile {
   return {
@@ -19,8 +30,9 @@ function hunk(...added: string[]): string {
 function run(
   files: PatchFile[],
   ownership: OwnershipRule[] = [],
+  fanIn?: FanInIndex,
 ): ReturnType<typeof computeBlastRadius> {
-  const input: BlastRadiusInput = { files, ownership };
+  const input: BlastRadiusInput = { files, ownership, ...(fanIn ? { fanIn } : {}) };
   return computeBlastRadius(input);
 }
 const of = (paint: ReturnType<typeof computeBlastRadius>, signal: string) =>
@@ -303,6 +315,50 @@ describe("blast radius — deferred signals surface as NOT ASSESSED", () => {
   it("never invents a churn-heat signal", () => {
     const paint = run([file("src/x.ts", { patch: hunk("x".repeat(50)) })]);
     expect(paint.some((p) => String(p.signal).includes("churn"))).toBe(false);
+  });
+});
+
+// ── fan-in (#200): assessed dependent counts, and the honest-absence guard ─────
+describe("blast radius — fan-in", () => {
+  it("counts the DISTINCT other files that reference a changed file's symbols (#200)", () => {
+    // src/a.ts defines `foo` and `bar`; foo is referenced by b + c, bar by c + d.
+    // Dependents of a.ts = {b, c, d} = 3 distinct files (deduped across symbols).
+    const fanIn = fakeFanIn(
+      { "src/a.ts": ["foo", "bar"] },
+      { foo: ["src/b.ts", "src/c.ts"], bar: ["src/c.ts", "src/d.ts"] },
+    );
+    const paint = run([file("src/a.ts", { patch: hunk("export const foo = 1;") })], [], fanIn);
+    const fi = of(paint, "fan-in");
+    expect(fi).toHaveLength(1);
+    expect(fi[0]?.target).toBe("rennet:file/src/a.ts");
+    expect(fi[0]?.assessed).toBe(true);
+    expect(fi[0]?.reason).toMatch(/^3 files reference/);
+    // Fan-in is now ASSESSED, so it is NOT among the not-assessed chips (only contract-surface is).
+    expect(paint.filter((p) => p.assessed === false).map((p) => p.signal)).toEqual([
+      "contract-surface",
+    ]);
+  });
+
+  it("does NOT count a file's references to its OWN symbols", () => {
+    const fanIn = fakeFanIn({ "src/a.ts": ["foo"] }, { foo: ["src/a.ts"] });
+    const paint = run([file("src/a.ts", { patch: hunk("export const foo = 1;") })], [], fanIn);
+    // Zero external dependents ⇒ no fan-in paint (checked, nothing depends on it), and the
+    // signal is still assessed (no not-assessed fan-in chip).
+    expect(of(paint, "fan-in")).toHaveLength(0);
+    expect(paint.some((p) => p.signal === "fan-in" && p.assessed === false)).toBe(false);
+  });
+
+  it("singular wording for exactly one dependent", () => {
+    const fanIn = fakeFanIn({ "src/a.ts": ["foo"] }, { foo: ["src/b.ts"] });
+    const paint = run([file("src/a.ts")], [], fanIn);
+    expect(of(paint, "fan-in")[0]?.reason).toMatch(/^1 file reference/);
+  });
+
+  it("stays NOT ASSESSED when no index is supplied — never a silent zero (#200 guard)", () => {
+    const paint = run([file("src/a.ts", { patch: hunk("export const foo = 1;") })]);
+    const fi = paint.find((p) => p.signal === "fan-in");
+    expect(fi?.assessed).toBe(false);
+    expect(fi?.reason).toMatch(/not assessed/i);
   });
 });
 
