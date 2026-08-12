@@ -328,11 +328,10 @@ describe("blast radius — fan-in", () => {
       { foo: ["src/b.ts", "src/c.ts"], bar: ["src/c.ts", "src/d.ts"] },
     );
     const paint = run([file("src/a.ts", { patch: hunk("export const foo = 1;") })], [], fanIn);
-    const fi = of(paint, "fan-in");
-    expect(fi).toHaveLength(1);
-    expect(fi[0]?.target).toBe("rennet:file/src/a.ts");
-    expect(fi[0]?.assessed).toBe(true);
-    expect(fi[0]?.reason).toMatch(/^3 files reference/);
+    const perFile = of(paint, "fan-in").filter((p) => p.target === "rennet:file/src/a.ts");
+    expect(perFile).toHaveLength(1);
+    expect(perFile[0]?.assessed).toBe(true);
+    expect(perFile[0]?.reason).toMatch(/^3 files reference/);
     // Fan-in is now ASSESSED, so it is NOT among the not-assessed chips (only contract-surface is).
     expect(paint.filter((p) => p.assessed === false).map((p) => p.signal)).toEqual([
       "contract-surface",
@@ -342,16 +341,36 @@ describe("blast radius — fan-in", () => {
   it("does NOT count a file's references to its OWN symbols", () => {
     const fanIn = fakeFanIn({ "src/a.ts": ["foo"] }, { foo: ["src/a.ts"] });
     const paint = run([file("src/a.ts", { patch: hunk("export const foo = 1;") })], [], fanIn);
-    // Zero external dependents ⇒ no fan-in paint (checked, nothing depends on it), and the
-    // signal is still assessed (no not-assessed fan-in chip).
-    expect(of(paint, "fan-in")).toHaveLength(0);
+    // Zero external dependents ⇒ no PER-FILE fan-in paint (checked, nothing depends on it).
+    expect(of(paint, "fan-in").filter((p) => p.target.startsWith("rennet:file/"))).toHaveLength(0);
+  });
+
+  it("a zero-dependent review is still EXPLICITLY assessed, never mere silence", () => {
+    // The honesty property one layer out: when the index IS supplied but every changed
+    // file has zero dependents, fan-in must announce "assessed, zero dependents" as a
+    // positive fact — NOT the same empty result a review would show if this producer had
+    // never run. So the index-supplied path always emits an assessed:true review-level
+    // marker, distinct from both the per-file paints (none, here) and the not-assessed
+    // absent chip (which must NOT appear when the index is present).
+    // Red-proof: delete the review-level `assessed:true` push from the fanIn branch and
+    // this reddens — the zero-dependent review then carries no fan-in entry at all,
+    // indistinguishable from "producer never ran".
+    const fanIn = fakeFanIn({ "src/a.ts": ["foo"] }, { foo: ["src/a.ts"] });
+    const paint = run([file("src/a.ts", { patch: hunk("export const foo = 1;") })], [], fanIn);
+    const marker = paint.find(
+      (p) => p.signal === "fan-in" && p.target === "rennet:review/blast-radius",
+    );
+    expect(marker?.assessed).toBe(true);
+    expect(marker?.reason).toMatch(/assessed/i);
+    // And the not-assessed absent chip must NOT be present when the index was supplied.
     expect(paint.some((p) => p.signal === "fan-in" && p.assessed === false)).toBe(false);
   });
 
   it("singular wording for exactly one dependent", () => {
     const fanIn = fakeFanIn({ "src/a.ts": ["foo"] }, { foo: ["src/b.ts"] });
     const paint = run([file("src/a.ts")], [], fanIn);
-    expect(of(paint, "fan-in")[0]?.reason).toMatch(/^1 file reference/);
+    const perFile = of(paint, "fan-in").filter((p) => p.target === "rennet:file/src/a.ts");
+    expect(perFile[0]?.reason).toMatch(/^1 file reference/);
   });
 
   it("stays NOT ASSESSED when no index is supplied — never a silent zero (#200 guard)", () => {
