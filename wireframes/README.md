@@ -27,4 +27,4 @@ node wireframes/serve.mjs
 
 Badges are derived from each frame's filename prefix (`05-project-detail` → badge `05`), so a new screen can be inserted (e.g. `04a-projects-list`) without renumbering the frames after it.
 
-Version marker lives in `gen-wireframe-gallery.mjs` (the hero kicker). Current: **v3.2**.
+Version marker lives in `gen-wireframe-gallery.mjs` (the hero kicker). Current: **v3.3**.

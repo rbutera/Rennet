@@ -21,6 +21,7 @@ const SCREENS = [
   { f: '04a-projects-list.png', n: 'Projects list', tag: 'Home', p: 'The populated front door — the same screen as first-run, now with projects. One row per project, most-recently-active first; a row is a whole project — a single repo or a multi-repo workspace. Add-a-project stays present as its own row; detection stays one ambient line. Row states drawn: active/needs-you, quiet, processing, stale-map, never-opened.', feats: [] },
   { f: '05-project-detail.png', n: 'Project detail', tag: 'Home', p: 'The everyday landing: ONE smart list, no hard zones (the ratified model, matching shipped #37/#216). Every branch, worktree and PR reads by state — local backlight, my-PR accent stripe, teammate PR neutral, needs-you amber, merged read-only + dimmed. Hot sort floats what needs you; filters All / Needs-you / Mine / Local / PRs. Dedupe folds a checked-out worktree onto its PR row; merged → read-only + clean up. Mode glyph in the title bar, no consent banner.', feats: [] },
   { f: '06-review-heart.png', n: 'The review heart', tag: 'Review', p: 'The tall sequence canvas. In-diff dispositions, the inline conversation cluster on every line, view-test + open-in-editor on the sticky header, threads in the right margin. Real scroll, no fold.', feats: [] },
+  { f: '06a-delta-rereview.png', n: 'Delta re-review', tag: 'Review', p: 'New (v3.3). The successor review after a handoff turn: the delta account states what moved before you re-read a line — each staged ask addressed / partially / untouched, and every path changed beyond your asks, surfaced loud. The facts are deterministic (no model); a light-tier LLM digest sits on top as the one-glance read, auto-generated every re-review, streaming in after the facts, and simply absent when the model is off. It gates nothing.', feats: [] },
   { f: '07-spec-view.png', n: 'Spec view', tag: 'Review', p: 'The openspec artifact set rendered as its shape: distilled why, capability grid, requirement rows with WHEN/THEN scenarios, coverage chips. Reviewable material, not raw markdown. Worked on a real rennet change.', feats: [] },
   { f: '08-decisions.png', n: 'Decisions', tag: 'Review', p: 'The calls the implementer made, grouped by theme, with evidence chips, a reconstructed why, and the alternatives not taken. The evidenced / mechanical / contestable taxonomy is gone.', feats: [] },
   { f: '09-flagged.png', n: 'Flagged', tag: 'Review', p: 'Model-council findings and dual-review disagreements, indexed by severity and agreement state, jumping to the marks at their anchors. The disagreement flare lives here, not in chat.', feats: [] },
@@ -130,7 +131,7 @@ const html = `<style>
 </style>
 
 <header class="hero"><div class="wrap">
-  <p class="kicker">Rennet &middot; lo-fi wireframes &middot; v3.2</p>
+  <p class="kicker">Rennet &middot; lo-fi wireframes &middot; v3.3</p>
   <h1>The whole app, one scroll.</h1>
   <p class="lede">Nineteen screens in flow order, rebuilt from your feedback and updated again since. The wizard is gone: add-a-project is the onboarding, and the narrated processing screen is the tutorial. The populated projects list is the front door (the same screen as first-run, now with projects), and project detail is one smart list, no hard zones: rows read by state, with a filter bar and a Hot sort. A Noise lens now joins the review lenses; the chrome moved to a sans UI type, with monospace kept for code only; the execution-mode glyph rides every in-project title bar; and processing shows an honest MVP spinner. Terse chrome; the LLM canvas content stays rich.</p>
   <div class="meta">
@@ -163,7 +164,7 @@ ${(() => {
   </section>
 </main>
 
-<footer><div class="wrap">Rennet wireframes v3.2 &middot; rebuilt from your feedback &middot; HTML sources in wireframes/src, iterable further.</div></footer>`;
+<footer><div class="wrap">Rennet wireframes v3.3 &middot; rebuilt from your feedback &middot; HTML sources in wireframes/src, iterable further.</div></footer>`;
 
 writeFileSync(OUT, html);
 const kb = Math.round(Buffer.byteLength(html) / 1024);

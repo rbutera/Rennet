@@ -207,7 +207,7 @@ export function frame05() {
   const winBody = `<div class="pd">${rail}${main}</div>`;
 
   return {
-    title: 'Rennet v3 · 05 Project detail',
+    title: 'Rennet v3.3 · 05 Project detail',
     head: { badge: '05', title: 'Project detail: the everyday landing', pill: 'Home' },
     ref: 'the everyday landing · ONE smart list\nno zones · filter + sort · mode glyph in the title bar',
     sub: 'Click a project and land here: <b>one list, no hard zones</b>. Every branch, worktree and PR reads distinctly by state — your local work in private backlight, your PRs accent-striped, a teammate’s PR neutral, a row that needs you in amber, a merged PR dimmed and read-only. Sort defaults to <b>Hot</b> (what needs you floats up); the filter bar narrows to Needs-you / Mine / Local / PRs. The execution mode is one glyph in the title bar, no consent banner.',

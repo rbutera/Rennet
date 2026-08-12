@@ -1,4 +1,4 @@
-// Rennet v3 wireframes — shared design system, chrome, icon set.
+// Rennet v3.3 wireframes — shared design system, chrome, icon set.
 // Emitted frames are self-contained (this CSS is inlined into every .html).
 
 export const CSS = `

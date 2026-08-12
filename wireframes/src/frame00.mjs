@@ -89,7 +89,7 @@ export function frame00() {
   const winBody = `<div class="legend-grid">${colA}${colB}${colC}</div>`;
 
   return {
-    title: 'Rennet v3 · 00 Legend',
+    title: 'Rennet v3.3 · 00 Legend',
     head: { badge: '00', title: 'Legend: the icon language', pill: 'Reference' },
     ref: 'v3 · icon-forward chrome\ndefines every glyph used across 01-17',
     sub: 'Rennet’s own chrome speaks in icons where they save noise; the words that remain are terse labels. This key defines every glyph. The <b>LLM-generated canvas content</b> (narration, a model’s answer, a distilled why) is exempt from the terse rule and lives by its own voice.',

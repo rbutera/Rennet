@@ -53,7 +53,7 @@ export function frame11() {
   const body = `<div class="draft-top"><span class="chip blue">${ic.decisions}editable · yours</span><div class="right"><button class="btn ink">${ic.comment}Refine to post</button><button class="btn">${ic.resteer}Compose handoff</button></div></div><div class="draftgrid">${main}${panel}</div>`;
 
   return {
-    title: 'Rennet v3 · 11 Collation draft',
+    title: 'Rennet v3.3 · 11 Collation draft',
     head: { badge: '11', title: 'Collation draft: the one editable draft', pill: 'Draft' },
     ref: 'the missing middle\neditable glass between lenses and paper',
     sub: 'The editable draft between the lenses and the paper: your dispositions collated into a document-in-formation, one click back to each anchor. Every staged item carries the inline conversation cluster, so you can question or discuss a staged chunk before signing. The orchestrator proposes; you dispose. Editing lives here; the paper is a freeze.',
@@ -108,7 +108,7 @@ export function frame12() {
   const body = `<div class="draft-top" style="margin-bottom:16px"><span class="chip">${ic.paper}paper · solid</span><span class="chip">nothing editable here</span></div><div class="papergrid">${paper}${panel}</div>`;
 
   return {
-    title: 'Rennet v3 · 12 Paper / sign',
+    title: 'Rennet v3.3 · 12 Paper / sign',
     head: { badge: '12', title: 'Paper: the one thing you sign', pill: 'Sign' },
     ref: 'the derived verdict + the human sign\nsign in the loop IS the safety',
     sub: 'The one solid object. It previews <b>exactly</b> what will post, nothing editable. The verdict is derived from your dispositions (here, request changes) and shown with its derivation, and you can override it. The human sign carries the real verdict: the sign in the loop is the safety, not a forced-neutral event.',
@@ -165,7 +165,7 @@ export function frame13() {
   const body = `${composer}${thread}`;
 
   return {
-    title: 'Rennet v3 · 13 Questions',
+    title: 'Rennet v3.3 · 13 Questions',
     head: { badge: '13', title: 'Questions: the orchestrator, by default', pill: 'Ask' },
     ref: 'orchestrator-only default\nask both is an opt-in split',
     sub: 'Every question goes to the orchestrator by default. The send control carries one small split: ask both models, remembered per thread, never sticky globally. When you ask both, the answers arrive as two labeled cards, side by side. There is no synthesis block, ever: the robotic auto-merge is gone.',
@@ -214,7 +214,7 @@ export function frame14() {
   const body = `<div class="setgrid">${left}${right}</div>`;
 
   return {
-    title: 'Rennet v3 · 14 Settings',
+    title: 'Rennet v3.3 · 14 Settings',
     head: { badge: '14', title: 'Settings and instructions', pill: 'Cross-cutting' },
     ref: 'the layered config ladder\nglobal › workspace › repo',
     sub: 'Terse. Config layers: global, then workspace, then repo, each overriding the last, with every row showing where its value comes from. Per-repo guidance is the house rules the harness reads before every review. The execution-mode default lives here and surfaces as the title-bar glyph.',
@@ -259,7 +259,7 @@ export function frame15() {
   </div>`;
 
   return {
-    title: 'Rennet v3 · 15 Command palette',
+    title: 'Rennet v3.3 · 15 Command palette',
     head: { badge: '15', title: 'Command palette', pill: 'Cross-cutting' },
     ref: 'command-K\nevery action, named and remappable',
     sub: 'Command-K. Every action in Rennet is a named command with a key hint, and every binding is remappable. The keyboard is a first-class surface, not an afterthought.',
@@ -331,7 +331,7 @@ export function frame16() {
   </div>`;
 
   return {
-    title: 'Rennet v3 · 16 Flow overview',
+    title: 'Rennet v3.3 · 16 Flow overview',
     head: { badge: '16', title: 'Flow overview: the whole app, one map', pill: 'The map' },
     ref: 'the v3 journey\ntwo entry points, one draft, one sign',
     sub: 'The v3 flow as one map. Point at code, watch it process, land on the two-zone project detail, and review through the canvases into a single editable draft and one signed paper. Your local work flows toward Make PR; a teammate’s PR is the other entry point, into the same canvases.',

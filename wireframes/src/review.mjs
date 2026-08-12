@@ -127,7 +127,7 @@ export function frame06() {
   const body = `<div class="lensbar"><span class="lens"><span style="color:#5a6069">${'<>'}</span>12</span><span class="lens on">${ic.sequence}Sequence</span><span class="lens">${ic.decisions}4</span><span class="lens">${ic.flag}2</span><span class="lens">${ic.noise}Noise</span><div class="right"><span class="chip blue">● 4 private</span><button class="btn">${ic.paper}Preview</button></div></div><div class="grid3">${rail}${center}${margin}</div>`;
 
   return {
-    title: 'Rennet v3 · 06 The review heart',
+    title: 'Rennet v3.3 · 06 The review heart',
     head: { badge: '06', title: 'The review heart: the sequence canvas', pill: 'Review' },
     ref: 'the tall, scrolling surface\nno viewport-fold element',
     sub: 'The code, in-diff dispositions, and the inline conversation cluster on every line. The surface is genuinely <b>tall</b> and scrolls the whole changeset, with no fold theatre. Threads live in the right margin aligned to their line; the diff column never reflows. The sticky chunk header keeps “view test” and open-in-editor reachable.',
@@ -243,7 +243,7 @@ export function frame07() {
   const body = `<div class="lensbar">${lensTabs('spec')}<div class="right"><button class="btn">raw markdown ⌘R</button></div></div>${band}${spine}${grid}${tasks}`;
 
   return {
-    title: 'Rennet v3 · 07 Spec view',
+    title: 'Rennet v3.3 · 07 Spec view',
     head: { badge: '07', title: 'Spec view: the structured artifact viewer', pill: 'Review' },
     ref: 'the openspec shape, rendered\nworked on build-model-council-v1',
     sub: 'The artifact set has a known shape, so Rennet renders the <b>shape</b>, not the raw markdown: a header band, the distilled why, the why / what-changes spine, a capability grid, and requirements as structured rows with their WHEN/THEN scenarios and coverage. Requirements, scenarios and tasks are all disposition anchors. Raw markdown is one keystroke away.',
@@ -300,7 +300,7 @@ export function frame08() {
   const body = `<div class="lensbar">${lensTabs('decisions')}<div class="right"><span class="chip">2 groups · 4 decisions</span></div></div>${grp1}${grp2}`;
 
   return {
-    title: 'Rennet v3 · 08 Decisions',
+    title: 'Rennet v3.3 · 08 Decisions',
     head: { badge: '08', title: 'Decisions: the calls the implementer made', pill: 'Review' },
     ref: 'purified, per Rai’s re-steer\nno triage taxonomy',
     sub: 'The decisions the implementer made, discernible from the spec, the PR body and the diff, grouped by theme. Each is the decision in plain language, the evidence it is drawn from, a <b>reconstructed</b> why (marked as such), and the alternatives not taken. The evidenced / mechanical / contestable buckets are gone; judging a decision is the reviewer’s job, not a pre-chewed verdict’s.',
@@ -370,7 +370,7 @@ export function frame09() {
   const body = `<div class="lensbar">${lensTabs('flagged')}<div class="right rel"><span class="anno" style="right:150px;top:-30px">${dot(3)}</span><span class="chip">3 flags · 1 disagreement</span></div></div>${f1}${f2}${f3}`;
 
   return {
-    title: 'Rennet v3 · 09 Flagged',
+    title: 'Rennet v3.3 · 09 Flagged',
     head: { badge: '09', title: 'Flagged: what the automated review raised', pill: 'Review · new' },
     ref: 'the new lens\nfindings + disagreements, indexed',
     sub: 'Everything the automated review layer produced: model-council findings and dual-review disagreements. Each flag carries a severity, the agreement state (both concur, or the models disagree), and its anchor. The disagreement flare lives here, in the index, instead of ambushing you in the chat.',
@@ -453,7 +453,7 @@ export function frame10() {
   const body = `<div class="lensbar">${lensTabs('sequence')}<div class="right"><span class="chip">${ic.peek}peek · then pin</span></div></div><div class="grid-insp">${center}${rail}</div>`;
 
   return {
-    title: 'Rennet v3 · 10 Symbol inspector',
+    title: 'Rennet v3.3 · 10 Symbol inspector',
     head: { badge: '10', title: 'Symbol inspector: peek, then pin', pill: 'Review' },
     ref: 'the answer to “what is this?”\nnever inline, never reflowing',
     sub: 'A plain click on a symbol opens a floating glass peek card at the symbol: signature, doc, the first lines, and a tier label (a tree-sitter guess versus a TypeScript answer). Pin it and the card docks into the right rail as a tiny code browser you navigate with a breadcrumb and back / forward. The navigation happens inside the inspector, so the diff never moves.',
@@ -504,7 +504,7 @@ export function frameNoise() {
   const body = `<div class="lensbar">${lensTabs('noise')}<div class="right"><span class="chip">6 groups · 36 hunks</span></div></div>${summary}${rows}`;
 
   return {
-    title: 'Rennet v3 · Noise',
+    title: 'Rennet v3.3 · Noise',
     head: { badge: '10', title: 'Noise: touched, but not for you', pill: 'Review · new' },
     ref: 'issue #34 · cut the noise\ngrouped, judged, dismissible',
     sub: 'A grouped summary of everything the changeset touches but that was judged not to need your attention. Most of it is settled deterministically (the formatter, lockfile paths, import order); the ambiguous remainder is judged by an LLM noise job, and each group says which. Nothing is hidden: noise is collapsed and dismissible, never dropped. It is the totality floor.',

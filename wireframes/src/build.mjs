@@ -9,6 +9,7 @@ import { frame01, frame02, frame03, frame04 } from './onboarding.mjs';
 import { frameProjectsList } from './projectslist.mjs';
 import { frame05 } from './frame05.mjs';
 import { frame06, frame07, frame08, frame09, frame10, frameNoise } from './review.mjs';
+import { frameDeltaReview } from './deltareview.mjs';
 import { frame11, frame12, frame13, frame14, frame15, frame16 } from './finalize.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url)); // .../src
@@ -23,6 +24,7 @@ const FRAMES = {
   '04a-projects-list': frameProjectsList,
   '05-project-detail': frame05,
   '06-review-heart': frame06,
+  '06a-delta-rereview': frameDeltaReview,
   '07-spec-view': frame07,
   '08-decisions': frame08,
   '09-flagged': frame09,

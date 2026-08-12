@@ -130,7 +130,7 @@ export function frameProjectsList() {
   </div>`;
 
   return {
-    title: 'Rennet v3 · Projects list',
+    title: 'Rennet v3.3 · Projects list',
     head: { badge: '04a', title: 'Projects list: the populated home', pill: 'Home' },
     ref: 'the front door · same screen as first-run\nadd stays present · one row per project',
     sub: 'The everyday front door: every project you have added, one row each, most-recently-active first. A row is a whole <b>project</b> — a single repo or a <b>workspace</b> holding several repos. Add-a-project stays present as its own row, and harness detection stays the one ambient line it was on first run. Click a row to land in project detail.',
