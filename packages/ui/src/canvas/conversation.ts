@@ -147,6 +147,12 @@ export interface ThreadMessage {
   /** The harness/model label shown on a harness card; absent for "you". */
   readonly model?: string;
   readonly body: string;
+  /**
+   * The turn's lifecycle (issue #251). ABSENT means `complete` — every #36 message,
+   * and every durable answer, omits it. `streaming` is the live-coalescing message;
+   * `interrupted` is a turn whose process died mid-stream. See {@link TurnStatus}.
+   */
+  readonly status?: TurnStatus;
 }
 
 /**
@@ -173,6 +179,12 @@ export interface ConversationThread {
   /** The default routing for a NEW question in this thread — the orchestrator (#139). */
   readonly route: AskMode;
   readonly messages: readonly ThreadMessage[];
+  /**
+   * ORPHANED (issue #251): on re-attach, this thread's anchor no longer resolved against
+   * the current diff. ABSENT means placed. Set only via {@link markOrphaned}, which never
+   * changes the anchor — the thread is surfaced as orphaned, never re-anchored.
+   */
+  readonly orphaned?: boolean;
 }
 
 // ── Opening + growing a thread ────────────────────────────────────────────────
@@ -377,6 +389,161 @@ export function groupThreadsByAnchor(
     else groups.set(key, [thread]);
   }
   return groups;
+}
+
+// ── Turn lifecycle + durability (issue #251) ──────────────────────────────────
+//
+// #36 shipped a thread whose harness messages are all COMPLETE. #251 adds the two
+// interrupted-observable states around them, and keeps the privacy law untouched:
+// none of this reads a message body into a payload; only `promoteMessage` still does.
+
+/**
+ * The lifecycle of a harness turn. A durable, completed answer has NO status (every
+ * #36 message is therefore `complete` by omission — back-compat). `streaming` is the
+ * live-coalescing message (renderer-only, never persisted). `interrupted` is a turn
+ * whose process died mid-stream: it is surfaced honestly and is NEVER upgraded to a
+ * fabricated `complete` (that upgrade is the exact failure the crash-recovery transform
+ * forbids).
+ */
+export type TurnStatus = "streaming" | "complete" | "interrupted";
+
+/** A completed durable message (status omitted) is `complete`. */
+export function isComplete(message: ThreadMessage): boolean {
+  return message.status === undefined || message.status === "complete";
+}
+
+/** A live-coalescing message (renderer-only; its body grows as deltas arrive). */
+export function isStreaming(message: ThreadMessage): boolean {
+  return message.status === "streaming";
+}
+
+/** A turn that never completed — the process died mid-stream. Surfaced, never faked. */
+export function isInterrupted(message: ThreadMessage): boolean {
+  return message.status === "interrupted";
+}
+
+/**
+ * The marker for a turn that was interrupted before completion. Carries whatever partial
+ * text had streamed (or none), STATUS-flagged so the UI shows it as interrupted rather
+ * than as an answer. It is not a durable answer and must never be promoted as one.
+ */
+export function interruptedTurn(messageId: string, model: string, partial = ""): ThreadMessage {
+  return { id: messageId, author: "harness", model, body: partial, status: "interrupted" };
+}
+
+/**
+ * Mark a thread ORPHANED — its anchor no longer resolves against the current diff (#251).
+ * The thread's content is preserved and its anchor is UNCHANGED: orphaning surfaces the
+ * loss, it does not re-point the thread at whatever code now occupies the anchor key.
+ * Re-anchoring is the disposition-carry failure class (a human's words on code they never
+ * wrote them about), so there is deliberately no `reAnchor` here — only this honest flag.
+ */
+export function markOrphaned(thread: ConversationThread): ConversationThread {
+  return { ...thread, orphaned: true };
+}
+
+/** Whether a thread is orphaned (anchor no longer resolves). Absent flag = placed. */
+export function isOrphaned(thread: ConversationThread): boolean {
+  return thread.orphaned === true;
+}
+
+// ── Two-channel token streaming under an injected clock (issue #251) ───────────
+//
+// Token deltas arrive faster than the DOM should repaint, so they are COALESCED. The
+// BODY is a deterministic concatenation with NO clock dependence; the injected clock
+// (`now` + `throttleMs`) governs only how often a repaint is signalled. That split is
+// the whole testable contract: replay the same deltas under a hand-advanced fake clock
+// and the body is byte-identical every run, while the repaint count tracks the clock.
+
+/** The channel a streamed answer arrives on — the orchestrator, or Codex's second opinion. */
+export type StreamChannel = "orchestrator" | "codex";
+
+/** One channel's coalescing state: the accumulated body and when it last repainted. */
+export interface CoalescerState {
+  readonly body: string;
+  readonly lastRepaintAt: number;
+}
+
+/** A fresh, empty coalescer state (no body, never repainted). */
+export function emptyCoalescerState(): CoalescerState {
+  return { body: "", lastRepaintAt: Number.NEGATIVE_INFINITY };
+}
+
+/**
+ * The book of coalescer states, one per (turnId, channel). Immutable: every push returns
+ * a new book, so a stray delta from a superseded turn cannot mutate a live one in place.
+ */
+export type CoalescerBook = ReadonlyMap<string, CoalescerState>;
+
+/** An empty coalescer book. */
+export function emptyCoalescerBook(): CoalescerBook {
+  return new Map<string, CoalescerState>();
+}
+
+/**
+ * The book key, injective over (turnId, channel). The tuple is JSON-encoded (the same
+ * idiom `fragmentAnchorKey` uses for two unconstrained strings), so `[channel, turnId]`
+ * and any other pair produce DIFFERENT keys for any string contents — two channels of the
+ * SAME turn can never share a state. RED-proof: drop `channel` from this key and the
+ * two-channel-independence test reddens (the two bodies collide into one).
+ */
+export function coalescerKey(turnId: string, channel: StreamChannel): string {
+  return JSON.stringify([channel, turnId]);
+}
+
+/** The current coalesced body for a (turnId, channel), or "" if none has streamed. */
+export function channelBody(book: CoalescerBook, turnId: string, channel: StreamChannel): string {
+  return (book.get(coalescerKey(turnId, channel)) ?? emptyCoalescerState()).body;
+}
+
+/** The result of folding a delta: the new book, the channel's current body, and whether a
+ *  repaint is DUE now (at least `throttleMs` since this channel last repainted). */
+export interface CoalesceResult {
+  readonly book: CoalescerBook;
+  readonly body: string;
+  readonly repaint: boolean;
+}
+
+/**
+ * Fold one token `delta` for a (turnId, channel) at time `now`. The body ALWAYS accumulates
+ * (`prev.body + delta`) with no dependence on the clock; `repaint` is due only when at least
+ * `throttleMs` has elapsed since this channel's last repaint. The returned book is a copy —
+ * the caller holds it, and a delta for a different (turnId, channel) leaves this one alone.
+ */
+export function pushDelta(
+  book: CoalescerBook,
+  turnId: string,
+  channel: StreamChannel,
+  delta: string,
+  now: number,
+  throttleMs: number,
+): CoalesceResult {
+  const key = coalescerKey(turnId, channel);
+  const prev = book.get(key) ?? emptyCoalescerState();
+  const body = prev.body + delta;
+  const due = now - prev.lastRepaintAt >= throttleMs;
+  const next: CoalescerState = { body, lastRepaintAt: due ? now : prev.lastRepaintAt };
+  const nextBook = new Map(book);
+  nextBook.set(key, next);
+  return { book: nextBook, body, repaint: due };
+}
+
+/**
+ * Force a final repaint of a channel's accumulated body — on `done` or `interrupted`, the
+ * UI must paint the last bytes regardless of the throttle. Repaint is always true here.
+ */
+export function flushChannel(
+  book: CoalescerBook,
+  turnId: string,
+  channel: StreamChannel,
+  now: number,
+): CoalesceResult {
+  const key = coalescerKey(turnId, channel);
+  const prev = book.get(key) ?? emptyCoalescerState();
+  const next: CoalescerState = { body: prev.body, lastRepaintAt: now };
+  const nextBook = new Map(book);
+  nextBook.set(key, next);
+  return { book: nextBook, body: prev.body, repaint: true };
 }
 
 // ── Fixture behind the real typed boundary (mirroring #138 / #139) ────────────

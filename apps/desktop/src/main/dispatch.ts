@@ -25,6 +25,8 @@ import {
   type ProjectVisibility,
   parseCommandInput,
   parseCommandOutput,
+  type ReattachResult,
+  type ReviewAskStreamEvent,
   type SetRepoVisibilityOutcome,
   type SettingsGuidance,
   type SettingsView,
@@ -260,6 +262,14 @@ export interface DispatchDeps {
     decisions?: readonly string[];
   }) => Promise<PrBodyDraftResult>;
   /**
+   * Reload the persisted conversation threads for a review, plus any turn still
+   * streaming in a surviving main process (issue #251). Optional so a composition with
+   * no thread store still constructs — dispatch then answers the TRUTHFUL empty result
+   * (there are genuinely zero persisted threads and zero tracked in-flight turns, NOT a
+   * fabricated set). This is the seam the `ThreadStore` + `LiveTurnRegistry` plug into.
+   */
+  readonly reattachThreads?: (input: { reviewId: string }) => Promise<ReattachResult>;
+  /**
    * The symbol inspector port (Rai, wireframes #8): resolve one clicked identifier to
    * its definition + reference sites over the review's model-free symbolic surface.
    * Takes the ALREADY-RESOLVED review (dispatch freshness-pins it once). Optional so a
@@ -336,6 +346,12 @@ function toForgeReviewTarget(target: {
  */
 export interface DispatchContext {
   emitProgress?(event: ProjectProcessEvent): void;
+  /**
+   * The push sink for a conversation's token STREAM (issue #251) — the transport binds
+   * it to the renderer's `onAskStream` channel, keyed by `reviewId`. Absent for a bridge
+   * with no push channel (a #139 one-shot ask resolves its final value with no stream).
+   */
+  emitAskStream?(event: ReviewAskStreamEvent): void;
 }
 
 export function createDispatch(
@@ -725,6 +741,20 @@ export function createDispatch(
           askCodex: (question) => deps.reviewAsk.askCodex({ review, question }),
         });
         return parseCommandOutput(name, result);
+      }
+      // ── review.reattach: reload persisted threads + in-flight turns (issue #251) ─
+      case "review.reattach": {
+        // Reload the conversation threads persisted for this review and any turn still
+        // streaming in a surviving main process. Resolve the review ONCE (a stale/unknown
+        // id is refused, exactly like ask). With no thread store wired yet, the honest
+        // answer is genuinely empty — zero persisted threads, zero tracked in-flight
+        // turns — NOT a fabricated set; this is the seam persistence (§3/§5) plugs into.
+        const input = parseCommandInput(name, rawInput);
+        requireLatestReview(input.reviewId);
+        if (!deps.reattachThreads) {
+          return parseCommandOutput(name, { threads: [], inFlight: [] });
+        }
+        return parseCommandOutput(name, await deps.reattachThreads({ reviewId: input.reviewId }));
       }
       // ── Refine a rough note into a clean comment (issue #19) ───────────────────
       case "review.refine": {
