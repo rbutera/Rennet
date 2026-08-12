@@ -229,8 +229,8 @@ describe("proactive rehydration — end to end over a real git repo", () => {
     handle?.close();
   });
 
-  it("serializes knowledge passes and coalesces a newer advance behind the running pass", async () => {
-    const { root, storeDir, advance } = repoOnMain();
+  it("coalesces from the unpersisted base when a running knowledge pass fails", async () => {
+    const { root, storeDir, oid1, advance } = repoOnMain();
     const store = new ProjectSnapshotStore(storeDir);
     const generator = new ProjectSnapshotGenerator({ store });
     await generator.generate(root, { explicitBaseRef: "main" });
@@ -251,14 +251,18 @@ describe("proactive rehydration — end to end over a real git repo", () => {
       },
       runKnowledgePass: async (input) => {
         calls.push(input);
-        if (calls.length === 1) await releaseFirst.promise;
-        else secondStarted.resolve();
+        if (calls.length === 1) {
+          await releaseFirst.promise;
+          return false;
+        }
+        secondStarted.resolve();
+        return true;
       },
       watch: watcher.watch,
       timers: clock.timers,
     });
 
-    const oid2 = advance();
+    advance();
     watcher.fire(`${sep}refs${sep}heads`);
     clock.flush();
     await structuralDone[0]?.promise;
@@ -279,7 +283,7 @@ describe("proactive rehydration — end to end over a real git repo", () => {
     await secondStarted.promise;
     expect(calls).toHaveLength(2);
     expect(calls[1]?.toOid).toBe(oid4);
-    expect(calls[1]?.fromOid).toBe(oid2);
+    expect(calls[1]?.fromOid).toBe(oid1);
     handle?.close();
   });
 

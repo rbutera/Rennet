@@ -133,6 +133,11 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
     await lifecycle.advanceRepo(opened.snapshot.repoKey);
 
     expect(lifecycle.get(opened.snapshot.repoKey, review.id)?.ledger.baseOid).toBe(repo.oid2);
+    const advance = lifecycle.getLastAdvance(opened.snapshot.repoKey, review.id);
+
+    await createLiveCanvasOpsBackend(review, pipeline, { store, noveltyLifecycle: lifecycle });
+    expect(lifecycle.get(opened.snapshot.repoKey, review.id)?.ledger.baseOid).toBe(repo.oid2);
+    expect(lifecycle.getLastAdvance(opened.snapshot.repoKey, review.id)).toBe(advance);
   });
 
   it("serves REAL snapshot-derived data for context.map / context.file / context.novelty", async () => {

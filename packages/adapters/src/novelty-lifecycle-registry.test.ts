@@ -43,5 +43,14 @@ describe("NoveltyLifecycleRegistry", () => {
     expect(registry.get("repo", "review")?.ledger.projectSnapshotId).toBe("new");
     expect(registry.get("repo", "review")?.ledger.entries[0]?.classification).toBe("novel");
     expect(registry.getLastAdvance("repo", "review")?.pendingEntryKeys).toHaveLength(1);
+
+    registry.register(
+      "repo",
+      "review",
+      { ledger: ledger("extends", "old"), judgments: new Map() },
+      async () => ({ ok: true, ledger: ledger("novel", "newer") }),
+    );
+    expect(registry.get("repo", "review")?.ledger.projectSnapshotId).toBe("new");
+    expect(registry.getLastAdvance("repo", "review")?.pendingEntryKeys).toHaveLength(1);
   });
 });

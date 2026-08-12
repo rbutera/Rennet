@@ -75,6 +75,13 @@ export interface ResolvedRepo {
   readonly gitCommonDir: string;
 }
 
+interface KnowledgeAdvance {
+  readonly repoKey: string;
+  readonly repoRoot: string;
+  readonly fromOid: string;
+  readonly toOid: string;
+}
+
 /** The absolute git common dir for `root` (`rev-parse --git-common-dir`, path-resolved). */
 export async function resolveGitCommonDir(root: string, git: GitExec): Promise<string> {
   const raw = (await git(root, ["rev-parse", "--git-common-dir"], { reject: true })).trim();
@@ -111,7 +118,7 @@ export interface StartRepoRehydrationDeps {
     readonly repoRoot: string;
     readonly fromOid: string;
     readonly toOid: string;
-  }) => Promise<void>;
+  }) => Promise<boolean | undefined>;
   /** Deterministic in-flight novelty reclassification after the structural advance. */
   readonly runNoveltyPass?: (repoKey: string) => Promise<void>;
   readonly git?: GitExec;
@@ -146,16 +153,21 @@ export async function startRepoRehydration(
   if (!deps.store.loadManifest(resolved.repoKey)) return null;
 
   const repoLabel = basename(resolved.root) || resolved.root;
-  let pendingKnowledge:
-    | {
-        readonly repoKey: string;
-        readonly repoRoot: string;
-        readonly fromOid: string;
-        readonly toOid: string;
-      }
-    | undefined;
+  let pendingKnowledge: KnowledgeAdvance | undefined;
   let knowledgeRunning = false;
-  const scheduleKnowledge = (advance: NonNullable<typeof pendingKnowledge>): void => {
+  const restoreFailedKnowledge = (failed: KnowledgeAdvance): boolean => {
+    const queued: KnowledgeAdvance | undefined = pendingKnowledge;
+    pendingKnowledge = queued
+      ? {
+          repoKey: queued.repoKey,
+          repoRoot: queued.repoRoot,
+          fromOid: failed.fromOid,
+          toOid: queued.toOid,
+        }
+      : failed;
+    return queued !== undefined;
+  };
+  const scheduleKnowledge = (advance: KnowledgeAdvance): void => {
     pendingKnowledge = pendingKnowledge
       ? { ...advance, fromOid: pendingKnowledge.fromOid }
       : advance;
@@ -163,12 +175,17 @@ export async function startRepoRehydration(
     knowledgeRunning = true;
     void (async () => {
       while (pendingKnowledge) {
-        const next = pendingKnowledge;
+        const next: KnowledgeAdvance = pendingKnowledge;
         pendingKnowledge = undefined;
         try {
-          await deps.runKnowledgePass?.(next);
+          const succeeded = await deps.runKnowledgePass?.(next);
+          if (succeeded === false) {
+            if (!restoreFailedKnowledge(next)) break;
+          }
         } catch (error) {
+          const hasQueued = restoreFailedKnowledge(next);
           deps.onError?.(error);
+          if (!hasQueued) break;
         }
       }
       knowledgeRunning = false;

@@ -18,7 +18,8 @@ export class NoveltyLifecycleRegistry {
     refresh: () => Promise<NoveltyResult>,
   ): void {
     const reviews = this.byRepo.get(repoKey) ?? new Map<string, RegisteredLifecycle>();
-    reviews.set(reviewId, { state, refresh });
+    const existing = reviews.get(reviewId);
+    reviews.set(reviewId, existing ? { ...existing, refresh } : { state, refresh });
     this.byRepo.set(repoKey, reviews);
   }
 

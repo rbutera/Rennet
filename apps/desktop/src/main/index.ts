@@ -1282,7 +1282,7 @@ app.whenReady().then(async () => {
     runNoveltyPass: (repoKey) => liveNoveltyLifecycle.advanceRepo(repoKey),
     runKnowledgePass: async ({ repoKey, repoRoot, fromOid, toOid }) => {
       const { adapter } = await getClaudeHarness();
-      if (!adapter) return;
+      if (!adapter) return false;
       const reader = new ProjectContextReader(snapshotStore);
       const knowledgeStore = new KnowledgeStore(snapshotStore);
       const common = {
@@ -1294,7 +1294,10 @@ app.whenReady().then(async () => {
         baseOid: toOid,
       };
       const result = await runKnowledgeDeltaForRepo({ ...common, fromOid });
-      if (result.status === "no-prior-set") await enrichKnowledgeForRepo(common);
+      if (result.status === "ok") return true;
+      if (result.status !== "no-prior-set") return false;
+      const initial = await enrichKnowledgeForRepo(common);
+      return initial.status === "ok";
     },
   });
   // At launch, resume warming every project whose Repo Map already exists.
