@@ -285,6 +285,22 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusPaint[] 
         );
       }
     }
+    // ASSESSED — emitted WHENEVER the index is supplied, independent of whether any
+    // per-file paint fired. Without this, a review where every changed file has zero
+    // dependents produces NO fan-in entry at all — structurally identical to a review
+    // where this producer never ran. That collapse is the thing the whole overlay
+    // exists to prevent one layer out: absence-of-index is already a distinct NOT-
+    // ASSESSED chip (below), but "assessed, zero dependents" was mere silence. A
+    // consumer (another lens, an export, a telemetry counter) must be able to read
+    // "fan-in WAS computed" as a positive fact, never infer it from what is not there.
+    // Review-scoped target ⇒ paints no chunk and shows no chip (canvas/logic.ts); it
+    // is a data-level statement of assessment, not a mark on the surface.
+    paint.push({
+      target: "rennet:review/blast-radius",
+      signal: "fan-in",
+      assessed: true,
+      reason: "Fan-in assessed from the identifier-occurrence reference index (#200).",
+    });
   } else {
     // DEFERRED — surfaced as NOT ASSESSED so its absence never reads as "clear".
     paint.push({
