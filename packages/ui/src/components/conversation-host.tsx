@@ -174,21 +174,32 @@ export function ConversationHost({
   // with no persisted threads returns an empty set, and a reattach that throws leaves the
   // (freshly-opened) threads alone. Seeds only threads not already present by id, so a
   // reattach can never clobber a thread the reviewer just opened in this session.
+  // The reattach reads the LATEST anchors for orphan resolution WITHOUT making `anchors` an
+  // effect dependency. This is load-bearing: `anchors` is a fresh array on every render (the
+  // app builds it as `patchset.files.map(...)`), so if it were a dep, any re-render landing
+  // during the async reattach IPC would tear the effect down and the one-shot ref would then
+  // block the re-run from re-invoking — discarding the restored threads entirely (they would
+  // never paint). Keyed on `[bridge, reviewId]` (stable within a review) and reading anchors
+  // via this ref, the reattach fires once and always applies its result.
+  const anchorsRef = useRef(anchors);
+  anchorsRef.current = anchors;
   const reattachedRef = useRef(false);
   useEffect(() => {
-    // ONE-SHOT reattach guarded by reattachedRef: `anchors` is a real dependency (read for
-    // orphan resolution), but the ref makes every re-run after the first a no-op, so a new
-    // `anchors` array each render cannot double-reattach.
+    // ONE-SHOT reattach guarded by reattachedRef. The result is applied UNCONDITIONALLY (no
+    // cancel-on-cleanup discard): `setThreads` seeds only threads not already present by id,
+    // so a StrictMode double-mount applies at most once, and a setState after a real unmount
+    // is a harmless no-op. Discarding on cleanup was the bug — a fake (StrictMode) or a
+    // dep-triggered unmount threw the reattach away and the surfaces went dark.
     if (reattachedRef.current) return;
     reattachedRef.current = true;
-    let cancelled = false;
     void (async () => {
       try {
         const result = await bridge.invoke("review.reattach", {
           commandId: crypto.randomUUID(),
           reviewId,
         });
-        if (cancelled || result.threads.length === 0) return;
+        if (result.threads.length === 0) return;
+        const anchors = anchorsRef.current;
         // Orphan resolution has THREE outcomes, not two (#251 slice 3): a thread is PLACED
         // (its file is in the current diff), ORPHANED (its file is confirmed GONE), or
         // COULD-NOT-DETERMINE (we have no authoritative file list to check against — the
@@ -220,10 +231,7 @@ export function ConversationHost({
         // "nothing to reattach", never a crash of the review surface.
       }
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [bridge, reviewId, anchors]);
+  }, [bridge, reviewId]);
 
   // Open a FRAGMENT thread on a message inside an existing thread (issue #36): the
   // "discuss a fragment of the conversation itself" anchor. The new thread anchors to
