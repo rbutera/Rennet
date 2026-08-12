@@ -42,6 +42,23 @@ function repo(): { root: string; oid: string } {
 }
 
 describe("pinned composition discovery", () => {
+  it("applies pnpm exclusions and does not promote nested packages beyond the declared glob", async () => {
+    const root = mkdtempSync(join(tmpdir(), "rennet-pnpm-scope-discovery-"));
+    scratch.push(root);
+    git(root, "init", "-q", "-b", "main");
+    git(root, "config", "user.email", "rennet@example.test");
+    git(root, "config", "user.name", "Rennet Test");
+    write(root, "pnpm-workspace.yaml", 'packages:\n  - "packages/*"\n  - "!packages/excluded"\n');
+    write(root, "packages/kept/package.json", '{"name":"kept"}\n');
+    write(root, "packages/kept/fixture/package.json", '{"name":"fixture"}\n');
+    write(root, "packages/excluded/package.json", '{"name":"excluded"}\n');
+    git(root, "add", "-A");
+    git(root, "commit", "-q", "-m", "pnpm scopes");
+
+    const scopes = await discoverWorkspaceScopes(execaGit, root, git(root, "rev-parse", "HEAD"));
+    expect(scopes).toEqual([{ name: "packages/kept", root: "packages/kept", provenance: "pnpm" }]);
+  });
+
   it("discovers pnpm, Nx, Cargo, and go.work declarations without folder inference", async () => {
     const { root, oid } = repo();
     const scopes = await discoverWorkspaceScopes(execaGit, root, oid);

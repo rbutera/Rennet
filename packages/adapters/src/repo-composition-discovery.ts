@@ -34,20 +34,29 @@ function globPattern(pattern: string): RegExp {
     } else if (char === "*") source += "[^/]*";
     else source += char?.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   }
-  return new RegExp(`^${source}(?:/|$)`);
+  return new RegExp(`^${source}$`);
 }
 
 function rootsForPatterns(patterns: readonly string[], paths: readonly string[]): string[] {
-  const roots = new Set<string>();
-  for (const pattern of patterns.filter((value) => !value.startsWith("!"))) {
-    const matcher = globPattern(pattern.replace(/^\.\//, "").replace(/\/$/, ""));
-    for (const path of paths) {
-      if (!matcher.test(path)) continue;
-      const marker = dirname(path);
-      roots.add(marker === "." ? "" : marker);
-    }
-  }
-  return [...roots].filter(Boolean).sort();
+  const positive = patterns
+    .filter((value) => !value.startsWith("!"))
+    .map((pattern) => globPattern(pattern.replace(/^\.\//, "").replace(/\/$/, "")));
+  const negative = patterns
+    .filter((value) => value.startsWith("!"))
+    .map((pattern) => globPattern(pattern.slice(1).replace(/^\.\//, "").replace(/\/$/, "")));
+  return [
+    ...new Set(
+      paths
+        .map((path) => dirname(path))
+        .map((root) => (root === "." ? "" : root))
+        .filter(
+          (root) =>
+            root &&
+            positive.some((matcher) => matcher.test(root)) &&
+            !negative.some((matcher) => matcher.test(root)),
+        ),
+    ),
+  ].sort();
 }
 
 export async function discoverWorkspaceScopes(
