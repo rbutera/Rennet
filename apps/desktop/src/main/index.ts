@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
-import { realpathSync } from "node:fs";
+import { constants as fsConstants, realpathSync } from "node:fs";
+import { access } from "node:fs/promises";
+import { homedir } from "node:os";
 import { join, normalize, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
@@ -110,7 +112,11 @@ import { createLiveDraftPrBodyPort } from "./draft-pr-body-live";
 import { createLiveComposeBundle } from "./handoff-compose-live";
 import { createDesktopReviewBackend } from "./live-review-backend";
 import { LiveTurnRegistry } from "./live-turn-registry";
-import { EDITOR_CLIS, performOpenInEditor } from "./open-in-editor";
+import {
+  createEditorLaunchEffects,
+  performOpenInEditor,
+  resolveEditorExecutables,
+} from "./open-in-editor";
 import { createOrchestratorTurnRunner } from "./orchestrator";
 import {
   createProactiveRehydration,
@@ -127,6 +133,39 @@ import { createSettingsComposition } from "./settings";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 
 const execFileAsync = promisify(execFile);
+
+let editorExecutables: Promise<string[]> | null = null;
+function getEditorExecutables(): Promise<string[]> {
+  editorExecutables ??= (async () => {
+    const discovery = defaultDiscoveryDeps();
+    const loginShellPath = (await discovery.loginShellPath()) ?? "";
+    return resolveEditorExecutables(
+      {
+        platform: process.platform,
+        home: homedir(),
+        inheritedPath: process.env.PATH ?? "",
+        loginShellPath,
+      },
+      async (candidate) => {
+        try {
+          await access(candidate, fsConstants.X_OK);
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    );
+  })();
+  return editorExecutables;
+}
+
+const editorLaunchEffects = createEditorLaunchEffects({
+  resolveExecutables: getEditorExecutables,
+  async spawn(executable, args) {
+    await execFileAsync(executable, args);
+  },
+  openPath: async (absPath) => (await shell.openPath(absPath)) === "",
+});
 
 const IPC_CHANNEL = "rennet:invoke";
 // The push channel a long-running command streams live progress on (today
@@ -1432,23 +1471,11 @@ app.whenReady().then(async () => {
     // family) first; fall back to an OS-level open (no line) only when none took it.
     // Path resolution + the escape-the-root refusal live in `performOpenInEditor`.
     openInEditor: ({ review, path, line }) =>
-      performOpenInEditor(
-        {
-          launchAtLine: async (absPath, ln) => {
-            for (const cli of EDITOR_CLIS) {
-              try {
-                await execFileAsync(cli, ["-g", `${absPath}:${ln}`]);
-                return true;
-              } catch {
-                // Not installed / refused — try the next candidate editor.
-              }
-            }
-            return false;
-          },
-          openPath: async (absPath) => (await shell.openPath(absPath)) === "",
-        },
-        { repositoryRoot: review.repositoryRoot, path, line },
-      ),
+      performOpenInEditor(editorLaunchEffects, {
+        repositoryRoot: review.repositoryRoot,
+        path,
+        line,
+      }),
     reviewAsk: createLiveReviewAskPorts({
       // Dispatch resolves + freshness-pins the review (and its patchset) and hands the
       // SAME snapshot to both legs, so the ports never re-resolve. The pipeline is a

@@ -12,7 +12,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { HarnessTurnResult } from "./harness-run-turn";
 import { createInvocationBudget } from "./invocation-budget";
 import {
+  buildNarrationChunkEvidence,
   buildReviewNarration,
+  NARRATION_CHUNK_EXCERPT_MAX_BYTES,
   type NarrationNode,
   offeredNarrationNodes,
   ROLLUP_NARRATION_ANCHOR,
@@ -133,6 +135,25 @@ function emit(body: unknown): HarnessTurnResult {
   return { status: "emitted", body };
 }
 
+async function captureNarrationPayload(input: Decomposition): Promise<Record<string, unknown>> {
+  const nodes = offeredNarrationNodes(canvases());
+  let capturedPrompt = "";
+  await runRollupNarration({
+    nodes,
+    decomposition: input,
+    patchsetId: input.patchsetId,
+    contract: ROLLUP_NARRATION_CONTRACT,
+    provenance: SEED,
+    runTurn: async (prompt) => {
+      capturedPrompt = prompt;
+      return emit(bodyFor(nodes));
+    },
+  });
+  const payload = capturedPrompt.split("<<<rennet:layer payload>>>\n")[1];
+  if (payload === undefined) throw new Error("narration payload layer was not assembled");
+  return JSON.parse(payload) as Record<string, unknown>;
+}
+
 // ── offeredNarrationNodes ─────────────────────────────────────────────────────
 
 describe("offeredNarrationNodes", () => {
@@ -173,6 +194,94 @@ describe("runRollupNarration — admission", () => {
     for (const node of nodes) {
       expect(result.narrations.get(node.anchor)?.oneLine).toBe(`one-line for ${node.anchor}`);
     }
+  });
+
+  it("grounds the prompt with every small chunk's real hunk lines", async () => {
+    const input = decomposition();
+    const firstHunk = input.hunks[0];
+    if (firstHunk === undefined) throw new Error("fixture must contain one hunk");
+    input.hunks[0] = {
+      ...firstHunk,
+      addedLines: ["ADDED_SENTINEL"],
+      deletedLines: ["DELETED_SENTINEL"],
+      contextLines: ["CONTEXT_SENTINEL"],
+    };
+
+    const payload = await captureNarrationPayload(input);
+    expect(payload).toMatchObject({
+      chunks: [
+        {
+          chunkId: "c1",
+          title: "core",
+          filePaths: ["src/a.ts"],
+          truncated: false,
+        },
+      ],
+    });
+    expect(JSON.stringify(payload)).toContain("ADDED_SENTINEL");
+    expect(JSON.stringify(payload)).toContain("DELETED_SENTINEL");
+    expect(JSON.stringify(payload)).toContain("CONTEXT_SENTINEL");
+  });
+
+  it("shares the excerpt ceiling across oversized chunks deterministically", async () => {
+    const chunks = Array.from({ length: 8 }, (_, index) => ({
+      chunkId: `c${index}`,
+      kind: "substantive" as const,
+      title: `chunk ${index}`,
+      layer: 0,
+      filePaths: [`src/${index}.ts`],
+      hunkIds: [`h${index}`],
+      changedLoc: 1,
+    }));
+    const input: Decomposition = {
+      patchsetId: "ps_large",
+      hunks: chunks.map((_chunk, index) => ({
+        ...hunk(`h${index}`),
+        filePath: `src/${index}.ts`,
+        addedLines: [`CHUNK_${index}_SENTINEL`, "🙂".repeat(4_000)],
+      })),
+      classifications: chunks.map((_chunk, index) => ({
+        hunkId: `h${index}`,
+        kind: "substantive" as const,
+        mechanical: null,
+        enclosingSymbol: "",
+      })),
+      chunks,
+      edges: [],
+      readingOrder: chunks.map((chunk) => chunk.chunkId),
+      residue: [],
+    };
+
+    const first = buildNarrationChunkEvidence(input);
+    const second = buildNarrationChunkEvidence(input);
+    const encodedBytes = first.reduce(
+      (total, chunk) => total + new TextEncoder().encode(chunk.excerpt).length,
+      0,
+    );
+
+    expect(first).toEqual(second);
+    expect(encodedBytes).toBeLessThanOrEqual(NARRATION_CHUNK_EXCERPT_MAX_BYTES);
+    expect(first).toHaveLength(chunks.length);
+    expect(first.every((chunk) => chunk.truncated && chunk.excerpt.length > 0)).toBe(true);
+    for (const [index, chunk] of first.entries()) {
+      expect(chunk.excerpt).toContain(`CHUNK_${index}_SENTINEL`);
+    }
+
+    const payload = await captureNarrationPayload(input);
+    expect(payload.chunks).toEqual(first);
+  });
+
+  it("still admits a valid account with no citations", async () => {
+    const nodes = offeredNarrationNodes(canvases());
+    const result = await runRollupNarration({
+      nodes,
+      decomposition: decomposition(),
+      patchsetId: "ps_1",
+      contract: ROLLUP_NARRATION_CONTRACT,
+      provenance: SEED,
+      runTurn: async () => emit(bodyFor(nodes)),
+    });
+    expect(result.outcome).toBe("narrated");
   });
 });
 

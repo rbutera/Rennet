@@ -1,4 +1,4 @@
-import { resolve, sep } from "node:path";
+import { delimiter, join, resolve, sep } from "node:path";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.openInEditor — open a review file, honouring the LINE (Rai, wireframes #8).
@@ -14,6 +14,65 @@ import { resolve, sep } from "node:path";
 
 /** The editor CLIs tried, in order, for a line-targeted open (`<cli> -g <file>:<line>`). */
 export const EDITOR_CLIS: readonly string[] = ["code", "cursor", "code-insiders", "codium", "subl"];
+
+const MACOS_EDITOR_BUNDLES: Readonly<Record<string, string>> = {
+  code: "Visual Studio Code.app/Contents/Resources/app/bin/code",
+  cursor: "Cursor.app/Contents/Resources/app/bin/cursor",
+  "code-insiders": "Visual Studio Code - Insiders.app/Contents/Resources/app/bin/code-insiders",
+  codium: "VSCodium.app/Contents/Resources/app/bin/codium",
+  subl: "Sublime Text.app/Contents/SharedSupport/bin/subl",
+};
+
+export interface EditorResolutionInput {
+  readonly platform: NodeJS.Platform;
+  readonly home: string;
+  readonly inheritedPath: string;
+  readonly loginShellPath: string;
+}
+
+export async function resolveEditorExecutables(
+  input: EditorResolutionInput,
+  isExecutable: (candidate: string) => Promise<boolean>,
+): Promise<string[]> {
+  const pathDirectories = [
+    ...input.inheritedPath.split(delimiter),
+    ...input.loginShellPath.split(delimiter),
+  ]
+    .filter((directory) => directory.length > 0)
+    .map((directory) => resolve(directory));
+  const uniqueDirectories = [...new Set(pathDirectories)];
+  const resolved: string[] = [];
+
+  for (const cli of EDITOR_CLIS) {
+    const candidates = uniqueDirectories.map((directory) => join(directory, cli));
+    const bundle = MACOS_EDITOR_BUNDLES[cli];
+    if (input.platform === "darwin" && bundle !== undefined) {
+      candidates.push(join("/Applications", bundle), join(input.home, "Applications", bundle));
+    }
+    for (const candidate of candidates) {
+      if ((await isExecutable(candidate)) && !resolved.includes(candidate))
+        resolved.push(candidate);
+    }
+  }
+  return resolved;
+}
+
+export async function launchResolvedEditor(
+  executables: readonly string[],
+  absPath: string,
+  line: number,
+  spawn: (executable: string, args: string[]) => Promise<void>,
+): Promise<boolean> {
+  for (const executable of executables) {
+    try {
+      await spawn(executable, ["-g", `${absPath}:${line}`]);
+      return true;
+    } catch {
+      // Try the next resolved editor.
+    }
+  }
+  return false;
+}
 
 /**
  * Resolve a repo-relative path within the review root, or null when it escapes the
@@ -32,6 +91,23 @@ export interface OpenInEditorEffects {
   launchAtLine(absPath: string, line: number): Promise<boolean>;
   /** Fallback: open the file via the OS (no line). Resolves true on success. */
   openPath(absPath: string): Promise<boolean>;
+}
+
+export interface EditorLaunchEffectsInput {
+  resolveExecutables(): Promise<string[]>;
+  spawn(executable: string, args: string[]): Promise<void>;
+  openPath(absPath: string): Promise<boolean>;
+}
+
+export function createEditorLaunchEffects(input: EditorLaunchEffectsInput): OpenInEditorEffects {
+  let executables: Promise<string[]> | null = null;
+  return {
+    async launchAtLine(absPath, line) {
+      executables ??= input.resolveExecutables();
+      return launchResolvedEditor(await executables, absPath, line, input.spawn);
+    },
+    openPath: input.openPath,
+  };
 }
 
 export interface OpenInEditorInput {

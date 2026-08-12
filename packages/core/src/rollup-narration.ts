@@ -63,6 +63,12 @@ import { absentBudgetGrant } from "./invocation-budget";
 /** The stable node key of the whole-changeset roll-up altitude. */
 export const ROLLUP_NARRATION_ANCHOR = "rollup";
 
+export const NARRATION_CHUNK_EXCERPT_MAX_BYTES = 12_288;
+export const NARRATION_SINGLE_CHUNK_MAX_BYTES = 2_048;
+
+const UTF8_ENCODER = new TextEncoder();
+const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
+
 // ── The offered node set (pure) ──────────────────────────────────────────────
 
 /**
@@ -213,15 +219,89 @@ const ZERO_TOKENS: RspTokenUsage = {
   total: 0,
 };
 
-/** A compact, model-facing serialisation of the nodes to narrate. */
-function renderPayload(nodes: NarrationNode[], patchsetId: string): string {
+interface NarrationChunkEvidence {
+  readonly chunkId: string;
+  readonly title: string;
+  readonly filePaths: string[];
+  readonly excerpt: string;
+  readonly truncated: boolean;
+}
+
+function truncateUtf8(text: string, maxBytes: number): { text: string; truncated: boolean } {
+  const encoded = UTF8_ENCODER.encode(text);
+  if (encoded.length <= maxBytes) return { text, truncated: false };
+  let end = Math.max(0, maxBytes);
+  while (end > 0) {
+    try {
+      return { text: UTF8_DECODER.decode(encoded.subarray(0, end)), truncated: true };
+    } catch {
+      end -= 1;
+    }
+  }
+  return {
+    text: "",
+    truncated: true,
+  };
+}
+
+function renderHunkEvidence(hunk: Decomposition["hunks"][number]): string {
+  const lines = [`hunk ${hunk.id} (${hunk.filePath})`];
+  for (const line of hunk.addedLines) lines.push(`added: ${line}`);
+  for (const line of hunk.deletedLines) lines.push(`deleted: ${line}`);
+  for (const line of hunk.contextLines) lines.push(`context: ${line}`);
+  return lines.join("\n");
+}
+
+export function buildNarrationChunkEvidence(
+  decomposition: Decomposition,
+): NarrationChunkEvidence[] {
+  const chunksById = new Map(decomposition.chunks.map((chunk) => [chunk.chunkId, chunk]));
+  const orderedChunks = [
+    ...decomposition.readingOrder
+      .map((chunkId) => chunksById.get(chunkId))
+      .filter((chunk): chunk is Decomposition["chunks"][number] => chunk !== undefined),
+    ...decomposition.chunks.filter((chunk) => !decomposition.readingOrder.includes(chunk.chunkId)),
+  ];
+  const hunksById = new Map(decomposition.hunks.map((hunk) => [hunk.id, hunk]));
+  const share = Math.min(
+    NARRATION_SINGLE_CHUNK_MAX_BYTES,
+    Math.floor(NARRATION_CHUNK_EXCERPT_MAX_BYTES / Math.max(1, orderedChunks.length)),
+  );
+
+  return orderedChunks.map((chunk) => {
+    const complete = chunk.hunkIds
+      .map((hunkId) => hunksById.get(hunkId))
+      .filter((hunk): hunk is Decomposition["hunks"][number] => hunk !== undefined)
+      .map(renderHunkEvidence)
+      .join("\n\n");
+    const excerpt = truncateUtf8(complete, share);
+    return {
+      chunkId: chunk.chunkId,
+      title: chunk.title,
+      filePaths: chunk.filePaths,
+      excerpt: excerpt.text,
+      truncated: excerpt.truncated,
+    };
+  });
+}
+
+/** A compact, model-facing serialisation of the nodes and their code evidence. */
+function renderPayload(
+  nodes: NarrationNode[],
+  decomposition: Decomposition,
+  patchsetId: string,
+): string {
   const rendered = nodes.map((node) => ({
     altitude: node.altitude,
     node: node.anchor,
     title: node.title,
     covers: node.elementTitles,
   }));
-  return JSON.stringify({ patchsetId, nodes: rendered }, null, 2);
+  return JSON.stringify(
+    { patchsetId, nodes: rendered, chunks: buildNarrationChunkEvidence(decomposition) },
+    null,
+    2,
+  );
 }
 
 /**
@@ -372,7 +452,7 @@ export async function runRollupNarration(
   const manifest: OfferedManifest = buildOfferedManifest(decomposition);
   const inputDigest = computeInputDigest(patchsetRef, manifest);
   const base = renderBaseInstruction(contract);
-  const payload = renderPayload(nodes, patchsetId);
+  const payload = renderPayload(nodes, decomposition, patchsetId);
 
   const attempts: NarrationAttempt[] = [];
   let lastReportText: string | undefined;
