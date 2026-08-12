@@ -17,7 +17,7 @@ import type {
   ReviewEngine,
   ReviewNarration,
 } from "@rennet/types";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   type CollationDraft,
   type CollationItem,
@@ -52,6 +52,7 @@ import { publishedItems } from "./canvas/staging";
 import { createViewStore, useViewStore } from "./canvas/store";
 import { buildCommands, type CommandContext, type Screen } from "./command/commands";
 import { AskPanel } from "./components/ask-panel";
+import { Breadcrumb } from "./components/breadcrumb";
 import {
   CollationDraftCanvas,
   type PrDraftState,
@@ -72,11 +73,20 @@ import {
   RennetMark,
   TriangleIcon,
 } from "./components/icons";
+import { NavRail } from "./components/nav-rail";
 import { ProjectDetail } from "./components/project-detail";
 import { type PublishOutcome, PublishSheet } from "./components/publish-sheet";
 import { SettingsScreen } from "./components/settings-screen";
 import { CanvasWorkspace } from "./components/workspace";
 import { runBatched } from "./concurrency";
+import {
+  ascendTo as ascendNavigationTo,
+  crumb as deriveCrumb,
+  navHistoryReducer,
+  back as navigateBack,
+  forward as navigateForward,
+  push as pushSurface,
+} from "./nav/history";
 import type { SmartRow } from "./project/smart-list";
 
 /**
@@ -299,12 +309,14 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const [selectedPath, setSelectedPath] = useState<string>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
-  // The front door (issue #29) is the app's entry: launching Rennet lands on the
-  // Projects list. `atFrontDoor` returns there from an open review; `directEntry`
-  // reveals the legacy repo/PR entry so that capability is never orphaned while
-  // project-detail (the review's real home) is a later slice.
-  const [atFrontDoor, setAtFrontDoor] = useState(false);
-  const [directEntry, setDirectEntry] = useState(false);
+  const [navigation, navigate] = useReducer(navHistoryReducer, {
+    stack: [{ kind: "projects" }],
+    future: [],
+  });
+  const currentSurface = navigation.stack.at(-1) ?? { kind: "projects" as const };
+  // The legacy direct-entry capability is palette-only. It is an overlay beside
+  // the surface stack, never a location recorded in navigation history.
+  const [directEntryOpen, setDirectEntryOpen] = useState(false);
   // The settings screen (wireframe #15): opened from the front door, closed back
   // to it. `scheme` is the reviewer's chosen appearance, fetched once and applied
   // to the front door's `data-scheme` — so changing it in settings re-themes here.
@@ -426,10 +438,6 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const draftRef = useRef(draft);
   draftRef.current = draft;
   const [destinationMode, setDestinationMode] = useState<DestinationMode>("own-branch");
-  // The forming-destination surface (R40): the frame opens the DRAFT (editable
-  // glass collation canvas); signing the draft opens the PAPER; the paper signs or
-  // goes back to the draft. frame → draft → paper.
-  const [destinationView, setDestinationView] = useState<"closed" | "draft" | "paper">("closed");
   // The editable PR submission draft (issue #74, M26) — the own-branch composer's
   // title + body. Rennet drafts an honest account from the review; the human edits
   // it, and the edited form is what flows into the paper's preview (and a later
@@ -483,7 +491,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   useEffect(() => {
     bridge
       .invoke("app.bootstrap", {})
-      .then(({ review: restored }) => setReview(restored))
+      .then(({ review: restored }) => {
+        setReview(restored);
+        if (restored) navigate(pushSurface({ kind: "review", reviewId: restored.id }));
+      })
       .catch((reason: unknown) =>
         setError(reason instanceof Error ? reason.message : String(reason)),
       );
@@ -905,8 +916,8 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         repoPath: path,
       });
       setReview(result.review);
-      setAtFrontDoor(false);
-      setDirectEntry(false);
+      setDirectEntryOpen(false);
+      navigate(pushSurface({ kind: "review", reviewId: result.review.id }));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -945,9 +956,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         retrospective,
       });
       setReview(result.review);
-      setProjectDetail(null);
-      setAtFrontDoor(false);
-      setDirectEntry(false);
+      navigate(pushSurface({ kind: "review", reviewId: result.review.id }));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -964,9 +973,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         repoPath: project.openPath,
       });
       setReview(result.review);
-      setProjectDetail(null);
-      setAtFrontDoor(false);
-      setDirectEntry(false);
+      navigate(pushSurface({ kind: "review", reviewId: result.review.id }));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -995,8 +1002,8 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         retrospective: prRetrospective,
       });
       setReview(result.review);
-      setAtFrontDoor(false);
-      setDirectEntry(false);
+      setDirectEntryOpen(false);
+      navigate(pushSurface({ kind: "review", reviewId: result.review.id }));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -1297,6 +1304,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     }
     void publishReview();
   }
+  const reviewSurfaceIndex = navigation.stack.map((surface) => surface.kind).lastIndexOf("review");
+  function returnToReview(): void {
+    if (reviewSurfaceIndex >= 0) navigate(ascendNavigationTo(reviewSurfaceIndex));
+  }
   // A retrospective review is read-only: the entire sign → collate → publish surface
   // is REPLACED by a plain notice, so there is no affordance to post at all. This is
   // the renderer half of the no-post guarantee; MAIN's `publish.review` refusal is the
@@ -1317,9 +1328,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         draft={draft}
         mode={destinationMode}
         onSelectMode={setDestinationMode}
-        onOpenDraft={() => setDestinationView("draft")}
+        onOpenDraft={() => {
+          if (review) navigate(pushSurface({ kind: "draft", reviewId: review.id }));
+        }}
       />
-      {destinationView === "draft" ? (
+      {currentSurface.kind === "draft" ? (
         <CollationDraftCanvas
           draft={draft}
           variant={destinationVariantForMode}
@@ -1335,12 +1348,12 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           onSign={() => {
             // Freezing a fresh paper drops any stale outcome from a prior sign.
             setPublishResult(undefined);
-            setDestinationView("paper");
+            if (review) navigate(pushSurface({ kind: "paper", reviewId: review.id }));
           }}
-          onBack={() => setDestinationView("closed")}
+          onBack={() => navigate(navigateBack())}
         />
       ) : null}
-      {destinationView === "paper" ? (
+      {currentSurface.kind === "paper" ? (
         <PublishSheet
           target={publishTargetForMode}
           payload={publishTargetPayload(publishTargetForMode)}
@@ -1361,12 +1374,12 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           onBack={() => {
             // Editing lives on the draft; a returned-to edit invalidates the outcome.
             setPublishResult(undefined);
-            setDestinationView("draft");
+            navigate(navigateBack());
           }}
           onSign={() => signPaper()}
           onClose={() => {
             setPublishResult(undefined);
-            setDestinationView("closed");
+            returnToReview();
           }}
         />
       ) : null}
@@ -1601,18 +1614,23 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     }
   }
 
-  // Which top-level surface is showing — mirrors the branch order of the returns
-  // below, so the palette offers exactly the commands live for the current screen.
+  function goToProjects(): void {
+    setDirectEntryOpen(false);
+    navigate(ascendNavigationTo(0));
+  }
+
+  // Which top-level surface is showing — mirrors the surface at the stack's tip,
+  // so the palette offers exactly the commands live for the current screen.
   const screen: Screen | null =
     review === undefined
       ? null
-      : projectDetail
-        ? "projectDetail"
-        : atFrontDoor || !review
-          ? directEntry
-            ? "directEntry"
-            : "frontDoor"
-          : "workspace";
+      : directEntryOpen
+        ? "directEntry"
+        : currentSurface.kind === "projects"
+          ? "frontDoor"
+          : currentSurface.kind === "project"
+            ? "projectDetail"
+            : "workspace";
   // The lens/zoom/scheme commands act on the live store, so they are only offered
   // while the Canvases view is actually showing a loaded review.
   const canvasReady = view === "canvases" && liveLoaded && canvases !== null;
@@ -1626,14 +1644,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         scheme: canvasScheme,
         angle: canvasAngle,
         zoomLevel: canvasZoomLevel,
-        backToProjects: () => setAtFrontDoor(true),
-        backToProjectList: () => setProjectDetail(null),
+        backToProjects: goToProjects,
+        backToProjectList: goToProjects,
         showFiles: () => setView("review"),
         showCanvases: () => setView("canvases"),
-        reviewDirectly: () => {
-          setDirectEntry(true);
-          setAtFrontDoor(true);
-        },
+        reviewDirectly: () => setDirectEntryOpen(true),
         chooseRepository: () => void chooseRepository(),
         retryReview: retryLiveLoad,
         regenerate: () => void regenerate(),
@@ -1660,13 +1675,55 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     />
   );
 
+  function navigationSurface(content: ReactNode): ReactNode {
+    const inReview =
+      currentSurface.kind === "review" ||
+      currentSurface.kind === "draft" ||
+      currentSurface.kind === "paper";
+    return (
+      <div className="navigation-shell">
+        <header className="navigation-titlebar">
+          <Breadcrumb
+            crumb={deriveCrumb(navigation.stack)}
+            onAscend={(index) => {
+              setDirectEntryOpen(false);
+              navigate(ascendNavigationTo(index));
+            }}
+          />
+          {inReview && patchset ? (
+            <div className="navigation-titlebar-context">
+              <span className="navigation-mode-pill">
+                {deepReviewOn ? "Dual review" : "Quick review"}
+              </span>
+              <code className="navigation-patchset-chip" title={patchset.id}>
+                {patchset.id.slice(0, 12)}
+              </code>
+            </div>
+          ) : null}
+        </header>
+        <NavRail
+          canBack={navigation.stack.length > 1}
+          canForward={navigation.future.length > 0}
+          onBack={() => {
+            setDirectEntryOpen(false);
+            navigate(navigateBack());
+          }}
+          onForward={() => navigate(navigateForward())}
+          onHome={goToProjects}
+          onProjects={goToProjects}
+        />
+        <div className="navigation-surface-content">{content}</div>
+      </div>
+    );
+  }
+
   if (review === undefined) return <div className="loading">Restoring local review…</div>;
 
   // Project detail (issue #37): clicking a project row opens its unified smart list —
-  // local work + every PR in one surface. It takes precedence over the front door and
-  // the review workspace; opening a row from here captures a review (and clears this).
-  if (projectDetail) {
-    return (
+  // local work + every PR in one surface. Its payload stays cached while a child
+  // review is open, so Back can reveal this exact parent surface without refetching.
+  if (currentSurface.kind === "project" && projectDetail) {
+    return navigationSurface(
       <>
         {error ? <div className="error-toast">{error}</div> : null}
         {busy ? <div className="busy-bar" /> : null}
@@ -1675,10 +1732,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           project={projectDetail}
           scheme={effectiveScheme}
           onOpenRow={(row) => void openRow(projectDetail, row)}
-          onBack={() => setProjectDetail(null)}
+          onBack={() => navigate(navigateBack())}
         />
         {palette}
-      </>
+      </>,
     );
   }
 
@@ -1699,40 +1756,32 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     );
   }
 
-  // The front door is the app's entry: shown on first run (no restored review) and
-  // whenever the user steps back to Projects from an open review. The legacy repo/PR
-  // entry is one terse disclosure away so no existing capability is orphaned.
-  if (atFrontDoor || !review) {
-    if (!directEntry) {
-      return (
+  // The front door is the root surface. Direct entry remains available through the
+  // palette, but no longer has a drawn door on this surface.
+  if (currentSurface.kind === "projects" || !review) {
+    if (!directEntryOpen) {
+      return navigationSurface(
         <>
           {error ? <div className="error-toast">{error}</div> : null}
           {busy ? <div className="busy-bar" /> : null}
           <FrontDoor
             bridge={bridge}
-            onOpenProject={(project) => setProjectDetail(project)}
+            onOpenProject={(project) => {
+              setProjectDetail(project);
+              navigate(pushSurface({ kind: "project", projectId: project.id }));
+            }}
             onOpenSettings={() => setSettingsOpen(true)}
             scheme={effectiveScheme}
           />
-          <button
-            type="button"
-            className="front-door-direct"
-            onClick={() => {
-              setDirectEntry(true);
-              setAtFrontDoor(true);
-            }}
-          >
-            Review directly
-          </button>
           {palette}
-        </>
+        </>,
       );
     }
     return (
       <>
         {palette}
         <main className="empty-state">
-          <button type="button" className="entry-back" onClick={() => setDirectEntry(false)}>
+          <button type="button" className="entry-back" onClick={() => setDirectEntryOpen(false)}>
             <ArrowLeftIcon size={13} />
             Projects
           </button>
@@ -1795,19 +1844,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     );
   }
 
-  return (
+  return navigationSurface(
     <>
       {error ? <div className="error-toast">{error}</div> : null}
       {busy ? <div className="busy-bar" /> : null}
-      <button
-        type="button"
-        className="workspace-projects"
-        onClick={() => setAtFrontDoor(true)}
-        aria-label="Back to projects"
-      >
-        <ArrowLeftIcon size={13} />
-        Projects
-      </button>
       {/* The delta re-review account (issue #73): at the TOP of a successor review,
           before the view tabs, stating what the returned patchset did to each ask and
           what it changed beyond them. Present only on a successor (a regenerate that
@@ -2019,6 +2059,6 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           Files and Canvases views, present from review-open even when empty. */}
       {destinationChrome}
       {palette}
-    </>
+    </>,
   );
 }

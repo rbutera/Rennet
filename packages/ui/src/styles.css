@@ -61,6 +61,53 @@ button {
   align-items: center;
   gap: 12px;
 }
+.navigation-shell {
+  min-height: 100vh;
+  background: var(--chrome-bg);
+}
+.navigation-titlebar {
+  position: fixed;
+  z-index: 20;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 18px 0 80px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--side-bg);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
+}
+.navigation-titlebar-context {
+  margin-left: auto;
+  margin-right: 190px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.navigation-mode-pill,
+.navigation-patchset-chip {
+  border: 1px solid var(--hairline);
+  border-radius: var(--chip-radius);
+  padding: 5px 8px;
+  color: var(--text-soft);
+  background: var(--surface-2);
+  font-size: 11px;
+}
+.navigation-mode-pill {
+  font-weight: 700;
+}
+.navigation-patchset-chip {
+  font-family: var(--mono);
+}
+.navigation-surface-content {
+  min-height: 100vh;
+  padding-top: 52px;
+  padding-left: 68px;
+}
 .nav-breadcrumb {
   min-width: 0;
   display: flex;
@@ -106,6 +153,11 @@ button {
   font-size: 14px;
 }
 .nav-rail {
+  position: fixed;
+  z-index: 20;
+  top: 52px;
+  bottom: 0;
+  left: 0;
   width: 68px;
   flex: none;
   display: flex;
@@ -640,14 +692,13 @@ button {
 
 /* Additive view toggle between the file/review surface and the canvas surface (#11).
  * Glass chrome pill (frosted), soft-blue active state. */
-/* Two standalone tab pills, not a chunky box of buttons (#62): each pill matches
- * .workspace-projects / .entry-back exactly (same padding, border, radius, glass),
- * so the three top-corner controls share one height and one corner radius. The old
- * form nested 9px pills inside a 12px padded box, which sat taller than its siblings
- * and read as a mismatched "last radius button". */
+/* Two standalone tab pills, not a chunky box of buttons (#62): each pill uses the
+ * same terse glass treatment as the navigation chrome. The old form nested 9px pills
+ * inside a 12px padded box, which sat taller than its siblings and read as a
+ * mismatched "last radius button". */
 .view-toggle {
   position: fixed;
-  z-index: 12;
+  z-index: 21;
   top: 12px;
   right: 16px;
   display: inline-flex;
@@ -2280,28 +2331,8 @@ button {
   font-size: 13px;
 }
 
-/* The terse escape hatch to the legacy repo/PR entry, and the back controls. */
-.front-door-direct {
-  position: fixed;
-  z-index: 12;
-  bottom: 18px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 7px 13px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--chip-radius);
-  background: var(--side-bg);
-  -webkit-backdrop-filter: var(--side-blur);
-  backdrop-filter: var(--side-blur);
-  color: var(--text-faint);
-  font-size: 12px;
-  cursor: pointer;
-}
-.front-door-direct:hover {
-  color: var(--text-soft);
-}
-.entry-back,
-.workspace-projects {
+/* Back from the palette-only direct-entry overlay to the Projects surface. */
+.entry-back {
   position: fixed;
   z-index: 12;
   top: 12px;
@@ -2320,8 +2351,7 @@ button {
   font-weight: 600;
   cursor: pointer;
 }
-.entry-back:hover,
-.workspace-projects:hover {
+.entry-back:hover {
   color: var(--text);
 }
 
