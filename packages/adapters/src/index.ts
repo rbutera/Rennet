@@ -243,6 +243,11 @@ export {
   NoveltyLedgerReader,
   type NoveltyLedgerResult,
 } from "./novelty-ledger-reader";
+export {
+  type NoveltyLifecycleAdvanceResult,
+  NoveltyLifecycleReader,
+} from "./novelty-lifecycle-reader";
+export { NoveltyLifecycleRegistry } from "./novelty-lifecycle-registry";
 export { readOpenSpecChange, selectedOpenSpecChangeName } from "./openspec-change-reader";
 export {
   type AttachedOrchestratorSession,
@@ -300,6 +305,7 @@ export {
   type SnapshotBuildProgress,
   type SnapshotBuildStage,
 } from "./project-snapshot-generator";
+export { ensureProjectSnapshotPin, projectSnapshotPinResolver } from "./project-snapshot-pin";
 export {
   listTree,
   matchesGlob,

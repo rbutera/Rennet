@@ -75,6 +75,13 @@ export interface ResolvedRepo {
   readonly gitCommonDir: string;
 }
 
+interface KnowledgeAdvance {
+  readonly repoKey: string;
+  readonly repoRoot: string;
+  readonly fromOid: string;
+  readonly toOid: string;
+}
+
 /** The absolute git common dir for `root` (`rev-parse --git-common-dir`, path-resolved). */
 export async function resolveGitCommonDir(root: string, git: GitExec): Promise<string> {
   const raw = (await git(root, ["rev-parse", "--git-common-dir"], { reject: true })).trim();
@@ -105,6 +112,15 @@ export interface StartRepoRehydrationDeps {
   readonly narrate: (event: ProjectProcessEvent) => void;
   /** A resolve/build error — logged, never thrown into the watcher. */
   readonly onError?: (error: unknown) => void;
+  /** Background knowledge upkeep composed onto the same coalesced baseline advance. */
+  readonly runKnowledgePass?: (advance: {
+    readonly repoKey: string;
+    readonly repoRoot: string;
+    readonly fromOid: string;
+    readonly toOid: string;
+  }) => Promise<boolean | undefined>;
+  /** Deterministic in-flight novelty reclassification after the structural advance. */
+  readonly runNoveltyPass?: (repoKey: string) => Promise<void>;
   readonly git?: GitExec;
   // ── test seams ─────────────────────────────────────────────────────────────
   readonly watch?: WatchFn;
@@ -137,6 +153,44 @@ export async function startRepoRehydration(
   if (!deps.store.loadManifest(resolved.repoKey)) return null;
 
   const repoLabel = basename(resolved.root) || resolved.root;
+  let pendingKnowledge: KnowledgeAdvance | undefined;
+  let knowledgeRunning = false;
+  const restoreFailedKnowledge = (failed: KnowledgeAdvance): boolean => {
+    const queued: KnowledgeAdvance | undefined = pendingKnowledge;
+    pendingKnowledge = queued
+      ? {
+          repoKey: queued.repoKey,
+          repoRoot: queued.repoRoot,
+          fromOid: failed.fromOid,
+          toOid: queued.toOid,
+        }
+      : failed;
+    return queued !== undefined;
+  };
+  const scheduleKnowledge = (advance: KnowledgeAdvance): void => {
+    pendingKnowledge = pendingKnowledge
+      ? { ...advance, fromOid: pendingKnowledge.fromOid }
+      : advance;
+    if (knowledgeRunning || !deps.runKnowledgePass) return;
+    knowledgeRunning = true;
+    void (async () => {
+      while (pendingKnowledge) {
+        const next: KnowledgeAdvance = pendingKnowledge;
+        pendingKnowledge = undefined;
+        try {
+          const succeeded = await deps.runKnowledgePass?.(next);
+          if (succeeded === false) {
+            if (!restoreFailedKnowledge(next)) break;
+          }
+        } catch (error) {
+          const hasQueued = restoreFailedKnowledge(next);
+          deps.onError?.(error);
+          if (!hasQueued) break;
+        }
+      }
+      knowledgeRunning = false;
+    })();
+  };
 
   const base = baselineAdvanceDepsFor({
     repoRoot: resolved.root,
@@ -154,6 +208,7 @@ export async function startRepoRehydration(
   const advanceDeps: BaselineAdvanceDeps = {
     ...base,
     runDeltaPass: async () => {
+      const fromOid = deps.store.loadManifest(resolved.repoKey)?.baseOid;
       deps.narrate({ kind: "repo-start", repo: repoLabel, index: 1, total: 1 });
       try {
         const result = await deps.generator.generate(resolved.root, {
@@ -177,7 +232,16 @@ export async function startRepoRehydration(
           reusedSymbols: result.reusedSymbolShards,
           baseRef: result.manifest.baseRef,
         };
+        await deps.runNoveltyPass?.(resolved.repoKey);
         deps.narrate({ kind: "repo-done", repo: repoLabel, summary });
+        if (fromOid && deps.runKnowledgePass) {
+          scheduleKnowledge({
+            repoKey: resolved.repoKey,
+            repoRoot: resolved.root,
+            fromOid,
+            toOid: result.manifest.baseOid,
+          });
+        }
       } catch (reason) {
         const message = reason instanceof Error ? reason.message : String(reason);
         deps.narrate({ kind: "repo-error", repo: repoLabel, message });
@@ -224,6 +288,8 @@ export interface ProactiveRehydrationDeps {
   readonly narrate: (event: ProjectProcessEvent) => void;
   readonly onError?: (error: unknown) => void;
   readonly git?: GitExec;
+  readonly runKnowledgePass?: StartRepoRehydrationDeps["runKnowledgePass"];
+  readonly runNoveltyPass?: StartRepoRehydrationDeps["runNoveltyPass"];
   /** Test seam: the per-repo starter (defaults to `startRepoRehydration`). */
   readonly startRepo?: (deps: StartRepoRehydrationDeps) => Promise<RepoRehydrationHandle | null>;
 }
@@ -271,6 +337,8 @@ export function createProactiveRehydration(deps: ProactiveRehydrationDeps): Proa
             narrate: deps.narrate,
             ...(deps.onError ? { onError: deps.onError } : {}),
             ...(deps.git ? { git: deps.git } : {}),
+            ...(deps.runKnowledgePass ? { runKnowledgePass: deps.runKnowledgePass } : {}),
+            ...(deps.runNoveltyPass ? { runNoveltyPass: deps.runNoveltyPass } : {}),
           });
           // No snapshot yet — not cached, so a later ensure retries this path.
           if (!handle) continue;

@@ -143,6 +143,7 @@ function makeBackend(): { backend: CanvasOpsBackend; applied: CanvasOpsEffect[] 
     novelty: () => ({
       ok: true,
       ledger: {
+        projectSnapshotId: "fp",
         snapshotFingerprint: "fp",
         baseOid: "a".repeat(40),
         patchsetId: PATCHSET_ID,

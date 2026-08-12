@@ -52,6 +52,7 @@ export * from "./lineage-matcher-fixtures";
 export * from "./model-council";
 export * from "./noise-generation";
 export * from "./novelty-ledger";
+export * from "./novelty-lifecycle";
 export * from "./openspec-change";
 export * from "./orchestrator-primer";
 export * from "./orchestrator-session";

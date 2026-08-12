@@ -31,6 +31,8 @@ import {
   discoverCodex,
   discoverProject,
   discoverWorktreeIdentities,
+  enrichKnowledgeForRepo,
+  ensureProjectSnapshotPin,
   execaGit,
   FileConfigStore,
   FileProjectStore,
@@ -43,8 +45,10 @@ import {
   GitHubPrSubmissionAdapter,
   GitHubPublishAdapter,
   type HttpFetch,
+  KnowledgeStore,
   loadConventionCatalogue,
   loadProjectDetail,
+  NoveltyLifecycleRegistry,
   ProjectContextReader,
   type ProjectPrSource,
   ProjectSnapshotGenerator,
@@ -55,6 +59,7 @@ import {
   resolveBaseRef,
   resolveForgeRemote,
   resolveGitHubAuth,
+  runKnowledgeDeltaForRepo,
   SqliteReviewStore,
   snapshotStoreFor,
 } from "@rennet/adapters";
@@ -191,7 +196,11 @@ protocol.registerSchemesAsPrivileged([
 
 if (process.env.RENNET_USER_DATA) app.setPath("userData", process.env.RENNET_USER_DATA);
 
-const capture = new GitCaptureAdapter();
+const liveSnapshotStore = snapshotStoreFor();
+const liveNoveltyLifecycle = new NoveltyLifecycleRegistry();
+const capture = new GitCaptureAdapter(undefined, (repoRoot, baseOid) =>
+  ensureProjectSnapshotPin(liveSnapshotStore, repoRoot, baseOid),
+);
 const watcher = new RepoWatcher();
 
 // Composition root for the Claude harness. This binds the REAL
@@ -363,9 +372,9 @@ let service: ReviewService;
 let repositoryDirty = false;
 const allowedRoots = new Set<string>();
 let dispatch: ReturnType<typeof createDispatch> | null = null;
-// Proactive snapshot rehydration (#143, the snapshot half): keeps each built
-// project's Repo Map (ProjectSnapshot) warm as its reference branch advances — NOT
-// the LLM knowledge layer. Assigned in `whenReady`, torn down on quit.
+// Proactive Repo Map rehydration (#143/#243): keeps each built project's structural
+// snapshot and model-backed knowledge warm as its reference branch advances.
+// Assigned in `whenReady`, torn down on quit.
 let rehydration: ProactiveRehydration | null = null;
 // The in-flight conversation turns (#251, criterion 4). One registry for the app
 // lifetime: dispatch registers each `review.ask` turn's AbortController and settles
@@ -436,6 +445,8 @@ async function openPullRequest(
     // matching (owner/name vs the repo's remotes) decides whether it is the
     // right clone; it never falls back to a path-name guess.
     worktrees: { list: async () => [await discoverWorktreeIdentities(execaGit, repoPath)] },
+    resolveProjectSnapshotId: (root, baseOid) =>
+      ensureProjectSnapshotPin(liveSnapshotStore, root, baseOid),
   });
   const result = await source.open(prRef);
   if (!result.pin) {
@@ -1249,12 +1260,10 @@ app.whenReady().then(async () => {
   // its real stages become the processing screen's live narration. The store is
   // SHARED with the settings surface (below) so the per-project `config.json`
   // (visibility/promotion) they read and write is the same one the generator keys.
-  const snapshotStore = snapshotStoreFor();
+  const snapshotStore = liveSnapshotStore;
   const snapshotGenerator = new ProjectSnapshotGenerator({ store: snapshotStore });
-  // Proactive snapshot rehydration (#143, the snapshot half): keep each already-built
-  // project's Repo Map (ProjectSnapshot) warm as its reference branch advances (a
-  // fetch, a local commit, a rebase). This does NOT refresh the LLM knowledge layer
-  // (context.knowledge) — that stays unwired. The background pass narrates on the SAME
+  // Proactive rehydration (#143/#243): keep each already-built project's structural
+  // snapshot and knowledge warm as its reference branch advances. The background pass narrates on the SAME
   // `rennet:progress` push the processing screen uses, under a stable command id, so
   // the mechanism is visible-capable with no new protocol surface. It only warms repos
   // that already have a snapshot — it never cold-builds in the background.
@@ -1269,6 +1278,26 @@ app.whenReady().then(async () => {
           event,
         });
       }
+    },
+    runNoveltyPass: (repoKey) => liveNoveltyLifecycle.advanceRepo(repoKey),
+    runKnowledgePass: async ({ repoKey, repoRoot, fromOid, toOid }) => {
+      const { adapter } = await getClaudeHarness();
+      if (!adapter) return false;
+      const reader = new ProjectContextReader(snapshotStore);
+      const knowledgeStore = new KnowledgeStore(snapshotStore);
+      const common = {
+        reader,
+        knowledgeStore,
+        port: adapter,
+        repoKey,
+        repoRoot,
+        baseOid: toOid,
+      };
+      const result = await runKnowledgeDeltaForRepo({ ...common, fromOid });
+      if (result.status === "ok") return true;
+      if (result.status !== "no-prior-set") return false;
+      const initial = await enrichKnowledgeForRepo(common);
+      return initial.status === "ok";
     },
   });
   // At launch, resume warming every project whose Repo Map already exists.
@@ -1337,6 +1366,10 @@ app.whenReady().then(async () => {
   const orchestratorTurn = createOrchestratorTurnRunner({
     resolveClaudePath: async () => (await getClaudeHarness()).discovery.chosen?.path ?? null,
     env: process.env,
+    backend: {
+      resolveKnowledgePort: async () => (await getClaudeHarness()).adapter,
+      noveltyLifecycle: liveNoveltyLifecycle,
+    },
   });
   // #251: the durable conversation store (~/.rennet/threads). Backs both re-attach
   // (reload persisted threads, crash-recovered) and persistence (write a streaming
@@ -1503,7 +1536,10 @@ app.whenReady().then(async () => {
           patchset: activePatchset(headReview),
           dispositions: headReview.dispositions,
         });
-        const live = await createDesktopReviewBackend(headReview, pipeline);
+        const live = await createDesktopReviewBackend(headReview, pipeline, {
+          resolveKnowledgePort: async () => (await getClaudeHarness()).adapter,
+          noveltyLifecycle: liveNoveltyLifecycle,
+        });
         return live.backend;
       },
     }),

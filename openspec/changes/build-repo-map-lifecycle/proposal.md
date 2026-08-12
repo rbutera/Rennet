@@ -22,7 +22,7 @@ This change is a **design-only proposal** (no implementation) for the whole life
 - **Symbolic navigation surface (layer b).** Grow the `context.*` family with model-free ops: `context.overview` (a file's symbol overview, served straight from the snapshot's existing symbol shards — no LSP dependency, leanest v1 context-saver), `context.symbol` (go-to-definition, tier-labelled `exact`/`guess`) and `context.references` (tier-labelled, sequenced behind definition). `context.symbol`/`context.references` consume #23's LSP engine substrate; this proposal exposes that engine as an agent tool surface (it does not subsume #23).
 - **LLM knowledge layer (layer c, `context.knowledge`).** Now in v1 (was #14's deferred half): evidence-anchored, confidence-labelled learned statements (what a module does, its conventions, the reconstructed *why*), stored at `~/.rennet/projects/<esc>/knowledge/` (promoted to `<repo>/.rennet/knowledge/`), served verbatim with hypothesis labels intact.
 - **Net-novel coupling (#144).** Add `projectSnapshotId` to `Patchset`; classify against the merged view; on baseline advance re-run the deterministic ledger and re-adjudicate only classification-changed items (R29); feed baseline-first; Stage-2 LLM adjudication (citation-required output schema) now ships in v1 on the knowledge layer.
-- **Knowledge delta pass (layer c).** The delta pass is no longer deterministic-only: as the reference branch moves it runs the model-free structural refresh AND a bounded LLM knowledge-enrichment pass (invalidation-scoped, changed-regions-only, debounced, merge-train-coalesced, budget-capped, on the user's own subscription), which never blocks a review and discloses withheld statements in the ContextManifest.
+- **Knowledge delta pass (layer c).** The delta pass is no longer deterministic-only: as the reference branch moves it runs the model-free structural refresh AND an uncapped LLM knowledge-enrichment pass (invalidation-scoped, changed-regions-only, debounced, merge-train-coalesced, on the user's own subscription), which never blocks a review and discloses withheld statements in the ContextManifest.
 
 ## Capabilities
 
@@ -32,7 +32,7 @@ This change is a **design-only proposal** (no implementation) for the whole life
 - `repo-map-delta-pass`: proactive baseline-advance detection and the deterministic, burst-coalesced, atomically-advancing delta rebuild that never blocks a review, plus the base+overlay composition for non-default bases.
 - `repo-map-net-novel`: the diff-pack-to-baseline pin (`projectSnapshotId` on `Patchset`), classification against the merged view, re-adjudication on advance, feed order, and the citation-required Stage-2 output schema (adjudicator in v1 on the knowledge layer).
 - `repo-map-symbolic-surface`: the model-free "IDE for the agent" ops — `context.overview` (from snapshot shards), `context.symbol`, `context.references` — tier-labelled, context-window-saving, riding the `canvasOps@2` envelope; consumes #23's LSP engine.
-- `repo-map-knowledge`: the LLM knowledge layer and `context.knowledge` — evidence-anchored, confidence/hypothesis-labelled statements, invalidated with their snapshot inputs, plus the bounded knowledge delta pass.
+- `repo-map-knowledge`: the LLM knowledge layer and `context.knowledge` — evidence-anchored, confidence/hypothesis-labelled statements, invalidated with their snapshot inputs, plus the uncapped knowledge delta pass.
 
 ## Impact
 

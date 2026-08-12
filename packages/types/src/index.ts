@@ -117,12 +117,9 @@ export interface Patchset {
    * net-novel spine). Fills the Contracts §3.1 role the `RspEnvelope` already
    * carries: a composite fingerprint that pins the diff pack to a specific
    * base-branch map, so "what is net-novel" is judged relative to a KNOWN
-   * baseline rather than a bare OID. OPTIONAL and additive in this wave: diff
-   * capture does not yet stamp it (the store/generator that would resolve it is
-   * still landing), and `NoveltyLedgerReader` still pins on
-   * `repository.baseOid`. The net-novel wave (Track C) threads capture-time
-   * stamping and switches the ledger pin onto this field; adding it now lets that
-   * wave be purely additive.
+   * baseline rather than a bare OID. Optional only for legacy or remote-degraded
+   * captures that have no local map to resolve; the live local capture path stamps
+   * it and `NoveltyLedgerReader` verifies it against the effective snapshot.
    */
   projectSnapshotId?: string;
   /**
@@ -2639,11 +2636,39 @@ export interface LedgerEntry {
  * whose classification changed. `entries` are in a deterministic total order.
  */
 export interface NoveltyLedger {
+  /** Effective base-map identity (the base fingerprint or base+overlay composite). */
+  readonly projectSnapshotId: string;
   readonly snapshotFingerprint: string;
   readonly baseOid: string;
   readonly patchsetId: string;
   readonly entries: readonly LedgerEntry[];
 }
+
+/** A concrete source a Stage-2 novelty judgment was drawn from. */
+export type NoveltyJudgmentEvidence =
+  | {
+      readonly kind: "snapshot-shard";
+      readonly projectSnapshotId: string;
+      readonly shardRef: string;
+    }
+  | { readonly kind: "knowledge"; readonly statementId: string };
+
+/** Stage-2 may assert a cited finding, or retain an uncited idea as a hypothesis. */
+export type Stage2NoveltyJudgment =
+  | {
+      readonly status: "finding";
+      readonly entryKey: string;
+      readonly classification: NoveltyClassification;
+      readonly rationale: string;
+      readonly evidence: readonly NoveltyJudgmentEvidence[];
+    }
+  | {
+      readonly status: "hypothesis";
+      readonly entryKey: string;
+      readonly classification: NoveltyClassification;
+      readonly rationale: string;
+      readonly evidence?: readonly NoveltyJudgmentEvidence[];
+    };
 
 // ── LLM knowledge layer (layer c, #14 knowledge half — design §6) ─────────────
 //

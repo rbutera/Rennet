@@ -38,7 +38,7 @@ The knowledge layer SHALL be stored locally at `~/.rennet/projects/<escaped-path
 
 ### Requirement: The model boundary stays at the knowledge layer
 
-No model turn SHALL enter the structural map or the symbolic surface. Only the knowledge layer (and net-novel Stage-2, which reads it) SHALL call a model, always behind the invocation-budget gate and always off a review's fail-closed critical path.
+No model turn SHALL enter the structural map or the symbolic surface. Only the knowledge layer (and net-novel Stage-2, which reads it) SHALL call a model, uncapped and always off a review's critical path.
 
 #### Scenario: a review's required layers are model-free
 

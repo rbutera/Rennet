@@ -198,6 +198,8 @@ export interface RangeCaptureInput {
   /** How the content was sourced. Defaults to `"github-local"`. */
   source?: PatchsetSource;
   visibleByteLimit?: number;
+  /** Effective base-map identity resolved at capture time. */
+  projectSnapshotId?: string;
 }
 
 /**
@@ -276,5 +278,8 @@ export async function captureRangePatchset(
     byteLength: bytes.length,
     truncated: bytes.length > visibleByteLimit,
     source,
+    ...(input.projectSnapshotId === undefined
+      ? {}
+      : { projectSnapshotId: input.projectSnapshotId }),
   };
 }

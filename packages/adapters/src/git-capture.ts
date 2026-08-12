@@ -92,7 +92,13 @@ async function resolveBase(repositoryRoot: string): Promise<{ baseRef: string; b
 }
 
 export class GitCaptureAdapter implements PatchsetCapturePort {
-  constructor(private readonly visibleByteLimit = DEFAULT_VISIBLE_BYTE_LIMIT) {}
+  constructor(
+    private readonly visibleByteLimit = DEFAULT_VISIBLE_BYTE_LIMIT,
+    private readonly resolveProjectSnapshotId?: (
+      repositoryRoot: string,
+      baseOid: string,
+    ) => Promise<string | undefined> | string | undefined,
+  ) {}
 
   async capture(repositoryPath: string): Promise<Patchset> {
     const root = (await git(repositoryPath, ["rev-parse", "--show-toplevel"])).trim();
@@ -180,6 +186,7 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
       .digest("hex");
 
     const intent = await captureLocalIntent(root, baseOid, headOid, files);
+    const projectSnapshotId = await this.resolveProjectSnapshotId?.(root, baseOid);
 
     return {
       id,
@@ -189,6 +196,7 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
       rawDiff: visible(completeDiff, this.visibleByteLimit),
       byteLength: bytes.length,
       truncated: bytes.length > this.visibleByteLimit,
+      ...(projectSnapshotId === undefined ? {} : { projectSnapshotId }),
       intent,
     };
   }

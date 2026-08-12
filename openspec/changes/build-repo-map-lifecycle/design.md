@@ -24,7 +24,7 @@ The user-facing "Repo Map" (R54) is one name over three distinct layers, and the
 | **(b) Symbolic surface** | The "IDE for the agent": go-to-def / references / symbol-overview over an LSP substrate | **Model-free** (LSP/tree-sitter) | Pinned to the same base OID; tier-labelled (`exact`/`guess`), honest degradation. |
 | **(c) Knowledge layer** | LLM-reconstructed *why*: what a module does, the conventions it embodies, the intent | **Model-backed** | Soft, best-effort, never blocks a review; partial state disclosed in the ContextManifest. |
 
-(a) and (b) are the fail-closed, synchronous substrate a review cannot proceed without. (c) is asynchronous, bounded, and disclosed-when-partial. Every `context.*` tool below names which layer it reads.
+(a) and (b) are the synchronous substrate. (c) is asynchronous, uncapped, and disclosed-when-partial. Every `context.*` tool below names which layer it reads.
 
 ## 1. Storage, travel & promotion (#141 / R55 — decisions 1 & 2)
 
@@ -83,9 +83,9 @@ Reuse the wave-1 incremental path exactly: `loadManifest` → `loadSymbolShards`
 ### 2b. Knowledge pass (layer c — model-backed, best-effort, log-structured)
 
 Adopts #143's ratified log-structured model:
-- **Delta pass (common case, medium model):** on `old..new`, invalidate knowledge statements whose evidence anchors intersect the diff, then a **bounded** pass over `{the diff, the invalidated statements, the affected scope maps}` re-adjudicates each invalidated statement and mines net-new ones. Untouched knowledge stays pinned to its original evidence (not re-run).
-- **Full re-rollup (compaction, heavy model):** only on generator/schema/guideline change or an accumulation threshold.
-- **Cost bounding (Rai: runs on the user's own subscription, $0-metered like review turns, but not latency/quota-free):** re-enrich only changed regions; debounce; coalesce the merge train; medium model for deltas, heavy only for re-rollup; a per-pass budget cap (rides the RoutePlan/invocation-budget gate, R10).
+- **Delta pass (common case):** on `old..new`, invalidate knowledge statements whose evidence anchors intersect the diff, then an **uncapped** pass over `{the diff, the invalidated statements, the affected scope maps}` re-adjudicates each invalidated statement and mines net-new ones. Untouched knowledge stays pinned to its original evidence (not re-run).
+- **Full re-rollup (compaction):** only on generator/schema/guideline change or an accumulation threshold.
+- **Run shape:** re-enrich only changed regions; debounce; coalesce the merge train; no per-pass model ceiling.
 - **Never block a review.** Reviews proceed on the current snapshot + surviving knowledge; the **ContextManifest discloses which statements were withheld as invalidated-pending** (R29). Prior knowledge stays visible until regeneration succeeds; regeneration is never automatic on the review's critical path.
 
 The model boundary is exactly here: 2a is synchronous and required; 2b is asynchronous and disclosed-when-partial.
@@ -131,14 +131,14 @@ All three are **deterministic / model-free** (LSP + tree-sitter), so the IDE sur
 ## 7. Dependency-arrow compliance
 
 - `core` (node-free, pure): `escapePath`; the delta-plan + overlay-merge/tombstone logic; the novelty re-adjudication diff; the `projectSnapshotId` field; the Stage-2 novelty output schema + validator; the pure `context.overview`/`context.symbol`/`context.references`/`context.knowledge` handler shapes (backend-resolved, exactly as `context.map` is today).
-- `adapters` (store/git/fs/model-backed): path-keyed store; promotion writer + validate-on-discovery reader; `relocate`/aliases; the baseline-advance watcher; the structural + knowledge delta runners; the overlay runner; the LSP-substrate ports (consuming #23); the knowledge-enrichment model calls (behind the budget gate); the visibility switch.
+- `adapters` (store/git/fs/model-backed): path-keyed store; promotion writer + validate-on-discovery reader; `relocate`/aliases; the baseline-advance watcher; the structural + knowledge delta runners; the overlay runner; the LSP-substrate ports (consuming #23); the uncapped knowledge-enrichment model calls; the visibility switch.
 - `ui`: reads only over `canvasOps@2`.
-- **Model boundary is explicit:** layers (a) structural and (b) symbolic are model-free; only layer (c) knowledge (and net-novel Stage 2, which reads it) calls a model, always behind the budget gate, always off the review's fail-closed critical path.
+- **Model boundary is explicit:** layers (a) structural and (b) symbolic are model-free; only layer (c) knowledge (and net-novel Stage 2, which reads it) calls a model, always off the review's critical path.
 
-## 8. Decisions still genuinely open for Rai (the friction)
+## 8. Resolved policy values (Rai, 2026-08-12)
 
-1. **Leading-dash in the escaped path (§1.2).** Brief gives two forms; this follows Claude Code's leading-dash form. Confirm or strip.
-2. **Knowledge storage location.** This design puts local knowledge at `~/.rennet/projects/<esc>/knowledge/` (consistent with R55 keeping derived data app-owned) and the promoted copy at `<repo>/.rennet/knowledge/`. The addendum said `.rennet/knowledge/`; confirm that meant the promoted location, not a change to the local-first rule.
-3. **Knowledge-pass budget.** Confirm the per-advance knowledge delta-pass budget (medium-model, changed-regions-only, debounced) and the full-re-rollup accumulation threshold — this is the one place v1 spends model turns on branch movement, so the cap wants Rai's number.
-4. **Overlay + knowledge retention.** Overlays and per-base knowledge accumulate as branches advance. Confirm a reaping policy (LRU / drop when the base OID is unreachable) so `~/.rennet/projects/<esc>/` doesn't grow unbounded.
-5. **Promoted-map scope.** Does promotion carry only the default-branch base (map + knowledge), or overlays too? (Recommend base-only; overlays are per-branch and local.)
+1. **Escaped paths keep the leading dash** used by Claude Code.
+2. **Knowledge stays local-first** at `~/.rennet/projects/<esc>/knowledge/`; promotion writes `<repo>/.rennet/knowledge/`.
+3. **Knowledge-pass model budget is uncapped.** Spend as needed; there is no per-advance ceiling.
+4. **Overlay and knowledge retention uses the design-default reaping policy:** LRU and drop when the base OID is unreachable.
+5. **Promotion is base-only.** Overlays remain local.

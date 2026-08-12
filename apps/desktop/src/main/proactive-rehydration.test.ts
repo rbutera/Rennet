@@ -79,7 +79,7 @@ function repoOnMain(): { root: string; storeDir: string; oid1: string; advance: 
   git(root, "add", "-A");
   git(root, "commit", "-q", "-m", "one");
   const oid1 = git(root, "rev-parse", "HEAD");
-  let advanced = false;
+  let advanceCount = 0;
   return {
     root,
     storeDir,
@@ -87,12 +87,8 @@ function repoOnMain(): { root: string; storeDir: string; oid1: string; advance: 
     advance: () => {
       // A real advance of main: change one file, add one, commit.
       write(root, "packages/a/src/index.ts", "export const a = 2;\nexport function makeA() {}\n");
-      write(
-        root,
-        `packages/a/src/added-${advanced ? "2" : "1"}.ts`,
-        "export const added = true;\n",
-      );
-      advanced = true;
+      advanceCount += 1;
+      write(root, `packages/a/src/added-${advanceCount}.ts`, "export const added = true;\n");
       git(root, "add", "-A");
       git(root, "commit", "-q", "-m", "advance");
       return git(root, "rev-parse", "HEAD");
@@ -192,6 +188,102 @@ describe("proactive rehydration — end to end over a real git repo", () => {
       }
     }
 
+    handle?.close();
+  });
+
+  it("runs knowledge upkeep from the same coalesced advance without delaying structural completion", async () => {
+    const { root, storeDir, oid1, advance } = repoOnMain();
+    const store = new ProjectSnapshotStore(storeDir);
+    const generator = new ProjectSnapshotGenerator({ store });
+    await generator.generate(root, { explicitBaseRef: "main" });
+    const structuralDone = deferred();
+    const knowledgeDone = deferred();
+    const clock = fakeTimers();
+    const watcher = capturingWatch();
+    const calls: unknown[] = [];
+    const handle = await startRepoRehydration({
+      repoPath: root,
+      explicitBaseRef: "main",
+      store,
+      generator,
+      narrate: (event) => {
+        if (event.kind === "repo-done") structuralDone.resolve();
+      },
+      runKnowledgePass: async (input) => {
+        calls.push(input);
+        knowledgeDone.resolve();
+      },
+      watch: watcher.watch,
+      timers: clock.timers,
+    });
+
+    const oid2 = advance();
+    watcher.fire(`${sep}refs${sep}heads`);
+    clock.flush();
+    await structuralDone.promise;
+    await knowledgeDone.promise;
+
+    expect(calls).toEqual([
+      expect.objectContaining({ repoKey: handle?.repoKey, fromOid: oid1, toOid: oid2 }),
+    ]);
+    handle?.close();
+  });
+
+  it("coalesces from the unpersisted base when a running knowledge pass fails", async () => {
+    const { root, storeDir, oid1, advance } = repoOnMain();
+    const store = new ProjectSnapshotStore(storeDir);
+    const generator = new ProjectSnapshotGenerator({ store });
+    await generator.generate(root, { explicitBaseRef: "main" });
+    const structuralDone = [deferred(), deferred(), deferred()];
+    const releaseFirst = deferred();
+    const secondStarted = deferred();
+    const clock = fakeTimers();
+    const watcher = capturingWatch();
+    const calls: { fromOid: string; toOid: string }[] = [];
+    let structuralCount = 0;
+    const handle = await startRepoRehydration({
+      repoPath: root,
+      explicitBaseRef: "main",
+      store,
+      generator,
+      narrate: (event) => {
+        if (event.kind === "repo-done") structuralDone[structuralCount++]?.resolve();
+      },
+      runKnowledgePass: async (input) => {
+        calls.push(input);
+        if (calls.length === 1) {
+          await releaseFirst.promise;
+          return false;
+        }
+        secondStarted.resolve();
+        return true;
+      },
+      watch: watcher.watch,
+      timers: clock.timers,
+    });
+
+    advance();
+    watcher.fire(`${sep}refs${sep}heads`);
+    clock.flush();
+    await structuralDone[0]?.promise;
+
+    advance();
+    watcher.fire(`${sep}refs${sep}heads`);
+    clock.flush();
+    await structuralDone[1]?.promise;
+    expect(calls).toHaveLength(1);
+
+    const oid4 = advance();
+    watcher.fire(`${sep}refs${sep}heads`);
+    clock.flush();
+    await structuralDone[2]?.promise;
+    expect(calls).toHaveLength(1);
+
+    releaseFirst.resolve();
+    await secondStarted.promise;
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.toOid).toBe(oid4);
+    expect(calls[1]?.fromOid).toBe(oid1);
     handle?.close();
   });
 
