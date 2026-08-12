@@ -1,15 +1,26 @@
 import type {
+  AnalysisCohort,
+  AnalysisElement,
+  AnchorSpan,
+  Annotation,
+  AskAnswer,
   AskReviewResult,
+  BlastRadiusPaint,
   Canvas,
   ComposableAsk,
   ComposedHandoffBundle,
   ComposedTask,
+  DecisionDetail,
+  DecisionEvidence,
   DecisionsRunStatus,
+  DecisionWhy,
   Disposition,
   DispositionAnchor,
+  DualReviewNote,
   ElementDiff,
   ElementDiffs,
   FindingElement,
+  FindingModelAnswer,
   FindingVerification,
   FlaggedReview,
   HandoffBundle,
@@ -17,20 +28,35 @@ import type {
   HandoffDisposition,
   HandoffRunResult,
   HandoffTask,
+  NarrationEvidence,
+  NoiseGroup,
+  NoiseItem,
   NoiseReview,
+  OpenSpecCapabilityNote,
   OpenSpecChange,
   OpenSpecCoverage,
   OpenSpecCoverageEdge,
+  OpenSpecDesign,
+  OpenSpecListItem,
+  OpenSpecProposal,
+  OpenSpecScenario,
+  OpenSpecSource,
+  OpenSpecSpecDelta,
+  OpenSpecTasks,
   Patchset,
   PatchsetIntent,
   PatchsetSpecSnapshot,
   PrBodyDraftResult,
+  Proposal,
   RefinementResult,
   RenderedHunkOccurrence,
+  RepositoryProvenance,
   Review,
   ReviewEngine,
   ReviewHypothesis,
   ReviewNarration,
+  RiskCrossCheck,
+  SubstrateChunkRef,
   SymbolInspection,
   SymbolNeighbor,
   SymbolNeighbors,
@@ -56,8 +82,14 @@ import { z } from "zod";
  * `z.ZodType<T>` annotation; the object schemas that are its members use this.
  */
 export function objectSchemaFor<T>() {
-  return <S extends { [K in keyof T]-?: z.ZodType<T[K]> }>(shape: S): z.ZodType<T> =>
-    z.object(shape) as unknown as z.ZodType<T>;
+  // Return the PRECISE `z.ZodObject<S>`, not a `z.ZodType<T>` cast. The coverage
+  // constraint on the parameter already guarantees the shape produces `T`, and the
+  // precise object type preserves BOTH `z.output` AND `z.input`. A `z.ZodType<T>`
+  // cast keeps the output but erases the input to `unknown` — harmless for an
+  // output-only schema, but it breaks any command whose INPUT schema uses one
+  // (disposition anchors, handoff dispositions), turning `z.input` into `unknown`
+  // at the consumer.
+  return <S extends { [K in keyof T]-?: z.ZodType<T[K]> }>(shape: S) => z.object(shape);
 }
 
 export * from "./bodies";
@@ -66,7 +98,7 @@ export * from "./sha256";
 
 const fileChangeStatusSchema = z.enum(["added", "modified", "deleted", "renamed"]);
 
-const repositoryProvenanceSchema = z.object({
+const repositoryProvenanceSchema = objectSchemaFor<RepositoryProvenance>()({
   id: z.string().min(1),
   root: z.string().min(1),
   commonDir: z.string().min(1),
@@ -132,7 +164,7 @@ export const patchsetSchema = objectSchemaFor<Patchset>()({
 export const dispositionTypeSchema = z.enum(["approve", "request-change", "comment", "question"]);
 
 /** A 1-based file-line span (issue #78). Shared by the disposition anchor + command inputs. */
-const anchorSpanSchema = z.object({
+const anchorSpanSchema = objectSchemaFor<AnchorSpan>()({
   startLine: z.number().int().min(1),
   endLine: z.number().int().min(1).optional(),
 });
@@ -228,7 +260,7 @@ export const reviewSchema = objectSchemaFor<Review>()({
 
 const canvasAngleSchema = z.enum(["spec", "sequence", "decisions", "claims", "noise", "flagged"]);
 
-const substrateChunkRefSchema = z.object({
+const substrateChunkRefSchema = objectSchemaFor<SubstrateChunkRef>()({
   chunkId: z.string(),
   hunkIds: z.array(z.string()),
   filePaths: z.array(z.string()),
@@ -239,19 +271,22 @@ const substrateChunkRefSchema = z.object({
 // silently strips) the evidence chips + reconstructed why the decisions lens
 // renders. `reconstructed` is pinned to the literal `true` so a `why` can only
 // EXIST as reconstructed — the schema enforces the same guarantee as the type.
-const decisionEvidenceSchema = z.object({
+const decisionEvidenceSchema = objectSchemaFor<DecisionEvidence>()({
   kind: z.enum(["spec", "pr-body", "hunk"]),
   label: z.string(),
   detail: z.string(),
 });
-const decisionWhySchema = z.object({ reconstructed: z.literal(true), text: z.string() });
-const decisionDetailSchema = z.object({
+const decisionWhySchema = objectSchemaFor<DecisionWhy>()({
+  reconstructed: z.literal(true),
+  text: z.string(),
+});
+const decisionDetailSchema = objectSchemaFor<DecisionDetail>()({
   evidence: z.array(decisionEvidenceSchema),
   why: decisionWhySchema.optional(),
   alternatives: z.array(z.string()),
 });
 
-const analysisElementSchema = z.object({
+const analysisElementSchema = objectSchemaFor<AnalysisElement>()({
   elementKey: z.string(),
   docId: z.string(),
   anchor: z.string(),
@@ -262,13 +297,13 @@ const analysisElementSchema = z.object({
   decision: decisionDetailSchema.optional(),
 });
 
-const analysisCohortSchema = z.object({
+const analysisCohortSchema = objectSchemaFor<AnalysisCohort>()({
   cohortKey: z.string(),
   title: z.string(),
   elementKeys: z.array(z.string()),
 });
 
-const annotationSchema = z.object({
+const annotationSchema = objectSchemaFor<Annotation>()({
   annotationId: z.string(),
   target: z.string(),
   kind: z.enum(["highlight", "callout", "link"]),
@@ -276,7 +311,7 @@ const annotationSchema = z.object({
   pinned: z.boolean(),
 });
 
-const proposalSchema = z.object({
+const proposalSchema = objectSchemaFor<Proposal>()({
   proposalId: z.string(),
   kind: z.enum(["disposition", "regroup", "split"]),
   target: z.string(),
@@ -288,7 +323,7 @@ const proposalSchema = z.object({
 // unlisted key at the IPC boundary, so a deterministic signal paint would arrive
 // with `signal`/`reason`/`assessed` silently gone and the overlay would render
 // nothing but the target. `docId` is now optional (deterministic paints omit it).
-const blastRadiusPaintSchema = z.object({
+const blastRadiusPaintSchema = objectSchemaFor<BlastRadiusPaint>()({
   target: z.string(),
   docId: z.string().optional(),
   signal: z
@@ -371,7 +406,10 @@ const elementDiffsSchema: z.ZodType<ElementDiffs> = z.record(z.string(), element
 // renders the agent's account at each altitude. A discriminated union keeps the
 // never-blank contract honest at the IPC boundary: a placement is a narrated
 // account or an explicit pending/failed state — there is no shape for "blank".
-const narrationEvidenceSchema = z.object({ anchor: z.string(), quote: z.string() });
+const narrationEvidenceSchema = objectSchemaFor<NarrationEvidence>()({
+  anchor: z.string(),
+  quote: z.string(),
+});
 const narrationPlacementSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("narrated"),
@@ -727,7 +765,7 @@ export type ProjectDetail = z.infer<typeof projectDetailSchema>;
 // into the flagged index; `status` keeps "ran clean" honestly apart from "the
 // runner did not complete".
 export const findingSeveritySchema = z.enum(["high", "medium", "low"]);
-export const findingModelAnswerSchema = z.object({
+export const findingModelAnswerSchema = objectSchemaFor<FindingModelAnswer>()({
   model: z.string().min(1),
   answer: z.string(),
 });
@@ -761,7 +799,7 @@ export const findingElementSchema = objectSchemaFor<FindingElement>()({
  * flagged review: `seats` names the provider labels that ran; `secondSeatUnavailable`
  * is the honest degradation marker. It carries NO merged verdict.
  */
-export const dualReviewNoteSchema = z.object({
+export const dualReviewNoteSchema = objectSchemaFor<DualReviewNote>()({
   seats: z.array(z.string().min(1)),
   secondSeatUnavailable: z.string().optional(),
 });
@@ -774,7 +812,7 @@ export const dualReviewNoteSchema = z.object({
  * renderer (the ok branch is a strict `z.object`), so the anti-rubber-stamp payoff
  * would silently never reach the UI (a delivery check, Rule 80).
  */
-export const riskCrossCheckSchema = z.object({
+export const riskCrossCheckSchema = objectSchemaFor<RiskCrossCheck>()({
   riskId: z.string().min(1),
   status: z.enum(["confirmed", "open"]),
   findingIds: z.array(z.string().min(1)),
@@ -829,7 +867,7 @@ export const flaggedReviewSchema: z.ZodType<FlaggedReview> = z.union([
 // in "both" mode) — there is no field for a merged answer, so "no synthesis, ever"
 // is enforced by the schema itself, not only by the router.
 export const askModeSchema = z.enum(["orchestrator", "both"]);
-export const askAnswerSchema = z.object({
+export const askAnswerSchema = objectSchemaFor<AskAnswer>()({
   model: z.string().min(1),
   answer: z.string(),
 });
@@ -895,12 +933,12 @@ export const noiseJudgedBySchema = z.union([
   z.object({ kind: z.literal("rule"), rule: z.string().min(1) }),
   z.object({ kind: z.literal("noise-job"), model: z.string().min(1) }),
 ]);
-export const noiseItemSchema = z.object({
+export const noiseItemSchema = objectSchemaFor<NoiseItem>()({
   anchor: z.string().min(1),
   detail: z.string(),
   deviates: z.boolean().optional(),
 });
-export const noiseGroupSchema = z.object({
+export const noiseGroupSchema = objectSchemaFor<NoiseGroup>()({
   groupId: z.string().min(1),
   category: noiseCategorySchema,
   summary: z.string(),
@@ -976,12 +1014,12 @@ export const symbolInspectionSchema = objectSchemaFor<SymbolInspection>()({
 // live parse-on-open crosses to the renderer as the exact `OpenSpecChange` shape.
 // Every node's `source` (artifact + line) rides across — that is what makes a
 // Spec-view disposition durable against the real artifact file.
-const openSpecSourceSchema = z.object({
+const openSpecSourceSchema = objectSchemaFor<OpenSpecSource>()({
   artifact: z.enum(["proposal", "design", "tasks", "spec"]),
   capability: z.string().optional(),
   line: z.number(),
 });
-const openSpecListItemSchema = z.object({
+const openSpecListItemSchema = objectSchemaFor<OpenSpecListItem>()({
   lead: z.string().optional(),
   text: z.string(),
   source: openSpecSourceSchema.optional(),
@@ -1011,19 +1049,19 @@ const openSpecBlockSchema = z.discriminatedUnion("kind", [
     source: openSpecSourceSchema.optional(),
   }),
 ]);
-const openSpecCapabilityNoteSchema = z.object({
+const openSpecCapabilityNoteSchema = objectSchemaFor<OpenSpecCapabilityNote>()({
   name: z.string(),
   summary: z.string(),
   source: openSpecSourceSchema.optional(),
 });
-const openSpecProposalSchema = z.object({
+const openSpecProposalSchema = objectSchemaFor<OpenSpecProposal>()({
   why: z.array(openSpecBlockSchema),
   whatChanges: z.array(openSpecListItemSchema),
   newCapabilities: z.array(openSpecCapabilityNoteSchema),
   modifiedCapabilities: z.array(openSpecCapabilityNoteSchema),
   impact: z.array(z.object({ area: z.string(), detail: z.string() })),
 });
-const openSpecDesignSchema = z.object({
+const openSpecDesignSchema = objectSchemaFor<OpenSpecDesign>()({
   sections: z.array(
     z.object({
       id: z.string(),
@@ -1034,7 +1072,7 @@ const openSpecDesignSchema = z.object({
     }),
   ),
 });
-const openSpecTasksSchema = z.object({
+const openSpecTasksSchema = objectSchemaFor<OpenSpecTasks>()({
   groups: z.array(
     z.object({
       id: z.string(),
@@ -1054,12 +1092,12 @@ const openSpecTasksSchema = z.object({
   total: z.number(),
   done: z.number(),
 });
-const openSpecScenarioSchema = z.object({
+const openSpecScenarioSchema = objectSchemaFor<OpenSpecScenario>()({
   name: z.string(),
   steps: z.array(z.object({ keyword: z.enum(["given", "when", "then", "and"]), text: z.string() })),
   source: openSpecSourceSchema.optional(),
 });
-const openSpecSpecDeltaSchema = z.object({
+const openSpecSpecDeltaSchema = objectSchemaFor<OpenSpecSpecDelta>()({
   capability: z.string(),
   groups: z.array(
     z.object({
@@ -1241,22 +1279,22 @@ export type SettingsGuidance = z.infer<typeof settingsGuidanceSchema>;
 // param to `unknown`, which would type the command input's `dispositions` as
 // `unknown[]`). The bundle's `z.ZodType<HandoffBundle>` annotation still catches a
 // task-shape drift through `tasks: z.array(handoffTaskSchema)`.
-const handoffDispositionSchema = z.object({
+const handoffDispositionSchema = objectSchemaFor<HandoffDisposition>()({
   path: z.string().min(1),
   type: dispositionTypeSchema,
   body: z.string(),
   span: anchorSpanSchema.optional(),
   side: anchorSideSchema.optional(),
-}) satisfies z.ZodType<HandoffDisposition>;
+});
 
-const handoffTaskSchema = z.object({
+const handoffTaskSchema = objectSchemaFor<HandoffTask>()({
   path: z.string().min(1),
   type: dispositionTypeSchema,
   instruction: z.string(),
   span: anchorSpanSchema.optional(),
   side: anchorSideSchema.optional(),
   context: z.string(),
-}) satisfies z.ZodType<HandoffTask>;
+});
 
 const handoffBundleSchema = objectSchemaFor<HandoffBundle>()({
   reviewId: z.string().min(1),
@@ -1308,7 +1346,7 @@ export type HandoffRunOutput = z.infer<typeof handoffRunOutputSchema>;
 // ── Handoff-bundle composition schemas (issue #72, M24) ────────────────────────
 // The output shapes are annotated `z.ZodType<T>` for the IPC-strip guard; the input
 // (`handoffDispositionSchema`, reused from #18) is the plain-object one.
-const composableAskSchema = z.object({
+const composableAskSchema = objectSchemaFor<ComposableAsk>()({
   path: z.string().min(1),
   type: dispositionTypeSchema,
   instruction: z.string(),
@@ -1316,7 +1354,7 @@ const composableAskSchema = z.object({
   side: anchorSideSchema.optional(),
   context: z.string(),
   id: z.string().min(1),
-}) satisfies z.ZodType<ComposableAsk>;
+});
 
 const composedTaskSchema = objectSchemaFor<ComposedTask>()({
   title: z.string(),
