@@ -16,6 +16,7 @@ import {
   type ReviewPostTarget,
 } from "@rennet/types";
 import { v7 as uuidv7 } from "uuid";
+import { buildDeltaAccount, changedPathsBetween } from "./delta-account";
 
 export * from "./angle-generation";
 export * from "./blast-radius";
@@ -28,6 +29,7 @@ export * from "./context-update-stream";
 export * from "./coverage-mapping";
 export * from "./decision-generation";
 export * from "./decomposition";
+export * from "./delta-account";
 export * from "./draft-pr-body";
 export * from "./dual-finding-review";
 export * from "./dual-seat";
@@ -615,12 +617,32 @@ export function foldReview(current: Review | null, event: ReviewEvent): Review {
         current.dispositions,
         event.patchset,
       );
+      // The delta re-review account (issue #73): when this activation SUCCEEDS a
+      // predecessor patchset that carried asks, record what the successor did to each
+      // ask (addressed / partially / untouched) and the paths it changed beyond any
+      // ask. Deterministic and model-free — computed from the carry + the changed-path
+      // set. Only stamped on a genuine successor (a distinct prior patchset with asks),
+      // so a first capture / PR open carries no account and validates unchanged.
+      const priorPatchset = current.patchsets.find(
+        (patchset) => patchset.id === current.activePatchsetId,
+      );
+      const deltaAccount =
+        priorPatchset && priorPatchset.id !== event.patchset.id && current.dispositions.length > 0
+          ? buildDeltaAccount({
+              asks: current.dispositions,
+              carried,
+              changedPaths: changedPathsBetween(priorPatchset, event.patchset),
+            })
+          : undefined;
       return {
         ...base,
         patchsets,
         activePatchsetId: event.patchset.id,
         pendingPatchsetId: undefined,
         dispositions: carried,
+        // Stamped only on a successor with asks to account for; absent otherwise so a
+        // first capture and every existing snapshot validate unchanged (like `orphaned`).
+        ...(deltaAccount ? { deltaAccount } : { deltaAccount: undefined }),
         // The orphan tray is recomputed for THIS activation and is authoritative:
         // set the fresh set, or `undefined` to clear any stale tray inherited from
         // `base` (a vanished-then-returned occurrence must not stay orphaned). An

@@ -1222,6 +1222,106 @@ button {
   flex: none;
 }
 
+/* ── The delta re-review account (issue #73) ──────────────────────────────── */
+/* At the top of a successor review: what the returned patchset did to each ask, and
+   what it changed beyond the asks. Informational — it gates nothing. */
+.delta-account {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line, var(--surface-2));
+  background: var(--surface-2);
+}
+.delta-account-eyebrow {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.delta-account-asks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.delta-account-item {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  inline-size: 100%;
+  padding: 5px 8px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  text-align: start;
+  cursor: pointer;
+  color: var(--text);
+}
+.delta-account-item:hover {
+  background: var(--surface-2);
+}
+.delta-account-status {
+  flex: none;
+  font-size: 11px;
+  font-weight: 650;
+  min-inline-size: 116px;
+}
+.delta-account-status[data-status="addressed"] {
+  color: var(--green);
+}
+.delta-account-status[data-status="partially-addressed"] {
+  color: var(--amber);
+}
+.delta-account-status[data-status="untouched"] {
+  color: var(--text-faint);
+}
+.delta-account-path {
+  flex: none;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--text-soft);
+}
+.delta-account-summary {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: var(--text-soft);
+}
+/* Beyond-asks: the scope-creep the reviewer must see — surfaced LOUDLY in amber. */
+.delta-account-beyond {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--amber-line);
+  border-radius: 8px;
+  background: var(--amber-surface);
+}
+.delta-account-beyond-title {
+  margin: 0;
+  font-size: 12px;
+  font-weight: 650;
+  color: var(--amber);
+}
+.delta-account-beyond-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.delta-account-beyond-item {
+  padding: 3px 6px;
+}
+
 /* ── The Canvases-view primer states (running / consent / failed) ─────────── */
 .canvas-primer {
   display: flex;

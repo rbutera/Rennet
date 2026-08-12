@@ -180,6 +180,66 @@ describe("carry seam — orphaned survives the IPC command-output boundary", () 
   });
 });
 
+// ── The delta re-review account at the fold (issue #73) ───────────────────────
+// A successor activation that carries asks stamps `Review.deltaAccount`: each ask is
+// classified (addressed / partially / untouched) and every changed-but-unasked path
+// is surfaced beyond-asks. Also crosses the REAL command-output boundary, so an
+// unlisted-optional strip (the hunkOccurrences hole) cannot silently drop it.
+describe("delta account — stamped on a successor activation (#73)", () => {
+  function withThree(): Review {
+    let review = created(
+      patchsetOf("p1", [file("a.ts", "A1"), file("b.ts", "B1"), file("c.ts", "C1")]),
+    );
+    review = withDisposition(review, "a.ts", "A1");
+    review = withDisposition(review, "b.ts", "B1");
+    review = withDisposition(review, "c.ts", "C1");
+    return review;
+  }
+
+  it("classifies 2 addressed + 1 untouched and flags the unrequested change beyond-asks", () => {
+    const successor = activate(
+      withThree(),
+      // a.ts + b.ts changed (addressed); c.ts byte-identical (untouched); d.ts is new
+      // and nobody asked for it (beyond-asks).
+      patchsetOf("p2", [
+        file("a.ts", "A2"),
+        file("b.ts", "B2"),
+        file("c.ts", "C1"),
+        file("d.ts", "D1"),
+      ]),
+    );
+    const account = successor.deltaAccount;
+    expect(account).toBeDefined();
+    const status = (path: string) => account?.asks.find((entry) => entry.path === path)?.status;
+    expect(status("a.ts")).toBe("addressed");
+    expect(status("b.ts")).toBe("addressed");
+    expect(status("c.ts")).toBe("untouched");
+    expect(account?.beyondAsks).toEqual(["d.ts"]);
+  });
+
+  it("a first capture (no predecessor asks) carries no account (back-compat)", () => {
+    const first = created(patchsetOf("p1", [file("a.ts", "A1")]));
+    expect(first.deltaAccount).toBeUndefined();
+  });
+
+  it("survives the real command-output boundary (parseCommandOutput('review.capture'))", () => {
+    const successor = activate(
+      withThree(),
+      patchsetOf("p2", [
+        file("a.ts", "A2"),
+        file("b.ts", "B2"),
+        file("c.ts", "C1"),
+        file("d.ts", "D1"),
+      ]),
+    );
+    // Precondition: the fold really produced an account (else the boundary test is vacuous).
+    expect(successor.deltaAccount?.beyondAsks).toEqual(["d.ts"]);
+    const parsed = parseCommandOutput("review.capture", { review: successor });
+    expect(parsed.review.deltaAccount).toBeDefined();
+    expect(parsed.review.deltaAccount).toEqual(successor.deltaAccount);
+  });
+});
+
 // ── The pure function directly (no fold), for the split carried/orphaned shape ─
 describe("carryDispositionsByLineage", () => {
   it("partitions into carried and orphaned without dropping anything to void", () => {

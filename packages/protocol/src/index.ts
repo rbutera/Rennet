@@ -14,6 +14,8 @@ import type {
   DecisionEvidence,
   DecisionsRunStatus,
   DecisionWhy,
+  DeltaAccount,
+  DeltaAskAccount,
   Disposition,
   DispositionAnchor,
   DualReviewNote,
@@ -232,6 +234,24 @@ const forgePublishTargetSchema = z.object({
   headOid: z.string().min(1),
 });
 
+// The delta re-review account (issue #73): the deterministic record of what a
+// successor patchset did to the staged asks + the paths it changed beyond them. It
+// crosses IPC on `Review.deltaAccount`, so it is declared here (an unlisted optional
+// on Review would be silently stripped at the boundary — the #242 discipline).
+const deltaAskStatusSchema = z.enum(["addressed", "partially-addressed", "untouched"]);
+const deltaAskAccountSchema = objectSchemaFor<DeltaAskAccount>()({
+  path: z.string().min(1),
+  span: anchorSpanSchema.optional(),
+  side: anchorSideSchema.optional(),
+  type: dispositionTypeSchema,
+  summary: z.string(),
+  status: deltaAskStatusSchema,
+});
+const deltaAccountSchema = objectSchemaFor<DeltaAccount>()({
+  asks: z.array(deltaAskAccountSchema),
+  beyondAsks: z.array(z.string()),
+});
+
 export const reviewSchema = objectSchemaFor<Review>()({
   id: z.string().min(1),
   repositoryRoot: z.string().min(1),
@@ -255,6 +275,9 @@ export const reviewSchema = objectSchemaFor<Review>()({
   // so every existing snapshot (and every local/retrospective review) validates
   // unchanged.
   postTarget: forgePublishTargetSchema.optional(),
+  // The delta re-review account (issue #73): stamped on a successor review, absent on
+  // a first capture. Optional so every existing snapshot validates unchanged.
+  deltaAccount: deltaAccountSchema.optional(),
 });
 
 // ── Canvas output schema (issue #54) ─────────────────────────────────────────

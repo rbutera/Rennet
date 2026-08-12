@@ -183,6 +183,44 @@ export interface Disposition {
 }
 
 /**
+ * How a returned patchset acted on ONE staged ask's target (issue #73). Derived
+ * deterministically from the shipped lineage carry + the successor's changed paths —
+ * never a model call:
+ *  - `untouched` — the ask's target carried byte-identically AND its file was not
+ *    changed at all (the agent left it alone).
+ *  - `partially-addressed` — the ask's target span carried byte-identically, but the
+ *    file WAS changed elsewhere (the agent worked the file, not the flagged span).
+ *  - `addressed` — the ask's target changed (it did not carry: reopened, or its file
+ *    was deleted).
+ */
+export type DeltaAskStatus = "addressed" | "partially-addressed" | "untouched";
+
+/** One staged ask and what the returned patchset did to it (issue #73). */
+export interface DeltaAskAccount {
+  readonly path: string;
+  readonly span?: AnchorSpan;
+  readonly side?: AnchorSide;
+  readonly type: DispositionType;
+  /** A short excerpt of the ask body, for the account's "what moved" line. */
+  readonly summary: string;
+  readonly status: DeltaAskStatus;
+}
+
+/**
+ * The delta re-review account (issue #73): a deterministic, model-free record of what
+ * a returned patchset did relative to the staged asks. `asks` classifies every staged
+ * ask (addressed / partially-addressed / untouched); `beyondAsks` lists the paths the
+ * successor changed that NO ask targeted — the scope-creep the reviewer must see. The
+ * partition is total by construction: every changed path is either an ask's path or a
+ * beyond-asks path, never silently dropped. This structured account is complete on its
+ * own; optional light-tier prose (M25) only rephrases it and adds no fact.
+ */
+export interface DeltaAccount {
+  readonly asks: readonly DeltaAskAccount[];
+  readonly beyondAsks: readonly string[];
+}
+
+/**
  * A disposition the deterministic floor DROPPED on a re-capture, offered to the
  * relevance judge (issue #78, Rai's #48 ruling). `successorPatch` is the new
  * file's patch text when the file survives; absent when the file is gone.
@@ -291,6 +329,16 @@ export interface Review {
    * snapshot validates unchanged.
    */
   postTarget?: ReviewPostTarget;
+  /**
+   * The delta re-review account (issue #73): stamped on a SUCCESSOR review — one
+   * whose active patchset carried dispositions from a predecessor — recording what
+   * the returned patchset did relative to the staged asks (addressed / partially /
+   * untouched) and the paths it changed beyond any ask. Deterministic and model-free.
+   * Optional and stamped ONLY on a successor with asks to account for, so a first
+   * capture and every existing snapshot validate unchanged (back-compat, exactly like
+   * `orphaned`).
+   */
+  deltaAccount?: DeltaAccount;
 }
 
 export interface CommandFailure {

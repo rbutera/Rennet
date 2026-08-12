@@ -60,6 +60,7 @@ import {
 } from "./components/collation-draft-canvas";
 import { CommandPalette } from "./components/command-palette";
 import { ConversationHost } from "./components/conversation-host";
+import { DeltaAccountPanel } from "./components/delta-account-panel";
 import { DestinationFrame } from "./components/destination-frame";
 import { FrontDoor } from "./components/front-door";
 import {
@@ -1770,6 +1771,20 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         <ArrowLeftIcon size={13} />
         Projects
       </button>
+      {/* The delta re-review account (issue #73): at the TOP of a successor review,
+          before the view tabs, stating what the returned patchset did to each ask and
+          what it changed beyond them. Present only on a successor (a regenerate that
+          carried asks); absent on a first capture. Informational — gates nothing.
+          Anchoring an item opens the Files view on that path (the moved hunk[s]). */}
+      {review?.deltaAccount ? (
+        <DeltaAccountPanel
+          account={review.deltaAccount}
+          onAnchor={(path) => {
+            setView("review");
+            setSelectedPath(path);
+          }}
+        />
+      ) : null}
       <div className="view-toggle" role="tablist" aria-label="Workspace view">
         <button
           type="button"
