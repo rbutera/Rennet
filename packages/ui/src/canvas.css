@@ -2482,6 +2482,23 @@
   font-size: 13px;
   line-height: 1.5;
 }
+/* #251: a live streaming preview shows a blinking caret after its growing body, so
+   the reviewer sees the answer is still being typed, not finished. */
+.thread-message.is-streaming .thread-message-body::after {
+  content: "";
+  display: inline-block;
+  width: 2px;
+  height: 1em;
+  margin-left: 2px;
+  vertical-align: text-bottom;
+  background: var(--accent, currentColor);
+  animation: thread-stream-caret 1s step-end infinite;
+}
+@keyframes thread-stream-caret {
+  50% {
+    opacity: 0;
+  }
+}
 .thread-message-promote {
   display: flex;
   flex-wrap: wrap;
