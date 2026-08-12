@@ -2990,8 +2990,11 @@ export interface HandoffRunResult {
    * in `service.capture`) landed the prior approvals (issue #254). `carriedForward` is
    * the number kept on the new patchset (byte-identical at the same path, or a
    * byte-verified git rename re-anchored); `orphaned` is the number surfaced for
-   * re-review because their code vanished or changed — surfaced, never silently
-   * dropped. The fuzzy occurrence matcher deliberately does NOT drive this carry.
+   * re-review because their occurrence VANISHED or was DELETED — surfaced, never
+   * silently dropped. A disposition whose same-path code merely CHANGED (or cannot be
+   * verified) reopens and is counted in NEITHER number; #266 tracks that this reopened
+   * case is currently unsurfaced. The fuzzy occurrence matcher deliberately does NOT
+   * drive this carry.
    */
   readonly carriedForward: number;
   readonly orphaned: number;
