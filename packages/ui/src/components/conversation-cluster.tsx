@@ -110,9 +110,13 @@ function MessageCard({
   // silent completion). `data-status` is the DOM-observable hook the user's view and
   // the tests read; a streaming preview also gets `is-streaming` for its live cue.
   const isStreaming = message.status === "streaming";
+  // An INTERRUPTED turn (#251): a previous process died mid-answer. Surfaced honestly
+  // with its own note — never a silent completion, and there is no fabricated body to
+  // show. This is the render half of criterion 3: the state reaches the person.
+  const isInterrupted = message.status === "interrupted";
   return (
     <article
-      className={`thread-message${isStreaming ? " is-streaming" : ""}`}
+      className={`thread-message${isStreaming ? " is-streaming" : ""}${isInterrupted ? " is-interrupted" : ""}`}
       data-author={message.author}
       data-message-id={message.id}
       {...(message.status ? { "data-status": message.status } : {})}
@@ -127,10 +131,16 @@ function MessageCard({
           <span className="thread-message-you">You</span>
         )}
       </header>
-      <p className="thread-message-body">{message.body}</p>
+      {isInterrupted ? (
+        <p className="thread-message-interrupted" role="note">
+          This answer was interrupted before it finished. Ask again to retry.
+        </p>
+      ) : (
+        <p className="thread-message-body">{message.body}</p>
+      )}
       {/* Promotion — a deliberate act, only on a COMPLETE harness answer. A still-
-          streaming preview cannot be promoted (there is no durable message yet). */}
-      {isHarness && !isStreaming && (onPromote || onSubThread) ? (
+          streaming preview or an interrupted turn cannot be promoted (no durable answer). */}
+      {isHarness && !isStreaming && !isInterrupted && (onPromote || onSubThread) ? (
         <footer className="thread-message-promote">
           {onPromote ? (
             <>

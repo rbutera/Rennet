@@ -2499,6 +2499,13 @@
     opacity: 0;
   }
 }
+/* #251: an interrupted turn's honest note — muted and italic, clearly not an answer. */
+.thread-message-interrupted {
+  color: var(--text-muted, var(--text));
+  font-size: 12px;
+  font-style: italic;
+  opacity: 0.8;
+}
 .thread-message-promote {
   display: flex;
   flex-wrap: wrap;
