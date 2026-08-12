@@ -17,7 +17,15 @@ import type {
   ReviewEngine,
   ReviewNarration,
 } from "@rennet/types";
-import { type ReactNode, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import {
   type CollationDraft,
   type CollationItem,
@@ -321,6 +329,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // to it. `scheme` is the reviewer's chosen appearance, fetched once and applied
   // to the front door's `data-scheme` — so changing it in settings re-themes here.
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const goBack = useCallback(() => {
+    setDirectEntryOpen(false);
+    navigate(navigateBack());
+  }, []);
+  const goForward = useCallback(() => navigate(navigateForward()), []);
   const [scheme, setScheme] = useState<AppearanceScheme>("system");
   // Project detail (issue #37): the unified smart list. Clicking a project row opens
   // this surface (local work + every PR in one list); a row there opens the review.
@@ -475,18 +488,34 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const canvasOverlayOn = useViewStore(viewStore, (state) => state.overlayOn);
   const canvasZoomLevel = useViewStore(viewStore, (state) => state.zoom.level);
 
-  // ⌘K (or Ctrl-K) toggles the palette app-wide: the listener is on `window`, so it
-  // fires from any surface (front door, project detail, review) regardless of focus.
+  // App-wide command and history shortcuts share the same window listener. History
+  // keys stay out of text editing controls; ⌘K keeps its existing global behaviour.
   useEffect(() => {
     function onKey(event: KeyboardEvent): void {
-      if ((event.metaKey || event.ctrlKey) && (event.key === "k" || event.key === "K")) {
+      if (!event.metaKey && !event.ctrlKey) return;
+      if (event.key === "k" || event.key === "K") {
         event.preventDefault();
         setPaletteOpen((open) => !open);
+        return;
+      }
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      )
+        return;
+      if (event.key === "[") {
+        event.preventDefault();
+        goBack();
+      } else if (event.key === "]") {
+        event.preventDefault();
+        goForward();
       }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, []);
+  }, [goBack, goForward]);
 
   useEffect(() => {
     bridge
@@ -1619,6 +1648,31 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     navigate(ascendNavigationTo(0));
   }
 
+  const projectSurfaceIndex = navigation.stack
+    .map((surface) => surface.kind)
+    .lastIndexOf("project");
+  function goToProject(): void {
+    if (projectSurfaceIndex < 0) return;
+    setDirectEntryOpen(false);
+    navigate(ascendNavigationTo(projectSurfaceIndex));
+  }
+  function goToDraft(): void {
+    if (!review) return;
+    const draftIndex = navigation.stack.map((surface) => surface.kind).lastIndexOf("draft");
+    if (draftIndex >= 0) {
+      navigate(ascendNavigationTo(draftIndex));
+      return;
+    }
+    navigate(pushSurface({ kind: "draft", reviewId: review.id }));
+  }
+  function goToPaper(): void {
+    if (!review || currentSurface.kind === "paper") return;
+    if (currentSurface.kind === "review") {
+      navigate(pushSurface({ kind: "draft", reviewId: review.id }));
+    }
+    navigate(pushSurface({ kind: "paper", reviewId: review.id }));
+  }
+
   // Which top-level surface is showing — mirrors the surface at the stack's tip,
   // so the palette offers exactly the commands live for the current screen.
   const screen: Screen | null =
@@ -1637,6 +1691,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const commandContext: CommandContext | null = screen
     ? {
         screen,
+        surfaceKind: currentSurface.kind,
+        canBack: navigation.stack.length > 1,
+        canForward: navigation.future.length > 0,
+        canGoToProject: projectSurfaceIndex >= 0,
         canvasReady,
         view,
         deepReviewOn,
@@ -1644,8 +1702,13 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         scheme: canvasScheme,
         angle: canvasAngle,
         zoomLevel: canvasZoomLevel,
-        backToProjects: goToProjects,
-        backToProjectList: goToProjects,
+        back: goBack,
+        forward: goForward,
+        goToProjects,
+        goToProject,
+        goToDraft,
+        goToPaper,
+        openSettings: () => setSettingsOpen(true),
         showFiles: () => setView("review"),
         showCanvases: () => setView("canvases"),
         reviewDirectly: () => setDirectEntryOpen(true),
@@ -1704,11 +1767,8 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         <NavRail
           canBack={navigation.stack.length > 1}
           canForward={navigation.future.length > 0}
-          onBack={() => {
-            setDirectEntryOpen(false);
-            navigate(navigateBack());
-          }}
-          onForward={() => navigate(navigateForward())}
+          onBack={goBack}
+          onForward={goForward}
           onHome={goToProjects}
           onProjects={goToProjects}
         />
@@ -1719,29 +1779,8 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
 
   if (review === undefined) return <div className="loading">Restoring local review…</div>;
 
-  // Project detail (issue #37): clicking a project row opens its unified smart list —
-  // local work + every PR in one surface. Its payload stays cached while a child
-  // review is open, so Back can reveal this exact parent surface without refetching.
-  if (currentSurface.kind === "project" && projectDetail) {
-    return navigationSurface(
-      <>
-        {error ? <div className="error-toast">{error}</div> : null}
-        {busy ? <div className="busy-bar" /> : null}
-        <ProjectDetail
-          bridge={bridge}
-          project={projectDetail}
-          scheme={effectiveScheme}
-          onOpenRow={(row) => void openRow(projectDetail, row)}
-          onBack={() => navigate(navigateBack())}
-        />
-        {palette}
-      </>,
-    );
-  }
-
-  // The settings screen (wireframe #15): opened from the front door's affordance,
-  // closed back to it. Takes precedence over the front door so it is a full screen,
-  // not an overlay; the chosen scheme flows back to `data-scheme` on close.
+  // Settings and direct entry are orbital overlays. They take render precedence but
+  // never mutate the surface stack, so closing either reveals the exact location.
   if (settingsOpen) {
     return (
       <>
@@ -1756,34 +1795,14 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     );
   }
 
-  // The front door is the root surface. Direct entry remains available through the
-  // palette, but no longer has a drawn door on this surface.
-  if (currentSurface.kind === "projects" || !review) {
-    if (!directEntryOpen) {
-      return navigationSurface(
-        <>
-          {error ? <div className="error-toast">{error}</div> : null}
-          {busy ? <div className="busy-bar" /> : null}
-          <FrontDoor
-            bridge={bridge}
-            onOpenProject={(project) => {
-              setProjectDetail(project);
-              navigate(pushSurface({ kind: "project", projectId: project.id }));
-            }}
-            onOpenSettings={() => setSettingsOpen(true)}
-            scheme={effectiveScheme}
-          />
-          {palette}
-        </>,
-      );
-    }
+  if (directEntryOpen) {
     return (
       <>
         {palette}
         <main className="empty-state">
           <button type="button" className="entry-back" onClick={() => setDirectEntryOpen(false)}>
             <ArrowLeftIcon size={13} />
-            Projects
+            Back
           </button>
           <div className="mark" aria-hidden="true">
             <RennetMark size={34} />
@@ -1841,6 +1860,47 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           {error ? <p className="error">{error}</p> : null}
         </main>
       </>
+    );
+  }
+
+  // Project detail (issue #37): clicking a project row opens its unified smart list —
+  // local work + every PR in one surface. Its payload stays cached while a child
+  // review is open, so Back can reveal this exact parent surface without refetching.
+  if (currentSurface.kind === "project" && projectDetail) {
+    return navigationSurface(
+      <>
+        {error ? <div className="error-toast">{error}</div> : null}
+        {busy ? <div className="busy-bar" /> : null}
+        <ProjectDetail
+          bridge={bridge}
+          project={projectDetail}
+          scheme={effectiveScheme}
+          onOpenRow={(row) => void openRow(projectDetail, row)}
+          onBack={() => navigate(navigateBack())}
+        />
+        {palette}
+      </>,
+    );
+  }
+
+  // The front door is the root surface. Direct entry remains available through the
+  // palette, but no longer has a drawn door on this surface.
+  if (currentSurface.kind === "projects" || !review) {
+    return navigationSurface(
+      <>
+        {error ? <div className="error-toast">{error}</div> : null}
+        {busy ? <div className="busy-bar" /> : null}
+        <FrontDoor
+          bridge={bridge}
+          onOpenProject={(project) => {
+            setProjectDetail(project);
+            navigate(pushSurface({ kind: "project", projectId: project.id }));
+          }}
+          onOpenSettings={() => setSettingsOpen(true)}
+          scheme={effectiveScheme}
+        />
+        {palette}
+      </>,
     );
   }
 

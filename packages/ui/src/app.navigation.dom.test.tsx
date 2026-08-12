@@ -133,4 +133,26 @@ describe("RennetApp navigation spine", () => {
     fireEvent.click(getByRole("button", { name: "Back" }));
     await waitFor(() => expect(container.querySelector(".front-door")).not.toBeNull());
   });
+
+  it("⌘[ and ⌘] use the same Back/Forward history paths", async () => {
+    const { container, getByRole } = mount(<RennetApp bridge={navigationBridge(null)} />);
+
+    await waitFor(() => expect(container.querySelector(".project-row")).not.toBeNull());
+    fireEvent.click(container.querySelector(".project-row") as HTMLButtonElement);
+    await waitFor(() => expect(container.querySelector(".smart-row-action")).not.toBeNull());
+    fireEvent.click(container.querySelector(".smart-row-action") as HTMLButtonElement);
+    await waitFor(() =>
+      expect(getByRole("navigation", { name: "Breadcrumb" }).textContent).toContain("review-1"),
+    );
+
+    fireEvent.keyDown(window, { key: "[", metaKey: true });
+    await waitFor(() => expect(container.querySelector(".project-detail")).not.toBeNull());
+    expect(container.querySelector(".front-door")).toBeNull();
+
+    fireEvent.keyDown(window, { key: "]", metaKey: true });
+    await waitFor(() =>
+      expect(getByRole("navigation", { name: "Breadcrumb" }).textContent).toContain("review-1"),
+    );
+    expect(container.querySelector(".project-detail")).toBeNull();
+  });
 });

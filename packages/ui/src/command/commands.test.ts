@@ -13,6 +13,10 @@ import {
 function context(overrides: Partial<CommandContext> = {}): CommandContext {
   return {
     screen: "workspace" as Screen,
+    surfaceKind: "review",
+    canBack: true,
+    canForward: false,
+    canGoToProject: true,
     canvasReady: true,
     view: "canvases",
     deepReviewOn: true,
@@ -20,8 +24,13 @@ function context(overrides: Partial<CommandContext> = {}): CommandContext {
     scheme: "dark",
     angle: "decisions",
     zoomLevel: "cohort",
-    backToProjects: vi.fn(),
-    backToProjectList: vi.fn(),
+    back: vi.fn(),
+    forward: vi.fn(),
+    goToProjects: vi.fn(),
+    goToProject: vi.fn(),
+    goToDraft: vi.fn(),
+    goToPaper: vi.fn(),
+    openSettings: vi.fn(),
     showFiles: vi.fn(),
     showCanvases: vi.fn(),
     reviewDirectly: vi.fn(),
@@ -40,10 +49,16 @@ function context(overrides: Partial<CommandContext> = {}): CommandContext {
 
 describe("buildCommands — context-aware registry", () => {
   it("offers no review/lens commands when the front door is showing", () => {
-    const commands = buildCommands(context({ screen: "frontDoor" }));
+    const commands = buildCommands(
+      context({
+        screen: "frontDoor",
+        surfaceKind: "projects",
+        canBack: false,
+        canGoToProject: false,
+      }),
+    );
     const ids = commands.map((command) => command.id);
-    // The one front-door action, and nothing that needs an open review.
-    expect(ids).toEqual(["door.direct"]);
+    expect(ids).toEqual(["nav.settings", "nav.reviewDirectly"]);
     expect(ids).not.toContain("lens.decisions");
     expect(ids).not.toContain("review.retry");
   });
@@ -52,11 +67,13 @@ describe("buildCommands — context-aware registry", () => {
     // On the Canvases view at a mid zoom, lens decisions (the active angle) is the one
     // omitted; every OTHER lens plus both zoom directions and the toggles are present.
     const ids = buildCommands(context()).map((command) => command.id);
+    expect(ids).toContain("nav.back");
     expect(ids).toContain("nav.files");
     expect(ids).toContain("review.retry");
-    for (const angle of ["spec", "sequence", "claims", "noise", "flagged"]) {
+    for (const angle of ["spec", "sequence", "noise", "flagged"]) {
       expect(ids).toContain(`lens.${angle}`);
     }
+    expect(ids).not.toContain("lens.claims");
     expect(ids).toContain("zoom.in");
     expect(ids).toContain("zoom.out");
     expect(ids).toContain("view.scheme");
@@ -101,6 +118,22 @@ describe("buildCommands — context-aware registry", () => {
     flagged?.run();
     expect(ctx.goToAngle).toHaveBeenCalledWith("flagged");
     expect(ctx.goToAngle).toHaveBeenCalledTimes(1);
+  });
+
+  it("runs the same back handler exposed by the navigation controls", () => {
+    const ctx = context();
+    buildCommands(ctx)
+      .find((command) => command.id === "nav.back")
+      ?.run();
+    expect(ctx.back).toHaveBeenCalledTimes(1);
+  });
+
+  it("opens Settings through the injected overlay handler", () => {
+    const ctx = context();
+    buildCommands(ctx)
+      .find((command) => command.id === "nav.settings")
+      ?.run();
+    expect(ctx.openSettings).toHaveBeenCalledTimes(1);
   });
 
   it("labels the dual-model + scheme toggles from live state", () => {
