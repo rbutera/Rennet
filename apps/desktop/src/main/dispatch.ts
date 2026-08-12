@@ -223,7 +223,13 @@ export interface DispatchDeps {
    * regeneration between the orchestrator and Codex legs cannot cross them).
    */
   readonly reviewAsk: {
-    askOrchestrator(input: { review: Review; question: string }): Promise<AskAnswer>;
+    askOrchestrator(input: {
+      review: Review;
+      question: string;
+      /** Token-stream sink (#251): each orchestrator token as it arrives, when the ask
+       *  is a streamed one. Absent for a one-shot #139 ask. */
+      onDelta?: (text: string) => void;
+    }): Promise<AskAnswer>;
     askCodex(input: { review: Review; question: string }): Promise<AskAnswer>;
   };
   /**
@@ -736,10 +742,57 @@ export function createDispatch(
         // question always answers against the latest code rather than ever refusing.
         const review = requireLatestReview(input.reviewId);
         const mode = input.mode ?? "orchestrator";
+        // #251 streaming: with a thread + turn AND a push channel, stream the
+        // orchestrator's tokens live and emit a terminal event per channel. Absent →
+        // a #139 one-shot ask, no stream (fully back-compat). The router's law is
+        // untouched — streaming changes the TRANSPORT, not which models are asked.
+        const stream =
+          input.threadId && input.turnId && ctx?.emitAskStream
+            ? { threadId: input.threadId, turnId: input.turnId, emit: ctx.emitAskStream }
+            : undefined;
+        const onOrchestratorDelta = stream
+          ? (delta: string) =>
+              stream.emit({
+                kind: "ask-delta",
+                threadId: stream.threadId,
+                turnId: stream.turnId,
+                channel: "orchestrator",
+                delta,
+              })
+          : undefined;
         const result = await askReview(mode, input.question, {
-          askOrchestrator: (question) => deps.reviewAsk.askOrchestrator({ review, question }),
+          askOrchestrator: (question) =>
+            deps.reviewAsk.askOrchestrator({
+              review,
+              question,
+              ...(onOrchestratorDelta ? { onDelta: onOrchestratorDelta } : {}),
+            }),
           askCodex: (question) => deps.reviewAsk.askCodex({ review, question }),
         });
+        // Terminal events: the orchestrator's tokens already streamed via onDelta;
+        // codex is one-shot (no token stream) so its whole answer lands as its
+        // completion. Both carry the SAME final answer the invoke returns — the stream
+        // is a live echo, never a second source of truth.
+        if (stream) {
+          stream.emit({
+            kind: "ask-complete",
+            threadId: stream.threadId,
+            turnId: stream.turnId,
+            channel: "orchestrator",
+            model: result.primary.model,
+            finalBody: result.primary.answer,
+          });
+          if (result.secondOpinion) {
+            stream.emit({
+              kind: "ask-complete",
+              threadId: stream.threadId,
+              turnId: stream.turnId,
+              channel: "codex",
+              model: result.secondOpinion.model,
+              finalBody: result.secondOpinion.answer,
+            });
+          }
+        }
         return parseCommandOutput(name, result);
       }
       // ── review.reattach: reload persisted threads + in-flight turns (issue #251) ─

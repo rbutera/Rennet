@@ -2,17 +2,21 @@ import type { RennetBridge } from "@rennet/protocol";
 import { useEffect, useRef, useState } from "react";
 import type { AskMode } from "../canvas/ask";
 import {
+  addMessage,
   answerInThread,
   askInThread,
   buildConversationQuestion,
+  type CoalescerBook,
   type ConversationAnchor,
   type ConversationThread,
   type DiscussRequest,
+  emptyCoalescerBook,
   fragmentAnchorKey,
   openThread,
   type PromotionEvent,
   type PromotionKind,
   promoteMessage,
+  pushDelta,
 } from "../canvas/conversation";
 import { ConversationMargin, DiscussControl } from "./conversation-cluster";
 
@@ -32,19 +36,31 @@ import { ConversationMargin, DiscussControl } from "./conversation-cluster";
 //
 // The boundary is `review.ask` verbatim — the SAME command, router, and live ports
 // `AskPanel` fires (`askReview`: orchestrator once, "both" adds Codex, never a
-// synthesis). No new protocol command and no streaming transport are invented: the
-// answer arrives whole (the orchestrator turn resolves to its final text), exactly
-// as it does for `AskPanel`. ⛔ Live token STREAMING and server-side session RESUME /
-// orphan reaping are DEFERRED as issue #251 (split from #36, criteria 3+4) — a
-// separate branch, only observable in the crash/kill failure case; a working,
-// contextual, multi-turn-LIVE conversation lands here first. The streaming seam is
-// the `answerInThread` call below (where whole answers land, tokens would stream).
+// synthesis). #251 now STREAMS the orchestrator's tokens live: the ask carries a
+// `turnId` + `anchor`, and `bridge.onAskStream` deltas (filtered to this turn) drive a
+// single live PREVIEW message that grows as the model types. The preview is a live
+// ECHO only — the durable answer is always the AUTHORITATIVE invoke result, which
+// replaces the preview on completion, so a missing/absent stream degrades cleanly to
+// the whole-answer behaviour (no `onAskStream` ⇒ no preview, answer still lands).
+// ⛔ Session persistence / re-attach / the interrupted-turn SURFACE / orphan reaping
+// remain #251's later slices — only observable in the crash/kill failure case.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The UI-side ceiling on a single turn before the thread unblocks with an honest
  *  timeout (the underlying turn is not aborted — this frees the composer so a thread
  *  is never permanently stuck). Mirrors `AskPanel`'s `DEFAULT_ASK_TIMEOUT_MS`. */
 export const DEFAULT_CONVERSATION_TIMEOUT_MS = 180_000;
+
+/** How often (ms) the live streaming preview repaints as tokens arrive (#251). The
+ *  coalescer accumulates every token into the body regardless; this only bounds how
+ *  often React repaints, so a fast token stream cannot thrash the DOM. */
+export const STREAM_REPAINT_THROTTLE_MS = 33;
+
+/** The message-id prefix of the live streaming PREVIEW (#251). One preview per turn;
+ *  it is replaced by the durable answer(s) from the authoritative invoke result on
+ *  completion, or removed on failure. Distinct prefix so it is never mistaken for a
+ *  durable message id (which is a random UUID). */
+export const STREAM_PREVIEW_ID_PREFIX = "stream-preview-";
 
 export interface ConversationHostProps {
   /** The command bridge — every turn runs `review.ask` over it. */
@@ -184,6 +200,54 @@ export function ConversationHost({
     setThreadError(threadId, undefined);
     markPending(threadId, true);
 
+    // #251: bind this turn to a stable id so the streamed tokens (keyed by reviewId,
+    // filtered to this turnId) drive a single live PREVIEW message that grows as the
+    // orchestrator types. The preview is a live ECHO; the durable answer is always the
+    // authoritative invoke RESULT below, which replaces the preview on completion.
+    const turnId = crypto.randomUUID();
+    const previewId = `${STREAM_PREVIEW_ID_PREFIX}${turnId}`;
+    let book: CoalescerBook = emptyCoalescerBook();
+    const unsubscribe = bridge.onAskStream?.(reviewId, (event) => {
+      if (event.turnId !== turnId) return; // only THIS turn's tokens
+      if (event.kind !== "ask-delta" || event.channel !== "orchestrator") return;
+      const pushed = pushDelta(
+        book,
+        event.turnId,
+        event.channel,
+        event.delta,
+        performance.now(),
+        STREAM_REPAINT_THROTTLE_MS,
+      );
+      book = pushed.book;
+      const liveBody = pushed.body;
+      setThreads((current) =>
+        current.map((candidate) => {
+          if (candidate.id !== threadId) return candidate;
+          const hasPreview = candidate.messages.some((message) => message.id === previewId);
+          if (hasPreview) {
+            return {
+              ...candidate,
+              messages: candidate.messages.map((message) =>
+                message.id === previewId ? { ...message, body: liveBody } : message,
+              ),
+            };
+          }
+          return addMessage(candidate, {
+            id: previewId,
+            author: "harness",
+            body: liveBody,
+            status: "streaming",
+          });
+        }),
+      );
+    });
+
+    /** Drop the live preview from a thread (on completion or failure). */
+    const dropPreview = (thread: ConversationThread): ConversationThread => ({
+      ...thread,
+      messages: thread.messages.filter((message) => message.id !== previewId),
+    });
+
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const invocation = bridge.invoke("review.ask", {
@@ -194,6 +258,11 @@ export function ConversationHost({
         // the explicit opt-in that ALSO asks Codex, its answer appended as a second card.
         mode,
         question,
+        // #251: identify the thread + turn and carry the anchor, so main persists the
+        // thread and streams the turn's tokens back under these ids.
+        threadId,
+        turnId,
+        anchor: thread.anchor,
       });
       // Race a UI timeout so a turn that never settles cannot leave the thread stuck.
       const timeout = new Promise<never>((_resolve, reject) => {
@@ -205,12 +274,13 @@ export function ConversationHost({
       const result = await Promise.race([invocation, timeout]);
       // The REAL answer(s) populate the thread — `primary` always, plus `secondOpinion`
       // when the thread asked both. Each is a durable harness card labelled by its own
-      // model. No synthesis is possible: the result shape carries at most these two.
+      // model. No synthesis is possible: the result shape carries at most these two. The
+      // live preview is dropped and REPLACED by the durable answer (never both).
       setThreads((current) =>
         current.map((candidate) => {
           if (candidate.id !== threadId) return candidate;
           let grown = answerInThread(
-            candidate,
+            dropPreview(candidate),
             crypto.randomUUID(),
             result.primary.model,
             result.primary.answer,
@@ -228,9 +298,16 @@ export function ConversationHost({
       );
     } catch (reason) {
       // A failed turn is surfaced honestly on the thread — never swallowed, never
-      // replaced by a fixture answer.
+      // replaced by a fixture answer. The half-streamed preview is dropped (its
+      // interrupted-surface persistence is #251's next slice, not this one).
+      setThreads((current) =>
+        current.map((candidate) =>
+          candidate.id === threadId ? dropPreview(candidate) : candidate,
+        ),
+      );
       setThreadError(threadId, reason instanceof Error ? reason.message : String(reason));
     } finally {
+      unsubscribe?.();
       if (timer !== undefined) clearTimeout(timer);
       markPending(threadId, false);
     }

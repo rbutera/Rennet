@@ -203,6 +203,14 @@ export interface OrchestratorTurnDeps {
   readonly loadQuery?: LoadSdkQuery;
   /** canvasOps@2 MCP-server SDK loader; defaults to the real lazy import. Injectable for tests. */
   readonly loadSdk?: LoadCanvasOpsSdk;
+  /**
+   * Token-stream sink (issue #251). Called with each `text.delta` as it arrives, so a
+   * caller can stream the answer live. The frames already flow through this turn's
+   * consume loop (the claude adapter decodes `content_block_delta`); without this hook
+   * they were simply dropped. Optional — a non-streaming caller omits it and only reads
+   * the final `finalText`. A throw here is not caught, so keep it total.
+   */
+  readonly onDelta?: (text: string) => void;
 }
 
 /** The outcome of one live orchestrator turn. */
@@ -323,6 +331,11 @@ export async function runOrchestratorTurn(
             input: event.call.input,
           });
         }
+      } else if (event.kind === "text.delta" && event.text) {
+        // Stream the token as it arrives (#251). The FINAL text still comes from
+        // `text.message`/`session.ended` below — deltas drive the live view, the
+        // durable answer is the completed message, never a concatenation of deltas here.
+        deps.onDelta?.(event.text);
       } else if (event.kind === "text.message" && event.text) {
         finalText = event.text;
       } else if (event.kind === "session.ended") {

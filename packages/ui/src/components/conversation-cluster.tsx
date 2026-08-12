@@ -105,8 +105,18 @@ function MessageCard({
   onSubThread?: (messageId: string) => void;
 }) {
   const isHarness = message.author === "harness";
+  // #251: a message carries a turn STATUS — absent = a durable complete answer, but a
+  // live-streaming preview or an interrupted turn are surfaced honestly here (never a
+  // silent completion). `data-status` is the DOM-observable hook the user's view and
+  // the tests read; a streaming preview also gets `is-streaming` for its live cue.
+  const isStreaming = message.status === "streaming";
   return (
-    <article className="thread-message" data-author={message.author} data-message-id={message.id}>
+    <article
+      className={`thread-message${isStreaming ? " is-streaming" : ""}`}
+      data-author={message.author}
+      data-message-id={message.id}
+      {...(message.status ? { "data-status": message.status } : {})}
+    >
       <header className="thread-message-head">
         {isHarness ? (
           <span className="thread-message-model">
@@ -118,9 +128,9 @@ function MessageCard({
         )}
       </header>
       <p className="thread-message-body">{message.body}</p>
-      {/* Promotion — a deliberate act, only on a harness answer. Behind the publish
-          boundary: pressing one lifts THIS message into a finding / draft comment. */}
-      {isHarness && (onPromote || onSubThread) ? (
+      {/* Promotion — a deliberate act, only on a COMPLETE harness answer. A still-
+          streaming preview cannot be promoted (there is no durable message yet). */}
+      {isHarness && !isStreaming && (onPromote || onSubThread) ? (
         <footer className="thread-message-promote">
           {onPromote ? (
             <>

@@ -75,7 +75,12 @@ export interface LiveReviewAskDeps {
  * to both legs, so the two legs of a "both" ask can never cross two patchsets.
  */
 export interface LiveReviewAskPorts {
-  askOrchestrator(input: { review: Review; question: string }): Promise<AskAnswer>;
+  askOrchestrator(input: {
+    review: Review;
+    question: string;
+    /** Token-stream sink (#251): each orchestrator token as it arrives. */
+    onDelta?: (text: string) => void;
+  }): Promise<AskAnswer>;
   askCodex(input: { review: Review; question: string }): Promise<AskAnswer>;
 }
 
@@ -87,9 +92,9 @@ export interface LiveReviewAskPorts {
  */
 export function createLiveReviewAskPorts(deps: LiveReviewAskDeps): LiveReviewAskPorts {
   return {
-    async askOrchestrator({ review, question }) {
+    async askOrchestrator({ review, question, onDelta }) {
       const pipeline = await deps.buildPipeline(review);
-      const outcome = await deps.orchestratorTurn(review, pipeline, question);
+      const outcome = await deps.orchestratorTurn(review, pipeline, question, onDelta);
       if (!outcome.available) {
         // Fail-closed, honest: no `claude` on the machine → an answer that SAYS so,
         // never a fabricated one. (The primary answer is always produced, in every

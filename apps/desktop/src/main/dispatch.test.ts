@@ -19,6 +19,7 @@ import type {
   Project,
   ProjectKind,
   ProjectProcessEvent,
+  ReviewAskStreamEvent,
 } from "@rennet/protocol";
 import type {
   Canvas,
@@ -204,9 +205,13 @@ function harness(
   // orchestrator is asked exactly once and Codex only in "both" mode — the whole
   // point of the issue is that negative guarantee on the REAL command path.
   const reviewAsk = {
-    askOrchestrator: vi.fn<(input: { review: Review; question: string }) => Promise<AskAnswer>>(
-      async () => ({ model: "Orchestrator · Claude", answer: "orchestrator's answer" }),
-    ),
+    askOrchestrator: vi.fn<
+      (input: {
+        review: Review;
+        question: string;
+        onDelta?: (text: string) => void;
+      }) => Promise<AskAnswer>
+    >(async () => ({ model: "Orchestrator · Claude", answer: "orchestrator's answer" })),
     askCodex: vi.fn<(input: { review: Review; question: string }) => Promise<AskAnswer>>(
       async () => ({
         model: "codex",
@@ -1658,6 +1663,105 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
     });
     expect(reviewAsk.askOrchestrator).toHaveBeenCalledWith({ review, question: "q" });
     expect(reviewAsk.askCodex).toHaveBeenCalledWith({ review, question: "q" });
+  });
+});
+
+describe("createDispatch — review.ask token streaming (issue #251)", () => {
+  async function openReview() {
+    const h = harness();
+    const review = await capturedReview(h.dispatch);
+    return { dispatch: h.dispatch, reviewAsk: h.reviewAsk, review };
+  }
+
+  it("streams the orchestrator's tokens as ask-delta, then a terminal ask-complete carrying the SAME answer", async () => {
+    const { dispatch, reviewAsk, review } = await openReview();
+    // The port calls its onDelta for each token as it arrives, exactly as the live
+    // orchestrator turn now does (text.delta → onDelta).
+    reviewAsk.askOrchestrator.mockImplementationOnce(async ({ onDelta }) => {
+      onDelta?.("Hel");
+      onDelta?.("lo ");
+      onDelta?.("world");
+      return { model: "Orchestrator · Claude", answer: "Hello world" };
+    });
+    const events: ReviewAskStreamEvent[] = [];
+    const out = (await dispatch(
+      "review.ask",
+      {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        mode: "orchestrator",
+        question: "why?",
+        threadId: "th",
+        turnId: "tn",
+        anchor: { kind: "chunk", label: "src/a.ts", key: "chunk|src/a.ts" },
+      },
+      { emitAskStream: (event) => events.push(event) },
+    )) as { primary: { answer: string } };
+
+    const deltas = events.filter((e) => e.kind === "ask-delta");
+    expect(deltas.map((e) => (e.kind === "ask-delta" ? e.delta : ""))).toEqual([
+      "Hel",
+      "lo ",
+      "world",
+    ]);
+    const complete = events.find((e) => e.kind === "ask-complete");
+    expect(complete).toMatchObject({
+      channel: "orchestrator",
+      finalBody: "Hello world",
+      model: "Orchestrator · Claude",
+    });
+    // The stream is a live ECHO: every event binds to the exact turn, and the durable
+    // answer is the invoke's result — never a concatenation of the deltas here.
+    expect(events.every((e) => e.turnId === "tn" && e.threadId === "th")).toBe(true);
+    expect(out.primary.answer).toBe("Hello world");
+    // The delta events precede the completion.
+    expect(events.at(-1)?.kind).toBe("ask-complete");
+  });
+
+  it("in BOTH mode, codex (one-shot, no token stream) lands its whole answer as an ask-complete", async () => {
+    const { dispatch, reviewAsk, review } = await openReview();
+    reviewAsk.askOrchestrator.mockImplementationOnce(async ({ onDelta }) => {
+      onDelta?.("orch");
+      return { model: "Orchestrator · Claude", answer: "orch" };
+    });
+    const events: ReviewAskStreamEvent[] = [];
+    await dispatch(
+      "review.ask",
+      {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        mode: "both",
+        question: "agree?",
+        threadId: "th",
+        turnId: "tn",
+      },
+      { emitAskStream: (event) => events.push(event) },
+    );
+    const completes = events.filter((e) => e.kind === "ask-complete");
+    // Two completions, one per channel; codex has NO deltas (it is a single exec).
+    expect(completes.map((e) => (e.kind === "ask-complete" ? e.channel : ""))).toEqual([
+      "orchestrator",
+      "codex",
+    ]);
+    expect(events.some((e) => e.kind === "ask-delta" && e.channel === "codex")).toBe(false);
+  });
+
+  it("emits NOTHING for a one-shot #139 ask with no thread/turn (back-compat)", async () => {
+    const { dispatch, reviewAsk, review } = await openReview();
+    const onDeltaSeen: boolean[] = [];
+    reviewAsk.askOrchestrator.mockImplementationOnce(async ({ onDelta }) => {
+      onDeltaSeen.push(onDelta !== undefined);
+      return { model: "Orchestrator · Claude", answer: "a" };
+    });
+    const events: ReviewAskStreamEvent[] = [];
+    await dispatch(
+      "review.ask",
+      { commandId: randomUUID(), reviewId: review.id, question: "q" },
+      { emitAskStream: (event) => events.push(event) },
+    );
+    // No threadId/turnId → no stream, no onDelta handed to the port, no events.
+    expect(events).toEqual([]);
+    expect(onDeltaSeen).toEqual([false]);
   });
 });
 
