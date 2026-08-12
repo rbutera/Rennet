@@ -1,5 +1,58 @@
 import { describe, expect, it, vi } from "vitest";
-import { type OpenInEditorEffects, performOpenInEditor, resolveWithinRoot } from "./open-in-editor";
+import {
+  launchResolvedEditor,
+  type OpenInEditorEffects,
+  performOpenInEditor,
+  resolveEditorExecutables,
+  resolveWithinRoot,
+} from "./open-in-editor";
+
+describe("resolveEditorExecutables", () => {
+  it("finds packaged Cursor from its absolute application bundle", async () => {
+    const cursor = "/Applications/Cursor.app/Contents/Resources/app/bin/cursor";
+    const result = await resolveEditorExecutables(
+      { platform: "darwin", home: "/Users/rai", inheritedPath: "", loginShellPath: "" },
+      async (candidate) => candidate === cursor,
+    );
+    expect(result).toEqual([cursor]);
+    expect(result.every((candidate) => candidate.startsWith("/"))).toBe(true);
+  });
+
+  it.each([
+    ["inherited", "/dev/bin", ""],
+    ["harvested", "", "/login/bin"],
+  ])("finds code on the %s PATH", async (_source, inheritedPath, loginShellPath) => {
+    const expected = `${inheritedPath || loginShellPath}/code`;
+    const result = await resolveEditorExecutables(
+      { platform: "darwin", home: "/Users/rai", inheritedPath, loginShellPath },
+      async (candidate) => candidate === expected,
+    );
+    expect(result).toEqual([expected]);
+  });
+});
+
+describe("launchResolvedEditor", () => {
+  it("falls through failed candidates and preserves the line jump", async () => {
+    const spawn = vi.fn(async (executable: string) => {
+      if (executable === "/bin/first") throw new Error("failed");
+    });
+    const launched = await launchResolvedEditor(
+      ["/bin/first", "/bin/second"],
+      "/repo/src/x.ts",
+      42,
+      spawn,
+    );
+    expect(launched).toBe(true);
+    expect(spawn).toHaveBeenNthCalledWith(1, "/bin/first", ["-g", "/repo/src/x.ts:42"]);
+    expect(spawn).toHaveBeenNthCalledWith(2, "/bin/second", ["-g", "/repo/src/x.ts:42"]);
+  });
+
+  it("does not spawn a bare command when no candidate resolves", async () => {
+    const spawn = vi.fn(async () => Promise.resolve());
+    expect(await launchResolvedEditor([], "/repo/src/x.ts", 7, spawn)).toBe(false);
+    expect(spawn).not.toHaveBeenCalled();
+  });
+});
 
 describe("resolveWithinRoot", () => {
   it("resolves a repo-relative path under the root", () => {
