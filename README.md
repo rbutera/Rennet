@@ -48,6 +48,6 @@ Nx runs and locally caches lint, TypeScript 7 typechecking, unit tests, and Vite
 
 ## Privacy boundary
 
-There is no Rennet backend. Selected harnesses or model providers may receive explicitly assembled code and context, and the app must disclose that before a run. Never use easyJet or other client repositories, data, screenshots, or pull requests as fixtures without written authorization.
+There is no Rennet backend. Selected harnesses or model providers may receive explicitly assembled code and context, and the app must disclose that before a run. Never use client repositories, data, screenshots, or pull requests as fixtures without written authorization.
 
 This private repository does not currently grant a licence. The planned public licensing split is recorded in the contracts and rulings and must be implemented before the repository becomes public.

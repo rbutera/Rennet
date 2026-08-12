@@ -454,7 +454,7 @@ Which is the sharpest strategic point in this document: **at your primary daily 
 - Bot-comment ingestion (Codex, Greptile, gitStream). Read-only and additive; it can land after the publish pipeline is trusted.
 - Webhooks. There is no callback endpoint and there should not be one.
 
-**Non-negotiable during dogfood:** the client-repo authorization boundary. easyJet and other client repositories stay out of dogfood without written authorization.
+**Non-negotiable during dogfood:** the client-repo authorization boundary. Client repositories stay out of dogfood without written authorization.
 
 ---
 
