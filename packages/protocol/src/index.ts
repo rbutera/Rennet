@@ -929,6 +929,9 @@ export const conversationAnchorSchema = z.object({
   key: z.string().min(1),
   side: anchorSideSchema.optional(),
   context: z.string().optional(),
+  // The file this anchor hangs on (#251 slice 3), for orphan resolution on re-attach.
+  // Absent for a conversation fragment (anchors to a message, not code).
+  path: z.string().optional(),
 });
 export type ConversationAnchorWire = z.infer<typeof conversationAnchorSchema>;
 

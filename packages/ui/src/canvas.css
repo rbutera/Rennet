@@ -2506,6 +2506,19 @@
   font-style: italic;
   opacity: 0.8;
 }
+/* #251 slice 3: an orphaned thread's banner — its anchored code left the diff. Muted,
+   with a warning tint, so it reads as a preserved-but-unplaceable note, not an answer. */
+.conversation-orphaned {
+  margin: 4px 8px;
+  padding: 4px 8px;
+  border-left: 2px solid var(--warning, currentColor);
+  color: var(--text-muted, var(--text));
+  font-size: 12px;
+  font-style: italic;
+}
+.conversation-cluster.is-orphaned {
+  opacity: 0.85;
+}
 .thread-message-promote {
   display: flex;
   flex-wrap: wrap;

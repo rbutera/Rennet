@@ -78,6 +78,14 @@ export interface ConversationAnchor {
   readonly side?: AnchorSide;
   /** The text this anchor refers to — the fragment's parent message (F2), so it travels with it. */
   readonly context?: string;
+  /**
+   * The FILE this anchor hangs on (#251, slice 3). Carried explicitly rather than parsed
+   * back out of `key` — a path may contain the key's `|` delimiter, so the key is
+   * deliberately not back-parseable. Used ONLY to resolve orphaning on re-attach: a thread
+   * whose `path` is gone from the current diff is orphaned. ABSENT for a conversation
+   * fragment (it anchors to a message, not code) — such a thread never orphans on a code change.
+   */
+  readonly path?: string;
 }
 
 // ── Injective anchor keys: the KIND is carried, never implied by shape (F4) ──────
@@ -445,6 +453,25 @@ export function markOrphaned(thread: ConversationThread): ConversationThread {
 /** Whether a thread is orphaned (anchor no longer resolves). Absent flag = placed. */
 export function isOrphaned(thread: ConversationThread): boolean {
   return thread.orphaned === true;
+}
+
+/**
+ * Resolve each thread's placement against the current diff's file paths (#251, slice 3),
+ * stamping ORPHANED any whose anchored file is gone. This is the ONLY resolution step: it
+ * flags, it never RE-ANCHORS (there is no re-anchor function — the refusal is structural),
+ * so a human's words are never silently moved onto code they were not written about. A
+ * thread whose anchor has no `path` (a conversation fragment) anchors to the conversation,
+ * not to code, so a code change cannot orphan it and it is left placed. Pure and total.
+ */
+export function orphanUnresolvedThreads(
+  threads: readonly ConversationThread[],
+  currentPaths: ReadonlySet<string>,
+): ConversationThread[] {
+  return threads.map((thread) => {
+    const path = thread.anchor.path;
+    if (path === undefined || currentPaths.has(path)) return thread;
+    return markOrphaned(thread);
+  });
 }
 
 // ── Two-channel token streaming under an injected clock (issue #251) ───────────

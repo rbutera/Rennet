@@ -13,6 +13,7 @@ import {
   emptyCoalescerBook,
   fragmentAnchorKey,
   openThread,
+  orphanUnresolvedThreads,
   type PromotionEvent,
   type PromotionKind,
   promoteMessage,
@@ -175,6 +176,9 @@ export function ConversationHost({
   // reattach can never clobber a thread the reviewer just opened in this session.
   const reattachedRef = useRef(false);
   useEffect(() => {
+    // ONE-SHOT reattach guarded by reattachedRef: `anchors` is a real dependency (read for
+    // orphan resolution), but the ref makes every re-run after the first a no-op, so a new
+    // `anchors` array each render cannot double-reattach.
     if (reattachedRef.current) return;
     reattachedRef.current = true;
     let cancelled = false;
@@ -185,11 +189,20 @@ export function ConversationHost({
           reviewId,
         });
         if (cancelled || result.threads.length === 0) return;
+        // The current diff's files, for orphan resolution (#251 slice 3): a re-attached
+        // thread whose anchored file is gone is surfaced ORPHANED (never dropped, never
+        // re-anchored). Fail-safe: with no current paths we CANNOT resolve, so we do not
+        // claim any thread orphaned — an unresolvable placement stays placed, not falsely lost.
+        const currentPaths = new Set(
+          anchors.map((anchor) => anchor.path).filter((path): path is string => path !== undefined),
+        );
         setThreads((current) => {
           const present = new Set(current.map((thread) => thread.id));
-          const restored = result.threads
+          const mapped = result.threads
             .filter((wire) => !present.has(wire.threadId))
             .map(threadFromPersisted);
+          const restored =
+            currentPaths.size > 0 ? orphanUnresolvedThreads(mapped, currentPaths) : mapped;
           return restored.length > 0 ? [...restored, ...current] : current;
         });
       } catch {
@@ -200,7 +213,7 @@ export function ConversationHost({
     return () => {
       cancelled = true;
     };
-  }, [bridge, reviewId]);
+  }, [bridge, reviewId, anchors]);
 
   // Open a FRAGMENT thread on a message inside an existing thread (issue #36): the
   // "discuss a fragment of the conversation itself" anchor. The new thread anchors to

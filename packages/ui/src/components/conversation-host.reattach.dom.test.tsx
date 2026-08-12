@@ -82,4 +82,46 @@ describe("ConversationHost — re-attach surfaces an interrupted turn (criterion
     await waitFor(() => expect(h.reattachedWith()?.reviewId).toBe("r"));
     expect(container.querySelectorAll(".thread-message")).toHaveLength(0);
   });
+
+  it("surfaces a thread whose file left the diff as ORPHANED — visible, kept, never re-anchored (slice 3)", async () => {
+    // The persisted thread hangs on src/gone.ts; the CURRENT diff (the anchors prop) only
+    // has src/present.ts. So the thread's file is gone → orphaned, surfaced honestly.
+    const goneAnchor: ConversationAnchor = {
+      kind: "chunk",
+      label: "src/gone.ts",
+      key: "chunk|src/gone.ts",
+      path: "src/gone.ts",
+    };
+    const presentAnchor: ConversationAnchor = {
+      kind: "chunk",
+      label: "src/present.ts",
+      key: "chunk|src/present.ts",
+      path: "src/present.ts",
+    };
+    const h = reattachBridge([
+      {
+        threadId: "th",
+        anchor: goneAnchor,
+        messages: [
+          { id: "m0", author: "you", body: "is this rate limiter correct?" },
+          { id: "m1", author: "harness", model: "Claude", body: "yes, it fails open by design" },
+        ],
+      },
+    ]);
+    const { container } = mount(
+      <ConversationHost bridge={h.bridge} reviewId="r" anchors={[presentAnchor]} />,
+    );
+
+    await waitFor(() => {
+      expect(container.querySelector('.conversation-cluster[data-orphaned="true"]')).not.toBeNull();
+    });
+    const cluster = container.querySelector('.conversation-cluster[data-orphaned="true"]');
+    // An honest banner, and the conversation is KEPT (its messages still render).
+    expect(cluster?.querySelector(".conversation-orphaned")?.textContent).toMatch(
+      /no longer in the diff/i,
+    );
+    expect(cluster?.textContent).toContain("yes, it fails open by design");
+    // NEVER re-anchored: the panel still carries its ORIGINAL anchor key, not the present file's.
+    expect(cluster?.getAttribute("data-anchor-key")).toBe("chunk|src/gone.ts");
+  });
 });
