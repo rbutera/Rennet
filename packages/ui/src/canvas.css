@@ -183,6 +183,37 @@
   border-color: var(--amber-line);
   background: var(--amber-surface);
 }
+/* The one-line reason rendered next to the amber mark (issue #35). */
+.cohort-blast-reason {
+  margin: 0 0 8px;
+  padding: 0 12px;
+  color: var(--amber);
+  font-size: 12px;
+}
+/* NOT-ASSESSED chips: as visible as the marks, so an unmeasured signal reads as
+ * unmeasured, never as clear (issue #35). Paint, not a gate. */
+.blast-not-assessed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 6px 12px;
+}
+.blast-not-assessed-label {
+  color: var(--amber);
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.blast-chip {
+  color: var(--amber);
+  background: var(--amber-fill);
+  border: 1px solid var(--amber-line);
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+}
 .cohort-head {
   display: flex;
   align-items: center;
@@ -380,6 +411,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   padding: 9px 14px;
   border: 1px solid var(--raised-border);
@@ -390,6 +422,19 @@
 .flat-element.is-blast {
   border-color: var(--amber-line);
   background: var(--amber-surface);
+}
+/* The amber blast badge + its one-line reason on a flat (sequence) element (#35). */
+.flat-element-blast {
+  color: var(--amber);
+  font: 700 10px / 1.2 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.flat-element-blast-reason {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--amber);
+  font-size: 12px;
 }
 .flat-element-select {
   display: flex;

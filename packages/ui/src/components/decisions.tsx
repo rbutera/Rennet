@@ -6,7 +6,12 @@ import type {
   DecisionsRunStatus,
   DispositionType,
 } from "@rennet/types";
-import { type ApprovalScope, blastPaint, canvasCoverage } from "../canvas/logic";
+import {
+  type ApprovalScope,
+  blastReasonsByChunk,
+  canvasCoverage,
+  paintedChunkIds,
+} from "../canvas/logic";
 import { DispositionBar } from "./disposition";
 import { ChevronIcon } from "./icons";
 
@@ -82,20 +87,12 @@ function DecisionDetailView({ element }: { element: AnalysisElement }) {
   );
 }
 
-function paintedChunkIds(canvas: Canvas): Set<string> {
-  const prefix = "rennet:chunk/";
-  return new Set(
-    [...blastPaint(canvas)]
-      .filter((target) => target.startsWith(prefix))
-      .map((target) => target.slice(prefix.length)),
-  );
-}
-
 function Cohort({
   cohort,
   elements,
   expanded,
   painted,
+  blastReason,
   onToggle,
   onApproveScope,
   onSelectElement,
@@ -104,6 +101,7 @@ function Cohort({
   elements: AnalysisElement[];
   expanded: boolean;
   painted: boolean;
+  blastReason?: string;
   onToggle(cohortKey: string): void;
   onApproveScope(scope: ApprovalScope, type: DispositionType): void;
   onSelectElement(elementKey: string): void;
@@ -124,11 +122,12 @@ function Cohort({
           {/* Honest count: the true number of decisions, collapsed or not. */}
           <span className="cohort-count">{cohort.elementKeys.length} decisions</span>
           {painted ? (
-            <span className="cohort-blast" title="In the blast radius">
+            <span className="cohort-blast" title={blastReason ?? "In the blast radius"}>
               blast
             </span>
           ) : null}
         </button>
+        {painted && blastReason ? <p className="cohort-blast-reason">{blastReason}</p> : null}
         <DispositionBar
           scopeLabel={`cohort ${cohort.title}`}
           compact
@@ -169,6 +168,7 @@ function Cohort({
 
 export function DecisionsCanvas({
   canvas,
+  overlayOn,
   expandedCohorts,
   onToggleCohort,
   onApproveScope,
@@ -176,6 +176,13 @@ export function DecisionsCanvas({
   runStatus = { status: "ok" },
 }: {
   canvas: Canvas;
+  /**
+   * The blast-radius overlay toggle (issue #35). Amber paint FOLLOWS the toggle,
+   * exactly like the not-assessed chips: off ⇒ no amber, so the invariant "if you can
+   * see amber, you can see what was not assessed" holds structurally (both are gated
+   * on the same toggle). Absent ⇒ off (a host/test that never engages the overlay).
+   */
+  overlayOn?: boolean;
   expandedCohorts: Record<string, boolean>;
   onToggleCohort(cohortKey: string): void;
   onApproveScope(scope: ApprovalScope, type: DispositionType): void;
@@ -205,7 +212,10 @@ export function DecisionsCanvas({
     );
   }
   const coverage = canvasCoverage(canvas);
-  const painted = paintedChunkIds(canvas);
+  // Amber follows the overlay toggle (#35 / F1): off ⇒ no painted chunks, so the
+  // cohort amber and the not-assessed chips appear and disappear together.
+  const painted = overlayOn ? paintedChunkIds(canvas) : new Set<string>();
+  const blastReasons = overlayOn ? blastReasonsByChunk(canvas) : new Map<string, string>();
   const byKey = new Map(canvas.layers.analysis.elements.map((el) => [el.elementKey, el]));
   // A review that RAN and discerned no decisions — honestly empty, distinct from
   // the failed-runner banner above.
@@ -243,6 +253,7 @@ export function DecisionsCanvas({
             elements={elements}
             expanded={Boolean(expandedCohorts[cohortKey])}
             painted={painted.has(chunkId)}
+            blastReason={blastReasons.get(chunkId)}
             onToggle={onToggleCohort}
             onApproveScope={onApproveScope}
             onSelectElement={onSelectElement}

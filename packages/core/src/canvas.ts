@@ -488,6 +488,13 @@ export interface BuildCanvasInput {
   decomposition: Decomposition;
   dispositions: Disposition[];
   canvasEvents: CanvasEvent[];
+  /**
+   * The deterministic blast-radius overlay (issue #35), computed upstream from the
+   * changeset + CODEOWNERS and painted identically onto every canvas. Optional and
+   * additive: absent ⇒ the legacy model-angle overlay (`projectBlastRadius`), which
+   * keeps every existing canvas snapshot byte-identical.
+   */
+  blastRadius?: readonly BlastRadiusPaint[];
 }
 
 /**
@@ -515,7 +522,7 @@ export function buildCanvas(input: BuildCanvasInput): Canvas {
       },
       annotation: { annotations, proposals },
     },
-    overlay: projectBlastRadius(input.admittedDocs),
+    overlay: input.blastRadius ? [...input.blastRadius] : projectBlastRadius(input.admittedDocs),
   };
 }
 

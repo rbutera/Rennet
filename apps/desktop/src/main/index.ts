@@ -47,6 +47,7 @@ import {
   RepoWatcher,
   readOpenSpecChange,
   repoHasSubmodules,
+  resolveBaseRef,
   resolveGitHubAuth,
   SqliteReviewStore,
   snapshotStoreFor,
@@ -87,6 +88,7 @@ import type {
   HypothesisStructure,
   NoiseReview,
   OpenSpecCoverage,
+  OwnershipRule,
   Patchset,
   Review,
   ReviewEngine,
@@ -109,6 +111,8 @@ import { createProcessProject } from "./process-project";
 import { createPublishConsentAuthority } from "./publish-consent-authority";
 import { createLiveRefinePort } from "./refine-comment-live";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
+import { loadReviewOwnership } from "./review-ownership";
+import { buildReviewCanvasesInput } from "./review-pipeline-input";
 import { createSettingsComposition } from "./settings";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 
@@ -472,22 +476,31 @@ async function buildCanvasesForReview(review: Review): Promise<{
 
   const decisions = await runDecisionsForReview(review, patchset, adapter, hypothesis, conventions);
 
-  const result = await buildReviewCanvases({
-    reviewId: review.id,
-    patchset,
-    dispositions: review.dispositions,
-    council: { availability: { installed } },
-    // The Decisions lens (issue #137): the decision-extraction runner's real
-    // `decision.record` docs, placed on the decisions canvas by the existing
-    // projector. The runner reasons over the diff alone until the full #136 intent
-    // capture (PR title/body + spec frozen on the patchset) lands; the runner
-    // FULLY supports intent (proven by the live dogfood over {diff, PR body}).
-    decisionDocs: decisions.docs,
-    ...(codexPort ? { codexPort } : {}),
-    ...(runDecompositionTurn ? { runDecompositionTurn } : {}),
-    ...(runOrderingTurn ? { runOrderingTurn } : {}),
-    ...(runNarrationTurn ? { runNarrationTurn } : {}),
-  });
+  // The blast-radius CODEOWNERS-overlap signal (issue #35) fires only when handed
+  // the review's ownership rules. Read them off the built ProjectSnapshot; absent a
+  // snapshot they are `[]` and the signal degrades honestly (never fires).
+  const ownership = await loadReviewOwnershipRules(review);
+
+  // Assemble the pipeline input at the ONE testable composition seam (F4): this is
+  // where `ownership` reaches the pipeline, so the guard against dropping it lives on
+  // `buildReviewCanvasesInput`, not on the loader beneath it. The Decisions lens
+  // (issue #137) rides `decisionDocs`: real `decision.record` docs placed by the
+  // existing projector; the runner reasons over the diff alone until #136 intent
+  // capture lands (it fully supports intent, proven by the live {diff, PR body} dogfood).
+  const result = await buildReviewCanvases(
+    buildReviewCanvasesInput({
+      reviewId: review.id,
+      patchset,
+      dispositions: review.dispositions,
+      ownership,
+      installed,
+      decisionDocs: decisions.docs,
+      ...(codexPort ? { codexPort } : {}),
+      ...(runDecompositionTurn ? { runDecompositionTurn } : {}),
+      ...(runOrderingTurn ? { runOrderingTurn } : {}),
+      ...(runNarrationTurn ? { runNarrationTurn } : {}),
+    }),
+  );
   // The honesty signal for the renderer (real-AI-default): a review is a REAL AI
   // review iff at least one model harness was installed AND the budget actually
   // let a turn run. With neither claude nor codex — or a refused budget — the set
@@ -543,6 +556,31 @@ const HYPOTHESIS_PROVENANCE_SEED = {
  */
 function loadReviewConventions(review: Review): ConventionCatalogue | undefined {
   return loadConventionCatalogue(review.repositoryRoot).catalogue;
+}
+
+/**
+ * The CODEOWNERS rules for a review (issue #35, F4), read off its built
+ * ProjectSnapshot so the blast-radius CODEOWNERS-overlap signal can actually fire
+ * in the real app. Honest degradation: no built snapshot (or an unresolvable repo)
+ * ⇒ `[]`, so the overlap signal simply does not fire — never a false single-owner
+ * claim. `resolveBaseRef` throws when it cannot pin a default branch; that is
+ * caught to a null key rather than crashing the canvas build.
+ */
+function loadReviewOwnershipRules(review: Review): Promise<readonly OwnershipRule[]> {
+  return loadReviewOwnership(
+    {
+      loadManifest: (repoKey) => snapshotStoreFor().loadManifest(repoKey),
+      loadShard: (repoKey, digest) => snapshotStoreFor().loadShard(repoKey, digest),
+      resolveRepoKey: async (repositoryRoot) => {
+        try {
+          return (await resolveBaseRef(repositoryRoot, { git: execaGit })).repoKey;
+        } catch {
+          return null;
+        }
+      },
+    },
+    review,
+  );
 }
 
 /**

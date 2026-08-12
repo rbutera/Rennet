@@ -28,6 +28,7 @@ import {
   type Adjudication,
   type ApprovalScope,
   adjudicateProposal,
+  blastNotAssessed,
   type DispositionWrite,
   fanOutApproval,
   isEditableTarget,
@@ -56,7 +57,7 @@ import { FlatCanvas } from "./flat";
 import { GranularityAuthor, type GranularityContext } from "./granularity-author";
 import { HypothesisReadingFrame } from "./hypothesis";
 import { AnnotationMark, ProposalMark } from "./l3";
-import { LensSwitcher } from "./lens";
+import { BlastNotAssessed, LensSwitcher } from "./lens";
 import { MarkIndex, type MarkIndexEntry } from "./mark-index";
 import { NarrationPanel } from "./narration";
 import { NoiseLens } from "./noise";
@@ -906,6 +907,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         }}
       />
 
+      {/* Blast radius NOT-ASSESSED chips (issue #35): shown alongside the amber
+          marks whenever the overlay is on, so an unmeasured signal is visible as
+          unmeasured rather than read as clear. Paint, never a gate. */}
+      {overlayOn ? <BlastNotAssessed signals={blastNotAssessed(canvas)} /> : null}
+
       <div className="zoom-bar" role="toolbar" aria-label="Zoom">
         <button
           type="button"
@@ -997,6 +1003,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         ) : angle === "decisions" ? (
           <DecisionsCanvas
             canvas={canvas}
+            overlayOn={overlayOn}
             expandedCohorts={expandedCohorts}
             onToggleCohort={(cohortKey) => store.getState().toggleCohort(cohortKey)}
             onApproveScope={approveScope}
@@ -1006,6 +1013,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         ) : (
           <FlatCanvas
             canvas={canvas}
+            overlayOn={overlayOn}
             onApproveScope={approveScope}
             onSelectElement={selectElement}
           />

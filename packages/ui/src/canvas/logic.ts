@@ -358,15 +358,95 @@ export function withoutProposal(canvas: Canvas, proposalId: string): Canvas {
 }
 
 // ── The amber blast-radius overlay: paint, never a queue ──────────────────────
+//
+// Blast radius is PAINT (Rule Zero / Canvas Paradigm §1): it marks risk on the
+// surface the reviewer is already reading. It never gates, never reorders the
+// canvas, never becomes a queue. The deterministic signals (issue #35) each carry
+// a one-line `reason` rendered next to the mark, and the DEFERRED signals
+// (`assessed: false`) are surfaced as visible chips — because a reviewer who
+// cannot see that a signal was NOT run would assume it was.
 
 /** The set of targets the blast-radius overlay paints amber onto this canvas. */
 export function blastPaint(canvas: Canvas): Set<string> {
-  return new Set(canvas.overlay.map((paint) => paint.target));
+  return new Set(canvas.overlay.filter((paint) => paint.assessed !== false).map((p) => p.target));
 }
 
 /** Whether a given element/anchor target carries blast-radius amber paint. */
 export function isPainted(canvas: Canvas, target: string): boolean {
-  return canvas.overlay.some((paint) => paint.target === target);
+  return canvas.overlay.some((paint) => paint.target === target && paint.assessed !== false);
+}
+
+/**
+ * The chunk ids the overlay paints, resolving BOTH `rennet:chunk/<id>` targets
+ * (direct) AND `rennet:file/<path>` targets (issue #35's file-level signals) via
+ * the substrate: a chunk is painted when any file it covers is targeted. Deferred
+ * (not-assessed) markers and the review-scoped target paint no chunk.
+ */
+export function paintedChunkIds(canvas: Canvas): Set<string> {
+  const chunkTargets = new Set<string>();
+  const fileTargets = new Set<string>();
+  for (const paint of canvas.overlay) {
+    if (paint.assessed === false) continue;
+    if (paint.target.startsWith("rennet:chunk/")) {
+      chunkTargets.add(paint.target.slice("rennet:chunk/".length));
+    } else if (paint.target.startsWith("rennet:file/")) {
+      fileTargets.add(paint.target.slice("rennet:file/".length));
+    }
+  }
+  const painted = new Set(chunkTargets);
+  for (const chunk of canvas.layers.substrate.chunks) {
+    if (chunk.filePaths.some((path) => fileTargets.has(path))) painted.add(chunk.chunkId);
+  }
+  return painted;
+}
+
+/** One reason line per painted chunk id, joined when several signals fired. */
+export function blastReasonsByChunk(canvas: Canvas): Map<string, string> {
+  const fileReasons = new Map<string, string[]>();
+  const chunkReasons = new Map<string, string[]>();
+  for (const paint of canvas.overlay) {
+    if (paint.assessed === false || !paint.reason) continue;
+    if (paint.target.startsWith("rennet:chunk/")) {
+      const id = paint.target.slice("rennet:chunk/".length);
+      chunkReasons.set(id, [...(chunkReasons.get(id) ?? []), paint.reason]);
+    } else if (paint.target.startsWith("rennet:file/")) {
+      const path = paint.target.slice("rennet:file/".length);
+      fileReasons.set(path, [...(fileReasons.get(path) ?? []), paint.reason]);
+    }
+  }
+  const byChunk = new Map<string, string>();
+  for (const chunk of canvas.layers.substrate.chunks) {
+    const reasons = [...(chunkReasons.get(chunk.chunkId) ?? [])];
+    for (const path of chunk.filePaths) reasons.push(...(fileReasons.get(path) ?? []));
+    if (reasons.length > 0) byChunk.set(chunk.chunkId, reasons.join(" "));
+  }
+  return byChunk;
+}
+
+/**
+ * The substrate chunk id an element anchor lives in, for resolving blast-radius
+ * paint on a FLAT canvas (sequence) the SAME way the decisions canvas does: a
+ * `chunk/<id>` anchor names its chunk directly; a `hunk/<id>` anchor resolves
+ * through its containing chunk. Anything else (a `doc/<id>` anchor on spec/claims/
+ * noise, an unknown id) has no code chunk and returns undefined — so blast amber,
+ * which is file/chunk-grained, never lands on a document element. A chunk id absent
+ * from the substrate (a proposal chunk) is returned as-is and simply matches no
+ * painted chunk, so it never false-paints.
+ */
+export function anchorChunkId(canvas: Canvas, anchor: string): string | undefined {
+  const parsed = parseAnchor(anchor);
+  if (!parsed.ok) return undefined;
+  if (parsed.anchor.kind === "chunk") return parsed.anchor.id;
+  if (parsed.anchor.kind === "hunk") return hunkChunkMap(canvas).get(parsed.anchor.id);
+  return undefined;
+}
+
+/** The deferred (NOT ASSESSED) signals on this canvas, surfaced as visible chips. */
+export function blastNotAssessed(canvas: Canvas): { signal: string; reason: string }[] {
+  return canvas.overlay
+    .filter((paint) => paint.assessed === false)
+    .map((paint) => ({ signal: paint.signal ?? "unknown", reason: paint.reason ?? "" }))
+    .sort((left, right) => (left.signal < right.signal ? -1 : left.signal > right.signal ? 1 : 0));
 }
 
 // ── The windowed diff (R16): a bounded node-count envelope ────────────────────
