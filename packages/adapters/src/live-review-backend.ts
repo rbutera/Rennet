@@ -195,18 +195,18 @@ export async function createLiveCanvasOpsBackend(
     new ProjectContextReader(deps.store),
     overlayReader,
   );
-  const initialNovelty = await noveltyReader.classifyWithGitlinks(
+  let liveNovelty = await noveltyReader.classifyWithGitlinks(
     review.repositoryRoot,
     repoKey,
     patchset,
     git,
   );
-  if (initialNovelty.ok && deps.noveltyLifecycle) {
+  if (liveNovelty.ok && deps.noveltyLifecycle) {
     const followsDefault = deps.store.loadManifest(repoKey)?.baseOid === baseOid;
     deps.noveltyLifecycle.register(
       repoKey,
       review.id,
-      { ledger: initialNovelty.ledger, judgments: new Map() },
+      { ledger: liveNovelty.ledger, judgments: new Map() },
       async () => {
         const current = deps.store.loadManifest(repoKey);
         if (!current) return { ok: false, failure: { reason: "absent" } };
@@ -224,7 +224,7 @@ export async function createLiveCanvasOpsBackend(
               review.repositoryRoot,
               effectiveBaseOid,
             );
-        return noveltyReader.classifyWithGitlinks(
+        const refreshed = await noveltyReader.classifyWithGitlinks(
           review.repositoryRoot,
           repoKey,
           {
@@ -234,6 +234,8 @@ export async function createLiveCanvasOpsBackend(
           },
           git,
         );
+        liveNovelty = refreshed;
+        return refreshed;
       },
     );
   }
@@ -262,7 +264,11 @@ export async function createLiveCanvasOpsBackend(
 
   const core = reviewBackendCore({ review, pipeline, ...deps.core });
   const contextPart = projectContextBackend(reader, resolveContextFor(review, repoKey));
-  const noveltyPart = noveltyBackend(noveltyReader, resolveNoveltyFor(review, repoKey));
+  const noveltyPart = noveltyBackend(
+    noveltyReader,
+    resolveNoveltyFor(review, repoKey),
+    () => liveNovelty,
+  );
   const knowledgePart = knowledgeBackend(
     reader,
     knowledgeStore,
