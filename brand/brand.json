@@ -1,0 +1,29 @@
+{
+  "name": "Rennet",
+  "concept": "A large body becoming digestible pieces",
+  "primaryMode": "monochrome",
+  "colors": {
+    "ink": "#0B0D10",
+    "paper": "#F7F4EE",
+    "pearl": "#F3EFE7"
+  },
+  "applicationIconArtwork": {
+    "midnight": "#11143B",
+    "cobalt": "#3556E8",
+    "orchid": "#A657E7",
+    "cyan": "#7CE6F5"
+  },
+  "assets": {
+    "primaryLockup": "exports/logo/svg/lockup-horizontal-black.svg",
+    "inverseLockup": "exports/logo/svg/lockup-horizontal-white.svg",
+    "mark": "exports/logo/svg/mark-black.svg",
+    "smallMark": "exports/logo/svg/mark-small-black.svg",
+    "primaryAppIcon": "exports/app-icons/masters/app-icon-color-1024.png",
+    "favicon": "exports/web/favicon.svg"
+  },
+  "minimumSizes": {
+    "fullMarkPx": 48,
+    "smallMarkPx": 16,
+    "horizontalLockupWidthPx": 140
+  }
+}

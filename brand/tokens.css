@@ -1,0 +1,11 @@
+:root {
+  --rennet-brand-ink: #0b0d10;
+  --rennet-brand-paper: #f7f4ee;
+  --rennet-brand-pearl: #f3efe7;
+
+  /* Application-icon artwork only; not product-interface semantic colours. */
+  --rennet-icon-midnight: #11143b;
+  --rennet-icon-cobalt: #3556e8;
+  --rennet-icon-orchid: #a657e7;
+  --rennet-icon-cyan: #7ce6f5;
+}
