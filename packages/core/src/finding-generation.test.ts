@@ -90,6 +90,13 @@ function emits(body: unknown): (prompt: string, attempt: number) => Promise<Find
     );
 }
 
+/** A mocked harness turn that emits the given body on EVERY attempt. */
+function alwaysEmits(
+  body: unknown,
+): (prompt: string, attempt: number) => Promise<FindingTurnResult> {
+  return () => Promise.resolve({ status: "emitted", body });
+}
+
 /** A model finding as the SDK would emit it (no findingId — the runner mints it). */
 function modelFinding(overrides: Record<string, unknown> = {}): Record<string, unknown> {
   return {
@@ -185,6 +192,65 @@ describe("runFindingAngle — the live finding runner (issue #32)", () => {
     expect(result.status).toBe("ok");
     expect(result.findings).toEqual([]);
     expect(result.report?.admitted).toBe(true);
+  });
+
+  // ── #158 item 1: a malformed body is not a clean review ──────────────────
+  // A model that returns a body which is not a finding document has NOT reviewed
+  // the code. Collapsing that to `{ findings: [] }` reports a clean review that
+  // found nothing — indistinguishable from a genuine one. These two tests pin
+  // both directions: a malformed body must FAIL, and a genuinely empty findings
+  // array must still be OK.
+
+  it("treats a malformed body (not a finding document) as a failed turn, never a clean review (#158)", async () => {
+    // A shape the model must never be believed for: an object with no findings array.
+    const result = await runFindingAngle({
+      patchsetId: PATCHSET.id,
+      manifest: MANIFEST,
+      provenance: SEED,
+      runTurn: alwaysEmits({ result: "here is my prose review, I found nothing wrong" }),
+      budget: createInvocationBudget(5),
+    });
+    // The bug's signature was `status: "ok"` with an empty findings set. The honest
+    // outcome is the LOUD failed state — the model did not produce a finding document.
+    expect(result.status).toBe("failed");
+    expect(result.findings).toEqual([]);
+    expect(result.failureReason).toContain("malformed");
+    // The malformed emission is recorded as its own fact, distinct from a turn that
+    // never emitted (turn-failed) or an empty-but-valid review.
+    expect(result.attempts.every((a) => a.outcome === "malformed-body")).toBe(true);
+  });
+
+  it.each([
+    ["a bare string", "I reviewed the code and it looks fine"],
+    ["null", null],
+    ["a bare array (the findings, un-wrapped)", []],
+    ["an object whose findings is not an array", { findings: "none" }],
+  ])("treats %s as malformed, not a clean review (#158)", async (_label, body) => {
+    const result = await runFindingAngle({
+      patchsetId: PATCHSET.id,
+      manifest: MANIFEST,
+      provenance: SEED,
+      runTurn: alwaysEmits(body),
+      budget: createInvocationBudget(5),
+    });
+    expect(result.status).toBe("failed");
+    expect(result.findings).toEqual([]);
+  });
+
+  it("a genuinely empty findings array is a CLEAN review and still reports ok (#158, the other direction)", async () => {
+    // The companion to the malformed test: `{ findings: [] }` is a model that
+    // reviewed the code and flagged nothing. This must keep working exactly.
+    const result = await runFindingAngle({
+      patchsetId: PATCHSET.id,
+      manifest: MANIFEST,
+      provenance: SEED,
+      runTurn: alwaysEmits({ findings: [] }),
+      budget: createInvocationBudget(5),
+    });
+    expect(result.status).toBe("ok");
+    expect(result.findings).toEqual([]);
+    expect(result.report?.admitted).toBe(true);
+    expect(result.attempts.at(-1)?.outcome).toBe("admitted");
   });
 
   it("resolves to the LOUD failed state when every turn fails (no fabricated floor)", async () => {
