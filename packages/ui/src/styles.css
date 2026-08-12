@@ -61,6 +61,94 @@ button {
   align-items: center;
   gap: 12px;
 }
+.nav-breadcrumb {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.nav-breadcrumb-item {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.nav-breadcrumb-separator {
+  flex: none;
+  color: var(--text-faint);
+  opacity: 0.65;
+}
+.nav-breadcrumb-segment {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  padding: 4px 2px;
+  color: var(--text-soft);
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.nav-breadcrumb-segment:hover {
+  color: var(--text);
+}
+.nav-breadcrumb-segment[aria-current="page"] {
+  color: var(--text);
+  font-weight: 700;
+  cursor: default;
+  opacity: 1;
+}
+.nav-breadcrumb-home {
+  color: var(--accent);
+  font-size: 14px;
+}
+.nav-rail {
+  width: 68px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 7px;
+  border-right: 1px solid var(--hairline);
+  background: var(--side-bg);
+}
+.nav-rail-history,
+.nav-rail-destinations {
+  display: grid;
+  gap: 5px;
+}
+.nav-rail-button {
+  min-height: 48px;
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  border: 1px solid transparent;
+  border-radius: var(--chip-radius);
+  padding: 6px 3px;
+  color: var(--text-soft);
+  background: transparent;
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+}
+.nav-rail-button:hover:not(:disabled) {
+  border-color: var(--hairline);
+  color: var(--text);
+  background: var(--surface-2);
+}
+.nav-rail-button:disabled {
+  color: var(--text-faint);
+  cursor: default;
+  opacity: 0.42;
+}
+.nav-rail-glyph {
+  font-size: 16px;
+  line-height: 1;
+}
 .topbar h1 {
   margin: 1px 0 0;
   font-size: 19px;
