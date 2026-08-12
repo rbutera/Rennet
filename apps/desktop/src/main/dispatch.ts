@@ -22,6 +22,7 @@ import {
   type ProjectDetail,
   type ProjectKind,
   type ProjectProcessEvent,
+  type ReviewAskStreamEvent,
   type ProjectVisibility,
   parseCommandInput,
   parseCommandOutput,
@@ -336,6 +337,12 @@ function toForgeReviewTarget(target: {
  */
 export interface DispatchContext {
   emitProgress?(event: ProjectProcessEvent): void;
+  /**
+   * The push sink for a conversation's token STREAM (issue #251) — the transport binds
+   * it to the renderer's `onAskStream` channel, keyed by `reviewId`. Absent for a bridge
+   * with no push channel (a #139 one-shot ask resolves its final value with no stream).
+   */
+  emitAskStream?(event: ReviewAskStreamEvent): void;
 }
 
 export function createDispatch(
