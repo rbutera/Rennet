@@ -23,6 +23,25 @@ function write(root: string, path: string, content: string): void {
   writeFileSync(full, content);
 }
 
+/**
+ * Corrupt the manifest the gate actually reads (#246). `loadFresh` reads the per-OID
+ * manifest `map/manifests/<baseOid>.json` and falls back to the current pointer
+ * `map/manifest.json`; a malformed-store test must corrupt BOTH, or the gate serves the
+ * copy that stayed valid.
+ */
+function corruptBothManifests(
+  storeDir: string,
+  manifest: ProjectSnapshotManifest,
+  malformed: unknown,
+): void {
+  const bytes = JSON.stringify(malformed);
+  writeFileSync(join(storeDir, manifest.repoKey, "map", "manifest.json"), bytes);
+  writeFileSync(
+    join(storeDir, manifest.repoKey, "map", "manifests", `${manifest.baseOid}.json`),
+    bytes,
+  );
+}
+
 /** A minimal pnpm workspace repo with two scopes and one commit on `main`. */
 function workspaceRepo(): { root: string; storeDir: string; oid: string } {
   const root = mkdtempSync(join(tmpdir(), "rennet-ctx-"));
@@ -332,9 +351,7 @@ describe("ProjectContextReader — the fail-closed staleness/integrity gate", ()
     // out. Without the loadManifest shape-guard the gate would reach
     // `Object.keys(manifest.shards)` and THROW instead of returning a typed
     // reason — violating its own "never a throw" contract (Rule 75).
-    const manifestPath = join(storeDir, manifest.repoKey, "map", "manifest.json");
-    const malformed = { ...manifest, shards: null };
-    writeFileSync(manifestPath, JSON.stringify(malformed));
+    corruptBothManifests(storeDir, manifest, { ...manifest, shards: null });
 
     expect(() => reader.readProjectMap(manifest.repoKey, manifest.baseOid)).not.toThrow();
     const result = reader.readProjectMap(manifest.repoKey, manifest.baseOid);
@@ -347,21 +364,21 @@ describe("ProjectContextReader — the fail-closed staleness/integrity gate", ()
   it("refuses a NESTED-malformed manifest (null shard value / non-tuple symbols) with a typed failure, never a throw", async () => {
     const { store, manifest, storeDir } = await generate();
     const reader = new ProjectContextReader(store);
-    const manifestPath = join(storeDir, manifest.repoKey, "map", "manifest.json");
 
     // These pass the container-only shape check (`shards` is a non-null object,
     // `symbols` is an array) but the INNER values are malformed. Without the
     // deep-shape guard the gate reaches `manifest.shards[slot].digest` /
     // `for (const [, digest] of manifest.symbols)` and THROWS — violating its own
     // "never a throw" contract (Rule 75). Both must degrade to a typed refusal.
-    const nullShardValue = { ...manifest, shards: { ...manifest.shards, files: null } };
-    writeFileSync(manifestPath, JSON.stringify(nullShardValue));
+    corruptBothManifests(storeDir, manifest, {
+      ...manifest,
+      shards: { ...manifest.shards, files: null },
+    });
     expect(() => reader.readProjectMap(manifest.repoKey, manifest.baseOid)).not.toThrow();
     const r1 = reader.readProjectMap(manifest.repoKey, manifest.baseOid);
     expect(r1.ok).toBe(false);
 
-    const nonTupleSymbols = { ...manifest, symbols: [null] };
-    writeFileSync(manifestPath, JSON.stringify(nonTupleSymbols));
+    corruptBothManifests(storeDir, manifest, { ...manifest, symbols: [null] });
     expect(() =>
       reader.readFileContext(manifest.repoKey, manifest.baseOid, "packages/a/src/index.ts"),
     ).not.toThrow();

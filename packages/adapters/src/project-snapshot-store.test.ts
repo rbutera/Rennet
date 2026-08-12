@@ -1,5 +1,13 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProjectSnapshotManifest } from "@rennet/types";
@@ -8,6 +16,7 @@ import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
 import { resolveBaseRef } from "./project-snapshot-source";
 import {
   defaultProjectsBaseDir,
+  MANIFEST_RETENTION,
   ProjectSnapshotStore,
   snapshotStoreFor,
 } from "./project-snapshot-store";
@@ -58,6 +67,7 @@ describe("ProjectSnapshotStore — local-first layout (design §1.1)", () => {
     expect(paths.configPath).toBe("/base/-Users-rai-dev-rennet/config.json");
     expect(paths.mapDir).toBe("/base/-Users-rai-dev-rennet/map");
     expect(paths.manifestPath).toBe("/base/-Users-rai-dev-rennet/map/manifest.json");
+    expect(paths.manifestsDir).toBe("/base/-Users-rai-dev-rennet/map/manifests");
     expect(paths.shardsDir).toBe("/base/-Users-rai-dev-rennet/map/shards");
     // Reserved homes for later waves — resolved now, populated later.
     expect(paths.overlaysDir).toBe("/base/-Users-rai-dev-rennet/overlays");
@@ -87,6 +97,57 @@ describe("ProjectSnapshotStore — local-first layout (design §1.1)", () => {
     // snapshotStoreFor with an explicit base composes a store at that base.
     const s = snapshotStoreFor("/tmp/x");
     expect(s.paths("k").projectDir).toBe("/tmp/x/k");
+  });
+});
+
+describe("ProjectSnapshotStore — OID-addressable manifests (#246)", () => {
+  it("keeps an older pinned OID readable after an advance to a new OID (an advance ADDS, not replaces)", async () => {
+    const storeDir = mkdtempSync(join(tmpdir(), "rennet-store-"));
+    scratch.push(storeDir);
+    const { root, oid } = initRepo("rennet-store-oid-");
+    const { store, manifest } = await generateInto(storeDir, root, oid);
+    const oidA = manifest.baseOid;
+    const oidB = "b".repeat(40);
+
+    store.advance({
+      manifest: { ...manifest, baseOid: oidB, fingerprint: `fp-${oidB}` },
+      shards: new Map(),
+    });
+
+    // BOTH the old pin and the new tip resolve — the eviction that used to fail the old
+    // one closed to `stale` is gone.
+    expect(store.loadManifestAt(manifest.repoKey, oidA)?.baseOid).toBe(oidA);
+    expect(store.loadManifestAt(manifest.repoKey, oidB)?.baseOid).toBe(oidB);
+    // The current pointer is the newest tip.
+    expect(store.loadManifest(manifest.repoKey)?.baseOid).toBe(oidB);
+  });
+
+  it("bounds the per-OID manifests to MANIFEST_RETENTION, keeping the newest tip readable", async () => {
+    const storeDir = mkdtempSync(join(tmpdir(), "rennet-store-"));
+    scratch.push(storeDir);
+    const { root, oid } = initRepo("rennet-store-evict-");
+    const { store, manifest } = await generateInto(storeDir, root, oid);
+
+    const oids = Array.from({ length: MANIFEST_RETENTION + 3 }, (_, i) =>
+      i.toString(16).padStart(40, "0"),
+    );
+    for (const o of oids) {
+      store.advance({
+        manifest: { ...manifest, baseOid: o, fingerprint: `fp-${o}` },
+        shards: new Map(),
+      });
+    }
+
+    const manifestsDir = store.paths(manifest.repoKey).manifestsDir;
+    const files = readdirSync(manifestsDir).filter((f) => f.endsWith(".json"));
+    // Bounded: after writing MANIFEST_RETENTION + 3 (+ the original) manifests, the dir
+    // never holds more than the retention window — pruning ran.
+    expect(files.length).toBeLessThanOrEqual(MANIFEST_RETENTION);
+    expect(files.length).toBeLessThan(oids.length + 1);
+    // The newest tip is always readable (freshest per-OID file, and the current pointer
+    // backs it regardless of pruning).
+    const newest = oids.at(-1) as string;
+    expect(store.loadManifestAt(manifest.repoKey, newest)?.baseOid).toBe(newest);
   });
 });
 

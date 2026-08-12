@@ -43,7 +43,8 @@ export type {
  * IS that first consumer.
  *
  * The gate composes the pieces the foundation built and individually tested:
- *   1. `store.loadManifest`        — the current stored manifest (or absent).
+ *   1. `store.loadManifestAt`      — the manifest for the REQUESTED base OID (#246),
+ *                                    so a pinned read survives a background advance.
  *   2. `isSnapshotFresh`           — freshness is content equality at the
  *                                    REQUESTED base OID, never age (R30). A
  *                                    snapshot built at any other OID is stale.
@@ -73,8 +74,28 @@ export class ProjectContextReader {
    * a snapshot at any other OID is refused as stale rather than served.
    */
   loadFresh(repoKey: string, requestedBaseOid: string): LoadFreshResult {
-    const manifest = this.store.loadManifest(repoKey);
-    if (!manifest) return { ok: false, failure: { reason: "absent" } };
+    // OID-ADDRESSABLE (issue #246): load the manifest for THIS pinned OID, not "the
+    // current tip". A background rehydration that advanced the current pointer to a
+    // newer OID no longer evicts this read — the per-OID manifest is still on disk, so
+    // the pin stays readable instead of failing closed to `stale`. `loadManifestAt`
+    // guarantees a returned manifest's `baseOid` matches the request; the freshness
+    // check below stays as defense in depth (a corrupt/misnamed per-OID file).
+    const manifest = this.store.loadManifestAt(repoKey, requestedBaseOid);
+    if (!manifest) {
+      // No readable manifest for THIS oid. Distinguish a STALE pin (a current snapshot
+      // exists at a different oid — there is content, just not yours) from genuinely
+      // ABSENT (nothing built, or the store is malformed). This preserves the failure
+      // taxonomy consumers branch on, while the OID-addressable store keeps a still-
+      // pinned oid warm rather than evicting it (#246).
+      const current = this.store.loadManifest(repoKey);
+      if (current) {
+        return {
+          ok: false,
+          failure: { reason: "stale", storedBaseOid: current.baseOid, requestedBaseOid },
+        };
+      }
+      return { ok: false, failure: { reason: "absent" } };
+    }
 
     if (!isSnapshotFresh(manifest, requestedBaseOid)) {
       return {

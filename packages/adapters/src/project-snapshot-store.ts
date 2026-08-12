@@ -1,4 +1,12 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { canonicalize, sha256Hex } from "@rennet/protocol";
@@ -48,6 +56,22 @@ import type {
 
 /** The current project-config schema version. Bumped on a breaking config shape change. */
 export const PROJECT_CONFIG_VERSION = 1;
+
+/**
+ * How many per-OID manifests to retain under `map/manifests/` (issue #246). An
+ * `advance` ADDS a manifest keyed by its base OID rather than replacing the one
+ * before it, so a review pinned to an older OID keeps a readable manifest through a
+ * background rehydration instead of being evicted to a `stale` refusal. This bounds
+ * the growth: the newest N are kept, older ones are pruned. N is generous because a
+ * manifest is a few KB and a review's lifetime spans only a handful of advances; the
+ * residual (a review outliving N advances) still fails closed to `stale`, never wrong.
+ */
+export const MANIFEST_RETENTION = 32;
+
+/** A git OID safe to use as a filename segment (hex only — never a path/separator). */
+function isSafeOid(oid: string): boolean {
+  return oid.length > 0 && /^[0-9a-fA-F]+$/.test(oid);
+}
 
 /** How visible the derived map is to git (design §1.6 / R14). */
 export type ProjectVisibility = "local" | "git-visible";
@@ -117,8 +141,10 @@ export interface ProjectPaths {
   readonly configPath: string;
   /** `map/` — the default-branch BASE map dir (manifest.json + shards/). */
   readonly mapDir: string;
-  /** `map/manifest.json`. */
+  /** `map/manifest.json` — the CURRENT (latest tip) manifest pointer. */
   readonly manifestPath: string;
+  /** `map/manifests/` — per-OID manifests, one `<baseOid>.json` per built tip (#246). */
+  readonly manifestsDir: string;
   /** `map/shards/`. */
   readonly shardsDir: string;
   /** `overlays/` — per-non-default-base overlays (LATER WAVE; dir home reserved). */
@@ -147,6 +173,7 @@ export class ProjectSnapshotStore {
       configPath: join(projectDir, "config.json"),
       mapDir,
       manifestPath: join(mapDir, "manifest.json"),
+      manifestsDir: join(mapDir, "manifests"),
       shardsDir: join(mapDir, "shards"),
       overlaysDir: join(projectDir, "overlays"),
       knowledgeDir: join(projectDir, "knowledge"),
@@ -155,6 +182,11 @@ export class ProjectSnapshotStore {
 
   private manifestPath(repoKey: string): string {
     return this.paths(repoKey).manifestPath;
+  }
+
+  /** `map/manifests/<baseOid>.json` — the per-OID manifest for a pinned read (#246). */
+  private manifestAtPath(repoKey: string, oid: string): string {
+    return join(this.paths(repoKey).manifestsDir, `${oid}.json`);
   }
 
   private shardPath(repoKey: string, digest: string): string {
@@ -169,13 +201,13 @@ export class ProjectSnapshotStore {
   // (`loadManifest`, `loadShard`) are the fail-safe primitives it composes.
 
   /**
-   * The current stored manifest for a repo, or null when absent/unreadable/
-   * malformed. FAIL-SAFE (Rule 75): a corrupt store degrades to "no snapshot
-   * yet" (forcing a clean rebuild), never a throw and never a partial read.
+   * Parse + FULLY validate a manifest file at `path`, or null when absent/
+   * unreadable/malformed. FAIL-SAFE (Rule 75): a corrupt store degrades to "no
+   * snapshot yet" (forcing a clean rebuild), never a throw and never a partial read.
    */
-  loadManifest(repoKey: string): ProjectSnapshotManifest | null {
+  private readManifestFile(path: string): ProjectSnapshotManifest | null {
     try {
-      const raw = readFileSync(this.manifestPath(repoKey), "utf8");
+      const raw = readFileSync(path, "utf8");
       const parsed = JSON.parse(raw) as ProjectSnapshotManifest;
       // A manifest that parses as JSON but is malformed in `shards` (missing/null/
       // non-object) or `symbols` (non-array) must degrade to "no snapshot" here,
@@ -233,6 +265,34 @@ export class ProjectSnapshotStore {
     } catch {
       return null;
     }
+  }
+
+  /**
+   * The current stored manifest (the LATEST built tip) for a repo, or null when
+   * absent/unreadable/malformed. FAIL-SAFE. This is the "what is newest" accessor —
+   * incremental-reuse planning, the advance watcher, overlays and existence checks
+   * all want the latest, and it advances on every build exactly as before.
+   */
+  loadManifest(repoKey: string): ProjectSnapshotManifest | null {
+    return this.readManifestFile(this.manifestPath(repoKey));
+  }
+
+  /**
+   * The manifest for a SPECIFIC base OID (issue #246): reads `map/manifests/<oid>.json`,
+   * so a read pinned to an older OID keeps a readable manifest after a background
+   * advance published a newer tip — the eviction that used to fail it closed to
+   * `stale` is gone because an advance ADDS a per-OID manifest rather than replacing
+   * the one before it. Falls back to the current pointer when it happens to match the
+   * requested OID (covers the current tip and any snapshot written before per-OID
+   * manifests existed). FAIL-SAFE: absent/malformed/unsafe-oid → null, never a throw.
+   */
+  loadManifestAt(repoKey: string, oid: string): ProjectSnapshotManifest | null {
+    if (isSafeOid(oid)) {
+      const at = this.readManifestFile(this.manifestAtPath(repoKey, oid));
+      if (at) return at;
+    }
+    const current = this.loadManifest(repoKey);
+    return current && current.baseOid === oid ? current : null;
   }
 
   /** Load a shard's bytes by digest, or undefined if absent/unreadable. */
@@ -298,6 +358,14 @@ export class ProjectSnapshotStore {
    * is written first (content-addressed), then the manifest is written to a temp
    * file and renamed over the live `map/manifest.json`. The old snapshot is fully
    * readable until the final rename.
+   *
+   * The manifest is published TWICE (issue #246): to the current pointer
+   * `map/manifest.json` (latest tip, unchanged) AND to a per-OID file
+   * `map/manifests/<baseOid>.json`. Because shards are content-addressed and never
+   * deleted by an advance, a review still pinned to an older base OID keeps a fully
+   * readable manifest through a background rehydration — an advance ADDS rather than
+   * replaces, so it can no longer evict a pinned read to a `stale` refusal. The
+   * per-OID dir is bounded by {@link MANIFEST_RETENTION}.
    */
   advance(built: BuiltSnapshot): void {
     const repoKey = built.manifest.repoKey;
@@ -320,7 +388,49 @@ export class ProjectSnapshotStore {
     // Canonical bytes (sorted keys, LF) so the stored manifest is itself
     // byte-reproducible for a given OID, matching the shard bytes.
     const manifestBytes = `${canonicalize(built.manifest)}\n`;
+    // Per-OID manifest FIRST (the pinned-read surface), then the current pointer —
+    // so a reader that follows the pointer to the new tip always finds the matching
+    // per-OID file already on disk. Same canonical bytes to both.
+    const baseOid = built.manifest.baseOid;
+    if (isSafeOid(baseOid)) {
+      const manifestsDir = this.paths(repoKey).manifestsDir;
+      mkdirSync(manifestsDir, { recursive: true });
+      this.writeAtomic(this.manifestAtPath(repoKey, baseOid), manifestBytes);
+    }
     this.writeAtomic(this.manifestPath(repoKey), manifestBytes);
+    // Bound the per-OID dir AFTER publishing, so a prune failure never blocks a
+    // build and the newest (just-written) OID is always retained.
+    this.evictOldManifests(repoKey);
+  }
+
+  /**
+   * Prune `map/manifests/` to the newest {@link MANIFEST_RETENTION} files by mtime
+   * (issue #246), so per-OID manifests do not grow without bound. FAIL-SAFE: any fs
+   * error (a missing dir, a race) is swallowed — pruning is best-effort housekeeping
+   * and must never break an advance or a read. The residual this leaves is the same
+   * shape as before but far rarer: a review that outlives N background advances can
+   * still have its pinned manifest pruned and then reads `stale` — never wrong.
+   */
+  private evictOldManifests(repoKey: string): void {
+    try {
+      const manifestsDir = this.paths(repoKey).manifestsDir;
+      const entries = readdirSync(manifestsDir)
+        .filter((name) => name.endsWith(".json"))
+        .map((name) => {
+          const full = join(manifestsDir, name);
+          return { full, mtimeMs: statSync(full).mtimeMs };
+        })
+        .sort((a, b) => b.mtimeMs - a.mtimeMs);
+      for (const stale of entries.slice(MANIFEST_RETENTION)) {
+        try {
+          unlinkSync(stale.full);
+        } catch {
+          // A concurrent prune already removed it, or a permission race — skip it.
+        }
+      }
+    } catch {
+      // No manifests dir yet, or an unreadable dir — nothing to prune.
+    }
   }
 
   // ── config.json (A.1 config read/write; the promotion/visibility state) ──────
