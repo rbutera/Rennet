@@ -127,6 +127,13 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
       noveltyLifecycle: lifecycle,
     });
     expect(opened.snapshot.generated).toBe(true);
+    expect(opened.contextManifest).toEqual(
+      expect.objectContaining({
+        repoRecordId: opened.snapshot.repoKey,
+        projectSnapshotId: expect.any(String),
+        freshness: { status: "current", staleMembers: [] },
+      }),
+    );
 
     git(repo.root, "reset", "--hard", repo.oid2);
     await new ProjectSnapshotGenerator({ store }).generate(repo.root, { explicitBaseRef: "main" });
