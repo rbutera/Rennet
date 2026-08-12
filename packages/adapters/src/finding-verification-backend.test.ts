@@ -498,4 +498,30 @@ describe("createVerificationTurn executed-reproduction observation (#259)", () =
       expect(tail.endsWith("=== 3 failed ===")).toBe(true);
     }
   });
+
+  it("a started-but-unpaired exec is NOT a run: it stays out of commands, kept as incomplete (#268 F1)", async () => {
+    // A command that STARTED but was denied/interrupted before any output used to be
+    // recorded as {ok: true} — an unrun command reported as a clean one. It must not
+    // count as executed: it belongs in `incomplete`, never in `commands`.
+    const state: FakeState = { sent: [], closed: false };
+    const port = fakePort(
+      [
+        toolStartedExec("c1", "pnpm test"), // no matching tool.output → never ran to completion
+        toolStartedExec("c2", "node repro.js"),
+        toolOutputEvent("c2", false, "TypeError"), // this one completed
+        endedEvent({ status: "completed", finalText: "ok", structuredOutput: reproducedBody }),
+      ],
+      state,
+    );
+    const turn = createVerificationTurn(port, { cwd: "/repo" });
+    const result = await turn("verify");
+    expect(result.status).toBe("emitted");
+    if (result.status === "emitted") {
+      // Only the completed command is proof of a run.
+      expect(result.execution?.commands.map((c) => c.command)).toEqual(["node repro.js"]);
+      // The unpaired one is kept separately, never reported as ok.
+      expect(result.execution?.incomplete?.map((c) => c.command)).toEqual(["pnpm test"]);
+      expect(result.execution?.incomplete?.[0]?.ok).toBe(false);
+    }
+  });
 });

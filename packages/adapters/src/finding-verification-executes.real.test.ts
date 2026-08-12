@@ -111,13 +111,24 @@ describe("verification turn executes the code (gated real turn, #259)", () => {
       const result = await runTurn(prompt);
 
       // The proof: the turn EMITTED a verdict AND it got there by RUNNING something —
-      // `execution` is present and carries at least one real command with its output.
+      // `execution` carries at least one COMPLETED command, and that command's output
+      // SUPPORTS the verdict (#268 F2: not merely "some command existed"). The bug is a
+      // TypeError on empty input, so the observed output must show that failure.
       expect(result.status).toBe("emitted");
       if (result.status === "emitted") {
         console.log("[#259 live] execution:", JSON.stringify(result.execution, null, 2));
         console.log("[#259 live] body:", JSON.stringify(result.body, null, 2));
         expect(result.execution).toBeDefined();
-        expect(result.execution?.commands.length ?? 0).toBeGreaterThan(0);
+        const commands = result.execution?.commands ?? [];
+        expect(commands.length).toBeGreaterThan(0);
+        // The observed run reproduces the actual failure the finding is about.
+        const provingRun = commands.some((c) =>
+          /valueOf|TypeError|undefined|throw/i.test(c.outputTail),
+        );
+        expect(provingRun).toBe(true);
+        // The model returned a reproduced verdict for the one finding.
+        const body = result.body as { verifications?: { verdict?: string }[] };
+        expect(body.verifications?.[0]?.verdict).toBe("reproduced");
       }
     },
     600_000,

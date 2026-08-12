@@ -171,9 +171,19 @@ export interface VerificationCommand {
   readonly outputTail: string;
 }
 
-/** The executed evidence a verification turn carried: the commands it actually ran (#259). */
+/**
+ * The executed evidence a verification turn carried (#259). `commands` are the exec
+ * calls that COMPLETED — a `tool.started` paired with its `tool.output`, so the
+ * command genuinely ran and produced output. `incomplete` are exec calls that started
+ * but were denied or interrupted before any output (issue #268 F1): they are kept
+ * separate and NEVER counted as a successful run, because a started-but-unpaired call
+ * used to be recorded as `{ok: true}` — an unrun command reported as a clean one, the
+ * permissive direction. Only `commands` are proof that anything executed.
+ */
 export interface VerificationExecution {
   readonly commands: readonly VerificationCommand[];
+  /** Exec calls that started but never produced output (denied/interrupted) — not a run. */
+  readonly incomplete?: readonly VerificationCommand[];
 }
 
 /** One batched verification turn's result (a fresh session emits `{ verifications }`). */
@@ -221,12 +231,17 @@ export interface VerificationTelemetry {
   readonly verificationTurns: number;
   readonly reproduced: number;
   /**
-   * Commands the verification turns ACTUALLY executed (issue #259) — the real
-   * reproduce-by-running, observed on the harness tool stream rather than claimed in
-   * prose. Zero means every verdict was reasoned from read code, not executed.
+   * Completed exec commands the harness OBSERVED across the verification turns (#259;
+   * #268 F1: completed only — a denied/interrupted call is not counted). This is a
+   * turn-level count of what actually ran, not a per-finding attribution.
    */
   readonly commandsRun: number;
-  /** Reproduced findings whose verification turn ran at least one command (#259). */
+  /**
+   * Reproduced findings whose model-cited command MATCHED a command the harness
+   * actually observed run (#268 F2). This is a per-FINDING count bound to observed
+   * execution — NOT "the batch ran something", which is what the earlier turn-level
+   * version wrongly credited to every reproduced finding in a file batch.
+   */
   readonly reproducedByExecution: number;
   /** Refuted findings — DROPPED, never surfaced. */
   readonly refuted: number;
@@ -275,6 +290,8 @@ interface ResolvedFinding {
 interface ParsedVerdict {
   readonly verdict: FindingVerdict;
   readonly evidence: string;
+  /** The exact command the model says it ran to reproduce THIS finding (#268 F2), if any. */
+  readonly command?: string;
 }
 
 /**
@@ -396,12 +413,13 @@ export async function runFindingVerification(
       continue;
     }
     if (turn.tokens) tokensSpent = addTokens(tokensSpent, turn.tokens);
-    // The commands this turn actually RAN (issue #259) — the executed reproduction,
-    // observed on the harness tool stream, not the model's self-report. A reproduced
-    // verdict from a turn that ran a command is proof-by-execution; one from a turn that
-    // ran nothing is proof-by-reading. Both surface; the telemetry keeps them apart.
-    const ranCommands = turn.execution?.commands ?? [];
-    commandsRun += ranCommands.length;
+    // The commands the harness OBSERVED this turn run (issue #259) — completed exec
+    // calls only (a started-but-denied call is not here, #268 F1). These are the ground
+    // truth a per-finding execution claim is checked against: a reproduced verdict is
+    // "by execution" only when the model cited a command that matches one of these
+    // (#268 F2), never merely because the batch ran something.
+    const observedCommands = turn.execution?.commands ?? [];
+    commandsRun += observedCommands.length;
 
     const verdictByRef = parseVerifications(turn.body);
     for (const [ref, finding] of refByFinding) {
@@ -421,12 +439,22 @@ export async function runFindingVerification(
         continue;
       }
       if (parsed.verdict === "reproduced" && parsed.evidence.trim().length > 0) {
+        // #268 F2: this finding is reproduced-by-EXECUTION only when the model cited a
+        // command that MATCHES one the harness observed run for this turn — never merely
+        // because the batch ran something. When it matches, the surfaced evidence is
+        // GROUNDED in the observed command + its real output, not the model's prose; an
+        // unmatched claim falls back to a reading-based reproduced (still surfaces, not
+        // counted as executed). Fail-closed: no citation or no match ⇒ not executed.
+        const backing = matchObservedCommand(parsed.command, observedCommands);
+        const evidence = backing
+          ? executedEvidence(parsed.evidence.trim(), backing)
+          : parsed.evidence.trim();
         decisions.set(finding.findingId, {
           kind: "attach",
-          verification: { verdict: "reproduced", evidence: parsed.evidence.trim() },
+          verification: { verdict: "reproduced", evidence },
         });
         reproduced += 1;
-        if (ranCommands.length > 0) reproducedByExecution += 1;
+        if (backing) reproducedByExecution += 1;
         continue;
       }
       // inconclusive — or a reproduced with no evidence, which is a guess, not proof.
@@ -620,9 +648,61 @@ function parseVerifications(body: unknown): Map<string, ParsedVerdict> {
     const verdict = record.verdict;
     if (typeof ref !== "string") continue;
     if (verdict !== "reproduced" && verdict !== "refuted" && verdict !== "inconclusive") continue;
-    map.set(ref, { verdict, evidence: typeof record.evidence === "string" ? record.evidence : "" });
+    map.set(ref, {
+      verdict,
+      evidence: typeof record.evidence === "string" ? record.evidence : "",
+      ...(typeof record.command === "string" && record.command.trim().length > 0
+        ? { command: record.command }
+        : {}),
+    });
   }
   return map;
+}
+
+/** Collapse whitespace and trim — so a cited command matches an observed one despite spacing. */
+function normalizeCommand(command: string): string {
+  return command.replace(/\s+/g, " ").trim();
+}
+
+/**
+ * The observed command that backs a model's reproduced-by-running claim (#268 F2), or
+ * undefined when the claim is not grounded. The model cites the command it says it ran;
+ * this returns the harness-OBSERVED command that matches it (exact, or one containing
+ * the other after whitespace-normalization, since a model may quote a sub- or super-
+ * string of what actually ran). No citation, or no observed command matches ⇒ undefined,
+ * so an unbacked claim is never counted as executed. Fails closed.
+ */
+function matchObservedCommand(
+  cited: string | undefined,
+  observed: readonly VerificationCommand[],
+): VerificationCommand | undefined {
+  if (cited === undefined) return undefined;
+  const needle = normalizeCommand(cited);
+  if (needle.length === 0) return undefined;
+  return observed.find((candidate) => {
+    const hay = normalizeCommand(candidate.command);
+    return hay.length > 0 && (hay === needle || hay.includes(needle) || needle.includes(hay));
+  });
+}
+
+/** A compact one-line excerpt of a command's output tail, for the evidence chip. */
+function outputExcerpt(text: string, max = 160): string {
+  const collapsed = text.replace(/\s+/g, " ").trim();
+  return collapsed.length <= max ? collapsed : `${collapsed.slice(0, max)}…`;
+}
+
+/**
+ * The surfaced evidence for a reproduced-by-EXECUTION finding (#268 F2): the model's
+ * one-line reasoning GROUNDED in the command the harness actually observed and what it
+ * printed — the executed proof comes from observed data, not from the model's prose. So
+ * the chip's "we ran it" is true by construction, not by the model's say-so.
+ */
+function executedEvidence(reasoning: string, observed: VerificationCommand): string {
+  const command =
+    observed.command.length <= 200 ? observed.command : `${observed.command.slice(0, 200)}…`;
+  const excerpt = outputExcerpt(observed.outputTail);
+  const proof = excerpt.length > 0 ? `ran \`${command}\` → ${excerpt}` : `ran \`${command}\``;
+  return reasoning.length > 0 ? `${reasoning} (${proof})` : proof;
 }
 
 function sumNullable(a: number | null, b: number | null): number | null {

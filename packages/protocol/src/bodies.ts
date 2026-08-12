@@ -176,16 +176,22 @@ const findingBodySchema = z.object({ findings: z.array(findingBodyElementSchema)
  * RSP document type (verification is a micro-judgment attached to a finding, never
  * a stored doc), so it lives here as a standalone projected schema rather than in
  * `RSP_DOC_TYPES`. A batched verify turn covers every finding sharing a file, so it
- * emits an array of `{ ref, verdict, evidence }` — `ref` is the per-batch reference
- * key the runner fed in (an ordinal, e.g. "f1"), echoed back so the runner maps
- * each verdict to the finding it belongs to. The runner parses this defensively and
- * a missing/garbled entry falls to an honest `inconclusive` (never a drop).
+ * emits an array of `{ ref, verdict, evidence, command? }` — `ref` is the per-batch
+ * reference key the runner fed in (an ordinal, e.g. "f1"), echoed back so the runner
+ * maps each verdict to the finding it belongs to. `command` (issue #268 F2) is the
+ * EXACT shell command the model ran to reproduce THAT finding, verbatim, so the
+ * runner can check it against the commands the harness actually observed — a claim
+ * of a run that no observed command matches is not counted as executed. The runner
+ * parses this defensively and a missing/garbled entry falls to an honest
+ * `inconclusive` (never a drop).
  */
 const findingVerificationTurnItemSchema = z
   .object({
     ref: z.string().min(1),
     verdict: z.enum(["reproduced", "refuted", "inconclusive"]),
     evidence: z.string(),
+    /** The exact command run to reproduce THIS finding (#268 F2); checked vs observed. */
+    command: z.string().optional(),
   })
   .loose();
 

@@ -206,29 +206,35 @@ describe("runFindingVerification disposition (#179)", () => {
 
 // ── ② executed reproduction: proof it RAN, not just re-read (#259) ───────────────
 
-describe("runFindingVerification executed reproduction (#259)", () => {
-  /** A turn that returns one verdict AND (optionally) the commands it actually ran. */
-  function turnWith(
-    verdict: { verdict: string; evidence: string },
+describe("runFindingVerification executed reproduction (#259 + #268 F2)", () => {
+  type Verdict = { ref: string; verdict: string; evidence: string; command?: string };
+  /** A turn returning arbitrary verifications AND (optionally) the commands the harness observed. */
+  function turnOf(
+    verifications: Verdict[],
     execution?: { commands: { command: string; ok: boolean; outputTail: string }[] },
   ): VerificationTurn {
     return async (): Promise<VerificationTurnResult> => ({
       status: "emitted",
-      body: {
-        verifications: [{ ref: "f1", verdict: verdict.verdict, evidence: verdict.evidence }],
-      },
+      body: { verifications },
       ...(execution ? { execution } : {}),
     });
   }
 
-  it("a reproduced verdict backed by a command the turn RAN counts as reproduced-by-execution", async () => {
+  it("counts reproduced-by-execution ONLY when the model's cited command matches an observed one", async () => {
     const f = finding({ findingId: "F1" });
     const result = await runFindingVerification({
       findings: [f],
       manifest: MANIFEST,
       readFileWindow: readAll,
-      runTurn: turnWith(
-        { verdict: "reproduced", evidence: "ran the test — it threw on empty input" },
+      runTurn: turnOf(
+        [
+          {
+            ref: "f1",
+            verdict: "reproduced",
+            evidence: "sum([]) throws",
+            command: "pnpm vitest run a.test.ts",
+          },
+        ],
         { commands: [{ command: "pnpm vitest run a.test.ts", ok: false, outputTail: "1 failed" }] },
       ),
       budget: budget(),
@@ -236,23 +242,66 @@ describe("runFindingVerification executed reproduction (#259)", () => {
     expect(result.findings[0]?.verification?.verdict).toBe("reproduced");
     expect(result.telemetry.commandsRun).toBe(1);
     expect(result.telemetry.reproducedByExecution).toBe(1);
+    // The surfaced evidence is GROUNDED in the observed command + its real output.
+    expect(result.findings[0]?.verification?.evidence).toContain("pnpm vitest run a.test.ts");
+    expect(result.findings[0]?.verification?.evidence).toContain("1 failed");
   });
 
-  it("a reproduced verdict from a turn that ran NOTHING is reproduced-by-reading, not by execution", async () => {
-    // Same verdict, same finding: the ONLY difference is whether a command executed —
-    // and that is exactly what the telemetry keeps apart, so "reproduced" can never
-    // silently mean "a model re-read it and still believed itself."
+  it("does NOT count a reproduced verdict whose cited command was NEVER observed — prose alone is not proof", async () => {
+    // The model claims it ran a command, but the harness observed nothing matching it.
+    // The finding still surfaces (reproduced-by-reading), but it is not executed-backed
+    // and the fabricated run is not grounded into the evidence.
     const f = finding({ findingId: "F1" });
     const result = await runFindingVerification({
       findings: [f],
       manifest: MANIFEST,
       readFileWindow: readAll,
-      runTurn: turnWith({ verdict: "reproduced", evidence: "line 2 dereferences a null x" }),
+      runTurn: turnOf(
+        [
+          {
+            ref: "f1",
+            verdict: "reproduced",
+            evidence: "I ran the suite and it failed",
+            command: "pnpm test --filter never-ran",
+          },
+        ],
+        { commands: [{ command: "ls", ok: true, outputTail: "a.ts" }] },
+      ),
       budget: budget(),
     });
     expect(result.findings[0]?.verification?.verdict).toBe("reproduced");
-    expect(result.telemetry.commandsRun).toBe(0);
-    expect(result.telemetry.reproducedByExecution).toBe(0);
+    expect(result.telemetry.commandsRun).toBe(1); // ls WAS observed…
+    expect(result.telemetry.reproducedByExecution).toBe(0); // …but nothing backs THIS finding
+    expect(result.findings[0]?.verification?.evidence).not.toContain("ran `");
+  });
+
+  it("one observed command does NOT bless a whole batch — only the finding that cited it (#268 F2)", async () => {
+    // Two findings share file a.ts (one batch, one turn). The turn observed ONE command,
+    // which only F1 cites. F2 is reproduced by reading. The old turn-wide code credited
+    // BOTH as reproduced-by-execution; now only F1 is.
+    const f1 = finding({ findingId: "F1", anchor: "rennet:hunk/h1", summary: "first concern" });
+    const f2 = finding({ findingId: "F2", anchor: "rennet:hunk/h2", summary: "second concern" });
+    const result = await runFindingVerification({
+      findings: [f1, f2],
+      manifest: MANIFEST,
+      readFileWindow: readAll,
+      runTurn: turnOf(
+        [
+          {
+            ref: "f1",
+            verdict: "reproduced",
+            evidence: "reproduced by test",
+            command: "node repro.js",
+          },
+          { ref: "f2", verdict: "reproduced", evidence: "line 20 is unguarded" },
+        ],
+        { commands: [{ command: "node repro.js", ok: false, outputTail: "TypeError" }] },
+      ),
+      budget: budget(),
+    });
+    expect(result.telemetry.reproduced).toBe(2);
+    expect(result.telemetry.commandsRun).toBe(1);
+    expect(result.telemetry.reproducedByExecution).toBe(1);
   });
 
   it("counts commandsRun even when a run ends inconclusive, but not reproducedByExecution", async () => {
@@ -261,8 +310,8 @@ describe("runFindingVerification executed reproduction (#259)", () => {
       findings: [f],
       manifest: MANIFEST,
       readFileWindow: readAll,
-      runTurn: turnWith(
-        { verdict: "inconclusive", evidence: "the test harness would not build here" },
+      runTurn: turnOf(
+        [{ ref: "f1", verdict: "inconclusive", evidence: "the harness would not build here" }],
         { commands: [{ command: "pnpm build", ok: false, outputTail: "error" }] },
       ),
       budget: budget(),

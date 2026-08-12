@@ -296,11 +296,16 @@ export function createVerificationTurn(
       ...(options.model === undefined ? {} : { model: options.model }),
       ...(options.signal === undefined ? {} : { signal: options.signal }),
     });
-    // The exec commands this turn ran, keyed by call id in the order they started. A
-    // command is recorded the moment the exec STARTS — so a command that ran counts
-    // even if the turn ends before its result frame — and its ok/output are filled in
-    // when the matching `tool.output` arrives. Absent from the result when nothing ran.
-    const execByCall = new Map<ToolCallId, { command: string; ok: boolean; outputTail: string }>();
+    // The exec calls this turn made, keyed by call id in the order they started. A
+    // call is only proof of a RUN once its `tool.output` arrives (issue #268 F1): the
+    // `paired` flag flips then, its real ok/output are filled in, and only paired calls
+    // become `execution.commands`. A call that started but was denied or interrupted
+    // before any output stays `paired: false` with `ok: false` — kept separate, never
+    // reported as a clean run. Default `ok: false` so an un-paired call never reads as fine.
+    const execByCall = new Map<
+      ToolCallId,
+      { command: string; ok: boolean; outputTail: string; paired: boolean }
+    >();
     const execOrder: ToolCallId[] = [];
     try {
       await session.send({ prompt });
@@ -309,8 +314,9 @@ export function createVerificationTurn(
           if (!execByCall.has(event.call.id)) {
             execByCall.set(event.call.id, {
               command: execCommandLine(event.call),
-              ok: true,
+              ok: false,
               outputTail: "",
+              paired: false,
             });
             execOrder.push(event.call.id);
           }
@@ -321,6 +327,7 @@ export function createVerificationTurn(
           if (record) {
             record.ok = event.ok;
             record.outputTail = outputTail(event.text);
+            record.paired = true;
           }
           continue;
         }
@@ -336,17 +343,29 @@ export function createVerificationTurn(
                 message: "the harness completed the verification turn without structured output",
               };
             }
-            const ranCommands: VerificationCommand[] = execOrder.map((id) => {
+            // Only PAIRED calls (started AND output-observed) are proof of a run; the
+            // rest started but were denied/interrupted and are kept separate (#268 F1).
+            const commands: VerificationCommand[] = [];
+            const incomplete: VerificationCommand[] = [];
+            for (const id of execOrder) {
               const record = execByCall.get(id);
-              return record
-                ? { command: record.command, ok: record.ok, outputTail: record.outputTail }
-                : { command: id, ok: true, outputTail: "" };
-            });
+              if (!record) continue;
+              const command: VerificationCommand = {
+                command: record.command,
+                ok: record.ok,
+                outputTail: record.outputTail,
+              };
+              (record.paired ? commands : incomplete).push(command);
+            }
+            const execution =
+              commands.length > 0 || incomplete.length > 0
+                ? { commands, ...(incomplete.length > 0 ? { incomplete } : {}) }
+                : undefined;
             return {
               status: "emitted",
               body: outcome.structuredOutput,
               ...(outcome.usage === undefined ? {} : { tokens: outcome.usage }),
-              ...(ranCommands.length > 0 ? { execution: { commands: ranCommands } } : {}),
+              ...(execution ? { execution } : {}),
             };
           }
           if (outcome.status === "failed") {
