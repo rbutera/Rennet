@@ -66,7 +66,13 @@ export interface LiveReviewAskDeps {
    * crashing the "both" ask (the router awaits it, so a throw would sink the whole
    * question — the orchestrator's answer already exists and must survive).
    */
-  askCodex?(input: { review: Review; question: string }): Promise<AskAnswer>;
+  askCodex?(input: {
+    review: Review;
+    question: string;
+    /** Cancels the codex exec (#251 criterion 4) — the same controller the
+     *  orchestrator leg gets, so one abort on quit cancels BOTH. */
+    abortController?: AbortController;
+  }): Promise<AskAnswer>;
 }
 
 /**
@@ -80,8 +86,16 @@ export interface LiveReviewAskPorts {
     question: string;
     /** Token-stream sink (#251): each orchestrator token as it arrives. */
     onDelta?: (text: string) => void;
+    /** Cancels the turn (#251 criterion 4): threaded to the SDK's `abortController`
+     *  so `before-quit` reaps the live claude turn. */
+    abortController?: AbortController;
   }): Promise<AskAnswer>;
-  askCodex(input: { review: Review; question: string }): Promise<AskAnswer>;
+  askCodex(input: {
+    review: Review;
+    question: string;
+    /** Cancels the codex exec (#251 criterion 4): threaded to execa's `cancelSignal`. */
+    abortController?: AbortController;
+  }): Promise<AskAnswer>;
 }
 
 /**
@@ -92,9 +106,13 @@ export interface LiveReviewAskPorts {
  */
 export function createLiveReviewAskPorts(deps: LiveReviewAskDeps): LiveReviewAskPorts {
   return {
-    async askOrchestrator({ review, question, onDelta }) {
+    async askOrchestrator({ review, question, onDelta, abortController }) {
       const pipeline = await deps.buildPipeline(review);
-      const outcome = await deps.orchestratorTurn(review, pipeline, question, onDelta);
+      // Thread the AbortController only when present, so a non-reaping caller still
+      // invokes the runner with exactly four args (the runner's back-compat shape).
+      const outcome = abortController
+        ? await deps.orchestratorTurn(review, pipeline, question, onDelta, abortController)
+        : await deps.orchestratorTurn(review, pipeline, question, onDelta);
       if (!outcome.available) {
         // Fail-closed, honest: no `claude` on the machine → an answer that SAYS so,
         // never a fabricated one. (The primary answer is always produced, in every
@@ -121,14 +139,20 @@ export function createLiveReviewAskPorts(deps: LiveReviewAskDeps): LiveReviewAsk
             : "The orchestrator completed the turn without a final answer.",
       };
     },
-    async askCodex({ review, question }) {
+    async askCodex({ review, question, abortController }) {
       if (!deps.askCodex) {
         return {
           model: CODEX_ASK_LABEL,
           answer: "Codex is not installed, so no second opinion is available.",
         };
       }
-      return deps.askCodex({ review, question });
+      // Include the controller only when present, so a non-reaping caller invokes the
+      // codex port with exactly `{ review, question }` (its back-compat shape).
+      return deps.askCodex({
+        review,
+        question,
+        ...(abortController ? { abortController } : {}),
+      });
     },
   };
 }
@@ -206,8 +230,12 @@ export interface LiveCodexAskDeps {
  */
 export function createLiveCodexAsk(
   deps: LiveCodexAskDeps,
-): (input: { review: Review; question: string }) => Promise<AskAnswer> {
-  return async ({ review, question }) => {
+): (input: {
+  review: Review;
+  question: string;
+  abortController?: AbortController;
+}) => Promise<AskAnswer> {
+  return async ({ review, question, abortController }) => {
     const patchset = activePatchsetOf(review);
     const prompt = buildCodexAskPrompt(patchset.rawDiff, question);
     try {
@@ -216,6 +244,9 @@ export function createLiveCodexAsk(
         effort: deps.effort ?? DEFAULT_CODEX_UTILITY_EFFORT,
         prompt,
         outputSchema: CODEX_ASK_OUTPUT_SCHEMA,
+        // #251 criterion 4: execa's `cancelSignal` — a quit-abort force-kills the
+        // codex child (unlike the claude child, whose PID the SDK never exposes).
+        ...(abortController ? { signal: abortController.signal } : {}),
       });
       const output = result.output as { answer?: unknown } | null;
       const answer = typeof output?.answer === "string" ? output.answer.trim() : "";

@@ -164,6 +164,7 @@ function harness(
     capturePort?: PatchsetCapturePort;
     runHandoffTurn?: DispatchDeps["runHandoffTurn"];
     composeBundle?: DispatchDeps["composeBundle"];
+    liveTurns?: DispatchDeps["liveTurns"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -270,6 +271,7 @@ function harness(
     publishConsent,
     ...(extra.runHandoffTurn ? { runHandoffTurn: extra.runHandoffTurn } : {}),
     ...(extra.composeBundle ? { composeBundle: extra.composeBundle } : {}),
+    ...(extra.liveTurns ? { liveTurns: extra.liveTurns } : {}),
     // Front-door deps (issue #29): a trivial in-memory projects capability plus
     // stub discovery/detection. The dedicated front-door tests exercise these
     // handlers directly; the shared harness only needs them to satisfy the shape.
@@ -2327,5 +2329,125 @@ describe("createDispatch — review.handoff.compose (issue #72)", () => {
         dispositions: COMPOSE_DISPOSITIONS,
       }),
     ).rejects.toThrow();
+  });
+});
+
+describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)", () => {
+  // A recording registry that hands out REAL AbortControllers, so a test can assert the
+  // exact controller instance reaches each leg and that register/settle bracket the turn.
+  function spyRegistry(): {
+    registered: { turnId: string; controller: AbortController }[];
+    settled: string[];
+    liveTurns: NonNullable<DispatchDeps["liveTurns"]>;
+  } {
+    const registered: { turnId: string; controller: AbortController }[] = [];
+    const settled: string[] = [];
+    return {
+      registered,
+      settled,
+      liveTurns: {
+        register(turnId: string): AbortController {
+          const controller = new AbortController();
+          registered.push({ turnId, controller });
+          return controller;
+        },
+        settle(turnId: string): void {
+          settled.push(turnId);
+        },
+      },
+    };
+  }
+
+  async function openReview(liveTurns: NonNullable<DispatchDeps["liveTurns"]>) {
+    const h = harness(undefined, {}, { liveTurns });
+    const review = await capturedReview(h.dispatch);
+    return { dispatch: h.dispatch, reviewAsk: h.reviewAsk, review };
+  }
+
+  it("registers the turn on start, threads the SAME controller into BOTH legs, and settles it on completion", async () => {
+    const reg = spyRegistry();
+    const { dispatch, reviewAsk, review } = await openReview(reg.liveTurns);
+    await dispatch(
+      "review.ask",
+      {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        mode: "both",
+        question: "q",
+        threadId: "th",
+        turnId: "tn",
+        anchor: { kind: "chunk", label: "src/a.ts", key: "chunk|src/a.ts" },
+      },
+      { emitAskStream: () => undefined },
+    );
+    // Entered the registry once, under this turn's id.
+    expect(reg.registered.map((r) => r.turnId)).toEqual(["tn"]);
+    const controller = reg.registered[0]?.controller;
+    // BOTH legs received the identical AbortController — one quit-abort cancels both.
+    const orchArg = reviewAsk.askOrchestrator.mock.calls[0]?.[0] as { abortController?: unknown };
+    const codexArg = reviewAsk.askCodex.mock.calls[0]?.[0] as { abortController?: unknown };
+    expect(orchArg.abortController).toBe(controller);
+    expect(codexArg.abortController).toBe(controller);
+    // Left the registry when the turn settled.
+    expect(reg.settled).toEqual(["tn"]);
+  });
+
+  it("SETTLES the turn even when the ask throws — the leak guard on the aborted/errored path", async () => {
+    const reg = spyRegistry();
+    const { dispatch, reviewAsk, review } = await openReview(reg.liveTurns);
+    // A quit-abort rejects the in-flight orchestrator turn; simulate that throw.
+    reviewAsk.askOrchestrator.mockRejectedValueOnce(new Error("aborted"));
+    await expect(
+      dispatch(
+        "review.ask",
+        {
+          commandId: randomUUID(),
+          reviewId: review.id,
+          mode: "orchestrator",
+          question: "q",
+          threadId: "th",
+          turnId: "tn",
+          anchor: { kind: "chunk", label: "src/a.ts", key: "chunk|src/a.ts" },
+        },
+        { emitAskStream: () => undefined },
+      ),
+    ).rejects.toThrow(/aborted/);
+    // The turn ENTERED and still LEFT the registry — settling only on success would leak
+    // the aborted turn's controller forever. This reddens if `settle` is moved out of the
+    // `finally` (into the success path after the return).
+    expect(reg.registered.map((r) => r.turnId)).toEqual(["tn"]);
+    expect(reg.settled).toEqual(["tn"]);
+  });
+
+  it("registers a one-shot ask (no turnId) under a fresh key and reaps it too", async () => {
+    const reg = spyRegistry();
+    const { dispatch, reviewAsk, review } = await openReview(reg.liveTurns);
+    await dispatch("review.ask", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      question: "q",
+    });
+    // A keyless one-shot ask still enters the registry under a generated key, so its
+    // model child is reapable on quit rather than surviving unregistered.
+    expect(reg.registered).toHaveLength(1);
+    const key = reg.registered[0]?.turnId ?? "";
+    expect(key.length).toBeGreaterThan(0);
+    const orchArg = reviewAsk.askOrchestrator.mock.calls[0]?.[0] as { abortController?: unknown };
+    expect(orchArg.abortController).toBe(reg.registered[0]?.controller);
+    // Settled under the SAME generated key it registered with.
+    expect(reg.settled).toEqual([key]);
+  });
+
+  it("threads NO controller when no registry is wired (fully back-compat)", async () => {
+    const h = harness();
+    const review = await capturedReview(h.dispatch);
+    await h.dispatch("review.ask", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      question: "q",
+    });
+    // No `liveTurns` dep ⇒ the port is called with exactly its existing input, no
+    // abortController key added.
+    expect(h.reviewAsk.askOrchestrator).toHaveBeenCalledWith({ review, question: "q" });
   });
 });

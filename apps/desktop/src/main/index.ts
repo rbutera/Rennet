@@ -109,6 +109,7 @@ import { createDispatch } from "./dispatch";
 import { createLiveDraftPrBodyPort } from "./draft-pr-body-live";
 import { createLiveComposeBundle } from "./handoff-compose-live";
 import { createDesktopReviewBackend } from "./live-review-backend";
+import { LiveTurnRegistry } from "./live-turn-registry";
 import { EDITOR_CLIS, performOpenInEditor } from "./open-in-editor";
 import { createOrchestratorTurnRunner } from "./orchestrator";
 import {
@@ -323,6 +324,11 @@ let dispatch: ReturnType<typeof createDispatch> | null = null;
 // project's Repo Map (ProjectSnapshot) warm as its reference branch advances — NOT
 // the LLM knowledge layer. Assigned in `whenReady`, torn down on quit.
 let rehydration: ProactiveRehydration | null = null;
+// The in-flight conversation turns (#251, criterion 4). One registry for the app
+// lifetime: dispatch registers each `review.ask` turn's AbortController and settles
+// it when the turn finishes; `before-quit` aborts whatever is still in flight so a
+// model child is asked to stop rather than surviving the quit.
+const liveTurns = new LiveTurnRegistry();
 
 function isTrustedAppUrl(value: string): boolean {
   const url = new URL(value);
@@ -1455,7 +1461,7 @@ app.whenReady().then(async () => {
           dispositions: review.dispositions,
         }),
       orchestratorTurn,
-      askCodex: async ({ review, question }) => {
+      askCodex: async ({ review, question, abortController }) => {
         // The ask executor is bound to the RESOLVED absolute codex, same as the
         // pipeline seat (bead workspace-6qp15). A null binPath means no codex
         // resolved — surface that honestly rather than shelling a bad `codex`.
@@ -1470,9 +1476,17 @@ app.whenReady().then(async () => {
           bin: codex.binPath,
           ...(codex.version ? { harnessVersion: codex.version } : {}),
         });
-        return createLiveCodexAsk({ executor })({ review, question });
+        // Thread the quit-abort controller (#251 criterion 4) → execa's cancelSignal.
+        return createLiveCodexAsk({ executor })({
+          review,
+          question,
+          ...(abortController ? { abortController } : {}),
+        });
       },
     }),
+    // The live-turn registry (#251 criterion 4): dispatch registers each ask turn's
+    // AbortController; `before-quit` reaps whatever is still in flight.
+    liveTurns,
     // review.refine (issue #19): the LIVE comment-refinement producer. Rai's
     // headline feature — a rough note refined into a clean comment by a real,
     // council-routed model turn. Runs on WHICHEVER seat the council resolves: Codex
@@ -1603,6 +1617,13 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => app.quit());
 app.on("before-quit", () => {
+  // #251 criterion 4: abort every in-flight conversation turn so a model child is
+  // asked to stop rather than surviving the quit. This SIGNALS the turns — the codex
+  // exec is force-killed by execa, but a claude child that ignores its abort cannot be
+  // observed to exit (the SDK never exposes its PID), so this is a reap REQUEST, not a
+  // confirmed kill. An aborted turn's `streaming` placeholder stays on disk and
+  // recovers as `interrupted` on the next launch's reattach (criterion 3).
+  liveTurns.abortAll();
   void watcher.close();
   rehydration?.closeAll();
   store?.close();
