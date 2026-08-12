@@ -113,7 +113,7 @@ import { createLiveComposeBundle } from "./handoff-compose-live";
 import { createDesktopReviewBackend } from "./live-review-backend";
 import { LiveTurnRegistry } from "./live-turn-registry";
 import {
-  launchResolvedEditor,
+  createEditorLaunchEffects,
   performOpenInEditor,
   resolveEditorExecutables,
 } from "./open-in-editor";
@@ -158,6 +158,14 @@ function getEditorExecutables(): Promise<string[]> {
   })();
   return editorExecutables;
 }
+
+const editorLaunchEffects = createEditorLaunchEffects({
+  resolveExecutables: getEditorExecutables,
+  async spawn(executable, args) {
+    await execFileAsync(executable, args);
+  },
+  openPath: async (absPath) => (await shell.openPath(absPath)) === "",
+});
 
 const IPC_CHANNEL = "rennet:invoke";
 // The push channel a long-running command streams live progress on (today
@@ -1463,18 +1471,11 @@ app.whenReady().then(async () => {
     // family) first; fall back to an OS-level open (no line) only when none took it.
     // Path resolution + the escape-the-root refusal live in `performOpenInEditor`.
     openInEditor: ({ review, path, line }) =>
-      performOpenInEditor(
-        {
-          launchAtLine: async (absPath, ln) => {
-            const executables = await getEditorExecutables();
-            return launchResolvedEditor(executables, absPath, ln, async (executable, args) => {
-              await execFileAsync(executable, args);
-            });
-          },
-          openPath: async (absPath) => (await shell.openPath(absPath)) === "",
-        },
-        { repositoryRoot: review.repositoryRoot, path, line },
-      ),
+      performOpenInEditor(editorLaunchEffects, {
+        repositoryRoot: review.repositoryRoot,
+        path,
+        line,
+      }),
     reviewAsk: createLiveReviewAskPorts({
       // Dispatch resolves + freshness-pins the review (and its patchset) and hands the
       // SAME snapshot to both legs, so the ports never re-resolve. The pipeline is a

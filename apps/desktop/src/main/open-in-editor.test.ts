@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import {
+  createEditorLaunchEffects,
   launchResolvedEditor,
   type OpenInEditorEffects,
   performOpenInEditor,
@@ -48,9 +49,41 @@ describe("launchResolvedEditor", () => {
   });
 
   it("does not spawn a bare command when no candidate resolves", async () => {
-    const spawn = vi.fn(async () => Promise.resolve());
+    const spawn = vi.fn<(executable: string, args: string[]) => Promise<void>>();
     expect(await launchResolvedEditor([], "/repo/src/x.ts", 7, spawn)).toBe(false);
     expect(spawn).not.toHaveBeenCalled();
+  });
+});
+
+describe("createEditorLaunchEffects", () => {
+  it("binds packaged discovery to an absolute Cursor launch and memoizes it", async () => {
+    const cursor = "/Applications/Cursor.app/Contents/Resources/app/bin/cursor";
+    const resolveExecutables = vi.fn(() =>
+      resolveEditorExecutables(
+        { platform: "darwin", home: "/Users/rai", inheritedPath: "", loginShellPath: "" },
+        async (candidate) => candidate === cursor,
+      ),
+    );
+    const spawned: Array<readonly [string, string[]]> = [];
+    const spawn = vi.fn(async (executable: string, args: string[]) => {
+      spawned.push([executable, args]);
+    });
+    const openPath = vi.fn(async () => true);
+    const bound = createEditorLaunchEffects({ resolveExecutables, spawn, openPath });
+
+    expect(
+      await performOpenInEditor(bound, {
+        repositoryRoot: "/repo",
+        path: "src/x.ts",
+        line: 42,
+      }),
+    ).toEqual({ ok: true });
+    expect(spawn).toHaveBeenCalledWith(cursor, ["-g", "/repo/src/x.ts:42"]);
+    expect(spawned.every(([command]) => command.startsWith("/"))).toBe(true);
+    expect(openPath).not.toHaveBeenCalled();
+
+    await bound.launchAtLine("/repo/src/y.ts", 8);
+    expect(resolveExecutables).toHaveBeenCalledTimes(1);
   });
 });
 

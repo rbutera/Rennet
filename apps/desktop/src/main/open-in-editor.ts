@@ -93,6 +93,23 @@ export interface OpenInEditorEffects {
   openPath(absPath: string): Promise<boolean>;
 }
 
+export interface EditorLaunchEffectsInput {
+  resolveExecutables(): Promise<string[]>;
+  spawn(executable: string, args: string[]): Promise<void>;
+  openPath(absPath: string): Promise<boolean>;
+}
+
+export function createEditorLaunchEffects(input: EditorLaunchEffectsInput): OpenInEditorEffects {
+  let executables: Promise<string[]> | null = null;
+  return {
+    async launchAtLine(absPath, line) {
+      executables ??= input.resolveExecutables();
+      return launchResolvedEditor(await executables, absPath, line, input.spawn);
+    },
+    openPath: input.openPath,
+  };
+}
+
 export interface OpenInEditorInput {
   readonly repositoryRoot: string;
   readonly path: string;
