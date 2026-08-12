@@ -1,6 +1,7 @@
 import { R10_BUDGET_EXHAUSTED } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { absentBudgetGrant, createInvocationBudget } from "./invocation-budget";
+import { DEFAULT_MAX_HARNESS_INVOCATIONS } from "./route-plan";
 
 describe("createInvocationBudget — the live R10 ceiling", () => {
   it("grants up to the ceiling then refuses, tracking consumed/remaining/refused", () => {
@@ -66,20 +67,27 @@ describe("createInvocationBudget — the live R10 ceiling", () => {
     expect(fractional.tryConsume("y").granted).toBe(false);
   });
 
-  it("a NON-FINITE or NEGATIVE ceiling means NO CEILING — unlimited, never fail-closed (#260)", () => {
-    // #260 deletes the old clamp-to-zero. A missing/malformed ceiling is "no
-    // ceiling, not no spend": it grants every turn (`max: Infinity`) and never
-    // latches `refused`. The old behaviour (fail closed to zero, refuse all)
-    // produced a silent review of pure deterministic fallbacks — the bug.
-    for (const noCeiling of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -4]) {
-      const budget = createInvocationBudget(noCeiling);
-      expect(budget.max, `ceiling ${noCeiling} is unlimited`).toBe(Number.POSITIVE_INFINITY);
+  it("a MALFORMED ceiling falls back to the DEFAULT — not fail-closed, not unbounded (#260)", () => {
+    // #260 (lead ruling): a NaN/Infinity/negative max is a caller DEFECT, so it
+    // falls back to DEFAULT_MAX_HARNESS_INVOCATIONS — the review runs and the model
+    // is used, but a wiring bug cannot spend without limit. Red-provable both ways:
+    // the old clamp-to-zero reds the grant count below; an unbounded (Infinity)
+    // ceiling reds the refusal and the `refused` latch.
+    for (const bad of [Number.NaN, Number.POSITIVE_INFINITY, Number.NEGATIVE_INFINITY, -4]) {
+      const budget = createInvocationBudget(bad);
+      expect(budget.max, `malformed ${bad} falls back to the default ceiling`).toBe(
+        DEFAULT_MAX_HARNESS_INVOCATIONS,
+      );
       let grants = 0;
-      for (let i = 0; i < 10; i += 1) {
+      for (let i = 0; i < DEFAULT_MAX_HARNESS_INVOCATIONS + 3; i += 1) {
         if (budget.tryConsume(`turn-${i}`).granted) grants += 1;
       }
-      expect(grants, `no-ceiling ${noCeiling} must grant every turn`).toBe(10);
-      expect(budget.refused, `no-ceiling ${noCeiling} never refuses`).toBe(false);
+      // Exactly the default ceiling of turns ran, then it refused — bounded, not
+      // unbounded, and not zero.
+      expect(grants, `malformed ${bad} grants exactly the default ceiling`).toBe(
+        DEFAULT_MAX_HARNESS_INVOCATIONS,
+      );
+      expect(budget.refused, `malformed ${bad} refuses once the default is spent`).toBe(true);
     }
   });
 });

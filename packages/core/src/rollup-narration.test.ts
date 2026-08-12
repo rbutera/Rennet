@@ -237,7 +237,9 @@ describe("runRollupNarration — budget gate (Rule 75, the money circuit)", () =
     expect(result.outcome).toBe("narrated");
   });
 
-  it("a non-finite ceiling means NO CEILING — the narration turn runs unlimited (#260)", async () => {
+  it("a non-finite ceiling falls back to the default — the narration turn still runs (#260)", async () => {
+    // A malformed ceiling is a caller defect → default ceiling (not fail-closed,
+    // not unbounded), so the single narration turn runs well within it and narrates.
     const nodes = offeredNarrationNodes(canvases());
     const turn = vi.fn(async () => emit(bodyFor(nodes)));
     const budget = createInvocationBudget(Number.POSITIVE_INFINITY);

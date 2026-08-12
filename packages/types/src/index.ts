@@ -1965,9 +1965,11 @@ export type BudgetGrant =
  * of R10 the pre-flight route-plan count never provided (bead p0wwp). A refused
  * turn falls to the runner's deterministic floor rather than crashing, and
  * `refused` latches so the pipeline can surface an out-of-budget review as
- * degraded rather than let it present as a completed AI review (#260). An absent
- * or malformed ceiling is UNLIMITED, not a fail-closed zero — no budget means no
- * ceiling, not no spend (#260); `max` is `Infinity` in that case.
+ * degraded rather than let it present as a completed AI review (#260). A malformed
+ * ceiling (`NaN`/`Infinity`/negative) is a caller defect, so it falls back to the
+ * DEFAULT ceiling — never a fail-closed zero (which faked a review), never unbounded
+ * (which would let a wiring bug spend without limit). A configured `0` is honored as
+ * a deliberate "spend nothing" (#260).
  */
 export interface InvocationBudget {
   readonly max: number;

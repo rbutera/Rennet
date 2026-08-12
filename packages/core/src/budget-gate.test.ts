@@ -212,6 +212,32 @@ describe("runOrderingPass — the live budget gate", () => {
     expect((result.document.body as { readingOrder: string[] }).readingOrder).toEqual(["c2", "c1"]);
   });
 
+  it("a MALFORMED budget produces REAL work — the turn runs and its order is admitted (#260)", async () => {
+    // The lead's guard for #260: a malformed budget must produce a real review, not
+    // merely the absence of a refusal. A NaN ceiling falls back to the default, so
+    // the ordering turn RUNS and its reorder is ADMITTED (usedFallback false) — work
+    // actually happened, it is not the deterministic baseline and it is not a no-op.
+    const turn = vi.fn(
+      async (): Promise<OrderingTurnResult> => ({
+        status: "emitted",
+        body: { readingOrder: ["c2", "c1"], rationale: "reorder" },
+      }),
+    );
+    const budget = createInvocationBudget(Number.NaN);
+    const result = await runOrderingPass({
+      proposal: PROPOSAL,
+      patchsetId: "ps_1",
+      contract: ORDERING_CONTRACT,
+      provenance: SEED,
+      runTurn: turn,
+      budget,
+    });
+    expect(turn).toHaveBeenCalledTimes(1);
+    expect(result.budgetRefused).toBe(false);
+    expect(result.usedFallback).toBe(false);
+    expect((result.document.body as { readingOrder: string[] }).readingOrder).toEqual(["c2", "c1"]);
+  });
+
   it("shares one budget across a decomposition retry and an ordering turn", async () => {
     // Budget of TWO: the decomposition proposal (1) + its first retry (2) exhaust
     // it, so the ordering pass — sharing the same budget — gets nothing.
