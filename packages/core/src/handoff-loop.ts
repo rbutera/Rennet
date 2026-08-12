@@ -2,7 +2,6 @@ import { sha256Hex } from "@rennet/protocol";
 import type {
   AnchorSide,
   AnchorSpan,
-  Disposition,
   DispositionType,
   HandoffBundle,
   HandoffDisclosure,
@@ -28,10 +27,9 @@ import type {
 //     bracket (pre-checkpoint → write turn → post-checkpoint → turn diff).
 //   • REUSED (by the caller, not here): the new patchset is captured by the same
 //     `ReviewService.capture`/`PatchsetActivated` fold every re-capture uses, so
-//     the prior patchset stays byte-identical (R28) and the byte-identical floor
-//     carry (`carryDispositions`) runs — the delta re-review's conservative floor.
-//   • SEAM (#16): `LineageCarryPort` upgrades that floor to carry approvals through
-//     moves/splits; explicitly UNIMPLEMENTED here (never a fabricated carry).
+//     the prior patchset stays byte-identical (R28) and the deterministic lineage
+//     carry (`carryDispositionsByLineage`: exact + verified git-rename, orphan the
+//     rest) runs — the delta re-review's carry (issue #254 reports carried/orphaned).
 //
 // ⛔ Safety properties do NOT relax inside the loop (§2.1): the human still
 // disposes; the agent addresses dispositions and nothing else; a new patchset never
@@ -398,44 +396,19 @@ export async function runHandoffTurn(input: RunHandoffTurnInput): Promise<Handof
   }
 }
 
-// ── The #16 lineage-carry seam (explicitly UNIMPLEMENTED) ─────────────────────
-
-/**
- * The delta re-review carries approvals forward. The BYTE-IDENTICAL FLOOR already
- * runs inside `foldReview(PatchsetActivated)` (`carryDispositions`): a disposition
- * on a file unchanged since the reviewer read it stays. Moved / renamed / split code
- * fails closed and is re-reviewed. Totality still holds — the new patchset captures
- * the WHOLE working-tree diff, so every changed file appears.
- *
- * #16's calibrated lineage matcher UPGRADES that floor to carry approvals through
- * moves. This is the typed boundary it drops into: given the prior dispositions and
- * the two patchsets, return the EXTRA dispositions to carry (re-anchored onto the
- * successor) where lineage is exact/one-to-one/move and NOT ambiguous (ambiguity
- * fails closed, R8/§3.3). It is deliberately NOT stubbed with a plausible return —
- * `notWiredLineageCarry` reports `matcher-not-wired` so the loop runs the real floor
- * carry and the delta stays honest and complete, just conservative, until #16 lands.
- */
-export interface LineageCarryInput {
-  readonly previous: readonly Disposition[];
-  readonly previousPatchset: Patchset;
-  readonly nextPatchset: Patchset;
-}
-
-export type LineageCarryResult =
-  | { readonly status: "matcher-not-wired" }
-  | { readonly status: "applied"; readonly carried: readonly Disposition[] };
-
-export interface LineageCarryPort {
-  carry(input: LineageCarryInput): Promise<LineageCarryResult>;
-}
-
-/** The sentinel returned while #16 is not wired. */
-export const LINEAGE_MATCHER_NOT_WIRED = "matcher-not-wired" as const;
-
-/**
- * The not-wired lineage carry: reports the seam is unwired rather than fabricating a
- * carry. The delta re-review then relies on the byte-identical floor (real) alone.
- */
-export function notWiredLineageCarry(): LineageCarryPort {
-  return { carry: () => Promise.resolve({ status: LINEAGE_MATCHER_NOT_WIRED }) };
-}
+// ── The delta re-review's carry, and why there is no fuzzy seam here ───────────
+//
+// The delta re-review carries approvals forward DETERMINISTICALLY, inside
+// `foldReview(PatchsetActivated)` via `carryDispositionsByLineage` (`@rennet/core`
+// index): a byte-identical occurrence at the same path carries (the exact floor); a
+// byte-verifiable git RENAME carries re-anchored onto the new path; a vanished
+// occurrence ORPHANS (surfaced for re-review, never dropped to void); everything else
+// reopens. The handoff run result reports how many carried vs orphaned (issue #254).
+//
+// ⛔ The fuzzy sub-file OCCURRENCE matcher (`lineage-matcher`) does NOT drive this
+// disposition carry, by design (issue #16 / #254): `AUTO_CARRY_LINEAGES` is `exact`
+// only because a confidently-labelled `move` can be a context-rotated reassignment
+// pointing at the WRONG occurrence — and a wrong carry silently moves a human's
+// approval onto code they never read. The matcher feeds the sub-file occurrence
+// surface (`resolveAnchor`), a separate consumer. So there is deliberately no
+// `LineageCarryPort` seam here: the carry is the deterministic one above.

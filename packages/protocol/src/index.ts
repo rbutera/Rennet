@@ -1205,8 +1205,8 @@ const handoffRunResultSchema: z.ZodType<HandoffRunResult> = z.object({
   review: reviewSchema,
   turnDiff: z.string(),
   filesTouched: z.array(z.string()),
-  carriedFloor: z.number().int().nonnegative(),
-  lineageCarry: z.enum(["matcher-not-wired", "applied"]),
+  carriedForward: z.number().int().nonnegative(),
+  orphaned: z.number().int().nonnegative(),
 });
 
 /**
