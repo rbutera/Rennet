@@ -1,4 +1,4 @@
-import type { FindingElement } from "@rennet/types";
+import type { FindingElement, PatchsetSpecSnapshot } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
 import {
@@ -37,6 +37,23 @@ describe("objectSchemaFor — the #242 coverage weld is a COMPILE guard", () => 
     // The value still constructs at runtime (the guard is purely at the type level).
     expect(incomplete).toBeDefined();
   });
+
+  it("a WRONG field-schema type does not compile (per-field exactness, not just key coverage)", () => {
+    // The guard above catches a MISSING field. This catches the OTHER regression a
+    // reviewer proved was uncaught: a PRESENT field whose schema produces the WRONG
+    // type. The helper's per-key `z.ZodType<T[K]>` constraint enforces it — weakening
+    // that parameter to `z.ZodTypeAny` (key-coverage only) would let this compile, the
+    // `@ts-expect-error` would go unused, and the `typecheck` target would red.
+    // `PatchsetSpecSnapshot.path` is `string`; a `z.number()` schema there must not
+    // compile. Every other field is correct, so the only possible error is `path`.
+    const wrong = objectSchemaFor<PatchsetSpecSnapshot>()({
+      // @ts-expect-error - `path` schema produces number, but the type declares string
+      path: z.number(),
+      digest: z.string(),
+      content: z.string().optional(),
+    });
+    expect(wrong).toBeDefined();
+  });
 });
 
 describe("patchsetSchema — a previously-stripped field now survives the round trip (#242)", () => {
@@ -65,7 +82,7 @@ describe("patchsetSchema — a previously-stripped field now survives the round 
         surface: "github-pr",
         prTitle: "Add X",
         prBody: "body",
-        specSnapshots: [{ path: "spec.md", digest: "d1" }],
+        specSnapshots: [{ path: "spec.md", digest: "d1", content: "# Spec\nbody\n" }],
       },
     });
 
@@ -73,5 +90,9 @@ describe("patchsetSchema — a previously-stripped field now survives the round 
     expect(parsed.intent?.surface).toBe("github-pr");
     expect(parsed.intent?.prTitle).toBe("Add X");
     expect(parsed.intent?.specSnapshots?.[0]?.path).toBe("spec.md");
+    // The nested OPTIONAL `content` must survive too — bypassing the nested
+    // `PatchsetSpecSnapshot` weld and omitting it would drop a small snapshot's
+    // captured text while every other assertion stayed green (the reviewer's find).
+    expect(parsed.intent?.specSnapshots?.[0]?.content).toBe("# Spec\nbody\n");
   });
 });
