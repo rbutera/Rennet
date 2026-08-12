@@ -1,6 +1,6 @@
-import type { RennetBridge } from "@rennet/protocol";
+import type { PersistedThreadWire, RennetBridge } from "@rennet/protocol";
 import { useEffect, useRef, useState } from "react";
-import type { AskMode } from "../canvas/ask";
+import { type AskMode, DEFAULT_ASK_MODE } from "../canvas/ask";
 import {
   addMessage,
   answerInThread,
@@ -17,8 +17,32 @@ import {
   type PromotionKind,
   promoteMessage,
   pushDelta,
+  THREAD_LANE,
 } from "../canvas/conversation";
 import { ConversationMargin, DiscussControl } from "./conversation-cluster";
+
+/**
+ * Reconstruct a live {@link ConversationThread} from a persisted one on re-attach (#251).
+ * The wire message shape is identical to `ThreadMessage` (id/author/model?/body/status?),
+ * so an interrupted turn's `status` carries straight through and renders honestly. A new
+ * thread is always private (blue) and orchestrator-routed by default; `orphaned` rides
+ * along when the persisted thread was flagged.
+ */
+function threadFromPersisted(wire: PersistedThreadWire): ConversationThread {
+  return {
+    id: wire.threadId,
+    anchor: wire.anchor,
+    lane: THREAD_LANE,
+    route: DEFAULT_ASK_MODE,
+    messages: wire.messages.map((message) => ({
+      id: message.id,
+      author: message.author,
+      body: message.body,
+      ...(message.model !== undefined ? { model: message.model } : {}),
+      ...(message.status !== undefined ? { status: message.status } : {}),
+    })),
+  };
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The LIVE conversation host (issue #36): the wiring that finally lights the inline
@@ -142,6 +166,42 @@ export function ConversationHost({
     ]);
   }, [autoOpenRequests]);
 
+  // Re-attach on mount (#251): reload the threads persisted for this review, so a
+  // conversation survives the process that created it. A turn that was streaming when a
+  // previous process died comes back INTERRUPTED (the store's crash-recovery transform),
+  // and renders as such — never a silent completion, never dropped. Best-effort: a bridge
+  // with no persisted threads returns an empty set, and a reattach that throws leaves the
+  // (freshly-opened) threads alone. Seeds only threads not already present by id, so a
+  // reattach can never clobber a thread the reviewer just opened in this session.
+  const reattachedRef = useRef(false);
+  useEffect(() => {
+    if (reattachedRef.current) return;
+    reattachedRef.current = true;
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await bridge.invoke("review.reattach", {
+          commandId: crypto.randomUUID(),
+          reviewId,
+        });
+        if (cancelled || result.threads.length === 0) return;
+        setThreads((current) => {
+          const present = new Set(current.map((thread) => thread.id));
+          const restored = result.threads
+            .filter((wire) => !present.has(wire.threadId))
+            .map(threadFromPersisted);
+          return restored.length > 0 ? [...restored, ...current] : current;
+        });
+      } catch {
+        // Re-attach is best-effort — a missing store or a failed call simply means
+        // "nothing to reattach", never a crash of the review surface.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [bridge, reviewId]);
+
   // Open a FRAGMENT thread on a message inside an existing thread (issue #36): the
   // "discuss a fragment of the conversation itself" anchor. The new thread anchors to
   // the message id (so the margin keys it distinctly) and is private like any other —
@@ -259,10 +319,12 @@ export function ConversationHost({
         mode,
         question,
         // #251: identify the thread + turn and carry the anchor, so main persists the
-        // thread and streams the turn's tokens back under these ids.
+        // thread and streams the turn's tokens back under these ids. `turnBody` is the
+        // raw question (not the folded transcript), persisted as the "you" message.
         threadId,
         turnId,
         anchor: thread.anchor,
+        turnBody: body,
       });
       // Race a UI timeout so a turn that never settles cannot leave the thread stuck.
       const timeout = new Promise<never>((_resolve, reject) => {

@@ -15,8 +15,10 @@ import {
 } from "@rennet/core";
 import {
   type CommandName,
+  type ConversationAnchorWire,
   type DetectedHarness,
   type DiscoveryResult,
+  type PersistedThreadMessageWire,
   type ProcessedRepoSummary,
   type Project,
   type ProjectDetail,
@@ -275,6 +277,26 @@ export interface DispatchDeps {
    * fabricated set). This is the seam the `ThreadStore` + `LiveTurnRegistry` plug into.
    */
   readonly reattachThreads?: (input: { reviewId: string }) => Promise<ReattachResult>;
+  /**
+   * Persist a conversation turn as it streams (issue #251), so a turn interrupted by a
+   * process death recovers as `interrupted` on re-attach. Optional so a composition with
+   * no thread store still constructs (no persistence, streaming still works). `upsertThread`
+   * records identity; `putMessage` appends the "you" question + a `streaming` placeholder,
+   * then REPLACES the placeholder with the durable answer on completion.
+   */
+  readonly threadPersistence?: {
+    upsertThread(input: {
+      reviewId: string;
+      threadId: string;
+      anchor: ConversationAnchorWire;
+      harnessVersionAtCreation?: string;
+    }): void;
+    putMessage(input: {
+      reviewId: string;
+      threadId: string;
+      message: PersistedThreadMessageWire;
+    }): void;
+  };
   /**
    * The symbol inspector port (Rai, wireframes #8): resolve one clicked identifier to
    * its definition + reference sites over the review's model-free symbolic surface.
@@ -760,6 +782,45 @@ export function createDispatch(
                 delta,
               })
           : undefined;
+        // #251 persistence: BEFORE the turn runs, record the thread, the reviewer's
+        // question, and a `streaming` placeholder for the orchestrator answer. If the
+        // process dies here, the placeholder is already on disk and re-attach recovers
+        // it as `interrupted` — never a silent loss, never a fabricated completion. The
+        // placeholder id is REPLACED by the durable answer on completion below.
+        const persist =
+          stream && deps.threadPersistence && input.anchor
+            ? {
+                store: deps.threadPersistence,
+                reviewId: input.reviewId,
+                threadId: stream.threadId,
+                orchestratorId: `${stream.turnId}::orchestrator`,
+                codexId: `${stream.turnId}::codex`,
+              }
+            : undefined;
+        if (persist && input.anchor) {
+          persist.store.upsertThread({
+            reviewId: persist.reviewId,
+            threadId: persist.threadId,
+            anchor: input.anchor,
+          });
+          if (input.turnBody) {
+            persist.store.putMessage({
+              reviewId: persist.reviewId,
+              threadId: persist.threadId,
+              message: { id: `${stream?.turnId}::you`, author: "you", body: input.turnBody },
+            });
+          }
+          persist.store.putMessage({
+            reviewId: persist.reviewId,
+            threadId: persist.threadId,
+            message: {
+              id: persist.orchestratorId,
+              author: "harness",
+              body: "",
+              status: "streaming",
+            },
+          });
+        }
         const result = await askReview(mode, input.question, {
           askOrchestrator: (question) =>
             deps.reviewAsk.askOrchestrator({
@@ -790,6 +851,34 @@ export function createDispatch(
               channel: "codex",
               model: result.secondOpinion.model,
               finalBody: result.secondOpinion.answer,
+            });
+          }
+        }
+        // #251 persistence: the turn completed — REPLACE the streaming placeholder with
+        // the durable orchestrator answer (same id) and append the codex answer when the
+        // ask was "both". Only completed messages persist a body; the placeholder never
+        // held the coalesced deltas.
+        if (persist) {
+          persist.store.putMessage({
+            reviewId: persist.reviewId,
+            threadId: persist.threadId,
+            message: {
+              id: persist.orchestratorId,
+              author: "harness",
+              model: result.primary.model,
+              body: result.primary.answer,
+            },
+          });
+          if (result.secondOpinion) {
+            persist.store.putMessage({
+              reviewId: persist.reviewId,
+              threadId: persist.threadId,
+              message: {
+                id: persist.codexId,
+                author: "harness",
+                model: result.secondOpinion.model,
+                body: result.secondOpinion.answer,
+              },
             });
           }
         }
