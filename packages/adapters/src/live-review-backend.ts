@@ -14,9 +14,11 @@ import { KnowledgeStore } from "./knowledge-store";
 import { resolveMapSource } from "./map-travel";
 import { noveltyBackend, type ResolvedNoveltyContext } from "./novelty-ledger-backend";
 import { NoveltyLedgerReader } from "./novelty-ledger-reader";
+import type { NoveltyLifecycleRegistry } from "./novelty-lifecycle-registry";
 import { projectContextBackend, type ResolvedRepoContext } from "./project-context-backend";
 import { ProjectContextReader } from "./project-context-reader";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
+import { projectSnapshotPinResolver } from "./project-snapshot-pin";
 import { type ResolvedBase, resolveBaseRef } from "./project-snapshot-source";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
 import { SnapshotOverlayGenerator, SnapshotOverlayReader } from "./snapshot-overlay-generator";
@@ -114,6 +116,7 @@ export interface LiveBackendDeps {
   readonly knowledgePort?: HarnessPort;
   readonly resolveKnowledgePort?: () => Promise<HarnessPort | null>;
   readonly onKnowledgeError?: (error: unknown) => void;
+  readonly noveltyLifecycle?: NoveltyLifecycleRegistry;
   /** Extra core state the composition root may supply (freshness, ledger, effect sink). */
   readonly core?: Omit<ReviewBackendState, "review" | "pipeline">;
 }
@@ -173,6 +176,32 @@ export async function createLiveCanvasOpsBackend(
     new ProjectContextReader(deps.store),
     overlayReader,
   );
+  const initialNovelty = noveltyReader.classify(repoKey, patchset);
+  if (initialNovelty.ok && deps.noveltyLifecycle) {
+    deps.noveltyLifecycle.register(
+      repoKey,
+      review.id,
+      { ledger: initialNovelty.ledger, judgments: new Map() },
+      async () => {
+        const current = deps.store.loadManifest(repoKey);
+        if (current && current.baseOid !== baseOid) {
+          await new SnapshotOverlayGenerator({
+            store: deps.store,
+            overlayStore,
+            git,
+          }).ensureOverlay(review.repositoryRoot, repoKey, baseOid);
+        }
+        const projectSnapshotId = projectSnapshotPinResolver(deps.store, overlayReader)(
+          review.repositoryRoot,
+          baseOid,
+        );
+        return noveltyReader.classify(repoKey, {
+          ...patchset,
+          ...(projectSnapshotId ? { projectSnapshotId } : {}),
+        });
+      },
+    );
+  }
 
   // Knowledge (layer c): seed a committed set into the local store if present (a
   // committed set is never trusted blind — `discoverCommitted` validates first),
@@ -256,7 +285,7 @@ async function generateSnapshotOnOpen(
     // Pin generation to the review's OWN base OID (a SHA resolves to itself), so
     // the stored `manifest.baseOid` equals what `resolveContext` requests and the
     // reader serves it fresh rather than refusing it as stale.
-    if (!opts.store.loadManifestAt(repoKey, defaultBase.baseOid)) {
+    if (opts.store.loadManifest(repoKey)?.baseOid !== defaultBase.baseOid) {
       await generator.generate(review.repositoryRoot, { explicitBaseRef: defaultBase.baseOid });
     }
     if (baseOid !== defaultBase.baseOid) {

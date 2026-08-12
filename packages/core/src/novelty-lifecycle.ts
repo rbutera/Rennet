@@ -1,4 +1,9 @@
-import type { LedgerEntry, NoveltyLedger, Stage2NoveltyJudgment } from "@rennet/types";
+import type {
+  LedgerEntry,
+  NoveltyJudgmentEvidence,
+  NoveltyLedger,
+  Stage2NoveltyJudgment,
+} from "@rennet/types";
 
 export interface NoveltyClassificationChange {
   readonly entryKey: string;
@@ -52,7 +57,12 @@ export type NoveltyJudgmentValidation =
   | { readonly ok: true; readonly judgment: Stage2NoveltyJudgment }
   | { readonly ok: false; readonly reason: string };
 
-export function validateStage2NoveltyJudgment(value: unknown): NoveltyJudgmentValidation {
+export type NoveltyEvidenceResolver = (evidence: NoveltyJudgmentEvidence) => boolean;
+
+export function validateStage2NoveltyJudgment(
+  value: unknown,
+  resolvesEvidence?: NoveltyEvidenceResolver,
+): NoveltyJudgmentValidation {
   if (!value || typeof value !== "object")
     return { ok: false, reason: "judgment must be an object" };
   const judgment = value as Record<string, unknown>;
@@ -74,6 +84,13 @@ export function validateStage2NoveltyJudgment(value: unknown): NoveltyJudgmentVa
   }
   if (evidence !== undefined && (!Array.isArray(evidence) || !evidence.every(validEvidence))) {
     return { ok: false, reason: "evidence is invalid" };
+  }
+  if (
+    judgment.status === "finding" &&
+    (!resolvesEvidence ||
+      !(evidence as readonly NoveltyJudgmentEvidence[])?.every(resolvesEvidence))
+  ) {
+    return { ok: false, reason: "a finding must cite resolvable evidence" };
   }
   return { ok: true, judgment: value as Stage2NoveltyJudgment };
 }

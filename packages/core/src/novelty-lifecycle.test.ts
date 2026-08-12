@@ -103,11 +103,15 @@ describe("novelty Stage-2 contract", () => {
     });
     expect(validateStage2NoveltyJudgment({ status: "hypothesis", ...uncited }).ok).toBe(true);
     expect(
-      validateStage2NoveltyJudgment({
-        status: "finding",
-        ...uncited,
-        evidence: [{ kind: "snapshot-shard", projectSnapshotId: "snapshot", shardRef: "files" }],
-      }).ok,
+      validateStage2NoveltyJudgment(
+        {
+          status: "finding",
+          ...uncited,
+          evidence: [{ kind: "snapshot-shard", projectSnapshotId: "snapshot", shardRef: "files" }],
+        },
+        (evidence) =>
+          evidence.kind === "snapshot-shard" && evidence.projectSnapshotId === "snapshot",
+      ).ok,
     ).toBe(true);
     expect(
       validateStage2NoveltyJudgment({
@@ -115,6 +119,16 @@ describe("novelty Stage-2 contract", () => {
         ...uncited,
         evidence: [{ kind: "knowledge", statementId: "" }],
       }).ok,
+    ).toBe(false);
+    expect(
+      validateStage2NoveltyJudgment(
+        {
+          status: "finding",
+          ...uncited,
+          evidence: [{ kind: "snapshot-shard", projectSnapshotId: "missing", shardRef: "files" }],
+        },
+        () => false,
+      ).ok,
     ).toBe(false);
   });
 });

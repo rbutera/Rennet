@@ -233,6 +233,54 @@ describe("proactive rehydration — end to end over a real git repo", () => {
     handle?.close();
   });
 
+  it("serializes knowledge passes and coalesces a newer advance behind the running pass", async () => {
+    const { root, storeDir, advance } = repoOnMain();
+    const store = new ProjectSnapshotStore(storeDir);
+    const generator = new ProjectSnapshotGenerator({ store });
+    await generator.generate(root, { explicitBaseRef: "main" });
+    const structuralDone = [deferred(), deferred()];
+    const releaseFirst = deferred();
+    const secondStarted = deferred();
+    const clock = fakeTimers();
+    const watcher = capturingWatch();
+    const calls: { fromOid: string; toOid: string }[] = [];
+    let structuralCount = 0;
+    const handle = await startRepoRehydration({
+      repoPath: root,
+      explicitBaseRef: "main",
+      store,
+      generator,
+      narrate: (event) => {
+        if (event.kind === "repo-done") structuralDone[structuralCount++]?.resolve();
+      },
+      runKnowledgePass: async (input) => {
+        calls.push(input);
+        if (calls.length === 1) await releaseFirst.promise;
+        else secondStarted.resolve();
+      },
+      watch: watcher.watch,
+      timers: clock.timers,
+    });
+
+    const oid2 = advance();
+    watcher.fire(`${sep}refs${sep}heads`);
+    clock.flush();
+    await structuralDone[0]?.promise;
+
+    const oid3 = advance();
+    watcher.fire(`${sep}refs${sep}heads`);
+    clock.flush();
+    await structuralDone[1]?.promise;
+    expect(calls).toHaveLength(1);
+
+    releaseFirst.resolve();
+    await secondStarted.promise;
+    expect(calls).toHaveLength(2);
+    expect(calls[1]?.toOid).toBe(oid3);
+    expect(calls[1]?.fromOid).toBe(oid2);
+    handle?.close();
+  });
+
   it("a never-built repo is not cold-built in the background (returns null, no watch)", async () => {
     const { root, storeDir } = repoOnMain();
     const store = new ProjectSnapshotStore(storeDir);

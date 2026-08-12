@@ -247,6 +247,7 @@ export {
   type NoveltyLifecycleAdvanceResult,
   NoveltyLifecycleReader,
 } from "./novelty-lifecycle-reader";
+export { NoveltyLifecycleRegistry } from "./novelty-lifecycle-registry";
 export { readOpenSpecChange, selectedOpenSpecChangeName } from "./openspec-change-reader";
 export {
   type AttachedOrchestratorSession,

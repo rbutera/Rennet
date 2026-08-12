@@ -48,6 +48,7 @@ import {
   KnowledgeStore,
   loadConventionCatalogue,
   loadProjectDetail,
+  NoveltyLifecycleRegistry,
   ProjectContextReader,
   type ProjectPrSource,
   ProjectSnapshotGenerator,
@@ -196,6 +197,7 @@ protocol.registerSchemesAsPrivileged([
 if (process.env.RENNET_USER_DATA) app.setPath("userData", process.env.RENNET_USER_DATA);
 
 const liveSnapshotStore = snapshotStoreFor();
+const liveNoveltyLifecycle = new NoveltyLifecycleRegistry();
 const capture = new GitCaptureAdapter(undefined, (repoRoot, baseOid) =>
   ensureProjectSnapshotPin(liveSnapshotStore, repoRoot, baseOid),
 );
@@ -1277,6 +1279,7 @@ app.whenReady().then(async () => {
         });
       }
     },
+    runNoveltyPass: (repoKey) => liveNoveltyLifecycle.advanceRepo(repoKey),
     runKnowledgePass: async ({ repoKey, repoRoot, fromOid, toOid }) => {
       const { adapter } = await getClaudeHarness();
       if (!adapter) return;
@@ -1362,6 +1365,7 @@ app.whenReady().then(async () => {
     env: process.env,
     backend: {
       resolveKnowledgePort: async () => (await getClaudeHarness()).adapter,
+      noveltyLifecycle: liveNoveltyLifecycle,
     },
   });
   // #251: the durable conversation store (~/.rennet/threads). Backs both re-attach
@@ -1531,6 +1535,7 @@ app.whenReady().then(async () => {
         });
         const live = await createDesktopReviewBackend(headReview, pipeline, {
           resolveKnowledgePort: async () => (await getClaudeHarness()).adapter,
+          noveltyLifecycle: liveNoveltyLifecycle,
         });
         return live.backend;
       },

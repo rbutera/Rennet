@@ -112,6 +112,8 @@ export interface StartRepoRehydrationDeps {
     readonly fromOid: string;
     readonly toOid: string;
   }) => Promise<void>;
+  /** Deterministic in-flight novelty reclassification after the structural advance. */
+  readonly runNoveltyPass?: (repoKey: string) => Promise<void>;
   readonly git?: GitExec;
   // ── test seams ─────────────────────────────────────────────────────────────
   readonly watch?: WatchFn;
@@ -144,6 +146,32 @@ export async function startRepoRehydration(
   if (!deps.store.loadManifest(resolved.repoKey)) return null;
 
   const repoLabel = basename(resolved.root) || resolved.root;
+  let pendingKnowledge:
+    | {
+        readonly repoKey: string;
+        readonly repoRoot: string;
+        readonly fromOid: string;
+        readonly toOid: string;
+      }
+    | undefined;
+  let knowledgeRunning = false;
+  const scheduleKnowledge = (advance: NonNullable<typeof pendingKnowledge>): void => {
+    pendingKnowledge = advance;
+    if (knowledgeRunning || !deps.runKnowledgePass) return;
+    knowledgeRunning = true;
+    void (async () => {
+      while (pendingKnowledge) {
+        const next = pendingKnowledge;
+        pendingKnowledge = undefined;
+        try {
+          await deps.runKnowledgePass?.(next);
+        } catch (error) {
+          deps.onError?.(error);
+        }
+      }
+      knowledgeRunning = false;
+    })();
+  };
 
   const base = baselineAdvanceDepsFor({
     repoRoot: resolved.root,
@@ -185,16 +213,15 @@ export async function startRepoRehydration(
           reusedSymbols: result.reusedSymbolShards,
           baseRef: result.manifest.baseRef,
         };
+        await deps.runNoveltyPass?.(resolved.repoKey);
         deps.narrate({ kind: "repo-done", repo: repoLabel, summary });
         if (fromOid && deps.runKnowledgePass) {
-          void deps
-            .runKnowledgePass({
-              repoKey: resolved.repoKey,
-              repoRoot: resolved.root,
-              fromOid,
-              toOid: result.manifest.baseOid,
-            })
-            .catch((error) => deps.onError?.(error));
+          scheduleKnowledge({
+            repoKey: resolved.repoKey,
+            repoRoot: resolved.root,
+            fromOid,
+            toOid: result.manifest.baseOid,
+          });
         }
       } catch (reason) {
         const message = reason instanceof Error ? reason.message : String(reason);
@@ -243,6 +270,7 @@ export interface ProactiveRehydrationDeps {
   readonly onError?: (error: unknown) => void;
   readonly git?: GitExec;
   readonly runKnowledgePass?: StartRepoRehydrationDeps["runKnowledgePass"];
+  readonly runNoveltyPass?: StartRepoRehydrationDeps["runNoveltyPass"];
   /** Test seam: the per-repo starter (defaults to `startRepoRehydration`). */
   readonly startRepo?: (deps: StartRepoRehydrationDeps) => Promise<RepoRehydrationHandle | null>;
 }
@@ -291,6 +319,7 @@ export function createProactiveRehydration(deps: ProactiveRehydrationDeps): Proa
             ...(deps.onError ? { onError: deps.onError } : {}),
             ...(deps.git ? { git: deps.git } : {}),
             ...(deps.runKnowledgePass ? { runKnowledgePass: deps.runKnowledgePass } : {}),
+            ...(deps.runNoveltyPass ? { runNoveltyPass: deps.runNoveltyPass } : {}),
           });
           // No snapshot yet — not cached, so a later ensure retries this path.
           if (!handle) continue;

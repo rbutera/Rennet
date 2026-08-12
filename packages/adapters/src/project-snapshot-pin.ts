@@ -23,7 +23,7 @@ export function projectSnapshotPinResolver(
     if (manifest.baseOid === baseOid) return manifest.fingerprint;
     const resolved = merged?.resolveMerged(repoKey, baseOid);
     if (resolved?.ok) return resolved.projectSnapshotId;
-    return store.loadManifestAt(repoKey, baseOid)?.fingerprint;
+    return undefined;
   };
 }
 
@@ -37,20 +37,21 @@ export async function ensureProjectSnapshotPin(
   const repoKey = escapePath(realpathSync(repoRoot));
   const overlayStore = new SnapshotOverlayStore(store);
   const overlayReader = new SnapshotOverlayReader({ store, overlayStore });
-  const resolvePin = projectSnapshotPinResolver(store, overlayReader);
-  const present = resolvePin(repoRoot, baseOid);
-  if (present) return present;
-
   let defaultBase: ResolvedBase;
   try {
     defaultBase = await resolveBaseRef(repoRoot, { git });
   } catch {
     defaultBase = await resolveBaseRef(repoRoot, { git, explicitBaseRef: baseOid });
   }
-  if (!store.loadManifestAt(repoKey, defaultBase.baseOid)) {
+  if (store.loadManifest(repoKey)?.baseOid !== defaultBase.baseOid) {
     await new ProjectSnapshotGenerator({ store, git }).generate(repoRoot, {
       explicitBaseRef: defaultBase.baseOid,
     });
+  }
+  const resolvePin = projectSnapshotPinResolver(store, overlayReader);
+  if (baseOid === defaultBase.baseOid) {
+    const pin = resolvePin(repoRoot, baseOid);
+    if (pin) return pin;
   }
   if (baseOid !== defaultBase.baseOid) {
     await new SnapshotOverlayGenerator({ store, overlayStore, git }).ensureOverlay(
