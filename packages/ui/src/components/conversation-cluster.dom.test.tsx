@@ -51,7 +51,7 @@ describe("ConversationCluster — the private thread panel", () => {
     expect(container.querySelector(".conversation-head-lock")).not.toBeNull();
     // The anchor range pill (defaults to the anchor label) is shown.
     expect(container.querySelector(".conversation-head-anchor")?.textContent).toBe(
-      "src/rate/bucket.ts",
+      "src/rate/bucket.ts:44-47",
     );
   });
 
@@ -148,11 +148,14 @@ describe("ConversationCluster — the private thread panel", () => {
   });
 });
 
-describe("the diff column is a fixed point — opening/growing a thread never reflows it", () => {
-  // A test host: a fixed diff column beside the conversation margin. The diff column's
-  // DOM is a function of the changeset alone; the margin is its sibling. We prove the
-  // diff column's node count is IDENTICAL whether the margin holds zero, one, or a
-  // grown thread — the structural guarantee behind "the diff never reflows".
+describe("the CSS split contract in isolation (the SHIPPED app is proven separately)", () => {
+  // ⚠️ This host is HAND-BUILT — it constructs the `.review-heart-split` / `.diff-column`
+  // structure itself, so it proves only the NARROW CSS contract: GIVEN the split, a
+  // sibling margin does not change the diff column's node count. It CANNOT prove the
+  // shipped app renders that structure — a test that builds its own wrapper can't fail
+  // on the wrapper being absent. That end-to-end proof lives in
+  // `app.conversation-cluster.dom.test.tsx` (whole-`RennetApp` mount), which is where a
+  // regression that unnests the host from the split actually reddens.
   function Host({ threads }: { threads: Parameters<typeof ConversationMargin>[0]["threads"] }) {
     return (
       <div className="review-heart-split">

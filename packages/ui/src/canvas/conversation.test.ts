@@ -6,15 +6,47 @@ import {
   askInThread,
   buildConversationQuestion,
   type ConversationAnchor,
+  chunkAnchorKey,
   demoConversationThread,
+  fragmentAnchorKey,
   groupThreadsByAnchor,
   isPrivate,
+  lineAnchorKey,
   openThread,
   promoteMessage,
+  rangeAnchorKey,
   threadContentForPublish,
   threadMarginKey,
   threadRoute,
 } from "./conversation";
+
+describe("anchor keys are injective across kinds (#36 F4)", () => {
+  it("every key is namespaced by its kind, so no cross-kind collision is possible", () => {
+    expect(lineAnchorKey("f", "additions", 5).startsWith("line|")).toBe(true);
+    expect(rangeAnchorKey("f", "additions", 5, 7).startsWith("range|")).toBe(true);
+    expect(chunkAnchorKey("f").startsWith("chunk|")).toBe(true);
+    expect(fragmentAnchorKey("t", "m").startsWith("fragment|")).toBe(true);
+  });
+
+  it("a chunk path that mimics a line's old shape does not collide with that line", () => {
+    // Pre-fix, line keys were `${path}#R:${line}` and chunk keys the raw path, so a file
+    // literally named `foo#R:5` collided with line 5 of `foo`. Carrying the kind removes it.
+    expect(chunkAnchorKey("foo#R:5")).not.toBe(lineAnchorKey("foo", "additions", 5));
+  });
+
+  it("a FRAGMENT key cannot collide when a component contains the delimiter (#36 F-B)", () => {
+    // Both components are unconstrained strings; a raw `|` join would make these two
+    // DIFFERENT tuples produce the SAME key. JSON encoding keeps them distinct. RED-proof:
+    // revert to `fragment|${parent}|${message}` and this reddens.
+    expect(fragmentAnchorKey("parent|message", "tail")).not.toBe(
+      fragmentAnchorKey("parent", "message|tail"),
+    );
+    // And a `|` in a path never collides a line with anything, because side + line right-parse.
+    expect(lineAnchorKey("we|ird.ts", "additions", 5)).not.toBe(
+      lineAnchorKey("we", "additions", 5),
+    );
+  });
+});
 
 const LINE_ANCHOR: ConversationAnchor = {
   kind: "line",
@@ -80,6 +112,43 @@ describe("composing the live question (the multi-turn carrier over review.ask)",
     );
     // No transcript header when the thread is fresh.
     expect(question).not.toContain("Conversation so far:");
+  });
+
+  it("carries the anchor SIDE into the question, so the two diff sides ask DIFFERENT things (#36 F1)", () => {
+    // Two anchors identical but for side — a question on the deleted line and one on the
+    // added line at the same number. The KEY being injective is not enough: the model
+    // reads the question, so the side must travel in the question text.
+    const deletion: ConversationAnchor = {
+      kind: "line",
+      label: "keys.ts:11",
+      key: "line|keys.ts|deletions|11",
+      side: "deletions",
+    };
+    const addition: ConversationAnchor = {
+      kind: "line",
+      label: "keys.ts:11",
+      key: "line|keys.ts|additions|11",
+      side: "additions",
+    };
+    const qDel = buildConversationQuestion(deletion, [], "why?");
+    const qAdd = buildConversationQuestion(addition, [], "why?");
+    expect(qDel).not.toBe(qAdd);
+    expect(qDel).toContain("REMOVED");
+    expect(qAdd).toContain("ADDED");
+  });
+
+  it("carries a FRAGMENT's referenced text into the question (#36 F2)", () => {
+    // The fragment anchors to a specific sentence; that sentence must reach the model,
+    // else the sub-thread's "what do you mean?" is unanswerable.
+    const fragment: ConversationAnchor = {
+      kind: "fragment",
+      label: "keys.ts:11 · reply",
+      key: "fragment|thread-1|m2",
+      context: "the fail-open path is unbounded",
+    };
+    const question = buildConversationQuestion(fragment, [], "what do you mean?");
+    expect(question).toContain("the fail-open path is unbounded");
+    expect(question).toContain("what do you mean?");
   });
 
   it("a follow-up folds the prior you/harness turns in so the stateless turn has context", () => {
@@ -180,11 +249,100 @@ describe("the demo fixture (behind the real typed boundary)", () => {
     const thread = demoConversationThread();
     expect(isPrivate(thread)).toBe(true);
     expect(thread.route).toBe("orchestrator");
-    expect(thread.anchor.key).toBe("src/rate/bucket.ts#L44-47");
+    expect(thread.anchor.key).toBe("range|src/rate/bucket.ts|additions|44|47");
+    expect(thread.anchor.side).toBe("additions");
     expect(thread.messages[0]?.author).toBe("you");
     expect(thread.messages[1]?.author).toBe("harness");
     expect(thread.messages[1]?.model).toBe("Claude Code");
     // Even the fixture's content never publishes on its own.
     expect(threadContentForPublish([thread])).toEqual([]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Criterion 2 as an INVARIANT over ALL paths (issue #36; lead's mandate). "Promotion
+// is the only private→published door" is a claim about EVERY OTHER path, not about
+// `promoteMessage`. So these tests do not show promotion works — they plant a unique
+// CANARY in every message of a private thread, at every anchor kind, then scan every
+// publish-bound value the model can produce and assert NO canary appears without a
+// deliberate promotion. A private conversation leaking into published output is the
+// review-side twin of an egress leak; multiplying the anchor kinds by four multiplies
+// the places a thread can exist, so the guard has to hold at each of them.
+//
+// RED-PROOF (run once, restored): making `threadContentForPublish` fold message
+// bodies into its output — the realistic "second door" (someone deciding to include
+// thread context in the PR) — makes a canary appear and reddens the first two tests.
+// If it could not distinguish "the only door" from "a door", it would not fire.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("criterion 2 — a private thread's content never reaches publish, by ANY route", () => {
+  const KINDS = ["line", "range", "chunk", "fragment"] as const;
+
+  // A private thread per anchor kind, each carrying a unique canary in BOTH a "you"
+  // message and a harness message — so a leak through any role at any kind is a
+  // detectable string, and a passing scan is evidence about all four at once.
+  function threadWithCanary(kind: (typeof KINDS)[number]): {
+    thread: ReturnType<typeof openThread>;
+    canary: string;
+  } {
+    const canary = `CANARY-${kind}-DO-NOT-PUBLISH`;
+    let thread = openThread(`t-${kind}`, { kind, label: `subject ${kind}`, key: `anchor#${kind}` });
+    thread = askInThread(thread, `${kind}-you`, `a private question ${canary}`);
+    thread = answerInThread(thread, `${kind}-ai`, "Claude Code", `a private answer ${canary}`);
+    return { thread, canary };
+  }
+
+  const built = KINDS.map(threadWithCanary);
+  const threads = built.map((entry) => entry.thread);
+  const canaries = built.map((entry) => entry.canary);
+  // The line-kind thread, guarded once so the promotion tests read it without
+  // tripping noUncheckedIndexedAccess (KINDS is non-empty by construction).
+  const lineEntry = built[0];
+  if (!lineEntry) throw new Error("expected a line-kind thread");
+
+  it("the passive publish contribution is empty and canary-free at every anchor kind", () => {
+    // The one value threads contribute to a publish payload, across all four kinds.
+    const contributed = threadContentForPublish(threads);
+    expect(contributed).toEqual([]);
+    const serialized = JSON.stringify(contributed);
+    for (const canary of canaries) expect(serialized).not.toContain(canary);
+  });
+
+  it("NO thread content reaches any publish-bound value without a deliberate promotion", () => {
+    // Scan EVERY value the model produces from threads that could plausibly reach a
+    // boundary — the passive publish slice AND the right-margin layout functions —
+    // with NOTHING promoted. A new leak path (a second door) would surface a canary
+    // here and redden this: it tests "promotion is the ONLY door", not "a door".
+    const publishBound = JSON.stringify({
+      contribution: threadContentForPublish(threads),
+      groupKeys: [...groupThreadsByAnchor(threads).keys()],
+      marginKeys: threads.map(threadMarginKey),
+    });
+    for (const canary of canaries) expect(publishBound).not.toContain(canary);
+  });
+
+  it("promotion is the door — and it carries ONLY the promoted message, never its siblings", () => {
+    const { thread, canary } = lineEntry;
+    // A SECOND harness message with its own distinct canary that is NOT promoted.
+    const grown = answerInThread(
+      thread,
+      "sibling",
+      "Claude Code",
+      "a sibling SIBLING-CANARY answer",
+    );
+    const event = promoteMessage(grown, "line-ai", "finding");
+    expect(event).not.toBeNull();
+    // The promoted event carries the promoted message's body…
+    expect(event?.body).toContain(canary);
+    // …and nothing from the sibling message the reviewer did NOT promote.
+    expect(JSON.stringify(event)).not.toContain("SIBLING-CANARY");
+  });
+
+  it("even after promotion, the passive path STILL leaks nothing (promotion is a copy out)", () => {
+    // Promoting a message must not retro-open the passive door: the thread stays
+    // private and its content still never appears in the passive contribution.
+    const { thread } = lineEntry;
+    promoteMessage(thread, "line-ai", "finding");
+    const serialized = JSON.stringify(threadContentForPublish(threads));
+    for (const canary of canaries) expect(serialized).not.toContain(canary);
   });
 });

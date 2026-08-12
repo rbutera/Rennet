@@ -772,6 +772,33 @@
   font-size: 12px;
   pointer-events: none;
 }
+/* The per-line discuss glyph (issue #36): absolutely positioned over the far edge
+   of the line-number gutter, so it consumes NO grid track and cannot reflow the
+   code column — "the diff column is a fixed point that never moves." Hover-disclosed
+   (calm roll-up, #62); a recorded range-start stays lit so the reviewer sees where a
+   shift-click range would begin. */
+.cv-discuss {
+  position: absolute;
+  left: 2px;
+  top: 0;
+  z-index: 2;
+  padding: 0 2px;
+  border: none;
+  background: transparent;
+  color: var(--private);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+  opacity: 0;
+}
+.code-view-row:hover .cv-discuss,
+.cv-discuss:focus-visible {
+  opacity: 1;
+}
+.cv-discuss[data-range-start] {
+  opacity: 1;
+  color: var(--accent);
+}
 /* The mark's card renders inline AT its span — a new full-width grid row below the
    code line, glass chrome (the ProposalMark/AnnotationMark bring their own dashed
    agent-hand treatment). */
@@ -2308,10 +2335,15 @@
   flex: 1 1 auto;
   min-width: 0;
 }
-.conversation-margin {
+/* The conversation host wraps the margin, so IT is the fixed-width flex sibling of the
+   diff column (issue #36). The diff column takes the rest and never reflows; the host
+   holds the 340px margin and its per-anchor discuss controls. */
+.review-heart-split > .conversation-host {
   flex: none;
   width: 340px;
   max-width: 40%;
+}
+.conversation-margin {
   display: flex;
   flex-direction: column;
   gap: 12px;
