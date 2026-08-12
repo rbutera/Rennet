@@ -41,6 +41,7 @@ import {
   type HttpFetch,
   loadConventionCatalogue,
   loadProjectDetail,
+  ProjectContextReader,
   type ProjectPrSource,
   ProjectSnapshotGenerator,
   parseGitHubPrRef,
@@ -63,6 +64,8 @@ import {
   DEFAULT_MAX_HARNESS_INVOCATIONS,
   DEFAULT_MAX_VERIFICATIONS,
   decompose,
+  type FanInIndex,
+  fanInIndexFromSnapshot,
   guardSeatTurn,
   markVerificationUnavailable,
   patchsetIntentToReviewIntent,
@@ -480,6 +483,9 @@ async function buildCanvasesForReview(review: Review): Promise<{
   // the review's ownership rules. Read them off the built ProjectSnapshot; absent a
   // snapshot they are `[]` and the signal degrades honestly (never fires).
   const ownership = await loadReviewOwnershipRules(review);
+  // The fan-in index (#200), materialized off the built snapshot; undefined ⇒ fan-in
+  // stays NOT-ASSESSED (the populated guard lives in the loader), never a silent zero.
+  const fanIn = await loadReviewFanInIndex(review);
 
   // Assemble the pipeline input at the ONE testable composition seam (F4): this is
   // where `ownership` reaches the pipeline, so the guard against dropping it lives on
@@ -493,6 +499,7 @@ async function buildCanvasesForReview(review: Review): Promise<{
       patchset,
       dispositions: review.dispositions,
       ownership,
+      ...(fanIn ? { fanIn } : {}),
       installed,
       decisionDocs: decisions.docs,
       ...(codexPort ? { codexPort } : {}),
@@ -581,6 +588,35 @@ function loadReviewOwnershipRules(review: Review): Promise<readonly OwnershipRul
     },
     review,
   );
+}
+
+/**
+ * The fan-in index for a review (#200 → #35 follow-on), materialized off its built
+ * ProjectSnapshot so the blast-radius fan-in signal is ASSESSED in the real app — the
+ * "read beyond the diff" the dogfood flagged Rennet cannot do.
+ *
+ * ⭐ The POPULATED GUARD is the load-bearing part: fan-in is supplied ONLY when the
+ * manifest actually carries reference shards. No repo key, no snapshot, a stale/absent
+ * snapshot, or an EMPTY reference index ⇒ `undefined`, and fan-in stays a NOT-ASSESSED
+ * chip — never a silent zero that would read as "checked, nothing depends on anything".
+ */
+async function loadReviewFanInIndex(review: Review): Promise<FanInIndex | undefined> {
+  const root = review.repositoryRoot;
+  if (!root) return undefined;
+  let repoKey: string | null;
+  try {
+    repoKey = (await resolveBaseRef(root, { git: execaGit })).repoKey;
+  } catch {
+    return undefined;
+  }
+  if (!repoKey) return undefined;
+  const store = snapshotStoreFor();
+  const manifest = store.loadManifest(repoKey);
+  // Only assess fan-in when the reference index is genuinely POPULATED (#200).
+  if (!manifest || manifest.references.length === 0) return undefined;
+  const gated = new ProjectContextReader(store).loadFresh(repoKey, manifest.baseOid);
+  if (!gated.ok) return undefined;
+  return fanInIndexFromSnapshot(gated.snapshot);
 }
 
 /**

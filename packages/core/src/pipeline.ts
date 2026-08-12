@@ -58,7 +58,7 @@ import {
   type RunDecompositionAngleResult,
   runDecompositionAngle,
 } from "./angle-generation";
-import { computeBlastRadius } from "./blast-radius";
+import { computeBlastRadius, type FanInIndex } from "./blast-radius";
 import { type AdmittedDocument, buildCanvas, type CanvasEvent } from "./canvas";
 import { createCodexRunTurn } from "./codex-run-turn";
 import type { CodexUtilityPort } from "./codex-utility-port";
@@ -144,6 +144,13 @@ export interface ReviewPipelineInput {
    * project snapshot's ownership when available.
    */
   readonly ownership?: readonly OwnershipRule[];
+  /**
+   * The fan-in index for the blast-radius fan-in signal (#200 → #35 follow-on). Present
+   * ⇒ fan-in is ASSESSED (per-file dependent counts); absent ⇒ it stays a NOT-ASSESSED
+   * chip, never a silent zero. The composition supplies it only when the reference index
+   * is populated, so absence is honest. A caller threads it from the project snapshot.
+   */
+  readonly fanIn?: FanInIndex;
   /** L3 canvas-op events (session-scoped); empty for a fresh review. */
   readonly canvasEvents?: CanvasEvent[];
   readonly decomposeOptions?: DecomposeOptions;
@@ -477,6 +484,7 @@ export async function buildReviewCanvases(
   const blastRadius = computeBlastRadius({
     files: input.patchset.files,
     ownership: input.ownership ?? [],
+    ...(input.fanIn ? { fanIn: input.fanIn } : {}),
   });
   const entries = CANVAS_ANGLES.map((angle): [CanvasAngle, Canvas] => [
     angle,

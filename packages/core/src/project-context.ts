@@ -46,6 +46,7 @@ import type {
   TestEntry,
   WorkspaceScope,
 } from "@rennet/types";
+import type { FanInIndex } from "./blast-radius";
 
 /** Load a content-addressed shard's bytes by digest, or `undefined` if absent. */
 export type ShardLoader = (digest: string) => string | undefined;
@@ -854,6 +855,31 @@ export function queryReferences(snapshot: LoadedSnapshot, query: ReferenceLookup
 
   sites.sort((a, b) => (a.path === b.path ? a.line - b.line : a.path < b.path ? -1 : 1));
   return { ok: true, references: { name: query.name, sites } };
+}
+
+/**
+ * Build the blast-radius {@link FanInIndex} (#200 → #35 follow-on) over a materialized
+ * snapshot: `definedSymbols(path)` reads the file's symbol overview, `referencingFiles(name)`
+ * reads the reference index and returns the DISTINCT files an identifier occurs in. Pure
+ * over the snapshot (the composition resolves + materializes it, and only supplies the index
+ * when the reference index is populated, so an empty index is a NOT-ASSESSED chip upstream,
+ * never a silent zero). A shard-decode failure degrades to empty for that lookup — a
+ * conservative under-count, never a crash.
+ */
+export function fanInIndexFromSnapshot(snapshot: LoadedSnapshot): FanInIndex {
+  return {
+    definedSymbols(path: string): readonly string[] {
+      const result = queryFileOverview(snapshot, path);
+      return result.ok ? result.overview.symbols.map((symbol) => symbol.name) : [];
+    },
+    referencingFiles(name: string): readonly string[] {
+      const result = queryReferences(snapshot, { name });
+      if (!result.ok) return [];
+      const paths = new Set<string>();
+      for (const site of result.references.sites) paths.add(site.path);
+      return [...paths];
+    },
+  };
 }
 
 /** The name of the most specific (longest-root) scope that contains `path`, or null. */
