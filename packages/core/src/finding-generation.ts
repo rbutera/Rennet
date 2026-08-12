@@ -143,7 +143,14 @@ export interface RunFindingAngleInput {
 
 export interface FindingAttempt {
   readonly attempt: number;
-  readonly outcome: "admitted" | "rejected" | "turn-failed" | "budget-refused";
+  /**
+   * `malformed-body`: the turn emitted, but the body was not a finding document
+   * (not an object with a `findings` array). It is recorded as its own fact —
+   * distinct from `turn-failed` (the turn never emitted) and from an admitted
+   * empty review — because a model that returned an unparseable shape has NOT
+   * reviewed the code, and must never be reported as a clean, empty review.
+   */
+  readonly outcome: "admitted" | "rejected" | "turn-failed" | "malformed-body" | "budget-refused";
   /** The validation report for an attempt that produced a body; absent on a turn failure. */
   readonly report?: ValidationReport;
   readonly turnError?: string;
@@ -240,23 +247,44 @@ function isGroundedAnchor(anchor: string, manifest: OfferedManifest): boolean {
 }
 
 /**
+ * The result of culling a model emission. `malformed` is the load-bearing
+ * distinction: a body that is not a finding document (not an object with a
+ * `findings` array) is a fact APART from a well-formed body whose findings
+ * happen to be empty. A model that flagged nothing has reviewed the code; a
+ * model that returned an unparseable shape has not — and only the first is a
+ * clean review. Returning a discriminated union removes the ambiguity
+ * STRUCTURALLY: the caller cannot read `findings` off a malformed body, because
+ * there is none to read (#158).
+ */
+type CullResult =
+  | { readonly malformed: true }
+  | { readonly malformed: false; readonly findings: FindingElement[]; readonly culled: number };
+
+/**
  * Cull the model's emitted findings to the GROUNDED, well-formed ones and stamp
- * the runner-owned fields. Kept: a finding with a string anchor that resolves to
- * an offered hunk, a non-empty summary, and a severity in the closed vocabulary.
- * Dropped: anything else (a hallucinated anchor, a word-less flag, a bad severity)
- * — never surfaced, so a lone bad finding cannot sink the grounded ones. The
- * `findingId` is minted here (agents never mint identity), and the AGREEMENT is
- * the runner's authority: a single model concurs with itself, 1 of 1.
+ * the runner-owned fields. A body that is not a finding document is reported as
+ * `malformed` and NOT collapsed to an empty set (#158) — the caller routes it to
+ * the failed path, never to a clean review. Otherwise, kept: a finding with a
+ * string anchor that resolves to an offered hunk, a non-empty summary, and a
+ * severity in the closed vocabulary. Dropped: anything else (a hallucinated
+ * anchor, a word-less flag, a bad severity) — never surfaced, so a lone bad
+ * finding cannot sink the grounded ones. The `findingId` is minted here (agents
+ * never mint identity), and the AGREEMENT is the runner's authority: a single
+ * model concurs with itself, 1 of 1.
  */
 function cullFindings(
   body: unknown,
   manifest: OfferedManifest,
   mintDocId: () => string,
-): { findings: FindingElement[]; culled: number } {
-  const raw =
-    typeof body === "object" && body !== null && Array.isArray((body as FindingBody).findings)
-      ? (body as { findings: unknown[] }).findings
-      : [];
+): CullResult {
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    !Array.isArray((body as { findings?: unknown }).findings)
+  ) {
+    return { malformed: true };
+  }
+  const raw = (body as { findings: unknown[] }).findings;
   const findings: FindingElement[] = [];
   let culled = 0;
   for (const item of raw) {
@@ -288,7 +316,7 @@ function cullFindings(
       agreement: { kind: "concur", agree: 1, total: 1 },
     });
   }
-  return { findings, culled };
+  return { malformed: false, findings, culled };
 }
 
 function buildProvenance(
@@ -416,7 +444,21 @@ export async function runFindingAngle(input: RunFindingAngleInput): Promise<RunF
       continue;
     }
 
-    const { findings, culled } = cullFindings(turn.body, manifest, mintDocId);
+    const cullResult = cullFindings(turn.body, manifest, mintDocId);
+    if (cullResult.malformed) {
+      // A body that is not a finding document is NOT a clean review: the model
+      // did not review the code, it returned an unparseable shape. Route it to
+      // the failed path (retry, then the honest LOUD failed state) — never
+      // `{ findings: [] }`, which would report a review that ran clean (#158).
+      attempts.push({
+        attempt,
+        outcome: "malformed-body",
+        turnError: "the model emitted a body that is not a finding document",
+      });
+      lastFailure = "the model emitted a malformed finding body";
+      continue;
+    }
+    const { findings, culled } = cullResult;
     const body: FindingBody = { findings };
     const provenance = buildProvenance(seed, inputDigest, newRunId(), turn.tokens ?? ZERO_TOKENS);
     const document = buildEnvelope(body, patchsetId, provenance, mintDocId());
