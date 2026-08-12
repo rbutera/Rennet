@@ -272,6 +272,54 @@ describe("runNoiseAngle — the live noise runner (issue #34)", () => {
     expect(result.budgetRefused).toBe(false);
   });
 
+  // ── #158: a malformed body is not a clean review ─────────────────────────────
+  // A model that returns a body which is not a noise document has NOT reviewed the
+  // churn. Collapsing that to `{ groups: [] }` reports a clean review that grouped
+  // nothing — indistinguishable from a genuine one. These two tests pin both
+  // directions: a malformed body must FAIL, and a genuinely empty groups array
+  // must still be OK. Emits the malformed body on EVERY attempt so the run resolves
+  // to the terminal failed state (the original bug returned `ok` on attempt 0).
+
+  it("treats a malformed body (not a noise document) as a failed turn, never a clean review (#158)", async () => {
+    const result = await runNoiseAngle({
+      patchsetId: PATCHSET.id,
+      manifest: MANIFEST,
+      provenance: SEED,
+      runTurn: () =>
+        Promise.resolve({
+          status: "emitted",
+          body: { result: "here is my prose review, nothing to group" },
+        }),
+      budget: createInvocationBudget(5),
+    });
+    // The bug's signature was `status: "ok"` with an empty groups set. The honest
+    // outcome is the LOUD failed state — the model did not produce a noise document.
+    expect(result.status).toBe("failed");
+    expect(result.groups).toHaveLength(0);
+    expect(result.report).toBeUndefined();
+    expect(result.failureReason).toContain("malformed");
+    // Recorded as its own fact, distinct from a turn that never emitted (turn-failed)
+    // or an empty-but-valid review.
+    expect(result.attempts.every((a) => a.outcome === "malformed-body")).toBe(true);
+  });
+
+  it.each([
+    ["a bare string", "I reviewed the churn and it looks fine"],
+    ["null", null],
+    ["a bare array (the groups, un-wrapped)", []],
+    ["an object whose groups is not an array", { groups: "none" }],
+  ])("treats %s as malformed, not a clean review (#158)", async (_label, body) => {
+    const result = await runNoiseAngle({
+      patchsetId: PATCHSET.id,
+      manifest: MANIFEST,
+      provenance: SEED,
+      runTurn: () => Promise.resolve({ status: "emitted", body }),
+      budget: createInvocationBudget(5),
+    });
+    expect(result.status).toBe("failed");
+    expect(result.groups).toHaveLength(0);
+  });
+
   it("fails (not empty) when every turn fails — ran-clean is never faked from did-not-run", async () => {
     const result = await runNoiseAngle({
       patchsetId: PATCHSET.id,

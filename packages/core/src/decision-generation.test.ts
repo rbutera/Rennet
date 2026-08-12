@@ -295,6 +295,55 @@ describe("runDecisionAngle — the live decision runner (issue #137)", () => {
     expect(result.report?.admitted).toBe(true);
   });
 
+  // ── #158: a malformed body is not a clean review ─────────────────────────────
+  // A model that returns a body which is not a decision document has NOT reviewed
+  // the code. Collapsing that to `{ decisions: [] }` reports a clean review that
+  // discerned nothing — indistinguishable from a genuine one. These two tests pin
+  // both directions: a malformed body must FAIL, and a genuinely empty decisions
+  // array must still be OK. Emits the malformed body on EVERY attempt so the run
+  // resolves to the terminal failed state (the original bug returned `ok` on
+  // attempt 0).
+
+  it("treats a malformed body (not a decision document) as a failed turn, never a clean review (#158)", async () => {
+    const result = await runDecisionAngle({
+      patchsetId: PATCHSET.id,
+      manifest: MANIFEST,
+      provenance: SEED,
+      runTurn: () =>
+        Promise.resolve({
+          status: "emitted",
+          body: { result: "here is my prose review, no decisions to report" },
+        }),
+      budget: createInvocationBudget(5),
+    });
+    // The bug's signature was `status: "ok"` with an empty decisions set. The honest
+    // outcome is the LOUD failed state — the model did not produce a decision document.
+    expect(result.status).toBe("failed");
+    expect(result.decisions).toEqual([]);
+    expect(result.document).toBeUndefined();
+    expect(result.failureReason).toContain("malformed");
+    // Recorded as its own fact, distinct from a turn that never emitted (turn-failed)
+    // or an empty-but-valid review.
+    expect(result.attempts.every((a) => a.outcome === "malformed-body")).toBe(true);
+  });
+
+  it.each([
+    ["a bare string", "I reviewed the code and it looks fine"],
+    ["null", null],
+    ["a bare array (the decisions, un-wrapped)", []],
+    ["an object whose decisions is not an array", { decisions: "none" }],
+  ])("treats %s as malformed, not a clean review (#158)", async (_label, body) => {
+    const result = await runDecisionAngle({
+      patchsetId: PATCHSET.id,
+      manifest: MANIFEST,
+      provenance: SEED,
+      runTurn: () => Promise.resolve({ status: "emitted", body }),
+      budget: createInvocationBudget(5),
+    });
+    expect(result.status).toBe("failed");
+    expect(result.decisions).toEqual([]);
+  });
+
   it("resolves to the LOUD failed state when every turn fails (no fabricated floor)", async () => {
     const result = await runDecisionAngle({
       patchsetId: PATCHSET.id,

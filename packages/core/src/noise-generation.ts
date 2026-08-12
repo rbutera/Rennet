@@ -149,7 +149,14 @@ export interface RunNoiseAngleInput {
 
 export interface NoiseAttempt {
   readonly attempt: number;
-  readonly outcome: "admitted" | "rejected" | "turn-failed" | "budget-refused";
+  /**
+   * `malformed-body`: the turn emitted, but the body was not a noise document (not
+   * an object with a `groups` array). It is recorded as its own fact — distinct
+   * from `turn-failed` (the turn never emitted) and from an admitted empty review —
+   * because a model that returned an unparseable shape has NOT reviewed the churn,
+   * and must never be reported as a clean, empty review (#158).
+   */
+  readonly outcome: "admitted" | "rejected" | "turn-failed" | "malformed-body" | "budget-refused";
   /** The validation report for an attempt that produced a body; absent on a turn failure. */
   readonly report?: ValidationReport;
   readonly turnError?: string;
@@ -283,23 +290,43 @@ function judgedByOf(raw: unknown, noiseJobModel: string): NoiseJudgedBy | undefi
 }
 
 /**
+ * The result of culling a model emission. `malformed` is the load-bearing
+ * distinction: a body that is not a noise document (not an object with a `groups`
+ * array) is a fact APART from a well-formed body whose groups happen to be empty.
+ * A model that grouped nothing has reviewed the churn; a model that returned an
+ * unparseable shape has not — and only the first is a clean review. Returning a
+ * discriminated union removes the ambiguity STRUCTURALLY: the caller cannot read
+ * `groups` off a malformed body, because there is none to read (#158).
+ */
+type CullResult =
+  | { readonly malformed: true }
+  | { readonly malformed: false; readonly groups: NoiseGroup[]; readonly culled: number };
+
+/**
  * Cull the model's emitted groups to the GROUNDED, well-formed ones and stamp the
- * runner-owned fields. Kept: a group with a category in the closed vocabulary, a
- * non-empty anchor-free summary, a well-formed judged-by, and at least one grounded
- * item. Dropped: anything else — never surfaced, so a lone malformed group cannot
- * sink the grounded ones. The `groupId` is minted here (agents never mint identity);
- * the `noise-job` chip's `model` is stamped (structural, not the model's to assert).
+ * runner-owned fields. A body that is not a noise document is reported as
+ * `malformed` and NOT collapsed to an empty set (#158) — the caller routes it to
+ * the failed path, never to a clean review. Otherwise, kept: a group with a
+ * category in the closed vocabulary, a non-empty anchor-free summary, a well-formed
+ * judged-by, and at least one grounded item. Dropped: anything else — never
+ * surfaced, so a lone malformed group cannot sink the grounded ones. The `groupId`
+ * is minted here (agents never mint identity); the `noise-job` chip's `model` is
+ * stamped (structural, not the model's to assert).
  */
 function cullGroups(
   body: unknown,
   manifest: OfferedManifest,
   noiseJobModel: string,
   mintDocId: () => string,
-): { groups: NoiseGroup[]; culled: number } {
-  const raw =
-    typeof body === "object" && body !== null && Array.isArray((body as NoiseBody).groups)
-      ? (body as { groups: unknown[] }).groups
-      : [];
+): CullResult {
+  if (
+    typeof body !== "object" ||
+    body === null ||
+    !Array.isArray((body as { groups?: unknown }).groups)
+  ) {
+    return { malformed: true };
+  }
+  const raw = (body as { groups: unknown[] }).groups;
   const groups: NoiseGroup[] = [];
   let culled = 0;
   for (const entry of raw) {
@@ -339,7 +366,7 @@ function cullGroups(
       items,
     });
   }
-  return { groups, culled };
+  return { malformed: false, groups, culled };
 }
 
 function buildProvenance(
@@ -483,7 +510,21 @@ export async function runNoiseAngle(input: RunNoiseAngleInput): Promise<RunNoise
       continue;
     }
 
-    const { groups, culled } = cullGroups(turn.body, manifest, noiseJobModel, mintDocId);
+    const cullResult = cullGroups(turn.body, manifest, noiseJobModel, mintDocId);
+    if (cullResult.malformed) {
+      // A body that is not a noise document is NOT a clean review: the model did
+      // not review the churn, it returned an unparseable shape. Route it to the
+      // failed path (retry, then the honest LOUD failed state) — never
+      // `{ groups: [] }`, which would report a review that ran clean (#158).
+      attempts.push({
+        attempt,
+        outcome: "malformed-body",
+        turnError: "the model emitted a body that is not a noise document",
+      });
+      lastFailure = "the model emitted a malformed noise body";
+      continue;
+    }
+    const { groups, culled } = cullResult;
     const body: NoiseBody = { groups };
     const provenance = buildProvenance(seed, inputDigest, newRunId(), turn.tokens ?? ZERO_TOKENS);
     const document = buildEnvelope(body, patchsetId, provenance, mintDocId());
