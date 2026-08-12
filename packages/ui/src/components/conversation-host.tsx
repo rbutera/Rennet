@@ -233,6 +233,37 @@ export function ConversationHost({
     })();
   }, [bridge, reviewId]);
 
+  // Placement RE-RESOLUTION (#251 slice 3). The one-shot reattach above seeds threads with
+  // placement resolved against whatever file list existed WHEN IT LANDED — which may be none,
+  // if reattach resolves before the diff loads (could-not-determine ⇒ every thread PLACED).
+  // That state is TEMPORARY: the moment an authoritative file list arrives, a genuinely-gone
+  // thread must resolve to ORPHANED, or "orphaned threads never paint their banner" becomes a
+  // dark surface one door along from the one the one-shot fix closed. This IS reachable: a
+  // zero-file patchset is a real rendered state (app.tsx renders "No changes" for it), so the
+  // host can mount with anchors=[] and the patchset later GAINS files (a recapture, a branch
+  // advance). So placement re-runs whenever the SET of current file paths changes. It only
+  // orphans against an authoritative (non-empty) list, never re-anchors, is idempotent, and
+  // returns the SAME threads reference when nothing changed so it can never loop.
+  //
+  // `pathsKey` is the change-detection signal: a stable string that changes iff the SET of
+  // current file paths changes, so the effect fires on a real file-list change and NOT on a
+  // fresh-identity `anchors` array from an unrelated render. It is a JSON array so no path
+  // character (a space, a `|`) can make two different sets collide.
+  const pathsKey = JSON.stringify([...new Set(anchors.map((anchor) => anchor.path))].sort());
+  useEffect(() => {
+    const paths = (JSON.parse(pathsKey) as (string | null)[]).filter(
+      (path): path is string => typeof path === "string",
+    );
+    if (paths.length === 0) return; // could-not-determine ⇒ leave placement unchanged
+    const currentPaths = new Set(paths);
+    setThreads((current) => {
+      const resolved = orphanUnresolvedThreads(current, currentPaths);
+      // orphanUnresolvedThreads returns each thread unchanged (===) unless it newly orphans it,
+      // so if nothing changed, return `current` and React skips the update (no render loop).
+      return resolved.some((thread, index) => thread !== current[index]) ? resolved : current;
+    });
+  }, [pathsKey]);
+
   // Open a FRAGMENT thread on a message inside an existing thread (issue #36): the
   // "discuss a fragment of the conversation itself" anchor. The new thread anchors to
   // the message id (so the margin keys it distinctly) and is private like any other —
