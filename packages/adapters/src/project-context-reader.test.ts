@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ProjectSnapshotManifest } from "@rennet/types";
@@ -303,6 +303,31 @@ describe("ProjectContextReader — the fail-closed staleness/integrity gate", ()
     expect(result.failure.storedBaseOid).toBe(manifest.baseOid);
   });
 
+  it("rejects a per-OID manifest whose embedded baseOid disagrees with its filename — never serves another commit's map (#246 F2)", async () => {
+    // The strongest defense in the OID-addressable store: `map/manifests/<A>.json` must
+    // contain commit A's manifest. A mis-keyed or corrupt write placing commit B's
+    // manifest under A's filename must be refused as stale, never served as A — otherwise
+    // a caller asking for A receives B's structure while believing it asked for A.
+    const { store, manifest, storeDir } = await generate();
+    const reader = new ProjectContextReader(store);
+    const oidA = "a".repeat(40);
+    // Place the REAL, fully-valid manifest (correct fingerprint, present shards) under a
+    // DIFFERENT commit's filename. It passes integrity and materialize, so ONLY the
+    // freshness block stands between the caller and being served commit R's map as if it
+    // were commit A. Removing that block leaves this readable — the worst outcome.
+    const manifestsDir = join(storeDir, manifest.repoKey, "map", "manifests");
+    const valid = readFileSync(join(manifestsDir, `${manifest.baseOid}.json`), "utf8");
+    writeFileSync(join(manifestsDir, `${oidA}.json`), valid);
+
+    const result = reader.readProjectMap(manifest.repoKey, oidA);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.failure.reason).toBe("stale");
+    if (result.failure.reason !== "stale") return;
+    // It saw commit R's manifest and refused to serve it as A — the freshness block bit.
+    expect(result.failure.storedBaseOid).toBe(manifest.baseOid);
+  });
+
   it("surfaces a stale gate as a snapshot-unavailable file result", async () => {
     const { store, manifest } = await generate();
     const reader = new ProjectContextReader(store);
@@ -377,6 +402,11 @@ describe("ProjectContextReader — the fail-closed staleness/integrity gate", ()
     expect(() => reader.readProjectMap(manifest.repoKey, manifest.baseOid)).not.toThrow();
     const r1 = reader.readProjectMap(manifest.repoKey, manifest.baseOid);
     expect(r1.ok).toBe(false);
+    // Assert the EXACT reason: a nested-malformed manifest degrades to `absent` (the
+    // deep-shape guard rejected it at load), NOT `corrupt` (which is what the downstream
+    // integrity/materialize catch would produce if the guard were removed). Without this,
+    // deleting the nested validation still passes on `ok === false` alone.
+    if (!r1.ok) expect(r1.failure.reason).toBe("absent");
 
     corruptBothManifests(storeDir, manifest, { ...manifest, symbols: [null] });
     expect(() =>
@@ -384,5 +414,6 @@ describe("ProjectContextReader — the fail-closed staleness/integrity gate", ()
     ).not.toThrow();
     const r2 = reader.readProjectMap(manifest.repoKey, manifest.baseOid);
     expect(r2.ok).toBe(false);
+    if (!r2.ok) expect(r2.failure.reason).toBe("absent");
   });
 });

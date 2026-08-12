@@ -6,6 +6,7 @@ import {
   readdirSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
@@ -148,6 +149,50 @@ describe("ProjectSnapshotStore — OID-addressable manifests (#246)", () => {
     // backs it regardless of pruning).
     const newest = oids.at(-1) as string;
     expect(store.loadManifestAt(manifest.repoKey, newest)?.baseOid).toBe(newest);
+  });
+
+  it("NEVER prunes the current tip's own per-OID manifest, even when it is the oldest on disk (#246 F1)", async () => {
+    // The reviewer's bug: pruning sorted by mtime alone, so a tie (or the current tip
+    // being oldest) could delete the current pointer's OWN per-OID file, which the
+    // fallback then hid until one more advance recreated the eviction. We force the
+    // STRONGEST version — the current tip is strictly the oldest file on disk — and
+    // assert it survives, with the exact retained/evicted set. (Oldest subsumes tied.)
+    const storeDir = mkdtempSync(join(tmpdir(), "rennet-store-"));
+    scratch.push(storeDir);
+    const { root, oid } = initRepo("rennet-store-keepcur-");
+    const { store, manifest } = await generateInto(storeDir, root, oid);
+    const manifestsDir = store.paths(manifest.repoKey).manifestsDir;
+
+    // Fill the window with RETENTION manifests at strictly-increasing FUTURE mtimes, so
+    // batch[0] is the oldest future file and batch[last] the newest.
+    const baseFuture = Date.now() / 1000 + 86_400;
+    const batch = Array.from(
+      { length: MANIFEST_RETENTION },
+      (_, i) => `a${i.toString(16).padStart(39, "0")}`,
+    );
+    batch.forEach((o, i) => {
+      const p = join(manifestsDir, `${o}.json`);
+      writeFileSync(p, JSON.stringify({ ...manifest, baseOid: o, fingerprint: `fp-${o}` }));
+      utimesSync(p, baseFuture + i, baseFuture + i);
+    });
+
+    // Advance to a brand-new current tip; its file is written "now" → the OLDEST on disk.
+    const current = "f".repeat(40);
+    store.advance({
+      manifest: { ...manifest, baseOid: current, fingerprint: "fp-cur" },
+      shards: new Map(),
+    });
+
+    const has = (name: string) => existsSync(join(manifestsDir, name));
+    // The current tip survives despite being oldest; the original generate OID and the
+    // oldest future file are the two evicted (RETENTION+2 on disk → RETENTION kept).
+    expect(has(`${current}.json`)).toBe(true);
+    expect(has(`${batch[MANIFEST_RETENTION - 1]}.json`)).toBe(true); // newest future kept
+    expect(has(`${batch[0]}.json`)).toBe(false); // oldest future evicted
+    expect(has(`${oid}.json`)).toBe(false); // original (now-mtime, non-current) evicted
+    const files = readdirSync(manifestsDir).filter((f) => f.endsWith(".json"));
+    expect(files.length).toBe(MANIFEST_RETENTION);
+    expect(files).toContain(`${current}.json`);
   });
 });
 

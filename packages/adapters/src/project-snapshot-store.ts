@@ -398,30 +398,45 @@ export class ProjectSnapshotStore {
       this.writeAtomic(this.manifestAtPath(repoKey, baseOid), manifestBytes);
     }
     this.writeAtomic(this.manifestPath(repoKey), manifestBytes);
-    // Bound the per-OID dir AFTER publishing, so a prune failure never blocks a
-    // build and the newest (just-written) OID is always retained.
-    this.evictOldManifests(repoKey);
+    // Bound the per-OID dir AFTER publishing, protecting the just-written OID (= the
+    // current pointer's target) from eviction so a prune failure never blocks a build
+    // and the current tip is never pruned out from under its own pointer.
+    this.evictOldManifests(repoKey, baseOid);
   }
 
   /**
    * Prune `map/manifests/` to the newest {@link MANIFEST_RETENTION} files by mtime
    * (issue #246), so per-OID manifests do not grow without bound. FAIL-SAFE: any fs
    * error (a missing dir, a race) is swallowed — pruning is best-effort housekeeping
-   * and must never break an advance or a read. The residual this leaves is the same
-   * shape as before but far rarer: a review that outlives N background advances can
-   * still have its pinned manifest pruned and then reads `stale` — never wrong.
+   * and must never break an advance or a read.
+   *
+   * ⭐ The CURRENT pointer's own manifest (`keepOid`) is NEVER a prune candidate (#246
+   * F1). Sorting by mtime alone let equal-mtime ties (rapid advances under a coarse
+   * clock) select the current tip's file for deletion; the current-pointer fallback
+   * hid it until one further advance, at which point a review pinned to the just-
+   * previous tip went `stale` after a SINGLE advance instead of the advertised window —
+   * silently recreating the eviction this fixes. Excluding it by NAME (not by mtime)
+   * closes that structurally. The residual is the honest one: a review outliving the
+   * retention window of NEWER advances can still have its (non-current) pin pruned and
+   * then reads `stale` — never wrong.
    */
-  private evictOldManifests(repoKey: string): void {
+  private evictOldManifests(repoKey: string, keepOid: string): void {
     try {
       const manifestsDir = this.paths(repoKey).manifestsDir;
+      const keepName = isSafeOid(keepOid) ? `${keepOid}.json` : null;
       const entries = readdirSync(manifestsDir)
         .filter((name) => name.endsWith(".json"))
         .map((name) => {
           const full = join(manifestsDir, name);
-          return { full, mtimeMs: statSync(full).mtimeMs };
+          return { name, full, mtimeMs: statSync(full).mtimeMs };
         })
         .sort((a, b) => b.mtimeMs - a.mtimeMs);
-      for (const stale of entries.slice(MANIFEST_RETENTION)) {
+      // Keep the current tip's file unconditionally, plus the newest of the rest up to
+      // the budget; prune whatever remains. Never the current tip, whatever its mtime.
+      const keepPresent = keepName !== null && entries.some((e) => e.name === keepName);
+      const others = entries.filter((e) => e.name !== keepName);
+      const keepOthers = keepPresent ? MANIFEST_RETENTION - 1 : MANIFEST_RETENTION;
+      for (const stale of others.slice(Math.max(0, keepOthers))) {
         try {
           unlinkSync(stale.full);
         } catch {
