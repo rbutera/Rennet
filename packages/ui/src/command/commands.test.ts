@@ -17,6 +17,7 @@ function context(overrides: Partial<CommandContext> = {}): CommandContext {
     canBack: true,
     canForward: false,
     canGoToProject: true,
+    retrospective: false,
     canvasReady: true,
     view: "canvases",
     deepReviewOn: true,
@@ -110,6 +111,13 @@ describe("buildCommands — context-aware registry", () => {
     expect(ids).toContain("review.retry");
     expect(ids).not.toContain("lens.decisions");
     expect(ids).not.toContain("zoom.in");
+  });
+
+  it("offers no Draft or Paper navigation for a retrospective review", () => {
+    const ids = buildCommands(context({ retrospective: true })).map((command) => command.id);
+
+    expect(ids).not.toContain("nav.draft");
+    expect(ids).not.toContain("nav.paper");
   });
 
   it("runs the EXACT wrapped handler — a lens command calls goToAngle with its angle", () => {

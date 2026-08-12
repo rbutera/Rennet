@@ -44,6 +44,23 @@ const review: Review = {
   ],
 };
 
+const directReview: Review = {
+  ...review,
+  id: "review-from-project-b",
+  repositoryRoot: "/code/project-b",
+  activePatchsetId: "patch-two",
+  patchsets: review.patchsets.map((patchset) => ({
+    ...patchset,
+    id: "patch-two",
+    repository: {
+      ...patchset.repository,
+      id: "repository-b",
+      root: "/code/project-b",
+      commonDir: "/code/project-b/.git",
+    },
+  })),
+};
+
 const projectDetail: ProjectDetailData = {
   viewer: { login: "rai" },
   truncated: false,
@@ -64,21 +81,37 @@ const projectDetail: ProjectDetailData = {
 };
 
 function navigationBridge(restored: Review | null): RennetBridge {
-  const invoke = async (name: string): Promise<unknown> => {
+  const invoke = async (name: string, input?: unknown): Promise<unknown> => {
     switch (name) {
       case "app.bootstrap":
         return { review: restored };
       case "settings.get":
-        return { scheme: "dark" };
+        return {
+          scheme: "dark",
+          schemeProvenance: { layer: "builtin", contributions: [] },
+          appearanceMalformed: false,
+          projects: [],
+        };
       case "projects.list":
         return { projects: [project] };
       case "harness.detect":
         return { detected: [] };
       case "project.detail":
         return projectDetail;
+      case "repository.choose":
+        return { path: directReview.repositoryRoot };
       case "review.capture":
+        return {
+          review:
+            (input as { repoPath?: string }).repoPath === directReview.repositoryRoot
+              ? directReview
+              : review,
+        };
       case "review.checkFreshness":
-        return { review };
+        return {
+          review:
+            (input as { reviewId?: string }).reviewId === directReview.id ? directReview : review,
+        };
       case "review.canvases":
         return { canvases: demoCanvases(), elementDiffs: {} };
       case "flagged.review":
@@ -154,5 +187,53 @@ describe("RennetApp navigation spine", () => {
       expect(getByRole("navigation", { name: "Breadcrumb" }).textContent).toContain("review-1"),
     );
     expect(container.querySelector(".project-detail")).toBeNull();
+  });
+
+  it("roots an arbitrary direct-entry capture at Projects instead of the open project", async () => {
+    const { container, getByRole } = mount(<RennetApp bridge={navigationBridge(null)} />);
+
+    await waitFor(() => expect(container.querySelector(".project-row")).not.toBeNull());
+    fireEvent.click(container.querySelector(".project-row") as HTMLButtonElement);
+    await waitFor(() => expect(container.querySelector(".project-detail")).not.toBeNull());
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    fireEvent.click(await waitFor(() => getByRole("button", { name: /Open review/ })));
+    fireEvent.click(getByRole("button", { name: "Choose a repository" }));
+
+    await waitFor(() => {
+      const breadcrumb = getByRole("navigation", { name: "Breadcrumb" });
+      expect(breadcrumb.textContent).toContain(directReview.id);
+      expect(breadcrumb.textContent).not.toContain(project.id);
+    });
+    fireEvent.click(getByRole("button", { name: "Back" }));
+    await waitFor(() => expect(container.querySelector(".front-door")).not.toBeNull());
+    expect(container.querySelector(".project-detail")).toBeNull();
+  });
+
+  it("⌘[ closes direct-entry and Settings overlays without changing the underlying surface", async () => {
+    const { container, getByRole, queryByRole } = mount(
+      <RennetApp bridge={navigationBridge(null)} />,
+    );
+
+    await waitFor(() => expect(container.querySelector(".project-row")).not.toBeNull());
+    fireEvent.click(container.querySelector(".project-row") as HTMLButtonElement);
+    await waitFor(() => expect(container.querySelector(".project-detail")).not.toBeNull());
+    const crumbBefore = getByRole("navigation", { name: "Breadcrumb" }).textContent;
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    fireEvent.click(await waitFor(() => getByRole("button", { name: /Open review/ })));
+    await waitFor(() => expect(getByRole("heading", { name: "Start a review." })).not.toBeNull());
+    fireEvent.keyDown(window, { key: "[", metaKey: true });
+    await waitFor(() => expect(container.querySelector(".project-detail")).not.toBeNull());
+    expect(getByRole("navigation", { name: "Breadcrumb" }).textContent).toBe(crumbBefore);
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    fireEvent.click(await waitFor(() => getByRole("button", { name: /Open Settings/ })));
+    await waitFor(() => expect(getByRole("heading", { name: "Settings" })).not.toBeNull());
+    fireEvent.keyDown(window, { key: "[", metaKey: true });
+
+    await waitFor(() => expect(queryByRole("heading", { name: "Settings" })).toBeNull());
+    expect(container.querySelector(".project-detail")).not.toBeNull();
+    expect(getByRole("navigation", { name: "Breadcrumb" }).textContent).toBe(crumbBefore);
   });
 });

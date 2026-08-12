@@ -72,7 +72,7 @@ export function navHistoryReducer(
       if (state.stack.length === 0) return state;
       return {
         stack: [...state.stack.slice(0, -1), action.surface],
-        future: state.future,
+        future: [],
       };
   }
 }

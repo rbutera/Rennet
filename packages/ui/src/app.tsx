@@ -330,9 +330,16 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // to the front door's `data-scheme` — so changing it in settings re-themes here.
   const [settingsOpen, setSettingsOpen] = useState(false);
   const goBack = useCallback(() => {
-    setDirectEntryOpen(false);
+    if (settingsOpen) {
+      setSettingsOpen(false);
+      return;
+    }
+    if (directEntryOpen) {
+      setDirectEntryOpen(false);
+      return;
+    }
     navigate(navigateBack());
-  }, []);
+  }, [directEntryOpen, settingsOpen]);
   const goForward = useCallback(() => navigate(navigateForward()), []);
   const [scheme, setScheme] = useState<AppearanceScheme>("system");
   // Project detail (issue #37): the unified smart list. Clicking a project row opens
@@ -946,6 +953,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       });
       setReview(result.review);
       setDirectEntryOpen(false);
+      navigate(ascendNavigationTo(0));
       navigate(pushSurface({ kind: "review", reviewId: result.review.id }));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -1032,6 +1040,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       });
       setReview(result.review);
       setDirectEntryOpen(false);
+      navigate(ascendNavigationTo(0));
       navigate(pushSurface({ kind: "review", reviewId: result.review.id }));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -1657,7 +1666,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     navigate(ascendNavigationTo(projectSurfaceIndex));
   }
   function goToDraft(): void {
-    if (!review) return;
+    if (!review || review.retrospective) return;
     const draftIndex = navigation.stack.map((surface) => surface.kind).lastIndexOf("draft");
     if (draftIndex >= 0) {
       navigate(ascendNavigationTo(draftIndex));
@@ -1666,7 +1675,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     navigate(pushSurface({ kind: "draft", reviewId: review.id }));
   }
   function goToPaper(): void {
-    if (!review || currentSurface.kind === "paper") return;
+    if (!review || review.retrospective || currentSurface.kind === "paper") return;
     if (currentSurface.kind === "review") {
       navigate(pushSurface({ kind: "draft", reviewId: review.id }));
     }
@@ -1695,6 +1704,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         canBack: navigation.stack.length > 1,
         canForward: navigation.future.length > 0,
         canGoToProject: projectSurfaceIndex >= 0,
+        retrospective: review?.retrospective === true,
         canvasReady,
         view,
         deepReviewOn,

@@ -53,6 +53,7 @@ export interface CommandContext {
   canBack: boolean;
   canForward: boolean;
   canGoToProject: boolean;
+  retrospective: boolean;
   /** The Canvases view is showing a loaded review, so the lens/zoom/scheme act live. */
   canvasReady: boolean;
   view: "review" | "canvases";
@@ -140,7 +141,10 @@ export function buildCommands(ctx: CommandContext): Command[] {
       run: ctx.goToProject,
     });
   }
-  if (ctx.surfaceKind === "review" || ctx.surfaceKind === "draft" || ctx.surfaceKind === "paper") {
+  if (
+    !ctx.retrospective &&
+    (ctx.surfaceKind === "review" || ctx.surfaceKind === "draft" || ctx.surfaceKind === "paper")
+  ) {
     if (ctx.surfaceKind !== "draft") {
       commands.push({
         id: "nav.draft",

@@ -68,17 +68,17 @@ describe("navigation history laws", () => {
     expect(next.future).toEqual([]);
   });
 
-  it("replaceTop swaps the tip without changing history length or future", () => {
+  it("replaceTop swaps the tip without changing history length and invalidates future", () => {
     const state: NavHistoryState = {
       stack: [projects, project, review],
-      future: [draft],
+      future: [{ kind: "draft", reviewId: "r1" }],
     };
 
     const next = navHistoryReducer(state, replaceTop({ kind: "review", reviewId: "r2" }));
 
     expect(next.stack).toHaveLength(state.stack.length);
     expect(next.stack.at(-1)).toEqual({ kind: "review", reviewId: "r2" });
-    expect(next.future).toEqual(state.future);
+    expect(next.future).toEqual([]);
   });
 });
 
