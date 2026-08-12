@@ -7,7 +7,9 @@ import type {
   DecisionsRunStatus,
   Disposition,
   DispositionAnchor,
+  ElementDiff,
   ElementDiffs,
+  FindingElement,
   FindingVerification,
   FlaggedReview,
   HandoffBundle,
@@ -20,15 +22,43 @@ import type {
   OpenSpecCoverage,
   OpenSpecCoverageEdge,
   Patchset,
+  PatchsetIntent,
+  PatchsetSpecSnapshot,
   PrBodyDraftResult,
   RefinementResult,
+  RenderedHunkOccurrence,
   Review,
   ReviewEngine,
   ReviewHypothesis,
   ReviewNarration,
   SymbolInspection,
+  SymbolNeighbor,
+  SymbolNeighbors,
 } from "@rennet/types";
 import { z } from "zod";
+
+/**
+ * Bind a `z.object` to a hand-written type `T` so that OMITTING ANY FIELD OF `T` —
+ * an optional field included — is a BUILD ERROR, never a silent IPC strip (#242).
+ *
+ * The plain `z.ZodType<T>` annotation only catches a missing REQUIRED field (the
+ * inferred output stops being assignable to `T`). A missing OPTIONAL field stays
+ * assignable, so it slips the annotation, and `parseCommandOutput` then strips it
+ * at runtime while every unit test on either side of the boundary stays green —
+ * exactly how #179's `verification`, #238's `tier`/`neighbors` and #84's
+ * `hunkOccurrences` reached the renderer as `undefined`. This closes the hole
+ * structurally: the shape MUST carry a schema for every key of `T`, and each
+ * field's schema must produce that field's type, so a forgotten field cannot
+ * compile and therefore can never silently strip.
+ *
+ * Usage: `export const fooSchema = objectSchemaFor<Foo>()({ ...every key of Foo });`
+ * Object types only. A union / record / discriminated-union keeps its own
+ * `z.ZodType<T>` annotation; the object schemas that are its members use this.
+ */
+export function objectSchemaFor<T>() {
+  return <S extends { [K in keyof T]-?: z.ZodType<T[K]> }>(shape: S): z.ZodType<T> =>
+    z.object(shape) as unknown as z.ZodType<T>;
+}
 
 export * from "./bodies";
 export * from "./rsp";
@@ -45,7 +75,25 @@ const repositoryProvenanceSchema = z.object({
   headOid: z.string().min(1),
 });
 
-export const patchsetSchema: z.ZodType<Patchset> = z.object({
+// The change's stated intent (#136), captured with the patchset. It reaches the
+// command boundary here so it survives IPC intact rather than being stripped: the
+// type declares it, so the schema must carry it (#242).
+const patchsetIntentSurfaceSchema = z.enum(["github-pr", "github-rest", "working-tree"]);
+const patchsetSpecSnapshotSchema = objectSchemaFor<PatchsetSpecSnapshot>()({
+  path: z.string(),
+  digest: z.string(),
+  content: z.string().optional(),
+});
+const patchsetIntentSchema = objectSchemaFor<PatchsetIntent>()({
+  surface: patchsetIntentSurfaceSchema,
+  prTitle: z.string().optional(),
+  prBody: z.string().optional(),
+  prBodyAbsent: z.boolean().optional(),
+  specSnapshots: z.array(patchsetSpecSnapshotSchema).optional(),
+  commitSubjects: z.array(z.string()).optional(),
+});
+
+export const patchsetSchema = objectSchemaFor<Patchset>()({
   id: z.string().min(1),
   createdAt: z.iso.datetime(),
   repository: repositoryProvenanceSchema,
@@ -72,6 +120,13 @@ export const patchsetSchema: z.ZodType<Patchset> = z.object({
   source: z.enum(["local", "github-local", "github-rest"]).optional(),
   degraded: z.boolean().optional(),
   degradationReason: z.string().optional(),
+  // #144: the ProjectSnapshot the changeset was computed against, and #136: the
+  // captured intent. Both optional/additive on the TYPE, so the old
+  // `z.ZodType<Patchset>` annotation never noticed the schema omitted them and
+  // stripped both at every IPC crossing (a silent #242 strip — the type promised
+  // fields that never survived). Declared here so the schema matches the type.
+  projectSnapshotId: z.string().optional(),
+  intent: patchsetIntentSchema.optional(),
 });
 
 export const dispositionTypeSchema = z.enum(["approve", "request-change", "comment", "question"]);
@@ -114,7 +169,7 @@ const dispositionAnchorSchema: z.ZodType<DispositionAnchor> = z
     { message: "span.endLine must be >= span.startLine" },
   );
 
-export const dispositionSchema: z.ZodType<Disposition> = z.object({
+export const dispositionSchema = objectSchemaFor<Disposition>()({
   anchor: dispositionAnchorSchema,
   type: dispositionTypeSchema,
   body: z.string(),
@@ -140,7 +195,7 @@ const forgePublishTargetSchema = z.object({
   headOid: z.string().min(1),
 });
 
-export const reviewSchema: z.ZodType<Review> = z.object({
+export const reviewSchema = objectSchemaFor<Review>()({
   id: z.string().min(1),
   repositoryRoot: z.string().min(1),
   patchsets: z.array(patchsetSchema).min(1),
@@ -231,7 +286,7 @@ const proposalSchema = z.object({
 
 const blastRadiusPaintSchema = z.object({ target: z.string(), docId: z.string() });
 
-export const canvasSchema: z.ZodType<Canvas> = z.object({
+export const canvasSchema = objectSchemaFor<Canvas>()({
   canvasId: z.string(),
   reviewId: z.string(),
   patchsetId: z.string(),
@@ -277,14 +332,14 @@ const canvasSetSchema = z.object({
 // once because the field was absent from this schema; making it required (with `[]`
 // for genuinely identity-less patches) means the `z.ZodType<ElementDiffs>` annotation
 // below fails to compile if the schema ever omits it again.
-const renderedHunkOccurrenceSchema = z.object({
+const renderedHunkOccurrenceSchema = objectSchemaFor<RenderedHunkOccurrence>()({
   id: z.string(),
   oldStart: z.number(),
   oldLines: z.number(),
   newStart: z.number(),
   newLines: z.number(),
 });
-const elementDiffSchema = z.object({
+const elementDiffSchema = objectSchemaFor<ElementDiff>()({
   path: z.string(),
   paths: z.array(z.string()),
   diff: z.string(),
@@ -308,7 +363,7 @@ const narrationPlacementSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("pending") }),
   z.object({ status: z.literal("failed") }),
 ]);
-const reviewNarrationSchema: z.ZodType<ReviewNarration> = z.object({
+const reviewNarrationSchema = objectSchemaFor<ReviewNarration>()({
   rollup: narrationPlacementSchema,
   cohorts: z.record(z.string(), narrationPlacementSchema),
 });
@@ -318,7 +373,7 @@ const reviewNarrationSchema: z.ZodType<ReviewNarration> = z.object({
 // from the deterministic mechanical outline (no model installed) and say so
 // loudly. Optional on the wire so a desktop build that predates it still
 // validates (absence → the UI shows no engine claim, never a false "AI" badge).
-const reviewEngineSchema: z.ZodType<ReviewEngine> = z.object({
+const reviewEngineSchema = objectSchemaFor<ReviewEngine>()({
   aiReview: z.boolean(),
   claudeAvailable: z.boolean(),
   codexAvailable: z.boolean(),
@@ -670,11 +725,11 @@ export const findingAgreementSchema = z.union([
  * verification pass computed would silently never reach the row (a delivery gap,
  * Rule 80) — the UI would render every finding as unverified.
  */
-export const findingVerificationSchema: z.ZodType<FindingVerification> = z.object({
+export const findingVerificationSchema = objectSchemaFor<FindingVerification>()({
   verdict: z.enum(["reproduced", "refuted", "inconclusive"]),
   evidence: z.string(),
 });
-export const findingElementSchema = z.object({
+export const findingElementSchema = objectSchemaFor<FindingElement>()({
   findingId: z.string().min(1),
   anchor: z.string().min(1),
   summary: z.string(),
@@ -716,7 +771,7 @@ export const riskCrossCheckSchema = z.object({
  * keeps that pair consistent. Absent ⇒ no hypothesis was produced (the pre-#178
  * shape); the reading frame is simply not shown.
  */
-export const reviewHypothesisSchema: z.ZodType<ReviewHypothesis> = z.object({
+export const reviewHypothesisSchema = objectSchemaFor<ReviewHypothesis>()({
   domain: z.string(),
   scope: z.object({
     inScope: z.array(z.string()),
@@ -759,7 +814,7 @@ export const askAnswerSchema = z.object({
   model: z.string().min(1),
   answer: z.string(),
 });
-export const askReviewResultSchema: z.ZodType<AskReviewResult> = z.object({
+export const askReviewResultSchema = objectSchemaFor<AskReviewResult>()({
   mode: askModeSchema,
   primary: askAnswerSchema,
   secondOpinion: askAnswerSchema.optional(),
@@ -881,16 +936,16 @@ function symbolSectionSchema<T extends z.ZodTypeAny>(row: T) {
 }
 // The definition file's sibling symbols (#11), the pinned mini-browser's clickable
 // rungs — likewise must survive the boundary or in-app navigation never exists.
-const symbolNeighborSchema = z.object({
+const symbolNeighborSchema = objectSchemaFor<SymbolNeighbor>()({
   name: z.string().min(1),
   kind: z.string().min(1),
   line: z.number().int().positive(),
 });
-const symbolNeighborsSchema = z.object({
+const symbolNeighborsSchema = objectSchemaFor<SymbolNeighbors>()({
   path: z.string().min(1),
   symbols: z.array(symbolNeighborSchema),
 });
-export const symbolInspectionSchema: z.ZodType<SymbolInspection> = z.object({
+export const symbolInspectionSchema = objectSchemaFor<SymbolInspection>()({
   name: z.string().min(1),
   definition: symbolSectionSchema(symbolDefinitionRowSchema),
   references: symbolSectionSchema(symbolReferenceRowSchema),
@@ -1002,7 +1057,7 @@ const openSpecSpecDeltaSchema = z.object({
   ),
   source: openSpecSourceSchema.optional(),
 });
-export const openSpecChangeSchema: z.ZodType<OpenSpecChange> = z.object({
+export const openSpecChangeSchema = objectSchemaFor<OpenSpecChange>()({
   name: z.string(),
   proposal: openSpecProposalSchema.optional(),
   design: openSpecDesignSchema.optional(),
@@ -1011,14 +1066,14 @@ export const openSpecChangeSchema: z.ZodType<OpenSpecChange> = z.object({
 });
 
 // ── The Spec view's requirement→hunk coverage (wireframes #9 / R53) ────────────
-const openSpecCoverageEdgeSchema: z.ZodType<OpenSpecCoverageEdge> = z.object({
+const openSpecCoverageEdgeSchema = objectSchemaFor<OpenSpecCoverageEdge>()({
   capability: z.string(),
   requirement: z.string(),
   hunks: z.array(z.string()),
   tests: z.number(),
 });
 
-export const openSpecCoverageSchema: z.ZodType<OpenSpecCoverage> = z.object({
+export const openSpecCoverageSchema = objectSchemaFor<OpenSpecCoverage>()({
   status: z.enum(["ok", "failed"]),
   edges: z.array(openSpecCoverageEdgeSchema),
 });
@@ -1184,7 +1239,7 @@ const handoffTaskSchema = z.object({
   context: z.string(),
 }) satisfies z.ZodType<HandoffTask>;
 
-const handoffBundleSchema: z.ZodType<HandoffBundle> = z.object({
+const handoffBundleSchema = objectSchemaFor<HandoffBundle>()({
   reviewId: z.string().min(1),
   patchsetId: z.string().min(1),
   tasks: z.array(handoffTaskSchema),
@@ -1192,7 +1247,7 @@ const handoffBundleSchema: z.ZodType<HandoffBundle> = z.object({
   digest: z.string().min(1),
 });
 
-const handoffDisclosureSchema: z.ZodType<HandoffDisclosure> = z.object({
+const handoffDisclosureSchema = objectSchemaFor<HandoffDisclosure>()({
   harness: z.string().min(1),
   model: z.string().optional(),
   taskCount: z.number().int().nonnegative(),
@@ -1201,7 +1256,7 @@ const handoffDisclosureSchema: z.ZodType<HandoffDisclosure> = z.object({
   summary: z.string(),
 });
 
-const handoffRunResultSchema: z.ZodType<HandoffRunResult> = z.object({
+const handoffRunResultSchema = objectSchemaFor<HandoffRunResult>()({
   review: reviewSchema,
   turnDiff: z.string(),
   filesTouched: z.array(z.string()),
@@ -1244,13 +1299,13 @@ const composableAskSchema = z.object({
   id: z.string().min(1),
 }) satisfies z.ZodType<ComposableAsk>;
 
-const composedTaskSchema: z.ZodType<ComposedTask> = z.object({
+const composedTaskSchema = objectSchemaFor<ComposedTask>()({
   title: z.string(),
   sourceDispositions: z.array(z.string()),
   asks: z.array(composableAskSchema),
 });
 
-const composedHandoffBundleSchema: z.ZodType<ComposedHandoffBundle> = z.object({
+const composedHandoffBundleSchema = objectSchemaFor<ComposedHandoffBundle>()({
   reviewId: z.string().min(1),
   patchsetId: z.string().min(1),
   tasks: z.array(composedTaskSchema),
