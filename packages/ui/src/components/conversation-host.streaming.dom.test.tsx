@@ -73,9 +73,9 @@ function openAndAsk(container: HTMLElement, question: string): void {
 }
 
 function harnessBodies(container: HTMLElement): string[] {
-  return [...container.querySelectorAll('.thread-message[data-author="harness"] .thread-message-body')].map(
-    (node) => node.textContent ?? "",
-  );
+  return [
+    ...container.querySelectorAll('.thread-message[data-author="harness"] .thread-message-body'),
+  ].map((node) => node.textContent ?? "");
 }
 
 describe("ConversationHost — token streaming into a live message (#251)", () => {
@@ -131,7 +131,9 @@ describe("ConversationHost — token streaming into a live message (#251)", () =
     });
 
     await waitFor(() => {
-      expect(container.querySelectorAll('.thread-message[data-status="streaming"]')).toHaveLength(0);
+      expect(container.querySelectorAll('.thread-message[data-status="streaming"]')).toHaveLength(
+        0,
+      );
       const bodies = harnessBodies(container);
       expect(bodies).toEqual(["Because a limiter outage must never become an API outage."]);
     });
@@ -160,7 +162,10 @@ describe("ConversationHost — token streaming into a live message (#251)", () =
     openAndAsk(container, "why?");
     await waitFor(() => expect(resolveInvoke).toBeTruthy());
     await act(async () => {
-      resolveInvoke?.({ mode: "orchestrator", primary: { model: "Orchestrator · Claude", answer: "the answer" } });
+      resolveInvoke?.({
+        mode: "orchestrator",
+        primary: { model: "Orchestrator · Claude", answer: "the answer" },
+      });
     });
     await waitFor(() => expect(harnessBodies(container)).toEqual(["the answer"]));
     // Never a streaming preview when there is no stream.

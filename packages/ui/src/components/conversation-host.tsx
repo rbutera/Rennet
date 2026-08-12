@@ -301,7 +301,9 @@ export function ConversationHost({
       // replaced by a fixture answer. The half-streamed preview is dropped (its
       // interrupted-surface persistence is #251's next slice, not this one).
       setThreads((current) =>
-        current.map((candidate) => (candidate.id === threadId ? dropPreview(candidate) : candidate)),
+        current.map((candidate) =>
+          candidate.id === threadId ? dropPreview(candidate) : candidate,
+        ),
       );
       setThreadError(threadId, reason instanceof Error ? reason.message : String(reason));
     } finally {

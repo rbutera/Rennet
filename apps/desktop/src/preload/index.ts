@@ -1,8 +1,4 @@
-import type {
-  ProjectProcessEvent,
-  RennetBridge,
-  ReviewAskStreamEvent,
-} from "@rennet/protocol";
+import type { ProjectProcessEvent, RennetBridge, ReviewAskStreamEvent } from "@rennet/protocol";
 import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
 
 const PROGRESS_CHANNEL = "rennet:progress";
