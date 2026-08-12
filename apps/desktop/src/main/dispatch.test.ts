@@ -2450,4 +2450,72 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
     // abortController key added.
     expect(h.reviewAsk.askOrchestrator).toHaveBeenCalledWith({ review, question: "q" });
   });
+
+  // ⭐ THE LOAD-BEARING PROOF (criterion 4 → criterion 3). The whole user-visible payoff is
+  // the chain: abort ⇒ no durable completion is persisted ⇒ the `streaming` placeholder
+  // survives on disk ⇒ next launch recovers it as `interrupted`. If a leg SWALLOWS its
+  // abort and returns a normal answer, the completion-persist would replace the
+  // placeholder with a durable answer for a turn that was killed — a fabricated
+  // completion, the exact failure #251 exists to prevent. The guard makes the property
+  // structural (it does not depend on the abort THROWING). These two tests pin it.
+  function orchWritesFrom(threadPersistence: {
+    putMessage: ReturnType<typeof vi.fn>;
+  }): { id: string; status?: string; body: string }[] {
+    return threadPersistence.putMessage.mock.calls
+      .map(([arg]) => (arg as { message: { id: string; status?: string; body: string } }).message)
+      .filter((m) => m.id === "tn::orchestrator");
+  }
+
+  const STREAMED_INPUT = {
+    mode: "orchestrator" as const,
+    threadId: "th",
+    turnId: "tn",
+    anchor: { kind: "chunk" as const, label: "src/a.ts", key: "chunk|src/a.ts" },
+    turnBody: "why?",
+  };
+
+  it("does NOT persist a durable completion when the leg SWALLOWS its abort and returns an answer (placeholder survives)", async () => {
+    const reg = spyRegistry();
+    const h = harness(undefined, {}, { liveTurns: reg.liveTurns });
+    const review = await capturedReview(h.dispatch);
+    // The quit fires mid-turn (controller.abort()), but the port returns a normal answer
+    // anyway — exactly what the codex leg does when it catches execa's cancel, and what
+    // the claude leg would do if the SDK ever resolved an aborted turn instead of throwing.
+    h.reviewAsk.askOrchestrator.mockImplementationOnce(async ({ abortController }) => {
+      abortController?.abort();
+      return { model: "Orchestrator · Claude", answer: "a partial answer that must NOT persist" };
+    });
+    await h.dispatch(
+      "review.ask",
+      { commandId: randomUUID(), reviewId: review.id, question: "q", ...STREAMED_INPUT },
+      { emitAskStream: () => undefined },
+    );
+    // The orchestrator id was written EXACTLY once — the streaming placeholder — and never
+    // replaced. Drop the `!liveTurn.signal.aborted` guard and this reddens at length 2,
+    // the second write being the durable `a partial answer…` body.
+    const orch = orchWritesFrom(h.threadPersistence);
+    expect(orch).toHaveLength(1);
+    expect(orch[0]?.status).toBe("streaming");
+    expect(orch[0]?.body).toBe("");
+  });
+
+  it("does NOT persist a durable completion when the aborted leg THROWS (placeholder survives)", async () => {
+    const reg = spyRegistry();
+    const h = harness(undefined, {}, { liveTurns: reg.liveTurns });
+    const review = await capturedReview(h.dispatch);
+    // The other arrival: the aborted leg rejects (the SDK's observed throw-on-abort).
+    h.reviewAsk.askOrchestrator.mockRejectedValueOnce(new Error("Request was cancelled"));
+    await expect(
+      h.dispatch(
+        "review.ask",
+        { commandId: randomUUID(), reviewId: review.id, question: "q", ...STREAMED_INPUT },
+        { emitAskStream: () => undefined },
+      ),
+    ).rejects.toThrow(/cancelled/);
+    // Same durable-state outcome by a different route: only the streaming placeholder, no
+    // completion. The throw skips the completion-persist by control flow.
+    const orch = orchWritesFrom(h.threadPersistence);
+    expect(orch).toHaveLength(1);
+    expect(orch[0]?.status).toBe("streaming");
+  });
 });

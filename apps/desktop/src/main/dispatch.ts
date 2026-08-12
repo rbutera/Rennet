@@ -897,10 +897,20 @@ export function createDispatch(
           // #251 persistence: the turn completed — REPLACE the streaming placeholder with
           // the durable orchestrator answer (same id) and append the codex answer when the
           // ask was "both". Only completed messages persist a body; the placeholder never
-          // held the coalesced deltas. A turn ABORTED on quit throws out of `askReview`
-          // above, so this completion-persist never runs and the `streaming` placeholder
-          // stays on disk — recovered as `interrupted` on the next reattach (criterion 3).
-          if (persist) {
+          // held the coalesced deltas.
+          //
+          // ⭐ THE ABORT GUARD (criterion 4, honest-state doctrine). If this turn's
+          // controller was aborted, its `streaming` placeholder MUST stay on disk so the
+          // next reattach recovers it as `interrupted` (criterion 3) — never as a durable
+          // completion. Two ways an abort arrives here, and the guard covers BOTH: usually
+          // the aborted leg THROWS and skips this block entirely; but a leg that SWALLOWS
+          // its abort and returns a (failure/empty/partial) answer — e.g. the codex port
+          // catches execa's cancel and returns text — would otherwise reach here and
+          // overwrite the placeholder with a durable answer for a turn that was killed.
+          // Checking `signal.aborted` is the direct truthful signal, not a guess about
+          // library throw-vs-resolve behaviour. No registry wired ⇒ `liveTurn` undefined
+          // ⇒ the guard is inert (back-compat).
+          if (persist && !liveTurn?.signal.aborted) {
             persist.store.putMessage({
               reviewId: persist.reviewId,
               threadId: persist.threadId,
