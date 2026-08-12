@@ -1,13 +1,13 @@
 ## 1. Pure model: turn status, orphaned anchor, stream coalescer (layer:ui, no Electron)
 
-- [ ] 1.1 Add a per-turn status (`streaming` | `complete` | `interrupted`) and an `orphaned` flag to the conversation model in `packages/ui/src/canvas/conversation.ts`, without changing the privacy law or the `answerInThread` completed-message shape. Unit-test the state transitions.
-- [ ] 1.2 Add a pure `StreamCoalescer` (clock/scheduler injected) that folds a `(turnId, channel)` delta sequence into one body; unit-test that a replayed sequence under a hand-advanced fake clock is byte-identical every run (spec: clock-driven coalescing).
-- [ ] 1.3 Prove two channels coalesce independently: orchestrator completes with its full body while the Codex channel is marked failed, not empty-success. Red-proof: make the coalescer share one buffer across channels and watch the independence test fire.
+- [x] 1.1 Add a per-turn status (`streaming` | `complete` | `interrupted`) and an `orphaned` flag to the conversation model in `packages/ui/src/canvas/conversation.ts`, without changing the privacy law or the `answerInThread` completed-message shape. Unit-test the state transitions.
+- [x] 1.2 Add a pure `StreamCoalescer` (clock/scheduler injected) that folds a `(turnId, channel)` delta sequence into one body; unit-test that a replayed sequence under a hand-advanced fake clock is byte-identical every run (spec: clock-driven coalescing).
+- [x] 1.3 Prove two channels coalesce independently: orchestrator completes with its full body while the Codex channel is marked failed, not empty-success. Red-proof: make the coalescer share one buffer across channels and watch the independence test fire.
 
 ## 2. Protocol: streamed review.ask contract
 
-- [ ] 2.1 In `packages/protocol`, add the streamed event schemas — `{ threadId, turnId, channel, delta }`, terminal `{ …, done, finalBody }`, and `{ …, interrupted }` — and the `review.reattach` + orphan-resolution command shapes. Hand-write every Zod schema; the new fields are optional (not build-protected), so add each deliberately.
-- [ ] 2.2 Schema round-trip tests for every new event/command, including a rejection test proving an event with an unknown/missing `turnId` does not validate (a stray delta must be droppable). Red-proof: drop `turnId` from a schema and watch the round-trip test fire.
+- [x] 2.1 In `packages/protocol`, add the streamed event schemas — `{ threadId, turnId, channel, delta }`, terminal `{ …, done, finalBody }`, and `{ …, interrupted }` — and the `review.reattach` + orphan-resolution command shapes. Hand-write every Zod schema; the new fields are optional (not build-protected), so add each deliberately.
+- [x] 2.2 Schema round-trip tests for every new event/command, including a rejection test proving an event with an unknown/missing `turnId` does not validate (a stray delta must be droppable). Red-proof: drop `turnId` from a schema and watch the round-trip test fire.
 
 ## 3. Persistence: ThreadStore extending the store pattern
 

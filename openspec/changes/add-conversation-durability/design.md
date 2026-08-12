@@ -45,3 +45,15 @@ The governing constraint is that **the whole feature is only observable in the f
 - **Reaping could over-kill (blanket pkill) or under-kill (miss a grandchild).** Trade-off: we scope to tracked direct children by PID; a harness that forks its own grandchildren is out of scope for v1 and named as such. Over-kill is refused structurally (only registered PIDs are signalled); under-kill of a grandchild is disclosed, not silently claimed covered.
 - **Persistence could become a second publish path.** Mitigation: decision 7's unmounted-canary proof is the guard; it lives in the change and red-proofs by routing a persisted body into the payload and watching it fire.
 - **Streaming touches `review.ask`, which #139 owns.** Trade-off: the router's law ("orchestrator once, both adds Codex, never a synthesis") is untouched — streaming changes the transport (one response → many events), not the routing. The two-channel independence requirement is the streaming-side restatement of that law.
+
+## Verified during build (2026-08-12) — the three load-bearing substrate facts
+
+These were confirmed against the tree before wiring, so a later reader (or reviewer) does not re-derive them:
+
+- **Streaming is real, not theatre.** `claude-adapter.ts:324` already decodes `content_block_delta`/`text_delta` frames into a `text.delta` event, and `orchestrator-turn.ts` already receives them in its `for await` loop — it just DROPS them (it handles `text.message`/`session.ended`, no `text.delta` case). So streaming is: add an optional `onDelta(text)` hook to `OrchestratorTurnDeps` and emit `text.delta` through it. The tokens already flow; nothing is faked.
+- **Reaping is by AbortController, not pkill.** `OrchestratorTurnDeps.abortController` (orchestrator-turn.ts:200) and codex-exec's `run` `cancelSignal` (codex-exec.ts) are BOTH already wired cancellation seams. Scoped reaping is therefore: the `LiveTurnRegistry` holds each in-flight turn's AbortController and aborts them all on `before-quit`. No PID scan, no name-based `pkill`, no over-kill risk. PID tracking (codex, via `execa`'s `.pid`) is a *backstop* only.
+- **The claude child PID is NOT reachable through the SDK.** The narrowed `SdkQuery` surface is `(params) => Query` (an async iterable); the agent SDK manages its `claude` child internally and exposes no handle/PID. So the codex child is PID-killable as a backstop but the claude child is only reachable via its AbortController. **A claude child that survives an abort is the one disclosed residual gap** (same family as "harness grandchildren out of scope") — it is named, not silently claimed covered.
+
+## Build status at hand-off (see the report to the orchestrator)
+
+§1 (pure model: turn lifecycle, orphaned flag, clock-injected coalescer) and §2 (protocol: streamed `review.ask` contract, persisted-thread wire shapes, `review.reattach`, `onAskStream`) are IMPLEMENTED, unit-tested, and red-proofed. §3–§8 (persistence store + wiring, streaming live-seat, reaping, renderer surfaces, privacy proof) are the remaining vertical, sequenced in `tasks.md`; the substrate facts above de-risk them.
