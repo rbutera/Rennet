@@ -2518,4 +2518,50 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
     expect(orch).toHaveLength(1);
     expect(orch[0]?.status).toBe("streaming");
   });
+
+  it("abort during the CODEX leg (orchestrator already returned genuinely) persists NO completion and NO codex record", async () => {
+    // ⭐ The subtler window: askReview is sequential (orchestrator, then codex), so an
+    // abort during the codex leg leaves a GENUINE orchestrator answer in hand while the
+    // codex port SWALLOWS its cancel (its catch returns "Codex could not answer …"). The
+    // ask then RESOLVES — no throw — so control flow alone would run the completion-persist
+    // and (a) overwrite the placeholder with the real orchestrator answer AND (b) persist
+    // the codex cancel as though the tool had FAILED, conflating "you quit" with "codex
+    // broke". The abort guard is leg-agnostic — it fires on `signal.aborted` regardless of
+    // which leg swallowed — so neither is persisted and the turn recovers as interrupted.
+    const reg = spyRegistry();
+    const h = harness(undefined, {}, { liveTurns: reg.liveTurns });
+    const review = await capturedReview(h.dispatch);
+    // Orchestrator finishes genuinely, WITHOUT aborting.
+    h.reviewAsk.askOrchestrator.mockImplementationOnce(async () => ({
+      model: "Orchestrator · Claude",
+      answer: "a genuine, complete orchestrator answer",
+    }));
+    // Codex leg: the quit fires mid-exec (abort), and the port's catch returns a
+    // failure-shaped answer rather than throwing — exactly `createLiveCodexAsk`'s behaviour.
+    h.reviewAsk.askCodex.mockImplementationOnce(async ({ abortController }) => {
+      abortController?.abort();
+      return { model: "codex", answer: "Codex could not answer: Operation aborted" };
+    });
+    await h.dispatch(
+      "review.ask",
+      {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        question: "q",
+        ...STREAMED_INPUT,
+        mode: "both",
+      },
+      { emitAskStream: () => undefined },
+    );
+    const messages = h.threadPersistence.putMessage.mock.calls.map(
+      ([arg]) => (arg as { message: { id: string; status?: string } }).message,
+    );
+    // Orchestrator: only the streaming placeholder, never replaced by the genuine answer.
+    const orch = messages.filter((m) => m.id === "tn::orchestrator");
+    expect(orch).toHaveLength(1);
+    expect(orch[0]?.status).toBe("streaming");
+    // Codex: no record at all — the cancel is NOT persisted as a codex failure. Drop the
+    // guard and this reddens (a `tn::codex` "could not answer" message appears).
+    expect(messages.some((m) => m.id === "tn::codex")).toBe(false);
+  });
 });
