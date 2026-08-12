@@ -79,7 +79,7 @@ function repoOnMain(): { root: string; storeDir: string; oid1: string; advance: 
   git(root, "add", "-A");
   git(root, "commit", "-q", "-m", "one");
   const oid1 = git(root, "rev-parse", "HEAD");
-  let advanced = false;
+  let advanceCount = 0;
   return {
     root,
     storeDir,
@@ -87,12 +87,8 @@ function repoOnMain(): { root: string; storeDir: string; oid1: string; advance: 
     advance: () => {
       // A real advance of main: change one file, add one, commit.
       write(root, "packages/a/src/index.ts", "export const a = 2;\nexport function makeA() {}\n");
-      write(
-        root,
-        `packages/a/src/added-${advanced ? "2" : "1"}.ts`,
-        "export const added = true;\n",
-      );
-      advanced = true;
+      advanceCount += 1;
+      write(root, `packages/a/src/added-${advanceCount}.ts`, "export const added = true;\n");
       git(root, "add", "-A");
       git(root, "commit", "-q", "-m", "advance");
       return git(root, "rev-parse", "HEAD");
@@ -238,7 +234,7 @@ describe("proactive rehydration — end to end over a real git repo", () => {
     const store = new ProjectSnapshotStore(storeDir);
     const generator = new ProjectSnapshotGenerator({ store });
     await generator.generate(root, { explicitBaseRef: "main" });
-    const structuralDone = [deferred(), deferred()];
+    const structuralDone = [deferred(), deferred(), deferred()];
     const releaseFirst = deferred();
     const secondStarted = deferred();
     const clock = fakeTimers();
@@ -267,16 +263,22 @@ describe("proactive rehydration — end to end over a real git repo", () => {
     clock.flush();
     await structuralDone[0]?.promise;
 
-    const oid3 = advance();
+    advance();
     watcher.fire(`${sep}refs${sep}heads`);
     clock.flush();
     await structuralDone[1]?.promise;
     expect(calls).toHaveLength(1);
 
+    const oid4 = advance();
+    watcher.fire(`${sep}refs${sep}heads`);
+    clock.flush();
+    await structuralDone[2]?.promise;
+    expect(calls).toHaveLength(1);
+
     releaseFirst.resolve();
     await secondStarted.promise;
     expect(calls).toHaveLength(2);
-    expect(calls[1]?.toOid).toBe(oid3);
+    expect(calls[1]?.toOid).toBe(oid4);
     expect(calls[1]?.fromOid).toBe(oid2);
     handle?.close();
   });

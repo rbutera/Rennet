@@ -178,25 +178,31 @@ export async function createLiveCanvasOpsBackend(
   );
   const initialNovelty = noveltyReader.classify(repoKey, patchset);
   if (initialNovelty.ok && deps.noveltyLifecycle) {
+    const followsDefault = deps.store.loadManifest(repoKey)?.baseOid === baseOid;
     deps.noveltyLifecycle.register(
       repoKey,
       review.id,
       { ledger: initialNovelty.ledger, judgments: new Map() },
       async () => {
         const current = deps.store.loadManifest(repoKey);
-        if (current && current.baseOid !== baseOid) {
+        if (!current) return { ok: false, failure: { reason: "absent" } };
+        if (!followsDefault && current.baseOid !== baseOid) {
           await new SnapshotOverlayGenerator({
             store: deps.store,
             overlayStore,
             git,
           }).ensureOverlay(review.repositoryRoot, repoKey, baseOid);
         }
-        const projectSnapshotId = projectSnapshotPinResolver(deps.store, overlayReader)(
-          review.repositoryRoot,
-          baseOid,
-        );
+        const effectiveBaseOid = followsDefault ? current.baseOid : baseOid;
+        const projectSnapshotId = followsDefault
+          ? current.fingerprint
+          : projectSnapshotPinResolver(deps.store, overlayReader)(
+              review.repositoryRoot,
+              effectiveBaseOid,
+            );
         return noveltyReader.classify(repoKey, {
           ...patchset,
+          repository: { ...patchset.repository, baseOid: effectiveBaseOid },
           ...(projectSnapshotId ? { projectSnapshotId } : {}),
         });
       },

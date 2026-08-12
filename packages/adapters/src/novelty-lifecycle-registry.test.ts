@@ -42,5 +42,6 @@ describe("NoveltyLifecycleRegistry", () => {
     await registry.advanceRepo("repo");
     expect(registry.get("repo", "review")?.ledger.projectSnapshotId).toBe("new");
     expect(registry.get("repo", "review")?.ledger.entries[0]?.classification).toBe("novel");
+    expect(registry.getLastAdvance("repo", "review")?.pendingEntryKeys).toHaveLength(1);
   });
 });

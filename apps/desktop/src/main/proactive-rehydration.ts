@@ -156,7 +156,9 @@ export async function startRepoRehydration(
     | undefined;
   let knowledgeRunning = false;
   const scheduleKnowledge = (advance: NonNullable<typeof pendingKnowledge>): void => {
-    pendingKnowledge = advance;
+    pendingKnowledge = pendingKnowledge
+      ? { ...advance, fromOid: pendingKnowledge.fromOid }
+      : advance;
     if (knowledgeRunning || !deps.runKnowledgePass) return;
     knowledgeRunning = true;
     void (async () => {

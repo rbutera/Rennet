@@ -6,6 +6,8 @@ import { buildReviewCanvases, type ProjectMap } from "@rennet/core";
 import type { NoveltyLedger, PatchFile, Patchset, Review } from "@rennet/types";
 import { afterEach, describe, expect, it } from "vitest";
 import { createLiveCanvasOpsBackend } from "./live-review-backend";
+import { NoveltyLifecycleRegistry } from "./novelty-lifecycle-registry";
+import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
 import { ProjectSnapshotStore } from "./project-snapshot-store";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -114,6 +116,25 @@ function freshStore(): ProjectSnapshotStore {
 }
 
 describe("createLiveCanvasOpsBackend — the live end-to-end review backend", () => {
+  it("reclassifies a live default-base review at the advanced default snapshot", async () => {
+    const repo = workspaceRepo();
+    git(repo.root, "reset", "--hard", repo.oid1);
+    const store = freshStore();
+    const lifecycle = new NoveltyLifecycleRegistry();
+    const { review, pipeline } = await reviewAt(repo.root, repo.commonDir, repo.oid1);
+    const opened = await createLiveCanvasOpsBackend(review, pipeline, {
+      store,
+      noveltyLifecycle: lifecycle,
+    });
+    expect(opened.snapshot.generated).toBe(true);
+
+    git(repo.root, "reset", "--hard", repo.oid2);
+    await new ProjectSnapshotGenerator({ store }).generate(repo.root, { explicitBaseRef: "main" });
+    await lifecycle.advanceRepo(opened.snapshot.repoKey);
+
+    expect(lifecycle.get(opened.snapshot.repoKey, review.id)?.ledger.baseOid).toBe(repo.oid2);
+  });
+
   it("serves REAL snapshot-derived data for context.map / context.file / context.novelty", async () => {
     const repo = workspaceRepo();
     const { review, pipeline } = await reviewAt(repo.root, repo.commonDir, repo.oid1);

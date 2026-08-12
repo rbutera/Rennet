@@ -3,6 +3,7 @@ import { advanceNoveltyLifecycle, type NoveltyLifecycleState } from "@rennet/cor
 
 interface RegisteredLifecycle {
   state: NoveltyLifecycleState;
+  lastAdvance?: ReturnType<typeof advanceNoveltyLifecycle>;
   readonly refresh: () => Promise<NoveltyResult>;
 }
 
@@ -25,13 +26,22 @@ export class NoveltyLifecycleRegistry {
     return this.byRepo.get(repoKey)?.get(reviewId)?.state;
   }
 
+  getLastAdvance(
+    repoKey: string,
+    reviewId: string,
+  ): ReturnType<typeof advanceNoveltyLifecycle> | undefined {
+    return this.byRepo.get(repoKey)?.get(reviewId)?.lastAdvance;
+  }
+
   async advanceRepo(repoKey: string): Promise<void> {
     const reviews = this.byRepo.get(repoKey);
     if (!reviews) return;
     for (const registration of reviews.values()) {
       const classified = await registration.refresh();
       if (!classified.ok) continue;
-      registration.state = advanceNoveltyLifecycle(registration.state, classified.ledger).next;
+      const advance = advanceNoveltyLifecycle(registration.state, classified.ledger);
+      registration.lastAdvance = advance;
+      registration.state = advance.next;
     }
   }
 }
