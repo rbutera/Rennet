@@ -1,6 +1,6 @@
 # repo-map-delta-pass
 
-Proactive refresh as the reference branch moves — a model-free structural pass AND a bounded LLM knowledge-enrichment pass off one shared trigger — plus base+overlay composition for reviews against a non-default base, without ever blocking or gating a review. Builds on the wave-1 incremental machinery (`planIncrementalSymbols`, atomic `store.advance`) and the fail-closed on-open gate. Mirrors codeindexer.dev's per-changed incremental reindex; the structural pass stays strictly model-free, the knowledge pass is the model-backed half.
+Proactive refresh as the reference branch moves — a model-free structural pass AND an uncapped LLM knowledge-enrichment pass off one shared trigger — plus base+overlay composition for reviews against a non-default base, without ever blocking or gating a review. Builds on the wave-1 incremental machinery (`planIncrementalSymbols`, atomic `store.advance`) and the on-open read path. Mirrors codeindexer.dev's per-changed incremental reindex; the structural pass stays strictly model-free, the knowledge pass is the model-backed half.
 
 ## ADDED Requirements
 
@@ -58,9 +58,9 @@ A review against a non-default base SHALL use the default-branch map as the **ba
 - **WHEN** the default-branch base advances (via a delta pass) under an open non-default-base review
 - **THEN** the overlay is treated as stale on its `(defaultOid, nonDefaultBaseOid)` pair and re-derived against the new base
 
-### Requirement: A bounded LLM knowledge pass runs off the same trigger and never blocks review
+### Requirement: An uncapped LLM knowledge pass runs off the same trigger and never blocks review
 
-On the same baseline-advance trigger, a knowledge-enrichment pass SHALL run: knowledge statements whose evidence anchors intersect the diff SHALL be invalidated, then a bounded medium-model pass over the diff, the invalidated statements, and the affected scope maps SHALL re-adjudicate each and mine net-new statements; untouched knowledge SHALL stay pinned to its original evidence. A full heavy-model re-rollup SHALL run only on a generator, schema, or guideline change or an accumulation threshold. The pass SHALL be budget-capped, debounced, and coalesced to the newest OID. It SHALL NEVER block a review: reviews proceed on the current snapshot plus surviving knowledge, and statements withheld as invalidated-pending SHALL be disclosed in the ContextManifest (R29), never silently dropped. The model SHALL enter only this pass, never the structural pass.
+On the same baseline-advance trigger, a knowledge-enrichment pass SHALL run: knowledge statements whose evidence anchors intersect the diff SHALL be invalidated, then an uncapped model pass over the diff, the invalidated statements, and the affected scope maps SHALL re-adjudicate each and mine net-new statements; untouched knowledge SHALL stay pinned to its original evidence. A full re-rollup SHALL run only on a generator, schema, or guideline change or an accumulation threshold. The pass SHALL be debounced and coalesced to the newest OID. It SHALL NEVER block a review: reviews proceed on the current snapshot plus surviving knowledge, and statements withheld as invalidated-pending SHALL be disclosed in the ContextManifest (R29), never silently dropped. The model SHALL enter only this pass, never the structural pass.
 
 #### Scenario: a review proceeds while knowledge is re-enriching
 

@@ -29,6 +29,18 @@ afterEach(() => {
 });
 
 describe("GitCaptureAdapter", () => {
+  it("stamps the effective project snapshot identity resolved at capture time", async () => {
+    const root = repository();
+    const seen: string[] = [];
+    const patchset = await new GitCaptureAdapter(undefined, (repoRoot, baseOid) => {
+      seen.push(repoRoot, baseOid);
+      return "project-snapshot";
+    }).capture(root);
+    expect(patchset.projectSnapshotId).toBe("project-snapshot");
+    expect(seen[0]).toBe(patchset.repository.root);
+    expect(seen[1]).toBe(patchset.repository.baseOid);
+  });
+
   it("captures an unchanged repository as an empty patchset", async () => {
     const root = repository();
     const patchset = await new GitCaptureAdapter().capture(root);

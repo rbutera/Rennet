@@ -145,6 +145,7 @@ function freshProjectMap(): ProjectMap {
 /** A fresh, served novelty ledger (the deterministic reader's ok shape) — one novel file. */
 function freshNoveltyLedger(): NoveltyLedger {
   return {
+    projectSnapshotId: "snapshot-fingerprint",
     snapshotFingerprint: FIXTURE_FINGERPRINT,
     baseOid: FIXTURE_BASE_OID,
     patchsetId: FIXTURE_PATCHSET_PIN,

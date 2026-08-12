@@ -90,6 +90,7 @@ async function setup(): Promise<{
   mainOid: string;
   featureOid: string;
   compositeId: string;
+  store: ProjectSnapshotStore;
 }> {
   const { root, storeDir, mainOid, featureOid } = repo();
   const store = new ProjectSnapshotStore(storeDir);
@@ -112,6 +113,7 @@ async function setup(): Promise<{
     mainOid,
     featureOid,
     compositeId: ensured.overlay.compositeId,
+    store,
   };
 }
 
@@ -129,6 +131,7 @@ describe("NoveltyLedgerReader — projectSnapshotId pin + merged effective base"
     if (!result.ok) return;
     // Classified against the merged snapshot at the feature OID, not the default base.
     expect(result.ledger.baseOid).toBe(s.featureOid);
+    expect(result.ledger.projectSnapshotId).toBe(s.compositeId);
   });
 
   it("a non-default base with the WRONG projectSnapshotId is refused as stale", async () => {
@@ -169,6 +172,24 @@ describe("NoveltyLedgerReader — projectSnapshotId pin + merged effective base"
     if (!result.ok) return;
     expect(result.ledger.baseOid).toBe(s.mainOid);
     expect(result.ledger.snapshotFingerprint).toBe(s.base.fingerprint);
+    expect(result.ledger.projectSnapshotId).toBe(s.base.fingerprint);
+  });
+
+  it("serves map, file, overview, symbol, and references from the same merged view", async () => {
+    const s = await setup();
+    const reader = new ProjectContextReader(s.store, s.overlayReader);
+    const result = reader.loadFresh(s.repoKey, s.featureOid);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.snapshot.manifest.baseOid).toBe(s.featureOid);
+    expect(result.snapshot.files.some((file) => file.path === "packages/a/src/index.ts")).toBe(true);
+    expect(reader.readProjectMap(s.repoKey, s.featureOid).ok).toBe(true);
+    expect(reader.readFileContext(s.repoKey, s.featureOid, "packages/a/src/index.ts").ok).toBe(true);
+    expect(reader.readFileOverview(s.repoKey, s.featureOid, "packages/a/src/index.ts").ok).toBe(
+      true,
+    );
+    expect(reader.readSymbolDefinition(s.repoKey, s.featureOid, { name: "extra" }).ok).toBe(true);
+    expect(reader.readReferences(s.repoKey, s.featureOid, { name: "extra" }).ok).toBe(true);
   });
 
   it("a default base with a MISMATCHED projectSnapshotId is refused as stale", async () => {

@@ -2,19 +2,25 @@ import { realpathSync } from "node:fs";
 import {
   type CanvasOpsBackend,
   escapePath,
+  type HarnessPort,
   type ReviewBackendState,
   reviewBackendCore,
 } from "@rennet/core";
 import type { Patchset, Review } from "@rennet/types";
 import { execaGit, type GitExec } from "./git-range-diff";
 import { knowledgeBackend } from "./knowledge-backend";
+import { enrichKnowledgeForRepo } from "./knowledge-enrichment";
 import { KnowledgeStore } from "./knowledge-store";
+import { resolveMapSource } from "./map-travel";
 import { noveltyBackend, type ResolvedNoveltyContext } from "./novelty-ledger-backend";
 import { NoveltyLedgerReader } from "./novelty-ledger-reader";
 import { projectContextBackend, type ResolvedRepoContext } from "./project-context-backend";
 import { ProjectContextReader } from "./project-context-reader";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
+import { resolveBaseRef } from "./project-snapshot-source";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
+import { SnapshotOverlayGenerator, SnapshotOverlayReader } from "./snapshot-overlay-generator";
+import { SnapshotOverlayStore } from "./snapshot-overlay-store";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The production `CanvasOpsBackend` composition root (issue #13 — live end-to-end
@@ -104,6 +110,9 @@ export interface LiveBackendDeps {
    * degradation to a typed `absent`, lenses unaffected). Defaults to 20000.
    */
   readonly maxSnapshotFiles?: number;
+  /** Optional model port; when present, missing knowledge is enriched in the background. */
+  readonly knowledgePort?: HarnessPort;
+  readonly onKnowledgeError?: (error: unknown) => void;
   /** Extra core state the composition root may supply (freshness, ledger, effect sink). */
   readonly core?: Omit<ReviewBackendState, "review" | "pipeline">;
 }
@@ -146,16 +155,20 @@ export async function createLiveCanvasOpsBackend(
   const repoKey = repoKeyOf(review);
   const maxFiles = deps.maxSnapshotFiles ?? DEFAULT_MAX_SNAPSHOT_FILES;
 
-  const outcome = await generateSnapshotOnOpen(review, baseOid, {
+  resolveMapSource(deps.store, repoKey, review.repositoryRoot);
+  const overlayStore = new SnapshotOverlayStore(deps.store);
+  const overlayReader = new SnapshotOverlayReader({ store: deps.store, overlayStore });
+  const outcome = await generateSnapshotOnOpen(review, baseOid, repoKey, {
     store: deps.store,
+    overlayStore,
     git,
     maxFiles,
   });
 
   // The fail-closed read gate is constructed regardless of the generation
   // outcome: with no fresh snapshot, every context read returns a typed refusal.
-  const reader = new ProjectContextReader(deps.store);
-  const noveltyReader = new NoveltyLedgerReader(reader);
+  const reader = new ProjectContextReader(deps.store, overlayReader);
+  const noveltyReader = new NoveltyLedgerReader(new ProjectContextReader(deps.store), overlayReader);
 
   // Knowledge (layer c): seed a committed set into the local store if present (a
   // committed set is never trusted blind — `discoverCommitted` validates first),
@@ -163,6 +176,17 @@ export async function createLiveCanvasOpsBackend(
   // absent set is an honest empty view; a review never blocks on knowledge.
   const knowledgeStore = new KnowledgeStore(deps.store);
   knowledgeStore.discoverCommitted(repoKey, review.repositoryRoot);
+  const currentBase = deps.store.loadManifest(repoKey);
+  if (!knowledgeStore.loadLocal(repoKey) && currentBase && deps.knowledgePort) {
+    void enrichKnowledgeForRepo({
+      reader: new ProjectContextReader(deps.store),
+      knowledgeStore,
+      port: deps.knowledgePort,
+      repoKey,
+      repoRoot: review.repositoryRoot,
+      baseOid: currentBase.baseOid,
+    }).catch((error) => deps.onKnowledgeError?.(error));
+  }
 
   const core = reviewBackendCore({ review, pipeline, ...deps.core });
   const contextPart = projectContextBackend(reader, resolveContextFor(review, repoKey));
@@ -190,14 +214,31 @@ export async function createLiveCanvasOpsBackend(
 async function generateSnapshotOnOpen(
   review: Review,
   baseOid: string,
-  opts: { store: ProjectSnapshotStore; git: GitExec; maxFiles: number },
+  repoKey: string,
+  opts: {
+    store: ProjectSnapshotStore;
+    overlayStore: SnapshotOverlayStore;
+    git: GitExec;
+    maxFiles: number;
+  },
 ): Promise<{ generated: boolean; reason?: string }> {
   const generator = new ProjectSnapshotGenerator({ git: opts.git, store: opts.store });
   try {
+    let defaultBase;
+    try {
+      defaultBase = await resolveBaseRef(review.repositoryRoot, { git: opts.git });
+    } catch {
+      defaultBase = await resolveBaseRef(review.repositoryRoot, {
+        git: opts.git,
+        explicitBaseRef: activePatchset(review).repository.baseRef,
+      });
+    }
     // Size gate BEFORE the build (and before any symbol extraction): a git ls-tree
     // at the pinned OID is cheap; refusing an oversize repo keeps open synchronous
     // without a runaway build.
-    const gathered = await generator.gather(review.repositoryRoot, { explicitBaseRef: baseOid });
+    const gathered = await generator.gather(review.repositoryRoot, {
+      explicitBaseRef: defaultBase.baseOid,
+    });
     if (gathered.inputs.files.length > opts.maxFiles) {
       return {
         generated: false,
@@ -207,7 +248,18 @@ async function generateSnapshotOnOpen(
     // Pin generation to the review's OWN base OID (a SHA resolves to itself), so
     // the stored `manifest.baseOid` equals what `resolveContext` requests and the
     // reader serves it fresh rather than refusing it as stale.
-    await generator.generate(review.repositoryRoot, { explicitBaseRef: baseOid });
+    if (!opts.store.loadManifestAt(repoKey, defaultBase.baseOid)) {
+      await generator.generate(review.repositoryRoot, { explicitBaseRef: defaultBase.baseOid });
+    }
+    if (baseOid !== defaultBase.baseOid) {
+      const overlays = new SnapshotOverlayGenerator({
+        store: opts.store,
+        overlayStore: opts.overlayStore,
+        git: opts.git,
+      });
+      const overlay = await overlays.ensureOverlay(review.repositoryRoot, repoKey, baseOid);
+      if (!overlay.ok) return { generated: false, reason: overlay.reason };
+    }
     return { generated: true };
   } catch (error) {
     return { generated: false, reason: error instanceof Error ? error.message : String(error) };

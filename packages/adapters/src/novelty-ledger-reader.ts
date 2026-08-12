@@ -75,7 +75,10 @@ export class NoveltyLedgerReader {
           },
         };
       }
-      return { ok: true, ledger: classifyNovelty(gated.snapshot, patchset) };
+      return {
+        ok: true,
+        ledger: classifyNovelty(gated.snapshot, patchset, gated.snapshot.manifest.fingerprint),
+      };
     }
 
     // A base map exists but is STALE at this OID ⇒ a non-default-base review.
@@ -89,7 +92,10 @@ export class NoveltyLedgerReader {
           failure: { reason: "stale", storedBaseOid: resolved.baseOid, requestedBaseOid },
         };
       }
-      return { ok: true, ledger: classifyNovelty(resolved.snapshot, patchset) };
+      return {
+        ok: true,
+        ledger: classifyNovelty(resolved.snapshot, patchset, resolved.projectSnapshotId),
+      };
     }
 
     // No merged source, or an absent/corrupt base map: surface the gate failure

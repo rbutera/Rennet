@@ -140,7 +140,8 @@ export interface EnrichKnowledgeDeps {
   readonly repoRoot: string;
   /** The resolved base OID the snapshot must be fresh at. */
   readonly baseOid: string;
-  readonly budget: InvocationBudget;
+  /** Optional ceiling; absent means the pass is deliberately uncapped. */
+  readonly budget?: InvocationBudget;
   readonly model?: string;
   readonly signal?: AbortSignal;
   readonly guidance?: string;
@@ -182,7 +183,7 @@ export async function enrichKnowledgeForRepo(
       deps.collector,
       "knowledge.initial",
     ),
-    budget: deps.budget,
+    ...(deps.budget === undefined ? {} : { budget: deps.budget }),
     ...(deps.maxRetries === undefined ? {} : { maxRetries: deps.maxRetries }),
     ...(deps.maxFiles === undefined ? {} : { maxFiles: deps.maxFiles }),
     ...(deps.guidance === undefined ? {} : { guidance: deps.guidance }),
@@ -242,7 +243,7 @@ export async function runKnowledgeDeltaForRepo(
       deps.collector,
       "knowledge.delta",
     ),
-    budget: deps.budget,
+    ...(deps.budget === undefined ? {} : { budget: deps.budget }),
     ...(deps.maxRetries === undefined ? {} : { maxRetries: deps.maxRetries }),
     ...(deps.maxFiles === undefined ? {} : { maxFiles: deps.maxFiles }),
     ...(deps.guidance === undefined ? {} : { guidance: deps.guidance }),

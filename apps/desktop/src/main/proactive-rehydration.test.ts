@@ -195,6 +195,44 @@ describe("proactive rehydration — end to end over a real git repo", () => {
     handle?.close();
   });
 
+  it("runs knowledge upkeep from the same coalesced advance without delaying structural completion", async () => {
+    const { root, storeDir, oid1, advance } = repoOnMain();
+    const store = new ProjectSnapshotStore(storeDir);
+    const generator = new ProjectSnapshotGenerator({ store });
+    await generator.generate(root, { explicitBaseRef: "main" });
+    const structuralDone = deferred();
+    const knowledgeDone = deferred();
+    const clock = fakeTimers();
+    const watcher = capturingWatch();
+    const calls: unknown[] = [];
+    const handle = await startRepoRehydration({
+      repoPath: root,
+      explicitBaseRef: "main",
+      store,
+      generator,
+      narrate: (event) => {
+        if (event.kind === "repo-done") structuralDone.resolve();
+      },
+      runKnowledgePass: async (input) => {
+        calls.push(input);
+        knowledgeDone.resolve();
+      },
+      watch: watcher.watch,
+      timers: clock.timers,
+    });
+
+    const oid2 = advance();
+    watcher.fire(`${sep}refs${sep}heads`);
+    clock.flush();
+    await structuralDone.promise;
+    await knowledgeDone.promise;
+
+    expect(calls).toEqual([
+      expect.objectContaining({ repoKey: handle?.repoKey, fromOid: oid1, toOid: oid2 }),
+    ]);
+    handle?.close();
+  });
+
   it("a never-built repo is not cold-built in the background (returns null, no watch)", async () => {
     const { root, storeDir } = repoOnMain();
     const store = new ProjectSnapshotStore(storeDir);

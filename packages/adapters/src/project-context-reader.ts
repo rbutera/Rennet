@@ -19,6 +19,7 @@ import {
   verifySnapshotIntegrity,
 } from "@rennet/core";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
+import type { MergedSnapshotSource } from "./snapshot-overlay-generator";
 
 // The gate-failure taxonomy and the two gated result unions are CANONICAL in
 // `@rennet/core` (alongside `ProjectMap` / `FileContextResult`) so the pure
@@ -65,7 +66,10 @@ export type LoadFreshResult =
   | { readonly ok: false; readonly failure: SnapshotGateFailure };
 
 export class ProjectContextReader {
-  constructor(private readonly store: ProjectSnapshotStore) {}
+  constructor(
+    private readonly store: ProjectSnapshotStore,
+    private readonly merged?: MergedSnapshotSource,
+  ) {}
 
   /**
    * The fail-closed gate: load + freshness + integrity + materialize. Returns a
@@ -89,6 +93,8 @@ export class ProjectContextReader {
       // pinned oid warm rather than evicting it (#246).
       const current = this.store.loadManifest(repoKey);
       if (current) {
+        const merged = this.merged?.resolveMerged(repoKey, requestedBaseOid);
+        if (merged?.ok) return { ok: true, snapshot: merged.snapshot };
         return {
           ok: false,
           failure: { reason: "stale", storedBaseOid: current.baseOid, requestedBaseOid },

@@ -239,6 +239,10 @@ export {
   type ResolvedNoveltyContext,
 } from "./novelty-ledger-backend";
 export {
+  type NoveltyLifecycleAdvanceResult,
+  NoveltyLifecycleReader,
+} from "./novelty-lifecycle-reader";
+export {
   type NoveltyLedgerFailure,
   NoveltyLedgerReader,
   type NoveltyLedgerResult,
@@ -322,6 +326,7 @@ export {
   type ProjectVisibility,
   snapshotStoreFor,
 } from "./project-snapshot-store";
+export { projectSnapshotPinResolver } from "./project-snapshot-pin";
 export { RepoWatcher } from "./repo-watcher";
 export {
   codexAskFixture,

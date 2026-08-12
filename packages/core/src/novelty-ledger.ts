@@ -362,7 +362,11 @@ function compareEntries(a: LedgerEntry, b: LedgerEntry): number {
  * function assumes that pairing and never does IO. Determinism is guaranteed by
  * the total {@link compareEntries} order over the emitted entries.
  */
-export function classifyNovelty(snapshot: LoadedSnapshot, patchset: Patchset): NoveltyLedger {
+export function classifyNovelty(
+  snapshot: LoadedSnapshot,
+  patchset: Patchset,
+  projectSnapshotId = snapshot.manifest.fingerprint,
+): NoveltyLedger {
   const knownTestPaths = new Set<string>(snapshot.tests.map((t: TestEntry) => t.path));
   const conventionPaths = new Set<string>(snapshot.conventions.map((c) => c.path));
 
@@ -384,6 +388,7 @@ export function classifyNovelty(snapshot: LoadedSnapshot, patchset: Patchset): N
   entries.sort(compareEntries);
 
   return {
+    projectSnapshotId,
     snapshotFingerprint: snapshot.manifest.fingerprint,
     baseOid: snapshot.manifest.baseOid,
     patchsetId: patchset.id,
