@@ -220,7 +220,7 @@ describe("proactive rehydration — end to end over a real git repo", () => {
     expect(generateSpy).not.toHaveBeenCalled();
   });
 
-  it("serves the new tip warm but evicts an OLDER-pinned reader — the #143 known limitation", async () => {
+  it("serves BOTH the new tip and an older-pinned reader warm after a background advance (#246)", async () => {
     const { root, storeDir, oid1, advance } = repoOnMain();
     const store = new ProjectSnapshotStore(storeDir);
     const generator = new ProjectSnapshotGenerator({ store });
@@ -251,14 +251,17 @@ describe("proactive rehydration — end to end over a real git repo", () => {
     clock.flush();
     await done.promise;
 
-    // After: the NEW tip is served warm (the value) — but the OLD-pinned read is now
-    // refused `stale` (the known limitation: a background advance DEGRADES an in-flight
-    // older-pinned review, never corrupts it). If a future fix makes both readable
-    // (OID-addressable manifests / lease-suppression), THIS assertion must change.
+    // #246 (was the #143 known limitation): a background advance no longer evicts an
+    // older-pinned reader. The manifest is now OID-addressable, so the advance ADDS a
+    // manifest at oid2 rather than replacing the one at oid1. BOTH reads are warm: the
+    // new tip AND the in-flight review still pinned to oid1. This assertion is the
+    // inversion the issue required — it used to assert oid1 was refused `stale`.
     expect(reader.loadFresh(repoKey, oid2).ok).toBe(true);
-    const stale = reader.loadFresh(repoKey, oid1);
-    expect(stale.ok).toBe(false);
-    if (!stale.ok) expect(stale.failure.reason).toBe("stale");
+    expect(reader.loadFresh(repoKey, oid1).ok).toBe(true);
+
+    // The CURRENT pointer still advances to the newest tip (unchanged): "what is newest"
+    // is oid2, while the per-OID pin keeps oid1 readable alongside it.
+    expect(store.loadManifest(repoKey)?.baseOid).toBe(oid2);
 
     handle?.close();
   });
