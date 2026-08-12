@@ -150,13 +150,18 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
   it("serves REAL snapshot-derived data for context.map / context.file / context.novelty", async () => {
     const repo = workspaceRepo();
     const { review, pipeline } = await reviewAt(repo.root, repo.commonDir, repo.oid1);
-    const { backend, snapshot } = await createLiveCanvasOpsBackend(review, pipeline, {
-      store: freshStore(),
-    });
+    const { backend, snapshot, contextManifest } = await createLiveCanvasOpsBackend(
+      review,
+      pipeline,
+      {
+        store: freshStore(),
+      },
+    );
 
     // The snapshot was generated at the review's pinned base OID.
     expect(snapshot.generated).toBe(true);
     expect(snapshot.baseOid).toBe(repo.oid1);
+    expect(contextManifest?.projectSnapshotId).toBeDefined();
 
     // context.map: a real structural map at exactly the pinned OID (never stale/absent).
     const mapResult = backend.projectMap();

@@ -28,19 +28,18 @@ import { SnapshotOverlayStore } from "./snapshot-overlay-store";
 
 export class NestedProjectContext {
   private readonly reader: ProjectContextReader;
+  private readonly overlays: SnapshotOverlayReader;
 
   constructor(
     private readonly snapshots: ProjectSnapshotStore,
     private readonly compositions: RepoCompositionStore,
     private readonly git: GitExec = execaGit,
   ) {
-    this.reader = new ProjectContextReader(
-      snapshots,
-      new SnapshotOverlayReader({
-        store: snapshots,
-        overlayStore: new SnapshotOverlayStore(snapshots),
-      }),
-    );
+    this.overlays = new SnapshotOverlayReader({
+      store: snapshots,
+      overlayStore: new SnapshotOverlayStore(snapshots),
+    });
+    this.reader = new ProjectContextReader(snapshots, this.overlays);
   }
 
   async composeRepo(
@@ -49,13 +48,17 @@ export class NestedProjectContext {
     pinnedOid: string,
   ): Promise<RepoComposition> {
     const manifest = this.snapshots.loadManifestAt(repoRecordId, pinnedOid);
-    if (!manifest)
+    const merged = manifest ? null : this.overlays.resolveMerged(repoRecordId, pinnedOid);
+    const projectSnapshotId =
+      manifest?.fingerprint ?? (merged?.ok ? merged.projectSnapshotId : null);
+    if (!projectSnapshotId) {
       throw new Error(`ProjectSnapshot unavailable for ${repoRecordId} at ${pinnedOid}`);
+    }
     return this.composeRepoAt(
       repoRoot,
       repoRecordId,
       pinnedOid,
-      manifest.fingerprint,
+      projectSnapshotId,
       new Set<string>(),
     );
   }
