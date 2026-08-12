@@ -522,6 +522,29 @@ describe("createDispatch — review.refine routing (the live producer, issue #19
   });
 });
 
+describe("createDispatch — review.reattach (issue #251, the honest pre-persistence floor)", () => {
+  it("returns the TRUTHFUL empty result when no thread store is wired (zero persisted, zero in-flight)", async () => {
+    // Not a fabricated set: with no ThreadStore/LiveTurnRegistry composed, there genuinely
+    // are no persisted threads and no tracked in-flight turns. The seam persistence plugs
+    // into. RED-proof: make the handler return a non-empty stub and this assertion fires.
+    const { dispatch } = harness();
+    const review = await capturedReview(dispatch);
+    const result = await dispatch("review.reattach", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+    });
+    expect(result).toEqual({ threads: [], inFlight: [] });
+  });
+
+  it("refuses review.reattach for a stale or unknown review id", async () => {
+    const { dispatch } = harness();
+    await capturedReview(dispatch);
+    await expect(
+      dispatch("review.reattach", { commandId: randomUUID(), reviewId: randomUUID() }),
+    ).rejects.toThrow(/Review not found/);
+  });
+});
+
 describe("createDispatch — review.draftPrBody routing (the live producer, issue #74)", () => {
   it("invokes the producer with the RESOLVED review and the exact drafting material, returning its result", async () => {
     const { dispatch, draftPrBodySpy } = harness();

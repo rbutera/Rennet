@@ -22,6 +22,7 @@ import {
   type ProjectDetail,
   type ProjectKind,
   type ProjectProcessEvent,
+  type ReattachResult,
   type ReviewAskStreamEvent,
   type ProjectVisibility,
   parseCommandInput,
@@ -260,6 +261,14 @@ export interface DispatchDeps {
     requirements?: readonly string[];
     decisions?: readonly string[];
   }) => Promise<PrBodyDraftResult>;
+  /**
+   * Reload the persisted conversation threads for a review, plus any turn still
+   * streaming in a surviving main process (issue #251). Optional so a composition with
+   * no thread store still constructs — dispatch then answers the TRUTHFUL empty result
+   * (there are genuinely zero persisted threads and zero tracked in-flight turns, NOT a
+   * fabricated set). This is the seam the `ThreadStore` + `LiveTurnRegistry` plug into.
+   */
+  readonly reattachThreads?: (input: { reviewId: string }) => Promise<ReattachResult>;
   /**
    * The symbol inspector port (Rai, wireframes #8): resolve one clicked identifier to
    * its definition + reference sites over the review's model-free symbolic surface.
@@ -732,6 +741,20 @@ export function createDispatch(
           askCodex: (question) => deps.reviewAsk.askCodex({ review, question }),
         });
         return parseCommandOutput(name, result);
+      }
+      // ── review.reattach: reload persisted threads + in-flight turns (issue #251) ─
+      case "review.reattach": {
+        // Reload the conversation threads persisted for this review and any turn still
+        // streaming in a surviving main process. Resolve the review ONCE (a stale/unknown
+        // id is refused, exactly like ask). With no thread store wired yet, the honest
+        // answer is genuinely empty — zero persisted threads, zero tracked in-flight
+        // turns — NOT a fabricated set; this is the seam persistence (§3/§5) plugs into.
+        const input = parseCommandInput(name, rawInput);
+        requireLatestReview(input.reviewId);
+        if (!deps.reattachThreads) {
+          return parseCommandOutput(name, { threads: [], inFlight: [] });
+        }
+        return parseCommandOutput(name, await deps.reattachThreads({ reviewId: input.reviewId }));
       }
       // ── Refine a rough note into a clean comment (issue #19) ───────────────────
       case "review.refine": {
