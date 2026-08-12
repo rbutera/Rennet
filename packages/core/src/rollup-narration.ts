@@ -67,7 +67,7 @@ export const NARRATION_CHUNK_EXCERPT_MAX_BYTES = 12_288;
 export const NARRATION_SINGLE_CHUNK_MAX_BYTES = 2_048;
 
 const UTF8_ENCODER = new TextEncoder();
-const UTF8_DECODER = new TextDecoder();
+const UTF8_DECODER = new TextDecoder("utf-8", { fatal: true });
 
 // ── The offered node set (pure) ──────────────────────────────────────────────
 
@@ -230,8 +230,16 @@ interface NarrationChunkEvidence {
 function truncateUtf8(text: string, maxBytes: number): { text: string; truncated: boolean } {
   const encoded = UTF8_ENCODER.encode(text);
   if (encoded.length <= maxBytes) return { text, truncated: false };
+  let end = Math.max(0, maxBytes);
+  while (end > 0) {
+    try {
+      return { text: UTF8_DECODER.decode(encoded.subarray(0, end)), truncated: true };
+    } catch {
+      end -= 1;
+    }
+  }
   return {
-    text: UTF8_DECODER.decode(encoded.subarray(0, Math.max(0, maxBytes))),
+    text: "",
     truncated: true,
   };
 }

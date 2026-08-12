@@ -238,7 +238,7 @@ describe("runRollupNarration — admission", () => {
       hunks: chunks.map((_chunk, index) => ({
         ...hunk(`h${index}`),
         filePath: `src/${index}.ts`,
-        addedLines: [`CHUNK_${index}_SENTINEL`, "å".repeat(4_000)],
+        addedLines: [`CHUNK_${index}_SENTINEL`, "🙂".repeat(4_000)],
       })),
       classifications: chunks.map((_chunk, index) => ({
         hunkId: `h${index}`,
