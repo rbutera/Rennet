@@ -118,6 +118,23 @@ describe("blast radius — codeowners overlap", () => {
     expect(of(paint, "codeowners")).toHaveLength(0);
   });
 
+  it("treats a literal `?` in a CODEOWNERS pattern as a literal, not a quantifier (#279)", () => {
+    // With `?` unescaped it compiles as a quantifier: `packages/ab?/**` becomes `ab?`
+    // = optional `b`, which WRONGLY matches `packages/a/x.ts` and (being the last rule to
+    // match it) shows @wrong as its owner. Escaped, `ab?` is a literal that only matches a
+    // path with a real `?` in it, so `packages/a/x.ts` keeps @team-a.
+    const rules: OwnershipRule[] = [
+      { pattern: "packages/a/**", owners: ["@team-a"] },
+      { pattern: "packages/ab?/**", owners: ["@wrong"] },
+      { pattern: "packages/c/**", owners: ["@team-c"] },
+    ];
+    const paint = run([file("packages/a/x.ts"), file("packages/c/y.ts")], rules);
+    const co = of(paint, "codeowners");
+    const forA = co.find((p) => p.target === "rennet:file/packages/a/x.ts");
+    expect(forA?.reason).toContain("@team-a");
+    expect(forA?.reason).not.toContain("@wrong");
+  });
+
   it("last matching rule wins (git CODEOWNERS semantics)", () => {
     const rules: OwnershipRule[] = [
       { pattern: "*", owners: ["@default"] },
@@ -173,9 +190,25 @@ describe("blast radius — safety-net", () => {
     expect(of(paint, "safety-net").some((p) => /skips or narrows/.test(p.reason ?? ""))).toBe(true);
   });
 
-  it("marks a CI config change", () => {
+  it("does NOT fire on a purely ADDITIVE CI change — adding coverage strengthens the net (#278)", () => {
+    // A CI change with only `+` lines adds a check; it does not weaken the safety net.
+    // The old code fired "changes CI configuration" under a "Weakens the safety net"
+    // headline — a direction the matcher never established.
     const paint = run([file(".github/workflows/ci.yml", { patch: hunk("  - run: echo hi") })]);
-    expect(of(paint, "safety-net").some((p) => /CI configuration/.test(p.reason ?? ""))).toBe(true);
+    expect(of(paint, "safety-net")).toHaveLength(0);
+  });
+
+  it("fires 'removes CI configuration' when a CI change REMOVES content (#278)", () => {
+    // A CI change that deletes a line is the weakening direction — and the wording says
+    // what was matched (removed), not the neutral "changed".
+    const paint = run([
+      file(".github/workflows/ci.yml", {
+        patch: "@@ -1,2 +1,1 @@\n   - run: pnpm test\n-  - run: pnpm typecheck",
+      }),
+    ]);
+    expect(
+      of(paint, "safety-net").some((p) => /removes CI configuration/.test(p.reason ?? "")),
+    ).toBe(true);
   });
 
   it("does NOT fire on an ordinary mock of a non-security module", () => {

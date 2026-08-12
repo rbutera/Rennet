@@ -32,6 +32,11 @@ function addedLines(file: PatchFile): string {
     .join("\n");
 }
 
+/** True when the patch REMOVES at least one line (a `-` hunk line, header excluded). */
+function hasRemovedLines(file: PatchFile): boolean {
+  return file.patch.split("\n").some((line) => line.startsWith("-") && !line.startsWith("--- "));
+}
+
 /** A repo-relative path that is a test file. */
 function isTestPath(path: string): boolean {
   return /(?:^|\/)__tests__\//.test(path) || /\.(test|spec)\.[cm]?[jt]sx?$/.test(path);
@@ -87,7 +92,12 @@ function codeownersRegExp(pattern: string): RegExp {
   if (anchored) body = body.slice(1);
   if (body.endsWith("/")) body = body.slice(0, -1);
   const escaped = body
-    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    // Escape every regex metacharacter that is NOT a glob wildcard this function
+    // translates. `?` is escaped as a LITERAL (issue #279): this is a minimal `*`/`**`
+    // translator, not a full gitignore engine, so a `?` in a CODEOWNERS path must
+    // compile to a literal `?` — never a regex quantifier that would match the wrong
+    // files and show a reviewer the wrong owning teams.
+    .replace(/[.+^${}()|[\]\\?]/g, "\\$&")
     .replace(/\*\*|\*/g, (match) => (match === "**" ? ".*" : "[^/]*"));
   const prefix = anchored ? "^" : "(?:^|/)";
   // The body must be followed by end-of-path OR a separator, so a directory
@@ -208,7 +218,15 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusPaint[] 
     if (mocksSecurityModule(added) || (hasMock(added) && SECURITY_HINT.test(file.path))) {
       reasons.push("adds a mock on a security/auth path");
     }
-    if (CI_PATH.test(file.path)) reasons.push("changes CI configuration");
+    // A CI change weakens the safety net only when it REMOVES content (issue #278): a
+    // purely additive CI change ADDS coverage, which strengthens the net, so it must not
+    // read as weakening. The wording is derived from what was matched — CI lines removed,
+    // not merely "CI changed".
+    // A CI change weakens the safety net only when it REMOVES content (issue #278): a
+    // purely additive CI change ADDS coverage, which strengthens the net, so it must not
+    // read as weakening. The wording is derived from what was matched — CI lines removed,
+    // not merely "CI changed".
+    if (CI_PATH.test(file.path) && hasRemovedLines(file)) reasons.push("removes CI configuration");
     if (LINT_DISABLE.test(added)) reasons.push("disables a linter or type check");
     if (reasons.length > 0) {
       paint.push(
