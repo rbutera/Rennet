@@ -116,6 +116,48 @@ function freshStore(): ProjectSnapshotStore {
 }
 
 describe("createLiveCanvasOpsBackend — the live end-to-end review backend", () => {
+  it("serves gitlink advances through the public live novelty accessor", async () => {
+    const repo = workspaceRepo();
+    const childA = "1234567890123456789012345678901234567890";
+    const childB = "abcdefabcdefabcdefabcdefabcdefabcdefabcd";
+    git(repo.root, "reset", "--hard", repo.oid1);
+    git(repo.root, "update-index", "--add", "--cacheinfo", `160000,${childA},vendor/tool`);
+    git(repo.root, "commit", "-q", "-m", "pin child A");
+    const baseOid = git(repo.root, "rev-parse", "HEAD");
+    git(repo.root, "update-index", "--cacheinfo", `160000,${childB},vendor/tool`);
+    git(repo.root, "commit", "-q", "-m", "pin child B");
+    const headOid = git(repo.root, "rev-parse", "HEAD");
+    const opened = await reviewAt(repo.root, repo.commonDir, baseOid);
+    const active = opened.review.patchsets[0];
+    if (!active) throw new Error("expected active patchset");
+    opened.review.patchsets = [
+      {
+        ...active,
+        repository: { ...active.repository, headOid },
+      },
+    ];
+
+    const { backend } = await createLiveCanvasOpsBackend(opened.review, opened.pipeline, {
+      store: freshStore(),
+    });
+    const novelty = backend.novelty();
+    expect(novelty.ok).toBe(true);
+    if (!novelty.ok) throw new Error("expected live novelty ledger");
+    expect(novelty.ledger.entries).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          classification: "extends",
+          unit: expect.objectContaining({
+            kind: "gitlink",
+            path: "vendor/tool",
+            oldOid: childA,
+            newOid: childB,
+          }),
+        }),
+      ]),
+    );
+  });
+
   it("reclassifies a live default-base review at the advanced default snapshot", async () => {
     const repo = workspaceRepo();
     git(repo.root, "reset", "--hard", repo.oid1);
@@ -127,6 +169,13 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
       noveltyLifecycle: lifecycle,
     });
     expect(opened.snapshot.generated).toBe(true);
+    expect(opened.contextManifest).toEqual(
+      expect.objectContaining({
+        repoRecordId: opened.snapshot.repoKey,
+        projectSnapshotId: expect.any(String),
+        freshness: { status: "current", staleMembers: [] },
+      }),
+    );
 
     git(repo.root, "reset", "--hard", repo.oid2);
     await new ProjectSnapshotGenerator({ store }).generate(repo.root, { explicitBaseRef: "main" });
@@ -142,14 +191,25 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
 
   it("serves REAL snapshot-derived data for context.map / context.file / context.novelty", async () => {
     const repo = workspaceRepo();
+    git(repo.root, "update-ref", "refs/remotes/origin/main", repo.oid2);
+    git(repo.root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main");
     const { review, pipeline } = await reviewAt(repo.root, repo.commonDir, repo.oid1);
-    const { backend, snapshot } = await createLiveCanvasOpsBackend(review, pipeline, {
-      store: freshStore(),
-    });
+    const store = freshStore();
+    const { backend, snapshot, contextManifest } = await createLiveCanvasOpsBackend(
+      review,
+      pipeline,
+      {
+        store,
+      },
+    );
 
     // The snapshot was generated at the review's pinned base OID.
     expect(snapshot.generated).toBe(true);
     expect(snapshot.baseOid).toBe(repo.oid1);
+    expect(contextManifest?.projectSnapshotId).toBeDefined();
+    expect(contextManifest?.projectSnapshotId).not.toBe(
+      store.loadManifest(snapshot.repoKey)?.fingerprint,
+    );
 
     // context.map: a real structural map at exactly the pinned OID (never stale/absent).
     const mapResult = backend.projectMap();

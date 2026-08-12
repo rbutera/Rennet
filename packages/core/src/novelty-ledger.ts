@@ -334,7 +334,11 @@ function classifySymbols(
   return entries;
 }
 
-const KIND_RANK: Record<"file" | "symbol", number> = { file: 0, symbol: 1 };
+const KIND_RANK: Record<"file" | "symbol" | "gitlink", number> = {
+  file: 0,
+  symbol: 1,
+  gitlink: 2,
+};
 const STATUS_RANK: Record<FileChangeStatus, number> = {
   added: 0,
   modified: 1,

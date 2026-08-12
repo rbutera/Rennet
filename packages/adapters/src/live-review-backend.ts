@@ -6,12 +6,13 @@ import {
   type ReviewBackendState,
   reviewBackendCore,
 } from "@rennet/core";
-import type { Patchset, Review } from "@rennet/types";
+import type { ContextManifest, Patchset, Review } from "@rennet/types";
 import { execaGit, type GitExec } from "./git-range-diff";
 import { knowledgeBackend } from "./knowledge-backend";
 import { enrichKnowledgeForRepo } from "./knowledge-enrichment";
 import { KnowledgeStore } from "./knowledge-store";
 import { resolveMapSource } from "./map-travel";
+import { NestedProjectContext } from "./nested-project-context";
 import { noveltyBackend, type ResolvedNoveltyContext } from "./novelty-ledger-backend";
 import { NoveltyLedgerReader } from "./novelty-ledger-reader";
 import type { NoveltyLifecycleRegistry } from "./novelty-lifecycle-registry";
@@ -21,6 +22,7 @@ import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
 import { projectSnapshotPinResolver } from "./project-snapshot-pin";
 import { type ResolvedBase, resolveBaseRef } from "./project-snapshot-source";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
+import { RepoCompositionStore } from "./repo-composition-store";
 import { SnapshotOverlayGenerator, SnapshotOverlayReader } from "./snapshot-overlay-generator";
 import { SnapshotOverlayStore } from "./snapshot-overlay-store";
 
@@ -117,6 +119,7 @@ export interface LiveBackendDeps {
   readonly resolveKnowledgePort?: () => Promise<HarnessPort | null>;
   readonly onKnowledgeError?: (error: unknown) => void;
   readonly noveltyLifecycle?: NoveltyLifecycleRegistry;
+  readonly compositionStore?: RepoCompositionStore;
   /** Extra core state the composition root may supply (freshness, ledger, effect sink). */
   readonly core?: Omit<ReviewBackendState, "review" | "pipeline">;
 }
@@ -137,6 +140,7 @@ export interface LiveSnapshotOutcome {
 export interface LiveReviewBackend {
   readonly backend: CanvasOpsBackend;
   readonly snapshot: LiveSnapshotOutcome;
+  readonly contextManifest?: ContextManifest;
 }
 
 const DEFAULT_MAX_SNAPSHOT_FILES = 20_000;
@@ -168,6 +172,21 @@ export async function createLiveCanvasOpsBackend(
     git,
     maxFiles,
   });
+  let contextManifest: ContextManifest | undefined;
+  if (outcome.generated) {
+    try {
+      const nested = new NestedProjectContext(
+        deps.store,
+        deps.compositionStore ?? new RepoCompositionStore(deps.store),
+        git,
+      );
+      contextManifest = nested.manifest(
+        await nested.composeRepo(review.repositoryRoot, repoKey, baseOid),
+      );
+    } catch (error) {
+      deps.onKnowledgeError?.(error);
+    }
+  }
 
   // The fail-closed read gate is constructed regardless of the generation
   // outcome: with no fresh snapshot, every context read returns a typed refusal.
@@ -176,13 +195,18 @@ export async function createLiveCanvasOpsBackend(
     new ProjectContextReader(deps.store),
     overlayReader,
   );
-  const initialNovelty = noveltyReader.classify(repoKey, patchset);
-  if (initialNovelty.ok && deps.noveltyLifecycle) {
+  let liveNovelty = await noveltyReader.classifyWithGitlinks(
+    review.repositoryRoot,
+    repoKey,
+    patchset,
+    git,
+  );
+  if (liveNovelty.ok && deps.noveltyLifecycle) {
     const followsDefault = deps.store.loadManifest(repoKey)?.baseOid === baseOid;
     deps.noveltyLifecycle.register(
       repoKey,
       review.id,
-      { ledger: initialNovelty.ledger, judgments: new Map() },
+      { ledger: liveNovelty.ledger, judgments: new Map() },
       async () => {
         const current = deps.store.loadManifest(repoKey);
         if (!current) return { ok: false, failure: { reason: "absent" } };
@@ -200,11 +224,18 @@ export async function createLiveCanvasOpsBackend(
               review.repositoryRoot,
               effectiveBaseOid,
             );
-        return noveltyReader.classify(repoKey, {
-          ...patchset,
-          repository: { ...patchset.repository, baseOid: effectiveBaseOid },
-          ...(projectSnapshotId ? { projectSnapshotId } : {}),
-        });
+        const refreshed = await noveltyReader.classifyWithGitlinks(
+          review.repositoryRoot,
+          repoKey,
+          {
+            ...patchset,
+            repository: { ...patchset.repository, baseOid: effectiveBaseOid },
+            ...(projectSnapshotId ? { projectSnapshotId } : {}),
+          },
+          git,
+        );
+        liveNovelty = refreshed;
+        return refreshed;
       },
     );
   }
@@ -233,7 +264,11 @@ export async function createLiveCanvasOpsBackend(
 
   const core = reviewBackendCore({ review, pipeline, ...deps.core });
   const contextPart = projectContextBackend(reader, resolveContextFor(review, repoKey));
-  const noveltyPart = noveltyBackend(noveltyReader, resolveNoveltyFor(review, repoKey));
+  const noveltyPart = noveltyBackend(
+    noveltyReader,
+    resolveNoveltyFor(review, repoKey),
+    () => liveNovelty,
+  );
   const knowledgePart = knowledgeBackend(
     reader,
     knowledgeStore,
@@ -245,6 +280,7 @@ export async function createLiveCanvasOpsBackend(
   return {
     backend,
     snapshot: { generated: outcome.generated, repoKey, baseOid, degradedReason: outcome.reason },
+    ...(contextManifest ? { contextManifest } : {}),
   };
 }
 

@@ -2415,6 +2415,96 @@ export interface BuiltSnapshot {
   readonly shards: ReadonlyMap<string, string>;
 }
 
+export type ScopeProvenance = "pnpm" | "nx" | "cargo" | "go-work";
+
+export interface ScopeTreeNode {
+  readonly id: string;
+  readonly name: string;
+  readonly root: string;
+  readonly parentId: string | null;
+  readonly provenance: readonly ScopeProvenance[];
+  readonly dependencies: readonly string[];
+}
+
+export interface ScopeTree {
+  readonly repoRecordId: string;
+  readonly rootId: string;
+  readonly nodes: readonly ScopeTreeNode[];
+  readonly contentDigest: string;
+}
+
+export interface RepoMapReference {
+  readonly repoRecordId: string;
+  readonly pinnedOid: string;
+  readonly projectSnapshotId: string;
+  readonly contentDigest: string;
+}
+
+export type RepoMapMember =
+  | { readonly status: "resolved"; readonly path: string; readonly reference: RepoMapReference }
+  | {
+      readonly status: "absent";
+      readonly path: string;
+      readonly repoRecordId: string;
+      readonly pinnedOid: string;
+    };
+
+export type CompositionStaleReason = "absent" | "oid-mismatch" | "digest-mismatch";
+
+export interface CompositionStaleMember {
+  readonly path: string;
+  readonly repoRecordId: string;
+  readonly reason: CompositionStaleReason;
+  readonly expectedOid: string;
+  readonly expectedDigest?: string;
+  readonly observedOid?: string;
+  readonly observedDigest?: string;
+}
+
+export type CompositionFreshness =
+  | { readonly status: "current"; readonly staleMembers: readonly [] }
+  | { readonly status: "stale"; readonly staleMembers: readonly CompositionStaleMember[] };
+
+export interface RepoComposition {
+  readonly repoRecordId: string;
+  readonly pinnedOid: string;
+  readonly projectSnapshotId: string;
+  readonly scopeTree: ScopeTree;
+  readonly submodules: readonly RepoMapMember[];
+  readonly contentDigest: string;
+  readonly freshness: CompositionFreshness;
+}
+
+export interface WorkspaceMember {
+  readonly repoRecordId: string;
+  readonly pinnedOid: string;
+  readonly projectSnapshotId: string;
+  readonly compositionDigest: string;
+}
+
+export interface CrossRepoEdge {
+  readonly sourceRepoRecordId: string;
+  readonly sourceScopeId: string;
+  readonly kind: "workspace" | "dependency" | "shared-contract";
+  readonly destination: RepoMapReference;
+}
+
+export interface WorkspaceContext {
+  readonly workspaceId: string;
+  readonly members: readonly WorkspaceMember[];
+  readonly edges: readonly CrossRepoEdge[];
+  readonly contentDigest: string;
+  readonly freshness: CompositionFreshness;
+}
+
+export interface ContextManifest {
+  readonly repoRecordId: string;
+  readonly projectSnapshotId: string;
+  readonly compositionDigest: string;
+  readonly freshness: CompositionFreshness;
+  readonly members: readonly RepoMapMember[];
+}
+
 // ── Base + overlay for a non-default base (#143, design §3) ───────────────────
 //
 // The default-branch ProjectSnapshot is the BASE. A review against a NON-DEFAULT
@@ -2529,7 +2619,7 @@ export type NoveltyClassification =
   | "conforms";
 
 /** The granularity a novelty entry is about. Narrow by design (#144). */
-export type NoveltyUnitKind = "file" | "symbol";
+export type NoveltyUnitKind = "file" | "symbol" | "gitlink";
 
 /** The changed unit a classification is attached to. */
 export interface NoveltyUnit {
@@ -2542,6 +2632,10 @@ export interface NoveltyUnit {
   readonly previousPath?: string;
   /** The exported symbol name — present iff `kind === "symbol"`. */
   readonly symbol?: string;
+  /** The child RepoRecord identity — present iff `kind === "gitlink"`. */
+  readonly repoRecordId?: string;
+  readonly oldOid?: string;
+  readonly newOid?: string;
 }
 
 /**
@@ -2580,6 +2674,13 @@ export type NoveltyMatch =
       readonly path: string;
       readonly matchedBy: string;
       readonly siblingTestCount: number;
+    }
+  | {
+      readonly kind: "gitlink-advance";
+      readonly path: string;
+      readonly repoRecordId: string;
+      readonly oldOid: string;
+      readonly newOid: string;
     };
 
 /**

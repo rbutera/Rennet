@@ -66,11 +66,12 @@ export interface NoveltyBackendPart {
 export function noveltyBackend(
   reader: NoveltyLedgerReader,
   resolve: () => ResolvedNoveltyContext,
+  read?: (context: ResolvedNoveltyContext) => NoveltyResult,
 ): NoveltyBackendPart {
   return {
     novelty(): NoveltyResult {
-      const { repoKey, patchset } = resolve();
-      return reader.classify(repoKey, patchset);
+      const context = resolve();
+      return read?.(context) ?? reader.classify(context.repoKey, context.patchset);
     },
   };
 }

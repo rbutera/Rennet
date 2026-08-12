@@ -228,6 +228,7 @@ export {
   previewVisibilitySwitch,
   type VisibilityPreview,
 } from "./map-visibility";
+export { NestedProjectContext } from "./nested-project-context";
 export {
   emptyNoiseReviewFixture,
   failedNoiseReviewFixture,
@@ -328,6 +329,12 @@ export {
   type ProjectVisibility,
   snapshotStoreFor,
 } from "./project-snapshot-store";
+export {
+  type DiscoveredGitlink,
+  discoverGitlinks,
+  discoverWorkspaceScopes,
+} from "./repo-composition-discovery";
+export { RepoCompositionStore } from "./repo-composition-store";
 export { RepoWatcher } from "./repo-watcher";
 export {
   codexAskFixture,

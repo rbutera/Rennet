@@ -85,6 +85,41 @@ function patchset(baseOid: string, files: PatchFile[]): Patchset {
 }
 
 describe("NoveltyLedgerReader — over a real generated snapshot (dogfood)", () => {
+  it("adds a changed parent-tree gitlink to the live Stage-1 ledger", async () => {
+    const { root, storeDir } = workspaceRepo();
+    const oidA = "1234567890123456789012345678901234567890";
+    const oidB = "abcdefabcdefabcdefabcdefabcdefabcdefabcd";
+    git(root, "update-index", "--add", "--cacheinfo", `160000,${oidA},vendor/tool`);
+    git(root, "commit", "-q", "-m", "pin A");
+    const baseOid = git(root, "rev-parse", "HEAD");
+    const store = new ProjectSnapshotStore(storeDir);
+    const manifest = (
+      await new ProjectSnapshotGenerator({ store }).generate(root, { explicitBaseRef: baseOid })
+    ).manifest;
+    git(root, "update-index", "--cacheinfo", `160000,${oidB},vendor/tool`);
+    git(root, "commit", "-q", "-m", "pin B");
+    const headOid = git(root, "rev-parse", "HEAD");
+    const input = patchset(baseOid, []);
+    input.repository.root = root;
+    input.repository.headOid = headOid;
+
+    const result = await new NoveltyLedgerReader(
+      new ProjectContextReader(store),
+    ).classifyWithGitlinks(root, manifest.repoKey, input);
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.ledger.entries).toEqual([
+      expect.objectContaining({
+        unit: expect.objectContaining({
+          kind: "gitlink",
+          path: "vendor/tool",
+          oldOid: oidA,
+          newOid: oidB,
+        }),
+      }),
+    ]);
+  });
+
   it("classifies novel / extends / conforms against the real base-branch snapshot", async () => {
     const { store, manifest } = await generate();
     const reader = new NoveltyLedgerReader(new ProjectContextReader(store));
