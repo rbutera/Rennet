@@ -176,7 +176,12 @@ export async function createLiveCanvasOpsBackend(
     new ProjectContextReader(deps.store),
     overlayReader,
   );
-  const initialNovelty = noveltyReader.classify(repoKey, patchset);
+  const initialNovelty = await noveltyReader.classifyWithGitlinks(
+    review.repositoryRoot,
+    repoKey,
+    patchset,
+    git,
+  );
   if (initialNovelty.ok && deps.noveltyLifecycle) {
     const followsDefault = deps.store.loadManifest(repoKey)?.baseOid === baseOid;
     deps.noveltyLifecycle.register(
@@ -200,11 +205,16 @@ export async function createLiveCanvasOpsBackend(
               review.repositoryRoot,
               effectiveBaseOid,
             );
-        return noveltyReader.classify(repoKey, {
-          ...patchset,
-          repository: { ...patchset.repository, baseOid: effectiveBaseOid },
-          ...(projectSnapshotId ? { projectSnapshotId } : {}),
-        });
+        return noveltyReader.classifyWithGitlinks(
+          review.repositoryRoot,
+          repoKey,
+          {
+            ...patchset,
+            repository: { ...patchset.repository, baseOid: effectiveBaseOid },
+            ...(projectSnapshotId ? { projectSnapshotId } : {}),
+          },
+          git,
+        );
       },
     );
   }

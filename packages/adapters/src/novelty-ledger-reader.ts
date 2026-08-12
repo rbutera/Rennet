@@ -1,6 +1,13 @@
-import { classifyNovelty, type NoveltyResult } from "@rennet/core";
+import {
+  appendGitlinkAdvances,
+  classifyNovelty,
+  type GitlinkEntry,
+  type NoveltyResult,
+} from "@rennet/core";
 import type { Patchset } from "@rennet/types";
+import { execaGit, type GitExec } from "./git-range-diff";
 import type { ProjectContextReader, SnapshotGateFailure } from "./project-context-reader";
+import { discoverGitlinks } from "./repo-composition-discovery";
 import type { MergedSnapshotSource } from "./snapshot-overlay-generator";
 
 /**
@@ -101,5 +108,29 @@ export class NoveltyLedgerReader {
     // No merged source, or an absent/corrupt base map: surface the gate failure
     // unchanged (identical to wave-1 when overlay support is not wired).
     return { ok: false, failure: gated.failure };
+  }
+
+  async classifyWithGitlinks(
+    repoRoot: string,
+    repoKey: string,
+    patchset: Patchset,
+    git: GitExec = execaGit,
+  ): Promise<NoveltyResult> {
+    const classified = this.classify(repoKey, patchset);
+    if (!classified.ok) return classified;
+    let previous: readonly GitlinkEntry[];
+    let current: readonly GitlinkEntry[];
+    try {
+      [previous, current] = await Promise.all([
+        discoverGitlinks(git, repoRoot, repoKey, patchset.repository.baseOid),
+        discoverGitlinks(git, repoRoot, repoKey, patchset.repository.headOid),
+      ]);
+    } catch {
+      return classified;
+    }
+    return {
+      ok: true,
+      ledger: appendGitlinkAdvances(classified.ledger, previous, current),
+    };
   }
 }

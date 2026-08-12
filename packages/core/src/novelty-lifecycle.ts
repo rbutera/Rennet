@@ -18,6 +18,9 @@ export function noveltyEntryKey(entry: LedgerEntry): string {
     unit.path,
     unit.previousPath ?? "",
     unit.symbol ?? "",
+    unit.repoRecordId ?? "",
+    unit.oldOid ?? "",
+    unit.newOid ?? "",
     unit.fileStatus,
   ]);
 }
