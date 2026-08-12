@@ -48,7 +48,11 @@ describe("FileThreadStore — persistence + round-trip (#251)", () => {
   it("a thread and its completed messages survive a fresh store over the same dir (a restart)", () => {
     const dir = tmpDir();
     const store = new FileThreadStore(dir);
-    store.upsertThread("r", { threadId: "th", anchor: ANCHOR, harnessVersionAtCreation: "cc 1.2.3" });
+    store.upsertThread("r", {
+      threadId: "th",
+      anchor: ANCHOR,
+      harnessVersionAtCreation: "cc 1.2.3",
+    });
     store.putMessage("r", "th", you("m0", "why fail open?"));
     store.putMessage("r", "th", complete("m1", "because the plan says so"));
     // A brand-new store instance over the same directory sees it — durability past the process.

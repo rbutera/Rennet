@@ -89,17 +89,17 @@ export {
   GLOBAL_CONFIG_VERSION,
 } from "./file-config-store";
 export {
-  defaultThreadStoreDir,
-  FileThreadStore,
-  recoverInterruptedTurns,
-  THREAD_STORE_VERSION,
-} from "./file-thread-store";
-export {
   deriveProjectDraft,
   FileProjectStore,
   type FileProjectStoreDeps,
   type ProjectDraft,
 } from "./file-project-store";
+export {
+  defaultThreadStoreDir,
+  FileThreadStore,
+  recoverInterruptedTurns,
+  THREAD_STORE_VERSION,
+} from "./file-thread-store";
 export {
   createGitShowFileRead,
   createVerificationFileReader,

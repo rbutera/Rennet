@@ -176,6 +176,10 @@ function harness(
     askOrchestrator: ReturnType<typeof vi.fn>;
     askCodex: ReturnType<typeof vi.fn>;
   };
+  threadPersistence: {
+    upsertThread: ReturnType<typeof vi.fn>;
+    putMessage: ReturnType<typeof vi.fn>;
+  };
   flaggedReviewSpy: ReturnType<typeof vi.fn>;
   refineCommentSpy: ReturnType<typeof vi.fn>;
   draftPrBodySpy: ReturnType<typeof vi.fn>;
@@ -219,6 +223,9 @@ function harness(
       }),
     ),
   };
+  // #251 persistence spies, so a test can assert the streaming ask writes a `streaming`
+  // placeholder BEFORE the turn and the durable answer AFTER (the crash-recovery seam).
+  const threadPersistence = { upsertThread: vi.fn(), putMessage: vi.fn() };
   const flaggedReviewSpy = vi.fn<(review: Review, deepReview: boolean) => Promise<FlaggedReview>>(
     async () => ({
       status: "ok",
@@ -298,6 +305,7 @@ function harness(
     flaggedReview: flaggedReviewSpy,
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
     reviewAsk,
+    threadPersistence,
     refineComment: refineCommentSpy,
     draftPrBody: draftPrBodySpy,
     symbolLookup: opts.symbolLookup,
@@ -314,6 +322,7 @@ function harness(
     publishPort,
     publishConsent,
     reviewAsk,
+    threadPersistence,
     flaggedReviewSpy,
     refineCommentSpy,
     draftPrBodySpy,
@@ -1670,7 +1679,12 @@ describe("createDispatch — review.ask token streaming (issue #251)", () => {
   async function openReview() {
     const h = harness();
     const review = await capturedReview(h.dispatch);
-    return { dispatch: h.dispatch, reviewAsk: h.reviewAsk, review };
+    return {
+      dispatch: h.dispatch,
+      reviewAsk: h.reviewAsk,
+      threadPersistence: h.threadPersistence,
+      review,
+    };
   }
 
   it("streams the orchestrator's tokens as ask-delta, then a terminal ask-complete carrying the SAME answer", async () => {
@@ -1762,6 +1776,49 @@ describe("createDispatch — review.ask token streaming (issue #251)", () => {
     // No threadId/turnId → no stream, no onDelta handed to the port, no events.
     expect(events).toEqual([]);
     expect(onDeltaSeen).toEqual([false]);
+  });
+
+  it("persists a STREAMING placeholder BEFORE the turn and the durable answer AFTER (crash-recovery seam, criterion 3)", async () => {
+    const { dispatch, reviewAsk, threadPersistence, review } = await openReview();
+    reviewAsk.askOrchestrator.mockImplementationOnce(async ({ onDelta }) => {
+      // ⭐ WHILE the turn is in flight, the streaming placeholder must ALREADY be on disk —
+      // that ordering is the whole point: a kill here recovers it interrupted. If the
+      // handler persisted the placeholder AFTER the await, this assertion reddens.
+      const streamingWrites = threadPersistence.putMessage.mock.calls.filter(
+        ([arg]) => (arg as { message: { status?: string } }).message.status === "streaming",
+      );
+      expect(streamingWrites).toHaveLength(1);
+      onDelta?.("hi");
+      return { model: "Orchestrator · Claude", answer: "the whole answer" };
+    });
+    await dispatch(
+      "review.ask",
+      {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        mode: "orchestrator",
+        question: "why?",
+        threadId: "th",
+        turnId: "tn",
+        anchor: { kind: "chunk", label: "src/a.ts", key: "chunk|src/a.ts" },
+        turnBody: "why fail open?",
+      },
+      { emitAskStream: () => undefined },
+    );
+    expect(threadPersistence.upsertThread).toHaveBeenCalledTimes(1);
+    const messages = threadPersistence.putMessage.mock.calls.map(
+      ([arg]) =>
+        (arg as { message: { id: string; author: string; body: string; status?: string } }).message,
+    );
+    // The reviewer's question persisted as the "you" message.
+    expect(messages.some((m) => m.author === "you" && m.body === "why fail open?")).toBe(true);
+    // The orchestrator turn: a streaming placeholder (empty body) then REPLACED by the
+    // durable answer under the SAME id — not two separate messages.
+    const orch = messages.filter((m) => m.id === "tn::orchestrator");
+    expect(orch[0]?.status).toBe("streaming");
+    expect(orch[0]?.body).toBe("");
+    expect(orch.at(-1)?.status).toBeUndefined();
+    expect(orch.at(-1)?.body).toBe("the whole answer");
   });
 });
 

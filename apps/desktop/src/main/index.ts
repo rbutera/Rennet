@@ -32,6 +32,7 @@ import {
   execaGit,
   FileConfigStore,
   FileProjectStore,
+  FileThreadStore,
   type GhRunner,
   GitCaptureAdapter,
   GitCheckpointStore,
@@ -1252,6 +1253,10 @@ app.whenReady().then(async () => {
     resolveClaudePath: async () => (await getClaudeHarness()).discovery.chosen?.path ?? null,
     env: process.env,
   });
+  // #251: the durable conversation store (~/.rennet/threads). Backs both re-attach
+  // (reload persisted threads, crash-recovered) and persistence (write a streaming
+  // placeholder that recovers as interrupted if this process dies mid-answer).
+  const threadStore = new FileThreadStore();
   dispatch = createDispatch({
     service,
     allowedRoots,
@@ -1504,6 +1509,21 @@ app.whenReady().then(async () => {
         });
       },
     }),
+    // #251 re-attach: reload the conversation threads persisted for a review, crash-
+    // recovered (a turn left streaming by a dead process reads back interrupted). No
+    // live in-flight registry yet, so `inFlight` is empty — the main-alive live-reattach
+    // case is a follow-on; the crash/kill → interrupted path is what this closes.
+    reattachThreads: async ({ reviewId }) => ({
+      threads: threadStore.loadThreads(reviewId),
+      inFlight: [],
+    }),
+    // #251 persistence: the write side of durability — a streaming placeholder on disk
+    // before the turn runs (recovers as interrupted on a kill), replaced by the durable
+    // answer on completion.
+    threadPersistence: {
+      upsertThread: (input) => threadStore.upsertThread(input.reviewId, input),
+      putMessage: (input) => threadStore.putMessage(input.reviewId, input.threadId, input.message),
+    },
     // The handoff-bundle composer (issue #72, M24): the light-tier authoring step over
     // the mechanical bundle. Council-routed over the SAME probes the refiner uses
     // (claude adapter + codex executor); one batched turn, exec-free (read-only). No

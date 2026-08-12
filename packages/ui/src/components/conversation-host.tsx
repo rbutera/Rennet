@@ -319,10 +319,12 @@ export function ConversationHost({
         mode,
         question,
         // #251: identify the thread + turn and carry the anchor, so main persists the
-        // thread and streams the turn's tokens back under these ids.
+        // thread and streams the turn's tokens back under these ids. `turnBody` is the
+        // raw question (not the folded transcript), persisted as the "you" message.
         threadId,
         turnId,
         anchor: thread.anchor,
+        turnBody: body,
       });
       // Race a UI timeout so a turn that never settles cannot leave the thread stuck.
       const timeout = new Promise<never>((_resolve, reject) => {

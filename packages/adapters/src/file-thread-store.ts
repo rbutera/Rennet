@@ -100,7 +100,9 @@ export class FileThreadStore {
       return { status: "malformed", file: empty };
     }
     const result = threadFileSchema.safeParse(parsed);
-    return result.success ? { status: "ok", file: result.data } : { status: "malformed", file: empty };
+    return result.success
+      ? { status: "ok", file: result.data }
+      : { status: "malformed", file: empty };
   }
 
   /**

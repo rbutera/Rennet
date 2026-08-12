@@ -1835,6 +1835,9 @@ export const commandDefinitions = {
       threadId: z.string().min(1).optional(),
       turnId: z.string().min(1).optional(),
       anchor: conversationAnchorSchema.optional(),
+      // The reviewer's RAW question for this turn (not the folded transcript), persisted
+      // as the "you" message so a re-attached thread shows what was asked. #251.
+      turnBody: z.string().optional(),
     }),
     output: askReviewResultSchema,
   },
