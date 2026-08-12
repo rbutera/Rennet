@@ -65,11 +65,14 @@ export interface OrchestratorTurnAvailable {
 
 export type OrchestratorTurnOutcome = OrchestratorTurnAvailable | OrchestratorTurnUnavailable;
 
-/** Drive ONE orchestrator turn for a live review + built pipeline + question. */
+/** Drive ONE orchestrator turn for a live review + built pipeline + question.
+ *  `onDelta` (issue #251) streams each token as it arrives; omit it for a
+ *  non-streaming turn that only reads the final text. */
 export type OrchestratorTurnRunner = (
   review: Review,
   pipeline: ReviewPipelineResult,
   question: string,
+  onDelta?: (text: string) => void,
 ) => Promise<OrchestratorTurnOutcome>;
 
 /**
@@ -79,7 +82,7 @@ export type OrchestratorTurnRunner = (
  * `unavailable` rather than crashing (mirroring the pipeline's honest degradation).
  */
 export function createOrchestratorTurnRunner(deps: OrchestratorRunnerDeps): OrchestratorTurnRunner {
-  return async (review, pipeline, question) => {
+  return async (review, pipeline, question, onDelta) => {
     const claudePath = await deps.resolveClaudePath();
     if (!claudePath) {
       return {
@@ -103,6 +106,7 @@ export function createOrchestratorTurnRunner(deps: OrchestratorRunnerDeps): Orch
       ...(deps.env ? { env: deps.env } : {}),
       ...(deps.loadQuery ? { loadQuery: deps.loadQuery } : {}),
       ...(deps.loadSdk ? { loadSdk: deps.loadSdk } : {}),
+      ...(onDelta ? { onDelta } : {}),
     });
     return { available: true, result };
   };

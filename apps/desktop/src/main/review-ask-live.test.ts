@@ -83,7 +83,8 @@ describe("createLiveReviewAskPorts — askOrchestrator", () => {
 
     // The pipeline is built over the SAME review dispatch resolved (never re-fetched).
     expect(built).toHaveBeenCalledWith(r);
-    expect(turn).toHaveBeenCalledWith(r, pipeline, "seconds or ms?");
+    // The 4th arg is the #251 onDelta sink — undefined here (this ask supplies none).
+    expect(turn).toHaveBeenCalledWith(r, pipeline, "seconds or ms?", undefined);
     expect(answer).toEqual({
       model: ORCHESTRATOR_ASK_LABEL,
       answer: "the retry-after is in milliseconds",
