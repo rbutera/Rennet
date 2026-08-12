@@ -182,6 +182,74 @@ describe("blast radius — safety-net", () => {
     const paint = run([file("src/format.test.ts", { patch: hunk("vi.mock('../format');") })]);
     expect(of(paint, "safety-net").some((p) => /mock/.test(p.reason ?? ""))).toBe(false);
   });
+
+  it("binds the security match to the mocked SPECIFIER, not a stray word in the hunk (F5)", () => {
+    // The mocked module is `../format` (not security). The word "token" appears
+    // independently, on an UNRELATED line. The old code searched the whole added text
+    // for a security word, so this false-fired "a mock on a security/auth path".
+    // Red-proof: revert to `SECURITY_HINT.test(added)` and this reddens.
+    const paint = run([
+      file("src/checkout.ts", {
+        patch: hunk("vi.mock('../format');", "const token = readToken();"),
+      }),
+    ]);
+    expect(of(paint, "safety-net").some((p) => /mock on a security/.test(p.reason ?? ""))).toBe(
+      false,
+    );
+  });
+
+  it("still fires when the mocked SPECIFIER itself is security-related", () => {
+    // Control that the F5 fix did not simply delete the signal: a mock of an auth
+    // module fires on the specifier alone, no security word needed elsewhere.
+    const paint = run([file("src/checkout.ts", { patch: hunk("vi.mock('../auth/session');") })]);
+    expect(of(paint, "safety-net").some((p) => /mock on a security/.test(p.reason ?? ""))).toBe(
+      true,
+    );
+  });
+
+  it("does NOT count @ts-expect-error as disabling a check (it asserts one, F5)", () => {
+    // `@ts-expect-error` is the OPPOSITE of a disable: it fails if the error goes away.
+    // Red-proof: put `expect-error` back in LINT_DISABLE and this reddens.
+    const paint = run([file("src/x.ts", { patch: hunk("// @ts-expect-error not yet typed") })]);
+    expect(of(paint, "safety-net").some((p) => /disables a linter/.test(p.reason ?? ""))).toBe(
+      false,
+    );
+  });
+
+  it("still counts @ts-ignore and @ts-nocheck as disabling a check", () => {
+    const ignore = run([file("src/x.ts", { patch: hunk("// @ts-ignore legacy") })]);
+    expect(of(ignore, "safety-net").some((p) => /disables a linter/.test(p.reason ?? ""))).toBe(
+      true,
+    );
+    const nocheck = run([file("src/y.ts", { patch: hunk("// @ts-nocheck") })]);
+    expect(of(nocheck, "safety-net").some((p) => /disables a linter/.test(p.reason ?? ""))).toBe(
+      true,
+    );
+  });
+
+  it("every assessed reason is a single line — no newline (F6 one-line guarantee)", () => {
+    // A blast-radius mark's reason renders inline beside the amber; a multi-line reason
+    // would break that. Fire several signals at once and assert each reason is one line.
+    // Red-proof: append "\n" to any assessed reason string and this reddens.
+    const paint = run(
+      [
+        file("db/migrations/x.sql", { patch: hunk("DROP TABLE t;") }),
+        file("packages/a/gone.ts", { status: "deleted", deletions: 4 }),
+        // A safety-net trigger, so the safety-net reason (where multi-signal joining
+        // happens) is exercised by this guard, not just the single-signal reasons.
+        file("packages/b/y.ts", { patch: hunk("// @ts-ignore legacy") }),
+      ],
+      [
+        { pattern: "packages/a/**", owners: ["@team-a"] },
+        { pattern: "packages/b/**", owners: ["@team-b"] },
+      ],
+    );
+    const assessed = paint.filter((p) => p.assessed !== false);
+    // Cover every assessed signal kind, including safety-net.
+    expect(new Set(assessed.map((p) => p.signal)).size).toBeGreaterThan(1);
+    expect(assessed.some((p) => p.signal === "safety-net")).toBe(true);
+    expect(assessed.every((p) => !(p.reason ?? "").includes("\n"))).toBe(true);
+  });
 });
 
 // ── the honesty property: deferred signals are visibly NOT ASSESSED ───────────

@@ -45,9 +45,33 @@ const CI_PATH =
   /(?:^|\/)\.github\/workflows\/|(?:^|\/)\.gitlab-ci\.ya?ml$|(?:^|\/)Jenkinsfile$|(?:^|\/)\.circleci\//;
 const SECURITY_HINT =
   /\b(auth|authn|authz|security|session|token|crypto|password|login|permission|rbac|acl)\b/i;
-const LINT_DISABLE = /\b(?:eslint-disable|biome-ignore)\b|@ts-(?:ignore|nocheck|expect-error)\b/;
+// The ts-expect-error directive is DELIBERATELY excluded: unlike ts-ignore /
+// ts-nocheck (which silence a check), it ASSERTS an error must exist and FAILS if
+// the error goes away — the opposite of weakening the safety net, so it must not be
+// counted. (Written without the leading "@" so biome's noTsIgnore does not rewrite
+// this prose into a live directive.)
+const LINT_DISABLE = /\b(?:eslint-disable|biome-ignore)\b|@ts-(?:ignore|nocheck)\b/;
 const TEST_SKIP = /\b(?:it|test|describe)\.(?:skip|only)\b|\bx(?:it|describe)\s*\(/;
+// A `vi.mock(...)`/`jest.mock(...)` call, capturing the mocked module SPECIFIER —
+// the security match binds to THIS, not to the whole added text, so an unrelated
+// security word elsewhere in the hunk (a `token` local beside a `vi.mock('../format')`)
+// can never render as "a mock on a security/auth path".
+const MOCK_SPECIFIER = /\b(?:vi|jest)\.mock\s*\(\s*['"]([^'"]+)['"]/g;
 const MOCK_CALL = /\b(?:vi|jest)\.mock\s*\(/;
+
+/** True when the added text contains any `vi.mock`/`jest.mock` call. */
+function hasMock(added: string): boolean {
+  return MOCK_CALL.test(added);
+}
+
+/** True when the added text mocks a module whose SPECIFIER looks security-related. */
+function mocksSecurityModule(added: string): boolean {
+  for (const match of added.matchAll(MOCK_SPECIFIER)) {
+    const specifier = match[1];
+    if (specifier && SECURITY_HINT.test(specifier)) return true;
+  }
+  return false;
+}
 
 /**
  * Convert a CODEOWNERS/gitignore-style pattern to a path regex. `/` anchors to the
@@ -178,7 +202,10 @@ export function computeBlastRadius(input: BlastRadiusInput): BlastRadiusPaint[] 
     const reasons: string[] = [];
     if (file.status === "deleted" && isTestPath(file.path)) reasons.push("deletes a test file");
     if (TEST_SKIP.test(added)) reasons.push("skips or narrows tests (.skip/.only/xit)");
-    if (MOCK_CALL.test(added) && (SECURITY_HINT.test(file.path) || SECURITY_HINT.test(added))) {
+    // Fire only for a mock whose target is security-related: the mocked module
+    // specifier looks like a security path, OR the file adding the mock is itself
+    // one. Never on a security word that merely co-occurs elsewhere in the hunk.
+    if (mocksSecurityModule(added) || (hasMock(added) && SECURITY_HINT.test(file.path))) {
       reasons.push("adds a mock on a security/auth path");
     }
     if (CI_PATH.test(file.path)) reasons.push("changes CI configuration");

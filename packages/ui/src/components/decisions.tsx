@@ -168,6 +168,7 @@ function Cohort({
 
 export function DecisionsCanvas({
   canvas,
+  overlayOn,
   expandedCohorts,
   onToggleCohort,
   onApproveScope,
@@ -175,6 +176,13 @@ export function DecisionsCanvas({
   runStatus = { status: "ok" },
 }: {
   canvas: Canvas;
+  /**
+   * The blast-radius overlay toggle (issue #35). Amber paint FOLLOWS the toggle,
+   * exactly like the not-assessed chips: off ⇒ no amber, so the invariant "if you can
+   * see amber, you can see what was not assessed" holds structurally (both are gated
+   * on the same toggle). Absent ⇒ off (a host/test that never engages the overlay).
+   */
+  overlayOn?: boolean;
   expandedCohorts: Record<string, boolean>;
   onToggleCohort(cohortKey: string): void;
   onApproveScope(scope: ApprovalScope, type: DispositionType): void;
@@ -204,8 +212,10 @@ export function DecisionsCanvas({
     );
   }
   const coverage = canvasCoverage(canvas);
-  const painted = paintedChunkIds(canvas);
-  const blastReasons = blastReasonsByChunk(canvas);
+  // Amber follows the overlay toggle (#35 / F1): off ⇒ no painted chunks, so the
+  // cohort amber and the not-assessed chips appear and disappear together.
+  const painted = overlayOn ? paintedChunkIds(canvas) : new Set<string>();
+  const blastReasons = overlayOn ? blastReasonsByChunk(canvas) : new Map<string, string>();
   const byKey = new Map(canvas.layers.analysis.elements.map((el) => [el.elementKey, el]));
   // A review that RAN and discerned no decisions — honestly empty, distinct from
   // the failed-runner banner above.

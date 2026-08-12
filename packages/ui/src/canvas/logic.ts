@@ -423,6 +423,24 @@ export function blastReasonsByChunk(canvas: Canvas): Map<string, string> {
   return byChunk;
 }
 
+/**
+ * The substrate chunk id an element anchor lives in, for resolving blast-radius
+ * paint on a FLAT canvas (sequence) the SAME way the decisions canvas does: a
+ * `chunk/<id>` anchor names its chunk directly; a `hunk/<id>` anchor resolves
+ * through its containing chunk. Anything else (a `doc/<id>` anchor on spec/claims/
+ * noise, an unknown id) has no code chunk and returns undefined — so blast amber,
+ * which is file/chunk-grained, never lands on a document element. A chunk id absent
+ * from the substrate (a proposal chunk) is returned as-is and simply matches no
+ * painted chunk, so it never false-paints.
+ */
+export function anchorChunkId(canvas: Canvas, anchor: string): string | undefined {
+  const parsed = parseAnchor(anchor);
+  if (!parsed.ok) return undefined;
+  if (parsed.anchor.kind === "chunk") return parsed.anchor.id;
+  if (parsed.anchor.kind === "hunk") return hunkChunkMap(canvas).get(parsed.anchor.id);
+  return undefined;
+}
+
 /** The deferred (NOT ASSESSED) signals on this canvas, surfaced as visible chips. */
 export function blastNotAssessed(canvas: Canvas): { signal: string; reason: string }[] {
   return canvas.overlay

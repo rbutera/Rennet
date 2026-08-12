@@ -411,6 +411,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  flex-wrap: wrap;
   gap: 12px;
   padding: 9px 14px;
   border: 1px solid var(--raised-border);
@@ -421,6 +422,19 @@
 .flat-element.is-blast {
   border-color: var(--amber-line);
   background: var(--amber-surface);
+}
+/* The amber blast badge + its one-line reason on a flat (sequence) element (#35). */
+.flat-element-blast {
+  color: var(--amber);
+  font: 700 10px / 1.2 var(--sans);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.flat-element-blast-reason {
+  flex-basis: 100%;
+  margin: 0;
+  color: var(--amber);
+  font-size: 12px;
 }
 .flat-element-select {
   display: flex;

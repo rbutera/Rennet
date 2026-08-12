@@ -1003,6 +1003,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         ) : angle === "decisions" ? (
           <DecisionsCanvas
             canvas={canvas}
+            overlayOn={overlayOn}
             expandedCohorts={expandedCohorts}
             onToggleCohort={(cohortKey) => store.getState().toggleCohort(cohortKey)}
             onApproveScope={approveScope}
@@ -1012,6 +1013,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         ) : (
           <FlatCanvas
             canvas={canvas}
+            overlayOn={overlayOn}
             onApproveScope={approveScope}
             onSelectElement={selectElement}
           />

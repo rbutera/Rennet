@@ -69,10 +69,11 @@ describe("DecisionsCanvas — roll-up, honest counts, no truncation", () => {
     expect(countOccurrences(html, 'class="decision"')).toBe(120);
   });
 
-  it("paints the blast-radius cohort amber (overlay, not a queue)", () => {
+  it("paints the blast-radius cohort amber when the overlay is ON (overlay, not a queue)", () => {
     const html = renderToStaticMarkup(
       <DecisionsCanvas
         canvas={canvas}
+        overlayOn={true}
         expandedCohorts={{}}
         onToggleCohort={noop}
         onApproveScope={noop}
@@ -82,19 +83,43 @@ describe("DecisionsCanvas — roll-up, honest counts, no truncation", () => {
     // c8 is painted in the fixture overlay.
     expect(html).toContain("cohort is-blast");
   });
+
+  it("paints NO amber when the overlay is OFF — it follows the toggle (#35 F1)", () => {
+    const html = renderToStaticMarkup(
+      <DecisionsCanvas
+        canvas={canvas}
+        overlayOn={false}
+        expandedCohorts={{}}
+        onToggleCohort={noop}
+        onApproveScope={noop}
+        onSelectElement={noop}
+      />,
+    );
+    expect(html).not.toContain("cohort is-blast");
+  });
 });
 
 describe("FlatCanvas — empty-but-honest", () => {
   it("says an empty claims angle is empty, not unchecked", () => {
     const html = renderToStaticMarkup(
-      <FlatCanvas canvas={demoCanvases().claims} onApproveScope={noop} onSelectElement={noop} />,
+      <FlatCanvas
+        canvas={demoCanvases().claims}
+        overlayOn={false}
+        onApproveScope={noop}
+        onSelectElement={noop}
+      />,
     );
     expect(html).toContain("empty, not unchecked");
   });
 
   it("lists spec requirements", () => {
     const html = renderToStaticMarkup(
-      <FlatCanvas canvas={demoCanvases().spec} onApproveScope={noop} onSelectElement={noop} />,
+      <FlatCanvas
+        canvas={demoCanvases().spec}
+        overlayOn={false}
+        onApproveScope={noop}
+        onSelectElement={noop}
+      />,
     );
     expect(html).toContain("The review survives a force-push");
   });

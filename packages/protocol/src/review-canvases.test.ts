@@ -160,4 +160,52 @@ describe("review.canvases command", () => {
       }),
     ).toThrow();
   });
+
+  // ── blast-radius overlay paint (issue #35) ──────────────────────────────────
+  // The blast paint's OPTIONAL fields (`signal`/`reason`/`assessed`) are declared by
+  // hand in the schema because a plain z.object STRIPS any unlisted key at the IPC
+  // boundary. If they are ever dropped, a deterministic paint arrives with only its
+  // `target` — the amber renders with no signal label and no reason, and a DEFERRED
+  // (not-assessed) paint arrives looking assessed, so "not measured" reads as "clear".
+  // The pre-existing overlay:[] round-trip could never have caught that (it carries no
+  // paint). These assertions go red if any of the three fields is dropped from the schema.
+  it("preserves a complete ASSESSED blast paint across the boundary (#35)", () => {
+    const canvases = canvasSet();
+    canvases.sequence.overlay = [
+      {
+        target: "rennet:file/packages/a/gone.ts",
+        signal: "deletions",
+        reason: "File deleted (12 lines); anything importing it breaks.",
+        assessed: true,
+      },
+    ];
+    const output = parseCommandOutput("review.canvases", { canvases, elementDiffs: {} });
+    expect(output.canvases.sequence.overlay).toEqual([
+      {
+        target: "rennet:file/packages/a/gone.ts",
+        signal: "deletions",
+        reason: "File deleted (12 lines); anything importing it breaks.",
+        assessed: true,
+      },
+    ]);
+  });
+
+  it("preserves a complete DEFERRED (not-assessed) blast paint across the boundary (#35)", () => {
+    const canvases = canvasSet();
+    canvases.decisions.overlay = [
+      {
+        target: "rennet:review/blast-radius",
+        signal: "fan-in",
+        reason: "Fan-in not assessed — the reference index is not wired into this overlay yet.",
+        assessed: false,
+      },
+    ];
+    const output = parseCommandOutput("review.canvases", { canvases, elementDiffs: {} });
+    const paint = output.canvases.decisions.overlay[0];
+    // `assessed:false` MUST survive — stripping it flips the deferred paint to "looks
+    // assessed", the exact false-clear the not-assessed chips exist to prevent.
+    expect(paint?.assessed).toBe(false);
+    expect(paint?.signal).toBe("fan-in");
+    expect(paint?.reason).toContain("not assessed");
+  });
 });
