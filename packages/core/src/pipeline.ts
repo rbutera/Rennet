@@ -219,7 +219,13 @@ export interface ReviewPipelineResult {
   readonly elementDiffs: ElementDiffs;
   readonly decomposition: Decomposition;
   readonly routePlan: RoutePlanResult;
-  /** True when the Brita budget refused and no model turn ran. */
+  /**
+   * True when the model budget refused — pre-flight (the Brita route plan judged
+   * the diff shape over budget before any spend) OR at runtime (the shared
+   * ceiling was exhausted mid-review by retries). Either way the model phase did
+   * not complete, so the surface must present the review as degraded, never as a
+   * completed AI review (#260).
+   */
   readonly budgetRefused: boolean;
   readonly decompositionResult?: RunDecompositionAngleResult;
   readonly orderingResult?: RunOrderingPassResult;
@@ -495,7 +501,10 @@ export async function buildReviewCanvases(
     elementDiffs,
     decomposition,
     routePlan,
-    budgetRefused,
+    // Pre-flight refusal (the route plan gated it before any spend) OR a runtime
+    // exhaustion of the shared ceiling by retries (#260). Either means no complete
+    // model phase ran, so the surface degrades the review rather than faking done.
+    budgetRefused: budgetRefused || budget.refused,
     ...(decompositionResult ? { decompositionResult } : {}),
     ...(orderingResult ? { orderingResult } : {}),
     admittedDocs,

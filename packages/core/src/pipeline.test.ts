@@ -794,9 +794,12 @@ describe("buildReviewCanvases — roll-up narration threads through (issue #70)"
       routePlanOptions: { maxHarnessInvocations: 3 },
     });
 
-    // The route plan did NOT refuse (3 is within the diff's plan), so the
-    // decomposition seat ran and exhausted the shared budget across its retries.
-    expect(result.budgetRefused).toBe(false);
+    // The route plan did NOT refuse (3 is within the diff's plan), but the
+    // decomposition seat exhausted the shared budget across its retries and the
+    // narration seat was refused at RUNTIME. #260 surfaces that runtime exhaustion
+    // (`budgetRefused` true) so a review floored by a spent ceiling is not
+    // presentable as a completed AI review.
+    expect(result.budgetRefused).toBe(true);
     expect(runDecompositionTurn).toHaveBeenCalledTimes(3);
     expect(runNarrationTurn).not.toHaveBeenCalled();
     expect(result.narration.rollup.status).toBe("pending");

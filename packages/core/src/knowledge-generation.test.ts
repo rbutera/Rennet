@@ -101,7 +101,7 @@ describe("runKnowledgeEnrichment", () => {
     expect(result.droppedAnchors).toBe(2);
   });
 
-  it("fails closed when the budget is absent (no spend, honest failed)", async () => {
+  it("runs UNGATED when the budget is absent — an absent budget is no ceiling, not no spend (#260)", async () => {
     let called = false;
     const result = await runKnowledgeEnrichment({
       snapshot: SNAPSHOT,
@@ -110,10 +110,11 @@ describe("runKnowledgeEnrichment", () => {
         called = true;
         return { status: "emitted", body: { statements: [] } };
       },
+      // budget omitted — #260: no ceiling, the turn runs.
     });
-    expect(result.status).toBe("failed");
-    expect(result.budgetRefused).toBe(true);
-    expect(called).toBe(false);
+    expect(result.status).toBe("ok");
+    expect(result.budgetRefused).toBe(false);
+    expect(called).toBe(true);
   });
 
   it("resolves to failed after every turn fails", async () => {

@@ -53,7 +53,7 @@ import type {
   OfferedManifest,
   RspTokenUsage,
 } from "@rennet/types";
-import { budgetAbsentRefusal } from "./invocation-budget";
+import { absentBudgetGrant } from "./invocation-budget";
 
 // ── ① The deterministic non-obvious gate ─────────────────────────────────────
 
@@ -171,10 +171,10 @@ export interface RunFindingVerificationInput {
   /** The fresh-session verification turn (adapters); by default a different seat than the raiser. */
   readonly runTurn: VerificationTurn;
   /**
-   * The shared live invocation budget (Rule 75, vital money circuit). Consulted
-   * before EVERY verification turn — an over-ceiling OR an ABSENT budget refuses
-   * fail-closed, and the affected findings surface with a "not verified" caveat
-   * (the ceiling stops spend, never the review). Optional only as a test ergonomic.
+   * The shared live invocation budget (#260). Consulted before EVERY verification
+   * turn — a turn over a CONFIGURED ceiling is refused (the affected findings
+   * surface with a "not verified" caveat); an ABSENT budget runs UNGATED (no
+   * ceiling, not no spend). Optional only as a test ergonomic.
    */
   readonly budget?: InvocationBudget;
   readonly contract?: VerificationContract;
@@ -313,7 +313,7 @@ export async function runFindingVerification(
   // 5. One budget-gated verification turn per file batch, in deterministic path order.
   for (const [path, members] of [...groups.entries()].sort((a, b) => compareIds(a[0], b[0]))) {
     const purpose = `finding-verification:${path}`;
-    const grant: BudgetGrant = input.budget?.tryConsume(purpose) ?? budgetAbsentRefusal(purpose);
+    const grant: BudgetGrant = input.budget?.tryConsume(purpose) ?? absentBudgetGrant(purpose);
     if (!grant.granted) {
       for (const { finding } of members) {
         decisions.set(finding.findingId, {

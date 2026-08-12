@@ -326,7 +326,7 @@ describe("runDecisionAngle — the live decision runner (issue #137)", () => {
     expect(turns).toBe(0);
   });
 
-  it("refuses fail-closed when NO budget is provided (an absent budget is not authorization)", async () => {
+  it("runs UNGATED when NO budget is provided — an absent budget is no ceiling, not no spend (#260)", async () => {
     let turns = 0;
     const result = await runDecisionAngle({
       patchsetId: PATCHSET.id,
@@ -336,9 +336,10 @@ describe("runDecisionAngle — the live decision runner (issue #137)", () => {
         turns += 1;
         return Promise.resolve({ status: "emitted", body: { decisions: [modelDecision()] } });
       },
+      // budget omitted — #260: no ceiling, the turn runs.
     });
-    expect(result.status).toBe("failed");
-    expect(result.budgetRefused).toBe(true);
-    expect(turns).toBe(0);
+    expect(result.status).toBe("ok");
+    expect(result.budgetRefused).toBe(false);
+    expect(turns).toBe(1);
   });
 });

@@ -60,7 +60,7 @@ import type {
   RspTokenUsage,
   ValidationReport,
 } from "@rennet/types";
-import { budgetAbsentRefusal } from "./invocation-budget";
+import { absentBudgetGrant } from "./invocation-budget";
 
 /** The result of one hypothesis turn: the emitted body, or a turn-level failure. */
 export type HypothesisTurnResult =
@@ -103,8 +103,8 @@ export interface RunHypothesisPassInput {
   readonly maxRetries?: number;
   /**
    * The shared live invocation budget (issue #69, #95). Consulted before EVERY
-   * turn — a turn over the ceiling, or an ABSENT budget, is refused fail-closed
-   * (Rule 75, vital money circuit: a single fault fails toward LESS spend). A
+   * turn — a turn over a CONFIGURED ceiling is refused; an ABSENT budget runs
+   * UNGATED (#260: no budget means no ceiling, not no spend). A
    * refusal is terminal for this pass: no turn runs and it resolves to the honest
    * `failed` state (never a fabricated hypothesis). Optional only as a test
    * ergonomic; a real caller must thread one to run turns.
@@ -329,12 +329,12 @@ export async function runHypothesisPass(
   let lastFailure = "the hypothesis pass did not complete";
 
   for (let attempt = 0; attempt <= maxRetries; attempt += 1) {
-    // The live budget gate (R10, fail-closed #95): consult the shared budget
-    // before spending a turn. An ABSENT budget is a refusal, exactly like an
-    // exhausted one (Rule 75, vital money circuit). A refusal is terminal and
-    // resolves to the honest failed state (no floor to fall to).
+    // The live budget gate (R10, #260): consult the shared budget before
+    // spending a turn. A turn over a CONFIGURED ceiling is refused; an ABSENT
+    // budget runs UNGATED — no budget means no ceiling, not no spend (#260). A
+    // refusal is terminal and resolves to the honest failed state (no floor).
     const purpose = `hypothesis:attempt-${attempt}`;
-    const grant = budget?.tryConsume(purpose) ?? budgetAbsentRefusal(purpose);
+    const grant = budget?.tryConsume(purpose) ?? absentBudgetGrant(purpose);
     if (!grant.granted) {
       attempts.push({ attempt, outcome: "budget-refused", budgetRefusal: grant });
       budgetRefused = true;

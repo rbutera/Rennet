@@ -295,21 +295,21 @@ describe("runFindingVerification cost containment (#179)", () => {
 // ── Red-then-green invariants ───────────────────────────────────────────────────
 
 describe("runFindingVerification fail-closed invariants (#179)", () => {
-  it("an ABSENT budget refuses every verification turn (fail-closed) and caveats, never drops", async () => {
+  it("an ABSENT budget runs the verification turn UNGATED (#260) — a refuted finding drops normally", async () => {
+    // #260 inverts the #95 fail-closed default: no budget means no ceiling, so the
+    // verification turn RUNS. F1 is refuted → dropped, exactly as it would be with a
+    // budget in hand — no fabricated "not verified" caveat, no budget-refused id.
     const f = finding({ findingId: "F1" });
     const result = await runFindingVerification({
       findings: [f],
       manifest: MANIFEST,
       readFileWindow: readAll,
-      // Would refute-drop if it ran — but no budget means no turn runs.
       runTurn: turnBySummary({ [f.summary]: { verdict: "refuted", evidence: "n/a" } }),
-      // budget omitted on purpose.
+      // budget omitted — no ceiling, the turn runs.
     });
-    expect(result.telemetry.verificationTurns).toBe(0);
-    expect(result.findings).toHaveLength(1);
-    expect(result.findings[0]?.verification?.verdict).toBe("inconclusive");
-    expect(result.telemetry.budgetRefusedFindingIds).toEqual(["F1"]);
-    expect(result.findings[0]?.verification?.evidence.toLowerCase()).toContain("budget");
+    expect(result.telemetry.verificationTurns).toBe(1);
+    expect(result.findings).toHaveLength(0);
+    expect(result.telemetry.budgetRefusedFindingIds).toEqual([]);
   });
 
   it("a failed verification turn caveats the batch, never drops it", async () => {

@@ -1741,12 +1741,17 @@ export interface ReviewNarration {
  *   - `aiReview: true`  — at least one real model harness (the user's Claude
  *     and/or Codex) was installed and drove the enrichment turns. This is a real
  *     AI review.
- *   - `aiReview: false` — NO model was available (no `claude` binary, no `codex`),
- *     so the canvases are the DETERMINISTIC mechanical outline of the diff: real
- *     structure, but not AI findings. The UI must say so LOUDLY.
+ *   - `aiReview: false` — the model phase did NOT complete, for one of two
+ *     reasons: no model was available (no `claude` binary, no `codex`), OR the
+ *     model-invocation budget refused it (#260 — over budget pre-flight, or the
+ *     shared ceiling exhausted by retries). Either way the canvases are the
+ *     DETERMINISTIC mechanical outline of the diff: real structure, but not AI
+ *     findings, and the UI must say so LOUDLY. A budget-exhausted review must
+ *     never present as a completed AI review.
  *
- * `claudeAvailable` / `codexAvailable` let the UI name exactly what was missing
- * ("Couldn't find your Claude CLI") rather than a generic apology.
+ * `claudeAvailable` / `codexAvailable` let the UI name the cause: with no model
+ * it points at the missing CLI; with a model present, `aiReview: false` means the
+ * budget was the limit, so the UI names the budget rather than a missing binary.
  */
 export interface ReviewEngine {
   aiReview: boolean;
@@ -1957,13 +1962,19 @@ export type BudgetGrant =
  * A shared runtime budget for model invocations. One is created per review and
  * threaded through every runner, so the first attempt AND every retry across
  * decomposition and ordering draw from the same ceiling — the live enforcement
- * of R10 the pre-flight route-plan count never provided (bead p0wwp). A refusal
- * is fail-closed: the runner falls to its deterministic floor rather than crash.
+ * of R10 the pre-flight route-plan count never provided (bead p0wwp). A refused
+ * turn falls to the runner's deterministic floor rather than crashing, and
+ * `refused` latches so the pipeline can surface an out-of-budget review as
+ * degraded rather than let it present as a completed AI review (#260). An absent
+ * or malformed ceiling is UNLIMITED, not a fail-closed zero — no budget means no
+ * ceiling, not no spend (#260); `max` is `Infinity` in that case.
  */
 export interface InvocationBudget {
   readonly max: number;
   readonly consumed: number;
   readonly remaining: number;
+  /** True once any turn was refused for a genuinely exhausted finite ceiling. */
+  readonly refused: boolean;
   tryConsume(purpose: string): BudgetGrant;
 }
 

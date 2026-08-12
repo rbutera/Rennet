@@ -286,7 +286,7 @@ describe("runNoiseAngle — the live noise runner (issue #34)", () => {
     expect(result.attempts.every((a) => a.outcome === "turn-failed")).toBe(true);
   });
 
-  it("refuses fail-closed and runs no turn when the budget is ABSENT (R10)", async () => {
+  it("runs UNGATED when the budget is ABSENT — an absent budget is no ceiling, not no spend (#260)", async () => {
     let ran = false;
     const result = await runNoiseAngle({
       patchsetId: PATCHSET.id,
@@ -296,12 +296,12 @@ describe("runNoiseAngle — the live noise runner (issue #34)", () => {
         ran = true;
         return Promise.resolve({ status: "emitted", body: { groups: [ruleGroup()] } });
       },
-      // no budget
+      // budget omitted — #260: no ceiling, the turn runs.
     });
-    expect(ran).toBe(false);
-    expect(result.status).toBe("failed");
-    expect(result.budgetRefused).toBe(true);
-    expect(result.attempts[0]?.outcome).toBe("budget-refused");
+    expect(ran).toBe(true);
+    expect(result.status).toBe("ok");
+    expect(result.budgetRefused).toBe(false);
+    expect(result.attempts[0]?.outcome).toBe("admitted");
   });
 
   it("refuses fail-closed on an exhausted (zero-ceiling) budget", async () => {
