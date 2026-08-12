@@ -189,20 +189,30 @@ export function ConversationHost({
           reviewId,
         });
         if (cancelled || result.threads.length === 0) return;
-        // The current diff's files, for orphan resolution (#251 slice 3): a re-attached
-        // thread whose anchored file is gone is surfaced ORPHANED (never dropped, never
-        // re-anchored). Fail-safe: with no current paths we CANNOT resolve, so we do not
-        // claim any thread orphaned — an unresolvable placement stays placed, not falsely lost.
+        // Orphan resolution has THREE outcomes, not two (#251 slice 3): a thread is PLACED
+        // (its file is in the current diff), ORPHANED (its file is confirmed GONE), or
+        // COULD-NOT-DETERMINE (we have no authoritative file list to check against — the
+        // diff has not loaded). The alarming failure is painting COULD-NOT-DETERMINE as
+        // ORPHANED: telling the reviewer their conversation is detached when it is merely
+        // not-loaded-yet, which asserts something false (worse than the silence it fixes).
+        // So orphaning runs ONLY with an authoritative basis. An empty file list is
+        // COULD-NOT-DETERMINE, NEVER "checked and found nothing" — that conflation is the
+        // fan-in collapse in a third costume. `anchors` is the review's COMPLETE current
+        // file list by the prop's contract, so a non-empty value is authoritative; an empty
+        // one means the diff is not yet loaded and every thread stays PLACED.
         const currentPaths = new Set(
           anchors.map((anchor) => anchor.path).filter((path): path is string => path !== undefined),
         );
+        const canResolvePlacement = currentPaths.size > 0;
         setThreads((current) => {
           const present = new Set(current.map((thread) => thread.id));
           const mapped = result.threads
             .filter((wire) => !present.has(wire.threadId))
             .map(threadFromPersisted);
-          const restored =
-            currentPaths.size > 0 ? orphanUnresolvedThreads(mapped, currentPaths) : mapped;
+          // COULD-NOT-DETERMINE ⇒ leave every thread PLACED, never falsely orphaned.
+          const restored = canResolvePlacement
+            ? orphanUnresolvedThreads(mapped, currentPaths)
+            : mapped;
           return restored.length > 0 ? [...restored, ...current] : current;
         });
       } catch {

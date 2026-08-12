@@ -124,4 +124,34 @@ describe("ConversationHost — re-attach surfaces an interrupted turn (criterion
     // NEVER re-anchored: the panel still carries its ORIGINAL anchor key, not the present file's.
     expect(cluster?.getAttribute("data-anchor-key")).toBe("chunk|src/gone.ts");
   });
+
+  it("COULD-NOT-DETERMINE ≠ orphaned: with the diff not loaded (no anchors), a thread stays PLACED", async () => {
+    // The alarming failure the design must not commit: if reattach runs before the diff
+    // has loaded, we have no authoritative file list, so we CANNOT know a thread is
+    // orphaned — and must not claim it. An empty anchors set is could-not-determine, never
+    // "checked and found nothing". RED-proof: drop the canResolvePlacement guard and this
+    // thread paints orphaned (told detached when it is merely not-loaded-yet).
+    const goneAnchor: ConversationAnchor = {
+      kind: "chunk",
+      label: "src/whatever.ts",
+      key: "chunk|src/whatever.ts",
+      path: "src/whatever.ts",
+    };
+    const h = reattachBridge([
+      {
+        threadId: "th",
+        anchor: goneAnchor,
+        messages: [{ id: "m0", author: "you", body: "still here?" }],
+      },
+    ]);
+    // anchors=[] → the diff is not loaded → could-not-determine.
+    const { container } = mount(<ConversationHost bridge={h.bridge} reviewId="r" anchors={[]} />);
+    await waitFor(() => expect(h.reattachedWith()?.reviewId).toBe("r"));
+    // The thread is restored and PLACED — not orphaned — because placement was unknowable.
+    await waitFor(() => {
+      expect(container.querySelector(".conversation-cluster")).not.toBeNull();
+    });
+    expect(container.querySelector('.conversation-cluster[data-orphaned="true"]')).toBeNull();
+    expect(container.querySelector(".conversation-orphaned")).toBeNull();
+  });
 });
