@@ -92,6 +92,51 @@ export async function discoverWorktreeIdentities(
   return { root, commonDir, identities: identitiesFromRemoteVerbose(remotes) };
 }
 
+/** A named git remote that points at a forge repo (the name + its parsed identity). */
+export interface NamedForgeRemote {
+  /** The git remote name (`origin`, `upstream`, …) — the ref to push to. */
+  name: string;
+  identity: RemoteIdentity;
+}
+
+/** Parse `git remote -v` into named forge remotes, in first-seen order, deduped by name. */
+function namedForgeRemotesFromVerbose(output: string): NamedForgeRemote[] {
+  const seen = new Set<string>();
+  const remotes: NamedForgeRemote[] = [];
+  for (const line of output.split("\n")) {
+    const match = /^(\S+)\t(\S+)\s+\((?:fetch|push)\)$/.exec(line.trim());
+    if (!match) continue;
+    const name = match[1] ?? "";
+    if (seen.has(name)) continue;
+    const identity = parseRemoteIdentity(match[2] ?? "");
+    if (!identity) continue;
+    seen.add(name);
+    remotes.push({ name, identity });
+  }
+  return remotes;
+}
+
+/**
+ * Resolve the ONE remote a branch is pushed to AND its PR opened against, so the push
+ * destination and the PR repo can never disagree (they share a single source). Picks
+ * the remote whose URL points at `host` (default `github.com`), preferring one named
+ * `preferName` (default `origin` — the North Star: your own repo), else the first such
+ * remote in `git remote -v` order. Returns null when no remote points at the forge —
+ * the caller then reports honestly that there is nowhere to open a PR.
+ */
+export async function resolveForgeRemote(
+  git: GitExec,
+  root: string,
+  options: { host?: string; preferName?: string } = {},
+): Promise<NamedForgeRemote | null> {
+  const host = (options.host ?? "github.com").toLowerCase();
+  const preferName = options.preferName ?? "origin";
+  const remotes = namedForgeRemotesFromVerbose(await git(root, ["remote", "-v"])).filter(
+    (remote) => remote.identity.host.toLowerCase() === host,
+  );
+  return remotes.find((remote) => remote.name === preferName) ?? remotes[0] ?? null;
+}
+
 /**
  * Match a PR's repo onto a discovered worktree by identity (owner/name,
  * case-insensitive). Returns null when nothing matches — the caller then takes the

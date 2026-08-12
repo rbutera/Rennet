@@ -356,6 +356,8 @@ export {
   discoverWorktreeIdentities,
   type LocalWorktree,
   matchWorktree,
+  type NamedForgeRemote,
   parseRemoteIdentity,
   type RemoteIdentity,
+  resolveForgeRemote,
 } from "./worktree-discovery";

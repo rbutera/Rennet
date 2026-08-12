@@ -4,6 +4,7 @@ import {
   type LocalWorktree,
   matchWorktree,
   parseRemoteIdentity,
+  resolveForgeRemote,
 } from "./worktree-discovery";
 
 describe("parseRemoteIdentity", () => {
@@ -81,5 +82,45 @@ describe("discoverWorktreeIdentities", () => {
       { host: "github.com", owner: "acme", name: "widget" },
       { host: "github.com", owner: "acme", name: "widget-upstream" },
     ]);
+  });
+});
+
+describe("resolveForgeRemote — the single source for push + PR-repo", () => {
+  const gitReturning = (remoteVerbose: string) => (_root: string, args: string[]) =>
+    args[0] === "remote" && args[1] === "-v" ? Promise.resolve(remoteVerbose) : Promise.resolve("");
+
+  it("prefers origin among GitHub remotes (name + identity share one source)", async () => {
+    // origin is a fork, upstream is the canonical repo — the push AND the PR must both
+    // go to origin (your own repo), never split across the two.
+    const git = gitReturning(
+      "origin\tgit@github.com:me/widget.git (fetch)\n" +
+        "origin\tgit@github.com:me/widget.git (push)\n" +
+        "upstream\thttps://github.com/acme/widget.git (fetch)\n" +
+        "upstream\thttps://github.com/acme/widget.git (push)\n",
+    );
+    const remote = await resolveForgeRemote(git, "/src/widget");
+    expect(remote).toEqual({
+      name: "origin",
+      identity: { host: "github.com", owner: "me", name: "widget" },
+    });
+  });
+
+  it("falls back to the first GitHub remote when there is no origin", async () => {
+    const git = gitReturning("github\thttps://github.com/acme/widget.git (fetch)\n");
+    const remote = await resolveForgeRemote(git, "/src/widget");
+    expect(remote).toEqual({
+      name: "github",
+      identity: { host: "github.com", owner: "acme", name: "widget" },
+    });
+  });
+
+  it("ignores a non-github remote, and returns null when none point at GitHub", async () => {
+    const git = gitReturning(
+      "origin\tgit@gitlab.com:acme/widget.git (fetch)\n" +
+        "origin\tgit@gitlab.com:acme/widget.git (push)\n",
+    );
+    // A non-github origin must NOT be handed to the github adapter — resolve to null so
+    // the caller reports honestly that there is nowhere to open a PR.
+    expect(await resolveForgeRemote(git, "/src/widget")).toBeNull();
   });
 });

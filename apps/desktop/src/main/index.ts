@@ -53,6 +53,7 @@ import {
   readOpenSpecChange,
   repoHasSubmodules,
   resolveBaseRef,
+  resolveForgeRemote,
   resolveGitHubAuth,
   SqliteReviewStore,
   snapshotStoreFor,
@@ -1301,21 +1302,26 @@ app.whenReady().then(async () => {
     headRef: string;
     submission: ForgePrSubmission;
   }): Promise<ForgePrSubmissionOutcome> => {
-    // Push the head branch to origin so GitHub can see it, then open the PR. The
-    // branch tracking is not assumed: `HEAD:refs/heads/<ref>` pushes the current head
-    // onto the named remote branch explicitly.
-    await execaGit(input.repoRoot, ["push", "origin", `HEAD:refs/heads/${input.headRef}`]);
-    const discovered = await discoverWorktreeIdentities(execaGit, input.repoRoot);
-    const identity =
-      discovered.identities.find((candidate) => candidate.host === "github.com") ??
-      discovered.identities[0];
-    if (!identity) {
+    // Resolve ONE GitHub remote — the single source for BOTH the push destination and
+    // the PR repo, so they can never disagree (prefer `origin`, the North Star of your
+    // own repo). A repo with no GitHub remote has nowhere to open a PR — say so.
+    const remote = await resolveForgeRemote(execaGit, input.repoRoot);
+    if (!remote) {
       throw new Error(
         "No GitHub remote is configured for this repository, so there is nowhere to open a pull request.",
       );
     }
+    // Push the NAMED reviewed branch, not the current HEAD: the PR must open from the
+    // branch the review is about, even if HEAD has since moved to another branch.
+    await execaGit(input.repoRoot, [
+      "push",
+      remote.name,
+      `refs/heads/${input.headRef}:refs/heads/${input.headRef}`,
+    ]);
     return prSubmissionAdapter.submitPullRequest({
-      target: { repo: { forge: "github", owner: identity.owner, name: identity.name } },
+      target: {
+        repo: { forge: "github", owner: remote.identity.owner, name: remote.identity.name },
+      },
       submission: input.submission,
     });
   };
