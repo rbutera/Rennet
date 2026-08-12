@@ -1834,6 +1834,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                 <CanvasWorkspace
                   store={viewStore}
                   canvases={canvases}
+                  // The live review identity (issue #240): the workspace stays mounted
+                  // across reviews, so its per-review hypothesis-frame collapse state is
+                  // keyed by this id rather than leaking A's choice into B.
+                  reviewId={reviewId}
                   bridge={bridge}
                   scheme={effectiveScheme}
                   narration={narration}

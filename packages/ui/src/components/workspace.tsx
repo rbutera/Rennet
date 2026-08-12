@@ -79,6 +79,16 @@ export type DiffResolver = (elementKey: string) => ElementDiff | undefined;
 
 export interface CanvasWorkspaceProps {
   canvases: Record<CanvasAngle, Canvas>;
+  /**
+   * The review being shown (issue #240). The workspace stays MOUNTED across reviews
+   * (app.tsx does not remount it), so per-review UI state — the hypothesis reading
+   * frame's collapsed/expanded choice — is keyed by this id rather than a single
+   * boolean that would leak review A's collapse into review B. An unseen review
+   * defaults to expanded; returning to a review restores its own choice; a regenerated
+   * patchset under the same review keeps it. Absent ⇒ a single shared bucket (the
+   * pre-#240 behaviour), so existing single-review callers are unaffected.
+   */
+  reviewId?: string;
   store?: ViewStore;
   /**
    * The resolved app appearance scheme (wireframe #15). The canvas FOLLOWS it —
@@ -332,7 +342,20 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   }, [props.flaggedReview]);
   // Narrative-first (Design Doctrine §3.2): the reading frame shows by default, but is
   // collapsible so it never traps the reviewer above the lens they want to read.
-  const [hypothesisOpen, setHypothesisOpen] = useState(true);
+  // Keyed by review (issue #240): the workspace stays mounted across reviews, so a
+  // single boolean would carry review A's collapse into review B. An unseen review has
+  // no entry ⇒ defaults to expanded; a regenerated patchset keeps the same reviewId, so
+  // its choice survives. `??` derives the default synchronously (no effect, no flash).
+  const [hypothesisCollapseByReview, setHypothesisCollapseByReview] = useState<
+    Record<string, boolean>
+  >({});
+  const hypothesisReviewKey = props.reviewId ?? "__single__";
+  const hypothesisOpen = hypothesisCollapseByReview[hypothesisReviewKey] ?? true;
+  const toggleHypothesisOpen = () =>
+    setHypothesisCollapseByReview((prev) => ({
+      ...prev,
+      [hypothesisReviewKey]: !(prev[hypothesisReviewKey] ?? true),
+    }));
   // The open symbol inspector (Rai, wireframes #8 + #11): null when closed. When
   // FLOATING a newer click retargets it (single-entry history); when PINNED a click
   // pushes onto the breadcrumb chain so the reviewer navigates deeper in the rail.
@@ -957,7 +980,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
               type="button"
               className="hypothesis-panel-toggle"
               aria-expanded={hypothesisOpen}
-              onClick={() => setHypothesisOpen((open) => !open)}
+              onClick={toggleHypothesisOpen}
             >
               <span className="hypothesis-panel-title">Reading frame</span>
               <span className="hypothesis-panel-counts">

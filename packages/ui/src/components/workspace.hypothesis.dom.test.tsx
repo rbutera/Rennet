@@ -222,6 +222,56 @@ describe("CanvasWorkspace — the hypothesis reading frame (#178/#181)", () => {
     expect(container.querySelector(".hypothesis-panel")).toBeTruthy();
   });
 
+  it("keys the collapse choice BY REVIEW: A's collapse does not leak into B (#240)", async () => {
+    // The workspace stays MOUNTED across reviews (app.tsx does not remount it), so a
+    // single collapse boolean would carry review A's choice into review B. Rerender the
+    // SAME mounted component with a new reviewId to prove the choice is per-review.
+    const { container, user, rerender } = mount(
+      <CanvasWorkspace
+        canvases={canvasSet()}
+        reviewId="A"
+        flaggedReview={reviewWithHypothesis()}
+      />,
+    );
+    // A starts expanded; collapse it.
+    expect(container.querySelector(".hypothesis-frame")).toBeTruthy();
+    const toggle = container.querySelector<HTMLButtonElement>(".hypothesis-panel-toggle");
+    if (!toggle) throw new Error("expected the collapse toggle");
+    await user.click(toggle);
+    expect(container.querySelector(".hypothesis-frame")).toBeNull(); // A collapsed
+
+    // Switch to an UNSEEN review B on the same mounted workspace — it must start
+    // EXPANDED. (Red-proof: with one `useState(true)` boolean, B stays collapsed here.)
+    rerender(
+      <CanvasWorkspace
+        canvases={canvasSet()}
+        reviewId="B"
+        flaggedReview={reviewWithHypothesis()}
+      />,
+    );
+    expect(container.querySelector(".hypothesis-frame")).toBeTruthy(); // B expanded
+
+    // Return to A — its own collapsed choice is restored.
+    rerender(
+      <CanvasWorkspace
+        canvases={canvasSet()}
+        reviewId="A"
+        flaggedReview={reviewWithHypothesis()}
+      />,
+    );
+    expect(container.querySelector(".hypothesis-frame")).toBeNull(); // A still collapsed
+
+    // A REGENERATE (a fresh canvas set under the SAME reviewId) keeps A's choice.
+    rerender(
+      <CanvasWorkspace
+        canvases={canvasSet()}
+        reviewId="A"
+        flaggedReview={reviewWithHypothesis()}
+      />,
+    );
+    expect(container.querySelector(".hypothesis-frame")).toBeNull(); // still collapsed
+  });
+
   it("shows NO frame when the review carries no hypothesis (pre-#178 shape)", () => {
     const noHypothesis: FlaggedReview = {
       status: "ok",
