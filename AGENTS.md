@@ -57,6 +57,17 @@ The Contracts and Rulings document (formerly titled the Master Plan; ruling numb
 
 `packages/types` imports nothing in-repo. `protocol` may import `types`; `core` may import `protocol`; `adapters` may import `core` and Node; `ui` may import only `types`, `protocol`, and browser-safe dependencies; `apps/desktop` is the only Electron package. Spikes are deliberately excluded from the pnpm workspace.
 
+## Documentation (the docsite stays alive by construction)
+
+Rennet has a documentation site at `apps/docs` (Astro Starlight, static → Cloudflare Pages), split into two audiences: **Using Rennet** (people who run reviews) and **Developing Rennet** (people who build Rennet). It renders `docs/` design docs plus authored guides, and build-time mermaid diagrams via `beautiful-mermaid` (no headless browser).
+
+**Standing obligation, part of the definition of done — not a gate:** a change to the monorepo updates the affected documentation *in the same change*. The test is: *if someone reads the docs after this change and is now wrong, the change is not done.* This is enforced the way the rest of Rennet's discipline is — it is what "done" means, not a separate consent step or approval.
+
+- How to write a page: `apps/docs/src/content/docs/developing/contributing/docs-style-guide.md`.
+- What every page must carry: `apps/docs/src/content/docs/developing/contributing/good-docs-standard.md`.
+- Reach for a mermaid diagram when a flow or architecture is clearer seen than read; write it as a ```mermaid fence and it renders to a themed SVG at build time.
+- A first representative batch of the `docs/*.md` set is migrated into `apps/docs`; the rest follow. When you touch a doc that still lives only in `docs/`, prefer migrating it into the right area as part of the change.
+
 ## Working agreement
 
 Keep `main` releasable. Run the full available local gate before every push. A clean check must include a positive control capable of failing. Preserve user changes, stage only intended files, and never bypass hooks or force-push unless Rai explicitly asks.

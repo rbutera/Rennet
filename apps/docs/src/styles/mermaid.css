@@ -1,0 +1,28 @@
+/*
+ * Theme binding for build-time mermaid SVGs (see src/plugins/remark-mermaid.mjs).
+ *
+ * beautiful-mermaid emits one SVG whose colours all derive from CSS custom
+ * properties set inline on the <svg> element. We override those variables here
+ * and bind them to Starlight's theme tokens, which flip automatically between
+ * light and dark. `!important` is load-bearing: it beats the SVG's inline
+ * (non-important) `style="--bg:...;--fg:..."`, so a single build-time SVG follows
+ * the site's light/dark toggle with no client-side JavaScript.
+ */
+.mermaid-diagram {
+  margin: 1.5rem 0;
+  overflow-x: auto;
+}
+
+.mermaid-diagram svg {
+  --bg: var(--sl-color-bg) !important;
+  --fg: var(--sl-color-text) !important;
+  --line: var(--sl-color-gray-3) !important;
+  --accent: var(--sl-color-accent) !important;
+  --muted: var(--sl-color-gray-3) !important;
+  --surface: var(--sl-color-gray-6) !important;
+  --border: var(--sl-color-gray-5) !important;
+  max-width: 100%;
+  height: auto;
+  display: block;
+  margin-inline: auto;
+}

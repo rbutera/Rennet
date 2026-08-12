@@ -1,0 +1,40 @@
+---
+title: Rennet
+description: A local-first code review harness — documentation for using it and for building it.
+template: splash
+hero:
+  tagline: A local-first code review harness. Read the diff, run the models, sign the paper — on your machine.
+  actions:
+    - text: Using Rennet
+      link: /using/
+      icon: right-arrow
+      variant: primary
+    - text: Developing Rennet
+      link: /developing/
+      icon: right-arrow
+      variant: secondary
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+<CardGrid stagger>
+  <Card title="Using Rennet" icon="open-book">
+    For people who run reviews with Rennet. Start with the [product and
+    vision](/using/concepts/product-and-vision/), then walk a real [user
+    journey](/using/guide/user-journey/).
+  </Card>
+  <Card title="Developing Rennet" icon="setting">
+    For people building Rennet. Start with the [architecture
+    overview](/developing/concepts/architecture-overview/) and the [architecture
+    contracts](/developing/concepts/architecture-contracts/).
+  </Card>
+  <Card title="Two audiences, on purpose" icon="puzzle">
+    The sidebar switches between **Using** and **Developing**. Each is its own
+    deep tree — Guide, Concepts, Reference — not a shared two-item nav.
+  </Card>
+  <Card title="Agent-maintained" icon="rocket">
+    Docs stay current because any change to the monorepo updates the affected
+    docs in the same change. See the [docs style
+    guide](/developing/contributing/docs-style-guide/).
+  </Card>
+</CardGrid>
