@@ -143,4 +143,30 @@ describe("createOrchestratorTurnRunner — the desktop composition", () => {
     expect(outcome.result.outcome).toBe("completed");
     expect(fake.calls()).toBe(1);
   });
+
+  it("threads the AbortController into the SDK options so a live turn is cancellable (#251 criterion 4)", async () => {
+    const { review, pipeline } = await liveReview();
+    const controller = new AbortController();
+    let capturedOptions: { abortController?: AbortController } | undefined;
+    // A capturing query records the SDK options the runner assembled. The real
+    // `query({ prompt, options })` is what a live claude turn is driven through, so
+    // `options.abortController` is the exact seam `before-quit` fires.
+    const loadQuery: LoadSdkQuery = (() =>
+      Promise.resolve((args: { options?: { abortController?: AbortController } }): Query => {
+        capturedOptions = args.options;
+        async function* gen(): AsyncGenerator<unknown> {
+          yield { type: "result", subtype: "success", is_error: false, result: "ok" };
+        }
+        return gen() as unknown as Query;
+      })) as unknown as LoadSdkQuery;
+    const run = createOrchestratorTurnRunner({
+      baseDir: tempBaseDir(),
+      resolveClaudePath: () => Promise.resolve("/fake/claude"),
+      loadQuery,
+    });
+    await run(review, pipeline, "Map the base.", undefined, controller);
+    // The VERY controller passed reaches the SDK — not a copy, not absent. Drop the
+    // threading in `createOrchestratorTurnRunner` and this reddens (undefined !== it).
+    expect(capturedOptions?.abortController).toBe(controller);
+  });
 });

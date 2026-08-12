@@ -91,6 +91,26 @@ describe("createLiveReviewAskPorts — askOrchestrator", () => {
     });
   });
 
+  it("threads the AbortController into the turn runner as the 5th arg (#251 criterion 4)", async () => {
+    const turn = vi.fn<OrchestratorTurnRunner>(() => Promise.resolve(completed("ok")));
+    const ports = createLiveReviewAskPorts({ buildPipeline, orchestratorTurn: turn });
+    const controller = new AbortController();
+    const r = review();
+    await ports.askOrchestrator({ review: r, question: "q", abortController: controller });
+    // The VERY controller reaches the runner (which hands it to the SDK). Drop the
+    // threading and this reddens (the runner would be called with only four args).
+    expect(turn).toHaveBeenCalledWith(r, pipeline, "q", undefined, controller);
+  });
+
+  it("calls the runner with exactly four args when NO controller is supplied (back-compat)", async () => {
+    const turn = vi.fn<OrchestratorTurnRunner>(() => Promise.resolve(completed("ok")));
+    const ports = createLiveReviewAskPorts({ buildPipeline, orchestratorTurn: turn });
+    const r = review();
+    await ports.askOrchestrator({ review: r, question: "q" });
+    // No abort seam ⇒ the runner's original four-arg shape is preserved unchanged.
+    expect(turn).toHaveBeenCalledWith(r, pipeline, "q", undefined);
+  });
+
   it("returns an HONEST unavailable answer (never a fabricated one) when no claude is present", async () => {
     const ports = createLiveReviewAskPorts({
       buildPipeline,
@@ -152,6 +172,25 @@ describe("createLiveReviewAskPorts — askCodex", () => {
     const answer = await ports.askCodex({ review: r, question: "seconds or ms?" });
     expect(askCodex).toHaveBeenCalledWith({ review: r, question: "seconds or ms?" });
     expect(answer).toEqual({ model: CODEX_ASK_LABEL, answer: "codex says ms" });
+  });
+
+  it("forwards the AbortController to the live codex port (#251 criterion 4)", async () => {
+    const askCodex = vi.fn(
+      async (): Promise<AskAnswer> => ({ model: CODEX_ASK_LABEL, answer: "ok" }),
+    );
+    const ports = createLiveReviewAskPorts({
+      buildPipeline,
+      orchestratorTurn: () => Promise.resolve(completed("x")),
+      askCodex,
+    });
+    const controller = new AbortController();
+    const r = review("review-7");
+    await ports.askCodex({ review: r, question: "q", abortController: controller });
+    expect(askCodex).toHaveBeenCalledWith({
+      review: r,
+      question: "q",
+      abortController: controller,
+    });
   });
 
   it("returns an honest unavailable answer when no codex port is wired", async () => {
@@ -230,6 +269,26 @@ describe("createLiveCodexAsk", () => {
       model: CODEX_ASK_LABEL,
       answer: "milliseconds; the wrapper divides by 1000",
     });
+  });
+
+  it("passes the AbortController's signal to the executor as execa's cancelSignal (#251 criterion 4)", async () => {
+    const executor = vi.fn<(req: CodexExecRequest) => Promise<CodexExecResult>>(() =>
+      Promise.resolve(execResult({ answer: "ok" })),
+    );
+    const ask = createLiveCodexAsk({ executor });
+    const controller = new AbortController();
+    await ask({ review: review(), question: "q", abortController: controller });
+    // The exec receives the SAME signal the quit-abort fires — that is what force-kills
+    // the codex child. Drop the threading and `req.signal` is undefined, reddening this.
+    expect(executor.mock.calls[0]?.[0]?.signal).toBe(controller.signal);
+  });
+
+  it("passes NO signal to the executor when no controller is supplied (back-compat)", async () => {
+    const executor = vi.fn<(req: CodexExecRequest) => Promise<CodexExecResult>>(() =>
+      Promise.resolve(execResult({ answer: "ok" })),
+    );
+    await createLiveCodexAsk({ executor })({ review: review(), question: "q" });
+    expect(executor.mock.calls[0]?.[0]?.signal).toBeUndefined();
   });
 
   it("reports an honest 'no answer' when codex returns an empty/absent answer", async () => {

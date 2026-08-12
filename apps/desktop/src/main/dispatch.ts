@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   type AskAnswer,
   askReview,
@@ -231,8 +232,31 @@ export interface DispatchDeps {
       /** Token-stream sink (#251): each orchestrator token as it arrives, when the ask
        *  is a streamed one. Absent for a one-shot #139 ask. */
       onDelta?: (text: string) => void;
+      /** Cancels the turn (#251 criterion 4): the LiveTurnRegistry's controller for this
+       *  turn, threaded to the claude SDK so `before-quit` reaps it. Absent → an
+       *  uncancellable turn (fully back-compat: no registry wired). */
+      abortController?: AbortController;
     }): Promise<AskAnswer>;
-    askCodex(input: { review: Review; question: string }): Promise<AskAnswer>;
+    askCodex(input: {
+      review: Review;
+      question: string;
+      /** Cancels the codex exec (#251 criterion 4): the SAME controller the orchestrator
+       *  leg gets, so one quit-abort cancels BOTH legs of a "both" ask. */
+      abortController?: AbortController;
+    }): Promise<AskAnswer>;
+  };
+  /**
+   * The live-turn registry (issue #251, criterion 4 — scoped reaping on quit). Optional
+   * so a composition with no registry still constructs — dispatch then runs the ask with
+   * NO abort seam (fully back-compat: the #139/#251 ports are called with exactly their
+   * existing inputs, no controller threaded). When present, each `review.ask` turn
+   * REGISTERS its AbortController when it starts and SETTLES it when it finishes (whether
+   * it completed, errored, or was aborted), so `before-quit` can abort the ones still in
+   * flight. The registered controller is threaded into BOTH model legs.
+   */
+  readonly liveTurns?: {
+    register(turnId: string): AbortController;
+    settle(turnId: string): void;
   };
   /**
    * The comment-refinement producer (issue #19): refine one raw review note into a
@@ -821,68 +845,103 @@ export function createDispatch(
             },
           });
         }
-        const result = await askReview(mode, input.question, {
-          askOrchestrator: (question) =>
-            deps.reviewAsk.askOrchestrator({
-              review,
-              question,
-              ...(onOrchestratorDelta ? { onDelta: onOrchestratorDelta } : {}),
-            }),
-          askCodex: (question) => deps.reviewAsk.askCodex({ review, question }),
-        });
-        // Terminal events: the orchestrator's tokens already streamed via onDelta;
-        // codex is one-shot (no token stream) so its whole answer lands as its
-        // completion. Both carry the SAME final answer the invoke returns — the stream
-        // is a live echo, never a second source of truth.
-        if (stream) {
-          stream.emit({
-            kind: "ask-complete",
-            threadId: stream.threadId,
-            turnId: stream.turnId,
-            channel: "orchestrator",
-            model: result.primary.model,
-            finalBody: result.primary.answer,
+        // #251 criterion 4 (scoped reaping): register this turn's AbortController so
+        // `before-quit` can reap it. The turn ENTERS the registry here and LEAVES in the
+        // finally below — whether it completed, errored, or was aborted — so a registry
+        // that only ever grew (the leak) is impossible. The controller is threaded into
+        // BOTH legs (claude via the SDK, codex via execa's cancelSignal), so one
+        // quit-abort cancels both. A one-shot ask with no turnId still registers under a
+        // fresh key, so it too is reaped. No registry wired ⇒ no controller ⇒ back-compat.
+        const turnKey = stream?.turnId ?? randomUUID();
+        const liveTurn = deps.liveTurns?.register(turnKey);
+        try {
+          const result = await askReview(mode, input.question, {
+            askOrchestrator: (question) =>
+              deps.reviewAsk.askOrchestrator({
+                review,
+                question,
+                ...(onOrchestratorDelta ? { onDelta: onOrchestratorDelta } : {}),
+                ...(liveTurn ? { abortController: liveTurn } : {}),
+              }),
+            askCodex: (question) =>
+              deps.reviewAsk.askCodex({
+                review,
+                question,
+                ...(liveTurn ? { abortController: liveTurn } : {}),
+              }),
           });
-          if (result.secondOpinion) {
+          // Terminal events: the orchestrator's tokens already streamed via onDelta;
+          // codex is one-shot (no token stream) so its whole answer lands as its
+          // completion. Both carry the SAME final answer the invoke returns — the stream
+          // is a live echo, never a second source of truth.
+          if (stream) {
             stream.emit({
               kind: "ask-complete",
               threadId: stream.threadId,
               turnId: stream.turnId,
-              channel: "codex",
-              model: result.secondOpinion.model,
-              finalBody: result.secondOpinion.answer,
-            });
-          }
-        }
-        // #251 persistence: the turn completed — REPLACE the streaming placeholder with
-        // the durable orchestrator answer (same id) and append the codex answer when the
-        // ask was "both". Only completed messages persist a body; the placeholder never
-        // held the coalesced deltas.
-        if (persist) {
-          persist.store.putMessage({
-            reviewId: persist.reviewId,
-            threadId: persist.threadId,
-            message: {
-              id: persist.orchestratorId,
-              author: "harness",
+              channel: "orchestrator",
               model: result.primary.model,
-              body: result.primary.answer,
-            },
-          });
-          if (result.secondOpinion) {
+              finalBody: result.primary.answer,
+            });
+            if (result.secondOpinion) {
+              stream.emit({
+                kind: "ask-complete",
+                threadId: stream.threadId,
+                turnId: stream.turnId,
+                channel: "codex",
+                model: result.secondOpinion.model,
+                finalBody: result.secondOpinion.answer,
+              });
+            }
+          }
+          // #251 persistence: the turn completed — REPLACE the streaming placeholder with
+          // the durable orchestrator answer (same id) and append the codex answer when the
+          // ask was "both". Only completed messages persist a body; the placeholder never
+          // held the coalesced deltas.
+          //
+          // ⭐ THE ABORT GUARD (criterion 4, honest-state doctrine). If this turn's
+          // controller was aborted, its `streaming` placeholder MUST stay on disk so the
+          // next reattach recovers it as `interrupted` (criterion 3) — never as a durable
+          // completion. Two ways an abort arrives here, and the guard covers BOTH: usually
+          // the aborted leg THROWS and skips this block entirely; but a leg that SWALLOWS
+          // its abort and returns a (failure/empty/partial) answer — e.g. the codex port
+          // catches execa's cancel and returns text — would otherwise reach here and
+          // overwrite the placeholder with a durable answer for a turn that was killed.
+          // Checking `signal.aborted` is the direct truthful signal, not a guess about
+          // library throw-vs-resolve behaviour. No registry wired ⇒ `liveTurn` undefined
+          // ⇒ the guard is inert (back-compat).
+          if (persist && !liveTurn?.signal.aborted) {
             persist.store.putMessage({
               reviewId: persist.reviewId,
               threadId: persist.threadId,
               message: {
-                id: persist.codexId,
+                id: persist.orchestratorId,
                 author: "harness",
-                model: result.secondOpinion.model,
-                body: result.secondOpinion.answer,
+                model: result.primary.model,
+                body: result.primary.answer,
               },
             });
+            if (result.secondOpinion) {
+              persist.store.putMessage({
+                reviewId: persist.reviewId,
+                threadId: persist.threadId,
+                message: {
+                  id: persist.codexId,
+                  author: "harness",
+                  model: result.secondOpinion.model,
+                  body: result.secondOpinion.answer,
+                },
+              });
+            }
           }
+          return parseCommandOutput(name, result);
+        } finally {
+          // The turn settled — completed, errored, or aborted-on-quit — so it leaves the
+          // registry. Running in `finally` is what makes the "leaves when it settles"
+          // guarantee hold on the throwing paths too (a quit-abort rejects the in-flight
+          // turn); settling only on success would leak the aborted turn's controller.
+          if (liveTurn) deps.liveTurns?.settle(turnKey);
         }
-        return parseCommandOutput(name, result);
       }
       // ── review.reattach: reload persisted threads + in-flight turns (issue #251) ─
       case "review.reattach": {

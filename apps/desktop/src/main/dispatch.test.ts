@@ -164,6 +164,7 @@ function harness(
     capturePort?: PatchsetCapturePort;
     runHandoffTurn?: DispatchDeps["runHandoffTurn"];
     composeBundle?: DispatchDeps["composeBundle"];
+    liveTurns?: DispatchDeps["liveTurns"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -270,6 +271,7 @@ function harness(
     publishConsent,
     ...(extra.runHandoffTurn ? { runHandoffTurn: extra.runHandoffTurn } : {}),
     ...(extra.composeBundle ? { composeBundle: extra.composeBundle } : {}),
+    ...(extra.liveTurns ? { liveTurns: extra.liveTurns } : {}),
     // Front-door deps (issue #29): a trivial in-memory projects capability plus
     // stub discovery/detection. The dedicated front-door tests exercise these
     // handlers directly; the shared harness only needs them to satisfy the shape.
@@ -2327,5 +2329,239 @@ describe("createDispatch — review.handoff.compose (issue #72)", () => {
         dispositions: COMPOSE_DISPOSITIONS,
       }),
     ).rejects.toThrow();
+  });
+});
+
+describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)", () => {
+  // A recording registry that hands out REAL AbortControllers, so a test can assert the
+  // exact controller instance reaches each leg and that register/settle bracket the turn.
+  function spyRegistry(): {
+    registered: { turnId: string; controller: AbortController }[];
+    settled: string[];
+    liveTurns: NonNullable<DispatchDeps["liveTurns"]>;
+  } {
+    const registered: { turnId: string; controller: AbortController }[] = [];
+    const settled: string[] = [];
+    return {
+      registered,
+      settled,
+      liveTurns: {
+        register(turnId: string): AbortController {
+          const controller = new AbortController();
+          registered.push({ turnId, controller });
+          return controller;
+        },
+        settle(turnId: string): void {
+          settled.push(turnId);
+        },
+      },
+    };
+  }
+
+  async function openReview(liveTurns: NonNullable<DispatchDeps["liveTurns"]>) {
+    const h = harness(undefined, {}, { liveTurns });
+    const review = await capturedReview(h.dispatch);
+    return { dispatch: h.dispatch, reviewAsk: h.reviewAsk, review };
+  }
+
+  it("registers the turn on start, threads the SAME controller into BOTH legs, and settles it on completion", async () => {
+    const reg = spyRegistry();
+    const { dispatch, reviewAsk, review } = await openReview(reg.liveTurns);
+    await dispatch(
+      "review.ask",
+      {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        mode: "both",
+        question: "q",
+        threadId: "th",
+        turnId: "tn",
+        anchor: { kind: "chunk", label: "src/a.ts", key: "chunk|src/a.ts" },
+      },
+      { emitAskStream: () => undefined },
+    );
+    // Entered the registry once, under this turn's id.
+    expect(reg.registered.map((r) => r.turnId)).toEqual(["tn"]);
+    const controller = reg.registered[0]?.controller;
+    // BOTH legs received the identical AbortController — one quit-abort cancels both.
+    const orchArg = reviewAsk.askOrchestrator.mock.calls[0]?.[0] as { abortController?: unknown };
+    const codexArg = reviewAsk.askCodex.mock.calls[0]?.[0] as { abortController?: unknown };
+    expect(orchArg.abortController).toBe(controller);
+    expect(codexArg.abortController).toBe(controller);
+    // Left the registry when the turn settled.
+    expect(reg.settled).toEqual(["tn"]);
+  });
+
+  it("SETTLES the turn even when the ask throws — the leak guard on the aborted/errored path", async () => {
+    const reg = spyRegistry();
+    const { dispatch, reviewAsk, review } = await openReview(reg.liveTurns);
+    // A quit-abort rejects the in-flight orchestrator turn; simulate that throw.
+    reviewAsk.askOrchestrator.mockRejectedValueOnce(new Error("aborted"));
+    await expect(
+      dispatch(
+        "review.ask",
+        {
+          commandId: randomUUID(),
+          reviewId: review.id,
+          mode: "orchestrator",
+          question: "q",
+          threadId: "th",
+          turnId: "tn",
+          anchor: { kind: "chunk", label: "src/a.ts", key: "chunk|src/a.ts" },
+        },
+        { emitAskStream: () => undefined },
+      ),
+    ).rejects.toThrow(/aborted/);
+    // The turn ENTERED and still LEFT the registry — settling only on success would leak
+    // the aborted turn's controller forever. This reddens if `settle` is moved out of the
+    // `finally` (into the success path after the return).
+    expect(reg.registered.map((r) => r.turnId)).toEqual(["tn"]);
+    expect(reg.settled).toEqual(["tn"]);
+  });
+
+  it("registers a one-shot ask (no turnId) under a fresh key and reaps it too", async () => {
+    const reg = spyRegistry();
+    const { dispatch, reviewAsk, review } = await openReview(reg.liveTurns);
+    await dispatch("review.ask", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      question: "q",
+    });
+    // A keyless one-shot ask still enters the registry under a generated key, so its
+    // model child is reapable on quit rather than surviving unregistered.
+    expect(reg.registered).toHaveLength(1);
+    const key = reg.registered[0]?.turnId ?? "";
+    expect(key.length).toBeGreaterThan(0);
+    const orchArg = reviewAsk.askOrchestrator.mock.calls[0]?.[0] as { abortController?: unknown };
+    expect(orchArg.abortController).toBe(reg.registered[0]?.controller);
+    // Settled under the SAME generated key it registered with.
+    expect(reg.settled).toEqual([key]);
+  });
+
+  it("threads NO controller when no registry is wired (fully back-compat)", async () => {
+    const h = harness();
+    const review = await capturedReview(h.dispatch);
+    await h.dispatch("review.ask", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      question: "q",
+    });
+    // No `liveTurns` dep ⇒ the port is called with exactly its existing input, no
+    // abortController key added.
+    expect(h.reviewAsk.askOrchestrator).toHaveBeenCalledWith({ review, question: "q" });
+  });
+
+  // ⭐ THE LOAD-BEARING PROOF (criterion 4 → criterion 3). The whole user-visible payoff is
+  // the chain: abort ⇒ no durable completion is persisted ⇒ the `streaming` placeholder
+  // survives on disk ⇒ next launch recovers it as `interrupted`. If a leg SWALLOWS its
+  // abort and returns a normal answer, the completion-persist would replace the
+  // placeholder with a durable answer for a turn that was killed — a fabricated
+  // completion, the exact failure #251 exists to prevent. The guard makes the property
+  // structural (it does not depend on the abort THROWING). These two tests pin it.
+  function orchWritesFrom(threadPersistence: {
+    putMessage: ReturnType<typeof vi.fn>;
+  }): { id: string; status?: string; body: string }[] {
+    return threadPersistence.putMessage.mock.calls
+      .map(([arg]) => (arg as { message: { id: string; status?: string; body: string } }).message)
+      .filter((m) => m.id === "tn::orchestrator");
+  }
+
+  const STREAMED_INPUT = {
+    mode: "orchestrator" as const,
+    threadId: "th",
+    turnId: "tn",
+    anchor: { kind: "chunk" as const, label: "src/a.ts", key: "chunk|src/a.ts" },
+    turnBody: "why?",
+  };
+
+  it("does NOT persist a durable completion when the leg SWALLOWS its abort and returns an answer (placeholder survives)", async () => {
+    const reg = spyRegistry();
+    const h = harness(undefined, {}, { liveTurns: reg.liveTurns });
+    const review = await capturedReview(h.dispatch);
+    // The quit fires mid-turn (controller.abort()), but the port returns a normal answer
+    // anyway — exactly what the codex leg does when it catches execa's cancel, and what
+    // the claude leg would do if the SDK ever resolved an aborted turn instead of throwing.
+    h.reviewAsk.askOrchestrator.mockImplementationOnce(async ({ abortController }) => {
+      abortController?.abort();
+      return { model: "Orchestrator · Claude", answer: "a partial answer that must NOT persist" };
+    });
+    await h.dispatch(
+      "review.ask",
+      { commandId: randomUUID(), reviewId: review.id, question: "q", ...STREAMED_INPUT },
+      { emitAskStream: () => undefined },
+    );
+    // The orchestrator id was written EXACTLY once — the streaming placeholder — and never
+    // replaced. Drop the `!liveTurn.signal.aborted` guard and this reddens at length 2,
+    // the second write being the durable `a partial answer…` body.
+    const orch = orchWritesFrom(h.threadPersistence);
+    expect(orch).toHaveLength(1);
+    expect(orch[0]?.status).toBe("streaming");
+    expect(orch[0]?.body).toBe("");
+  });
+
+  it("does NOT persist a durable completion when the aborted leg THROWS (placeholder survives)", async () => {
+    const reg = spyRegistry();
+    const h = harness(undefined, {}, { liveTurns: reg.liveTurns });
+    const review = await capturedReview(h.dispatch);
+    // The other arrival: the aborted leg rejects (the SDK's observed throw-on-abort).
+    h.reviewAsk.askOrchestrator.mockRejectedValueOnce(new Error("Request was cancelled"));
+    await expect(
+      h.dispatch(
+        "review.ask",
+        { commandId: randomUUID(), reviewId: review.id, question: "q", ...STREAMED_INPUT },
+        { emitAskStream: () => undefined },
+      ),
+    ).rejects.toThrow(/cancelled/);
+    // Same durable-state outcome by a different route: only the streaming placeholder, no
+    // completion. The throw skips the completion-persist by control flow.
+    const orch = orchWritesFrom(h.threadPersistence);
+    expect(orch).toHaveLength(1);
+    expect(orch[0]?.status).toBe("streaming");
+  });
+
+  it("abort during the CODEX leg (orchestrator already returned genuinely) persists NO completion and NO codex record", async () => {
+    // ⭐ The subtler window: askReview is sequential (orchestrator, then codex), so an
+    // abort during the codex leg leaves a GENUINE orchestrator answer in hand while the
+    // codex port SWALLOWS its cancel (its catch returns "Codex could not answer …"). The
+    // ask then RESOLVES — no throw — so control flow alone would run the completion-persist
+    // and (a) overwrite the placeholder with the real orchestrator answer AND (b) persist
+    // the codex cancel as though the tool had FAILED, conflating "you quit" with "codex
+    // broke". The abort guard is leg-agnostic — it fires on `signal.aborted` regardless of
+    // which leg swallowed — so neither is persisted and the turn recovers as interrupted.
+    const reg = spyRegistry();
+    const h = harness(undefined, {}, { liveTurns: reg.liveTurns });
+    const review = await capturedReview(h.dispatch);
+    // Orchestrator finishes genuinely, WITHOUT aborting.
+    h.reviewAsk.askOrchestrator.mockImplementationOnce(async () => ({
+      model: "Orchestrator · Claude",
+      answer: "a genuine, complete orchestrator answer",
+    }));
+    // Codex leg: the quit fires mid-exec (abort), and the port's catch returns a
+    // failure-shaped answer rather than throwing — exactly `createLiveCodexAsk`'s behaviour.
+    h.reviewAsk.askCodex.mockImplementationOnce(async ({ abortController }) => {
+      abortController?.abort();
+      return { model: "codex", answer: "Codex could not answer: Operation aborted" };
+    });
+    await h.dispatch(
+      "review.ask",
+      {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        question: "q",
+        ...STREAMED_INPUT,
+        mode: "both",
+      },
+      { emitAskStream: () => undefined },
+    );
+    const messages = h.threadPersistence.putMessage.mock.calls.map(
+      ([arg]) => (arg as { message: { id: string; status?: string } }).message,
+    );
+    // Orchestrator: only the streaming placeholder, never replaced by the genuine answer.
+    const orch = messages.filter((m) => m.id === "tn::orchestrator");
+    expect(orch).toHaveLength(1);
+    expect(orch[0]?.status).toBe("streaming");
+    // Codex: no record at all — the cancel is NOT persisted as a codex failure. Drop the
+    // guard and this reddens (a `tn::codex` "could not answer" message appears).
+    expect(messages.some((m) => m.id === "tn::codex")).toBe(false);
   });
 });

@@ -67,12 +67,16 @@ export type OrchestratorTurnOutcome = OrchestratorTurnAvailable | OrchestratorTu
 
 /** Drive ONE orchestrator turn for a live review + built pipeline + question.
  *  `onDelta` (issue #251) streams each token as it arrives; omit it for a
- *  non-streaming turn that only reads the final text. */
+ *  non-streaming turn that only reads the final text. `abortController` (issue #251,
+ *  criterion 4) cancels the turn — the composition root holds it in the LiveTurnRegistry
+ *  and fires it on `before-quit`, so an in-flight turn's `claude` child is asked to stop
+ *  (via the SDK's `abortController` option) rather than surviving the quit. */
 export type OrchestratorTurnRunner = (
   review: Review,
   pipeline: ReviewPipelineResult,
   question: string,
   onDelta?: (text: string) => void,
+  abortController?: AbortController,
 ) => Promise<OrchestratorTurnOutcome>;
 
 /**
@@ -82,7 +86,7 @@ export type OrchestratorTurnRunner = (
  * `unavailable` rather than crashing (mirroring the pipeline's honest degradation).
  */
 export function createOrchestratorTurnRunner(deps: OrchestratorRunnerDeps): OrchestratorTurnRunner {
-  return async (review, pipeline, question, onDelta) => {
+  return async (review, pipeline, question, onDelta, abortController) => {
     const claudePath = await deps.resolveClaudePath();
     if (!claudePath) {
       return {
@@ -107,6 +111,9 @@ export function createOrchestratorTurnRunner(deps: OrchestratorRunnerDeps): Orch
       ...(deps.loadQuery ? { loadQuery: deps.loadQuery } : {}),
       ...(deps.loadSdk ? { loadSdk: deps.loadSdk } : {}),
       ...(onDelta ? { onDelta } : {}),
+      // #251 criterion 4: hand the SDK the AbortController so `before-quit` can cancel
+      // the live claude turn. Absent → an uncancellable turn (fully back-compat).
+      ...(abortController ? { abortController } : {}),
     });
     return { available: true, result };
   };
