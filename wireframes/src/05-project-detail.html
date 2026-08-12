@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8">
-<title>Rennet v3.3 · 05 Project detail</title><style>
+<title>Rennet v4.0 · 05 Project detail</title><style>
 :root{
   --ground:#e7e9ec; --ink:#181b1f; --text:#1c1f24; --muted:#697079; --faint:#9aa1a9;
   --win:#ffffff; --titlebar:#f4f5f7; --glass:#eceff2; --card:#ffffff;
@@ -94,6 +94,44 @@ svg{ display:block; width:16px; height:16px; }
   border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
 .modepill svg{ width:14px; height:14px; }
 
+/* ---- v4.0 navigation chrome ---- */
+/* breadcrumb spine in the title bar (the "where am I") — glass, sans, interactive */
+.crumbs{ display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+.cseg{ display:inline-flex; align-items:center; gap:6px; font-size:14px; font-weight:550; color:var(--muted); }
+.cseg .cico{ display:flex; color:#5a6069; }
+.cseg .cico svg{ width:15px; height:15px; }
+.cseg.cur{ color:var(--text); font-weight:650; }
+.cseg.root{ color:var(--muted); }
+.csep{ display:flex; color:#aab0b8; }
+.csep svg{ width:13px; height:13px; }
+
+/* the compact left nav rail (the "where can I go" controls): back/forward, home, projects, context */
+.winmain{ display:flex; align-items:stretch; }
+.winmain > .content{ flex:1; min-width:0; }
+.navrail{ flex:none; width:64px; align-self:stretch; background:var(--glass); border-right:1px solid var(--line);
+  display:flex; flex-direction:column; align-items:center; gap:13px; padding:16px 0 18px; }
+.navbtn{ display:flex; flex-direction:column; align-items:center; gap:4px; color:var(--muted); }
+.navbtn .gb{ width:34px; height:34px; border-radius:9px; border:1px solid var(--line2); background:#fff;
+  display:flex; align-items:center; justify-content:center; color:#2a2e34; }
+.navbtn .gb svg{ width:18px; height:18px; }
+.navbtn .cap{ font-family:var(--mono); font-size:9px; letter-spacing:.02em; color:var(--faint); }
+.navbtn.off{ opacity:.38; }
+.navrail .sep{ width:28px; height:1px; background:var(--line2); }
+.navrail .ctx{ margin-top:auto; display:flex; flex-direction:column; align-items:center; gap:6px; }
+.navrail .ctx .cnode{ width:30px; height:30px; border-radius:8px; display:flex; align-items:center; justify-content:center;
+  border:1px solid var(--line2); background:#fff; color:#5a6069; }
+.navrail .ctx .cnode svg{ width:15px; height:15px; }
+.navrail .ctx .cnode.on{ background:var(--blue-bg); border-color:var(--blue-line); color:var(--blue-ink); }
+.navrail .ctx .cbar{ width:1.5px; height:9px; background:var(--line2); }
+.navrail .ctx .clab{ font-family:var(--mono); font-size:8.5px; color:var(--faint); }
+
+/* the patchset chip (title-bar meta) with an optional trail caret */
+.psetchip{ display:inline-flex; align-items:center; gap:6px; font-family:var(--sans); font-size:12px; color:var(--text);
+  border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
+.psetchip svg{ width:13px; height:13px; color:#5a6069; }
+.psetchip .pcaret{ display:flex; color:#aab0b8; }
+.psetchip .pcaret svg{ width:12px; height:12px; }
+
 .pd{ display:grid; grid-template-columns:236px 1fr; }
 .rail{ background:var(--glass); border-right:1px solid var(--line); margin:-26px 0 -26px -28px; padding:22px 18px; }
 .rail .pj{ font-size:16px; font-weight:650; display:flex; align-items:center; gap:8px; }
@@ -182,10 +220,17 @@ svg{ display:block; width:16px; height:16px; }
     <h1 class="ftitle">Project detail: the everyday landing</h1>
     <span class="pill">Home</span>
     <div class="fref">the everyday landing · ONE smart list
-no zones · filter + sort · mode glyph in the title bar</div>
+no zones · the review’s real home</div>
   </div>
-  <p class="fsub">Click a project and land here: <b>one list, no hard zones</b>. Every branch, worktree and PR reads distinctly by state — your local work in private backlight, your PRs accent-striped, a teammate’s PR neutral, a row that needs you in amber, a merged PR dimmed and read-only. Sort defaults to <b>Hot</b> (what needs you floats up); the filter bar narrows to Needs-you / Mine / Local / PRs. The execution mode is one glyph in the title bar, no consent banner.</p>
-  <div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="gly sm plain" style="width:20px;height:20px;color:#4a5059"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span>orbital</span><span class="tmeta"><span class="modepill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg>auto<span style="color:#aab0b8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></span>synced 14:02<span style="color:#aab0b8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M7 9.5h.01M10.5 9.5h.01M14 9.5h.01M7.5 13.5h9" /></svg></span></span></div><div class="content"><div class="pd"><div class="rail">
+  <p class="fsub">Click a project and land here: <b>one list, no hard zones</b>. Every branch, worktree and PR reads distinctly by state — your local work in private backlight, your PRs accent-striped, a teammate’s PR neutral, a row that needs you in amber, a merged PR dimmed and read-only. Sort defaults to <b>Hot</b>; the filter bar narrows to Needs-you / Mine / Local / PRs. This is a <b>review’s real home</b>: the breadcrumb reads Projects › orbital, and back from any review lands here — never the front door.</p>
+  <div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="crumbs"><span class="cseg root"><span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7"/><path d="M6.5 9.5V20h4v-6h3v6h4V9.5"/></svg></span>Projects</span><span class="csep"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span><span class="cseg cur"><span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span>orbital</span></span></span><span class="tmeta"><span class="modepill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg>auto<span style="color:#aab0b8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></span>synced 14:02<span style="color:#aab0b8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M7 9.5h.01M10.5 9.5h.01M14 9.5h.01M7.5 13.5h9" /></svg></span></span></div><div class="winmain"><div class="navrail">
+    <span class="navbtn"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></span><span class="cap">⌘[</span></span>
+    <span class="navbtn off"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span><span class="cap">⌘]</span></span>
+    <span class="sep"></span>
+    <span class="navbtn"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7"/><path d="M6.5 9.5V20h4v-6h3v6h4V9.5"/></svg></span><span class="cap">Home</span></span>
+    <span class="navbtn"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span><span class="cap">Projects</span></span>
+    <div class="ctx"><span class="cnode on" title="orbital"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span><span class="clab">here</span></div>
+  </div><div class="content"><div class="pd"><div class="rail">
     <div class="pj"><span style="color:#4a5059"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span>orbital</div>
     <div class="pjpath">~/orbital</div>
     <div class="pjcount">3 repos · 11 branches</div>
@@ -265,8 +310,8 @@ no zones · filter + sort · mode glyph in the title bar</div>
     </div>
     <div class="state"><span class="ci pend">CI …</span><span class="lbl">your PR</span></div>
     <div class="act"><button class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.6"/></svg>Open</button></div>
-  </div></div></div></div></div>
+  </div></div></div></div></div></div>
   <div class="notes"><div class="notes-h">Designer notes &nbsp;/&nbsp; what to weigh in on</div>
-    <div class="notes-grid"><div class="note"><span class="dot">1</span><div><b>One list, no zones.</b> The old Yours / Team split is gone (it contradicted the ratified design). It is a single scroll; a row’s STATE — not a zone — gives it its look: local backlight, my-PR accent stripe, teammate PR neutral, needs-you amber, merged green + dimmed.</div></div><div class="note"><span class="dot">2</span><div><b>Hot sort, with a needs-you boost.</b> Default order is recency of engagement, and anything that needs you (review requested, your own PR’s CI red) floats to the top. Also sort by Recent / Author / Status.</div></div><div class="note"><span class="dot">3</span><div><b>Ownership is appearance + filter, not a wall.</b> You edit what you own and review what you did not author; the row shows which via stripe + the Mine filter, but nothing is walled off. Filters: All / Needs-you / Mine / Local / PRs, each with a count.</div></div><div class="note"><span class="dot">4</span><div><b>One item, one row (dedupe).</b> Once a local branch has a PR, the PR row wins and the worktree becomes a “checked out locally” annotation on it (#477) — never a duplicate second row.</div></div><div class="note"><span class="dot">5</span><div><b>Merged → read-only + clean up.</b> A merged PR (#468) dims to read-only; if a worktree is still on disk, a Clean up action sweeps it away. The terminal verb on local work is Make PR (reviewed) or Review.</div></div></div>
+    <div class="notes-grid"><div class="note"><span class="dot">1</span><div><b>One list, no zones.</b> The old Yours / Team split is gone (it contradicted the ratified design). It is a single scroll; a row’s STATE — not a zone — gives it its look: local backlight, my-PR accent stripe, teammate PR neutral, needs-you amber, merged green + dimmed.</div></div><div class="note"><span class="dot">2</span><div><b>Hot sort, with a needs-you boost.</b> Default order is recency of engagement, and anything that needs you (review requested, your own PR’s CI red) floats to the top. Also sort by Recent / Author / Status.</div></div><div class="note"><span class="dot">3</span><div><b>Ownership is appearance + filter, not a wall.</b> You edit what you own and review what you did not author; the row shows which via stripe + the Mine filter, but nothing is walled off. Filters: All / Needs-you / Mine / Local / PRs, each with a count.</div></div><div class="note"><span class="dot">4</span><div><b>One item, one row (dedupe).</b> Once a local branch has a PR, the PR row wins and the worktree becomes a “checked out locally” annotation on it (#477) — never a duplicate second row.</div></div><div class="note"><span class="dot">5</span><div><b>Merged → read-only + clean up.</b> A merged PR (#468) dims to read-only; if a worktree is still on disk, a Clean up action sweeps it away. The terminal verb on local work is Make PR (reviewed) or Review.</div></div><div class="note"><span class="dot">6</span><div><b>The nav spine, in two parts.</b> The slim left rail carries the app controls — back / forward (⌘[ / ⌘]), Home, Projects, and a context stack for the current lineage — while the title-bar breadcrumb says where you are. The project’s own repo rail sits beside it, scoped to this project: a global rail plus a contextual panel, not two competing sidebars.</div></div></div>
   </div>
 </div></body></html>

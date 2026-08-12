@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8">
-<title>Rennet v3.3 · 09 Flagged</title><style>
+<title>Rennet v4.0 · 09 Flagged</title><style>
 :root{
   --ground:#e7e9ec; --ink:#181b1f; --text:#1c1f24; --muted:#697079; --faint:#9aa1a9;
   --win:#ffffff; --titlebar:#f4f5f7; --glass:#eceff2; --card:#ffffff;
@@ -94,6 +94,44 @@ svg{ display:block; width:16px; height:16px; }
   border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
 .modepill svg{ width:14px; height:14px; }
 
+/* ---- v4.0 navigation chrome ---- */
+/* breadcrumb spine in the title bar (the "where am I") — glass, sans, interactive */
+.crumbs{ display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+.cseg{ display:inline-flex; align-items:center; gap:6px; font-size:14px; font-weight:550; color:var(--muted); }
+.cseg .cico{ display:flex; color:#5a6069; }
+.cseg .cico svg{ width:15px; height:15px; }
+.cseg.cur{ color:var(--text); font-weight:650; }
+.cseg.root{ color:var(--muted); }
+.csep{ display:flex; color:#aab0b8; }
+.csep svg{ width:13px; height:13px; }
+
+/* the compact left nav rail (the "where can I go" controls): back/forward, home, projects, context */
+.winmain{ display:flex; align-items:stretch; }
+.winmain > .content{ flex:1; min-width:0; }
+.navrail{ flex:none; width:64px; align-self:stretch; background:var(--glass); border-right:1px solid var(--line);
+  display:flex; flex-direction:column; align-items:center; gap:13px; padding:16px 0 18px; }
+.navbtn{ display:flex; flex-direction:column; align-items:center; gap:4px; color:var(--muted); }
+.navbtn .gb{ width:34px; height:34px; border-radius:9px; border:1px solid var(--line2); background:#fff;
+  display:flex; align-items:center; justify-content:center; color:#2a2e34; }
+.navbtn .gb svg{ width:18px; height:18px; }
+.navbtn .cap{ font-family:var(--mono); font-size:9px; letter-spacing:.02em; color:var(--faint); }
+.navbtn.off{ opacity:.38; }
+.navrail .sep{ width:28px; height:1px; background:var(--line2); }
+.navrail .ctx{ margin-top:auto; display:flex; flex-direction:column; align-items:center; gap:6px; }
+.navrail .ctx .cnode{ width:30px; height:30px; border-radius:8px; display:flex; align-items:center; justify-content:center;
+  border:1px solid var(--line2); background:#fff; color:#5a6069; }
+.navrail .ctx .cnode svg{ width:15px; height:15px; }
+.navrail .ctx .cnode.on{ background:var(--blue-bg); border-color:var(--blue-line); color:var(--blue-ink); }
+.navrail .ctx .cbar{ width:1.5px; height:9px; background:var(--line2); }
+.navrail .ctx .clab{ font-family:var(--mono); font-size:8.5px; color:var(--faint); }
+
+/* the patchset chip (title-bar meta) with an optional trail caret */
+.psetchip{ display:inline-flex; align-items:center; gap:6px; font-family:var(--sans); font-size:12px; color:var(--text);
+  border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
+.psetchip svg{ width:13px; height:13px; color:#5a6069; }
+.psetchip .pcaret{ display:flex; color:#aab0b8; }
+.psetchip .pcaret svg{ width:12px; height:12px; }
+
 .lensbar{ display:flex; align-items:center; gap:8px; margin-bottom:16px; }
 .lens{ display:flex; align-items:center; gap:7px; font-family:var(--mono); font-size:12.5px; color:var(--muted);
   border:1px solid var(--line2); border-radius:8px; padding:7px 11px; background:#fff; }
@@ -154,6 +192,39 @@ svg{ display:block; width:16px; height:16px; }
 .composer{ display:flex; align-items:center; gap:9px; border:1px solid var(--line2); border-radius:9px; padding:9px 11px; margin-top:4px; }
 .composer .ph{ color:var(--faint); font-size:13px; flex:1; }
 
+/* ---- v4.0 unified conversation panel (one chat-style stream) ---- */
+.chat{ border-left:1px solid var(--line); padding-left:18px; margin:-4px 0; display:flex; flex-direction:column; }
+.chat-h{ display:flex; align-items:center; gap:8px; padding-bottom:11px; border-bottom:1px solid var(--line);
+  font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); }
+.chat-h .exp{ margin-left:auto; display:inline-flex; align-items:center; gap:6px; font-family:var(--sans);
+  text-transform:none; letter-spacing:0; font-size:11.5px; color:var(--muted); border:1px solid var(--line2);
+  border-radius:7px; padding:4px 8px; background:#fff; }
+.chat-h .exp svg{ width:13px; height:13px; }
+.stream{ display:flex; flex-direction:column; gap:15px; padding:15px 0 6px; }
+/* one lightweight chat row: type-icon gutter + message. No card box. */
+.msg{ display:flex; gap:9px; align-items:flex-start; }
+.msg .tico{ flex:none; width:25px; height:25px; border-radius:50%; border:1px solid var(--line2); background:#fff;
+  display:flex; align-items:center; justify-content:center; color:#6b7178; }
+.msg .tico svg{ width:13px; height:13px; }
+.msg .tico.rc{ color:var(--amber); border-color:var(--amber-line); background:var(--amber-bg); }
+.msg .tico.find{ color:#a8434f; border-color:#e6c3c9; background:#fbeef0; }
+.msg .tico.ask{ color:var(--blue-ink); border-color:var(--blue-line); background:var(--blue-bg); }
+.msg .tico.harn{ color:var(--blue); border-color:var(--blue-line); background:var(--blue-bg); }
+.msg .mb{ flex:1; min-width:0; }
+.msg .mh{ display:flex; align-items:baseline; gap:7px; }
+.msg .mh .nm{ font-size:12.5px; font-weight:600; }
+.msg .mh .ty{ font-family:var(--mono); font-size:10px; color:var(--faint); }
+.msg .mh .tm{ margin-left:auto; font-family:var(--mono); font-size:10px; color:var(--faint); }
+/* the WhatsApp/Messenger reply chip: a quoted line reference above the message */
+.replychip{ display:flex; align-items:center; gap:7px; border-left:2px solid var(--blue); background:#f4f8fb;
+  border-radius:0 6px 6px 0; padding:3px 8px; margin:5px 0 4px; }
+.replychip .rl{ font-family:var(--mono); font-size:9.5px; color:var(--blue-ink); flex:none; }
+.replychip .rc{ font-family:var(--code); font-size:10.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.msg .mt{ font-size:12.5px; line-height:1.5; color:var(--text); margin-top:2px; }
+.msg .mfrag{ display:flex; gap:6px; margin-top:7px; flex-wrap:wrap; }
+.msg.self .tico{ background:#eef0f2; color:#5a6069; }
+.chat .composer{ margin-top:14px; }
+
 .flagrow{ border:1px solid var(--line2); border-radius:12px; padding:14px 16px; margin-bottom:11px; display:flex; gap:14px; }
 .flagrow.disagree{ background:var(--amber-bg); border-color:var(--amber-line); }
 .sev{ flex:none; display:flex; flex-direction:column; align-items:center; gap:5px; width:56px; }
@@ -182,7 +253,14 @@ svg{ display:block; width:16px; height:16px; }
 findings + disagreements, indexed</div>
   </div>
   <p class="fsub">Everything the automated review layer produced: model-council findings and dual-review disagreements. Each flag carries a severity, the agreement state (both concur, or the models disagree), and its anchor. The disagreement flare lives here, in the index, instead of ambushing you in the chat.</p>
-  <div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="gly sm plain" style="width:20px;height:20px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/></svg></span>#482 · Flagged</span><span class="tmeta"><span class="modepill"><span style="color:#2a2e34"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span>auto<span style="color:#aab0b8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></span><span>model council · dual review</span></span></div><div class="content"><div class="lensbar"><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 13.5l1.7 1.7L14 11.8"/></svg>Spec</span><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4.2" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="4.2" cy="12" r="1.3"/><path d="M3 17l1.2 1.2L6 16.4" /></svg>Sequence</span><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M6 8.4v7.2M8.3 6.9C13 7.5 15.6 8.9 16 10.6M8.2 17c4.8-.6 7.4-2 7.8-3.8"/></svg>Decisions</span><span class="lens on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/></svg>Flagged</span><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h3.5l2-6.5 3 13 2.4-9 1.6 3.5H22"/></svg>Noise</span><div class="right rel"><span class="anno" style="right:150px;top:-30px"><span class="dot">3</span></span><span class="chip">3 flags · 1 disagreement</span></div></div><div class="flagrow rel">
+  <div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="crumbs"><span class="cseg root"><span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7"/><path d="M6.5 9.5V20h4v-6h3v6h4V9.5"/></svg></span>Projects</span><span class="csep"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span><span class="cseg"><span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span>orbital</span><span class="csep"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span><span class="cseg cur"><span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/></svg></span>#482 · rate limiting</span></span></span><span class="tmeta"><span class="modepill"><span style="color:#2a2e34"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span>auto<span style="color:#aab0b8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></span><span>model council · dual review</span></span></div><div class="winmain"><div class="navrail">
+    <span class="navbtn"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></span><span class="cap">⌘[</span></span>
+    <span class="navbtn off"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span><span class="cap">⌘]</span></span>
+    <span class="sep"></span>
+    <span class="navbtn"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7"/><path d="M6.5 9.5V20h4v-6h3v6h4V9.5"/></svg></span><span class="cap">Home</span></span>
+    <span class="navbtn"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span><span class="cap">Projects</span></span>
+    <div class="ctx"><span class="cnode" title="orbital"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span><span class="cbar"></span><span class="cnode on" title="feat/rate-limiting"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="8" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 10.3c0 4-3.5 4.4-6.4 5.2"/></svg></span><span class="clab">here</span></div>
+  </div><div class="content"><div class="lensbar"><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h8l4 4v14H6z"/><path d="M14 3v4h4"/><path d="M9 13.5l1.7 1.7L14 11.8"/></svg>Spec</span><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4.2" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="4.2" cy="12" r="1.3"/><path d="M3 17l1.2 1.2L6 16.4" /></svg>Sequence</span><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M6 8.4v7.2M8.3 6.9C13 7.5 15.6 8.9 16 10.6M8.2 17c4.8-.6 7.4-2 7.8-3.8"/></svg>Decisions</span><span class="lens on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/></svg>Flagged</span><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h3.5l2-6.5 3 13 2.4-9 1.6 3.5H22"/></svg>Noise</span><div class="right rel"><span class="anno" style="right:150px;top:-30px"><span class="dot">3</span></span><span class="chip">3 flags · 1 disagreement</span></div></div><div class="flagrow rel">
     <span class="anno" style="left:-30px;top:16px"><span class="dot">1</span></span>
     <div class="sev"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/></svg><span class="badge2 high">high</span></div>
     <div class="flagbody">
@@ -206,7 +284,7 @@ findings + disagreements, indexed</div>
       <div class="ft">metrics.count label “rate.store_error” is not in the registered metric set.</div>
       <div class="meta"><span class="agree concur"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5 10-11"/></svg>both concur · 3/3</span><span class="chip">self-consistency</span><span class="anchor"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 14.5l5-5"/><path d="M11 7l1.2-1.2a3.4 3.4 0 0 1 4.9 4.9L16 12"/><path d="M13 17l-1.2 1.2a3.4 3.4 0 0 1-4.9-4.9L8 12"/></svg>rate-limit.ts L45 →</span></div>
     </div>
-  </div></div></div>
+  </div></div></div></div>
   <div class="notes"><div class="notes-h">Designer notes &nbsp;/&nbsp; what to weigh in on</div>
     <div class="notes-grid"><div class="note"><span class="dot">1</span><div><b>One index for the machine’s opinions.</b> Model-council findings and dual-review disagreements, in one queue. This is the lens that repairs Decisions by subtraction: everything machine-opinionated leaves it.</div></div><div class="note"><span class="dot">2</span><div><b>Severity plus agreement state.</b> Each flag says how bad and how sure: both models concur, or they disagree, with the vote counts.</div></div><div class="note"><span class="dot">3</span><div><b>Disagreement lives here.</b> When the models split, both answers sit side by side in this lens, labeled. It no longer flares up mid-conversation in the chat.</div></div><div class="note"><span class="dot">4</span><div><b>The lens is an index, not a house.</b> The flags still render as marks at their anchors on the code surfaces; this lens is the thing that jumps you to them.</div></div></div>
   </div>

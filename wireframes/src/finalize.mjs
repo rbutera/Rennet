@@ -1,8 +1,23 @@
-import { ic, dot, win, modePill } from './kit.mjs';
+import { ic, dot, win, modePill, crumb, navRail, navCtx } from './kit.mjs';
 
 const cl4 = () => `<span class="cluster"><i>${ic.comment}</i><i>${ic.reqchange}</i><i>${ic.question}</i><i>${ic.discuss}</i></span>`;
 // title-bar meta = the mode glyph (auto) then whatever else the frame states
 const tmeta = (extra) => `${modePill}${extra ? `<span>${extra}</span>` : ''}`;
+// the review lineage for the nav-rail context stack (project → review → surface)
+const reviewCtx = (leaf) =>
+  navCtx([
+    { icon: ic.repo, title: 'orbital' },
+    { icon: ic.branch, title: 'feat/rate-limiting' },
+    ...(leaf ? [{ icon: leaf, on: true }] : [{ icon: ic.branch, on: true }]),
+  ]);
+// crumb for a surface hanging off the rate-limiting review
+const reviewChain = (...leaves) =>
+  crumb([
+    { label: 'Projects', icon: ic.home, root: true },
+    { label: 'orbital', icon: ic.repo },
+    { label: 'feat/rate-limiting', icon: ic.branch },
+    ...leaves,
+  ]);
 
 /* ---------- 11 Collation draft ---------- */
 export const css11 = `
@@ -53,12 +68,17 @@ export function frame11() {
   const body = `<div class="draft-top"><span class="chip blue">${ic.decisions}editable · yours</span><div class="right"><button class="btn ink">${ic.comment}Refine to post</button><button class="btn">${ic.resteer}Compose handoff</button></div></div><div class="draftgrid">${main}${panel}</div>`;
 
   return {
-    title: 'Rennet v3.3 · 11 Collation draft',
+    title: 'Rennet v4.0 · 11 Collation draft',
     head: { badge: '11', title: 'Collation draft: the one editable draft', pill: 'Draft' },
     ref: 'the missing middle\neditable glass between lenses and paper',
-    sub: 'The editable draft between the lenses and the paper: your dispositions collated into a document-in-formation, one click back to each anchor. Every staged item carries the inline conversation cluster, so you can question or discuss a staged chunk before signing. The orchestrator proposes; you dispose. Editing lives here; the paper is a freeze.',
+    sub: 'The editable draft between the lenses and the paper: your dispositions collated into a document-in-formation, one click back to each anchor. Every staged item carries the inline conversation cluster, so you can question or discuss a staged chunk before signing. The orchestrator proposes; you dispose. The <b>Draft</b> is a crumb child of the review — the crumb reads … › feat/rate-limiting › Draft, and Esc or the review crumb ascends one step. Editing lives here; the paper is a freeze.',
     css: css11,
-    win: win({ name: `<span class="gly sm plain" style="width:20px;height:20px">${ic.decisions}</span>#482 · Collation draft`, meta: tmeta('review to post'), body }),
+    win: win({
+      name: reviewChain({ label: 'Draft', icon: ic.decisions, cur: true }),
+      meta: tmeta('review to post'),
+      body,
+      nav: navRail({ back: true, ctx: reviewCtx(ic.decisions) }),
+    }),
     notes: [
       { h: 'The one editable surface.', b: 'The glass draft between the lenses and the paper. The raw note becomes a refined comment; the strikethrough keeps what you actually typed visible.' },
       { h: 'Merge, split, reorder, withdraw.', b: 'Via the drag handle and item controls, plus the inline cluster on every staged item. You can still question or discuss a staged chunk here.' },
@@ -108,12 +128,20 @@ export function frame12() {
   const body = `<div class="draft-top" style="margin-bottom:16px"><span class="chip">${ic.paper}paper · solid</span><span class="chip">nothing editable here</span></div><div class="papergrid">${paper}${panel}</div>`;
 
   return {
-    title: 'Rennet v3.3 · 12 Paper / sign',
+    title: 'Rennet v4.0 · 12 Paper / sign',
     head: { badge: '12', title: 'Paper: the one thing you sign', pill: 'Sign' },
     ref: 'the derived verdict + the human sign\nsign in the loop IS the safety',
-    sub: 'The one solid object. It previews <b>exactly</b> what will post, nothing editable. The verdict is derived from your dispositions (here, request changes) and shown with its derivation, and you can override it. The human sign carries the real verdict: the sign in the loop is the safety, not a forced-neutral event.',
+    sub: 'The one solid object. It previews <b>exactly</b> what will post, nothing editable. The verdict is derived from your dispositions (here, request changes) and shown with its derivation, and you can override it. The <b>Paper</b> is a crumb child of the Draft — the crumb reads … › Draft › Paper, and back lands on the Draft, because editing lives there. The human sign carries the real verdict: the sign in the loop is the safety, not a forced-neutral event.',
     css: css11 + css12,
-    win: win({ name: `<span class="gly sm plain" style="width:20px;height:20px;color:#8a7f5a">${ic.paper}</span>#482 · Paper`, meta: tmeta('sign to post'), body }),
+    win: win({
+      name: reviewChain(
+        { label: 'Draft', icon: ic.decisions },
+        { label: 'Paper', icon: ic.paper, cur: true },
+      ),
+      meta: tmeta('sign to post'),
+      body,
+      nav: navRail({ back: true, ctx: reviewCtx(ic.paper) }),
+    }),
     notes: [
       { h: 'The one solid object.', b: 'Paper is opaque: it shows precisely the comments that will land on the PR, in the order they will land. Editing happened on the draft; here it is frozen.' },
       { h: 'The verdict is derived.', b: 'Rennet reads your dispositions and derives Approve / Request changes / Comment, and shows the arithmetic (2 request-changes, 1 comment).' },
@@ -165,16 +193,25 @@ export function frame13() {
   const body = `${composer}${thread}`;
 
   return {
-    title: 'Rennet v3.3 · 13 Questions',
-    head: { badge: '13', title: 'Questions: the orchestrator, by default', pill: 'Ask' },
-    ref: 'orchestrator-only default\nask both is an opt-in split',
-    sub: 'Every question goes to the orchestrator by default. The send control carries one small split: ask both models, remembered per thread, never sticky globally. When you ask both, the answers arrive as two labeled cards, side by side. There is no synthesis block, ever: the robotic auto-merge is gone.',
+    title: 'Rennet v4.0 · 13 Questions',
+    head: { badge: '13', title: 'Questions: the conversation, expanded', pill: 'Ask' },
+    ref: 'the unified conversation, full-screen\nask both is an opt-in split',
+    sub: 'This is the review’s <b>unified conversation expanded to full screen</b> — the same stream that lives collapsed in the review’s right sidebar (frame 06), given room for a long back-and-forth. Every question goes to the orchestrator by default; the send control carries one small split, <b>ask both models</b>, remembered per thread. When you ask both, the answers arrive as two labeled cards, side by side. No synthesis block, ever. As an overlay it never moves the crumb — you have not gone anywhere.',
     css: css13,
-    win: win({ name: `<span class="gly sm plain" style="width:20px;height:20px">${ic.orchestrator}</span>#482 · Ask`, meta: tmeta('orchestrator by default'), body }),
+    win: win({
+      name: crumb([
+        { label: 'Projects', icon: ic.home, root: true },
+        { label: 'orbital', icon: ic.repo },
+        { label: 'feat/rate-limiting', icon: ic.branch, cur: true },
+      ]),
+      meta: tmeta('conversation · expanded'),
+      body,
+      nav: navRail({ back: true, ctx: reviewCtx() }),
+    }),
     notes: [
+      { h: 'The expanded conversation.', b: 'Not a separate destination: it is the unified chat panel (frame 06) filling the screen. It collapses back to the right sidebar; as an overlay it touches neither the crumb nor back/forward history.' },
       { h: 'Orchestrator by default.', b: 'Every question goes to the one harness you converse with. Nothing auto-fires to a second model behind your back.' },
-      { h: 'Ask both is a split, not a mode.', b: 'A small caret on the send control offers “ask both models”, remembered per thread and never sticky globally.' },
-      { h: 'Two answers, labeled.', b: 'When both are asked, you get two cards side by side, each named by its model. You read them yourself.' },
+      { h: 'Ask both is a split, not a mode.', b: 'A small caret on the send control offers “ask both models”, remembered per thread and never sticky globally. Two answers, side by side, each named by its model.' },
       { h: 'No synthesis, ever.', b: 'Rennet never manufactures a merged answer. If the two disagree, that disagreement is itself something you can ask the orchestrator about.' },
     ],
   };
@@ -214,14 +251,19 @@ export function frame14() {
   const body = `<div class="setgrid">${left}${right}</div>`;
 
   return {
-    title: 'Rennet v3.3 · 14 Settings',
+    title: 'Rennet v4.0 · 14 Settings',
     head: { badge: '14', title: 'Settings and instructions', pill: 'Cross-cutting' },
-    ref: 'the layered config ladder\nglobal › workspace › repo',
-    sub: 'Terse. Config layers: global, then workspace, then repo, each overriding the last, with every row showing where its value comes from. Per-repo guidance is the house rules the harness reads before every review. The execution-mode default lives here and surfaces as the title-bar glyph.',
+    ref: 'orbital · reachable from anywhere\nreturns to exactly where you were',
+    sub: 'Terse. Config layers: global, then workspace, then repo, each overriding the last, with every row showing where its value comes from. Settings is <b>orbital</b> — reachable from every screen (the palette + the title-bar glyph) and it <b>returns to exactly where you were</b>: the crumb keeps the review you came from (… › feat/rate-limiting › Settings) so closing drops you back with lens and scroll intact, never a detour through the front door.',
     css: css14,
-    win: win({ name: `<span class="gly sm plain" style="width:20px;height:20px">${ic.palette}</span>Settings`, meta: tmeta('orbital'), body }),
+    win: win({
+      name: reviewChain({ label: 'Settings', icon: ic.palette, cur: true }),
+      meta: tmeta('orbital · returns here'),
+      body,
+      nav: navRail({ back: true, ctx: reviewCtx(ic.palette) }),
+    }),
     notes: [
-      { h: 'Terse.', b: 'Facts and their source, no prose. Every row states its value and whether it is inherited or set here.' },
+      { h: 'Orbital, not a dead end.', b: 'Reachable from every screen via the palette (Open Settings) and the title-bar glyph; it becomes the last history entry and returns to origin — the open review, lens intact, scroll preserved. No leaving your place to change a setting.' },
       { h: 'The ladder.', b: 'Global to workspace to repo, each overriding the last. A project you only spectate can sit in read-only without dragging your own repos with it.' },
       { h: 'Per-repo guidance.', b: 'The house rules the harness reads before every review, plus where new worktrees get created. The mode default lives here and in the title bar.' },
     ],
@@ -241,33 +283,61 @@ export const css15 = `
 .pcmd .pg{ color:#5a6069; display:flex; }
 .pcmd .kh{ margin-left:auto; font-family:var(--mono); font-size:12px; color:var(--faint); }
 .pcmd .grp{ font-family:var(--mono); font-size:11px; color:var(--faint); }
+.pcmd .sub{ font-family:var(--mono); font-size:11px; color:var(--faint); margin-left:auto; }
+.pgh{ font-family:var(--mono); font-size:10.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint);
+  padding:9px 18px 6px; background:#fbfcfd; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:8px; }
+.pgh.top{ border-top:1px solid var(--line); }
 `;
 export function frame15() {
   const cmd = (icon, label, keys, on) => `<div class="pcmd${on ? ' on' : ''}"><span class="pg">${icon}</span><span>${label}</span><span class="kh">${keys}</span></div>`;
+  const recent = (icon, label, sub) => `<div class="pcmd"><span class="pg">${icon}</span><span>${label}</span><span class="sub">${sub}</span></div>`;
+  const gh = (label, n, top) => `<div class="pgh${top ? ' top' : ''} rel">${n ? `<span class="anno" style="left:-30px;top:4px">${dot(n)}</span>` : ''}${label}</div>`;
+
   const body = `<div class="pal-backdrop rel">
     <span class="anno" style="left:calc(50% + 270px);top:52px">${dot(1)}</span>
     <div class="palette">
-      <div class="pinput">${ic.search}<span class="cue">Type a command</span><span class="kbd">⌘K</span></div>
-      ${cmd(ic.eye, 'Review this branch', 'R', true)}
+      <div class="pinput">${ic.search}<span class="cue">Jump to a place, or run a command</span><span class="kbd">⌘K</span></div>
+      ${gh('Recent locations · empty query', 2)}
+      ${recent(ic.branch, 'feat/rate-limiting · Sequence', 'orbital · 2m ago')}
+      ${recent(ic.decisions, 'feat/rate-limiting · Draft', 'orbital · 14m ago')}
+      ${recent(ic.repo, 'orbital', 'project detail')}
+      ${gh('Navigate', 3, true)}
+      ${cmd(ic.repo, 'Go to project…', '⌘P', true)}
+      ${cmd(ic.eye, 'Open review…', '⌘O')}
+      ${cmd(ic.chevronL, 'Back', '⌘[')}
+      ${cmd(ic.chevronR, 'Forward', '⌘]')}
+      ${cmd(ic.decisions, 'Go to Draft', 'G D')}
+      ${cmd(ic.paper, 'Go to Paper', 'G P')}
+      ${cmd(ic.palette, 'Open Settings', '⌘,')}
+      ${gh('Actions · this review', 4, true)}
       ${cmd(ic.makepr, 'Make PR from worktree', 'P')}
       ${cmd(ic.resteer, 'Re-steer: hand changes back', '⇧R')}
       ${cmd(ic.harness, 'Ask both models', '⇧A')}
-      ${cmd(ic.flask, 'View test for this hunk', 'T')}
-      ${cmd(ic.editor, 'Open in editor', '⌘E')}
       ${cmd(ic.auto, 'Toggle execution mode', '⌘M')}
     </div>
   </div>`;
 
   return {
-    title: 'Rennet v3.3 · 15 Command palette',
-    head: { badge: '15', title: 'Command palette', pill: 'Cross-cutting' },
-    ref: 'command-K\nevery action, named and remappable',
-    sub: 'Command-K. Every action in Rennet is a named command with a key hint, and every binding is remappable. The keyboard is a first-class surface, not an afterthought.',
+    title: 'Rennet v4.0 · 15 Command palette',
+    head: { badge: '15', title: 'Command palette: the keyboard spine', pill: 'Cross-cutting' },
+    ref: 'command-K · every action, named\nplus a Navigate group on every screen',
+    sub: 'Command-K. Every action is a named, remappable command — and in v4.0 the palette is also the <b>keyboard spine of navigation</b>. A <b>Navigate</b> group rides every screen: Go to project…, Open review…, Back / Forward, Go to Draft / Paper, Open Settings. On an empty query it shows your <b>recent locations</b> first, so returning to a place is one keystroke. The retired <code>claims</code> lens is gone from the offered set.',
     css: css15,
-    win: win({ name: `<span class="gly sm plain" style="width:20px;height:20px">${ic.palette}</span>orbital`, meta: tmeta('⌘K'), body }),
+    win: win({
+      name: crumb([
+        { label: 'Projects', icon: ic.home, root: true },
+        { label: 'orbital', icon: ic.repo },
+        { label: 'feat/rate-limiting', icon: ic.branch, cur: true },
+      ]),
+      meta: tmeta('⌘K'),
+      body,
+      nav: navRail({ back: true, ctx: reviewCtx() }),
+    }),
     notes: [
-      { h: 'Command-K opens it.', b: 'One overlay, one search field, every action reachable by name. Review, Make PR, Re-steer, Ask both, View test, Toggle mode.' },
-      { h: 'Named and remappable.', b: 'Each command carries a default key hint you can rebind. The palette is the discoverable index of the whole keyboard surface.' },
+      { h: 'The keyboard spine.', b: 'One overlay, one search field, every action and every destination reachable by name. As an overlay it never moves the crumb or the history — running Back from here is what moves them.' },
+      { h: 'A Navigate group everywhere.', b: 'Present on every screen: Go to project… (fuzzy over projects), Open review… (fuzzy over the current project’s rows), Back / Forward, Go to Draft / Paper, Open Settings. The legacy “Review directly” door lives here too — palette-only, no drawn button.' },
+      { h: 'Recent locations first.', b: 'With an empty query the palette leads with where you have just been, so returning to review B after glancing at A is a single keystroke — the cheapness that lets one review evict another.' },
+      { h: 'Named and remappable.', b: 'Each command carries a default key hint you can rebind. No retired destinations: the resteer-era claims lens is not offered.' },
     ],
   };
 }
@@ -331,9 +401,9 @@ export function frame16() {
   </div>`;
 
   return {
-    title: 'Rennet v3.3 · 16 Flow overview',
+    title: 'Rennet v4.0 · 16 Flow overview',
     head: { badge: '16', title: 'Flow overview: the whole app, one map', pill: 'The map' },
-    ref: 'the v3 journey\ntwo entry points, one draft, one sign',
+    ref: 'the journey map (forward flow)\nsee 18 for the navigation structure',
     sub: 'The v3 flow as one map. Point at code, watch it process, land on the two-zone project detail, and review through the canvases into a single editable draft and one signed paper. Your local work flows toward Make PR; a teammate’s PR is the other entry point, into the same canvases.',
     css: css16,
     win: win({ name: `<span class="gly sm plain" style="width:20px;height:20px;color:#4a5059">${ic.repo}</span>Rennet · flow`, meta: tmeta('v3'), body }),

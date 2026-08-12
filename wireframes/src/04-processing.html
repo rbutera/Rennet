@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8">
-<title>Rennet v3.3 · 04 Processing</title><style>
+<title>Rennet v4.0 · 04 Processing</title><style>
 :root{
   --ground:#e7e9ec; --ink:#181b1f; --text:#1c1f24; --muted:#697079; --faint:#9aa1a9;
   --win:#ffffff; --titlebar:#f4f5f7; --glass:#eceff2; --card:#ffffff;
@@ -93,6 +93,44 @@ svg{ display:block; width:16px; height:16px; }
 .modepill{ display:inline-flex; align-items:center; gap:7px; font-family:var(--sans); font-size:12.5px; color:var(--text);
   border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
 .modepill svg{ width:14px; height:14px; }
+
+/* ---- v4.0 navigation chrome ---- */
+/* breadcrumb spine in the title bar (the "where am I") — glass, sans, interactive */
+.crumbs{ display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+.cseg{ display:inline-flex; align-items:center; gap:6px; font-size:14px; font-weight:550; color:var(--muted); }
+.cseg .cico{ display:flex; color:#5a6069; }
+.cseg .cico svg{ width:15px; height:15px; }
+.cseg.cur{ color:var(--text); font-weight:650; }
+.cseg.root{ color:var(--muted); }
+.csep{ display:flex; color:#aab0b8; }
+.csep svg{ width:13px; height:13px; }
+
+/* the compact left nav rail (the "where can I go" controls): back/forward, home, projects, context */
+.winmain{ display:flex; align-items:stretch; }
+.winmain > .content{ flex:1; min-width:0; }
+.navrail{ flex:none; width:64px; align-self:stretch; background:var(--glass); border-right:1px solid var(--line);
+  display:flex; flex-direction:column; align-items:center; gap:13px; padding:16px 0 18px; }
+.navbtn{ display:flex; flex-direction:column; align-items:center; gap:4px; color:var(--muted); }
+.navbtn .gb{ width:34px; height:34px; border-radius:9px; border:1px solid var(--line2); background:#fff;
+  display:flex; align-items:center; justify-content:center; color:#2a2e34; }
+.navbtn .gb svg{ width:18px; height:18px; }
+.navbtn .cap{ font-family:var(--mono); font-size:9px; letter-spacing:.02em; color:var(--faint); }
+.navbtn.off{ opacity:.38; }
+.navrail .sep{ width:28px; height:1px; background:var(--line2); }
+.navrail .ctx{ margin-top:auto; display:flex; flex-direction:column; align-items:center; gap:6px; }
+.navrail .ctx .cnode{ width:30px; height:30px; border-radius:8px; display:flex; align-items:center; justify-content:center;
+  border:1px solid var(--line2); background:#fff; color:#5a6069; }
+.navrail .ctx .cnode svg{ width:15px; height:15px; }
+.navrail .ctx .cnode.on{ background:var(--blue-bg); border-color:var(--blue-line); color:var(--blue-ink); }
+.navrail .ctx .cbar{ width:1.5px; height:9px; background:var(--line2); }
+.navrail .ctx .clab{ font-family:var(--mono); font-size:8.5px; color:var(--faint); }
+
+/* the patchset chip (title-bar meta) with an optional trail caret */
+.psetchip{ display:inline-flex; align-items:center; gap:6px; font-family:var(--sans); font-size:12px; color:var(--text);
+  border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
+.psetchip svg{ width:13px; height:13px; color:#5a6069; }
+.psetchip .pcaret{ display:flex; color:#aab0b8; }
+.psetchip .pcaret svg{ width:12px; height:12px; }
 
 .proc{ padding:16px 10px 8px; text-align:center; }
 .prism-wrap{ height:150px; display:flex; align-items:center; justify-content:center; position:relative; }

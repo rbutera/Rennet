@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8">
-<title>Rennet v3.3 · 12 Paper / sign</title><style>
+<title>Rennet v4.0 · 12 Paper / sign</title><style>
 :root{
   --ground:#e7e9ec; --ink:#181b1f; --text:#1c1f24; --muted:#697079; --faint:#9aa1a9;
   --win:#ffffff; --titlebar:#f4f5f7; --glass:#eceff2; --card:#ffffff;
@@ -94,6 +94,44 @@ svg{ display:block; width:16px; height:16px; }
   border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
 .modepill svg{ width:14px; height:14px; }
 
+/* ---- v4.0 navigation chrome ---- */
+/* breadcrumb spine in the title bar (the "where am I") — glass, sans, interactive */
+.crumbs{ display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+.cseg{ display:inline-flex; align-items:center; gap:6px; font-size:14px; font-weight:550; color:var(--muted); }
+.cseg .cico{ display:flex; color:#5a6069; }
+.cseg .cico svg{ width:15px; height:15px; }
+.cseg.cur{ color:var(--text); font-weight:650; }
+.cseg.root{ color:var(--muted); }
+.csep{ display:flex; color:#aab0b8; }
+.csep svg{ width:13px; height:13px; }
+
+/* the compact left nav rail (the "where can I go" controls): back/forward, home, projects, context */
+.winmain{ display:flex; align-items:stretch; }
+.winmain > .content{ flex:1; min-width:0; }
+.navrail{ flex:none; width:64px; align-self:stretch; background:var(--glass); border-right:1px solid var(--line);
+  display:flex; flex-direction:column; align-items:center; gap:13px; padding:16px 0 18px; }
+.navbtn{ display:flex; flex-direction:column; align-items:center; gap:4px; color:var(--muted); }
+.navbtn .gb{ width:34px; height:34px; border-radius:9px; border:1px solid var(--line2); background:#fff;
+  display:flex; align-items:center; justify-content:center; color:#2a2e34; }
+.navbtn .gb svg{ width:18px; height:18px; }
+.navbtn .cap{ font-family:var(--mono); font-size:9px; letter-spacing:.02em; color:var(--faint); }
+.navbtn.off{ opacity:.38; }
+.navrail .sep{ width:28px; height:1px; background:var(--line2); }
+.navrail .ctx{ margin-top:auto; display:flex; flex-direction:column; align-items:center; gap:6px; }
+.navrail .ctx .cnode{ width:30px; height:30px; border-radius:8px; display:flex; align-items:center; justify-content:center;
+  border:1px solid var(--line2); background:#fff; color:#5a6069; }
+.navrail .ctx .cnode svg{ width:15px; height:15px; }
+.navrail .ctx .cnode.on{ background:var(--blue-bg); border-color:var(--blue-line); color:var(--blue-ink); }
+.navrail .ctx .cbar{ width:1.5px; height:9px; background:var(--line2); }
+.navrail .ctx .clab{ font-family:var(--mono); font-size:8.5px; color:var(--faint); }
+
+/* the patchset chip (title-bar meta) with an optional trail caret */
+.psetchip{ display:inline-flex; align-items:center; gap:6px; font-family:var(--sans); font-size:12px; color:var(--text);
+  border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
+.psetchip svg{ width:13px; height:13px; color:#5a6069; }
+.psetchip .pcaret{ display:flex; color:#aab0b8; }
+.psetchip .pcaret svg{ width:12px; height:12px; }
+
 .draftgrid{ display:grid; grid-template-columns:1fr 262px; gap:20px; }
 .draft-top{ display:flex; align-items:center; gap:10px; margin-bottom:16px; }
 .draft-top .right{ margin-left:auto; display:flex; gap:9px; }
@@ -149,8 +187,15 @@ svg{ display:block; width:16px; height:16px; }
     <div class="fref">the derived verdict + the human sign
 sign in the loop IS the safety</div>
   </div>
-  <p class="fsub">The one solid object. It previews <b>exactly</b> what will post, nothing editable. The verdict is derived from your dispositions (here, request changes) and shown with its derivation, and you can override it. The human sign carries the real verdict: the sign in the loop is the safety, not a forced-neutral event.</p>
-  <div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="gly sm plain" style="width:20px;height:20px;color:#8a7f5a"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l3 3v15H6z"/><path d="M15 3v3h3"/><path d="M9 12h6M9 15.5h6M9 8.5h3"/></svg></span>#482 · Paper</span><span class="tmeta"><span class="modepill"><span style="color:#2a2e34"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span>auto<span style="color:#aab0b8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></span><span>sign to post</span></span></div><div class="content"><div class="draft-top" style="margin-bottom:16px"><span class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l3 3v15H6z"/><path d="M15 3v3h3"/><path d="M9 12h6M9 15.5h6M9 8.5h3"/></svg>paper · solid</span><span class="chip">nothing editable here</span></div><div class="papergrid"><div class="paper rel">
+  <p class="fsub">The one solid object. It previews <b>exactly</b> what will post, nothing editable. The verdict is derived from your dispositions (here, request changes) and shown with its derivation, and you can override it. The <b>Paper</b> is a crumb child of the Draft — the crumb reads … › Draft › Paper, and back lands on the Draft, because editing lives there. The human sign carries the real verdict: the sign in the loop is the safety, not a forced-neutral event.</p>
+  <div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="crumbs"><span class="cseg root"><span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7"/><path d="M6.5 9.5V20h4v-6h3v6h4V9.5"/></svg></span>Projects</span><span class="csep"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span><span class="cseg"><span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span>orbital</span><span class="csep"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span><span class="cseg"><span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="8" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 10.3c0 4-3.5 4.4-6.4 5.2"/></svg></span>feat/rate-limiting</span><span class="csep"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span><span class="cseg"><span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M6 8.4v7.2M8.3 6.9C13 7.5 15.6 8.9 16 10.6M8.2 17c4.8-.6 7.4-2 7.8-3.8"/></svg></span>Draft</span><span class="csep"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span><span class="cseg cur"><span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l3 3v15H6z"/><path d="M15 3v3h3"/><path d="M9 12h6M9 15.5h6M9 8.5h3"/></svg></span>Paper</span></span></span><span class="tmeta"><span class="modepill"><span style="color:#2a2e34"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span>auto<span style="color:#aab0b8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></span><span>sign to post</span></span></div><div class="winmain"><div class="navrail">
+    <span class="navbtn"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></span><span class="cap">⌘[</span></span>
+    <span class="navbtn off"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span><span class="cap">⌘]</span></span>
+    <span class="sep"></span>
+    <span class="navbtn"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7"/><path d="M6.5 9.5V20h4v-6h3v6h4V9.5"/></svg></span><span class="cap">Home</span></span>
+    <span class="navbtn"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span><span class="cap">Projects</span></span>
+    <div class="ctx"><span class="cnode" title="orbital"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span><span class="cbar"></span><span class="cnode" title="feat/rate-limiting"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="8" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 10.3c0 4-3.5 4.4-6.4 5.2"/></svg></span><span class="cbar"></span><span class="cnode on" title=""><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l3 3v15H6z"/><path d="M15 3v3h3"/><path d="M9 12h6M9 15.5h6M9 8.5h3"/></svg></span><span class="clab">here</span></div>
+  </div><div class="content"><div class="draft-top" style="margin-bottom:16px"><span class="chip"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l3 3v15H6z"/><path d="M15 3v3h3"/><path d="M9 12h6M9 15.5h6M9 8.5h3"/></svg>paper · solid</span><span class="chip">nothing editable here</span></div><div class="papergrid"><div class="paper rel">
     <span class="anno" style="left:-30px;top:14px"><span class="dot">1</span></span>
     <div class="ph"><span style="color:#8a7f5a"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l3 3v15H6z"/><path d="M15 3v3h3"/><path d="M9 12h6M9 15.5h6M9 8.5h3"/></svg></span><span class="vd">Review · #482</span><span class="tg">exactly what will post</span></div>
     <div class="cmt"><div class="ch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-.6 4"/><path d="M20 5v4h-4"/></svg>keys.ts · L18-19 · request change</div><div class="cb">Re-keying from API key to org changes what a 429 means for existing clients; document the migration note in the PR body.</div></div>
@@ -159,7 +204,7 @@ sign in the loop IS the safety</div>
   </div><div class="signpanel">
     <div class="vblock rel"><span class="anno" style="left:-30px;top:14px"><span class="dot">2</span></span><div class="pl">Verdict · derived from dispositions</div><div class="derived">Request changes</div><div class="deriv-note">2 request-changes · 1 comment. Rennet derives the verdict; you can override it, and your sign is what makes it real.</div><div class="override rel"><span class="anno" style="left:-30px;top:8px"><span class="dot">3</span></span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.5l5 5 10-11"/></svg>override<span class="k">Approve · Request changes · Comment <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></div></div>
     <div class="holdsign rel"><span class="anno" style="left:-30px;top:16px"><span class="dot">4</span></span><div class="hs"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 20.5h18"/><path d="M15.5 4.6l3.9 3.9L9.6 18.3l-4.6 1 1-4.6z"/></svg>Hold to sign</div><div class="track"><i></i></div><div class="hint">the deliberate act · nothing posts until you do</div></div>
-  </div></div></div></div>
+  </div></div></div></div></div>
   <div class="notes"><div class="notes-h">Designer notes &nbsp;/&nbsp; what to weigh in on</div>
     <div class="notes-grid"><div class="note"><span class="dot">1</span><div><b>The one solid object.</b> Paper is opaque: it shows precisely the comments that will land on the PR, in the order they will land. Editing happened on the draft; here it is frozen.</div></div><div class="note"><span class="dot">2</span><div><b>The verdict is derived.</b> Rennet reads your dispositions and derives Approve / Request changes / Comment, and shows the arithmetic (2 request-changes, 1 comment).</div></div><div class="note"><span class="dot">3</span><div><b>Override is yours.</b> The derived verdict is a default, not a lock. You can change it before signing; the review carries whatever you sign.</div></div><div class="note"><span class="dot">4</span><div><b>The sign is the safety.</b> Rennet never forces a neutral event. The human sign in the loop is the safeguard, and it publishes the real verdict.</div></div></div>
   </div>

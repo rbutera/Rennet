@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8">
-<title>Rennet v3.3 · 16 Flow overview</title><style>
+<title>Rennet v4.0 · 16 Flow overview</title><style>
 :root{
   --ground:#e7e9ec; --ink:#181b1f; --text:#1c1f24; --muted:#697079; --faint:#9aa1a9;
   --win:#ffffff; --titlebar:#f4f5f7; --glass:#eceff2; --card:#ffffff;
@@ -94,6 +94,44 @@ svg{ display:block; width:16px; height:16px; }
   border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
 .modepill svg{ width:14px; height:14px; }
 
+/* ---- v4.0 navigation chrome ---- */
+/* breadcrumb spine in the title bar (the "where am I") — glass, sans, interactive */
+.crumbs{ display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+.cseg{ display:inline-flex; align-items:center; gap:6px; font-size:14px; font-weight:550; color:var(--muted); }
+.cseg .cico{ display:flex; color:#5a6069; }
+.cseg .cico svg{ width:15px; height:15px; }
+.cseg.cur{ color:var(--text); font-weight:650; }
+.cseg.root{ color:var(--muted); }
+.csep{ display:flex; color:#aab0b8; }
+.csep svg{ width:13px; height:13px; }
+
+/* the compact left nav rail (the "where can I go" controls): back/forward, home, projects, context */
+.winmain{ display:flex; align-items:stretch; }
+.winmain > .content{ flex:1; min-width:0; }
+.navrail{ flex:none; width:64px; align-self:stretch; background:var(--glass); border-right:1px solid var(--line);
+  display:flex; flex-direction:column; align-items:center; gap:13px; padding:16px 0 18px; }
+.navbtn{ display:flex; flex-direction:column; align-items:center; gap:4px; color:var(--muted); }
+.navbtn .gb{ width:34px; height:34px; border-radius:9px; border:1px solid var(--line2); background:#fff;
+  display:flex; align-items:center; justify-content:center; color:#2a2e34; }
+.navbtn .gb svg{ width:18px; height:18px; }
+.navbtn .cap{ font-family:var(--mono); font-size:9px; letter-spacing:.02em; color:var(--faint); }
+.navbtn.off{ opacity:.38; }
+.navrail .sep{ width:28px; height:1px; background:var(--line2); }
+.navrail .ctx{ margin-top:auto; display:flex; flex-direction:column; align-items:center; gap:6px; }
+.navrail .ctx .cnode{ width:30px; height:30px; border-radius:8px; display:flex; align-items:center; justify-content:center;
+  border:1px solid var(--line2); background:#fff; color:#5a6069; }
+.navrail .ctx .cnode svg{ width:15px; height:15px; }
+.navrail .ctx .cnode.on{ background:var(--blue-bg); border-color:var(--blue-line); color:var(--blue-ink); }
+.navrail .ctx .cbar{ width:1.5px; height:9px; background:var(--line2); }
+.navrail .ctx .clab{ font-family:var(--mono); font-size:8.5px; color:var(--faint); }
+
+/* the patchset chip (title-bar meta) with an optional trail caret */
+.psetchip{ display:inline-flex; align-items:center; gap:6px; font-family:var(--sans); font-size:12px; color:var(--text);
+  border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
+.psetchip svg{ width:13px; height:13px; color:#5a6069; }
+.psetchip .pcaret{ display:flex; color:#aab0b8; }
+.psetchip .pcaret svg{ width:12px; height:12px; }
+
 .flow{ padding:10px 4px; }
 .frow{ display:flex; align-items:center; gap:10px; margin-bottom:16px; flex-wrap:wrap; }
 .fnode{ border:1px solid var(--line2); border-radius:11px; padding:12px 14px; background:#fff; min-width:132px; }
@@ -117,8 +155,8 @@ svg{ display:block; width:16px; height:16px; }
     <span class="badge">17</span>
     <h1 class="ftitle">Flow overview: the whole app, one map</h1>
     <span class="pill">The map</span>
-    <div class="fref">the v3 journey
-two entry points, one draft, one sign</div>
+    <div class="fref">the journey map (forward flow)
+see 18 for the navigation structure</div>
   </div>
   <p class="fsub">The v3 flow as one map. Point at code, watch it process, land on the two-zone project detail, and review through the canvases into a single editable draft and one signed paper. Your local work flows toward Make PR; a teammate’s PR is the other entry point, into the same canvases.</p>
   <div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="gly sm plain" style="width:20px;height:20px;color:#4a5059"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span>Rennet · flow</span><span class="tmeta"><span class="modepill"><span style="color:#2a2e34"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span>auto<span style="color:#aab0b8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></span><span>v3</span></span></div><div class="content"><div class="flow">
