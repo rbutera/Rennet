@@ -113,7 +113,13 @@ describe("persisted-thread wire shapes (#251)", () => {
       harnessVersionAtCreation: "claude-code 1.2.3",
       messages: [
         { id: "m0", author: "you" as const, body: "why fail open?" },
-        { id: "m1", author: "harness" as const, model: "Claude", body: "half an ans", status: "interrupted" as const },
+        {
+          id: "m1",
+          author: "harness" as const,
+          model: "Claude",
+          body: "half an ans",
+          status: "interrupted" as const,
+        },
       ],
     };
     expect(persistedThreadSchema.parse(thread)).toEqual(thread);
@@ -147,9 +153,7 @@ describe("review.reattach command + review.ask back-compat (#251)", () => {
     expect(input).toEqual({ commandId: UUID, reviewId: "r" });
     const output = parseCommandOutput("review.reattach", {
       threads: [],
-      inFlight: [
-        { threadId: "th", turnId: "tn", channel: "codex", model: "codex", bodySoFar: "" },
-      ],
+      inFlight: [{ threadId: "th", turnId: "tn", channel: "codex", model: "codex", bodySoFar: "" }],
     });
     expect(reattachResultSchema.parse(output).inFlight).toHaveLength(1);
   });
