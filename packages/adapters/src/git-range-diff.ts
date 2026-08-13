@@ -211,7 +211,10 @@ export function parseUnifiedDiffFiles(diff: string): PatchFile[] {
       patch: visible(acc.rawParts.join("\n"), FILE_VISIBLE_BYTE_LIMIT),
     });
   }
-  files.sort((left, right) => left.path.localeCompare(right.path));
+  // Code-unit ordering, not `localeCompare`: this order feeds the REST patchset's
+  // content hash, so a locale/ICU-dependent comparator would let identical diff
+  // bytes yield different identities across machines.
+  files.sort((left, right) => (left.path < right.path ? -1 : left.path > right.path ? 1 : 0));
   return files;
 }
 
