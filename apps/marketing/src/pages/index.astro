@@ -1,0 +1,328 @@
+---
+import "@fontsource-variable/archivo/wdth.css";
+import "../styles/global.css";
+
+const githubUrl = "https://github.com/rbutera/rennet";
+const downloadUrl = `${githubUrl}/releases/latest`;
+
+const diffLines = [
+  ["+", 77, "add"],
+  ["+", 58, "add"],
+  [" ", 84, "plain"],
+  ["-", 65, "remove"],
+  ["+", 88, "add"],
+  [" ", 48, "plain"],
+  ["+", 72, "add"],
+  ["-", 55, "remove"],
+  [" ", 82, "plain"],
+  ["+", 60, "add"],
+  [" ", 70, "plain"],
+  ["-", 44, "remove"],
+  ["+", 91, "add"],
+  [" ", 63, "plain"],
+  ["+", 52, "add"],
+  ["-", 76, "remove"],
+  [" ", 67, "plain"],
+  ["+", 86, "add"],
+];
+
+const cohorts = [
+  { name: "Storage & state", detail: "4 decisions", tone: "blue" },
+  { name: "Failure posture", detail: "3 decisions", tone: "amber" },
+  { name: "Interface & API", detail: "2 decisions", tone: "green" },
+  { name: "Tests & noise", detail: "2 decisions", tone: "slate" },
+];
+
+const lenses = [
+  ["Spec", "Read the change against what it promised."],
+  ["Sequence", "Follow the implementation in dependency order."],
+  ["Decisions", "See the judgments hidden inside the patch."],
+  ["Flagged", "Resolve disagreement and verification evidence."],
+  ["Noise", "Keep generated churn out of the reading path."],
+];
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta
+      name="description"
+      content="Rennet is a free, local-first macOS review harness that turns large code changes into cohorts, decisions, and one review you can answer for."
+    />
+    <meta name="theme-color" content="#f5f2ec" />
+    <meta property="og:title" content="Rennet — Make code digestible" />
+    <meta
+      property="og:description"
+      content="You stopped writing the code. You still have to answer for it."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://rennet.dev" />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" href="/favicon.ico" sizes="any" />
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <link rel="canonical" href="https://rennet.dev" />
+    <title>Rennet — Make code digestible</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+    <header class="site-header shell">
+      <a class="brand" href="#top" aria-label="Rennet home">
+        <img src="/brand/rennet-lockup.svg" alt="Rennet" width="160" height="46" />
+      </a>
+      <nav aria-label="Primary navigation">
+        <a href="https://docs.rennet.dev">Docs</a>
+        <a href={githubUrl} class="nav-external">
+          GitHub
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M7 17 17 7M9 7h8v8" /></svg>
+        </a>
+      </nav>
+    </header>
+
+    <main id="main">
+      <section class="hero shell" id="top">
+        <div class="hero-copy">
+          <h1>You stopped writing the code.<br />You still have to answer for it.</h1>
+          <p>
+            Rennet turns large changes into cohorts, decisions, and one review you can
+            understand, edit, and sign.
+          </p>
+          <div class="hero-actions">
+            <a class="button primary" href={downloadUrl}>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3" />
+              </svg>
+              Download for macOS
+            </a>
+            <a class="github-link" href={githubUrl}>
+              View on GitHub
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M7 17 17 7M9 7h8v8" />
+              </svg>
+            </a>
+          </div>
+          <p class="availability">Available now · Free · Open source · MIT</p>
+        </div>
+
+        <div class="digest" aria-label="A large diff breaking down into cohorts, decisions, and a review paper">
+          <div class="diff-mass" aria-hidden="true">
+            <div class="diff-head">
+              <span>atlas · feat/rate-limiting</span>
+              <span>1,872 changed lines</span>
+            </div>
+            <div class="diff-body">
+              {diffLines.map(([sign, width, tone], index) => (
+                <div class:list={["diff-line", tone]} style={`--line:${width}%;--delay:${index * 24}ms`}>
+                  <span>{sign}</span><i></i>
+                </div>
+              ))}
+            </div>
+            <div class="fracture"></div>
+          </div>
+
+          <div class="digest-arrow" aria-hidden="true">
+            <span></span><svg viewBox="0 0 20 12"><path d="M1 6h17m-5-5 5 5-5 5" /></svg>
+          </div>
+
+          <div class="cohort-stack">
+            {cohorts.map((cohort) => (
+              <article class:list={["cohort", cohort.tone]}>
+                <span class="cohort-icon" aria-hidden="true"></span>
+                <div><h2>{cohort.name}</h2><p>{cohort.detail}</p></div>
+              </article>
+            ))}
+          </div>
+
+          <div class="digest-arrow decision-arrow" aria-hidden="true">
+            <span></span><svg viewBox="0 0 20 12"><path d="M1 6h17m-5-5 5 5-5 5" /></svg>
+          </div>
+
+          <div class="decision-stack">
+            {["One refill-on-read bucket", "Fail open on store error", "Keep Redis out of the core"].map((decision, index) => (
+              <article class="decision">
+                <span>{index + 1}</span><div><h2>{decision}</h2><p>Reconstructed</p></div>
+              </article>
+            ))}
+          </div>
+
+          <div class="digest-arrow paper-arrow" aria-hidden="true">
+            <span></span><svg viewBox="0 0 20 12"><path d="M1 6h17m-5-5 5 5-5 5" /></svg>
+          </div>
+
+          <article class="paper">
+            <div class="paper-head"><span>Review · #482</span><b>Ready</b></div>
+            <h2>Exactly what will post.</h2>
+            <div class="paper-rule wide"></div>
+            <div class="paper-rule"></div>
+            <ul>
+              <li><span>3</span> request changes</li>
+              <li><span>1</span> comment</li>
+              <li><span>✓</span> derived verdict</li>
+            </ul>
+            <div class="signature" aria-hidden="true">R</div>
+          </article>
+          <p class="digest-note">Illustrative review data</p>
+        </div>
+      </section>
+
+      <section class="breakdown section shell">
+        <div class="section-copy">
+          <h2>The diff, broken down.</h2>
+          <p>
+            Rennet reads the diff, the PR body, and the code around it. Then it replaces file order
+            with a path built for comprehension.
+          </p>
+        </div>
+        <figure class="product-frame">
+          <div class="window-bar">
+            <span class="traffic"><i></i><i></i><i></i></span>
+            <span>atlas · feat/rate-limiting</span>
+            <span>patchset 8 · snapshot</span>
+          </div>
+          <img
+            src="/product/review-heart.png"
+            alt="Rennet review surface showing a change organized into a readable sequence"
+            width="1536"
+            height="1024"
+            loading="lazy"
+          />
+          <figcaption>Current product wireframe · final product capture incoming</figcaption>
+        </figure>
+      </section>
+
+      <section class="category section shell">
+        <p>
+          A coding harness points a model at your codebase so it can write.
+          <strong>A review harness points models at a change so you can read.</strong>
+        </p>
+        <p>The harness does the structural work. You do the deciding.</p>
+      </section>
+
+      <section class="lenses section shell">
+        <div class="section-copy lenses-copy">
+          <h2>Read from five angles.<br />Lose nothing between them.</h2>
+          <p>
+            Every decision stays reachable. Change altitude without losing your place or the
+            evidence behind it.
+          </p>
+        </div>
+        <ol class="lens-list">
+          {lenses.map(([name, description], index) => (
+            <li>
+              <span>{String(index + 1).padStart(2, "0")}</span>
+              <h3>{name}</h3>
+              <p>{description}</p>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      <section class="loops section shell">
+        <div class="loop-intro">
+          <h2>One review surface.<br />Both sides of the work.</h2>
+        </div>
+        <article class="loop team-loop">
+          <div>
+            <h3>Someone else’s pull request</h3>
+            <p>
+              Read the change, collect dispositions, edit the paper, and post one normal GitHub
+              review in your own voice.
+            </p>
+          </div>
+          <div class="loop-path" aria-label="Pull request to Rennet to GitHub review">
+            <span>Pull request</span><i></i><img src="/brand/rennet-mark.svg" alt="" /><i></i><span>GitHub review</span>
+          </div>
+        </article>
+        <article class="loop own-loop">
+          <div>
+            <h3>Your own agent-generated branch</h3>
+            <p>
+              Turn the same dispositions into a work order, send it back to your coding harness,
+              then re-review only what moved.
+            </p>
+          </div>
+          <div class="loop-path" aria-label="Local branch to Rennet to coding harness and back">
+            <span>Local branch</span><i></i><img src="/brand/rennet-mark.svg" alt="" /><i></i><span>Coding harness</span>
+          </div>
+        </article>
+      </section>
+
+      <section class="truth section shell">
+        <div class="truth-lead">
+          <h2>Local-first means<br />your machine is the product.</h2>
+          <p>
+            Rennet has no backend and no telemetry. It uses the coding harnesses already installed
+            on your Mac and their existing authentication.
+          </p>
+          <p class="egress">
+            Selected harnesses may send assembled context to their own model providers. Rennet
+            tells you that plainly; it doesn’t pretend every model runs locally.
+          </p>
+        </div>
+        <dl>
+          <div><dt>Rennet backend</dt><dd>None</dd></div>
+          <div><dt>Telemetry</dt><dd>None</dd></div>
+          <div><dt>API key setup</dt><dd>None</dd></div>
+          <div><dt>Supported at launch</dt><dd>macOS</dd></div>
+          <div><dt>Licence</dt><dd>MIT</dd></div>
+        </dl>
+      </section>
+
+      <section class="objections section shell">
+        <h2>The questions worth asking.</h2>
+        <details open>
+          <summary>Is this another autonomous review bot?</summary>
+          <p>
+            No. Rennet performs the structural reading work and prepares one paper. You inspect,
+            edit, and sign the judgment that another person sees.
+          </p>
+        </details>
+        <details>
+          <summary>Does it replace GitHub review?</summary>
+          <p>
+            No. It produces a normal batched GitHub review. Your team stays in the workflow it
+            already knows; Rennet changes how you reach the judgment.
+          </p>
+        </details>
+        <details>
+          <summary>Does “local-first” mean nothing leaves my machine?</summary>
+          <p>
+            Rennet itself has no backend or telemetry. The coding harness you select still talks to
+            its provider under its own terms and authentication.
+          </p>
+        </details>
+      </section>
+
+      <section class="closing section">
+        <div class="shell closing-inner">
+          <img src="/brand/rennet-mark-small.svg" alt="" width="72" height="54" />
+          <h2>Make the next change digestible.</h2>
+          <p>Free, open source, and available for macOS.</p>
+          <div class="hero-actions closing-actions">
+            <a class="button primary inverse" href={downloadUrl}>
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3" />
+              </svg>
+              Download for macOS
+            </a>
+            <a class="github-link inverse-link" href={githubUrl}>View on GitHub</a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer shell">
+      <img src="/brand/rennet-lockup.svg" alt="Rennet" width="136" height="40" />
+      <p>
+        Rennet is the enzyme that separates milk into curds and whey. Here, it turns a body of code
+        into pieces a person can digest.
+      </p>
+      <nav aria-label="Footer navigation">
+        <a href="https://docs.rennet.dev">Docs</a>
+        <a href={githubUrl}>GitHub</a>
+        <a href={`${githubUrl}/blob/main/LICENSE`}>MIT licence</a>
+      </nav>
+    </footer>
+  </body>
+</html>

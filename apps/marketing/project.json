@@ -1,0 +1,28 @@
+{
+  "name": "rennet-marketing",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/marketing/src",
+  "projectType": "application",
+  "tags": ["scope:rennet", "layer:app", "platform:web"],
+  "targets": {
+    "build": {
+      "command": "pnpm --dir apps/marketing exec astro build",
+      "outputs": ["{projectRoot}/dist"]
+    },
+    "dev": {
+      "cache": false,
+      "command": "pnpm --dir apps/marketing exec astro dev"
+    },
+    "preview": {
+      "cache": false,
+      "dependsOn": ["build"],
+      "command": "pnpm --dir apps/marketing exec astro preview"
+    },
+    "lint": {
+      "command": "pnpm exec biome check apps/marketing/astro.config.mjs apps/marketing/project.json apps/marketing/package.json apps/marketing/src/styles"
+    },
+    "typecheck": {
+      "command": "pnpm --dir apps/marketing exec astro check"
+    }
+  }
+}
