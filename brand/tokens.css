@@ -3,9 +3,32 @@
   --rennet-brand-paper: #f7f4ee;
   --rennet-brand-white: #ffffff;
 
+  --rennet-font-display: "Helvetica Neue", "Instrument Sans Variable", Arial, sans-serif;
+  --rennet-font-body: "Avenir Next", "Source Sans 3 Variable", system-ui, sans-serif;
+
+  --rennet-canvas: #f4f2ed;
+  --rennet-surface: #fcfbf8;
+  --rennet-text: #111419;
+  --rennet-text-muted: #59616b;
+  --rennet-line: #d7d4cd;
+  --rennet-action: #396f96;
+  --rennet-decision: #a86125;
+  --rennet-evidence: #41745b;
+
   /* Application-icon artwork only; not product-interface semantic colours. */
   --rennet-icon-midnight: #11143b;
   --rennet-icon-cobalt: #3556e8;
   --rennet-icon-orchid: #a657e7;
   --rennet-icon-cyan: #7ce6f5;
+}
+
+:root[data-scheme="dark"] {
+  --rennet-canvas: #0e1116;
+  --rennet-surface: #15191f;
+  --rennet-text: #f1f0eb;
+  --rennet-text-muted: #a8b0ba;
+  --rennet-line: #2d333b;
+  --rennet-action: #8bbddd;
+  --rennet-decision: #dda664;
+  --rennet-evidence: #88bc9b;
 }

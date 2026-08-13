@@ -110,6 +110,16 @@ describe("chrome type contract — no monospace as UI chrome (resteer fresh upda
     expect(block(".rennet-glass {")).toContain("--mono: var(--sans)");
   });
 
+  it("uses the complementary Rennet display and reading families", () => {
+    const tokens = block(".rennet-glass {");
+    expect(tokens).toContain(
+      '--sans: "Avenir Next", "Source Sans 3 Variable", -apple-system, BlinkMacSystemFont, sans-serif',
+    );
+    expect(tokens).toContain(
+      '--display: "Helvetica Neue", "Instrument Sans Variable", Arial, sans-serif',
+    );
+  });
+
   it("reserves a separate --code token for the real monospace stack (code/diff only)", () => {
     expect(block(".rennet-glass {")).toMatch(/--code:\s*ui-monospace/);
   });

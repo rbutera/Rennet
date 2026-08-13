@@ -1,68 +1,82 @@
 {
   "schemaVersion": 2,
-  "generatedAt": "2026-08-13T07:40:00.000Z",
+  "generatedAt": "2026-08-13T12:00:00.000Z",
   "title": "Design System: Rennet",
   "extensions": {
     "colorMeta": {
-      "warm-paper": { "role": "neutral", "displayName": "Warm Paper", "canonical": "#f5f2ec", "tonalRamp": ["#292725", "#45423e", "#66615b", "#89837a", "#aea79d", "#d0cbc3", "#e7e3dc", "#f5f2ec"] },
-      "ink": { "role": "primary", "displayName": "Near-black Ink", "canonical": "#101317", "tonalRamp": ["#101317", "#242a30", "#3a4249", "#555e66", "#747d85", "#9ca3a9", "#cbd0d3", "#f0f2f3"] },
-      "blue": { "role": "secondary", "displayName": "Review Blue", "canonical": "#527c9b", "tonalRamp": ["#14242f", "#203b4c", "#2e5369", "#3e6b87", "#5f87a3", "#88a7bc", "#b7cbd8", "#e8f0f4"] },
-      "amber": { "role": "secondary", "displayName": "Decision Amber", "canonical": "#b86a2d", "tonalRamp": ["#321a09", "#552d10", "#794218", "#9d5922", "#bd7338", "#d99a69", "#edc5a4", "#faede0"] },
-      "green": { "role": "secondary", "displayName": "Evidence Green", "canonical": "#58806b", "tonalRamp": ["#15271e", "#244233", "#355d49", "#497963", "#67927b", "#8eaf9d", "#bad0c4", "#e9f1ed"] }
+      "light-canvas": { "role": "neutral", "displayName": "Light Canvas", "canonical": "#f4f2ed", "tonalRamp": ["#111419", "#59616b", "#d7d4cd", "#f4f2ed", "#fcfbf8"] },
+      "dark-canvas": { "role": "neutral", "displayName": "Dark Canvas", "canonical": "#0e1116", "tonalRamp": ["#0e1116", "#15191f", "#2d333b", "#a8b0ba", "#f1f0eb"] },
+      "blue-light": { "role": "primary", "displayName": "Review Blue", "canonical": "#396f96", "tonalRamp": ["#172b38", "#284e68", "#396f96", "#8bbddd", "#e7f1f7"] },
+      "amber-light": { "role": "secondary", "displayName": "Decision Amber", "canonical": "#a86125", "tonalRamp": ["#321b0b", "#704018", "#a86125", "#dda664", "#faebda"] },
+      "green-light": { "role": "secondary", "displayName": "Evidence Green", "canonical": "#41745b", "tonalRamp": ["#162a21", "#315943", "#41745b", "#88bc9b", "#e6f1ea"] }
     },
     "typographyMeta": {
-      "display": { "displayName": "Compressed Display", "purpose": "Hero and major section theses." },
-      "body": { "displayName": "Editorial Body", "purpose": "Explanations and product truth." },
-      "label": { "displayName": "Interface Label", "purpose": "Navigation and compact evidence." }
+      "display": { "displayName": "Neo-grotesk Display", "purpose": "Hero and major section theses." },
+      "body": { "displayName": "Calm Reading Face", "purpose": "Explanations, product truth, and controls." },
+      "label": { "displayName": "Interface Label", "purpose": "Navigation, stages, and compact evidence." }
     },
     "shadows": [
       { "name": "ambient-review", "value": "0 26px 64px -34px rgb(25 30 35 / 32%)", "purpose": "Separate review papers and product frames from the page." },
       { "name": "control-lift", "value": "0 12px 28px -18px rgb(15 19 23 / 80%)", "purpose": "Give the primary action restrained physical confidence." }
     ],
     "motion": [
-      { "name": "resolve", "value": "520ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Resolve dense diff lines from blur into readable structure." }
+      { "name": "resolve", "value": "520ms cubic-bezier(0.16, 1, 0.3, 1)", "purpose": "Resolve dense material into readable structure without bounce." }
     ],
     "breakpoints": [
-      { "name": "compact-desktop", "value": "1280px" },
-      { "name": "tablet", "value": "900px" },
-      { "name": "mobile", "value": "620px" }
+      { "name": "wide", "value": "1180px" },
+      { "name": "stack", "value": "1000px" },
+      { "name": "mobile", "value": "560px" }
     ]
   },
   "components": [
     {
-      "name": "Primary Download Button",
+      "name": "Primary Action",
       "kind": "button",
       "refersTo": "button-primary",
-      "description": "The dominant action on warm paper.",
-      "html": "<a class=\"ds-primary\" href=\"#\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 3v11m0 0 4-4m-4 4-4-4M5 17v3h14v-3\"/></svg>Download for macOS</a>",
-      "css": ".ds-primary{display:inline-flex;height:58px;align-items:center;gap:11px;padding:0 24px;border-radius:10px;background:#101317;color:#fff;font:650 16px 'Archivo Variable',sans-serif;text-decoration:none;box-shadow:0 12px 28px -18px rgb(15 19 23 / 80%);transition:transform 180ms cubic-bezier(.16,1,.3,1)}.ds-primary svg{width:21px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}.ds-primary:hover{transform:translateY(-2px)}.ds-primary:focus-visible{outline:3px solid #527c9b;outline-offset:4px}"
+      "description": "The dominant download or start action, inverted against its field.",
+      "html": "<a class=\"ds-primary\" href=\"#\">Download for macOS</a>",
+      "css": ".ds-primary{display:inline-flex;min-height:56px;align-items:center;padding:0 24px;border-radius:10px;background:#111419;color:#f4f2ed;font:650 16px 'Avenir Next','Source Sans 3 Variable',system-ui,sans-serif;text-decoration:none;box-shadow:0 12px 28px -18px rgb(15 19 23 / 80%);transition:transform 180ms cubic-bezier(.16,1,.3,1)}.ds-primary:hover{transform:translateY(-2px)}.ds-primary:focus-visible{outline:3px solid #396f96;outline-offset:4px}"
+    },
+    {
+      "name": "Theme Control",
+      "kind": "button",
+      "description": "A compact scheme switch whose accessible label names the resulting theme.",
+      "html": "<button class=\"ds-theme\" aria-label=\"Use dark theme\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M12 3v2m0 14v2M3 12h2m14 0h2M5.6 5.6 7 7m10 10 1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4\"/><circle cx=\"12\" cy=\"12\" r=\"4\"/></svg></button>",
+      "css": ".ds-theme{display:grid;width:44px;height:44px;place-items:center;border:1px solid #d7d4cd;border-radius:10px;background:#fcfbf8;color:#111419}.ds-theme svg{width:20px;fill:none;stroke:currentColor;stroke-width:1.7}.ds-theme:hover{border-color:#396f96}.ds-theme:focus-visible{outline:3px solid #396f96;outline-offset:3px}"
     },
     {
       "name": "Review Cohort",
       "kind": "card",
       "refersTo": "review-surface",
-      "description": "One calm grouping resolved from the raw diff.",
-      "html": "<article class=\"ds-cohort\"><i></i><div><strong>Storage & state</strong><span>4 decisions</span></div></article>",
-      "css": ".ds-cohort{display:flex;min-height:82px;align-items:center;gap:11px;padding:13px 12px;border:1px solid #a7bdca;border-radius:12px;background:#f6fafc;color:#101317;font-family:'Archivo Variable',sans-serif;box-shadow:0 9px 28px -22px rgb(20 24 28 / 60%)}.ds-cohort i{width:8px;height:38px;border-radius:3px;background:#527c9b}.ds-cohort strong,.ds-cohort span{display:block}.ds-cohort span{margin-top:5px;color:#5f6872;font-size:10px}"
+      "description": "One evidence-bearing grouping resolved from a raw change.",
+      "html": "<article class=\"ds-cohort\"><i></i><div><strong>Storage and state</strong><span>4 decisions</span></div></article>",
+      "css": ".ds-cohort{display:flex;min-height:82px;align-items:center;gap:12px;padding:14px;border:1px solid #b8cbd7;border-radius:12px;background:#fcfbf8;color:#111419;font-family:'Avenir Next','Source Sans 3 Variable',system-ui,sans-serif}.ds-cohort i{width:8px;height:38px;border-radius:3px;background:#396f96}.ds-cohort strong,.ds-cohort span{display:block}.ds-cohort span{margin-top:5px;color:#59616b;font-size:12px}"
+    },
+    {
+      "name": "Provider Result",
+      "kind": "card",
+      "description": "An independent Claude Code or Codex review result with disagreement preserved.",
+      "html": "<article class=\"ds-provider\"><strong>Codex</strong><p>Flags a stale repository assumption.</p><span>Disagrees on severity</span></article>",
+      "css": ".ds-provider{padding:18px;border:1px solid #d7d4cd;border-radius:12px;background:#fcfbf8;color:#111419;font-family:'Avenir Next','Source Sans 3 Variable',system-ui,sans-serif}.ds-provider strong{font:500 22px 'Helvetica Neue','Instrument Sans Variable',Arial,sans-serif}.ds-provider p{margin:12px 0;color:#59616b;line-height:1.5}.ds-provider span{color:#a86125;font-size:13px;font-weight:650}"
     },
     {
       "name": "Editorial Navigation",
       "kind": "nav",
-      "description": "Canonical lockup plus direct destinations.",
-      "html": "<nav class=\"ds-nav\"><strong>Rennet</strong><span><a href=\"#\">Docs</a><a href=\"#\">GitHub ↗</a></span></nav>",
-      "css": ".ds-nav{display:flex;align-items:center;justify-content:space-between;padding-bottom:22px;border-bottom:1px solid #d9d5cd;color:#101317;font-family:'Archivo Variable',sans-serif}.ds-nav strong{font-size:28px}.ds-nav span{display:flex;gap:28px}.ds-nav a{color:inherit;font-size:14px;font-weight:600;text-decoration:none}.ds-nav a:hover{text-decoration:underline;text-underline-offset:4px}.ds-nav a:focus-visible{outline:3px solid #527c9b;outline-offset:4px}"
+      "description": "Canonical lockup, direct destinations, and the scheme control.",
+      "html": "<nav class=\"ds-nav\"><strong>Rennet</strong><span><a href=\"#\">How it works</a><a href=\"#\">GitHub</a></span></nav>",
+      "css": ".ds-nav{display:flex;align-items:center;justify-content:space-between;padding-bottom:20px;border-bottom:1px solid #d7d4cd;color:#111419;font-family:'Avenir Next','Source Sans 3 Variable',system-ui,sans-serif}.ds-nav strong{font:500 28px 'Helvetica Neue','Instrument Sans Variable',Arial,sans-serif}.ds-nav span{display:flex;gap:24px}.ds-nav a{color:inherit;font-size:14px;font-weight:650;text-decoration:none}.ds-nav a:hover{text-decoration:underline;text-underline-offset:4px}.ds-nav a:focus-visible{outline:3px solid #396f96;outline-offset:4px}"
     }
   ],
   "narrative": {
     "northStar": "The Breaking Edge",
-    "overview": "Rennet is a warm editorial system for a serious developer tool. Dense technical material crosses the cheese-wheel breaking edge and becomes fewer, calmer, more legible objects. The brand mark is the mechanism, not decorative chrome.",
-    "keyCharacteristics": ["Warm paper and near-black ink dominate.", "Dense information resolves into a clear reading order.", "The canonical cheese-wheel mark supplies the fragmentation geometry.", "Product-native color identifies meaning; it does not decorate the page.", "Large editorial type creates confidence and pace."],
+    "overview": "Rennet is an editorial system for a serious developer tool. Dense technical material becomes fewer evidence-bearing objects without hiding the code underneath. The brand mark remains identity; provenance, continuity, and information density explain decomposition.",
+    "keyCharacteristics": ["Flat editorial fields and quiet reading surfaces.", "Dense information resolves into a deliberate reading order.", "Functional color names review meaning rather than decorating the page.", "Light and dark are complete authored compositions.", "Marketing and desktop share roles without becoming identical skins."],
     "rules": [
-      { "name": "The Sparse Color Rule", "body": "Monochrome carries the brand; color appears only where it helps someone read state, provenance, or structure.", "section": "colors" },
-      { "name": "The Compressed Thesis Rule", "body": "Compress display headings with the width axis; never substitute a monospace or generic system-black face to signal technical credibility.", "section": "typography" },
-      { "name": "The Paper-First Rule", "body": "A surface earns elevation by behaving like a separate review object, not merely because it needs visual emphasis.", "section": "elevation" }
+      { "name": "The Sparse Color Rule", "body": "Monochrome carries the identity; color appears only for review state, provenance, or structure.", "section": "colors" },
+      { "name": "The Identity Is Not Layout Rule", "body": "Never force the logo into a mask, connector, crop, or decomposition effect.", "section": "shapes" },
+      { "name": "The Flat-By-Default Rule", "body": "A surface earns elevation by behaving like a separate review object.", "section": "elevation" }
     ],
-    "dos": ["Do use the committed brand exports from brand/ without redrawing their geometry.", "Do vary scroll density: a dense proof passage should earn a quiet editorial passage.", "Do use real product captures or clearly labeled wireframe and synthetic material.", "Do preserve the mass-to-meaning reading order at every breakpoint."],
-    "donts": ["Don't expand, inflate, explode, fold, or substitute another metaphor for decomposition.", "Don't turn the site into equal-sized SaaS cards or an icon-feature grid.", "Don't use gradients, glass, neon, or color as a site-wide decorative identity.", "Don't use the standalone mark as a giant decorative object when it is not doing structural work."]
+    "dos": ["Do preserve the complete narrative and review sequence at every breakpoint.", "Do show real product evidence or label illustrative material.", "Do use committed black and white brand exports.", "Do keep code visible while changing its reading order."],
+    "donts": ["Don't use the standalone mark as a decomposition device.", "Don't turn the page into an equal-card feature grid.", "Don't use gradients, glass, neon, or monospace as generic developer-tool identity.", "Don't average independent model reviews into a synthetic consensus."]
   }
 }

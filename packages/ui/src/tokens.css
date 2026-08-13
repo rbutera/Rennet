@@ -24,7 +24,7 @@
 .rennet-glass {
   /* type */
   --serif: "New York", ui-serif, Georgia, serif;
-  --sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+  --sans: "Avenir Next", "Source Sans 3 Variable", -apple-system, BlinkMacSystemFont, sans-serif;
   /* Chrome is sans (resteer fresh update 2 / #62: no monospace as UI chrome —
    * monospace is for actual code only, never interface texture). --mono aliases
    * --sans so every legacy chrome reference (paths, branches, refs, counts, badges,
@@ -121,9 +121,9 @@
   --prop-color: #a9c7e0;
   --var-color: #d9a77a;
 
-  --display: var(--sans);
-  --display-weight: 700;
-  --display-track: -0.02em;
+  --display: "Helvetica Neue", "Instrument Sans Variable", Arial, sans-serif;
+  --display-weight: 500;
+  --display-track: -0.03em;
   --label-transform: none;
   --label-track: 0.01em;
 

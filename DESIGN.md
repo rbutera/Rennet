@@ -2,46 +2,54 @@
 name: Rennet
 description: Dense change becomes clear human judgment.
 colors:
-  warm-paper: "#f5f2ec"
-  paper-bright: "#fbfaf7"
-  ink: "#101317"
-  ink-soft: "#5f6872"
-  hairline: "#d9d5cd"
-  blue: "#527c9b"
-  amber: "#b86a2d"
-  green: "#58806b"
+  light-canvas: "#f4f2ed"
+  light-surface: "#fcfbf8"
+  light-ink: "#111419"
+  light-muted: "#59616b"
+  light-line: "#d7d4cd"
+  dark-canvas: "#0e1116"
+  dark-surface: "#15191f"
+  dark-ink: "#f1f0eb"
+  dark-muted: "#a8b0ba"
+  dark-line: "#2d333b"
+  blue-light: "#396f96"
+  blue-dark: "#8bbddd"
+  amber-light: "#a86125"
+  amber-dark: "#dda664"
+  green-light: "#41745b"
+  green-dark: "#88bc9b"
 typography:
   display:
-    fontFamily: "Archivo Variable, Arial Narrow, sans-serif"
-    fontSize: "clamp(2.7rem, 4.9vw, 5.5rem)"
-    fontWeight: 720
-    lineHeight: 0.96
-    letterSpacing: "-0.04em"
+    fontFamily: "Helvetica Neue, Instrument Sans Variable, Arial, sans-serif"
+    fontSize: "clamp(2.8rem, 5vw, 6rem)"
+    fontWeight: 500
+    lineHeight: 0.98
+    letterSpacing: "-0.035em"
   body:
-    fontFamily: "Archivo Variable, Arial Narrow, sans-serif"
+    fontFamily: "Avenir Next, Source Sans 3 Variable, system-ui, sans-serif"
     fontSize: "16px"
     fontWeight: 400
-    lineHeight: 1.5
+    lineHeight: 1.55
   label:
-    fontFamily: "Archivo Variable, Arial Narrow, sans-serif"
+    fontFamily: "Avenir Next, Source Sans 3 Variable, system-ui, sans-serif"
     fontSize: "13px"
-    fontWeight: 600
+    fontWeight: 650
 rounded:
   control: "10px"
   surface: "12px"
 spacing:
   control-x: "24px"
-  section-min: "96px"
+  section-min: "88px"
 components:
   button-primary:
-    backgroundColor: "{colors.ink}"
-    textColor: "{colors.paper-bright}"
+    backgroundColor: "{colors.light-ink}"
+    textColor: "{colors.light-canvas}"
     rounded: "{rounded.control}"
     padding: "0 24px"
-    height: "58px"
+    height: "56px"
   review-surface:
-    backgroundColor: "{colors.paper-bright}"
-    textColor: "{colors.ink}"
+    backgroundColor: "{colors.light-surface}"
+    textColor: "{colors.light-ink}"
     rounded: "{rounded.surface}"
 ---
 
@@ -49,136 +57,172 @@ components:
 
 ## Overview
 
-**Creative North Star: "The Breaking Edge"**
+**Creative North Star: “The Breaking Edge”**
 
-Rennet is a warm editorial system for a serious developer tool. Its defining move is reduction:
-dense technical material crosses the cheese-wheel breaking edge and becomes fewer, calmer, more
-legible objects. The brand mark is the mechanism, not decorative chrome.
+Rennet is an editorial system for a serious developer tool. Its defining move is reduction: dense
+technical material becomes a smaller number of legible, evidence-bearing objects without hiding the
+code underneath. The product is for engineers whose attention is constrained, not engineers who
+want judgment removed from the workflow.
 
-The system pairs compact, high-confidence display typography with quiet paper surfaces, fine rules,
-and truthful product evidence. Color is sparse and functional. The product should feel rigorous
-without becoming enterprise-cold or dressing itself in generic developer-tool neon.
+The canonical mark illustrates the product promise, but it is identity rather than layout material.
+Decomposition is shown through provenance, continuity, ordering, and changing information density.
+Never force the logo into a mask, connector, crop, or fragmentation effect.
 
-**Key Characteristics:**
+The system has two related materials:
 
-- Warm paper and near-black ink dominate.
-- Dense information resolves into a clear reading order.
-- The canonical cheese-wheel mark supplies the fragmentation geometry.
-- Product-native color identifies meaning; it does not decorate the page.
-- Large editorial type creates confidence and pace.
+- **Marketing:** flat editorial fields, fine rules, lifted proof objects, and generous narrative pace.
+- **Desktop product:** translucent glass for chrome, opaque code and analysis surfaces, and themed
+  paper for the artifact that leaves the machine.
+
+Both materials use the same typography roles, semantic color meanings, scheme vocabulary, spacing
+rhythm, and restrained geometry. They are siblings, not identical skins.
 
 ## Colors
 
-The palette is primarily monochrome, with dusty blue, warm amber, and muted green reserved for
-meaning inside demonstrations and product evidence.
+Light and dark are complete compositions. Both are first-class and must preserve hierarchy,
+contrast, product-state meaning, imagery, logos, browser chrome, focus, and elevation.
 
-### Primary
+### Light
 
-- **Near-black ink** (`#101317`): headlines, primary controls, and the dark raw-diff mass.
-- **Warm paper** (`#f5f2ec`): the continuous page field.
+- **Canvas** (`#f4f2ed`): a neutral warm-gray field, not cream nostalgia.
+- **Surface** (`#fcfbf8`): lifted review objects and editorial proof.
+- **Text** (`#111419`) and **muted text** (`#59616b`).
+- **Line** (`#d7d4cd`) for section and object structure.
 
-### Secondary
+### Dark
 
-- **Review blue** (`#527c9b`): informational groupings and links.
-- **Decision amber** (`#b86a2d`): reconstructed decisions and attention points.
-- **Evidence green** (`#58806b`): additions and verified structural material.
+- **Canvas** (`#0e1116`): cool near-black suited to long code-review sessions.
+- **Surface** (`#15191f`): opaque reading surfaces one step above the canvas.
+- **Text** (`#f1f0eb`) and **muted text** (`#a8b0ba`).
+- **Line** (`#2d333b`) for quiet structural separation.
 
-### Neutral
+Use `data-scheme="light|dark"` as the shared control vocabulary. Honor the operating-system
+preference by default, allow an explicit stored override, and resolve it before paint. Use the
+committed black and white brand exports instead of filtering or recoloring one asset.
 
-- **Bright paper** (`#fbfaf7`): elevated review objects and sheets.
-- **Soft ink** (`#5f6872`): supporting prose and metadata.
-- **Hairline** (`#d9d5cd`): section divisions and surface boundaries.
+### Semantic roles
 
-**The Sparse Color Rule.** Monochrome carries the brand; color appears only where it helps someone
-read state, provenance, or structure.
+Monochrome carries the identity. Functional color explains review state:
+
+- **Review blue** (`#396f96` light / `#8bbddd` dark): links, information, selection, and review
+  structure.
+- **Decision amber** (`#a86125` / `#dda664`): reconstructed decisions, disagreement, and blast
+  radius.
+- **Evidence green** (`#41745b` / `#88bc9b`): additions, current repository state, and verified
+  evidence.
+
+Do not use the application-icon gradient as an interface palette. Do not introduce a decorative
+fourth hue. Color never carries a state without text or structure.
 
 ## Typography
 
-**Display Font:** Archivo Variable, using its width axis for compactness.
-**Body Font:** Archivo Variable with a wider, calmer setting.
+The production wordmark is an exact path trace of selected concept lettering. It is not a font and
+must never be described as one. Its character is light neo-grotesk: open counters, ordinary width,
+and low visual friction.
 
-**Character:** Display type is blunt, compressed, and assured without becoming futuristic. Body
-copy is neutral and highly readable, allowing the display voice and product evidence to lead.
+- **Display:** Helvetica Neue where present, with self-hosted Instrument Sans Variable and Arial as
+  fallbacks. Use 440–600 rather than compressed extra-bold settings. Headlines lead through scale,
+  cadence, and short line length.
+- **Body:** Avenir Next where present, with self-hosted Source Sans 3 Variable and system UI as
+  fallbacks. Use 400–500 for prose and 600–700 for labels and controls.
+- **Code:** the platform monospace stack, only for source code and exact technical values.
 
-### Hierarchy
-
-- **Display** (720–750, fluid up to `5.5rem`, `0.96`): hero and major section statements.
-- **Title** (650–680, `20–25px`): review objects, questions, and workflow labels.
-- **Body** (400, `16–19px`, `1.5`): explanatory prose, normally kept below 65 characters per line.
-- **Label** (600, `10–14px`): navigation, metadata, and compact interface evidence.
-
-**The Compressed Thesis Rule.** Compress display headings with the width axis; never substitute a
-monospace or generic system-black face to signal technical credibility.
+Display headings may grow to `6rem`, use `0.94–1.0` line height, and never track tighter than
+`-0.04em`. Body copy stays between 45 and 75 characters where practical, starts at 16px, and uses
+roughly 1.5–1.6 line height. The same roles apply across marketing and desktop; the desktop keeps a
+smaller, more spatially stable scale.
 
 ## Layout
 
-The desktop shell is wide and editorial, capped near 1480px with 40px outer gutters. Sections use
-large vertical intervals, generally 96–176px, and alternate dense proof with quiet explanation.
-The first viewport reads left-to-right from promise to raw diff, cohorts, decisions, and paper.
+The marketing page follows this reading order:
 
-At tablet widths, secondary decision detail may collapse while the causal sequence stays intact.
-Below 620px the digestion sequence becomes vertical: dense diff first, then cohorts, decisions, and
-paper. Mobile never miniaturizes the desktop diagram into an unreadable strip.
+1. Accountability headline and agentic-engineer stance.
+2. AI-expanded pull requests and the pressure on the human context window.
+3. The two user stories: own work before submission, then someone else’s pull request.
+4. Digestion plus conversation with the diff.
+5. Existing Claude Code and Codex, independent dual review, and why disagreement matters.
+6. Deterministic repository discovery reinforced by evidence-backed model knowledge.
+7. Product evidence, lenses, local-first truth, objections, and action.
+
+Desktop may place related passages side by side. Mobile preserves this same DOM and story order in
+one column; it never rotates, hides, or miniaturizes a desktop pipeline.
+
+The shell caps near 1440px with 40px desktop gutters. Sections use 88–168px vertical intervals and
+alternate dense proof with quiet explanation. Related content is tight; distinct ideas receive
+meaningful separation.
+
+### Decomposition
+
+The signature sequence is always complete:
+
+**raw change → related cohorts → human decisions → one review paper**
+
+Represent it as a semantic ordered sequence with visible stage names and honest or clearly
+illustrative counts. On wide screens it may read left to right. On phones it becomes a vertical
+spine with one stage per viewport passage, larger representative content, and downward connectors.
+No stage disappears at an intermediate breakpoint.
+
+Use shared evidence color, labels, and provenance to show how material moves between stages. Do not
+use the cheese-wheel mark, a logo-shaped mask, or decorative fragments as the transformation.
 
 ## Elevation & Depth
 
-The page is flat by default. Review objects and product windows receive one ambient shadow with a
-real downward offset and broad blur. Hairlines establish most hierarchy; shadows are reserved for
-objects that conceptually lift from the paper.
-
-### Shadow Vocabulary
-
-- **Ambient review lift** (`0 26px 64px -34px rgb(25 30 35 / 32%)`): paper and full product frames.
-- **Control lift** (`0 12px 28px -18px rgb(15 19 23 / 80%)`): primary actions at rest.
-
-**The Paper-First Rule.** A surface earns elevation by behaving like a separate review object, not
-merely because it needs visual emphasis.
+The system is flat by default. Product frames, review papers, and mechanism proofs may use one
+ambient shadow with a real downward offset and broad blur. Marketing chrome stays opaque; only the
+desktop product shell may use translucent glass. Motion is limited to purposeful state transitions
+and one authored narrative moment. It starts from visible content, respects reduced motion, and uses
+exponential ease-out rather than bounce or perpetual ambient animation.
 
 ## Shapes
 
-Controls use a restrained 10px radius. Review groupings use 12px corners, while the final paper may
-carry one slightly more pronounced folded corner. Borders remain one pixel. The cheese-wheel mark
-and its diminishing fragments are the only expressive recurring geometry.
+Controls use 10px corners and review or proof surfaces use 10–14px corners. Borders are one pixel
+and structural. A paper may carry one deeper corner when it reinforces the document metaphor, but
+the logo remains identity rather than recurring layout geometry. Avoid pills for containers and
+avoid ornamental clipping that competes with the evidence.
 
 ## Components
 
 ### Buttons
 
-- **Shape:** compact rectangle with a 10px radius and 58px height.
-- **Primary:** near-black fill, white label, 24px horizontal padding, and an authored line icon.
-- **Hover / Focus:** two-pixel upward lift on hover; three-pixel review-blue focus outline.
-- **Secondary:** text link in review blue, underlined on hover rather than enclosed in another box.
+- 56px minimum height, 10px radius, 24px horizontal padding.
+- Primary controls invert against their field; secondary actions are text links.
+- Hover lift is two pixels with a real downward shadow. Focus uses a three-pixel review-blue ring.
+- Touch targets are at least 44 by 44 pixels.
 
-### Cards / Containers
+### Review and proof surfaces
 
-- **Corner Style:** 12px for cohorts and decisions; eight pixels with one deeper corner for paper.
-- **Background:** bright paper, occasionally tinted with a very pale functional hue.
-- **Shadow Strategy:** ambient only when the object lifts from the page.
-- **Border:** one quiet neutral or semantically tinted hairline.
+- 10–14px radius for cohorts, findings, conversations, provider results, and product frames.
+- Use either a structural border or a broad ambient shadow; avoid a shadowed border around every
+  object.
+- Code is always on an opaque surface. Product chrome may be translucent only in the desktop app.
+- The final paper may carry one deeper corner, but it remains a document rather than decoration.
 
-### Navigation
+### Provider marks
 
-Navigation is spare: the canonical horizontal lockup on the left and a small set of direct links on
-the right. External destinations use one consistent authored arrow icon.
+Claude Code and Codex are named with their recognizable provider marks and plain-word labels. They
+appear as installed tools the user already owns, not as customer logos or endorsements. Dual review
+shows two independent outputs side by side and gives disagreement its own explicit state.
 
-### Horizontal Reduction
+### Theme control
 
-The signature component begins with one dark, information-dense diff. The canonical fragment edge
-breaks it into a smaller set of cohorts, then decisions, then one paper. Counts and sample content
-must be truthful or visibly labeled illustrative.
+Use a single 44px icon button with a visible focus state and an accessible action label. The icon
+shows the scheme the action will select. The operating-system preference remains the default until
+the visitor chooses an override.
 
 ## Do's and Don'ts
 
-### Do:
+### Do
 
-- **Do** use the committed brand exports from `brand/` without redrawing their geometry.
-- **Do** vary scroll density: a dense proof passage should earn a quiet editorial passage.
-- **Do** use real product captures or clearly labeled wireframe and synthetic material.
-- **Do** preserve the mass-to-meaning reading order at every breakpoint.
+- Use committed black and white brand exports without redrawing their geometry.
+- Keep every review stage, user story, and important product claim present at every breakpoint.
+- Show real product captures or clearly labeled illustrative material.
+- Preserve access to actual code while changing its reading order.
+- Treat both themes as authored compositions and test both.
 
-### Don't:
+### Don’t
 
-- **Don't** expand, inflate, explode, fold, or substitute another metaphor for decomposition.
-- **Don't** turn the site into equal-sized SaaS cards or an icon-feature grid.
-- **Don't** use gradients, glass, neon, or color as a site-wide decorative identity.
-- **Don't** use the standalone mark as a giant decorative object when it is not doing structural work.
+- Do not use the standalone mark as a giant decorative object or decomposition device.
+- Do not turn the page into an equal-card feature grid.
+- Do not use gradients, glass, neon, or monospace as generic developer-tool identity.
+- Do not claim the own-work flow already pushes or opens a pull request until the live path does.
+- Do not average independent model outputs into one synthetic consensus.
