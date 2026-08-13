@@ -33,6 +33,12 @@ function answer(text: string): AskReviewResult {
   };
 }
 
+const bothAnswers: AskReviewResult = {
+  mode: "both",
+  primary: { model: "Orchestrator · Claude", answer: "The orchestrator answer." },
+  secondOpinion: { model: "Codex", answer: "The Codex second opinion." },
+};
+
 function fakeBridge({
   ask = answer("The bridge answered."),
   threads = [],
@@ -222,6 +228,63 @@ describe("ConversationPanel", () => {
       '.chat-row[data-ask-type="general-ask"][data-author="harness"]',
     );
     expect(generalAnswer?.querySelector(".chat-message-actions")).toBeNull();
+    expect(generalAnswer?.querySelectorAll(".chat-message-text")).toHaveLength(1);
+    expect(generalAnswer?.querySelector(".ask-answer-card")).toBeNull();
+    expect(generalAnswer?.querySelector(".ask-answers-foot")).toBeNull();
+  });
+
+  it("offers both routes from the one composer and renders a both result as two unsynthesised cards", async () => {
+    const h = fakeBridge({ ask: bothAnswers });
+    const { container } = mount(
+      <ConversationPanel bridge={h.bridge} reviewId="review-both" anchors={[]} />,
+    );
+
+    const composer = container.querySelector<HTMLElement>(".conversation-panel-composer");
+    const options = composer?.querySelector<HTMLButtonElement>('[aria-label="ask options"]');
+    if (!composer || !options) throw new Error("the composer ask routing is missing");
+    expect(composer.getAttribute("data-ask-mode")).toBe("orchestrator");
+    expect(options.getAttribute("aria-expanded")).toBe("false");
+
+    fireEvent.click(options);
+    const routes = [...composer.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
+    expect(routes.map((route) => route.textContent)).toEqual([
+      "Ask the orchestratordefault",
+      "Ask both modelstwo answers",
+    ]);
+    const both = composer.querySelector<HTMLButtonElement>('.ask-menu-item[data-mode="both"]');
+    if (!both) throw new Error("both-model routing is missing from the composer");
+    fireEvent.click(both);
+    expect(composer.getAttribute("data-ask-mode")).toBe("both");
+
+    compose(container, "Do the models agree?");
+    await waitFor(() => expect(container.querySelectorAll(".ask-answer-card")).toHaveLength(2));
+
+    const askCalls = h.calls.filter((call) => call.name === "review.ask");
+    expect(askCalls).toHaveLength(1);
+    const input = askCalls[0]?.input as CommandInput<"review.ask">;
+    expect(input).toMatchObject({
+      reviewId: "review-both",
+      mode: "both",
+      question: "Do the models agree?",
+    });
+    expect(Object.keys(input)).not.toContain("permission");
+
+    const comparison = container.querySelector<HTMLElement>(
+      '.chat-row[data-ask-type="general-ask"][data-author="harness"] .ask-answers',
+    );
+    expect(comparison?.getAttribute("data-count")).toBe("2");
+    expect(
+      [...(comparison?.querySelectorAll(".ask-answer-head") ?? [])].map(
+        (label) => label.textContent,
+      ),
+    ).toEqual(["Orchestrator · Claude", "Codex"]);
+    expect(comparison?.querySelectorAll(".ask-answer-body")).toHaveLength(2);
+    expect(comparison?.querySelector(".ask-answers-foot")?.textContent).toMatch(
+      /no synthesis.*two answers.*you decide/i,
+    );
+    expect(comparison?.querySelector('[data-model="merged"]')).toBeNull();
+    expect(comparison?.querySelector(".ask-synthesis")).toBeNull();
+    expect(container.querySelectorAll('.chat-row[data-author="harness"]')).toHaveLength(1);
   });
 
   it("auto-opens a line reply with its chip and sends the anchored turn through review.ask", async () => {

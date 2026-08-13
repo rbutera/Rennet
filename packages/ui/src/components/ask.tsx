@@ -32,6 +32,74 @@ export interface AskControlProps {
   onAsk(): void;
 }
 
+export interface AskButtonProps {
+  mode: AskMode;
+  disabled: boolean;
+  pending?: boolean;
+  primaryClassName?: string;
+  onModeChange(mode: AskMode): void;
+  onAsk(): void;
+}
+
+export function AskButton({
+  mode,
+  disabled,
+  pending = false,
+  primaryClassName,
+  onModeChange,
+  onAsk,
+}: AskButtonProps) {
+  const [menuOpen, setMenuOpen] = useState(false);
+
+  function pick(next: AskMode): void {
+    onModeChange(next);
+    setMenuOpen(false);
+  }
+
+  return (
+    <div className="ask-send">
+      <button
+        type="button"
+        className={primaryClassName ? `ask-send-primary ${primaryClassName}` : "ask-send-primary"}
+        data-ask-mode={mode}
+        disabled={disabled}
+        onClick={onAsk}
+      >
+        Ask
+      </button>
+      <button
+        type="button"
+        className="ask-send-caret"
+        aria-label="ask options"
+        aria-haspopup="menu"
+        aria-expanded={menuOpen}
+        disabled={pending}
+        onClick={() => setMenuOpen((open) => !open)}
+      >
+        <span aria-hidden="true">⌄</span>
+      </button>
+      {menuOpen ? (
+        <div className="ask-menu" role="menu">
+          {ASK_OPTIONS.map((option) => (
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={option.mode === mode}
+              className="ask-menu-item"
+              data-mode={option.mode}
+              key={option.mode}
+              onClick={() => pick(option.mode)}
+            >
+              <span className="ask-menu-label">{option.label}</span>
+              <span className="ask-menu-hint">{option.hint}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 /**
  * The send control: a question box plus a split "Ask" button whose caret opens the
  * routing menu. "Ask the orchestrator" is the default; "Ask both models" is the
@@ -46,13 +114,7 @@ export function AskControl({
   onModeChange,
   onAsk,
 }: AskControlProps) {
-  const [menuOpen, setMenuOpen] = useState(false);
   const canSend = question.trim().length > 0 && !pending;
-
-  function pick(next: AskMode): void {
-    onModeChange(next);
-    setMenuOpen(false);
-  }
 
   return (
     <div className="ask-control" data-ask-mode={mode}>
@@ -63,46 +125,13 @@ export function AskControl({
         disabled={pending}
         onChange={(event) => onQuestionChange(event.target.value)}
       />
-      <div className="ask-send">
-        <button
-          type="button"
-          className="ask-send-primary"
-          data-ask-mode={mode}
-          disabled={!canSend}
-          onClick={() => onAsk()}
-        >
-          Ask
-        </button>
-        <button
-          type="button"
-          className="ask-send-caret"
-          aria-label="ask options"
-          aria-haspopup="menu"
-          aria-expanded={menuOpen}
-          disabled={pending}
-          onClick={() => setMenuOpen((open) => !open)}
-        >
-          <span aria-hidden="true">⌄</span>
-        </button>
-        {menuOpen ? (
-          <div className="ask-menu" role="menu">
-            {ASK_OPTIONS.map((option) => (
-              <button
-                type="button"
-                role="menuitemradio"
-                aria-checked={option.mode === mode}
-                className="ask-menu-item"
-                data-mode={option.mode}
-                key={option.mode}
-                onClick={() => pick(option.mode)}
-              >
-                <span className="ask-menu-label">{option.label}</span>
-                <span className="ask-menu-hint">{option.hint}</span>
-              </button>
-            ))}
-          </div>
-        ) : null}
-      </div>
+      <AskButton
+        mode={mode}
+        disabled={!canSend}
+        pending={pending}
+        onModeChange={onModeChange}
+        onAsk={onAsk}
+      />
     </div>
   );
 }

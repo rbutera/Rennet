@@ -213,7 +213,8 @@ export {
 } from "./components/conversation-cluster";
 // The LIVE conversation host (issue #36): wires the cluster to the real `review.ask`
 // boundary — opening/continuing a thread invokes the orchestrator and its own answer
-// populates the thread (no fixture). The sibling of `AskPanel` for the in-diff chat.
+// populates the thread (no fixture). `ConversationPanel` composes this host with the
+// unified general-ask surface.
 export type { ConversationHostProps } from "./components/conversation-host";
 export {
   ConversationHost,

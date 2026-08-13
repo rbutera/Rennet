@@ -169,11 +169,12 @@ describe("RennetApp — the review-heart split ships (issue #36 HIGH-1, no reflo
     expect(panelShell).not.toBeNull();
     expect(split.querySelectorAll(".conversation-panel-stream")).toHaveLength(1);
 
-    const askPanel = container.querySelector<HTMLElement>(".ask-panel");
-    const options = askPanel?.querySelector<HTMLButtonElement>(".ask-send-caret");
-    if (!options) throw new Error("the both-model AskPanel is not reachable");
+    expect(container.querySelector(".ask-panel")).toBeNull();
+    const composer = panelShell?.querySelector<HTMLElement>(".conversation-panel-composer");
+    const options = composer?.querySelector<HTMLButtonElement>('[aria-label="ask options"]');
+    if (!options) throw new Error("both-model routing is not reachable from the one composer");
     fireEvent.click(options);
-    expect(askPanel?.querySelector('.ask-menu-item[data-mode="both"]')).not.toBeNull();
+    expect(composer?.querySelector('.ask-menu-item[data-mode="both"]')).not.toBeNull();
   });
 
   it("opening and expanding the panel leave the diff column's allocation untouched", async () => {

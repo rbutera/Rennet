@@ -59,7 +59,6 @@ import {
 import { publishedItems } from "./canvas/staging";
 import { createViewStore, useViewStore } from "./canvas/store";
 import { buildCommands, type CommandContext, type Screen } from "./command/commands";
-import { AskPanel } from "./components/ask-panel";
 import { Breadcrumb } from "./components/breadcrumb";
 import {
   CollationDraftCanvas,
@@ -2091,10 +2090,6 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                 />
               ) : null}
             </div>
-            {/* The unified panel owns the normal orchestrator conversation. Keep the
-                existing AskPanel reachable for its explicit both-model side-by-side
-                comparison until that affordance moves to the Questions overlay. */}
-            {review ? <AskPanel bridge={bridge} reviewId={review.id} /> : null}
           </>
         ) : loadFailed ? (
           <section className="canvas-primer" role="alert">

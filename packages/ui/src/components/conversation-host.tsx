@@ -48,8 +48,8 @@ function threadFromPersisted(wire: PersistedThreadWire): ConversationThread {
 // ─────────────────────────────────────────────────────────────────────────────
 // The LIVE conversation host (issue #36): the wiring that finally lights the inline
 // conversation cluster with the REAL orchestrator, replacing the fixture message
-// source. It is the sibling of `AskPanel` (#139): a self-contained container that
-// owns the thread state and drives every turn over the proven `review.ask` boundary.
+// source. It is a self-contained container that owns the anchored-thread state and
+// drives every turn over the proven `review.ask` boundary.
 //
 // The gap it closes: `conversation-cluster.tsx` renders threads, but until now the
 // ONLY source of a harness answer was `demoConversationThread()` — a canned string.
@@ -60,8 +60,8 @@ function threadFromPersisted(wire: PersistedThreadWire): ConversationThread {
 // conversation so far). There is no fixture fallback anywhere on this path.
 //
 // The boundary is `review.ask` verbatim — the SAME command, router, and live ports
-// `AskPanel` fires (`askReview`: orchestrator once, "both" adds Codex, never a
-// synthesis). #251 now STREAMS the orchestrator's tokens live: the ask carries a
+// the unified panel fires (`askReview`: orchestrator once, "both" adds Codex, never
+// a synthesis). #251 now STREAMS the orchestrator's tokens live: the ask carries a
 // `turnId` + `anchor`, and `bridge.onAskStream` deltas (filtered to this turn) drive a
 // single live PREVIEW message that grows as the model types. The preview is a live
 // ECHO only — the durable answer is always the AUTHORITATIVE invoke result, which
@@ -73,7 +73,7 @@ function threadFromPersisted(wire: PersistedThreadWire): ConversationThread {
 
 /** The UI-side ceiling on a single turn before the thread unblocks with an honest
  *  timeout (the underlying turn is not aborted — this frees the composer so a thread
- *  is never permanently stuck). Mirrors `AskPanel`'s `DEFAULT_ASK_TIMEOUT_MS`. */
+ *  is never permanently stuck). */
 export const DEFAULT_CONVERSATION_TIMEOUT_MS = 180_000;
 
 /** How often (ms) the live streaming preview repaints as tokens arrive (#251). The

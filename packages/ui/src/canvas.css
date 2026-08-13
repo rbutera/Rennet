@@ -2265,7 +2265,7 @@
   gap: 12px;
 }
 .ask-answers[data-count="2"] .ask-answer-cards {
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr;
 }
 .ask-answer-card {
   display: flex;
@@ -2290,32 +2290,6 @@
   color: var(--text-faint);
   font-size: 12px;
   text-align: center;
-}
-
-/* The Ask panel (bead workspace-alqow): the mounted container for the send control
- * and the last answer — the affordance that fires the live review.ask path. */
-.ask-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  margin-top: 20px;
-  padding: 16px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--radius);
-  background: var(--surface-2);
-}
-.ask-panel-head {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-.ask-panel-hint {
-  color: var(--text-faint);
-  font-size: 12px;
-}
-.ask-panel-error {
-  color: var(--danger, #c0392b);
-  font-size: 13px;
 }
 
 /* ── The inline conversation cluster (issue #36) ──────────────────────────────

@@ -60,6 +60,9 @@ button {
   border-left: 0;
   overflow: auto;
 }
+.conversation-panel--expanded .ask-answers[data-count="2"] .ask-answer-cards {
+  grid-template-columns: 1fr 1fr;
+}
 .conversation-panel-header.chat-h {
   display: flex;
   align-items: center;

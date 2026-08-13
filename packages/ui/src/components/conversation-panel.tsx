@@ -1,6 +1,6 @@
 import type { RennetBridge } from "@rennet/protocol";
 import { useEffect, useRef, useState } from "react";
-import { DEFAULT_ASK_MODE } from "../canvas/ask";
+import { type AskMode, type AskReviewResult, DEFAULT_ASK_MODE } from "../canvas/ask";
 import type {
   ConversationAnchor,
   ConversationThread,
@@ -8,6 +8,7 @@ import type {
   PromotionEvent,
   ThreadMessage,
 } from "../canvas/conversation";
+import { AskAnswers, AskButton } from "./ask";
 import { DiscussControl } from "./conversation-cluster";
 import {
   ConversationHost,
@@ -29,10 +30,14 @@ type AskType = "comment" | "request-change" | "question" | "discuss" | "general-
 
 interface GeneralMessage extends ThreadMessage {
   readonly askType: "general-ask";
+  readonly comparison?: {
+    readonly question: string;
+    readonly result: AskReviewResult;
+  };
 }
 
 interface StreamMessage {
-  readonly message: ThreadMessage;
+  readonly message: ThreadMessage & Pick<GeneralMessage, "comparison">;
   readonly thread?: ConversationThread;
   readonly askType: AskType;
 }
@@ -134,6 +139,8 @@ function ChatRow({
           <p className="chat-message-interrupted">
             This answer was interrupted before it finished.
           </p>
+        ) : message.comparison ? (
+          <AskAnswers question={message.comparison.question} result={message.comparison.result} />
         ) : (
           <p className="chat-message-text mt">{message.body}</p>
         )}
@@ -188,6 +195,7 @@ function PanelSurface({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [draft, setDraft] = useState("");
+  const [mode, setMode] = useState<AskMode>(DEFAULT_ASK_MODE);
   const [activeThreadId, setActiveThreadId] = useState<string | undefined>(undefined);
   const [generalMessages, setGeneralMessages] = useState<readonly GeneralMessage[]>([]);
   const [generalPending, setGeneralPending] = useState(false);
@@ -247,7 +255,7 @@ function PanelSurface({
       const invocation = bridge.invoke("review.ask", {
         commandId: crypto.randomUUID(),
         reviewId,
-        mode: DEFAULT_ASK_MODE,
+        mode,
         question: body,
       });
       const timeout = new Promise<never>((_resolve, reject) => {
@@ -257,6 +265,7 @@ function PanelSurface({
         );
       });
       const result = await Promise.race([invocation, timeout]);
+      const comparison = result.secondOpinion ? { question: body, result } : undefined;
       setGeneralMessages((current) => [
         ...current,
         {
@@ -265,6 +274,7 @@ function PanelSurface({
           model: result.primary.model,
           body: result.primary.answer,
           askType: "general-ask",
+          ...(comparison ? { comparison } : {}),
         },
       ]);
     } catch (reason) {
@@ -423,6 +433,7 @@ function PanelSurface({
         <div
           className="conversation-panel-composer composer"
           data-anchor-kind={activeThread?.anchor.kind ?? "general"}
+          data-ask-mode={activeThread ? DEFAULT_ASK_MODE : mode}
           data-thread-id={activeThread?.id}
         >
           <SparkleIcon size={14} />
@@ -433,14 +444,25 @@ function PanelSurface({
             disabled={activePending}
             onChange={(event) => setDraft(event.target.value)}
           />
-          <button
-            type="button"
-            className="conversation-panel-send"
-            disabled={draft.trim().length === 0 || activePending}
-            onClick={submit}
-          >
-            Ask
-          </button>
+          {activeThread ? (
+            <button
+              type="button"
+              className="conversation-panel-send"
+              disabled={draft.trim().length === 0 || activePending}
+              onClick={submit}
+            >
+              Ask
+            </button>
+          ) : (
+            <AskButton
+              mode={mode}
+              disabled={draft.trim().length === 0 || activePending}
+              pending={activePending}
+              primaryClassName="conversation-panel-send"
+              onModeChange={setMode}
+              onAsk={submit}
+            />
+          )}
         </div>
       </section>
     </aside>
