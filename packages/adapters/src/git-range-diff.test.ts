@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decompose } from "@rennet/core";
 import { afterEach, describe, expect, it } from "vitest";
-import { captureRangePatchset, execaGit, parseUnifiedDiffFiles } from "./git-range-diff";
+import {
+  captureRangePatchset,
+  execaGit,
+  FILE_VISIBLE_BYTE_LIMIT,
+  parseUnifiedDiffFiles,
+} from "./git-range-diff";
 
 const directories: string[] = [];
 
@@ -112,6 +117,46 @@ describe("parseUnifiedDiffFiles coalesces same-path type-change blocks", () => {
       expect(result.ingestionGaps).toEqual([]);
     });
   }
+
+  it("keeps the truncation marker TERMINAL when the first block exceeds the file limit", () => {
+    // Coalescing already-`visible()`-truncated blocks would bury the first block's
+    // terminal marker mid-patch, so `isTruncatedFile` would not fire and a
+    // truncated capture would read clean. Coalescing RAW + one `visible` keeps the
+    // marker terminal, so the diff-truncated gap is disclosed.
+    const lineCount = Math.ceil(FILE_VISIBLE_BYTE_LIMIT / 24) + 1000; // first block > file limit
+    const body = Array.from({ length: lineCount }, (_, i) => `-real ordinary line ${i}`).join("\n");
+    const oid = "a".repeat(40);
+    const rawDiff =
+      `diff --git a/embedded b/embedded\ndeleted file mode 100644\nindex 036ad28..0000000\n` +
+      `--- a/embedded\n+++ /dev/null\n@@ -1,${lineCount} +0,0 @@\n${body}\n` +
+      `diff --git a/embedded b/embedded\nnew file mode 160000\nindex 0000000..${oid.slice(0, 7)}\n` +
+      `--- /dev/null\n+++ b/embedded\n@@ -0,0 +1 @@\n+Subproject commit ${oid}\n`;
+    const files = parseUnifiedDiffFiles(rawDiff);
+    expect(files).toHaveLength(1);
+    // The marker survives as a terminal frame (not buried mid-patch).
+    expect(files[0]?.patch.trimEnd().endsWith("[diff truncated by Rennet]")).toBe(true);
+
+    const result = decompose({
+      id: "trunc",
+      createdAt: "2026-08-13T00:00:00.000Z",
+      repository: {
+        id: "r",
+        root: "/tmp/r",
+        commonDir: "/tmp/r/.git",
+        baseRef: "main",
+        baseOid: "0".repeat(40),
+        headOid: "1".repeat(40),
+      },
+      files,
+      rawDiff,
+      byteLength: Buffer.byteLength(rawDiff),
+      truncated: false,
+      source: "github-rest",
+    });
+    expect(result.ingestionGaps).toContainEqual(
+      expect.objectContaining({ kind: "diff-truncated", path: "embedded" }),
+    );
+  });
 });
 
 describe("captureRangePatchset", () => {

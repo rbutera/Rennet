@@ -130,7 +130,23 @@ function unprefix(path: string): string {
 export function parseUnifiedDiffFiles(diff: string): PatchFile[] {
   if (diff.trim().length === 0) return [];
   const blocks = diff.split(/(?=^diff --git )/m).filter((block) => block.startsWith("diff --git"));
-  const files: PatchFile[] = [];
+  // Accumulate per PATH, coalescing RAW blocks. git splits a TYPE CHANGE
+  // (gitlink↔regular file) into a delete + an add of the SAME path, i.e. two
+  // `diff --git` blocks; the local capture keeps both halves in ONE PatchFile and
+  // `decompose` keys its per-file state on a UNIQUE path, so two same-path files
+  // would collide and drop the first half's hunks (a real change hidden). We merge
+  // the raw block text and apply `visible` ONCE at the end, so any truncation
+  // marker stays TERMINAL (a per-block `visible` would bury the first block's
+  // marker mid-patch and the truncation gap would silently disappear).
+  interface Accumulated {
+    status: FileChangeStatus;
+    previousPath?: string;
+    additions: number;
+    deletions: number;
+    binary: boolean;
+    rawParts: string[];
+  }
+  const byPath = new Map<string, Accumulated>();
   for (const block of blocks) {
     const lines = block.split("\n");
     let status: FileChangeStatus = "modified";
@@ -171,47 +187,32 @@ export function parseUnifiedDiffFiles(diff: string): PatchFile[] {
     // ordinary file whose added body line merely reads `+Binary files … differ`,
     // hiding that real change downstream (the dangerous direction).
     const binary = /^Binary files .+ differ$/m.test(block) || /^GIT binary patch$/m.test(block);
+    const existing = byPath.get(path);
+    if (existing === undefined) {
+      byPath.set(path, { status, previousPath, additions, deletions, binary, rawParts: [block] });
+    } else {
+      existing.status = "modified";
+      existing.additions += additions;
+      existing.deletions += deletions;
+      existing.binary ||= binary;
+      existing.previousPath ??= previousPath;
+      existing.rawParts.push(block);
+    }
+  }
+  const files: PatchFile[] = [];
+  for (const [path, acc] of byPath) {
     files.push({
       path,
-      ...(status === "renamed" && previousPath ? { previousPath } : {}),
-      status,
-      additions: binary ? null : additions,
-      deletions: binary ? null : deletions,
-      binary,
-      patch: visible(block, FILE_VISIBLE_BYTE_LIMIT),
+      ...(acc.status === "renamed" && acc.previousPath ? { previousPath: acc.previousPath } : {}),
+      status: acc.status,
+      additions: acc.binary ? null : acc.additions,
+      deletions: acc.binary ? null : acc.deletions,
+      binary: acc.binary,
+      patch: visible(acc.rawParts.join("\n"), FILE_VISIBLE_BYTE_LIMIT),
     });
   }
-  // Coalesce same-path blocks. git splits a TYPE CHANGE (gitlink↔regular file)
-  // into a delete + an add of the SAME path, i.e. two `diff --git` blocks. The
-  // local capture keeps both halves in ONE PatchFile, and `decompose` keys its
-  // per-file state on a UNIQUE path — two same-path PatchFiles would collide,
-  // dropping the first half's hunks entirely (a real change hidden). Merge so
-  // each path yields exactly one PatchFile, as the local path already guarantees.
-  const byPath = new Map<string, PatchFile>();
-  for (const file of files) {
-    const existing = byPath.get(file.path);
-    if (existing === undefined) {
-      byPath.set(file.path, file);
-      continue;
-    }
-    byPath.set(file.path, {
-      ...existing,
-      status: "modified",
-      additions:
-        existing.additions === null || file.additions === null
-          ? null
-          : existing.additions + file.additions,
-      deletions:
-        existing.deletions === null || file.deletions === null
-          ? null
-          : existing.deletions + file.deletions,
-      binary: existing.binary || file.binary,
-      patch: `${existing.patch}\n${file.patch}`,
-    });
-  }
-  const coalesced = [...byPath.values()];
-  coalesced.sort((left, right) => left.path.localeCompare(right.path));
-  return coalesced;
+  files.sort((left, right) => left.path.localeCompare(right.path));
+  return files;
 }
 
 /**
