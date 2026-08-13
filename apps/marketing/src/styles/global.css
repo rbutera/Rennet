@@ -313,6 +313,11 @@ h2 {
   stroke-width: 1.8;
 }
 
+.nav-download {
+  min-height: 44px;
+  padding-inline: 18px;
+}
+
 .text-link {
   color: var(--blue);
   font-weight: 650;
@@ -1291,7 +1296,7 @@ h2 {
     font-size: 12px;
   }
 
-  .site-header nav a:nth-child(2) {
+  .site-header nav > a:not(.nav-download) {
     display: none;
   }
 
