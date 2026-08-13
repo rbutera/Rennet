@@ -4,7 +4,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decompose } from "@rennet/core";
 import { afterEach, describe, expect, it } from "vitest";
-import { captureRangePatchset, execaGit } from "./git-range-diff";
+import {
+  captureRangePatchset,
+  execaGit,
+  FILE_VISIBLE_BYTE_LIMIT,
+  parseUnifiedDiffFiles,
+} from "./git-range-diff";
 
 const directories: string[] = [];
 
@@ -35,6 +40,123 @@ function repositoryWithRange(): { root: string; baseOid: string; headOid: string
 afterEach(() => {
   for (const directory of directories.splice(0))
     rmSync(directory, { recursive: true, force: true });
+});
+
+describe("parseUnifiedDiffFiles (degraded REST parser) binary detection", () => {
+  it("does NOT flag an ordinary file whose body line merely reads `+Binary files … differ`", () => {
+    // git emits `Binary files … differ` at column 0; an added body line carrying
+    // that text must not set binary:true (it would hide the change downstream).
+    const diff =
+      "diff --git a/note.txt b/note.txt\nindex 1111111..2222222 100644\n--- a/note.txt\n+++ b/note.txt\n" +
+      "@@ -1 +1 @@\n-old\n+Binary files foo and bar differ\n";
+    const [file] = parseUnifiedDiffFiles(diff);
+    expect(file?.binary).toBe(false);
+  });
+
+  it("flags a real binary file via git's column-0 `Binary files … differ` sentinel", () => {
+    const diff =
+      "diff --git a/logo.png b/logo.png\nindex 1111111..2222222 100644\n" +
+      "Binary files a/logo.png and b/logo.png differ\n";
+    const [file] = parseUnifiedDiffFiles(diff);
+    expect(file?.binary).toBe(true);
+  });
+
+  it("flags a `GIT binary patch` blob the old `includes` check missed", () => {
+    const diff =
+      "diff --git a/icon.png b/icon.png\nindex 0000000..1111111 100644\nGIT binary patch\nliteral 8\nzcmZQ$0000\n\n";
+    const [file] = parseUnifiedDiffFiles(diff);
+    expect(file?.binary).toBe(true);
+  });
+});
+
+describe("parseUnifiedDiffFiles coalesces same-path type-change blocks", () => {
+  // git splits a gitlink↔file type change into two same-path `diff --git` blocks.
+  // The parser must merge them into one PatchFile so decompose (which keys per-file
+  // state on a unique path) does not drop the first half's hunks — a hidden change.
+  const oid = "a".repeat(40);
+  const cases = {
+    "file→gitlink":
+      "diff --git a/embedded b/embedded\ndeleted file mode 100644\nindex 036ad28..0000000\n" +
+      "--- a/embedded\n+++ /dev/null\n@@ -1 +0,0 @@\n-real ordinary text\n" +
+      `diff --git a/embedded b/embedded\nnew file mode 160000\nindex 0000000..${oid.slice(0, 7)}\n` +
+      `--- /dev/null\n+++ b/embedded\n@@ -0,0 +1 @@\n+Subproject commit ${oid}\n`,
+    "gitlink→file":
+      `diff --git a/embedded b/embedded\ndeleted file mode 160000\nindex ${oid.slice(0, 7)}..0000000\n` +
+      `--- a/embedded\n+++ /dev/null\n@@ -1 +0,0 @@\n-Subproject commit ${oid}\n` +
+      "diff --git a/embedded b/embedded\nnew file mode 100644\nindex 0000000..036ad28\n" +
+      "--- /dev/null\n+++ b/embedded\n@@ -0,0 +1 @@\n+real ordinary text\n",
+  };
+
+  for (const [name, rawDiff] of Object.entries(cases)) {
+    it(`${name}: one PatchFile per path; every hunk chunked once; regular half substantive`, () => {
+      const files = parseUnifiedDiffFiles(rawDiff);
+      expect(files.filter((f) => f.path === "embedded")).toHaveLength(1);
+
+      const result = decompose({
+        id: name,
+        createdAt: "2026-08-13T00:00:00.000Z",
+        repository: {
+          id: "r",
+          root: "/tmp/r",
+          commonDir: "/tmp/r/.git",
+          baseRef: "main",
+          baseOid: "0".repeat(40),
+          headOid: "1".repeat(40),
+        },
+        files,
+        rawDiff,
+        byteLength: Buffer.byteLength(rawDiff),
+        truncated: false,
+        source: "github-rest",
+      });
+      // Totality: every hunk lands in exactly one chunk (no half dropped).
+      const placed = result.chunks.flatMap((c) => c.hunkIds).sort();
+      expect(placed).toEqual(result.hunks.map((h) => h.id).sort());
+      // The regular text is reviewed, not hidden as submodule noise.
+      expect(result.chunks.some((c) => c.kind === "substantive")).toBe(true);
+      expect(result.ingestionGaps).toEqual([]);
+    });
+  }
+
+  it("keeps the truncation marker TERMINAL when the first block exceeds the file limit", () => {
+    // Coalescing already-`visible()`-truncated blocks would bury the first block's
+    // terminal marker mid-patch, so `isTruncatedFile` would not fire and a
+    // truncated capture would read clean. Coalescing RAW + one `visible` keeps the
+    // marker terminal, so the diff-truncated gap is disclosed.
+    const lineCount = Math.ceil(FILE_VISIBLE_BYTE_LIMIT / 24) + 1000; // first block > file limit
+    const body = Array.from({ length: lineCount }, (_, i) => `-real ordinary line ${i}`).join("\n");
+    const oid = "a".repeat(40);
+    const rawDiff =
+      `diff --git a/embedded b/embedded\ndeleted file mode 100644\nindex 036ad28..0000000\n` +
+      `--- a/embedded\n+++ /dev/null\n@@ -1,${lineCount} +0,0 @@\n${body}\n` +
+      `diff --git a/embedded b/embedded\nnew file mode 160000\nindex 0000000..${oid.slice(0, 7)}\n` +
+      `--- /dev/null\n+++ b/embedded\n@@ -0,0 +1 @@\n+Subproject commit ${oid}\n`;
+    const files = parseUnifiedDiffFiles(rawDiff);
+    expect(files).toHaveLength(1);
+    // The marker survives as a terminal frame (not buried mid-patch).
+    expect(files[0]?.patch.trimEnd().endsWith("[diff truncated by Rennet]")).toBe(true);
+
+    const result = decompose({
+      id: "trunc",
+      createdAt: "2026-08-13T00:00:00.000Z",
+      repository: {
+        id: "r",
+        root: "/tmp/r",
+        commonDir: "/tmp/r/.git",
+        baseRef: "main",
+        baseOid: "0".repeat(40),
+        headOid: "1".repeat(40),
+      },
+      files,
+      rawDiff,
+      byteLength: Buffer.byteLength(rawDiff),
+      truncated: false,
+      source: "github-rest",
+    });
+    expect(result.ingestionGaps).toContainEqual(
+      expect.objectContaining({ kind: "diff-truncated", path: "embedded" }),
+    );
+  });
 });
 
 describe("captureRangePatchset", () => {

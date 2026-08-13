@@ -472,12 +472,16 @@ describe("incomplete ingestion (R18)", () => {
     );
   });
 
-  it("detects git's `diff.submodule=log` form: spaced path, and `...`/`(commits not present)`", () => {
-    // Both are real git outputs (Codex probes). The path may contain spaces, the
-    // range may be `..` or `...`, and the line may end with `:` or a ` (status)`.
+  it("detects git's `diff.submodule=log` forms: spaced path, `...`, dirty, and sha-256 OIDs", () => {
+    // All are real git outputs (Codex probes). The path may contain spaces, the
+    // range may be `..`/`...` ending in `:` or ` (status)`, a dirty working tree
+    // shows `contains modified content`, and OIDs may be sha-256 (64 chars).
+    const sha256 = `${"a".repeat(64)}..${"b".repeat(64)}`;
     for (const [path, patch] of [
       ["sub module", "Submodule sub module bd72186..0d4dfdc:\n  > two\n"],
       ["vendor/lib", "Submodule vendor/lib a426a56...26627d8 (commits not present)\n"],
+      ["sub module", "Submodule sub module contains modified content\n"],
+      ["vendor/lib", `Submodule vendor/lib ${sha256}:\n`],
     ] as const) {
       const result = decompose(patchset([file(path, patch)]));
       expect(classOf(result, path)).toBe("submodule");
@@ -485,6 +489,24 @@ describe("incomplete ingestion (R18)", () => {
         expect.objectContaining({ kind: "submodule", path }),
       );
     }
+  });
+
+  it("does NOT flag an ordinary text file whose line is `Subproject commit <hex>-dirty`", () => {
+    // The over-fire the `-dirty` body-line matcher caused: a real 100644 text file
+    // adding a pointer-shaped line with git's `-dirty` suffix must stay substantive
+    // (VISIBLE), never be stamped submodule and hidden in the appendix. Detection
+    // keys only on column-0 metadata, never a forgeable +/- body line.
+    const path = "note.txt";
+    const oid = "deadbeef00000000000000000000000000000000";
+    const patch =
+      `diff --git a/${path} b/${path}\nindex 1111111..2222222 100644\n--- a/${path}\n+++ b/${path}\n` +
+      `@@ -1 +1 @@\n-old\n+Subproject commit ${oid}-dirty\n`;
+    const result = decompose(patchset([file(path, patch)]));
+    expect(classOf(result, path)).toBeNull();
+    expect(result.chunks.filter((c) => c.kind === "substantive").map((c) => c.title)).toContain(
+      path,
+    );
+    expect(result.ingestionGaps).toEqual([]);
   });
 
   it("detects a `GIT binary patch` blob even when the capture left binary:false", () => {
@@ -498,6 +520,32 @@ describe("incomplete ingestion (R18)", () => {
     expect(classOf(result, path)).toBe("binary");
     expect(result.chunks.filter((c) => c.kind === "substantive")).toEqual([]);
     expect(result.ingestionGaps).toContainEqual(expect.objectContaining({ kind: "binary", path }));
+  });
+
+  it("does NOT hide the regular half of a gitlink↔file TYPE CHANGE (both directions)", () => {
+    // A path that changes between a submodule (160000) and a regular file (100644)
+    // emits both a 160000 section and a regular-file section in one PatchFile. The
+    // regular text must stay substantive/VISIBLE, not be stamped submodule and
+    // hidden in the appendix (the dangerous direction Codex reproduced).
+    const path = "src/embedded";
+    const gitlinkToFile =
+      `diff --git a/${path} b/${path}\ndeleted file mode 160000\nindex abc1234..0000000\n` +
+      `--- a/${path}\n+++ /dev/null\n@@ -1 +0,0 @@\n-Subproject commit abc1234000000000000000000000000000000000\n` +
+      `diff --git a/${path} b/${path}\nnew file mode 100644\nindex 0000000..036ad28\n` +
+      `--- /dev/null\n+++ b/${path}\n@@ -0,0 +1 @@\n+real ordinary text\n`;
+    const fileToGitlink =
+      `diff --git a/${path} b/${path}\ndeleted file mode 100644\nindex 036ad28..0000000\n` +
+      `--- a/${path}\n+++ /dev/null\n@@ -1 +0,0 @@\n-real ordinary text\n` +
+      `diff --git a/${path} b/${path}\nnew file mode 160000\nindex 0000000..abc1234\n` +
+      `--- /dev/null\n+++ b/${path}\n@@ -0,0 +1 @@\n+Subproject commit abc1234000000000000000000000000000000000\n`;
+    for (const patch of [gitlinkToFile, fileToGitlink]) {
+      const result = decompose(patchset([file(path, patch)]));
+      expect(classOf(result, path)).toBeNull();
+      expect(result.chunks.filter((c) => c.kind === "substantive").map((c) => c.title)).toContain(
+        path,
+      );
+      expect(result.ingestionGaps).toEqual([]);
+    }
   });
 
   it("does NOT flag truncation when the marker text appears mid-body (only the terminal frame counts)", () => {

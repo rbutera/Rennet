@@ -304,21 +304,37 @@ function isBinaryFile(file: PatchFile): boolean {
  * Every real git submodule form carries one of:
  *  - the `160000` gitlink tree mode, in the index line (modified) or a mode line
  *    (added/deleted);
- *  - git's `diff.submodule=log` block, whose `Submodule <path> <a>..<b>` line sits
- *    at column 0 (never a `+`/`-` diff body line, so it cannot collide with file
- *    content). The path may contain spaces and the range may be `..` or `...`,
- *    optionally followed by `:` or a ` (status)` note.
- * A submodule whose diff carries only the bare pointer line and no metadata simply
- * stays substantive — its `-/+ Subproject commit` lines remain VISIBLE to the
- * reviewer (the safe direction); it just misses the ingestion-gap badge.
+ *  - git's `diff.submodule=log` block, whose `Submodule <path> …` lines sit at
+ *    column 0 (never a `+`/`-` diff body line, so they cannot collide with file
+ *    content): a pointer advance `Submodule <path> <a>..<b>[:| (status)]` (path may
+ *    contain spaces; range `..` or `...`; OID any length, incl. sha-256), or a
+ *    dirty working tree `Submodule <path> contains modified/untracked content`.
+ *
+ * The invariant that keeps this honest: detection NEVER keys on a `+`/`-` diff
+ * body line. A `Subproject commit <oid>` body line — even with git's `-dirty`
+ * suffix — is forgeable by ordinary file content, and stamping such a file
+ * `submodule` would hide a real change in the appendix (the dangerous direction).
+ * So a submodule whose diff carries ONLY the bare pointer body line and no
+ * column-0 metadata (e.g. the short-form dirty `+…-dirty`) stays substantive — its
+ * `-/+ Subproject commit` lines remain VISIBLE to the reviewer (the safe
+ * direction); it just misses the ingestion-gap badge.
  */
 function isSubmoduleChange(file: PatchFile): boolean {
   const p = file.patch;
-  return (
+  const gitlink =
     /^index [0-9a-f]+\.+[0-9a-f]+ 160000\b/m.test(p) ||
     /^(?:old|new|new file|deleted file) mode 160000\b/m.test(p) ||
-    /^Submodule .+? [0-9a-f]{7,40}\.{2,3}[0-9a-f]{7,40}/m.test(p)
-  );
+    /^Submodule .+? [0-9a-f]+\.{2,3}[0-9a-f]+/m.test(p) ||
+    /^Submodule .+ contains (?:modified|untracked) content/m.test(p);
+  if (!gitlink) return false;
+  // A gitlink↔regular-file TYPE CHANGE carries BOTH a 160000 signal and a regular
+  // file-mode section (`100644`/`100755`/`120000`) in the same PatchFile; the
+  // regular half is real reviewable text that must not be hidden in the appendix.
+  // When both are present, fall back to substantive — the safe direction.
+  const regularFile =
+    /^(?:old|new|new file|deleted file) mode (?:100644|100755|120000)\b/m.test(p) ||
+    /^index [0-9a-f]+\.+[0-9a-f]+ (?:100644|100755|120000)\b/m.test(p);
+  return !regularFile;
 }
 
 /**
@@ -425,7 +441,7 @@ function collectIngestionGaps(patchset: Patchset, files: readonly PatchFile[]): 
       gaps.push({
         kind: "submodule",
         path: file.path,
-        detail: `${file.path}: submodule pointer advanced; the child repository's own changes are not part of this diff.`,
+        detail: `${file.path}: submodule change; the child repository's own content is not part of this diff.`,
       });
     } else if (isBinaryFile(file)) {
       gaps.push({
