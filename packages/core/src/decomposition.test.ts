@@ -491,20 +491,22 @@ describe("incomplete ingestion (R18)", () => {
     }
   });
 
-  it("detects a short-form DIRTY submodule via git's `-dirty` suffix", () => {
-    // A submodule whose pointer is unchanged but working tree is dirty: same OID
-    // both sides, `-dirty` on the new side. Without this the log form becomes an
-    // empty zero-LOC substantive hunk — the false-clear this floor prevents.
-    const path = "vendor/lib";
-    const oid = "abc1234000000000000000000000000000000000";
+  it("does NOT flag an ordinary text file whose line is `Subproject commit <hex>-dirty`", () => {
+    // The over-fire the `-dirty` body-line matcher caused: a real 100644 text file
+    // adding a pointer-shaped line with git's `-dirty` suffix must stay substantive
+    // (VISIBLE), never be stamped submodule and hidden in the appendix. Detection
+    // keys only on column-0 metadata, never a forgeable +/- body line.
+    const path = "note.txt";
+    const oid = "deadbeef00000000000000000000000000000000";
     const patch =
-      `diff --git a/${path} b/${path}\n@@ -1 +1 @@\n` +
-      `-Subproject commit ${oid}\n+Subproject commit ${oid}-dirty\n`;
+      `diff --git a/${path} b/${path}\nindex 1111111..2222222 100644\n--- a/${path}\n+++ b/${path}\n` +
+      `@@ -1 +1 @@\n-old\n+Subproject commit ${oid}-dirty\n`;
     const result = decompose(patchset([file(path, patch)]));
-    expect(classOf(result, path)).toBe("submodule");
-    expect(result.ingestionGaps).toContainEqual(
-      expect.objectContaining({ kind: "submodule", path }),
+    expect(classOf(result, path)).toBeNull();
+    expect(result.chunks.filter((c) => c.kind === "substantive").map((c) => c.title)).toContain(
+      path,
     );
+    expect(result.ingestionGaps).toEqual([]);
   });
 
   it("detects a `GIT binary patch` blob even when the capture left binary:false", () => {

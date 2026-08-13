@@ -308,12 +308,16 @@ function isBinaryFile(file: PatchFile): boolean {
  *    column 0 (never a `+`/`-` diff body line, so they cannot collide with file
  *    content): a pointer advance `Submodule <path> <a>..<b>[:| (status)]` (path may
  *    contain spaces; range `..` or `...`; OID any length, incl. sha-256), or a
- *    dirty working tree `Submodule <path> contains modified/untracked content`;
- *  - the short-form dirty gitlink `+Subproject commit <oid>-dirty`, matched only on
- *    git's `-dirty` suffix so it cannot collide with ordinary pointer-shaped text.
- * A submodule whose diff carries ONLY a bare, clean pointer line and no metadata
- * stays substantive — its `-/+ Subproject commit` lines remain VISIBLE to the
- * reviewer (the safe direction); it just misses the ingestion-gap badge.
+ *    dirty working tree `Submodule <path> contains modified/untracked content`.
+ *
+ * The invariant that keeps this honest: detection NEVER keys on a `+`/`-` diff
+ * body line. A `Subproject commit <oid>` body line — even with git's `-dirty`
+ * suffix — is forgeable by ordinary file content, and stamping such a file
+ * `submodule` would hide a real change in the appendix (the dangerous direction).
+ * So a submodule whose diff carries ONLY the bare pointer body line and no
+ * column-0 metadata (e.g. the short-form dirty `+…-dirty`) stays substantive — its
+ * `-/+ Subproject commit` lines remain VISIBLE to the reviewer (the safe
+ * direction); it just misses the ingestion-gap badge.
  */
 function isSubmoduleChange(file: PatchFile): boolean {
   const p = file.patch;
@@ -321,8 +325,7 @@ function isSubmoduleChange(file: PatchFile): boolean {
     /^index [0-9a-f]+\.+[0-9a-f]+ 160000\b/m.test(p) ||
     /^(?:old|new|new file|deleted file) mode 160000\b/m.test(p) ||
     /^Submodule .+? [0-9a-f]+\.{2,3}[0-9a-f]+/m.test(p) ||
-    /^Submodule .+ contains (?:modified|untracked) content/m.test(p) ||
-    /^[+-]Subproject commit [0-9a-f]+-dirty\b/m.test(p)
+    /^Submodule .+ contains (?:modified|untracked) content/m.test(p)
   );
 }
 
@@ -430,7 +433,7 @@ function collectIngestionGaps(patchset: Patchset, files: readonly PatchFile[]): 
       gaps.push({
         kind: "submodule",
         path: file.path,
-        detail: `${file.path}: submodule pointer advanced; the child repository's own changes are not part of this diff.`,
+        detail: `${file.path}: submodule change; the child repository's own content is not part of this diff.`,
       });
     } else if (isBinaryFile(file)) {
       gaps.push({
