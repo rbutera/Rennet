@@ -8,6 +8,7 @@ import type {
   PromotionEvent,
   ThreadMessage,
 } from "../canvas/conversation";
+import { DiscussControl } from "./conversation-cluster";
 import {
   ConversationHost,
   type ConversationHostRenderState,
@@ -75,7 +76,17 @@ function messageType(thread: ConversationThread, message: ThreadMessage): AskTyp
   return thread.anchor.kind === "fragment" ? "discuss" : "question";
 }
 
-function ChatRow({ entry, onReply }: { entry: StreamMessage; onReply?(): void }) {
+function ChatRow({
+  entry,
+  onReply,
+  onPromote,
+  onSubThread,
+}: {
+  entry: StreamMessage;
+  onReply?(): void;
+  onPromote?(kind: "finding" | "draft-comment"): void;
+  onSubThread?(): void;
+}) {
   const { message, thread, askType } = entry;
   const reply = thread ? anchorReply(thread.anchor) : null;
   const name = message.author === "you" ? "You" : (message.model ?? "Orchestrator");
@@ -108,6 +119,27 @@ function ChatRow({ entry, onReply }: { entry: StreamMessage; onReply?(): void })
         ) : (
           <p className="chat-message-text mt">{message.body}</p>
         )}
+        {message.author === "harness" && status === "complete" ? (
+          <div className="chat-message-actions mfrag">
+            <button
+              type="button"
+              className="thread-promote-btn"
+              onClick={() => onPromote?.("finding")}
+            >
+              finding
+            </button>
+            <button
+              type="button"
+              className="thread-promote-btn"
+              onClick={() => onPromote?.("draft-comment")}
+            >
+              draft comment
+            </button>
+            <button type="button" className="thread-promote-btn is-subthread" onClick={onSubThread}>
+              discuss reply
+            </button>
+          </div>
+        ) : null}
       </div>
     </article>
   );
@@ -118,11 +150,13 @@ function PanelSurface({
   bridge,
   reviewId,
   timeoutMs,
+  anchors,
 }: {
   state: ConversationHostRenderState;
   bridge: RennetBridge;
   reviewId: string;
   timeoutMs: number;
+  anchors: readonly ConversationAnchor[];
 }) {
   const [expanded, setExpanded] = useState(false);
   const [draft, setDraft] = useState("");
@@ -137,12 +171,7 @@ function PanelSurface({
   useEffect(() => {
     const fresh = [...state.threads]
       .reverse()
-      .find(
-        (thread) =>
-          thread.messages.length === 0 &&
-          (thread.anchor.kind === "line" || thread.anchor.kind === "range") &&
-          !autoSelected.current.has(thread.id),
-      );
+      .find((thread) => thread.messages.length === 0 && !autoSelected.current.has(thread.id));
     if (!fresh) return;
     autoSelected.current.add(fresh.id);
     setActiveThreadId(fresh.id);
@@ -150,6 +179,8 @@ function PanelSurface({
 
   const activeThread = state.threads.find((thread) => thread.id === activeThreadId);
   const activeReply = activeThread ? anchorReply(activeThread.anchor) : null;
+  const openAnchorKeys = new Set(state.threads.map((thread) => thread.anchor.key));
+  const discussable = anchors.filter((anchor) => !openAnchorKeys.has(anchor.key));
   const stream: StreamMessage[] = state.threads.flatMap((thread) =>
     thread.messages.map((message) => ({ message, thread, askType: messageType(thread, message) })),
   );
@@ -246,6 +277,14 @@ function PanelSurface({
           </button>
         </header>
 
+        {discussable.length > 0 ? (
+          <div className="conversation-panel-discuss">
+            {discussable.map((anchor) => (
+              <DiscussControl key={anchor.key} anchor={anchor} onDiscuss={state.openConversation} />
+            ))}
+          </div>
+        ) : null}
+
         <div
           className="conversation-panel-stream stream"
           role="log"
@@ -256,6 +295,16 @@ function PanelSurface({
               key={streamMessageKey(entry)}
               entry={entry}
               onReply={entry.thread ? () => setActiveThreadId(entry.thread?.id) : undefined}
+              onPromote={
+                entry.thread
+                  ? (kind) => state.promote(entry.thread?.id ?? "", entry.message.id, kind)
+                  : undefined
+              }
+              onSubThread={
+                entry.thread
+                  ? () => state.openSubThread(entry.thread?.id ?? "", entry.message.id)
+                  : undefined
+              }
             />
           ))}
           {state.threads
@@ -311,7 +360,11 @@ function PanelSurface({
             {generalError}
           </p>
         ) : null}
-        <div className="conversation-panel-composer composer">
+        <div
+          className="conversation-panel-composer composer"
+          data-anchor-kind={activeThread?.anchor.kind ?? "general"}
+          data-thread-id={activeThread?.id}
+        >
           <SparkleIcon size={14} />
           <textarea
             className="conversation-panel-input"
@@ -351,7 +404,13 @@ export function ConversationPanel({
       timeoutMs={timeoutMs}
       onPromote={onPromote}
       render={(state) => (
-        <PanelSurface state={state} bridge={bridge} reviewId={reviewId} timeoutMs={timeoutMs} />
+        <PanelSurface
+          state={state}
+          bridge={bridge}
+          reviewId={reviewId}
+          timeoutMs={timeoutMs}
+          anchors={anchors}
+        />
       )}
     />
   );

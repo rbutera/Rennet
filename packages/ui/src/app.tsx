@@ -68,7 +68,7 @@ import {
   type RefineItemState,
 } from "./components/collation-draft-canvas";
 import { CommandPalette } from "./components/command-palette";
-import { ConversationHost } from "./components/conversation-host";
+import { ConversationPanel } from "./components/conversation-panel";
 import { DeltaAccountPanel } from "./components/delta-account-panel";
 import { DestinationFrame } from "./components/destination-frame";
 import { FrontDoor } from "./components/front-door";
@@ -2065,15 +2065,12 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                   }
                 />
               </div>
-              {/* The inline conversation cluster (issue #36), LIVE: open a private
-                thread on a diff LINE, a dragged RANGE, a CHUNK header, or a
-                conversation FRAGMENT, and converse with the orchestrator. Each turn
-                runs the real `review.ask` boundary and the orchestrator's OWN answer
-                populates the thread — no fixture. Keyed by review id so a new review
-                starts a fresh conversation. It is the diff column's FLEX SIBLING in the
-                split above, so opening or growing a thread never reflows the diff. */}
+              {/* Frame 06's unified conversation: anchored line/range/chunk threads and
+                  general orchestrator asks share one stream and one composer. It remains
+                  the diff column's FLEX SIBLING, so growing or expanding it never changes
+                  the diff's allocation. Keyed by review id so conversations never cross. */}
               {review && patchset ? (
-                <ConversationHost
+                <ConversationPanel
                   key={review.id}
                   bridge={bridge}
                   reviewId={review.id}
@@ -2088,16 +2085,15 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                     }),
                   )}
                   // The diff-opened requests (issue #36): a line / range / chunk the
-                  // reviewer clicked a discuss glyph on. The host opens a private thread
-                  // per new request in the margin — the code column never reflows.
+                  // reviewer clicked a discuss glyph on. The panel opens a private thread
+                  // per new request in the stream — the code column never reflows.
                   autoOpenRequests={discussRequests}
                 />
               ) : null}
             </div>
-            {/* Ask the AI about this review (issue #139): the live conversational
-                affordance below the split. Present once a real review has loaded, so a
-                question is always ABOUT the open review. Asking a model is Rennet's
-                whole job — the ask just runs, with no permission step. */}
+            {/* The unified panel owns the normal orchestrator conversation. Keep the
+                existing AskPanel reachable for its explicit both-model side-by-side
+                comparison until that affordance moves to the Questions overlay. */}
             {review ? <AskPanel bridge={bridge} reviewId={review.id} /> : null}
           </>
         ) : loadFailed ? (
