@@ -64,6 +64,56 @@ describe("parseUnifiedDiffFiles (degraded REST parser) binary detection", () => 
   });
 });
 
+describe("parseUnifiedDiffFiles coalesces same-path type-change blocks", () => {
+  // git splits a gitlink↔file type change into two same-path `diff --git` blocks.
+  // The parser must merge them into one PatchFile so decompose (which keys per-file
+  // state on a unique path) does not drop the first half's hunks — a hidden change.
+  const oid = "a".repeat(40);
+  const cases = {
+    "file→gitlink":
+      "diff --git a/embedded b/embedded\ndeleted file mode 100644\nindex 036ad28..0000000\n" +
+      "--- a/embedded\n+++ /dev/null\n@@ -1 +0,0 @@\n-real ordinary text\n" +
+      `diff --git a/embedded b/embedded\nnew file mode 160000\nindex 0000000..${oid.slice(0, 7)}\n` +
+      `--- /dev/null\n+++ b/embedded\n@@ -0,0 +1 @@\n+Subproject commit ${oid}\n`,
+    "gitlink→file":
+      `diff --git a/embedded b/embedded\ndeleted file mode 160000\nindex ${oid.slice(0, 7)}..0000000\n` +
+      `--- a/embedded\n+++ /dev/null\n@@ -1 +0,0 @@\n-Subproject commit ${oid}\n` +
+      "diff --git a/embedded b/embedded\nnew file mode 100644\nindex 0000000..036ad28\n" +
+      "--- /dev/null\n+++ b/embedded\n@@ -0,0 +1 @@\n+real ordinary text\n",
+  };
+
+  for (const [name, rawDiff] of Object.entries(cases)) {
+    it(`${name}: one PatchFile per path; every hunk chunked once; regular half substantive`, () => {
+      const files = parseUnifiedDiffFiles(rawDiff);
+      expect(files.filter((f) => f.path === "embedded")).toHaveLength(1);
+
+      const result = decompose({
+        id: name,
+        createdAt: "2026-08-13T00:00:00.000Z",
+        repository: {
+          id: "r",
+          root: "/tmp/r",
+          commonDir: "/tmp/r/.git",
+          baseRef: "main",
+          baseOid: "0".repeat(40),
+          headOid: "1".repeat(40),
+        },
+        files,
+        rawDiff,
+        byteLength: Buffer.byteLength(rawDiff),
+        truncated: false,
+        source: "github-rest",
+      });
+      // Totality: every hunk lands in exactly one chunk (no half dropped).
+      const placed = result.chunks.flatMap((c) => c.hunkIds).sort();
+      expect(placed).toEqual(result.hunks.map((h) => h.id).sort());
+      // The regular text is reviewed, not hidden as submodule noise.
+      expect(result.chunks.some((c) => c.kind === "substantive")).toBe(true);
+      expect(result.ingestionGaps).toEqual([]);
+    });
+  }
+});
+
 describe("captureRangePatchset", () => {
   it("produces a rawDiff byte-identical to `git diff base...head`", async () => {
     const { root, baseOid, headOid } = repositoryWithRange();

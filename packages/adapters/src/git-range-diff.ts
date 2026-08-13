@@ -181,8 +181,37 @@ export function parseUnifiedDiffFiles(diff: string): PatchFile[] {
       patch: visible(block, FILE_VISIBLE_BYTE_LIMIT),
     });
   }
-  files.sort((left, right) => left.path.localeCompare(right.path));
-  return files;
+  // Coalesce same-path blocks. git splits a TYPE CHANGE (gitlink↔regular file)
+  // into a delete + an add of the SAME path, i.e. two `diff --git` blocks. The
+  // local capture keeps both halves in ONE PatchFile, and `decompose` keys its
+  // per-file state on a UNIQUE path — two same-path PatchFiles would collide,
+  // dropping the first half's hunks entirely (a real change hidden). Merge so
+  // each path yields exactly one PatchFile, as the local path already guarantees.
+  const byPath = new Map<string, PatchFile>();
+  for (const file of files) {
+    const existing = byPath.get(file.path);
+    if (existing === undefined) {
+      byPath.set(file.path, file);
+      continue;
+    }
+    byPath.set(file.path, {
+      ...existing,
+      status: "modified",
+      additions:
+        existing.additions === null || file.additions === null
+          ? null
+          : existing.additions + file.additions,
+      deletions:
+        existing.deletions === null || file.deletions === null
+          ? null
+          : existing.deletions + file.deletions,
+      binary: existing.binary || file.binary,
+      patch: `${existing.patch}\n${file.patch}`,
+    });
+  }
+  const coalesced = [...byPath.values()];
+  coalesced.sort((left, right) => left.path.localeCompare(right.path));
+  return coalesced;
 }
 
 /**
