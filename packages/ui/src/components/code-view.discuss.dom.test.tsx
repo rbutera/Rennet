@@ -69,6 +69,10 @@ describe("CodeView — the in-diff discuss affordances (issue #36)", () => {
     if (!glyph) throw new Error("no discuss glyph");
     const line = Number(glyph.getAttribute("data-cv-discuss"));
     const side = glyph.getAttribute("data-cv-discuss-side");
+    const context = glyph
+      .closest(".code-view-row")
+      ?.querySelector(".code-view-code")
+      ?.textContent?.replace(/^[ +-]/, "");
     fireEvent.click(glyph);
     expect(seen).toHaveLength(1);
     // The key is kind-prefixed and injective; `side` rides as SEMANTIC data (F1), so
@@ -78,6 +82,8 @@ describe("CodeView — the in-diff discuss affordances (issue #36)", () => {
       label: `src/rate/bucket.ts:${line}`,
       key: `line|src/rate/bucket.ts|${side}|${line}`,
       side,
+      path: "src/rate/bucket.ts",
+      context,
     });
   });
 
@@ -123,6 +129,8 @@ describe("CodeView — the in-diff discuss affordances (issue #36)", () => {
       label: `src/rate/bucket.ts:${lo}-${hi}`,
       key: `range|src/rate/bucket.ts|additions|${lo}|${hi}`,
       side: "additions",
+      path: "src/rate/bucket.ts",
+      context: "  const b = 3;\n  const c = 4;",
     });
   });
 

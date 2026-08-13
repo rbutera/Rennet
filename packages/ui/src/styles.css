@@ -29,6 +29,214 @@ button {
   font: inherit;
 }
 
+/* Frame 06 unified conversation panel. The shell remains the fixed-width flex
+ * sibling while the inner panel expands as an overlay, so the diff column keeps
+ * exactly the same flex allocation in both states. */
+.conversation-panel-shell {
+  min-width: 0;
+}
+.review-heart-split > .conversation-panel-shell {
+  flex: none;
+  width: 340px;
+  max-width: 40%;
+}
+.conversation-panel.chat {
+  display: flex;
+  min-height: 360px;
+  flex-direction: column;
+  margin: -4px 0;
+  padding-left: 18px;
+  border-left: 1px solid var(--hairline);
+  background: var(--surface);
+}
+.conversation-panel--expanded {
+  position: fixed;
+  z-index: 40;
+  inset: 52px 0 0 56px;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  padding: 24px;
+  border-left: 0;
+  overflow: auto;
+}
+.conversation-panel-header.chat-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 11px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--text-faint);
+  font: 600 11px / 1 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.conversation-panel-expand.exp {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 4px 8px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: var(--surface);
+  color: var(--text-soft);
+  font: 500 11.5px / 1 var(--sans);
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+}
+.conversation-panel-stream.stream {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 15px;
+  padding: 15px 0 6px;
+}
+.chat-row.msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+.chat-type-icon.tico {
+  display: flex;
+  width: 25px;
+  height: 25px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-soft);
+}
+.chat-type-icon.tico--request-change {
+  border-color: var(--amber-line);
+  background: var(--amber-fill);
+  color: var(--amber);
+}
+.chat-type-icon.tico--general-ask,
+.chat-type-icon.tico--discuss {
+  border-color: var(--private-line);
+  background: var(--private-fill);
+  color: var(--private);
+}
+.chat-message.mb {
+  min-width: 0;
+  flex: 1;
+}
+.chat-message-head.mh {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+.chat-message-name.nm {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.chat-message-type.ty {
+  color: var(--text-faint);
+  font: 500 10px / 1 var(--mono);
+}
+.replychip {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 7px;
+  margin: 5px 0 4px;
+  padding: 3px 8px;
+  border: 0;
+  border-left: 2px solid var(--private);
+  border-radius: 0 6px 6px 0;
+  background: var(--private-fill);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.replychip-reference.rl {
+  flex: none;
+  color: var(--private);
+  font: 500 9.5px / 1.2 var(--mono);
+}
+.replychip-context.rc {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-soft);
+  font: 500 10.5px / 1.2 var(--code);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-message-text.mt,
+.chat-message-interrupted {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.chat-message-interrupted,
+.conversation-panel-error {
+  color: var(--del-glyph);
+}
+.chat-row--anchor-context .chat-message-text {
+  color: var(--text-faint);
+}
+.conversation-composer-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border-left: 2px solid var(--private);
+  background: var(--private-fill);
+  color: var(--private);
+  font: 500 10px / 1.2 var(--mono);
+}
+.conversation-composer-context button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.conversation-panel-error {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.conversation-panel-composer.composer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 8px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--private);
+}
+.conversation-panel-input {
+  min-width: 0;
+  min-height: 36px;
+  flex: 1;
+  resize: vertical;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: 500 12.5px / 1.45 var(--sans);
+}
+.conversation-panel-send {
+  padding: 6px 10px;
+  border: 1px solid var(--private-line);
+  border-radius: var(--chip-radius);
+  background: var(--private-fill);
+  color: var(--private);
+  font-size: 12px;
+  cursor: pointer;
+}
+.conversation-panel-send:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
 /* The destination rail (issue #64) is persistent chrome fixed to the right. The
  * two working views reserve a gutter for it so nothing ever overlaps it. The
  * front door / empty state carries no destination, so it takes no gutter. */

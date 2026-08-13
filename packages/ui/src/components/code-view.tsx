@@ -130,8 +130,20 @@ export interface CodeViewProps {
  * WHICH SIDE the reviewer pointed at. Deletion old-L11 and addition new-L11 are then
  * distinct threads AND distinct questions, not just distinct keys.
  */
-function lineAnchor(path: string, line: number, side: AnchorSide): ConversationAnchor {
-  return { kind: "line", label: `${path}:${line}`, key: lineAnchorKey(path, side, line), side };
+function lineAnchor(
+  path: string,
+  line: number,
+  side: AnchorSide,
+  context: string,
+): ConversationAnchor {
+  return {
+    kind: "line",
+    label: `${path}:${line}`,
+    key: lineAnchorKey(path, side, line),
+    side,
+    path,
+    context,
+  };
 }
 
 /**
@@ -140,7 +152,13 @@ function lineAnchor(path: string, line: number, side: AnchorSide): ConversationA
  * both endpoints share a side, so the (kind-prefixed) key and the carried `side` are
  * unambiguous.
  */
-function rangeAnchor(path: string, a: number, b: number, side: AnchorSide): ConversationAnchor {
+function rangeAnchor(
+  path: string,
+  a: number,
+  b: number,
+  side: AnchorSide,
+  context: string,
+): ConversationAnchor {
   const start = Math.min(a, b);
   const end = Math.max(a, b);
   return {
@@ -148,6 +166,8 @@ function rangeAnchor(path: string, a: number, b: number, side: AnchorSide): Conv
     label: `${path}:${start}-${end}`,
     key: rangeAnchorKey(path, side, start, end),
     side,
+    path,
+    context,
   };
 }
 
@@ -260,15 +280,29 @@ export function CodeView({
   // both anchor kinds, so the diff speaks the single "verbs times anchors" abstraction.
   function discussLine(line: number, side: AnchorSide, shiftKey: boolean): void {
     if (!onDiscuss) return;
+    const contextBetween = (start: number, end: number) =>
+      registry.rows
+        .filter(
+          (row) =>
+            row.kind === "content" &&
+            row.side === side &&
+            row.fileLine !== null &&
+            row.fileLine >= start &&
+            row.fileLine <= end,
+        )
+        .map((row) => row.text.replace(/^[ +-]/, ""))
+        .join("\n");
     // A range only forms across the SAME side (both new-file or both old-file); a
     // cross-side shift-click starts a fresh single-line anchor instead of a nonsensical
     // pre-to-post span.
     if (shiftKey && rangeStart !== null && rangeStart.side === side && rangeStart.line !== line) {
-      onDiscuss(rangeAnchor(path, rangeStart.line, line, side));
+      const start = Math.min(rangeStart.line, line);
+      const end = Math.max(rangeStart.line, line);
+      onDiscuss(rangeAnchor(path, start, end, side, contextBetween(start, end)));
       setRangeStart(null);
       return;
     }
-    onDiscuss(lineAnchor(path, line, side));
+    onDiscuss(lineAnchor(path, line, side, contextBetween(line, line)));
     setRangeStart({ line, side });
   }
   // The scroll container, so a focus-driven jump can move the REAL viewport (setting

@@ -1,5 +1,5 @@
 import type { PersistedThreadWire, RennetBridge } from "@rennet/protocol";
-import { useEffect, useRef, useState } from "react";
+import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type AskMode, DEFAULT_ASK_MODE } from "../canvas/ask";
 import {
   addMessage,
@@ -117,6 +117,18 @@ export interface ConversationHostProps {
    * promote affordances still fire, they just have nowhere to route yet.
    */
   onPromote?(event: PromotionEvent): void;
+  /** Alternate presentation over the same live conversation engine. */
+  render?(state: ConversationHostRenderState): ReactNode;
+}
+
+export interface ConversationHostRenderState {
+  readonly threads: readonly ConversationThread[];
+  readonly pendingThreadIds: ReadonlySet<string>;
+  readonly errorByThread: Readonly<Record<string, string>>;
+  openConversation(anchor: ConversationAnchor): void;
+  ask(threadId: string, body: string, mode: AskMode): void;
+  promote(threadId: string, messageId: string, kind: PromotionKind): void;
+  openSubThread(threadId: string, messageId: string): void;
 }
 
 /**
@@ -133,6 +145,7 @@ export function ConversationHost({
   autoOpenRequests = [],
   timeoutMs = DEFAULT_CONVERSATION_TIMEOUT_MS,
   onPromote,
+  render,
 }: ConversationHostProps) {
   const [threads, setThreads] = useState<readonly ConversationThread[]>([]);
   // Thread ids with a live turn in flight, and the last failure per thread — the
@@ -445,6 +458,18 @@ export function ConversationHost({
   }
 
   const discussable = anchors.filter((anchor) => !openAnchorKeys.has(anchor.key));
+
+  if (render) {
+    return render({
+      threads,
+      pendingThreadIds: pending,
+      errorByThread: errors,
+      openConversation,
+      ask: (threadId, body, mode) => void ask(threadId, body, mode),
+      promote,
+      openSubThread,
+    });
+  }
 
   return (
     <div className="conversation-host">
