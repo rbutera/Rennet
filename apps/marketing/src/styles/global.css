@@ -595,6 +595,29 @@ h2 {
   margin-top: 24px;
 }
 
+.category-statement {
+  display: grid;
+  grid-template-columns: minmax(140px, 0.3fr) minmax(0, 1fr);
+  gap: 10vw;
+  align-items: start;
+}
+
+.category-label {
+  margin: 0.6em 0 0;
+  color: var(--ink-soft);
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.category-statement h2 {
+  max-width: 34ch;
+  font-size: clamp(1.75rem, 3vw, 3.5rem);
+  font-weight: 440;
+  line-height: 1.12;
+}
+
 .section-heading {
   display: grid;
   grid-template-columns: 1.1fr 0.9fr;
@@ -1163,6 +1186,16 @@ h2 {
   font-size: 13px;
 }
 
+.footer-copy {
+  display: grid;
+  gap: 10px;
+}
+
+.site-footer .footer-meaning {
+  font-size: 12px;
+  opacity: 0.72;
+}
+
 @media (max-width: 1180px) {
   :root {
     --shell: min(1080px, calc(100vw - 56px));
@@ -1225,6 +1258,7 @@ h2 {
   }
 
   .pressure,
+  .category-statement,
   .section-heading,
   .conversation,
   .dual-review,
@@ -1236,6 +1270,7 @@ h2 {
   }
 
   .pressure,
+  .category-statement,
   .conversation,
   .dual-review,
   .intelligence,
