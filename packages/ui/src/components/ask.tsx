@@ -141,6 +141,8 @@ export interface AskAnswersProps {
   question: string;
   /** The routed result: the orchestrator's answer, plus Codex's ONLY when both were asked. */
   result: AskReviewResult;
+  /** Whether to echo the question above the cards. Defaults to true. */
+  showQuestion?: boolean;
 }
 
 /**
@@ -150,15 +152,17 @@ export interface AskAnswersProps {
  * add one. If the two disagree, that disagreement is just something the reviewer
  * can ask the orchestrator about next.
  */
-export function AskAnswers({ question, result }: AskAnswersProps) {
+export function AskAnswers({ question, result, showQuestion = true }: AskAnswersProps) {
   const cards = askCards(result);
   const both = askedBoth(result);
   return (
     <div className="ask-answers" data-mode={result.mode} data-count={cards.length}>
-      <p className="ask-question-echo">
-        <span className="ask-question-label">{both ? "You asked both:" : "You asked:"}</span>{" "}
-        <span className="ask-question-text">{question}</span>
-      </p>
+      {showQuestion ? (
+        <p className="ask-question-echo">
+          <span className="ask-question-label">{both ? "You asked both:" : "You asked:"}</span>{" "}
+          <span className="ask-question-text">{question}</span>
+        </p>
+      ) : null}
       <div className="ask-answer-cards">
         {cards.map((card) => (
           // The model label is the stable, unique key: the orchestrator and Codex

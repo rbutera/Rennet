@@ -2265,7 +2265,7 @@
   gap: 12px;
 }
 .ask-answers[data-count="2"] .ask-answer-cards {
-  grid-template-columns: 1fr;
+  grid-template-columns: 1fr 1fr;
 }
 .ask-answer-card {
   display: flex;

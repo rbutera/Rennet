@@ -98,7 +98,11 @@ function ChatRow({
   const { message, thread, askType } = entry;
   const orphaned = thread?.orphaned === true;
   const reply = thread && !orphaned ? anchorReply(thread.anchor) : null;
-  const name = message.author === "you" ? "You" : (message.model ?? "Orchestrator");
+  const name = message.comparison
+    ? "Both models"
+    : message.author === "you"
+      ? "You"
+      : (message.model ?? "Orchestrator");
   const status = message.status ?? "complete";
   const hasActions =
     message.author === "harness" &&
@@ -140,7 +144,11 @@ function ChatRow({
             This answer was interrupted before it finished.
           </p>
         ) : message.comparison ? (
-          <AskAnswers question={message.comparison.question} result={message.comparison.result} />
+          <AskAnswers
+            question={message.comparison.question}
+            result={message.comparison.result}
+            showQuestion={false}
+          />
         ) : (
           <p className="chat-message-text mt">{message.body}</p>
         )}
@@ -260,7 +268,7 @@ function PanelSurface({
       });
       const timeout = new Promise<never>((_resolve, reject) => {
         timer = setTimeout(
-          () => reject(new Error("The orchestrator did not answer in time. Try asking again.")),
+          () => reject(new Error("The AI did not answer in time. Try asking again.")),
           timeoutMs,
         );
       });
@@ -277,6 +285,7 @@ function PanelSurface({
           ...(comparison ? { comparison } : {}),
         },
       ]);
+      setDraft("");
     } catch (reason) {
       setGeneralError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -291,11 +300,11 @@ function PanelSurface({
     if (activeThread) {
       if (state.pendingThreadIds.has(activeThread.id)) return;
       state.ask(activeThread.id, body, DEFAULT_ASK_MODE);
+      setDraft("");
     } else {
       if (generalPending) return;
       void askGeneral(body);
     }
-    setDraft("");
   }
 
   const activePending = activeThread ? state.pendingThreadIds.has(activeThread.id) : generalPending;

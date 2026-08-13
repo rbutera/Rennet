@@ -43,7 +43,7 @@ function fakeBridge({
   ask = answer("The bridge answered."),
   threads = [],
 }: {
-  ask?: AskReviewResult;
+  ask?: AskReviewResult | Promise<AskReviewResult>;
   threads?: {
     threadId: string;
     anchor: ConversationAnchor;
@@ -272,7 +272,15 @@ describe("ConversationPanel", () => {
     const comparison = container.querySelector<HTMLElement>(
       '.chat-row[data-ask-type="general-ask"][data-author="harness"] .ask-answers',
     );
+    const comparisonRow = comparison?.closest<HTMLElement>('.chat-row[data-author="harness"]');
+    expect(comparisonRow?.querySelector(".chat-message-name")?.textContent).toBe("Both models");
     expect(comparison?.getAttribute("data-count")).toBe("2");
+    expect(comparison?.querySelector(".ask-question-echo")).toBeNull();
+    expect(
+      [...container.querySelectorAll(".chat-message-text")].filter(
+        (message) => message.textContent === "Do the models agree?",
+      ),
+    ).toHaveLength(1);
     expect(
       [...(comparison?.querySelectorAll(".ask-answer-head") ?? [])].map(
         (label) => label.textContent,
@@ -285,6 +293,49 @@ describe("ConversationPanel", () => {
     expect(comparison?.querySelector('[data-model="merged"]')).toBeNull();
     expect(comparison?.querySelector(".ask-synthesis")).toBeNull();
     expect(container.querySelectorAll('.chat-row[data-author="harness"]')).toHaveLength(1);
+  });
+
+  it("reports a both-mode timeout neutrally, preserves the question, and re-enables the input", async () => {
+    const h = fakeBridge({ ask: new Promise<AskReviewResult>(() => undefined) });
+    const { container } = mount(
+      <ConversationPanel bridge={h.bridge} reviewId="review-timeout" anchors={[]} timeoutMs={20} />,
+    );
+    const options = container.querySelector<HTMLButtonElement>('[aria-label="ask options"]');
+    if (!options) throw new Error("ask options are missing");
+    fireEvent.click(options);
+    const both = container.querySelector<HTMLButtonElement>('.ask-menu-item[data-mode="both"]');
+    if (!both) throw new Error("both-model option is missing");
+    fireEvent.click(both);
+
+    compose(container, "Which model timed out?");
+    const alert = await waitFor(() => {
+      const current = container.querySelector<HTMLElement>('[role="alert"]');
+      if (!current) throw new Error("timeout alert has not appeared");
+      return current;
+    });
+    expect(alert.textContent).toBe("The AI did not answer in time. Try asking again.");
+    expect(alert.textContent).not.toMatch(/orchestrator/i);
+    const input = container.querySelector<HTMLTextAreaElement>(".conversation-panel-input");
+    expect(input?.value).toBe("Which model timed out?");
+    expect(input?.disabled).toBe(false);
+  });
+
+  it("surfaces a rejected general ask and preserves its question for retry", async () => {
+    const h = fakeBridge({ ask: Promise.reject(new Error("the models are unavailable")) });
+    const { container } = mount(
+      <ConversationPanel bridge={h.bridge} reviewId="review-error" anchors={[]} />,
+    );
+
+    compose(container, "Can either model answer?");
+    const alert = await waitFor(() => {
+      const current = container.querySelector<HTMLElement>('[role="alert"]');
+      if (!current) throw new Error("bridge error has not appeared");
+      return current;
+    });
+    expect(alert.textContent).toBe("the models are unavailable");
+    const input = container.querySelector<HTMLTextAreaElement>(".conversation-panel-input");
+    expect(input?.value).toBe("Can either model answer?");
+    expect(input?.disabled).toBe(false);
   });
 
   it("auto-opens a line reply with its chip and sends the anchored turn through review.ask", async () => {

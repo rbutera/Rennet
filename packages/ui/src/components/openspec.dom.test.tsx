@@ -265,7 +265,7 @@ describe("OpenSpecView — review affordances reuse the seams", () => {
 
   it("renders side-by-side answers with no synthesis when both models were asked", () => {
     const view = buildOpenSpecView(CHANGE);
-    const { getByText } = mount(
+    const { container, getByText } = mount(
       <OpenSpecView
         view={view}
         onDispose={vi.fn()}
@@ -285,6 +285,8 @@ describe("OpenSpecView — review affordances reuse the seams", () => {
     );
     getByText("yes, the budget is fail-closed");
     getByText("agreed, with a caveat on retries");
+    getByText("You asked both:");
+    expect(container.querySelector(".ask-question-echo")?.textContent).toContain("is this safe?");
     getByText("no synthesis block · two answers, side by side · you decide");
   });
 });
