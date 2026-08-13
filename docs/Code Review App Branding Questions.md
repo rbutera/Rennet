@@ -83,7 +83,7 @@ Dev tool naming has clear camps. Animal/whimsy: CodeRabbit, [[References/Greptil
 
 ## 8. Is this a product, a project, or a portfolio piece, and when does that change?
 
-Three futures with three different brands. **Personal tool:** it needs no brand at all, just a name you like typing. **Open source with a paid tier:** the brand has to carry a community, a GitHub README that converts, a contribution story, and probably a slightly humbler tone. **Commercial product:** it needs a price, a pitch, a landing page, and a story about why local-first is a business rather than a philosophy. There is also a fourth: **credibility artifact**, a thing that exists to demonstrate to [[References/Focused Labs|Focused Labs]] and clients that you build serious software, in which case the brand is partly your brand.
+Three futures with three different brands. **Personal tool:** it needs no brand at all, just a name you like typing. **Open source with a paid tier:** the brand has to carry a community, a GitHub README that converts, a contribution story, and probably a slightly humbler tone. **Commercial product:** it needs a price, a pitch, a landing page, and a story about why local-first is a business rather than a philosophy. There is also a fourth: **credibility artifact**, a thing that exists to demonstrate to clients and prospective employers that you build serious software, in which case the brand is partly your brand.
 
 **Why it matters:** it decides whether I optimise the name for trademark defensibility, for GitHub-star charisma, or purely for your own enjoyment. Also decides whether we need to worry about the crowded `.com` landscape at all.
 
