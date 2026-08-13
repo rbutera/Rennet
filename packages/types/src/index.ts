@@ -680,6 +680,13 @@ export interface ValidationReport {
  * The mechanical (non-substantive) classification of a hunk (Architecture Plan
  * D7). A mechanical hunk is VERIFIED noise; this deterministic pass is the ONLY
  * admission authority for it (R9). Closed vocabulary.
+ *
+ * `binary` and `submodule` are first-class per R18: a binary blob or a submodule
+ * gitlink pointer advance is a real change whose CONTENT the text floor cannot
+ * ingest. Classifying them mechanical keeps them out of the substantive review
+ * surface (they must never read as reviewed content) while the parallel
+ * `Decomposition.ingestionGaps` disclosure names them as un-ingested so an
+ * absence of findings over them is not mistaken for cleanliness.
  */
 export type MechanicalClass =
   | "lockfile"
@@ -687,7 +694,9 @@ export type MechanicalClass =
   | "pure-rename"
   | "formatting-only"
   | "vendored"
-  | "mode-only";
+  | "mode-only"
+  | "binary"
+  | "submodule";
 
 /** Whether a hunk carries reviewable meaning or is mechanical noise. */
 export type HunkKind = "substantive" | "mechanical";
@@ -777,6 +786,33 @@ export interface DecompositionResidueItem {
   reason: string;
 }
 
+/** The reason the floor could not fully ingest a piece of the captured change. */
+export type IngestionGapKind = "diff-truncated" | "binary" | "submodule";
+
+/**
+ * A first-class disclosure that the deterministic floor could NOT fully ingest
+ * some captured content (R18: binary / submodule / truncated inputs are
+ * first-class). Its presence is the operative fact for a done/publish surface:
+ * an absence of findings over the affected content is NOT evidence of
+ * cleanliness — the exact false-clear this floor exists to prevent.
+ *
+ * This is the patchset-level companion to `residue` (which proves hunk-placement
+ * totality). `residue` can only speak in terms of a `hunkId`; a truncated tail
+ * has no hunk to point at, so incomplete ingestion needs its own carrier.
+ *
+ * Per R18 this DISCLOSES rather than hard-blocks: "the user finishes and
+ * publishes anyway if they choose". A done/publish gate MUST surface a non-empty
+ * `ingestionGaps` (Rule Zero forbids turning that disclosure into a consent
+ * gate), but the human keeps the final act.
+ */
+export interface IngestionGap {
+  readonly kind: IngestionGapKind;
+  /** The file the gap applies to, or `null` for a patchset-wide gap. */
+  readonly path: string | null;
+  /** Human-facing disclosure copy for the sheet. */
+  readonly detail: string;
+}
+
 /**
  * The deterministic decomposition of one patchset: every hunk classified, every
  * substantive hunk chunked to the budget, the dependency DAG, and its topological
@@ -792,6 +828,14 @@ export interface Decomposition {
   edges: DecompositionEdge[];
   readingOrder: string[];
   residue: DecompositionResidueItem[];
+  /**
+   * Incomplete-ingestion disclosures (R18). Empty ⇒ the floor fully ingested
+   * every captured byte. Non-empty ⇒ some content (a truncated tail, a binary
+   * blob, a submodule pointer's child repo) was not ingested, so "reviewed
+   * clean" cannot be claimed over it. Deterministically ordered: any
+   * patchset-wide gap first, then per-file gaps in path order.
+   */
+  ingestionGaps: IngestionGap[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

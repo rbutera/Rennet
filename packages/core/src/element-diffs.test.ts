@@ -362,6 +362,7 @@ describe("buildElementDiffs", () => {
       edges: [],
       readingOrder: ["csplit"],
       residue: [],
+      ingestionGaps: [],
     };
     const set = setWith("sequence", [
       { elementKey: "es", docId: "d", anchor: "rennet:chunk/csplit", kind: "chunk", title: "S" },

@@ -20,15 +20,17 @@
  * blocks the floor.
  */
 
-import type {
-  Decomposition,
-  DecompositionChunk,
-  DecompositionEdge,
-  Hunk,
-  HunkClassification,
-  MechanicalClass,
-  PatchFile,
-  Patchset,
+import {
+  type Decomposition,
+  type DecompositionChunk,
+  type DecompositionEdge,
+  DIFF_TRUNCATION_MARKER,
+  type Hunk,
+  type HunkClassification,
+  type IngestionGap,
+  type MechanicalClass,
+  type PatchFile,
+  type Patchset,
 } from "@rennet/types";
 
 /** The SmartBear/Cisco 400-LOC review ceiling (Architecture Plan D7 step 3). */
@@ -273,6 +275,27 @@ function isGeneratedPath(path: string): boolean {
 }
 
 /**
+ * A binary blob: not text-diffable, so the floor cannot ingest its content.
+ * `binary` is set by the capture; the "Binary files … differ" sentinel git emits
+ * for a bodyless binary diff is a defensive backstop.
+ */
+function isBinaryFile(file: PatchFile): boolean {
+  if (file.binary) return true;
+  return /^Binary files .+ differ$/m.test(file.patch);
+}
+
+/**
+ * A submodule (gitlink) pointer advance: the diff records the child repo's OID
+ * moving, never the child's own changes, so the content behind the pointer is not
+ * ingested. Git marks a gitlink with the `160000` tree mode and/or a
+ * `Subproject commit <oid>` body line.
+ */
+function isSubmoduleChange(file: PatchFile): boolean {
+  if (file.patch.includes("Subproject commit")) return true;
+  return /(?:^|\n)(?:old mode|new mode|new file mode|deleted file mode) 160000\b/.test(file.patch);
+}
+
+/**
  * True when a generated-file marker sits in the file HEADER region.
  *
  * Marker detection must be scoped to the top of the NEW file, not anywhere in
@@ -323,10 +346,57 @@ function isFormattingOnly(body: readonly string[]): boolean {
 
 /** The file-level mechanical class, if any: signals that stamp every hunk. */
 function fileMechanicalClass(file: PatchFile): MechanicalClass | null {
+  // Un-ingestable content first: a binary blob or a submodule pointer must never
+  // read as reviewed substantive change, whatever its path (R18). The parallel
+  // ingestion-gap disclosure names it as un-ingested.
+  if (isSubmoduleChange(file)) return "submodule";
+  if (isBinaryFile(file)) return "binary";
   if (isLockfile(file.path)) return "lockfile";
   if (isVendored(file.path)) return "vendored";
   if (isGeneratedPath(file.path)) return "generated";
   return null;
+}
+
+/**
+ * The incomplete-ingestion disclosures for a patchset (R18). Deterministic: any
+ * patchset-wide truncation first, then per-file gaps in the caller's (path-sorted)
+ * file order. A file can carry more than one gap (e.g. a truncated binary).
+ */
+function collectIngestionGaps(patchset: Patchset, files: readonly PatchFile[]): IngestionGap[] {
+  const gaps: IngestionGap[] = [];
+  if (patchset.truncated) {
+    gaps.push({
+      kind: "diff-truncated",
+      path: null,
+      detail:
+        "The captured diff was truncated at the size cap; changes past the cut were not " +
+        "ingested and are not reviewed. Absence of findings over the un-ingested tail is not " +
+        "evidence of cleanliness.",
+    });
+  }
+  for (const file of files) {
+    if (file.patch.includes(DIFF_TRUNCATION_MARKER)) {
+      gaps.push({
+        kind: "diff-truncated",
+        path: file.path,
+        detail: `${file.path}: the diff was truncated at the size cap; content past the cut was not ingested.`,
+      });
+    }
+    if (isSubmoduleChange(file)) {
+      gaps.push({
+        kind: "submodule",
+        path: file.path,
+        detail: `${file.path}: submodule pointer advanced; the child repository's own changes are not part of this diff.`,
+      });
+    } else if (isBinaryFile(file)) {
+      gaps.push({
+        kind: "binary",
+        path: file.path,
+        detail: `${file.path}: binary file; its content is not text-diffable and was not ingested for review.`,
+      });
+    }
+  }
+  return gaps;
 }
 
 // ── Reading layers ───────────────────────────────────────────────────────────
@@ -517,8 +587,11 @@ export function decompose(patchset: Patchset, options: DecomposeOptions = {}): D
           mechanical = "mode-only";
         }
       }
-      // A bare binary asset with no mechanical signal stays substantive: it is a
-      // real change the reviewer must see, just not text-diffable.
+      // Binary blobs and submodule pointers are caught by `fileMechanicalClass`
+      // above, so they classify `binary` / `submodule` (never substantive) and
+      // route to the skimmable appendix, with a parallel ingestion-gap disclosure.
+      // Only a genuinely empty bodyless file with no signal at all stays
+      // substantive here.
       emit(synthetic, mechanical === null ? "substantive" : "mechanical", mechanical);
       perFile.set(file.path, fileHunks);
       continue;
@@ -699,6 +772,7 @@ export function decompose(patchset: Patchset, options: DecomposeOptions = {}): D
     edges,
     readingOrder,
     residue: [],
+    ingestionGaps: collectIngestionGaps(patchset, files),
   };
 }
 
