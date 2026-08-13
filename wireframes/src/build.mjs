@@ -11,6 +11,7 @@ import { frame05 } from './frame05.mjs';
 import { frame06, frame07, frame08, frame09, frame10, frameNoise } from './review.mjs';
 import { frameDeltaReview } from './deltareview.mjs';
 import { frame11, frame12, frame13, frame14, frame15, frame16 } from './finalize.mjs';
+import { frame18 } from './navmodel.mjs';
 
 const __dir = dirname(fileURLToPath(import.meta.url)); // .../src
 
@@ -36,6 +37,7 @@ const FRAMES = {
   '15-settings': frame14,
   '16-command-palette': frame15,
   '17-flow-overview': frame16,
+  '18-navigation-model': frame18,
 };
 
 export const NAMES = Object.keys(FRAMES);

@@ -187,11 +187,12 @@ describe("RennetApp — the lifted store resets on review change (regression)", 
     await runCommand("Zoom in");
     await waitFor(() => expect(container.querySelector(".zoom-level")?.textContent).toBe("Cohort"));
 
-    // Back to projects, then open review B through the direct-entry door.
+    // Back to projects, then open review B through the palette-only direct-entry seam.
     nextCapture = reviewB;
     await runCommand("Back to projects");
-    await waitFor(() => expect(container.querySelector(".front-door-direct")).toBeTruthy());
-    await user.click(getByText("Review directly"));
+    await waitFor(() => expect(container.querySelector(".front-door")).toBeTruthy());
+    expect(container.querySelector(".front-door-direct")).toBeNull();
+    await runCommand("Review directly");
     await user.click(getByText("Choose a repository"));
 
     // Review B's workspace renders — and it is CLEAN: the default Decisions lens at

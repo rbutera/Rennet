@@ -1,4 +1,4 @@
-import { ic, dot } from './kit.mjs';
+import { ic, dot, win, crumb, navRail, navCtx } from './kit.mjs';
 
 // 05 Project detail — the UNIFIED smart list (issue #37 / #216), the design Rai
 // ratified: ONE scroll, no hard Yours/Team zones. Rows read distinctly by STATE
@@ -207,18 +207,27 @@ export function frame05() {
   const winBody = `<div class="pd">${rail}${main}</div>`;
 
   return {
-    title: 'Rennet v3.3 · 05 Project detail',
+    title: 'Rennet v4.0 · 05 Project detail',
     head: { badge: '05', title: 'Project detail: the everyday landing', pill: 'Home' },
-    ref: 'the everyday landing · ONE smart list\nno zones · filter + sort · mode glyph in the title bar',
-    sub: 'Click a project and land here: <b>one list, no hard zones</b>. Every branch, worktree and PR reads distinctly by state — your local work in private backlight, your PRs accent-striped, a teammate’s PR neutral, a row that needs you in amber, a merged PR dimmed and read-only. Sort defaults to <b>Hot</b> (what needs you floats up); the filter bar narrows to Needs-you / Mine / Local / PRs. The execution mode is one glyph in the title bar, no consent banner.',
+    ref: 'the everyday landing · ONE smart list\nno zones · the review’s real home',
+    sub: 'Click a project and land here: <b>one list, no hard zones</b>. Every branch, worktree and PR reads distinctly by state — your local work in private backlight, your PRs accent-striped, a teammate’s PR neutral, a row that needs you in amber, a merged PR dimmed and read-only. Sort defaults to <b>Hot</b>; the filter bar narrows to Needs-you / Mine / Local / PRs. This is a <b>review’s real home</b>: the breadcrumb reads Projects › orbital, and back from any review lands here — never the front door.',
     css: css05,
-    win: `<div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="gly sm plain" style="width:20px;height:20px;color:#4a5059">${ic.repo}</span>orbital</span><span class="tmeta"><span class="modepill">${ic.harness}auto<span style="color:#aab0b8">${ic.chevron}</span></span>synced 14:02<span style="color:#aab0b8">${ic.palette}</span></span></div><div class="content">${winBody}</div></div>`,
+    win: win({
+      name: crumb([
+        { label: 'Projects', icon: ic.home, root: true },
+        { label: 'orbital', icon: ic.repo, cur: true },
+      ]),
+      meta: `<span class="modepill">${ic.harness}auto<span style="color:#aab0b8">${ic.chevron}</span></span>synced 14:02<span style="color:#aab0b8">${ic.palette}</span>`,
+      body: winBody,
+      nav: navRail({ back: true, ctx: navCtx([{ icon: ic.repo, on: true, title: 'orbital' }]) }),
+    }),
     notes: [
       { h: 'One list, no zones.', b: 'The old Yours / Team split is gone (it contradicted the ratified design). It is a single scroll; a row’s STATE — not a zone — gives it its look: local backlight, my-PR accent stripe, teammate PR neutral, needs-you amber, merged green + dimmed.' },
       { h: 'Hot sort, with a needs-you boost.', b: 'Default order is recency of engagement, and anything that needs you (review requested, your own PR’s CI red) floats to the top. Also sort by Recent / Author / Status.' },
       { h: 'Ownership is appearance + filter, not a wall.', b: 'You edit what you own and review what you did not author; the row shows which via stripe + the Mine filter, but nothing is walled off. Filters: All / Needs-you / Mine / Local / PRs, each with a count.' },
       { h: 'One item, one row (dedupe).', b: 'Once a local branch has a PR, the PR row wins and the worktree becomes a “checked out locally” annotation on it (#477) — never a duplicate second row.' },
       { h: 'Merged → read-only + clean up.', b: 'A merged PR (#468) dims to read-only; if a worktree is still on disk, a Clean up action sweeps it away. The terminal verb on local work is Make PR (reviewed) or Review.' },
+      { h: 'The nav spine, in two parts.', b: 'The slim left rail carries the app controls — back / forward (⌘[ / ⌘]), Home, Projects, and a context stack for the current lineage — while the title-bar breadcrumb says where you are. The project’s own repo rail sits beside it, scoped to this project: a global rail plus a contextual panel, not two competing sidebars.' },
     ],
   };
 }

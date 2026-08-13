@@ -1,6 +1,7 @@
 import type { CanvasAngle } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 import type { ZoomLevel } from "../canvas/logic";
+import type { Surface } from "../nav/history";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The command registry (wireframes screen 16: "⌘K, every action a named
@@ -15,8 +16,8 @@ import type { ZoomLevel } from "../canvas/logic";
 //
 // Keybindings live HERE, in the registry, not hardcoded at each call site. That is
 // the "remappable" structure the wireframe asks for: a later remap UI edits these
-// fields, and a later key-dispatch routes through them. Today ⌘K itself is the one
-// binding wired globally (in app.tsx); the diff-canvas keys (`[ ] l h`) still live
+// fields, and a later key-dispatch routes through them. Today ⌘K plus history's
+// ⌘[ / ⌘] are wired globally (in app.tsx); the diff-canvas keys (`l h`) still live
 // in the workspace's own keydown and are declared here as their canonical home.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -48,6 +49,11 @@ export type Screen = "projectDetail" | "frontDoor" | "directEntry" | "workspace"
  */
 export interface CommandContext {
   screen: Screen;
+  surfaceKind: Surface["kind"];
+  canBack: boolean;
+  canForward: boolean;
+  canGoToProject: boolean;
+  retrospective: boolean;
   /** The Canvases view is showing a loaded review, so the lens/zoom/scheme act live. */
   canvasReady: boolean;
   view: "review" | "canvases";
@@ -59,8 +65,13 @@ export interface CommandContext {
   zoomLevel: ZoomLevel;
 
   // Navigation + review actions (app.tsx handlers).
-  backToProjects(): void;
-  backToProjectList(): void;
+  back(): void;
+  forward(): void;
+  goToProjects(): void;
+  goToProject(): void;
+  goToDraft(): void;
+  goToPaper(): void;
+  openSettings(): void;
   showFiles(): void;
   showCanvases(): void;
   reviewDirectly(): void;
@@ -78,11 +89,10 @@ export interface CommandContext {
 }
 
 /** The lens titles, in the canonical angle order. */
-const ANGLE_LABELS: Record<CanvasAngle, string> = {
+const ANGLE_LABELS: Partial<Record<CanvasAngle, string>> = {
   spec: "Spec",
   sequence: "Sequence",
   decisions: "Decisions",
-  claims: "Claims",
   noise: "Noise",
   flagged: "Flagged",
 };
@@ -96,6 +106,84 @@ const ANGLE_LABELS: Record<CanvasAngle, string> = {
  */
 export function buildCommands(ctx: CommandContext): Command[] {
   const commands: Command[] = [];
+
+  if (ctx.canBack) {
+    commands.push({
+      id: "nav.back",
+      title: "Back",
+      group: "Navigate",
+      keybinding: "⌘[",
+      run: ctx.back,
+    });
+  }
+  if (ctx.canForward) {
+    commands.push({
+      id: "nav.forward",
+      title: "Forward",
+      group: "Navigate",
+      keybinding: "⌘]",
+      run: ctx.forward,
+    });
+  }
+  if (ctx.surfaceKind !== "projects") {
+    commands.push({
+      id: "nav.projects",
+      title: "Back to projects",
+      group: "Navigate",
+      run: ctx.goToProjects,
+    });
+  }
+  if (ctx.canGoToProject && ctx.surfaceKind !== "project") {
+    commands.push({
+      id: "nav.project",
+      title: "Go to project…",
+      group: "Navigate",
+      run: ctx.goToProject,
+    });
+  }
+  if (
+    !ctx.retrospective &&
+    (ctx.surfaceKind === "review" || ctx.surfaceKind === "draft" || ctx.surfaceKind === "paper")
+  ) {
+    if (ctx.surfaceKind !== "draft") {
+      commands.push({
+        id: "nav.draft",
+        title: "Go to Draft",
+        group: "Navigate",
+        run: ctx.goToDraft,
+      });
+    }
+    if (ctx.surfaceKind !== "paper") {
+      commands.push({
+        id: "nav.paper",
+        title: "Go to Paper",
+        group: "Navigate",
+        run: ctx.goToPaper,
+      });
+    }
+  }
+  commands.push({
+    id: "nav.settings",
+    title: "Open Settings",
+    group: "Navigate",
+    run: ctx.openSettings,
+  });
+  if (ctx.screen === "projectDetail") {
+    commands.push({
+      id: "nav.openReview",
+      title: "Open review…",
+      group: "Navigate",
+      run: ctx.reviewDirectly,
+    });
+  }
+  if (ctx.screen === "frontDoor") {
+    commands.push({
+      id: "nav.reviewDirectly",
+      title: "Review directly",
+      group: "Navigate",
+      run: ctx.reviewDirectly,
+    });
+  }
 
   if (ctx.screen === "workspace") {
     // A view command is offered only when it CHANGES the view — the destination that
@@ -117,12 +205,6 @@ export function buildCommands(ctx: CommandContext): Command[] {
       });
     }
     commands.push(
-      {
-        id: "nav.projects",
-        title: "Back to projects",
-        group: "Navigate",
-        run: ctx.backToProjects,
-      },
       {
         id: "review.retry",
         title: "Retry the AI review",
@@ -151,10 +233,11 @@ export function buildCommands(ctx: CommandContext): Command[] {
     if (ctx.canvasReady) {
       // Every lens EXCEPT the one already active — "go to the lens I'm on" is inert.
       for (const angle of CANVAS_ANGLES) {
-        if (angle === ctx.angle) continue;
+        const label = ANGLE_LABELS[angle];
+        if (angle === ctx.angle || label === undefined) continue;
         commands.push({
           id: `lens.${angle}`,
-          title: `Go to ${ANGLE_LABELS[angle]} lens`,
+          title: `Go to ${label} lens`,
           group: "Lens",
           run: () => ctx.goToAngle(angle),
         });
@@ -196,30 +279,12 @@ export function buildCommands(ctx: CommandContext): Command[] {
     }
   }
 
-  if (ctx.screen === "frontDoor") {
-    commands.push({
-      id: "door.direct",
-      title: "Review directly",
-      group: "Start",
-      run: ctx.reviewDirectly,
-    });
-  }
-
   if (ctx.screen === "directEntry") {
     commands.push({
       id: "door.choose",
       title: "Choose a repository",
       group: "Start",
       run: ctx.chooseRepository,
-    });
-  }
-
-  if (ctx.screen === "projectDetail") {
-    commands.push({
-      id: "nav.projectList",
-      title: "Back to projects",
-      group: "Navigate",
-      run: ctx.backToProjectList,
     });
   }
 

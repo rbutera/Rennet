@@ -70,10 +70,14 @@ describe("RennetApp — app-wide appearance via the document root", () => {
     await waitFor(() => expect(document.documentElement.getAttribute("data-scheme")).toBe("light"));
   });
 
-  it("keeps the root themed on the direct-entry route (a screen with no glass scope)", async () => {
+  it("keeps the root themed on the palette-only direct-entry route", async () => {
     installMatchMedia(true);
-    const { getByRole } = mount(<RennetApp bridge={fakeBridge("light")} />);
-    // Step into the legacy direct-entry screen (the `.empty-state`, no rennet-glass).
+    const { container, getByRole, queryByRole } = mount(<RennetApp bridge={fakeBridge("light")} />);
+    await waitFor(() => expect(container.querySelector(".front-door")).not.toBeNull());
+    // The legacy door is no longer drawn; its existing palette command is the seam
+    // until Phase 4 replaces the command registry's navigation group.
+    expect(queryByRole("button", { name: /Review directly/ })).toBeNull();
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
     await waitFor(() => getByRole("button", { name: /Review directly/ }));
     fireEvent.click(getByRole("button", { name: /Review directly/ }));
     await waitFor(() => getByRole("heading", { name: /Start a review/ }));

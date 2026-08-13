@@ -826,6 +826,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     // Canvas shortcuts must never hijack text editing: a keydown from the
     // proposal-edit textarea (or any field) is the user typing, not a command.
     if (isEditableTarget(event.target as HTMLElement)) return;
+    if ((event.metaKey || event.ctrlKey) && (event.key === "[" || event.key === "]")) return;
     if (event.key === "]") rotateAndRefocus(1);
     else if (event.key === "[") rotateAndRefocus(-1);
     else if (event.key === "l" || event.key === "ArrowRight")

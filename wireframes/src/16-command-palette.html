@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8">
-<title>Rennet v3.3 · 15 Command palette</title><style>
+<title>Rennet v4.0 · 15 Command palette</title><style>
 :root{
   --ground:#e7e9ec; --ink:#181b1f; --text:#1c1f24; --muted:#697079; --faint:#9aa1a9;
   --win:#ffffff; --titlebar:#f4f5f7; --glass:#eceff2; --card:#ffffff;
@@ -94,6 +94,44 @@ svg{ display:block; width:16px; height:16px; }
   border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
 .modepill svg{ width:14px; height:14px; }
 
+/* ---- v4.0 navigation chrome ---- */
+/* breadcrumb spine in the title bar (the "where am I") — glass, sans, interactive */
+.crumbs{ display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+.cseg{ display:inline-flex; align-items:center; gap:6px; font-size:14px; font-weight:550; color:var(--muted); }
+.cseg .cico{ display:flex; color:#5a6069; }
+.cseg .cico svg{ width:15px; height:15px; }
+.cseg.cur{ color:var(--text); font-weight:650; }
+.cseg.root{ color:var(--muted); }
+.csep{ display:flex; color:#aab0b8; }
+.csep svg{ width:13px; height:13px; }
+
+/* the compact left nav rail (the "where can I go" controls): back/forward, home, projects, context */
+.winmain{ display:flex; align-items:stretch; }
+.winmain > .content{ flex:1; min-width:0; }
+.navrail{ flex:none; width:64px; align-self:stretch; background:var(--glass); border-right:1px solid var(--line);
+  display:flex; flex-direction:column; align-items:center; gap:13px; padding:16px 0 18px; }
+.navbtn{ display:flex; flex-direction:column; align-items:center; gap:4px; color:var(--muted); }
+.navbtn .gb{ width:34px; height:34px; border-radius:9px; border:1px solid var(--line2); background:#fff;
+  display:flex; align-items:center; justify-content:center; color:#2a2e34; }
+.navbtn .gb svg{ width:18px; height:18px; }
+.navbtn .cap{ font-family:var(--mono); font-size:9px; letter-spacing:.02em; color:var(--faint); }
+.navbtn.off{ opacity:.38; }
+.navrail .sep{ width:28px; height:1px; background:var(--line2); }
+.navrail .ctx{ margin-top:auto; display:flex; flex-direction:column; align-items:center; gap:6px; }
+.navrail .ctx .cnode{ width:30px; height:30px; border-radius:8px; display:flex; align-items:center; justify-content:center;
+  border:1px solid var(--line2); background:#fff; color:#5a6069; }
+.navrail .ctx .cnode svg{ width:15px; height:15px; }
+.navrail .ctx .cnode.on{ background:var(--blue-bg); border-color:var(--blue-line); color:var(--blue-ink); }
+.navrail .ctx .cbar{ width:1.5px; height:9px; background:var(--line2); }
+.navrail .ctx .clab{ font-family:var(--mono); font-size:8.5px; color:var(--faint); }
+
+/* the patchset chip (title-bar meta) with an optional trail caret */
+.psetchip{ display:inline-flex; align-items:center; gap:6px; font-family:var(--sans); font-size:12px; color:var(--text);
+  border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
+.psetchip svg{ width:13px; height:13px; color:#5a6069; }
+.psetchip .pcaret{ display:flex; color:#aab0b8; }
+.psetchip .pcaret svg{ width:12px; height:12px; }
+
 .pal-backdrop{ background:var(--glass); border-radius:10px; padding:60px 0; display:flex; justify-content:center; position:relative; }
 .palette{ width:560px; background:#fff; border:1px solid var(--line2); border-radius:14px; box-shadow:0 30px 70px -24px rgba(20,26,33,.5); overflow:hidden; }
 .palette .pinput{ display:flex; align-items:center; gap:11px; padding:15px 18px; border-bottom:1px solid var(--line); }
@@ -105,30 +143,51 @@ svg{ display:block; width:16px; height:16px; }
 .pcmd .pg{ color:#5a6069; display:flex; }
 .pcmd .kh{ margin-left:auto; font-family:var(--mono); font-size:12px; color:var(--faint); }
 .pcmd .grp{ font-family:var(--mono); font-size:11px; color:var(--faint); }
+.pcmd .sub{ font-family:var(--mono); font-size:11px; color:var(--faint); margin-left:auto; }
+.pgh{ font-family:var(--mono); font-size:10.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint);
+  padding:9px 18px 6px; background:#fbfcfd; border-bottom:1px solid var(--line); display:flex; align-items:center; gap:8px; }
+.pgh.top{ border-top:1px solid var(--line); }
 </style></head>
 <body><div class="page">
   <div class="fhead">
     <span class="badge">16</span>
-    <h1 class="ftitle">Command palette</h1>
+    <h1 class="ftitle">Command palette: the keyboard spine</h1>
     <span class="pill">Cross-cutting</span>
-    <div class="fref">command-K
-every action, named and remappable</div>
+    <div class="fref">command-K · every action, named
+plus a Navigate group on every screen</div>
   </div>
-  <p class="fsub">Command-K. Every action in Rennet is a named command with a key hint, and every binding is remappable. The keyboard is a first-class surface, not an afterthought.</p>
-  <div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="gly sm plain" style="width:20px;height:20px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M7 9.5h.01M10.5 9.5h.01M14 9.5h.01M7.5 13.5h9" /></svg></span>orbital</span><span class="tmeta"><span class="modepill"><span style="color:#2a2e34"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span>auto<span style="color:#aab0b8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></span><span>⌘K</span></span></div><div class="content"><div class="pal-backdrop rel">
+  <p class="fsub">Command-K. Every action is a named, remappable command — and in v4.0 the palette is also the <b>keyboard spine of navigation</b>. A <b>Navigate</b> group rides every screen: Go to project…, Open review…, Back / Forward, Go to Draft / Paper, Open Settings. On an empty query it shows your <b>recent locations</b> first, so returning to a place is one keystroke. The retired <code>claims</code> lens is gone from the offered set.</p>
+  <div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="crumbs"><span class="cseg root"><span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7"/><path d="M6.5 9.5V20h4v-6h3v6h4V9.5"/></svg></span>Projects</span><span class="csep"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span><span class="cseg"><span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span>orbital</span><span class="csep"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span><span class="cseg cur"><span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="8" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 10.3c0 4-3.5 4.4-6.4 5.2"/></svg></span>feat/rate-limiting</span></span></span><span class="tmeta"><span class="modepill"><span style="color:#2a2e34"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span>auto<span style="color:#aab0b8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></span><span>⌘K</span></span></div><div class="winmain"><div class="navrail">
+    <span class="navbtn"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></span><span class="cap">⌘[</span></span>
+    <span class="navbtn off"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span><span class="cap">⌘]</span></span>
+    <span class="sep"></span>
+    <span class="navbtn"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7"/><path d="M6.5 9.5V20h4v-6h3v6h4V9.5"/></svg></span><span class="cap">Home</span></span>
+    <span class="navbtn"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span><span class="cap">Projects</span></span>
+    <div class="ctx"><span class="cnode" title="orbital"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span><span class="cbar"></span><span class="cnode" title="feat/rate-limiting"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="8" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 10.3c0 4-3.5 4.4-6.4 5.2"/></svg></span><span class="cbar"></span><span class="cnode on" title=""><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="8" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 10.3c0 4-3.5 4.4-6.4 5.2"/></svg></span><span class="clab">here</span></div>
+  </div><div class="content"><div class="pal-backdrop rel">
     <span class="anno" style="left:calc(50% + 270px);top:52px"><span class="dot">1</span></span>
     <div class="palette">
-      <div class="pinput"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l4.5 4.5"/></svg><span class="cue">Type a command</span><span class="kbd">⌘K</span></div>
-      <div class="pcmd on"><span class="pg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.6"/></svg></span><span>Review this branch</span><span class="kh">R</span></div>
+      <div class="pinput"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="10.5" cy="10.5" r="6"/><path d="M15 15l4.5 4.5"/></svg><span class="cue">Jump to a place, or run a command</span><span class="kbd">⌘K</span></div>
+      <div class="pgh rel"><span class="anno" style="left:-30px;top:4px"><span class="dot">2</span></span>Recent locations · empty query</div>
+      <div class="pcmd"><span class="pg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="8" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 10.3c0 4-3.5 4.4-6.4 5.2"/></svg></span><span>feat/rate-limiting · Sequence</span><span class="sub">orbital · 2m ago</span></div>
+      <div class="pcmd"><span class="pg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M6 8.4v7.2M8.3 6.9C13 7.5 15.6 8.9 16 10.6M8.2 17c4.8-.6 7.4-2 7.8-3.8"/></svg></span><span>feat/rate-limiting · Draft</span><span class="sub">orbital · 14m ago</span></div>
+      <div class="pcmd"><span class="pg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span><span>orbital</span><span class="sub">project detail</span></div>
+      <div class="pgh top rel"><span class="anno" style="left:-30px;top:4px"><span class="dot">3</span></span>Navigate</div>
+      <div class="pcmd on"><span class="pg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span><span>Go to project…</span><span class="kh">⌘P</span></div>
+      <div class="pcmd"><span class="pg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.6"/></svg></span><span>Open review…</span><span class="kh">⌘O</span></div>
+      <div class="pcmd"><span class="pg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></span><span>Back</span><span class="kh">⌘[</span></div>
+      <div class="pcmd"><span class="pg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span><span>Forward</span><span class="kh">⌘]</span></div>
+      <div class="pcmd"><span class="pg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M6 8.4v7.2M8.3 6.9C13 7.5 15.6 8.9 16 10.6M8.2 17c4.8-.6 7.4-2 7.8-3.8"/></svg></span><span>Go to Draft</span><span class="kh">G D</span></div>
+      <div class="pcmd"><span class="pg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l3 3v15H6z"/><path d="M15 3v3h3"/><path d="M9 12h6M9 15.5h6M9 8.5h3"/></svg></span><span>Go to Paper</span><span class="kh">G P</span></div>
+      <div class="pcmd"><span class="pg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="5" width="17" height="14" rx="2"/><path d="M7 9.5h.01M10.5 9.5h.01M14 9.5h.01M7.5 13.5h9" /></svg></span><span>Open Settings</span><span class="kh">⌘,</span></div>
+      <div class="pgh top rel"><span class="anno" style="left:-30px;top:4px"><span class="dot">4</span></span>Actions · this review</div>
       <div class="pcmd"><span class="pg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 18L18 6"/><path d="M9 6h9v9"/></svg></span><span>Make PR from worktree</span><span class="kh">P</span></div>
       <div class="pcmd"><span class="pg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 5.5A8.3 8.3 0 1 0 21 12"/><path d="M20 4.5V9h-4.5"/><path d="M9 12l2.5 2.5L16 10" opacity=".6"/></svg></span><span>Re-steer: hand changes back</span><span class="kh">⇧R</span></div>
       <div class="pcmd"><span class="pg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span><span>Ask both models</span><span class="kh">⇧A</span></div>
-      <div class="pcmd"><span class="pg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3h6"/><path d="M10 3v6.2L5.6 17a2 2 0 0 0 1.8 3h9.2a2 2 0 0 0 1.8-3L14 9.2V3"/><path d="M8 14.5h8"/></svg></span><span>View test for this hunk</span><span class="kh">T</span></div>
-      <div class="pcmd"><span class="pg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-7"/><path d="M14 4h6v6"/><path d="M11 13L20 4"/></svg></span><span>Open in editor</span><span class="kh">⌘E</span></div>
       <div class="pcmd"><span class="pg"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v16M4 12h16M6 6l12 12M18 6L6 18"/></svg></span><span>Toggle execution mode</span><span class="kh">⌘M</span></div>
     </div>
-  </div></div></div>
+  </div></div></div></div>
   <div class="notes"><div class="notes-h">Designer notes &nbsp;/&nbsp; what to weigh in on</div>
-    <div class="notes-grid"><div class="note"><span class="dot">1</span><div><b>Command-K opens it.</b> One overlay, one search field, every action reachable by name. Review, Make PR, Re-steer, Ask both, View test, Toggle mode.</div></div><div class="note"><span class="dot">2</span><div><b>Named and remappable.</b> Each command carries a default key hint you can rebind. The palette is the discoverable index of the whole keyboard surface.</div></div></div>
+    <div class="notes-grid"><div class="note"><span class="dot">1</span><div><b>The keyboard spine.</b> One overlay, one search field, every action and every destination reachable by name. As an overlay it never moves the crumb or the history — running Back from here is what moves them.</div></div><div class="note"><span class="dot">2</span><div><b>A Navigate group everywhere.</b> Present on every screen: Go to project… (fuzzy over projects), Open review… (fuzzy over the current project’s rows), Back / Forward, Go to Draft / Paper, Open Settings. The legacy “Review directly” door lives here too — palette-only, no drawn button.</div></div><div class="note"><span class="dot">3</span><div><b>Recent locations first.</b> With an empty query the palette leads with where you have just been, so returning to review B after glancing at A is a single keystroke — the cheapness that lets one review evict another.</div></div><div class="note"><span class="dot">4</span><div><b>Named and remappable.</b> Each command carries a default key hint you can rebind. No retired destinations: the resteer-era claims lens is not offered.</div></div></div>
   </div>
 </div></body></html>

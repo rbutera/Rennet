@@ -19,24 +19,27 @@ const SCREENS = [
   { f: '03-worktree-config.png', n: 'Worktree config', tag: 'Onboarding', p: 'Discovery shown as editable defaults, not questions. Include toggles all on, primary branch confirmed, one Confirm.', feats: [] },
   { f: '04-processing.png', n: 'Processing', tag: 'Onboarding', p: 'The narrated context dump. An honest MVP spinner over a live feed; completed lines collapse into a ledger, then it becomes the project. A more delightful animation is promoted post-MVP.', feats: [] },
   { f: '04a-projects-list.png', n: 'Projects list', tag: 'Home', p: 'The populated front door — the same screen as first-run, now with projects. One row per project, most-recently-active first; a row is a whole project — a single repo or a multi-repo workspace. Add-a-project stays present as its own row; detection stays one ambient line. Row states drawn: active/needs-you, quiet, processing, stale-map, never-opened.', feats: [] },
-  { f: '05-project-detail.png', n: 'Project detail', tag: 'Home', p: 'The everyday landing: ONE smart list, no hard zones (the ratified model, matching shipped #37/#216). Every branch, worktree and PR reads by state — local backlight, my-PR accent stripe, teammate PR neutral, needs-you amber, merged read-only + dimmed. Hot sort floats what needs you; filters All / Needs-you / Mine / Local / PRs. Dedupe folds a checked-out worktree onto its PR row; merged → read-only + clean up. Mode glyph in the title bar, no consent banner.', feats: [] },
-  { f: '06-review-heart.png', n: 'The review heart', tag: 'Review', p: 'The tall sequence canvas. In-diff dispositions, the inline conversation cluster on every line, view-test + open-in-editor on the sticky header, threads in the right margin. Real scroll, no fold.', feats: [] },
-  { f: '06a-delta-rereview.png', n: 'Delta re-review', tag: 'Review', p: 'New (v3.3). The successor review after a handoff turn: the delta account states what moved before you re-read a line — each staged ask addressed / partially / untouched, and every path changed beyond your asks, surfaced loud. The facts are deterministic (no model); a light-tier LLM digest sits on top as the one-glance read, auto-generated every re-review, streaming in after the facts, and simply absent when the model is off. It gates nothing.', feats: [] },
+  { f: '05-project-detail.png', n: 'Project detail', tag: 'Home', p: 'The everyday landing: ONE smart list, no hard zones (the ratified model, matching shipped #37/#216). Every branch, worktree and PR reads by state — local backlight, my-PR accent stripe, teammate PR neutral, needs-you amber, merged read-only + dimmed. Hot sort floats what needs you; filters All / Needs-you / Mine / Local / PRs. v4.0 adds the nav spine: a title-bar breadcrumb (Projects › orbital) and a slim left rail with back/forward — and back from any review lands HERE, the review’s real home, not the front door.', feats: [] },
+  { f: '06-review-heart.png', n: 'The review heart', tag: 'Review', p: 'The tall sequence canvas. In-diff dispositions, the inline conversation cluster on every line, view-test + open-in-editor on the sticky header. v4.0 replaces the right margin with ONE unified conversation — a lightweight chat stream (an icon per ask type; line-anchored messages read as a reply to their line, Messenger-style) that gives the orchestrator a visible home, collapses to the sidebar and expands to full screen. The breadcrumb + nav rail frame it. Real scroll, no fold.', feats: [] },
+  { f: '06a-delta-rereview.png', n: 'Delta re-review', tag: 'Review', p: 'The successor review after a handoff turn: the delta account states what moved before you re-read a line — each staged ask addressed / partially / untouched, and every path changed beyond your asks, surfaced loud. The facts are deterministic (no model); a light-tier LLM digest sits on top as the one-glance read. v4.0 promotes the patchset to a title-bar chip whose trail lists the lineage (9 ‹ 8 ‹ 7), current pinned, predecessors read-only. It gates nothing.', feats: [] },
   { f: '07-spec-view.png', n: 'Spec view', tag: 'Review', p: 'The openspec artifact set rendered as its shape: distilled why, capability grid, requirement rows with WHEN/THEN scenarios, coverage chips. Reviewable material, not raw markdown. Worked on a real rennet change.', feats: [] },
   { f: '08-decisions.png', n: 'Decisions', tag: 'Review', p: 'The calls the implementer made, grouped by theme, with evidence chips, a reconstructed why, and the alternatives not taken. The evidenced / mechanical / contestable taxonomy is gone.', feats: [] },
   { f: '09-flagged.png', n: 'Flagged', tag: 'Review', p: 'Model-council findings and dual-review disagreements, indexed by severity and agreement state, jumping to the marks at their anchors. The disagreement flare lives here, not in chat.', feats: [] },
   { f: '10-noise-lens.png', n: 'Noise', tag: 'Review', p: 'New. A grouped summary of everything the changeset touches but that was judged not to need attention: most settled by deterministic rule, the remainder by an LLM noise job, each group saying which. The totality floor: collapsed and dismissible, never dropped (issue #34).', feats: [] },
   { f: '11-symbol-inspector.png', n: 'Symbol inspector', tag: 'Review', p: 'Peek, then pin. A floating glass card on plain click (signature, doc, tier label), or a docked mini code-browser that navigates deeper without ever moving the diff.', feats: [] },
-  { f: '12-collation-draft.png', n: 'Collation draft', tag: 'Draft', p: 'The one editable draft before sign. Merge, split, reorder, withdraw, and converse on staged chunks. The orchestrator proposes; you dispose. Editing lives here.', feats: [] },
-  { f: '13-paper-sign.png', n: 'Paper', tag: 'Sign', p: 'The one solid object. It previews exactly what will post; the verdict is derived from your dispositions and override-able, and the human sign carries it. The sign in the loop is the safety.', feats: [] },
-  { f: '14-questions.png', n: 'Questions', tag: 'Ask', p: 'Orchestrator by default, with an opt-in split to ask both models. When both, two labeled answers side by side. Never a synthesis block.', feats: [] },
-  { f: '15-settings.png', n: 'Settings', tag: 'Cross-cutting', p: 'The layered config ladder (global › workspace › repo), per-repo guidance, worktree location, and the mode default. Terse: facts and their source.', feats: [] },
-  { f: '16-command-palette.png', n: 'Command palette', tag: 'Cross-cutting', p: 'Command-K. Every action a named, remappable command.', feats: [] },
-  { f: '17-flow-overview.png', n: 'Flow overview', tag: 'The map', p: 'The v3 journey as one map: two entry points (your local work toward Make PR, a teammate’s PR into review), one draft, one signed paper, and the material legend.', feats: [] },
+  { f: '12-collation-draft.png', n: 'Collation draft', tag: 'Draft', p: 'The one editable draft before sign. Merge, split, reorder, withdraw, and converse on staged chunks. The orchestrator proposes; you dispose. In v4.0 it is a crumb child of the review (… › feat/rate-limiting › Draft) — one crumb-click or Esc ascends back. Editing lives here.', feats: [] },
+  { f: '13-paper-sign.png', n: 'Paper', tag: 'Sign', p: 'The one solid object. It previews exactly what will post; the verdict is derived from your dispositions and override-able, and the human sign carries it. A crumb child of the Draft (… › Draft › Paper); back lands on the Draft, where editing lives. The sign in the loop is the safety.', feats: [] },
+  { f: '14-questions.png', n: 'Questions', tag: 'Ask', p: 'The unified conversation (frame 06) expanded to full screen — the same one stream, given room for a long back-and-forth. Orchestrator by default, with an opt-in split to ask both models; when both, two labeled answers side by side, never a synthesis block. As an overlay it never moves the crumb.', feats: [] },
+  { f: '15-settings.png', n: 'Settings', tag: 'Cross-cutting', p: 'The layered config ladder (global › workspace › repo), per-repo guidance, worktree location, and the mode default. Terse: facts and their source. v4.0 makes it orbital — reachable from every screen and returning to exactly where you were, review and scroll intact, never a detour through the front door.', feats: [] },
+  { f: '16-command-palette.png', n: 'Command palette', tag: 'Cross-cutting', p: 'Command-K, the keyboard spine. Every action a named, remappable command — and now a Navigate group on every screen (Go to project…, Open review…, Back / Forward, Go to Draft / Paper, Open Settings) with recent locations on an empty query. The retired claims lens is gone from the offered set.', feats: [] },
+  { f: '17-flow-overview.png', n: 'Flow overview', tag: 'The map', p: 'The forward journey as one map: two entry points (your local work toward Make PR, a teammate’s PR into review), one draft, one signed paper, and the material legend. The journey map; frame 18 is the navigation structure that binds it.', feats: [] },
+  { f: '18-navigation-model.png', n: 'Navigation model', tag: 'Navigation model', p: 'New (v4.0) — the model this version is named for. The structure map: the hybrid spine (title-bar breadcrumb for “where am I”, a left nav rail with back/forward for “how did I get here”, the palette for “where can I go”), the full destination tree with every place tagged peer / child / overlay, the tab-vs-crumb-vs-overlay law, the history keys (⌘[ / ⌘]), one-review-at-a-time, and the patchset trail. Pure wayfinding: it adds reachable places and never a gate.', feats: [] },
 ];
 
 const CALLS = [
-  'Project detail: the Yours / Team zone chips are drawn as a soft switcher (click one to collapse the other), both visible by default. Keep that, or a hard toggle?',
+  'The nav rail is a slim 64px icon rail (back/forward · Home · Projects · lineage) sitting beside project detail’s own repo rail. Right weight, or should the two rails merge on the project screen?',
+  'Line-anchored chat messages wear a quoted reply chip above the text (Messenger style). Reads as “a reply to this line” — or would a left-edge line-number gutter read cleaner?',
+  'Back from a review lands on project detail, and ⌘[ / ⌘] are drawn as rail buttons. Is temporal back/forward worth its chrome, or is hierarchical “up” via the crumb enough?',
   'Processing draws one slow glass prism as the app’s only motion. Enough delight for the identity moment, or does it want more?',
   'Symbol click is drawn as plain-click-peek, with hover reserved for a modifier-hold underline. Or should hover itself peek?',
   'Flagged uses three severities (high / medium / low). Right granularity, or too much?',
@@ -45,9 +48,10 @@ const CALLS = [
 ];
 
 const TENSIONS = [
-  'The orchestrator has no dedicated home surface: it lives in the margin, the ask composer, and the draft. Undrawn as its own screen.',
+  'Onboarding (02 add-project, 03 worktree-config) still wants its explicit ‹ Projects escape drawn alongside the step counter — deferred from this v4.0 nav pass.',
   'Spec-only reviews (the spec canvas as the whole review, before code exists) are in the flow but not separately mocked.',
   'Watch mode, a live view while an agent edits the working tree, has no ratified UX yet; the processing feed is the closest pattern.',
+  'Predecessor patchsets are trail-listed but not browsable in v4.0 (deliberate — the read-only look-back is deferred).',
 ];
 
 const card = (s, i) => `
@@ -131,12 +135,12 @@ const html = `<style>
 </style>
 
 <header class="hero"><div class="wrap">
-  <p class="kicker">Rennet &middot; lo-fi wireframes &middot; v3.3</p>
-  <h1>The whole app, one scroll.</h1>
-  <p class="lede">Nineteen screens in flow order, rebuilt from your feedback and updated again since. The wizard is gone: add-a-project is the onboarding, and the narrated processing screen is the tutorial. The populated projects list is the front door (the same screen as first-run, now with projects), and project detail is one smart list, no hard zones: rows read by state, with a filter bar and a Hot sort. A Noise lens now joins the review lenses; the chrome moved to a sans UI type, with monospace kept for code only; the execution-mode glyph rides every in-project title bar; and processing shows an honest MVP spinner. Terse chrome; the LLM canvas content stays rich.</p>
+  <p class="kicker">Rennet &middot; lo-fi wireframes &middot; v4.0</p>
+  <h1>The whole app, one scroll — now with a way to move through it.</h1>
+  <p class="lede">Twenty-one screens in flow order. v4.0 is v3.3 plus a coherent navigation model: a hybrid wayfinding spine — a title-bar breadcrumb for “where am I,” a slim left nav rail with back/forward (⌘[ / ⌘]) for “how did I get here,” and the command palette’s Navigate group for “where can I go.” Back from a review lands on project detail, its real home. The review’s right side is now one unified, chat-style conversation (an icon per ask type, line-anchored messages that read as replies) that gives the orchestrator a home. The patchset gets a title-bar chip and trail; Settings goes orbital; and a new frame 18 draws the whole structure — peers, children, overlays, and the history. Pure wayfinding, no gates.</p>
   <div class="meta">
-    <span>19 screens</span><span>no wizard</span><span>unified smart list</span>
-    <span>spec / decisions / flagged / noise</span><span>orchestrator-default questions</span><span>peek-then-pin symbols</span><span>sans chrome, mono code</span><span>mode glyph everywhere</span>
+    <span>21 screens</span><span>breadcrumb + nav rail</span><span>back/forward · ⌘[ ⌘]</span>
+    <span>unified chat panel</span><span>palette Navigate group</span><span>patchset trail</span><span>settings orbital</span><span>one review at a time</span><span>no gates</span>
   </div>
 </div></header>
 
@@ -159,12 +163,12 @@ ${(() => {
 
   <section>
     <div class="sec-head"><h2>Carried, undrawn</h2><span class="idx mono">named but not mocked</span></div>
-    <p class="sec-sub">Design tensions that survive into v3 without a screen yet.</p>
+    <p class="sec-sub">Design tensions that survive into v4.0 without a screen yet.</p>
     <div class="callout"><ul class="tensions">${TENSIONS.map((t) => `<li>${t}</li>`).join('')}</ul></div>
   </section>
 </main>
 
-<footer><div class="wrap">Rennet wireframes v3.3 &middot; rebuilt from your feedback &middot; HTML sources in wireframes/src, iterable further.</div></footer>`;
+<footer><div class="wrap">Rennet wireframes v4.0 &middot; v3.3 plus a coherent navigation model &middot; HTML sources in wireframes/src, iterable further.</div></footer>`;
 
 writeFileSync(OUT, html);
 const kb = Math.round(Buffer.byteLength(html) / 1024);

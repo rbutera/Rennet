@@ -1,4 +1,17 @@
-import { ic, dot, win, modePill } from './kit.mjs';
+import { ic, dot, win, modePill, crumb, navRail, navCtx } from './kit.mjs';
+
+// the review lineage shown in the nav-rail context stack (project → review)
+const reviewCtx = navCtx([
+  { icon: ic.repo, title: 'orbital' },
+  { icon: ic.branch, on: true, title: 'feat/rate-limiting' },
+]);
+// the standard review breadcrumb: Projects › orbital › <review>. The lens is a TAB, never a crumb.
+const reviewCrumb = (leaf, leafIcon = ic.branch) =>
+  crumb([
+    { label: 'Projects', icon: ic.home, root: true },
+    { label: 'orbital', icon: ic.repo },
+    { label: leaf, icon: leafIcon, cur: true },
+  ]);
 
 /* shared review-surface CSS (06/07/08/09/10) */
 export const reviewCss = `
@@ -61,6 +74,39 @@ export const reviewCss = `
 .fragbtn{ font-family:var(--mono); font-size:11px; color:var(--muted); border:1px solid var(--line2); border-radius:6px; padding:4px 7px; display:inline-flex; align-items:center; gap:5px; background:#fff; }
 .composer{ display:flex; align-items:center; gap:9px; border:1px solid var(--line2); border-radius:9px; padding:9px 11px; margin-top:4px; }
 .composer .ph{ color:var(--faint); font-size:13px; flex:1; }
+
+/* ---- v4.0 unified conversation panel (one chat-style stream) ---- */
+.chat{ border-left:1px solid var(--line); padding-left:18px; margin:-4px 0; display:flex; flex-direction:column; }
+.chat-h{ display:flex; align-items:center; gap:8px; padding-bottom:11px; border-bottom:1px solid var(--line);
+  font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); }
+.chat-h .exp{ margin-left:auto; display:inline-flex; align-items:center; gap:6px; font-family:var(--sans);
+  text-transform:none; letter-spacing:0; font-size:11.5px; color:var(--muted); border:1px solid var(--line2);
+  border-radius:7px; padding:4px 8px; background:#fff; }
+.chat-h .exp svg{ width:13px; height:13px; }
+.stream{ display:flex; flex-direction:column; gap:15px; padding:15px 0 6px; }
+/* one lightweight chat row: type-icon gutter + message. No card box. */
+.msg{ display:flex; gap:9px; align-items:flex-start; }
+.msg .tico{ flex:none; width:25px; height:25px; border-radius:50%; border:1px solid var(--line2); background:#fff;
+  display:flex; align-items:center; justify-content:center; color:#6b7178; }
+.msg .tico svg{ width:13px; height:13px; }
+.msg .tico.rc{ color:var(--amber); border-color:var(--amber-line); background:var(--amber-bg); }
+.msg .tico.find{ color:#a8434f; border-color:#e6c3c9; background:#fbeef0; }
+.msg .tico.ask{ color:var(--blue-ink); border-color:var(--blue-line); background:var(--blue-bg); }
+.msg .tico.harn{ color:var(--blue); border-color:var(--blue-line); background:var(--blue-bg); }
+.msg .mb{ flex:1; min-width:0; }
+.msg .mh{ display:flex; align-items:baseline; gap:7px; }
+.msg .mh .nm{ font-size:12.5px; font-weight:600; }
+.msg .mh .ty{ font-family:var(--mono); font-size:10px; color:var(--faint); }
+.msg .mh .tm{ margin-left:auto; font-family:var(--mono); font-size:10px; color:var(--faint); }
+/* the WhatsApp/Messenger reply chip: a quoted line reference above the message */
+.replychip{ display:flex; align-items:center; gap:7px; border-left:2px solid var(--blue); background:#f4f8fb;
+  border-radius:0 6px 6px 0; padding:3px 8px; margin:5px 0 4px; }
+.replychip .rl{ font-family:var(--mono); font-size:9.5px; color:var(--blue-ink); flex:none; }
+.replychip .rc{ font-family:var(--code); font-size:10.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.msg .mt{ font-size:12.5px; line-height:1.5; color:var(--text); margin-top:2px; }
+.msg .mfrag{ display:flex; gap:6px; margin-top:7px; flex-wrap:wrap; }
+.msg.self .tico{ background:#eef0f2; color:#5a6069; }
+.chat .composer{ margin-top:14px; }
 `;
 
 const cl = (hot) => `<span class="cluster"><i${hot === 'c' ? ' class="hot"' : ''}>${ic.comment}</i><i${hot === 'r' ? ' class="hot"' : ''}>${ic.reqchange}</i><i${hot === 'q' ? ' class="hot"' : ''}>${ic.question}</i><i${hot === 'd' ? ' class="hot"' : ''}>${ic.discuss}</i></span>`;
@@ -115,29 +161,53 @@ export function frame06() {
     <div class="fold rel"><span class="anno" style="left:6px;top:-2px">${dot(4)}</span>more files below · call sites, tests, noise · this surface scrolls the whole changeset</div>
   </div>`;
 
-  const margin = `<div class="margin rel">
-    <span class="anno" style="left:-2px;top:-2px">${dot(5)}</span>
-    <div class="margin-h">${ic.lock}Thread · fail-open path <span style="margin-left:auto" class="chip">L44-47</span></div>
-    <div class="tcard"><div class="who"><span style="width:8px;height:8px;border-radius:50%;background:#8a9099;display:inline-block"></span>You</div><div class="msg">Why fail open? If the store is down, doesn’t this switch off limiting exactly when load is weirdest?</div></div>
-    <div class="tcard blue"><div class="who"><span style="color:var(--blue)">${ic.harness}</span>Claude Code</div><div class="msg">It follows the plan: “limiter outage must never become API outage.” Failing closed turns every store blip into a 5xx storm for all 4,112 orgs. The window is observable via rate.store_error.</div><div class="fragrow"><span class="fragbtn">${ic.flag}finding</span><span class="fragbtn">${ic.comment}draft comment</span><span class="fragbtn">${ic.discuss}sub-thread</span></div></div>
-    <div class="tcard amber"><div class="who">${ic.flag}Harnesses disagree</div><div class="msg">Unbounded fail-open is not defensible: an outage lets any org scrape without limit. A process-local bucket at 5x the org limit caps it.</div><div class="fragrow"><span class="chip">claude 3/3</span><span class="chip">codex 3/3</span><span class="chip amber">substantive</span></div></div>
-    <div class="composer">${ic.askharness}<span class="ph">Ask about these lines</span><button class="btn sm ink">${ic.askharness}</button></div>
+  // the UNIFIED conversation panel: one chat-style stream. Every message carries an icon
+  // for its ask TYPE; line-anchored ones wear a reply chip (a quoted line reference), so
+  // they read as "a reply to this line" — distinct from a general ask, in one stream.
+  const reply = (rl, code) => `<div class="replychip"><span class="rl">${rl}</span><span class="rc">${code}</span></div>`;
+  const msg = ({ ico, cls = '', self, nm, ty, tm, rl, code, text, frag }) => `<div class="msg${self ? ' self' : ''}">
+    <span class="tico ${cls}">${ico}</span>
+    <div class="mb">
+      <div class="mh"><span class="nm">${nm}</span><span class="ty">${ty}</span><span class="tm">${tm}</span></div>
+      ${rl ? reply(rl, code) : ''}
+      <div class="mt">${text}</div>
+      ${frag ? `<div class="mfrag">${frag}</div>` : ''}
+    </div>
   </div>`;
 
-  const body = `<div class="lensbar"><span class="lens"><span style="color:#5a6069">${'<>'}</span>12</span><span class="lens on">${ic.sequence}Sequence</span><span class="lens">${ic.decisions}4</span><span class="lens">${ic.flag}2</span><span class="lens">${ic.noise}Noise</span><div class="right"><span class="chip blue">● 4 private</span><button class="btn">${ic.paper}Preview</button></div></div><div class="grid3">${rail}${center}${margin}</div>`;
+  const chat = `<div class="chat rel">
+    <span class="anno" style="left:-2px;top:-2px">${dot(5)}</span>
+    <div class="chat-h">${ic.discuss}Conversation<span class="anno" style="right:0;top:-30px">${dot(6)}</span><span class="exp">${ic.editor}expand</span></div>
+    <div class="stream">
+      ${msg({ ico: ic.flag, cls: 'find', nm: 'Model council', ty: 'finding', tm: '11:04', rl: 'keys.ts · L44-47', code: 'return { allowed: true }', text: 'Unbounded fail-open lets any org scrape without limit during a store outage.', frag: `<span class="chip">claude 3/3</span><span class="chip">codex 3/3</span>` })}
+      ${msg({ ico: ic.question, self: true, nm: 'You', ty: 'question', tm: '11:12', rl: 'keys.ts · L44-47', code: 'if (err) return { allowed: true }', text: 'Why fail open? If the store is down, doesn’t this switch off limiting exactly when load is weirdest?' })}
+      ${msg({ ico: ic.harness, cls: 'harn', nm: 'Claude Code', ty: 'discuss', tm: '11:12', rl: 'keys.ts · L44-47', code: 'if (err) return { allowed: true }', text: 'It follows the plan: “limiter outage must never become API outage.” Failing closed turns every store blip into a 5xx storm. Observable via rate.store_error.', frag: `<span class="fragbtn">${ic.flag}finding</span><span class="fragbtn">${ic.comment}draft comment</span>` })}
+      ${msg({ ico: ic.reqchange, cls: 'rc', self: true, nm: 'You', ty: 'request-change', tm: '11:18', rl: 'keys.ts · L18', code: 'return `rl:org:${ctx.org.id}`', text: 'Re-key to org is right — but document the migration note in the PR body; a 429 now means something different for per-key clients.' })}
+      ${msg({ ico: ic.askharness, cls: 'ask', self: true, nm: 'You', ty: 'general ask', tm: '11:20', text: 'Does the fallback bucket share state across workers?' })}
+      ${msg({ ico: ic.orchestrator, cls: 'ask', nm: 'Orchestrator', ty: 'answer', tm: '11:20', text: 'No — each worker holds its own process-local bucket. That is the point of the fail-open cap: one dead store can’t become one shared unlimited allowance.' })}
+    </div>
+    <div class="composer">${ic.askharness}<span class="ph">Ask the orchestrator, or reply to a line…</span><button class="btn sm ink">${ic.askharness}</button></div>
+  </div>`;
+
+  const body = `<div class="lensbar"><span class="lens"><span style="color:#5a6069">${'<>'}</span>12</span><span class="lens on">${ic.sequence}Sequence</span><span class="lens">${ic.decisions}4</span><span class="lens">${ic.flag}2</span><span class="lens">${ic.noise}Noise</span><div class="right"><span class="chip blue">● 4 private</span><button class="btn">${ic.paper}Preview</button></div></div><div class="grid3">${rail}${center}${chat}</div>`;
 
   return {
-    title: 'Rennet v3.3 · 06 The review heart',
+    title: 'Rennet v4.0 · 06 The review heart',
     head: { badge: '06', title: 'The review heart: the sequence canvas', pill: 'Review' },
     ref: 'the tall, scrolling surface\nno viewport-fold element',
-    sub: 'The code, in-diff dispositions, and the inline conversation cluster on every line. The surface is genuinely <b>tall</b> and scrolls the whole changeset, with no fold theatre. Threads live in the right margin aligned to their line; the diff column never reflows. The sticky chunk header keeps “view test” and open-in-editor reachable.',
+    sub: 'The code, in-diff dispositions, and the inline conversation cluster on every line. The surface is genuinely <b>tall</b> and scrolls the whole changeset, with no fold theatre. The right side is now <b>one unified conversation</b> — a lightweight chat stream where every message wears an icon for its type and line-anchored messages read as a <b>reply</b> to their line; it collapses to this sidebar and expands to fill the screen. The diff column never reflows.',
     css: reviewCss,
-    win: win({ name: `<span class="gly sm plain" style="width:20px;height:20px">${ic.branch}</span>atlas · feat/rate-limiting`, meta: tmeta('patchset 8 · snapshot'), body }),
+    win: win({
+      name: reviewCrumb('feat/rate-limiting'),
+      meta: tmeta('patchset 8 · snapshot'),
+      body,
+      nav: navRail({ back: true, ctx: reviewCtx }),
+    }),
     notes: [
       { h: 'Tall and real, no fold.', b: 'The viewport-fold element is gone (Rai’s note). The surface scrolls the whole changeset; the order rail holds your place.' },
-      { h: 'View test, context-labeled.', b: 'One button reads “view test” on an implementation hunk and “view implementation” on a test; disabled “no tests” when none reference it.' },
-      { h: 'The cluster is verbs times anchors.', b: 'Comment / request-change / question / discuss, on a line, a dragged range, a chunk header, or a fragment. Ink publishes; blue stays local.' },
-      { h: 'Threads in the margin.', b: 'Conversation aligns to its line in the right margin and the composer opens there, so the diff column is a fixed point that never moves.' },
+      { h: 'One conversation, chat-style.', b: 'Ask (orchestrator) and every line thread live in one stream — no tabs. An icon per type (comment / request-change / question / discuss / general-ask / finding) tells them apart; the orchestrator finally has a visible home.' },
+      { h: 'Line anchors read as replies.', b: 'A line-anchored message carries a small quoted line-reference chip above it (Messenger reply style), so it reads as “a reply to this line,” distinct from a general ask — without a boxy card or a section header.' },
+      { h: 'Collapse and expand.', b: 'The panel is a right sidebar by default and expands to full screen for a long back-and-forth. Nav chrome frames it: the crumb says where you are, the rail’s back/⌘[ returns you to project detail.' },
     ],
   };
 }
@@ -243,12 +313,12 @@ export function frame07() {
   const body = `<div class="lensbar">${lensTabs('spec')}<div class="right"><button class="btn">raw markdown ⌘R</button></div></div>${band}${spine}${grid}${tasks}`;
 
   return {
-    title: 'Rennet v3.3 · 07 Spec view',
+    title: 'Rennet v4.0 · 07 Spec view',
     head: { badge: '07', title: 'Spec view: the structured artifact viewer', pill: 'Review' },
     ref: 'the openspec shape, rendered\nworked on build-model-council-v1',
-    sub: 'The artifact set has a known shape, so Rennet renders the <b>shape</b>, not the raw markdown: a header band, the distilled why, the why / what-changes spine, a capability grid, and requirements as structured rows with their WHEN/THEN scenarios and coverage. Requirements, scenarios and tasks are all disposition anchors. Raw markdown is one keystroke away.',
+    sub: 'The artifact set has a known shape, so Rennet renders the <b>shape</b>, not the raw markdown: a header band, the distilled why, the why / what-changes spine, a capability grid, and requirements as structured rows with their WHEN/THEN scenarios and coverage. Requirements, scenarios and tasks are all disposition anchors. Raw markdown is one keystroke away. Spec is a <b>lens tab</b> of the review, so the crumb stays on the review — you have not gone anywhere.',
     css: reviewCss + css07,
-    win: win({ name: `<span class="gly sm plain" style="width:20px;height:20px">${ic.spec}</span>build-model-council-v1`, meta: tmeta('spec · ⌘R raw'), body }),
+    win: win({ name: reviewCrumb('build-model-council-v1', ic.spec), meta: tmeta('spec · ⌘R raw'), body, nav: navRail({ back: true, ctx: reviewCtx }) }),
     notes: [
       { h: 'Render the shape, not the markdown.', b: 'Header band, distilled why, spine, capability grid, requirement rows. The raw files are always one keystroke away, never the default.' },
       { h: 'The spec is reviewable material.', b: 'The same conversation cluster works on a requirement, a scenario, a task, or a why paragraph. A request-change on a requirement collates like any other disposition.' },
@@ -300,12 +370,12 @@ export function frame08() {
   const body = `<div class="lensbar">${lensTabs('decisions')}<div class="right"><span class="chip">2 groups · 4 decisions</span></div></div>${grp1}${grp2}`;
 
   return {
-    title: 'Rennet v3.3 · 08 Decisions',
+    title: 'Rennet v4.0 · 08 Decisions',
     head: { badge: '08', title: 'Decisions: the calls the implementer made', pill: 'Review' },
     ref: 'purified, per Rai’s re-steer\nno triage taxonomy',
     sub: 'The decisions the implementer made, discernible from the spec, the PR body and the diff, grouped by theme. Each is the decision in plain language, the evidence it is drawn from, a <b>reconstructed</b> why (marked as such), and the alternatives not taken. The evidenced / mechanical / contestable buckets are gone; judging a decision is the reviewer’s job, not a pre-chewed verdict’s.',
     css: reviewCss + css08,
-    win: win({ name: `<span class="gly sm plain" style="width:20px;height:20px">${ic.decisions}</span>#482 · Decisions`, meta: tmeta('per-org rate limiting'), body }),
+    win: win({ name: reviewCrumb('#482 · rate limiting', ic.decisions), meta: tmeta('per-org rate limiting'), body, nav: navRail({ back: true, ctx: reviewCtx }) }),
     notes: [
       { h: 'The calls only you can weigh.', b: 'Decisions discerned from spec, PR body and diff, grouped by theme (for example a dedicated module for the glass theme, or a fail-open posture).' },
       { h: 'The why is reconstructed, and says so.', b: 'The rationale is inferred and labeled reconstructed, in the model’s voice. It is a starting read, not a claim of fact.' },
@@ -370,12 +440,12 @@ export function frame09() {
   const body = `<div class="lensbar">${lensTabs('flagged')}<div class="right rel"><span class="anno" style="right:150px;top:-30px">${dot(3)}</span><span class="chip">3 flags · 1 disagreement</span></div></div>${f1}${f2}${f3}`;
 
   return {
-    title: 'Rennet v3.3 · 09 Flagged',
+    title: 'Rennet v4.0 · 09 Flagged',
     head: { badge: '09', title: 'Flagged: what the automated review raised', pill: 'Review · new' },
     ref: 'the new lens\nfindings + disagreements, indexed',
     sub: 'Everything the automated review layer produced: model-council findings and dual-review disagreements. Each flag carries a severity, the agreement state (both concur, or the models disagree), and its anchor. The disagreement flare lives here, in the index, instead of ambushing you in the chat.',
     css: reviewCss + css09,
-    win: win({ name: `<span class="gly sm plain" style="width:20px;height:20px">${ic.flag}</span>#482 · Flagged`, meta: tmeta('model council · dual review'), body }),
+    win: win({ name: reviewCrumb('#482 · rate limiting', ic.flag), meta: tmeta('model council · dual review'), body, nav: navRail({ back: true, ctx: reviewCtx }) }),
     notes: [
       { h: 'One index for the machine’s opinions.', b: 'Model-council findings and dual-review disagreements, in one queue. This is the lens that repairs Decisions by subtraction: everything machine-opinionated leaves it.' },
       { h: 'Severity plus agreement state.', b: 'Each flag says how bad and how sure: both models concur, or they disagree, with the vote counts.' },
@@ -453,12 +523,12 @@ export function frame10() {
   const body = `<div class="lensbar">${lensTabs('sequence')}<div class="right"><span class="chip">${ic.peek}peek · then pin</span></div></div><div class="grid-insp">${center}${rail}</div>`;
 
   return {
-    title: 'Rennet v3.3 · 10 Symbol inspector',
+    title: 'Rennet v4.0 · 10 Symbol inspector',
     head: { badge: '10', title: 'Symbol inspector: peek, then pin', pill: 'Review' },
     ref: 'the answer to “what is this?”\nnever inline, never reflowing',
-    sub: 'A plain click on a symbol opens a floating glass peek card at the symbol: signature, doc, the first lines, and a tier label (a tree-sitter guess versus a TypeScript answer). Pin it and the card docks into the right rail as a tiny code browser you navigate with a breadcrumb and back / forward. The navigation happens inside the inspector, so the diff never moves.',
+    sub: 'A plain click on a symbol opens a floating glass peek card at the symbol: signature, doc, the first lines, and a tier label (a tree-sitter guess versus a TypeScript answer). Pin it and the card docks into the right rail as a tiny code browser you navigate with a breadcrumb and back / forward. The inspector’s own breadcrumb is <b>local</b> — an overlay — and never touches the app crumb or history; the diff never moves.',
     css: reviewCss + css10,
-    win: win({ name: `<span class="gly sm plain" style="width:20px;height:20px">${ic.branch}</span>atlas · feat/rate-limiting`, meta: tmeta('snapshot'), body }),
+    win: win({ name: reviewCrumb('feat/rate-limiting'), meta: tmeta('snapshot'), body, nav: navRail({ back: true, ctx: reviewCtx }) }),
     notes: [
       { h: 'Plain click peeks.', b: 'A floating glass card points at the symbol and never covers the clicked line. Clicking another symbol retargets the same peek; Esc dismisses it.' },
       { h: 'The tier label is honest.', b: 'A TypeScript answer says exact; a tree-sitter guess says guess and, when degraded, lists its candidates. The LSP-honesty doctrine, surfaced.' },
@@ -504,12 +574,12 @@ export function frameNoise() {
   const body = `<div class="lensbar">${lensTabs('noise')}<div class="right"><span class="chip">6 groups · 36 hunks</span></div></div>${summary}${rows}`;
 
   return {
-    title: 'Rennet v3.3 · Noise',
+    title: 'Rennet v4.0 · Noise',
     head: { badge: '10', title: 'Noise: touched, but not for you', pill: 'Review · new' },
     ref: 'issue #34 · cut the noise\ngrouped, judged, dismissible',
     sub: 'A grouped summary of everything the changeset touches but that was judged not to need your attention. Most of it is settled deterministically (the formatter, lockfile paths, import order); the ambiguous remainder is judged by an LLM noise job, and each group says which. Nothing is hidden: noise is collapsed and dismissible, never dropped. It is the totality floor.',
     css: reviewCss + cssNoise,
-    win: win({ name: `<span class="gly sm plain" style="width:20px;height:20px">${ic.noise}</span>#482 · Noise`, meta: tmeta('the floor · nothing hidden'), body }),
+    win: win({ name: reviewCrumb('#482 · rate limiting', ic.noise), meta: tmeta('the floor · nothing hidden'), body, nav: navRail({ back: true, ctx: reviewCtx }) }),
     notes: [
       { h: 'Touched, not hidden.', b: 'Everything the changeset touches is here; noise is grouped and collapsed, never dropped. This is the totality floor: the review saw all of it.' },
       { h: 'How it was judged.', b: 'Each group says whether a deterministic rule (the formatter, the lockfile path, an import-order AST check) or the LLM noise job decided it was noise.' },

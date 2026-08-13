@@ -2,7 +2,7 @@
 
 The blessed lo-fi wireframe set for Rennet. These are the design source of truth: build UI to match them.
 
-- `*.png` — rendered screens, flow order (`00-legend` … `18-flow-overview`).
+- `*.png` — rendered screens, flow order (`00-legend` … `17-flow-overview` … `18-navigation-model`).
 - `src/*.html` — self-contained HTML for each screen (generated from the builders below).
 - `src/kit.mjs` — the shared design system: CSS tokens, chrome, and the stroke icon set. Study this first; it defines the visual language.
 - `src/*.mjs` builders — `frame00.mjs`, `onboarding.mjs`, `projectslist.mjs`, `frame05.mjs`, `review.mjs`, `finalize.mjs` each emit one or more frames.
@@ -27,4 +27,4 @@ node wireframes/serve.mjs
 
 Badges are derived from each frame's filename prefix (`05-project-detail` → badge `05`), so a new screen can be inserted (e.g. `04a-projects-list`) without renumbering the frames after it.
 
-Version marker lives in `gen-wireframe-gallery.mjs` (the hero kicker). Current: **v3.3**.
+Version marker lives in `gen-wireframe-gallery.mjs` (the hero kicker + footer) and each frame's `title`. Current: **v4.0** (v3.3 plus a coherent navigation model — the breadcrumb + nav-rail spine, the unified chat conversation panel, the patchset trail, and frame `18-navigation-model`).

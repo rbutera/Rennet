@@ -1,10 +1,10 @@
 // @vitest-environment happy-dom
 //
-// Whole-`RennetApp` proofs for the inline conversation cluster (issue #36), the two
+// Whole-`RennetApp` proofs for the unified conversation panel (issue #36), the two
 // the component tests could not give:
 //   • HIGH-1 (no reflow): the SHIPPED app renders the review-heart split, with the
-//     diff column and the conversation host as FLEX SIBLINGS — so opening a thread
-//     changes only the margin. The component test that hand-built the wrapper could
+//     diff column and the conversation panel shell as FLEX SIBLINGS — so opening or
+//     expanding the panel changes only the sibling. The component test that hand-built the wrapper could
 //     not prove the app renders it; this does.
 //   • HIGH-3 (privacy at the REAL boundary): a private thread's content never reaches
 //     the actual publish construction (`publish.review` comments + payload) or the
@@ -73,19 +73,27 @@ const A3 = "CANARY_A3_HARNESS_SUBTHREAD::must-never-be-published";
 
 function harness() {
   const publishCalls: CommandInput<"publish.review">[] = [];
+  const askCalls: CommandInput<"review.ask">[] = [];
   // Each `review.ask` turn returns the next distinct answer, so answers never repeat
   // across turns — a later answer is a genuinely different body.
   const answers = [A1, A2, A3];
   let turn = 0;
   const invoke = async (name: string, _input: unknown): Promise<unknown> => {
     if (name === "review.canvases") return { canvases: demoCanvases(), elementDiffs: {} };
+    if (name === "review.reattach") return { threads: [] };
     if (name === "review.ask") {
+      const input = _input as CommandInput<"review.ask">;
+      askCalls.push(input);
+      const mode = input.mode ?? "orchestrator";
       const answer: AskReviewResult = {
-        mode: "orchestrator",
+        mode,
         primary: {
           model: "Claude",
           answer: `A private research answer. ${answers[Math.min(turn, answers.length - 1)]}`,
         },
+        ...(mode === "both"
+          ? { secondOpinion: { model: "codex", answer: "A separate Codex answer." } }
+          : {}),
       };
       turn += 1;
       return answer;
@@ -107,17 +115,21 @@ function harness() {
     }
     return { review };
   };
-  return { bridge: { invoke: invoke as unknown as RennetBridge["invoke"] }, publishCalls };
+  return {
+    bridge: { invoke: invoke as unknown as RennetBridge["invoke"] },
+    publishCalls,
+    askCalls,
+  };
 }
 
-/** Ask a question in the currently-focused composer of a specific thread cluster. */
-async function askInCluster(cluster: Element, question: string, expectAnswer: string) {
-  const input = cluster.querySelector<HTMLTextAreaElement>(".conversation-composer-input");
-  const send = cluster.querySelector<HTMLButtonElement>(".conversation-composer-send");
-  if (!input || !send) throw new Error("no composer in the cluster");
+/** Ask through the panel's one composer, which targets its currently active thread. */
+async function askInPanel(panel: Element, question: string, expectAnswer: string) {
+  const input = panel.querySelector<HTMLTextAreaElement>(".conversation-panel-input");
+  const send = panel.querySelector<HTMLButtonElement>(".conversation-panel-send");
+  if (!input || !send) throw new Error("no composer in the conversation panel");
   fireEvent.change(input, { target: { value: question } });
   fireEvent.click(send);
-  await waitFor(() => expect(cluster.textContent?.includes(expectAnswer)).toBe(true));
+  await waitFor(() => expect(panel.textContent?.includes(expectAnswer)).toBe(true));
 }
 
 function toCanvasesView(getByRole: (r: string, o: { name: string }) => HTMLElement) {
@@ -127,16 +139,21 @@ function toCanvasesView(getByRole: (r: string, o: { name: string }) => HTMLEleme
 /** Open a private thread (margin discuss) and ask a canary-bearing question, so both the
  *  human question and the harness answer carry a canary. Used by the HIGH-1 no-reflow test. */
 async function openThreadWithCanary(container: HTMLElement): Promise<void> {
-  const discuss = container.querySelector<HTMLButtonElement>(".discuss-control");
+  const panel = container.querySelector<HTMLElement>(".conversation-panel");
+  if (!panel) throw new Error("no conversation panel in the canvas view");
+  const discuss = panel.querySelector<HTMLButtonElement>(".discuss-control");
   if (!discuss) throw new Error("no margin discuss control in the canvas view");
   fireEvent.click(discuss);
-  const cluster = container.querySelector(".conversation-cluster");
-  if (!cluster) throw new Error("no thread cluster after opening");
-  await askInCluster(cluster, `why fail open? ${Q1}`, A1);
+  await waitFor(() =>
+    expect(
+      panel?.querySelector(".conversation-panel-composer")?.getAttribute("data-thread-id"),
+    ).toBeTruthy(),
+  );
+  await askInPanel(panel, `why fail open? ${Q1}`, A1);
 }
 
 describe("RennetApp — the review-heart split ships (issue #36 HIGH-1, no reflow)", () => {
-  it("renders the diff column and the conversation host as FLEX SIBLINGS in the split", async () => {
+  it("renders one conversation stream beside the diff and keeps both-model comparison reachable", async () => {
     const { bridge } = harness();
     const { container, getByRole } = mount(<RennetApp bridge={bridge} />);
     await waitFor(() => expect(container.querySelector(".destination-frame")).not.toBeNull());
@@ -147,12 +164,19 @@ describe("RennetApp — the review-heart split ships (issue #36 HIGH-1, no reflo
     // Both are DIRECT children of the split — siblings, not stacked. This is exactly
     // what the hand-built component test could not prove about the shipped app.
     const diff = split.querySelector<HTMLElement>(":scope > .diff-column");
-    const host = split.querySelector<HTMLElement>(":scope > .conversation-host");
+    const panelShell = split.querySelector<HTMLElement>(":scope > .conversation-panel-shell");
     expect(diff).not.toBeNull();
-    expect(host).not.toBeNull();
+    expect(panelShell).not.toBeNull();
+    expect(split.querySelectorAll(".conversation-panel-stream")).toHaveLength(1);
+
+    const askPanel = container.querySelector<HTMLElement>(".ask-panel");
+    const options = askPanel?.querySelector<HTMLButtonElement>(".ask-send-caret");
+    if (!options) throw new Error("the both-model AskPanel is not reachable");
+    fireEvent.click(options);
+    expect(askPanel?.querySelector('.ask-menu-item[data-mode="both"]')).not.toBeNull();
   });
 
-  it("opening a thread changes only the margin — the diff column's DOM is untouched", async () => {
+  it("opening and expanding the panel leave the diff column's allocation untouched", async () => {
     const { bridge } = harness();
     const { container, getByRole } = mount(<RennetApp bridge={bridge} />);
     await waitFor(() => expect(container.querySelector(".destination-frame")).not.toBeNull());
@@ -160,16 +184,56 @@ describe("RennetApp — the review-heart split ships (issue #36 HIGH-1, no reflo
     await waitFor(() => expect(container.querySelector(".review-heart-split")).not.toBeNull());
     const diffColumn = () =>
       container.querySelector<HTMLElement>(".review-heart-split > .diff-column");
-    const before = diffColumn()?.querySelectorAll("*").length ?? -1;
-    expect(before).toBeGreaterThan(0);
+    const diffBefore = diffColumn();
+    const beforeNodes = diffBefore?.querySelectorAll("*").length ?? -1;
+    expect(beforeNodes).toBeGreaterThan(0);
+    expect(diffBefore?.className).toBe("diff-column");
     // Open a thread in the margin.
     await openThreadWithCanary(container);
-    expect(container.querySelector(".conversation-cluster")).not.toBeNull();
-    // The diff column's node count is IDENTICAL — the margin is a sibling, so growing
-    // it never reflows the code. RED-proof: nest the host inside `.diff-column` and this
-    // count changes when the thread opens.
-    const after = diffColumn()?.querySelectorAll("*").length ?? -2;
-    expect(after).toBe(before);
+    expect(container.querySelector(".conversation-panel .chat-row")).not.toBeNull();
+    const expand = container.querySelector<HTMLButtonElement>(".conversation-panel-expand");
+    if (!expand) throw new Error("no conversation expand control");
+    fireEvent.click(expand);
+    expect(container.querySelector(".conversation-panel--expanded")).not.toBeNull();
+
+    // The exact same diff element retains its DOM and class contract. Expansion is
+    // carried ONLY by the inner panel, whose fixed-width shell stays the direct flex
+    // sibling. RED-proof: move the expanded class to the diff or its shell and these
+    // assertions fail; unlike happy-dom's always-zero offsetWidth, this is structural.
+    const diffAfter = diffColumn();
+    expect(diffAfter).toBe(diffBefore);
+    expect(diffAfter?.querySelectorAll("*").length).toBe(beforeNodes);
+    expect(diffAfter?.className).toBe("diff-column");
+    const panelShell = container.querySelector<HTMLElement>(
+      ".review-heart-split > .conversation-panel-shell",
+    );
+    expect(panelShell?.className).toBe("conversation-panel-shell");
+    expect(panelShell?.querySelector(":scope > .conversation-panel--expanded")).not.toBeNull();
+
+    fireEvent.click(expand);
+    expect(container.querySelector(".conversation-panel--expanded")).toBeNull();
+  });
+
+  it("asks the orchestrator from the panel directly, with no permission step", async () => {
+    const { bridge, askCalls } = harness();
+    const { container, getByRole } = mount(<RennetApp bridge={bridge} />);
+    await waitFor(() => expect(container.querySelector(".destination-frame")).not.toBeNull());
+    toCanvasesView(getByRole);
+    await waitFor(() => expect(container.querySelector(".conversation-panel")).not.toBeNull());
+    const panel = container.querySelector<HTMLElement>(".conversation-panel");
+    if (!panel) throw new Error("no conversation panel");
+
+    await askInPanel(panel, "What should I review first?", A1);
+
+    expect(askCalls).toHaveLength(1);
+    expect(askCalls[0]).toMatchObject({
+      reviewId: review.id,
+      mode: "orchestrator",
+      question: "What should I review first?",
+    });
+    expect(askCalls[0] && "permission" in askCalls[0]).toBe(false);
+    expect(panel.querySelectorAll(".conversation-panel-stream")).toHaveLength(1);
+    expect(panel.querySelector('[data-ask-type="general-ask"] .replychip')).toBeNull();
   });
 });
 
@@ -199,29 +263,27 @@ describe("RennetApp — a private thread never reaches the publish boundary (iss
     // fragment sub-thread — six bodies, each with its own canary. The threads stay
     // mounted (canvas view) while the paper — always-present chrome — signs.
     toCanvasesView(getByRole);
-    await waitFor(() => expect(container.querySelector(".conversation-host")).not.toBeNull());
+    await waitFor(() => expect(container.querySelector(".conversation-panel")).not.toBeNull());
+    const panel = container.querySelector<HTMLElement>(".conversation-panel");
+    if (!panel) throw new Error("no conversation panel");
     // Turn 1 (margin discuss): q1 → a1.
-    fireEvent.click(container.querySelector(".discuss-control") as HTMLButtonElement);
-    const thread1 = container.querySelector(".conversation-cluster");
-    if (!thread1) throw new Error("no thread after discuss");
-    await askInCluster(thread1, `why fail open? ${Q1}`, A1);
-    // Turn 2 in the SAME thread (a LATER human message + a later answer): q2 → a2.
-    await askInCluster(thread1, `and then what? ${Q2}`, A2);
-    // A fragment SUB-THREAD on the first harness answer → a SECOND thread: q3 → a3.
-    fireEvent.click(thread1.querySelector(".thread-promote-btn.is-subthread") as HTMLButtonElement);
+    fireEvent.click(panel.querySelector(".discuss-control") as HTMLButtonElement);
     await waitFor(() =>
-      expect(container.querySelectorAll(".conversation-cluster")).toHaveLength(2),
+      expect(
+        panel.querySelector(".conversation-panel-composer")?.getAttribute("data-thread-id"),
+      ).toBeTruthy(),
     );
-    const fragment = Array.from(container.querySelectorAll(".conversation-cluster")).find(
-      (node) => node !== container.querySelector(".conversation-cluster"),
+    await askInPanel(panel, `why fail open? ${Q1}`, A1);
+    // Turn 2 in the SAME thread (a LATER human message + a later answer): q2 → a2.
+    await askInPanel(panel, `and then what? ${Q2}`, A2);
+    // A fragment SUB-THREAD on the first harness answer → a SECOND thread: q3 → a3.
+    fireEvent.click(panel.querySelector(".thread-promote-btn.is-subthread") as HTMLButtonElement);
+    await waitFor(() =>
+      expect(
+        panel.querySelector(".conversation-panel-composer")?.getAttribute("data-anchor-kind"),
+      ).toBe("fragment"),
     );
-    // (the fragment is the second cluster; query it fresh so we ask in ITS composer)
-    const clusters = Array.from(container.querySelectorAll(".conversation-cluster"));
-    await askInCluster(
-      clusters[clusters.length - 1] ?? (fragment as Element),
-      `what do you mean? ${Q3}`,
-      A3,
-    );
+    await askInPanel(panel, `what do you mean? ${Q3}`, A3);
 
     // Open the draft, stage the comment to ink, freeze the paper, and hold-to-sign.
     fireEvent.click(container.querySelector(".destination-open-draft") as HTMLButtonElement);
@@ -242,7 +304,7 @@ describe("RennetApp — a private thread never reaches the publish boundary (iss
     await waitFor(() => expect(publishCalls).toHaveLength(1));
 
     // ⭐ The proof is over the CORPUS DERIVED FROM THE LIVE DOM, not an enumerated canary
-    // list (#36 F-A, fourth round). Every mounted `.thread-message-body` — human and model,
+    // list (#36 F-A, fourth round). Every mounted `.chat-message-text` — human and model,
     // every turn, every thread — is a forbidden string; a ten-turn fixture is covered
     // automatically because the corpus grows WITH the fixture instead of being listed
     // beside it. (Route 1 — a purely structural "the publish construction reads no thread
@@ -251,7 +313,7 @@ describe("RennetApp — a private thread never reaches the publish boundary (iss
     // directly at `app.tsx`, which no import/parameter shape forbids. So the corpus scan is
     // the honest proof, and its limit is named: it catches a body that reaches the
     // outbound, not one that a future door might paraphrase.)
-    const corpus = Array.from(container.querySelectorAll(".thread-message-body"))
+    const corpus = Array.from(panel.querySelectorAll(".chat-message-text"))
       .map((node) => node.textContent ?? "")
       .filter((text) => text.trim() !== "");
 
@@ -266,7 +328,7 @@ describe("RennetApp — a private thread never reaches the publish boundary (iss
     // escapes exactly the quotes / backslashes / newlines a real secret contains (Q2
     // carries all three). So inspect each `comments[].body` directly, and PARSE `payload`
     // before inspecting ITS comment bodies. The paper is DOM text (untransformed), scanned
-    // raw. RED-proof: fold any `.thread-message-body` (e.g. index 2, the quote/newline
+    // raw. RED-proof: fold any `.chat-message-text` (e.g. index 2, the quote/newline
     // body) into `comments[0].body` in `signPaper` — the structured check reddens where a
     // `JSON.stringify(...).includes(body)` check stayed green.
     const call = publishCalls[0];

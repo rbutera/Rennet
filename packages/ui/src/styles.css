@@ -29,6 +29,246 @@ button {
   font: inherit;
 }
 
+/* Frame 06 unified conversation panel. The shell remains the fixed-width flex
+ * sibling while the inner panel expands as an overlay, so the diff column keeps
+ * exactly the same flex allocation in both states. */
+.conversation-panel-shell {
+  min-width: 0;
+}
+.review-heart-split > .conversation-panel-shell {
+  flex: none;
+  width: 340px;
+  max-width: 40%;
+}
+.conversation-panel.chat {
+  display: flex;
+  min-height: 360px;
+  flex-direction: column;
+  margin: -4px 0;
+  padding-left: 18px;
+  border-left: 1px solid var(--hairline);
+  background: var(--surface);
+}
+.conversation-panel--expanded {
+  position: fixed;
+  z-index: 40;
+  inset: 52px 0 0 56px;
+  width: auto;
+  max-width: none;
+  margin: 0;
+  padding: 24px;
+  border-left: 0;
+  overflow: auto;
+}
+.conversation-panel-header.chat-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-bottom: 11px;
+  border-bottom: 1px solid var(--hairline);
+  color: var(--text-faint);
+  font: 600 11px / 1 var(--mono);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.conversation-panel-expand.exp {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 4px 8px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: var(--surface);
+  color: var(--text-soft);
+  font: 500 11.5px / 1 var(--sans);
+  letter-spacing: 0;
+  text-transform: none;
+  cursor: pointer;
+}
+.conversation-panel-discuss {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 10px 0 0;
+}
+.conversation-panel-stream.stream {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 15px;
+  padding: 15px 0 6px;
+}
+.chat-row.msg {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+}
+.chat-row[data-lane="blue"] .chat-type-icon {
+  border-color: var(--private-line);
+  background: var(--private-fill);
+  color: var(--private);
+}
+.chat-row.is-orphaned {
+  opacity: 0.85;
+}
+.chat-type-icon.tico {
+  display: flex;
+  width: 25px;
+  height: 25px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-soft);
+}
+.chat-type-icon.tico--request-change {
+  border-color: var(--amber-line);
+  background: var(--amber-fill);
+  color: var(--amber);
+}
+.chat-type-icon.tico--general-ask,
+.chat-type-icon.tico--discuss {
+  border-color: var(--private-line);
+  background: var(--private-fill);
+  color: var(--private);
+}
+.chat-message.mb {
+  min-width: 0;
+  flex: 1;
+}
+.chat-message-head.mh {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+}
+.chat-message-name.nm {
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.chat-message-type.ty {
+  color: var(--text-faint);
+  font: 500 10px / 1 var(--mono);
+}
+.replychip {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 7px;
+  margin: 5px 0 4px;
+  padding: 3px 8px;
+  border: 0;
+  border-left: 2px solid var(--private);
+  border-radius: 0 6px 6px 0;
+  background: var(--private-fill);
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.replychip-reference.rl {
+  flex: none;
+  color: var(--private);
+  font: 500 9.5px / 1.2 var(--mono);
+}
+.replychip-context.rc {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-soft);
+  font: 500 10.5px / 1.2 var(--code);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.chat-message-text.mt,
+.chat-message-interrupted {
+  margin: 2px 0 0;
+  color: var(--text);
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.chat-message-interrupted,
+.conversation-panel-error {
+  color: var(--del-glyph);
+}
+.chat-message-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+.chat-row--anchor-context .chat-message-text {
+  color: var(--text-faint);
+}
+.conversation-anchor-context {
+  width: 100%;
+  margin: 5px 0 4px;
+  padding: 4px 8px;
+  border: 0;
+  border-left: 2px solid var(--private);
+  background: var(--private-fill);
+  color: var(--private);
+  font: 500 10px / 1.3 var(--mono);
+  text-align: left;
+  cursor: pointer;
+}
+.conversation-composer-context {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 5px 8px;
+  border-left: 2px solid var(--private);
+  background: var(--private-fill);
+  color: var(--private);
+  font: 500 10px / 1.2 var(--mono);
+}
+.conversation-composer-context button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+.conversation-panel-error {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+.conversation-panel-composer.composer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding: 8px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--private);
+}
+.conversation-panel-input {
+  min-width: 0;
+  min-height: 36px;
+  flex: 1;
+  resize: vertical;
+  border: 0;
+  outline: 0;
+  background: transparent;
+  color: var(--text);
+  font: 500 12.5px / 1.45 var(--sans);
+}
+.conversation-panel-send {
+  padding: 6px 10px;
+  border: 1px solid var(--private-line);
+  border-radius: var(--chip-radius);
+  background: var(--private-fill);
+  color: var(--private);
+  font-size: 12px;
+  cursor: pointer;
+}
+.conversation-panel-send:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
 /* The destination rail (issue #64) is persistent chrome fixed to the right. The
  * two working views reserve a gutter for it so nothing ever overlaps it. The
  * front door / empty state carries no destination, so it takes no gutter. */
@@ -60,6 +300,146 @@ button {
   display: flex;
   align-items: center;
   gap: 12px;
+}
+.navigation-shell {
+  min-height: 100vh;
+  background: var(--chrome-bg);
+}
+.navigation-titlebar {
+  position: fixed;
+  z-index: 20;
+  top: 0;
+  right: 0;
+  left: 0;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  padding: 0 18px 0 80px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--side-bg);
+  -webkit-backdrop-filter: var(--side-blur);
+  backdrop-filter: var(--side-blur);
+}
+.navigation-titlebar-context {
+  margin-left: auto;
+  margin-right: 190px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.navigation-mode-pill,
+.navigation-patchset-chip {
+  border: 1px solid var(--hairline);
+  border-radius: var(--chip-radius);
+  padding: 5px 8px;
+  color: var(--text-soft);
+  background: var(--surface-2);
+  font-size: 11px;
+}
+.navigation-mode-pill {
+  font-weight: 700;
+}
+.navigation-patchset-chip {
+  font-family: var(--mono);
+}
+.navigation-surface-content {
+  min-height: 100vh;
+  padding-top: 52px;
+  padding-left: 68px;
+}
+.nav-breadcrumb {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+.nav-breadcrumb-item {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.nav-breadcrumb-separator {
+  flex: none;
+  color: var(--text-faint);
+  opacity: 0.65;
+}
+.nav-breadcrumb-segment {
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  border: 0;
+  padding: 4px 2px;
+  color: var(--text-soft);
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.nav-breadcrumb-segment:hover {
+  color: var(--text);
+}
+.nav-breadcrumb-segment[aria-current="page"] {
+  color: var(--text);
+  font-weight: 700;
+  cursor: default;
+  opacity: 1;
+}
+.nav-breadcrumb-home {
+  color: var(--accent);
+  font-size: 14px;
+}
+.nav-rail {
+  position: fixed;
+  z-index: 20;
+  top: 52px;
+  bottom: 0;
+  left: 0;
+  width: 68px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 7px;
+  border-right: 1px solid var(--hairline);
+  background: var(--side-bg);
+}
+.nav-rail-history,
+.nav-rail-destinations {
+  display: grid;
+  gap: 5px;
+}
+.nav-rail-button {
+  min-height: 48px;
+  display: grid;
+  place-items: center;
+  gap: 3px;
+  border: 1px solid transparent;
+  border-radius: var(--chip-radius);
+  padding: 6px 3px;
+  color: var(--text-soft);
+  background: transparent;
+  font-size: 9px;
+  line-height: 1;
+  cursor: pointer;
+}
+.nav-rail-button:hover:not(:disabled) {
+  border-color: var(--hairline);
+  color: var(--text);
+  background: var(--surface-2);
+}
+.nav-rail-button:disabled {
+  color: var(--text-faint);
+  cursor: default;
+  opacity: 0.42;
+}
+.nav-rail-glyph {
+  font-size: 16px;
+  line-height: 1;
 }
 .topbar h1 {
   margin: 1px 0 0;
@@ -552,14 +932,13 @@ button {
 
 /* Additive view toggle between the file/review surface and the canvas surface (#11).
  * Glass chrome pill (frosted), soft-blue active state. */
-/* Two standalone tab pills, not a chunky box of buttons (#62): each pill matches
- * .workspace-projects / .entry-back exactly (same padding, border, radius, glass),
- * so the three top-corner controls share one height and one corner radius. The old
- * form nested 9px pills inside a 12px padded box, which sat taller than its siblings
- * and read as a mismatched "last radius button". */
+/* Two standalone tab pills, not a chunky box of buttons (#62): each pill uses the
+ * same terse glass treatment as the navigation chrome. The old form nested 9px pills
+ * inside a 12px padded box, which sat taller than its siblings and read as a
+ * mismatched "last radius button". */
 .view-toggle {
   position: fixed;
-  z-index: 12;
+  z-index: 21;
   top: 12px;
   right: 16px;
   display: inline-flex;
@@ -2192,28 +2571,8 @@ button {
   font-size: 13px;
 }
 
-/* The terse escape hatch to the legacy repo/PR entry, and the back controls. */
-.front-door-direct {
-  position: fixed;
-  z-index: 12;
-  bottom: 18px;
-  left: 50%;
-  transform: translateX(-50%);
-  padding: 7px 13px;
-  border: 1px solid var(--hairline);
-  border-radius: var(--chip-radius);
-  background: var(--side-bg);
-  -webkit-backdrop-filter: var(--side-blur);
-  backdrop-filter: var(--side-blur);
-  color: var(--text-faint);
-  font-size: 12px;
-  cursor: pointer;
-}
-.front-door-direct:hover {
-  color: var(--text-soft);
-}
-.entry-back,
-.workspace-projects {
+/* Back from the palette-only direct-entry overlay to the Projects surface. */
+.entry-back {
   position: fixed;
   z-index: 12;
   top: 12px;
@@ -2232,8 +2591,7 @@ button {
   font-weight: 600;
   cursor: pointer;
 }
-.entry-back:hover,
-.workspace-projects:hover {
+.entry-back:hover {
   color: var(--text);
 }
 

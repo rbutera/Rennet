@@ -1,4 +1,4 @@
-// Rennet v3.3 wireframes — shared design system, chrome, icon set.
+// Rennet v4.0 wireframes — shared design system, chrome, icon set.
 // Emitted frames are self-contained (this CSS is inlined into every .html).
 
 export const CSS = `
@@ -95,6 +95,44 @@ svg{ display:block; width:16px; height:16px; }
 .modepill{ display:inline-flex; align-items:center; gap:7px; font-family:var(--sans); font-size:12.5px; color:var(--text);
   border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
 .modepill svg{ width:14px; height:14px; }
+
+/* ---- v4.0 navigation chrome ---- */
+/* breadcrumb spine in the title bar (the "where am I") — glass, sans, interactive */
+.crumbs{ display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+.cseg{ display:inline-flex; align-items:center; gap:6px; font-size:14px; font-weight:550; color:var(--muted); }
+.cseg .cico{ display:flex; color:#5a6069; }
+.cseg .cico svg{ width:15px; height:15px; }
+.cseg.cur{ color:var(--text); font-weight:650; }
+.cseg.root{ color:var(--muted); }
+.csep{ display:flex; color:#aab0b8; }
+.csep svg{ width:13px; height:13px; }
+
+/* the compact left nav rail (the "where can I go" controls): back/forward, home, projects, context */
+.winmain{ display:flex; align-items:stretch; }
+.winmain > .content{ flex:1; min-width:0; }
+.navrail{ flex:none; width:64px; align-self:stretch; background:var(--glass); border-right:1px solid var(--line);
+  display:flex; flex-direction:column; align-items:center; gap:13px; padding:16px 0 18px; }
+.navbtn{ display:flex; flex-direction:column; align-items:center; gap:4px; color:var(--muted); }
+.navbtn .gb{ width:34px; height:34px; border-radius:9px; border:1px solid var(--line2); background:#fff;
+  display:flex; align-items:center; justify-content:center; color:#2a2e34; }
+.navbtn .gb svg{ width:18px; height:18px; }
+.navbtn .cap{ font-family:var(--mono); font-size:9px; letter-spacing:.02em; color:var(--faint); }
+.navbtn.off{ opacity:.38; }
+.navrail .sep{ width:28px; height:1px; background:var(--line2); }
+.navrail .ctx{ margin-top:auto; display:flex; flex-direction:column; align-items:center; gap:6px; }
+.navrail .ctx .cnode{ width:30px; height:30px; border-radius:8px; display:flex; align-items:center; justify-content:center;
+  border:1px solid var(--line2); background:#fff; color:#5a6069; }
+.navrail .ctx .cnode svg{ width:15px; height:15px; }
+.navrail .ctx .cnode.on{ background:var(--blue-bg); border-color:var(--blue-line); color:var(--blue-ink); }
+.navrail .ctx .cbar{ width:1.5px; height:9px; background:var(--line2); }
+.navrail .ctx .clab{ font-family:var(--mono); font-size:8.5px; color:var(--faint); }
+
+/* the patchset chip (title-bar meta) with an optional trail caret */
+.psetchip{ display:inline-flex; align-items:center; gap:6px; font-family:var(--sans); font-size:12px; color:var(--text);
+  border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
+.psetchip svg{ width:13px; height:13px; color:#5a6069; }
+.psetchip .pcaret{ display:flex; color:#aab0b8; }
+.psetchip .pcaret svg{ width:12px; height:12px; }
 `;
 
 // --- icon set: stroke-only, greyscale (final art keeps semantics, refined) ---
@@ -137,6 +175,8 @@ export const ic = {
   cmd: S('<path d="M9 4.5A2.5 2.5 0 1 0 11.5 7v10A2.5 2.5 0 1 0 9 19.5"/><path d="M15 4.5A2.5 2.5 0 1 1 12.5 7v10a2.5 2.5 0 1 1 2.5 2.5" transform="translate(0.5 0)"/>'),
   chevron: S('<path d="M8 10l4 4 4-4"/>'),
   chevronR: S('<path d="M9 6l6 6-6 6"/>'),
+  chevronL: S('<path d="M15 6l-6 6 6 6"/>'),
+  home: S('<path d="M4 11l8-7 8 7"/><path d="M6.5 9.5V20h4v-6h3v6h4V9.5"/>'),
   plus: S('<path d="M12 5v14M5 12h14"/>'),
   dotsdrag: S('<circle cx="9" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="6" r="1.2" fill="currentColor" stroke="none"/><circle cx="9" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1.2" fill="currentColor" stroke="none"/><circle cx="9" cy="18" r="1.2" fill="currentColor" stroke="none"/><circle cx="15" cy="18" r="1.2" fill="currentColor" stroke="none"/>'),
   sun: S('<circle cx="12" cy="12" r="4"/><path d="M12 2v2.5M12 19.5V22M4.2 4.2l1.8 1.8M18 18l1.8 1.8M2 12h2.5M19.5 12H22M4.2 19.8L6 18M18 6l1.8-1.8"/>', { w: 1.4 }),
@@ -171,7 +211,52 @@ export function doc({ title, head, sub, ref, win, notes, css = '' }) {
 </div></body></html>`;
 }
 
-// window helper
-export function win({ name, meta, body }) {
-  return `<div class="win"><div class="tbar">${traffic}<span class="tname">${name}</span><span class="tmeta">${meta}</span></div><div class="content">${body}</div></div>`;
+// --- v4.0 navigation helpers ---
+
+// interactive breadcrumb chain for the title bar. segments: [{label, icon?, cur?, root?}]
+// lenses never appear here (they are tabs); the leaf is the current surface.
+export function crumb(segments) {
+  return `<span class="crumbs">${segments
+    .map(
+      (s, i) =>
+        `${i ? `<span class="csep">${ic.chevronR}</span>` : ''}<span class="cseg${s.cur ? ' cur' : ''}${s.root ? ' root' : ''}">${s.icon ? `<span class="cico">${s.icon}</span>` : ''}${s.label}</span>`,
+    )
+    .join('')}</span>`;
+}
+
+// the compact left nav rail. back/forward are the temporal history (⌘[ / ⌘]); home + projects
+// jump; ctx nodes show the current project → review lineage. Muted when history is empty.
+export function navRail({ back = true, fwd = false, ctx } = {}) {
+  const btn = (icon, cap, off) =>
+    `<span class="navbtn${off ? ' off' : ''}"><span class="gb">${icon}</span><span class="cap">${cap}</span></span>`;
+  return `<div class="navrail">
+    ${btn(ic.chevronL, '⌘[', !back)}
+    ${btn(ic.chevronR, '⌘]', !fwd)}
+    <span class="sep"></span>
+    ${btn(ic.home, 'Home')}
+    ${btn(ic.repo, 'Projects')}
+    ${ctx || ''}
+  </div>`;
+}
+
+// current-review context stack for the bottom of the nav rail
+export function navCtx(nodes) {
+  return `<div class="ctx">${nodes
+    .map(
+      (n, i) =>
+        `${i ? '<span class="cbar"></span>' : ''}<span class="cnode${n.on ? ' on' : ''}" title="${n.title || ''}">${n.icon}</span>`,
+    )
+    .join('')}<span class="clab">here</span></div>`;
+}
+
+export function patchsetChip(label, { trail = false } = {}) {
+  return `<span class="psetchip">${ic.resteer}${label}${trail ? `<span class="pcaret">${ic.chevron}</span>` : ''}</span>`;
+}
+
+// window helper. Pass `nav` (a navRail) to add the compact left nav rail beside the content.
+export function win({ name, meta, body, nav }) {
+  const inner = nav
+    ? `<div class="winmain">${nav}<div class="content">${body}</div></div>`
+    : `<div class="content">${body}</div>`;
+  return `<div class="win"><div class="tbar">${traffic}<span class="tname">${name}</span><span class="tmeta">${meta}</span></div>${inner}</div>`;
 }

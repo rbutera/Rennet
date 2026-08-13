@@ -1,5 +1,5 @@
 <!doctype html><html lang="en"><head><meta charset="utf-8">
-<title>Rennet v3.3 · 06 The review heart</title><style>
+<title>Rennet v4.0 · 06 The review heart</title><style>
 :root{
   --ground:#e7e9ec; --ink:#181b1f; --text:#1c1f24; --muted:#697079; --faint:#9aa1a9;
   --win:#ffffff; --titlebar:#f4f5f7; --glass:#eceff2; --card:#ffffff;
@@ -94,6 +94,44 @@ svg{ display:block; width:16px; height:16px; }
   border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
 .modepill svg{ width:14px; height:14px; }
 
+/* ---- v4.0 navigation chrome ---- */
+/* breadcrumb spine in the title bar (the "where am I") — glass, sans, interactive */
+.crumbs{ display:flex; align-items:center; gap:7px; flex-wrap:wrap; }
+.cseg{ display:inline-flex; align-items:center; gap:6px; font-size:14px; font-weight:550; color:var(--muted); }
+.cseg .cico{ display:flex; color:#5a6069; }
+.cseg .cico svg{ width:15px; height:15px; }
+.cseg.cur{ color:var(--text); font-weight:650; }
+.cseg.root{ color:var(--muted); }
+.csep{ display:flex; color:#aab0b8; }
+.csep svg{ width:13px; height:13px; }
+
+/* the compact left nav rail (the "where can I go" controls): back/forward, home, projects, context */
+.winmain{ display:flex; align-items:stretch; }
+.winmain > .content{ flex:1; min-width:0; }
+.navrail{ flex:none; width:64px; align-self:stretch; background:var(--glass); border-right:1px solid var(--line);
+  display:flex; flex-direction:column; align-items:center; gap:13px; padding:16px 0 18px; }
+.navbtn{ display:flex; flex-direction:column; align-items:center; gap:4px; color:var(--muted); }
+.navbtn .gb{ width:34px; height:34px; border-radius:9px; border:1px solid var(--line2); background:#fff;
+  display:flex; align-items:center; justify-content:center; color:#2a2e34; }
+.navbtn .gb svg{ width:18px; height:18px; }
+.navbtn .cap{ font-family:var(--mono); font-size:9px; letter-spacing:.02em; color:var(--faint); }
+.navbtn.off{ opacity:.38; }
+.navrail .sep{ width:28px; height:1px; background:var(--line2); }
+.navrail .ctx{ margin-top:auto; display:flex; flex-direction:column; align-items:center; gap:6px; }
+.navrail .ctx .cnode{ width:30px; height:30px; border-radius:8px; display:flex; align-items:center; justify-content:center;
+  border:1px solid var(--line2); background:#fff; color:#5a6069; }
+.navrail .ctx .cnode svg{ width:15px; height:15px; }
+.navrail .ctx .cnode.on{ background:var(--blue-bg); border-color:var(--blue-line); color:var(--blue-ink); }
+.navrail .ctx .cbar{ width:1.5px; height:9px; background:var(--line2); }
+.navrail .ctx .clab{ font-family:var(--mono); font-size:8.5px; color:var(--faint); }
+
+/* the patchset chip (title-bar meta) with an optional trail caret */
+.psetchip{ display:inline-flex; align-items:center; gap:6px; font-family:var(--sans); font-size:12px; color:var(--text);
+  border:1px solid var(--line2); border-radius:7px; padding:5px 9px; background:#fff; }
+.psetchip svg{ width:13px; height:13px; color:#5a6069; }
+.psetchip .pcaret{ display:flex; color:#aab0b8; }
+.psetchip .pcaret svg{ width:12px; height:12px; }
+
 .lensbar{ display:flex; align-items:center; gap:8px; margin-bottom:16px; }
 .lens{ display:flex; align-items:center; gap:7px; font-family:var(--mono); font-size:12.5px; color:var(--muted);
   border:1px solid var(--line2); border-radius:8px; padding:7px 11px; background:#fff; }
@@ -153,6 +191,39 @@ svg{ display:block; width:16px; height:16px; }
 .fragbtn{ font-family:var(--mono); font-size:11px; color:var(--muted); border:1px solid var(--line2); border-radius:6px; padding:4px 7px; display:inline-flex; align-items:center; gap:5px; background:#fff; }
 .composer{ display:flex; align-items:center; gap:9px; border:1px solid var(--line2); border-radius:9px; padding:9px 11px; margin-top:4px; }
 .composer .ph{ color:var(--faint); font-size:13px; flex:1; }
+
+/* ---- v4.0 unified conversation panel (one chat-style stream) ---- */
+.chat{ border-left:1px solid var(--line); padding-left:18px; margin:-4px 0; display:flex; flex-direction:column; }
+.chat-h{ display:flex; align-items:center; gap:8px; padding-bottom:11px; border-bottom:1px solid var(--line);
+  font-family:var(--mono); font-size:11px; letter-spacing:.1em; text-transform:uppercase; color:var(--faint); }
+.chat-h .exp{ margin-left:auto; display:inline-flex; align-items:center; gap:6px; font-family:var(--sans);
+  text-transform:none; letter-spacing:0; font-size:11.5px; color:var(--muted); border:1px solid var(--line2);
+  border-radius:7px; padding:4px 8px; background:#fff; }
+.chat-h .exp svg{ width:13px; height:13px; }
+.stream{ display:flex; flex-direction:column; gap:15px; padding:15px 0 6px; }
+/* one lightweight chat row: type-icon gutter + message. No card box. */
+.msg{ display:flex; gap:9px; align-items:flex-start; }
+.msg .tico{ flex:none; width:25px; height:25px; border-radius:50%; border:1px solid var(--line2); background:#fff;
+  display:flex; align-items:center; justify-content:center; color:#6b7178; }
+.msg .tico svg{ width:13px; height:13px; }
+.msg .tico.rc{ color:var(--amber); border-color:var(--amber-line); background:var(--amber-bg); }
+.msg .tico.find{ color:#a8434f; border-color:#e6c3c9; background:#fbeef0; }
+.msg .tico.ask{ color:var(--blue-ink); border-color:var(--blue-line); background:var(--blue-bg); }
+.msg .tico.harn{ color:var(--blue); border-color:var(--blue-line); background:var(--blue-bg); }
+.msg .mb{ flex:1; min-width:0; }
+.msg .mh{ display:flex; align-items:baseline; gap:7px; }
+.msg .mh .nm{ font-size:12.5px; font-weight:600; }
+.msg .mh .ty{ font-family:var(--mono); font-size:10px; color:var(--faint); }
+.msg .mh .tm{ margin-left:auto; font-family:var(--mono); font-size:10px; color:var(--faint); }
+/* the WhatsApp/Messenger reply chip: a quoted line reference above the message */
+.replychip{ display:flex; align-items:center; gap:7px; border-left:2px solid var(--blue); background:#f4f8fb;
+  border-radius:0 6px 6px 0; padding:3px 8px; margin:5px 0 4px; }
+.replychip .rl{ font-family:var(--mono); font-size:9.5px; color:var(--blue-ink); flex:none; }
+.replychip .rc{ font-family:var(--code); font-size:10.5px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.msg .mt{ font-size:12.5px; line-height:1.5; color:var(--text); margin-top:2px; }
+.msg .mfrag{ display:flex; gap:6px; margin-top:7px; flex-wrap:wrap; }
+.msg.self .tico{ background:#eef0f2; color:#5a6069; }
+.chat .composer{ margin-top:14px; }
 </style></head>
 <body><div class="page">
   <div class="fhead">
@@ -162,8 +233,15 @@ svg{ display:block; width:16px; height:16px; }
     <div class="fref">the tall, scrolling surface
 no viewport-fold element</div>
   </div>
-  <p class="fsub">The code, in-diff dispositions, and the inline conversation cluster on every line. The surface is genuinely <b>tall</b> and scrolls the whole changeset, with no fold theatre. Threads live in the right margin aligned to their line; the diff column never reflows. The sticky chunk header keeps “view test” and open-in-editor reachable.</p>
-  <div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="gly sm plain" style="width:20px;height:20px"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="8" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 10.3c0 4-3.5 4.4-6.4 5.2"/></svg></span>atlas · feat/rate-limiting</span><span class="tmeta"><span class="modepill"><span style="color:#2a2e34"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span>auto<span style="color:#aab0b8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></span><span>patchset 8 · snapshot</span></span></div><div class="content"><div class="lensbar"><span class="lens"><span style="color:#5a6069"><></span>12</span><span class="lens on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4.2" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="4.2" cy="12" r="1.3"/><path d="M3 17l1.2 1.2L6 16.4" /></svg>Sequence</span><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M6 8.4v7.2M8.3 6.9C13 7.5 15.6 8.9 16 10.6M8.2 17c4.8-.6 7.4-2 7.8-3.8"/></svg>4</span><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/></svg>2</span><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h3.5l2-6.5 3 13 2.4-9 1.6 3.5H22"/></svg>Noise</span><div class="right"><span class="chip blue">● 4 private</span><button class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l3 3v15H6z"/><path d="M15 3v3h3"/><path d="M9 12h6M9 15.5h6M9 8.5h3"/></svg>Preview</button></div></div><div class="grid3"><div class="orderrail">
+  <p class="fsub">The code, in-diff dispositions, and the inline conversation cluster on every line. The surface is genuinely <b>tall</b> and scrolls the whole changeset, with no fold theatre. The right side is now <b>one unified conversation</b> — a lightweight chat stream where every message wears an icon for its type and line-anchored messages read as a <b>reply</b> to their line; it collapses to this sidebar and expands to fill the screen. The diff column never reflows.</p>
+  <div class="win"><div class="tbar"><span class="tls"><span class="tl"></span><span class="tl"></span><span class="tl"></span></span><span class="tname"><span class="crumbs"><span class="cseg root"><span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7"/><path d="M6.5 9.5V20h4v-6h3v6h4V9.5"/></svg></span>Projects</span><span class="csep"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span><span class="cseg"><span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span>orbital</span><span class="csep"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span><span class="cseg cur"><span class="cico"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="8" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 10.3c0 4-3.5 4.4-6.4 5.2"/></svg></span>feat/rate-limiting</span></span></span><span class="tmeta"><span class="modepill"><span style="color:#2a2e34"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span>auto<span style="color:#aab0b8"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></span><span>patchset 8 · snapshot</span></span></div><div class="winmain"><div class="navrail">
+    <span class="navbtn"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M15 6l-6 6 6 6"/></svg></span><span class="cap">⌘[</span></span>
+    <span class="navbtn off"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M9 6l6 6-6 6"/></svg></span><span class="cap">⌘]</span></span>
+    <span class="sep"></span>
+    <span class="navbtn"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 11l8-7 8 7"/><path d="M6.5 9.5V20h4v-6h3v6h4V9.5"/></svg></span><span class="cap">Home</span></span>
+    <span class="navbtn"><span class="gb"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span><span class="cap">Projects</span></span>
+    <div class="ctx"><span class="cnode" title="orbital"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 4.5h11a2 2 0 0 1 2 2v13"/><path d="M18 16.5H7a2 2 0 0 0-2 2v0a2 2 0 0 0 2 2h11z"/><path d="M5 4.5v12"/></svg></span><span class="cbar"></span><span class="cnode on" title="feat/rate-limiting"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6.5" cy="6" r="2.3"/><circle cx="6.5" cy="18" r="2.3"/><circle cx="17.5" cy="8" r="2.3"/><path d="M6.5 8.3v7.4"/><path d="M17.5 10.3c0 4-3.5 4.4-6.4 5.2"/></svg></span><span class="clab">here</span></div>
+  </div><div class="content"><div class="lensbar"><span class="lens"><span style="color:#5a6069"><></span>12</span><span class="lens on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 6h12M8 12h12M8 18h12"/><circle cx="4.2" cy="6" r="1.3" fill="currentColor" stroke="none"/><circle cx="4.2" cy="12" r="1.3"/><path d="M3 17l1.2 1.2L6 16.4" /></svg>Sequence</span><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="6" r="2.4"/><circle cx="6" cy="18" r="2.4"/><circle cx="18" cy="12" r="2.4"/><path d="M6 8.4v7.2M8.3 6.9C13 7.5 15.6 8.9 16 10.6M8.2 17c4.8-.6 7.4-2 7.8-3.8"/></svg>4</span><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/></svg>2</span><span class="lens"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12h3.5l2-6.5 3 13 2.4-9 1.6 3.5H22"/></svg>Noise</span><div class="right"><span class="chip blue">● 4 private</span><button class="btn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h9l3 3v15H6z"/><path d="M15 3v3h3"/><path d="M9 12h6M9 15.5h6M9 8.5h3"/></svg>Preview</button></div></div><div class="grid3"><div class="orderrail">
     <div class="oh"><span>Order</span><span style="display:flex;gap:6px;color:#aab0b8">spine<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M8 10l4 4 4-4"/></svg></span></div>
     <div class="orow"><span class="rd"></span>Limit schema<span class="cnt">96</span></div>
     <div class="orow on"><span class="rd"></span>Token bucket<span class="cnt">121</span></div>
@@ -199,15 +277,68 @@ no viewport-fold element</div>
       <div class="dl "><span class="ln">19</span><span class="pm"> </span><span class="code">}</span></div>
     </div>
     <div class="fold rel"><span class="anno" style="left:6px;top:-2px"><span class="dot">4</span></span>more files below · call sites, tests, noise · this surface scrolls the whole changeset</div>
-  </div><div class="margin rel">
+  </div><div class="chat rel">
     <span class="anno" style="left:-2px;top:-2px"><span class="dot">5</span></span>
-    <div class="margin-h"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="5" y="10.5" width="14" height="9.5" rx="2"/><path d="M8 10.5V8a4 4 0 0 1 8 0v2.5"/></svg>Thread · fail-open path <span style="margin-left:auto" class="chip">L44-47</span></div>
-    <div class="tcard"><div class="who"><span style="width:8px;height:8px;border-radius:50%;background:#8a9099;display:inline-block"></span>You</div><div class="msg">Why fail open? If the store is down, doesn’t this switch off limiting exactly when load is weirdest?</div></div>
-    <div class="tcard blue"><div class="who"><span style="color:var(--blue)"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span>Claude Code</div><div class="msg">It follows the plan: “limiter outage must never become API outage.” Failing closed turns every store blip into a 5xx storm for all 4,112 orgs. The window is observable via rate.store_error.</div><div class="fragrow"><span class="fragbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/></svg>finding</span><span class="fragbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v10H9l-4 3.5v-3.5H4z"/></svg>draft comment</span><span class="fragbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h12v8H8l-3 2.6V12.5H3z"/><path d="M8.5 8.5h12v8h-2v2.6l-3-2.6H12"/></svg>sub-thread</span></div></div>
-    <div class="tcard amber"><div class="who"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/></svg>Harnesses disagree</div><div class="msg">Unbounded fail-open is not defensible: an outage lets any org scrape without limit. A process-local bucket at 5x the org limit caps it.</div><div class="fragrow"><span class="chip">claude 3/3</span><span class="chip">codex 3/3</span><span class="chip amber">substantive</span></div></div>
-    <div class="composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v9H9l-4 3v-3H4z"/><path d="M15 2.4l.8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7L12.5 5l1.7-.9z"/></svg><span class="ph">Ask about these lines</span><button class="btn sm ink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v9H9l-4 3v-3H4z"/><path d="M15 2.4l.8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7L12.5 5l1.7-.9z"/></svg></button></div>
-  </div></div></div></div>
+    <div class="chat-h"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 4.5h12v8H8l-3 2.6V12.5H3z"/><path d="M8.5 8.5h12v8h-2v2.6l-3-2.6H12"/></svg>Conversation<span class="anno" style="right:0;top:-30px"><span class="dot">6</span></span><span class="exp"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M13 5H6a2 2 0 0 0-2 2v11a2 2 0 0 0 2 2h11a2 2 0 0 0 2-2v-7"/><path d="M14 4h6v6"/><path d="M11 13L20 4"/></svg>expand</span></div>
+    <div class="stream">
+      <div class="msg">
+    <span class="tico find"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/></svg></span>
+    <div class="mb">
+      <div class="mh"><span class="nm">Model council</span><span class="ty">finding</span><span class="tm">11:04</span></div>
+      <div class="replychip"><span class="rl">keys.ts · L44-47</span><span class="rc">return { allowed: true }</span></div>
+      <div class="mt">Unbounded fail-open lets any org scrape without limit during a store outage.</div>
+      <div class="mfrag"><span class="chip">claude 3/3</span><span class="chip">codex 3/3</span></div>
+    </div>
+  </div>
+      <div class="msg self">
+    <span class="tico "><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.4"/><path d="M9.5 9.4a2.6 2.6 0 0 1 4.9 1.1c0 1.7-2.4 2-2.4 3.6"/><circle cx="12" cy="17.2" r=".7" fill="currentColor" stroke="none"/></svg></span>
+    <div class="mb">
+      <div class="mh"><span class="nm">You</span><span class="ty">question</span><span class="tm">11:12</span></div>
+      <div class="replychip"><span class="rl">keys.ts · L44-47</span><span class="rc">if (err) return { allowed: true }</span></div>
+      <div class="mt">Why fail open? If the store is down, doesn’t this switch off limiting exactly when load is weirdest?</div>
+      
+    </div>
+  </div>
+      <div class="msg">
+    <span class="tico harn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M3 12h18M5.3 5.3l13.4 13.4M18.7 5.3L5.3 18.7"/></svg></span>
+    <div class="mb">
+      <div class="mh"><span class="nm">Claude Code</span><span class="ty">discuss</span><span class="tm">11:12</span></div>
+      <div class="replychip"><span class="rl">keys.ts · L44-47</span><span class="rc">if (err) return { allowed: true }</span></div>
+      <div class="mt">It follows the plan: “limiter outage must never become API outage.” Failing closed turns every store blip into a 5xx storm. Observable via rate.store_error.</div>
+      <div class="mfrag"><span class="fragbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M6 21V4"/><path d="M6 4.5h11l-2.2 4 2.2 4H6"/></svg>finding</span><span class="fragbtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v10H9l-4 3.5v-3.5H4z"/></svg>draft comment</span></div>
+    </div>
+  </div>
+      <div class="msg self">
+    <span class="tico rc"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8 8 0 1 0-.6 4"/><path d="M20 5v4h-4"/></svg></span>
+    <div class="mb">
+      <div class="mh"><span class="nm">You</span><span class="ty">request-change</span><span class="tm">11:18</span></div>
+      <div class="replychip"><span class="rl">keys.ts · L18</span><span class="rc">return `rl:org:${ctx.org.id}`</span></div>
+      <div class="mt">Re-key to org is right — but document the migration note in the PR body; a 429 now means something different for per-key clients.</div>
+      
+    </div>
+  </div>
+      <div class="msg self">
+    <span class="tico ask"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v9H9l-4 3v-3H4z"/><path d="M15 2.4l.8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7L12.5 5l1.7-.9z"/></svg></span>
+    <div class="mb">
+      <div class="mh"><span class="nm">You</span><span class="ty">general ask</span><span class="tm">11:20</span></div>
+      
+      <div class="mt">Does the fallback bucket share state across workers?</div>
+      
+    </div>
+  </div>
+      <div class="msg">
+    <span class="tico ask"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="7" r="2.1"/><circle cx="18" cy="7" r="2.1"/><circle cx="12" cy="18" r="2.1"/><path d="M7.7 8.4l3 8M16.3 8.4l-3 8M8 7h8"/></svg></span>
+    <div class="mb">
+      <div class="mh"><span class="nm">Orchestrator</span><span class="ty">answer</span><span class="tm">11:20</span></div>
+      
+      <div class="mt">No — each worker holds its own process-local bucket. That is the point of the fail-open cap: one dead store can’t become one shared unlimited allowance.</div>
+      
+    </div>
+  </div>
+    </div>
+    <div class="composer"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v9H9l-4 3v-3H4z"/><path d="M15 2.4l.8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7L12.5 5l1.7-.9z"/></svg><span class="ph">Ask the orchestrator, or reply to a line…</span><button class="btn sm ink"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5.5h16v9H9l-4 3v-3H4z"/><path d="M15 2.4l.8 1.7 1.7.8-1.7.8-.8 1.7-.8-1.7L12.5 5l1.7-.9z"/></svg></button></div>
+  </div></div></div></div></div>
   <div class="notes"><div class="notes-h">Designer notes &nbsp;/&nbsp; what to weigh in on</div>
-    <div class="notes-grid"><div class="note"><span class="dot">1</span><div><b>Tall and real, no fold.</b> The viewport-fold element is gone (Rai’s note). The surface scrolls the whole changeset; the order rail holds your place.</div></div><div class="note"><span class="dot">2</span><div><b>View test, context-labeled.</b> One button reads “view test” on an implementation hunk and “view implementation” on a test; disabled “no tests” when none reference it.</div></div><div class="note"><span class="dot">3</span><div><b>The cluster is verbs times anchors.</b> Comment / request-change / question / discuss, on a line, a dragged range, a chunk header, or a fragment. Ink publishes; blue stays local.</div></div><div class="note"><span class="dot">4</span><div><b>Threads in the margin.</b> Conversation aligns to its line in the right margin and the composer opens there, so the diff column is a fixed point that never moves.</div></div></div>
+    <div class="notes-grid"><div class="note"><span class="dot">1</span><div><b>Tall and real, no fold.</b> The viewport-fold element is gone (Rai’s note). The surface scrolls the whole changeset; the order rail holds your place.</div></div><div class="note"><span class="dot">2</span><div><b>One conversation, chat-style.</b> Ask (orchestrator) and every line thread live in one stream — no tabs. An icon per type (comment / request-change / question / discuss / general-ask / finding) tells them apart; the orchestrator finally has a visible home.</div></div><div class="note"><span class="dot">3</span><div><b>Line anchors read as replies.</b> A line-anchored message carries a small quoted line-reference chip above it (Messenger reply style), so it reads as “a reply to this line,” distinct from a general ask — without a boxy card or a section header.</div></div><div class="note"><span class="dot">4</span><div><b>Collapse and expand.</b> The panel is a right sidebar by default and expands to full screen for a long back-and-forth. Nav chrome frames it: the crumb says where you are, the rail’s back/⌘[ returns you to project detail.</div></div></div>
   </div>
 </div></body></html>

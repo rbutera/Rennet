@@ -38,7 +38,7 @@ export function frame01() {
     <div class="coach rel"><span class="anno" style="left:-30px;top:-2px">${dot(3)}</span>A few one-time coach marks teach the rest, in place.</div>
   </div>`;
   return {
-    title: 'Rennet v3.3 · 01 First run',
+    title: 'Rennet v4.0 · 01 First run',
     head: { badge: '01', title: 'First run: the empty projects list', pill: 'Onboarding' },
     ref: 'no wizard, no ceremony\nadd-a-project IS the onboarding',
     sub: 'First run is a <b>state</b> of the projects list, not a separate flow. It is one large add-a-project affordance and an ambient line saying which harnesses were found. Nothing here is once-only, so nothing can rot in a surface you never revisit.',
@@ -91,7 +91,7 @@ export function frame02() {
     <div class="foot"><button class="btn ink">Continue ${ic.chevronR}</button></div>
   </div>`;
   return {
-    title: 'Rennet v3.3 · 02 Add a project',
+    title: 'Rennet v4.0 · 02 Add a project',
     head: { badge: '02', title: 'Add a project: type and path', pill: 'Onboarding' },
     ref: 'step 1 of 2\ntwo nouns, then a path',
     sub: 'The only vocabulary you meet is <b>workspace</b> (a folder holding several repos) and <b>project repo</b> (one repo), one line of explanation each. Everything else is inference. Pick the type, point at the path, continue.',
@@ -130,7 +130,7 @@ export function frame03() {
     <div class="foot rel"><span class="anno" style="left:-30px;top:8px">${dot(3)}</span><span class="mono" style="color:var(--faint);font-size:12.5px">2 of 3 included</span><button class="btn ink">${ic.check}Confirm</button></div>
   </div>`;
   return {
-    title: 'Rennet v3.3 · 03 Worktree config',
+    title: 'Rennet v4.0 · 03 Worktree config',
     head: { badge: '03', title: 'Worktree config: editable defaults', pill: 'Onboarding' },
     ref: 'step 2 of 2\ndiscovery, not an interrogation',
     sub: 'Discovery shows what it found as <b>editable defaults</b>, not questions: the repos and worktrees it detected, each with an include toggle (all on), and the primary branch confirmed. One Confirm. If nothing is odd, this screen is three rows tall.',
@@ -183,7 +183,7 @@ export function frame04() {
     </div>
   </div>`;
   return {
-    title: 'Rennet v3.3 · 04 Processing',
+    title: 'Rennet v4.0 · 04 Processing',
     head: { badge: '04', title: 'Processing: the narrated context dump', pill: 'Onboarding' },
     ref: 'the narrated context dump\nhonest spinner for the MVP',
     sub: 'The initial context dump, narrated. A plain spinner (the MVP placeholder) sits over a real feed of pipeline events in plain speech. Completed lines collapse into a done-ledger; the current line is always the bottom line. When it finishes it <b>becomes</b> the project.',

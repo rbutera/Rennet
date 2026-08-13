@@ -1,14 +1,18 @@
-// Rennet v3.3 — the delta re-review account with the LLM digest on top.
+// Rennet v4.0 — the delta re-review account with the LLM digest on top.
 // Journey stage 7: the agent handed back a new patchset; before you re-read a line,
 // the account states what moved. The DETERMINISTIC facts (addressed / untouched /
 // beyond-asks) are the ground truth; a light-tier LLM digest sits ON TOP as the
 // fast-read. Facts render instantly; the digest auto-generates and streams in a beat
 // later; if the model is absent/over-budget the digest line is gone and the facts are
 // unchanged. It gates nothing.
-import { ic, dot, win, modePill } from './kit.mjs';
+import { ic, dot, win, modePill, crumb, navRail, navCtx, patchsetChip } from './kit.mjs';
 import { reviewCss } from './review.mjs';
 
 const tmeta = (extra) => `${modePill}${extra ? `<span>${extra}</span>` : ''}`;
+const reviewCtx = navCtx([
+  { icon: ic.repo, title: 'orbital' },
+  { icon: ic.branch, on: true, title: 'feat/rate-limiting' },
+]);
 
 // a plain diff line (local copy — review.mjs keeps its own private)
 const dl = (n, sign, code) =>
@@ -57,6 +61,22 @@ export const deltaCss = `
 .beyond .fact .say{ color:#6f5410; }
 
 .delta-foot{ font-family:var(--mono); font-size:11.5px; color:var(--faint); padding:10px 17px; border-top:1px solid var(--line); background:#fbfbfc; }
+
+/* the patchset trail — a dropdown off the title-bar patchset chip (§4.5) */
+.trail{ position:relative; width:280px; margin:0 0 16px auto; border:1px solid var(--line2); border-radius:11px;
+  background:#fff; box-shadow:0 20px 44px -26px rgba(20,26,33,.4); overflow:hidden; }
+.trail::before{ content:""; position:absolute; right:26px; top:-6px; width:11px; height:11px; background:#fff;
+  border-left:1px solid var(--line2); border-top:1px solid var(--line2); transform:rotate(45deg); }
+.trail .th{ font-family:var(--mono); font-size:10.5px; letter-spacing:.09em; text-transform:uppercase; color:var(--faint);
+  padding:9px 13px; background:var(--glass); border-bottom:1px solid var(--line); }
+.trail .trow{ display:flex; align-items:center; gap:10px; padding:9px 13px; border-bottom:1px solid var(--line); font-size:12.5px; }
+.trail .trow:last-child{ border:none; }
+.trail .trow.cur{ background:var(--blue-bg); font-weight:600; }
+.trail .trow .pn{ font-family:var(--mono); font-weight:600; color:var(--text); }
+.trail .trow .pd{ color:var(--muted); font-family:var(--mono); font-size:11.5px; }
+.trail .trow .ro{ margin-left:auto; font-family:var(--mono); font-size:10px; color:var(--faint); display:inline-flex; align-items:center; gap:4px; }
+.trail .trow .ro svg{ width:11px; height:11px; }
+.trail .trow .pin{ margin-left:auto; font-family:var(--mono); font-size:10px; color:var(--blue-ink); }
 
 /* the two OTHER digest states, shown as small stacked variants on the right */
 .states{ margin-top:2px; }
@@ -128,28 +148,43 @@ export function frameDeltaReview() {
     <p class="muted" style="font-size:13px;line-height:1.55;margin:0">The digest is a rephrasing of the deterministic account — it can add no fact the facts don't already carry. Remove it and the account is unchanged. So the model can be fast and loose; the truth is underneath.</p>
   </div>`;
 
-  const body = `<div class="drgrid">${deltaPanel}${heartSlice}<div class="drside">${states}</div></div>`;
+  // the patchset trail dropped off the title-bar chip: current pinned, predecessors read-only
+  const trail = `<div class="trail rel">
+    <span class="anno" style="left:-30px;top:14px">${dot(6)}</span>
+    <div class="th">Patchset trail · off the title-bar chip</div>
+    <div class="trow cur"><span class="pn">patchset 9</span><span class="pd">re-review · now</span><span class="pin">● current</span></div>
+    <div class="trow"><span class="pn">patchset 8</span><span class="pd">your last read</span><span class="ro">${ic.lock}read-only</span></div>
+    <div class="trow"><span class="pn">patchset 7</span><span class="pd">first snapshot</span><span class="ro">${ic.lock}read-only</span></div>
+  </div>`;
+
+  const body = `<div class="drgrid">${trail}${deltaPanel}${heartSlice}<div class="drside">${states}</div></div>`;
 
   return {
-    title: 'Rennet v3.3 · 06a Delta re-review',
+    title: 'Rennet v4.0 · 06a Delta re-review',
     head: { badge: '06a', title: 'Delta re-review: what the agent did, digested', pill: 'Review' },
     ref: 'stage 7 · after the handoff turn\ndigest on top, facts below',
-    sub: 'The agent handed back a new patchset. Before you re-read a line, the <b>delta account</b> states what moved: each staged ask <b>addressed / partially / untouched</b>, and every path it changed <b>beyond your asks</b>, surfaced loud. The facts are deterministic — no model. A light-tier <b>LLM digest</b> sits on top as the one-glance read; it <b>auto-generates every re-review</b>, streams in after the facts, and is simply absent when the model is off. It gates nothing.',
+    sub: 'The agent handed back a new patchset. Before you re-read a line, the <b>delta account</b> states what moved: each staged ask <b>addressed / partially / untouched</b>, and every path it changed <b>beyond your asks</b>, surfaced loud. The facts are deterministic — no model. A light-tier <b>LLM digest</b> sits on top as the one-glance read. The title bar now carries a <b>patchset chip</b>; its <b>trail</b> lists the lineage (9 ‹ 8 ‹ 7), current pinned, predecessors read-only. It gates nothing.',
     css: reviewCss + deltaCss + `
       .drgrid{ display:grid; grid-template-columns:1fr 320px; gap:0 26px; }
-      .drgrid > .delta, .drgrid > .lensbar, .drgrid > .file, .drgrid > .fold{ grid-column:1; }
+      .drgrid > .delta, .drgrid > .lensbar, .drgrid > .file, .drgrid > .fold, .drgrid > .trail{ grid-column:1; }
       .drside{ grid-column:2; grid-row:1 / 999; border-left:1px solid var(--line); padding-left:22px; }
     `,
     win: win({
-      name: `<span class="gly sm plain" style="width:20px;height:20px">${ic.branch}</span>atlas · feat/rate-limiting`,
-      meta: tmeta('patchset 9 · re-review'),
+      name: crumb([
+        { label: 'Projects', icon: ic.home, root: true },
+        { label: 'orbital', icon: ic.repo },
+        { label: 'feat/rate-limiting', icon: ic.branch, cur: true },
+      ]),
+      meta: `${modePill}${patchsetChip('patchset 9 · re-review', { trail: true })}`,
       body,
+      nav: navRail({ back: true, ctx: reviewCtx }),
     }),
     notes: [
       { h: 'Digest on top, facts below.', b: 'The LLM rephrases the deterministic account into one plain-English read. The addressed / untouched / beyond-asks facts stay visible right under it as the authoritative ground truth — the prose can never claim a fact the facts don’t carry.' },
       { h: 'Auto, and never blocking.', b: 'The facts render the instant the re-review opens; the digest generates in the background and streams in a beat later. One light-model call per re-review — a deliberate, infrequent act.' },
       { h: 'Model-free floor.', b: 'If the light seat is down or over budget, the digest line is simply absent and the facts are unchanged — an honest “no summary this time,” never a blank card and never a guess.' },
       { h: 'Beyond-asks stays loud.', b: 'The scope-creep the reviewer must see gets its own amber block; every row jumps to its diff. The account is informational — re-review and sign proceed without dismissing it (Rule Zero: no gate).' },
+      { h: 'The patchset trail.', b: 'The title-bar patchset chip drops a trail (9 ‹ 8 ‹ 7): the current patchset is pinned, predecessors are read-only look-backs. Regenerate remains the only way a new patchset appears; the trail is how you look back — no browsing of predecessors in v4.0.' },
     ],
   };
 }

@@ -166,14 +166,14 @@ describe("RennetApp — a persisted private conversation never reaches the publi
       ),
     );
 
-    // Enter the Canvases view so the conversation host mounts and RE-ATTACHES the persisted
+    // Enter the Canvases view so the conversation panel mounts and RE-ATTACHES the persisted
     // private conversation through the real seam — the app pulls the private content into
     // its reach. (Whether the restored threads then render into the DOM is a rendering
     // concern of the host, not of privacy; the proof deliberately does NOT depend on it,
     // because the corpus is the STORE output, not the screen — a persisted body must not
     // leak whether or not it is currently mounted.)
     fireEvent.click(getByRole("tab", { name: "Canvases" }));
-    await waitFor(() => expect(container.querySelector(".conversation-host")).not.toBeNull());
+    await waitFor(() => expect(container.querySelector(".conversation-panel")).not.toBeNull());
     await waitFor(() => expect(reattach.called).toBeGreaterThanOrEqual(1));
 
     // Open the draft, stage the comment to ink, freeze the paper, and hold-to-sign.
