@@ -1,0 +1,76 @@
+# Marketing site build + deploy (Astro -> Cloudflare Pages, preview-first).
+#
+# Builds the static marketing site on any change under apps/marketing (or this
+# workflow). Deploys to a Cloudflare Pages project ONLY when the
+# CLOUDFLARE_API_TOKEN secret is present — so the workflow is green before the
+# two external setup items are wired (see the PR body / marketing proposal):
+#   1. rennet.dev added to Cloudflare as a zone (for the rennet.dev domain)
+#   2. a Cloudflare Pages project + a CLOUDFLARE_API_TOKEN secret (Pages:Edit)
+# Until then the build proves the site compiles and the deploy step skips cleanly.
+# It ships to the *.pages.dev preview URL; the rennet.dev custom domain is a
+# follow-up once the zone exists. This never blocks on the custom domain.
+#
+# Security: read-only token, `pull_request` (never `pull_request_target`). Fork
+# PRs cannot read secrets, so the deploy step simply skips for them.
+name: Marketing
+
+on:
+  pull_request:
+    paths:
+      - "apps/marketing/**"
+      - ".github/workflows/marketing.yml"
+  push:
+    branches: [main]
+    paths:
+      - "apps/marketing/**"
+      - ".github/workflows/marketing.yml"
+
+concurrency:
+  group: marketing-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  build-deploy:
+    name: build marketing (deploy to Cloudflare Pages when configured)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build marketing site (static)
+        run: pnpm nx run rennet-marketing:build
+
+      - name: Deploy to Cloudflare Pages (preview)
+        if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            pages deploy apps/marketing/dist
+            --project-name=rennet-marketing
+            --branch=${{ github.head_ref || github.ref_name }}
+
+      - name: Note when deploy is skipped
+        if: ${{ env.CLOUDFLARE_API_TOKEN == '' }}
+        run: |
+          echo "Marketing site built successfully. Cloudflare deploy skipped: CLOUDFLARE_API_TOKEN is not set."
+          echo "See the PR body for the two external setup items (Cloudflare zone + Pages project/token)."
