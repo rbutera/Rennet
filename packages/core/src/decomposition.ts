@@ -274,25 +274,58 @@ function isGeneratedPath(path: string): boolean {
   return segments(path).some((s) => GENERATED_SEGMENTS.has(s.toLowerCase()));
 }
 
+/** git's own-line binary-hunk header (`--binary` / full-index form). */
+const GIT_BINARY_PATCH = /^GIT binary patch$/m;
+/** git's default bodyless-binary sentinel. */
+const BINARY_FILES_DIFFER = /^Binary files .+ differ$/m;
+
 /**
  * A binary blob: not text-diffable, so the floor cannot ingest its content.
- * `binary` is set by the capture; the "Binary files … differ" sentinel git emits
- * for a bodyless binary diff is a defensive backstop.
+ * `binary` is set by the capture. The two structural sentinels are defensive
+ * backstops for the paths that do NOT set it: `Binary files … differ` (git's
+ * default) and a `GIT binary patch` header (git's `--binary` / full-index form,
+ * which the REST parser does not currently flag — so without this a real binary
+ * blob would become a synthetic zero-LOC substantive hunk).
  */
 function isBinaryFile(file: PatchFile): boolean {
   if (file.binary) return true;
-  return /^Binary files .+ differ$/m.test(file.patch);
+  return BINARY_FILES_DIFFER.test(file.patch) || GIT_BINARY_PATCH.test(file.patch);
 }
 
 /**
  * A submodule (gitlink) pointer advance: the diff records the child repo's OID
  * moving, never the child's own changes, so the content behind the pointer is not
- * ingested. Git marks a gitlink with the `160000` tree mode and/or a
- * `Subproject commit <oid>` body line.
+ * ingested.
+ *
+ * Detection is STRUCTURAL, not a substring scan: a source line that merely
+ * mentions "Subproject commit" must not misclassify the whole file as a submodule
+ * (that would hide a real hand-edit as noise — the worst direction). Each form is
+ * matched as a whole diff line:
+ *  - a `+`/`-` gitlink pointer line: `+Subproject commit <oid>`;
+ *  - the `160000` gitlink tree mode in the index or a mode header;
+ *  - git's `diff.submodule=log` form: `Submodule <path> <oid>..<oid>[ (…)]:`.
  */
 function isSubmoduleChange(file: PatchFile): boolean {
-  if (file.patch.includes("Subproject commit")) return true;
-  return /(?:^|\n)(?:old mode|new mode|new file mode|deleted file mode) 160000\b/.test(file.patch);
+  const p = file.patch;
+  return (
+    /^[+-]Subproject commit [0-9a-f]{7,40}\b/m.test(p) ||
+    /^index [0-9a-f]+\.+[0-9a-f]+ 160000\b/m.test(p) ||
+    /^(?:old|new|new file|deleted file) mode 160000\b/m.test(p) ||
+    /^Submodule \S+ [0-9a-f]+\.+[0-9a-f]+.*:$/m.test(p)
+  );
+}
+
+/**
+ * A file diff truncated by the capture. The `DIFF_TRUNCATION_MARKER` is emitted
+ * ONLY as a terminal frame (`…content\n\n<marker>`) by `visible()`; requiring the
+ * blank-line frame at end-of-patch keeps a source line that happens to contain
+ * the literal marker text from raising a false truncation gap.
+ */
+function isTruncatedFile(patch: string): boolean {
+  const trimmed = patch.replace(/\s+$/, "");
+  if (!trimmed.endsWith(DIFF_TRUNCATION_MARKER)) return false;
+  const before = trimmed.slice(0, trimmed.length - DIFF_TRUNCATION_MARKER.length);
+  return before.endsWith("\n\n");
 }
 
 /**
@@ -375,7 +408,7 @@ function collectIngestionGaps(patchset: Patchset, files: readonly PatchFile[]): 
     });
   }
   for (const file of files) {
-    if (file.patch.includes(DIFF_TRUNCATION_MARKER)) {
+    if (isTruncatedFile(file.patch)) {
       gaps.push({
         kind: "diff-truncated",
         path: file.path,

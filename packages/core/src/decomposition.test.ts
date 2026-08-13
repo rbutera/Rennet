@@ -367,9 +367,10 @@ describe("incomplete ingestion (R18)", () => {
     );
   });
 
-  it("a per-file DIFF_TRUNCATION_MARKER discloses a file-scoped diff-truncated gap", () => {
+  it("a per-file DIFF_TRUNCATION_MARKER (producer's terminal frame) discloses a file-scoped gap", () => {
     const path = "src/big.ts";
-    const patch = `${filePatch(path, [{ lines: ["+const a = 1;"] }])}${TRUNC}\n`;
+    // `visible()` emits the marker as a terminal `…\n\n<marker>` frame.
+    const patch = `${filePatch(path, [{ lines: ["+const a = 1;"] }]).trimEnd()}\n\n${TRUNC}`;
     const result = decompose(patchset([file(path, patch)]));
     expect(result.ingestionGaps).toContainEqual(
       expect.objectContaining({ kind: "diff-truncated", path }),
@@ -439,6 +440,63 @@ describe("incomplete ingestion (R18)", () => {
       ["submodule", sub],
       ["binary", bin],
     ]);
+  });
+
+  // ── Structural detection, not substring (negative controls) ────────────────
+
+  it("does NOT flag ordinary source that merely MENTIONS 'Subproject commit'", () => {
+    // The dangerous over-fire: a substring scan classified a normal file wholesale
+    // as a submodule, moving a real hand-edit into the skimmed appendix.
+    const path = "src/x.ts";
+    const patch = filePatch(path, [{ lines: ['+const label = "Subproject commit";'] }]);
+    const result = decompose(patchset([file(path, patch)]));
+    expect(classOf(result, path)).toBeNull();
+    expect(result.chunks.filter((c) => c.kind === "substantive").map((c) => c.title)).toContain(
+      path,
+    );
+    expect(result.ingestionGaps).toEqual([]);
+  });
+
+  it("detects a submodule via the `index …160000` header alone (no Subproject line)", () => {
+    const path = "vendor/lib";
+    const patch = `diff --git a/${path} b/${path}\nindex 8cc0857..d9a9186 160000\n`;
+    const result = decompose(patchset([file(path, patch)]));
+    expect(classOf(result, path)).toBe("submodule");
+    expect(result.ingestionGaps).toContainEqual(
+      expect.objectContaining({ kind: "submodule", path }),
+    );
+  });
+
+  it("detects a submodule via git's `diff.submodule=log` form", () => {
+    const path = "vendor/lib";
+    const patch = `Submodule ${path} 8cc0857..d9a9186:\n  > two\n`;
+    const result = decompose(patchset([file(path, patch)]));
+    expect(classOf(result, path)).toBe("submodule");
+    expect(result.ingestionGaps).toContainEqual(
+      expect.objectContaining({ kind: "submodule", path }),
+    );
+  });
+
+  it("detects a `GIT binary patch` blob even when the capture left binary:false", () => {
+    // The false-clear Codex found: a canonical GIT binary patch with binary:false
+    // became a synthetic zero-LOC substantive chunk with no gap.
+    const path = "assets/icon.png";
+    const patch =
+      `diff --git a/${path} b/${path}\n` +
+      "index 0000000..1111111 100644\nGIT binary patch\nliteral 8\nzcmZQ$0000\n\n";
+    const result = decompose(patchset([file(path, patch, { binary: false })]));
+    expect(classOf(result, path)).toBe("binary");
+    expect(result.chunks.filter((c) => c.kind === "substantive")).toEqual([]);
+    expect(result.ingestionGaps).toContainEqual(expect.objectContaining({ kind: "binary", path }));
+  });
+
+  it("does NOT flag truncation when the marker text appears mid-body (only the terminal frame counts)", () => {
+    const path = "src/x.ts";
+    const patch = filePatch(path, [
+      { lines: ['+const note = "[diff truncated by Rennet]";', "+const a = 1;"] },
+    ]);
+    const result = decompose(patchset([file(path, patch)]));
+    expect(result.ingestionGaps).toEqual([]);
   });
 });
 
