@@ -472,12 +472,16 @@ describe("incomplete ingestion (R18)", () => {
     );
   });
 
-  it("detects git's `diff.submodule=log` form: spaced path, and `...`/`(commits not present)`", () => {
-    // Both are real git outputs (Codex probes). The path may contain spaces, the
-    // range may be `..` or `...`, and the line may end with `:` or a ` (status)`.
+  it("detects git's `diff.submodule=log` forms: spaced path, `...`, dirty, and sha-256 OIDs", () => {
+    // All are real git outputs (Codex probes). The path may contain spaces, the
+    // range may be `..`/`...` ending in `:` or ` (status)`, a dirty working tree
+    // shows `contains modified content`, and OIDs may be sha-256 (64 chars).
+    const sha256 = `${"a".repeat(64)}..${"b".repeat(64)}`;
     for (const [path, patch] of [
       ["sub module", "Submodule sub module bd72186..0d4dfdc:\n  > two\n"],
       ["vendor/lib", "Submodule vendor/lib a426a56...26627d8 (commits not present)\n"],
+      ["sub module", "Submodule sub module contains modified content\n"],
+      ["vendor/lib", `Submodule vendor/lib ${sha256}:\n`],
     ] as const) {
       const result = decompose(patchset([file(path, patch)]));
       expect(classOf(result, path)).toBe("submodule");
@@ -485,6 +489,22 @@ describe("incomplete ingestion (R18)", () => {
         expect.objectContaining({ kind: "submodule", path }),
       );
     }
+  });
+
+  it("detects a short-form DIRTY submodule via git's `-dirty` suffix", () => {
+    // A submodule whose pointer is unchanged but working tree is dirty: same OID
+    // both sides, `-dirty` on the new side. Without this the log form becomes an
+    // empty zero-LOC substantive hunk — the false-clear this floor prevents.
+    const path = "vendor/lib";
+    const oid = "abc1234000000000000000000000000000000000";
+    const patch =
+      `diff --git a/${path} b/${path}\n@@ -1 +1 @@\n` +
+      `-Subproject commit ${oid}\n+Subproject commit ${oid}-dirty\n`;
+    const result = decompose(patchset([file(path, patch)]));
+    expect(classOf(result, path)).toBe("submodule");
+    expect(result.ingestionGaps).toContainEqual(
+      expect.objectContaining({ kind: "submodule", path }),
+    );
   });
 
   it("detects a `GIT binary patch` blob even when the capture left binary:false", () => {

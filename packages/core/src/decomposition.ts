@@ -304,11 +304,14 @@ function isBinaryFile(file: PatchFile): boolean {
  * Every real git submodule form carries one of:
  *  - the `160000` gitlink tree mode, in the index line (modified) or a mode line
  *    (added/deleted);
- *  - git's `diff.submodule=log` block, whose `Submodule <path> <a>..<b>` line sits
- *    at column 0 (never a `+`/`-` diff body line, so it cannot collide with file
- *    content). The path may contain spaces and the range may be `..` or `...`,
- *    optionally followed by `:` or a ` (status)` note.
- * A submodule whose diff carries only the bare pointer line and no metadata simply
+ *  - git's `diff.submodule=log` block, whose `Submodule <path> …` lines sit at
+ *    column 0 (never a `+`/`-` diff body line, so they cannot collide with file
+ *    content): a pointer advance `Submodule <path> <a>..<b>[:| (status)]` (path may
+ *    contain spaces; range `..` or `...`; OID any length, incl. sha-256), or a
+ *    dirty working tree `Submodule <path> contains modified/untracked content`;
+ *  - the short-form dirty gitlink `+Subproject commit <oid>-dirty`, matched only on
+ *    git's `-dirty` suffix so it cannot collide with ordinary pointer-shaped text.
+ * A submodule whose diff carries ONLY a bare, clean pointer line and no metadata
  * stays substantive — its `-/+ Subproject commit` lines remain VISIBLE to the
  * reviewer (the safe direction); it just misses the ingestion-gap badge.
  */
@@ -317,7 +320,9 @@ function isSubmoduleChange(file: PatchFile): boolean {
   return (
     /^index [0-9a-f]+\.+[0-9a-f]+ 160000\b/m.test(p) ||
     /^(?:old|new|new file|deleted file) mode 160000\b/m.test(p) ||
-    /^Submodule .+? [0-9a-f]{7,40}\.{2,3}[0-9a-f]{7,40}/m.test(p)
+    /^Submodule .+? [0-9a-f]+\.{2,3}[0-9a-f]+/m.test(p) ||
+    /^Submodule .+ contains (?:modified|untracked) content/m.test(p) ||
+    /^[+-]Subproject commit [0-9a-f]+-dirty\b/m.test(p)
   );
 }
 
