@@ -1,0 +1,12 @@
+{
+  "title": "Rennet marketing site — horizontal reduction",
+  "approved": true,
+  "selectedAt": "2026-08-13",
+  "intent": "Show one dense diff breaking down into cohorts, decisions, and a review paper in a single left-to-right story.",
+  "constraints": [
+    "Use the existing Rennet cheese-wheel mark and wordmark without redesigning them.",
+    "The transformation must reduce complexity rather than expand, inflate, or introduce an unrelated metaphor.",
+    "Treat generated interface details as compositional placeholders; replace them with truthful Rennet product captures.",
+    "Use macOS in all download copy."
+  ]
+}

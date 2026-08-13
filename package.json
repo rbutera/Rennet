@@ -33,7 +33,7 @@
       },
       "format": {
         "cache": true,
-        "command": "pnpm exec biome check packages/*/src apps/desktop/src apps/desktop/e2e apps/desktop/*.ts apps/desktop/*.cjs apps/desktop/*.json scripts/*.mjs package.json biome.json",
+        "command": "pnpm exec biome check packages/*/src apps/desktop/src apps/desktop/e2e apps/desktop/*.ts apps/desktop/*.cjs apps/desktop/*.json apps/marketing/astro.config.mjs apps/marketing/project.json apps/marketing/package.json apps/marketing/src/styles scripts/*.mjs package.json biome.json",
         "inputs": [
           "{workspaceRoot}/packages/*/src/**/*",
           "{workspaceRoot}/apps/desktop/src/**/*",
@@ -41,6 +41,7 @@
           "{workspaceRoot}/apps/desktop/*.ts",
           "{workspaceRoot}/apps/desktop/*.cjs",
           "{workspaceRoot}/apps/desktop/*.json",
+          "{workspaceRoot}/apps/marketing/**/*",
           "{workspaceRoot}/scripts/*.mjs",
           "sharedGlobals"
         ]
