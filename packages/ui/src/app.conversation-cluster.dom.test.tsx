@@ -186,8 +186,8 @@ describe("RennetApp — the review-heart split ships (issue #36 HIGH-1, no reflo
       container.querySelector<HTMLElement>(".review-heart-split > .diff-column");
     const diffBefore = diffColumn();
     const beforeNodes = diffBefore?.querySelectorAll("*").length ?? -1;
-    const beforeWidth = diffBefore?.offsetWidth;
     expect(beforeNodes).toBeGreaterThan(0);
+    expect(diffBefore?.className).toBe("diff-column");
     // Open a thread in the margin.
     await openThreadWithCanary(container);
     expect(container.querySelector(".conversation-panel .chat-row")).not.toBeNull();
@@ -196,15 +196,19 @@ describe("RennetApp — the review-heart split ships (issue #36 HIGH-1, no reflo
     fireEvent.click(expand);
     expect(container.querySelector(".conversation-panel--expanded")).not.toBeNull();
 
-    // The exact same diff element retains its DOM and measured width. The expanded
-    // class belongs to the panel inside its fixed-width sibling shell.
+    // The exact same diff element retains its DOM and class contract. Expansion is
+    // carried ONLY by the inner panel, whose fixed-width shell stays the direct flex
+    // sibling. RED-proof: move the expanded class to the diff or its shell and these
+    // assertions fail; unlike happy-dom's always-zero offsetWidth, this is structural.
     const diffAfter = diffColumn();
     expect(diffAfter).toBe(diffBefore);
     expect(diffAfter?.querySelectorAll("*").length).toBe(beforeNodes);
-    expect(diffAfter?.offsetWidth).toBe(beforeWidth);
-    expect(
-      container.querySelector(".review-heart-split > .conversation-panel-shell"),
-    ).not.toBeNull();
+    expect(diffAfter?.className).toBe("diff-column");
+    const panelShell = container.querySelector<HTMLElement>(
+      ".review-heart-split > .conversation-panel-shell",
+    );
+    expect(panelShell?.className).toBe("conversation-panel-shell");
+    expect(panelShell?.querySelector(":scope > .conversation-panel--expanded")).not.toBeNull();
 
     fireEvent.click(expand);
     expect(container.querySelector(".conversation-panel--expanded")).toBeNull();

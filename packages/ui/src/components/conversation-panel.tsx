@@ -55,7 +55,7 @@ function TypeIcon({ type }: { type: AskType }) {
   return <Icon size={13} />;
 }
 
-function anchorReply(anchor: ConversationAnchor): { reference: string; context: string } | null {
+function anchorReply(anchor: ConversationAnchor): { reference: string; context?: string } | null {
   if (anchor.kind !== "line" && anchor.kind !== "range") return null;
   const label = /^(.*?):L?(\d+)(?:-L?(\d+))?$/.exec(anchor.label);
   const keyed = /^(?:line|range)\|(.*)\|(?:additions|deletions|context)\|(\d+)(?:\|(\d+))?$/.exec(
@@ -65,9 +65,10 @@ function anchorReply(anchor: ConversationAnchor): { reference: string; context: 
   const start = label?.[2] ?? keyed?.[2];
   const end = label?.[3] ?? keyed?.[3];
   const lines = start ? `L${start}${end && end !== start ? `-L${end}` : ""}` : anchor.label;
+  const context = anchor.context;
   return {
     reference: `${path} · ${lines}`,
-    context: anchor.context?.trim() || "Line text unavailable",
+    ...(context && context.trim().length > 0 ? { context } : {}),
   };
 }
 
@@ -78,30 +79,45 @@ function messageType(thread: ConversationThread, message: ThreadMessage): AskTyp
 
 function ChatRow({
   entry,
+  showOrphanedMarker,
   onReply,
   onPromote,
   onSubThread,
 }: {
   entry: StreamMessage;
+  showOrphanedMarker?: boolean;
   onReply?(): void;
   onPromote?(kind: "finding" | "draft-comment"): void;
   onSubThread?(): void;
 }) {
   const { message, thread, askType } = entry;
-  const reply = thread ? anchorReply(thread.anchor) : null;
+  const orphaned = thread?.orphaned === true;
+  const reply = thread && !orphaned ? anchorReply(thread.anchor) : null;
   const name = message.author === "you" ? "You" : (message.model ?? "Orchestrator");
   const status = message.status ?? "complete";
+  const hasActions =
+    message.author === "harness" &&
+    status === "complete" &&
+    (onPromote !== undefined || onSubThread !== undefined);
   return (
     <article
-      className={`chat-row msg${message.author === "you" ? " self" : ""}`}
+      className={`chat-row msg${message.author === "you" ? " self" : ""}${thread ? " is-private" : ""}${orphaned ? " is-orphaned" : ""}`}
       data-author={message.author}
       data-ask-type={askType}
+      data-lane={thread?.lane}
+      data-orphaned={orphaned || undefined}
       data-status={status}
     >
       <span className={`chat-type-icon tico tico--${askType}`} title={askType}>
         <TypeIcon type={askType} />
       </span>
       <div className="chat-message mb">
+        {showOrphanedMarker ? (
+          <p className="conversation-orphaned" role="note">
+            The code this thread was about is no longer in the diff. It is kept here, but not moved
+            onto other code.
+          </p>
+        ) : null}
         <header className="chat-message-head mh">
           <span className="chat-message-name nm">{name}</span>
           <span className="chat-message-type ty">{askType}</span>
@@ -109,7 +125,9 @@ function ChatRow({
         {reply ? (
           <button type="button" className="replychip" onClick={onReply}>
             <span className="replychip-reference rl">{reply.reference}</span>
-            <span className="replychip-context rc">{reply.context}</span>
+            {reply.context !== undefined ? (
+              <span className="replychip-context rc">{reply.context}</span>
+            ) : null}
           </button>
         ) : null}
         {status === "interrupted" ? (
@@ -119,25 +137,35 @@ function ChatRow({
         ) : (
           <p className="chat-message-text mt">{message.body}</p>
         )}
-        {message.author === "harness" && status === "complete" ? (
+        {hasActions ? (
           <div className="chat-message-actions mfrag">
-            <button
-              type="button"
-              className="thread-promote-btn"
-              onClick={() => onPromote?.("finding")}
-            >
-              finding
-            </button>
-            <button
-              type="button"
-              className="thread-promote-btn"
-              onClick={() => onPromote?.("draft-comment")}
-            >
-              draft comment
-            </button>
-            <button type="button" className="thread-promote-btn is-subthread" onClick={onSubThread}>
-              discuss reply
-            </button>
+            {onPromote ? (
+              <>
+                <button
+                  type="button"
+                  className="thread-promote-btn"
+                  onClick={() => onPromote("finding")}
+                >
+                  finding
+                </button>
+                <button
+                  type="button"
+                  className="thread-promote-btn"
+                  onClick={() => onPromote("draft-comment")}
+                >
+                  draft comment
+                </button>
+              </>
+            ) : null}
+            {onSubThread ? (
+              <button
+                type="button"
+                className="thread-promote-btn is-subthread"
+                onClick={onSubThread}
+              >
+                discuss reply
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -178,7 +206,13 @@ function PanelSurface({
   }, [state.threads]);
 
   const activeThread = state.threads.find((thread) => thread.id === activeThreadId);
-  const activeReply = activeThread ? anchorReply(activeThread.anchor) : null;
+  const activeReply =
+    activeThread && !activeThread.orphaned ? anchorReply(activeThread.anchor) : null;
+  const activeReference = activeThread
+    ? activeThread.orphaned
+      ? "Orphaned thread"
+      : (activeReply?.reference ?? activeThread.anchor.label)
+    : undefined;
   const openAnchorKeys = new Set(state.threads.map((thread) => thread.anchor.key));
   const discussable = anchors.filter((anchor) => !openAnchorKeys.has(anchor.key));
   const stream: StreamMessage[] = state.threads.flatMap((thread) =>
@@ -294,6 +328,9 @@ function PanelSurface({
             <ChatRow
               key={streamMessageKey(entry)}
               entry={entry}
+              showOrphanedMarker={
+                entry.thread?.orphaned === true && entry.thread.messages[0]?.id === entry.message.id
+              }
               onReply={entry.thread ? () => setActiveThreadId(entry.thread?.id) : undefined}
               onPromote={
                 entry.thread
@@ -310,40 +347,63 @@ function PanelSurface({
           {state.threads
             .filter((thread) => thread.messages.length === 0)
             .map((thread) => {
-              const reply = anchorReply(thread.anchor);
-              if (!reply) return null;
+              const orphaned = thread.orphaned === true;
+              const reply = orphaned ? null : anchorReply(thread.anchor);
+              const active = thread.id === activeThreadId;
               return (
                 <article
-                  className="chat-row chat-row--anchor-context msg"
+                  className={`chat-row chat-row--anchor-context msg is-private${orphaned ? " is-orphaned" : ""}`}
                   data-ask-type="discuss"
+                  data-active={active}
+                  data-anchor-kind={thread.anchor.kind}
                   data-anchor-key={thread.anchor.key}
+                  data-lane={thread.lane}
+                  data-orphaned={orphaned || undefined}
                   key={`context:${thread.id}`}
                 >
                   <span className="chat-type-icon tico tico--discuss" title="discuss">
                     <CommentIcon size={13} />
                   </span>
                   <div className="chat-message mb">
-                    <button
-                      type="button"
-                      className="replychip"
-                      onClick={() => setActiveThreadId(thread.id)}
-                    >
-                      <span className="replychip-reference rl">{reply.reference}</span>
-                      <span className="replychip-context rc">{reply.context}</span>
-                    </button>
-                    <p className="chat-message-text mt">Reply to this line…</p>
+                    {orphaned ? (
+                      <p className="conversation-orphaned" role="note">
+                        The code this thread was about is no longer in the diff. It is kept here,
+                        but not moved onto other code.
+                      </p>
+                    ) : null}
+                    {reply ? (
+                      <button
+                        type="button"
+                        className="replychip"
+                        onClick={() => setActiveThreadId(thread.id)}
+                      >
+                        <span className="replychip-reference rl">{reply.reference}</span>
+                        {reply.context !== undefined ? (
+                          <span className="replychip-context rc">{reply.context}</span>
+                        ) : null}
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="conversation-anchor-context"
+                        onClick={() => setActiveThreadId(thread.id)}
+                      >
+                        {orphaned ? "Orphaned thread" : thread.anchor.label}
+                      </button>
+                    )}
+                    <p className="chat-message-text mt">Reply to this {thread.anchor.kind}…</p>
                   </div>
                 </article>
               );
             })}
         </div>
 
-        {activeReply ? (
+        {activeThread ? (
           <div className="conversation-composer-context">
-            <span>{activeReply.reference}</span>
+            <span>{activeReference}</span>
             <button
               type="button"
-              aria-label="Clear line reply"
+              aria-label="Clear thread reply"
               onClick={() => setActiveThreadId(undefined)}
             >
               ×
