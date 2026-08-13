@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import type { Surface } from "../nav/history";
+import type { RecentSurface } from "../nav/history";
 import {
   buildCommands,
   type CommandContext,
@@ -35,7 +35,7 @@ function context(overrides: Partial<CommandContext> = {}): CommandContext {
     goToProject: vi.fn(),
     goToDraft: vi.fn(),
     goToPaper: vi.fn(),
-    goToRecent: vi.fn<(surface: Surface) => void>(),
+    goToRecent: vi.fn<(surface: RecentSurface) => void>(),
     openSettings: vi.fn(),
     showFiles: vi.fn(),
     showCanvases: vi.fn(),
@@ -142,9 +142,10 @@ describe("buildCommands — context-aware registry", () => {
   });
 
   it("lists resolved recents except the current surface and runs the injected navigation", () => {
-    const recentProject: Surface = { kind: "project", projectId: "project-1" };
+    const recentProject: RecentSurface = { kind: "project", projectId: "project-1" };
     const ctx = context({
-      recents: [{ kind: "review", reviewId: "review-current" }, recentProject],
+      currentSurface: { kind: "projects" },
+      recents: [{ kind: "projects" }, recentProject],
       surfaceLabels: {
         project: (id) => (id === "project-1" ? "Rennet" : undefined),
         review: () => undefined,

@@ -10,8 +10,10 @@ export type NavHistoryState = {
   future: Surface[];
 };
 
-export type PersistedNavigationState = NavHistoryState & {
-  recents: Surface[];
+export type RecentSurface = Extract<Surface, { kind: "projects" | "project" }>;
+
+export type PersistedRecentsState = {
+  recents: RecentSurface[];
 };
 
 export type NavHistoryAction =
@@ -19,8 +21,7 @@ export type NavHistoryAction =
   | { type: "back" }
   | { type: "forward" }
   | { type: "ascendTo"; index: number }
-  | { type: "replaceTop"; surface: Surface }
-  | { type: "restore"; state: NavHistoryState };
+  | { type: "replaceTop"; surface: Surface };
 
 export type CrumbSegment = {
   label: string;
@@ -33,7 +34,7 @@ export type SurfaceLabels = {
   review(id: string): string | undefined;
 };
 
-const RECENT_LIMIT = 8;
+export const RECENT_LIMIT = 8;
 
 export function surfaceIdentity(surface: Surface): string {
   switch (surface.kind) {
@@ -48,7 +49,10 @@ export function surfaceIdentity(surface: Surface): string {
   }
 }
 
-export function recordRecent(recents: readonly Surface[], surface: Surface): Surface[] {
+export function recordRecent(
+  recents: readonly RecentSurface[],
+  surface: RecentSurface,
+): RecentSurface[] {
   const identity = surfaceIdentity(surface);
   return [surface, ...recents.filter((recent) => surfaceIdentity(recent) !== identity)].slice(
     0,
@@ -74,8 +78,6 @@ export const replaceTop = (surface: Surface): NavHistoryAction => ({
   type: "replaceTop",
   surface,
 });
-
-export const restore = (state: NavHistoryState): NavHistoryAction => ({ type: "restore", state });
 
 export function navHistoryReducer(
   state: NavHistoryState,
@@ -109,117 +111,59 @@ export function navHistoryReducer(
         stack: [...state.stack.slice(0, -1), action.surface],
         future: [],
       };
-    case "restore":
-      return action.state;
   }
 }
 
-export const NAV_HISTORY_VERSION = 1;
+export const NAV_HISTORY_VERSION = 2;
 export const NAV_HISTORY_STORAGE_KEY = `rennet.nav.v${NAV_HISTORY_VERSION}`;
 
-const cleanNavigation = (): PersistedNavigationState => ({
-  stack: [{ kind: "projects" }],
-  future: [],
-  recents: [],
-});
+const cleanRecents = (): PersistedRecentsState => ({ recents: [] });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-function isSurface(value: unknown): value is Surface {
+function isRecentSurface(value: unknown): value is RecentSurface {
   if (!isRecord(value) || typeof value.kind !== "string") return false;
   switch (value.kind) {
     case "projects":
       return true;
     case "project":
       return typeof value.projectId === "string" && value.projectId.length > 0;
-    case "review":
-    case "draft":
-    case "paper":
-      return typeof value.reviewId === "string" && value.reviewId.length > 0;
     default:
       return false;
   }
 }
 
-export function serialize(state: PersistedNavigationState): string {
-  return JSON.stringify({ version: NAV_HISTORY_VERSION, ...state });
+export function serialize(recents: readonly RecentSurface[]): string {
+  return JSON.stringify({ version: NAV_HISTORY_VERSION, recents });
 }
 
-export function parse(raw: string): PersistedNavigationState | undefined {
+export function parse(raw: string | null | undefined): PersistedRecentsState {
+  if (!raw) return cleanRecents();
   try {
     const value: unknown = JSON.parse(raw);
-    if (!isRecord(value) || value.version !== NAV_HISTORY_VERSION) return undefined;
     if (
-      !Array.isArray(value.stack) ||
-      !Array.isArray(value.future) ||
-      !Array.isArray(value.recents)
-    ) {
-      return undefined;
+      !isRecord(value) ||
+      value.version !== NAV_HISTORY_VERSION ||
+      !Array.isArray(value.recents) ||
+      !value.recents.every(isRecentSurface)
+    )
+      return cleanRecents();
+
+    const identities = new Set<string>();
+    const recents: RecentSurface[] = [];
+    for (const surface of value.recents) {
+      const identity = surfaceIdentity(surface);
+      if (identities.has(identity)) continue;
+      identities.add(identity);
+      recents.push(surface);
+      if (recents.length === RECENT_LIMIT) break;
     }
-    if (
-      value.stack.length === 0 ||
-      value.stack[0]?.kind !== "projects" ||
-      !value.stack.every(isSurface) ||
-      !value.future.every(isSurface) ||
-      !value.recents.every(isSurface)
-    ) {
-      return undefined;
-    }
-    return {
-      stack: value.stack,
-      future: value.future,
-      recents: value.recents,
-    };
+    return { recents };
   } catch {
-    return undefined;
+    return cleanRecents();
   }
-}
-
-function reviewIdFor(surface: Surface): string | undefined {
-  return surface.kind === "review" || surface.kind === "draft" || surface.kind === "paper"
-    ? surface.reviewId
-    : undefined;
-}
-
-export function hydrate(
-  stored: string | null | undefined,
-  bootstrapReviewId?: string | null,
-): PersistedNavigationState {
-  const parsed = stored ? parse(stored) : undefined;
-  if (!parsed) {
-    const clean = cleanNavigation();
-    return bootstrapReviewId
-      ? {
-          ...clean,
-          stack: [...clean.stack, { kind: "review", reviewId: bootstrapReviewId }],
-        }
-      : clean;
-  }
-  if (bootstrapReviewId === undefined) return parsed;
-
-  const tip = parsed.stack.at(-1);
-  if (!tip) return cleanNavigation();
-  const tipReviewId = reviewIdFor(tip);
-  if (tipReviewId !== undefined) {
-    if (tipReviewId === bootstrapReviewId) return parsed;
-    const projectIndex = parsed.stack.map((surface) => surface.kind).lastIndexOf("project");
-    return {
-      stack: projectIndex >= 0 ? parsed.stack.slice(0, projectIndex + 1) : [{ kind: "projects" }],
-      future: [],
-      recents: parsed.recents,
-    };
-  }
-
-  if (bootstrapReviewId) {
-    return {
-      stack: [...parsed.stack, { kind: "review", reviewId: bootstrapReviewId }],
-      future: [],
-      recents: parsed.recents,
-    };
-  }
-  return parsed;
 }
 
 function resolvedLabel(label: string | undefined, fallback: string): string {

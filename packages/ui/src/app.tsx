@@ -2,6 +2,7 @@ import {
   type AppearanceScheme,
   openSpecRequirementCoverageKey,
   type Project,
+  type ProjectDetail as ProjectDetailData,
   type RennetBridge,
 } from "@rennet/protocol";
 import type {
@@ -89,16 +90,14 @@ import { runBatched } from "./concurrency";
 import {
   ascendTo as ascendNavigationTo,
   crumb as deriveCrumb,
-  hydrate,
   NAV_HISTORY_STORAGE_KEY,
-  type NavHistoryState,
   navHistoryReducer,
   back as navigateBack,
   forward as navigateForward,
+  parse as parseNavigation,
   push as pushSurface,
+  type RecentSurface,
   recordRecent,
-  restore as restoreNavigation,
-  type Surface,
   type SurfaceLabels,
   serialize as serializeNavigation,
 } from "./nav/history";
@@ -319,20 +318,17 @@ function mechanicalFallbackDetail(engine: ReviewEngine): string {
   return "This review's model-invocation budget was spent before it finished, so parts of what you see are the diff's structure, not AI findings.";
 }
 
-function readStoredNavigation(): string | undefined {
+function readStoredRecents(): RecentSurface[] {
   try {
-    return globalThis.localStorage?.getItem(NAV_HISTORY_STORAGE_KEY) ?? undefined;
+    return parseNavigation(globalThis.localStorage?.getItem(NAV_HISTORY_STORAGE_KEY)).recents;
   } catch {
-    return undefined;
+    return [];
   }
 }
 
-function persistNavigation(state: NavHistoryState, recents: Surface[]): void {
+function persistRecents(recents: readonly RecentSurface[]): void {
   try {
-    globalThis.localStorage?.setItem(
-      NAV_HISTORY_STORAGE_KEY,
-      serializeNavigation({ ...state, recents }),
-    );
+    globalThis.localStorage?.setItem(NAV_HISTORY_STORAGE_KEY, serializeNavigation(recents));
   } catch {
     return;
   }
@@ -343,20 +339,19 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const [selectedPath, setSelectedPath] = useState<string>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
-  const [storedNavigation] = useState(readStoredNavigation);
-  const [initialNavigation] = useState(() => hydrate(storedNavigation));
   const [navigation, navigate] = useReducer(navHistoryReducer, {
-    stack: initialNavigation.stack,
-    future: initialNavigation.future,
+    stack: [{ kind: "projects" }],
+    future: [],
   });
   const currentSurface = navigation.stack.at(-1) ?? { kind: "projects" as const };
-  const [recents, setRecents] = useState<Surface[]>(initialNavigation.recents);
+  const [recents, setRecents] = useState<RecentSurface[]>(readStoredRecents);
   const navigationReady = review !== undefined;
   useEffect(() => {
     if (!navigationReady) return;
+    if (currentSurface.kind !== "project" && currentSurface.kind !== "projects") return;
     setRecents((current) => recordRecent(current, currentSurface));
   }, [currentSurface, navigationReady]);
-  useEffect(() => persistNavigation(navigation, recents), [navigation, recents]);
+  useEffect(() => persistRecents(recents), [recents]);
   // The legacy direct-entry capability is palette-only. It is an overlay beside
   // the surface stack, never a location recorded in navigation history.
   const [directEntryOpen, setDirectEntryOpen] = useState(false);
@@ -380,6 +375,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // Project detail (issue #37): the unified smart list. Clicking a project row opens
   // this surface (local work + every PR in one list); a row there opens the review.
   const [projectDetail, setProjectDetail] = useState<Project | null>(null);
+  const [projectDetailData, setProjectDetailData] = useState<ProjectDetailData | null>(null);
   // The GitHub PR front door (the second v1 source): the ref the user typed
   // (`owner/repo#123` or a PR URL). Opening it picks the local clone, then lands
   // in the same review surface a working-tree capture does.
@@ -563,20 +559,13 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     bridge
       .invoke("app.bootstrap", {})
       .then(({ review: restored }) => {
-        const hydrated = hydrate(storedNavigation, restored?.id ?? null);
-        navigate(
-          restoreNavigation({
-            stack: hydrated.stack,
-            future: hydrated.future,
-          }),
-        );
-        setRecents(hydrated.recents);
+        if (restored) navigate(pushSurface({ kind: "review", reviewId: restored.id }));
         setReview(restored);
       })
       .catch((reason: unknown) =>
         setError(reason instanceof Error ? reason.message : String(reason)),
       );
-  }, [bridge, storedNavigation]);
+  }, [bridge]);
 
   // The reviewer's appearance scheme (wireframe #15), fetched once so the front
   // door themes to it. Settings updates it live via `onSchemeChange`. Fail-quiet:
@@ -1699,6 +1688,27 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     navigate(ascendNavigationTo(0));
   }
 
+  async function goToRecent(surface: RecentSurface): Promise<void> {
+    if (surface.kind === "projects") {
+      goToProjects();
+      return;
+    }
+
+    setError(undefined);
+    try {
+      const detail = await bridge.invoke("project.detail", { projectId: surface.projectId });
+      const { projects } = await bridge.invoke("projects.list", {});
+      const project = projects.find((candidate) => candidate.id === surface.projectId);
+      if (!project) throw new Error(`Project ${surface.projectId} is no longer available.`);
+      setProjectDetail(project);
+      setProjectDetailData(detail);
+      setDirectEntryOpen(false);
+      navigate(pushSurface(surface));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    }
+  }
+
   const projectSurfaceIndex = navigation.stack
     .map((surface) => surface.kind)
     .lastIndexOf("project");
@@ -1767,7 +1777,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         goToProject,
         goToDraft,
         goToPaper,
-        goToRecent: (surface) => navigate(pushSurface(surface)),
+        goToRecent: (surface) => void goToRecent(surface),
         openSettings: () => setSettingsOpen(true),
         showFiles: () => setView("review"),
         showCanvases: () => setView("canvases"),
@@ -1943,8 +1953,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         {error ? <div className="error-toast">{error}</div> : null}
         {busy ? <div className="busy-bar" /> : null}
         <ProjectDetail
+          key={projectDetail.id}
           bridge={bridge}
           project={projectDetail}
+          initialDetail={projectDetailData ?? undefined}
           scheme={effectiveScheme}
           onOpenRow={(row) => void openRow(projectDetail, row)}
           onBack={() => navigate(navigateBack())}
@@ -1965,6 +1977,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           bridge={bridge}
           onOpenProject={(project) => {
             setProjectDetail(project);
+            setProjectDetailData(null);
             navigate(pushSurface({ kind: "project", projectId: project.id }));
           }}
           onOpenSettings={() => setSettingsOpen(true)}

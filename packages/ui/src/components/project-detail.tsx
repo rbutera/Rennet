@@ -36,18 +36,20 @@ import {
 export function ProjectDetail({
   bridge,
   project,
+  initialDetail,
   scheme,
   onOpenRow,
   onBack,
 }: {
   bridge: RennetBridge;
   project: Project;
+  initialDetail?: ProjectDetailData;
   /** The resolved appearance scheme (system already folded to dark/light upstream). */
   scheme?: "dark" | "light";
   onOpenRow(row: SmartRow): void;
   onBack(): void;
 }) {
-  const [detail, setDetail] = useState<ProjectDetailData | null>(null);
+  const [detail, setDetail] = useState<ProjectDetailData | null>(initialDetail ?? null);
   const [error, setError] = useState<string>();
   const [sort, setSort] = useState<SmartSort>("hot");
   const [filter, setFilter] = useState<SmartFilter>("all");
@@ -56,13 +58,17 @@ export function ProjectDetail({
   const [cleaned, setCleaned] = useState<ReadonlySet<string>>(new Set());
 
   useEffect(() => {
-    setDetail(null);
     setError(undefined);
+    if (initialDetail) {
+      setDetail(initialDetail);
+      return;
+    }
+    setDetail(null);
     bridge
       .invoke("project.detail", { projectId: project.id })
       .then(setDetail)
       .catch((reason: unknown) => setError(messageFrom(reason)));
-  }, [bridge, project.id]);
+  }, [bridge, initialDetail, project.id]);
 
   const rows = useMemo(() => (detail ? buildSmartRows(detail) : []), [detail]);
   // Apply the optimistic clean-ups: drop the annotation from any swept worktree (keyed

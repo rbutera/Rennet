@@ -4,12 +4,12 @@ import {
   back,
   crumb,
   forward,
-  hydrate,
   NAV_HISTORY_VERSION,
   type NavHistoryState,
   navHistoryReducer,
   parse,
   push,
+  type RecentSurface,
   recordRecent,
   replaceTop,
   type Surface,
@@ -141,85 +141,86 @@ describe("recent surfaces", () => {
   it("unshifts the latest landing, dedupes by identity, and caps at eight", () => {
     const visited = Array.from(
       { length: 9 },
-      (_, index): Surface => ({
-        kind: "review",
-        reviewId: `r${index}`,
+      (_, index): RecentSurface => ({
+        kind: "project",
+        projectId: `p${index}`,
       }),
-    ).reduce<Surface[]>((recents, surface) => recordRecent(recents, surface), []);
+    ).reduce<RecentSurface[]>((recents, surface) => recordRecent(recents, surface), []);
 
     expect(visited).toHaveLength(8);
     expect(visited.map(surfaceIdentity)).toEqual([
-      "review:r8",
-      "review:r7",
-      "review:r6",
-      "review:r5",
-      "review:r4",
-      "review:r3",
-      "review:r2",
-      "review:r1",
+      "project:p8",
+      "project:p7",
+      "project:p6",
+      "project:p5",
+      "project:p4",
+      "project:p3",
+      "project:p2",
+      "project:p1",
     ]);
-    expect(recordRecent(visited, { kind: "review", reviewId: "r4" }).map(surfaceIdentity)).toEqual([
-      "review:r4",
-      "review:r8",
-      "review:r7",
-      "review:r6",
-      "review:r5",
-      "review:r3",
-      "review:r2",
-      "review:r1",
+    expect(
+      recordRecent(visited, { kind: "project", projectId: "p4" }).map(surfaceIdentity),
+    ).toEqual([
+      "project:p4",
+      "project:p8",
+      "project:p7",
+      "project:p6",
+      "project:p5",
+      "project:p3",
+      "project:p2",
+      "project:p1",
     ]);
   });
 });
 
-describe("persisted navigation", () => {
-  const persisted = {
-    stack: [projects, project, review],
-    future: [draft],
-    recents: [review, project],
-  } satisfies NavHistoryState & { recents: Surface[] };
+describe("persisted recents", () => {
+  const persisted = { recents: [project, projects] };
 
-  it("round-trips stack, future, and recents through the versioned blob", () => {
-    const raw = serialize(persisted);
+  it("survives a reload through the versioned blob", () => {
+    const raw = serialize(persisted.recents);
 
-    expect(JSON.parse(raw).version).toBe(NAV_HISTORY_VERSION);
+    expect(JSON.parse(raw)).toEqual({
+      version: NAV_HISTORY_VERSION,
+      recents: persisted.recents,
+    });
     expect(parse(raw)).toEqual(persisted);
-    expect(hydrate(raw, "r1")).toEqual(persisted);
   });
 
-  it("returns the clean default for absent, malformed, mismatched, or invalid state", () => {
-    const clean = { stack: [projects], future: [], recents: [] };
+  it("returns empty recents for absent, malformed, mismatched, or invalid blobs", () => {
+    const clean = { recents: [] };
 
-    expect(hydrate(undefined, null)).toEqual(clean);
-    expect(hydrate("not json", null)).toEqual(clean);
+    expect(parse(undefined)).toEqual(clean);
+    expect(parse(null)).toEqual(clean);
+    expect(parse("not json")).toEqual(clean);
     expect(
-      hydrate(JSON.stringify({ ...persisted, version: NAV_HISTORY_VERSION + 1 }), null),
+      parse(JSON.stringify({ version: NAV_HISTORY_VERSION + 1, recents: persisted.recents })),
     ).toEqual(clean);
-    expect(
-      hydrate(JSON.stringify({ version: NAV_HISTORY_VERSION, ...persisted, stack: [] }), null),
-    ).toEqual(clean);
+    expect(parse(JSON.stringify({ version: NAV_HISTORY_VERSION, recents: [review] }))).toEqual(
+      clean,
+    );
   });
 
-  it("keeps a matching bootstrap review exactly once", () => {
-    const hydrated = hydrate(serialize(persisted), "r1");
+  it("globally dedupes first occurrences and caps parsed recents", () => {
+    const recents = [
+      { kind: "project", projectId: "p0" },
+      { kind: "project", projectId: "p0" },
+      ...Array.from({ length: 9 }, (_, index) => ({
+        kind: "project" as const,
+        projectId: `p${index + 1}`,
+      })),
+    ];
 
-    expect(hydrated.stack).toEqual([projects, project, review]);
-    expect(hydrated.stack.filter((surface) => surface.kind === "review")).toHaveLength(1);
-  });
-
-  it("floors a stale review-family tip to its nearest project ancestor and clears future", () => {
-    const stale = serialize({
-      stack: [projects, project, review, draft, paper],
-      future: [{ kind: "review", reviewId: "future" }],
-      recents: [paper, review],
-    });
-
-    expect(hydrate(stale, "another-review")).toEqual({
-      stack: [projects, project],
-      future: [],
-      recents: [paper, review],
-    });
     expect(
-      hydrate(serialize({ stack: [projects, review], future: [draft], recents: [review] }), null),
-    ).toEqual({ stack: [projects], future: [], recents: [review] });
+      parse(JSON.stringify({ version: NAV_HISTORY_VERSION, recents })).recents.map(surfaceIdentity),
+    ).toEqual([
+      "project:p0",
+      "project:p1",
+      "project:p2",
+      "project:p3",
+      "project:p4",
+      "project:p5",
+      "project:p6",
+      "project:p7",
+    ]);
   });
 });

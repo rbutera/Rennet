@@ -81,8 +81,12 @@ const projectDetail: ProjectDetailData = {
   prs: [],
 };
 
-function navigationBridge(restored: Review | null): RennetBridge {
+function navigationBridge(
+  restored: Review | null,
+  calls: Array<{ name: string; input: unknown }> = [],
+): RennetBridge {
   const invoke = async (name: string, input?: unknown): Promise<unknown> => {
+    calls.push({ name, input });
     switch (name) {
       case "app.bootstrap":
         return { review: restored };
@@ -153,25 +157,51 @@ describe("RennetApp navigation spine", () => {
     expect(breadcrumb.textContent).toContain("Projects");
   });
 
-  it("restores persisted ancestry without duplicating the bootstrap review", async () => {
+  it("reloads a persisted recent project before navigating to its renderable surface", async () => {
+    const calls: Array<{ name: string; input: unknown }> = [];
     localStorage.setItem(
       NAV_HISTORY_STORAGE_KEY,
-      serialize({
-        stack: [
-          { kind: "projects" },
-          { kind: "project", projectId: project.id },
-          { kind: "review", reviewId: review.id },
-        ],
-        future: [],
-        recents: [],
-      }),
+      serialize([{ kind: "project", projectId: project.id }]),
     );
-    const { getByRole } = mount(<RennetApp bridge={navigationBridge(review)} />);
+    const { container, getByRole } = mount(<RennetApp bridge={navigationBridge(null, calls)} />);
 
-    const breadcrumb = await waitFor(() => getByRole("navigation", { name: "Breadcrumb" }));
-    expect(within(breadcrumb).getAllByRole("button")).toHaveLength(3);
-    expect(breadcrumb.textContent).toContain(project.id);
-    expect(breadcrumb.textContent?.match(/\/code\/rennet/g)).toHaveLength(1);
+    await waitFor(() => expect(container.querySelector(".front-door")).not.toBeNull());
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    fireEvent.click(await waitFor(() => getByRole("button", { name: /project-1/ })));
+
+    await waitFor(() => expect(container.querySelector(".project-detail")).not.toBeNull());
+    expect(calls).toContainEqual({
+      name: "project.detail",
+      input: { projectId: project.id },
+    });
+    expect(container.querySelector(".project-detail-name")?.textContent).toBe(project.name);
+    expect(container.querySelector(".canvas-app")).toBeNull();
+  });
+
+  it("keeps the current surface and reports an error when a recent project cannot reload", async () => {
+    localStorage.setItem(
+      NAV_HISTORY_STORAGE_KEY,
+      serialize([{ kind: "project", projectId: project.id }]),
+    );
+    const fallback = navigationBridge(null);
+    const invoke = async (name: string, input?: unknown): Promise<unknown> => {
+      if (name === "project.detail") throw new Error("Project detail unavailable.");
+      return (fallback.invoke as (command: string, value?: unknown) => Promise<unknown>)(
+        name,
+        input,
+      );
+    };
+    const { container, getByRole, getByText } = mount(
+      <RennetApp bridge={{ invoke: invoke as unknown as RennetBridge["invoke"] }} />,
+    );
+
+    await waitFor(() => expect(container.querySelector(".front-door")).not.toBeNull());
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    fireEvent.click(await waitFor(() => getByRole("button", { name: /project-1/ })));
+
+    await waitFor(() => expect(getByText("Project detail unavailable.")).not.toBeNull());
+    expect(container.querySelector(".front-door")).not.toBeNull();
+    expect(container.querySelector(".project-detail")).toBeNull();
   });
 
   it("opens project → review, then Back lands on project detail rather than the front door", async () => {
@@ -309,5 +339,42 @@ describe("RennetApp navigation spine", () => {
     fireEvent.click(recentProject);
     await waitFor(() => expect(container.querySelector(".project-detail")).not.toBeNull());
     expect(getByRole("navigation", { name: "Breadcrumb" }).textContent).toContain(project.name);
+  });
+
+  it("records only project locations, never an unresolvable review visit", async () => {
+    const { container } = mount(<RennetApp bridge={navigationBridge(null)} />);
+
+    await waitFor(() => expect(container.querySelector(".project-row")).not.toBeNull());
+    fireEvent.click(container.querySelector(".project-row") as HTMLButtonElement);
+    await waitFor(() => expect(container.querySelector(".smart-row-action")).not.toBeNull());
+    fireEvent.click(container.querySelector(".smart-row-action") as HTMLButtonElement);
+    await waitFor(() => expect(container.querySelector(".canvas-app")).not.toBeNull());
+    fireEvent.click(
+      within(container.querySelector(".nav-rail") as HTMLElement).getByRole("button", {
+        name: "Projects",
+      }),
+    );
+    await waitFor(() => expect(container.querySelector(".front-door")).not.toBeNull());
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    const palette = await waitFor(() => container.querySelector(".command-palette") as HTMLElement);
+    expect(within(palette).getByRole("button", { name: /rennet/ })).not.toBeNull();
+    expect(within(palette).queryByRole("button", { name: /\/code\/rennet/ })).toBeNull();
+  });
+
+  it("a recent Projects jump ascends to the existing root without duplicating it", async () => {
+    const { container, getByRole } = mount(<RennetApp bridge={navigationBridge(null)} />);
+
+    await waitFor(() => expect(container.querySelector(".project-row")).not.toBeNull());
+    fireEvent.click(container.querySelector(".project-row") as HTMLButtonElement);
+    await waitFor(() => expect(container.querySelector(".project-detail")).not.toBeNull());
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    const palette = await waitFor(() => container.querySelector(".command-palette") as HTMLElement);
+    fireEvent.click(within(palette).getByRole("button", { name: "Recent Projects" }));
+
+    await waitFor(() => expect(container.querySelector(".front-door")).not.toBeNull());
+    const breadcrumb = getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(breadcrumb).getAllByRole("button")).toHaveLength(1);
+    expect((getByRole("button", { name: "Back" }) as HTMLButtonElement).disabled).toBe(true);
   });
 });

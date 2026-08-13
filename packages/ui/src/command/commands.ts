@@ -1,7 +1,13 @@
 import type { CanvasAngle } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 import type { ZoomLevel } from "../canvas/logic";
-import { crumb, type Surface, type SurfaceLabels, surfaceIdentity } from "../nav/history";
+import {
+  crumb,
+  type RecentSurface,
+  type Surface,
+  type SurfaceLabels,
+  surfaceIdentity,
+} from "../nav/history";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The command registry (wireframes screen 16: "⌘K, every action a named
@@ -51,7 +57,7 @@ export interface CommandContext {
   screen: Screen;
   surfaceKind: Surface["kind"];
   currentSurface: Surface;
-  recents: readonly Surface[];
+  recents: readonly RecentSurface[];
   surfaceLabels: SurfaceLabels;
   canBack: boolean;
   canForward: boolean;
@@ -74,7 +80,7 @@ export interface CommandContext {
   goToProject(): void;
   goToDraft(): void;
   goToPaper(): void;
-  goToRecent(surface: Surface): void;
+  goToRecent(surface: RecentSurface): void;
   openSettings(): void;
   showFiles(): void;
   showCanvases(): void;
