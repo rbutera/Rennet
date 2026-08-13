@@ -335,6 +335,181 @@ describe("classification", () => {
   });
 });
 
+// ── Incomplete ingestion (R18): the false-clear floor ────────────────────────
+//
+// R18: binary / submodule / truncated inputs are first-class and incomplete
+// ingestion is DISCLOSED (in `ingestionGaps`) — an absence of findings over
+// un-ingested content must never read as "reviewed clean". Each test is written
+// by first performing the literal original bug (a truncated/binary capture that
+// yields a clean-looking decomposition) and asserting the fix now surfaces the
+// gap. Per R18 this DISCLOSES; it is not a hard gate (Rule Zero).
+
+/** The DIFF_TRUNCATION_MARKER the capture appends when it truncates a file diff. */
+const TRUNC = "[diff truncated by Rennet]";
+
+describe("incomplete ingestion (R18)", () => {
+  it("a truncated patchset is NOT clean: a patchset-wide diff-truncated gap is disclosed", () => {
+    // The literal original bug: `decompose` never read `patchset.truncated`, so a
+    // capture that hit its byte cap produced a decomposition indistinguishable
+    // from a complete one — nothing for a done/publish surface to disclose.
+    const result = decompose({
+      ...patchset([
+        file("src/logic.ts", filePatch("src/logic.ts", [{ lines: ["+const a = 1;"] }])),
+      ]),
+      truncated: true,
+    });
+    // The visible prefix still decomposes and reads complete on its own …
+    assertTotality(result);
+    expect(result.chunks.filter((c) => c.kind === "substantive").length).toBe(1);
+    // … but the truncation is now an explicit first-class disclosure.
+    expect(result.ingestionGaps).toContainEqual(
+      expect.objectContaining({ kind: "diff-truncated", path: null }),
+    );
+  });
+
+  it("a per-file DIFF_TRUNCATION_MARKER (producer's terminal frame) discloses a file-scoped gap", () => {
+    const path = "src/big.ts";
+    // `visible()` emits the marker as a terminal `…\n\n<marker>` frame.
+    const patch = `${filePatch(path, [{ lines: ["+const a = 1;"] }]).trimEnd()}\n\n${TRUNC}`;
+    const result = decompose(patchset([file(path, patch)]));
+    expect(result.ingestionGaps).toContainEqual(
+      expect.objectContaining({ kind: "diff-truncated", path }),
+    );
+  });
+
+  it("a binary blob classifies mechanical:binary (never substantive) and discloses a gap", () => {
+    // Original bug: a bare binary with no path signal fell through to
+    // `substantive`, so a changed blob read as reviewed content.
+    const path = "assets/logo.png";
+    const result = decompose(patchset([file(path, "", { binary: true })]));
+    expect(classOf(result, path)).toBe("binary");
+    // It lands in the skimmable appendix, not a substantive chunk.
+    expect(result.chunks.filter((c) => c.kind === "substantive")).toEqual([]);
+    expect(result.chunks.filter((c) => c.kind === "appendix").map((c) => c.title)).toEqual([path]);
+    expect(result.ingestionGaps).toContainEqual(expect.objectContaining({ kind: "binary", path }));
+    assertTotality(result);
+    assertTopological(result);
+  });
+
+  it("a submodule pointer advance classifies mechanical:submodule and discloses a gap", () => {
+    // Original bug: a gitlink `Subproject commit` change had no mechanical signal
+    // and became a synthetic substantive hunk reading as reviewed content.
+    const path = "vendor/lib";
+    const patch =
+      `diff --git a/${path} b/${path}\nindex abc1234..def5678 160000\n--- a/${path}\n+++ b/${path}\n` +
+      "@@ -1 +1 @@\n-Subproject commit abc1234000000000000000000000000000000000\n" +
+      "+Subproject commit def5678000000000000000000000000000000000\n";
+    const result = decompose(patchset([file(path, patch)]));
+    expect(classOf(result, path)).toBe("submodule");
+    expect(result.chunks.filter((c) => c.kind === "substantive")).toEqual([]);
+    expect(result.ingestionGaps).toContainEqual(
+      expect.objectContaining({ kind: "submodule", path }),
+    );
+    assertTotality(result);
+  });
+
+  it("a fully-ingested clean patchset discloses NO gaps (the fix must not over-fire)", () => {
+    // The green direction a disclosure like this usually breaks: an ordinary
+    // text change is fully ingested, so `ingestionGaps` must be empty.
+    const result = decompose(
+      patchset([
+        file(
+          "src/logic.ts",
+          filePatch("src/logic.ts", [{ lines: ["-const a = 1;", "+const a = 2;"] }]),
+        ),
+        file("pnpm-lock.yaml", filePatch("pnpm-lock.yaml", [{ lines: ["+  a: 1"] }])),
+      ]),
+    );
+    expect(result.ingestionGaps).toEqual([]);
+  });
+
+  it("orders gaps deterministically: patchset-wide first, then per-file by path", () => {
+    const bin = "z-assets/a.bin";
+    const sub = "a-vendor/lib";
+    const subPatch =
+      `diff --git a/${sub} b/${sub}\nindex aaa0000..bbb0000 160000\n@@ -1 +1 @@\n` +
+      "-Subproject commit aaa0000000000000000000000000000000000000\n" +
+      "+Subproject commit bbb0000000000000000000000000000000000000\n";
+    const result = decompose({
+      ...patchset([file(bin, "", { binary: true }), file(sub, subPatch)]),
+      truncated: true,
+    });
+    // Patchset-wide truncation first; then files in path order (a-vendor < z-assets).
+    expect(result.ingestionGaps.map((g) => [g.kind, g.path])).toEqual([
+      ["diff-truncated", null],
+      ["submodule", sub],
+      ["binary", bin],
+    ]);
+  });
+
+  // ── Structural detection, not substring (negative controls) ────────────────
+
+  it("does NOT flag a real text file whose ADDED LINE is exactly a pointer-shaped string", () => {
+    // The dangerous over-fire (Codex's real-git probe): note.txt's content becomes
+    // literally `Subproject commit deadbeef`, so the diff carries a `+Subproject
+    // commit <hex>` line with an ordinary `100644` mode. Keying on the pointer body
+    // line would hide this real hand-edit in the appendix; keying on the `160000`
+    // metadata does not.
+    const path = "note.txt";
+    const patch =
+      `diff --git a/${path} b/${path}\nindex 1111111..2222222 100644\n--- a/${path}\n+++ b/${path}\n` +
+      "@@ -1 +1 @@\n-old\n+Subproject commit deadbeef00000000000000000000000000000000\n";
+    const result = decompose(patchset([file(path, patch)]));
+    expect(classOf(result, path)).toBeNull();
+    expect(result.chunks.filter((c) => c.kind === "substantive").map((c) => c.title)).toContain(
+      path,
+    );
+    expect(result.ingestionGaps).toEqual([]);
+  });
+
+  it("detects a submodule via the `index …160000` header alone (no Subproject line)", () => {
+    const path = "vendor/lib";
+    const patch = `diff --git a/${path} b/${path}\nindex 8cc0857..d9a9186 160000\n`;
+    const result = decompose(patchset([file(path, patch)]));
+    expect(classOf(result, path)).toBe("submodule");
+    expect(result.ingestionGaps).toContainEqual(
+      expect.objectContaining({ kind: "submodule", path }),
+    );
+  });
+
+  it("detects git's `diff.submodule=log` form: spaced path, and `...`/`(commits not present)`", () => {
+    // Both are real git outputs (Codex probes). The path may contain spaces, the
+    // range may be `..` or `...`, and the line may end with `:` or a ` (status)`.
+    for (const [path, patch] of [
+      ["sub module", "Submodule sub module bd72186..0d4dfdc:\n  > two\n"],
+      ["vendor/lib", "Submodule vendor/lib a426a56...26627d8 (commits not present)\n"],
+    ] as const) {
+      const result = decompose(patchset([file(path, patch)]));
+      expect(classOf(result, path)).toBe("submodule");
+      expect(result.ingestionGaps).toContainEqual(
+        expect.objectContaining({ kind: "submodule", path }),
+      );
+    }
+  });
+
+  it("detects a `GIT binary patch` blob even when the capture left binary:false", () => {
+    // The false-clear Codex found: a canonical GIT binary patch with binary:false
+    // became a synthetic zero-LOC substantive chunk with no gap.
+    const path = "assets/icon.png";
+    const patch =
+      `diff --git a/${path} b/${path}\n` +
+      "index 0000000..1111111 100644\nGIT binary patch\nliteral 8\nzcmZQ$0000\n\n";
+    const result = decompose(patchset([file(path, patch, { binary: false })]));
+    expect(classOf(result, path)).toBe("binary");
+    expect(result.chunks.filter((c) => c.kind === "substantive")).toEqual([]);
+    expect(result.ingestionGaps).toContainEqual(expect.objectContaining({ kind: "binary", path }));
+  });
+
+  it("does NOT flag truncation when the marker text appears mid-body (only the terminal frame counts)", () => {
+    const path = "src/x.ts";
+    const patch = filePatch(path, [
+      { lines: ['+const note = "[diff truncated by Rennet]";', "+const a = 1;"] },
+    ]);
+    const result = decompose(patchset([file(path, patch)]));
+    expect(result.ingestionGaps).toEqual([]);
+  });
+});
+
 // ── Chunking and the ≤400 budget ─────────────────────────────────────────────
 
 describe("chunking", () => {

@@ -24,6 +24,7 @@ function stubBackend(): CanvasOpsBackend {
     edges: [],
     readingOrder: [],
     residue: [],
+    ingestionGaps: [],
   };
   const plan: RoutePlanResult = {
     refused: false,
