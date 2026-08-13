@@ -297,21 +297,27 @@ function isBinaryFile(file: PatchFile): boolean {
  * moving, never the child's own changes, so the content behind the pointer is not
  * ingested.
  *
- * Detection is STRUCTURAL, not a substring scan: a source line that merely
- * mentions "Subproject commit" must not misclassify the whole file as a submodule
- * (that would hide a real hand-edit as noise — the worst direction). Each form is
- * matched as a whole diff line:
- *  - a `+`/`-` gitlink pointer line: `+Subproject commit <oid>`;
- *  - the `160000` gitlink tree mode in the index or a mode header;
- *  - git's `diff.submodule=log` form: `Submodule <path> <oid>..<oid>[ (…)]:`.
+ * Detection is STRUCTURAL and keyed on metadata that ordinary file content cannot
+ * forge, NOT on the `Subproject commit <oid>` body line — a real text file whose
+ * content is literally `Subproject commit deadbeef` would otherwise be
+ * misclassified as a submodule and hidden in the appendix (the worst direction).
+ * Every real git submodule form carries one of:
+ *  - the `160000` gitlink tree mode, in the index line (modified) or a mode line
+ *    (added/deleted);
+ *  - git's `diff.submodule=log` block, whose `Submodule <path> <a>..<b>` line sits
+ *    at column 0 (never a `+`/`-` diff body line, so it cannot collide with file
+ *    content). The path may contain spaces and the range may be `..` or `...`,
+ *    optionally followed by `:` or a ` (status)` note.
+ * A submodule whose diff carries only the bare pointer line and no metadata simply
+ * stays substantive — its `-/+ Subproject commit` lines remain VISIBLE to the
+ * reviewer (the safe direction); it just misses the ingestion-gap badge.
  */
 function isSubmoduleChange(file: PatchFile): boolean {
   const p = file.patch;
   return (
-    /^[+-]Subproject commit [0-9a-f]{7,40}\b/m.test(p) ||
     /^index [0-9a-f]+\.+[0-9a-f]+ 160000\b/m.test(p) ||
     /^(?:old|new|new file|deleted file) mode 160000\b/m.test(p) ||
-    /^Submodule \S+ [0-9a-f]+\.+[0-9a-f]+.*:$/m.test(p)
+    /^Submodule .+? [0-9a-f]{7,40}\.{2,3}[0-9a-f]{7,40}/m.test(p)
   );
 }
 

@@ -427,7 +427,7 @@ describe("incomplete ingestion (R18)", () => {
     const bin = "z-assets/a.bin";
     const sub = "a-vendor/lib";
     const subPatch =
-      `diff --git a/${sub} b/${sub}\n@@ -1 +1 @@\n` +
+      `diff --git a/${sub} b/${sub}\nindex aaa0000..bbb0000 160000\n@@ -1 +1 @@\n` +
       "-Subproject commit aaa0000000000000000000000000000000000000\n" +
       "+Subproject commit bbb0000000000000000000000000000000000000\n";
     const result = decompose({
@@ -444,11 +444,16 @@ describe("incomplete ingestion (R18)", () => {
 
   // ── Structural detection, not substring (negative controls) ────────────────
 
-  it("does NOT flag ordinary source that merely MENTIONS 'Subproject commit'", () => {
-    // The dangerous over-fire: a substring scan classified a normal file wholesale
-    // as a submodule, moving a real hand-edit into the skimmed appendix.
-    const path = "src/x.ts";
-    const patch = filePatch(path, [{ lines: ['+const label = "Subproject commit";'] }]);
+  it("does NOT flag a real text file whose ADDED LINE is exactly a pointer-shaped string", () => {
+    // The dangerous over-fire (Codex's real-git probe): note.txt's content becomes
+    // literally `Subproject commit deadbeef`, so the diff carries a `+Subproject
+    // commit <hex>` line with an ordinary `100644` mode. Keying on the pointer body
+    // line would hide this real hand-edit in the appendix; keying on the `160000`
+    // metadata does not.
+    const path = "note.txt";
+    const patch =
+      `diff --git a/${path} b/${path}\nindex 1111111..2222222 100644\n--- a/${path}\n+++ b/${path}\n` +
+      "@@ -1 +1 @@\n-old\n+Subproject commit deadbeef00000000000000000000000000000000\n";
     const result = decompose(patchset([file(path, patch)]));
     expect(classOf(result, path)).toBeNull();
     expect(result.chunks.filter((c) => c.kind === "substantive").map((c) => c.title)).toContain(
@@ -467,14 +472,19 @@ describe("incomplete ingestion (R18)", () => {
     );
   });
 
-  it("detects a submodule via git's `diff.submodule=log` form", () => {
-    const path = "vendor/lib";
-    const patch = `Submodule ${path} 8cc0857..d9a9186:\n  > two\n`;
-    const result = decompose(patchset([file(path, patch)]));
-    expect(classOf(result, path)).toBe("submodule");
-    expect(result.ingestionGaps).toContainEqual(
-      expect.objectContaining({ kind: "submodule", path }),
-    );
+  it("detects git's `diff.submodule=log` form: spaced path, and `...`/`(commits not present)`", () => {
+    // Both are real git outputs (Codex probes). The path may contain spaces, the
+    // range may be `..` or `...`, and the line may end with `:` or a ` (status)`.
+    for (const [path, patch] of [
+      ["sub module", "Submodule sub module bd72186..0d4dfdc:\n  > two\n"],
+      ["vendor/lib", "Submodule vendor/lib a426a56...26627d8 (commits not present)\n"],
+    ] as const) {
+      const result = decompose(patchset([file(path, patch)]));
+      expect(classOf(result, path)).toBe("submodule");
+      expect(result.ingestionGaps).toContainEqual(
+        expect.objectContaining({ kind: "submodule", path }),
+      );
+    }
   });
 
   it("detects a `GIT binary patch` blob even when the capture left binary:false", () => {
