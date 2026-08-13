@@ -21,8 +21,15 @@ import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { afterEach } from "vitest";
 
-// Unmount and reset document.body between tests in this file.
-afterEach(cleanup);
+// Unmount and reset browser-owned state between tests in this file.
+afterEach(() => {
+  cleanup();
+  try {
+    globalThis.localStorage?.clear();
+  } catch {
+    return;
+  }
+});
 
 /** The RTL render handle, plus a ready-to-drive user-event instance. */
 export type MountResult = RenderResult & {

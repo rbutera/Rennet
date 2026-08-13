@@ -1,7 +1,7 @@
 import type { CanvasAngle } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 import type { ZoomLevel } from "../canvas/logic";
-import type { Surface } from "../nav/history";
+import { crumb, type Surface, type SurfaceLabels, surfaceIdentity } from "../nav/history";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The command registry (wireframes screen 16: "⌘K, every action a named
@@ -50,6 +50,9 @@ export type Screen = "projectDetail" | "frontDoor" | "directEntry" | "workspace"
 export interface CommandContext {
   screen: Screen;
   surfaceKind: Surface["kind"];
+  currentSurface: Surface;
+  recents: readonly Surface[];
+  surfaceLabels: SurfaceLabels;
   canBack: boolean;
   canForward: boolean;
   canGoToProject: boolean;
@@ -71,6 +74,7 @@ export interface CommandContext {
   goToProject(): void;
   goToDraft(): void;
   goToPaper(): void;
+  goToRecent(surface: Surface): void;
   openSettings(): void;
   showFiles(): void;
   showCanvases(): void;
@@ -106,6 +110,19 @@ const ANGLE_LABELS: Partial<Record<CanvasAngle, string>> = {
  */
 export function buildCommands(ctx: CommandContext): Command[] {
   const commands: Command[] = [];
+
+  const currentIdentity = surfaceIdentity(ctx.currentSurface);
+  for (const surface of ctx.recents) {
+    const identity = surfaceIdentity(surface);
+    if (identity === currentIdentity) continue;
+    const title = crumb([surface], ctx.surfaceLabels)[0]?.label ?? identity;
+    commands.push({
+      id: `recent.${identity}`,
+      title,
+      group: "Recent",
+      run: () => ctx.goToRecent(surface),
+    });
+  }
 
   if (ctx.canBack) {
     commands.push({

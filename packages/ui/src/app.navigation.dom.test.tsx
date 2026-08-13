@@ -4,6 +4,7 @@ import type { Review } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";
+import { NAV_HISTORY_STORAGE_KEY, serialize } from "./nav/history";
 import { fireEvent, mount, waitFor, within } from "./test/dom";
 
 const project: Project = {
@@ -128,6 +129,51 @@ function navigationBridge(restored: Review | null): RennetBridge {
 }
 
 describe("RennetApp navigation spine", () => {
+  it("shows only the Projects root crumb while bootstrap is still loading", () => {
+    const pending = new Promise<never>(() => undefined);
+    const invoke = (name: string): Promise<unknown> => {
+      if (name === "app.bootstrap") return pending;
+      if (name === "settings.get") {
+        return Promise.resolve({
+          scheme: "dark",
+          schemeProvenance: { layer: "builtin", contributions: [] },
+          appearanceMalformed: false,
+          projects: [],
+        });
+      }
+      return Promise.resolve({});
+    };
+    const { getByRole, getByText } = mount(
+      <RennetApp bridge={{ invoke: invoke as unknown as RennetBridge["invoke"] }} />,
+    );
+
+    expect(getByText("Restoring local review…")).not.toBeNull();
+    const breadcrumb = getByRole("navigation", { name: "Breadcrumb" });
+    expect(within(breadcrumb).getAllByRole("button")).toHaveLength(1);
+    expect(breadcrumb.textContent).toContain("Projects");
+  });
+
+  it("restores persisted ancestry without duplicating the bootstrap review", async () => {
+    localStorage.setItem(
+      NAV_HISTORY_STORAGE_KEY,
+      serialize({
+        stack: [
+          { kind: "projects" },
+          { kind: "project", projectId: project.id },
+          { kind: "review", reviewId: review.id },
+        ],
+        future: [],
+        recents: [],
+      }),
+    );
+    const { getByRole } = mount(<RennetApp bridge={navigationBridge(review)} />);
+
+    const breadcrumb = await waitFor(() => getByRole("navigation", { name: "Breadcrumb" }));
+    expect(within(breadcrumb).getAllByRole("button")).toHaveLength(3);
+    expect(breadcrumb.textContent).toContain(project.id);
+    expect(breadcrumb.textContent?.match(/\/code\/rennet/g)).toHaveLength(1);
+  });
+
   it("opens project → review, then Back lands on project detail rather than the front door", async () => {
     const { container, getByRole } = mount(<RennetApp bridge={navigationBridge(null)} />);
 
@@ -139,8 +185,10 @@ describe("RennetApp navigation spine", () => {
     fireEvent.click(container.querySelector(".smart-row-action") as HTMLButtonElement);
     await waitFor(() => {
       const breadcrumb = getByRole("navigation", { name: "Breadcrumb" });
-      expect(breadcrumb.textContent).toContain("project-1");
-      expect(breadcrumb.textContent).toContain("review-1");
+      expect(breadcrumb.textContent).toContain("rennet");
+      expect(breadcrumb.textContent).toContain(project.openPath);
+      expect(breadcrumb.textContent).not.toContain("project-1");
+      expect(breadcrumb.textContent).not.toContain("review-1");
     });
 
     fireEvent.click(getByRole("button", { name: "Back" }));
@@ -175,7 +223,9 @@ describe("RennetApp navigation spine", () => {
     await waitFor(() => expect(container.querySelector(".smart-row-action")).not.toBeNull());
     fireEvent.click(container.querySelector(".smart-row-action") as HTMLButtonElement);
     await waitFor(() =>
-      expect(getByRole("navigation", { name: "Breadcrumb" }).textContent).toContain("review-1"),
+      expect(getByRole("navigation", { name: "Breadcrumb" }).textContent).toContain(
+        review.repositoryRoot,
+      ),
     );
 
     fireEvent.keyDown(window, { key: "[", metaKey: true });
@@ -184,7 +234,9 @@ describe("RennetApp navigation spine", () => {
 
     fireEvent.keyDown(window, { key: "]", metaKey: true });
     await waitFor(() =>
-      expect(getByRole("navigation", { name: "Breadcrumb" }).textContent).toContain("review-1"),
+      expect(getByRole("navigation", { name: "Breadcrumb" }).textContent).toContain(
+        review.repositoryRoot,
+      ),
     );
     expect(container.querySelector(".project-detail")).toBeNull();
   });
@@ -202,7 +254,7 @@ describe("RennetApp navigation spine", () => {
 
     await waitFor(() => {
       const breadcrumb = getByRole("navigation", { name: "Breadcrumb" });
-      expect(breadcrumb.textContent).toContain(directReview.id);
+      expect(breadcrumb.textContent).toContain(directReview.repositoryRoot);
       expect(breadcrumb.textContent).not.toContain(project.id);
     });
     fireEvent.click(getByRole("button", { name: "Back" }));
@@ -235,5 +287,27 @@ describe("RennetApp navigation spine", () => {
     await waitFor(() => expect(queryByRole("heading", { name: "Settings" })).toBeNull());
     expect(container.querySelector(".project-detail")).not.toBeNull();
     expect(getByRole("navigation", { name: "Breadcrumb" }).textContent).toBe(crumbBefore);
+  });
+
+  it("lists resolved recent locations, excludes the current surface, and navigates to one", async () => {
+    const { container, getByRole } = mount(<RennetApp bridge={navigationBridge(null)} />);
+
+    await waitFor(() => expect(container.querySelector(".project-row")).not.toBeNull());
+    fireEvent.click(container.querySelector(".project-row") as HTMLButtonElement);
+    await waitFor(() => expect(container.querySelector(".smart-row-action")).not.toBeNull());
+    fireEvent.click(container.querySelector(".smart-row-action") as HTMLButtonElement);
+    await waitFor(() => expect(container.querySelector(".canvas-app")).not.toBeNull());
+
+    fireEvent.keyDown(window, { key: "k", metaKey: true });
+    await waitFor(() => expect(container.querySelector(".command-palette")).not.toBeNull());
+    const palette = container.querySelector(".command-palette") as HTMLElement;
+    const paletteQueries = within(palette);
+    expect(paletteQueries.queryByRole("button", { name: /\/code\/rennet/ })).toBeNull();
+    const recentProject = paletteQueries.getByRole("button", { name: /rennet/ });
+    expect(recentProject.textContent).toContain("Recent");
+
+    fireEvent.click(recentProject);
+    await waitFor(() => expect(container.querySelector(".project-detail")).not.toBeNull());
+    expect(getByRole("navigation", { name: "Breadcrumb" }).textContent).toContain(project.name);
   });
 });

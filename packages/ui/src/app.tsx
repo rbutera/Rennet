@@ -89,10 +89,18 @@ import { runBatched } from "./concurrency";
 import {
   ascendTo as ascendNavigationTo,
   crumb as deriveCrumb,
+  hydrate,
+  NAV_HISTORY_STORAGE_KEY,
+  type NavHistoryState,
   navHistoryReducer,
   back as navigateBack,
   forward as navigateForward,
   push as pushSurface,
+  recordRecent,
+  restore as restoreNavigation,
+  type Surface,
+  type SurfaceLabels,
+  serialize as serializeNavigation,
 } from "./nav/history";
 import type { SmartRow } from "./project/smart-list";
 
@@ -311,16 +319,44 @@ function mechanicalFallbackDetail(engine: ReviewEngine): string {
   return "This review's model-invocation budget was spent before it finished, so parts of what you see are the diff's structure, not AI findings.";
 }
 
+function readStoredNavigation(): string | undefined {
+  try {
+    return globalThis.localStorage?.getItem(NAV_HISTORY_STORAGE_KEY) ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function persistNavigation(state: NavHistoryState, recents: Surface[]): void {
+  try {
+    globalThis.localStorage?.setItem(
+      NAV_HISTORY_STORAGE_KEY,
+      serializeNavigation({ ...state, recents }),
+    );
+  } catch {
+    return;
+  }
+}
+
 export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const [review, setReview] = useState<Review | null | undefined>(undefined);
   const [selectedPath, setSelectedPath] = useState<string>();
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
+  const [storedNavigation] = useState(readStoredNavigation);
+  const [initialNavigation] = useState(() => hydrate(storedNavigation));
   const [navigation, navigate] = useReducer(navHistoryReducer, {
-    stack: [{ kind: "projects" }],
-    future: [],
+    stack: initialNavigation.stack,
+    future: initialNavigation.future,
   });
   const currentSurface = navigation.stack.at(-1) ?? { kind: "projects" as const };
+  const [recents, setRecents] = useState<Surface[]>(initialNavigation.recents);
+  const navigationReady = review !== undefined;
+  useEffect(() => {
+    if (!navigationReady) return;
+    setRecents((current) => recordRecent(current, currentSurface));
+  }, [currentSurface, navigationReady]);
+  useEffect(() => persistNavigation(navigation, recents), [navigation, recents]);
   // The legacy direct-entry capability is palette-only. It is an overlay beside
   // the surface stack, never a location recorded in navigation history.
   const [directEntryOpen, setDirectEntryOpen] = useState(false);
@@ -527,13 +563,20 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     bridge
       .invoke("app.bootstrap", {})
       .then(({ review: restored }) => {
+        const hydrated = hydrate(storedNavigation, restored?.id ?? null);
+        navigate(
+          restoreNavigation({
+            stack: hydrated.stack,
+            future: hydrated.future,
+          }),
+        );
+        setRecents(hydrated.recents);
         setReview(restored);
-        if (restored) navigate(pushSurface({ kind: "review", reviewId: restored.id }));
       })
       .catch((reason: unknown) =>
         setError(reason instanceof Error ? reason.message : String(reason)),
       );
-  }, [bridge]);
+  }, [bridge, storedNavigation]);
 
   // The reviewer's appearance scheme (wireframe #15), fetched once so the front
   // door themes to it. Settings updates it live via `onSchemeChange`. Fail-quiet:
@@ -1659,6 +1702,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const projectSurfaceIndex = navigation.stack
     .map((surface) => surface.kind)
     .lastIndexOf("project");
+  const surfaceLabels: SurfaceLabels = {
+    project: (id) => (projectDetail?.id === id ? projectDetail.name : undefined),
+    review: (id) => (review?.id === id ? review.repositoryRoot : undefined),
+  };
   function goToProject(): void {
     if (projectSurfaceIndex < 0) return;
     setDirectEntryOpen(false);
@@ -1700,6 +1747,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     ? {
         screen,
         surfaceKind: currentSurface.kind,
+        currentSurface,
+        recents,
+        surfaceLabels,
         canBack: navigation.stack.length > 1,
         canForward: navigation.future.length > 0,
         canGoToProject: projectSurfaceIndex >= 0,
@@ -1717,6 +1767,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         goToProject,
         goToDraft,
         goToPaper,
+        goToRecent: (surface) => navigate(pushSurface(surface)),
         openSettings: () => setSettingsOpen(true),
         showFiles: () => setView("review"),
         showCanvases: () => setView("canvases"),
@@ -1756,7 +1807,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       <div className="navigation-shell">
         <header className="navigation-titlebar">
           <Breadcrumb
-            crumb={deriveCrumb(navigation.stack)}
+            crumb={deriveCrumb(navigation.stack, surfaceLabels)}
             onAscend={(index) => {
               setDirectEntryOpen(false);
               navigate(ascendNavigationTo(index));
@@ -1786,7 +1837,18 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     );
   }
 
-  if (review === undefined) return <div className="loading">Restoring local review…</div>;
+  if (review === undefined) {
+    return (
+      <div className="navigation-shell">
+        <header className="navigation-titlebar">
+          <Breadcrumb crumb={deriveCrumb([{ kind: "projects" }])} onAscend={() => undefined} />
+        </header>
+        <div className="navigation-surface-content">
+          <div className="loading">Restoring local review…</div>
+        </div>
+      </div>
+    );
+  }
 
   // Settings and direct entry are orbital overlays. They take render precedence but
   // never mutate the surface stack, so closing either reveals the exact location.
