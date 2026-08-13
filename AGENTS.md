@@ -29,15 +29,15 @@ Rennet is Rai Butera's personal product. This is the product monorepo and the pr
 
 ## Read before changing the product
 
-**Start here: `docs/Rennet Delivery Order.md`.** It says what to build next, what is already finished on an unmerged branch, and how to read the Rule Zero amendment blocks now sitting on many issues. It outranks the ordering implied by issue numbers, P-labels, and any plan document below.
+**Start here: `docs/src/content/docs/developing/reference/delivery-order.md`.** It says what to build next, what is already finished, and how to read the Rule Zero amendment blocks now sitting on many issues. It outranks the ordering implied by issue numbers, P-labels, and any plan document below.
 
 Then, for depth:
 
-1. `docs/Rennet Product and Vision.md`
-2. `docs/Rennet Contracts and Rulings.md`
-3. `docs/Rennet Architecture Contracts.md`
-4. `docs/Rennet Dependency Standard.md`
-5. `docs/Rennet Navi Handoff.md`
+1. `docs/src/content/docs/using/concepts/product-and-vision.md`
+2. `docs/src/content/docs/developing/reference/contracts-and-rulings.md`
+3. `docs/src/content/docs/developing/concepts/architecture-contracts.md`
+4. `docs/src/content/docs/developing/reference/dependency-standard.md`
+5. `docs/src/content/docs/developing/concepts/agent-handoff.md`
 
 Every one of these is subordinate to Rule Zero.
 
@@ -48,7 +48,7 @@ The Contracts and Rulings document (formerly titled the Master Plan; ruling numb
 - Never use client repositories, code, pull requests, screenshots, data, time, or infrastructure for development, fixtures, calibration, or model-backed dogfood without written authorization.
 - Never add AI attribution or co-author trailers. Rai is the sole author.
 - Rennet is **MIT** licensed throughout, one licence for every package (Rai's decision, 2026-08-06). There is no AGPL boundary and no Apache-2.0 carve-out for `protocol`/`types`; any document still describing that split is superseded.
-- The Claude adapter **uses `@anthropic-ai/claude-agent-sdk`** (Rai's decision, 2026-08-06, superseding the original R2 ruling in docs/Rennet Contracts and Rulings.md). The SDK spawns the user's own installed `claude` binary via `pathToClaudeCodeExecutable`, so it authenticates with the user's Claude subscription and costs nothing per token. Strip the SDK's bundled per-platform executables at packaging time. Never bundle a harness binary of our own, and never read a credential.
+- The Claude adapter **uses `@anthropic-ai/claude-agent-sdk`** (Rai's decision, 2026-08-06, recorded in `docs/src/content/docs/developing/reference/contracts-and-rulings.md`). The SDK spawns the user's own installed `claude` binary via `pathToClaudeCodeExecutable`, so it authenticates with the user's Claude subscription and costs nothing per token. Strip the SDK's bundled per-platform executables at packaging time. Never bundle a harness binary of our own, and never read a credential.
 - Nothing another human can see gets published without Rai clicking post. This is a product feature — the review is his, in his voice, over his signature — not a safety gate. **Pushing a branch is not publishing**: Rennet's coding-agent loop writes and pushes freely, because submitting a PR requires a push.
 - Say "no Rennet backend" and disclose harness/provider egress. Never claim universally that nothing leaves the machine. This is honest copy, not a consent screen — state the fact, do not make the user clear a dialog.
 - `.rennet/` is local and ignored by default. Rennet never stages or commits a user's project context.
@@ -59,14 +59,14 @@ The Contracts and Rulings document (formerly titled the Master Plan; ruling numb
 
 ## Documentation (the docsite stays alive by construction)
 
-Rennet has a documentation site at `apps/docs` (Astro Starlight, static → Cloudflare Pages), split into two audiences: **Using Rennet** (people who run reviews) and **Developing Rennet** (people who build Rennet). It renders `docs/` design docs plus authored guides, and build-time mermaid diagrams via `beautiful-mermaid` (no headless browser).
+Rennet's root `docs/` directory is an Astro Starlight site (static → Cloudflare Pages), split into two audiences: **Using Rennet** (people who run reviews) and **Developing Rennet** (people who build Rennet). Mermaid diagrams render to themed SVG at build time via `beautiful-mermaid` (no headless browser).
 
 **Standing obligation, part of the definition of done — not a gate:** a change to the monorepo updates the affected documentation *in the same change*. The test is: *if someone reads the docs after this change and is now wrong, the change is not done.* This is enforced the way the rest of Rennet's discipline is — it is what "done" means, not a separate consent step or approval.
 
-- How to write a page: `apps/docs/src/content/docs/developing/contributing/docs-style-guide.md`.
-- What every page must carry: `apps/docs/src/content/docs/developing/contributing/good-docs-standard.md`.
+- How to write a page: `docs/src/content/docs/developing/contributing/docs-style-guide.md`.
+- What every page must carry: `docs/src/content/docs/developing/contributing/good-docs-standard.md`.
 - Reach for a mermaid diagram when a flow or architecture is clearer seen than read; write it as a ```mermaid fence and it renders to a themed SVG at build time.
-- A first representative batch of the `docs/*.md` set is migrated into `apps/docs`; the rest follow. When you touch a doc that still lives only in `docs/`, prefer migrating it into the right area as part of the change.
+- Retired planning files remain available in Git history. Do not restore them as competing authorities; move any still-live fact into the page that owns it.
 
 ## Working agreement
 

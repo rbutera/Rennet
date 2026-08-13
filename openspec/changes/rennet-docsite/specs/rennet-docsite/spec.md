@@ -1,14 +1,14 @@
 ## ADDED Requirements
 
 ### Requirement: A static, two-audience documentation site
-The system SHALL provide a documentation site (`apps/docs`, Astro Starlight) that builds fully static (`astro build` → `dist/`) and presents two independent content areas — "Using Rennet" and "Developing Rennet" — each with its own deep multi-section sidebar.
+The system SHALL provide a documentation site (`docs`, Astro Starlight) that builds fully static (`astro build` → `dist/`) and presents two independent content areas — "Using Rennet" and "Developing Rennet" — each with its own deep multi-section sidebar.
 
 #### Scenario: Both areas have independent deep sidebars
 - **WHEN** the docsite is built and the reader switches between the Using and Developing topics
 - **THEN** each topic shows its own full sidebar tree, not a shared two-item nav
 
 #### Scenario: The build is static and runtime-free
-- **WHEN** `apps/docs` is built
+- **WHEN** `docs` is built
 - **THEN** it produces a static `dist/` servable by Cloudflare Pages with no SSR or server runtime
 
 ### Requirement: Mermaid diagrams render as themed SVGs without a headless browser
@@ -25,9 +25,9 @@ The repository SHALL carry a docs writing/style guide, a "good docs" standard, a
 - **WHEN** an agent reads `AGENTS.md` before changing the monorepo
 - **THEN** it finds the instruction to update affected docs in the same change, and a style guide + standard telling it how
 
-### Requirement: CI deploys the docsite to Cloudflare Pages, preview-first
-The system SHALL build and deploy the docsite to a Cloudflare Pages project via GitHub Actions on changes under `apps/docs/**`, shipping to the `*.pages.dev` preview without blocking on the custom domain.
+### Requirement: CI deploys the docsite to Cloudflare Pages
+The system SHALL build and deploy the docsite to the `rennet-docs` Cloudflare Pages project via GitHub Actions on changes under `docs/**`, using preview branches for pull requests and the production branch for `main`.
 
-#### Scenario: A docs change deploys to the preview
-- **WHEN** a change under `apps/docs/**` lands and the workflow runs
-- **THEN** the site builds and deploys to the Cloudflare Pages preview URL, and the workflow does not fail for lack of the `docs.rennet.dev` custom domain
+#### Scenario: A docs change deploys to the matching environment
+- **WHEN** a change under `docs/**` lands and the workflow runs
+- **THEN** the site builds and deploys to a preview branch for a pull request or the `docs.rennet.dev` production branch for `main`

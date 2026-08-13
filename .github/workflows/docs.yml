@@ -1,28 +1,31 @@
-# Docs site build + deploy (Astro Starlight -> Cloudflare Pages, preview-first).
+# Docs site build + deploy (Astro Starlight -> Cloudflare Pages).
 #
-# Builds the static docsite on any change under apps/docs (or the migrated docs
-# or this workflow). Deploys to a Cloudflare Pages project ONLY when the
-# CLOUDFLARE_API_TOKEN secret is present — so the workflow is green before the
-# two external setup items are wired (see the PR body / docs proposal):
-#   1. rennet.dev added to Cloudflare as a zone (for the docs.rennet.dev domain)
-#   2. a Cloudflare Pages project + a CLOUDFLARE_API_TOKEN secret (Pages:Edit)
-# Until then the build proves the site compiles and the deploy step skips cleanly.
-# It ships to the *.pages.dev preview URL; the docs.rennet.dev custom domain is a
-# follow-up once the zone exists. This never blocks on the custom domain.
+# Builds the root static docsite on every relevant change. When Cloudflare
+# credentials are configured, main deploys the production branch of the
+# `rennet-docs` Pages project and pull requests deploy preview branches. The
+# Pages custom-domain mapping serves the production branch at docs.rennet.dev.
+# Without credentials the workflow still proves the complete static build.
 #
 # Security: read-only token, `pull_request` (never `pull_request_target`). Fork
 # PRs cannot read secrets, so the deploy step simply skips for them.
 name: Docs
 
 on:
+  workflow_dispatch:
   pull_request:
     paths:
-      - "apps/docs/**"
+      - "docs/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
       - ".github/workflows/docs.yml"
   push:
     branches: [main]
     paths:
-      - "apps/docs/**"
+      - "docs/**"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
       - ".github/workflows/docs.yml"
 
 concurrency:
@@ -34,7 +37,7 @@ permissions:
 
 jobs:
   build-deploy:
-    name: build docsite (deploy to Cloudflare Pages preview when configured)
+    name: build and deploy docsite
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -58,7 +61,7 @@ jobs:
       - name: Build docsite (static)
         run: pnpm nx run rennet-docs:build
 
-      - name: Deploy to Cloudflare Pages (preview)
+      - name: Deploy to Cloudflare Pages
         if: ${{ env.CLOUDFLARE_API_TOKEN != '' }}
         uses: cloudflare/wrangler-action@v3
         with:
@@ -66,12 +69,10 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           packageManager: npm
           command: >-
-            pages deploy apps/docs/dist
+            pages deploy docs/dist
             --project-name=rennet-docs
             --branch=${{ github.head_ref || github.ref_name }}
 
       - name: Note when deploy is skipped
         if: ${{ env.CLOUDFLARE_API_TOKEN == '' }}
-        run: |
-          echo "Docsite built successfully. Cloudflare deploy skipped: CLOUDFLARE_API_TOKEN is not set."
-          echo "See the PR body for the two external setup items (Cloudflare zone + Pages project/token)."
+        run: echo "Docsite built successfully. Cloudflare deploy skipped because the token is not set."

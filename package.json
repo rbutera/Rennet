@@ -22,6 +22,9 @@
           "{workspaceRoot}/apps/**/package.json",
           "{workspaceRoot}/apps/**/project.json",
           "{workspaceRoot}/apps/**/src/**/*",
+          "{workspaceRoot}/docs/package.json",
+          "{workspaceRoot}/docs/project.json",
+          "{workspaceRoot}/docs/src/**/*",
           "{workspaceRoot}/eslint.config.mjs",
           "{workspaceRoot}/scripts/check-boundaries.mjs",
           "sharedGlobals"
@@ -33,7 +36,7 @@
       },
       "format": {
         "cache": true,
-        "command": "pnpm exec biome check packages/*/src apps/desktop/src apps/desktop/e2e apps/desktop/*.ts apps/desktop/*.cjs apps/desktop/*.json apps/marketing/astro.config.mjs apps/marketing/project.json apps/marketing/package.json apps/marketing/src/styles scripts/*.mjs package.json biome.json",
+        "command": "pnpm exec biome check packages/*/src apps/desktop/src apps/desktop/e2e apps/desktop/*.ts apps/desktop/*.cjs apps/desktop/*.json apps/marketing/astro.config.mjs apps/marketing/project.json apps/marketing/package.json apps/marketing/src/styles docs/astro.config.mjs docs/project.json docs/package.json docs/tsconfig.json docs/src/content.config.ts docs/src/plugins docs/src/styles scripts/*.mjs package.json biome.json",
         "inputs": [
           "{workspaceRoot}/packages/*/src/**/*",
           "{workspaceRoot}/apps/desktop/src/**/*",
@@ -42,6 +45,13 @@
           "{workspaceRoot}/apps/desktop/*.cjs",
           "{workspaceRoot}/apps/desktop/*.json",
           "{workspaceRoot}/apps/marketing/**/*",
+          "{workspaceRoot}/docs/astro.config.mjs",
+          "{workspaceRoot}/docs/project.json",
+          "{workspaceRoot}/docs/package.json",
+          "{workspaceRoot}/docs/tsconfig.json",
+          "{workspaceRoot}/docs/src/content.config.ts",
+          "{workspaceRoot}/docs/src/plugins/**/*",
+          "{workspaceRoot}/docs/src/styles/**/*",
           "{workspaceRoot}/scripts/*.mjs",
           "sharedGlobals"
         ]
@@ -53,6 +63,7 @@
           "{workspaceRoot}/package.json",
           "{workspaceRoot}/packages/**/package.json",
           "{workspaceRoot}/apps/**/package.json",
+          "{workspaceRoot}/docs/package.json",
           "{workspaceRoot}/pnpm-lock.yaml",
           "{workspaceRoot}/scripts/check-licenses.mjs",
           "sharedGlobals"

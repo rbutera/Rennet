@@ -1,17 +1,17 @@
 # Rennet
 
-Rennet is a local-first code review harness. It helps a reviewer understand large local changes and pull requests through six complementary angles while keeping the human responsible for every published outcome.
+Rennet is a local-first code review harness. It turns local changes and GitHub pull requests into an ordered, evidence-backed review while keeping the human responsible for the result that goes out.
 
-The repository now contains the first runnable desktop MVP alongside the architecture and evidence work. It captures a local repository into an immutable patchset, persists review events locally, preserves the old review when code changes, and regenerates only after an explicit action. It does not call a model, mutate Git, or publish anything.
+The desktop app captures immutable patchsets, builds deterministic project context, runs review work through installed coding harnesses, preserves review state across successor changes, and produces one editable signed artifact. Team work can become a GitHub review; your own branch can become a coding-agent handoff followed by a pushed branch and pull request.
 
 ## Start here
 
-- [Contracts and rulings](./docs/Rennet%20Contracts%20and%20Rulings.md): the authority register (formerly the master plan): rulings, frozen core, open questions, and the execution pipeline.
-- [Architecture contracts](./docs/Rennet%20Architecture%20Contracts.md): project context, immutable patchsets, invalidation, persistence, privacy, and publication.
-- [Dependency standard](./docs/Rennet%20Dependency%20Standard.md): authoritative package, licence, toolchain, and ownership decisions.
-- [Local review MVP](./docs/Rennet%20Local%20Review%20MVP.md): what is implemented, how to run it, and the deliberately missing product layers.
-- [Evidence gates](./docs/Rennet%20Evidence%20Gate%20Status.md): what is proven, open, or approval-blocked before implementation.
-- [Build handoff](./docs/Rennet%20Navi%20Handoff.md): dependency-ordered implementation plan.
+- [Using Rennet](./docs/src/content/docs/using/index.md): the product, the review loop, and the shortest route through it.
+- [Architecture overview](./docs/src/content/docs/developing/concepts/architecture-overview.md): packages, processes, state, and the two live review paths.
+- [Architecture contracts](./docs/src/content/docs/developing/concepts/architecture-contracts.md): immutable patchsets, context, lineage, persistence, and publication.
+- [Contracts and rulings](./docs/src/content/docs/developing/reference/contracts-and-rulings.md): the authority register and durable product decisions.
+- [Dependency standard](./docs/src/content/docs/developing/reference/dependency-standard.md): package, licence, toolchain, and ownership decisions.
+- [Delivery order](./docs/src/content/docs/developing/reference/delivery-order.md): current implementation priorities grounded in the live issue queue.
 - [Wireframes](./wireframes/): the canonical lo-fi wireframe set (rendered PNGs + HTML sources in `wireframes/src/`). Open `wireframes/gallery.html` for the whole flow on one scroll.
 
 ## Repository shape
@@ -20,7 +20,7 @@ The repository now contains the first runnable desktop MVP alongside the archite
 apps/          Electron desktop app and future clients
 packages/      Portable types, protocol, core, adapters, UI, and instructions
 scripts/       Repository gates and maintenance tooling
-docs/          Architecture, product research, decisions, and evidence verdicts
+docs/          Astro Starlight docsite: user guides, architecture, and reference
 wireframes/    Canonical lo-fi wireframes (rendered PNGs + HTML sources + gallery)
 prototypes/    Archived exploratory screens (pre-wireframe)
 spikes/        Isolated evidence probes, never workspace packages
@@ -48,6 +48,6 @@ Nx runs and locally caches lint, TypeScript 7 typechecking, unit tests, and Vite
 
 ## Privacy boundary
 
-There is no Rennet backend. Selected harnesses or model providers may receive explicitly assembled code and context, and the app must disclose that before a run. Never use client repositories, data, screenshots, or pull requests as fixtures without written authorization.
+There is no Rennet backend. Selected harnesses or model providers may receive explicitly assembled code and context; Rennet records the assembled context rather than pretending the whole loop is offline. Never use client repositories, data, screenshots, or pull requests as fixtures without written authorization.
 
-This private repository does not currently grant a licence. The planned public licensing split is recorded in the contracts and rulings and must be implemented before the repository becomes public.
+Rennet is MIT licensed throughout.

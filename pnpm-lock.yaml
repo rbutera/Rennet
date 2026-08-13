@@ -145,7 +145,7 @@ importers:
         specifier: 19.2.8
         version: 19.2.8(react@19.2.8)
 
-  apps/docs:
+  docs:
     devDependencies:
       '@astrojs/markdown-remark':
         specifier: 7.2.2

@@ -1,6 +1,6 @@
 # Rennet mark
 
-The wordmark glyph and lockup, corrected per the Branding Plan (`docs/Wingman Branding Plan.md` §1a) and rendered at the four required sizes.
+The historical pre-launch wordmark glyph and lockup, rendered at four sizes.
 
 ## The mark
 

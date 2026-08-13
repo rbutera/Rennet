@@ -8,4 +8,4 @@ types <- protocol <- core <- adapters <- desktop
   +---------+------------------------- ui
 ```
 
-The package and licensing contracts are frozen in [Rennet Contracts and Rulings](../docs/Rennet%20Contracts%20and%20Rulings.md) and [Rennet Architecture Contracts](../docs/Rennet%20Architecture%20Contracts.md). Package selection and dependency overlap are governed by [Rennet Dependency Standard](../docs/Rennet%20Dependency%20Standard.md).
+The package and licensing contracts are recorded in [contracts and rulings](../docs/src/content/docs/developing/reference/contracts-and-rulings.md) and [architecture contracts](../docs/src/content/docs/developing/concepts/architecture-contracts.md). Package selection and dependency overlap are governed by the [dependency standard](../docs/src/content/docs/developing/reference/dependency-standard.md).

@@ -485,7 +485,7 @@ export function classifyLineage(
 // `resolveAnchor` in `@rennet/protocol` share one binding policy — a local copy
 // here is exactly how the policy drifted from `resolveAnchor` (issue #16
 // Critical 2). Re-exported for the existing import sites; `exact` only, after
-// measurement disproved `move` (see the verdict doc).
+// measurement disproved `move` (see the delta re-review and lineage doc).
 export { AUTO_CARRY_LINEAGES, autoCarries };
 
 // ── Measurement (the spike verdict) ───────────────────────────────────────────

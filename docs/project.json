@@ -1,0 +1,21 @@
+{
+  "name": "rennet-docs",
+  "$schema": "../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "docs/src",
+  "projectType": "application",
+  "tags": ["scope:rennet", "layer:app", "platform:docs"],
+  "targets": {
+    "build": {
+      "outputs": ["{projectRoot}/dist", "{projectRoot}/.astro"],
+      "command": "pnpm --dir docs exec astro build"
+    },
+    "dev": {
+      "cache": false,
+      "command": "pnpm --dir docs exec astro dev"
+    },
+    "preview": {
+      "cache": false,
+      "command": "pnpm --dir docs exec astro preview"
+    }
+  }
+}

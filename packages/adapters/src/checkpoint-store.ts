@@ -12,7 +12,7 @@ import { execa } from "execa";
 //
 // VENDORED PATTERN — attribution: this is T3 Code's checkpoint-as-hidden-git-ref
 // technique (`pingdotgg/t3code`, MIT: `CheckpointStore.ts`, `CheckpointDiffQuery.ts`,
-// `checkpointing/Utils.ts`), described in [[T3 Code Integration Research]] §1 and
+// `checkpointing/Utils.ts`), described in the docsite context-assembly page and
 // mandated by Contracts §2.1. The mechanism:
 //
 //   • Snapshot the working tree (tracked + untracked, .gitignore respected) into a

@@ -32,7 +32,7 @@ import type { ProcessedRepoSummary, Project, ProjectProcessEvent } from "@rennet
  * the thing that was missing: it starts a watcher per warm repo, brackets the pass
  * with background narration, and tears down cleanly.
  *
- * Design fidelity (R54, `Rennet Orchestrator Context Access.md`): the "proactive
+ * Design fidelity (see the docsite context-assembly contract): the "proactive
  * update" direction keeps the DETERMINISTIC snapshot rebuild warm and never yields a
  * WRONG review — every context read is gated on content-equality at the review's own
  * pinned base OID (`project-context-reader.ts`, R30) and returns a typed `stale`

@@ -1,8 +1,10 @@
 # Rennet site (pre-launch status page)
 
-The honest pre-launch surface for Rennet: a status page, not a marketing page, waitlist-free by instruction and by taste (Branding Plan §2, "The honest pre-launch version").
+The retired pre-launch status-page prototype. The live marketing application now
+lives in `apps/marketing`; this directory remains as design history.
 
-> **Build-only. Not deployed.** Deploying anything for Rennet is a Rai-only action (`docs/Rennet Navi Handoff.md`, RAI-ONLY actions). This directory builds a static site locally; it does not publish it.
+> **Build-only. Not deployed.** This directory builds a static site locally; it
+> is not part of the current deployment pipeline.
 
 ## What is here
 

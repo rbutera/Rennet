@@ -13,7 +13,7 @@ Wire as a build-time **rehype/remark hook** that finds ```mermaid fences and rep
 
 ## Two areas: `starlight-sidebar-topics`
 
-Use the `starlight-sidebar-topics` plugin (HiDeoo) to give **Using Rennet** and **Developing Rennet** each an independent, deep sidebar. Top-level switcher between the two topics; within each, a Guide / Concepts / Reference / Recipes shape. Content lives as plain `.md`/`.mdx` under `apps/docs/src/content/docs/{using,developing}/…` so an agent edits files + one config, nothing bespoke.
+Use the `starlight-sidebar-topics` plugin (HiDeoo) to give **Using Rennet** and **Developing Rennet** each an independent, deep sidebar. Top-level switcher between the two topics; within each, a Guide / Concepts / Reference / Recipes shape. Content lives as plain `.md`/`.mdx` under `docs/src/content/docs/{using,developing}/…` so an agent edits files + one config, nothing bespoke.
 
 ## The agent-maintenance layer
 
@@ -22,10 +22,10 @@ This is the requirement Rai cares most about — the docset stays alive because 
 - **"Good Rennet docs" standard**: what a page must have (purpose up top, examples, a diagram where it clarifies a flow/architecture).
 - **`AGENTS.md` instruction**: any change to the monorepo updates the affected docs *in the same change*; mermaid diagrams where they clarify. This is the "auto-update" — not (only) a CI job, but a standing agent obligation, enforced the same way Rule Zero and the wave discipline are.
 
-## CI / deploy: preview-first
+## CI / deploy
 
-GitHub Actions on `apps/docs/**` changes: `astro build`, then deploy `dist/` to a Cloudflare Pages project via `wrangler pages deploy` (or the Pages GitHub integration) using a `CLOUDFLARE_API_TOKEN` secret scoped to Pages:Edit. **Ship to the `*.pages.dev` preview first** so the PR is fully green without waiting on DNS; the `docs.rennet.dev` custom domain is a follow-up once rennet.dev is on Cloudflare. Do not block the build on the custom domain.
+GitHub Actions on `docs/**` changes: `astro build`, then deploy `dist/` to the `rennet-docs` Cloudflare Pages project with a Pages-scoped token. Pull requests use preview branches; `main` is the production branch behind `docs.rennet.dev`.
 
-## Phasing (keep the first PR reviewable)
+## Migration completion
 
-First PR = scaffold + the two-area structure + the mermaid hook + the CI pipeline (to preview) + the agent-maintenance layer + a **representative first batch** of migrated docs (pick ~6-10 that exercise both areas and at least one mermaid diagram — e.g. Product & Vision + a user guide for *Using*; Architecture Contracts + the Delivery Order + a contributing guide for *Developing*). The remaining ~46 docs and the marketing-site question are explicit follow-ups. Rai reads this PR in Rennet — keep it coherent, not a 56-file dump.
+The initial scaffold proved the two-area structure, Mermaid rendering, deployment, and maintenance layer. The completion pass moved the site to root `docs`, rewrote the useful legacy authority into focused pages, and removed the retired planning set from the working tree.

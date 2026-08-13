@@ -84,9 +84,9 @@ Confirmed public claims are:
 
 ## Evidence on Hand
 
-- Canonical product intent: [`docs/Rennet Product and Vision.md`](docs/Rennet%20Product%20and%20Vision.md)
-- Current delivery truth and priorities: [`docs/Rennet Delivery Order.md`](docs/Rennet%20Delivery%20Order.md)
-- Product and architecture rulings: [`docs/Rennet Contracts and Rulings.md`](docs/Rennet%20Contracts%20and%20Rulings.md)
+- Canonical product intent: [`product-and-vision.md`](docs/src/content/docs/using/concepts/product-and-vision.md)
+- Current delivery truth and priorities: [`delivery-order.md`](docs/src/content/docs/developing/reference/delivery-order.md)
+- Product and architecture rulings: [`contracts-and-rulings.md`](docs/src/content/docs/developing/reference/contracts-and-rulings.md)
 - Desktop packaging and installation: [`apps/desktop/PACKAGING.md`](apps/desktop/PACKAGING.md)
 - Production brand assets: [`brand/README.md`](brand/README.md)
 - Existing product UI: [`apps/desktop/`](apps/desktop/) and [`packages/ui/`](packages/ui/)

@@ -541,7 +541,7 @@ export type Lineage =
  *
  * ⭐ `exact` ONLY. §3.4: "Only an exact, byte-identical occurrence with matching
  * contextual disambiguators may carry." `move` was REMOVED after measurement
- * (`docs/Rennet Lineage Matcher Verdict.md`): content + optional context cannot
+ * (`docs/src/content/docs/developing/concepts/delta-rereview-and-lineage.md`): content + optional context cannot
  * distinguish a move from a delete-plus-copy or a context-rotated reassignment,
  * so a confidently-labelled `move` can point at the WRONG occurrence — the
  * product's worst failure. `move` returns as a carry class only behind
@@ -1928,7 +1928,7 @@ export interface CanvasChangeNotification {
 // catalogue data, the three assignment tables, and the pure `resolveAssignment`
 // resolver live in `@rennet/core` (`model-council.ts`); the budget closure lives
 // in `@rennet/core` (`invocation-budget.ts`). Doc authority:
-// `docs/Rennet Model Council.md` (§2 catalogue, §3 tables, §4 resolver + gate).
+// `docs/src/content/docs/developing/concepts/model-council.md`.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The provider a council model belongs to. Determines the harness it runs on. */

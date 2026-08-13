@@ -3007,7 +3007,7 @@
   align-items: center;
   gap: 6px;
   /* Proportional UI face — the Design Doctrine reserves monospace for actual CODE,
-     never a label/count/chip (docs/Rennet Design Doctrine.md §mono). */
+     never a label/count/chip (see the docsite design doctrine). */
   font: 500 11.5px / 1.2 var(--sans);
   padding: 4px 8px;
   border-radius: 6px;
