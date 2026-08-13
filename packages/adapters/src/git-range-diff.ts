@@ -166,7 +166,11 @@ export function parseUnifiedDiffFiles(diff: string): PatchFile[] {
       }
     }
     if (!path) continue;
-    const binary = block.includes("Binary files ");
+    // Anchor the binary sentinels to a line start: git emits `Binary files … differ`
+    // and `GIT binary patch` at column 0. An unanchored `includes` would flag an
+    // ordinary file whose added body line merely reads `+Binary files … differ`,
+    // hiding that real change downstream (the dangerous direction).
+    const binary = /^Binary files .+ differ$/m.test(block) || /^GIT binary patch$/m.test(block);
     files.push({
       path,
       ...(status === "renamed" && previousPath ? { previousPath } : {}),

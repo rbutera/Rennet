@@ -321,12 +321,20 @@ function isBinaryFile(file: PatchFile): boolean {
  */
 function isSubmoduleChange(file: PatchFile): boolean {
   const p = file.patch;
-  return (
+  const gitlink =
     /^index [0-9a-f]+\.+[0-9a-f]+ 160000\b/m.test(p) ||
     /^(?:old|new|new file|deleted file) mode 160000\b/m.test(p) ||
     /^Submodule .+? [0-9a-f]+\.{2,3}[0-9a-f]+/m.test(p) ||
-    /^Submodule .+ contains (?:modified|untracked) content/m.test(p)
-  );
+    /^Submodule .+ contains (?:modified|untracked) content/m.test(p);
+  if (!gitlink) return false;
+  // A gitlink↔regular-file TYPE CHANGE carries BOTH a 160000 signal and a regular
+  // file-mode section (`100644`/`100755`/`120000`) in the same PatchFile; the
+  // regular half is real reviewable text that must not be hidden in the appendix.
+  // When both are present, fall back to substantive — the safe direction.
+  const regularFile =
+    /^(?:old|new|new file|deleted file) mode (?:100644|100755|120000)\b/m.test(p) ||
+    /^index [0-9a-f]+\.+[0-9a-f]+ (?:100644|100755|120000)\b/m.test(p);
+  return !regularFile;
 }
 
 /**

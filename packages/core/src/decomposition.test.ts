@@ -522,6 +522,32 @@ describe("incomplete ingestion (R18)", () => {
     expect(result.ingestionGaps).toContainEqual(expect.objectContaining({ kind: "binary", path }));
   });
 
+  it("does NOT hide the regular half of a gitlink↔file TYPE CHANGE (both directions)", () => {
+    // A path that changes between a submodule (160000) and a regular file (100644)
+    // emits both a 160000 section and a regular-file section in one PatchFile. The
+    // regular text must stay substantive/VISIBLE, not be stamped submodule and
+    // hidden in the appendix (the dangerous direction Codex reproduced).
+    const path = "src/embedded";
+    const gitlinkToFile =
+      `diff --git a/${path} b/${path}\ndeleted file mode 160000\nindex abc1234..0000000\n` +
+      `--- a/${path}\n+++ /dev/null\n@@ -1 +0,0 @@\n-Subproject commit abc1234000000000000000000000000000000000\n` +
+      `diff --git a/${path} b/${path}\nnew file mode 100644\nindex 0000000..036ad28\n` +
+      `--- /dev/null\n+++ b/${path}\n@@ -0,0 +1 @@\n+real ordinary text\n`;
+    const fileToGitlink =
+      `diff --git a/${path} b/${path}\ndeleted file mode 100644\nindex 036ad28..0000000\n` +
+      `--- a/${path}\n+++ /dev/null\n@@ -1 +0,0 @@\n-real ordinary text\n` +
+      `diff --git a/${path} b/${path}\nnew file mode 160000\nindex 0000000..abc1234\n` +
+      `--- /dev/null\n+++ b/${path}\n@@ -0,0 +1 @@\n+Subproject commit abc1234000000000000000000000000000000000\n`;
+    for (const patch of [gitlinkToFile, fileToGitlink]) {
+      const result = decompose(patchset([file(path, patch)]));
+      expect(classOf(result, path)).toBeNull();
+      expect(result.chunks.filter((c) => c.kind === "substantive").map((c) => c.title)).toContain(
+        path,
+      );
+      expect(result.ingestionGaps).toEqual([]);
+    }
+  });
+
   it("does NOT flag truncation when the marker text appears mid-body (only the terminal frame counts)", () => {
     const path = "src/x.ts";
     const patch = filePatch(path, [

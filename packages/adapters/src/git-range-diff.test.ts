@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { decompose } from "@rennet/core";
 import { afterEach, describe, expect, it } from "vitest";
-import { captureRangePatchset, execaGit } from "./git-range-diff";
+import { captureRangePatchset, execaGit, parseUnifiedDiffFiles } from "./git-range-diff";
 
 const directories: string[] = [];
 
@@ -35,6 +35,33 @@ function repositoryWithRange(): { root: string; baseOid: string; headOid: string
 afterEach(() => {
   for (const directory of directories.splice(0))
     rmSync(directory, { recursive: true, force: true });
+});
+
+describe("parseUnifiedDiffFiles (degraded REST parser) binary detection", () => {
+  it("does NOT flag an ordinary file whose body line merely reads `+Binary files … differ`", () => {
+    // git emits `Binary files … differ` at column 0; an added body line carrying
+    // that text must not set binary:true (it would hide the change downstream).
+    const diff =
+      "diff --git a/note.txt b/note.txt\nindex 1111111..2222222 100644\n--- a/note.txt\n+++ b/note.txt\n" +
+      "@@ -1 +1 @@\n-old\n+Binary files foo and bar differ\n";
+    const [file] = parseUnifiedDiffFiles(diff);
+    expect(file?.binary).toBe(false);
+  });
+
+  it("flags a real binary file via git's column-0 `Binary files … differ` sentinel", () => {
+    const diff =
+      "diff --git a/logo.png b/logo.png\nindex 1111111..2222222 100644\n" +
+      "Binary files a/logo.png and b/logo.png differ\n";
+    const [file] = parseUnifiedDiffFiles(diff);
+    expect(file?.binary).toBe(true);
+  });
+
+  it("flags a `GIT binary patch` blob the old `includes` check missed", () => {
+    const diff =
+      "diff --git a/icon.png b/icon.png\nindex 0000000..1111111 100644\nGIT binary patch\nliteral 8\nzcmZQ$0000\n\n";
+    const [file] = parseUnifiedDiffFiles(diff);
+    expect(file?.binary).toBe(true);
+  });
 });
 
 describe("captureRangePatchset", () => {
