@@ -3,6 +3,7 @@ import "@fontsource-variable/instrument-sans/wdth.css";
 import "@fontsource-variable/source-sans-3/wght.css";
 import logoWhite from "../../../../brand/exports/logo/svg/lockup-horizontal-white.svg?url";
 import markWhite from "../../../../brand/exports/logo/svg/mark-small-white.svg?url";
+import CategoryStatement from "../components/CategoryStatement.astro";
 import "../styles/global.css";
 
 const githubUrl = "https://github.com/rbutera/rennet";
@@ -170,6 +171,8 @@ const lenses = [
         </div>
       </section>
 
+      <CategoryStatement />
+
       <section class="workflows section shell" id="workflows">
         <div class="section-heading">
           <h2>Two sides of the same responsibility.</h2>
@@ -186,7 +189,7 @@ const lenses = [
             <ol>
               <li><span>Branch</span><p>Review committed and working-tree changes.</p></li>
               <li><span>Refine</span><p>Turn your dispositions into focused work for the coding harness.</p></li>
-              <li><span>Re-read</span><p>Inspect what moved before you submit.</p></li>
+              <li><span>Re-read</span><p>Rennet captures the result as a new patchset and re-reviews only what changed.</p></li>
             </ol>
           </article>
           <article class="workflow team-work">
@@ -324,7 +327,10 @@ const lenses = [
 
     <footer class="site-footer shell">
       <a class="brand" href="#top" aria-label="Rennet home"><img class="logo-light" src="/brand/rennet-lockup.svg" alt="Rennet" width="136" height="40" /><img class="logo-dark" src={logoWhite} alt="Rennet" width="136" height="40" /></a>
-      <p>Rennet turns a body of code into pieces a person can digest, question, and answer for.</p>
+      <div class="footer-copy">
+        <p>Rennet turns a body of code into pieces a person can digest, question, and answer for.</p>
+        <p class="footer-meaning">Rennet is the enzyme that separates milk into curds and whey. It adds nothing; it separates what is already there.</p>
+      </div>
       <nav aria-label="Footer navigation"><a href="https://docs.rennet.dev">Docs</a><a href={githubUrl}>GitHub</a><a href={`${githubUrl}/blob/main/LICENSE`}>MIT licence</a></nav>
     </footer>
 
