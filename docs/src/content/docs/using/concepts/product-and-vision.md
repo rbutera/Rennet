@@ -15,6 +15,11 @@ Coding agents can produce a changeset faster than a person can build a mental
 model of it. A flat list of changed files makes that gap worse: it tells you
 where bytes moved, not how the change hangs together.
 
+The first user is the engineer reviewing work produced on their own branch before
+asking a teammate to absorb it. Rennet removes the mechanical overhead around
+that self-review. It does not outsource the judgment or turn a model's finding
+into a human verdict.
+
 Rennet does the structural work around the review. It groups related changes,
 orders them for comprehension, surfaces decisions and disagreements, remembers
 what you acted on, and turns your dispositions into one editable outbound
@@ -90,6 +95,11 @@ Blast radius paints the other lenses instead of owning a separate surface. The
 same patchset and anchors sit underneath every view, so rotating a lens does not
 move the code under you.
 
+Models surface findings, reconstruct possible reasoning, and propose useful
+grouping. The reviewer reads, judges, and signs. Product copy should preserve
+that distinction: Rennet can say a model **flagged** something, not that the
+machine **reviewed**, **approved**, or **found a bug** on the reviewer's behalf.
+
 ## Local-first, honestly stated
 
 Rennet has no Rennet backend and no Rennet telemetry service. Review state and
@@ -106,11 +116,14 @@ Claude Code or Codex.
 The team-PR loop works end to end on `main`: ingest, decomposition, the review
 lenses, dual-model analysis, refinement, signing, and a real GitHub post.
 
-The own-branch loop is live too: Rennet composes the handoff, runs the coding
-agent with write access, captures the successor patchset, carries only proven
-unchanged state, and can push the named branch and open the previewed pull
-request. Richer sub-file lineage, project-processing narration, and parts of the
-code-intelligence experience are still intended destinations rather than
+The own-branch submission path is live: Rennet drafts the pull request, signs,
+pushes the named branch, and opens the previewed pull request. The coding-agent
+handoff is not yet live through the renderer. Its mechanical bundle, capable
+runner, checkpoint capture, successor patchset, deterministic carry, and model
+composer exist behind main-process commands, but the renderer does not invoke
+the acting command and the composed bundle is not yet threaded into it. Richer
+sub-file lineage, project-processing narration, and parts of the
+code-intelligence experience are also intended destinations rather than
 finished surfaces.
 
 These docs mark those seams explicitly. A designed flow is useful context, but

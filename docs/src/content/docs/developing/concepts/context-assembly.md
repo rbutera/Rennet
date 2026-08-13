@@ -138,6 +138,24 @@ desktop main; a background answer agent and its `answer` document are deferred.
 
 The live tracking item is [#15 — context.ask](https://github.com/rbutera/rennet/issues/15).
 
+## Empirical validation still open
+
+The hybrid design is adopted, but several sizing and behavior choices are still
+hypotheses. [Issue #24](https://github.com/rbutera/rennet/issues/24) preserves five
+experiments against small, medium, and large reviews with known-answer questions:
+
+| Experiment | What it settles |
+|---|---|
+| Primer ablation | Fat dump versus capped primer versus lean map and tools; correctness, resident tokens, tool calls, and time to useful output |
+| `context.ask` quality | Deterministic composition versus an actual sub-agent, light versus heavy; evidence validity and honest refusal |
+| Retrieval latency | Per-tool p50/p95 and quick versus thorough asks; when a synchronous answer needs an asynchronous ticket |
+| Retrieval triggers | Whether the protocol card and tool descriptions actually make the model retrieve when the answer is absent, without over-asking or fabricating |
+| Session economics | Warm per-review versus fresh per-question sessions and provider-cache effects |
+
+Run these through the existing provenance and run-ledger machinery. The purpose
+is to amend the primer and tool contract when evidence disagrees, not to prove a
+favored architecture right.
+
 ## Code map
 
 | Concern | Source |

@@ -163,7 +163,7 @@ frame remains available for diagnostics.
 | Area | Status |
 |---|---|
 | Claude discovery, health, sessions, streaming, tools, errors, usage | Live |
-| Fully capable Claude handoff turn | Live |
+| Fully capable Claude handoff turn | Live behind a main-process command; renderer caller missing |
 | Codex binary discovery and utility execution | Live |
 | Full Codex `HarnessPort` session adapter | Deferred |
 | omp/Pi adapter | Deferred |

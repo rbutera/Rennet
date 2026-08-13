@@ -25,6 +25,11 @@ The intended product has five review canvases:
 Blast radius is different. It is amber paint laid over the other canvases, not
 another queue to work through.
 
+Those surfaces are intentionally different species: Sequence is a reading path;
+Spec is a structured document; Decisions is a judgment queue; Flagged is an
+index; Noise is the visible remainder. [Review lenses](/developing/concepts/review-lenses/)
+explains their behavior, provenance, and shared read-coverage floor.
+
 > **Current implementation detail:** `CanvasAngle` still includes a transitional
 > `claims` canvas. The current product direction retires that surface. Claim and
 > requirement links remain useful infrastructure for Spec coverage, test links,
@@ -65,8 +70,12 @@ GitHub review, or the coding-agent handoff.
 
 **L3, annotations** is conversational working state: highlights, callouts,
 links, and proposals. It stays visually distinct from the analysis and the
-reviewer's own decisions. Unpinned annotations disappear with the session;
+reviewer’s own decisions. Unpinned annotations disappear with the session;
 pinned ones survive.
+
+Marks render at their anchors. The mark index only navigates back to them. If an
+anchor cannot resolve, the mark stays visible in the orphan tray instead of being
+dropped or attached to convenient nearby code.
 
 ## How analysis reaches a canvas
 

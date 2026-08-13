@@ -65,6 +65,7 @@ export default defineConfig({
                     link: "/developing/concepts/architecture-contracts/",
                   },
                   { label: "Canvas model", link: "/developing/concepts/canvas-model/" },
+                  { label: "Review lenses", link: "/developing/concepts/review-lenses/" },
                   { label: "Context assembly", link: "/developing/concepts/context-assembly/" },
                   {
                     label: "Code intelligence",

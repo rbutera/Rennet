@@ -82,6 +82,21 @@ to its local structural index when a language server is missing, starting, or
 unable to load the project. A future provider must pin its answer to the
 reviewed patchset rather than quietly resolving a newer working tree.
 
+## Researched LSP direction
+
+The TypeScript spike selected the reviewed repository's native TypeScript 7
+`tsgo --lsp --stdio` as the first language-server choice when that repository
+already selects TypeScript 7. For TypeScript 6 and older projects, the fallback
+direction is `typescript-language-server` using the repository's own TypeScript,
+not a globally chosen compiler that can disagree with the code being reviewed.
+
+That is researched direction, not a live adapter. A production provider must
+run against immutable base and head materialisations, keep the two sides
+distinct, report readiness and degradation honestly, and never answer from the
+moving checkout merely because it is easier to start. The detailed benchmark
+tables remain in Git history; the durable choice and its proof obligation belong
+here.
+
 ## Code map
 
 | Concern | Source |

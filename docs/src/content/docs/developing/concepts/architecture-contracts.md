@@ -24,7 +24,8 @@ consent screens, capability denial, read-only coding sessions, or safety theatre
 | Evidence-backed knowledge layer | Data model exists; desktop composition is deferred | Every statement carries evidence and freshness |
 | Occurrence lineage | Exact carry is live; fuzzy matching is present but not connected to carry | Similarity never impersonates identity |
 | Someone else's PR | Live end to end | Preview the exact outbound review, then submit once |
-| Own-branch handoff and PR submission | Live | Coding agent may write and test; sign pushes the named branch and opens the previewed PR |
+| Own-branch PR submission | Live | Sign pushes the named branch and opens the previewed PR |
+| Coding-agent handoff | Backend commands live; renderer and composed-bundle joins missing | Coding agent may write and test; capture its complete delta as a successor |
 | Remote/mobile client | Protocol seam only; client deferred | Host paths and raw events never cross the portable boundary |
 
 ## The ten invariants
@@ -173,7 +174,7 @@ successor patchset. It never edits the old patchset in place.
 ### Occurrences and lineage
 
 An occurrence is a reviewable unit scoped to one patchset. A successor may have
-an `exact`, `one-to-one`, `move`, `split`, `merge`, `ambiguous`, or `rejected`
+an `exact`, `one-to-one`, `move`, `split`, `merge`, `ambiguous`, or `terminated`
 relationship to an older occurrence.
 
 Only exact byte-identical content with matching context carries read state and

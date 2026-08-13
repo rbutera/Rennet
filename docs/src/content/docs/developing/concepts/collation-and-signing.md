@@ -76,7 +76,7 @@ changes.
 | Draft emphasis | Compose change requests and the PR account | Refine and order review comments |
 | Paper previews | PR title, body, base, head, and draft state | Review verdict and anchored comments |
 | Sign does | Push the branch and create or reuse the PR | Post one batched GitHub review |
-| Needs another coding pass | Hand the same asks to a coding harness, then recapture | Not applicable |
+| Needs another coding pass | Intended: hand the same asks to a coding harness, then recapture | Not applicable |
 
 On your branch, the title and body can be drafted by a Model Council seat and
 then edited directly. On another person's PR, the paper derives one GitHub review
@@ -109,9 +109,12 @@ into a disposition on the draft.
 ## What is live
 
 The destination frame, editable collation canvas, comment refinement, paper,
-batched review post, write-enabled coding-agent handoff, delta recapture, and
-own-branch push-plus-PR submission are wired in the current tree. The paper has a
-back action; edits happen on the draft.
+batched review post, and own-branch push-plus-PR submission are wired through the
+renderer. The paper has a back action; edits happen on the draft.
+
+The write-enabled handoff and delta-recapture machinery is wired behind typed
+main-process commands, but the renderer does not invoke it. The handoff composer
+is also a separate command whose result is not yet passed into the acting run.
 
 The deeper orchestrator-on-draft experience is still incomplete. The UI explains
 the proposal model, and `canvasOps@2` can raise proposals, but free-form

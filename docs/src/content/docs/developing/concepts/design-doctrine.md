@@ -59,6 +59,21 @@ flowchart TD
 Use margin threads, overlays, and a peek-then-pin inspector. Do not insert a
 large conversation block into the diff column and shove the code around.
 
+## Anchors are home
+
+A mark lives at the line, range, chunk, requirement, or conversation fragment it
+refers to. An index can jump to that anchor; it must not become a detached list
+that makes the reviewer guess where a finding belongs. If placement fails, show
+the mark in a visible orphan tray with the reason. Never guess a nearby anchor.
+
+```mermaid
+flowchart LR
+  mark["Annotation or proposal"] --> resolve{"Anchor resolves?"}
+  resolve -->|yes| code["Render on code or document"]
+  code --> index["Index jumps back to anchor"]
+  resolve -->|no| orphan["Visible orphan tray<br/>reason preserved"]
+```
+
 ## Progressive disclosure without hiding truth
 
 The first view should be calm, but every decision and every unread part of the
@@ -83,10 +98,24 @@ Controls should usually fit in four words. The content being reviewed can
 breathe; the interface around it should get out of the way.
 
 - Use proportional type for interface chrome. Monospace is for code.
+- Keep serif type for paper—the signed destination—not ordinary working chrome.
 - Prefer one familiar glyph over a row of labelled utilities.
 - Give unfamiliar glyphs a tooltip and include them in the product legend.
 - Use the shared design tokens. New one-off colours and radii usually signal a
   missing system decision.
+
+The four-word rule applies to chrome, not to the material being understood.
+Model evidence, review prose, reconstructed reasoning, and processing narration
+may breathe when brevity would make them cryptic.
+
+## Accessibility is ordinary craft
+
+- Every pointer action needs a keyboard route and a visible focus state.
+- Respect reduced-motion preferences; removing animation must not remove status.
+- Secondary text still needs readable contrast on glass and paper.
+- Use the shared icon components for real controls. Do not use emoji or arbitrary
+  text glyphs as the only meaning-bearing icon.
+- Keep labels or accessible names when a compact glyph replaces visible text.
 
 ## Show mode without asking permission
 
@@ -109,6 +138,8 @@ Before a UI change is done, check:
 5. Does loading say what the machine is doing?
 6. Is the chrome short, proportional, and built from shared tokens?
 7. Does the signed paper match the outbound artifact exactly?
+8. Can the same work be done by keyboard, with reduced motion and readable contrast?
+9. Does every mark live at an anchor or in an explicit orphan tray?
 
 ## Where to go next
 

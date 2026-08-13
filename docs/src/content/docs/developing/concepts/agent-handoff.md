@@ -3,10 +3,11 @@ title: Agent handoff
 description: How review requests become one coding-agent work order, a new patchset, and a focused delta review.
 ---
 
-Agent handoff closes Rennet's author-side loop: collect the changes you want,
+Agent handoff is the intended author-side loop: collect the changes you want,
 hand them to the coding harness, capture what it edits, then review only the
-resulting delta. The coding agent is capable enough to edit files and run the
-tests it needs.
+resulting delta. The backend pieces exist, but the current renderer does not yet
+invoke this loop. Today, signing your own-branch paper pushes the branch and
+opens the pull request instead.
 
 ## The loop
 
@@ -23,9 +24,18 @@ flowchart TD
   rereview --> paper["Sign the PR submission"]
 ```
 
-This loop is live. The handoff runner, bundle composer, successor capture, delta
-account, short delta digest, and author-side PR submission are all wired through
-the desktop main process.
+Most of the machinery is live behind typed main-process commands: the mechanical
+bundle, write-enabled runner, workspace checkpoints, successor capture, exact
+carry, delta account, optional digest, and PR submission. Two joins are still
+missing from the shipped product path:
+
+- the renderer does not call `review.handoff.run`;
+- `review.handoff.compose` returns a composed bundle, but
+  `review.handoff.run` rebuilds and executes the mechanical bundle instead of
+  accepting that exact composed result.
+
+That is why [#72](https://github.com/rbutera/rennet/issues/72) remains open even
+though its composer and validation code are present.
 
 ## From dispositions to a work order
 
@@ -44,9 +54,10 @@ The mechanical bundle contains:
 - a stable digest of the ordered tasks.
 
 `buildHandoffBundle()` in `packages/core/src/handoff-loop.ts` owns this plain,
-deterministic shape. `review.handoff.compose` can then merge related asks, choose
-a useful order, and add a short narrative without changing which asks are in the
-bundle.
+deterministic shape. The separate `review.handoff.compose` command can merge
+related asks, choose a useful order, and add a short narrative without changing
+which asks are in the bundle. The composer is real, but its output is not yet the
+input to the acting turn.
 
 ```mermaid
 flowchart LR
@@ -54,8 +65,9 @@ flowchart LR
   filter -->|request change or comment| task["Anchored task"]
   filter -->|approve or question| local["Keep in review"]
   task --> bundle["Mechanical bundle"]
-  bundle --> composer["Optional composed work order"]
-  composer --> turn["Coding-agent turn"]
+  bundle --> composer["Composed work order command"]
+  bundle --> turn["Current acting turn<br/>mechanical bundle"]
+  composer -. "not threaded through yet" .-> turn
 ```
 
 The mechanical partition remains the authority. Composition may make the work
@@ -63,10 +75,11 @@ order easier to follow, but it may not invent a task or lose one.
 
 ## The acting turn
 
-`review.handoff.run` rebuilds the bundle from the current patchset, checkpoints
-the working tree, and starts one Claude Code session in the repository root. The
-session has the harness's full default tool surface, including shell access. That
-lets the agent edit, inspect, format, and test the work it just changed.
+When invoked, `review.handoff.run` rebuilds the mechanical bundle from the
+current patchset, checkpoints the working tree, and starts one Claude Code
+session in the repository root. The session has the harness's full default tool
+surface, including shell access. That lets the agent edit, inspect, format, and
+test the work it just changed.
 
 Rennet's prompt asks the agent to stay on the listed work and leave commit and
 push to the later PR-submission step. This is instruction, not a reduced
@@ -80,7 +93,7 @@ sequenceDiagram
   participant Review as Review service
 
   Main->>Store: Save pre-turn checkpoint
-  Main->>Claude: Send composed work order
+  Main->>Claude: Send mechanical work order
   Claude->>Claude: Edit files and run checks
   Claude-->>Main: Final text and usage
   Main->>Store: Capture post-turn state and turn diff
@@ -90,6 +103,41 @@ sequenceDiagram
 
 A failed turn stays a failed turn. If it changed files before failing, those
 files are reported instead of being hidden behind the error.
+
+Repositories containing submodules are currently refused on this path. An edit
+inside a child repository can leave the superproject gitlink unchanged, which
+would make the checkpoint diff incomplete. Recursive submodule checkpoints are
+the missing implementation; the refusal is an honest visibility limit, not a
+reduced coding-agent capability.
+
+## How checkpoints isolate one turn
+
+`GitCheckpointStore` snapshots tracked, deleted, and non-ignored untracked files
+with a temporary Git index. It writes each snapshot to a hidden
+`refs/rennet/checkpoints/*` ref without moving `HEAD`, changing a branch, touching
+the user's real index, or creating a reflog entry. The two trees bracket the
+agent turn.
+
+```mermaid
+sequenceDiagram
+  participant Tree as Working tree
+  participant Temp as Temporary Git index
+  participant Ref as Hidden checkpoint refs
+  participant Agent as Coding agent
+
+  Tree->>Temp: add -A before the turn
+  Temp->>Ref: write pre-turn tree
+  Agent->>Tree: edit files and run checks
+  Tree->>Temp: add -A after success or failure
+  Temp->>Ref: write post-turn tree
+  Ref-->>Tree: tree diff plus name-only -z paths
+  Ref->>Ref: best-effort delete both refs
+```
+
+The display diff and the authoritative path list are deliberately separate.
+`git diff --name-only -z` supplies `filesTouched`, so spaces, quotes, and tabs in
+a path are not lost by parsing human-oriented patch headers. An unrelated edit
+and a partial edit made before a failed turn are both included.
 
 ## Capturing the result
 
@@ -163,20 +211,22 @@ this.” See [delta re-review and lineage](/developing/concepts/delta-rereview-a
 | Concern | Owner |
 |---|---|
 | Bundle filtering, anchored context, deterministic prompt | `packages/core/src/handoff-loop.ts` |
-| Agent-friendly ordering and narration | `packages/core/src/handoff-compose.ts` |
-| Live write-enabled harness turn | `packages/adapters/src/handoff-run-live.ts` |
+| Agent-friendly ordering and narration, not yet threaded into run | `packages/core/src/handoff-compose.ts` |
+| Write-enabled harness turn behind the main-process command | `packages/adapters/src/handoff-run-live.ts` |
 | Checkpoint and turn diff | `packages/adapters/src/checkpoint-store.ts` |
 | Command routing and successor capture | `apps/desktop/src/main/dispatch.ts` |
 | Delta facts | `packages/core/src/delta-account.ts` |
 | Draft, paper, and sign interaction | `packages/ui/src/app.tsx` |
 
-The renderer never gets direct process authority. It invokes typed commands; the
-desktop main process resolves the current review again, runs the turn, captures
-the result, and returns a validated output.
+The renderer never gets direct process authority. Once the missing renderer join
+is added, it should invoke the typed command; the desktop main process already
+resolves the current review again, runs the turn, captures the result, and
+returns a validated output.
 
 ## Current edge
 
-The main remaining precision seam is sub-file lineage across a changed patchset.
-The fuzzy matcher can classify it, but the handoff carry still stays on the
-deterministic floor. That means Rennet can reopen more work than strictly
-necessary; it does not silently carry uncertain review state.
+The first product seam is wiring the renderer through one exact composed bundle
+into the acting command. After that, the main precision seam is sub-file lineage
+across a changed patchset. The fuzzy matcher can classify it, but handoff carry
+still stays on the deterministic floor. That means Rennet can reopen more work
+than strictly necessary; it does not silently carry uncertain review state.

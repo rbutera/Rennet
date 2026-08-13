@@ -7,7 +7,7 @@ Read this before choosing product work. It outranks the ordering implied by
 issue numbers, priority labels, and historical plans. Re-check the linked issues
 before acting: this page is orientation, while GitHub is the live queue.
 
-Last checked against `main` and GitHub on 2026-08-13.
+Last checked against `main` and GitHub on 2026-08-14.
 
 ## Rule Zero
 
@@ -22,16 +22,19 @@ blocking the coding agent from running tests or pushing its branch is not.
 
 ## What works now
 
-Both main review destinations are wired end to end:
+Both current GitHub destinations are wired end to end:
 
 - A team pull request can be ingested, decomposed, reviewed through the lens
   set, refined, previewed, signed, and posted as one real GitHub review.
 - A review of your own branch can produce a drafted title and body, sign, push
   the named branch, and create the pull request. The create path is idempotent by
   head branch and surfaces the resulting URL.
-- The coding-agent handoff and exact-evidence delta carry have landed. The
-  fuzzy sub-file matcher exists but is not yet connected to disposition carry.
-  The agent is allowed to edit, test, commit, and push.
+- The coding-agent handoff backend and exact-evidence delta carry have landed,
+  but the renderer does not invoke the acting command. The separate #72 composer
+  exists behind its own command and is not yet threaded into the run. The fuzzy
+  sub-file matcher exists but is not connected to disposition carry. When the
+  acting path is called, the agent is allowed to edit and test with the full
+  harness tool surface.
 - Blast radius, the project knowledge lifecycle, IPC field-fidelity fixes,
   shell-enabled verification turns, and honest invocation-budget behavior have
   all landed since the previous delivery-order snapshot.

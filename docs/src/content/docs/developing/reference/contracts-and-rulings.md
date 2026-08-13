@@ -157,6 +157,12 @@ the old conflict no longer controls current work; the row records the replacemen
 | **R50** | Noise is a visible totality floor. Mechanical rules handle unambiguous churn; model judgement handles the remainder; nothing is silently dropped and “not noise” restores an item. The precise Flagged/Noise overlap remains an open product call. |
 | **R51** | `review.ask` defaults to one orchestrator answer. “Ask both” adds a separately labelled second opinion; Rennet never invents a synthesized third answer. |
 
+R45 is only partly live. The current code view shows **View test** or **View
+implementation** when the counterpart is another changed file in this review,
+and the symbol inspector can open a definition in the editor. When no changed
+counterpart resolves, the button is simply absent; the explicit “no tests
+reference this” state from the ruling has not landed yet.
+
 ### Repo Map
 
 | ID | Current ruling |

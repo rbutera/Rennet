@@ -54,9 +54,14 @@ credential.
 
 ## What happens on my own branch?
 
-Your requests become a handoff bundle for a coding agent. The agent can change
-the branch, run tests, and push. Rennet captures the successor patchset and
-shows the delta so you can review what actually moved.
+Today, the live renderer lets you shape and sign the pull-request title and body,
+then Rennet pushes the named branch and opens that pull request.
+
+The next loop turns your requested changes into a coding-agent bundle, lets the
+agent edit and test, captures a successor patchset, and shows the delta. The
+backend runner and capture machinery exist, but that acting command is not yet
+invoked by the renderer, and its separate model-composed bundle is not yet
+threaded into the run.
 
 When you sign the finished paper, Rennet pushes the named branch and opens the
 previewed pull request. The richer fuzzy sub-file lineage work is separate: the

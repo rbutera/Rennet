@@ -5,8 +5,9 @@ description: The intended path from adding a project to signing a review, with h
 
 This is the road through Rennet: add a project, enter through your branch or a
 team pull request, understand the change, shape the outbound artifact, and sign
-it. Both destinations are live today: a team change becomes a GitHub review,
-while your branch can loop through a coding agent and finish as a pull request.
+it. A team change can become a GitHub review, while your branch can be pushed and
+opened as a pull request. The coding-agent loop in the journey is still missing
+its renderer join.
 
 ## The journey at a glance
 
@@ -14,15 +15,15 @@ while your branch can loop through a coding agent and finish as a pull request.
 flowchart TD
   projects[Projects] --> add[Add a project]
   add --> process[Process repository context]
-  process --> detail[Project: Yours and Team]
-  detail -->|Yours| local[Capture local patchset]
-  detail -->|Team| pr[Pin PR patchset]
+  process --> detail[Project smart list]
+  detail -->|Local row| local[Capture local patchset]
+  detail -->|Pull request row| pr[Pin PR patchset]
   local --> review[Review through lenses]
   pr --> review
   review --> draft[Collation draft]
   draft --> paper[Paper preview]
-  paper -->|Team| post[Post GitHub review]
-  paper -->|Yours| handoff[Handoff to coding agent]
+  paper -->|Pull request| post[Post GitHub review]
+  paper -->|Own branch| handoff[Handoff to coding agent]
   handoff --> delta[Review only what moved]
   delta --> review
 ```
@@ -48,17 +49,21 @@ plain language and ends by becoming the project screen.
 The live UI is simpler than that destination. The underlying project-context
 lifecycle is real; the richer narrated animation remains polish work.
 
-## 4. Choose Yours or Team
+## 4. Choose from one smart list
 
-The project screen has two zones on one page:
+The project screen mixes local work and pull requests in one list. Rows remain
+visually distinct: local branch, your pull request, teammate pull request, or a
+read-only closed/merged pull request. Use **Needs you**, **Mine**, **Local**, or
+**PRs** to narrow it; the default Hot sort combines recent activity with work
+that needs attention.
 
-- **Yours** contains local worktrees and branches that are still private to the
-  machine.
-- **Team** contains pull requests that already exist on the forge, including
-  your own open PRs.
+Your review request and a failing check on your own open pull request can float a
+row into **Needs you**. A read-only row can offer **Clean up** when its worktree is
+still checked out locally.
 
-Once a local branch has a PR, the PR is the primary row and the local checkout
-becomes an annotation on it. One thing should not appear twice.
+Once a local branch has a pull request, the pull-request row wins and the local
+checkout becomes a **checked out locally** annotation. One thing should not
+appear twice.
 
 ## 5. Capture one immutable patchset
 
@@ -77,13 +82,29 @@ definitions, or the source file in your editor without losing your place. The
 current index and its deliberately honest confidence tiers are explained in
 [code intelligence](/developing/concepts/code-intelligence/).
 
+When both sides changed, the code header says **View test** or **View
+implementation** instead of making you hunt through a file tree. That jump only
+speaks for files in this review; no button is not a claim that no test exists.
+
 ## 7. Rotate the lenses
 
-Use Spec, Sequence, Decisions, Flagged, and Noise over the same anchors. Blast
-radius paints those surfaces rather than changing their order.
+Use Spec, Sequence, Decisions, Flagged, and Noise over the same anchors. They do
+different jobs:
 
-Noise is not hidden content. It is the visible remainder of the change, grouped
-and collapsed so you can confirm what received less attention.
+- Spec turns known OpenSpec artifacts into addressable requirements and scenarios,
+  with coverage chips only when a real mapping exists.
+- Decisions groups implementer choices with evidence, reconstructed reasoning,
+  and discernible alternatives.
+- Flagged indexes automated findings by severity, agreement, verification, and
+  code anchor without pretending they are the reviewer's verdict.
+- Noise groups low-signal churn, names whether a rule or model judged it, and lets
+  you pull anything back with **not noise?**
+
+Blast radius paints those surfaces rather than changing their order. Read
+coverage is equally literal: an action marks material read, scrolling can only
+mark it skimmed, and collapsed or unseen work remains unread. The whole-change
+mosaic keeps that residue visible. [Review lenses](/developing/concepts/review-lenses/)
+has the deeper model.
 
 ## 8. Ask and annotate in place
 
@@ -113,9 +134,15 @@ paper, idempotently, in the reviewer's name.
 
 ## 11. Re-steer your own branch
 
-On the own-branch path, signed requests go to a coding harness. The harness can
-edit, test, commit, and push. Rennet then captures a successor patchset, carries
-only exact unaffected review state, and focuses the next pass on what moved.
+The intended own-branch loop sends requested changes to a capable coding
+harness, then captures a successor patchset, carries only exact unaffected
+review state, and focuses the next pass on what moved.
+
+The backend can build and run the mechanical bundle, bracket the turn with Git
+checkpoints, and capture the successor. It also exposes a model-backed composer.
+The current renderer calls neither handoff command, and the acting command does
+not yet accept the composer's exact output, so this loop is not end to end in the
+shipped surface.
 
 Signing the finished own-branch paper pushes the named branch and opens the
 previewed pull request. The next precision work is narrower: richer sub-file

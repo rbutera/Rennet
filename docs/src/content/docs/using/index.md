@@ -27,6 +27,7 @@ flowchart LR
   paper --> agent[Coding-agent handoff]
 ```
 
-Both routes are live end to end. Team work becomes a signed GitHub review. Your
-own branch becomes a write-enabled coding-agent handoff, a successor delta
-review, and a signed push-plus-PR submission.
+Team work can become a signed GitHub review. Your own branch can become a signed
+push-plus-PR submission. The coding-agent and successor-delta route shown above
+is the intended loop; its backend machinery exists, but the current renderer
+does not invoke it yet.

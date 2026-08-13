@@ -35,7 +35,7 @@ sequenceDiagram
   participant Git as Local Git
   participant Harness as Review harness
 
-  You->>Rennet: Open a PR from Team
+  You->>Rennet: Open a PR row from the project list
   Rennet->>GitHub: Read PR identity, title, body, and SHAs
   Rennet->>Git: Read the pinned diff and repository context
   Git-->>Rennet: Immutable patchset
@@ -47,7 +47,8 @@ sequenceDiagram
   Rennet->>GitHub: Post one SHA-bound review
 ```
 
-1. Open the project, then choose the pull request under **Team**.
+1. Open the project, use **PRs** or **Needs you** to narrow the unified list, then
+   choose the pull request.
 2. Read the change through the available views. Rennet keeps the sequence,
    decisions, flags, and remaining noise connected to the same underlying diff.
 3. Leave dispositions where you have a judgment: approve, question, comment, or
@@ -131,6 +132,21 @@ the assembled context is inspectable in Rennet.
 GitHub naturally receives the review only when you sign it. If GitHub is
 unavailable, local reading still works for material already on disk, but posting
 waits until the connection is back.
+
+## GitHub edge cases
+
+An organization can require SAML SSO for the token returned by `gh`. GitHub may
+then return `X-GitHub-SSO: partial-results`: a valid-looking but incomplete pull
+request list. Rennet keeps that state distinct from a complete or empty list;
+GitHub includes an authorization URL with the state, though the current project
+screen only shows the generic incomplete-list banner. Authorize the `gh` token
+for the named organization through GitHub, then refresh the project.
+
+GitHub can also apply a secondary rate limit while the paper is posting. Rennet
+keeps the artifact as one batched review and surfaces the backoff instead of
+splitting it into independently retrying comments. Retry after GitHub's stated
+window; the review marker and read-back reconciliation protect the one-review
+shape when the network outcome was uncertain.
 
 ## Next
 

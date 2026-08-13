@@ -5,7 +5,7 @@ description: How Rennet's packages, desktop processes, review engine, and local 
 
 This page is the quickest way to get your bearings in the Rennet codebase. It
 shows the boundaries that exist on `main`, then follows one review from Git to a
-signed GitHub result or a coding-agent handoff.
+signed GitHub result and shows where the coding-agent handoff is meant to join.
 
 ## The short version
 
@@ -147,15 +147,57 @@ flowchart TB
 
 The package boundary, typed Electron bridge, immutable local and remote capture,
 review pipeline, five lenses, dual-model findings, comment refinement,
-deterministic Repo Map refresh, GitHub review publication, write-enabled
-coding-agent handoff, exact-evidence delta carry, and own-branch push-plus-PR
-submission are wired on current `main`.
+deterministic Repo Map refresh, GitHub review publication, and own-branch
+push-plus-PR submission are wired on current `main`.
+
+The handoff bundle, capable harness turn, checkpoints, successor capture,
+exact-evidence carry, and optional composition command also exist. They are not a
+renderer-to-renderer loop yet: no renderer call invokes the acting command, and
+the acting command still rebuilds the mechanical bundle instead of consuming the
+composer's exact output.
 
 The architecture still contains deliberate future seams: additional harnesses,
 remote/mobile clients, and public release machinery are not all live merely
 because their ports or contracts exist. The
 [architecture contracts](/developing/concepts/architecture-contracts/) page
 keeps those requirements separate from observed implementation.
+
+## Conversation transport and durability
+
+Inline review questions stream from desktop main to the renderer on a channel
+keyed by review and turn. The renderer coalesces token deltas before painting;
+those partial bodies are live display state, not durable conversation history.
+
+```mermaid
+sequenceDiagram
+  participant UI as Renderer thread
+  participant Main as Desktop main
+  participant Store as Thread store
+  participant Harness
+
+  UI->>Main: review.ask with thread and turn ids
+  Main->>Store: Persist question plus empty streaming placeholder
+  Main->>Harness: Start turn
+  Harness-->>Main: Token deltas
+  Main-->>UI: Push deltas keyed by review and turn
+  UI->>UI: Coalesce and paint partial answer
+  Harness-->>Main: Final answer
+  Main->>Store: Replace placeholder with one durable completion
+  Main-->>UI: Push final body
+```
+
+If the process dies first, the empty `streaming` placeholder reloads as
+`interrupted`; no partial token buffer is promoted to a finished answer. A
+malformed thread file degrades to no restored threads and is left untouched for
+manual recovery. On app quit, desktop main aborts every registered turn. Codex's
+child is killed through its executor; the Claude SDK exposes no child PID, so
+Rennet can request cancellation but cannot claim it observed the process exit.
+
+Persisted threads do reattach after reload. Main-alive in-flight enumeration is
+not wired yet—`review.reattach` returns an empty `inFlight` list—so a freshly
+loaded renderer cannot reconstruct deltas it missed before subscribing. The
+durable completion or honest interrupted placeholder remains the source of
+truth.
 
 ## Where to go next
 

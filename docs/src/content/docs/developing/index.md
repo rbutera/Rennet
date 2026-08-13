@@ -26,12 +26,14 @@ flowchart LR
    defines immutable patchsets, project context, persistence, and publication.
 3. [Canvas model](/developing/concepts/canvas-model/) explains how ingest,
    analysis, user dispositions, and orchestrator annotations share a surface.
-4. [Context assembly](/developing/concepts/context-assembly/) and the
+4. [Review lenses](/developing/concepts/review-lenses/) explains why Sequence,
+   Spec, Decisions, Flagged, and Noise behave differently over that surface.
+5. [Context assembly](/developing/concepts/context-assembly/) and the
    [model council](/developing/concepts/model-council/) cover what models see and
    which model runs each job.
-5. [Code intelligence](/developing/concepts/code-intelligence/) explains the
+6. [Code intelligence](/developing/concepts/code-intelligence/) explains the
    live definition and textual-reference index without pretending it is an LSP.
-6. [Collation and signing](/developing/concepts/collation-and-signing/) follows
+7. [Collation and signing](/developing/concepts/collation-and-signing/) follows
    private review state into the exact outbound artifact.
 
 ## Follow a subsystem
@@ -43,7 +45,7 @@ flowchart LR
 | Coding-agent work after a review | [Agent handoff](/developing/concepts/agent-handoff/) and [delta re-review](/developing/concepts/delta-rereview-and-lineage/) |
 | Comment or draft behavior | [Comment refinement](/developing/concepts/comment-refinement/) and [collation and signing](/developing/concepts/collation-and-signing/) |
 | Project discovery or settings | [Repository bootstrap](/developing/guide/repository-bootstrap/) and [settings and setup](/developing/guide/settings-and-setup/) |
-| UI behavior | [Design doctrine](/developing/concepts/design-doctrine/) and [canvas model](/developing/concepts/canvas-model/) |
+| UI behavior | [Design doctrine](/developing/concepts/design-doctrine/), [canvas model](/developing/concepts/canvas-model/), and [review lenses](/developing/concepts/review-lenses/) |
 | Dependencies or build tools | [Dependency standard](/developing/reference/dependency-standard/) |
 
 ## Authority and delivery

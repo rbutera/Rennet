@@ -27,6 +27,13 @@ If you cannot tell which area a page belongs in, it is probably two pages.
 - No marketing. No hedging. If something is deferred or not built yet, say so
   plainly and link the tracking issue or the openspec change.
 - Short sentences over long ones. Short paragraphs over walls.
+- Keep authorship honest. Models **surface**, **suggest**, **reconstruct**, or
+  **flag**. The reviewer **reviews**, **judges**, **approves**, and **signs**. Do
+  not say Rennet “found a bug” or “approved” work on the user's behalf.
+- Prefer plain product language over AI clichés. Avoid “magic,” “slop,” and
+  grand claims about intelligence; name the concrete input, output, or action.
+- Say **pull request** in user-facing prose. Use **changeset** or **patchset** only
+  when the internal distinction matters.
 
 ## Page structure
 

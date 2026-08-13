@@ -45,6 +45,9 @@ The current supply-chain rules are:
 - Nx and ESLint enforce in-repo package arrows;
 - licence and vulnerability checks cover the full lockfile and include a seeded
   positive control;
+- pnpm currently reports the adopted proprietary Agent SDK packages as
+  `Unknown`; the licence check allows those package names only, while every
+  other unknown licence still fails the gate;
 - scanners and build caches never receive credentials, user repositories, or
   ambient home-directory state as declared inputs;
 - overrides leave once the upstream graph resolves to an equal or newer compatible
