@@ -114,7 +114,7 @@ describe("parseUnifiedDiffFiles coalesces same-path type-change blocks", () => {
       expect(placed).toEqual(result.hunks.map((h) => h.id).sort());
       // The regular text is reviewed, not hidden as submodule noise.
       expect(result.chunks.some((c) => c.kind === "substantive")).toBe(true);
-      expect(result.ingestionGaps).toEqual([]);
+      expect(result.blockingStates).toEqual([]);
     });
   }
 
@@ -122,7 +122,7 @@ describe("parseUnifiedDiffFiles coalesces same-path type-change blocks", () => {
     // Coalescing already-`visible()`-truncated blocks would bury the first block's
     // terminal marker mid-patch, so `isTruncatedFile` would not fire and a
     // truncated capture would read clean. Coalescing RAW + one `visible` keeps the
-    // marker terminal, so the diff-truncated gap is disclosed.
+    // marker terminal, so the truncated blocking state is present.
     const lineCount = Math.ceil(FILE_VISIBLE_BYTE_LIMIT / 24) + 1000; // first block > file limit
     const body = Array.from({ length: lineCount }, (_, i) => `-real ordinary line ${i}`).join("\n");
     const oid = "a".repeat(40);
@@ -153,8 +153,8 @@ describe("parseUnifiedDiffFiles coalesces same-path type-change blocks", () => {
       truncated: false,
       source: "github-rest",
     });
-    expect(result.ingestionGaps).toContainEqual(
-      expect.objectContaining({ kind: "diff-truncated", path: "embedded" }),
+    expect(result.blockingStates).toContainEqual(
+      expect.objectContaining({ reason: "truncated", path: "embedded" }),
     );
   });
 });

@@ -892,11 +892,10 @@ const diffStructureTool: CanvasOpsTool = {
       edges: decomposition.edges,
       readingOrder: decomposition.readingOrder,
       residue: decomposition.residue,
-      // Incomplete-ingestion disclosures (R18): a truncated tail, a binary blob,
-      // or a submodule pointer the floor could not ingest. Surfaced here so the
-      // sheet and any done/publish surface can see that "reviewed clean" cannot
-      // be claimed over the un-ingested content.
-      ingestionGaps: decomposition.ingestionGaps,
+      // Incomplete-ingestion blockers (R18): a truncated tail, a binary blob, or
+      // a submodule pointer the floor could not ingest. A done or publish gate
+      // can refuse a false-clear by checking this array directly.
+      blockingStates: decomposition.blockingStates,
     };
     return ok(data, { freshness: backend.freshness(), total: decomposition.chunks.length });
   },

@@ -335,23 +335,22 @@ describe("classification", () => {
   });
 });
 
-// ── Incomplete ingestion (R18): the false-clear floor ────────────────────────
+// ── Blocking states (R18): the false-clear floor ────────────────────────────
 //
 // R18: binary / submodule / truncated inputs are first-class and incomplete
-// ingestion is DISCLOSED (in `ingestionGaps`) — an absence of findings over
-// un-ingested content must never read as "reviewed clean". Each test is written
-// by first performing the literal original bug (a truncated/binary capture that
-// yields a clean-looking decomposition) and asserting the fix now surfaces the
-// gap. Per R18 this DISCLOSES; it is not a hard gate (Rule Zero).
+// ingestion is BLOCKING (in `blockingStates`): an absence of findings over
+// un-ingested content must never let a done or publish gate read "reviewed
+// clean". Each required test directly exercises one false-clear or false-positive
+// direction and is red-proofed independently.
 
 /** The DIFF_TRUNCATION_MARKER the capture appends when it truncates a file diff. */
 const TRUNC = "[diff truncated by Rennet]";
 
-describe("incomplete ingestion (R18)", () => {
-  it("a truncated patchset is NOT clean: a patchset-wide diff-truncated gap is disclosed", () => {
+describe("blocking states (R18)", () => {
+  it("required blocking contract: truncated patchset", () => {
     // The literal original bug: `decompose` never read `patchset.truncated`, so a
     // capture that hit its byte cap produced a decomposition indistinguishable
-    // from a complete one — nothing for a done/publish surface to disclose.
+    // from a complete one, leaving a done or publish gate nothing to block on.
     const result = decompose({
       ...patchset([
         file("src/logic.ts", filePatch("src/logic.ts", [{ lines: ["+const a = 1;"] }])),
@@ -361,23 +360,23 @@ describe("incomplete ingestion (R18)", () => {
     // The visible prefix still decomposes and reads complete on its own …
     assertTotality(result);
     expect(result.chunks.filter((c) => c.kind === "substantive").length).toBe(1);
-    // … but the truncation is now an explicit first-class disclosure.
-    expect(result.ingestionGaps).toContainEqual(
-      expect.objectContaining({ kind: "diff-truncated", path: null }),
+    // The visible prefix stays reviewable, but the missing tail blocks completion.
+    expect(result.blockingStates).toContainEqual(
+      expect.objectContaining({ reason: "truncated", path: null }),
     );
   });
 
-  it("a per-file DIFF_TRUNCATION_MARKER (producer's terminal frame) discloses a file-scoped gap", () => {
+  it("blocks a per-file DIFF_TRUNCATION_MARKER using the producer's terminal frame", () => {
     const path = "src/big.ts";
     // `visible()` emits the marker as a terminal `…\n\n<marker>` frame.
     const patch = `${filePatch(path, [{ lines: ["+const a = 1;"] }]).trimEnd()}\n\n${TRUNC}`;
     const result = decompose(patchset([file(path, patch)]));
-    expect(result.ingestionGaps).toContainEqual(
-      expect.objectContaining({ kind: "diff-truncated", path }),
+    expect(result.blockingStates).toContainEqual(
+      expect.objectContaining({ reason: "truncated", path }),
     );
   });
 
-  it("a binary blob classifies mechanical:binary (never substantive) and discloses a gap", () => {
+  it("required blocking contract: binary file stays out of substantive review", () => {
     // Original bug: a bare binary with no path signal fell through to
     // `substantive`, so a changed blob read as reviewed content.
     const path = "assets/logo.png";
@@ -386,12 +385,14 @@ describe("incomplete ingestion (R18)", () => {
     // It lands in the skimmable appendix, not a substantive chunk.
     expect(result.chunks.filter((c) => c.kind === "substantive")).toEqual([]);
     expect(result.chunks.filter((c) => c.kind === "appendix").map((c) => c.title)).toEqual([path]);
-    expect(result.ingestionGaps).toContainEqual(expect.objectContaining({ kind: "binary", path }));
+    expect(result.blockingStates).toContainEqual(
+      expect.objectContaining({ reason: "binary", path }),
+    );
     assertTotality(result);
     assertTopological(result);
   });
 
-  it("a submodule pointer advance classifies mechanical:submodule and discloses a gap", () => {
+  it("required blocking contract: submodule change", () => {
     // Original bug: a gitlink `Subproject commit` change had no mechanical signal
     // and became a synthetic substantive hunk reading as reviewed content.
     const path = "vendor/lib";
@@ -402,15 +403,15 @@ describe("incomplete ingestion (R18)", () => {
     const result = decompose(patchset([file(path, patch)]));
     expect(classOf(result, path)).toBe("submodule");
     expect(result.chunks.filter((c) => c.kind === "substantive")).toEqual([]);
-    expect(result.ingestionGaps).toContainEqual(
-      expect.objectContaining({ kind: "submodule", path }),
+    expect(result.blockingStates).toContainEqual(
+      expect.objectContaining({ reason: "submodule", path }),
     );
     assertTotality(result);
   });
 
-  it("a fully-ingested clean patchset discloses NO gaps (the fix must not over-fire)", () => {
-    // The green direction a disclosure like this usually breaks: an ordinary
-    // text change is fully ingested, so `ingestionGaps` must be empty.
+  it("required blocking contract: normal patchset stays unblocked", () => {
+    // The green direction a blocker like this usually breaks: an ordinary text
+    // change is fully ingested, so `blockingStates` must be empty.
     const result = decompose(
       patchset([
         file(
@@ -420,10 +421,10 @@ describe("incomplete ingestion (R18)", () => {
         file("pnpm-lock.yaml", filePatch("pnpm-lock.yaml", [{ lines: ["+  a: 1"] }])),
       ]),
     );
-    expect(result.ingestionGaps).toEqual([]);
+    expect(result.blockingStates).toEqual([]);
   });
 
-  it("orders gaps deterministically: patchset-wide first, then per-file by path", () => {
+  it("orders blocking states deterministically: patchset-wide first, then per-file by path", () => {
     const bin = "z-assets/a.bin";
     const sub = "a-vendor/lib";
     const subPatch =
@@ -435,8 +436,8 @@ describe("incomplete ingestion (R18)", () => {
       truncated: true,
     });
     // Patchset-wide truncation first; then files in path order (a-vendor < z-assets).
-    expect(result.ingestionGaps.map((g) => [g.kind, g.path])).toEqual([
-      ["diff-truncated", null],
+    expect(result.blockingStates.map((state) => [state.reason, state.path])).toEqual([
+      ["truncated", null],
       ["submodule", sub],
       ["binary", bin],
     ]);
@@ -459,7 +460,7 @@ describe("incomplete ingestion (R18)", () => {
     expect(result.chunks.filter((c) => c.kind === "substantive").map((c) => c.title)).toContain(
       path,
     );
-    expect(result.ingestionGaps).toEqual([]);
+    expect(result.blockingStates).toEqual([]);
   });
 
   it("detects a submodule via the `index …160000` header alone (no Subproject line)", () => {
@@ -467,8 +468,8 @@ describe("incomplete ingestion (R18)", () => {
     const patch = `diff --git a/${path} b/${path}\nindex 8cc0857..d9a9186 160000\n`;
     const result = decompose(patchset([file(path, patch)]));
     expect(classOf(result, path)).toBe("submodule");
-    expect(result.ingestionGaps).toContainEqual(
-      expect.objectContaining({ kind: "submodule", path }),
+    expect(result.blockingStates).toContainEqual(
+      expect.objectContaining({ reason: "submodule", path }),
     );
   });
 
@@ -485,8 +486,8 @@ describe("incomplete ingestion (R18)", () => {
     ] as const) {
       const result = decompose(patchset([file(path, patch)]));
       expect(classOf(result, path)).toBe("submodule");
-      expect(result.ingestionGaps).toContainEqual(
-        expect.objectContaining({ kind: "submodule", path }),
+      expect(result.blockingStates).toContainEqual(
+        expect.objectContaining({ reason: "submodule", path }),
       );
     }
   });
@@ -506,7 +507,7 @@ describe("incomplete ingestion (R18)", () => {
     expect(result.chunks.filter((c) => c.kind === "substantive").map((c) => c.title)).toContain(
       path,
     );
-    expect(result.ingestionGaps).toEqual([]);
+    expect(result.blockingStates).toEqual([]);
   });
 
   it("detects a `GIT binary patch` blob even when the capture left binary:false", () => {
@@ -519,7 +520,9 @@ describe("incomplete ingestion (R18)", () => {
     const result = decompose(patchset([file(path, patch, { binary: false })]));
     expect(classOf(result, path)).toBe("binary");
     expect(result.chunks.filter((c) => c.kind === "substantive")).toEqual([]);
-    expect(result.ingestionGaps).toContainEqual(expect.objectContaining({ kind: "binary", path }));
+    expect(result.blockingStates).toContainEqual(
+      expect.objectContaining({ reason: "binary", path }),
+    );
   });
 
   it("does NOT hide the regular half of a gitlink↔file TYPE CHANGE (both directions)", () => {
@@ -544,7 +547,7 @@ describe("incomplete ingestion (R18)", () => {
       expect(result.chunks.filter((c) => c.kind === "substantive").map((c) => c.title)).toContain(
         path,
       );
-      expect(result.ingestionGaps).toEqual([]);
+      expect(result.blockingStates).toEqual([]);
     }
   });
 
@@ -554,7 +557,7 @@ describe("incomplete ingestion (R18)", () => {
       { lines: ['+const note = "[diff truncated by Rennet]";', "+const a = 1;"] },
     ]);
     const result = decompose(patchset([file(path, patch)]));
-    expect(result.ingestionGaps).toEqual([]);
+    expect(result.blockingStates).toEqual([]);
   });
 });
 

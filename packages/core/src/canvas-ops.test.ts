@@ -76,7 +76,7 @@ function makeDecomposition(): Decomposition {
     edges: [{ from: "c1", to: "c2", kind: "enables" }],
     readingOrder: ["c1", "c2"],
     residue: [],
-    ingestionGaps: [],
+    blockingStates: [],
   };
 }
 
@@ -698,8 +698,13 @@ describe("canvasOps@2 tool surface", () => {
   it("retrieval tools return the uniform envelope with freshness and evidence", () => {
     const { backend } = makeFixture();
     const structure = expectOk(run(canvasOpsTool("diff.structure"), {}, backend));
-    const dag = structure.data as { chunks: unknown[]; readingOrder: string[] };
+    const dag = structure.data as {
+      chunks: unknown[];
+      readingOrder: string[];
+      blockingStates: unknown[];
+    };
     expect(dag.readingOrder).toEqual(["c1", "c2"]);
+    expect(dag.blockingStates).toEqual([]);
 
     const ledger = expectOk(run(canvasOpsTool("run.ledger"), {}, backend));
     expect((ledger.data as unknown[]).length).toBe(1);

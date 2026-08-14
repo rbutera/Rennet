@@ -81,7 +81,7 @@ function decomposition(): Decomposition {
     edges: [],
     readingOrder: ["c1"],
     residue: [],
-    ingestionGaps: [],
+    blockingStates: [],
   };
 }
 
@@ -251,7 +251,7 @@ describe("runRollupNarration — admission", () => {
       edges: [],
       readingOrder: chunks.map((chunk) => chunk.chunkId),
       residue: [],
-      ingestionGaps: [],
+      blockingStates: [],
     };
 
     const first = buildNarrationChunkEvidence(input);
