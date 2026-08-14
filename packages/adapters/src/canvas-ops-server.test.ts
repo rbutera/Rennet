@@ -178,6 +178,29 @@ function makeBackend(): { backend: CanvasOpsBackend; applied: CanvasOpsEffect[] 
         invalidatedPending: [],
       },
     }),
+    ask: async () => ({
+      status: "answered",
+      answer: {
+        answer: "a served answer",
+        evidence: [{ path: "packages/a/src/index.ts", blobOid: "a".repeat(40) }],
+        confidence: "high",
+        consulted: ["context.knowledge (0 statements)"],
+        cost: {
+          turns: 1,
+          model: "opus-4.8",
+          effort: "high",
+          budgetGranted: true,
+          overage: false,
+          resolution: {
+            jobId: "context-ask-fetch",
+            tier: "light",
+            scenario: "degraded",
+            source: "council-table",
+            summary: "resolved",
+          },
+        },
+      },
+    }),
     applyEffects: (effects) => {
       for (const effect of effects) applied.push(effect);
     },
@@ -244,6 +267,7 @@ describe("canvasOps@2 SDK server", () => {
       "context.symbol",
       "context.references",
       "context.knowledge",
+      "context.ask",
     ]);
     const byName = new Map(defs.map((d) => [d.name, d]));
     // Hot trio is always-loaded (SDK stores it under _meta).

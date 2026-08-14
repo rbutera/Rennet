@@ -7,6 +7,7 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   applyVisibilitySwitch,
+  buildReviewContextManifest,
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
   type CodexAvailability,
@@ -100,6 +101,7 @@ import {
 import type {
   Canvas,
   CanvasAngle,
+  ContextManifest,
   ConventionCatalogue,
   CouncilHarnessId,
   DecisionsRunStatus,
@@ -491,6 +493,8 @@ async function buildCanvasesForReview(review: Review): Promise<{
   decisionsRun: DecisionsRunStatus;
   /** The committed hypothesis (#178), when one was produced; the human's reading frame. */
   hypothesis?: ReviewHypothesis;
+  /** The REAL "what was sent" manifest (issue #30); absent ⇒ honestly not available. */
+  contextManifest?: ContextManifest;
 }> {
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
@@ -557,6 +561,9 @@ async function buildCanvasesForReview(review: Review): Promise<{
   // The fan-in index (#200), materialized off the built snapshot; undefined ⇒ fan-in
   // stays NOT-ASSESSED (the populated guard lives in the loader), never a silent zero.
   const fanIn = await loadReviewFanInIndex(review);
+  // The REAL "what was sent" manifest (issue #30), produced off the built snapshot via
+  // the same assembly the live backend uses. Undefined ⇒ honestly not available.
+  const contextManifest = await loadReviewContextManifest(review);
 
   // Assemble the pipeline input at the ONE testable composition seam (F4): this is
   // where `ownership` reaches the pipeline, so the guard against dropping it lives on
@@ -595,6 +602,8 @@ async function buildCanvasesForReview(review: Review): Promise<{
     engine,
     decisionsRun: decisions.status,
     ...(hypothesis ? { hypothesis } : {}),
+    // The real manifest for THIS review (issue #30), or omitted (honest absence).
+    ...(contextManifest ? { contextManifest } : {}),
   };
 }
 
@@ -688,6 +697,20 @@ async function loadReviewFanInIndex(review: Review): Promise<FanInIndex | undefi
   const gated = new ProjectContextReader(store).loadFresh(repoKey, manifest.baseOid);
   if (!gated.ok) return undefined;
   return fanInIndexFromSnapshot(gated.snapshot);
+}
+
+/**
+ * The REAL "what was sent" ContextManifest for a review (issue #30), produced from
+ * the SAME composition + deterministic assembly the live backend uses
+ * (`buildReviewContextManifest`) off the built ProjectSnapshot. This is the manifest
+ * for THIS review — never a fabricated stand-in. When no snapshot has been composed
+ * (or composition fails) it returns `undefined`, an HONEST absence the renderer
+ * surfaces as "not available" rather than an empty-but-present manifest (Rule Zero:
+ * a lie in the UI is a bug).
+ */
+async function loadReviewContextManifest(review: Review): Promise<ContextManifest | undefined> {
+  const built = await buildReviewContextManifest({ store: snapshotStoreFor(), review });
+  return built?.manifest;
 }
 
 /**

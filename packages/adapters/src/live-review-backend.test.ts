@@ -3,9 +3,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildReviewCanvases, type ProjectMap } from "@rennet/core";
+import { sha256Hex } from "@rennet/protocol";
 import type { NoveltyLedger, PatchFile, Patchset, Review } from "@rennet/types";
 import { afterEach, describe, expect, it } from "vitest";
-import { createLiveCanvasOpsBackend } from "./live-review-backend";
+import { ContextManifestStore } from "./context-manifest-store";
+import {
+  buildReviewContextManifest,
+  createLiveCanvasOpsBackend,
+  repoRecordOf,
+} from "./live-review-backend";
 import { NoveltyLifecycleRegistry } from "./novelty-lifecycle-registry";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
 import { ProjectSnapshotStore } from "./project-snapshot-store";
@@ -187,6 +193,52 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
     await createLiveCanvasOpsBackend(review, pipeline, { store, noveltyLifecycle: lifecycle });
     expect(lifecycle.get(opened.snapshot.repoKey, review.id)?.ledger.baseOid).toBe(repo.oid2);
     expect(lifecycle.getLastAdvance(opened.snapshot.repoKey, review.id)).toBe(advance);
+  });
+
+  it("persists the ContextManifest under the R55 entry and reloads it across a fresh session (#30)", async () => {
+    const repo = workspaceRepo();
+    git(repo.root, "reset", "--hard", repo.oid1);
+    const storeDir = mkdtempSync(join(tmpdir(), "rennet-ctxman-store-"));
+    scratch.push(storeDir);
+    const store = new ProjectSnapshotStore(storeDir);
+    const { review, pipeline } = await reviewAt(repo.root, repo.commonDir, repo.oid1);
+
+    const opened = await createLiveCanvasOpsBackend(review, pipeline, { store });
+    expect(opened.contextManifest).toBeDefined();
+    const { repoKey, baseOid } = repoRecordOf(review);
+
+    // A FRESH session: a brand-new store instance over the SAME on-disk entry
+    // reloads the persisted manifest byte-for-byte (survives restart).
+    const reloaded = new ContextManifestStore(new ProjectSnapshotStore(storeDir)).load(
+      repoKey,
+      baseOid,
+    );
+    expect(reloaded).toEqual(opened.contextManifest);
+    expect(reloaded?.assembledPromptDigest).toBe(opened.contextManifest?.assembledPromptDigest);
+  });
+
+  it("records the assembled-prompt digest byte-identically, and the canvases-path producer yields the SAME manifest (#30)", async () => {
+    const repo = workspaceRepo();
+    git(repo.root, "reset", "--hard", repo.oid1);
+    const store = freshStore();
+    const { review, pipeline } = await reviewAt(repo.root, repo.commonDir, repo.oid1);
+
+    // Open the backend (generates the snapshot + produces + persists the manifest).
+    const opened = await createLiveCanvasOpsBackend(review, pipeline, { store });
+    expect(opened.contextManifest).toBeDefined();
+
+    // The SAME producer the desktop canvases path reuses — recomputed independently.
+    const built = await buildReviewContextManifest({ store, review });
+    expect(built).toBeDefined();
+    if (!built) throw new Error("expected a manifest");
+
+    // Byte-identity: the recorded send-digest equals the digest over the assembled text.
+    expect(built.manifest.assembledPromptDigest).toBe(built.assembly.digest);
+    expect(built.manifest.assembledPromptDigest).toBe(sha256Hex(built.assembly.text));
+
+    // Same inputs → same manifest: the canvases-path manifest equals the live one
+    // (so the renderer sees the REAL manifest, never a divergent recomputation).
+    expect(built.manifest).toEqual(opened.contextManifest);
   });
 
   it("serves REAL snapshot-derived data for context.map / context.file / context.novelty", async () => {

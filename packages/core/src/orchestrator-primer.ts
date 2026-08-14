@@ -184,6 +184,7 @@ const TOOL_WHEN_TO_USE: Readonly<Record<string, string>> = {
   "context.symbol": "go-to-definition: where an exported name is defined",
   "context.references": "find-references: where a name is used (blast radius)",
   "context.knowledge": "learned WHY of a module (labelled hypothesis/confirmed)",
+  "context.ask": "ask a QUESTION; get answer+evidence or honest unanswered",
 };
 
 /** First sentence of a description (fallback one-liner), trimmed. */

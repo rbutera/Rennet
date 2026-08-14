@@ -1,12 +1,12 @@
-import { DECOMPOSITION_PROPOSAL_CONTRACT } from "@rennet/instructions";
 import {
   buildOfferedManifest,
   createInvocationBudget,
-  decompose,
   type DecompositionTurnResult,
+  decompose,
   type HarnessEvent,
   runDecompositionAngle,
 } from "@rennet/core";
+import { DECOMPOSITION_PROPOSAL_CONTRACT } from "@rennet/instructions";
 import { bodyJsonSchema } from "@rennet/protocol";
 import type { PatchFile, Patchset } from "@rennet/types";
 import { describe, expect, it } from "vitest";
@@ -65,82 +65,83 @@ const PATCHSET: Patchset = {
 };
 
 describe.skipIf(!LIVE)("live decomposition angle (opt-in; spends the subscription)", () => {
-  it(
-    "runs the diff-to-angles transformation on the subscription path",
-    async () => {
-      const { adapter, discovery } = await createClaudeHarness({ env: process.env });
-      if (!adapter) {
-        throw new Error(
-          `No claude binary discovered; cannot run the live decomposition. Health: ${JSON.stringify(
-            discovery.health,
-          )}`,
-        );
+  it("runs the diff-to-angles transformation on the subscription path", async () => {
+    const { adapter, discovery } = await createClaudeHarness({ env: process.env });
+    if (!adapter) {
+      throw new Error(
+        `No claude binary discovered; cannot run the live decomposition. Health: ${JSON.stringify(
+          discovery.health,
+        )}`,
+      );
+    }
+
+    const decomposition = decompose(PATCHSET);
+    const manifest = buildOfferedManifest(decomposition);
+    const outputSchema = bodyJsonSchema("decomposition.proposal");
+
+    let sawMeteredWarning = false;
+    let apiKeySource: string | null = "MISSING";
+
+    const runTurn = async (prompt: string): Promise<DecompositionTurnResult> => {
+      const session = await adapter.createSession({
+        cwd: process.cwd(),
+        readOnly: true,
+        outputSchema,
+      });
+      await session.send({ prompt });
+      const events: HarnessEvent[] = [];
+      for await (const event of session.events) events.push(event);
+      const started = events.find((event) => event.kind === "session.started");
+      if (started?.kind === "session.started") apiKeySource = started.apiKeySource;
+      if (events.some((event) => event.kind === "auth.metered-key-warning"))
+        sawMeteredWarning = true;
+      const ended = events.find((event) => event.kind === "session.ended");
+      if (ended?.kind === "session.ended" && ended.outcome.status === "completed") {
+        const body = ended.outcome.structuredOutput;
+        if (body !== undefined) return { status: "emitted", body };
+        return { status: "failed", message: "no structured output" };
       }
+      return { status: "failed", message: `turn did not complete: ${JSON.stringify(ended)}` };
+    };
 
-      const decomposition = decompose(PATCHSET);
-      const manifest = buildOfferedManifest(decomposition);
-      const outputSchema = bodyJsonSchema("decomposition.proposal");
-
-      let sawMeteredWarning = false;
-      let apiKeySource: string | null = "MISSING";
-
-      const runTurn = async (prompt: string): Promise<DecompositionTurnResult> => {
-        const session = await adapter.createSession({ cwd: process.cwd(), readOnly: true, outputSchema });
-        await session.send({ prompt });
-        const events: HarnessEvent[] = [];
-        for await (const event of session.events) events.push(event);
-        const started = events.find((event) => event.kind === "session.started");
-        if (started?.kind === "session.started") apiKeySource = started.apiKeySource;
-        if (events.some((event) => event.kind === "auth.metered-key-warning")) sawMeteredWarning = true;
-        const ended = events.find((event) => event.kind === "session.ended");
-        if (ended?.kind === "session.ended" && ended.outcome.status === "completed") {
-          const body = ended.outcome.structuredOutput;
-          if (body !== undefined) return { status: "emitted", body };
-          return { status: "failed", message: "no structured output" };
-        }
-        return { status: "failed", message: `turn did not complete: ${JSON.stringify(ended)}` };
-      };
-
-      const result = await runDecompositionAngle({
-        decomposition,
-        contract: DECOMPOSITION_PROPOSAL_CONTRACT,
-        manifest,
-        provenance: {
-          harness: "claude-code",
-          harnessVersion: discovery.chosen?.version ?? "unknown",
-          adapterVersion: "0.1.0",
-          model: "unknown",
-          modelReportedBy: "unknown",
-          capability: {
-            structuredOutput: {
-              implementedByAdapter: true,
-              advertisedByHarness: true,
-              availableInSession: true,
-            },
-            perCallModelSelection: {
-              implementedByAdapter: false,
-              advertisedByHarness: false,
-              availableInSession: false,
-            },
+    const result = await runDecompositionAngle({
+      decomposition,
+      contract: DECOMPOSITION_PROPOSAL_CONTRACT,
+      manifest,
+      provenance: {
+        harness: "claude-code",
+        harnessVersion: discovery.chosen?.version ?? "unknown",
+        adapterVersion: "0.1.0",
+        model: "unknown",
+        modelReportedBy: "unknown",
+        capability: {
+          structuredOutput: {
+            implementedByAdapter: true,
+            advertisedByHarness: true,
+            availableInSession: true,
+          },
+          perCallModelSelection: {
+            implementedByAdapter: false,
+            advertisedByHarness: false,
+            availableInSession: false,
           },
         },
-        runTurn,
-        maxRetries: 0,
-        budget: createInvocationBudget(10), // explicit budget: absent now fails closed (#95)
-      });
+      },
+      runTurn,
+      maxRetries: 0,
+      budget: createInvocationBudget(10), // explicit budget: absent now fails closed (#95)
+    });
 
-      // eslint-disable-next-line no-console
-      console.log(
-        `[real-decomp] apiKeySource=${apiKeySource} usedFallback=${result.usedFallback} admitted=${result.admitted}`,
-      );
+    // eslint-disable-next-line no-console
+    console.log(
+      `[real-decomp] apiKeySource=${apiKeySource} usedFallback=${result.usedFallback} admitted=${result.admitted}`,
+    );
 
-      // Money safety (R2): the subscription path only, never a metered key.
-      expect(["oauth", "none"]).toContain(apiKeySource);
-      expect(sawMeteredWarning).toBe(false);
-      // The transformation produced an admitted decomposition — agent's or floor's.
-      expect(result.admitted).toBe(true);
-      expect(result.document.docType).toBe("decomposition.proposal");
-    },
-    180_000,
-  );
+    // Money safety (R2): the subscription path only, never a metered key.
+    expect(["oauth", "none"]).toContain(apiKeySource);
+    expect(sawMeteredWarning).toBe(false);
+    // The transformation produced an admitted decomposition — agent's or floor's.
+    expect(result.admitted).toBe(true);
+    expect(result.document.docType).toBe("decomposition.proposal");
+  }, 180_000);
 });

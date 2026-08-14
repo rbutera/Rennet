@@ -1726,6 +1726,139 @@ button {
   padding: 3px 6px;
 }
 
+/* ── The "what was sent" inspector (issue #30) ─────────────────────────────── */
+/* Informational, model-free, gate-free: it shows the REAL assembled context — in
+   sent order, with truncation visible — never gating what may be sent. */
+.context-manifest {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--line, var(--surface-2));
+  background: var(--surface-2);
+}
+.context-manifest-eyebrow {
+  margin: 0;
+  font-size: 10px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-faint);
+}
+.context-manifest-summary {
+  margin: 0;
+  font-size: 12px;
+  color: var(--text-soft);
+}
+.context-manifest-docs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.context-manifest-doc {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.context-manifest-doc[data-state="dropped"] {
+  opacity: 0.72;
+}
+.context-manifest-source {
+  flex: none;
+  min-inline-size: 92px;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--text-soft);
+}
+.context-manifest-path {
+  flex: 1 1 auto;
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  color: var(--text-soft);
+}
+.context-manifest-state {
+  flex: none;
+  font-size: 11px;
+  font-weight: 650;
+}
+.context-manifest-state[data-state="included"] {
+  color: var(--green);
+}
+.context-manifest-state[data-state="truncated"] {
+  color: var(--amber);
+}
+.context-manifest-state[data-state="dropped"] {
+  color: var(--text-faint);
+}
+.context-manifest-bytes {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-faint);
+  font-variant-numeric: tabular-nums;
+}
+.context-manifest-hash {
+  flex: none;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.context-manifest-empty,
+.context-manifest-unmanaged {
+  margin: 0;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.context-manifest-assembled {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+}
+.context-manifest-assembled-title {
+  margin: 0;
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--text-soft);
+}
+.context-manifest-assembled-digest {
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.context-manifest-assembled-prompt {
+  margin: 0;
+  max-block-size: 240px;
+  overflow: auto;
+  padding: 8px 10px;
+  border: 1px solid var(--line, var(--surface-2));
+  border-radius: 8px;
+  background: var(--surface-1, var(--surface-2));
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  color: var(--text-soft);
+}
+.context-manifest-open {
+  align-self: flex-start;
+  padding: 4px 10px;
+  border: 1px solid var(--line, var(--surface-2));
+  border-radius: 6px;
+  background: transparent;
+  font-size: 11px;
+  color: var(--text-soft);
+  cursor: pointer;
+}
+
 /* ── The Canvases-view primer states (running / consent / failed) ─────────── */
 .canvas-primer {
   display: flex;

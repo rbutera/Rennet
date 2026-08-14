@@ -7,6 +7,7 @@ import {
 } from "@rennet/protocol";
 import type {
   CanvasAngle,
+  ContextManifest,
   DecisionsRunStatus,
   ElementDiffs,
   FlaggedReview,
@@ -68,6 +69,7 @@ import {
   type RefineItemState,
 } from "./components/collation-draft-canvas";
 import { CommandPalette } from "./components/command-palette";
+import { ContextManifestPanel } from "./components/context-manifest-panel";
 import { ConversationPanel } from "./components/conversation-panel";
 import { DeltaAccountPanel } from "./components/delta-account-panel";
 import { DestinationFrame } from "./components/destination-frame";
@@ -408,6 +410,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // the Decisions lens defaults to `ok`. When the runner FAILED, this carries the
   // reason so the lens paints the failed banner instead of "no decisions".
   const [decisionsRun, setDecisionsRun] = useState<DecisionsRunStatus | undefined>(undefined);
+  // The REAL "what was sent" manifest (issue #30), delivered with the canvas set.
+  // Undefined until a live load sets it (or when no snapshot was composed) → the
+  // "what was sent" inspector shows an honest "not available", never a fabrication.
+  const [contextManifest, setContextManifest] = useState<ContextManifest | undefined>(undefined);
   const [liveLoaded, setLiveLoaded] = useState(false);
   // The Flagged lens's input (issue #138): the automated review layer's findings +
   // dual-review agreement for the open review. Fetched over the real command
@@ -954,6 +960,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       setNarration(live.narration);
       setEngine(live.engine);
       setDecisionsRun(live.decisionsRun);
+      setContextManifest(live.contextManifest);
       setLiveLoaded(true);
     });
     return () => {
@@ -2007,6 +2014,12 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           }}
         />
       ) : null}
+      {/* The "what was sent" inspector (issue #30): the REAL manifest of the context
+          assembled for this review's fleet — documents in sent order, hashes, byte
+          counts, truncation state, and the assembled-prompt digest. Present ONLY when
+          a real manifest came back; absent ⇒ nothing renders (honest not-available,
+          never a fabricated stand-in). Informational and gate-free (Rule Zero). */}
+      {contextManifest ? <ContextManifestPanel manifest={contextManifest} /> : null}
       <div className="view-toggle" role="tablist" aria-label="Workspace view">
         <button
           type="button"

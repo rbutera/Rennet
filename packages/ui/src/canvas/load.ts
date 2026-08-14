@@ -2,6 +2,7 @@ import type { RennetBridge } from "@rennet/protocol";
 import type {
   Canvas,
   CanvasAngle,
+  ContextManifest,
   DecisionsRunStatus,
   ElementDiffs,
   Review,
@@ -34,6 +35,13 @@ export interface LoadedCanvases {
    * it, "the decisions pass crashed" renders identical to "found nothing".
    */
   decisionsRun?: DecisionsRunStatus;
+  /**
+   * The REAL "what was sent" manifest (issue #30): the deterministic, byte-budgeted
+   * context assembled for this review's fleet dispatch, recorded per document.
+   * Optional — absent ⇒ the "what was sent" inspector shows an honest "not
+   * available", never a fabricated stand-in (Rule Zero).
+   */
+  contextManifest?: ContextManifest;
 }
 
 /**
@@ -51,20 +59,19 @@ export async function loadCanvases(
   try {
     // Running the harness is Rennet's whole job — it just runs. No consent token,
     // no permission mode: opening Canvases composes the model turn directly.
-    const { canvases, elementDiffs, narration, engine, decisionsRun } = await bridge.invoke(
-      "review.canvases",
-      {
+    const { canvases, elementDiffs, narration, engine, decisionsRun, contextManifest } =
+      await bridge.invoke("review.canvases", {
         commandId: crypto.randomUUID(),
         reviewId: review.id,
         repoPath: review.repositoryRoot,
-      },
-    );
+      });
     return {
       canvases,
       elementDiffs,
       ...(narration ? { narration } : {}),
       ...(engine ? { engine } : {}),
       ...(decisionsRun ? { decisionsRun } : {}),
+      ...(contextManifest ? { contextManifest } : {}),
     };
   } catch {
     return null;

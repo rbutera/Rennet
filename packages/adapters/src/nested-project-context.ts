@@ -1,7 +1,9 @@
 import { existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import {
+  assembleContext,
   buildScopeTree,
+  type ContextAssembly,
   composeRepo,
   composeWorkspace,
   eagerScopeTree,
@@ -168,13 +170,29 @@ export class NestedProjectContext {
     return eagerScopeTree(composition.scopeTree);
   }
 
-  manifest(composition: RepoComposition): ContextManifest {
+  /**
+   * Build the {@link ContextManifest} for a composition. The composition fields
+   * (identity, digest, freshness, and the absent-member disclosure `members`) are
+   * PRESERVED as before; the assembly fields (per-document records, total bytes,
+   * assembled-prompt digest) come from the injected {@link ContextAssembly}. When
+   * no assembly is given the manifest carries an empty assembly (0 documents) —
+   * used by callers that only need the composition disclosure. `exhaustive` is
+   * `false` until a context-isolation probe proves the harness sees only
+   * pipeline-assembled context; `unmanagedSources` names what may reach it outside.
+   */
+  manifest(composition: RepoComposition, assembly?: ContextAssembly): ContextManifest {
+    const assembled = assembly ?? assembleContext([], 0);
     return {
       repoRecordId: composition.repoRecordId,
       projectSnapshotId: composition.projectSnapshotId,
       compositionDigest: composition.contentDigest,
       freshness: composition.freshness,
       members: composition.submodules,
+      documents: assembled.documents,
+      totalBytes: assembled.totalBytes,
+      assembledPromptDigest: assembled.digest,
+      exhaustive: false,
+      unmanagedSources: ["harness ambient file reads (context-isolation probe not yet run)"],
     };
   }
 

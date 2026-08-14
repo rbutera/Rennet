@@ -1,12 +1,16 @@
 import { realpathSync } from "node:fs";
 import {
   type CanvasOpsBackend,
+  type ContextAssembly,
   escapePath,
   type HarnessPort,
   type ReviewBackendState,
   reviewBackendCore,
 } from "@rennet/core";
 import type { ContextManifest, Patchset, Review } from "@rennet/types";
+import { contextAskBackend } from "./context-ask-backend";
+import { assembleContextForComposition } from "./context-manifest";
+import { ContextManifestStore } from "./context-manifest-store";
 import { execaGit, type GitExec } from "./git-range-diff";
 import { knowledgeBackend } from "./knowledge-backend";
 import { enrichKnowledgeForRepo } from "./knowledge-enrichment";
@@ -82,6 +86,56 @@ export function repoKeyOf(review: Review): string {
  */
 export function repoRecordOf(review: Review): RepoRecord {
   return { repoKey: repoKeyOf(review), baseOid: activePatchset(review).repository.baseOid };
+}
+
+/** The produced manifest for a review plus the assembly it was built from (its `text` is byte-identical). */
+export interface ReviewContextManifest {
+  readonly manifest: ContextManifest;
+  readonly assembly: ContextAssembly;
+}
+
+/** Inputs for {@link buildReviewContextManifest}. */
+export interface BuildReviewContextManifestDeps {
+  readonly store: ProjectSnapshotStore;
+  readonly review: Review;
+  readonly git?: GitExec;
+  readonly compositionStore?: RepoCompositionStore;
+  readonly byteBudget?: number;
+}
+
+/**
+ * Build the "what was sent" {@link ContextManifest} for a review from the composed
+ * repo + the deterministic, byte-budgeted assembly (issue #30). This is the ONE
+ * producer both the live backend (on open) and the desktop canvases path reuse, so
+ * the manifest the renderer sees is BYTE-IDENTICAL to the one persisted — same
+ * inputs, same code, same bytes.
+ *
+ * Fail-safe (Rule Zero): when no snapshot exists for the review's pinned base OID
+ * (or composition throws), this returns `undefined` — an honest absence the caller
+ * surfaces as "no manifest for this review", never a fabricated stand-in.
+ */
+export async function buildReviewContextManifest(
+  deps: BuildReviewContextManifestDeps,
+): Promise<ReviewContextManifest | undefined> {
+  const git = deps.git ?? execaGit;
+  const { repoKey, baseOid } = repoRecordOf(deps.review);
+  try {
+    const nested = new NestedProjectContext(
+      deps.store,
+      deps.compositionStore ?? new RepoCompositionStore(deps.store),
+      git,
+    );
+    const composition = await nested.composeRepo(deps.review.repositoryRoot, repoKey, baseOid);
+    // Repo guidance feeds the assembly directly, labelled by source (no gate).
+    const assembly = assembleContextForComposition(
+      deps.review.repositoryRoot,
+      composition,
+      deps.byteBudget,
+    );
+    return { manifest: nested.manifest(composition, assembly), assembly };
+  } catch {
+    return undefined;
+  }
 }
 
 /**
@@ -172,17 +226,21 @@ export async function createLiveCanvasOpsBackend(
     git,
     maxFiles,
   });
-  let contextManifest: ContextManifest | undefined;
-  if (outcome.generated) {
+  // The "what was sent" manifest (issue #30): produce it from the SAME composition +
+  // deterministic assembly the desktop canvases path reuses (via
+  // `buildReviewContextManifest`), then PERSIST it under the R55 project entry so it
+  // reloads across restart. A snapshot that could not be composed yields an honest
+  // `undefined` — never a fabricated stand-in (Rule Zero).
+  const built = await buildReviewContextManifest({
+    store: deps.store,
+    review,
+    git,
+    ...(deps.compositionStore ? { compositionStore: deps.compositionStore } : {}),
+  });
+  const contextManifest: ContextManifest | undefined = built?.manifest;
+  if (built) {
     try {
-      const nested = new NestedProjectContext(
-        deps.store,
-        deps.compositionStore ?? new RepoCompositionStore(deps.store),
-        git,
-      );
-      contextManifest = nested.manifest(
-        await nested.composeRepo(review.repositoryRoot, repoKey, baseOid),
-      );
+      new ContextManifestStore(deps.store).save(repoKey, baseOid, built.manifest);
     } catch (error) {
       deps.onKnowledgeError?.(error);
     }
@@ -274,8 +332,24 @@ export async function createLiveCanvasOpsBackend(
     knowledgeStore,
     resolveContextFor(review, repoKey),
   );
+  // `context.ask` (issue #15): the one model-backed tool. Binds the pure runner to
+  // the same fail-closed reader + local knowledge store, resolving the answering
+  // harness lazily (the user's own `claude`), routed through the council seats.
+  const askPart = contextAskBackend({
+    reader,
+    knowledgeStore,
+    resolve: resolveContextFor(review, repoKey),
+    resolvePort: async () => deps.knowledgePort ?? (await deps.resolveKnowledgePort?.()) ?? null,
+    repoRoot: review.repositoryRoot,
+  });
 
-  const backend: CanvasOpsBackend = { ...core, ...contextPart, ...noveltyPart, ...knowledgePart };
+  const backend: CanvasOpsBackend = {
+    ...core,
+    ...contextPart,
+    ...noveltyPart,
+    ...knowledgePart,
+    ...askPart,
+  };
 
   return {
     backend,

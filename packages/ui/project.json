@@ -6,7 +6,9 @@
   "tags": ["scope:rennet", "layer:ui"],
   "targets": {
     "build": { "command": "pnpm exec tsc -p packages/ui/tsconfig.json" },
-    "lint": { "command": "pnpm exec eslint packages/ui/src --max-warnings=0 && pnpm exec biome check packages/ui/src" },
+    "lint": {
+      "command": "pnpm exec eslint packages/ui/src --max-warnings=0 && pnpm exec biome check packages/ui/src"
+    },
     "typecheck": { "command": "pnpm exec tsc -p packages/ui/tsconfig.json" },
     "test": { "command": "pnpm exec vitest run --passWithNoTests packages/ui/src" }
   }

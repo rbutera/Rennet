@@ -66,6 +66,7 @@ export type ReviewBackendCore = Omit<
   | "symbolDefinition"
   | "references"
   | "knowledge"
+  | "ask"
 >;
 
 /**

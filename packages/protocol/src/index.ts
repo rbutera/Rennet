@@ -10,6 +10,10 @@ import type {
   ComposableAsk,
   ComposedHandoffBundle,
   ComposedTask,
+  CompositionFreshness,
+  CompositionStaleMember,
+  ContextDocumentRecord,
+  ContextManifest,
   DecisionDetail,
   DecisionEvidence,
   DecisionsRunStatus,
@@ -475,6 +479,66 @@ const decisionsRunStatusSchema: z.ZodType<DecisionsRunStatus> = z.union([
   z.object({ status: z.literal("ok") }),
   z.object({ status: z.literal("failed"), reason: z.string() }),
 ]);
+
+// ── ContextManifest (issue #30) ──────────────────────────────────────────────
+// The "what was sent" manifest crossing the desktop IPC boundary. An unlisted
+// optional field is silently STRIPPED by the strict command output objects, so the
+// manifest — and every one of its members — MUST be declared here, or the renderer
+// receives a manifest missing exactly the assembly records the panel exists to show.
+const compositionStaleMemberSchema: z.ZodType<CompositionStaleMember> = z.object({
+  path: z.string(),
+  repoRecordId: z.string(),
+  reason: z.enum(["absent", "oid-mismatch", "digest-mismatch"]),
+  expectedOid: z.string(),
+  expectedDigest: z.string().optional(),
+  observedOid: z.string().optional(),
+  observedDigest: z.string().optional(),
+});
+
+const compositionFreshnessSchema: z.ZodType<CompositionFreshness> = z.union([
+  z.object({ status: z.literal("current"), staleMembers: z.tuple([]) }),
+  z.object({ status: z.literal("stale"), staleMembers: z.array(compositionStaleMemberSchema) }),
+]);
+
+const repoMapReferenceSchema = z.object({
+  repoRecordId: z.string(),
+  pinnedOid: z.string(),
+  projectSnapshotId: z.string(),
+  contentDigest: z.string(),
+});
+
+const repoMapMemberSchema = z.union([
+  z.object({ status: z.literal("resolved"), path: z.string(), reference: repoMapReferenceSchema }),
+  z.object({
+    status: z.literal("absent"),
+    path: z.string(),
+    repoRecordId: z.string(),
+    pinnedOid: z.string(),
+  }),
+]);
+
+const contextDocumentRecordSchema: z.ZodType<ContextDocumentRecord> = z.object({
+  order: z.number().int().nonnegative(),
+  source: z.string(),
+  sourcePath: z.string(),
+  contentHash: z.string(),
+  originalBytes: z.number().int().nonnegative(),
+  bytes: z.number().int().nonnegative(),
+  state: z.enum(["included", "truncated", "dropped"]),
+});
+
+const contextManifestSchema: z.ZodType<ContextManifest> = z.object({
+  repoRecordId: z.string(),
+  projectSnapshotId: z.string(),
+  compositionDigest: z.string(),
+  freshness: compositionFreshnessSchema,
+  members: z.array(repoMapMemberSchema),
+  documents: z.array(contextDocumentRecordSchema),
+  totalBytes: z.number().int().nonnegative(),
+  assembledPromptDigest: z.string(),
+  exhaustive: z.boolean(),
+  unmanagedSources: z.array(z.string()),
+});
 
 const commandIdSchema = z.uuid();
 
@@ -1629,6 +1693,14 @@ export const commandDefinitions = {
       // `ok` (the pre-#160 shape). Carried so the Decisions failed banner can fire
       // rather than reading a crashed pass as "no decisions".
       decisionsRun: decisionsRunStatusSchema.optional(),
+      // `contextManifest` (issue #30): the "what was sent" manifest for this fleet
+      // dispatch — the assembled documents in sent order, their hashes/bytes,
+      // truncation state, and the assembled-prompt digest. Declared here because a
+      // strict output object silently strips any undeclared optional (the exact
+      // IPC-field-fidelity failure this field guards against). Optional so a build
+      // that predates the wiring still validates; absent ⇒ the panel shows its
+      // pending state, never a crash.
+      contextManifest: contextManifestSchema.optional(),
     }),
   },
   // ── Publish consent request, main-issued (issue #21) ───────────────────────

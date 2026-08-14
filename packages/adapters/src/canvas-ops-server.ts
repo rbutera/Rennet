@@ -101,7 +101,9 @@ function toZodShape(params: readonly ToolParam[]): ZodRawShape {
 /** Wrap a pure core handler into an SDK `CallToolResult` handler over `backend`. */
 function toSdkHandler(descriptor: CanvasOpsTool, backend: CanvasOpsBackend) {
   return async (args: Record<string, unknown>): Promise<CallToolResult> => {
-    const outcome = descriptor.handle(args as ToolArgs, backend);
+    // Almost every handler is synchronous; `context.ask` returns a Promise. Await
+    // covers both — a plain value passes through unchanged.
+    const outcome = await descriptor.handle(args as ToolArgs, backend);
     if (!outcome.ok) {
       return {
         content: [{ type: "text", text: JSON.stringify({ error: outcome.error }) }],

@@ -61,6 +61,24 @@ function stubBackend(): CanvasOpsBackend {
     }),
     novelty: () => ({ ok: false as const, failure: { reason: "absent" as const } }),
     knowledge: () => ({ ok: false as const, failure: { reason: "absent" as const } }),
+    ask: async () => ({
+      status: "failed" as const,
+      failureReason: "no harness in this hermetic fixture",
+      cost: {
+        turns: 0,
+        model: null,
+        effort: null,
+        budgetGranted: true,
+        overage: false,
+        resolution: {
+          jobId: "context-ask-fetch",
+          tier: "light" as const,
+          scenario: "degraded" as const,
+          source: "council-table" as const,
+          summary: "resolved",
+        },
+      },
+    }),
     applyEffects: (effects: readonly CanvasOpsEffect[]) => {
       void effects;
     },

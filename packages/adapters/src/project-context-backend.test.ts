@@ -88,9 +88,16 @@ function backendFor(
   }) as CanvasOpsBackend;
 }
 
-function okEnvelope<T>(outcome: ToolOutcome<T>): OpsEnvelope<T> {
-  if (!outcome.ok) throw new Error(`expected ok, got ${JSON.stringify(outcome.error)}`);
-  return outcome.envelope;
+/** Narrow a (now possibly-async) tool handle result: these context reads are all sync. */
+function sync<T>(outcome: ToolOutcome<T> | Promise<ToolOutcome<T>>): ToolOutcome<T> {
+  if (outcome instanceof Promise) throw new Error("expected a synchronous tool outcome");
+  return outcome;
+}
+
+function okEnvelope<T>(outcome: ToolOutcome<T> | Promise<ToolOutcome<T>>): OpsEnvelope<T> {
+  const settled = sync(outcome);
+  if (!settled.ok) throw new Error(`expected ok, got ${JSON.stringify(settled.error)}`);
+  return settled.envelope;
 }
 
 describe("context.map through the real reader gate", () => {
@@ -182,7 +189,7 @@ describe("context.file through the real reader gate", () => {
       baseOid: manifest.baseOid,
     }));
 
-    const outcome = canvasOpsTool("context.file").handle({ path: "../escape.ts" }, backend);
+    const outcome = sync(canvasOpsTool("context.file").handle({ path: "../escape.ts" }, backend));
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
     expect(outcome.error.code).toBe("invalid-input");
@@ -196,7 +203,9 @@ describe("context.file through the real reader gate", () => {
       baseOid: manifest.baseOid,
     }));
 
-    const outcome = canvasOpsTool("context.file").handle({ path: "packages/a/ghost.ts" }, backend);
+    const outcome = sync(
+      canvasOpsTool("context.file").handle({ path: "packages/a/ghost.ts" }, backend),
+    );
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
     expect(outcome.error.code).toBe("not-found");
@@ -245,7 +254,9 @@ describe("context.overview through the real reader gate", () => {
       repoKey: manifest.repoKey,
       baseOid: manifest.baseOid,
     }));
-    const outcome = canvasOpsTool("context.overview").handle({ path: "../escape.ts" }, backend);
+    const outcome = sync(
+      canvasOpsTool("context.overview").handle({ path: "../escape.ts" }, backend),
+    );
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
     expect(outcome.error.code).toBe("invalid-input");
@@ -291,7 +302,7 @@ describe("context.symbol through the real reader gate", () => {
       repoKey: manifest.repoKey,
       baseOid: manifest.baseOid,
     }));
-    const outcome = canvasOpsTool("context.symbol").handle({}, backend);
+    const outcome = sync(canvasOpsTool("context.symbol").handle({}, backend));
     expect(outcome.ok).toBe(false);
     if (outcome.ok) return;
     expect(outcome.error.code).toBe("invalid-input");

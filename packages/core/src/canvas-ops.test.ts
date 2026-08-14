@@ -35,6 +35,7 @@ import {
   type ToolOutcome,
   type ViewState,
 } from "./canvas-ops";
+import type { ContextAnswer, ContextAskQuery, RunContextAskResult } from "./context-ask";
 import type { KnowledgeQuery, KnowledgeResult } from "./knowledge";
 import type { NoveltyResult } from "./novelty-ledger";
 import type {
@@ -120,6 +121,10 @@ interface FixtureOptions {
   knowledge?: KnowledgeResult;
   /** Capture the query the last `context.knowledge` call passed the backend. */
   onKnowledge?: (query?: KnowledgeQuery) => void;
+  /** Override the `context.ask` result (default: a served evidence-backed answer). */
+  ask?: RunContextAskResult;
+  /** Capture the query the last `context.ask` call passed the backend. */
+  onAsk?: (query: ContextAskQuery) => void;
 }
 
 const FIXTURE_BASE_OID = "a".repeat(40);
@@ -177,6 +182,32 @@ interface Fixture {
   canvasEvents: CanvasEvent[];
   decisionsCanvasId: string;
 }
+
+const DEFAULT_ASK_COST: ContextAnswer["cost"] = {
+  turns: 1,
+  model: "opus-4.8",
+  effort: "high",
+  budgetGranted: true,
+  overage: false,
+  resolution: {
+    jobId: "context-ask-fetch",
+    tier: "light",
+    scenario: "degraded",
+    source: "council-table",
+    summary: "context-ask-fetch resolved",
+  },
+};
+
+const DEFAULT_ASK_ANSWER: RunContextAskResult = {
+  status: "answered",
+  answer: {
+    answer: "core holds the deterministic reads",
+    evidence: [{ path: "packages/a/src/index.ts", blobOid: "blob-a" }],
+    confidence: "high",
+    consulted: ["context.knowledge (1 statements)", "context.map (2 files)"],
+    cost: DEFAULT_ASK_COST,
+  },
+};
 
 function makeFixture(options: FixtureOptions = {}): Fixture {
   const decomposition = makeDecomposition();
@@ -400,6 +431,10 @@ function makeFixture(options: FixtureOptions = {}): Fixture {
         }
       );
     },
+    ask: async (query: ContextAskQuery): Promise<RunContextAskResult> => {
+      options.onAsk?.(query);
+      return options.ask ?? DEFAULT_ASK_ANSWER;
+    },
     applyEffects: (effects) => {
       for (const effect of effects) {
         applied.push(effect);
@@ -417,6 +452,17 @@ function run(
   args: Record<string, unknown>,
   backend: CanvasOpsBackend,
 ): ToolOutcome {
+  const outcome = tool.handle(args, backend);
+  if (outcome instanceof Promise) throw new Error(`${tool.name} handle is async; use runAsync`);
+  return outcome;
+}
+
+/** Await an async tool handle (`context.ask` is the one model-backed tool). */
+async function runAsync(
+  tool: CanvasOpsTool,
+  args: Record<string, unknown>,
+  backend: CanvasOpsBackend,
+): Promise<ToolOutcome> {
   return tool.handle(args, backend);
 }
 
@@ -452,6 +498,7 @@ describe("canvasOps@2 tool surface", () => {
       "context.symbol",
       "context.references",
       "context.knowledge",
+      "context.ask",
     ]);
     // The base-branch context reads (issue #14) + the deterministic novelty ledger
     // (issue #144) + the model-free symbolic trio (repo-map-symbolic-surface:
@@ -465,6 +512,8 @@ describe("canvasOps@2 tool surface", () => {
     expect(names).toContain("context.symbol");
     expect(names).toContain("context.references");
     expect(names).toContain("context.knowledge");
+    // The ONE model-backed synthesis TOOL (context.ask, issue #15) completes the surface.
+    expect(names).toContain("context.ask");
   });
 
   it("marks the hot trio always-loaded and read tools read-only", () => {
@@ -1310,6 +1359,85 @@ describe("canvasOps@2 tool surface", () => {
       const data = env.data as { unavailable: { reason: string }; statements?: unknown };
       expect(data.unavailable.reason).toBe("absent");
       expect(data.statements).toBeUndefined();
+    });
+  });
+
+  describe("context.ask — the one model-backed synthesis tool (issue #15)", () => {
+    it("is registered in CANVAS_OPS_TOOLS as a read-only retrieval tool", () => {
+      const tool = canvasOpsTool("context.ask");
+      expect(tool.kind).toBe("retrieval");
+      expect(tool.readOnly).toBe(true);
+      expect(tool.params.map((p) => p.name)).toEqual(["question", "scope", "budgetHint"]);
+      // Red-proof: the surface list contains it (removing the registry entry reddens
+      // the exact-list assertion above).
+      expect(CANVAS_OPS_TOOLS.some((t) => t.name === "context.ask")).toBe(true);
+    });
+
+    it("round-trips a backend answer through the tool handle, citing evidence", async () => {
+      let seen: ContextAskQuery | undefined;
+      const { backend } = makeFixture({ onAsk: (q) => (seen = q) });
+      const outcome = await runAsync(
+        canvasOpsTool("context.ask"),
+        { question: "what is in core?", budgetHint: "quick" },
+        backend,
+      );
+      const env = expectOk(outcome);
+      expect(seen?.question).toBe("what is in core?");
+      expect(seen?.budgetHint).toBe("quick");
+      expect(env.freshness).toBe("current");
+      const doc = env.data as ContextAnswer;
+      expect(doc.answer).toContain("deterministic reads");
+      expect(doc.evidence.length).toBeGreaterThan(0);
+      // Evidence rides the envelope as path:blobOid anchors.
+      expect(env.evidence?.[0]).toBe("packages/a/src/index.ts:blob-a");
+    });
+
+    it("renders unanswered-with-reason as a served OK, not an error", async () => {
+      const { backend } = makeFixture({
+        ask: {
+          status: "unanswered",
+          answer: {
+            answer: "",
+            evidence: [],
+            confidence: "low",
+            consulted: ["context.knowledge (0 statements)"],
+            cost: DEFAULT_ASK_COST,
+            unanswered: { reason: "the snapshot does not cover generated code" },
+          },
+        },
+      });
+      const env = expectOk(
+        await runAsync(canvasOpsTool("context.ask"), { question: "runtime?" }, backend),
+      );
+      expect(env.freshness).toBe("current");
+      const doc = env.data as ContextAnswer;
+      expect(doc.unanswered?.reason).toContain("generated code");
+    });
+
+    it("renders a failed ask as an honest failed reply, never a clean answer", async () => {
+      const { backend } = makeFixture({
+        ask: {
+          status: "failed",
+          failureReason: "the ask turn produced an answer with no resolvable evidence",
+          cost: DEFAULT_ASK_COST,
+        },
+      });
+      const env = expectOk(
+        await runAsync(canvasOpsTool("context.ask"), { question: "?" }, backend),
+      );
+      expect(env.freshness).toBe("failed");
+      const data = env.data as { failed?: { reason: string }; answer?: unknown };
+      expect(data.failed?.reason).toContain("no resolvable evidence");
+      // Never rendered as a clean answer.
+      expect(data.answer).toBeUndefined();
+    });
+
+    it("refuses a malformed call (no question) as invalid-input", async () => {
+      const { backend } = makeFixture();
+      const outcome = await runAsync(canvasOpsTool("context.ask"), {}, backend);
+      expect(outcome.ok).toBe(false);
+      if (outcome.ok) throw new Error("unreachable");
+      expect(outcome.error.code).toBe("invalid-input");
     });
   });
 });

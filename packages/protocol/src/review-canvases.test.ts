@@ -190,6 +190,85 @@ describe("review.canvases command", () => {
     ]);
   });
 
+  // ── contextManifest delivery (issue #30) ───────────────────────────────────
+  // The "what was sent" manifest MUST survive the command boundary intact. The
+  // output is a strict z.object, so an unschema'd field — or an unschema'd member
+  // inside the manifest — is silently stripped, and the "what was sent" panel would
+  // render a manifest missing exactly the assembly records it exists to show. These
+  // assertions go red if the manifest field or any of its records is dropped.
+  it("carries the full contextManifest through the output, no field stripped (#30)", () => {
+    const manifest = {
+      repoRecordId: "/repo",
+      projectSnapshotId: "fp-1",
+      compositionDigest: "comp-1",
+      freshness: { status: "current" as const, staleMembers: [] as const },
+      members: [],
+      documents: [
+        {
+          order: 0,
+          source: "claude-md",
+          sourcePath: "CLAUDE.md",
+          contentHash: "a".repeat(64),
+          originalBytes: 120,
+          bytes: 120,
+          state: "included" as const,
+        },
+        {
+          order: 1,
+          source: "project-map",
+          sourcePath: "(project-map)",
+          contentHash: "b".repeat(64),
+          originalBytes: 300,
+          bytes: 64,
+          state: "truncated" as const,
+        },
+      ],
+      totalBytes: 184,
+      assembledPromptDigest: "c".repeat(64),
+      exhaustive: false,
+      unmanagedSources: ["harness ambient file reads (context-isolation probe not yet run)"],
+    };
+    const output = parseCommandOutput("review.canvases", {
+      canvases: canvasSet(),
+      elementDiffs: {},
+      contextManifest: manifest,
+    });
+    // Every record + the truncation state + the digest survive intact.
+    expect(output.contextManifest).toEqual(manifest);
+    expect(output.contextManifest?.documents[1]?.state).toBe("truncated");
+    expect(output.contextManifest?.assembledPromptDigest).toBe("c".repeat(64));
+  });
+
+  it("round-trips WITHOUT contextManifest unchanged (pre-#30 shape preserved)", () => {
+    const output = parseCommandOutput("review.canvases", {
+      canvases: canvasSet(),
+      elementDiffs: {},
+    });
+    expect(output.contextManifest).toBeUndefined();
+  });
+
+  it("rejects a contextManifest with a malformed document record (positive control)", () => {
+    expect(() =>
+      parseCommandOutput("review.canvases", {
+        canvases: canvasSet(),
+        elementDiffs: {},
+        contextManifest: {
+          repoRecordId: "/repo",
+          projectSnapshotId: "fp-1",
+          compositionDigest: "comp-1",
+          freshness: { status: "current", staleMembers: [] },
+          members: [],
+          // `state` is not one of included|truncated|dropped → must fail.
+          documents: [{ order: 0, source: "x", sourcePath: "y", contentHash: "z", state: "bogus" }],
+          totalBytes: 0,
+          assembledPromptDigest: "d".repeat(64),
+          exhaustive: false,
+          unmanagedSources: [],
+        },
+      }),
+    ).toThrow();
+  });
+
   it("preserves a complete DEFERRED (not-assessed) blast paint across the boundary (#35)", () => {
     const canvases = canvasSet();
     canvases.decisions.overlay = [

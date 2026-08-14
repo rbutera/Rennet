@@ -6,7 +6,9 @@
   "tags": ["scope:rennet", "layer:types"],
   "targets": {
     "build": { "command": "pnpm exec tsc -p packages/types/tsconfig.json" },
-    "lint": { "command": "pnpm exec eslint packages/types/src --max-warnings=0 && pnpm exec biome check packages/types/src" },
+    "lint": {
+      "command": "pnpm exec eslint packages/types/src --max-warnings=0 && pnpm exec biome check packages/types/src"
+    },
     "typecheck": { "command": "pnpm exec tsc -p packages/types/tsconfig.json" },
     "test": { "command": "pnpm exec vitest run --passWithNoTests packages/types/src" }
   }

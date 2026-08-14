@@ -43,6 +43,7 @@ import type {
   Canvas,
   CanvasAngle,
   ComposedHandoffBundle,
+  ContextManifest,
   DecisionsRunStatus,
   DeltaAccount,
   DeltaDigestResult,
@@ -122,6 +123,13 @@ export interface DispatchDeps {
      * the failed state distinctly is a follow-up.
      */
     decisionsRun?: DecisionsRunStatus;
+    /**
+     * The "what was sent" manifest (issue #30): the deterministic, byte-budgeted
+     * context assembled for this fleet dispatch, recorded per document. Optional so
+     * a caller that composes no live backend omits it; carried to the renderer so
+     * the "what was sent" inspector can show exactly what the agents were given.
+     */
+    contextManifest?: ContextManifest;
   }>;
   /**
    * The forge egress port (issue #21). `buildReviewRequest` is pure and network-free
@@ -756,7 +764,7 @@ export function createDispatch(
         // Running the review harness (the model spend) is Rennet's entire job — it
         // just runs. No permission mode, no consent token: opening Canvases composes
         // the model turn directly.
-        const { canvases, elementDiffs, narration, engine, decisionsRun } =
+        const { canvases, elementDiffs, narration, engine, decisionsRun, contextManifest } =
           await deps.buildCanvases(review);
         return parseCommandOutput(name, {
           canvases,
@@ -767,6 +775,10 @@ export function createDispatch(
           // can paint a FAILED decisions pass distinctly from "ran, found nothing".
           // Absent ⇒ the UI defaults to `ok` (the pre-#160 shape).
           ...(decisionsRun ? { decisionsRun } : {}),
+          // The "what was sent" manifest (issue #30): carried to the renderer intact
+          // (declared in the Zod output schema, so it survives — an undeclared
+          // optional would be silently stripped here).
+          ...(contextManifest ? { contextManifest } : {}),
         });
       }
       // ── The front door: projects + discovery (issue #29) ──────────────────────

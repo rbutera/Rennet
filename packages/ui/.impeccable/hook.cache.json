@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "sessions": {
+    "6fdc23db-dfbb-4845-8602-43eff7cc26bc": {
+      "updatedAt": 1786746114957,
+      "files": {
+        "/Volumes/ExternalNVMe/home/dev/rennet-wt-context/packages/ui/src/app.tsx": {
+          "editCount": 7,
+          "findings": [],
+          "cleanAcked": true
+        },
+        "/Volumes/ExternalNVMe/home/dev/rennet-wt-context/packages/ui/src/styles.css": {
+          "editCount": 1,
+          "findings": [],
+          "cleanAcked": true
+        },
+        "/Volumes/ExternalNVMe/home/dev/rennet-wt-context/packages/ui/src/app.context-manifest.dom.test.tsx": {
+          "editCount": 1,
+          "findings": [],
+          "cleanAcked": true
+        }
+      }
+    }
+  }
+}

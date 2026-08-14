@@ -71,6 +71,18 @@ export {
   ZERO_CODEX_USAGE,
 } from "./codex-session-usage";
 export {
+  type ContextAskBackendDeps,
+  type ContextAskBackendPart,
+  contextAskBackend,
+  createContextAskRunTurn,
+} from "./context-ask-backend";
+export {
+  assembleContextForComposition,
+  DEFAULT_CONTEXT_BYTE_BUDGET,
+  gatherContextDocuments,
+} from "./context-manifest";
+export { ContextManifestStore } from "./context-manifest-store";
+export {
   CONVENTIONS_FILE,
   type ConventionCatalogueLoad,
   type ConventionLoadReason,
@@ -201,11 +213,14 @@ export {
 } from "./knowledge-store";
 export {
   activePatchset,
+  type BuildReviewContextManifestDeps,
+  buildReviewContextManifest,
   createLiveCanvasOpsBackend,
   type LiveBackendDeps,
   type LiveReviewBackend,
   type LiveSnapshotOutcome,
   type RepoRecord,
+  type ReviewContextManifest,
   repoKeyOf,
   repoRecordOf,
   resolveContextFor,

@@ -2560,12 +2560,66 @@ export interface WorkspaceContext {
   readonly freshness: CompositionFreshness;
 }
 
+/**
+ * The included/truncated/dropped state of one assembled context document (issue
+ * #30). `included` = the whole document was assembled; `truncated` = the byte
+ * budget cut it at a section boundary (its `bytes` < `originalBytes`); `dropped` =
+ * the budget was exhausted before it, so 0 bytes were assembled. Every cut is
+ * RECORDED — the budget never silently drops content.
+ */
+export type ContextDocumentState = "included" | "truncated" | "dropped";
+
+/**
+ * One document in the deterministic context assembly (issue #30). Records its
+ * order position, source label (CLAUDE.md, AGENTS.md, `.rennet/`, the project map,
+ * knowledge — labelled, never gated), source path, a content hash over the
+ * ORIGINAL bytes, the original size, the bytes actually assembled after budgeting,
+ * and its included/truncated/dropped state.
+ */
+export interface ContextDocumentRecord {
+  /** 0-based order position in the assembled context (the sent order). */
+  readonly order: number;
+  /** The source label, e.g. "claude-md" | "agents-md" | "rennet" | "project-map" | "knowledge". */
+  readonly source: string;
+  /** The repo-relative (or synthetic) source path of the document. */
+  readonly sourcePath: string;
+  /** sha256 of the ORIGINAL document content (content identity, pre-truncation). */
+  readonly contentHash: string;
+  /** The full byte size of the document before any budget truncation. */
+  readonly originalBytes: number;
+  /** The bytes actually assembled: == originalBytes when included, < when truncated, 0 when dropped. */
+  readonly bytes: number;
+  readonly state: ContextDocumentState;
+}
+
+/**
+ * The manifest of what a fleet dispatch was told (issue #30). The type already
+ * existed (repoRecordId/projectSnapshotId/compositionDigest/freshness/members —
+ * the absent-member disclosure); this change ADDS the per-document assembly
+ * record: each document sent (hash, source path, order, included/truncated/dropped
+ * state), the total assembled byte size, a digest of the assembled prompt (so the
+ * "what was sent" view is provably byte-identical), and `exhaustive` set from
+ * evidence (false until an isolation probe proves the harness sees only
+ * pipeline-assembled context) with `unmanagedSources` naming what may have reached
+ * the harness outside the pipeline. The absent-member disclosure (`members`) is
+ * PRESERVED, not redefined.
+ */
 export interface ContextManifest {
   readonly repoRecordId: string;
   readonly projectSnapshotId: string;
   readonly compositionDigest: string;
   readonly freshness: CompositionFreshness;
   readonly members: readonly RepoMapMember[];
+  /** The assembled documents in sent order, with per-document truncation state. */
+  readonly documents: readonly ContextDocumentRecord[];
+  /** The total bytes actually assembled across all documents (post-budget). */
+  readonly totalBytes: number;
+  /** sha256 of the assembled prompt text — the byte-identity anchor for the "what was sent" view. */
+  readonly assembledPromptDigest: string;
+  /** Whether the manifest provably covers everything the harness saw (false until a probe proves it). */
+  readonly exhaustive: boolean;
+  /** Sources that may have reached the harness outside the pipeline (e.g. its own ambient reads). */
+  readonly unmanagedSources: readonly string[];
 }
 
 // ── Base + overlay for a non-default base (#143, design §3) ───────────────────

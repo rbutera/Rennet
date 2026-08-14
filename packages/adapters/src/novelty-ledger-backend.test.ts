@@ -128,7 +128,8 @@ function backendFor(
   }) as CanvasOpsBackend;
 }
 
-function okEnvelope<T>(outcome: ToolOutcome<T>): OpsEnvelope<T> {
+function okEnvelope<T>(outcome: ToolOutcome<T> | Promise<ToolOutcome<T>>): OpsEnvelope<T> {
+  if (outcome instanceof Promise) throw new Error("expected a synchronous tool outcome");
   if (!outcome.ok) throw new Error(`expected ok, got ${JSON.stringify(outcome.error)}`);
   return outcome.envelope;
 }

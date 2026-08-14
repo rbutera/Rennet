@@ -15,6 +15,7 @@ import type {
 } from "@rennet/types";
 import { v7 as uuidv7 } from "uuid";
 import { type CanvasEvent, dispatchOrchestratorCanvasOp } from "./canvas";
+import type { ContextAskQuery, RunContextAskResult } from "./context-ask";
 import type { KnowledgeQuery, KnowledgeResult } from "./knowledge";
 import type { NoveltyResult } from "./novelty-ledger";
 import type {
@@ -286,6 +287,18 @@ export interface CanvasOpsBackend {
    * never silently dropped. Model turns happen on enrichment, NEVER on this read.
    */
   knowledge(query?: KnowledgeQuery): KnowledgeResult;
+  /**
+   * `context.ask` (issue #15): one synthesised answer to a question about the
+   * project, composed from the existing pure reads plus ONE injected model turn.
+   * Unlike every other retrieval accessor this is model-backed, so it is async —
+   * it returns the validated answer document (`{answer, evidence, confidence,
+   * unanswered?}` + a metered `cost`), a first-class `unanswered`-with-reason
+   * success, or a `failed` ask (an evidence-free answer is never served as clean).
+   * The answering machinery lives behind this port boundary and MAY be upgraded
+   * without changing the tool contract. Budget is metered and reported, never
+   * refused (Rule Zero).
+   */
+  ask(query: ContextAskQuery): Promise<RunContextAskResult>;
   /** Apply the effects a write op emitted. Never receives an L2 write. */
   applyEffects(effects: readonly CanvasOpsEffect[]): void;
 }
@@ -336,7 +349,13 @@ export interface CanvasOpsTool {
   readOnly: boolean;
   alwaysLoad: boolean;
   params: readonly ToolParam[];
-  handle(args: ToolArgs, backend: CanvasOpsBackend): ToolOutcome;
+  /**
+   * The pure handler. Almost every tool is synchronous (a deterministic read);
+   * `context.ask` is the one model-backed tool and returns a `Promise`, so the
+   * type admits either — the transport (`toSdkHandler`) awaits the outcome
+   * uniformly.
+   */
+  handle(args: ToolArgs, backend: CanvasOpsBackend): ToolOutcome | Promise<ToolOutcome>;
 }
 
 // ── Argument + pagination helpers ────────────────────────────────────────────
@@ -1485,6 +1504,76 @@ const contextKnowledgeTool: CanvasOpsTool = {
   },
 };
 
+// ── The synthesis surface (context.ask, issue #15) ──────────────────────────
+//
+// The ONE model-backed TOOL (context.knowledge is model-backed but its READ runs
+// no model; context.ask runs a model turn per call). It composes a validated
+// answer from the existing pure reads plus one injected turn, behind the async
+// `backend.ask` port. Evidence-or-nothing: an answer with claims and no resolvable
+// evidence is a `failed` ask, never a clean answer (anti-hallucination, Rule Zero
+// protects it as anti-lie-in-the-UI). `unanswered`-with-reason is a first-class
+// SUCCESS. Budget is metered and reported in the `cost` block, never refused.
+
+const contextAskTool: CanvasOpsTool = {
+  name: "context.ask",
+  description:
+    "Ask ONE question about the project and get back a validated ANSWER DOCUMENT synthesised from the knowledge layer + the deterministic project map: `{answer, evidence, confidence, unanswered?}` plus a metered `cost`. Every claim carries EVIDENCE anchors (path[:line], resolved against the pinned snapshot); an answer that cannot cite evidence is reported as a FAILED ask, never a fluent guess. When the layer demonstrably cannot support an answer you get `unanswered` with a reason naming what was consulted — an HONEST non-answer is a real, successful result, not an error. `budgetHint` routes the model: 'quick' (light fetch seat) or 'thorough' (heavy seat); either way the budget is metered and reported in `cost`, NEVER refused. Use this for a QUESTION needing synthesis — for a raw structural fact prefer context.map/file/overview/symbol/references, and for verbatim learned statements prefer context.knowledge.",
+  kind: "retrieval",
+  readOnly: true,
+  alwaysLoad: false,
+  params: [
+    {
+      name: "question",
+      type: "string",
+      optional: false,
+      description: "The question to answer from the project's knowledge layer + snapshot.",
+    },
+    {
+      name: "scope",
+      type: "string",
+      optional: true,
+      description: "Narrow the consulted context to a scope name or repo-relative subtree.",
+    },
+    {
+      name: "budgetHint",
+      type: "enum",
+      optional: true,
+      enum: ["quick", "thorough"],
+      description: "Routing hint: 'quick' (light) or 'thorough' (heavy). Default quick.",
+    },
+  ],
+  async handle(args, backend) {
+    const question = requireString(args, "question");
+    if (!question) return fail("invalid-input", "context.ask requires a question");
+    const scope = optString(args, "scope");
+    const budgetHint = enumArg(args, "budgetHint", ["quick", "thorough"] as const);
+    const query: ContextAskQuery = {
+      question,
+      ...(scope !== undefined ? { scope } : {}),
+      ...(budgetHint !== undefined ? { budgetHint } : {}),
+    };
+    const result = await backend.ask(query);
+    if (result.status === "answered") {
+      // Evidence is the concrete anchor set (path:blobOid), so a reader can prove
+      // which bytes each claim was drawn from.
+      return ok(result.answer, {
+        freshness: "current",
+        evidence: result.answer.evidence.map((a) => `${a.path}:${a.blobOid}`),
+      });
+    }
+    if (result.status === "unanswered") {
+      // An honest non-answer is a served OK, never an error (anti-hallucination).
+      return ok(result.answer, { freshness: "current" });
+    }
+    // A failed ask rides back as an honest `failed` reply carrying the cost — it is
+    // NOT rendered as a clean answer (evidence-or-nothing).
+    return ok(
+      { failed: { reason: result.failureReason }, cost: result.cost },
+      { freshness: "failed" },
+    );
+  },
+};
+
 // ── The surface ──────────────────────────────────────────────────────────────
 
 /**
@@ -1526,6 +1615,7 @@ export const CANVAS_OPS_TOOLS: readonly CanvasOpsTool[] = [
   contextSymbolTool,
   contextReferencesTool,
   contextKnowledgeTool,
+  contextAskTool,
 ] as const;
 
 const TOOLS_BY_NAME: ReadonlyMap<string, CanvasOpsTool> = new Map(

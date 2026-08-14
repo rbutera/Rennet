@@ -25,6 +25,7 @@ import type {
 import type {
   Canvas,
   CanvasAngle,
+  ContextManifest,
   FlaggedReview,
   PatchFile,
   Patchset,
@@ -530,6 +531,51 @@ describe("createDispatch — canvas.* routing (issue #54)", () => {
     expect(Object.keys(result.canvases).sort()).toEqual([...CANVAS_ANGLES].sort());
     // The per-element real diff map (#60) is delivered with the canvas set.
     expect(result.elementDiffs.e1?.diff).toContain("+x");
+  });
+
+  it("carries the REAL contextManifest through the review.canvases command boundary (#30)", async () => {
+    const { dispatch, buildCanvases } = harness();
+    const review = await capturedReview(dispatch);
+    // The manifest the builder produced for THIS review; it must reach the renderer
+    // intact through the strict Zod command output (an undeclared field is stripped
+    // here — that is the exact IPC-fidelity failure the declared field guards).
+    const manifest: ContextManifest = {
+      repoRecordId: "/repo",
+      projectSnapshotId: "fp-1",
+      compositionDigest: "comp-1",
+      freshness: { status: "current", staleMembers: [] },
+      members: [],
+      documents: [
+        {
+          order: 0,
+          source: "claude-md",
+          sourcePath: "CLAUDE.md",
+          contentHash: "a".repeat(64),
+          originalBytes: 120,
+          bytes: 64,
+          state: "truncated",
+        },
+      ],
+      totalBytes: 64,
+      assembledPromptDigest: "b".repeat(64),
+      exhaustive: false,
+      unmanagedSources: ["harness ambient file reads (context-isolation probe not yet run)"],
+    };
+    buildCanvases.mockResolvedValueOnce({
+      canvases: canvasSet(),
+      elementDiffs: {},
+      engine: { aiReview: true, claudeAvailable: true, codexAvailable: true },
+      contextManifest: manifest,
+    });
+
+    const result = (await dispatch("review.canvases", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      repoPath: REPO,
+    })) as { contextManifest?: ContextManifest };
+
+    expect(result.contextManifest).toEqual(manifest);
+    expect(result.contextManifest?.documents[0]?.state).toBe("truncated");
   });
 
   it("still serves the preserved MVP commands (app.bootstrap, review.setDisposition)", async () => {

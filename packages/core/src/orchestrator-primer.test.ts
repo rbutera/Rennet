@@ -124,6 +124,11 @@ describe("assemblePrimer", () => {
     for (const entry of index) {
       expect(entry.whenToUse.length).toBeGreaterThan(0);
     }
+    // context.ask (issue #15) carries a dedicated one-liner so the tool index matches
+    // the standing PROTOCOL_CARD promise, not the description's first sentence.
+    const ask = index.find((e) => e.name === "context.ask");
+    expect(ask?.whenToUse).toContain("QUESTION");
+    expect(ask?.whenToUse).toContain("unanswered");
   });
 
   it("ENFORCES the ≤4 KB ceiling: an oversized state throws rather than assembling a fat primer", () => {
