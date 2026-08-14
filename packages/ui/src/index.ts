@@ -198,8 +198,7 @@ export type { AskAnswersProps, AskControlProps } from "./components/ask";
 export { AskAnswers, AskControl } from "./components/ask";
 export { BatchView } from "./components/batch-view";
 export { CollationDraftCanvas } from "./components/collation-draft-canvas";
-// The "what was sent" inspector (issue #30): the deterministic, gate-free manifest of
-// what context each fleet agent was given, down to the assembled-prompt digest.
+// The context-composition inspector: Rennet's deterministic, gate-free assembly manifest.
 export { ContextManifestPanel } from "./components/context-manifest-panel";
 // The inline conversation cluster UI (issue #36): the discuss verb (opens a thread),
 // the private thread panel, and the right-margin column (a sibling of the diff, so

@@ -76,7 +76,14 @@ const KNOWLEDGE: KnowledgeSet = {
       subject: "@x/core",
       aspect: "purpose",
       claim: "core holds the deterministic reads",
-      evidence: [{ path: "packages/core/src/a.ts", blobOid: B_A }],
+      evidence: [
+        {
+          path: "packages/core/src/a.ts",
+          blobOid: B_A,
+          symbol: "foo",
+          lines: { startLine: 1 },
+        },
+      ],
       confidence: "high",
       status: "hypothesis",
       provenance: { generator: "knowledge-gen@1", model: "m", apiKeySource: "none" },
@@ -105,7 +112,14 @@ describe("runContextAsk", () => {
       runTurn: emit({
         answer: "core holds the deterministic snapshot reads",
         confidence: "high",
-        evidence: [{ path: "packages/core/src/a.ts", symbol: "foo", startLine: 1 }],
+        evidence: [
+          {
+            evidenceId: "k1:0",
+            path: "packages/core/src/a.ts",
+            symbol: "foo",
+            startLine: 1,
+          },
+        ],
       }),
     });
     expect(result.status).toBe("answered");
@@ -136,6 +150,83 @@ describe("runContextAsk", () => {
     expect(result.status).toBe("failed");
   });
 
+  it("rejects a fabricated citation to a real file with an unoffered symbol/span", async () => {
+    const result = await runContextAsk({
+      snapshot: loaded(),
+      knowledgeSet: null,
+      query: { question: "is MFA mandatory?" },
+      council: COUNCIL,
+      runTurn: emit({
+        answer: "MFA is mandatory",
+        confidence: "high",
+        evidence: [
+          {
+            evidenceId: "invented:0",
+            path: "packages/core/src/a.ts",
+            symbol: "requireMfa",
+            startLine: 999999,
+          },
+        ],
+      }),
+      maxRetries: 0,
+    });
+    expect(result.status).toBe("failed");
+  });
+
+  it.each([
+    { symbol: "requireMfa", startLine: 1 },
+    { symbol: "foo", startLine: 999999 },
+  ])(
+    "rejects invented $symbol/$startLine bounds even when the evidence id and path are real",
+    async ({ symbol, startLine }) => {
+      const result = await runContextAsk({
+        snapshot: loaded(),
+        knowledgeSet: KNOWLEDGE,
+        query: { question: "is MFA mandatory?" },
+        council: COUNCIL,
+        runTurn: emit({
+          answer: "MFA is mandatory",
+          confidence: "high",
+          evidence: [
+            {
+              evidenceId: "k1:0",
+              path: "packages/core/src/a.ts",
+              symbol,
+              startLine,
+            },
+          ],
+        }),
+        maxRetries: 0,
+      });
+      expect(result.status).toBe("failed");
+    },
+  );
+
+  it("shows the model identifiable claim evidence and labels file names non-evidence", async () => {
+    let prompt = "";
+    await runContextAsk({
+      snapshot: loaded(),
+      knowledgeSet: KNOWLEDGE,
+      query: { question: "what is in core?" },
+      council: COUNCIL,
+      runTurn: async (value) => {
+        prompt = value;
+        return {
+          status: "emitted",
+          body: {
+            answer: "core holds deterministic reads",
+            confidence: "high",
+            evidence: [{ evidenceId: "k1:0", path: "packages/core/src/a.ts" }],
+          },
+        };
+      },
+      maxRetries: 0,
+    });
+    expect(prompt).toContain("evidence=k1:0 statement=k1");
+    expect(prompt).toContain("claim: core holds the deterministic reads");
+    expect(prompt).toContain("PROJECT FILE NAMES (navigation only; NOT evidence)");
+  });
+
   it("returns unanswered-with-reason as a first-class success", async () => {
     const result = await runContextAsk({
       snapshot: loaded(),
@@ -164,7 +255,7 @@ describe("runContextAsk", () => {
       runTurn: emit({
         answer: "core holds reads",
         confidence: "medium",
-        evidence: [{ path: "packages/core/src/a.ts" }],
+        evidence: [{ evidenceId: "k1:0", path: "packages/core/src/a.ts" }],
       }),
     });
     expect(result.status).toBe("answered");
@@ -183,7 +274,7 @@ describe("runContextAsk", () => {
       runTurn: emit({
         answer: "core holds reads",
         confidence: "medium",
-        evidence: [{ path: "packages/core/src/a.ts" }],
+        evidence: [{ evidenceId: "k1:0", path: "packages/core/src/a.ts" }],
       }),
       maxRetries: 0,
     });

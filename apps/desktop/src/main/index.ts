@@ -7,7 +7,6 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   applyVisibilitySwitch,
-  buildReviewContextManifest,
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
   type CodexAvailability,
@@ -122,7 +121,10 @@ import { createLiveDeltaDigestPort } from "./delta-digest-live";
 import { createDispatch } from "./dispatch";
 import { createLiveDraftPrBodyPort } from "./draft-pr-body-live";
 import { createLiveComposeBundle } from "./handoff-compose-live";
-import { createDesktopReviewBackend } from "./live-review-backend";
+import {
+  createDesktopReviewBackend,
+  loadDesktopReviewContextManifest,
+} from "./live-review-backend";
 import { LiveTurnRegistry } from "./live-turn-registry";
 import {
   createEditorLaunchEffects,
@@ -493,7 +495,7 @@ async function buildCanvasesForReview(review: Review): Promise<{
   decisionsRun: DecisionsRunStatus;
   /** The committed hypothesis (#178), when one was produced; the human's reading frame. */
   hypothesis?: ReviewHypothesis;
-  /** The REAL "what was sent" manifest (issue #30); absent ⇒ honestly not available. */
+  /** The captured context-composition manifest; absent ⇒ honestly not available. */
   contextManifest?: ContextManifest;
 }> {
   const patchset = activePatchset(review);
@@ -561,8 +563,8 @@ async function buildCanvasesForReview(review: Review): Promise<{
   // The fan-in index (#200), materialized off the built snapshot; undefined ⇒ fan-in
   // stays NOT-ASSESSED (the populated guard lives in the loader), never a silent zero.
   const fanIn = await loadReviewFanInIndex(review);
-  // The REAL "what was sent" manifest (issue #30), produced off the built snapshot via
-  // the same assembly the live backend uses. Undefined ⇒ honestly not available.
+  // The captured context-composition manifest for this review. Undefined ⇒ honestly
+  // not available.
   const contextManifest = await loadReviewContextManifest(review);
 
   // Assemble the pipeline input at the ONE testable composition seam (F4): this is
@@ -700,17 +702,12 @@ async function loadReviewFanInIndex(review: Review): Promise<FanInIndex | undefi
 }
 
 /**
- * The REAL "what was sent" ContextManifest for a review (issue #30), produced from
- * the SAME composition + deterministic assembly the live backend uses
- * (`buildReviewContextManifest`) off the built ProjectSnapshot. This is the manifest
- * for THIS review — never a fabricated stand-in. When no snapshot has been composed
- * (or composition fails) it returns `undefined`, an HONEST absence the renderer
- * surfaces as "not available" rather than an empty-but-present manifest (Rule Zero:
- * a lie in the UI is a bug).
+ * The captured ContextManifest for a review (issue #30). The desktop and live
+ * backend paths both use the capture-once store seam, so mutable working-tree
+ * guidance cannot create two manifests for the same review.
  */
 async function loadReviewContextManifest(review: Review): Promise<ContextManifest | undefined> {
-  const built = await buildReviewContextManifest({ store: snapshotStoreFor(), review });
-  return built?.manifest;
+  return loadDesktopReviewContextManifest(review);
 }
 
 /**

@@ -1,16 +1,15 @@
 import type { ContextDocumentRecord, ContextManifest } from "@rennet/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The "WHAT WAS SENT" inspector (issue #30). Rendered for a fleet dispatch, it
-// shows the reviewer EXACTLY what context the agents were given: every assembled
-// document in SENT ORDER with its source label, content hash, byte count, and
+// The context-composition inspector (issue #30). It shows the reviewer what Rennet
+// assembled: every document in composition order with its source label, content hash, byte count, and
 // included/truncated/dropped state, plus the assembled-prompt digest and (when
 // available) the byte-identical assembled prompt itself.
 //
 // Modelled on `delta-account-panel.tsx`: deterministic, model-free, and gate-free
 // (Rule Zero). It gates NOTHING — repo guidance already fed the pipeline; honesty
-// is provided by SHOWING the truth (what was sent, what was cut), never by
-// restricting what may be sent. There is no accept/trust/consent affordance
+// is provided by SHOWING the truth (what was composed, what was cut), never by
+// restricting what may be composed. There is no accept/trust/consent affordance
 // anywhere in this panel, by design.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -29,20 +28,20 @@ function bytesLabel(record: ContextDocumentRecord): string {
 
 export function ContextManifestPanel({
   manifest,
-  assembledPrompt,
-  onOpenAssembledPrompt,
+  assembledContext,
+  onOpenAssembledContext,
 }: {
   manifest: ContextManifest;
   /**
-   * The byte-identical assembled prompt text the adapter sent, when available. When
-   * present the panel shows it verbatim (never a reconstruction); its digest is
+   * The byte-identical context Rennet assembled, when available. When present the
+   * panel shows it verbatim (never a reconstruction); its digest is
    * `manifest.assembledPromptDigest`, proven equal on the capture path.
    */
-  assembledPrompt?: string;
-  /** Reveal the assembled prompt (when the host loads it lazily). Optional. */
-  onOpenAssembledPrompt?: () => void;
+  assembledContext?: string;
+  /** Reveal the assembled context (when the host loads it lazily). Optional. */
+  onOpenAssembledContext?: () => void;
 }) {
-  // Render in SENT order — sort by the recorded order position so the panel is
+  // Render in composition order — sort by the recorded order position so the panel is
   // honest about the sequence regardless of array order.
   const documents = [...manifest.documents].sort((a, b) => a.order - b.order);
 
@@ -50,9 +49,9 @@ export function ContextManifestPanel({
     <section
       className="context-manifest"
       data-testid="context-manifest"
-      aria-label="What the agents were sent"
+      aria-label="Context Rennet assembled"
     >
-      <p className="context-manifest-eyebrow">What the agents were sent</p>
+      <p className="context-manifest-eyebrow">Context Rennet assembled</p>
 
       <p className="context-manifest-summary" data-testid="context-manifest-summary">
         {documents.length} document{documents.length === 1 ? "" : "s"} · {manifest.totalBytes} B
@@ -103,7 +102,7 @@ export function ContextManifestPanel({
       ) : null}
 
       <div className="context-manifest-assembled">
-        <p className="context-manifest-assembled-title">Assembled prompt</p>
+        <p className="context-manifest-assembled-title">Assembled context</p>
         <code
           className="context-manifest-assembled-digest"
           data-testid="context-manifest-assembled-digest"
@@ -111,22 +110,22 @@ export function ContextManifestPanel({
         >
           {manifest.assembledPromptDigest.slice(0, 16)}
         </code>
-        {assembledPrompt !== undefined ? (
+        {assembledContext !== undefined ? (
           <pre
             className="context-manifest-assembled-prompt"
             data-testid="context-manifest-assembled-prompt"
           >
-            {assembledPrompt}
+            {assembledContext}
           </pre>
         ) : null}
-        {assembledPrompt === undefined && onOpenAssembledPrompt ? (
+        {assembledContext === undefined && onOpenAssembledContext ? (
           <button
             type="button"
             className="context-manifest-open"
             data-testid="context-manifest-open"
-            onClick={onOpenAssembledPrompt}
+            onClick={onOpenAssembledContext}
           >
-            Open the assembled prompt
+            Open the assembled context
           </button>
         ) : null}
       </div>

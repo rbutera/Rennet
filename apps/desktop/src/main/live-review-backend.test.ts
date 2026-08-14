@@ -5,7 +5,11 @@ import { join } from "node:path";
 import { buildReviewCanvases } from "@rennet/core";
 import type { PatchFile, Patchset, Review } from "@rennet/types";
 import { afterEach, describe, expect, it } from "vitest";
-import { createDesktopReviewBackend, snapshotStoreFor } from "./live-review-backend";
+import {
+  createDesktopReviewBackend,
+  loadDesktopReviewContextManifest,
+  snapshotStoreFor,
+} from "./live-review-backend";
 
 // The desktop composition root over a real git repo: the app-owned store is the
 // local-first, path-keyed store under `~/.rennet/projects/` (issue #188). Tests
@@ -106,5 +110,56 @@ describe("createDesktopReviewBackend — the desktop composition root", () => {
   it("snapshotStoreFor composes a store over the injected base dir", () => {
     const store = snapshotStoreFor("/tmp/example-rennet-projects");
     expect(store).toBeInstanceOf(Object);
+  });
+
+  it("shows the captured manifest even when guidance changes before the canvas load", async () => {
+    const repo = workspaceRepo();
+    write(repo.root, "AGENTS.md", "original guidance\n");
+    const baseDir = mkdtempSync(join(tmpdir(), "rennet-projects-manifest-"));
+    scratch.push(baseDir);
+    const patch = "@@ -1,1 +1,2 @@\n export const a = 1;\n+export const b = 2;";
+    const patchset: Patchset = {
+      id: "ps-manifest",
+      createdAt: "2026-08-10T00:00:00.000Z",
+      repository: {
+        id: "repo",
+        root: repo.root,
+        commonDir: repo.commonDir,
+        baseRef: repo.oid,
+        baseOid: repo.oid,
+        headOid: repo.oid,
+      },
+      files: [
+        {
+          path: "packages/a/src/index.ts",
+          status: "modified",
+          additions: 1,
+          deletions: 0,
+          binary: false,
+          patch,
+        },
+      ],
+      rawDiff: patch,
+      byteLength: patch.length,
+      truncated: false,
+    };
+    const review: Review = {
+      id: "review-manifest",
+      repositoryRoot: repo.root,
+      patchsets: [patchset],
+      activePatchsetId: patchset.id,
+      dispositions: [],
+      status: "current",
+    };
+    const pipeline = await buildReviewCanvases({ reviewId: review.id, patchset, dispositions: [] });
+    const opened = await createDesktopReviewBackend(review, pipeline, { baseDir });
+    expect(opened.contextManifest).toBeDefined();
+
+    write(repo.root, "AGENTS.md", "changed after backend creation\n");
+    const rendererManifest = await loadDesktopReviewContextManifest(review, { baseDir });
+    expect(rendererManifest).toEqual(opened.contextManifest);
+    expect(rendererManifest?.assembledPromptDigest).toBe(
+      opened.contextManifest?.assembledPromptDigest,
+    );
   });
 });

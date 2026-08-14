@@ -36,9 +36,8 @@ export interface LoadedCanvases {
    */
   decisionsRun?: DecisionsRunStatus;
   /**
-   * The REAL "what was sent" manifest (issue #30): the deterministic, byte-budgeted
-   * context assembled for this review's fleet dispatch, recorded per document.
-   * Optional — absent ⇒ the "what was sent" inspector shows an honest "not
+   * The composition manifest (issue #30): the deterministic, byte-budgeted context
+   * Rennet assembled for this review, recorded per document. Optional — absent ⇒ the inspector shows an honest "not
    * available", never a fabricated stand-in (Rule Zero).
    */
   contextManifest?: ContextManifest;

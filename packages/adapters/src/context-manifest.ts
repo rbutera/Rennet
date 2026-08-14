@@ -13,7 +13,7 @@ import type { RepoComposition } from "@rennet/types";
 // Repo guidance (CLAUDE.md, AGENTS.md, `.rennet/`) feeds the assembly DIRECTLY,
 // labelled by source — no accept/trust step, no inert-until-accepted gate (Rule
 // Zero). A missing guidance file is simply absent from the assembly; honesty about
-// what was sent is the manifest's job, not a ceremony.
+// what Rennet composed is the manifest's job, not a ceremony.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** The default per-assembly byte budget (32 KiB). Metered + visible, never a silent drop. */

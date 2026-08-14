@@ -1,4 +1,5 @@
 import {
+  captureReviewContextManifest,
   createLiveCanvasOpsBackend,
   defaultProjectsBaseDir,
   type LiveBackendDeps,
@@ -6,7 +7,7 @@ import {
   snapshotStoreFor,
 } from "@rennet/adapters";
 import type { ReviewPipelineResult } from "@rennet/core";
-import type { Review } from "@rennet/types";
+import type { ContextManifest, Review } from "@rennet/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The desktop composition root for the live end-to-end review backend (issue #13).
@@ -45,5 +46,16 @@ export function createDesktopReviewBackend(
   return createLiveCanvasOpsBackend(review, pipeline, {
     store: snapshotStoreFor(baseDir ?? defaultProjectsBaseDir()),
     ...rest,
+  });
+}
+
+/** Load or capture once the exact composition manifest the renderer should show. */
+export function loadDesktopReviewContextManifest(
+  review: Review,
+  opts?: { readonly baseDir?: string },
+): Promise<ContextManifest | undefined> {
+  return captureReviewContextManifest({
+    store: snapshotStoreFor(opts?.baseDir ?? defaultProjectsBaseDir()),
+    review,
   });
 }

@@ -1,7 +1,7 @@
 /**
  * Deterministic, byte-budgeted context assembly (issue #30).
  *
- * The pipeline assembles "what each fleet agent is told" from declared inputs. This
+ * The pipeline composes review context from declared inputs. This
  * module is the PURE, node-free core of that assembly: given an ORDERED list of
  * candidate documents and a byte budget, it produces the byte-exact assembled text,
  * a digest over it, and a per-document record (order, source label, content hash,
@@ -11,16 +11,15 @@
  *  - **Deterministic**: identical inputs → byte-identical assembled text + digest.
  *    A change to the section ordering changes the bytes, so an ordering drift is a
  *    reviewed decision, not a silent shift in review quality.
- *  - **Visible truncation**: the byte budget truncates only at section boundaries
- *    (whole documents, and within a document at line boundaries) and RECORDS every
- *    cut — a truncated document carries a visible marker in the text and a `bytes <
- *    originalBytes` record; a dropped document carries a visible marker and a
- *    `bytes: 0` record. The budget NEVER silently drops content.
+ *  - **Honest byte accounting**: headers, separators, and visible cut markers draw
+ *    from the SAME byte budget as document bodies. A marker is included when it
+ *    fits; every cut is recorded even when the budget is too small to render its
+ *    marker. `totalBytes` is always the UTF-8 length of the final text.
  *
  * Repo guidance (CLAUDE.md, AGENTS.md, `.rennet/`) is just another labelled
  * document here — it feeds the assembly directly, labelled by `source`, with no
- * accept/trust step (Rule Zero). Honesty is provided by recording what was sent,
- * not by gating what may be sent.
+ * accept/trust step (Rule Zero). Honesty is provided by recording what Rennet
+ * composed, not by gating what may be composed.
  */
 
 import { sha256Hex } from "@rennet/protocol";
@@ -38,11 +37,11 @@ export interface ContextDocumentInput {
 
 /** The result of assembling context: the byte-exact text, its digest, and per-document records. */
 export interface ContextAssembly {
-  /** The assembled prompt text, byte-exact — the thing an adapter would send. */
+  /** The context Rennet assembled, byte-exact. */
   readonly text: string;
   /** sha256 over {@link text} — the byte-identity anchor. */
   readonly digest: string;
-  /** Per-document records in sent order (order, hash, bytes, state). */
+  /** Per-document records in composition order (order, hash, bytes, state). */
   readonly documents: readonly ContextDocumentRecord[];
   /** The total bytes actually assembled across all documents (post-budget). */
   readonly totalBytes: number;
@@ -53,29 +52,17 @@ function byteLength(text: string): number {
   return new TextEncoder().encode(text).length;
 }
 
-/**
- * The largest prefix of WHOLE LINES of `content` whose UTF-8 byte length is ≤
- * `maxBytes`. Truncation happens only at a line boundary (a section boundary
- * within a document), never mid-line. Returns "" when even the first line exceeds
- * the budget (the caller then records the document as `dropped`, not a 0-byte cut).
- */
-function truncateAtLineBoundary(content: string, maxBytes: number): string {
-  if (maxBytes <= 0) return "";
-  if (byteLength(content) <= maxBytes) return content;
+/** Every non-empty prefix ending at a line boundary, longest first. */
+function lineBoundaryPrefixes(content: string): string[] {
   const lines = content.split("\n");
+  const prefixes: string[] = [];
   let kept = "";
-  let keptBytes = 0;
   for (let i = 0; i < lines.length; i += 1) {
     const line = lines[i] ?? "";
-    // Re-add the newline that `split` removed for every line but the first.
-    const candidate = kept === "" ? line : `${kept}\n${line}`;
-    const candidateBytes = byteLength(candidate);
-    if (candidateBytes > maxBytes) break;
-    kept = candidate;
-    keptBytes = candidateBytes;
+    kept = i === 0 ? line : `${kept}\n${line}`;
+    if (kept.length > 0) prefixes.push(kept);
   }
-  void keptBytes;
-  return kept;
+  return prefixes.reverse();
 }
 
 /** Render one document's header, labelled by source (deterministic). */
@@ -88,8 +75,8 @@ function renderHeader(source: string, sourcePath: string): string {
  * are consumed IN THE GIVEN ORDER (the caller declares the order; the assembly is
  * deterministic over it). Each document is included whole if it fits, truncated at
  * a line boundary if it partially fits (with a visible marker), or dropped with a
- * visible marker once the budget is exhausted. Every cut is recorded; nothing is
- * silently dropped.
+ * visible marker when that framing fits. Every byte of framing is charged to the
+ * same budget as content; every cut remains recorded even when no marker fits.
  */
 export function assembleContext(
   documents: readonly ContextDocumentInput[],
@@ -104,46 +91,36 @@ export function assembleContext(
     const contentHash = sha256Hex(doc.content);
     const header = renderHeader(doc.source, doc.sourcePath);
 
-    let state: ContextDocumentState;
-    let assembled: string;
-    let bytes: number;
+    const separator = parts.length === 0 ? "" : "\n\n";
+    const includedSection = `${separator}${header}\n${doc.content}`;
+    let state: ContextDocumentState = "dropped";
+    let bytes = 0;
+    let rendered = "";
 
-    if (remaining >= originalBytes) {
+    if (byteLength(includedSection) <= remaining) {
       state = "included";
-      assembled = doc.content;
       bytes = originalBytes;
-      remaining -= originalBytes;
-    } else if (remaining > 0) {
-      const truncated = truncateAtLineBoundary(doc.content, remaining);
-      const truncatedBytes = byteLength(truncated);
-      if (truncatedBytes === 0) {
-        // Not even one line fit — record as dropped (a visible omission), not a
-        // 0-byte "truncation".
-        state = "dropped";
-        assembled = "";
-        bytes = 0;
-      } else {
-        state = "truncated";
-        assembled = truncated;
-        bytes = truncatedBytes;
-      }
-      remaining = 0;
+      rendered = includedSection;
     } else {
-      state = "dropped";
-      assembled = "";
-      bytes = 0;
+      for (const prefix of lineBoundaryPrefixes(doc.content)) {
+        const prefixBytes = byteLength(prefix);
+        if (prefixBytes >= originalBytes) continue;
+        const candidate = `${separator}${header}\n${prefix}\n[truncated ${originalBytes - prefixBytes} of ${originalBytes} bytes at section boundary]`;
+        if (byteLength(candidate) > remaining) continue;
+        state = "truncated";
+        bytes = prefixBytes;
+        rendered = candidate;
+        break;
+      }
+      if (rendered === "") {
+        const droppedSection = `${separator}${header}\n[dropped ${originalBytes} bytes — over byte budget]`;
+        if (byteLength(droppedSection) <= remaining) rendered = droppedSection;
+      }
     }
 
-    // Visible truncation/drop markers ride IN the assembled text — the reader sees
-    // exactly what was cut, never a silent gap.
-    if (state === "included") {
-      parts.push(`${header}\n${assembled}`);
-    } else if (state === "truncated") {
-      parts.push(
-        `${header}\n${assembled}\n[truncated ${originalBytes - bytes} of ${originalBytes} bytes at section boundary]`,
-      );
-    } else {
-      parts.push(`${header}\n[dropped ${originalBytes} bytes — over byte budget]`);
+    if (rendered !== "") {
+      parts.push(rendered.slice(separator.length));
+      remaining -= byteLength(rendered);
     }
 
     records.push({
@@ -158,6 +135,6 @@ export function assembleContext(
   });
 
   const text = parts.join("\n\n");
-  const totalBytes = records.reduce((sum, record) => sum + record.bytes, 0);
+  const totalBytes = byteLength(text);
   return { text, digest: sha256Hex(text), documents: records, totalBytes };
 }

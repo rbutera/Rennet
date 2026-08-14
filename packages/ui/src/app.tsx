@@ -410,10 +410,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // the Decisions lens defaults to `ok`. When the runner FAILED, this carries the
   // reason so the lens paints the failed banner instead of "no decisions".
   const [decisionsRun, setDecisionsRun] = useState<DecisionsRunStatus | undefined>(undefined);
-  // The REAL "what was sent" manifest (issue #30), delivered with the canvas set.
-  // Undefined until a live load sets it (or when no snapshot was composed) → the
-  // "what was sent" inspector shows an honest "not available", never a fabrication.
-  const [contextManifest, setContextManifest] = useState<ContextManifest | undefined>(undefined);
+  // The composition manifest (issue #30), bound to the exact review+patchset fetch
+  // that produced it. Undefined until that load succeeds with a manifest.
+  const [contextManifest, setContextManifest] = useState<
+    { readonly fetchKey: string; readonly manifest: ContextManifest } | undefined
+  >(undefined);
   const [liveLoaded, setLiveLoaded] = useState(false);
   // The Flagged lens's input (issue #138): the automated review layer's findings +
   // dual-review agreement for the open review. Fetched over the real command
@@ -643,6 +644,8 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // is a new set to enrich; a no-op freshness poll keeps the same string, so it does
   // NOT re-run the canvas effect. Null until a review is open.
   const canvasFetchKey = review ? `${review.id}::${review.activePatchsetId}` : null;
+  const shownContextManifest =
+    contextManifest?.fetchKey === canvasFetchKey ? contextManifest.manifest : undefined;
   // The delta re-review digest (issue #73 / M25): when a successor review carries a
   // delta account, request the light-tier LLM TL;DR ONCE per (review, patchset) and
   // slot it atop the panel. The facts render immediately regardless; the digest is
@@ -738,6 +741,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setNoiseReview(undefined);
     setOpenSpecChange(undefined);
     setOpenSpecCoverage(undefined);
+    setContextManifest(undefined);
     // The PR-body draft (#74) is review-scoped: a fresh review starts with an empty,
     // un-drafted composer so review A's account never lingers over review B. Bump the
     // draft generation so a turn still in flight for the PREVIOUS review is dropped on
@@ -762,6 +766,13 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     // and leak a wasted single-seat fetch for the prior review's opt-down.
     fetchedCanvasKey.current = null;
   }, [reviewId]);
+
+  // A regenerate changes the patchset without changing reviewId. Clear the prior
+  // composition immediately; the fetch-key binding below is the structural backstop.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentionally keyed on review+patchset identity.
+  useEffect(() => {
+    setContextManifest(undefined);
+  }, [canvasFetchKey]);
 
   // The Flagged lens (issue #138): fetch the automated review layer's findings for
   // the open review over the real command boundary. It carries NO model spend and
@@ -941,6 +952,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     // refetch. A cancelled/failed fetch never records, so it stays free to retry.
     if (fetchedCanvasKey.current === canvasFetchKey) return;
     setLoadFailed(false);
+    setContextManifest(undefined);
     let cancelled = false;
     void loadCanvases(bridge, current).then((live) => {
       if (cancelled) return;
@@ -949,6 +961,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         // The key is NOT recorded, so the retry affordance (which bumps `reloadNonce`)
         // re-runs this and fetches again — a failed load never poisons the identity.
         setLoadFailed(true);
+        setContextManifest(undefined);
         return;
       }
       // Record the enriched identity ONLY here, on success (#59): a slow fetch that
@@ -960,7 +973,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       setNarration(live.narration);
       setEngine(live.engine);
       setDecisionsRun(live.decisionsRun);
-      setContextManifest(live.contextManifest);
+      setContextManifest(
+        live.contextManifest
+          ? { fetchKey: canvasFetchKey, manifest: live.contextManifest }
+          : undefined,
+      );
       setLiveLoaded(true);
     });
     return () => {
@@ -2014,12 +2031,12 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           }}
         />
       ) : null}
-      {/* The "what was sent" inspector (issue #30): the REAL manifest of the context
-          assembled for this review's fleet — documents in sent order, hashes, byte
+      {/* The composition inspector (issue #30): the REAL manifest of the context
+          Rennet assembled for this review — documents in composition order, hashes, byte
           counts, truncation state, and the assembled-prompt digest. Present ONLY when
           a real manifest came back; absent ⇒ nothing renders (honest not-available,
           never a fabricated stand-in). Informational and gate-free (Rule Zero). */}
-      {contextManifest ? <ContextManifestPanel manifest={contextManifest} /> : null}
+      {shownContextManifest ? <ContextManifestPanel manifest={shownContextManifest} /> : null}
       <div className="view-toggle" role="tablist" aria-label="Workspace view">
         <button
           type="button"

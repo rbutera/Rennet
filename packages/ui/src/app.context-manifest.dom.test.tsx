@@ -1,16 +1,16 @@
 // @vitest-environment happy-dom
 //
-// The "what was sent" inspector mount (issue #30): when the live canvases load
+// The context-composition inspector mount (issue #30): when the live canvases load
 // returns a REAL ContextManifest, the review surface renders the inspector; when it
 // returns none, nothing is rendered (honest absence, never a fabricated stand-in —
 // Rule Zero). This mounts the whole `RennetApp` over a fake `RennetBridge` and
 // asserts the mount behaviourally.
 import type { RennetBridge } from "@rennet/protocol";
 import type { ContextManifest, Review } from "@rennet/types";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";
-import { mount, waitFor } from "./test/dom";
+import { act, mount, waitFor } from "./test/dom";
 
 const review: Review = {
   id: "review",
@@ -85,7 +85,8 @@ function bridgeWith(contextManifest?: ContextManifest): RennetBridge {
   return { invoke: invoke as unknown as RennetBridge["invoke"] };
 }
 
-describe("RennetApp — the 'what was sent' inspector mount (#30)", () => {
+describe("RennetApp — the context-composition inspector mount (#30)", () => {
+  afterEach(() => vi.useRealTimers());
   it("renders the inspector when the live load returns a REAL manifest", async () => {
     const { container } = mount(<RennetApp bridge={bridgeWith(manifest)} />);
     // RED-proof: drop the `{contextManifest ? <ContextManifestPanel/> : null}` mount
@@ -103,5 +104,49 @@ describe("RennetApp — the 'what was sent' inspector mount (#30)", () => {
     // never a fabricated empty-but-present panel.
     await waitFor(() => expect(container.querySelector(".canvas-app")).not.toBeNull());
     expect(container.querySelector('[data-testid="context-manifest"]')).toBeNull();
+  });
+
+  it("clears review A's manifest as soon as review B becomes current, even while B never loads", async () => {
+    vi.useFakeTimers();
+    const patchA = review.patchsets[0];
+    if (!patchA) throw new Error("expected review A's patchset");
+    const reviewB: Review = {
+      ...review,
+      id: "review-b",
+      activePatchsetId: "patch-b",
+      patchsets: [{ ...patchA, id: "patch-b" }],
+    };
+    const state = { current: review };
+    const invoke = async (name: string, input: unknown): Promise<unknown> => {
+      if (name === "app.bootstrap") return { review };
+      if (name === "review.checkFreshness") return { review: state.current };
+      if (name === "review.canvases") {
+        const reviewId = (input as { reviewId: string }).reviewId;
+        if (reviewId === reviewB.id) return new Promise(() => undefined);
+        return {
+          canvases: demoCanvases(),
+          elementDiffs: {},
+          engine: { aiReview: true, claudeAvailable: true, codexAvailable: true },
+          contextManifest: manifest,
+        };
+      }
+      if (name === "flagged.review") return { status: "ok", findings: [] };
+      if (name === "noise.review") return { status: "ok", groups: [] };
+      return {};
+    };
+    const handle = mount(
+      <RennetApp bridge={{ invoke: invoke as unknown as RennetBridge["invoke"] }} />,
+    );
+    await act(async () => {
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(handle.container.querySelector('[data-testid="context-manifest"]')).not.toBeNull();
+
+    state.current = reviewB;
+    await act(async () => {
+      vi.advanceTimersByTime(1500);
+      for (let i = 0; i < 8; i += 1) await Promise.resolve();
+    });
+    expect(handle.container.querySelector('[data-testid="context-manifest"]')).toBeNull();
   });
 });

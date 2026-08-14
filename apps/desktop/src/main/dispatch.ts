@@ -124,10 +124,9 @@ export interface DispatchDeps {
      */
     decisionsRun?: DecisionsRunStatus;
     /**
-     * The "what was sent" manifest (issue #30): the deterministic, byte-budgeted
-     * context assembled for this fleet dispatch, recorded per document. Optional so
-     * a caller that composes no live backend omits it; carried to the renderer so
-     * the "what was sent" inspector can show exactly what the agents were given.
+     * The context-composition manifest (issue #30): the deterministic,
+     * byte-budgeted context Rennet assembled, recorded per document. Optional so a
+     * caller that has no captured composition omits it.
      */
     contextManifest?: ContextManifest;
   }>;
@@ -775,7 +774,7 @@ export function createDispatch(
           // can paint a FAILED decisions pass distinctly from "ran, found nothing".
           // Absent ⇒ the UI defaults to `ok` (the pre-#160 shape).
           ...(decisionsRun ? { decisionsRun } : {}),
-          // The "what was sent" manifest (issue #30): carried to the renderer intact
+          // The context-composition manifest (issue #30): carried to the renderer intact
           // (declared in the Zod output schema, so it survives — an undeclared
           // optional would be silently stripped here).
           ...(contextManifest ? { contextManifest } : {}),

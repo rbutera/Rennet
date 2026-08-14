@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 //
-// The "what was sent" inspector (issue #30): it renders the ContextManifest — the
-// documents assembled for a fleet dispatch, in SENT ORDER, with hashes, byte counts,
+// The context-composition inspector (issue #30): it renders the ContextManifest — the
+// documents Rennet assembled, in composition order, with hashes, byte counts,
 // and truncated/dropped state — plus the assembled-prompt digest. It is deterministic,
 // model-free, and gate-free: it shows the truth, it never gates what may be sent.
 import type { ContextDocumentRecord, ContextManifest } from "@rennet/types";
@@ -51,7 +51,16 @@ const manifest: ContextManifest = {
 };
 
 describe("ContextManifestPanel (#30)", () => {
-  it("renders documents in SENT order with truncation/drop marked", () => {
+  it("labels the panel as Rennet's composition, never a sent transcript", () => {
+    const { container } = mount(<ContextManifestPanel manifest={manifest} />);
+    expect(container.querySelector("section")?.getAttribute("aria-label")).toBe(
+      "Context Rennet assembled",
+    );
+    expect(container.textContent).toContain("Context Rennet assembled");
+    expect(container.textContent).not.toContain("What the agents were sent");
+  });
+
+  it("renders documents in composition order with truncation/drop marked", () => {
     // Deliberately pass the documents out of order — the panel must sort by `order`.
     const shuffled: ContextManifest = {
       ...manifest,
@@ -64,7 +73,7 @@ describe("ContextManifestPanel (#30)", () => {
       "truncated",
       "dropped",
     ]);
-    // The paths render in sent order, not the array order they were passed in.
+    // The paths render in composition order, not the array order they were passed in.
     const paths = [...container.querySelectorAll(".context-manifest-path")].map(
       (el) => el.textContent,
     );
@@ -90,7 +99,10 @@ describe("ContextManifestPanel (#30)", () => {
   it("shows the assembled-prompt digest and the byte-identical prompt when provided", () => {
     // The prompt text whose digest the manifest recorded; the panel shows it verbatim.
     const { container } = mount(
-      <ContextManifestPanel manifest={manifest} assembledPrompt="### claude-md — CLAUDE.md\nfoo" />,
+      <ContextManifestPanel
+        manifest={manifest}
+        assembledContext="### claude-md — CLAUDE.md\nfoo"
+      />,
     );
     const digest = container.querySelector('[data-testid="context-manifest-assembled-digest"]');
     // The digest shown is the manifest's recorded digest (byte-identity anchor).
@@ -106,7 +118,7 @@ describe("ContextManifestPanel (#30)", () => {
       expect(text).not.toContain(forbidden);
     }
     // No form control that could gate: the only interactive element is the optional
-    // "open the assembled prompt" reveal, and it is absent unless a handler is given.
+    // "open the assembled context" reveal, and it is absent unless a handler is given.
     expect(container.querySelectorAll("button").length).toBe(0);
   });
 });

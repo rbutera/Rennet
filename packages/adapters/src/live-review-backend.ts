@@ -5,9 +5,10 @@ import {
   escapePath,
   type HarnessPort,
   type ReviewBackendState,
+  type RunLedgerEntry,
   reviewBackendCore,
 } from "@rennet/core";
-import type { ContextManifest, Patchset, Review } from "@rennet/types";
+import type { ContextManifest, InvocationBudget, Patchset, Review } from "@rennet/types";
 import { contextAskBackend } from "./context-ask-backend";
 import { assembleContextForComposition } from "./context-manifest";
 import { ContextManifestStore } from "./context-manifest-store";
@@ -104,11 +105,9 @@ export interface BuildReviewContextManifestDeps {
 }
 
 /**
- * Build the "what was sent" {@link ContextManifest} for a review from the composed
+ * Build the {@link ContextManifest} for context Rennet composed for a review
  * repo + the deterministic, byte-budgeted assembly (issue #30). This is the ONE
- * producer both the live backend (on open) and the desktop canvases path reuse, so
- * the manifest the renderer sees is BYTE-IDENTICAL to the one persisted — same
- * inputs, same code, same bytes.
+ * producer used by the capture-once store path below.
  *
  * Fail-safe (Rule Zero): when no snapshot exists for the review's pinned base OID
  * (or composition throws), this returns `undefined` — an honest absence the caller
@@ -136,6 +135,35 @@ export async function buildReviewContextManifest(
   } catch {
     return undefined;
   }
+}
+
+/** Inputs for the persisted capture-once manifest path. */
+export interface CaptureReviewContextManifestDeps extends BuildReviewContextManifestDeps {
+  readonly onPersistError?: (error: unknown) => void;
+}
+
+/**
+ * Return the exact persisted composition artifact for this review, capturing it
+ * once when absent. Both the live backend and desktop canvases path call this
+ * function, so a mutable guidance file cannot be re-read into two different
+ * manifests between those consumers.
+ */
+export async function captureReviewContextManifest(
+  deps: CaptureReviewContextManifestDeps,
+): Promise<ContextManifest | undefined> {
+  const { repoKey, baseOid } = repoRecordOf(deps.review);
+  const store = new ContextManifestStore(deps.store);
+  const persisted = store.load(repoKey, baseOid);
+  if (persisted) return persisted;
+
+  const built = await buildReviewContextManifest(deps);
+  if (!built) return undefined;
+  try {
+    store.save(repoKey, baseOid, built.manifest);
+  } catch (error) {
+    deps.onPersistError?.(error);
+  }
+  return built.manifest;
 }
 
 /**
@@ -174,6 +202,8 @@ export interface LiveBackendDeps {
   readonly onKnowledgeError?: (error: unknown) => void;
   readonly noveltyLifecycle?: NoveltyLifecycleRegistry;
   readonly compositionStore?: RepoCompositionStore;
+  /** Override the pipeline's shared per-review invocation meter (tests/composition only). */
+  readonly budget?: InvocationBudget;
   /** Extra core state the composition root may supply (freshness, ledger, effect sink). */
   readonly core?: Omit<ReviewBackendState, "review" | "pipeline">;
 }
@@ -226,25 +256,15 @@ export async function createLiveCanvasOpsBackend(
     git,
     maxFiles,
   });
-  // The "what was sent" manifest (issue #30): produce it from the SAME composition +
-  // deterministic assembly the desktop canvases path reuses (via
-  // `buildReviewContextManifest`), then PERSIST it under the R55 project entry so it
-  // reloads across restart. A snapshot that could not be composed yields an honest
-  // `undefined` — never a fabricated stand-in (Rule Zero).
-  const built = await buildReviewContextManifest({
+  // Capture the composition manifest once under the R55 project entry. The desktop
+  // canvases path reads this exact artifact, never re-reading mutable guidance.
+  const contextManifest = await captureReviewContextManifest({
     store: deps.store,
     review,
     git,
     ...(deps.compositionStore ? { compositionStore: deps.compositionStore } : {}),
+    ...(deps.onKnowledgeError ? { onPersistError: deps.onKnowledgeError } : {}),
   });
-  const contextManifest: ContextManifest | undefined = built?.manifest;
-  if (built) {
-    try {
-      new ContextManifestStore(deps.store).save(repoKey, baseOid, built.manifest);
-    } catch (error) {
-      deps.onKnowledgeError?.(error);
-    }
-  }
 
   // The fail-closed read gate is constructed regardless of the generation
   // outcome: with no fresh snapshot, every context read returns a typed refusal.
@@ -320,7 +340,8 @@ export async function createLiveCanvasOpsBackend(
     })().catch((error) => deps.onKnowledgeError?.(error));
   }
 
-  const core = reviewBackendCore({ review, pipeline, ...deps.core });
+  const runLedger: RunLedgerEntry[] = [...(deps.core?.runLedger ?? [])];
+  const core = reviewBackendCore({ review, pipeline, ...deps.core, runLedger });
   const contextPart = projectContextBackend(reader, resolveContextFor(review, repoKey));
   const noveltyPart = noveltyBackend(
     noveltyReader,
@@ -341,6 +362,22 @@ export async function createLiveCanvasOpsBackend(
     resolve: resolveContextFor(review, repoKey),
     resolvePort: async () => deps.knowledgePort ?? (await deps.resolveKnowledgePort?.()) ?? null,
     repoRoot: review.repositoryRoot,
+    budget: deps.budget ?? pipeline.invocationBudget,
+    onAttempt: (attempt) => {
+      const accepted = attempt.outcome === "answered" || attempt.outcome === "unanswered";
+      runLedger.push({
+        runId: `${review.id}:context.ask:${runLedger.length + 1}`,
+        purpose: attempt.purpose,
+        tier: attempt.tier,
+        model: attempt.model ?? "harness-default",
+        admitted: accepted ? 1 : 0,
+        rejected: accepted ? 0 : 1,
+        budgetSpent: attempt.budgetGranted ? 1 : 0,
+        ...(Number.isFinite(attempt.budgetRemaining)
+          ? { budgetRemaining: attempt.budgetRemaining }
+          : {}),
+      });
+    },
   });
 
   const backend: CanvasOpsBackend = {

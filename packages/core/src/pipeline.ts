@@ -39,6 +39,7 @@ import type {
   ElementDiffs,
   HypothesisRepoContext,
   HypothesisStructure,
+  InvocationBudget,
   OfferedManifest,
   OwnershipRule,
   Patchset,
@@ -235,6 +236,8 @@ export interface ReviewPipelineResult {
   readonly elementDiffs: ElementDiffs;
   readonly decomposition: Decomposition;
   readonly routePlan: RoutePlanResult;
+  /** The one shared per-review invocation meter, reused by follow-on model tools. */
+  readonly invocationBudget: InvocationBudget;
   /**
    * True when the model budget refused — pre-flight (the Brita route plan judged
    * the diff shape over budget before any spend) OR at runtime (the shared
@@ -539,6 +542,7 @@ export async function buildReviewCanvases(
     elementDiffs,
     decomposition,
     routePlan,
+    invocationBudget: budget,
     // Pre-flight refusal (the route plan gated it before any spend) OR a runtime
     // exhaustion of the shared ceiling by retries (#260). Either means no complete
     // model phase ran, so the surface degrades the review rather than faking done.

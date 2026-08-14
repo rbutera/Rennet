@@ -215,6 +215,8 @@ export {
   activePatchset,
   type BuildReviewContextManifestDeps,
   buildReviewContextManifest,
+  type CaptureReviewContextManifestDeps,
+  captureReviewContextManifest,
   createLiveCanvasOpsBackend,
   type LiveBackendDeps,
   type LiveReviewBackend,

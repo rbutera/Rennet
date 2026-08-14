@@ -2,11 +2,26 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildReviewCanvases, type ProjectMap } from "@rennet/core";
+import {
+  buildReviewCanvases,
+  type HarnessDescriptor,
+  type HarnessEvent,
+  type HarnessHealth,
+  type HarnessPort,
+  type HarnessSession,
+  type ProjectMap,
+} from "@rennet/core";
 import { sha256Hex } from "@rennet/protocol";
-import type { NoveltyLedger, PatchFile, Patchset, Review } from "@rennet/types";
+import {
+  KNOWLEDGE_SCHEMA_VERSION,
+  type NoveltyLedger,
+  type PatchFile,
+  type Patchset,
+  type Review,
+} from "@rennet/types";
 import { afterEach, describe, expect, it } from "vitest";
 import { ContextManifestStore } from "./context-manifest-store";
+import { KnowledgeStore } from "./knowledge-store";
 import {
   buildReviewContextManifest,
   createLiveCanvasOpsBackend,
@@ -121,7 +136,158 @@ function freshStore(): ProjectSnapshotStore {
   return new ProjectSnapshotStore(dir);
 }
 
+function askPort(body: unknown): HarnessPort {
+  const events: HarnessEvent[] = [
+    {
+      seq: 1,
+      harness: "claude-code",
+      sessionId: "ask-session",
+      turnId: null,
+      receivedAt: 0,
+      native: {},
+      kind: "session.started",
+      model: "claude-fake",
+      cwd: "/repo",
+      tools: [],
+      apiKeySource: "none",
+    },
+    {
+      seq: 2,
+      harness: "claude-code",
+      sessionId: "ask-session",
+      turnId: "ask-turn",
+      receivedAt: 0,
+      native: {},
+      kind: "session.ended",
+      outcome: { status: "completed", finalText: "", structuredOutput: body },
+    },
+  ];
+  return {
+    descriptor: { id: "claude-code" } as unknown as HarnessDescriptor,
+    health: (): Promise<HarnessHealth> => Promise.resolve({ state: "ready", version: "test" }),
+    createSession: (): Promise<HarnessSession> =>
+      Promise.resolve({
+        id: "ask-session",
+        harness: "claude-code",
+        events: {
+          async *[Symbol.asyncIterator](): AsyncIterator<HarnessEvent> {
+            yield* events;
+          },
+        },
+        send: (): Promise<string> => Promise.resolve("ask-turn"),
+        interrupt: (): Promise<void> => Promise.resolve(),
+        close: (): Promise<void> => Promise.resolve(),
+      }),
+  };
+}
+
+async function seedAskKnowledge(
+  repo: ReturnType<typeof workspaceRepo>,
+  store: ProjectSnapshotStore,
+): Promise<void> {
+  const { manifest } = await new ProjectSnapshotGenerator({ store }).generate(repo.root, {
+    explicitBaseRef: repo.oid1,
+  });
+  new KnowledgeStore(store).save(manifest.repoKey, {
+    schemaVersion: KNOWLEDGE_SCHEMA_VERSION,
+    repoKey: manifest.repoKey,
+    baseOid: manifest.baseOid,
+    snapshotFingerprint: manifest.fingerprint,
+    generator: "knowledge-gen@1",
+    statements: [
+      {
+        id: "k-live",
+        subject: "@t/a",
+        aspect: "purpose",
+        claim: "scope a exports its review functions",
+        evidence: [
+          {
+            path: "packages/a/src/index.ts",
+            blobOid: git(repo.root, "rev-parse", `${repo.oid1}:packages/a/src/index.ts`),
+          },
+        ],
+        confidence: "high",
+        status: "hypothesis",
+        provenance: { generator: "knowledge-gen@1", model: "test", apiKeySource: "none" },
+        learnedAgainst: { baseOid: manifest.baseOid, snapshotFingerprint: manifest.fingerprint },
+      },
+    ],
+  });
+}
+
 describe("createLiveCanvasOpsBackend — the live end-to-end review backend", () => {
+  it("meters production context.ask on the shared review budget and appends run.ledger", async () => {
+    const repo = workspaceRepo();
+    git(repo.root, "reset", "--hard", repo.oid1);
+    const store = freshStore();
+    await seedAskKnowledge(repo, store);
+    const { review, pipeline } = await reviewAt(repo.root, repo.commonDir, repo.oid1);
+    const before = pipeline.invocationBudget.consumed;
+    const { backend } = await createLiveCanvasOpsBackend(review, pipeline, {
+      store,
+      knowledgePort: askPort({
+        answer: "scope a exports its review functions",
+        confidence: "high",
+        evidence: [{ evidenceId: "k-live:0", path: "packages/a/src/index.ts" }],
+      }),
+    });
+
+    const result = await backend.ask({ question: "what does scope a export?" });
+    expect(result.status).toBe("answered");
+    expect(pipeline.invocationBudget.consumed).toBe(before + 1);
+    expect(backend.runLedger()).toEqual([
+      expect.objectContaining({
+        purpose: "context-ask:quick:attempt-0",
+        admitted: 1,
+        rejected: 0,
+        budgetSpent: 1,
+      }),
+    ]);
+  });
+
+  it("runs a no-headroom thorough production ask and reports overage in its ledger", async () => {
+    const repo = workspaceRepo();
+    git(repo.root, "reset", "--hard", repo.oid1);
+    const store = freshStore();
+    await seedAskKnowledge(repo, store);
+    const { review } = await reviewAt(repo.root, repo.commonDir, repo.oid1);
+    const patchset = review.patchsets[0];
+    if (!patchset) throw new Error("expected an active patchset");
+    const pipeline = await buildReviewCanvases({
+      reviewId: review.id,
+      patchset,
+      dispositions: [],
+      routePlanOptions: { maxHarnessInvocations: 0 },
+    });
+    const { backend } = await createLiveCanvasOpsBackend(review, pipeline, {
+      store,
+      knowledgePort: askPort({
+        answer: "scope a exports its review functions",
+        confidence: "high",
+        evidence: [{ evidenceId: "k-live:0", path: "packages/a/src/index.ts" }],
+      }),
+    });
+
+    const result = await backend.ask({
+      question: "what does scope a export?",
+      budgetHint: "thorough",
+    });
+    expect(result.status).toBe("answered");
+    if (result.status !== "answered") throw new Error("expected an answer");
+    expect(result.answer.cost).toEqual(
+      expect.objectContaining({ budgetGranted: false, overage: true, turns: 1 }),
+    );
+    expect(backend.runLedger()).toEqual([
+      expect.objectContaining({
+        purpose: "context-ask:thorough:attempt-0",
+        tier: "heavy",
+        admitted: 1,
+        budgetSpent: 0,
+        budgetRemaining: 0,
+      }),
+    ]);
+  });
+
   it("serves gitlink advances through the public live novelty accessor", async () => {
     const repo = workspaceRepo();
     const childA = "1234567890123456789012345678901234567890";
@@ -217,7 +383,7 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
     expect(reloaded?.assembledPromptDigest).toBe(opened.contextManifest?.assembledPromptDigest);
   });
 
-  it("records the assembled-prompt digest byte-identically, and the canvases-path producer yields the SAME manifest (#30)", async () => {
+  it("records the assembled-context digest byte-identically and builds deterministically (#30)", async () => {
     const repo = workspaceRepo();
     git(repo.root, "reset", "--hard", repo.oid1);
     const store = freshStore();
@@ -227,17 +393,17 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
     const opened = await createLiveCanvasOpsBackend(review, pipeline, { store });
     expect(opened.contextManifest).toBeDefined();
 
-    // The SAME producer the desktop canvases path reuses — recomputed independently.
+    // Rebuild directly to prove the deterministic producer's own byte identity.
     const built = await buildReviewContextManifest({ store, review });
     expect(built).toBeDefined();
     if (!built) throw new Error("expected a manifest");
 
-    // Byte-identity: the recorded send-digest equals the digest over the assembled text.
+    // Byte-identity: the recorded digest equals the digest over the assembled text.
     expect(built.manifest.assembledPromptDigest).toBe(built.assembly.digest);
     expect(built.manifest.assembledPromptDigest).toBe(sha256Hex(built.assembly.text));
 
-    // Same inputs → same manifest: the canvases-path manifest equals the live one
-    // (so the renderer sees the REAL manifest, never a divergent recomputation).
+    // Same inputs → same manifest. The separate desktop test proves production
+    // consumers load the persisted artifact instead of relying on this recomputation.
     expect(built.manifest).toEqual(opened.contextManifest);
   });
 

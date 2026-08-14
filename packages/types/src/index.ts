@@ -2577,7 +2577,7 @@ export type ContextDocumentState = "included" | "truncated" | "dropped";
  * and its included/truncated/dropped state.
  */
 export interface ContextDocumentRecord {
-  /** 0-based order position in the assembled context (the sent order). */
+  /** 0-based order position in the assembled context (the composition order). */
   readonly order: number;
   /** The source label, e.g. "claude-md" | "agents-md" | "rennet" | "project-map" | "knowledge". */
   readonly source: string;
@@ -2593,12 +2593,11 @@ export interface ContextDocumentRecord {
 }
 
 /**
- * The manifest of what a fleet dispatch was told (issue #30). The type already
+ * The manifest of context Rennet composed for a review (issue #30). The type already
  * existed (repoRecordId/projectSnapshotId/compositionDigest/freshness/members —
  * the absent-member disclosure); this change ADDS the per-document assembly
- * record: each document sent (hash, source path, order, included/truncated/dropped
- * state), the total assembled byte size, a digest of the assembled prompt (so the
- * "what was sent" view is provably byte-identical), and `exhaustive` set from
+ * record: each composed document (hash, source path, order, included/truncated/dropped
+ * state), the total assembled byte size, a digest of the assembled context, and `exhaustive` set from
  * evidence (false until an isolation probe proves the harness sees only
  * pipeline-assembled context) with `unmanagedSources` naming what may have reached
  * the harness outside the pipeline. The absent-member disclosure (`members`) is
@@ -2610,11 +2609,11 @@ export interface ContextManifest {
   readonly compositionDigest: string;
   readonly freshness: CompositionFreshness;
   readonly members: readonly RepoMapMember[];
-  /** The assembled documents in sent order, with per-document truncation state. */
+  /** The assembled documents in composition order, with per-document truncation state. */
   readonly documents: readonly ContextDocumentRecord[];
   /** The total bytes actually assembled across all documents (post-budget). */
   readonly totalBytes: number;
-  /** sha256 of the assembled prompt text — the byte-identity anchor for the "what was sent" view. */
+  /** sha256 of the assembled context text — the byte-identity anchor for the inspector. */
   readonly assembledPromptDigest: string;
   /** Whether the manifest provably covers everything the harness saw (false until a probe proves it). */
   readonly exhaustive: boolean;

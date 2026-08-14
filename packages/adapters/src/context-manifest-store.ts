@@ -5,7 +5,7 @@ import type { ContextManifest } from "@rennet/types";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
 
 /**
- * The ContextManifest store (issue #30) — persists the "what was sent" manifest
+ * The ContextManifest store (issue #30) persists Rennet's composition manifest
  * LOCAL-FIRST under the R55 project entry (`~/.rennet/projects/<esc>/
  * context-manifests/<baseOid>.json`), so it RELOADS across restart rather than
  * being recomputed from scratch every open. Keyed by the review's pinned base OID,

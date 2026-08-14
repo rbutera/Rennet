@@ -1,5 +1,6 @@
 import {
   CONTEXT_ASK_OUTPUT_SCHEMA,
+  type ContextAskAttempt,
   type ContextAskCost,
   type ContextAskQuery,
   type HarnessPort,
@@ -45,6 +46,8 @@ export interface ContextAskBackendDeps {
   readonly council?: CouncilResolveContext;
   /** The shared live invocation budget. Metered + reported, NEVER used to refuse. */
   readonly budget?: InvocationBudget;
+  /** Records each actual ask turn in the live review's mutable run ledger. */
+  readonly onAttempt?: (attempt: ContextAskAttempt) => void;
   readonly signal?: AbortSignal;
 }
 
@@ -159,6 +162,7 @@ export function contextAskBackend(deps: ContextAskBackendDeps): ContextAskBacken
         runTurn,
         council,
         ...(deps.budget === undefined ? {} : { budget: deps.budget }),
+        ...(deps.onAttempt === undefined ? {} : { onAttempt: deps.onAttempt }),
       });
     },
   };

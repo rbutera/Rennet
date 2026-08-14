@@ -34,15 +34,17 @@
 import type {
   CouncilEffort,
   CouncilResolveContext,
+  CouncilTier,
   InvocationBudget,
   KnowledgeAnchor,
   KnowledgeConfidence,
   KnowledgeSet,
+  KnowledgeStatement,
   ResolutionTrace,
 } from "@rennet/types";
 import type { HarnessTurnResult } from "./harness-run-turn";
 import { absentBudgetGrant } from "./invocation-budget";
-import { fileBlobIndex, queryKnowledge } from "./knowledge";
+import { queryKnowledge } from "./knowledge";
 import { resolveAssignment } from "./model-council";
 import { type LoadedSnapshot, queryProjectMap } from "./project-context";
 
@@ -117,8 +119,9 @@ export const CONTEXT_ASK_OUTPUT_SCHEMA = {
       items: {
         type: "object",
         additionalProperties: false,
-        required: ["path"],
+        required: ["evidenceId", "path"],
         properties: {
+          evidenceId: { type: "string" },
           path: { type: "string" },
           symbol: { type: "string" },
           startLine: { type: "integer", minimum: 1 },
@@ -145,40 +148,76 @@ function coerceConfidence(value: unknown): KnowledgeConfidence {
 }
 
 /**
- * Resolve the model's raw evidence anchors (which cite a `path` + optional
- * symbol/lines, never a git OID) to authoritative {@link KnowledgeAnchor}s stamped
- * with the snapshot's `blobOid`. An anchor citing a path absent from the snapshot
- * is DROPPED (unresolvable ⇒ cannot support a claim) — the same discipline
- * `mintStatement` applies to knowledge statements.
+ * One claim-bearing evidence anchor offered to the model. The id binds a citation
+ * to the exact knowledge statement and anchor shown in the prompt; a path name by
+ * itself is never evidence.
  */
-function resolveAnchors(raw: unknown, filesByPath: ReadonlyMap<string, string>): KnowledgeAnchor[] {
-  if (!Array.isArray(raw)) return [];
+interface OfferedEvidence {
+  readonly id: string;
+  readonly statementId: string;
+  readonly claim: string;
+  readonly anchor: KnowledgeAnchor;
+}
+
+interface ResolvedAnchors {
+  readonly anchors: readonly KnowledgeAnchor[];
+  readonly invalid: boolean;
+}
+
+/** Whether a model-provided span stays within the exact offered anchor span. */
+function spanWithin(
+  startLine: unknown,
+  endLine: unknown,
+  offered: KnowledgeAnchor["lines"],
+): boolean {
+  if (startLine === undefined && endLine === undefined) return true;
+  if (
+    offered === undefined ||
+    typeof startLine !== "number" ||
+    !Number.isInteger(startLine) ||
+    startLine < 1
+  )
+    return false;
+  if (endLine !== undefined && (typeof endLine !== "number" || !Number.isInteger(endLine)))
+    return false;
+  const citedEnd = endLine ?? startLine;
+  const offeredEnd = offered.endLine ?? offered.startLine;
+  return citedEnd >= startLine && startLine >= offered.startLine && citedEnd <= offeredEnd;
+}
+
+/**
+ * Resolve EVERY model citation against the claim-bearing evidence actually offered
+ * in the prompt. One fabricated id/path/symbol/span invalidates the whole answer;
+ * invalid citations are never silently dropped while another valid citation lets
+ * the claim through.
+ */
+function resolveAnchors(
+  raw: unknown,
+  offeredById: ReadonlyMap<string, OfferedEvidence>,
+): ResolvedAnchors {
+  if (!Array.isArray(raw)) return { anchors: [], invalid: true };
   const anchors: KnowledgeAnchor[] = [];
+  let invalid = false;
   for (const entry of raw) {
-    if (!entry || typeof entry !== "object") continue;
+    if (!entry || typeof entry !== "object") {
+      invalid = true;
+      continue;
+    }
     const record = entry as Record<string, unknown>;
-    const path = typeof record.path === "string" ? record.path : "";
-    const blobOid = filesByPath.get(path);
-    if (blobOid === undefined) continue;
-    const startLine = typeof record.startLine === "number" ? record.startLine : undefined;
-    const endLine = typeof record.endLine === "number" ? record.endLine : undefined;
-    anchors.push({
-      path,
-      blobOid,
-      ...(typeof record.symbol === "string" && record.symbol.length > 0
-        ? { symbol: record.symbol }
-        : {}),
-      ...(startLine !== undefined && startLine >= 1
-        ? {
-            lines:
-              endLine !== undefined && endLine >= startLine
-                ? { startLine, endLine }
-                : { startLine },
-          }
-        : {}),
-    });
+    const offered =
+      typeof record.evidenceId === "string" ? offeredById.get(record.evidenceId) : undefined;
+    if (
+      offered === undefined ||
+      record.path !== offered.anchor.path ||
+      (record.symbol !== undefined && record.symbol !== offered.anchor.symbol) ||
+      !spanWithin(record.startLine, record.endLine, offered.anchor.lines)
+    ) {
+      invalid = true;
+      continue;
+    }
+    anchors.push(offered.anchor);
   }
-  return anchors;
+  return { anchors, invalid };
 }
 
 // ── Prompt building (model-facing, node-free) ────────────────────────────────
@@ -188,10 +227,11 @@ const ASK_CONTRACT = `You are answering ONE question about a codebase from the E
 from that evidence.
 
 RULES (non-negotiable):
-- Every claim in your answer MUST cite EVIDENCE: one or more files (by
-  repo-relative path, optionally a symbol name and a 1-based line span) drawn from
-  the provided context. Only cite paths that appear in the provided context. Do
-  not invent paths.
+- Every claim in your answer MUST cite one or more OFFERED EVIDENCE IDs whose
+  statement supports that claim. Copy that evidence item's id + path exactly.
+  Optional symbol/line narrowing must stay within the offered anchor. Project file
+  names are navigation context, NOT evidence. Do not invent ids, paths, symbols,
+  or line spans.
 - If the provided context does NOT support an answer, DO NOT GUESS. Return an
   "unanswered" object with a human-readable "reason" naming what you consulted and
   why it did not suffice. An honest "unanswered" is a SUCCESS, not a failure.
@@ -199,18 +239,42 @@ RULES (non-negotiable):
   at most 'medium'.
 - Prefer a short, well-anchored answer over a long, thinly-supported one.`;
 
+function offeredEvidenceFor(statements: readonly KnowledgeStatement[]): OfferedEvidence[] {
+  return statements.flatMap((statement) =>
+    statement.evidence.map((anchor, index) => ({
+      id: `${statement.id}:${index}`,
+      statementId: statement.id,
+      claim: statement.claim,
+      anchor,
+    })),
+  );
+}
+
+function renderAnchor(anchor: KnowledgeAnchor): string {
+  const symbol = anchor.symbol ? ` symbol=${anchor.symbol}` : "";
+  const lines = anchor.lines
+    ? ` lines=${anchor.lines.startLine}-${anchor.lines.endLine ?? anchor.lines.startLine}`
+    : "";
+  return `${anchor.path}${symbol}${lines}`;
+}
+
 function renderConsultedContext(
-  knowledgeClaims: readonly string[],
+  evidence: readonly OfferedEvidence[],
   paths: readonly string[],
 ): string {
   const knowledgeBlock =
-    knowledgeClaims.length > 0
-      ? `KNOWLEDGE (reconstructed, evidence-anchored):\n${knowledgeClaims.map((c) => `- ${c}`).join("\n")}`
-      : "KNOWLEDGE: (none reconstructed yet)";
+    evidence.length > 0
+      ? `OFFERED EVIDENCE (reconstructed knowledge; cite by evidence id):\n${evidence
+          .map(
+            (item) =>
+              `- evidence=${item.id} statement=${item.statementId} anchor=${renderAnchor(item.anchor)}\n  claim: ${item.claim}`,
+          )
+          .join("\n")}`
+      : "OFFERED EVIDENCE: (none; return unanswered)";
   const filesBlock =
     paths.length > 0
-      ? `PROJECT FILES (${paths.length}):\n${paths.map((p) => `- ${p}`).join("\n")}`
-      : "PROJECT FILES: (none)";
+      ? `PROJECT FILE NAMES (navigation only; NOT evidence) (${paths.length}):\n${paths.map((p) => `- ${p}`).join("\n")}`
+      : "PROJECT FILE NAMES: (none)";
   return `${knowledgeBlock}\n\n${filesBlock}`;
 }
 
@@ -235,6 +299,19 @@ export interface RunContextAskInput {
   readonly maxRetries?: number;
   readonly maxFiles?: number;
   readonly maxStatements?: number;
+  /** Observe every actual model attempt so the live backend can append its run ledger row. */
+  readonly onAttempt?: (attempt: ContextAskAttempt) => void;
+}
+
+export interface ContextAskAttempt {
+  readonly attempt: number;
+  readonly purpose: string;
+  readonly budgetHint: ContextAskBudgetHint;
+  readonly tier: CouncilTier;
+  readonly model: string | null;
+  readonly budgetGranted: boolean;
+  readonly budgetRemaining: number;
+  readonly outcome: "answered" | "unanswered" | "rejected" | "turn-failed";
 }
 
 /**
@@ -266,20 +343,18 @@ export async function runContextAsk(input: RunContextAskInput): Promise<RunConte
     snapshot,
     query.scope !== undefined ? { path: query.scope } : undefined,
   );
-  const knowledgeClaims = knowledgeView.statements
-    .slice(0, maxStatements)
-    .map((s) => `[${s.aspect}/${s.confidence}] ${s.subject}: ${s.claim}`);
+  const offeredEvidence = offeredEvidenceFor(knowledgeView.statements.slice(0, maxStatements));
+  const offeredById = new Map(offeredEvidence.map((evidence) => [evidence.id, evidence]));
   const paths = map.files.map((f) => f.path).slice(0, maxFiles);
   const consulted = [
     `context.knowledge (${knowledgeView.statements.length} statements)`,
     `context.map (${map.files.length} files)`,
   ];
 
-  const filesByPath = fileBlobIndex(snapshot.files);
   const prompt = [
     ASK_CONTRACT,
     `\nQUESTION:\n${query.question}`,
-    `\nCONTEXT (at base ${snapshot.manifest.baseOid.slice(0, 12)}):\n${renderConsultedContext(knowledgeClaims, paths)}`,
+    `\nCONTEXT (at base ${snapshot.manifest.baseOid.slice(0, 12)}):\n${renderConsultedContext(offeredEvidence, paths)}`,
     '\nAnswer the question from this evidence, or return an honest "unanswered".',
   ].join("\n");
 
@@ -309,6 +384,16 @@ export async function runContextAsk(input: RunContextAskInput): Promise<RunConte
 
     const turn = await runTurn(prompt, attempt);
     if (turn.status === "failed") {
+      input.onAttempt?.({
+        attempt,
+        purpose,
+        budgetHint,
+        tier: resolution.trace.tier,
+        model,
+        budgetGranted: grant.granted,
+        budgetRemaining: budget?.remaining ?? Number.POSITIVE_INFINITY,
+        outcome: "turn-failed",
+      });
       lastFailure = turn.message;
       continue;
     }
@@ -320,6 +405,16 @@ export async function runContextAsk(input: RunContextAskInput): Promise<RunConte
     if (rawUnanswered && typeof rawUnanswered === "object") {
       const reason = (rawUnanswered as Record<string, unknown>).reason;
       if (typeof reason === "string" && reason.trim().length > 0) {
+        input.onAttempt?.({
+          attempt,
+          purpose,
+          budgetHint,
+          tier: resolution.trace.tier,
+          model,
+          budgetGranted: grant.granted,
+          budgetRemaining: budget?.remaining ?? Number.POSITIVE_INFINITY,
+          outcome: "unanswered",
+        });
         return {
           status: "unanswered",
           answer: {
@@ -335,17 +430,39 @@ export async function runContextAsk(input: RunContextAskInput): Promise<RunConte
     }
 
     const answerText = typeof body.answer === "string" ? body.answer.trim() : "";
-    const evidence = resolveAnchors(body.evidence, filesByPath);
+    const resolved = resolveAnchors(body.evidence, offeredById);
+    const evidence = resolved.anchors;
 
     // Evidence-or-fail: a claim (non-empty answer) with no resolvable evidence is
     // invalid — a failed ask, never a clean answer.
-    if (answerText.length === 0 || evidence.length === 0) {
+    if (answerText.length === 0 || evidence.length === 0 || resolved.invalid) {
+      input.onAttempt?.({
+        attempt,
+        purpose,
+        budgetHint,
+        tier: resolution.trace.tier,
+        model,
+        budgetGranted: grant.granted,
+        budgetRemaining: budget?.remaining ?? Number.POSITIVE_INFINITY,
+        outcome: "rejected",
+      });
       lastFailure =
         answerText.length === 0
           ? "the ask turn returned neither an answer nor an unanswered reason"
-          : "the ask turn produced an answer with no resolvable evidence";
+          : "the ask turn produced an answer with evidence not offered for its claims";
       continue;
     }
+
+    input.onAttempt?.({
+      attempt,
+      purpose,
+      budgetHint,
+      tier: resolution.trace.tier,
+      model,
+      budgetGranted: grant.granted,
+      budgetRemaining: budget?.remaining ?? Number.POSITIVE_INFINITY,
+      outcome: "answered",
+    });
 
     return {
       status: "answered",
