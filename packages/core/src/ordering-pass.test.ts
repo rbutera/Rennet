@@ -1,4 +1,5 @@
 import { ORDERING_CONTRACT } from "@rennet/instructions";
+import { sha256Hex } from "@rennet/protocol";
 import type { DecompositionProposalBody, OrderingBody, RspCapabilitySnapshot } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { createInvocationBudget } from "./invocation-budget";
@@ -100,6 +101,33 @@ describe("buildChunkManifest", () => {
 });
 
 describe("runOrderingPass — the agent produces the order (no user approval)", () => {
+  it("feeds assembled context verbatim and preserves the absent-context prompt golden", async () => {
+    const capture = async (assembledContext?: string): Promise<string> => {
+      let prompt = "";
+      await runOrderingPass(
+        base({
+          assembledContext,
+          runTurn: (sent) => {
+            prompt = sent;
+            return Promise.resolve({ status: "emitted", body: AGENT_ORDER });
+          },
+        }),
+      );
+      return prompt;
+    };
+    const context = "shared context line one\nshared context line two";
+    const absent = await capture();
+    const present = await capture(context);
+
+    expect(sha256Hex(absent)).toBe(
+      "18ecc07374cb598854386ba19586da8acc9ee70cc2e92ed1928027292cd4adca",
+    );
+    expect(absent).not.toContain("<<<rennet:layer context>>>");
+    expect(present).toContain(
+      `<<<rennet:layer context>>>\n${context}\n\n<<<rennet:layer payload>>>`,
+    );
+  });
+
   it("admits a valid agent order and stamps the envelope itself", async () => {
     const result = await runOrderingPass(
       base({ mintDocId: () => "0123456789ABCDEFGHJKMNPQRS", newRunId: () => "run_fixed" }),

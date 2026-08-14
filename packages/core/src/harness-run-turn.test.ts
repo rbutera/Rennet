@@ -1,4 +1,5 @@
-import { bodyJsonSchema } from "@rennet/protocol";
+import { bodyJsonSchema, sha256Hex } from "@rennet/protocol";
+import type { ContextSendRecord } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import type {
   HarnessDescriptor,
@@ -10,7 +11,12 @@ import type {
   SessionSpec,
   TurnInput,
 } from "./harness";
-import { createHarnessRunTurn, guardSeatTurn, type HarnessTurnResult } from "./harness-run-turn";
+import {
+  createHarnessRunTurn,
+  guardSeatTurn,
+  type HarnessTurnResult,
+  recordSeatSend,
+} from "./harness-run-turn";
 
 // ── A scripted fake harness over the HarnessPort interface (no adapters, no SDK) ──
 
@@ -235,5 +241,91 @@ describe("guardSeatTurn", () => {
     if (result.status === "failed") {
       expect(result.message).toContain("an uncoercible non-Error value");
     }
+  });
+});
+
+describe("recordSeatSend", () => {
+  it("records exact sent prompt bytes and parses context inclusion back from those bytes", async () => {
+    const records: ContextSendRecord[] = [];
+    const prompt = [
+      "<<<rennet:layer base>>>",
+      "base",
+      "",
+      "<<<rennet:layer context>>>",
+      "context with café bytes",
+      "",
+      "<<<rennet:layer payload>>>",
+      "payload",
+    ].join("\n");
+    const inner = async (): Promise<HarnessTurnResult> => ({ status: "emitted", body: {} });
+    const recorded = recordSeatSend(inner, { seat: "finding", harness: "claude-code" }, (record) =>
+      records.push(record),
+    );
+
+    await recorded(prompt, 0);
+
+    expect(records).toEqual([
+      {
+        seat: "finding",
+        harness: "claude-code",
+        channel: "prompt",
+        attempt: 0,
+        promptBytes: new TextEncoder().encode(prompt).length,
+        promptDigest: sha256Hex(prompt),
+        contextIncluded: true,
+        contextDigest: sha256Hex("context with café bytes"),
+        sentAt: expect.any(String),
+      },
+    ]);
+  });
+
+  it("records contextIncluded false from a sent prompt with no context block", async () => {
+    const records: ContextSendRecord[] = [];
+    const prompt = "<<<rennet:layer base>>>\nbase\n\n<<<rennet:layer payload>>>\npayload";
+    const recorded = recordSeatSend(
+      async () => ({ status: "emitted", body: {} }),
+      { seat: "ordering", harness: "codex" },
+      (record) => records.push(record),
+    );
+
+    await recorded(prompt, 0);
+
+    expect(records[0]).toMatchObject({ contextIncluded: false });
+    expect(records[0]?.contextDigest).toBeUndefined();
+  });
+
+  it("records every attempt with that attempt's exact sent bytes", async () => {
+    const records: ContextSendRecord[] = [];
+    const recorded = recordSeatSend(
+      async () => ({ status: "emitted", body: {} }),
+      { seat: "decomposition", harness: "claude-code" },
+      (record) => records.push(record),
+    );
+
+    await recorded("first prompt", 0);
+    await recorded("second prompt", 1);
+
+    expect(records.map((record) => [record.attempt, record.promptDigest])).toEqual([
+      [0, sha256Hex("first prompt")],
+      [1, sha256Hex("second prompt")],
+    ]);
+  });
+
+  it("records before a throwing turn and composes inside guardSeatTurn", async () => {
+    const records: ContextSendRecord[] = [];
+    const throwing = async (): Promise<HarnessTurnResult> => {
+      throw new Error("transport failed after handoff");
+    };
+    const guarded = guardSeatTurn(
+      recordSeatSend(throwing, { seat: "narration", harness: "codex" }, (record) =>
+        records.push(record),
+      ),
+    );
+
+    const result = await guarded("sent before throw", 2);
+
+    expect(result.status).toBe("failed");
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ attempt: 2, promptDigest: sha256Hex("sent before throw") });
   });
 });

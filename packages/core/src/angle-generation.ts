@@ -134,6 +134,7 @@ export interface RunDecompositionAngleInput {
   readonly runTurn: (prompt: string, attempt: number) => Promise<DecompositionTurnResult>;
   /** Optional repo guidance layers, wrapped as untrusted material by the assembler. */
   readonly guidance?: { readonly general?: string; readonly files?: string };
+  readonly assembledContext?: string;
   /** Retries after the first attempt. Default 2 (three attempts total). */
   readonly maxRetries?: number;
   /**
@@ -313,6 +314,7 @@ export async function runDecompositionAngle(
         ...(guidance?.general === undefined ? {} : { general: guidance.general }),
         ...(guidance?.files === undefined ? {} : { files: guidance.files }),
         ...(lastReportText === undefined ? {} : { task: lastReportText }),
+        ...(input.assembledContext === undefined ? {} : { context: input.assembledContext }),
         payload,
       },
       assembleOptions ?? {},

@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Query, Options as SdkOptions } from "@anthropic-ai/claude-agent-sdk";
 import { buildReviewCanvases } from "@rennet/core";
-import type { PatchFile, Patchset, Review } from "@rennet/types";
+import { sha256Hex } from "@rennet/protocol";
+import type { ContextSendRecord, PatchFile, Patchset, Review } from "@rennet/types";
 import { afterEach, describe, expect, it } from "vitest";
 import { CANVAS_OPS_SERVER_NAME } from "./canvas-ops-server";
 import { createLiveCanvasOpsBackend } from "./live-review-backend";
@@ -192,6 +193,48 @@ describe("deriveOrchestratorPrimerState — honest primer from live state", () =
 });
 
 describe("runOrchestratorTurn — wiring proof (no model)", () => {
+  it("appends assembled context after the primer, records the exact append, and preserves primer-only bytes when absent", async () => {
+    const { review, pipeline, backend, snapshot } = await liveReview();
+    const primer = deriveOrchestratorPrimerState(pipeline, backend, snapshot);
+    const context = "shared orchestrator context\nwith exact bytes";
+    const records: ContextSendRecord[] = [];
+    const fedQuery = fakeQuery([resultFrame("done")]);
+
+    const fed = await runOrchestratorTurn(backend, primer, "Anything.", {
+      claudePath: "/fake/claude",
+      cwd: review.repositoryRoot,
+      loadQuery: fedQuery.loadQuery,
+      assembledContext: context,
+      onSend: (record) => records.push(record),
+    });
+    const fedAppend = (fedQuery.captured()?.systemPrompt as { append?: string } | undefined)
+      ?.append;
+    const expectedAppend = `${fed.session.primer.text}\n\n<<<rennet:layer context>>>\n${context}`;
+    expect(fedAppend).toBe(expectedAppend);
+    expect(records).toEqual([
+      expect.objectContaining({
+        seat: "orchestrator",
+        harness: "claude-code",
+        channel: "system-append",
+        attempt: 0,
+        promptBytes: new TextEncoder().encode(expectedAppend).length,
+        promptDigest: sha256Hex(expectedAppend),
+        contextIncluded: true,
+        contextDigest: sha256Hex(context),
+      }),
+    ]);
+
+    const absentQuery = fakeQuery([resultFrame("done")]);
+    const absent = await runOrchestratorTurn(backend, primer, "Anything.", {
+      claudePath: "/fake/claude",
+      cwd: review.repositoryRoot,
+      loadQuery: absentQuery.loadQuery,
+    });
+    const absentAppend = (absentQuery.captured()?.systemPrompt as { append?: string } | undefined)
+      ?.append;
+    expect(absentAppend).toBe(absent.session.primer.text);
+  });
+
   it("hands the canvasOps@2 server to query() and surfaces the tool call", async () => {
     const { review, pipeline, backend, snapshot } = await liveReview();
     const primer = deriveOrchestratorPrimerState(pipeline, backend, snapshot);

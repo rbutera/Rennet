@@ -1,4 +1,5 @@
 import { DECOMPOSITION_PROPOSAL_CONTRACT } from "@rennet/instructions";
+import { sha256Hex } from "@rennet/protocol";
 import type {
   DecompositionProposalBody,
   PatchFile,
@@ -130,6 +131,41 @@ describe("deterministicProposalBody", () => {
 });
 
 describe("runDecompositionAngle", () => {
+  it("feeds assembled context verbatim and preserves the absent-context prompt golden", async () => {
+    const capture = async (assembledContext?: string): Promise<string> => {
+      let prompt = "";
+      const manifest = buildOfferedManifest(DECOMPOSITION);
+      await runDecompositionAngle({
+        decomposition: DECOMPOSITION,
+        contract: DECOMPOSITION_PROPOSAL_CONTRACT,
+        manifest,
+        provenance: SEED,
+        assembledContext,
+        runTurn: (sent) => {
+          prompt = sent;
+          return Promise.resolve({
+            status: "emitted",
+            body: deterministicProposalBody(DECOMPOSITION),
+          });
+        },
+        maxRetries: 0,
+        budget: createInvocationBudget(10),
+      });
+      return prompt;
+    };
+    const context = "shared context line one\nshared context line two";
+    const absent = await capture();
+    const present = await capture(context);
+
+    expect(sha256Hex(absent)).toBe(
+      "ca4fbab8d58477ab2ac63eda1fd9635d1080b71d210f3d80f4f14dbf8d57f5d4",
+    );
+    expect(absent).not.toContain("<<<rennet:layer context>>>");
+    expect(present).toContain(
+      `<<<rennet:layer context>>>\n${context}\n\n<<<rennet:layer payload>>>`,
+    );
+  });
+
   it("admits a valid body and stamps the envelope itself (agent never mints identity)", async () => {
     const manifest = buildOfferedManifest(DECOMPOSITION);
     const body = deterministicProposalBody(DECOMPOSITION);

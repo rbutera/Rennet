@@ -39,6 +39,8 @@ export interface ReviewPipelineInputParts {
   readonly runDecompositionTurn?: ReviewPipelineInput["runDecompositionTurn"];
   readonly runOrderingTurn?: ReviewPipelineInput["runOrderingTurn"];
   readonly runNarrationTurn?: ReviewPipelineInput["runNarrationTurn"];
+  readonly assembledContext?: ReviewPipelineInput["assembledContext"];
+  readonly onSend?: ReviewPipelineInput["onSend"];
 }
 
 /**
@@ -59,5 +61,7 @@ export function buildReviewCanvasesInput(parts: ReviewPipelineInputParts): Revie
     ...(parts.runDecompositionTurn ? { runDecompositionTurn: parts.runDecompositionTurn } : {}),
     ...(parts.runOrderingTurn ? { runOrderingTurn: parts.runOrderingTurn } : {}),
     ...(parts.runNarrationTurn ? { runNarrationTurn: parts.runNarrationTurn } : {}),
+    ...(parts.assembledContext === undefined ? {} : { assembledContext: parts.assembledContext }),
+    ...(parts.onSend ? { onSend: parts.onSend } : {}),
   };
 }

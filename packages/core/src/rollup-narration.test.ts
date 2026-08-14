@@ -1,4 +1,5 @@
 import { ROLLUP_NARRATION_CONTRACT } from "@rennet/instructions";
+import { sha256Hex } from "@rennet/protocol";
 import type {
   Canvas,
   CanvasAngle,
@@ -179,6 +180,38 @@ describe("offeredNarrationNodes", () => {
 // ── runRollupNarration: the happy path ────────────────────────────────────────
 
 describe("runRollupNarration — admission", () => {
+  it("feeds assembled context verbatim and preserves the absent-context prompt golden", async () => {
+    const capture = async (assembledContext?: string): Promise<string> => {
+      const nodes = offeredNarrationNodes(canvases());
+      let prompt = "";
+      await runRollupNarration({
+        nodes,
+        decomposition: decomposition(),
+        patchsetId: "ps_1",
+        contract: ROLLUP_NARRATION_CONTRACT,
+        provenance: SEED,
+        assembledContext,
+        runTurn: async (sent) => {
+          prompt = sent;
+          return emit(bodyFor(nodes));
+        },
+        budget: createInvocationBudget(10),
+      });
+      return prompt;
+    };
+    const context = "shared context line one\nshared context line two";
+    const absent = await capture();
+    const present = await capture(context);
+
+    expect(sha256Hex(absent)).toBe(
+      "99c03e54777160b86f303abe6742a82c0c9c543a074b005a3f50f94d566ab819",
+    );
+    expect(absent).not.toContain("<<<rennet:layer context>>>");
+    expect(present).toContain(
+      `<<<rennet:layer context>>>\n${context}\n\n<<<rennet:layer payload>>>`,
+    );
+  });
+
   it("admits a well-formed batch and returns the account per node", async () => {
     const nodes = offeredNarrationNodes(canvases());
     const result = await runRollupNarration({

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { Query, Options as SdkOptions } from "@anthropic-ai/claude-agent-sdk";
 import {
+  buildContextSendRecord,
   type CanvasOpsBackend,
   createSeqCounter,
   type EnvelopeContext,
@@ -12,7 +13,8 @@ import {
   type RunLedgerHeadline,
   summarizeCanvasCounts,
 } from "@rennet/core";
-import type { Canvas } from "@rennet/types";
+import { renderLayer } from "@rennet/instructions";
+import type { Canvas, ContextSendRecord } from "@rennet/types";
 import { CANVAS_OPS_SERVER_NAME, type LoadCanvasOpsSdk } from "./canvas-ops-server";
 import { normalizeClaudeFrame } from "./claude-adapter";
 import type { LiveSnapshotOutcome } from "./live-review-backend";
@@ -211,6 +213,8 @@ export interface OrchestratorTurnDeps {
    * the final `finalText`. A throw here is not caught, so keep it total.
    */
   readonly onDelta?: (text: string) => void;
+  readonly assembledContext?: string;
+  readonly onSend?: (record: ContextSendRecord) => void;
 }
 
 /** The outcome of one live orchestrator turn. */
@@ -281,6 +285,10 @@ export async function runOrchestratorTurn(
           },
     );
 
+  const systemAppend =
+    deps.assembledContext === undefined
+      ? session.primer.text
+      : `${session.primer.text}\n\n${renderLayer("context", deps.assembledContext)}`;
   const options: SdkOptions = {
     cwd: deps.cwd,
     pathToClaudeCodeExecutable: deps.claudePath,
@@ -295,12 +303,25 @@ export async function runOrchestratorTurn(
     canUseTool,
     // Append the lean primer to Claude Code's own system prompt (never replace it),
     // exactly as the harness adapter's append-mode does.
-    systemPrompt: { type: "preset", preset: "claude_code", append: session.primer.text },
+    systemPrompt: { type: "preset", preset: "claude_code", append: systemAppend },
     ...(deps.model !== undefined ? { model: deps.model } : {}),
     ...(deps.abortController ? { abortController: deps.abortController } : {}),
   };
 
   const query = await (deps.loadQuery ?? loadRealQuery)();
+  if (deps.onSend) {
+    const record = buildContextSendRecord(systemAppend, {
+      seat: "orchestrator",
+      harness: "claude-code",
+      channel: "system-append",
+      attempt: 0,
+    });
+    try {
+      deps.onSend(record);
+    } catch {
+      // Transcript observation must never block or alter the turn.
+    }
+  }
   const iterator = query({ prompt: question, options });
 
   const context: EnvelopeContext = {

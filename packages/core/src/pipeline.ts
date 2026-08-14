@@ -31,6 +31,7 @@ import {
 import type {
   Canvas,
   CanvasAngle,
+  ContextSendRecord,
   CouncilJobId,
   CouncilResolveContext,
   Decomposition,
@@ -65,7 +66,7 @@ import { createCodexRunTurn } from "./codex-run-turn";
 import type { CodexUtilityPort } from "./codex-utility-port";
 import { type DecomposeOptions, decompose } from "./decomposition";
 import { buildElementDiffs } from "./element-diffs";
-import { guardSeatTurn, type HarnessTurnResult } from "./harness-run-turn";
+import { guardSeatTurn, type HarnessTurnResult, recordSeatSend } from "./harness-run-turn";
 import {
   type HypothesisTurnResult,
   type RunHypothesisResult,
@@ -138,6 +139,9 @@ export interface ReviewPipelineInput {
   readonly reviewId: string;
   readonly patchset: Patchset;
   readonly dispositions: Disposition[];
+  readonly assembledContext?: string;
+  /** Captures exact per-attempt sends after council routing resolves the executing harness. */
+  readonly onSend?: (record: ContextSendRecord) => void;
   /**
    * CODEOWNERS rules for the blast-radius CODEOWNERS-overlap signal (issue #35).
    * Optional: absent ⇒ the overlap signal simply does not fire (the other three
@@ -311,6 +315,9 @@ export async function buildReviewCanvases(
     readonly runTurn: RunTurn | undefined;
   }
 
+  const recordedTurn = (runTurn: RunTurn, seat: string, harness: string): RunTurn =>
+    input.onSend ? recordSeatSend(runTurn, { seat, harness }, input.onSend) : runTurn;
+
   /**
    * Resolve one model-facing seat: the Model Council's assignment (or none), the
    * provenance seed with the resolved model AND harness (so `harness` follows the
@@ -401,8 +408,9 @@ export async function buildReviewCanvases(
       provenance: seed,
       // A thrown hypothesis turn degrades to the honest failed state (no hypothesis)
       // rather than crashing the whole run (#96).
-      runTurn: guardSeatTurn(input.runHypothesisTurn),
+      runTurn: guardSeatTurn(recordedTurn(input.runHypothesisTurn, "hypothesis", seed.harness)),
       budget,
+      ...(input.assembledContext === undefined ? {} : { assembledContext: input.assembledContext }),
       ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
       ...(input.newRunId ? { newRunId: input.newRunId } : {}),
     });
@@ -418,8 +426,11 @@ export async function buildReviewCanvases(
       // A thrown/rejected turn (e.g. a session/transport construction exception,
       // #96) is caught and degraded to a turn-failure, so a construction throw
       // falls to the deterministic floor instead of crashing the whole run.
-      runTurn: guardSeatTurn(decompositionSeat.runTurn),
+      runTurn: guardSeatTurn(
+        recordedTurn(decompositionSeat.runTurn, "decomposition", decompositionSeat.seed.harness),
+      ),
       budget,
+      ...(input.assembledContext === undefined ? {} : { assembledContext: input.assembledContext }),
       ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
       ...(input.newRunId ? { newRunId: input.newRunId } : {}),
     });
@@ -454,8 +465,13 @@ export async function buildReviewCanvases(
         contract: input.orderingContract ?? ORDERING_CONTRACT,
         provenance: orderingSeat.seed,
         // A thrown ordering turn degrades to the #8 baseline order (#96).
-        runTurn: guardSeatTurn(orderingSeat.runTurn),
+        runTurn: guardSeatTurn(
+          recordedTurn(orderingSeat.runTurn, "ordering", orderingSeat.seed.harness),
+        ),
         budget,
+        ...(input.assembledContext === undefined
+          ? {}
+          : { assembledContext: input.assembledContext }),
         ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
         ...(input.newRunId ? { newRunId: input.newRunId } : {}),
       });
@@ -529,8 +545,11 @@ export async function buildReviewCanvases(
       provenance: narrationSeat.seed,
       // A thrown narration turn degrades every node to the honest pending/failed
       // floor instead of crashing the run (#96).
-      runTurn: guardSeatTurn(narrationSeat.runTurn),
+      runTurn: guardSeatTurn(
+        recordedTurn(narrationSeat.runTurn, "narration", narrationSeat.seed.harness),
+      ),
       budget,
+      ...(input.assembledContext === undefined ? {} : { assembledContext: input.assembledContext }),
       ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
       ...(input.newRunId ? { newRunId: input.newRunId } : {}),
     });

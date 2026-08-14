@@ -127,7 +127,10 @@ for the engineering model behind that behaviour.
 Rennet has no backend. Review state, reading progress, local discussion, and the
 full Rennet structure stay in local application storage. Material selected for a
 model turn can leave the machine through the harness and provider you use, and
-the assembled context is inspectable in Rennet.
+the context inspector lists the assembly and its per-seat send transcript. A
+“sent” label means the digest extracted from at least one actual send matches the
+recorded assembly; it does not claim that the harness made no additional ambient
+reads.
 
 GitHub naturally receives the review only when you sign it. If GitHub is
 unavailable, local reading still works for material already on disk, but posting

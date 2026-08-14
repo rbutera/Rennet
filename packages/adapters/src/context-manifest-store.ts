@@ -1,7 +1,7 @@
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { canonicalize } from "@rennet/protocol";
-import type { ContextManifest } from "@rennet/types";
+import { canonicalize, sha256Hex } from "@rennet/protocol";
+import type { ContextManifest, ContextSendRecord } from "@rennet/types";
 import type { ProjectSnapshotStore } from "./project-snapshot-store";
 
 /**
@@ -28,6 +28,10 @@ function manifestPath(store: ProjectSnapshotStore, repoKey: string, baseOid: str
   return join(contextManifestsDir(store, repoKey), `${baseOid}.json`);
 }
 
+function contextTextPath(store: ProjectSnapshotStore, repoKey: string, baseOid: string): string {
+  return join(contextManifestsDir(store, repoKey), `${baseOid}.context.txt`);
+}
+
 /** Atomic write to `path`, creating parent dirs (temp + rename on one filesystem). */
 function writeAtomic(path: string, bytes: string): void {
   mkdirSync(join(path, ".."), { recursive: true });
@@ -48,7 +52,25 @@ function isContextManifest(value: unknown): value is ContextManifest {
     typeof m.exhaustive === "boolean" &&
     Array.isArray(m.documents) &&
     Array.isArray(m.members) &&
-    Array.isArray(m.unmanagedSources)
+    Array.isArray(m.unmanagedSources) &&
+    (m.sends === undefined ||
+      (Array.isArray(m.sends) && m.sends.every((record) => isContextSendRecord(record))))
+  );
+}
+
+function isContextSendRecord(value: unknown): value is ContextSendRecord {
+  if (!value || typeof value !== "object") return false;
+  const record = value as Record<string, unknown>;
+  return (
+    typeof record.seat === "string" &&
+    typeof record.harness === "string" &&
+    (record.channel === "prompt" || record.channel === "system-append") &&
+    typeof record.attempt === "number" &&
+    typeof record.promptBytes === "number" &&
+    typeof record.promptDigest === "string" &&
+    typeof record.contextIncluded === "boolean" &&
+    (record.contextDigest === undefined || typeof record.contextDigest === "string") &&
+    typeof record.sentAt === "string"
   );
 }
 
@@ -60,6 +82,10 @@ export class ContextManifestStore {
     writeAtomic(manifestPath(this.store, repoKey, baseOid), `${canonicalize(manifest)}\n`);
   }
 
+  saveText(repoKey: string, baseOid: string, text: string): void {
+    writeAtomic(contextTextPath(this.store, repoKey, baseOid), text);
+  }
+
   /** The persisted manifest for a base OID, or null when absent/unreadable/malformed. */
   load(repoKey: string, baseOid: string): ContextManifest | null {
     let parsed: unknown;
@@ -69,5 +95,31 @@ export class ContextManifestStore {
       return null;
     }
     return isContextManifest(parsed) ? parsed : null;
+  }
+
+  loadVerified(
+    repoKey: string,
+    baseOid: string,
+  ): { readonly manifest: ContextManifest; readonly text: string } | null {
+    const manifest = this.load(repoKey, baseOid);
+    if (!manifest) return null;
+
+    let text: string;
+    try {
+      text = readFileSync(contextTextPath(this.store, repoKey, baseOid), "utf8");
+    } catch {
+      return null;
+    }
+    return sha256Hex(text) === manifest.assembledPromptDigest ? { manifest, text } : null;
+  }
+
+  appendSends(repoKey: string, baseOid: string, records: readonly ContextSendRecord[]): void {
+    if (records.length === 0) return;
+    const manifest = this.load(repoKey, baseOid);
+    if (!manifest) return;
+    this.save(repoKey, baseOid, {
+      ...manifest,
+      sends: [...(manifest.sends ?? []), ...records],
+    });
   }
 }

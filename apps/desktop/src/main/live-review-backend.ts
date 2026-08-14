@@ -1,13 +1,17 @@
 import {
+  ContextManifestStore,
   captureReviewContextManifest,
   createLiveCanvasOpsBackend,
   defaultProjectsBaseDir,
+  ensureReviewContextAssembly,
   type LiveBackendDeps,
   type LiveReviewBackend,
+  repoRecordOf,
   snapshotStoreFor,
 } from "@rennet/adapters";
 import type { ReviewPipelineResult } from "@rennet/core";
 import type { ContextManifest, Review } from "@rennet/types";
+import { createReviewContextFeed, type ReviewContextFeed } from "./review-context-feed";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The desktop composition root for the live end-to-end review backend (issue #13).
@@ -57,5 +61,25 @@ export function loadDesktopReviewContextManifest(
   return captureReviewContextManifest({
     store: snapshotStoreFor(opts?.baseDir ?? defaultProjectsBaseDir()),
     review,
+  });
+}
+
+export function createDesktopReviewContextFeed(
+  review: Review,
+  opts?: { readonly baseDir?: string; readonly onError?: (error: unknown) => void },
+): Promise<ReviewContextFeed> {
+  const store = snapshotStoreFor(opts?.baseDir ?? defaultProjectsBaseDir());
+  return createReviewContextFeed({
+    ensure: () =>
+      ensureReviewContextAssembly({
+        store,
+        review,
+        ...(opts?.onError ? { onPersistError: opts.onError } : {}),
+      }),
+    append: (records) => {
+      const { repoKey, baseOid } = repoRecordOf(review);
+      new ContextManifestStore(store).appendSends(repoKey, baseOid, records);
+    },
+    ...(opts?.onError ? { onError: opts.onError } : {}),
   });
 }

@@ -160,10 +160,30 @@ export async function captureReviewContextManifest(
   if (!built) return undefined;
   try {
     store.save(repoKey, baseOid, built.manifest);
+    store.saveText(repoKey, baseOid, built.assembly.text);
   } catch (error) {
     deps.onPersistError?.(error);
   }
   return built.manifest;
+}
+
+export async function ensureReviewContextAssembly(
+  deps: CaptureReviewContextManifestDeps,
+): Promise<{ readonly manifest: ContextManifest; readonly text: string } | undefined> {
+  const { repoKey, baseOid } = repoRecordOf(deps.review);
+  const store = new ContextManifestStore(deps.store);
+  const persisted = store.loadVerified(repoKey, baseOid);
+  if (persisted) return persisted;
+
+  const built = await buildReviewContextManifest(deps);
+  if (!built) return undefined;
+  try {
+    store.save(repoKey, baseOid, built.manifest);
+    store.saveText(repoKey, baseOid, built.assembly.text);
+  } catch (error) {
+    deps.onPersistError?.(error);
+  }
+  return { manifest: built.manifest, text: built.assembly.text };
 }
 
 /**

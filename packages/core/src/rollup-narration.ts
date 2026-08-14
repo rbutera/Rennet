@@ -157,6 +157,7 @@ export interface RunRollupNarrationInput {
   /** Runs one turn against the assembled prompt; the caller owns the session wiring. */
   readonly runTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
   readonly guidance?: { readonly general?: string; readonly files?: string };
+  readonly assembledContext?: string;
   /** Retries after the first attempt. Default 2 (three attempts total). */
   readonly maxRetries?: number;
   /**
@@ -478,6 +479,7 @@ export async function runRollupNarration(
         ...(guidance?.general === undefined ? {} : { general: guidance.general }),
         ...(guidance?.files === undefined ? {} : { files: guidance.files }),
         ...(lastReportText === undefined ? {} : { task: lastReportText }),
+        ...(input.assembledContext === undefined ? {} : { context: input.assembledContext }),
         payload,
       },
       assembleOptions ?? {},

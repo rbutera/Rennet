@@ -1,3 +1,4 @@
+import { sha256Hex } from "@rennet/protocol";
 import type { PatchFile, Patchset, RspCapabilitySnapshot } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { buildOfferedManifest } from "./angle-generation";
@@ -106,6 +107,35 @@ function modelDecision(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 describe("runDecisionAngle — the live decision runner (issue #137)", () => {
+  it("feeds assembled context verbatim and preserves the absent-context prompt golden", async () => {
+    const capture = async (assembledContext?: string): Promise<string> => {
+      let prompt = "";
+      await runDecisionAngle({
+        patchsetId: PATCHSET.id,
+        manifest: MANIFEST,
+        provenance: SEED,
+        assembledContext,
+        runTurn: (sent) => {
+          prompt = sent;
+          return Promise.resolve({ status: "emitted", body: { decisions: [] } });
+        },
+        budget: createInvocationBudget(5),
+      });
+      return prompt;
+    };
+    const context = "shared context line one\nshared context line two";
+    const absent = await capture();
+    const present = await capture(context);
+
+    expect(sha256Hex(absent)).toBe(
+      "49ed34cd7e3df71d9eb3cda905f71d401a2540a666bae70365badd1559f4d632",
+    );
+    expect(absent).not.toContain("<<<rennet:layer context>>>");
+    expect(present).toContain(
+      `<<<rennet:layer context>>>\n${context}\n\n<<<rennet:layer payload>>>`,
+    );
+  });
+
   it("admits a grounded decision, minting the id and carrying evidence + alternatives", async () => {
     const result = await runDecisionAngle({
       patchsetId: PATCHSET.id,

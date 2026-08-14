@@ -2619,6 +2619,20 @@ export interface ContextManifest {
   readonly exhaustive: boolean;
   /** Sources that may have reached the harness outside the pipeline (e.g. its own ambient reads). */
   readonly unmanagedSources: readonly string[];
+  /** The exact prompt or system-append bytes handed to fleet harnesses, recorded per attempt. */
+  readonly sends?: readonly ContextSendRecord[];
+}
+
+export interface ContextSendRecord {
+  readonly seat: string;
+  readonly harness: string;
+  readonly channel: "prompt" | "system-append";
+  readonly attempt: number;
+  readonly promptBytes: number;
+  readonly promptDigest: string;
+  readonly contextIncluded: boolean;
+  readonly contextDigest?: string;
+  readonly sentAt: string;
 }
 
 // ── Base + overlay for a non-default base (#143, design §3) ───────────────────

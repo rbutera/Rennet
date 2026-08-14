@@ -44,14 +44,15 @@ export function ContextManifestPanel({
   // Render in composition order — sort by the recorded order position so the panel is
   // honest about the sequence regardless of array order.
   const documents = [...manifest.documents].sort((a, b) => a.order - b.order);
+  const sends = manifest.sends ?? [];
+  const hasProvenSend = sends.some(
+    (send) => send.contextIncluded && send.contextDigest === manifest.assembledPromptDigest,
+  );
+  const panelLabel = hasProvenSend ? "Context sent to the fleet" : "Context Rennet assembled";
 
   return (
-    <section
-      className="context-manifest"
-      data-testid="context-manifest"
-      aria-label="Context Rennet assembled"
-    >
-      <p className="context-manifest-eyebrow">Context Rennet assembled</p>
+    <section className="context-manifest" data-testid="context-manifest" aria-label={panelLabel}>
+      <p className="context-manifest-eyebrow">{panelLabel}</p>
 
       <p className="context-manifest-summary" data-testid="context-manifest-summary">
         {documents.length} document{documents.length === 1 ? "" : "s"} · {manifest.totalBytes} B
@@ -86,6 +87,39 @@ export function ContextManifestPanel({
           No context documents were assembled for this dispatch.
         </p>
       )}
+
+      {sends.length > 0 ? (
+        <ol className="context-manifest-sends" aria-label="Fleet context send transcript">
+          {sends.map((send) => {
+            const digestMatches =
+              send.contextIncluded && send.contextDigest === manifest.assembledPromptDigest;
+            return (
+              <li
+                key={`${send.sentAt}:${send.seat}:${send.harness}:${send.attempt}:${send.promptDigest}`}
+                className="context-manifest-send"
+                data-testid="context-manifest-send"
+                data-context-included={send.contextIncluded}
+                data-digest-match={digestMatches}
+              >
+                <span className="context-manifest-send-seat">{send.seat}</span>
+                <span className="context-manifest-send-harness">{send.harness}</span>
+                <span className="context-manifest-send-channel">{send.channel}</span>
+                <span>Attempt {send.attempt}</span>
+                <span>{send.promptBytes} B</span>
+                <span>{send.contextIncluded ? "Included" : "Dropped"}</span>
+                <span>
+                  {digestMatches
+                    ? "Digest matches"
+                    : send.contextIncluded
+                      ? "Digest differs"
+                      : "No context digest"}
+                </span>
+                <code title={send.promptDigest}>{send.promptDigest.slice(0, 12)}</code>
+              </li>
+            );
+          })}
+        </ol>
+      ) : null}
 
       {/*
         Exhaustiveness is EVIDENCE, not optimism: until a context-isolation probe

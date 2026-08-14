@@ -14,6 +14,7 @@ import type {
   CompositionStaleMember,
   ContextDocumentRecord,
   ContextManifest,
+  ContextSendRecord,
   DecisionDetail,
   DecisionEvidence,
   DecisionsRunStatus,
@@ -527,6 +528,18 @@ const contextDocumentRecordSchema: z.ZodType<ContextDocumentRecord> = z.object({
   state: z.enum(["included", "truncated", "dropped"]),
 });
 
+const contextSendRecordSchema: z.ZodType<ContextSendRecord> = z.object({
+  seat: z.string(),
+  harness: z.string(),
+  channel: z.enum(["prompt", "system-append"]),
+  attempt: z.number().int().nonnegative(),
+  promptBytes: z.number().int().nonnegative(),
+  promptDigest: z.string(),
+  contextIncluded: z.boolean(),
+  contextDigest: z.string().optional(),
+  sentAt: z.string(),
+});
+
 const contextManifestSchema: z.ZodType<ContextManifest> = z.object({
   repoRecordId: z.string(),
   projectSnapshotId: z.string(),
@@ -538,6 +551,7 @@ const contextManifestSchema: z.ZodType<ContextManifest> = z.object({
   assembledPromptDigest: z.string(),
   exhaustive: z.boolean(),
   unmanagedSources: z.array(z.string()),
+  sends: z.array(contextSendRecordSchema).optional(),
 });
 
 const commandIdSchema = z.uuid();

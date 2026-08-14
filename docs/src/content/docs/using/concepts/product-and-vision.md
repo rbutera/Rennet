@@ -104,8 +104,11 @@ machine **reviewed**, **approved**, or **found a bug** on the reviewer's behalf.
 
 Rennet has no Rennet backend and no Rennet telemetry service. Review state and
 project context live locally. Material sent through a selected harness may go to
-that harness's model provider, so Rennet records the assembled context for each
-run rather than claiming that nothing ever leaves the machine.
+that harness's model provider. Rennet feeds its deterministic assembled context
+as a labelled layer and records the exact prompt or system-append bytes handed
+to each fleet seat. The inspector says **Context sent to the fleet** only when a
+send record's context digest matches the assembly digest; ambient harness reads
+remain separately disclosed.
 
 The intended zero-config path uses harnesses already installed and authenticated
 on your computer. Rennet does not need to become a credential vault to drive

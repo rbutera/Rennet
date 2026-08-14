@@ -234,6 +234,75 @@ describe("buildReviewCanvases — blast-radius overlay is consumed (issue #35)",
 });
 
 describe("buildReviewCanvases", () => {
+  it("threads one assembled context through hypothesis, decomposition, ordering, and narration without changing absent prompts", async () => {
+    const proposal = deterministicProposalBody(decompose(independentPatchset));
+    const capture = async (assembledContext?: string): Promise<string[]> => {
+      const prompts: string[] = [];
+      await buildReviewCanvases({
+        reviewId: "context-feed",
+        patchset: independentPatchset,
+        dispositions: [],
+        assembledContext,
+        runHypothesisTurn: async (prompt) => {
+          prompts.push(prompt);
+          return {
+            status: "emitted",
+            body: {
+              domain: "understand the change",
+              scope: { inScope: ["src"], outOfScope: [] },
+              designExpectation: "preserve the dependency floor",
+              risks: Array.from({ length: 6 }, (_, index) => ({
+                statement: `risk ${index} changes dependency order unexpectedly`,
+                severity: "medium",
+                disconfirmer: `check dependency ${index}`,
+              })),
+            },
+          };
+        },
+        runDecompositionTurn: async (prompt) => {
+          prompts.push(prompt);
+          return { status: "emitted", body: proposal };
+        },
+        runOrderingTurn: async (prompt) => {
+          prompts.push(prompt);
+          return {
+            status: "emitted",
+            body: { readingOrder: proposal.readingOrder, rationale: "keep the dependency floor" },
+          };
+        },
+        runNarrationTurn: async (prompt) => {
+          prompts.push(prompt);
+          return {
+            status: "emitted",
+            body: {
+              narrations: [
+                {
+                  altitude: "rollup",
+                  anchor: "rollup",
+                  oneLine: "The change updates two independent modules.",
+                  paragraph: "Read the two independent modules in their admitted order.",
+                },
+              ],
+            },
+          };
+        },
+      });
+      return prompts;
+    };
+    const context = "shared pipeline context\nwith exact bytes";
+    const absent = await capture();
+    const present = await capture(context);
+    const renderedBlock = `<<<rennet:layer context>>>\n${context}`;
+
+    expect(absent).toHaveLength(4);
+    expect(present).toHaveLength(4);
+    for (let index = 0; index < present.length; index += 1) {
+      expect(absent[index]).not.toContain("<<<rennet:layer context>>>");
+      expect(present[index]).toContain(`${renderedBlock}\n\n<<<rennet:layer payload>>>`);
+      expect(present[index]?.replace(`\n\n${renderedBlock}`, "")).toBe(absent[index]);
+    }
+  });
+
   it("populates all five canvases from the real decomposition of the diff", async () => {
     const decomposition = decompose(edgedPatchset);
     const proposal = deterministicProposalBody(decomposition);

@@ -585,7 +585,7 @@ function layerHeader(layer: PromptLayerName): string {
 }
 
 /** Render one labelled layer block, so the assembled text is fully attributable. */
-function renderLayer(layer: PromptLayerName, body: string): string {
+export function renderLayer(layer: PromptLayerName, body: string): string {
   return `${layerHeader(layer)}\n${body}`;
 }
 

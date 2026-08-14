@@ -196,7 +196,7 @@ describe("review.canvases command", () => {
   // inside the manifest — is silently stripped, and the "what was sent" panel would
   // render a manifest missing exactly the assembly records it exists to show. These
   // assertions go red if the manifest field or any of its records is dropped.
-  it("carries the full contextManifest through the output, no field stripped (#30)", () => {
+  it("carries the full contextManifest send transcript through the output, no field stripped", () => {
     const manifest = {
       repoRecordId: "/repo",
       projectSnapshotId: "fp-1",
@@ -227,6 +227,19 @@ describe("review.canvases command", () => {
       assembledPromptDigest: "c".repeat(64),
       exhaustive: false,
       unmanagedSources: ["harness ambient file reads (context-isolation probe not yet run)"],
+      sends: [
+        {
+          seat: "finding",
+          harness: "claude-code",
+          channel: "prompt" as const,
+          attempt: 1,
+          promptBytes: 2_048,
+          promptDigest: "d".repeat(64),
+          contextIncluded: true,
+          contextDigest: "c".repeat(64),
+          sentAt: "2026-08-15T12:00:00.000Z",
+        },
+      ],
     };
     const output = parseCommandOutput("review.canvases", {
       canvases: canvasSet(),
@@ -237,6 +250,30 @@ describe("review.canvases command", () => {
     expect(output.contextManifest).toEqual(manifest);
     expect(output.contextManifest?.documents[1]?.state).toBe("truncated");
     expect(output.contextManifest?.assembledPromptDigest).toBe("c".repeat(64));
+    expect(output.contextManifest?.sends).toEqual(manifest.sends);
+  });
+
+  it("parses a contextManifest without sends for backward compatibility", () => {
+    const manifest = {
+      repoRecordId: "/repo",
+      projectSnapshotId: "fp-1",
+      compositionDigest: "comp-1",
+      freshness: { status: "current" as const, staleMembers: [] as const },
+      members: [],
+      documents: [],
+      totalBytes: 0,
+      assembledPromptDigest: "c".repeat(64),
+      exhaustive: false,
+      unmanagedSources: [],
+    };
+
+    const output = parseCommandOutput("review.canvases", {
+      canvases: canvasSet(),
+      elementDiffs: {},
+      contextManifest: manifest,
+    });
+
+    expect(output.contextManifest).toEqual(manifest);
   });
 
   it("round-trips WITHOUT contextManifest unchanged (pre-#30 shape preserved)", () => {

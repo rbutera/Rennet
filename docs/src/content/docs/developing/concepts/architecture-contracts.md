@@ -278,12 +278,16 @@ the harness and the job, so the run ledger records:
 - executable, version, harness, provider, and model-selection source;
 - working directory and read roots;
 - whether user config, hooks, MCP servers, or other ambient context may load;
-- the assembled prompt and context manifest;
+- the assembled prompt and context manifest, including per-attempt send records
+  derived from the exact prompt or system-append bytes at the harness boundary;
 - reported token use and the applicable product budget.
 
 The honest product claim is **no Rennet backend**. Selected code and context may
 leave the machine through the chosen harness provider. If ambient inputs cannot
 be enumerated, the manifest says `exhaustive: false`; it never invents completeness.
+The assembly is fed through the prompt's labelled `context` layer (or the
+orchestrator system append). Missing or failed context capture removes only that
+layer: it never refuses or alters the underlying turn.
 
 ## Storage and deletion
 

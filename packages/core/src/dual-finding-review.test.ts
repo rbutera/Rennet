@@ -350,4 +350,27 @@ describe("runDualFindingReview — dual-model Flagged orchestration (#41)", () =
     expect(promptB).toContain("UNIQUEINTENTMARKER");
     expect(promptB).toContain("UNIQUEHYPMARKER");
   });
+
+  it("feeds the identical assembled context layer to both finding seats", async () => {
+    let promptA = "";
+    let promptB = "";
+    const claude = vi.fn((prompt: string, attempt: number) => {
+      promptA = prompt;
+      return emits([])(prompt, attempt);
+    });
+    const codex = vi.fn((prompt: string, attempt: number) => {
+      promptB = prompt;
+      return emits([])(prompt, attempt);
+    });
+    const context = "shared dual-seat context\nwith exact bytes";
+
+    await runDualFindingReview({
+      ...baseInput([seat("claude-code", "Claude", claude), seat("codex", "Codex", codex)], true),
+      assembledContext: context,
+    });
+
+    const block = `<<<rennet:layer context>>>\n${context}\n\n<<<rennet:layer payload>>>`;
+    expect(promptA).toContain(block);
+    expect(promptB).toContain(block);
+  });
 });

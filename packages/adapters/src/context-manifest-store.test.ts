@@ -1,7 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ContextManifest } from "@rennet/types";
+import { sha256Hex } from "@rennet/protocol";
+import type { ContextManifest, ContextSendRecord } from "@rennet/types";
 import { afterEach, describe, expect, it } from "vitest";
 import { ContextManifestStore } from "./context-manifest-store";
 import { ProjectSnapshotStore } from "./project-snapshot-store";
@@ -19,6 +20,7 @@ function freshStore(): { store: ProjectSnapshotStore; dir: string } {
 
 const REPO_KEY = "-repo";
 const BASE_OID = "oid-abc";
+const ASSEMBLY_TEXT = "assembled context\nwith exact bytes";
 
 const MANIFEST: ContextManifest = {
   repoRecordId: REPO_KEY,
@@ -38,7 +40,7 @@ const MANIFEST: ContextManifest = {
     },
   ],
   totalBytes: 120,
-  assembledPromptDigest: "b".repeat(64),
+  assembledPromptDigest: sha256Hex(ASSEMBLY_TEXT),
   exhaustive: false,
   unmanagedSources: ["harness ambient file reads"],
 };
@@ -79,5 +81,71 @@ describe("ContextManifestStore (#30)", () => {
     cms.save(REPO_KEY, "oid-2", { ...MANIFEST, assembledPromptDigest: "2".repeat(64) });
     expect(cms.load(REPO_KEY, "oid-1")?.assembledPromptDigest).toBe("1".repeat(64));
     expect(cms.load(REPO_KEY, "oid-2")?.assembledPromptDigest).toBe("2".repeat(64));
+  });
+
+  it("persists the exact assembly text beside the manifest JSON", () => {
+    const { store } = freshStore();
+    const cms = new ContextManifestStore(store);
+
+    cms.saveText(REPO_KEY, BASE_OID, ASSEMBLY_TEXT);
+
+    const textPath = join(
+      store.paths(REPO_KEY).projectDir,
+      "context-manifests",
+      `${BASE_OID}.context.txt`,
+    );
+    expect(readFileSync(textPath, "utf8")).toBe(ASSEMBLY_TEXT);
+  });
+
+  it("loads manifest and text only when the text digest matches the manifest", () => {
+    const { store } = freshStore();
+    const cms = new ContextManifestStore(store);
+    cms.save(REPO_KEY, BASE_OID, MANIFEST);
+    cms.saveText(REPO_KEY, BASE_OID, ASSEMBLY_TEXT);
+
+    expect(cms.loadVerified(REPO_KEY, BASE_OID)).toEqual({
+      manifest: MANIFEST,
+      text: ASSEMBLY_TEXT,
+    });
+
+    cms.saveText(REPO_KEY, BASE_OID, "mismatched bytes");
+    expect(cms.loadVerified(REPO_KEY, BASE_OID)).toBeNull();
+  });
+
+  it("treats missing text and malformed persisted JSON as verified absence without throwing", () => {
+    const { store } = freshStore();
+    const cms = new ContextManifestStore(store);
+    cms.save(REPO_KEY, BASE_OID, MANIFEST);
+    expect(cms.loadVerified(REPO_KEY, BASE_OID)).toBeNull();
+
+    const path = join(store.paths(REPO_KEY).projectDir, "context-manifests", `${BASE_OID}.json`);
+    writeFileSync(path, "{not-json");
+    expect(() => cms.loadVerified(REPO_KEY, BASE_OID)).not.toThrow();
+    expect(cms.loadVerified(REPO_KEY, BASE_OID)).toBeNull();
+  });
+
+  it("atomically appends sends to a pre-sends manifest", () => {
+    const { store } = freshStore();
+    const cms = new ContextManifestStore(store);
+    const send: ContextSendRecord = {
+      seat: "finding",
+      harness: "claude-code",
+      channel: "prompt",
+      attempt: 0,
+      promptBytes: 123,
+      promptDigest: "c".repeat(64),
+      contextIncluded: true,
+      contextDigest: MANIFEST.assembledPromptDigest,
+      sentAt: "2026-08-15T12:00:00.000Z",
+    };
+    cms.save(REPO_KEY, BASE_OID, MANIFEST);
+
+    cms.appendSends(REPO_KEY, BASE_OID, [send]);
+    cms.appendSends(REPO_KEY, BASE_OID, [{ ...send, seat: "ordering", attempt: 1 }]);
+
+    expect(cms.load(REPO_KEY, BASE_OID)?.sends).toEqual([
+      send,
+      { ...send, seat: "ordering", attempt: 1 },
+    ]);
   });
 });

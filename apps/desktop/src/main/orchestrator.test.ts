@@ -5,8 +5,10 @@ import { join } from "node:path";
 import type { Query } from "@anthropic-ai/claude-agent-sdk";
 import type { LoadSdkQuery } from "@rennet/adapters";
 import { buildReviewCanvases, type ReviewPipelineResult } from "@rennet/core";
+import { sha256Hex } from "@rennet/protocol";
 import type { PatchFile, Patchset, Review } from "@rennet/types";
 import { afterEach, describe, expect, it } from "vitest";
+import { loadDesktopReviewContextManifest } from "./live-review-backend";
 import { createOrchestratorTurnRunner } from "./orchestrator";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -142,6 +144,40 @@ describe("createOrchestratorTurnRunner — the desktop composition", () => {
     expect(outcome.result.toolCalls.map((c) => c.op)).toEqual(["context.map"]);
     expect(outcome.result.outcome).toBe("completed");
     expect(fake.calls()).toBe(1);
+  });
+
+  it("feeds the verified assembly to the orchestrator and persists its exact send", async () => {
+    const { review, pipeline } = await liveReview();
+    const baseDir = tempBaseDir();
+    let append = "";
+    const loadQuery: LoadSdkQuery = (() =>
+      Promise.resolve((args: { options?: { systemPrompt?: { append?: string } } }): Query => {
+        append = args.options?.systemPrompt?.append ?? "";
+        async function* gen(): AsyncGenerator<unknown> {
+          yield { type: "result", subtype: "success", is_error: false, result: "ok" };
+        }
+        return gen() as unknown as Query;
+      })) as unknown as LoadSdkQuery;
+    const run = createOrchestratorTurnRunner({
+      baseDir,
+      resolveClaudePath: () => Promise.resolve("/fake/claude"),
+      loadQuery,
+    });
+
+    await run(review, pipeline, "Map the base.");
+    const manifest = await loadDesktopReviewContextManifest(review, { baseDir });
+
+    expect(append).toContain("<<<rennet:layer context>>>\n");
+    expect(manifest?.sends).toHaveLength(1);
+    expect(manifest?.sends?.[0]).toMatchObject({
+      seat: "orchestrator",
+      harness: "claude-code",
+      channel: "system-append",
+      attempt: 0,
+      promptDigest: sha256Hex(append),
+      contextIncluded: true,
+      contextDigest: manifest?.assembledPromptDigest,
+    });
   });
 
   it("threads the AbortController into the SDK options so a live turn is cancellable (#251 criterion 4)", async () => {

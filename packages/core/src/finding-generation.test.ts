@@ -1,3 +1,4 @@
+import { sha256Hex } from "@rennet/protocol";
 import type { PatchFile, Patchset, RspCapabilitySnapshot } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { buildOfferedManifest } from "./angle-generation";
@@ -109,6 +110,35 @@ function modelFinding(overrides: Record<string, unknown> = {}): Record<string, u
 }
 
 describe("runFindingAngle — the live finding runner (issue #32)", () => {
+  it("feeds assembled context verbatim and preserves the absent-context prompt golden", async () => {
+    const capture = async (assembledContext?: string): Promise<string> => {
+      let prompt = "";
+      await runFindingAngle({
+        patchsetId: PATCHSET.id,
+        manifest: MANIFEST,
+        provenance: SEED,
+        assembledContext,
+        runTurn: (sent) => {
+          prompt = sent;
+          return Promise.resolve({ status: "emitted", body: { findings: [] } });
+        },
+        budget: createInvocationBudget(5),
+      });
+      return prompt;
+    };
+    const context = "shared context line one\nshared context line two";
+    const absent = await capture();
+    const present = await capture(context);
+
+    expect(sha256Hex(absent)).toBe(
+      "28657be302ffa327584a27a8ef75f61b5130bc59093666d1d1a9bd2e20ee2bfc",
+    );
+    expect(absent).not.toContain("<<<rennet:layer context>>>");
+    expect(present).toContain(
+      `<<<rennet:layer context>>>\n${context}\n\n<<<rennet:layer payload>>>`,
+    );
+  });
+
   it("admits a grounded finding, minting the id and owning the concur vote", async () => {
     const result = await runFindingAngle({
       patchsetId: PATCHSET.id,

@@ -8,7 +8,7 @@ import {
 } from "@rennet/adapters";
 import type { ReviewPipelineResult } from "@rennet/core";
 import type { Review } from "@rennet/types";
-import { createDesktopReviewBackend } from "./live-review-backend";
+import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The desktop composition root for a live orchestrator turn (issue #13, wave 2).
@@ -49,6 +49,7 @@ export interface OrchestratorRunnerDeps {
   readonly loadQuery?: LoadSdkQuery;
   /** canvasOps@2 MCP-server SDK loader; defaults to the real lazy import. Injectable for tests. */
   readonly loadSdk?: LoadCanvasOpsSdk;
+  readonly onContextFeedError?: (error: unknown) => void;
 }
 
 /** A turn is unavailable when no `claude` binary was discovered (fail-closed, honest). */
@@ -100,21 +101,33 @@ export function createOrchestratorTurnRunner(deps: OrchestratorRunnerDeps): Orch
       ...deps.backend,
     });
     const primer = deriveOrchestratorPrimerState(pipeline, backend, snapshot);
-
-    const result = await runOrchestratorTurn(backend, primer, question, {
-      claudePath,
-      // KNOWN §7.2 DEVIATION (inherited, unchanged): the harness cwd is the live
-      // mutable checkout, not an immutable materialisation of the patchset (#30,
-      // deferred). Named so it is not silently widened.
-      cwd: review.repositoryRoot,
-      ...(deps.env ? { env: deps.env } : {}),
-      ...(deps.loadQuery ? { loadQuery: deps.loadQuery } : {}),
-      ...(deps.loadSdk ? { loadSdk: deps.loadSdk } : {}),
-      ...(onDelta ? { onDelta } : {}),
-      // #251 criterion 4: hand the SDK the AbortController so `before-quit` can cancel
-      // the live claude turn. Absent → an uncancellable turn (fully back-compat).
-      ...(abortController ? { abortController } : {}),
+    const contextFeed = await createDesktopReviewContextFeed(review, {
+      ...(deps.baseDir ? { baseDir: deps.baseDir } : {}),
+      ...(deps.onContextFeedError ? { onError: deps.onContextFeedError } : {}),
     });
-    return { available: true, result };
+
+    try {
+      const result = await runOrchestratorTurn(backend, primer, question, {
+        claudePath,
+        // KNOWN §7.2 DEVIATION (inherited, unchanged): the harness cwd is the live
+        // mutable checkout, not an immutable materialisation of the patchset (#30,
+        // deferred). Named so it is not silently widened.
+        cwd: review.repositoryRoot,
+        ...(deps.env ? { env: deps.env } : {}),
+        ...(deps.loadQuery ? { loadQuery: deps.loadQuery } : {}),
+        ...(deps.loadSdk ? { loadSdk: deps.loadSdk } : {}),
+        ...(onDelta ? { onDelta } : {}),
+        ...(contextFeed.assembledContext === undefined
+          ? {}
+          : { assembledContext: contextFeed.assembledContext }),
+        onSend: contextFeed.onSend,
+        // #251 criterion 4: hand the SDK the AbortController so `before-quit` can cancel
+        // the live claude turn. Absent → an uncancellable turn (fully back-compat).
+        ...(abortController ? { abortController } : {}),
+      });
+      return { available: true, result };
+    } finally {
+      contextFeed.complete();
+    }
   };
 }

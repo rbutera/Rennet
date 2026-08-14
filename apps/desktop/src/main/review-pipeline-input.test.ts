@@ -99,4 +99,21 @@ describe("buildReviewCanvasesInput — the composition hands ownership to the pi
     });
     expect("codexPort" in without).toBe(false);
   });
+
+  it("threads the verified assembly and send sink to the pipeline composition", () => {
+    const onSend = () => undefined;
+    const input = buildReviewCanvasesInput({
+      reviewId: "rv",
+      patchset: patchset(),
+      dispositions: [],
+      ownership: [],
+      installed: [],
+      decisionDocs: [],
+      assembledContext: "captured context",
+      onSend,
+    });
+
+    expect(input.assembledContext).toBe("captured context");
+    expect(input.onSend).toBe(onSend);
+  });
 });

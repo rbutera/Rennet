@@ -79,9 +79,11 @@ import {
   type ForgePrSubmissionOutcome,
   fanInIndexFromSnapshot,
   guardSeatTurn,
+  type HarnessTurnResult,
   markVerificationUnavailable,
   patchsetIntentToReviewIntent,
   ReviewService,
+  recordSeatSend,
   resolveDualSeat,
   runCoverageMapping,
   runDecisionAngle,
@@ -121,10 +123,7 @@ import { createLiveDeltaDigestPort } from "./delta-digest-live";
 import { createDispatch } from "./dispatch";
 import { createLiveDraftPrBodyPort } from "./draft-pr-body-live";
 import { createLiveComposeBundle } from "./handoff-compose-live";
-import {
-  createDesktopReviewBackend,
-  loadDesktopReviewContextManifest,
-} from "./live-review-backend";
+import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
 import { LiveTurnRegistry } from "./live-turn-registry";
 import {
   createEditorLaunchEffects,
@@ -141,6 +140,7 @@ import { createProcessProject } from "./process-project";
 import { createPublishConsentAuthority } from "./publish-consent-authority";
 import { createLiveRefinePort } from "./refine-comment-live";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
+import type { ReviewContextFeed } from "./review-context-feed";
 import { loadReviewOwnership } from "./review-ownership";
 import { buildReviewCanvasesInput } from "./review-pipeline-input";
 import { createSettingsComposition } from "./settings";
@@ -498,6 +498,9 @@ async function buildCanvasesForReview(review: Review): Promise<{
   /** The captured context-composition manifest; absent ⇒ honestly not available. */
   contextManifest?: ContextManifest;
 }> {
+  const contextFeed = await createDesktopReviewContextFeed(review, {
+    onError: reportContextFeedError,
+  });
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
   const codex = await getCodexAvailability();
@@ -547,14 +550,21 @@ async function buildCanvasesForReview(review: Review): Promise<{
   // the Decisions runner as disconfirmation criteria and rides the result as the
   // human's reading frame. Absent an adapter (or on a failed pass) it is undefined
   // and every lens runs exactly as before.
-  const hypothesis = await computeReviewHypothesis(review, patchset, adapter);
+  const hypothesis = await computeReviewHypothesis(review, patchset, adapter, contextFeed);
 
   // The per-project convention checklist (#180), sourced once and fed to the
   // Decisions runner as a labelled layer. Absent (no catalogue file), the runner
   // reasons exactly as before.
   const conventions = loadReviewConventions(review);
 
-  const decisions = await runDecisionsForReview(review, patchset, adapter, hypothesis, conventions);
+  const decisions = await runDecisionsForReview(
+    review,
+    patchset,
+    adapter,
+    contextFeed,
+    hypothesis,
+    conventions,
+  );
 
   // The blast-radius CODEOWNERS-overlap signal (issue #35) fires only when handed
   // the review's ownership rules. Read them off the built ProjectSnapshot; absent a
@@ -563,10 +573,6 @@ async function buildCanvasesForReview(review: Review): Promise<{
   // The fan-in index (#200), materialized off the built snapshot; undefined ⇒ fan-in
   // stays NOT-ASSESSED (the populated guard lives in the loader), never a silent zero.
   const fanIn = await loadReviewFanInIndex(review);
-  // The captured context-composition manifest for this review. Undefined ⇒ honestly
-  // not available.
-  const contextManifest = await loadReviewContextManifest(review);
-
   // Assemble the pipeline input at the ONE testable composition seam (F4): this is
   // where `ownership` reaches the pipeline, so the guard against dropping it lives on
   // `buildReviewCanvasesInput`, not on the loader beneath it. The Decisions lens
@@ -586,8 +592,13 @@ async function buildCanvasesForReview(review: Review): Promise<{
       ...(runDecompositionTurn ? { runDecompositionTurn } : {}),
       ...(runOrderingTurn ? { runOrderingTurn } : {}),
       ...(runNarrationTurn ? { runNarrationTurn } : {}),
+      ...(contextFeed.assembledContext === undefined
+        ? {}
+        : { assembledContext: contextFeed.assembledContext }),
+      onSend: contextFeed.onSend,
     }),
   );
+  const contextManifest = contextFeed.complete();
   // The honesty signal for the renderer (real-AI-default): a review is a REAL AI
   // review iff at least one model harness was installed AND the budget actually
   // let a turn run. With neither claude nor codex — or a refused budget — the set
@@ -701,13 +712,16 @@ async function loadReviewFanInIndex(review: Review): Promise<FanInIndex | undefi
   return fanInIndexFromSnapshot(gated.snapshot);
 }
 
-/**
- * The captured ContextManifest for a review (issue #30). The desktop and live
- * backend paths both use the capture-once store seam, so mutable working-tree
- * guidance cannot create two manifests for the same review.
- */
-async function loadReviewContextManifest(review: Review): Promise<ContextManifest | undefined> {
-  return loadDesktopReviewContextManifest(review);
+function reportContextFeedError(error: unknown): void {
+  console.error("Context feed transcript persistence failed", error);
+}
+
+function recordedDesktopSeatTurn(
+  runTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
+  seat: string,
+  feed: ReviewContextFeed,
+): (prompt: string, attempt: number) => Promise<HarnessTurnResult> {
+  return guardSeatTurn(recordSeatSend(runTurn, { seat, harness: "claude-code" }, feed.onSend));
 }
 
 /**
@@ -727,6 +741,7 @@ async function computeReviewHypothesis(
   review: Review,
   patchset: Patchset,
   adapter: Awaited<ReturnType<typeof getClaudeHarness>>["adapter"],
+  contextFeed: ReviewContextFeed,
 ): Promise<ReviewHypothesis | undefined> {
   if (!adapter) return undefined;
   const decomposition = decompose(patchset);
@@ -756,8 +771,11 @@ async function computeReviewHypothesis(
     provenance: HYPOTHESIS_PROVENANCE_SEED,
     // A thrown/rejected turn (a session/transport construction exception, #96)
     // degrades to a turn-failure rather than crashing the command.
-    runTurn: guardSeatTurn(runHypothesisTurn),
+    runTurn: recordedDesktopSeatTurn(runHypothesisTurn, "hypothesis", contextFeed),
     budget,
+    ...(contextFeed.assembledContext === undefined
+      ? {}
+      : { assembledContext: contextFeed.assembledContext }),
   });
   return result.status === "ok" ? result.hypothesis : undefined;
 }
@@ -807,6 +825,7 @@ async function runDecisionsForReview(
   review: Review,
   patchset: Patchset,
   adapter: Awaited<ReturnType<typeof getClaudeHarness>>["adapter"],
+  contextFeed: ReviewContextFeed,
   hypothesis?: ReviewHypothesis,
   conventions?: ConventionCatalogue,
 ): Promise<{ docs: AdmittedDocument[]; status: DecisionsRunStatus }> {
@@ -847,8 +866,11 @@ async function runDecisionsForReview(
     provenance: DECISION_PROVENANCE_SEED,
     // A thrown/rejected turn (a session/transport construction exception, #96)
     // degrades to a turn-failure rather than crashing the command.
-    runTurn: guardSeatTurn(runDecisionTurn),
+    runTurn: recordedDesktopSeatTurn(runDecisionTurn, "decisions", contextFeed),
     budget,
+    ...(contextFeed.assembledContext === undefined
+      ? {}
+      : { assembledContext: contextFeed.assembledContext }),
   });
   if (result.status === "ok") {
     const doc = result.document;
@@ -912,6 +934,9 @@ const FINDING_PROVENANCE_SEED = {
  * lens gets the LOUD `failed` state — "ran clean" is never faked from "did not run".
  */
 async function runFlaggedReview(review: Review, deepReview = true): Promise<FlaggedReview> {
+  const contextFeed = await createDesktopReviewContextFeed(review, {
+    onError: reportContextFeedError,
+  });
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
   const codex = await getCodexAvailability();
@@ -963,7 +988,7 @@ async function runFlaggedReview(review: Review, deepReview = true): Promise<Flag
   // undefined. The intent is projected from the frozen capture on the patchset;
   // absent a captured surface it is undefined. With BOTH undefined the finding
   // assembly is byte-identical to before this change (no regression).
-  const hypothesis = await computeReviewHypothesis(review, patchset, adapter);
+  const hypothesis = await computeReviewHypothesis(review, patchset, adapter, contextFeed);
   const intent = patchsetIntentToReviewIntent(patchset.intent);
 
   const { review: flagged } = await runDualFindingReview({
@@ -975,6 +1000,10 @@ async function runFlaggedReview(review: Review, deepReview = true): Promise<Flag
     ...(intent ? { intent } : {}),
     ...(hypothesis ? { hypothesis } : {}),
     ...(conventions ? { conventions } : {}),
+    ...(contextFeed.assembledContext === undefined
+      ? {}
+      : { assembledContext: contextFeed.assembledContext }),
+    onSend: contextFeed.onSend,
   });
 
   // ── Per-finding verification (#179): a DEEP-REVIEW feature, alongside dual-model ──
@@ -1013,7 +1042,9 @@ async function runFlaggedReview(review: Review, deepReview = true): Promise<Flag
     // ones were dropped), so a risk marked `confirmed` is addressed by a finding
     // that actually surfaces. Deterministic, $0 — absent a hypothesis it returns
     // `verified` unchanged.
-    return attachRiskCrossCheck(verified, hypothesis);
+    const result = attachRiskCrossCheck(verified, hypothesis);
+    contextFeed.complete();
+    return result;
   }
   // DEEP review requested but NO Claude verifier (e.g. Codex-only: findings were
   // produced by the Codex seat, but verification needs the Claude adapter). Announce it
@@ -1022,12 +1053,16 @@ async function runFlaggedReview(review: Review, deepReview = true): Promise<Flag
   // all-clear while deep review appears active. `adapter` is falsy here (we are past the
   // branch above), so this is exactly the no-verifier deep case.
   if (deepReview) {
-    return attachRiskCrossCheck(markVerificationUnavailable(flagged), hypothesis);
+    const result = attachRiskCrossCheck(markVerificationUnavailable(flagged), hypothesis);
+    contextFeed.complete();
+    return result;
   }
   // Quick review (single-seat, unverified): the cross-check still runs — it is a
   // free deterministic step — over the single seat's own findings. No chip, byte-
   // identical to before (quick review never promised verification).
-  return attachRiskCrossCheck(flagged, hypothesis);
+  const result = attachRiskCrossCheck(flagged, hypothesis);
+  contextFeed.complete();
+  return result;
 }
 
 /**
@@ -1138,9 +1173,13 @@ const NOISE_PROVENANCE_SEED = {
  * "a mechanical certainty settles this" claim rather than a deterministic checker's.
  */
 async function runNoiseReview(review: Review): Promise<NoiseReview> {
+  const contextFeed = await createDesktopReviewContextFeed(review, {
+    onError: reportContextFeedError,
+  });
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
   if (!adapter) {
+    contextFeed.complete();
     return { status: "failed", reason: "no model harness is available to classify noise" };
   }
   const decomposition = decompose(patchset);
@@ -1168,12 +1207,17 @@ async function runNoiseReview(review: Review): Promise<NoiseReview> {
     noiseJobModel: "Claude",
     // A thrown/rejected turn (a session/transport construction exception, #96)
     // degrades to a turn-failure rather than crashing the command.
-    runTurn: guardSeatTurn(runNoiseTurn),
+    runTurn: recordedDesktopSeatTurn(runNoiseTurn, "noise", contextFeed),
     budget,
+    ...(contextFeed.assembledContext === undefined
+      ? {}
+      : { assembledContext: contextFeed.assembledContext }),
   });
   if (result.status === "ok") {
+    contextFeed.complete();
     return { status: "ok", groups: result.groups };
   }
+  contextFeed.complete();
   return {
     status: "failed",
     reason: result.failureReason ?? "the noise runner did not complete",

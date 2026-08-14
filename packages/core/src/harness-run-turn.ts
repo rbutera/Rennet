@@ -18,14 +18,81 @@
  * angle's always-present deterministic floor stands.
  */
 
-import { bodyJsonSchema } from "@rennet/protocol";
-import type { RspDocType, RspTokenUsage } from "@rennet/types";
+import { bodyJsonSchema, sha256Hex } from "@rennet/protocol";
+import type { ContextSendRecord, RspDocType, RspTokenUsage } from "@rennet/types";
 import type { HarnessPort } from "./harness";
 
 /** The turn result shape shared by `runDecompositionAngle` and `runOrderingPass`. */
 export type HarnessTurnResult =
   | { readonly status: "emitted"; readonly body: unknown; readonly tokens?: RspTokenUsage }
   | { readonly status: "failed"; readonly message: string };
+
+const CONTEXT_LAYER_PREFIX = "<<<rennet:layer context>>>\n";
+const PAYLOAD_LAYER_SEPARATOR = "\n\n<<<rennet:layer payload>>>\n";
+const UTF8_ENCODER = new TextEncoder();
+
+function extractContextLayer(sentText: string): string | undefined {
+  const prefixed = `\n\n${CONTEXT_LAYER_PREFIX}`;
+  const contextStart = sentText.startsWith(CONTEXT_LAYER_PREFIX)
+    ? 0
+    : sentText.indexOf(prefixed) < 0
+      ? -1
+      : sentText.indexOf(prefixed) + 2;
+  if (contextStart < 0) return undefined;
+
+  const bodyStart = contextStart + CONTEXT_LAYER_PREFIX.length;
+  const payloadStart = sentText.indexOf(PAYLOAD_LAYER_SEPARATOR, bodyStart);
+  return sentText.slice(bodyStart, payloadStart < 0 ? sentText.length : payloadStart);
+}
+
+export interface ContextSendRecordInput {
+  readonly seat: string;
+  readonly harness: string;
+  readonly channel: ContextSendRecord["channel"];
+  readonly attempt: number;
+}
+
+export function buildContextSendRecord(
+  sentText: string,
+  input: ContextSendRecordInput,
+): ContextSendRecord {
+  const context = extractContextLayer(sentText);
+  return {
+    seat: input.seat,
+    harness: input.harness,
+    channel: input.channel,
+    attempt: input.attempt,
+    promptBytes: UTF8_ENCODER.encode(sentText).length,
+    promptDigest: sha256Hex(sentText),
+    contextIncluded: context !== undefined,
+    ...(context === undefined ? {} : { contextDigest: sha256Hex(context) }),
+    sentAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Record the exact prompt handed to a seat before delegating. Compose this inside
+ * the throw guard as `guardSeatTurn(recordSeatSend(runTurn, meta, sink))` so a
+ * handed-off prompt remains in the transcript even when the turn later throws.
+ */
+export function recordSeatSend(
+  runTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
+  meta: { readonly seat: string; readonly harness: string },
+  sink: (record: ContextSendRecord) => void,
+): (prompt: string, attempt: number) => Promise<HarnessTurnResult> {
+  return async function recordedSeatSend(
+    prompt: string,
+    attempt: number,
+  ): Promise<HarnessTurnResult> {
+    const record = buildContextSendRecord(prompt, { ...meta, channel: "prompt", attempt });
+    try {
+      sink(record);
+    } catch {
+      // Transcript observation must never block or alter the turn.
+    }
+    return runTurn(prompt, attempt);
+  };
+}
 
 /** Render a thrown value (Error, string, or anything) into a turn-failure message. */
 function describeTurnThrow(error: unknown): string {

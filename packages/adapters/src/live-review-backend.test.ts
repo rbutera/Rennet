@@ -25,6 +25,7 @@ import { KnowledgeStore } from "./knowledge-store";
 import {
   buildReviewContextManifest,
   createLiveCanvasOpsBackend,
+  ensureReviewContextAssembly,
   repoRecordOf,
 } from "./live-review-backend";
 import { NoveltyLifecycleRegistry } from "./novelty-lifecycle-registry";
@@ -405,6 +406,69 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
     // Same inputs → same manifest. The separate desktop test proves production
     // consumers load the persisted artifact instead of relying on this recomputation.
     expect(built.manifest).toEqual(opened.contextManifest);
+  });
+
+  it("serves the persisted digest-verified assembly without re-reading mutable guidance", async () => {
+    const repo = workspaceRepo();
+    git(repo.root, "reset", "--hard", repo.oid1);
+    const store = freshStore();
+    await new ProjectSnapshotGenerator({ store }).generate(repo.root, {
+      explicitBaseRef: repo.oid1,
+    });
+    const { review } = await reviewAt(repo.root, repo.commonDir, repo.oid1);
+    const built = await buildReviewContextManifest({ store, review });
+    if (!built) throw new Error("expected a context assembly");
+    const { repoKey, baseOid } = repoRecordOf(review);
+    const manifestStore = new ContextManifestStore(store);
+    manifestStore.save(repoKey, baseOid, built.manifest);
+    manifestStore.saveText(repoKey, baseOid, built.assembly.text);
+    write(repo.root, "CLAUDE.md", "mutable guidance changed after capture\n");
+
+    const ensured = await ensureReviewContextAssembly({ store, review });
+
+    expect(ensured).toEqual({ manifest: built.manifest, text: built.assembly.text });
+  });
+
+  it("rebuilds and re-persists both artifacts when text is mismatched or missing", async () => {
+    const repo = workspaceRepo();
+    git(repo.root, "reset", "--hard", repo.oid1);
+    const store = freshStore();
+    await new ProjectSnapshotGenerator({ store }).generate(repo.root, {
+      explicitBaseRef: repo.oid1,
+    });
+    const { review } = await reviewAt(repo.root, repo.commonDir, repo.oid1);
+    const original = await buildReviewContextManifest({ store, review });
+    if (!original) throw new Error("expected a context assembly");
+    const { repoKey, baseOid } = repoRecordOf(review);
+    const manifestStore = new ContextManifestStore(store);
+    manifestStore.save(repoKey, baseOid, original.manifest);
+    manifestStore.saveText(repoKey, baseOid, "mismatched text");
+    write(repo.root, "CLAUDE.md", "replacement guidance one\n");
+
+    const fromMismatch = await ensureReviewContextAssembly({ store, review });
+    expect(fromMismatch).toBeDefined();
+    expect(manifestStore.loadVerified(repoKey, baseOid)).toEqual(fromMismatch);
+    expect(fromMismatch?.manifest.assembledPromptDigest).not.toBe(
+      original.manifest.assembledPromptDigest,
+    );
+
+    rmSync(join(store.paths(repoKey).projectDir, "context-manifests", `${baseOid}.context.txt`));
+    write(repo.root, "CLAUDE.md", "replacement guidance two\n");
+    const fromMissing = await ensureReviewContextAssembly({ store, review });
+    expect(fromMissing).toBeDefined();
+    expect(manifestStore.loadVerified(repoKey, baseOid)).toEqual(fromMissing);
+    expect(fromMissing?.manifest.assembledPromptDigest).not.toBe(
+      fromMismatch?.manifest.assembledPromptDigest,
+    );
+  });
+
+  it("returns honest undefined without throwing when no snapshot can produce an assembly", async () => {
+    const repo = workspaceRepo();
+    const { review } = await reviewAt(repo.root, repo.commonDir, repo.oid1);
+
+    await expect(
+      ensureReviewContextAssembly({ store: freshStore(), review }),
+    ).resolves.toBeUndefined();
   });
 
   it("serves REAL snapshot-derived data for context.map / context.file / context.novelty", async () => {

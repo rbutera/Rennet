@@ -23,6 +23,7 @@
 
 import type { AssembleOptions, PromptContract } from "@rennet/instructions";
 import type {
+  ContextSendRecord,
   ConventionCatalogue,
   CouncilHarnessId,
   DualReviewNote,
@@ -38,7 +39,7 @@ import {
   runFindingAngle,
 } from "./finding-generation";
 import { reconcileFindings } from "./finding-reconcile";
-import { guardSeatTurn } from "./harness-run-turn";
+import { guardSeatTurn, recordSeatSend } from "./harness-run-turn";
 
 export interface RunDualFindingReviewInput {
   /**
@@ -60,6 +61,8 @@ export interface RunDualFindingReviewInput {
   /** Builds one fresh invocation budget per seat run (each seat its own ceiling). */
   readonly makeBudget: () => InvocationBudget;
   readonly guidance?: { readonly general?: string; readonly files?: string };
+  readonly assembledContext?: string;
+  readonly onSend?: (record: ContextSendRecord) => void;
   readonly assembleOptions?: AssembleOptions;
   readonly maxRetries?: number;
   readonly mintDocId?: () => string;
@@ -89,13 +92,18 @@ async function runSeat(seat: DualSeat, input: RunDualFindingReviewInput): Promis
     // A thrown turn (a Codex spawn or session/transport exception) degrades to a
     // turn-failure rather than crashing the review (#96) — the seat then fails and
     // the reconcile degrades to the other seat.
-    runTurn: guardSeatTurn(seat.runTurn),
+    runTurn: guardSeatTurn(
+      input.onSend
+        ? recordSeatSend(seat.runTurn, { seat: "finding", harness: seat.provider }, input.onSend)
+        : seat.runTurn,
+    ),
     budget: input.makeBudget(),
     ...(input.intent ? { intent: input.intent } : {}),
     ...(input.hypothesis ? { hypothesis: input.hypothesis } : {}),
     ...(input.conventions ? { conventions: input.conventions } : {}),
     ...(input.contract ? { contract: input.contract } : {}),
     ...(input.guidance ? { guidance: input.guidance } : {}),
+    ...(input.assembledContext === undefined ? {} : { assembledContext: input.assembledContext }),
     ...(input.assembleOptions ? { assembleOptions: input.assembleOptions } : {}),
     ...(input.maxRetries === undefined ? {} : { maxRetries: input.maxRetries }),
     ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),

@@ -218,6 +218,7 @@ export {
   type CaptureReviewContextManifestDeps,
   captureReviewContextManifest,
   createLiveCanvasOpsBackend,
+  ensureReviewContextAssembly,
   type LiveBackendDeps,
   type LiveReviewBackend,
   type LiveSnapshotOutcome,

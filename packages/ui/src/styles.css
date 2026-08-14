@@ -1811,6 +1811,38 @@ button {
   font-size: 11px;
   color: var(--text-faint);
 }
+.context-manifest-sends {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.context-manifest-send {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 4px 8px;
+  border-radius: 6px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.context-manifest-send[data-context-included="false"] {
+  opacity: 0.72;
+}
+.context-manifest-send-seat,
+.context-manifest-send-harness {
+  font-weight: 650;
+  color: var(--text-soft);
+}
+.context-manifest-send-channel,
+.context-manifest-send code {
+  font-family: var(--mono, ui-monospace, monospace);
+}
+.context-manifest-send[data-digest-match="true"] span:nth-last-of-type(2) {
+  color: var(--green);
+}
 .context-manifest-empty,
 .context-manifest-unmanaged {
   margin: 0;

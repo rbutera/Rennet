@@ -1,3 +1,4 @@
+import { sha256Hex } from "@rennet/protocol";
 import type {
   HypothesisStructure,
   PatchFile,
@@ -101,6 +102,36 @@ function emits(body: unknown): (prompt: string, attempt: number) => Promise<Hypo
 }
 
 describe("runHypothesisPass — the hypothesis-first pre-read (issue #178)", () => {
+  it("feeds assembled context verbatim and preserves the absent-context prompt golden", async () => {
+    const capture = async (assembledContext?: string): Promise<string> => {
+      let prompt = "";
+      await runHypothesisPass({
+        patchsetId: PATCHSET.id,
+        manifest: MANIFEST,
+        structure: STRUCTURE,
+        provenance: SEED,
+        assembledContext,
+        runTurn: (sent) => {
+          prompt = sent;
+          return Promise.resolve({ status: "emitted", body: modelHypothesis() });
+        },
+        budget: createInvocationBudget(5),
+      });
+      return prompt;
+    };
+    const context = "shared context line one\nshared context line two";
+    const absent = await capture();
+    const present = await capture(context);
+
+    expect(sha256Hex(absent)).toBe(
+      "24bab9099f70c717eef3a013372bd7695919ed71c1bf6ce1cbb1bc982dd5e0d0",
+    );
+    expect(absent).not.toContain("<<<rennet:layer context>>>");
+    expect(present).toContain(
+      `<<<rennet:layer context>>>\n${context}\n\n<<<rennet:layer payload>>>`,
+    );
+  });
+
   it("admits a well-formed hypothesis, minting each riskId (agents never mint identity)", async () => {
     const result = await runHypothesisPass({
       patchsetId: PATCHSET.id,

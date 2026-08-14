@@ -1,3 +1,4 @@
+import { sha256Hex } from "@rennet/protocol";
 import type { PatchFile, Patchset, RspCapabilitySnapshot } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { buildOfferedManifest } from "./angle-generation";
@@ -110,6 +111,36 @@ function noiseJobGroup(overrides: Record<string, unknown> = {}): Record<string, 
 }
 
 describe("runNoiseAngle — the live noise runner (issue #34)", () => {
+  it("feeds assembled context verbatim and preserves the absent-context prompt golden", async () => {
+    const capture = async (assembledContext?: string): Promise<string> => {
+      let prompt = "";
+      await runNoiseAngle({
+        patchsetId: PATCHSET.id,
+        manifest: MANIFEST,
+        provenance: SEED,
+        noiseJobModel: "Claude",
+        assembledContext,
+        runTurn: (sent) => {
+          prompt = sent;
+          return Promise.resolve({ status: "emitted", body: { groups: [] } });
+        },
+        budget: createInvocationBudget(5),
+      });
+      return prompt;
+    };
+    const context = "shared context line one\nshared context line two";
+    const absent = await capture();
+    const present = await capture(context);
+
+    expect(sha256Hex(absent)).toBe(
+      "b42660d429e9d960e4fc49b208b02aa6d1ff811c179bb5117ac81b6ae8f4dcab",
+    );
+    expect(absent).not.toContain("<<<rennet:layer context>>>");
+    expect(present).toContain(
+      `<<<rennet:layer context>>>\n${context}\n\n<<<rennet:layer payload>>>`,
+    );
+  });
+
   it("admits grounded groups, minting the id and stamping the noise-job model", async () => {
     const result = await runNoiseAngle({
       patchsetId: PATCHSET.id,

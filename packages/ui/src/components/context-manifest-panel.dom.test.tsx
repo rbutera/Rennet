@@ -4,7 +4,7 @@
 // documents Rennet assembled, in composition order, with hashes, byte counts,
 // and truncated/dropped state — plus the assembled-prompt digest. It is deterministic,
 // model-free, and gate-free: it shows the truth, it never gates what may be sent.
-import type { ContextDocumentRecord, ContextManifest } from "@rennet/types";
+import type { ContextDocumentRecord, ContextManifest, ContextSendRecord } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { mount } from "../test/dom";
 import { ContextManifestPanel } from "./context-manifest-panel";
@@ -50,14 +50,56 @@ const manifest: ContextManifest = {
   unmanagedSources: ["harness ambient file reads (context-isolation probe not yet run)"],
 };
 
+const provenSend: ContextSendRecord = {
+  seat: "finding",
+  harness: "codex",
+  channel: "prompt",
+  attempt: 1,
+  promptBytes: 4096,
+  promptDigest: "e".repeat(64),
+  contextIncluded: true,
+  contextDigest: manifest.assembledPromptDigest,
+  sentAt: "2026-08-15T00:00:00.000Z",
+};
+
 describe("ContextManifestPanel (#30)", () => {
-  it("labels the panel as Rennet's composition, never a sent transcript", () => {
+  it("keeps the assembled label when there is no proven send", () => {
     const { container } = mount(<ContextManifestPanel manifest={manifest} />);
     expect(container.querySelector("section")?.getAttribute("aria-label")).toBe(
       "Context Rennet assembled",
     );
     expect(container.textContent).toContain("Context Rennet assembled");
-    expect(container.textContent).not.toContain("What the agents were sent");
+    const unproven = mount(
+      <ContextManifestPanel
+        manifest={{ ...manifest, sends: [{ ...provenSend, contextIncluded: false }] }}
+      />,
+    );
+    expect(unproven.container.textContent).toContain("Context Rennet assembled");
+    expect(unproven.container.textContent).not.toContain("Context sent to the fleet");
+    expect(unproven.container.textContent).toContain("Dropped");
+    expect(unproven.container.textContent).toContain("Not exhaustive");
+    expect(unproven.container.textContent).toContain("harness ambient file reads");
+  });
+
+  it("upgrades only on a digest-joined send and lists the exact per-agent evidence", () => {
+    const { container } = mount(
+      <ContextManifestPanel manifest={{ ...manifest, sends: [provenSend] }} />,
+    );
+
+    expect(container.querySelector("section")?.getAttribute("aria-label")).toBe(
+      "Context sent to the fleet",
+    );
+    expect(container.textContent).toContain("Context sent to the fleet");
+    const send = container.querySelector('[data-testid="context-manifest-send"]');
+    expect(send?.textContent).toContain("finding");
+    expect(send?.textContent).toContain("codex");
+    expect(send?.textContent).toContain("prompt");
+    expect(send?.textContent).toContain("Attempt 1");
+    expect(send?.textContent).toContain("4096 B");
+    expect(send?.textContent).toContain("Included");
+    expect(send?.textContent).toContain("Digest matches");
+    expect(container.textContent).toContain("Not exhaustive");
+    expect(container.textContent).toContain("harness ambient file reads");
   });
 
   it("renders documents in composition order with truncation/drop marked", () => {
