@@ -40,7 +40,7 @@ Gate for every wave: `NX_DAEMON=false pnpm check` (format, architecture, license
 
 - [x] 6.1 `NX_DAEMON=false pnpm check` clean across the workspace.
 - [x] 6.2 Positive control (a clean check must be able to fail): temporarily flip one send-record assertion (e.g. expect `contextIncluded: false` where a fed prompt is asserted) and watch the suite fail; revert.
-- [ ] 6.3 Live dogfood on a Rennet-repo review (never a client repo): open a review, run the fleet, verify in the panel that the sent digests match `assembledPromptDigest` per seat and that the transcript reloads after an app restart.
+- [x] 6.3 Live dogfood on a Rennet-repo review (never a client repo): open a review, run the fleet, verify in the panel that the sent digests match `assembledPromptDigest` per seat and that the transcript reloads after an app restart.
 
 ## 7. Dual-review fix pass
 
