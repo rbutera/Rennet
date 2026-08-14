@@ -395,7 +395,7 @@ describe("blocking states (R18)", () => {
   it("required blocking contract: submodule change", () => {
     // Original bug: a gitlink `Subproject commit` change had no mechanical signal
     // and became a synthetic substantive hunk reading as reviewed content.
-    const path = "vendor/lib";
+    const path = "deps/lib";
     const patch =
       `diff --git a/${path} b/${path}\nindex abc1234..def5678 160000\n--- a/${path}\n+++ b/${path}\n` +
       "@@ -1 +1 @@\n-Subproject commit abc1234000000000000000000000000000000000\n" +
