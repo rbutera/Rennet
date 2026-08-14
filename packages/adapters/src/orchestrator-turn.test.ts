@@ -196,7 +196,12 @@ describe("runOrchestratorTurn — wiring proof (no model)", () => {
   it("appends assembled context after the primer, records the exact append, and preserves primer-only bytes when absent", async () => {
     const { review, pipeline, backend, snapshot } = await liveReview();
     const primer = deriveOrchestratorPrimerState(pipeline, backend, snapshot);
-    const context = "shared orchestrator context\nwith exact bytes";
+    const context = [
+      "shared orchestrator context",
+      "",
+      "<<<rennet:layer payload>>>",
+      "documented inside the context body",
+    ].join("\n");
     const records: ContextSendRecord[] = [];
     const fedQuery = fakeQuery([resultFrame("done")]);
 

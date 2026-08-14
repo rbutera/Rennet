@@ -12,6 +12,20 @@ export interface ReviewContextFeed {
   complete(): ContextManifest | undefined;
 }
 
+export async function runWithReviewContextFeed<T>(
+  feed: ReviewContextFeed,
+  run: () => Promise<T>,
+): Promise<{ readonly result: T; readonly contextManifest?: ContextManifest }> {
+  let result!: T;
+  let contextManifest: ContextManifest | undefined;
+  try {
+    result = await run();
+  } finally {
+    contextManifest = feed.complete();
+  }
+  return { result, ...(contextManifest ? { contextManifest } : {}) };
+}
+
 export async function createReviewContextFeed(
   deps: ReviewContextFeedDeps,
 ): Promise<ReviewContextFeed> {

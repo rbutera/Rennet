@@ -1,3 +1,4 @@
+import { renderLayer } from "@rennet/instructions";
 import { bodyJsonSchema, sha256Hex } from "@rennet/protocol";
 import type { ContextSendRecord } from "@rennet/types";
 import { describe, expect, it } from "vitest";
@@ -245,6 +246,51 @@ describe("guardSeatTurn", () => {
 });
 
 describe("recordSeatSend", () => {
+  it("proves an expected context containing a payload delimiter from the exact sent block", async () => {
+    const records: ContextSendRecord[] = [];
+    const expectedContext = [
+      "repo instructions describe this literal boundary:",
+      "",
+      "<<<rennet:layer payload>>>",
+      "but this is still context body text",
+    ].join("\n");
+    const prompt = [
+      renderLayer("base", "base"),
+      renderLayer("context", expectedContext),
+      renderLayer("payload", "real payload"),
+    ].join("\n\n");
+    const recorded = recordSeatSend(
+      async () => ({ status: "emitted", body: {} }),
+      { seat: "finding", harness: "claude-code" },
+      (record) => records.push(record),
+      expectedContext,
+    );
+
+    await recorded(prompt, 0);
+
+    expect(records[0]).toMatchObject({
+      contextIncluded: true,
+      contextDigest: sha256Hex(expectedContext),
+    });
+  });
+
+  it("does not claim an expected context when its rendered layer was budget-dropped", async () => {
+    const records: ContextSendRecord[] = [];
+    const expectedContext = "assembled but dropped by the prompt budget";
+    const prompt = [renderLayer("base", "base"), renderLayer("payload", "payload")].join("\n\n");
+    const recorded = recordSeatSend(
+      async () => ({ status: "emitted", body: {} }),
+      { seat: "ordering", harness: "codex" },
+      (record) => records.push(record),
+      expectedContext,
+    );
+
+    await recorded(prompt, 0);
+
+    expect(records[0]).toMatchObject({ contextIncluded: false });
+    expect(records[0]?.contextDigest).toBeUndefined();
+  });
+
   it("records exact sent prompt bytes and parses context inclusion back from those bytes", async () => {
     const records: ContextSendRecord[] = [];
     const prompt = [

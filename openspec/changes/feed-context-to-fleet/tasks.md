@@ -14,8 +14,8 @@ Gate for every wave: `NX_DAEMON=false pnpm check` (format, architecture, license
 - [x] 2.2 Add optional `assembledContext?: string` to each runner input; map to the `context` layer at each existing `assemblePrompt` call site. Green 2.1.
 - [x] 2.3 RED: `pipeline.test.ts` — `buildReviewCanvases({ assembledContext })` threads the same text to the hypothesis, decomposition, ordering, and narration turns (assert via a capturing mock `runTurn`); absent → prompts unchanged. `dual-finding-review.test.ts` — both seats receive the identical layer.
 - [x] 2.4 `pipeline.ts`: `ReviewPipelineInput.assembledContext` threaded to the four seats; `dual-finding-review.ts` threads to both seats (same shape as `guidance`). Green 2.3.
-- [x] 2.5 RED: `harness-run-turn.test.ts` — `recordSeatSend(runTurn, meta, sink)` stamps `{promptBytes, promptDigest}` over the exact sent string; parse-back extracts the labelled context block and stamps `contextIncluded`/`contextDigest` from the SENT bytes (a prompt without the block → `contextIncluded: false` even when the caller supplied context); each attempt stamps its own record; a throwing inner turn still records before propagating to `guardSeatTurn`.
-- [x] 2.6 Implement `recordSeatSend` (+ the exact-delimiter context-block extractor) in `packages/core/src/harness-run-turn.ts`; document composition order `guardSeatTurn(recordSeatSend(...))`. Green 2.5.
+- [x] 2.5 RED: `harness-run-turn.test.ts` — `recordSeatSend(runTurn, meta, sink)` stamps `{promptBytes, promptDigest}` over the exact sent string; sent-byte verification stamps `contextIncluded`/`contextDigest` only when the exact expected labelled block is present (a prompt without the block → `contextIncluded: false` even when the caller supplied context); each attempt stamps its own record; a throwing inner turn still records before propagating to `guardSeatTurn`.
+- [x] 2.6 Implement `recordSeatSend` (+ expected-block verification and the no-expected exact-delimiter fallback) in `packages/core/src/harness-run-turn.ts`; document composition order `guardSeatTurn(recordSeatSend(...))`. Green 2.5.
 
 ## 3. adapters — the captured text feeds the send; the manifest becomes the transcript
 
@@ -29,7 +29,7 @@ Gate for every wave: `NX_DAEMON=false pnpm check` (format, architecture, license
 ## 4. apps/desktop — the composition root closes the loop
 
 - [x] 4.1 RED: desktop main test — `buildCanvasesForReview` feeds the ensured assembly text into the pipeline input, and the finding (both seats), noise, decisions, and hypothesis call sites; with the store empty/failed every turn runs with today's byte-identical prompt (no gate); after a run, `sends` records for each executed seat are appended to the persisted manifest and a persistence failure only hits the error sink.
-- [x] 4.2 Wire it: call `ensureReviewContextAssembly` once per run; thread `assembledContext`; wrap each seat's turn as `guardSeatTurn(recordSeatSend(...))` with an in-memory sink; `appendSends` once per completed run. Thread `assembledContext` + sink into `createOrchestratorTurnRunner` (`orchestrator.ts`). Green 4.1.
+- [x] 4.2 Wire it: call `ensureReviewContextAssembly` once per run; thread `assembledContext`; wrap each seat's turn as `guardSeatTurn(recordSeatSend(...))` with an in-memory sink; `appendSends` once during run finalization, including failure paths. Thread `assembledContext` + sink into `createOrchestratorTurnRunner` (`orchestrator.ts`). Green 4.1.
 
 ## 5. ui — the label follows the evidence
 
@@ -41,3 +41,11 @@ Gate for every wave: `NX_DAEMON=false pnpm check` (format, architecture, license
 - [x] 6.1 `NX_DAEMON=false pnpm check` clean across the workspace.
 - [x] 6.2 Positive control (a clean check must be able to fail): temporarily flip one send-record assertion (e.g. expect `contextIncluded: false` where a fed prompt is asserted) and watch the suite fail; revert.
 - [ ] 6.3 Live dogfood on a Rennet-repo review (never a client repo): open a review, run the fleet, verify in the panel that the sent digests match `assembledPromptDigest` per seat and that the transcript reloads after an app restart.
+
+## 7. Dual-review fix pass
+
+- [x] 7.1 RED: prove a sent context containing the payload-layer delimiter is still recorded as included, while a genuinely absent/budget-dropped expected context is not.
+- [x] 7.2 Verify the exact expected rendered context block against sent bytes and thread the expected assembly through every seat and orchestrator recording boundary.
+- [x] 7.3 RED: prove a review feed persists already-captured sends when later review work throws.
+- [x] 7.4 Finalize every desktop command-owned context feed in `finally`, preserving non-throwing persistence.
+- [x] 7.5 Run the full gate and a focused positive control.

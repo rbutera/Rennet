@@ -1,4 +1,5 @@
-import type { PatchFile, Patchset, RspCapabilitySnapshot } from "@rennet/types";
+import { sha256Hex } from "@rennet/protocol";
+import type { ContextSendRecord, PatchFile, Patchset, RspCapabilitySnapshot } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
 import { buildOfferedManifest } from "./angle-generation";
 import { decompose } from "./decomposition";
@@ -362,15 +363,28 @@ describe("runDualFindingReview — dual-model Flagged orchestration (#41)", () =
       promptB = prompt;
       return emits([])(prompt, attempt);
     });
-    const context = "shared dual-seat context\nwith exact bytes";
+    const context = [
+      "shared dual-seat context",
+      "",
+      "<<<rennet:layer payload>>>",
+      "with exact bytes",
+    ].join("\n");
+    const records: ContextSendRecord[] = [];
 
     await runDualFindingReview({
       ...baseInput([seat("claude-code", "Claude", claude), seat("codex", "Codex", codex)], true),
       assembledContext: context,
+      onSend: (record) => records.push(record),
     });
 
     const block = `<<<rennet:layer context>>>\n${context}\n\n<<<rennet:layer payload>>>`;
     expect(promptA).toContain(block);
     expect(promptB).toContain(block);
+    expect(records).toHaveLength(2);
+    expect(records.every((record) => record.contextIncluded)).toBe(true);
+    expect(records.map((record) => record.contextDigest)).toEqual([
+      sha256Hex(context),
+      sha256Hex(context),
+    ]);
   });
 });

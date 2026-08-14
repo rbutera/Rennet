@@ -1,6 +1,6 @@
 import type { ContextManifest, ContextSendRecord } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
-import { createReviewContextFeed } from "./review-context-feed";
+import { createReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
 
 const manifest: ContextManifest = {
   repoRecordId: "repo",
@@ -72,9 +72,31 @@ describe("createReviewContextFeed — desktop run transcript", () => {
       },
       onError: (error) => errors.push(error),
     });
-    feed.onSend(send);
+    const completed = await runWithReviewContextFeed(feed, async () => {
+      feed.onSend(send);
+      return "review result";
+    });
 
-    expect(feed.complete()?.sends).toEqual([send]);
+    expect(completed.result).toBe("review result");
+    expect(completed.contextManifest?.sends).toEqual([send]);
     expect(errors).toHaveLength(1);
+  });
+
+  it("persists finding sends when flagged-review verification throws later", async () => {
+    const append = vi.fn();
+    const feed = await createReviewContextFeed({
+      ensure: () => Promise.resolve({ manifest, text: "context" }),
+      append,
+    });
+
+    await expect(
+      runWithReviewContextFeed(feed, async () => {
+        feed.onSend({ ...send, seat: "finding" });
+        throw new Error("verification createSession failed");
+      }),
+    ).rejects.toThrow("verification createSession failed");
+
+    expect(append).toHaveBeenCalledTimes(1);
+    expect(append).toHaveBeenCalledWith([{ ...send, seat: "finding" }]);
   });
 });

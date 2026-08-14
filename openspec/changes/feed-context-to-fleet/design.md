@@ -56,24 +56,24 @@ Each seat runner input gains an optional `assembledContext?: string`. At the run
 
 `captureReviewContextManifest` keeps its capture-once contract but is extended to write the text; both the panel path and the send path read through the same store, so they cannot diverge.
 
-### D3 — Send-time capture at the wire, parsed from the sent bytes
+### D3 — Send-time capture at the wire, verified against the sent bytes
 
 A new core wrapper, sibling of `guardSeatTurn` (`harness-run-turn.ts`):
 
 ```
-recordSeatSend(runTurn, meta: { seat: string; harness: string }, sink: (r: ContextSendRecord) => void)
+recordSeatSend(runTurn, meta: { seat: string; harness: string }, sink: (r: ContextSendRecord) => void, expectedContext?: string)
 ```
 
 Wraps the exact `runTurn(prompt, attempt)` every seat's turn passes through — Claude (`createHarnessRunTurn`), Codex (`createCodexRunTurn`), and mocks alike. On each call, BEFORE delegating, it stamps:
 
 - `promptBytes` / `promptDigest`: UTF-8 length and sha256 of the exact prompt string handed over.
-- `contextIncluded` / `contextDigest`: determined by extracting the `<<<rennet:layer context>>>` block from the SENT text (Rennet's own deterministic framing — exact delimiter parsing, not a heuristic) and hashing the block body. So a layer dropped by the prompt byte-budget is honestly `contextIncluded: false`, whatever the caller intended.
+- `contextIncluded` / `contextDigest`: when the digest-verified expected assembly is available, determined by verifying that the SENT text contains the exact `renderLayer("context", expectedContext)` bytes and hashing `expectedContext`. This remains sent-byte evidence while avoiding delimiter ambiguity when arbitrary repository text contains a literal layer marker. A layer dropped by the prompt byte-budget is honestly `contextIncluded: false`, whatever the caller intended. Callers without expected context retain the exact-delimiter parse-back fallback.
 
 Composition order: `guardSeatTurn(recordSeatSend(runTurn, …))` — the send is recorded even when the turn later throws (the hand-off happened; the transcript says so).
 
-*Why parse-back instead of having the runner report inclusion?* The manifest's claim is "what was sent," and the only artifact that proves it is the sent bytes at the seam the adapter actually reads from. Runner-reported intent can drift from the wire; the parse-back cannot.
+*Why verify the expected rendered block instead of trusting runner intent?* The manifest's claim is "what was sent," and the sent bytes at the seam the adapter actually reads from must contain the exact expected labelled block. Expected text alone cannot produce a claim, while a delimiter inside arbitrary repository text cannot truncate the digest proof.
 
-Orchestrator: `runOrchestratorTurn` deps gain `assembledContext?: string`; when present the append becomes `primer.text + "\n\n" + renderLayer("context", assembledContext)` and a record with `channel: "system-append"` is stamped over the exact append string (same digest + parse-back rules). Seat records use `channel: "prompt"`.
+Orchestrator: `runOrchestratorTurn` deps gain `assembledContext?: string`; when present the append becomes `primer.text + "\n\n" + renderLayer("context", assembledContext)` and a record with `channel: "system-append"` is stamped over the exact append string (same digest + expected-block verification rules). Seat records use `channel: "prompt"`.
 
 ### D4 — The manifest becomes the transcript: additive `sends`
 
@@ -95,7 +95,7 @@ interface ContextSendRecord {
 interface ContextManifest { …existing…; readonly sends?: readonly ContextSendRecord[]; }
 ```
 
-`assembledPromptDigest` keeps its meaning (digest of the assembly text). **The send proof is the join**: a record with `contextIncluded && contextDigest === assembledPromptDigest` proves that agent was sent the recorded assembly byte-for-byte; a differing `contextDigest` is per-agent variance, recorded rather than papered over. `ContextManifestStore` gains `appendSends(repoKey, baseOid, records)` (atomic read-modify-write; a malformed persisted file still reads as absence, never a throw). Desktop main collects each run's records via the sinks and appends after the run completes.
+`assembledPromptDigest` keeps its meaning (digest of the assembly text). **The send proof is the join**: a record with `contextIncluded && contextDigest === assembledPromptDigest` proves that agent was sent the recorded assembly byte-for-byte; a differing `contextDigest` is per-agent variance, recorded rather than papered over. `ContextManifestStore` gains `appendSends(repoKey, baseOid, records)` (atomic read-modify-write; a malformed persisted file still reads as absence, never a throw). Desktop main collects each run's records via the sinks and appends during `finally` finalization, including records captured before a later step throws.
 
 `packages/protocol`: `contextSendRecordSchema` + `sends: z.array(…).optional()` on `contextManifestSchema`. Without this the strict IPC command output silently strips the field and the renderer never sees the transcript (the exact failure mode the schema comment at line ~484 warns about).
 

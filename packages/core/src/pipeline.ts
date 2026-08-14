@@ -316,7 +316,9 @@ export async function buildReviewCanvases(
   }
 
   const recordedTurn = (runTurn: RunTurn, seat: string, harness: string): RunTurn =>
-    input.onSend ? recordSeatSend(runTurn, { seat, harness }, input.onSend) : runTurn;
+    input.onSend
+      ? recordSeatSend(runTurn, { seat, harness }, input.onSend, input.assembledContext)
+      : runTurn;
 
   /**
    * Resolve one model-facing seat: the Model Council's assignment (or none), the

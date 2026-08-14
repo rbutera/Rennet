@@ -310,12 +310,16 @@ export async function runOrchestratorTurn(
 
   const query = await (deps.loadQuery ?? loadRealQuery)();
   if (deps.onSend) {
-    const record = buildContextSendRecord(systemAppend, {
-      seat: "orchestrator",
-      harness: "claude-code",
-      channel: "system-append",
-      attempt: 0,
-    });
+    const record = buildContextSendRecord(
+      systemAppend,
+      {
+        seat: "orchestrator",
+        harness: "claude-code",
+        channel: "system-append",
+        attempt: 0,
+      },
+      deps.assembledContext,
+    );
     try {
       deps.onSend(record);
     } catch {

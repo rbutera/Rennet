@@ -140,7 +140,7 @@ import { createProcessProject } from "./process-project";
 import { createPublishConsentAuthority } from "./publish-consent-authority";
 import { createLiveRefinePort } from "./refine-comment-live";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
-import type { ReviewContextFeed } from "./review-context-feed";
+import { type ReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
 import { loadReviewOwnership } from "./review-ownership";
 import { buildReviewCanvasesInput } from "./review-pipeline-input";
 import { createSettingsComposition } from "./settings";
@@ -486,7 +486,10 @@ async function openPullRequest(
  * the decomposition angle + ordering pass on their subscription OAuth. With no
  * harness the deterministic floor still populates real canvases from the diff.
  */
-async function buildCanvasesForReview(review: Review): Promise<{
+async function buildCanvasesForReviewWithContextFeed(
+  review: Review,
+  contextFeed: ReviewContextFeed,
+): Promise<{
   canvases: Record<CanvasAngle, Canvas>;
   elementDiffs: ElementDiffs;
   narration?: ReviewNarration;
@@ -498,9 +501,6 @@ async function buildCanvasesForReview(review: Review): Promise<{
   /** The captured context-composition manifest; absent ⇒ honestly not available. */
   contextManifest?: ContextManifest;
 }> {
-  const contextFeed = await createDesktopReviewContextFeed(review, {
-    onError: reportContextFeedError,
-  });
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
   const codex = await getCodexAvailability();
@@ -598,7 +598,6 @@ async function buildCanvasesForReview(review: Review): Promise<{
       onSend: contextFeed.onSend,
     }),
   );
-  const contextManifest = contextFeed.complete();
   // The honesty signal for the renderer (real-AI-default): a review is a REAL AI
   // review iff at least one model harness was installed AND the budget actually
   // let a turn run. With neither claude nor codex — or a refused budget — the set
@@ -615,8 +614,21 @@ async function buildCanvasesForReview(review: Review): Promise<{
     engine,
     decisionsRun: decisions.status,
     ...(hypothesis ? { hypothesis } : {}),
-    // The real manifest for THIS review (issue #30), or omitted (honest absence).
-    ...(contextManifest ? { contextManifest } : {}),
+  };
+}
+
+async function buildCanvasesForReview(
+  review: Review,
+): ReturnType<typeof buildCanvasesForReviewWithContextFeed> {
+  const contextFeed = await createDesktopReviewContextFeed(review, {
+    onError: reportContextFeedError,
+  });
+  const completed = await runWithReviewContextFeed(contextFeed, () =>
+    buildCanvasesForReviewWithContextFeed(review, contextFeed),
+  );
+  return {
+    ...completed.result,
+    ...(completed.contextManifest ? { contextManifest: completed.contextManifest } : {}),
   };
 }
 
@@ -721,7 +733,9 @@ function recordedDesktopSeatTurn(
   seat: string,
   feed: ReviewContextFeed,
 ): (prompt: string, attempt: number) => Promise<HarnessTurnResult> {
-  return guardSeatTurn(recordSeatSend(runTurn, { seat, harness: "claude-code" }, feed.onSend));
+  return guardSeatTurn(
+    recordSeatSend(runTurn, { seat, harness: "claude-code" }, feed.onSend, feed.assembledContext),
+  );
 }
 
 /**
@@ -933,10 +947,11 @@ const FINDING_PROVENANCE_SEED = {
  * With no discoverable provider, or on a total runner failure/budget refusal, the
  * lens gets the LOUD `failed` state — "ran clean" is never faked from "did not run".
  */
-async function runFlaggedReview(review: Review, deepReview = true): Promise<FlaggedReview> {
-  const contextFeed = await createDesktopReviewContextFeed(review, {
-    onError: reportContextFeedError,
-  });
+async function runFlaggedReviewWithContextFeed(
+  review: Review,
+  deepReview: boolean,
+  contextFeed: ReviewContextFeed,
+): Promise<FlaggedReview> {
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
   const codex = await getCodexAvailability();
@@ -1043,7 +1058,6 @@ async function runFlaggedReview(review: Review, deepReview = true): Promise<Flag
     // that actually surfaces. Deterministic, $0 — absent a hypothesis it returns
     // `verified` unchanged.
     const result = attachRiskCrossCheck(verified, hypothesis);
-    contextFeed.complete();
     return result;
   }
   // DEEP review requested but NO Claude verifier (e.g. Codex-only: findings were
@@ -1054,15 +1068,23 @@ async function runFlaggedReview(review: Review, deepReview = true): Promise<Flag
   // branch above), so this is exactly the no-verifier deep case.
   if (deepReview) {
     const result = attachRiskCrossCheck(markVerificationUnavailable(flagged), hypothesis);
-    contextFeed.complete();
     return result;
   }
   // Quick review (single-seat, unverified): the cross-check still runs — it is a
   // free deterministic step — over the single seat's own findings. No chip, byte-
   // identical to before (quick review never promised verification).
   const result = attachRiskCrossCheck(flagged, hypothesis);
-  contextFeed.complete();
   return result;
+}
+
+async function runFlaggedReview(review: Review, deepReview = true): Promise<FlaggedReview> {
+  const contextFeed = await createDesktopReviewContextFeed(review, {
+    onError: reportContextFeedError,
+  });
+  const completed = await runWithReviewContextFeed(contextFeed, () =>
+    runFlaggedReviewWithContextFeed(review, deepReview, contextFeed),
+  );
+  return completed.result;
 }
 
 /**
@@ -1172,14 +1194,13 @@ const NOISE_PROVENANCE_SEED = {
  * turn — is DEFERRED; today both chip types render, and the `rule` tag is the model's
  * "a mechanical certainty settles this" claim rather than a deterministic checker's.
  */
-async function runNoiseReview(review: Review): Promise<NoiseReview> {
-  const contextFeed = await createDesktopReviewContextFeed(review, {
-    onError: reportContextFeedError,
-  });
+async function runNoiseReviewWithContextFeed(
+  review: Review,
+  contextFeed: ReviewContextFeed,
+): Promise<NoiseReview> {
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
   if (!adapter) {
-    contextFeed.complete();
     return { status: "failed", reason: "no model harness is available to classify noise" };
   }
   const decomposition = decompose(patchset);
@@ -1214,14 +1235,22 @@ async function runNoiseReview(review: Review): Promise<NoiseReview> {
       : { assembledContext: contextFeed.assembledContext }),
   });
   if (result.status === "ok") {
-    contextFeed.complete();
     return { status: "ok", groups: result.groups };
   }
-  contextFeed.complete();
   return {
     status: "failed",
     reason: result.failureReason ?? "the noise runner did not complete",
   };
+}
+
+async function runNoiseReview(review: Review): Promise<NoiseReview> {
+  const contextFeed = await createDesktopReviewContextFeed(review, {
+    onError: reportContextFeedError,
+  });
+  const completed = await runWithReviewContextFeed(contextFeed, () =>
+    runNoiseReviewWithContextFeed(review, contextFeed),
+  );
+  return completed.result;
 }
 
 function registerCommandHandler(): void {

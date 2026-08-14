@@ -18,6 +18,7 @@
  * angle's always-present deterministic floor stands.
  */
 
+import { renderLayer } from "@rennet/instructions";
 import { bodyJsonSchema, sha256Hex } from "@rennet/protocol";
 import type { ContextSendRecord, RspDocType, RspTokenUsage } from "@rennet/types";
 import type { HarnessPort } from "./harness";
@@ -55,8 +56,14 @@ export interface ContextSendRecordInput {
 export function buildContextSendRecord(
   sentText: string,
   input: ContextSendRecordInput,
+  expectedContext?: string,
 ): ContextSendRecord {
-  const context = extractContextLayer(sentText);
+  const context =
+    expectedContext === undefined
+      ? extractContextLayer(sentText)
+      : sentText.includes(renderLayer("context", expectedContext))
+        ? expectedContext
+        : undefined;
   return {
     seat: input.seat,
     harness: input.harness,
@@ -79,12 +86,17 @@ export function recordSeatSend(
   runTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>,
   meta: { readonly seat: string; readonly harness: string },
   sink: (record: ContextSendRecord) => void,
+  expectedContext?: string,
 ): (prompt: string, attempt: number) => Promise<HarnessTurnResult> {
   return async function recordedSeatSend(
     prompt: string,
     attempt: number,
   ): Promise<HarnessTurnResult> {
-    const record = buildContextSendRecord(prompt, { ...meta, channel: "prompt", attempt });
+    const record = buildContextSendRecord(
+      prompt,
+      { ...meta, channel: "prompt", attempt },
+      expectedContext,
+    );
     try {
       sink(record);
     } catch {

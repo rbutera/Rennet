@@ -94,7 +94,12 @@ async function runSeat(seat: DualSeat, input: RunDualFindingReviewInput): Promis
     // the reconcile degrades to the other seat.
     runTurn: guardSeatTurn(
       input.onSend
-        ? recordSeatSend(seat.runTurn, { seat: "finding", harness: seat.provider }, input.onSend)
+        ? recordSeatSend(
+            seat.runTurn,
+            { seat: "finding", harness: seat.provider },
+            input.onSend,
+            input.assembledContext,
+          )
         : seat.runTurn,
     ),
     budget: input.makeBudget(),

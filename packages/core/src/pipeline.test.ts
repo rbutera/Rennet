@@ -1,4 +1,6 @@
+import { sha256Hex } from "@rennet/protocol";
 import type {
+  ContextSendRecord,
   CouncilModel,
   OrderingBody,
   PatchFile,
@@ -236,13 +238,17 @@ describe("buildReviewCanvases — blast-radius overlay is consumed (issue #35)",
 describe("buildReviewCanvases", () => {
   it("threads one assembled context through hypothesis, decomposition, ordering, and narration without changing absent prompts", async () => {
     const proposal = deterministicProposalBody(decompose(independentPatchset));
-    const capture = async (assembledContext?: string): Promise<string[]> => {
+    const capture = async (
+      assembledContext?: string,
+      onSend?: (record: ContextSendRecord) => void,
+    ): Promise<string[]> => {
       const prompts: string[] = [];
       await buildReviewCanvases({
         reviewId: "context-feed",
         patchset: independentPatchset,
         dispositions: [],
         assembledContext,
+        onSend,
         runHypothesisTurn: async (prompt) => {
           prompts.push(prompt);
           return {
@@ -289,9 +295,15 @@ describe("buildReviewCanvases", () => {
       });
       return prompts;
     };
-    const context = "shared pipeline context\nwith exact bytes";
+    const context = [
+      "shared pipeline context",
+      "",
+      "<<<rennet:layer payload>>>",
+      "with exact bytes",
+    ].join("\n");
+    const records: ContextSendRecord[] = [];
     const absent = await capture();
-    const present = await capture(context);
+    const present = await capture(context, (record) => records.push(record));
     const renderedBlock = `<<<rennet:layer context>>>\n${context}`;
 
     expect(absent).toHaveLength(4);
@@ -301,6 +313,11 @@ describe("buildReviewCanvases", () => {
       expect(present[index]).toContain(`${renderedBlock}\n\n<<<rennet:layer payload>>>`);
       expect(present[index]?.replace(`\n\n${renderedBlock}`, "")).toBe(absent[index]);
     }
+    expect(records).toHaveLength(4);
+    expect(records.every((record) => record.contextIncluded)).toBe(true);
+    expect(records.map((record) => record.contextDigest)).toEqual(
+      Array.from({ length: 4 }, () => sha256Hex(context)),
+    );
   });
 
   it("populates all five canvases from the real decomposition of the diff", async () => {
