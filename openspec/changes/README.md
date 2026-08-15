@@ -8,8 +8,11 @@ Rule Zero (`AGENTS.md`) outranks every spec in here and in `openspec/specs/`.
 
 | change | state |
 |---|---|
-| `build-repo-map-lifecycle` | 4/30. Wave 1 landed (`knowledge.ts`, `escape-path.ts`); the delta-pass half has not. Tracked as #243. |
-| `add-review-intelligence-core` | 35/40. Verified task-by-task against `main`. The five open tasks are genuinely unbuilt: the per-review turn ceiling (0.5), the ProjectSnapshot projection into `runHypothesisPass` (5.2), and the `ReviewPipelineInput`/`Result` extension carrying hypothesis and cross-checks (6.1). |
+| `add-conversation-durability` | in-flight. |
+| `rennet-docsite` | in-flight (docsite migration). |
+| `ci-signal-surface` | in-flight (#182 — the non-blocking CI review signal). |
+
+(`build-repo-map-lifecycle` and `add-review-intelligence-core` were completed and moved to `archive/` — this table previously lagged behind that.)
 
 ## Archived
 
