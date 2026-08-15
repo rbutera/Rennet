@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import { buildGitHubReviewRequest } from "@rennet/adapters";
 import {
   type AskAnswer,
+  buildHandoffBundle,
   canonicalPrSubmissionPayload,
   canonicalReviewPayload,
+  composeHandoffBundle,
   type ForgePublishPort,
   type ForgeReviewEvent,
   type ForgeReviewPost,
@@ -2667,6 +2669,105 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
   });
 });
 
+// ── review.handoff.run executes the previewed composition (issue #72, D2/D3) ───
+
+/** A valid model-composed bundle over the given dispositions (composed:true). */
+async function composedBundleFor(reviewId: string, dispositions: typeof HANDOFF_DISPOSITIONS) {
+  const mechanical = buildHandoffBundle({ reviewId, patchset: patchset(), dispositions });
+  const ids = mechanical.tasks.map((_, index) => `d${index}`);
+  return composeHandoffBundle(mechanical, () =>
+    Promise.resolve({
+      status: "emitted",
+      proposal: { groups: [{ title: "Do the thing", dispositionIds: ids }] },
+    }),
+  );
+}
+
+describe("createDispatch — review.handoff.run executes the composition (issue #72)", () => {
+  it("executes the SUPPLIED composed prompt, not the mechanical one, and traces it", async () => {
+    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
+      async () => HANDOFF_TURN,
+    );
+    const { dispatch } = harness(undefined, {}, { capturePort: twoPhaseCapture(), runHandoffTurn });
+    const review = await capturedReview(dispatch);
+    const composed = await composedBundleFor(review.id, HANDOFF_DISPOSITIONS);
+    // Sanity: the composed prompt genuinely differs from the mechanical run prompt.
+    const mechanicalPrompt = buildHandoffBundle({
+      reviewId: review.id,
+      patchset: patchset(),
+      dispositions: HANDOFF_DISPOSITIONS,
+    }).prompt;
+    expect(composed.prompt).not.toBe(mechanicalPrompt);
+
+    const out = (await dispatch("review.handoff.run", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      dispositions: HANDOFF_DISPOSITIONS,
+      composed,
+    })) as { status: string; result: { composed: boolean; traceMap: Record<string, number> } };
+
+    expect(out.status).toBe("ran");
+    // The harness received the COMPOSED prompt (string identity), never the mechanical.
+    const handed = runHandoffTurn.mock.calls[0]?.[0]?.bundle.prompt;
+    expect(handed).toBe(composed.prompt);
+    expect(handed).not.toBe(mechanicalPrompt);
+    // The executed bundle's trace map + composed flag ride the result (D3).
+    expect(out.result.composed).toBe(true);
+    expect(Object.keys(out.result.traceMap).sort()).toEqual(["d0"]);
+  });
+
+  it("REFUSES a stale composition with NO turn spent (the dispositions changed)", async () => {
+    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
+      async () => HANDOFF_TURN,
+    );
+    const { dispatch } = harness(undefined, {}, { capturePort: twoPhaseCapture(), runHandoffTurn });
+    const review = await capturedReview(dispatch);
+    // A composition of a DIFFERENT ask body than the one being run — its d0 no longer
+    // matches the mechanical rebuild from HANDOFF_DISPOSITIONS, so the run must refuse.
+    const stale = await composedBundleFor(review.id, [
+      { path: "src/a.ts", type: "request-change" as const, body: "a completely different ask" },
+    ]);
+
+    const out = (await dispatch("review.handoff.run", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      dispositions: HANDOFF_DISPOSITIONS,
+      composed: stale,
+    })) as { status: string; reason: string };
+
+    expect(out.status).toBe("refused");
+    expect(out.reason).toContain("stale");
+    // No harness turn was spent on a composition the paper never previewed.
+    expect(runHandoffTurn).not.toHaveBeenCalled();
+  });
+
+  it("absent composition preserves the mechanical prompt AND still carries a total trace map", async () => {
+    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
+      async () => HANDOFF_TURN,
+    );
+    const { dispatch } = harness(undefined, {}, { capturePort: twoPhaseCapture(), runHandoffTurn });
+    const review = await capturedReview(dispatch);
+    const mechanicalPrompt = buildHandoffBundle({
+      reviewId: review.id,
+      patchset: patchset(),
+      dispositions: HANDOFF_DISPOSITIONS,
+    }).prompt;
+
+    const out = (await dispatch("review.handoff.run", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      dispositions: HANDOFF_DISPOSITIONS,
+    })) as { status: string; result: { composed: boolean; traceMap: Record<string, number> } };
+
+    expect(out.status).toBe("ran");
+    // Byte-identical to today: the mechanical prompt is what ran.
+    expect(runHandoffTurn.mock.calls[0]?.[0]?.bundle.prompt).toBe(mechanicalPrompt);
+    // The mechanical path still emits a total trace map (one ask per task), composed:false.
+    expect(out.result.composed).toBe(false);
+    expect(Object.keys(out.result.traceMap).sort()).toEqual(["d0"]);
+  });
+});
+
 // ── review.handoff.compose (issue #72, Model Council M24) ──────────────────────
 
 const COMPOSE_DISPOSITIONS = [
@@ -2692,19 +2793,28 @@ describe("createDispatch — review.handoff.compose (issue #72)", () => {
 
   it("delegates to the wired composer and returns its composed bundle", async () => {
     const composeBundle = vi.fn<NonNullable<DispatchDeps["composeBundle"]>>(async ({ bundle }) => ({
-      reviewId: bundle.reviewId,
-      patchsetId: bundle.patchsetId,
-      tasks: [
-        {
-          title: "Guard and log",
-          sourceDispositions: ["d0", "d1"],
-          asks: bundle.tasks.map((task, index) => ({ ...task, id: `d${index}` })),
-        },
-      ],
-      prompt: "composed",
-      digest: "deadbeef",
-      composed: true,
-      traceMap: { d0: 0, d1: 0 },
+      bundle: {
+        reviewId: bundle.reviewId,
+        patchsetId: bundle.patchsetId,
+        tasks: [
+          {
+            title: "Guard and log",
+            sourceDispositions: ["d0", "d1"],
+            asks: bundle.tasks.map((task, index) => ({ ...task, id: `d${index}` })),
+          },
+        ],
+        prompt: "composed",
+        digest: "deadbeef",
+        composed: true,
+        traceMap: { d0: 0, d1: 0 },
+      },
+      resolution: {
+        status: "resolved",
+        harness: "codex",
+        model: "gpt-5.5-codex",
+        effort: "medium",
+        summary: "M24 · council-table",
+      },
     }));
     const { dispatch } = harness(undefined, {}, { composeBundle });
     const review = await capturedReview(dispatch);
@@ -2713,13 +2823,18 @@ describe("createDispatch — review.handoff.compose (issue #72)", () => {
       commandId: randomUUID(),
       reviewId: review.id,
       dispositions: COMPOSE_DISPOSITIONS,
-    })) as { bundle: { composed: boolean; tasks: { title: string }[] } };
+    })) as {
+      bundle: { composed: boolean; tasks: { title: string }[] };
+      resolution: { status: string };
+    };
 
     expect(composeBundle).toHaveBeenCalledTimes(1);
     // It was handed the reviewed repo root for the compose session's cwd.
     expect(composeBundle.mock.calls[0]?.[0]?.repoRoot).toBe(review.repositoryRoot);
     expect(out.bundle.composed).toBe(true);
     expect(out.bundle.tasks[0]?.title).toBe("Guard and log");
+    // The command surfaces the composer's resolution (task 2.2).
+    expect(out.resolution.status).toBe("resolved");
   });
 
   it("refuses a stale/unknown review id", async () => {

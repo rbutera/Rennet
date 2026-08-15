@@ -1,4 +1,4 @@
-import type { DispositionType } from "@rennet/types";
+import type { ComposableAsk, ComposedHandoffBundle, DispositionType } from "@rennet/types";
 import {
   type CollationDraft,
   type CollationItem,
@@ -86,6 +86,31 @@ export interface PrDraftValues {
   readonly body: string;
 }
 
+/**
+ * The EPHEMERAL handoff-composition state (issue #72), tracked by the host while a
+ * compose turn is in flight or after it fails. The composed BUNDLE itself is durable
+ * in the host's held state (`handoffComposition`), so it is NOT here — this carries
+ * only the transient/outcome status the canvas shows beside the action. Absent ⇒ idle
+ * (offer "Compose the handoff"). A compose never returns an error bundle — it always
+ * yields a complete one, floor-marked when the model was unavailable — so `failed`
+ * covers only an IPC-level throw.
+ */
+export type HandoffComposeState =
+  | { readonly status: "composing" }
+  | { readonly status: "composed" }
+  | { readonly status: "failed"; readonly reason: string };
+
+/** The human-facing anchor label for a composed ask ("lines A–B, additions" / "whole file"). */
+function askAnchorLabel(ask: ComposableAsk): string {
+  if (ask.span === undefined) return "whole file";
+  const end = ask.span.endLine ?? ask.span.startLine;
+  const range =
+    end === ask.span.startLine
+      ? `line ${ask.span.startLine}`
+      : `lines ${ask.span.startLine}–${end}`;
+  return ask.side === undefined ? range : `${range}, ${ask.side}`;
+}
+
 /** A raw note is refinable when it has actual text (an empty item cannot be cleaned). */
 function isRefinable(item: CollationItem): boolean {
   return item.raw.trim() !== "";
@@ -105,6 +130,9 @@ export function CollationDraftCanvas({
   onPrDraftChange,
   onDraftPrBody,
   prDraftState,
+  handoffComposition,
+  onComposeHandoff,
+  composeState,
 }: {
   /** The editable collation draft — the L2 disposition set across every angle. */
   draft: CollationDraft;
@@ -146,6 +174,22 @@ export function CollationDraftCanvas({
   onDraftPrBody?: () => void;
   /** The ephemeral PR-draft status (idle when absent). */
   prDraftState?: PrDraftState;
+  /**
+   * The CURRENT composed handoff bundle (issue #72) — own-branch composition only.
+   * Held by the host, keyed to the staged set; the host passes it ONLY while it is
+   * current (a since-changed staged set clears it), so what renders here is never a
+   * stale narrative. Absent ⇒ not yet composed (offer the action). `composed:false`
+   * ⇒ the mechanical floor, shown explicitly as not model-composed.
+   */
+  handoffComposition?: ComposedHandoffBundle;
+  /**
+   * Compose the handoff over the staged set (#72). The host runs the real council-
+   * routed turn and holds the result. Absent ⇒ no compose affordance renders (a
+   * composition without the command wired).
+   */
+  onComposeHandoff?: () => void;
+  /** The ephemeral compose status (idle when absent). */
+  composeState?: HandoffComposeState;
 }) {
   const items = collationItems(draft);
   const empty = draft.length === 0;
@@ -288,6 +332,107 @@ export function CollationDraftCanvas({
                 The draft didn't land: {prDraftState.reason}. Your text is untouched — write or
                 retry.
               </p>
+            ) : null}
+          </div>
+        ) : null}
+
+        {/* The handoff-bundle composition (issue #72, M24) — own-branch mode only.
+            Composition ORDERS + GROUPS + narrates the staged asks into one coherent
+            work order for a coding agent, WITHOUT altering what was asked (bodies are
+            carried verbatim). It is a derived reading of the staged set: composing
+            never edits a disposition, and any staged edit clears the held result
+            (the host stops passing it). The mechanical floor is shown honestly as
+            not model-composed rather than dressed up as an authored narrative. */}
+        {variant.mode === "own-branch" && onComposeHandoff ? (
+          <div className="collation-handoff" data-testid="handoff-composition">
+            <div className="collation-handoff-head">
+              <p className="collation-handoff-label">Handoff work order</p>
+              <button
+                type="button"
+                className="collation-handoff-btn"
+                onClick={() => onComposeHandoff()}
+                disabled={empty || composeState?.status === "composing"}
+                aria-label="Compose the handoff work order"
+                title="Order and group your notes into one coherent work order for a coding agent"
+              >
+                {composeState?.status === "composing"
+                  ? "Composing…"
+                  : handoffComposition
+                    ? "Re-compose"
+                    : "Compose the handoff"}
+              </button>
+            </div>
+            {composeState?.status === "failed" ? (
+              <p
+                className="collation-handoff-status"
+                data-testid="handoff-compose-status"
+                data-status="failed"
+                role="alert"
+              >
+                Composition didn't run: {composeState.reason}. Your notes are untouched — retry, or
+                hand them off as the plain list.
+              </p>
+            ) : null}
+            {handoffComposition ? (
+              <div
+                className="collation-handoff-result"
+                data-testid="handoff-result"
+                data-composed={handoffComposition.composed}
+              >
+                {handoffComposition.composed ? (
+                  <p className="collation-handoff-note" role="note">
+                    Composed into {handoffComposition.tasks.length} task
+                    {handoffComposition.tasks.length === 1 ? "" : "s"}, in execution order. The
+                    coding agent gets your notes verbatim — composition only orders and groups them.
+                  </p>
+                ) : (
+                  <p
+                    className="collation-handoff-note"
+                    data-testid="handoff-floor-note"
+                    data-status="floor"
+                    role="note"
+                  >
+                    Not model-composed — no compose seat was available, so this is the plain
+                    pass-through list of every note, one task each. Nothing was lost.
+                  </p>
+                )}
+                <ol className="collation-handoff-tasks" aria-label="Composed handoff tasks">
+                  {handoffComposition.tasks.map((task, index) => (
+                    <li
+                      className="collation-handoff-task"
+                      // A stable key over the ordered composed tasks: the group's member
+                      // ids are stable and unique across the partition (a total cover).
+                      key={task.sourceDispositions.join(",")}
+                      data-testid="handoff-task"
+                    >
+                      <p className="collation-handoff-task-head">
+                        <span className="collation-handoff-task-ordinal" aria-hidden="true">
+                          {index + 1}
+                        </span>
+                        {task.title.trim() === "" ? (
+                          <span className="collation-handoff-task-title" data-empty="true">
+                            {task.asks.map((ask) => ask.path).join(", ")}
+                          </span>
+                        ) : (
+                          <span className="collation-handoff-task-title">{task.title}</span>
+                        )}
+                      </p>
+                      <ul className="collation-handoff-asks">
+                        {task.asks.map((ask) => (
+                          <li className="collation-handoff-ask" data-path={ask.path} key={ask.id}>
+                            <span className="collation-handoff-ask-anchor">
+                              {ask.path} ({askAnchorLabel(ask)})
+                            </span>
+                            <span className="collation-handoff-ask-body">
+                              {ask.instruction.trim() === "" ? "(no note)" : ask.instruction}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    </li>
+                  ))}
+                </ol>
+              </div>
             ) : null}
           </div>
         ) : null}

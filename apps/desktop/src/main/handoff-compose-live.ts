@@ -8,7 +8,13 @@ import {
   providerHarness,
   resolveAssignment,
 } from "@rennet/core";
-import type { ComposedHandoffBundle, CouncilHarnessId, HandoffBundle } from "@rennet/types";
+import type {
+  ComposedHandoffBundle,
+  ComposeResolution,
+  CouncilHarnessId,
+  HandoffBundle,
+  InvocationBudget,
+} from "@rennet/types";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.handoff.compose — the LIVE producer (issue #72, Model Council job M24).
@@ -175,6 +181,15 @@ export interface LiveComposeDeps {
   claudePort(): Promise<HarnessPort | null>;
   /** The Codex executor resolved to the absolute binary, or null when no `codex`. */
   codexExecutor(): Promise<CodexExecutor | null>;
+  /**
+   * The review's shared invocation budget (issue #72, task 2.1; #260 semantics). When
+   * present, one `tryConsume("handoff-bundle-composition")` is charged BEFORE the
+   * turn: a refusal skips the seat so the core router returns the mechanical floor
+   * (`composed:false`), never a block and never a fabricated composition. ABSENT ⇒
+   * ungated (#260: "no budget means no ceiling, not no spend"), matching the ad-hoc
+   * compose command that runs outside a pipeline run.
+   */
+  budget?(): InvocationBudget | undefined;
 }
 
 /** The input to one compose call: the mechanical bundle + the reviewed repo root. */
@@ -185,17 +200,36 @@ export interface LiveComposeInput {
 }
 
 /**
+ * The outcome of one live compose (issue #72, task 2.2): the composed bundle plus the
+ * council resolution that produced it, so `review.handoff.compose` can answer "why did
+ * this model run." A model-composed bundle carries the `resolved` seat; the floor path
+ * (no seat, a refused budget, or a probe rejection) carries an honest `unavailable`.
+ */
+export interface LiveComposeResult {
+  readonly bundle: ComposedHandoffBundle;
+  readonly resolution: ComposeResolution;
+}
+
+/** The unavailable resolution the floor path records (no model turn ran). */
+function floorResolution(summary: string): ComposeResolution {
+  return { status: "unavailable", summary };
+}
+
+/**
  * Build the LIVE handoff-bundle composer. Resolves the council seat from the same
- * probes it executes on, runs one batched turn on whichever seat the council picked,
- * and hands it to the core `composeHandoffBundle` router. When NEITHER seat is
- * installed, it composes with an always-`unavailable` port so the core router returns
- * the mechanical floor — never a throw, never a lossy authoring.
+ * probes it executes on, charges the shared invocation budget when present, runs one
+ * batched turn on whichever seat the council picked, and hands it to the core
+ * `composeHandoffBundle` router. When NEITHER seat is installed, the budget refuses,
+ * or a probe rejects, it composes with an always-`unavailable` port so the core router
+ * returns the mechanical floor — never a throw, never a lossy authoring — and records
+ * an honest `unavailable` resolution.
  */
 export function createLiveComposeBundle(
   deps: LiveComposeDeps,
-): (input: LiveComposeInput) => Promise<ComposedHandoffBundle> {
+): (input: LiveComposeInput) => Promise<LiveComposeResult> {
   return async ({ bundle, repoRoot }) => {
     let port: ComposePort | null = null;
+    let resolution: ComposeResolution = floorResolution("no compose seat installed");
     // F3: a seat probe that REJECTS (e.g. codex discovery throws) must not reject the
     // whole IPC command — it sits OUTSIDE the core router's fallback boundary. Catch it
     // here and fall to the deterministic mechanical floor (a real, complete bundle).
@@ -205,23 +239,53 @@ export function createLiveComposeBundle(
       if (claudePort !== null) installed.push("claude-code");
       if (executor !== null) installed.push("codex");
 
-      const resolution = resolveAssignment(COMPOSE_JOB_ID, { availability: { installed } });
-      if (resolution.kind === "model") {
-        const harness = providerHarness(resolution.model);
+      const resolved = resolveAssignment(COMPOSE_JOB_ID, { availability: { installed } });
+      if (resolved.kind === "model") {
+        const harness = providerHarness(resolved.model);
         if (harness === "codex" && executor !== null) {
-          port = codexComposePort(executor, resolution.model, resolution.effort);
+          port = codexComposePort(executor, resolved.model, resolved.effort);
         } else if (harness === "claude-code" && claudePort !== null) {
           port = claudeComposePort(claudePort, repoRoot);
+        }
+        if (port !== null) {
+          // The seat the turn will run on — recorded WITH the outcome (task 2.2) so the
+          // product can answer "why did this model run" the way pipeline provenance does.
+          resolution = {
+            status: "resolved",
+            harness: resolved.harness,
+            model: resolved.model,
+            effort: resolved.effort,
+            summary: resolved.trace.summary,
+          };
         }
       }
     } catch {
       port = null;
+      resolution = floorResolution("the compose seat probe failed");
     }
-    // No seat (or a probe rejected): compose with an unavailable port so the core
-    // router returns the deterministic mechanical floor (a real, complete bundle).
+
+    // Budget gate (task 2.1, #260): charge ONE invocation before the turn when a budget
+    // is present. A refusal skips the seat — the core router returns the mechanical floor
+    // and the outcome records an honest `unavailable` resolution (no model turn spent).
+    // An ABSENT budget runs ungated (#260: absent = no ceiling, not no spend).
+    if (port !== null) {
+      const budget = deps.budget?.();
+      if (budget !== undefined) {
+        const grant = budget.tryConsume("handoff-bundle-composition");
+        if (!grant.granted) {
+          port = null;
+          resolution = floorResolution(grant.reason);
+        }
+      }
+    }
+
+    // No seat, a refused budget, or a probe rejection: compose with an unavailable port
+    // so the core router returns the deterministic mechanical floor (a real, complete
+    // bundle) and the recorded resolution stays `unavailable`.
     const composePort: ComposePort =
       port ??
       (() => Promise.resolve({ status: "unavailable", reason: "no compose seat installed" }));
-    return composeHandoffBundle(bundle, composePort);
+    const composed = await composeHandoffBundle(bundle, composePort);
+    return { bundle: composed, resolution };
   };
 }

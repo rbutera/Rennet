@@ -16,6 +16,7 @@ import {
   mechanicalComposition,
   type ReviewService,
   resolveReviewEvent,
+  verifyComposedBundle,
 } from "@rennet/core";
 import {
   type CommandName,
@@ -43,6 +44,7 @@ import type {
   Canvas,
   CanvasAngle,
   ComposedHandoffBundle,
+  ComposeResolution,
   ContextManifest,
   DecisionsRunStatus,
   DeltaAccount,
@@ -179,7 +181,7 @@ export interface DispatchDeps {
   readonly composeBundle?: (input: {
     bundle: HandoffBundle;
     repoRoot: string;
-  }) => Promise<ComposedHandoffBundle>;
+  }) => Promise<{ bundle: ComposedHandoffBundle; resolution: ComposeResolution }>;
   /**
    * The front door (issue #29): the persisted projects list and the read-only
    * discovery + harness-detection that feed the add-a-project flow. `add` takes the
@@ -1125,13 +1127,44 @@ export function createDispatch(
           patchset: priorActive,
           dispositions: input.dispositions,
         });
+        // The bundle whose trace map rides the run result (issue #72, D3). When a
+        // composed bundle is supplied and verifies, the run EXECUTES that composition,
+        // so its trace map is the one that maps results back to dispositions. With no
+        // composition, the mechanical pass-through's trace map (one ask per task) makes
+        // the field total on both paths, so downstream delta tooling never branches.
+        let executedTraceMap = mechanicalComposition(bundle).traceMap;
+        let executedComposed = false;
+        // The prompt the harness executes. Defaults to the mechanical prompt (today's
+        // behaviour, byte-identical); a verified composed bundle overrides it with the
+        // exact prompt the paper previewed (D2).
+        let runBundle: HandoffBundle = bundle;
+        if (input.composed !== undefined) {
+          // Verification is recomputation, never trust (D2): the composed bundle's
+          // digest and ask set must match the mechanical rebuild. A stale/corrupt
+          // composition REFUSES the run — no harness turn is spent — rather than
+          // silently executing something the paper never previewed.
+          const verdict = verifyComposedBundle(input.composed, bundle);
+          if (!verdict.ok) {
+            return parseCommandOutput(name, { status: "refused", reason: verdict.reason });
+          }
+          // Only `prompt` is consumed by the turn (the checkpoint bracket runs over the
+          // repo, not the tasks), so carry the composed prompt on the mechanical
+          // baseline. The trusted mechanical `tasks` stay put; the executed contract is
+          // the previewed composed prompt.
+          runBundle = { ...bundle, prompt: input.composed.prompt };
+          executedTraceMap = input.composed.traceMap;
+          executedComposed = input.composed.composed;
+        }
         if (!deps.runHandoffTurn) {
           return parseCommandOutput(name, {
             status: "unavailable",
             reason: "no coding harness is available to run the handoff",
           });
         }
-        const turn = await deps.runHandoffTurn({ repoRoot: review.repositoryRoot, bundle });
+        const turn = await deps.runHandoffTurn({
+          repoRoot: review.repositoryRoot,
+          bundle: runBundle,
+        });
         if (turn.status === "failed") {
           // Surface the files the agent changed before erroring (Codex F4) — the working
           // tree was modified even though the turn failed; hiding it defeats totality.
@@ -1167,6 +1200,10 @@ export function createDispatch(
           filesTouched: [...turn.filesTouched],
           carriedForward: updated.dispositions.length,
           orphaned: updated.orphaned?.length ?? 0,
+          // The executed bundle's trace map + composed flag ride the result (D3), so the
+          // delta re-review can map the agent's result back to the source dispositions.
+          traceMap: executedTraceMap,
+          composed: executedComposed,
         };
         return parseCommandOutput(name, { status: "ran", result });
       }
@@ -1242,10 +1279,23 @@ export function createDispatch(
           patchset: activePatchsetOf(review),
           dispositions: input.dispositions,
         });
-        const bundle = deps.composeBundle
+        // With the composer wired, its outcome carries both the composed bundle and the
+        // council resolution that produced it (issue #72, task 2.2). With no composer,
+        // the mechanical floor answers and the resolution is honestly `unavailable` — a
+        // real, complete bundle either way, never a throw and never a lossy authoring.
+        const outcome = deps.composeBundle
           ? await deps.composeBundle({ bundle: mechanical, repoRoot: review.repositoryRoot })
-          : mechanicalComposition(mechanical);
-        return parseCommandOutput(name, { bundle });
+          : {
+              bundle: mechanicalComposition(mechanical),
+              resolution: {
+                status: "unavailable",
+                summary: "no composer is available in this build",
+              } satisfies ComposeResolution,
+            };
+        return parseCommandOutput(name, {
+          bundle: outcome.bundle,
+          resolution: outcome.resolution,
+        });
       }
       // ── The Noise lens (issue #34) ────────────────────────────────────────────
       case "noise.review": {

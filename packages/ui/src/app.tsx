@@ -46,6 +46,12 @@ import {
 } from "./canvas/conversation";
 import { type DestinationMode, destinationVariant, type PublishLedger } from "./canvas/destination";
 import { flaggedForPatchset } from "./canvas/flagged";
+import {
+  currentComposition,
+  type HeldComposition,
+  handoffDispositions,
+  handoffStagedSignature,
+} from "./canvas/handoff";
 import { type CanvasSet, loadCanvases } from "./canvas/load";
 import { type DispositionWrite, withoutProposal, zoomReducer } from "./canvas/logic";
 import type { OpenSpecCoverageIndex } from "./canvas/openspec";
@@ -65,6 +71,7 @@ import { buildCommands, type CommandContext, type Screen } from "./command/comma
 import { Breadcrumb } from "./components/breadcrumb";
 import {
   CollationDraftCanvas,
+  type HandoffComposeState,
   type PrDraftState,
   type PrDraftValues,
   type RefineItemState,
@@ -513,6 +520,20 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // create act). `prDraftState` is the ephemeral drafting status (idle when absent).
   const [prDraft, setPrDraft] = useState<PrDraftValues>({ title: "", body: "" });
   const [prDraftState, setPrDraftState] = useState<PrDraftState | undefined>(undefined);
+  // The composed handoff bundle (issue #72) — renderer-HELD derived state (design D1),
+  // tagged with the staged signature it was computed from. It is presented ONLY while
+  // that signature still matches the current staged set (`currentComposition`), so a
+  // staged edit clears it without an explicit reset, and the run seam never passes a
+  // stale one. `composeState` is the ephemeral compose status (idle when absent).
+  const [handoffComposition, setHandoffComposition] = useState<HeldComposition | undefined>(
+    undefined,
+  );
+  const [composeState, setComposeState] = useState<HandoffComposeState | undefined>(undefined);
+  // The generation of the current compose turn (mirrors `prDraftGeneration`, #74
+  // HIGH-2): bumped on every new compose AND whenever the staged set changes, so a late
+  // result from a superseded turn is DROPPED rather than held over a set it no longer
+  // describes.
+  const composeGeneration = useRef(0);
   // The generation of the current PR-body draft turn (#74 HIGH-2). Bumped on every
   // new draft AND on a review switch, so a late result from a superseded turn is
   // DROPPED rather than overwriting the current review's composer with another
@@ -1238,6 +1259,22 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     prDraftGeneration.current += 1;
     setPrDraftState(undefined);
   }, [prDraftInputFingerprint]);
+  // The staged handoff signature (issue #72, D1): the identity of the addressed
+  // (request-change/comment) staged set the server would rebuild the mechanical bundle
+  // from. A held composition is CURRENT only while it matches this — so a reword /
+  // retype / withdraw that changes the payload silently makes a held composition stale
+  // (it stops being presented), and the run seam stops passing it.
+  const handoffStagedSig = handoffStagedSignature(draft, activePatchsetId ?? "");
+  const currentHandoffComposition = currentComposition(handoffComposition, handoffStagedSig);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — the effect FIRES ON the signature change to void an in-flight compose turn and clear a status that no longer describes the staged set; its body reads only the stable generation ref + setter, so biome reads the dep as "unnecessary", but dropping it would stop the invalidation.
+  useEffect(() => {
+    // The staged set changed: drop any in-flight compose turn (its result would land
+    // over a set it no longer describes) and clear the compose status. The held bundle
+    // is left in place but `currentComposition` already stops presenting it, so nothing
+    // stale is shown — this only voids the transient status + in-flight turn.
+    composeGeneration.current += 1;
+    setComposeState(undefined);
+  }, [handoffStagedSig]);
   const publishTargetForMode = publishTarget(destinationMode, inkDraft, publishContext);
   // The degradation ledger, sourced HONESTLY from the active patchset: a degraded
   // (REST-fallback) changeset really did flatten, so it gates the sign. A clean
@@ -1460,6 +1497,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           onPrDraftChange={setPrDraft}
           onDraftPrBody={() => void draftPrBody()}
           prDraftState={prDraftState}
+          handoffComposition={currentHandoffComposition}
+          onComposeHandoff={() => void composeHandoff()}
+          composeState={composeState}
           onSign={() => {
             // Freezing a fresh paper drops any stale outcome from a prior sign.
             setPublishResult(undefined);
@@ -1473,6 +1513,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           target={publishTargetForMode}
           payload={publishTargetPayload(publishTargetForMode)}
           variant={destinationVariantForMode}
+          handoffComposition={currentHandoffComposition}
           ledger={publishLedger}
           result={publishResult}
           // A completed sign performs a REAL post only when this review was opened
@@ -1723,6 +1764,47 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       // "failed" status onto a composer that has moved to another review/draft.
       if (generation !== prDraftGeneration.current) return;
       setPrDraftState({
+        status: "failed",
+        reason: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * Compose the handoff over the staged set (issue #72, task 3.2). Runs the real
+   * council-routed compose turn and HOLDS the result, tagged with the staged signature
+   * it was computed from, so a later staged edit clears it (design D1). A late result
+   * against a since-changed set is discarded (the generation guard, mirroring the
+   * PR-body draft). The compose command never yields an error bundle — it always
+   * returns a complete one, floor-marked when the model was unavailable — so the only
+   * "failed" state is an IPC-level throw.
+   */
+  async function composeHandoff(): Promise<void> {
+    if (!review) return;
+    // Bind this turn to the staged signature it was requested over AND claim a
+    // generation, so a result that lands after the staged set changed is dropped
+    // rather than held over a set it no longer describes.
+    const signature = handoffStagedSig;
+    composeGeneration.current += 1;
+    const generation = composeGeneration.current;
+    setComposeState({ status: "composing" });
+    // The addressed (request-change/comment) dispositions in effective-body form —
+    // exactly what the server rebuilds the mechanical bundle from, and what the run
+    // later verifies the composition against.
+    const dispositions = handoffDispositions(draft);
+    try {
+      const result = await bridge.invoke("review.handoff.compose", {
+        commandId: crypto.randomUUID(),
+        reviewId: review.id,
+        dispositions,
+      });
+      // Drop a superseded result: the staged set moved while the turn was in flight.
+      if (generation !== composeGeneration.current) return;
+      setHandoffComposition({ signature, bundle: result.bundle });
+      setComposeState({ status: "composed" });
+    } catch (err) {
+      if (generation !== composeGeneration.current) return;
+      setComposeState({
         status: "failed",
         reason: err instanceof Error ? err.message : String(err),
       });

@@ -109,12 +109,25 @@ into a disposition on the draft.
 ## What is live
 
 The destination frame, editable collation canvas, comment refinement, paper,
-batched review post, and own-branch push-plus-PR submission are wired through the
-renderer. The paper has a back action; edits happen on the draft.
+batched review post, own-branch push-plus-PR submission, and handoff-bundle
+composition are wired through the renderer. The paper has a back action; edits
+happen on the draft.
 
-The write-enabled handoff and delta-recapture machinery is wired behind typed
-main-process commands, but the renderer does not invoke it. The handoff composer
-is also a separate command whose result is not yet passed into the acting run.
+In own-branch mode the collation draft canvas composes the staged asks into one
+coherent work order (`review.handoff.compose`), the paper previews the composed
+narrative as the exact prompt contract, and the handoff run executes that same
+previewed prompt: `review.handoff.run` takes the composed bundle, verifies its
+digest and ask set against the mechanical rebuild, and refuses on a stale or
+corrupt mismatch rather than diverging from the preview. The composed bundle's
+trace map rides the run result, so the delta re-review can map the agent's result
+back to the source dispositions. Composition is content-preserving by construction
+— the model contributes only ordering, grouping, and preview-only titles, and any
+failure falls closed to the mechanical pass-through, marked not model-composed.
+
+The write-enabled handoff run loop and delta-recapture surface are still driven
+behind typed main-process commands rather than a full renderer loop (issue #18);
+this change guarantees only that when the run happens, it executes the previewed
+composition.
 
 The deeper orchestrator-on-draft experience is still incomplete. The UI explains
 the proposal model, and `canvasOps@2` can raise proposals, but free-form
@@ -130,6 +143,9 @@ orchestrator editing of the whole collation draft is not yet the main live path.
 | Draft canvas | `packages/ui/src/components/collation-draft-canvas.tsx` |
 | Paper | `packages/ui/src/components/publish-sheet.tsx` |
 | Live sign wiring | `packages/ui/src/app.tsx` and `apps/desktop/src/main/dispatch.ts` |
+| Handoff composition (core) | `packages/core/src/handoff-compose.ts` |
+| Handoff composition (live seat) | `apps/desktop/src/main/handoff-compose-live.ts` |
+| Composition held state and staleness | `packages/ui/src/canvas/handoff.ts` |
 
 See [comment refinement](/developing/concepts/comment-refinement/) for how rough
 notes become effective bodies and [the canvas model](/developing/concepts/canvas-model/)

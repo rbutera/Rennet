@@ -1,0 +1,26 @@
+## 1. Run executes the previewed composition (core + protocol + dispatch)
+
+- [x] 1.1 Add a pure verification helper in `packages/core` (beside `handoff-compose.ts`): given a supplied `ComposedHandoffBundle` and the trusted mechanical `HandoffBundle` rebuilt from the same dispositions, verify (a) the recomputed composed digest matches `composed.digest` and (b) the composed ask set is a total cover of the mechanical asks with byte-identical bodies/anchors. Unit tests: pass, corrupted-digest fail, stale-ask-set fail (each red-proofed by performing the literal defect in the fixture).
+- [x] 1.2 Widen `packages/protocol`'s `review.handoff.run` input with optional `composed` (reusing `composedHandoffBundleSchema`) and its output's `ran` result with `traceMap` + `composed: boolean` (additive; existing clients unaffected — round-trip test with and without the new fields).
+- [x] 1.3 Add `traceMap`/`composed` to `HandoffRunResult` in `packages/types` (additive).
+- [x] 1.4 In `apps/desktop/src/main/dispatch.ts` `review.handoff.run`: when `input.composed` is supplied, run the 1.1 verification against the mechanical rebuild; on pass hand `runHandoffTurn` the composed bundle's prompt; on fail return a refusal naming the stale/corrupt composition (no harness turn spent); when absent, keep today's mechanical path byte-identical. Emit the executed bundle's trace map in the result on both paths (mechanical path uses `mechanicalComposition`'s trace map).
+- [x] 1.5 Dispatch tests: composed-pass executes the composed prompt (assert the prompt string handed to the fake `runHandoffTurn` IS `composed.prompt`, not the mechanical prompt); stale composition refuses with no turn spent; absent composition preserves the mechanical prompt; trace-map totality on both paths.
+
+## 2. Budget gating + resolution trace on the compose turn
+
+- [x] 2.1 In `apps/desktop/src/main/handoff-compose-live.ts`: accept an optional `InvocationBudget` in `LiveComposeDeps`; `tryConsume("handoff-bundle-composition")` before the turn; a refusal skips the seat so the core router returns the mechanical floor (`composed: false`). Absent budget = ungated (#260 semantics). Tests: exhausted budget → floor, no model call; absent budget → turn runs.
+- [x] 2.2 Return the council resolution summary (harness, model, effort, trace line from `resolveAssignment`) alongside the composed bundle, and surface it in the `review.handoff.compose` command output (additive protocol field). Test: a composed result carries the resolution that produced it; the floor path carries an honest absent/`unavailable` resolution.
+
+## 3. Renderer: compose on the collation draft (own-branch mode)
+
+- [x] 3.1 In `packages/ui` add the composed-bundle state to `app.tsx` following the #74 `prDraft` pattern: held per review, keyed to the staged set via the mechanical bundle digest; invalidated when any draft edit (reword, retype, reorder, merge, split, withdraw, refinement acceptance) changes the staged payload. Test: an edit after compose marks the held composition stale.
+- [x] 3.2 Add the "Compose the handoff" action to `collation-draft-canvas.tsx` (own-branch mode only), invoking `review.handoff.compose` over the staged set with transient status (in-flight / failed / done) beside the action, mirroring the refine controls. A late result against a changed staged set is discarded (signature check, as refinement does).
+- [x] 3.3 Render the composed result on the draft canvas: tasks in execution order, each group showing its preview title and member asks (verbatim effective bodies, anchor labels), with an explicit visible "not model-composed" state when `composed: false`. DOM tests: grouped render, floor render, honest distinction between them.
+- [x] 3.4 Own-branch paper preview (`publish-sheet.tsx`): render the composed work order from the held bundle — the previewed prompt string must BE `composed.prompt` (DOM test asserts string identity against the bundle, not a re-derivation); floor previews as the pass-through list marked not model-composed.
+- [x] 3.5 Wire the run invocation path (where the renderer or a future #18 surface invokes `review.handoff.run`) to pass the held, current composition when one exists; DOM/unit test that a stale held composition is not passed.
+
+## 4. Totality + doc alignment
+
+- [x] 4.1 Round-trip acceptance test (issue #72's own criterion) at the composition seam: fixture dispositions with overlapping asks → composed bundle merges them and every disposition id appears exactly once in the trace map; the content-preservation guard falls to pass-through on a seeded lossy partition (red-proof by disabling the validator in the fixture, per 81ax: make the fixture valid in every other dimension so the guard under test is the one that fires).
+- [x] 4.2 Update `docs/src/content/docs/developing/concepts/collation-and-signing.md` ("What is live") and `comment-refinement.md`'s cross-references: the composer's result now reaches the acting run and the paper previews the composed narrative. Remove the "separate command whose result is not yet passed into the acting run" gap sentence.
+- [x] 4.3 Run the full `pnpm check` (typecheck, lint, tests) via the project's nx targets; confirm `openspec validate add-handoff-bundle-composition --strict` passes.

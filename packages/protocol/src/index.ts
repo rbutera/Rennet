@@ -12,6 +12,7 @@ import type {
   ComposableAsk,
   ComposedHandoffBundle,
   ComposedTask,
+  ComposeResolution,
   CompositionFreshness,
   CompositionStaleMember,
   ContextDocumentRecord,
@@ -1591,6 +1592,12 @@ const handoffRunResultSchema = objectSchemaFor<HandoffRunResult>()({
   filesTouched: z.array(z.string()),
   carriedForward: z.number().int().nonnegative(),
   orphaned: z.number().int().nonnegative(),
+  // The trace map of the bundle the run EXECUTED (issue #72). Total by construction —
+  // every source disposition id maps to the composed task that carried it — so the
+  // delta re-review never branches on absence. Present on both the composed and the
+  // mechanical run (the mechanical path carries the pass-through's one-ask-per-task map).
+  traceMap: z.record(z.string(), z.number().int().nonnegative()),
+  composed: z.boolean(),
 });
 
 /**
@@ -1612,6 +1619,12 @@ const handoffRunOutputSchema = z.discriminatedUnion("status", [
     reason: z.string(),
     filesTouched: z.array(z.string()),
   }),
+  // A refused run (issue #72, D2): a composed bundle was supplied but its digest or
+  // ask set no longer matches the mechanical rebuild (corrupt or stale composition).
+  // The run refuses with an honest reason and spends NO harness turn, rather than
+  // silently executing the mechanical prompt — the previewed composition is what runs,
+  // or nothing runs. No filesTouched: nothing was touched (the turn never started).
+  z.object({ status: z.literal("refused"), reason: z.string() }),
 ]);
 export type HandoffRunOutput = z.infer<typeof handoffRunOutputSchema>;
 
@@ -1643,6 +1656,21 @@ const composedHandoffBundleSchema = objectSchemaFor<ComposedHandoffBundle>()({
   composed: z.boolean(),
   traceMap: z.record(z.string(), z.number().int().nonnegative()),
 });
+
+// The council resolution that produced a compose turn (issue #72, task 2.2) — "why
+// did this model run." A discriminated union so a `resolved` seat carries its
+// harness/model/effort/summary and the `unavailable` floor carries only a summary
+// (the honest no-seat case), each an inspectable, distinct provenance state.
+const composeResolutionSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("resolved"),
+    harness: z.string().min(1),
+    model: z.string().min(1),
+    effort: z.string().min(1),
+    summary: z.string(),
+  }),
+  z.object({ status: z.literal("unavailable"), summary: z.string() }),
+]) satisfies z.ZodType<ComposeResolution>;
 
 export const commandDefinitions = {
   "app.bootstrap": {
@@ -2278,6 +2306,15 @@ export const commandDefinitions = {
       reviewId: z.string().min(1),
       /** The dispositions to hand off; the bundle is rebuilt from them + the active patchset. */
       dispositions: z.array(handoffDispositionSchema),
+      /**
+       * The previewed composed bundle to execute (issue #72, D2). Optional and
+       * additive: when present, the run verifies it against the mechanical rebuild
+       * (digest + total-cover) and executes ITS prompt — the exact one the paper
+       * previewed — refusing on a stale/corrupt mismatch rather than diverging. When
+       * absent, the run rebuilds and executes the mechanical bundle exactly as before,
+       * so a client that never composes behaves identically to today.
+       */
+      composed: composedHandoffBundleSchema.optional(),
     }),
     output: handoffRunOutputSchema,
   },
@@ -2301,7 +2338,14 @@ export const commandDefinitions = {
       /** The addressed dispositions in effective (refined-if-kept, else raw) form. */
       dispositions: z.array(handoffDispositionSchema),
     }),
-    output: z.object({ bundle: composedHandoffBundleSchema }),
+    output: z.object({
+      bundle: composedHandoffBundleSchema,
+      // The council resolution that produced this composition (issue #72, task 2.2):
+      // the seat the council picked (harness/model/effort + trace summary), or an
+      // honest `unavailable` when the mechanical floor answered (no seat / budget
+      // refused). Additive — a client that ignores it behaves exactly as before.
+      resolution: composeResolutionSchema,
+    }),
   },
 } as const;
 

@@ -351,3 +351,82 @@ export async function composeHandoffBundle(
   }
   return composed;
 }
+
+// ── Run-time verification: the executed composition must be the previewed one ──
+
+export type ComposedVerification =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly reason: string };
+
+/**
+ * Identity comparison over exactly the fields the composed digest binds (id, path,
+ * type, instruction body, and anchor) — the "byte-identical bodies/anchors" the
+ * staleness check needs. Diff CONTEXT is deliberately excluded, matching the digest
+ * scope: the run rebuilds context from the live patchset, so a context-only change is
+ * not what makes a composition stale.
+ */
+function askIdentityEqual(left: ComposableAsk, right: ComposableAsk): boolean {
+  return (
+    left.id === right.id &&
+    left.path === right.path &&
+    left.type === right.type &&
+    left.instruction === right.instruction &&
+    JSON.stringify(left.span ?? null) === JSON.stringify(right.span ?? null) &&
+    (left.side ?? null) === (right.side ?? null)
+  );
+}
+
+/**
+ * Verify a SUPPLIED composed bundle against the TRUSTED mechanical bundle rebuilt
+ * from the same dispositions (issue #72, D2). Verification is recomputation, never
+ * trust: (a) the composed digest recomputed over the supplied tasks must equal
+ * `composed.digest` (integrity — a corrupted structure fails); (b) the supplied
+ * partition must be a TOTAL COVER of the mechanical ask ids AND every cited ask must
+ * be byte-identical to the current mechanical ask with that id (staleness — a
+ * disposition that changed since the composition was produced fails). It does NOT
+ * recompose (a fresh turn could legitimately produce a different partition, so the
+ * executed prompt could differ from the previewed one); it checks the ONE bundle the
+ * paper previewed. A failure returns a reason the caller surfaces as a refusal; a
+ * pass means the composed prompt IS the previewed prompt and is safe to execute.
+ */
+export function verifyComposedBundle(
+  composed: ComposedHandoffBundle,
+  mechanical: HandoffBundle,
+): ComposedVerification {
+  // (a) Integrity: the supplied digest must match a recomputation over the tasks.
+  if (composedDigest(composed.tasks) !== composed.digest) {
+    return {
+      ok: false,
+      reason: "the composed bundle's digest does not match its tasks (corrupted composition)",
+    };
+  }
+  const mechanicalAsks = asksFromBundle(mechanical);
+  // (b1) Total cover of the CURRENT mechanical ask ids by the supplied partition.
+  const proposal: ComposeProposal = {
+    groups: composed.tasks.map((task) => ({
+      title: task.title,
+      dispositionIds: [...task.sourceDispositions],
+    })),
+  };
+  const cover = validateComposition(mechanicalAsks, proposal);
+  if (!cover.ok) {
+    return {
+      ok: false,
+      reason: `the composed bundle no longer matches the staged dispositions: ${cover.reason}`,
+    };
+  }
+  // (b2) Byte-identical bodies/anchors: each cited ask must equal the CURRENT ask.
+  const mechanicalById = new Map(mechanicalAsks.map((ask) => [ask.id, ask] as const));
+  for (const task of composed.tasks) {
+    for (const ask of task.asks) {
+      const trusted = mechanicalById.get(ask.id);
+      if (trusted === undefined || !askIdentityEqual(ask, trusted)) {
+        return {
+          ok: false,
+          reason: `the composed bundle is stale: ask ${ask.id} no longer matches the current staged disposition`,
+        };
+      }
+    }
+  }
+  return { ok: true };
+}

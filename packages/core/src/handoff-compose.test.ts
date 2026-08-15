@@ -8,6 +8,7 @@ import {
   composeHandoffBundle,
   mechanicalComposition,
   validateComposition,
+  verifyComposedBundle,
 } from "./handoff-compose";
 import { buildHandoffBundle } from "./handoff-loop";
 
@@ -263,5 +264,67 @@ describe("mechanicalComposition", () => {
     expect(floor.tasks).toHaveLength(3);
     expect(floor.tasks.every((t) => t.title === "")).toBe(true);
     expect(Object.keys(floor.traceMap).sort()).toEqual(["d0", "d1", "d2"]);
+  });
+});
+
+describe("verifyComposedBundle — the run executes only the previewed composition", () => {
+  const VALID: ComposeProposal = {
+    groups: [
+      { title: "Harden token validation in auth.ts", dispositionIds: ["d0", "d1"] },
+      { title: "Fix the missing-user status code", dispositionIds: ["d2"] },
+    ],
+  };
+
+  it("passes when the supplied composition matches the mechanical rebuild", async () => {
+    const mechanical = bundleOf(THREE_ASKS);
+    const composed = await composeHandoffBundle(mechanical, portReturning(emitted(VALID)));
+    expect(composed.composed).toBe(true);
+    // The mechanical rebuild from the SAME dispositions is the trusted reference.
+    expect(verifyComposedBundle(composed, mechanical)).toEqual({ ok: true });
+  });
+
+  it("passes for the mechanical floor verified against its own bundle", async () => {
+    const mechanical = bundleOf(THREE_ASKS);
+    const floor = mechanicalComposition(mechanical);
+    expect(verifyComposedBundle(floor, mechanical)).toEqual({ ok: true });
+  });
+
+  it("fails a corrupted digest (integrity — the literal defect: tamper the digest)", async () => {
+    const mechanical = bundleOf(THREE_ASKS);
+    const composed = await composeHandoffBundle(mechanical, portReturning(emitted(VALID)));
+    // Perform the literal defect: hand a bundle whose digest no longer binds its tasks.
+    const corrupted = { ...composed, digest: `${composed.digest}-tampered` };
+    const result = verifyComposedBundle(corrupted, mechanical);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("digest");
+  });
+
+  it("fails a stale ask set (the dispositions changed since composition)", async () => {
+    // Compose against the ORIGINAL asks...
+    const composed = await composeHandoffBundle(
+      bundleOf(THREE_ASKS),
+      portReturning(emitted(VALID)),
+    );
+    // ...then rebuild the mechanical bundle from a CHANGED disposition body. The
+    // composed bundle cites the OLD body; the current mechanical rebuild carries the
+    // NEW one, so d0 no longer matches — a stale composition must refuse.
+    const changed: HandoffDisposition[] = [
+      { path: "src/auth.ts", type: "request-change", body: "validate the token AND its audience" },
+      ...THREE_ASKS.slice(1),
+    ];
+    const result = verifyComposedBundle(composed, bundleOf(changed));
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reason).toContain("stale");
+  });
+
+  it("fails when the staged set lost a disposition (no longer a total cover)", async () => {
+    const composed = await composeHandoffBundle(
+      bundleOf(THREE_ASKS),
+      portReturning(emitted(VALID)),
+    );
+    // The staged set shrank to two dispositions: the composition cites d2, which the
+    // rebuilt mechanical bundle no longer has, so verification refuses.
+    const result = verifyComposedBundle(composed, bundleOf(THREE_ASKS.slice(0, 2)));
+    expect(result.ok).toBe(false);
   });
 });

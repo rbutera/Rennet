@@ -3388,6 +3388,23 @@ export interface HandoffRunResult {
    */
   readonly carriedForward: number;
   readonly orphaned: number;
+  /**
+   * The trace map of the bundle the run EXECUTED (issue #72), mapping every source
+   * disposition id to the index of the composed task that carried it. Total by
+   * construction — every input ask id appears exactly once — so the successor
+   * review's delta re-review (stage 7) can map the agent's result back to the
+   * dispositions that asked for them without branching on absence. The mechanical
+   * path emits the pass-through composition's trace map (one ask per task), so the
+   * field is present on both the composed and the mechanical run.
+   */
+  readonly traceMap: Readonly<Record<string, number>>;
+  /**
+   * True when the executed bundle was a validated model composition; false when the
+   * run executed the mechanical bundle (no composition supplied) or the deterministic
+   * pass-through floor. Lets a reader distinguish an authored work order from the
+   * floor without inspecting the prompt.
+   */
+  readonly composed: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -3443,3 +3460,23 @@ export interface ComposedHandoffBundle {
   readonly composed: boolean;
   readonly traceMap: Readonly<Record<string, number>>;
 }
+
+/**
+ * The council resolution that produced a compose turn (issue #72, task 2.2): "why did
+ * this model run." `status: "resolved"` carries the seat the council picked — harness,
+ * model, effort — and the one-line resolution `summary` from the resolution trace, so
+ * the product can answer the provenance question the same way the pipeline lenses do.
+ * `status: "unavailable"` is the honest floor case: no seat was installed (or the
+ * budget refused before a seat ran), so no model resolution exists — `summary` names
+ * why. It is recorded WITH the compose outcome; a composed bundle carries the
+ * resolution that produced it, the floor carries an unavailable one.
+ */
+export type ComposeResolution =
+  | {
+      readonly status: "resolved";
+      readonly harness: string;
+      readonly model: string;
+      readonly effort: string;
+      readonly summary: string;
+    }
+  | { readonly status: "unavailable"; readonly summary: string };

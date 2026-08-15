@@ -1,3 +1,4 @@
+import type { ComposedHandoffBundle } from "@rennet/types";
 import { useRef, useState } from "react";
 import {
   bucketLedgerEntries,
@@ -103,6 +104,7 @@ export function PublishSheet({
   payload,
   variant,
   target,
+  handoffComposition,
   holdToSignMs = 800,
   ledger,
   result,
@@ -133,6 +135,16 @@ export function PublishSheet({
    * Absent → the legacy `items` list renders (the #80 gate-test path).
    */
   target?: PublishTarget;
+  /**
+   * The CURRENT composed handoff bundle (issue #72) — own-branch mode only. When
+   * present, the paper previews the composed work order as the EXACT prompt contract
+   * the handoff run will execute: the previewed prompt string IS `composed.prompt`,
+   * so "the preview is what runs" holds by construction (the run verifies the same
+   * bundle's digest and refuses on mismatch, D2). `composed:false` previews the plain
+   * pass-through, marked not model-composed. Absent ⇒ no composition preview (the
+   * own-branch PR submission renders as before).
+   */
+  handoffComposition?: ComposedHandoffBundle;
   /** Hold budget before a sign is permitted; accessibility floor 0 signs immediately. */
   holdToSignMs?: number;
   /**
@@ -343,6 +355,16 @@ export function PublishSheet({
         {/* The variant-specific outbound preview (issue #22). Both variants are
             rendered from the one collation draft the `target` was derived from. */}
         {target ? renderTarget(target) : renderItems(items)}
+
+        {/* The composed handoff work order (issue #72) — own-branch mode only. This is
+            the EXACT prompt contract the run executes: the previewed prompt string IS
+            `composed.prompt` (not a re-derivation), so what the paper shows is what the
+            coding harness receives, and the run refuses any bundle whose digest no
+            longer matches rather than diverging from this preview. The floor previews
+            as the plain pass-through, marked not model-composed. */}
+        {variant.mode === "own-branch" && handoffComposition
+          ? renderComposedHandoff(handoffComposition)
+          : null}
 
         {/* The exact outbound bytes, machine-readable: previewed bytes == the
             `payload` prop == what `onSign` emits. Rendered so a reviewer (and a
@@ -597,6 +619,43 @@ function renderPrSubmission(submission: PrSubmission) {
         Signing previews the submission. Creating the pull request is a separate act — nothing is
         pushed from here.
       </p>
+    </div>
+  );
+}
+
+/**
+ * The composed handoff work order preview (issue #72). The `<pre>` renders
+ * `composed.prompt` VERBATIM — the exact string the run hands the coding harness — so
+ * a DOM test can assert string identity against the bundle rather than re-deriving it.
+ * The structured task list is a secondary reading of the same bundle. `composed:false`
+ * is marked as the not-model-composed floor, honestly, never dressed as an authored
+ * narrative.
+ */
+function renderComposedHandoff(composed: ComposedHandoffBundle) {
+  return (
+    <div
+      className="publish-sheet-handoff"
+      data-testid="handoff-work-order"
+      data-composed={composed.composed}
+    >
+      <p className="publish-sheet-handoff-head">
+        <span className="publish-sheet-handoff-title">
+          {composed.composed ? "Composed work order" : "Handoff work order (not model-composed)"}
+        </span>
+        <span className="publish-sheet-handoff-count">
+          {composed.tasks.length} task{composed.tasks.length === 1 ? "" : "s"}
+        </span>
+      </p>
+      {composed.composed ? null : (
+        <p className="publish-sheet-handoff-floor" data-testid="handoff-floor" role="note">
+          No compose seat was available, so this is the plain pass-through list — every note, one
+          task each. Nothing was lost.
+        </p>
+      )}
+      {/* The EXACT prompt the run executes — string identity with the bundle. */}
+      <pre className="publish-sheet-handoff-prompt" data-testid="handoff-prompt">
+        {composed.prompt}
+      </pre>
     </div>
   );
 }
