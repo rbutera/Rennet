@@ -41,7 +41,7 @@ import {
   REVIEW_HYPOTHESIS_CONTRACT,
   renderBaseInstruction,
 } from "@rennet/instructions";
-import { computeInputDigest, validateDocument } from "@rennet/protocol";
+import { canonicalize, computeInputDigest, sha256Hex, validateDocument } from "@rennet/protocol";
 import type {
   BudgetGrant,
   HypothesisRepoContext,
@@ -157,6 +157,21 @@ function defaultMintDocId(): string {
   return out;
 }
 
+/** Content-address one risk by its patchset and meaning, never by run or list position. */
+function defaultMintRiskId(
+  patchsetId: string,
+  risk: Pick<HypothesisRisk, "statement" | "severity" | "disconfirmer">,
+): string {
+  return sha256Hex(
+    canonicalize({
+      patchsetId,
+      statement: risk.statement,
+      severity: risk.severity,
+      disconfirmer: risk.disconfirmer,
+    }),
+  );
+}
+
 function defaultRunId(): string {
   return `run_${Math.floor(Math.random() * 1e9).toString(36)}`;
 }
@@ -185,7 +200,11 @@ export function hasRepoContext(repoContext: HypothesisRepoContext | undefined): 
  * rejects the WHOLE document with a precise code (V153/V154/V155) and the report
  * is fed back — the pass never silently drops a risk to reach a clean count.
  */
-function stampRiskIds(body: unknown, mintRiskId: () => string): ReviewHypothesisBody {
+function stampRiskIds(
+  body: unknown,
+  patchsetId: string,
+  mintRiskId?: () => string,
+): ReviewHypothesisBody {
   const record = typeof body === "object" && body !== null ? (body as Record<string, unknown>) : {};
   const domain = typeof record.domain === "string" ? record.domain : "";
   const designExpectation =
@@ -203,13 +222,16 @@ function stampRiskIds(body: unknown, mintRiskId: () => string): ReviewHypothesis
   const rawRisks = Array.isArray(record.risks) ? record.risks : [];
   const risks: HypothesisRisk[] = rawRisks.map((raw) => {
     const risk = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
-    return {
-      riskId: mintRiskId(),
+    const stampedRisk = {
       statement: typeof risk.statement === "string" ? risk.statement : "",
       // Severity is passed through as-emitted; the shape schema (V108) rejects an
       // out-of-vocabulary value, so a bad severity rejects the whole doc.
       severity: risk.severity as HypothesisRisk["severity"],
       disconfirmer: typeof risk.disconfirmer === "string" ? risk.disconfirmer : "",
+    };
+    return {
+      riskId: mintRiskId?.() ?? defaultMintRiskId(patchsetId, stampedRisk),
+      ...stampedRisk,
     };
   });
   return { domain, scope: { inScope, outOfScope }, designExpectation, risks };
@@ -316,7 +338,6 @@ export async function runHypothesisPass(
   } = input;
   const mintDocId = input.mintDocId ?? defaultMintDocId;
   const newRunId = input.newRunId ?? defaultRunId;
-  const mintRiskId = input.mintRiskId ?? defaultMintDocId;
 
   const repoContextPresent = hasRepoContext(input.repoContext);
   const patchsetRef = { id: patchsetId };
@@ -362,7 +383,7 @@ export async function runHypothesisPass(
       continue;
     }
 
-    const body = stampRiskIds(turn.body, mintRiskId);
+    const body = stampRiskIds(turn.body, patchsetId, input.mintRiskId);
     const provenance = buildProvenance(seed, inputDigest, newRunId(), turn.tokens ?? ZERO_TOKENS);
     const document = buildEnvelope(body, patchsetId, provenance, mintDocId());
     const report = validateDocument({ document, patchset: patchsetRef, manifest });

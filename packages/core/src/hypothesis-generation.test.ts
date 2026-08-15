@@ -1,4 +1,4 @@
-import { sha256Hex } from "@rennet/protocol";
+import { canonicalize, sha256Hex } from "@rennet/protocol";
 import type {
   HypothesisStructure,
   PatchFile,
@@ -150,6 +150,68 @@ describe("runHypothesisPass — the hypothesis-first pre-read (issue #178)", () 
     }
     expect(result.document?.docType).toBe("review.hypothesis");
     expect(result.report?.admitted).toBe(true);
+  });
+
+  it("mints the same default riskIds for the same patchset and risk content across independent passes", async () => {
+    const body = modelHypothesis();
+    const run = () =>
+      runHypothesisPass({
+        patchsetId: PATCHSET.id,
+        manifest: MANIFEST,
+        structure: STRUCTURE,
+        provenance: SEED,
+        runTurn: emits(body),
+        budget: createInvocationBudget(5),
+      });
+
+    const first = await run();
+    const second = await run();
+
+    expect(first.hypothesis?.risks.map((risk) => risk.riskId)).toEqual(
+      second.hypothesis?.risks.map((risk) => risk.riskId),
+    );
+    const firstRisk = first.hypothesis?.risks[0];
+    expect(firstRisk?.riskId).toBe(
+      sha256Hex(
+        canonicalize({
+          patchsetId: PATCHSET.id,
+          statement: firstRisk?.statement,
+          severity: firstRisk?.severity,
+          disconfirmer: firstRisk?.disconfirmer,
+        }),
+      ),
+    );
+  });
+
+  it("changes riskId with semantic content and not with risk ordering", async () => {
+    const original = modelHypothesis() as Record<string, unknown> & { risks: readonly unknown[] };
+    const reordered = { ...original, risks: [...original.risks].reverse() };
+    const changed = modelHypothesis(6, {
+      statement: "a different risk that the repository key ignores the common git directory",
+    });
+    const run = (body: unknown) =>
+      runHypothesisPass({
+        patchsetId: PATCHSET.id,
+        manifest: MANIFEST,
+        structure: STRUCTURE,
+        provenance: SEED,
+        runTurn: emits(body),
+        budget: createInvocationBudget(5),
+      });
+
+    const baseline = await run(original);
+    const reorderedResult = await run(reordered);
+    const changedResult = await run(changed);
+    const reorderedIds = new Map(
+      reorderedResult.hypothesis?.risks.map((risk) => [risk.statement, risk.riskId]),
+    );
+
+    for (const risk of baseline.hypothesis?.risks ?? []) {
+      expect(reorderedIds.get(risk.statement)).toBe(risk.riskId);
+    }
+    expect(changedResult.hypothesis?.risks[0]?.riskId).not.toBe(
+      baseline.hypothesis?.risks[0]?.riskId,
+    );
   });
 
   it("marks the repo context absent when none is supplied, and present when it is", async () => {
