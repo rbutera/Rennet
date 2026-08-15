@@ -230,6 +230,8 @@ export interface CanvasWorkspaceProps {
   onSpanSelect?: (selection: { anchor: string; excerpt: string } | null) => void;
   /** Main→renderer agent pointing; nonce makes repeated same-anchor focus deliberate. */
   agentFocus?: { anchor: string; nonce: number };
+  /** Acknowledges that the one-shot delivery was applied, including an honest no-op. */
+  onAgentFocusConsumed?: (nonce: number) => void;
 }
 
 /** One inspected name in the navigation history: loading, errored, or resolved. */
@@ -548,14 +550,16 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     }
     store.getState().setCursor(requested.anchor);
     store.getState().setZoom({ level: "diff", elementKey: element.elementKey });
-    setFocusAnchor(requested.anchor);
-    setFocusNonce(requested.nonce);
+    pointAt(requested.anchor);
   };
+  const onAgentFocusConsumed = useRef(props.onAgentFocusConsumed);
+  onAgentFocusConsumed.current = props.onAgentFocusConsumed;
   const agentFocusAnchor = props.agentFocus?.anchor;
   const agentFocusNonce = props.agentFocus?.nonce;
   useEffect(() => {
     if (agentFocusAnchor === undefined || agentFocusNonce === undefined) return;
     deliverAgentFocus.current({ anchor: agentFocusAnchor, nonce: agentFocusNonce });
+    onAgentFocusConsumed.current?.(agentFocusNonce);
   }, [agentFocusAnchor, agentFocusNonce]);
 
   // The index's orphan verdict is AUTHORITATIVE (issue #84 P0-2), not the old coarse

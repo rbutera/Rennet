@@ -41,6 +41,12 @@ const review: Review = {
   ],
 };
 
+function focusDiff(lines: number): string {
+  const rows = [`@@ -10,1 +10,${lines} @@`, " context", "+pointed"];
+  for (let index = 2; index <= lines - 1; index += 1) rows.push(`+pointed ${index}`);
+  return rows.join("\n");
+}
+
 function harness() {
   const asks: CommandInput<"review.ask">[] = [];
   const listeners = new Set<(event: ReviewAskStreamEvent) => void>();
@@ -54,9 +60,9 @@ function harness() {
           "dec-1-1": {
             path: "src/focus.ts",
             paths: ["src/focus.ts"],
-            diff: "@@ -10,1 +10,2 @@\n context\n+pointed",
+            diff: focusDiff(240),
             hunkOccurrences: [
-              [{ id: "c1-h1", oldStart: 10, oldLines: 1, newStart: 10, newLines: 2 }],
+              [{ id: "c1-h1", oldStart: 10, oldLines: 1, newStart: 10, newLines: 240 }],
             ],
           },
         },
@@ -134,5 +140,28 @@ describe("RennetApp — two-way deixis routing (#79)", () => {
     fireEvent.click(send);
     await waitFor(() => expect(h.asks).toHaveLength(2));
     expect(h.asks[1]).not.toHaveProperty("selection");
+  });
+
+  it("consumes focus once across Files/Canvases remounts and accepts a new delivery", async () => {
+    const h = harness();
+    const { container, getByRole } = mount(<RennetApp bridge={h.bridge} />);
+    await waitFor(() => expect(container.querySelector(".review-heart-split")).not.toBeNull());
+
+    h.emit({ kind: "ask-focus", anchor: "rennet:hunk/c1-h1#L200@additions" });
+    await waitFor(() => expect(container.querySelector(".code-view-scroll")).not.toBeNull());
+    const initialScroll = container.querySelector<HTMLElement>(".code-view-scroll");
+    if (!initialScroll) throw new Error("canvas diff did not mount");
+    await waitFor(() => expect(initialScroll.scrollTop).toBeGreaterThan(150 * 18));
+
+    fireEvent.click(getByRole("tab", { name: "Files" }));
+    expect(container.querySelector(".code-view-scroll")).toBeNull();
+    fireEvent.click(getByRole("tab", { name: "Canvases" }));
+
+    const remountedScroll = container.querySelector<HTMLElement>(".code-view-scroll");
+    if (!remountedScroll) throw new Error("canvas diff did not remount");
+    expect(remountedScroll.scrollTop).toBe(0);
+
+    h.emit({ kind: "ask-focus", anchor: "rennet:hunk/c1-h1#L200@additions" });
+    await waitFor(() => expect(remountedScroll.scrollTop).toBeGreaterThan(150 * 18));
   });
 });

@@ -69,6 +69,23 @@ describe("real desktop glass + solid content (issue #61, the #115 correction)", 
   });
 });
 
+describe("deixis focus pulse (#79)", () => {
+  const canvas = readFileSync(fileURLToPath(new URL("./canvas.css", import.meta.url)), "utf8");
+
+  it("animates the focused row once and settles instead of leaving a static highlight", () => {
+    const selector = ".code-view-row.cv-focus {";
+    const start = canvas.indexOf(selector);
+    expect(start).toBeGreaterThanOrEqual(0);
+    const close = canvas.indexOf("}", start);
+    const focus = canvas.slice(start, close);
+
+    expect(focus).toMatch(/animation:\s*cv-focus-pulse\s+\d+ms\s+ease-out\s+1\s+both/);
+    expect(focus).not.toMatch(/animation[^;]*infinite/);
+    expect(canvas).toMatch(/@keyframes\s+cv-focus-pulse\s*{/);
+    expect(canvas).toMatch(/100%\s*{[^}]*transparent[^}]*}/);
+  });
+});
+
 describe("dark paper — the R40 fix: paper is materiality (warmth + opacity), not a fixed light colour", () => {
   it("makes the dark (default) paper WARM-DARK espresso, not cream", () => {
     const dark = block(".rennet-glass {");

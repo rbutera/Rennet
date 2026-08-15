@@ -104,16 +104,24 @@ describe("CodeView — mounted scroll interaction (the #11 frozen-window bug)", 
     const scrollEl = container.querySelector<HTMLElement>(".code-view-scroll");
     if (!scrollEl) throw new Error("scroll container did not mount");
     await waitFor(() => expect(scrollEl.scrollTop).toBeGreaterThan(150 * 18));
+    const firstPulse = container.querySelector<HTMLElement>(".cv-focus");
+    if (!firstPulse) throw new Error("focused row did not mount");
 
-    fireEvent.scroll(scrollEl, { target: { scrollTop: 900 } });
-    expect(scrollEl.scrollTop).toBe(900);
     rerender(<CodeView {...props} focusNonce={1} />);
     await Promise.resolve();
-    expect(scrollEl.scrollTop).toBe(900);
+    expect(container.querySelector(".cv-focus")).toBe(firstPulse);
 
     rerender(<CodeView {...props} focusNonce={2} />);
     await waitFor(() => expect(scrollEl.scrollTop).toBeGreaterThan(150 * 18));
-    expect(container.querySelector(".cv-focus")?.getAttribute("data-focus-nonce")).toBe("2");
+    const secondPulse = container.querySelector<HTMLElement>(".cv-focus");
+    expect(secondPulse?.getAttribute("data-focus-nonce")).toBe("2");
+    expect(secondPulse).not.toBe(firstPulse);
+
+    fireEvent.scroll(scrollEl, { target: { scrollTop: 900 } });
+    expect(scrollEl.scrollTop).toBe(900);
+    rerender(<CodeView {...props} focusNonce={2} />);
+    await Promise.resolve();
+    expect(scrollEl.scrollTop).toBe(900);
   });
 
   it("malformed and orphan focus anchors are honest no-ops", async () => {

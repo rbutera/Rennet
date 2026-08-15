@@ -494,6 +494,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     undefined,
   );
   const agentFocusNonce = useRef(0);
+  const consumeAgentFocus = useCallback((nonce: number) => {
+    setAgentFocus((current) => (current?.nonce === nonce ? undefined : current));
+  }, []);
   // The EPHEMERAL per-item refinement state (issue #19), keyed by collation-item
   // id. An adopted refinement is durable on the item (`item.refined`); this map
   // holds only the in-flight/failed/no-change states the refine turn produces.
@@ -2187,6 +2190,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                       : undefined
                   }
                   agentFocus={agentFocus}
+                  onAgentFocusConsumed={consumeAgentFocus}
                   onSpanSelect={(selection) => setSpanSelection(selection ?? undefined)}
                 />
               </div>
