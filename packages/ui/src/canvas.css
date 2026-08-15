@@ -1463,6 +1463,63 @@
   background: var(--amber-surface);
   border: 1px solid var(--amber-line);
 }
+.ci-signal-panel {
+  border: 1px solid var(--raised-border);
+  border-radius: var(--radius);
+  background: var(--raised);
+  margin-bottom: 12px;
+}
+.ci-signal-panel > summary {
+  cursor: pointer;
+  padding: 9px 12px;
+  color: var(--text-soft);
+  font: 650 12px / 1.3 var(--sans);
+}
+.ci-signal-body {
+  border-top: 1px solid var(--hairline);
+  padding: 9px 12px;
+  color: var(--text-soft);
+  font-size: 13px;
+}
+.ci-signal-body p {
+  margin: 0;
+}
+.ci-signal-failures {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.ci-signal-failure {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 3px 9px;
+  padding: 7px 0;
+  border-top: 1px solid var(--hairline);
+}
+.ci-signal-failure:first-child {
+  border-top: 0;
+}
+.ci-signal-failure-label {
+  color: var(--amber);
+  font: 700 10px / 1.3 var(--sans);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.ci-signal-check-name {
+  color: var(--text);
+  font-weight: 600;
+}
+.ci-signal-evidence {
+  grid-column: 1 / -1;
+}
+.ci-signal-details {
+  grid-column: 1 / -1;
+  color: var(--accent);
+}
+.ci-signal-body .ci-signal-incomplete {
+  margin-top: 8px;
+  color: var(--amber);
+}
 /* The reproduce-or-refute verification chip (issue #179): a terse chrome verdict
    label + the model's evidence prose. `reproduced` is a confirmed green treatment;
    `inconclusive` an honest amber caveat (never a silent all-clear). The evidence is

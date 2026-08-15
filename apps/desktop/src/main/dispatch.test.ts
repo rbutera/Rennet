@@ -913,6 +913,55 @@ interface PublishResult {
 }
 
 describe("createDispatch — publish.review egress (issue #21)", () => {
+  it("keeps sign/publish dispatch byte-identical across passing, failing, and unavailable CI", async () => {
+    const { dispatch, flaggedReviewSpy } = harness();
+    const review = await postableReview(dispatch);
+    const comments = publishComments();
+    const payload = canonicalReviewPayload(comments);
+    const signals: NonNullable<FlaggedReview["ciSignal"]>[] = [
+      {
+        status: "checked",
+        overall: "passing",
+        failures: [],
+        headOid: SANDBOX_TARGET.headOid,
+        incomplete: false,
+      },
+      {
+        status: "checked",
+        overall: "failing",
+        failures: [
+          {
+            checkName: "core:test",
+            verdict: "change-caused",
+            evidence: "pipeline.ts failed",
+            implicatedPaths: ["src/a.ts"],
+            classifiedBy: "deterministic",
+          },
+        ],
+        headOid: SANDBOX_TARGET.headOid,
+        incomplete: false,
+      },
+      { status: "unavailable", reason: "network down" },
+    ];
+    const requests: PublishResult[] = [];
+    for (const ciSignal of signals) {
+      flaggedReviewSpy.mockResolvedValueOnce({ status: "ok", findings: [], ciSignal });
+      await dispatch("flagged.review", { reviewId: review.id });
+      requests.push(
+        (await dispatch("publish.review", {
+          commandId: randomUUID(),
+          reviewId: review.id,
+          target: SANDBOX_TARGET,
+          comments,
+          payload,
+          dryRun: true,
+        })) as PublishResult,
+      );
+    }
+    expect(requests[1]).toEqual(requests[0]);
+    expect(requests[2]).toEqual(requests[0]);
+  });
+
   it("(d) dry-run: builds the exact GitHub request, posts NOTHING, leaks no token", async () => {
     const port = fakePublishPort();
     const { dispatch } = harness(port);

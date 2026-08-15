@@ -1,4 +1,5 @@
-import type { DualReviewNote } from "@rennet/types";
+import type { CiFailure, CiSignal, DualReviewNote } from "@rennet/types";
+import type { ReactNode } from "react";
 import type { FlaggedIndex, FlaggedRow } from "../canvas/flagged";
 
 /**
@@ -76,6 +77,76 @@ function DualBadge({ dual }: { dual?: DualReviewNote }) {
     <span className="flag-dual flag-dual-full" data-dual="full">
       reconciled by {dual.seats.join(" + ")}
     </span>
+  );
+}
+
+function CiFailureLine({ failure }: { failure: CiFailure }) {
+  const label =
+    failure.verdict === "environmental"
+      ? "environmental (infra)"
+      : "Rennet could not attribute this — check it yourself";
+  return (
+    <li className={`ci-signal-failure ci-signal-${failure.verdict}`}>
+      <span className="ci-signal-failure-label">{label}</span>
+      <span className="ci-signal-check-name">{failure.checkName}</span>
+      <span className="ci-signal-evidence">{failure.evidence}</span>
+      {failure.detailsUrl ? (
+        <a className="ci-signal-details" href={failure.detailsUrl}>
+          check details
+        </a>
+      ) : null}
+    </li>
+  );
+}
+
+export function CiSignalPanel({ signal }: { signal?: CiSignal }) {
+  if (!signal) return null;
+
+  let content: ReactNode;
+  if (signal.status === "unavailable") {
+    content = <p>CI status unavailable — {signal.reason}</p>;
+  } else if (signal.status === "no-checks") {
+    content = <p>no CI checks reported for the reviewed head</p>;
+  } else {
+    const changeCaused = signal.failures.filter(
+      (failure) => failure.verdict === "change-caused",
+    ).length;
+    const panelFailures = signal.failures.filter((failure) => failure.verdict !== "change-caused");
+    content = (
+      <>
+        {signal.overall === "passing" ? (
+          <p>CI: all checks passing on the reviewed head</p>
+        ) : signal.overall === "pending" ? (
+          <p>CI checks are still pending on the reviewed head</p>
+        ) : null}
+        {changeCaused > 0 ? (
+          <p>
+            {`${changeCaused} change-caused CI ${
+              changeCaused === 1 ? "failure appears" : "failures appear"
+            } in the flagged findings below`}
+          </p>
+        ) : null}
+        {panelFailures.length > 0 ? (
+          <ul className="ci-signal-failures">
+            {panelFailures.map((failure) => (
+              <CiFailureLine key={failure.checkName} failure={failure} />
+            ))}
+          </ul>
+        ) : null}
+        {signal.incomplete ? (
+          <p className="ci-signal-incomplete">
+            CI results may be incomplete because GitHub returned partial results
+          </p>
+        ) : null}
+      </>
+    );
+  }
+
+  return (
+    <details className="ci-signal-panel" open>
+      <summary>CI on reviewed head</summary>
+      <div className="ci-signal-body">{content}</div>
+    </details>
   );
 }
 
@@ -161,6 +232,7 @@ export function FlaggedLens({
           </p>
           <p className="flagged-failed-reason">{index.reason}</p>
         </div>
+        <CiSignalPanel signal={index.ciSignal} />
       </div>
     );
   }
@@ -191,6 +263,7 @@ export function FlaggedLens({
           </button>
         ) : null}
       </div>
+      <CiSignalPanel signal={index.ciSignal} />
       {index.total === 0 ? (
         <p className="flagged-empty">
           Reviewed. Nothing was flagged — this angle ran clean, it was not skipped.

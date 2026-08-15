@@ -12,7 +12,9 @@ import {
   type CodexAvailability,
   claudeHandoffRunPort,
   cleanupWorktree,
+  createClaudeCiRefinementTurn,
   createClaudeHarness,
+  createCodexCiRefinementTurn,
   createCodexExecutor,
   createCodexUtilityAdapter,
   createCoverageTurn,
@@ -70,6 +72,7 @@ import {
   attachRiskCrossCheck,
   buildOfferedManifest,
   buildReviewCanvases,
+  type CodexExecutor,
   type CodexUtilityPort,
   createHarnessRunTurn,
   createInvocationBudget,
@@ -85,6 +88,7 @@ import {
   patchsetIntentToReviewIntent,
   ReviewService,
   recordSeatSend,
+  resolveAssignment,
   resolveDualSeat,
   reviewInvocationCeiling,
   runCoverageMapping,
@@ -121,6 +125,7 @@ import type {
   ReviewNarration,
 } from "@rennet/types";
 import { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell } from "electron";
+import { attachCiSignal } from "./ci-signal";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
 import { createDispatch } from "./dispatch";
 import { createLiveDraftPrBodyPort } from "./draft-pr-body-live";
@@ -243,6 +248,7 @@ function getClaudeHarness(): Promise<ClaudeHarnessResult> {
 interface CodexResolution {
   readonly availability: CodexAvailability;
   readonly port: CodexUtilityPort | null;
+  readonly executor: CodexExecutor | null;
   /** The resolved absolute `codex` path (for the ask-AI executor), or null. */
   readonly binPath: string | null;
   /** The resolved codex version, stamped as harness provenance, or null. */
@@ -260,6 +266,7 @@ function getCodexResolution(): Promise<CodexResolution> {
       return {
         availability: { available: false, version: null },
         port: null,
+        executor: null,
         binPath: null,
         version: null,
       };
@@ -271,6 +278,7 @@ function getCodexResolution(): Promise<CodexResolution> {
     return {
       availability: { available: true, version: chosen.version },
       port: createCodexUtilityAdapter({ executor }),
+      executor,
       binPath: chosen.path,
       version: chosen.version,
     };
@@ -280,13 +288,6 @@ function getCodexResolution(): Promise<CodexResolution> {
 
 function getCodexAvailability(): Promise<CodexAvailability> {
   return getCodexResolution().then((resolution) => resolution.availability);
-}
-
-/** The Codex utility port bound to the resolved absolute binary, or null when no
- *  codex resolved. Null here is the pipeline's "no Codex seat" signal — it degrades
- *  to single-Claude with the existing honest DEGRADED marker. */
-function getCodexPort(): Promise<CodexUtilityPort | null> {
-  return getCodexResolution().then((resolution) => resolution.port);
 }
 
 // The ambient first-run detection line (issue #29): which harnesses are on the
@@ -506,8 +507,9 @@ async function buildCanvasesForReviewWithContextFeed(
 }> {
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
-  const codex = await getCodexAvailability();
-  const codexPort = await getCodexPort();
+  const codexResolution = await getCodexResolution();
+  const codex = codexResolution.availability;
+  const codexPort = codexResolution.port;
   // KNOWN §7 DEVIATION (documented in the openspec change's design.md): the
   // read-only harness runs with `cwd` on the live mutable checkout rather than
   // an immutable materialisation, because that layer is not built yet and the
@@ -969,8 +971,9 @@ async function runFlaggedReviewWithContextFeed(
     reviewInvocationCeiling(DEFAULT_REVIEW_INTELLIGENCE_BUDGET, deepReview),
   );
   const { adapter } = await getClaudeHarness();
-  const codex = await getCodexAvailability();
-  const codexPort = await getCodexPort();
+  const codexResolution = await getCodexResolution();
+  const codex = codexResolution.availability;
+  const codexPort = codexResolution.port;
   const decomposition = decompose(patchset);
   const manifest = buildOfferedManifest(decomposition);
   // KNOWN §7 DEVIATION (as in buildCanvasesForReview): the read-only harness runs
@@ -986,6 +989,24 @@ async function runFlaggedReviewWithContextFeed(
   const installed: CouncilHarnessId[] = [];
   if (adapter) installed.push("claude-code");
   if (codex.available) installed.push("codex");
+
+  const ciAssignment = resolveAssignment("ci-failure-classification", {
+    availability: { installed },
+  });
+  const ciRefinementTurn =
+    ciAssignment.kind !== "model"
+      ? undefined
+      : ciAssignment.harness === "codex" && codexResolution.executor
+        ? createCodexCiRefinementTurn(codexResolution.executor, {
+            model: ciAssignment.model,
+            effort: ciAssignment.effort,
+          })
+        : ciAssignment.harness === "claude-code" && adapter
+          ? createClaudeCiRefinementTurn(adapter, {
+              cwd: review.repositoryRoot,
+              model: ciAssignment.model,
+            })
+          : undefined;
 
   // The ordered dual seats (Claude first, Codex second), each with its honest
   // provenance seed and executor. Under a single provider this is one seat.
@@ -1052,6 +1073,7 @@ async function runFlaggedReviewWithContextFeed(
   // there is no verification seat (createVerificationTurn needs a HarnessPort) — but in
   // DEEP review that absence must ANNOUNCE itself (P0-3, below), never surface a chipless
   // finding that reads as "nothing to check."
+  let surfacedReview: FlaggedReview;
   if (deepReview && adapter) {
     const readFileWindow = createVerificationFileReaderForPatchset({
       patchset,
@@ -1078,17 +1100,29 @@ async function runFlaggedReviewWithContextFeed(
     // ones were dropped), so a risk marked `confirmed` is addressed by a finding
     // that actually surfaces. Deterministic, $0 — absent a hypothesis it returns
     // `verified` unchanged.
-    const result = attachRiskCrossCheck(verified, hypothesis);
-    return result;
+    surfacedReview = attachRiskCrossCheck(verified, hypothesis);
+  } else {
+    // Reaching here under DEEP review means there is no Claude verifier (e.g. a
+    // Codex-only review). Announce that honestly: every finding that WOULD have been
+    // verified gets an explicit unavailable caveat. Quick review stays unchanged
+    // because it never promised verification. The cross-check is a free deterministic
+    // step over whichever honest surface applies.
+    const surfaced = projectUnavailableDeepVerification(flagged, deepReview);
+    surfacedReview = attachRiskCrossCheck(surfaced, hypothesis);
   }
-  // Reaching here under DEEP review means there is no Claude verifier (e.g. a
-  // Codex-only review). Announce that honestly: every finding that WOULD have been
-  // verified gets an explicit unavailable caveat. Quick review stays unchanged
-  // because it never promised verification. The cross-check is a free deterministic
-  // step over whichever honest surface applies.
-  const surfaced = projectUnavailableDeepVerification(flagged, deepReview);
-  const result = attachRiskCrossCheck(surfaced, hypothesis);
-  return result;
+
+  return attachCiSignal({
+    review: surfacedReview,
+    ...(review.postTarget === undefined ? {} : { postTarget: review.postTarget }),
+    patchset,
+    manifest,
+    fetchCiStatus: async (ref, headOid) => {
+      const token = await resolveGitHubToken();
+      return new GitHubForgeAdapter({ http: publishHttp, token }).fetchCiStatus(ref, headOid);
+    },
+    ...(ciRefinementTurn === undefined ? {} : { refineTurn: ciRefinementTurn }),
+    budget: sharedBudget,
+  });
 }
 
 async function runFlaggedReview(review: Review, deepReview = true): Promise<FlaggedReview> {

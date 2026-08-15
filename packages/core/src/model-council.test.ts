@@ -54,6 +54,20 @@ describe("the versioned job catalogue", () => {
       expect(ASSIGNMENT_TABLES["codex-only"][jobId], `codex:${jobId}`).toBeDefined();
     }
   });
+
+  it("routes CI failure classification as a batched light Codex seat when both are installed", () => {
+    expect(JOB_CATALOGUE["ci-failure-classification"]).toMatchObject({
+      tier: "light",
+      batching: "batched",
+      sessionRider: false,
+    });
+    expect(resolveAssignment("ci-failure-classification", ctx(BOTH))).toMatchObject({
+      kind: "model",
+      harness: "codex",
+      model: "gpt-5.6-luna",
+      effort: "low",
+    });
+  });
 });
 
 describe("resolveAssignment — the three availability scenarios (acceptance 1)", () => {

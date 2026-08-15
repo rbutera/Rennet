@@ -123,8 +123,11 @@ defaults. There is no adaptive policy silently rewriting the route table.
 The catalogue, three assignment tables, pure resolver, cross-harness execution,
 resolution provenance, RoutePlan, and shared runtime invocation budget are live.
 The review pipeline resolves real decomposition, ordering, narration, finding,
-comment-refinement, PR-drafting, and delta-summary seats through council-owned
-job IDs.
+comment-refinement, PR-drafting, delta-summary, and CI-failure-classification
+seats through council-owned job IDs. CI classification is a batched light job
+that sees only deterministically unclassified failures and shares the review's
+invocation budget; refusal or invalid output leaves the visible deterministic
+verdicts unchanged.
 
 The full diagnostics/calibration screen is still deferred. Several catalogue
 jobs also exist ahead of their final caller; the catalogue describes the system's

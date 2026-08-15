@@ -434,6 +434,78 @@ export const FINDING_VERIFICATION_CONTRACT: VerificationContract = {
     "If you can establish neither reproduce NOR refute — running it is impractical here, the claim reaches beyond what you can check, you are genuinely unsure — return inconclusive with the honest reason. Inconclusive is surfaced to the human with a 'could not verify' caveat, so it is a safe and honest answer. A refuted verdict DROPS the finding from the review, so refute a concern only when you have shown it wrong; never refute merely because you did not immediately see the problem.",
 };
 
+export interface CiClassificationContract {
+  readonly version: number;
+  readonly role: string;
+  readonly task: string;
+  readonly discipline: string;
+  readonly failureValve: string;
+}
+
+export const CI_CLASSIFICATION_CONTRACT: CiClassificationContract = {
+  version: 1,
+  role: "You classify CI failures that Rennet's deterministic rules could not attribute. This is an informational review signal, never a review, sign, or publish gate.",
+  task: 'For every supplied failure, return exactly one classification with its ref unchanged and verdict "change-caused", "environmental", or "unclassified". Treat a failure as environmental only when the evidence identifies infrastructure machinery rather than the changed code. The exact JSON schema is enforced separately; return only the complete classifications object.',
+  discipline:
+    "Use only the supplied check name, failure summary, and changed-path list. Change-caused means the failure is attributable to this changeset. Environmental means the evidence identifies runner, network, storage, rate-limit, artifact-service, or concurrency machinery. Do not infer environmental merely because attribution is unclear.",
+  failureValve:
+    "When the evidence cannot support either attribution, return unclassified. Uncertainty must stay visible and must never be softened into environmental.",
+};
+
+export const CI_CLASSIFICATION_OUTPUT_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  properties: {
+    classifications: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        properties: {
+          ref: { type: "string", minLength: 1 },
+          verdict: { type: "string", enum: ["change-caused", "environmental", "unclassified"] },
+        },
+        required: ["ref", "verdict"],
+      },
+    },
+  },
+  required: ["classifications"],
+} as const;
+
+export interface CiClassificationPromptFailure {
+  readonly ref: string;
+  readonly checkName: string;
+  readonly evidence: string;
+}
+
+export function renderCiClassificationPrompt(
+  contract: CiClassificationContract,
+  input: {
+    readonly failures: readonly CiClassificationPromptFailure[];
+    readonly changedPaths: readonly string[];
+  },
+): string {
+  return [
+    `# Rennet ci-failure-classification@${contract.version}`,
+    "",
+    "## Role",
+    contract.role,
+    "",
+    "## Task",
+    contract.task,
+    "",
+    "## Discipline",
+    contract.discipline,
+    "",
+    "## Failure valve",
+    contract.failureValve,
+    "",
+    "## Unclassified failures and changed paths",
+    JSON.stringify(input, null, 2),
+    "",
+  ].join("\n");
+}
+
 /** One finding handed to a verification turn: its ref key, severity, concern, and offered hunk. */
 export interface VerificationPromptFinding {
   /** The reference key the runner minted (e.g. "f1"); the model echoes it back. */

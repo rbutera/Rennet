@@ -107,6 +107,15 @@ finding is removed by the deterministic review result. A failed runner is shown
 as a failure, not “nothing flagged.” The row jumps to the mark at its code
 anchor—the index is not a second home for the finding.
 
+For GitHub pull requests, Flagged also carries a collapsible CI signal for the
+pinned head. Deterministic path overlap turns attributable failures into
+pre-reproduced high-severity findings; a failure without an offered-hunk anchor
+stays panel-only rather than acquiring an invented location. Narrow machinery
+signatures are labelled **environmental (infra)**, while every unresolved case
+says **Rennet could not attribute this — check it yourself**. Passing, no-checks,
+partial, and unavailable are distinct states. This signal is information only:
+no review, sign, or publish handler consults it.
+
 Today, a dual review matches nearby anchors and compares severity to decide
 whether two findings concur. It does not yet recognise differently worded
 claims as the same claim, reason about their polarity, or ask each provider to

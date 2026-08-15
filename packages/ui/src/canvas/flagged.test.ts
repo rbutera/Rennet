@@ -175,6 +175,26 @@ describe("buildFlaggedIndex — the dual-review note (issue #191)", () => {
   });
 });
 
+describe("buildFlaggedIndex — the CI signal", () => {
+  it("carries CI state through on an ok review", () => {
+    const ciSignal = {
+      status: "checked" as const,
+      overall: "passing" as const,
+      failures: [],
+      headOid: "abc123",
+      incomplete: false,
+    };
+    const index = buildFlaggedIndex({ status: "ok", findings: [], ciSignal });
+    expect(index.ciSignal).toEqual(ciSignal);
+  });
+
+  it("carries CI state through on a failed review", () => {
+    const ciSignal = { status: "unavailable" as const, reason: "network down" };
+    const index = buildFlaggedIndex({ status: "failed", reason: "model failed", ciSignal });
+    expect(index.ciSignal).toEqual(ciSignal);
+  });
+});
+
 describe("isFinding — the strict flag guard", () => {
   it("accepts a well-formed finding", () => {
     expect(isFinding(finding({ findingId: "x" }))).toBe(true);

@@ -141,6 +141,14 @@ export const JOB_CATALOGUE: Readonly<Record<CouncilJobId, CouncilJob>> = Object.
           15,
         ),
         job("context-ask-fetch", "light", "per-call", false, "context.ask — fetch/quick", 16),
+        job(
+          "ci-failure-classification",
+          "light",
+          "batched",
+          false,
+          "CI failure classification (#182)",
+          28,
+        ),
         // ── Heavy tier (§2.2) ──
         job("context-ask-thorough", "heavy", "per-call", false, "context.ask — thorough", 17),
         job("decomposition-skeleton", "heavy", "per-call", false, "Decomposition skeleton", 18),
@@ -303,6 +311,7 @@ const TABLE_BOTH: AssignmentTable = {
   "comment-refinement": pick("gpt-5.6-terra", "medium"),
   "handoff-bundle-composition": pick("gpt-5.6-terra", "medium"),
   "context-ask-fetch": pick("gpt-5.6-luna", "low"),
+  "ci-failure-classification": pick("gpt-5.6-luna", "low"),
   // Heavy → Claude review seats.
   "context-ask-thorough": pick("sonnet-5", "medium"),
   "decomposition-skeleton": pick("sonnet-5", "low"),
@@ -339,6 +348,7 @@ const TABLE_CLAUDE_ONLY: AssignmentTable = {
   "comment-refinement": pick("sonnet-5", "medium"),
   "handoff-bundle-composition": pick("sonnet-5", "medium"),
   "context-ask-fetch": pick("haiku", "low"),
+  "ci-failure-classification": pick("haiku", "low"),
   "context-ask-thorough": pick("sonnet-5", "medium"),
   "decomposition-skeleton": pick("sonnet-5", "low"),
   "decomposition-proposal": pick("opus-4.8", "high"),
@@ -374,6 +384,7 @@ const TABLE_CODEX_ONLY: AssignmentTable = {
   "comment-refinement": pick("gpt-5.6-terra", "medium"),
   "handoff-bundle-composition": pick("gpt-5.6-terra", "medium"),
   "context-ask-fetch": pick("gpt-5.6-luna", "low"),
+  "ci-failure-classification": pick("gpt-5.6-luna", "low"),
   "context-ask-thorough": pick("gpt-5.6-sol", "medium"),
   "decomposition-skeleton": pick("gpt-5.6-terra", "medium"),
   "decomposition-proposal": pick("gpt-5.6-sol", "high"),

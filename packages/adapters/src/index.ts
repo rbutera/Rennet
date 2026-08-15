@@ -18,6 +18,11 @@ export {
 } from "./canvas-ops-server";
 export { GitCheckpointStore, repoHasSubmodules } from "./checkpoint-store";
 export {
+  type ClaudeCiRefinementTurnOptions,
+  createClaudeCiRefinementTurn,
+  createCodexCiRefinementTurn,
+} from "./ci-refinement-backend";
+export {
   CLAUDE_TESTED_RANGE,
   ClaudeAdapter,
   type ClaudeAdapterConfig,
@@ -128,6 +133,7 @@ export {
   emptyFlaggedReviewFixture,
   failedFlaggedReviewFixture,
   flaggedReviewFixture,
+  noChecksFlaggedReviewFixture,
 } from "./flagged-fixture";
 export { GitCaptureAdapter } from "./git-capture";
 export {

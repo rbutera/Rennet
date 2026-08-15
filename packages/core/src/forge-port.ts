@@ -39,6 +39,20 @@ export type SsoState =
   | { kind: "required"; organizations: string[]; authorizationUrl: string | null }
   | { kind: "partial-results"; organizations: string[]; authorizationUrl: string | null };
 
+/** One check/status attached to a commit, in forge-neutral nouns. */
+export interface ForgeCheckRun {
+  name: string;
+  outcome: "passing" | "failing" | "pending" | "neutral";
+  /** The forge's one-line summary or description; empty when none. Never a full log. */
+  summary: string;
+  detailsUrl?: string;
+}
+
+export interface ForgeCiStatus {
+  checks: ForgeCheckRun[];
+  sso: SsoState;
+}
+
 /**
  * A pull request deep-fetched into Rennet nouns. GitHub is authoritative for
  * identity (which SHAs, whose review); local git is authoritative for content.
@@ -122,4 +136,6 @@ export interface ForgePort {
   fetchPullRequest(ref: ForgePullRequestRef): Promise<ForgePullRequest>;
   /** The unified-diff fallback for when the local clone is unavailable. */
   fetchDiff(ref: ForgePullRequestRef): Promise<ForgeDiff>;
+  /** Per-check CI results for a commit, keyed by OID rather than a moving branch. */
+  fetchCiStatus(ref: ForgePullRequestRef, headOid: string): Promise<ForgeCiStatus>;
 }

@@ -18,6 +18,35 @@ import type { FlaggedReview } from "@rennet/types";
 export function flaggedReviewFixture(): FlaggedReview {
   return {
     status: "ok",
+    ciSignal: {
+      status: "checked",
+      overall: "failing",
+      headOid: "fixture-reviewed-head",
+      incomplete: true,
+      failures: [
+        {
+          checkName: "core:test",
+          verdict: "change-caused",
+          evidence: "packages/core/src/budget.test.ts failed",
+          implicatedPaths: ["packages/core/src/budget.ts"],
+          classifiedBy: "deterministic",
+        },
+        {
+          checkName: "hosted runner",
+          verdict: "environmental",
+          evidence: "runner lost communication with the service",
+          implicatedPaths: [],
+          classifiedBy: "deterministic",
+        },
+        {
+          checkName: "acceptance",
+          verdict: "unclassified",
+          evidence: "snapshot mismatch without an attributable path",
+          implicatedPaths: [],
+          classifiedBy: "deterministic",
+        },
+      ],
+    },
     findings: [
       {
         findingId: "finding-money-circuit",
@@ -64,7 +93,26 @@ export function flaggedReviewFixture(): FlaggedReview {
  * runner that never executed.
  */
 export function emptyFlaggedReviewFixture(): FlaggedReview {
-  return { status: "ok", findings: [] };
+  return {
+    status: "ok",
+    findings: [],
+    ciSignal: {
+      status: "checked",
+      overall: "passing",
+      failures: [],
+      headOid: "fixture-passing-head",
+      incomplete: false,
+    },
+  };
+}
+
+/** A reviewed head on which the forge reported no check contexts. */
+export function noChecksFlaggedReviewFixture(): FlaggedReview {
+  return {
+    status: "ok",
+    findings: [],
+    ciSignal: { status: "no-checks", headOid: "fixture-no-checks-head" },
+  };
 }
 
 /**
@@ -73,5 +121,9 @@ export function emptyFlaggedReviewFixture(): FlaggedReview {
  * lie the empty-vs-failed distinction refuses.
  */
 export function failedFlaggedReviewFixture(): FlaggedReview {
-  return { status: "failed", reason: "the review harness did not report a result" };
+  return {
+    status: "failed",
+    reason: "the review harness did not report a result",
+    ciSignal: { status: "unavailable", reason: "the forge fixture is unavailable" },
+  };
 }

@@ -116,6 +116,127 @@ describe("FlaggedLens — the flagged index surface", () => {
     expect(getByText(/harness timed out/)).toBeTruthy();
   });
 
+  it("renders passing CI, no checks, unavailable, and absent as four distinct surfaces", () => {
+    const passing = mount(
+      <FlaggedLens
+        index={buildFlaggedIndex({
+          status: "ok",
+          findings: [],
+          ciSignal: {
+            status: "checked",
+            overall: "passing",
+            failures: [],
+            headOid: "passing-head",
+            incomplete: false,
+          },
+        })}
+        onJumpToAnchor={vi.fn()}
+      />,
+    );
+    expect(passing.getByText("CI: all checks passing on the reviewed head")).toBeTruthy();
+
+    const noChecks = mount(
+      <FlaggedLens
+        index={buildFlaggedIndex({
+          status: "ok",
+          findings: [],
+          ciSignal: { status: "no-checks", headOid: "empty-head" },
+        })}
+        onJumpToAnchor={vi.fn()}
+      />,
+    );
+    expect(noChecks.getByText("no CI checks reported for the reviewed head")).toBeTruthy();
+    expect(noChecks.container.textContent).not.toContain(
+      "CI: all checks passing on the reviewed head",
+    );
+
+    const unavailable = mount(
+      <FlaggedLens
+        index={buildFlaggedIndex({
+          status: "ok",
+          findings: [],
+          ciSignal: { status: "unavailable", reason: "GitHub timed out" },
+        })}
+        onJumpToAnchor={vi.fn()}
+      />,
+    );
+    expect(unavailable.getByText("CI status unavailable — GitHub timed out")).toBeTruthy();
+
+    const absent = mount(
+      <FlaggedLens
+        index={buildFlaggedIndex({ status: "ok", findings: [] })}
+        onJumpToAnchor={vi.fn()}
+      />,
+    );
+    expect(absent.container.querySelector(".ci-signal-panel")).toBeNull();
+  });
+
+  it("shows attributed failures without duplicating change-caused finding text", () => {
+    const { container, getByText, queryByText } = mount(
+      <FlaggedLens
+        index={buildFlaggedIndex({
+          status: "ok",
+          findings: [],
+          ciSignal: {
+            status: "checked",
+            overall: "failing",
+            headOid: "red-head",
+            incomplete: true,
+            failures: [
+              {
+                checkName: "core:test",
+                verdict: "change-caused",
+                evidence: "packages/core/src/pipeline.test.ts failed",
+                implicatedPaths: ["packages/core/src/pipeline.ts"],
+                classifiedBy: "deterministic",
+              },
+              {
+                checkName: "hosted runner",
+                verdict: "environmental",
+                evidence: "runner lost communication",
+                implicatedPaths: [],
+                classifiedBy: "deterministic",
+              },
+              {
+                checkName: "acceptance",
+                verdict: "unclassified",
+                evidence: "snapshot mismatch",
+                implicatedPaths: [],
+                classifiedBy: "deterministic",
+              },
+            ],
+          },
+        })}
+        onJumpToAnchor={vi.fn()}
+      />,
+    );
+    const panel = container.querySelector<HTMLDetailsElement>(".ci-signal-panel");
+    expect(panel?.open).toBe(true);
+    expect(
+      getByText("1 change-caused CI failure appears in the flagged findings below"),
+    ).toBeTruthy();
+    expect(getByText("environmental (infra)")).toBeTruthy();
+    expect(getByText("Rennet could not attribute this — check it yourself")).toBeTruthy();
+    expect(
+      getByText("CI results may be incomplete because GitHub returned partial results"),
+    ).toBeTruthy();
+    expect(queryByText("packages/core/src/pipeline.test.ts failed")).toBeNull();
+  });
+
+  it("shows CI state even when the model review failed", () => {
+    const { getByText } = mount(
+      <FlaggedLens
+        index={buildFlaggedIndex({
+          status: "failed",
+          reason: "model unavailable",
+          ciSignal: { status: "unavailable", reason: "forge unavailable" },
+        })}
+        onJumpToAnchor={vi.fn()}
+      />,
+    );
+    expect(getByText("CI status unavailable — forge unavailable")).toBeTruthy();
+  });
+
   // ── Dual-model (issue #191): the UI toggle. Dual is the DEFAULT; the control is
   // the OPT-DOWN to a single-Claude quick review (and back), never an opt-in. ──
   it("shows NO dual-model control when the affordance is not wired", () => {

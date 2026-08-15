@@ -7,6 +7,8 @@ import type {
   AskReviewResult,
   BlastRadiusPaint,
   Canvas,
+  CiFailure,
+  CiSignal,
   ComposableAsk,
   ComposedHandoffBundle,
   ComposedTask,
@@ -938,6 +940,26 @@ export const riskCrossCheckSchema = objectSchemaFor<RiskCrossCheck>()({
   status: z.enum(["confirmed", "open"]),
   findingIds: z.array(z.string().min(1)),
 });
+export const ciFailureVerdictSchema = z.enum(["change-caused", "environmental", "unclassified"]);
+export const ciFailureSchema = objectSchemaFor<CiFailure>()({
+  checkName: z.string().min(1),
+  verdict: ciFailureVerdictSchema,
+  evidence: z.string(),
+  implicatedPaths: z.array(z.string().min(1)),
+  detailsUrl: z.string().url().optional(),
+  classifiedBy: z.enum(["deterministic", "model"]),
+});
+export const ciSignalSchema: z.ZodType<CiSignal> = z.union([
+  z.object({
+    status: z.literal("checked"),
+    overall: z.enum(["passing", "failing", "pending"]),
+    failures: z.array(ciFailureSchema),
+    headOid: z.string().min(1),
+    incomplete: z.boolean(),
+  }),
+  z.object({ status: z.literal("no-checks"), headOid: z.string().min(1) }),
+  z.object({ status: z.literal("unavailable"), reason: z.string().min(1) }),
+]);
 /**
  * The committed hypothesis (issue #178): the reviewer's reading frame — the domain,
  * in/out scope, the design we'd have chosen, and the predicted risks (each with the
@@ -972,13 +994,21 @@ export const flaggedReviewSchema: z.ZodType<FlaggedReview> = z.union([
     findings: z.array(findingElementSchema),
     dual: dualReviewNoteSchema.optional(),
     crossChecks: z.array(riskCrossCheckSchema).optional(),
+    // Additive informational CI signal (#182). This MUST be declared on BOTH
+    // branches or the strict command boundary silently strips it (Rule 80).
+    ciSignal: ciSignalSchema.optional(),
     hypothesis: reviewHypothesisSchema.optional(),
     // The patchset this result was computed against (#160/P0-2), so the renderer can
     // bind it to the canvases it is shown beside and drop a result that regenerate
     // left stale. Additive optional — absent ⇒ unbound (pre-#160 shape).
     patchsetId: z.string().min(1).optional(),
   }),
-  z.object({ status: z.literal("failed"), reason: z.string() }),
+  z.object({
+    status: z.literal("failed"),
+    reason: z.string(),
+    // CI facts survive even when the model review fails; omission strips them.
+    ciSignal: ciSignalSchema.optional(),
+  }),
 ]);
 
 // ── review.ask: ask the AI a question, one model or both (issue #139) ─────────

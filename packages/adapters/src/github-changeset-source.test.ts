@@ -63,6 +63,7 @@ function forgeReturning(pr: ForgePullRequest, diff = "diff --git a/x.ts b/x.ts\n
       }),
     fetchPullRequest: () => Promise.resolve(pr),
     fetchDiff: () => Promise.resolve({ diff, sso: { kind: "none" } }),
+    fetchCiStatus: () => Promise.reject(new Error("CI status not used by changeset source tests")),
   };
 }
 

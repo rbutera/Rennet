@@ -217,6 +217,132 @@ describe("GitHubForgeAdapter.fetchDiff — the REST fallback", () => {
   });
 });
 
+describe("GitHubForgeAdapter.fetchCiStatus", () => {
+  it("fetches the pinned head once and maps CheckRun plus legacy StatusContext nodes", async () => {
+    let calls = 0;
+    let request: { query?: string; variables?: unknown } = {};
+    const http: HttpFetch = (_url, init) => {
+      calls += 1;
+      request = JSON.parse(init?.body ?? "{}") as typeof request;
+      return Promise.resolve(
+        response(
+          200,
+          {},
+          JSON.stringify({
+            data: {
+              repository: {
+                object: {
+                  statusCheckRollup: {
+                    contexts: {
+                      nodes: [
+                        {
+                          __typename: "CheckRun",
+                          name: "core:test",
+                          status: "COMPLETED",
+                          conclusion: "FAILURE",
+                          title: "Tests failed",
+                          summary: "pipeline.test.ts failed",
+                          detailsUrl: "https://example.test/check/1",
+                        },
+                        {
+                          __typename: "CheckRun",
+                          name: "build",
+                          status: "IN_PROGRESS",
+                          conclusion: null,
+                          title: null,
+                          summary: null,
+                          detailsUrl: null,
+                        },
+                        {
+                          __typename: "StatusContext",
+                          context: "legacy/deploy",
+                          state: "ERROR",
+                          description: "deployment errored",
+                          targetUrl: "https://example.test/status/1",
+                        },
+                        {
+                          __typename: "StatusContext",
+                          context: "legacy/queue",
+                          state: "EXPECTED",
+                          description: null,
+                          targetUrl: null,
+                        },
+                      ],
+                    },
+                  },
+                },
+              },
+            },
+          }),
+        ),
+      );
+    };
+
+    const result = await new GitHubForgeAdapter({ http, token: "t" }).fetchCiStatus(
+      ref,
+      "deadbeef",
+    );
+    expect(calls).toBe(1);
+    expect(request.query).toContain("statusCheckRollup");
+    expect(request.query).toContain("... on CheckRun");
+    expect(request.query).toContain("... on StatusContext");
+    expect(request.variables).toEqual({ owner: "acme", name: "widget", headOid: "deadbeef" });
+    expect(result.checks).toEqual([
+      {
+        name: "core:test",
+        outcome: "failing",
+        summary: "pipeline.test.ts failed",
+        detailsUrl: "https://example.test/check/1",
+      },
+      { name: "build", outcome: "pending", summary: "" },
+      {
+        name: "legacy/deploy",
+        outcome: "failing",
+        summary: "deployment errored",
+        detailsUrl: "https://example.test/status/1",
+      },
+      { name: "legacy/queue", outcome: "pending", summary: "" },
+    ]);
+  });
+
+  it.each([{ statusCheckRollup: null }, { statusCheckRollup: { contexts: { nodes: [] } } }])(
+    "returns an honest empty check set for no checks",
+    async (object) => {
+      const http: HttpFetch = () =>
+        Promise.resolve(response(200, {}, JSON.stringify({ data: { repository: { object } } })));
+      await expect(
+        new GitHubForgeAdapter({ http, token: "t" }).fetchCiStatus(ref, "deadbeef"),
+      ).resolves.toEqual({ checks: [], sso: { kind: "none" } });
+    },
+  );
+
+  it("carries SSO partial-results so the caller can mark the signal incomplete", async () => {
+    const http: HttpFetch = () =>
+      Promise.resolve(
+        response(
+          200,
+          { "X-GitHub-SSO": "partial-results; organizations=ORG_7; url=https://github.com/sso" },
+          JSON.stringify({
+            data: {
+              repository: {
+                object: { statusCheckRollup: { contexts: { nodes: [] } } },
+              },
+            },
+          }),
+        ),
+      );
+    const result = await new GitHubForgeAdapter({ http, token: "t" }).fetchCiStatus(
+      ref,
+      "deadbeef",
+    );
+    expect(result.sso).toEqual({
+      kind: "partial-results",
+      organizations: ["ORG_7"],
+      authorizationUrl: "https://github.com/sso",
+    });
+  });
+});
+
 describe("GitHubForgeAdapter.capabilities", () => {
   it("advertises GitHub's forge capabilities", () => {
     const forge = new GitHubForgeAdapter({

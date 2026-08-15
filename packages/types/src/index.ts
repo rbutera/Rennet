@@ -582,6 +582,8 @@ export interface Resolution {
 export interface ManifestOccurrence {
   id: string;
   kind: AnchorKind;
+  /** Repo-relative path for file-backed occurrences such as offered hunks. */
+  path?: string;
   /** Side line text (1-based access via span), for span bounds and quotes. */
   sides?: Partial<Record<AnchorSide, readonly string[]>>;
 }
@@ -1183,6 +1185,35 @@ export interface FindingVerification {
 }
 
 /**
+ * Attribution of a failing CI check. Uncertainty is always `unclassified`, never
+ * `environmental`: an unknown failure stays visible instead of being waved away
+ * as infrastructure.
+ */
+export type CiFailureVerdict = "change-caused" | "environmental" | "unclassified";
+
+/** One failing CI check classified against the reviewed changeset. */
+export interface CiFailure {
+  checkName: string;
+  verdict: CiFailureVerdict;
+  evidence: string;
+  implicatedPaths: string[];
+  detailsUrl?: string;
+  classifiedBy: "deterministic" | "model";
+}
+
+/** Informational CI state for the pinned head under review. Never a review gate. */
+export type CiSignal =
+  | {
+      status: "checked";
+      overall: "passing" | "failing" | "pending";
+      failures: CiFailure[];
+      headOid: string;
+      incomplete: boolean;
+    }
+  | { status: "no-checks"; headOid: string }
+  | { status: "unavailable"; reason: string };
+
+/**
  * The canvas-facing shape of one finding: an id, the anchor it is about, a short
  * summary, its severity, and its agreement state. The `finding` doc body (issue
  * #32) is an ADDITIVE superset — the lens placement only needs these fields.
@@ -1253,6 +1284,7 @@ export type FlaggedReview =
       findings: FindingElement[];
       dual?: DualReviewNote;
       crossChecks?: readonly RiskCrossCheck[];
+      ciSignal?: CiSignal;
       /**
        * The committed hypothesis (issue #178) that produced this review, carried so
        * the surface can fold the reader's reading frame. It rides ALONGSIDE
@@ -1275,7 +1307,7 @@ export type FlaggedReview =
        */
       patchsetId?: string;
     }
-  | { status: "failed"; reason: string };
+  | { status: "failed"; reason: string; ciSignal?: CiSignal };
 
 // ─── review.ask: ask the AI a question, one model or both (issue #139) ────────
 //

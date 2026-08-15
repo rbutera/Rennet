@@ -60,6 +60,7 @@ export function buildOfferedManifest(decomposition: Decomposition): OfferedManif
     .map((hunk) => ({
       id: hunk.id,
       kind: "hunk",
+      path: hunk.filePath,
       sides: {
         additions: hunk.addedLines,
         deletions: hunk.deletedLines,

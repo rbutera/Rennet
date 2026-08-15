@@ -1,5 +1,7 @@
 import type {
   ForgeCapabilities,
+  ForgeCheckRun,
+  ForgeCiStatus,
   ForgeDiff,
   ForgePort,
   ForgePullRequest,
@@ -52,6 +54,20 @@ const HOME_QUERY = `query($q:String!){
   }
 }`;
 
+const CI_STATUS_QUERY = `query($owner:String!,$name:String!,$headOid:GitObjectID!){
+  repository(owner:$owner,name:$name){
+    object(oid:$headOid){ ... on Commit {
+      statusCheckRollup{
+        contexts(first:100){ nodes{
+          __typename
+          ... on CheckRun { name status conclusion title summary detailsUrl }
+          ... on StatusContext { context state description targetUrl }
+        } }
+      }
+    } }
+  }
+}`;
+
 interface GraphqlPr {
   number: number;
   title: string;
@@ -74,6 +90,60 @@ interface GraphqlSearchNode {
   headRefOid: string;
   id: string;
   repository: { nameWithOwner: string };
+}
+
+interface GraphqlCheckRun {
+  __typename: "CheckRun";
+  name: string;
+  status: string;
+  conclusion: string | null;
+  title: string | null;
+  summary: string | null;
+  detailsUrl: string | null;
+}
+
+interface GraphqlStatusContext {
+  __typename: "StatusContext";
+  context: string;
+  state: string;
+  description: string | null;
+  targetUrl: string | null;
+}
+
+type GraphqlCheckContext = GraphqlCheckRun | GraphqlStatusContext;
+
+function mapCheckRun(node: GraphqlCheckRun): ForgeCheckRun {
+  const outcome: ForgeCheckRun["outcome"] =
+    node.status !== "COMPLETED"
+      ? "pending"
+      : node.conclusion === "SUCCESS"
+        ? "passing"
+        : node.conclusion === "NEUTRAL" || node.conclusion === "SKIPPED"
+          ? "neutral"
+          : "failing";
+  return {
+    name: node.name,
+    outcome,
+    summary: node.summary ?? node.title ?? "",
+    ...(node.detailsUrl === null ? {} : { detailsUrl: node.detailsUrl }),
+  };
+}
+
+function mapStatusContext(node: GraphqlStatusContext): ForgeCheckRun {
+  const outcome: ForgeCheckRun["outcome"] =
+    node.state === "SUCCESS"
+      ? "passing"
+      : node.state === "PENDING" || node.state === "EXPECTED"
+        ? "pending"
+        : node.state === "FAILURE" || node.state === "ERROR"
+          ? "failing"
+          : "neutral";
+  return {
+    name: node.context,
+    outcome,
+    summary: node.description ?? "",
+    ...(node.targetUrl === null ? {} : { detailsUrl: node.targetUrl }),
+  };
 }
 
 /** Clone URLs derived from repo identity — never a path guess; the matcher maps these. */
@@ -182,5 +252,29 @@ export class GitHubForgeAdapter implements ForgePort {
     });
     const sso = parseGitHubSso(res.headers.get("X-GitHub-SSO"));
     return { diff: await res.text(), sso };
+  }
+
+  async fetchCiStatus(ref: ForgePullRequestRef, headOid: string): Promise<ForgeCiStatus> {
+    const { data, sso } = await this.graphql<{
+      repository: {
+        object: {
+          statusCheckRollup: { contexts: { nodes: GraphqlCheckContext[] } } | null;
+        } | null;
+      };
+    }>(CI_STATUS_QUERY, {
+      owner: ref.repo.owner,
+      name: ref.repo.name,
+      headOid,
+    });
+    if (data.repository.object === null) {
+      throw new Error(`GitHub returned no commit for reviewed head ${headOid}`);
+    }
+    const nodes = data.repository.object.statusCheckRollup?.contexts.nodes ?? [];
+    return {
+      checks: nodes.map((node) =>
+        node.__typename === "CheckRun" ? mapCheckRun(node) : mapStatusContext(node),
+      ),
+      sso,
+    };
   }
 }

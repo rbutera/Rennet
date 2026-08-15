@@ -1,4 +1,5 @@
 import type {
+  CiSignal,
   DualReviewNote,
   FindingAgreement,
   FindingElement,
@@ -64,7 +65,7 @@ export interface FlaggedRow {
  * user "all clear" when the truth is "we could not check".
  */
 export type FlaggedIndex =
-  | { state: "failed"; reason: string }
+  | { state: "failed"; reason: string; ciSignal?: CiSignal }
   | {
       state: "ok";
       rows: FlaggedRow[];
@@ -79,6 +80,8 @@ export type FlaggedIndex =
        * merged verdict — disagreement itself lives per-row in `agreement`.
        */
       dual?: DualReviewNote;
+      /** Informational CI state for the reviewed head. It never gates an action. */
+      ciSignal?: CiSignal;
     };
 
 const SEVERITY_RANK: Record<FindingSeverity, number> = { high: 0, medium: 1, low: 2 };
@@ -185,7 +188,11 @@ export function flaggedForPatchset(
 /** Fold a review's flagged input into the ordered index the surface renders. */
 export function buildFlaggedIndex(review: FlaggedReview): FlaggedIndex {
   if (review.status === "failed") {
-    return { state: "failed", reason: review.reason };
+    return {
+      state: "failed",
+      reason: review.reason,
+      ...(review.ciSignal ? { ciSignal: review.ciSignal } : {}),
+    };
   }
   // Defensive: a host or fixture that hands back a malformed input (no findings
   // array) must not crash the lens — treat it as an empty, honest read.
@@ -210,6 +217,7 @@ export function buildFlaggedIndex(review: FlaggedReview): FlaggedIndex {
     counts,
     total: rows.length,
     ...(isDualNote(review.dual) ? { dual: review.dual } : {}),
+    ...(review.ciSignal ? { ciSignal: review.ciSignal } : {}),
   };
 }
 

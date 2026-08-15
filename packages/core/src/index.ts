@@ -23,6 +23,8 @@ export * from "./blast-radius";
 export * from "./canvas";
 export * from "./canvas-change-feed";
 export * from "./canvas-ops";
+export * from "./ci-classification";
+export * from "./ci-refinement";
 export * from "./codex-run-turn";
 export * from "./codex-utility-port";
 export * from "./context-ask";

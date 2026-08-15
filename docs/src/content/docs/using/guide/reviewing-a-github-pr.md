@@ -79,10 +79,12 @@ flowchart LR
 
 The live deep-review path requires a matching local checkout. If none is
 available, Rennet reports that REST-only review is unavailable instead of
-pretending it captured the repository from GitHub. Review threads and CI checks
-are not part of PR ingest today; checks currently appear only in project-list
-summary data. [#182](https://github.com/rbutera/rennet/issues/182) tracks bringing
-CI signal into the review itself.
+pretending it captured the repository from GitHub. After reviewing a pinned PR
+head, Rennet also reads that exact commit's GitHub checks and shows an
+informational CI panel in Flagged. Failures attributable to changed code become
+high-severity findings when they have an offered-diff anchor; infrastructure and
+unattributed failures stay visible in the panel. Missing, partial, or unavailable
+CI never blocks review, signing, or publishing.
 
 ## What reaches GitHub
 
