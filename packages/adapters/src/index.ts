@@ -222,6 +222,7 @@ export {
   type LiveBackendDeps,
   type LiveReviewBackend,
   type LiveSnapshotOutcome,
+  projectHypothesisRepoContext,
   type RepoRecord,
   type ReviewContextManifest,
   repoKeyOf,

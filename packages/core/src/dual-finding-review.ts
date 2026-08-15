@@ -16,9 +16,8 @@
  *     honest `concur 1/1`) with an explicit "second seat unavailable" marker. Never
  *     a fabricated concurrence, never a hang: each seat is guarded and budget-bounded.
  *
- * Each seat runs as its OWN budget-gated action (`makeBudget()` per seat), mirroring
- * how the production commands treat each producer — so one seat's retries can never
- * starve the other, and the total is bounded by (seats × ceiling).
+ * Every seat draws from the caller's ONE per-review budget. Retries, the second
+ * opinion, and later verification therefore share one hard total.
  */
 
 import type { AssembleOptions, PromptContract } from "@rennet/instructions";
@@ -58,8 +57,8 @@ export interface RunDualFindingReviewInput {
   /** The per-project convention catalogue (#180), fed to BOTH seats as a checklist layer. */
   readonly conventions?: ConventionCatalogue;
   readonly contract?: PromptContract;
-  /** Builds one fresh invocation budget per seat run (each seat its own ceiling). */
-  readonly makeBudget: () => InvocationBudget;
+  /** The one shared per-review invocation budget. */
+  readonly budget: InvocationBudget;
   readonly guidance?: { readonly general?: string; readonly files?: string };
   readonly assembledContext?: string;
   readonly onSend?: (record: ContextSendRecord) => void;
@@ -83,7 +82,7 @@ export interface RunDualFindingReviewResult {
   readonly seatRuns: DualSeatRun[];
 }
 
-/** Run one seat's finding attempt, guarded and on its own fresh budget. */
+/** Run one seat's finding attempt, guarded and on the review's shared budget. */
 async function runSeat(seat: DualSeat, input: RunDualFindingReviewInput): Promise<DualSeatRun> {
   const result = await runFindingAngle({
     patchsetId: input.patchsetId,
@@ -102,7 +101,7 @@ async function runSeat(seat: DualSeat, input: RunDualFindingReviewInput): Promis
           )
         : seat.runTurn,
     ),
-    budget: input.makeBudget(),
+    budget: input.budget,
     ...(input.intent ? { intent: input.intent } : {}),
     ...(input.hypothesis ? { hypothesis: input.hypothesis } : {}),
     ...(input.conventions ? { conventions: input.conventions } : {}),

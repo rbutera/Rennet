@@ -26,9 +26,11 @@ import {
   buildReviewContextManifest,
   createLiveCanvasOpsBackend,
   ensureReviewContextAssembly,
+  projectHypothesisRepoContext,
   repoRecordOf,
 } from "./live-review-backend";
 import { NoveltyLifecycleRegistry } from "./novelty-lifecycle-registry";
+import { ProjectContextReader } from "./project-context-reader";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
 import { ProjectSnapshotStore } from "./project-snapshot-store";
 
@@ -520,6 +522,38 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
     // Scoped context.map narrows to a subtree — proving the query threads through.
     const scoped = backend.projectMap({ path: "packages/a" });
     expect(scoped.ok).toBe(true);
+  });
+
+  it("projects the fresh context.map/file snapshot into compact hypothesis repo context", async () => {
+    const repo = workspaceRepo();
+    const { review, pipeline } = await reviewAt(repo.root, repo.commonDir, repo.oid1);
+    const store = freshStore();
+    const live = await createLiveCanvasOpsBackend(review, pipeline, { store });
+    const context = projectHypothesisRepoContext(
+      new ProjectContextReader(store),
+      { repoKey: live.snapshot.repoKey, baseOid: live.snapshot.baseOid },
+      ["packages/a/src/index.ts"],
+    );
+
+    expect(context).toBeDefined();
+    expect(context?.summary).toContain("@t/a");
+    expect(context?.files).toEqual([
+      expect.objectContaining({
+        path: "packages/a/src/index.ts",
+        summary: expect.stringContaining("makeA"),
+      }),
+    ]);
+  });
+
+  it("returns no hypothesis repo context on a typed snapshot refusal", () => {
+    const store = freshStore();
+    expect(
+      projectHypothesisRepoContext(
+        new ProjectContextReader(store),
+        { repoKey: "missing", baseOid: "0".repeat(40) },
+        ["src/missing.ts"],
+      ),
+    ).toBeUndefined();
   });
 
   it("fail-closed: no snapshot → context refuses (typed absent) while the lenses still render", async () => {

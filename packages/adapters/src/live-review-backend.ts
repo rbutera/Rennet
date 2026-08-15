@@ -8,7 +8,13 @@ import {
   type RunLedgerEntry,
   reviewBackendCore,
 } from "@rennet/core";
-import type { ContextManifest, InvocationBudget, Patchset, Review } from "@rennet/types";
+import type {
+  ContextManifest,
+  HypothesisRepoContext,
+  InvocationBudget,
+  Patchset,
+  Review,
+} from "@rennet/types";
 import { contextAskBackend } from "./context-ask-backend";
 import { assembleContextForComposition } from "./context-manifest";
 import { ContextManifestStore } from "./context-manifest-store";
@@ -194,6 +200,40 @@ export async function ensureReviewContextAssembly(
  */
 export function resolveContextFor(review: Review, repoKey: string): () => ResolvedRepoContext {
   return () => ({ repoKey, baseOid: activePatchset(review).repository.baseOid });
+}
+
+export function projectHypothesisRepoContext(
+  reader: ProjectContextReader,
+  resolved: ResolvedRepoContext,
+  changedPaths: readonly string[],
+): HypothesisRepoContext | undefined {
+  const mapResult = reader.readProjectMap(resolved.repoKey, resolved.baseOid);
+  if (!mapResult.ok) return undefined;
+
+  const map = mapResult.map;
+  const scopes = map.scopes.map((scope) => scope.name).slice(0, 8);
+  const summary = [
+    scopes.length > 0 ? `workspace scopes: ${scopes.join(", ")}` : "workspace scopes: none",
+    `dependency edges: ${map.edges.length}`,
+    `entry points: ${map.entryPoints.length}`,
+    `tests: ${map.tests.length}`,
+    `conventions: ${map.conventions.length}`,
+  ].join("; ");
+
+  const files = [...new Set(changedPaths)].slice(0, 40).flatMap((path) => {
+    const result = reader.readFileContext(resolved.repoKey, resolved.baseOid, path);
+    if (!result.ok) return [];
+    const context = result.context;
+    const symbols = context.symbols.map((symbol) => symbol.name).slice(0, 8);
+    const details = [
+      context.scope ? `scope ${context.scope}` : "unscoped",
+      symbols.length > 0 ? `symbols ${symbols.join(", ")}` : "no indexed symbols",
+      context.tests.length > 0 ? "test file" : "source file",
+    ];
+    return [{ path, summary: details.join("; ") }];
+  });
+
+  return { summary, ...(files.length > 0 ? { files } : {}) };
 }
 
 /**

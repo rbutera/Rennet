@@ -38,6 +38,7 @@ import type {
   DecompositionProposalBody,
   Disposition,
   ElementDiffs,
+  FindingElement,
   HypothesisRepoContext,
   HypothesisStructure,
   InvocationBudget,
@@ -48,6 +49,7 @@ import type {
   ReviewHypothesis,
   ReviewIntent,
   ReviewNarration,
+  RiskCrossCheck,
   RoutePlanResult,
   RspCapabilitySnapshot,
   RspDocType,
@@ -65,7 +67,16 @@ import { type AdmittedDocument, buildCanvas, type CanvasEvent } from "./canvas";
 import { createCodexRunTurn } from "./codex-run-turn";
 import type { CodexUtilityPort } from "./codex-utility-port";
 import { type DecomposeOptions, decompose } from "./decomposition";
+import { runDualFindingReview } from "./dual-finding-review";
+import { resolveDualSeat } from "./dual-seat";
 import { buildElementDiffs } from "./element-diffs";
+import type { FindingIntent } from "./finding-generation";
+import {
+  type RunFindingVerificationInput,
+  runFindingVerification,
+  type VerificationFileReader,
+  type VerificationTurn,
+} from "./finding-verification";
 import { guardSeatTurn, type HarnessTurnResult, recordSeatSend } from "./harness-run-turn";
 import {
   type HypothesisTurnResult,
@@ -82,16 +93,18 @@ import {
   runOrderingPass,
 } from "./ordering-pass";
 import {
+  DEFAULT_REVIEW_INTELLIGENCE_BUDGET,
+  type ReviewIntelligenceBudget,
+  reviewInvocationCeiling,
+} from "./review-intelligence-budget";
+import { crossCheckRisks } from "./risk-crosscheck";
+import {
   buildReviewNarration,
   offeredNarrationNodes,
   type RunRollupNarrationResult,
   runRollupNarration,
 } from "./rollup-narration";
-import {
-  buildRoutePlan,
-  DEFAULT_MAX_HARNESS_INVOCATIONS,
-  type RoutePlanOptions,
-} from "./route-plan";
+import { buildRoutePlan, type RoutePlanOptions } from "./route-plan";
 
 /** The provenance a caller knows before the run; the rest is stamped per attempt. */
 export interface PipelineProvenanceSeed {
@@ -135,6 +148,28 @@ const DEFAULT_PROVENANCE_SEED: PipelineProvenanceSeed = {
   capability: NO_CAPABILITY,
 };
 
+export interface ReviewHypothesisConfig {
+  readonly runTurn: (prompt: string, attempt: number) => Promise<HypothesisTurnResult>;
+  readonly contract?: PromptContract;
+  readonly intent?: ReviewIntent;
+  readonly repoContext?: HypothesisRepoContext;
+}
+
+export interface ReviewDualModelConfig {
+  readonly deepReviewOn: boolean;
+  readonly runFindingTurn: (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
+  readonly contract?: PromptContract;
+  readonly intent?: FindingIntent;
+  /** The second-seat Codex executor; scoped to the lens so unrelated seats do not run. */
+  readonly codexPort?: CodexUtilityPort;
+}
+
+export interface ReviewVerificationConfig {
+  readonly readFileWindow: VerificationFileReader;
+  readonly runTurn: VerificationTurn;
+  readonly contract?: RunFindingVerificationInput["contract"];
+}
+
 export interface ReviewPipelineInput {
   readonly reviewId: string;
   readonly patchset: Patchset;
@@ -160,6 +195,10 @@ export interface ReviewPipelineInput {
   readonly canvasEvents?: CanvasEvent[];
   readonly decomposeOptions?: DecomposeOptions;
   readonly routePlanOptions?: RoutePlanOptions;
+  readonly reviewIntelligenceBudget?: ReviewIntelligenceBudget;
+  readonly hypothesisConfig?: ReviewHypothesisConfig;
+  readonly dualModelConfig?: ReviewDualModelConfig;
+  readonly verificationConfig?: ReviewVerificationConfig;
   readonly provenance?: PipelineProvenanceSeed;
   /**
    * The Model Council context (installed harnesses + user overrides). When
@@ -196,7 +235,7 @@ export interface ReviewPipelineInput {
    * Drives the roll-up narration pass (#70). Absent (or a Codex resolution with no
    * port, or a budget refusal) means every node's narration is the honest
    * `pending` state — never a fabricated account. Narration draws from the SAME
-   * shared budget, so its turns count toward the <5 ceiling.
+   * shared budget, so its turns count toward the configured review ceiling.
    */
   readonly runNarrationTurn?: (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
   readonly narrationContract?: PromptContract;
@@ -217,7 +256,7 @@ export interface ReviewPipelineInput {
    * decomposition angle reads a hunk) over the change's intent + structure +
    * repo context, and its committed hypothesis rides the result for the lens
    * runners to disconfirm against and for the human's reading frame. It draws from
-   * the SAME shared budget, so its turn counts toward the <5 ceiling.
+   * the SAME shared budget, so its turn counts toward the configured review ceiling.
    */
   readonly runHypothesisTurn?: (prompt: string, attempt: number) => Promise<HypothesisTurnResult>;
   readonly hypothesisContract?: PromptContract;
@@ -274,6 +313,8 @@ export interface ReviewPipelineResult {
   readonly hypothesis?: ReviewHypothesis;
   /** The hypothesis pass result (for provenance / telemetry); absent when it did not run. */
   readonly hypothesisResult?: RunHypothesisResult;
+  /** Deterministic predicted-risk cross-check over the final surfaced findings. */
+  readonly crossCheckRisks?: readonly RiskCrossCheck[];
 }
 
 /**
@@ -284,6 +325,8 @@ export async function buildReviewCanvases(
   input: ReviewPipelineInput,
 ): Promise<ReviewPipelineResult> {
   const decomposition = decompose(input.patchset, input.decomposeOptions ?? {});
+  const intelligenceBudget = input.reviewIntelligenceBudget ?? DEFAULT_REVIEW_INTELLIGENCE_BUDGET;
+  const deepReviewOn = input.dualModelConfig?.deepReviewOn ?? true;
   // Normalize the ceiling ONCE, at the point the raw config is read, and hand the
   // SAME value to the pre-flight route plan AND the runtime budget below — so no
   // consumer ever sees an un-normalized ceiling (#269). A malformed value
@@ -293,7 +336,8 @@ export async function buildReviewCanvases(
   // refused pre-flight and rendered a COMPLETED review with zero model turns — the
   // exact fake review the circuit exists to prevent.
   const maxInvocations = normalizeMaxInvocations(
-    input.routePlanOptions?.maxHarnessInvocations ?? DEFAULT_MAX_HARNESS_INVOCATIONS,
+    input.routePlanOptions?.maxHarnessInvocations ??
+      reviewInvocationCeiling(intelligenceBudget, deepReviewOn),
   );
   const routePlan = buildRoutePlan(decomposition, {
     ...(input.routePlanOptions ?? {}),
@@ -304,7 +348,7 @@ export async function buildReviewCanvases(
   // ONE shared live invocation budget for the whole model phase (issue #69, bead
   // p0wwp). Seeded from the SAME normalized ceiling the pre-flight route plan uses,
   // threaded through BOTH runners, consumed once per actual turn — so the proposal's
-  // retries AND the ordering pass draw from a single ceiling and a turn over it
+  // retries and every intelligence stage draw from a single ceiling and a turn over it
   // is refused at runtime, not merely counted once in a static pre-flight plan.
   const budget = createInvocationBudget(maxInvocations);
   const manifest = buildOfferedManifest(decomposition);
@@ -384,7 +428,7 @@ export async function buildReviewCanvases(
   // The Brita gate: run the model phase ONLY when the decomposition seat has an
   // executor for its resolved harness (Claude turn OR Codex port) AND the budget
   // permits it. A refusal skips the whole model phase — no spend, floor stands.
-  const budgetRefused = routePlan.refused;
+  const preflightBudgetRefused = routePlan.refused;
 
   // ① The hypothesis-first pre-read pass (#178). It runs FIRST — before the
   // decomposition angle reads a hunk — over the change's intent + STRUCTURE (the
@@ -395,7 +439,17 @@ export async function buildReviewCanvases(
   // hypothesis and every lens runs unchanged — never a fabricated one.
   let hypothesisResult: RunHypothesisResult | undefined;
   let hypothesis: ReviewHypothesis | undefined;
-  if (input.runHypothesisTurn && !budgetRefused) {
+  const hypothesisConfig: ReviewHypothesisConfig | undefined =
+    input.hypothesisConfig ??
+    (input.runHypothesisTurn
+      ? {
+          runTurn: input.runHypothesisTurn,
+          ...(input.hypothesisContract ? { contract: input.hypothesisContract } : {}),
+          ...(input.intent ? { intent: input.intent } : {}),
+          ...(input.repoContext ? { repoContext: input.repoContext } : {}),
+        }
+      : undefined);
+  if (hypothesisConfig && !preflightBudgetRefused) {
     const structure: HypothesisStructure = {
       changedFiles: input.patchset.files.map((file) => file.path),
       chunkTitles: decomposition.chunks.map((chunk) => chunk.title),
@@ -404,14 +458,15 @@ export async function buildReviewCanvases(
       patchsetId: decomposition.patchsetId,
       manifest,
       structure,
-      ...(input.intent ? { intent: input.intent } : {}),
-      ...(input.repoContext ? { repoContext: input.repoContext } : {}),
-      contract: input.hypothesisContract ?? REVIEW_HYPOTHESIS_CONTRACT,
+      ...(hypothesisConfig.intent ? { intent: hypothesisConfig.intent } : {}),
+      ...(hypothesisConfig.repoContext ? { repoContext: hypothesisConfig.repoContext } : {}),
+      contract: hypothesisConfig.contract ?? REVIEW_HYPOTHESIS_CONTRACT,
       provenance: seed,
       // A thrown hypothesis turn degrades to the honest failed state (no hypothesis)
       // rather than crashing the whole run (#96).
-      runTurn: guardSeatTurn(recordedTurn(input.runHypothesisTurn, "hypothesis", seed.harness)),
+      runTurn: guardSeatTurn(recordedTurn(hypothesisConfig.runTurn, "hypothesis", seed.harness)),
       budget,
+      maxRetries: Math.max(0, Math.floor(intelligenceBudget.hypothesis.maxTurns) - 1),
       ...(input.assembledContext === undefined ? {} : { assembledContext: input.assembledContext }),
       ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
       ...(input.newRunId ? { newRunId: input.newRunId } : {}),
@@ -419,7 +474,7 @@ export async function buildReviewCanvases(
     if (hypothesisResult.status === "ok") hypothesis = hypothesisResult.hypothesis;
   }
 
-  if (decompositionSeat.runTurn && !budgetRefused) {
+  if (decompositionSeat.runTurn && !preflightBudgetRefused) {
     decompositionResult = await runDecompositionAngle({
       decomposition,
       contract: input.decompositionContract ?? DECOMPOSITION_PROPOSAL_CONTRACT,
@@ -497,6 +552,72 @@ export async function buildReviewCanvases(
     admittedDocs = [...admittedDocs, ...input.decisionDocs];
   }
 
+  let finalFindings: FindingElement[] = [];
+  if (input.dualModelConfig && !preflightBudgetRefused) {
+    const seats = resolveDualSeat({
+      council: input.council,
+      jobId: "finding-generation",
+      docType: "finding",
+      patchsetId: decomposition.patchsetId,
+      manifest,
+      baseSeed: seed,
+      claudeTurn: input.dualModelConfig.runFindingTurn,
+      ...((input.dualModelConfig.codexPort ?? input.codexPort)
+        ? { codexPort: input.dualModelConfig.codexPort ?? input.codexPort }
+        : {}),
+    });
+    const dualEnabled =
+      deepReviewOn &&
+      intelligenceBudget.dualModel.enabled &&
+      intelligenceBudget.dualModel.lenses.includes("flagged");
+    const findingRun = await runDualFindingReview({
+      deepReview: dualEnabled,
+      patchsetId: decomposition.patchsetId,
+      manifest,
+      seats,
+      budget,
+      ...(input.dualModelConfig.intent ? { intent: input.dualModelConfig.intent } : {}),
+      ...(hypothesis ? { hypothesis } : {}),
+      ...(input.dualModelConfig.contract ? { contract: input.dualModelConfig.contract } : {}),
+      ...(input.assembledContext === undefined ? {} : { assembledContext: input.assembledContext }),
+      ...(input.onSend ? { onSend: input.onSend } : {}),
+      ...(input.mintDocId ? { mintDocId: input.mintDocId } : {}),
+      ...(input.newRunId ? { newRunId: input.newRunId } : {}),
+    });
+
+    if (findingRun.review.status === "ok") {
+      finalFindings = findingRun.review.findings;
+      if (deepReviewOn && input.verificationConfig) {
+        const verification = await runFindingVerification({
+          findings: finalFindings,
+          manifest,
+          readFileWindow: input.verificationConfig.readFileWindow,
+          runTurn: input.verificationConfig.runTurn,
+          budget,
+          maxVerifications: intelligenceBudget.verification.maxVerifications,
+          ...(input.verificationConfig.contract
+            ? { contract: input.verificationConfig.contract }
+            : {}),
+        });
+        finalFindings = verification.findings;
+      }
+
+      const sourceDocId = findingRun.seatRuns
+        .map((seatRun) => seatRun.result.document?.docId)
+        .find((docId): docId is string => docId !== undefined);
+      admittedDocs = [
+        ...admittedDocs,
+        {
+          docId: sourceDocId ?? `finding:${decomposition.patchsetId}`,
+          docType: "finding",
+          body: { findings: finalFindings },
+        },
+      ];
+    }
+  }
+
+  const riskCrossChecks = hypothesis ? crossCheckRisks(hypothesis, finalFindings) : undefined;
+
   const canvasEvents = input.canvasEvents ?? [];
   // The deterministic blast-radius overlay (issue #35): computed once from the
   // changeset + CODEOWNERS and painted identically onto every angle's canvas. It
@@ -525,7 +646,7 @@ export async function buildReviewCanvases(
 
   // Roll-up narration (#70): the zoom ladder's own voice, produced AFTER the
   // canvases exist (it accounts for their nodes). It is a council-routed light-tier
-  // seat drawing from the SAME shared budget — so its turns count toward the <5
+  // seat drawing from the SAME shared budget — so its turns count toward the configured
   // ceiling, and a budget refusal (route plan OR the shared counter exhausted by
   // the decomposition/ordering phase) leaves every node's narration `pending`,
   // never a fabricated account. The offered node set is always ≥1 (the rollup).
@@ -538,7 +659,7 @@ export async function buildReviewCanvases(
     input.runNarrationTurn,
   );
   let narrationResult: RunRollupNarrationResult | undefined;
-  if (narrationSeat.runTurn && !budgetRefused) {
+  if (narrationSeat.runTurn && !preflightBudgetRefused) {
     narrationResult = await runRollupNarration({
       nodes: narrationNodes,
       decomposition,
@@ -567,7 +688,7 @@ export async function buildReviewCanvases(
     // Pre-flight refusal (the route plan gated it before any spend) OR a runtime
     // exhaustion of the shared ceiling by retries (#260). Either means no complete
     // model phase ran, so the surface degrades the review rather than faking done.
-    budgetRefused: budgetRefused || budget.refused,
+    budgetRefused: preflightBudgetRefused || budget.refused,
     ...(decompositionResult ? { decompositionResult } : {}),
     ...(orderingResult ? { orderingResult } : {}),
     admittedDocs,
@@ -575,5 +696,6 @@ export async function buildReviewCanvases(
     ...(narrationResult ? { narrationResult } : {}),
     ...(hypothesis ? { hypothesis } : {}),
     ...(hypothesisResult ? { hypothesisResult } : {}),
+    ...(riskCrossChecks ? { crossCheckRisks: riskCrossChecks } : {}),
   };
 }

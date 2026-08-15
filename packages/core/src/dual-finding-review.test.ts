@@ -99,7 +99,7 @@ function baseInput(seats: DualSeat[], deepReview: boolean): RunDualFindingReview
     patchsetId: PATCHSET.id,
     manifest: MANIFEST,
     seats,
-    makeBudget: () => createInvocationBudget(5),
+    budget: createInvocationBudget(5),
   };
 }
 
@@ -237,7 +237,7 @@ describe("runDualFindingReview — dual-model Flagged orchestration (#41)", () =
         ],
         repoContextPresent: false,
       },
-      makeBudget: () => createInvocationBudget(5),
+      budget: createInvocationBudget(5),
     });
     if (review.status !== "ok") throw new Error("expected ok");
 
@@ -302,7 +302,7 @@ describe("runDualFindingReview — dual-model Flagged orchestration (#41)", () =
         ],
         repoContextPresent: false,
       },
-      makeBudget: () => createInvocationBudget(5),
+      budget: createInvocationBudget(5),
     });
     // Both independent prompts carry the hypothesis layer — the disconfirmers reached each seat.
     expect(promptA).toContain("UNIQUEBOUNDCHECK");
@@ -341,7 +341,7 @@ describe("runDualFindingReview — dual-model Flagged orchestration (#41)", () =
         ],
         repoContextPresent: false,
       },
-      makeBudget: () => createInvocationBudget(5),
+      budget: createInvocationBudget(5),
     });
     // Both independent seats receive the projected intent (task slot) AND the hypothesis prior.
     expect(promptA).toContain("<<<rennet:layer task>>>");

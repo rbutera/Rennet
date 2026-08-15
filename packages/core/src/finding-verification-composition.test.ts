@@ -156,7 +156,7 @@ describe("#207 deep-review composition: dual findings → verification, cap resp
       patchsetId: PATCHSET.id,
       manifest: MANIFEST,
       seats: [claude, codex],
-      makeBudget: () => createInvocationBudget(5),
+      budget: createInvocationBudget(5),
     });
     expect(flagged.status).toBe("ok");
     if (flagged.status !== "ok") throw new Error("unreachable");
@@ -209,7 +209,7 @@ describe("#207 deep-review composition: dual findings → verification, cap resp
       patchsetId: PATCHSET.id,
       manifest: MANIFEST,
       seats: [claude, codex],
-      makeBudget: () => createInvocationBudget(5),
+      budget: createInvocationBudget(5),
     });
     expect(quick.status).toBe("ok");
     if (quick.status !== "ok") throw new Error("unreachable");

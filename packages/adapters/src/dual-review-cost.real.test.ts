@@ -163,7 +163,7 @@ describe("rennet dual-model Flagged review — cost (gated real turns)", () => {
         patchsetId: patchset.id,
         manifest,
         seats: [claudeSeat, codexSeat],
-        makeBudget: () => createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS),
+        budget: createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS),
       });
 
       // ── Claude cost (real tokens) from the instrumentation collector ─────────

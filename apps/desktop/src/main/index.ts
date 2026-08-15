@@ -53,9 +53,11 @@ import {
   type ProjectPrSource,
   ProjectSnapshotGenerator,
   parseGitHubPrRef,
+  projectHypothesisRepoContext,
   RepoWatcher,
   readOpenSpecChange,
   repoHasSubmodules,
+  repoRecordOf,
   resolveBaseRef,
   resolveForgeRemote,
   resolveGitHubAuth,
@@ -72,7 +74,7 @@ import {
   createHarnessRunTurn,
   createInvocationBudget,
   DEFAULT_MAX_HARNESS_INVOCATIONS,
-  DEFAULT_MAX_VERIFICATIONS,
+  DEFAULT_REVIEW_INTELLIGENCE_BUDGET,
   decompose,
   type FanInIndex,
   type ForgePrSubmission,
@@ -85,6 +87,7 @@ import {
   ReviewService,
   recordSeatSend,
   resolveDualSeat,
+  reviewInvocationCeiling,
   runCoverageMapping,
   runDecisionAngle,
   runDualFindingReview,
@@ -756,6 +759,9 @@ async function computeReviewHypothesis(
   patchset: Patchset,
   adapter: Awaited<ReturnType<typeof getClaudeHarness>>["adapter"],
   contextFeed: ReviewContextFeed,
+  budget = createInvocationBudget(
+    reviewInvocationCeiling(DEFAULT_REVIEW_INTELLIGENCE_BUDGET, true),
+  ),
 ): Promise<ReviewHypothesis | undefined> {
   if (!adapter) return undefined;
   const decomposition = decompose(patchset);
@@ -771,22 +777,28 @@ async function computeReviewHypothesis(
     docType: "review.hypothesis",
     cwd: review.repositoryRoot,
   });
-  const budget = createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS);
   // The change's stated intent (#136), projected from the frozen capture on the
   // patchset. Absent (a no-PR working-tree review with no spec touched) it is
   // undefined and the pass runs on structure + repo context alone — the honest
   // degrade, unchanged from before intent capture landed.
   const intent = patchsetIntentToReviewIntent(patchset.intent);
+  const repoContext = projectHypothesisRepoContext(
+    new ProjectContextReader(snapshotStoreFor()),
+    repoRecordOf(review),
+    patchset.files.map((file) => file.path),
+  );
   const result = await runHypothesisPass({
     patchsetId: patchset.id,
     manifest,
     structure,
     ...(intent ? { intent } : {}),
+    ...(repoContext ? { repoContext } : {}),
     provenance: HYPOTHESIS_PROVENANCE_SEED,
     // A thrown/rejected turn (a session/transport construction exception, #96)
     // degrades to a turn-failure rather than crashing the command.
     runTurn: recordedDesktopSeatTurn(runHypothesisTurn, "hypothesis", contextFeed),
     budget,
+    maxRetries: 0,
     ...(contextFeed.assembledContext === undefined
       ? {}
       : { assembledContext: contextFeed.assembledContext }),
@@ -953,6 +965,9 @@ async function runFlaggedReviewWithContextFeed(
   contextFeed: ReviewContextFeed,
 ): Promise<FlaggedReview> {
   const patchset = activePatchset(review);
+  const sharedBudget = createInvocationBudget(
+    reviewInvocationCeiling(DEFAULT_REVIEW_INTELLIGENCE_BUDGET, deepReview),
+  );
   const { adapter } = await getClaudeHarness();
   const codex = await getCodexAvailability();
   const codexPort = await getCodexPort();
@@ -985,10 +1000,10 @@ async function runFlaggedReviewWithContextFeed(
     ...(codexPort ? { codexPort } : {}),
   });
 
-  // Each seat is its OWN live-budget-gated action (R10, fail-closed): the ceiling
-  // stops spend, never the review. The dual runner guards each seat's turn (a
-  // thrown Codex spawn degrades to a failed seat, then the reconcile degrades) and
-  // owns the reconcile + the honest single-provider degradation.
+  // Hypothesis, both finding seats, and verification draw from ONE review budget:
+  // the ceiling stops spend, never the review. The dual runner guards each seat's
+  // turn (a thrown Codex spawn degrades to a failed seat, then the reconcile
+  // degrades) and owns the reconcile + the honest single-provider degradation.
   // The per-project convention checklist (#180), fed to BOTH seats as a labelled
   // layer. Absent (no catalogue file), each seat assembles exactly as before.
   const conventions = loadReviewConventions(review);
@@ -997,13 +1012,19 @@ async function runFlaggedReviewWithContextFeed(
   // BOTH finding seats so the Flagged lens reasons over the same disconfirmation
   // prior + PR intent the Decisions runner already gets (issue #210) — the whole
   // point of hypothesis-first is that it shapes EVERY finding, not just decisions.
-  // The hypothesis is produced ONCE here for the flagged path (its own budget-gated
-  // action, from the change's structure + intent + repo context, never the hunk
-  // bodies, so the prior stays genuine); absent an adapter or on a failed pass it is
+  // The hypothesis is produced ONCE here for the flagged path (from the change's
+  // structure + intent + repo context, never the hunk bodies, so the prior stays
+  // genuine); absent an adapter or on a failed pass it is
   // undefined. The intent is projected from the frozen capture on the patchset;
   // absent a captured surface it is undefined. With BOTH undefined the finding
   // assembly is byte-identical to before this change (no regression).
-  const hypothesis = await computeReviewHypothesis(review, patchset, adapter, contextFeed);
+  const hypothesis = await computeReviewHypothesis(
+    review,
+    patchset,
+    adapter,
+    contextFeed,
+    sharedBudget,
+  );
   const intent = patchsetIntentToReviewIntent(patchset.intent);
 
   const { review: flagged } = await runDualFindingReview({
@@ -1011,7 +1032,7 @@ async function runFlaggedReviewWithContextFeed(
     patchsetId: patchset.id,
     manifest,
     seats,
-    makeBudget: () => createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS),
+    budget: sharedBudget,
     ...(intent ? { intent } : {}),
     ...(hypothesis ? { hypothesis } : {}),
     ...(conventions ? { conventions } : {}),
@@ -1041,16 +1062,16 @@ async function runFlaggedReviewWithContextFeed(
     // BUDGET-GATE (Rule 75, vital money circuit): `maxVerifications` caps how many
     // findings are verified — the over-cap remainder surfaces an honest "not verified"
     // caveat chip (CAP_CAVEAT), NEVER a silent skip that would read as an all-clear —
-    // and the invocation budget bounds actual model turns (one per file batch,
-    // fail-closed). Both limits surface on the findings themselves; the returned
+    // and the invocation budget bounds actual model turns (one per finding,
+    // with a visible refusal floor). Both limits surface on the findings themselves; the returned
     // telemetry is the aggregate of those same per-finding chips, so no capped or
     // refused finding is dropped without a visible caveat.
     const { review: verified } = await verifyFlaggedReview(flagged, {
       manifest,
       readFileWindow,
       runTurn,
-      budget: createInvocationBudget(DEFAULT_MAX_VERIFICATIONS),
-      maxVerifications: DEFAULT_MAX_VERIFICATIONS,
+      budget: sharedBudget,
+      maxVerifications: DEFAULT_REVIEW_INTELLIGENCE_BUDGET.verification.maxVerifications,
     });
     // The predicted-risk cross-check (#181), the LAST transform: reconcile the
     // hypothesis's predicted risks against the VERIFIED findings (after refuted

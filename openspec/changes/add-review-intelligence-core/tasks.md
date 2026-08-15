@@ -8,7 +8,7 @@
 - [x] 0.2 Confirm always-on vs opt-in: hypothesis always-on; dual-model + verification behind a "deep review" toggle (or a different split)
 - [x] 0.3 Confirm dual-model scope: Flagged lens only vs. all three lenses
 - [x] 0.4 Confirm the verification cap `maxVerifications`, the inconclusive policy (surface-with-caveat vs. drop), and the non-obvious classifier rule set
-- [ ] 0.5 Confirm the total per-review turn ceiling (and a "quick review" lower value)
+- [x] 0.5 Confirm the total per-review turn ceiling (and a "quick review" lower value)
 - [x] 0.6 Confirm the genuine-prior decision: hypothesis sees intent + structure + repo context, NOT full hunk bodies
 
 ## 1. Shared types (types)
@@ -44,13 +44,13 @@
 ## 5. Adapters (store + model I/O)
 
 - [x] 5.1 Second seat executor for dual-model via the existing `createCodexRunTurn` port; provider→harness follows the resolved model
-- [ ] 5.2 Feed `runHypothesisPass` the ProjectSnapshot projection through `ProjectContextReader`/`context.map`; keep `core` node-free
+- [x] 5.2 Feed `runHypothesisPass` the ProjectSnapshot projection through `ProjectContextReader`/`context.map`; keep `core` node-free
 - [x] 5.3 Feed `runFindingVerification` real file content through `context.file`; a fresh session per verification (default a different seat)
 
 ## 6. Pipeline wiring (core)
 
-- [ ] 6.1 Extend `ReviewPipelineInput`/`Result` with hypothesis, cross-checks, dual-model config, and verification config
-- [ ] 6.2 Sequence in `buildReviewCanvases`: hypothesis pass → dual-model lens runs (`resolveDualSeat`) → reconcile → verification → cross-check, all drawing from the ONE shared `InvocationBudget`
+- [x] 6.1 Extend `ReviewPipelineInput`/`Result` with hypothesis, cross-checks, dual-model config, and verification config
+- [x] 6.2 Sequence in `buildReviewCanvases`: hypothesis pass → dual-model lens runs (`resolveDualSeat`) → reconcile → verification → cross-check, all drawing from the ONE shared `InvocationBudget`
 - [x] 6.4 Honest degradation paths: no hypothesis, single-provider, unverified-caveat — each on a budget refusal or a missing provider
 
 ## 7. Reading surface (ui, host-free)
