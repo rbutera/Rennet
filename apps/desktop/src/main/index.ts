@@ -82,7 +82,6 @@ import {
   fanInIndexFromSnapshot,
   guardSeatTurn,
   type HarnessTurnResult,
-  markVerificationUnavailable,
   patchsetIntentToReviewIntent,
   ReviewService,
   recordSeatSend,
@@ -125,6 +124,7 @@ import { app, BrowserWindow, dialog, ipcMain, net, protocol, session, shell } fr
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
 import { createDispatch } from "./dispatch";
 import { createLiveDraftPrBodyPort } from "./draft-pr-body-live";
+import { projectUnavailableDeepVerification } from "./flagged-review-verification";
 import { createLiveComposeBundle } from "./handoff-compose-live";
 import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
 import { LiveTurnRegistry } from "./live-turn-registry";
@@ -1081,20 +1081,13 @@ async function runFlaggedReviewWithContextFeed(
     const result = attachRiskCrossCheck(verified, hypothesis);
     return result;
   }
-  // DEEP review requested but NO Claude verifier (e.g. Codex-only: findings were
-  // produced by the Codex seat, but verification needs the Claude adapter). Announce it
-  // honestly (P0-3): every finding that WOULD have been verified gets an explicit
-  // "verification unavailable" inconclusive caveat, so an absent chip never reads as an
-  // all-clear while deep review appears active. `adapter` is falsy here (we are past the
-  // branch above), so this is exactly the no-verifier deep case.
-  if (deepReview) {
-    const result = attachRiskCrossCheck(markVerificationUnavailable(flagged), hypothesis);
-    return result;
-  }
-  // Quick review (single-seat, unverified): the cross-check still runs — it is a
-  // free deterministic step — over the single seat's own findings. No chip, byte-
-  // identical to before (quick review never promised verification).
-  const result = attachRiskCrossCheck(flagged, hypothesis);
+  // Reaching here under DEEP review means there is no Claude verifier (e.g. a
+  // Codex-only review). Announce that honestly: every finding that WOULD have been
+  // verified gets an explicit unavailable caveat. Quick review stays unchanged
+  // because it never promised verification. The cross-check is a free deterministic
+  // step over whichever honest surface applies.
+  const surfaced = projectUnavailableDeepVerification(flagged, deepReview);
+  const result = attachRiskCrossCheck(surfaced, hypothesis);
   return result;
 }
 

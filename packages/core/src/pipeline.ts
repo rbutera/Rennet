@@ -72,6 +72,7 @@ import { resolveDualSeat } from "./dual-seat";
 import { buildElementDiffs } from "./element-diffs";
 import type { FindingIntent } from "./finding-generation";
 import {
+  markVerificationUnavailable,
   type RunFindingVerificationInput,
   runFindingVerification,
   type VerificationFileReader,
@@ -327,6 +328,12 @@ export async function buildReviewCanvases(
   const decomposition = decompose(input.patchset, input.decomposeOptions ?? {});
   const intelligenceBudget = input.reviewIntelligenceBudget ?? DEFAULT_REVIEW_INTELLIGENCE_BUDGET;
   const deepReviewOn = input.dualModelConfig?.deepReviewOn ?? true;
+  const intelligenceEnabled =
+    input.reviewIntelligenceBudget !== undefined ||
+    input.hypothesisConfig !== undefined ||
+    input.runHypothesisTurn !== undefined ||
+    input.dualModelConfig !== undefined ||
+    input.verificationConfig !== undefined;
   // Normalize the ceiling ONCE, at the point the raw config is read, and hand the
   // SAME value to the pre-flight route plan AND the runtime budget below — so no
   // consumer ever sees an un-normalized ceiling (#269). A malformed value
@@ -334,11 +341,15 @@ export async function buildReviewCanvases(
   // preserved. Before this, `buildRoutePlan` read the RAW `maxHarnessInvocations`
   // one hop before the budget's fallback applied, so a negative/`-Infinity` ceiling
   // refused pre-flight and rendered a COMPLETED review with zero model turns — the
-  // exact fake review the circuit exists to prevent.
-  const maxInvocations = normalizeMaxInvocations(
-    input.routePlanOptions?.maxHarnessInvocations ??
-      reviewInvocationCeiling(intelligenceBudget, deepReviewOn),
-  );
+  // exact fake review the circuit exists to prevent. Once review intelligence is
+  // enabled, its ceiling is canonical; the legacy route-plan knob may tighten it
+  // but can never silently raise it.
+  const intelligenceCeiling = reviewInvocationCeiling(intelligenceBudget, deepReviewOn);
+  const legacyCeiling = input.routePlanOptions?.maxHarnessInvocations;
+  const maxInvocations =
+    intelligenceEnabled && legacyCeiling !== undefined
+      ? Math.min(intelligenceCeiling, normalizeMaxInvocations(legacyCeiling))
+      : normalizeMaxInvocations(legacyCeiling ?? intelligenceCeiling);
   const routePlan = buildRoutePlan(decomposition, {
     ...(input.routePlanOptions ?? {}),
     maxHarnessInvocations: maxInvocations,
@@ -600,6 +611,9 @@ export async function buildReviewCanvases(
             : {}),
         });
         finalFindings = verification.findings;
+      } else if (deepReviewOn) {
+        const unavailable = markVerificationUnavailable(findingRun.review);
+        if (unavailable.status === "ok") finalFindings = unavailable.findings;
       }
 
       const sourceDocId = findingRun.seatRuns

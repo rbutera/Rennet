@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { buildOfferedManifest } from "./angle-generation";
 import type { CodexUtilityPort } from "./codex-utility-port";
 import { decompose } from "./decomposition";
+import { VERIFIER_UNAVAILABLE_CAVEAT } from "./finding-verification";
 import { buildReviewCanvases } from "./pipeline";
 import {
   DEFAULT_REVIEW_INTELLIGENCE_BUDGET,
@@ -304,5 +305,47 @@ describe("buildReviewCanvases review-intelligence sequence", () => {
       verdict: "inconclusive",
       evidence: expect.stringContaining("budget was exhausted"),
     });
+  });
+
+  it("surfaces non-obvious findings as verification-unavailable when deep review has no verifier", async () => {
+    const result = await buildReviewCanvases({
+      reviewId: "review-no-verifier",
+      patchset: PATCHSET,
+      dispositions: [],
+      provenance: PROVENANCE,
+      council: { availability: { installed: ["claude-code"] } },
+      dualModelConfig: {
+        deepReviewOn: true,
+        runFindingTurn: async () => ({
+          status: "emitted",
+          body: findingBody(FINDING_ANCHOR),
+        }),
+      },
+    });
+
+    const findingDoc = result.admittedDocs.find((doc) => doc.docType === "finding");
+    expect(findingDoc).toBeDefined();
+    if (!findingDoc) throw new Error("expected an admitted finding document");
+    const findings = (findingDoc.body as { findings?: Array<Record<string, unknown>> }).findings;
+    expect(findings?.[0]?.verification).toEqual({
+      verdict: "inconclusive",
+      evidence: VERIFIER_UNAVAILABLE_CAVEAT,
+    });
+  });
+
+  it("keeps the intelligence ceiling canonical when the legacy route-plan ceiling is higher", async () => {
+    const result = await buildReviewCanvases({
+      reviewId: "review-conflicting-ceilings",
+      patchset: PATCHSET,
+      dispositions: [],
+      reviewIntelligenceBudget: {
+        ...DEFAULT_REVIEW_INTELLIGENCE_BUDGET,
+        totalInvocations: 3,
+      },
+      routePlanOptions: { maxHarnessInvocations: 12 },
+    });
+
+    expect(result.routePlan.maxHarnessInvocations).toBe(3);
+    expect(result.invocationBudget.max).toBe(3);
   });
 });
