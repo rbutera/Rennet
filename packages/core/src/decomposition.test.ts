@@ -694,11 +694,36 @@ describe("dependency DAG and reading order", () => {
       ),
       file("pnpm-lock.yaml", filePatch("pnpm-lock.yaml", [{ lines: ["+  a: 1"] }])),
     ];
-    const first = decompose(patchset(files));
-    const second = decompose(patchset(files));
-    expect(JSON.stringify(second)).toBe(
-      JSON.stringify({ ...first, patchsetId: second.patchsetId }),
-    );
+    // The real guarantee: decompose the SAME patchset twice → byte-identical
+    // output, no field normalization. (Two separate patchsets with different ids
+    // would only test id-normalized equality, which is weaker.)
+    const ps = patchset(files);
+    const first = decompose(ps);
+    const second = decompose(ps);
+    expect(JSON.stringify(second)).toBe(JSON.stringify(first));
+  });
+
+  it("is independent of the order of patchset.files", () => {
+    const files = [
+      file(
+        "db/migrations/001_init.sql",
+        filePatch("db/migrations/001_init.sql", [{ lines: ["+CREATE TABLE t (id int);"] }]),
+      ),
+      file("src/model.ts", filePatch("src/model.ts", [{ lines: ["+export interface Model {}"] }])),
+      file(
+        "src/service.ts",
+        filePatch("src/service.ts", [{ lines: ['+import { Model } from "./model";'] }]),
+      ),
+      file("pnpm-lock.yaml", filePatch("pnpm-lock.yaml", [{ lines: ["+  a: 1"] }])),
+    ];
+    // Same patchset (same id), files array in a DIFFERENT order. The floor's
+    // defensive path-sort must make the output identical — proving the ordering
+    // is a pure function of file content, not of arrival order.
+    const base = patchset(files);
+    const reordered = { ...base, files: [...base.files].reverse() };
+    const inOrder = decompose(base);
+    const shuffled = decompose(reordered);
+    expect(JSON.stringify(shuffled)).toBe(JSON.stringify(inOrder));
   });
 });
 
