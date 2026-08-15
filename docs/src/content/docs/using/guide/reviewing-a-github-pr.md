@@ -82,9 +82,12 @@ available, Rennet reports that REST-only review is unavailable instead of
 pretending it captured the repository from GitHub. After reviewing a pinned PR
 head, Rennet also reads that exact commit's GitHub checks and shows an
 informational CI panel in Flagged. Failures attributable to changed code become
-high-severity findings when they have an offered-diff anchor; infrastructure and
-unattributed failures stay visible in the panel. Missing, partial, or unavailable
-CI never blocks review, signing, or publishing.
+high-severity findings when they have an offered-diff anchor; an attributable
+failure without a real anchor stays visible in the panel. Only contextual
+infrastructure signatures receive the infrastructure label, and model refinement
+can only attribute a failure to the change or leave it unclassified. Missing,
+truncated, timed-out, or otherwise unavailable CI never blocks review, signing,
+or publishing and is never reported as passing.
 
 ## What reaches GitHub
 

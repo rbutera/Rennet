@@ -2,7 +2,7 @@
 
 ### Requirement: CI status is fetched for the reviewed head, on the forge seam
 
-The system SHALL fetch per-check CI results for a PR review through the forge-neutral `ForgePort` (`fetchCiStatus(ref, headOid)`), keyed by the review's PINNED head OID (`postTarget.headOid`), never by branch name. The fetch SHALL occur only for reviews that carry a `postTarget` (non-retrospective PR reviews); a local working-tree review and a retrospective review SHALL carry no CI signal at all (the pre-change wire shape). SSO `partial-results` on the fetch SHALL surface as an `incomplete` marker, never as a complete-looking check set.
+The system SHALL fetch per-check CI results for a PR review through the forge-neutral `ForgePort` (`fetchCiStatus(ref, headOid, signal?)`), keyed by the review's PINNED head OID (`postTarget.headOid`), never by branch name. The fetch SHALL occur only for reviews that carry a `postTarget` (non-retrospective PR reviews); a local working-tree review and a retrospective review SHALL carry no CI signal at all (the pre-change wire shape). SSO `partial-results`, GraphQL partial errors, and a paginated first-100 result SHALL surface as an `incomplete` marker, never as a complete-looking check set.
 
 #### Scenario: The signal binds to the reviewed commit
 
@@ -21,7 +21,7 @@ The system SHALL fetch per-check CI results for a PR review through the forge-ne
 
 ### Requirement: Deterministic classification with an honest UNCLASSIFIED floor
 
-The system SHALL classify each failing check deterministically ($0, no model turn): `environmental` only on a narrow, versioned table of infrastructure failure signatures; `change-caused` only on real token/path overlap between the check's name + failure summary and the changeset's changed paths; and `unclassified` for everything else. Uncertainty SHALL NEVER resolve to `environmental` — a failure the system cannot attribute SHALL surface as `unclassified`, visibly, with copy telling the human to check it themselves. A deterministic `change-caused` verdict SHALL never be demoted by any later stage.
+The system SHALL classify each failing check deterministically ($0, no model turn): a real token/path overlap with changed paths SHALL win as `change-caused`; `environmental` SHALL require a narrow, versioned, infrastructure-contextualised machinery signature; and everything else SHALL be `unclassified`. Bare application error codes and domain-oriented check names SHALL NOT prove infrastructure. Uncertainty SHALL NEVER resolve to `environmental`.
 
 #### Scenario: An infra signature is environmental
 
@@ -41,6 +41,8 @@ The system SHALL classify each failing check deterministically ($0, no model tur
 ### Requirement: Change-caused failures become evidence-backed findings
 
 The system SHALL fold each `change-caused` CI failure into the Flagged lens as an additive finding: a deterministically minted `findingId`, an anchor resolved against the OFFERED hunk manifest in an implicated changed file, severity `high`, honest single-judge agreement (`concur 1/1`), and a verification chip `reproduced` whose evidence is the CI failure summary excerpt — CI itself is the reproduction, and the verification pass SHALL NOT spend a model turn re-verifying it. A change-caused failure whose implicated paths resolve to no offered hunk SHALL remain in the signal panel only — the system SHALL never emit a finding with an unresolvable anchor.
+
+Stable forge check identity SHALL distinguish same-named checks in finding IDs and panel rows. The signal SHALL carry whether a change-caused failure actually folded; only placed failures may be omitted from the panel body.
 
 #### Scenario: A change-caused failure is a finding with CI evidence
 
@@ -73,7 +75,7 @@ The system SHALL deliver every classified failure on a `ciSignal` field riding t
 
 ### Requirement: The CI signal never blocks anything
 
-The CI signal SHALL be purely informational. No CI state — failing, unavailable, or otherwise — SHALL gate, delay, or add any step to review, sign, or publish; no dispatch handler SHALL read CI state to decide behaviour. Any failure in the fetch/classify path (network, auth, malformed payload, timeout) SHALL degrade to `ciSignal: { status: "unavailable", reason }` with the model-produced review returned untouched — never a thrown error, never a blocked review.
+The CI signal SHALL be purely informational. No CI state SHALL gate, delay, or add any step to review, sign, or publish. Fetch and refinement SHALL have separate abortable deadlines: a thrown or hung fetch degrades to `unavailable`; a thrown or hung refinement retains deterministic verdicts. An incomplete, truncated, empty, or neutral-only check set SHALL never be labelled passing.
 
 #### Scenario: A dead forge degrades honestly
 
@@ -87,7 +89,7 @@ The CI signal SHALL be purely informational. No CI state — failing, unavailabl
 
 ### Requirement: Model refinement meters on the shared budget and never refuses the review
 
-When a light-model refinement seat is available (the `ci-failure-classification` council job), the system SHALL refine ONLY `unclassified` failures, in one batched turn drawing from the SAME shared per-review invocation budget as every other intelligence stage — metered and reported. On budget refusal, seat absence, or a failed/invalid turn, the deterministic verdicts SHALL stand and the review SHALL complete. A model verdict SHALL never override a deterministic `change-caused`.
+When a light-model refinement seat is available (the `ci-failure-classification` council job), the system SHALL refine ONLY `unclassified` failures to `change-caused`, or leave them `unclassified`, in one batched turn drawing from the SAME shared per-review invocation budget. A model-returned `environmental` SHALL never be adopted. On refusal, absence, timeout, or invalid output, deterministic verdicts SHALL stand and the review SHALL complete.
 
 #### Scenario: Budget refusal degrades the refinement, not the signal
 

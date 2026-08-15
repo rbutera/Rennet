@@ -4,6 +4,7 @@ import { refineCiFailures } from "./ci-refinement";
 import { createInvocationBudget } from "./invocation-budget";
 
 const deterministic: CiFailure = {
+  checkId: "check:core-test",
   checkName: "core:test",
   verdict: "change-caused",
   evidence: "pipeline.ts failed",
@@ -11,6 +12,7 @@ const deterministic: CiFailure = {
   classifiedBy: "deterministic",
 };
 const uncertain: CiFailure = {
+  checkId: "check:acceptance",
   checkName: "acceptance",
   verdict: "unclassified",
   evidence: "snapshot mismatch",
@@ -34,7 +36,7 @@ describe("refineCiFailures", () => {
       expect(prompt).toContain('"checkName": "acceptance"');
       return {
         status: "emitted" as const,
-        body: { classifications: [{ ref: "failure-1", verdict: "environmental" }] },
+        body: { classifications: [{ ref: "failure-1", verdict: "change-caused" }] },
         tokens,
       };
     });
@@ -46,7 +48,7 @@ describe("refineCiFailures", () => {
     });
     expect(result.failures).toEqual([
       deterministic,
-      { ...uncertain, verdict: "environmental", classifiedBy: "model" },
+      { ...uncertain, verdict: "change-caused", classifiedBy: "model" },
     ]);
     expect(runTurn).toHaveBeenCalledOnce();
     expect(budget.consumed).toBe(1);
@@ -57,6 +59,19 @@ describe("refineCiFailures", () => {
       budgetRefused: false,
       tokensSpent: tokens,
     });
+  });
+
+  it("never adopts a model-produced environmental verdict for an uncertain failure", async () => {
+    const result = await refineCiFailures({
+      failures: [uncertain],
+      changedPaths: ["packages/core/src/pipeline.ts"],
+      runTurn: async () => ({
+        status: "emitted",
+        body: { classifications: [{ ref: "failure-0", verdict: "environmental" }] },
+      }),
+    });
+    expect(result.failures).toEqual([uncertain]);
+    expect(result.telemetry).toMatchObject({ turns: 1, refined: 0 });
   });
 
   it("rejects an incomplete or extra result as a whole, never partially adopting it", async () => {

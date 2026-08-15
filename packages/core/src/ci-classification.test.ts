@@ -3,18 +3,18 @@ import { describe, expect, it } from "vitest";
 import { ciFindingsFor, classifyCiFailures } from "./ci-classification";
 import type { ForgeCheckRun } from "./forge-port";
 
-function check(name: string, summary: string): ForgeCheckRun {
-  return { name, outcome: "failing", summary };
+function check(name: string, summary: string, id = `check:${name}`): ForgeCheckRun {
+  return { id, name, outcome: "failing", summary };
 }
 
 describe("classifyCiFailures", () => {
   it.each([
     "The runner has lost communication with the server",
     "Timed out waiting for a hosted runner to come online",
-    "No space left on device",
-    "Secondary rate limit exceeded",
-    "request failed: ECONNRESET",
-    "Artifact upload failed: service unavailable",
+    "Hosted runner: no space left on device",
+    "Package registry returned HTTP 429 rate limit exceeded",
+    "Hosted runner request failed: ECONNRESET",
+    "GitHub Actions artifact service: artifact upload failed: service unavailable",
     "Cancelled because a higher-priority run owns the concurrency group",
   ])("classifies machinery failures as environmental: %s", (summary) => {
     expect(
@@ -28,6 +28,43 @@ describe("classifyCiFailures", () => {
         [check("integration", "Test suite timed out after 30 seconds")],
         ["packages/core/src/pipeline.ts"],
       )[0]?.verdict,
+    ).toBe("unclassified");
+  });
+
+  it.each([
+    [
+      "test",
+      "AssertionError: expected backoff after rate limit exceeded in packages/core/src/rate-limit.ts",
+      "packages/core/src/rate-limit.ts",
+    ],
+    [
+      "rate limit handling › retries",
+      "AssertionError: expected retry backoff",
+      "packages/core/src/rate-limit.ts",
+    ],
+    [
+      "http client",
+      "http-client.ts request failed with ETIMEDOUT",
+      "packages/adapters/src/http-client.ts",
+    ],
+  ])(
+    "lets changed-code overlap win over application-shaped infra words: %s",
+    (name, summary, changedPath) => {
+      expect(classifyCiFailures([check(name, summary)], [changedPath])[0]).toMatchObject({
+        verdict: "change-caused",
+        implicatedPaths: [changedPath],
+      });
+    },
+  );
+
+  it.each([
+    "AssertionError: expected backoff after rate limit exceeded",
+    "application request failed with ETIMEDOUT",
+    "getaddrinfo ENOTFOUND api.customer.test",
+    "Artifact upload failed in the application",
+  ])("keeps bare application failure language visible as unclassified: %s", (summary) => {
+    expect(
+      classifyCiFailures([check("application test", summary)], ["src/other.ts"])[0]?.verdict,
     ).toBe("unclassified");
   });
 
@@ -58,7 +95,7 @@ describe("classifyCiFailures", () => {
   it("classifies only failing checks and is stable under check reordering", () => {
     const checks: ForgeCheckRun[] = [
       check("core:test", "pipeline failed"),
-      { name: "lint", outcome: "passing", summary: "" },
+      { id: "check:lint", name: "lint", outcome: "passing", summary: "" },
       check("acceptance", "Snapshot mismatch in an unnamed scenario"),
     ];
     const forward = classifyCiFailures(checks, ["packages/core/src/pipeline.ts"]);
@@ -76,6 +113,7 @@ describe("ciFindingsFor", () => {
     ],
   };
   const failure: CiFailure = {
+    checkId: "check:core-test",
     checkName: "core:test",
     verdict: "change-caused",
     evidence: "pipeline.test.ts failed",
@@ -110,6 +148,16 @@ describe("ciFindingsFor", () => {
         "patch-1",
       ),
     ).toEqual([]);
+  });
+
+  it("uses stable check identity so same-named checks cannot collide", () => {
+    const findings = ciFindingsFor(
+      [failure, { ...failure, checkId: "check:other-workflow" }],
+      manifest,
+      "patch-1",
+    );
+    expect(findings).toHaveLength(2);
+    expect(findings[0]?.findingId).not.toBe(findings[1]?.findingId);
   });
 
   it("never turns environmental or unclassified failures into findings", () => {

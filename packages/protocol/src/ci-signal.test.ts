@@ -7,12 +7,14 @@ const checked: CiSignal = {
   overall: "failing",
   failures: [
     {
+      checkId: "check-run-1",
       checkName: "core:test",
       verdict: "change-caused",
       evidence: "pipeline.test.ts failed",
       implicatedPaths: ["packages/core/src/pipeline.ts"],
       detailsUrl: "https://example.test/check/1",
       classifiedBy: "deterministic",
+      findingId: "ci-finding-1",
     },
   ],
   headOid: "abc123",

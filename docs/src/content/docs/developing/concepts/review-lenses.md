@@ -110,11 +110,14 @@ anchor—the index is not a second home for the finding.
 For GitHub pull requests, Flagged also carries a collapsible CI signal for the
 pinned head. Deterministic path overlap turns attributable failures into
 pre-reproduced high-severity findings; a failure without an offered-hunk anchor
-stays panel-only rather than acquiring an invented location. Narrow machinery
-signatures are labelled **environmental (infra)**, while every unresolved case
-says **Rennet could not attribute this — check it yourself**. Passing, no-checks,
-partial, and unavailable are distinct states. This signal is information only:
-no review, sign, or publish handler consults it.
+stays visible in the panel rather than acquiring an invented location. Path
+overlap wins before the narrow, context-bearing machinery signatures labelled
+**environmental (infra)**. Model refinement may promote an unclassified failure
+to change-caused but can never assign the environmental label; every unresolved
+case says **Rennet could not attribute this — check it yourself**. Passing,
+no-checks, incomplete, and unavailable are distinct states, and both the forge
+read and optional refinement have independent deadlines. This signal is
+information only: no review, sign, or publish handler consults it.
 
 Today, a dual review matches nearby anchors and compares severity to decide
 whether two findings concur. It does not yet recognise differently worded

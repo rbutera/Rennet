@@ -931,6 +931,7 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
         overall: "failing",
         failures: [
           {
+            checkId: "check-run-1",
             checkName: "core:test",
             verdict: "change-caused",
             evidence: "pipeline.ts failed",

@@ -30,7 +30,7 @@ export interface ForgeCiStatus {
 fetchCiStatus(ref: ForgePullRequestRef, headOid: string): Promise<ForgeCiStatus>;
 ```
 
-**GitHub implementation:** one GraphQL query on `repository.object(oid: $headOid) ... on Commit { statusCheckRollup { state, contexts(first: 100) { nodes { ... on CheckRun { name status conclusion title summary detailsUrl } ... on StatusContext { context state description targetUrl } } } } }`. Both node kinds map into `ForgeCheckRun` (CheckRun `conclusion` and legacy StatusContext `state` each map to the four-value `outcome`; queued/in-progress/EXPECTED → `pending`; ERROR is a failure, per the `mapCi` precedent in `project-pr-source.ts`). `X-GitHub-SSO` is parsed on the response like every other call, and a `partial-results` SSO state rides out on `sso` so a truncated check set is never presented as complete. All HTTP goes through the injected `HttpFetch`; no test touches the network.
+**GitHub implementation:** one GraphQL query on `repository.object(oid: $headOid) ... on Commit { statusCheckRollup { state, contexts(first: 100) { pageInfo { hasNextPage } nodes { ... on CheckRun { id name status conclusion title summary detailsUrl } ... on StatusContext { context state description targetUrl } } } } }`. Both node kinds map into `ForgeCheckRun`, including a stable identity (`CheckRun.id`, or the legacy context plus target URL). `pageInfo.hasNextPage`, GraphQL partial `errors`, and `X-GitHub-SSO: partial-results` all set the forge-neutral completeness marker. A truncated set can therefore never produce a passing signal. All HTTP goes through the injected `HttpFetch` and accepts the caller's abort signal.
 
 **Keyed by the pinned head.** The patchset pins `headOid` at review start, and `Review.postTarget` (present exactly on non-retrospective PR reviews, issue #21) carries `{repo, number, forgeRef, headOid}`. The CI fetch uses `postTarget.headOid` — checks attach to the commit, so the signal describes the code actually under review even if the branch has moved since (the same binding discipline as `patchsetId` on the flagged wire, #160). Local working-tree reviews have no `postTarget` → no fetch, no `ciSignal` field, pre-change shape. Retrospective reviews also omit `postTarget` → no signal (named deferral in the proposal).
 
@@ -62,13 +62,13 @@ export function classifyCiFailures(
 
 Rules, applied in order to each `failing` check:
 
-1. **Environmental, by signature.** A versioned, conservative pattern table of infrastructure failure signatures matched against name + summary: runner lost/communication lost, "timed out waiting for", no space left on device, rate limit / secondary rate limit, ECONNRESET / ETIMEDOUT / DNS resolution, artifact-upload/download infrastructure errors, "cancelled" caused by a concurrency group. The table is deliberately narrow: only signatures that are *about the machinery* qualify. (A test timeout inside a test suite is NOT on this table — a slow test can be change-caused.)
-2. **Change-caused, by overlap.** Real token overlap between the check's name + failure summary and the changeset's changed paths: full path matches, path-segment and file-stem matches, and project-name stems derived from changed paths (e.g. a changed `packages/core/src/…` matching a failing `core:test` target). This reuses the conservative-overlap spirit of `risk-crosscheck.ts` (#181) — a match requires a real, salient token, never an incidental stopword.
+1. **Change-caused, by overlap.** Real token overlap between the check's name + failure summary and the changeset's changed paths: full path matches, path-segment and file-stem matches, and project-name stems derived from changed paths. This wins even when the evidence also contains a weak machinery-looking token.
+2. **Environmental, by contextual signature.** Runner loss and concurrency cancellation are intrinsically machinery-shaped. Disk, rate-limit, network-code, DNS, registry, and artifact failures require nearby runner/registry/action/CI-setup/service context; a bare `ETIMEDOUT`, `ECONNRESET`, rate-limit phrase, or application assertion is not infrastructure proof.
 3. **Everything else → `unclassified`.**
 
 **The bias, stated and inverted from #181.** In the risk cross-check the safe wrong answer is `open` (mildly redundant); here the DANGEROUS wrong answer is `environmental`, because it tells the reviewer "not your change" about a break that is. So uncertainty NEVER resolves to `environmental` — it resolves to `unclassified`, a visible FYI whose copy explicitly says Rennet could not attribute it and the human should look. A red-proof test pins this: make the classifier default uncertain failures to `environmental` and watch the "uncertain is visible" test fire.
 
-**The ratchet.** A deterministic `change-caused` verdict is final: no later stage (including the model refinement) may demote it. Demotion only ever moves toward visibility (`unclassified` → `change-caused` or `environmental`), never away from it.
+**The ratchet.** A deterministic `change-caused` verdict is final. Model refinement may only promote `unclassified` to `change-caused`, or leave it `unclassified`; a model can never create `environmental`. Only the deterministic contextual signature table may make that claim.
 
 **Optional model refinement (the council seat).** A new catalogue job `ci-failure-classification` (light tier, batched — a table edit in `model-council.ts`, per the council doctrine; Table 1 resolves light-tier volume to the Codex seat when both harnesses are installed). One batched turn over ONLY the `unclassified` failures, given each failure's name + summary and the changed-path list, with a `CI_CLASSIFICATION_CONTRACT` in `@rennet/instructions`. It draws from the SAME shared review invocation budget (`sharedBudget` in `runFlaggedReviewWithContextFeed`) — it METERS and REPORTS like the hypothesis and verification passes, and on budget refusal, missing adapter, or a failed/invalid turn the deterministic verdicts simply stand. It never refuses the review. Verdicts it returns are stamped `classifiedBy: "model"`.
 
@@ -76,7 +76,7 @@ Rules, applied in order to each `failing` check:
 
 **Change-caused → findings.** Each `change-caused` failure folds into the `FlaggedReview.findings` array as an additive `FindingElement`:
 
-- `findingId`: minted deterministically from `(patchsetId, checkName)` — never model-minted (the "agents never mint identity" rule; here the producer is deterministic code).
+- `findingId`: minted deterministically from `(patchsetId, checkName, stable forge check identity)` — same-named checks from different workflows cannot collide.
 - `anchor`: resolved against the OFFERED hunk manifest — the first offered hunk in an implicated changed path. A failure whose implicated paths resolve to no offered hunk stays panel-only (it still rides `ciSignal` with its verdict): a finding with an unresolvable anchor is the hallucinated-location failure class `finding-generation.ts` already culls, and we do not reintroduce it from the deterministic side.
 - `severity`: `high`. Rationale: an actually-failing check attributable to the change is the strongest evidence class the lens carries — the break is not hypothesised, it already happened on a machine.
 - `agreement`: `{ kind: "concur", agree: 1, total: 1 }` — the honest single-judge shape the quick single-seat review already uses.
@@ -84,7 +84,7 @@ Rules, applied in order to each `failing` check:
 
 The fold happens AFTER the verification pass and the risk cross-check (#181) in `runFlaggedReviewWithContextFeed` — CI findings are appended last, so verification never sees them and the cross-check reconciles the hypothesis against the model findings exactly as today.
 
-**Environmental + unclassified → FYI.** They never become findings. They ride `ciSignal` and render in the signal panel, clearly labelled, collapsible-as-noise but never hidden by default and never auto-suppressed. An `unclassified` failure's copy is the anti-rubber-stamp sentence: attribution unknown — check it yourself.
+**Panel visibility follows actual placement.** Environmental and unclassified failures always render in the FYI. A change-caused failure is omitted from the panel body only when its `findingId` proves it actually folded into a finding; an unplaced change-caused failure remains visible with its evidence and link. React keys use stable check identity.
 
 ## 4. The wire contract (`packages/protocol`)
 
@@ -128,7 +128,7 @@ postTarget present?
       then: append change-caused findings (anchor-resolved), attach ciSignal
 ```
 
-The whole block is wrapped so NO throw escapes: network failure, auth failure, a malformed GraphQL payload, a timeout — every one resolves to `unavailable` with a reason string, and the flagged review the model seats produced is returned exactly as it would have been. The forge adapter is constructed from the same auth ladder (`resolveGitHubAuth`) the existing PR paths use; no new credential handling.
+The fetch and refinement are bounded separately with abortable deadlines. Fetch timeout/failure resolves to `unavailable` with the model review untouched. Refinement timeout/failure abandons the optional turn and retains deterministic verdicts. Neither a rejection nor a never-settling promise can block `flagged.review`.
 
 **Never-blocks, proven not asserted:** tests pin that (a) a throwing `fetchCiStatus` yields `unavailable` and leaves the model findings untouched, and (b) the publish path (`publish.requestConsent` / `publish.review` dispatch) behaves byte-identically under `ciSignal` passing, failing, and unavailable — no dispatch handler reads CI state to decide anything. Red-proof for (b): make a publish handler consult `ciSignal` and watch the invariance test fire.
 

@@ -443,13 +443,13 @@ export interface CiClassificationContract {
 }
 
 export const CI_CLASSIFICATION_CONTRACT: CiClassificationContract = {
-  version: 1,
+  version: 2,
   role: "You classify CI failures that Rennet's deterministic rules could not attribute. This is an informational review signal, never a review, sign, or publish gate.",
-  task: 'For every supplied failure, return exactly one classification with its ref unchanged and verdict "change-caused", "environmental", or "unclassified". Treat a failure as environmental only when the evidence identifies infrastructure machinery rather than the changed code. The exact JSON schema is enforced separately; return only the complete classifications object.',
+  task: 'For every supplied failure, return exactly one classification with its ref unchanged and verdict "change-caused" or "unclassified". Deterministic rules alone may identify environmental failures; this refinement may never produce that verdict. The exact JSON schema is enforced separately; return only the complete classifications object.',
   discipline:
-    "Use only the supplied check name, failure summary, and changed-path list. Change-caused means the failure is attributable to this changeset. Environmental means the evidence identifies runner, network, storage, rate-limit, artifact-service, or concurrency machinery. Do not infer environmental merely because attribution is unclear.",
+    "Use only the supplied check name, failure summary, and changed-path list. Promote a failure to change-caused only when that evidence attributes it to this changeset. Otherwise leave it unclassified; never infer infrastructure attribution.",
   failureValve:
-    "When the evidence cannot support either attribution, return unclassified. Uncertainty must stay visible and must never be softened into environmental.",
+    "When the evidence cannot support change attribution, return unclassified. Uncertainty must stay visible and must never be softened into environmental.",
 };
 
 export const CI_CLASSIFICATION_OUTPUT_SCHEMA = {
@@ -463,7 +463,7 @@ export const CI_CLASSIFICATION_OUTPUT_SCHEMA = {
         additionalProperties: false,
         properties: {
           ref: { type: "string", minLength: 1 },
-          verdict: { type: "string", enum: ["change-caused", "environmental", "unclassified"] },
+          verdict: { type: "string", enum: ["change-caused", "unclassified"] },
         },
         required: ["ref", "verdict"],
       },

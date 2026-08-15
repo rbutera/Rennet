@@ -1116,9 +1116,13 @@ async function runFlaggedReviewWithContextFeed(
     ...(review.postTarget === undefined ? {} : { postTarget: review.postTarget }),
     patchset,
     manifest,
-    fetchCiStatus: async (ref, headOid) => {
+    fetchCiStatus: async (ref, headOid, signal) => {
       const token = await resolveGitHubToken();
-      return new GitHubForgeAdapter({ http: publishHttp, token }).fetchCiStatus(ref, headOid);
+      return new GitHubForgeAdapter({ http: publishHttp, token }).fetchCiStatus(
+        ref,
+        headOid,
+        signal,
+      );
     },
     ...(ciRefinementTurn === undefined ? {} : { refineTurn: ciRefinementTurn }),
     budget: sharedBudget,

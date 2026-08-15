@@ -221,8 +221,10 @@ describe("GitHubForgeAdapter.fetchCiStatus", () => {
   it("fetches the pinned head once and maps CheckRun plus legacy StatusContext nodes", async () => {
     let calls = 0;
     let request: { query?: string; variables?: unknown } = {};
+    let capturedSignal: AbortSignal | undefined;
     const http: HttpFetch = (_url, init) => {
       calls += 1;
+      capturedSignal = init?.signal;
       request = JSON.parse(init?.body ?? "{}") as typeof request;
       return Promise.resolve(
         response(
@@ -234,9 +236,11 @@ describe("GitHubForgeAdapter.fetchCiStatus", () => {
                 object: {
                   statusCheckRollup: {
                     contexts: {
+                      pageInfo: { hasNextPage: false },
                       nodes: [
                         {
                           __typename: "CheckRun",
+                          id: "CR_core",
                           name: "core:test",
                           status: "COMPLETED",
                           conclusion: "FAILURE",
@@ -246,6 +250,7 @@ describe("GitHubForgeAdapter.fetchCiStatus", () => {
                         },
                         {
                           __typename: "CheckRun",
+                          id: "CR_build",
                           name: "build",
                           status: "IN_PROGRESS",
                           conclusion: null,
@@ -278,31 +283,43 @@ describe("GitHubForgeAdapter.fetchCiStatus", () => {
       );
     };
 
+    const controller = new AbortController();
     const result = await new GitHubForgeAdapter({ http, token: "t" }).fetchCiStatus(
       ref,
       "deadbeef",
+      controller.signal,
     );
     expect(calls).toBe(1);
     expect(request.query).toContain("statusCheckRollup");
     expect(request.query).toContain("... on CheckRun");
     expect(request.query).toContain("... on StatusContext");
+    expect(request.query).toContain("pageInfo { hasNextPage }");
+    expect(capturedSignal).toBe(controller.signal);
     expect(request.variables).toEqual({ owner: "acme", name: "widget", headOid: "deadbeef" });
     expect(result.checks).toEqual([
       {
+        id: "CR_core",
         name: "core:test",
         outcome: "failing",
         summary: "pipeline.test.ts failed",
         detailsUrl: "https://example.test/check/1",
       },
-      { name: "build", outcome: "pending", summary: "" },
+      { id: "CR_build", name: "build", outcome: "pending", summary: "" },
       {
+        id: "status-context:legacy/deploy\0https://example.test/status/1",
         name: "legacy/deploy",
         outcome: "failing",
         summary: "deployment errored",
         detailsUrl: "https://example.test/status/1",
       },
-      { name: "legacy/queue", outcome: "pending", summary: "" },
+      {
+        id: "status-context:legacy/queue\0",
+        name: "legacy/queue",
+        outcome: "pending",
+        summary: "",
+      },
     ]);
+    expect(result.incomplete).toBe(false);
   });
 
   it.each([{ statusCheckRollup: null }, { statusCheckRollup: { contexts: { nodes: [] } } }])(
@@ -312,7 +329,7 @@ describe("GitHubForgeAdapter.fetchCiStatus", () => {
         Promise.resolve(response(200, {}, JSON.stringify({ data: { repository: { object } } })));
       await expect(
         new GitHubForgeAdapter({ http, token: "t" }).fetchCiStatus(ref, "deadbeef"),
-      ).resolves.toEqual({ checks: [], sso: { kind: "none" } });
+      ).resolves.toEqual({ checks: [], sso: { kind: "none" }, incomplete: false });
     },
   );
 
@@ -340,6 +357,46 @@ describe("GitHubForgeAdapter.fetchCiStatus", () => {
       organizations: ["ORG_7"],
       authorizationUrl: "https://github.com/sso",
     });
+    expect(result.incomplete).toBe(true);
+  });
+
+  it.each([
+    {
+      label: "a first-100 page with a hidden tail",
+      body: {
+        data: {
+          repository: {
+            object: {
+              statusCheckRollup: {
+                contexts: { nodes: [], pageInfo: { hasNextPage: true } },
+              },
+            },
+          },
+        },
+      },
+    },
+    {
+      label: "partial GraphQL data with errors",
+      body: {
+        data: {
+          repository: {
+            object: {
+              statusCheckRollup: {
+                contexts: { nodes: [], pageInfo: { hasNextPage: false } },
+              },
+            },
+          },
+        },
+        errors: [{ message: "one context was not readable" }],
+      },
+    },
+  ])("marks $label incomplete instead of treating it as a complete check set", async ({ body }) => {
+    const http: HttpFetch = () => Promise.resolve(response(200, {}, JSON.stringify(body)));
+    const result = await new GitHubForgeAdapter({ http, token: "t" }).fetchCiStatus(
+      ref,
+      "deadbeef",
+    );
+    expect(result.incomplete).toBe(true);
   });
 });
 

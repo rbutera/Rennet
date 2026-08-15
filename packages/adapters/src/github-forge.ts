@@ -58,9 +58,11 @@ const CI_STATUS_QUERY = `query($owner:String!,$name:String!,$headOid:GitObjectID
   repository(owner:$owner,name:$name){
     object(oid:$headOid){ ... on Commit {
       statusCheckRollup{
-        contexts(first:100){ nodes{
+        contexts(first:100){
+          pageInfo { hasNextPage }
+          nodes{
           __typename
-          ... on CheckRun { name status conclusion title summary detailsUrl }
+          ... on CheckRun { id name status conclusion title summary detailsUrl }
           ... on StatusContext { context state description targetUrl }
         } }
       }
@@ -94,6 +96,7 @@ interface GraphqlSearchNode {
 
 interface GraphqlCheckRun {
   __typename: "CheckRun";
+  id: string;
   name: string;
   status: string;
   conclusion: string | null;
@@ -122,6 +125,7 @@ function mapCheckRun(node: GraphqlCheckRun): ForgeCheckRun {
           ? "neutral"
           : "failing";
   return {
+    id: node.id,
     name: node.name,
     outcome,
     summary: node.summary ?? node.title ?? "",
@@ -139,6 +143,7 @@ function mapStatusContext(node: GraphqlStatusContext): ForgeCheckRun {
           ? "failing"
           : "neutral";
   return {
+    id: `status-context:${node.context}\0${node.targetUrl ?? ""}`,
     name: node.context,
     outcome,
     summary: node.description ?? "",
@@ -172,7 +177,8 @@ export class GitHubForgeAdapter implements ForgePort {
   private async graphql<T>(
     query: string,
     variables: Record<string, unknown>,
-  ): Promise<{ data: T; sso: SsoState }> {
+    signal?: AbortSignal,
+  ): Promise<{ data: T; sso: SsoState; incomplete: boolean }> {
     const url = this.config.graphqlUrl ?? GRAPHQL_URL;
     const res = await this.config.http(url, {
       method: "POST",
@@ -181,13 +187,18 @@ export class GitHubForgeAdapter implements ForgePort {
         "Content-Type": "application/json",
       },
       body: JSON.stringify({ query, variables }),
+      ...(signal === undefined ? {} : { signal }),
     });
     const sso = parseGitHubSso(res.headers.get("X-GitHub-SSO"));
     const parsed = JSON.parse(await res.text()) as { data?: T; errors?: unknown };
     if (!parsed.data) {
       throw new Error(`GraphQL returned no data: ${JSON.stringify(parsed.errors ?? {})}`);
     }
-    return { data: parsed.data, sso };
+    const incomplete =
+      (parsed.errors !== undefined &&
+        (!Array.isArray(parsed.errors) || parsed.errors.length > 0)) ||
+      sso.kind === "partial-results";
+    return { data: parsed.data, sso, incomplete };
   }
 
   async listOpenPullRequests(): Promise<ForgePullRequestList> {
@@ -254,27 +265,42 @@ export class GitHubForgeAdapter implements ForgePort {
     return { diff: await res.text(), sso };
   }
 
-  async fetchCiStatus(ref: ForgePullRequestRef, headOid: string): Promise<ForgeCiStatus> {
-    const { data, sso } = await this.graphql<{
+  async fetchCiStatus(
+    ref: ForgePullRequestRef,
+    headOid: string,
+    signal?: AbortSignal,
+  ): Promise<ForgeCiStatus> {
+    const { data, sso, incomplete } = await this.graphql<{
       repository: {
         object: {
-          statusCheckRollup: { contexts: { nodes: GraphqlCheckContext[] } } | null;
+          statusCheckRollup: {
+            contexts: {
+              nodes: GraphqlCheckContext[];
+              pageInfo?: { hasNextPage: boolean };
+            };
+          } | null;
         } | null;
       };
-    }>(CI_STATUS_QUERY, {
-      owner: ref.repo.owner,
-      name: ref.repo.name,
-      headOid,
-    });
+    }>(
+      CI_STATUS_QUERY,
+      {
+        owner: ref.repo.owner,
+        name: ref.repo.name,
+        headOid,
+      },
+      signal,
+    );
     if (data.repository.object === null) {
       throw new Error(`GitHub returned no commit for reviewed head ${headOid}`);
     }
-    const nodes = data.repository.object.statusCheckRollup?.contexts.nodes ?? [];
+    const contexts = data.repository.object.statusCheckRollup?.contexts;
+    const nodes = contexts?.nodes ?? [];
     return {
       checks: nodes.map((node) =>
         node.__typename === "CheckRun" ? mapCheckRun(node) : mapStatusContext(node),
       ),
       sso,
+      incomplete: incomplete || (contexts?.pageInfo?.hasNextPage ?? false),
     };
   }
 }

@@ -41,6 +41,8 @@ export type SsoState =
 
 /** One check/status attached to a commit, in forge-neutral nouns. */
 export interface ForgeCheckRun {
+  /** Stable forge identity for this check, independent of its display name. */
+  id: string;
   name: string;
   outcome: "passing" | "failing" | "pending" | "neutral";
   /** The forge's one-line summary or description; empty when none. Never a full log. */
@@ -51,6 +53,8 @@ export interface ForgeCheckRun {
 export interface ForgeCiStatus {
   checks: ForgeCheckRun[];
   sso: SsoState;
+  /** True when the forge could not prove the returned check set was complete. */
+  incomplete: boolean;
 }
 
 /**
@@ -137,5 +141,9 @@ export interface ForgePort {
   /** The unified-diff fallback for when the local clone is unavailable. */
   fetchDiff(ref: ForgePullRequestRef): Promise<ForgeDiff>;
   /** Per-check CI results for a commit, keyed by OID rather than a moving branch. */
-  fetchCiStatus(ref: ForgePullRequestRef, headOid: string): Promise<ForgeCiStatus>;
+  fetchCiStatus(
+    ref: ForgePullRequestRef,
+    headOid: string,
+    signal?: AbortSignal,
+  ): Promise<ForgeCiStatus>;
 }

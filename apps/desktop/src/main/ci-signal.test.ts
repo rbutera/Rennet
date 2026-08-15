@@ -53,6 +53,7 @@ function status(checks: ForgeCiStatus["checks"], partial = false): ForgeCiStatus
     sso: partial
       ? { kind: "partial-results", organizations: ["ORG"], authorizationUrl: null }
       : { kind: "none" },
+    incomplete: partial,
   };
 }
 
@@ -67,7 +68,7 @@ describe("attachCiSignal", () => {
 
   it("fetches the pinned head and distinguishes passing from no checks", async () => {
     const fetchPassing = vi.fn(async () =>
-      status([{ name: "test", outcome: "passing", summary: "" }]),
+      status([{ id: "check:test", name: "test", outcome: "passing", summary: "" }]),
     );
     const passing = await attachCiSignal({
       review,
@@ -86,6 +87,7 @@ describe("attachCiSignal", () => {
     expect(fetchPassing).toHaveBeenCalledWith(
       { repo: target.repo, number: target.number },
       "reviewed-head",
+      expect.any(AbortSignal),
     );
     expect(passing.ciSignal).toEqual({
       status: "checked",
@@ -106,6 +108,7 @@ describe("attachCiSignal", () => {
       fetchCiStatus: async () =>
         status([
           {
+            id: "check:core-test",
             name: "core:test",
             outcome: "failing",
             summary: "pipeline.ts failed",
@@ -118,6 +121,9 @@ describe("attachCiSignal", () => {
       anchor: "rennet:hunk/h1",
       severity: "high",
       verification: { verdict: "reproduced", evidence: "CI: core:test — pipeline.ts failed" },
+    });
+    expect(result.ciSignal).toMatchObject({
+      failures: [{ checkId: "check:core-test", findingId: result.findings[1]?.findingId }],
     });
   });
 
@@ -146,11 +152,148 @@ describe("attachCiSignal", () => {
       patchset,
       manifest,
       fetchCiStatus: async () =>
-        status([{ name: "acceptance", outcome: "failing", summary: "unknown failure" }], true),
+        status(
+          [
+            {
+              id: "check:acceptance",
+              name: "acceptance",
+              outcome: "failing",
+              summary: "unknown failure",
+            },
+          ],
+          true,
+        ),
     });
     expect(result).toMatchObject({
       ...failed,
       ciSignal: { status: "checked", overall: "failing", incomplete: true },
     });
+  });
+
+  it("never reports passing for a truncated first-100 page, partial empty read, or neutral-only set", async () => {
+    const firstHundred = Array.from({ length: 100 }, (_, index) => ({
+      id: `check:${index}`,
+      name: `check ${index}`,
+      outcome: "passing" as const,
+      summary: "",
+    }));
+    const truncated = await attachCiSignal({
+      review,
+      postTarget: target,
+      patchset,
+      manifest,
+      fetchCiStatus: async () => ({
+        checks: firstHundred,
+        sso: { kind: "none" },
+        incomplete: true,
+      }),
+    });
+    const partialEmpty = await attachCiSignal({
+      review,
+      postTarget: target,
+      patchset,
+      manifest,
+      fetchCiStatus: async () => status([], true),
+    });
+    const neutralOnly = await attachCiSignal({
+      review,
+      postTarget: target,
+      patchset,
+      manifest,
+      fetchCiStatus: async () =>
+        status([{ id: "check:neutral", name: "skipped", outcome: "neutral", summary: "" }]),
+    });
+
+    expect(truncated.ciSignal).toMatchObject({
+      status: "checked",
+      overall: "pending",
+      incomplete: true,
+    });
+    expect(partialEmpty.ciSignal).toMatchObject({
+      status: "checked",
+      overall: "pending",
+      incomplete: true,
+    });
+    expect(neutralOnly.ciSignal).toMatchObject({
+      status: "checked",
+      overall: "pending",
+      incomplete: false,
+    });
+  });
+
+  it("bounds a fetch that never settles, aborts it, and completes the review as unavailable", async () => {
+    vi.useFakeTimers();
+    try {
+      let aborted = false;
+      const pending = attachCiSignal({
+        review,
+        postTarget: target,
+        patchset,
+        manifest,
+        fetchTimeoutMs: 25,
+        fetchCiStatus: async (_ref, _headOid, signal) =>
+          new Promise<ForgeCiStatus>(() => {
+            signal?.addEventListener("abort", () => {
+              aborted = true;
+            });
+          }),
+      });
+      await vi.advanceTimersByTimeAsync(25);
+      const result = await pending;
+      expect(aborted).toBe(true);
+      expect(result).toEqual({
+        ...review,
+        ciSignal: { status: "unavailable", reason: "CI status fetch timed out after 25ms" },
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("bounds refinement separately and retains deterministic visible verdicts", async () => {
+    vi.useFakeTimers();
+    try {
+      let aborted = false;
+      const pending = attachCiSignal({
+        review,
+        postTarget: target,
+        patchset,
+        manifest,
+        refinementTimeoutMs: 25,
+        fetchCiStatus: async () =>
+          status([
+            {
+              id: "check:acceptance",
+              name: "acceptance",
+              outcome: "failing",
+              summary: "snapshot mismatch without an attributable path",
+            },
+          ]),
+        refineTurn: async (_prompt, signal) =>
+          new Promise(() => {
+            signal?.addEventListener("abort", () => {
+              aborted = true;
+            });
+          }),
+      });
+      await vi.advanceTimersByTimeAsync(25);
+      const result = await pending;
+      expect(aborted).toBe(true);
+      expect(result.ciSignal).toMatchObject({
+        status: "checked",
+        overall: "failing",
+        failures: [
+          {
+            checkId: "check:acceptance",
+            verdict: "unclassified",
+            classifiedBy: "deterministic",
+          },
+        ],
+      });
+      if (result.status !== "ok") throw new Error("expected review completion");
+      expect(result.findings).toEqual([modelFinding]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

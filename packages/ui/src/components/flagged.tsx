@@ -84,7 +84,9 @@ function CiFailureLine({ failure }: { failure: CiFailure }) {
   const label =
     failure.verdict === "environmental"
       ? "environmental (infra)"
-      : "Rennet could not attribute this — check it yourself";
+      : failure.verdict === "change-caused"
+        ? "change-caused CI failure (no offered hunk to place it on)"
+        : "Rennet could not attribute this — check it yourself";
   return (
     <li className={`ci-signal-failure ci-signal-${failure.verdict}`}>
       <span className="ci-signal-failure-label">{label}</span>
@@ -108,35 +110,36 @@ export function CiSignalPanel({ signal }: { signal?: CiSignal }) {
   } else if (signal.status === "no-checks") {
     content = <p>no CI checks reported for the reviewed head</p>;
   } else {
-    const changeCaused = signal.failures.filter(
-      (failure) => failure.verdict === "change-caused",
+    const placedChangeCaused = signal.failures.filter(
+      (failure) => failure.verdict === "change-caused" && failure.findingId !== undefined,
     ).length;
-    const panelFailures = signal.failures.filter((failure) => failure.verdict !== "change-caused");
+    const panelFailures = signal.failures.filter(
+      (failure) => failure.verdict !== "change-caused" || failure.findingId === undefined,
+    );
     content = (
       <>
-        {signal.overall === "passing" ? (
+        {signal.incomplete ? (
+          <p className="ci-signal-incomplete">
+            CI results are incomplete — omitted checks may still be failing
+          </p>
+        ) : signal.overall === "passing" ? (
           <p>CI: all checks passing on the reviewed head</p>
         ) : signal.overall === "pending" ? (
-          <p>CI checks are still pending on the reviewed head</p>
+          <p>CI checks are pending or have no passing/failing result on the reviewed head</p>
         ) : null}
-        {changeCaused > 0 ? (
+        {placedChangeCaused > 0 ? (
           <p>
-            {`${changeCaused} change-caused CI ${
-              changeCaused === 1 ? "failure appears" : "failures appear"
+            {`${placedChangeCaused} change-caused CI ${
+              placedChangeCaused === 1 ? "failure appears" : "failures appear"
             } in the flagged findings below`}
           </p>
         ) : null}
         {panelFailures.length > 0 ? (
           <ul className="ci-signal-failures">
             {panelFailures.map((failure) => (
-              <CiFailureLine key={failure.checkName} failure={failure} />
+              <CiFailureLine key={failure.checkId} failure={failure} />
             ))}
           </ul>
-        ) : null}
-        {signal.incomplete ? (
-          <p className="ci-signal-incomplete">
-            CI results may be incomplete because GitHub returned partial results
-          </p>
         ) : null}
       </>
     );

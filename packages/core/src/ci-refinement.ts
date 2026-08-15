@@ -10,7 +10,10 @@ export type CiRefinementTurnResult =
   | { readonly status: "emitted"; readonly body: unknown; readonly tokens?: RspTokenUsage }
   | { readonly status: "failed"; readonly message: string };
 
-export type CiRefinementTurn = (prompt: string) => Promise<CiRefinementTurnResult>;
+export type CiRefinementTurn = (
+  prompt: string,
+  signal?: AbortSignal,
+) => Promise<CiRefinementTurnResult>;
 
 export interface CiRefinementTelemetry {
   readonly candidates: number;
@@ -27,6 +30,7 @@ export interface RefineCiFailuresInput {
   readonly runTurn: CiRefinementTurn;
   readonly budget?: InvocationBudget;
   readonly contract?: CiClassificationContract;
+  readonly signal?: AbortSignal;
 }
 
 interface Candidate {
@@ -111,7 +115,7 @@ export async function refineCiFailures(
   });
   let turn: CiRefinementTurnResult;
   try {
-    turn = await input.runTurn(prompt);
+    turn = await input.runTurn(prompt, input.signal);
   } catch (error) {
     return unchanged(input.failures, {
       ...baseTelemetry,
@@ -140,7 +144,7 @@ export async function refineCiFailures(
   let refined = 0;
   for (const candidate of candidates) {
     const verdict = classifications.get(candidate.ref);
-    if (verdict === undefined || verdict === "unclassified") continue;
+    if (verdict !== "change-caused") continue;
     failures[candidate.index] = {
       ...candidate.failure,
       verdict,

@@ -16,12 +16,15 @@ export function createClaudeCiRefinementTurn(
   port: HarnessPort,
   options: ClaudeCiRefinementTurnOptions,
 ): CiRefinementTurn {
-  return async function runCiRefinement(prompt: string): Promise<CiRefinementTurnResult> {
+  return async function runCiRefinement(
+    prompt: string,
+    signal?: AbortSignal,
+  ): Promise<CiRefinementTurnResult> {
     const session = await port.createSession({
       cwd: options.cwd,
       outputSchema: CI_CLASSIFICATION_OUTPUT_SCHEMA,
       ...(options.model === undefined ? {} : { model: options.model }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
+      ...((signal ?? options.signal) === undefined ? {} : { signal: signal ?? options.signal }),
     });
     try {
       await session.send({ prompt });
@@ -59,13 +62,17 @@ export function createCodexCiRefinementTurn(
   executor: CodexExecutor,
   options: { readonly model: string; readonly effort: string },
 ): CiRefinementTurn {
-  return async function runCiRefinement(prompt: string): Promise<CiRefinementTurnResult> {
+  return async function runCiRefinement(
+    prompt: string,
+    signal?: AbortSignal,
+  ): Promise<CiRefinementTurnResult> {
     try {
       const result = await executor({
         model: options.model,
         effort: options.effort,
         prompt,
         outputSchema: CI_CLASSIFICATION_OUTPUT_SCHEMA,
+        ...(signal === undefined ? {} : { signal }),
       });
       return {
         status: "emitted",

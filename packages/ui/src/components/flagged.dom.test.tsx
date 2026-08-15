@@ -184,13 +184,16 @@ describe("FlaggedLens — the flagged index surface", () => {
             incomplete: true,
             failures: [
               {
+                checkId: "check:core-test",
                 checkName: "core:test",
                 verdict: "change-caused",
                 evidence: "packages/core/src/pipeline.test.ts failed",
                 implicatedPaths: ["packages/core/src/pipeline.ts"],
                 classifiedBy: "deterministic",
+                findingId: "ci-finding-core-test",
               },
               {
+                checkId: "check:hosted-runner",
                 checkName: "hosted runner",
                 verdict: "environmental",
                 evidence: "runner lost communication",
@@ -198,6 +201,7 @@ describe("FlaggedLens — the flagged index surface", () => {
                 classifiedBy: "deterministic",
               },
               {
+                checkId: "check:acceptance",
                 checkName: "acceptance",
                 verdict: "unclassified",
                 evidence: "snapshot mismatch",
@@ -218,9 +222,57 @@ describe("FlaggedLens — the flagged index surface", () => {
     expect(getByText("environmental (infra)")).toBeTruthy();
     expect(getByText("Rennet could not attribute this — check it yourself")).toBeTruthy();
     expect(
-      getByText("CI results may be incomplete because GitHub returned partial results"),
+      getByText("CI results are incomplete — omitted checks may still be failing"),
     ).toBeTruthy();
     expect(queryByText("packages/core/src/pipeline.test.ts failed")).toBeNull();
+  });
+
+  it("keeps unplaced change-caused failures visible and keys same-named checks by forge identity", () => {
+    const { container, getByText, getAllByText } = mount(
+      <FlaggedLens
+        index={buildFlaggedIndex({
+          status: "ok",
+          findings: [],
+          ciSignal: {
+            status: "checked",
+            overall: "failing",
+            headOid: "red-head",
+            incomplete: false,
+            failures: [
+              {
+                checkId: "workflow-a/check-1",
+                checkName: "test",
+                verdict: "change-caused",
+                evidence: "mechanical failure without an offered hunk",
+                implicatedPaths: ["generated/output.ts"],
+                detailsUrl: "https://example.test/check/a",
+                classifiedBy: "deterministic",
+              },
+              {
+                checkId: "workflow-b/check-1",
+                checkName: "test",
+                verdict: "change-caused",
+                evidence: "model refinement could not supply a location",
+                implicatedPaths: [],
+                detailsUrl: "https://example.test/check/b",
+                classifiedBy: "model",
+              },
+            ],
+          },
+        })}
+        onJumpToAnchor={vi.fn()}
+      />,
+    );
+
+    expect(getAllByText("test")).toHaveLength(2);
+    expect(getAllByText("change-caused CI failure (no offered hunk to place it on)")).toHaveLength(
+      2,
+    );
+    expect(getByText("mechanical failure without an offered hunk")).toBeTruthy();
+    expect(getByText("model refinement could not supply a location")).toBeTruthy();
+    expect(container.querySelectorAll(".ci-signal-failure")).toHaveLength(2);
+    expect(container.querySelectorAll(".ci-signal-details")).toHaveLength(2);
+    expect(container.textContent).not.toContain("appears in the flagged findings below");
   });
 
   it("shows CI state even when the model review failed", () => {

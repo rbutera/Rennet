@@ -942,12 +942,14 @@ export const riskCrossCheckSchema = objectSchemaFor<RiskCrossCheck>()({
 });
 export const ciFailureVerdictSchema = z.enum(["change-caused", "environmental", "unclassified"]);
 export const ciFailureSchema = objectSchemaFor<CiFailure>()({
+  checkId: z.string().min(1),
   checkName: z.string().min(1),
   verdict: ciFailureVerdictSchema,
   evidence: z.string(),
   implicatedPaths: z.array(z.string().min(1)),
   detailsUrl: z.string().url().optional(),
   classifiedBy: z.enum(["deterministic", "model"]),
+  findingId: z.string().min(1).optional(),
 });
 export const ciSignalSchema: z.ZodType<CiSignal> = z.union([
   z.object({

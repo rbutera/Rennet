@@ -25,6 +25,7 @@ export function flaggedReviewFixture(): FlaggedReview {
       incomplete: true,
       failures: [
         {
+          checkId: "fixture-core-test",
           checkName: "core:test",
           verdict: "change-caused",
           evidence: "packages/core/src/budget.test.ts failed",
@@ -32,6 +33,7 @@ export function flaggedReviewFixture(): FlaggedReview {
           classifiedBy: "deterministic",
         },
         {
+          checkId: "fixture-hosted-runner",
           checkName: "hosted runner",
           verdict: "environmental",
           evidence: "runner lost communication with the service",
@@ -39,6 +41,7 @@ export function flaggedReviewFixture(): FlaggedReview {
           classifiedBy: "deterministic",
         },
         {
+          checkId: "fixture-acceptance",
           checkName: "acceptance",
           verdict: "unclassified",
           evidence: "snapshot mismatch without an attributable path",

@@ -1193,12 +1193,16 @@ export type CiFailureVerdict = "change-caused" | "environmental" | "unclassified
 
 /** One failing CI check classified against the reviewed changeset. */
 export interface CiFailure {
+  /** Stable forge identity; display names are not unique across workflows. */
+  checkId: string;
   checkName: string;
   verdict: CiFailureVerdict;
   evidence: string;
   implicatedPaths: string[];
   detailsUrl?: string;
   classifiedBy: "deterministic" | "model";
+  /** Present only when this failure was actually folded into an anchored finding. */
+  findingId?: string;
 }
 
 /** Informational CI state for the pinned head under review. Never a review gate. */
