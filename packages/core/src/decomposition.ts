@@ -778,7 +778,10 @@ export function decompose(patchset: Patchset, options: DecomposeOptions = {}): D
   for (const hunk of hunks) hunkById.set(hunk.id, hunk);
 
   const changedPaths = new Set(files.map((f) => f.path));
-  const candidateEdges = new Set<string>();
+  // Candidate edges keyed by a structured, collision-free key (a JSON-encoded
+  // [from, to] tuple) so there is no in-band delimiter to split on later. The
+  // stored value is the tuple itself, consumed directly below.
+  const candidateEdges = new Map<string, readonly [string, string]>();
   for (const chunk of chunks) {
     if (chunk.kind !== "substantive") continue;
     for (const hunkId of chunk.hunkIds) {
@@ -791,26 +794,24 @@ export function decompose(patchset: Patchset, options: DecomposeOptions = {}): D
         const fromChunk = definingChunk.get(target);
         const toChunk = chunkByHunkId.get(hunkId);
         if (fromChunk === undefined || toChunk === undefined || fromChunk === toChunk) continue;
-        candidateEdges.add(`${fromChunk}�${toChunk}`);
+        candidateEdges.set(JSON.stringify([fromChunk, toChunk]), [fromChunk, toChunk]);
       }
     }
   }
 
   // Add edges deterministically, dropping any that would close a cycle so the
   // stored edge set is a guaranteed DAG (V103).
-  const sortedCandidates = [...candidateEdges].sort((a, b) => {
-    const [af, at] = a.split("�");
-    const [bf, bt] = b.split("�");
-    const byFrom = (chunkIndexById.get(af ?? "") ?? 0) - (chunkIndexById.get(bf ?? "") ?? 0);
+  const sortedCandidates = [...candidateEdges.values()].sort((a, b) => {
+    const [af, at] = a;
+    const [bf, bt] = b;
+    const byFrom = (chunkIndexById.get(af) ?? 0) - (chunkIndexById.get(bf) ?? 0);
     if (byFrom !== 0) return byFrom;
-    return (chunkIndexById.get(at ?? "") ?? 0) - (chunkIndexById.get(bt ?? "") ?? 0);
+    return (chunkIndexById.get(at) ?? 0) - (chunkIndexById.get(bt) ?? 0);
   });
   const adjacency = new Map<string, Set<string>>();
   for (const chunk of chunks) adjacency.set(chunk.chunkId, new Set());
   const edges: DecompositionEdge[] = [];
-  for (const candidate of sortedCandidates) {
-    const [from, to] = candidate.split("�");
-    if (from === undefined || to === undefined) continue;
+  for (const [from, to] of sortedCandidates) {
     if (reaches(adjacency, to, from)) continue; // would close a cycle → drop
     adjacency.get(from)?.add(to);
     edges.push({ from, to, kind: "enables" });
