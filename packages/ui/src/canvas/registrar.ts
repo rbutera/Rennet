@@ -312,6 +312,47 @@ export type RowResolution =
     }
   | { outcome: "orphan"; reason: OrphanReason };
 
+export type SpanAnchorResult =
+  | { outcome: "minted"; anchor: string; rawIndices: number[] }
+  | { outcome: "failure"; reason: "no-rows" | "cross-occurrence" };
+
+/** Mint a side-qualified occurrence span from the CodeView's file-line selection. */
+export function spanAnchorForRows(
+  registry: RowRegistry,
+  selection: { line: number; side: AnchorSide; endLine?: number },
+): SpanAnchorResult {
+  const startLine = Math.min(selection.line, selection.endLine ?? selection.line);
+  const endLine = Math.max(selection.line, selection.endLine ?? selection.line);
+  const rows = registry.rows.filter(
+    (row) =>
+      row.kind === "content" &&
+      row.side === selection.side &&
+      row.fileLine !== null &&
+      row.fileLine >= startLine &&
+      row.fileLine <= endLine &&
+      row.occurrenceId !== null,
+  );
+  if (rows.length === 0) return { outcome: "failure", reason: "no-rows" };
+  const occurrenceId = rows[0]?.occurrenceId;
+  if (!occurrenceId || rows.some((row) => row.occurrenceId !== occurrenceId)) {
+    return { outcome: "failure", reason: "cross-occurrence" };
+  }
+  const first = rows[0];
+  const last = rows.at(-1);
+  if (!first || !last || first.sideOrdinal === null || last.sideOrdinal === null) {
+    return { outcome: "failure", reason: "no-rows" };
+  }
+  const span =
+    first.sideOrdinal === last.sideOrdinal
+      ? `L${first.sideOrdinal}`
+      : `L${first.sideOrdinal}-L${last.sideOrdinal}`;
+  return {
+    outcome: "minted",
+    anchor: `rennet:hunk/${occurrenceId}#${span}@${selection.side}`,
+    rawIndices: rows.map((row) => row.rawIndex),
+  };
+}
+
 /** Resolve a parsed anchor onto the registry's rendered rows, side-aware. */
 export function resolveAnchorToRows(registry: RowRegistry, anchor: ParsedAnchor): RowResolution {
   // Find the occurrence SLICE whose id the anchor names, across every rendered hunk.

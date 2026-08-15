@@ -93,13 +93,14 @@ Lists report totals and cursors, and a query with no matches reports an empty
 result explicitly. Freshness travels on the answer itself, which matters when a
 base branch advances halfway through a long review.
 
-## View context: contract and current gap
+## View context: the live pointing slice
 
-The session model can accept structured selection, disposition, proposal, and
-view events. The live renderer does not push that stream into the orchestrator
-yet. `canvas.view` currently returns a static view with no expanded cohorts or
-selection, and the live turn sends the raw question rather than a request built
-from the session's pushed context.
+The session model accepts structured selection, disposition, proposal, and view
+events. The live ask path now carries the reviewer's selected diff span into the
+next turn: the renderer sends an occurrence-relative RSP anchor plus the selected
+text, desktop main turns it into a `selected` event, and the orchestrator appends
+the exact event JSON to its inspectable turn context. An ask with no selected span
+adds no `selected` event.
 
 ```mermaid
 sequenceDiagram
@@ -109,19 +110,22 @@ sequenceDiagram
   participant O as Orchestrator
   participant T as canvasOps@2
 
-  U->>C: Select a decision and ask “why?”
-  C->>S: selected + current view
+  U->>C: Select a diff span and ask “why?”
+  C->>S: selected span anchor + excerpt
   S->>O: Question with structured deixis
-  O->>T: canvas.read(decision)
+  O->>T: canvas.read(element)
   O->>T: diff.read(anchor)
+  O->>T: canvas.focus(span)
+  T-->>C: Scroll once and pulse the exact span
   T-->>O: Evidence + freshness
   O-->>U: Answer about the selected decision
 ```
 
-The diagram is the intended wiring. The session can produce an assembled-prompt
-object internally, but that view is not exposed through the current UI or IPC.
-Until the wiring lands, phrases such as “this decision” need explicit anchors in
-the question rather than relying on invisible renderer state.
+`canvas.focus` is presentational: it moves the viewport and pulses the resolved
+rows without selecting the element, writing a disposition, or changing read
+state. Malformed and orphaned anchors are honest no-ops. Continuous renderer view
+sync and the `{ viewing }` batcher remain deferred; `canvas.view` therefore still
+reports the backend's static view rather than a live stream of every navigation.
 
 ## The `context.ask` seam
 

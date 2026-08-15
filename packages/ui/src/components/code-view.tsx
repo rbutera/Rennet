@@ -17,6 +17,7 @@ import {
   placeMarks,
   type RegistryRow,
   resolveAnchorToRows,
+  spanAnchorForRows,
 } from "../canvas/registrar";
 import { splitIdentifierRuns, tokenTextMayContainSymbol } from "../canvas/symbol";
 import { detectLanguage, type LanguageId, tokenizeLine } from "../syntax/highlight";
@@ -69,6 +70,8 @@ export interface CodeViewProps {
   renderMarkCard?: (mark: Mark, placed: PlacedMark) => ReactNode;
   /** Deixis: the agent points — the focused anchor's span is pulsed. */
   focusAnchor?: string;
+  /** Repeats the same pointing deliberately; a new value re-scrolls and re-pulses. */
+  focusNonce?: number;
   /** Reports placement (placed + orphans) up, so the host routes orphans + builds the index. */
   onPlacement?: (placement: MarkPlacement) => void;
 
@@ -121,6 +124,8 @@ export interface CodeViewProps {
    * the per-row glyph is one element on already-windowed rows).
    */
   onDiscuss?: (anchor: ConversationAnchor) => void;
+  /** Reports the reviewer's current line/range selection as an RSP span + exact excerpt. */
+  onSpanSelect?: (selection: { anchor: string; excerpt: string } | null) => void;
 }
 
 /**
@@ -252,11 +257,13 @@ export function CodeView({
   marks,
   renderMarkCard,
   focusAnchor,
+  focusNonce = 0,
   onPlacement,
   onDispose,
   counterpart,
   onSymbolClick,
   onDiscuss,
+  onSpanSelect,
 }: CodeViewProps) {
   // The live scroll position: seeded from the prop (which the node-count control
   // test and any programmatic positioning inject), then advanced by the user's
@@ -279,7 +286,7 @@ export function CodeView({
   // prior line recorded — on the RANGE from that prior line to this one. One handler,
   // both anchor kinds, so the diff speaks the single "verbs times anchors" abstraction.
   function discussLine(line: number, side: AnchorSide, shiftKey: boolean): void {
-    if (!onDiscuss) return;
+    if (!onDiscuss && !onSpanSelect) return;
     const contextBetween = (start: number, end: number) =>
       registry.rows
         .filter(
@@ -298,11 +305,17 @@ export function CodeView({
     if (shiftKey && rangeStart !== null && rangeStart.side === side && rangeStart.line !== line) {
       const start = Math.min(rangeStart.line, line);
       const end = Math.max(rangeStart.line, line);
-      onDiscuss(rangeAnchor(path, start, end, side, contextBetween(start, end)));
+      const excerpt = contextBetween(start, end);
+      const minted = spanAnchorForRows(registry, { line: start, endLine: end, side });
+      onSpanSelect?.(minted.outcome === "minted" ? { anchor: minted.anchor, excerpt } : null);
+      onDiscuss?.(rangeAnchor(path, start, end, side, excerpt));
       setRangeStart(null);
       return;
     }
-    onDiscuss(lineAnchor(path, line, side, contextBetween(line, line)));
+    const excerpt = contextBetween(line, line);
+    const minted = spanAnchorForRows(registry, { line, side });
+    onSpanSelect?.(minted.outcome === "minted" ? { anchor: minted.anchor, excerpt } : null);
+    onDiscuss?.(lineAnchor(path, line, side, excerpt));
     setRangeStart({ line, side });
   }
   // The scroll container, so a focus-driven jump can move the REAL viewport (setting
@@ -356,12 +369,13 @@ export function CodeView({
   // own scroll, only a fresh jump target.
   const firstFocusRow = focusRows.size > 0 ? Math.min(...focusRows) : -1;
   useEffect(() => {
+    void focusNonce;
     if (firstFocusRow < 0 || renderAll) return;
     const margin = Math.min(overscan, 4) * rowHeight;
     const target = Math.max(0, firstFocusRow * rowHeight - margin);
     setScroll(target);
     if (scrollRef.current) scrollRef.current.scrollTop = target;
-  }, [firstFocusRow, renderAll, rowHeight, overscan]);
+  }, [firstFocusRow, focusNonce, renderAll, rowHeight, overscan]);
 
   const total = registry.rows.length;
   const range: WindowRange = renderAll
@@ -384,7 +398,10 @@ export function CodeView({
             type="button"
             className="code-view-counterpart"
             title={`Go to ${counterpart.path}`}
-            onClick={counterpart.onView}
+            onClick={() => {
+              onSpanSelect?.(null);
+              counterpart.onView();
+            }}
           >
             {counterpart.label}
           </button>
@@ -469,12 +486,13 @@ export function CodeView({
           return (
             <div
               className={className}
-              key={row.rawIndex}
+              key={isFocus ? `${row.rawIndex}:${focusNonce}` : row.rawIndex}
               data-raw-index={row.rawIndex}
               data-side={row.side ?? undefined}
               data-file-line={row.fileLine ?? undefined}
               data-side-ordinal={row.sideOrdinal ?? undefined}
               data-occurrence={row.occurrenceId ?? undefined}
+              data-focus-nonce={isFocus ? focusNonce : undefined}
               data-mark={isGlow ? glowMarks.map((m) => m.mark.markId).join(" ") : undefined}
             >
               {gutterMarks && gutterMarks.length > 0 ? (
@@ -494,7 +512,9 @@ export function CodeView({
                   header row has no line to anchor to. Hover-disclosed via CSS so the
                   gutter reads calm. It is one absolutely-positioned element, so it
                   cannot widen the row or reflow the code column. */}
-              {onDiscuss && discussLineNo !== undefined && discussSide !== undefined ? (
+              {(onDiscuss || onSpanSelect) &&
+              discussLineNo !== undefined &&
+              discussSide !== undefined ? (
                 <button
                   type="button"
                   className="cv-discuss l3-hand"

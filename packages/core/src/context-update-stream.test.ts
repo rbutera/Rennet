@@ -41,6 +41,26 @@ describe("ContextUpdateStream — user acts", () => {
     expect(stream.entries()).toContainEqual(context[0]);
   });
 
+  it("a span-bearing selection carries its anchor and excerpt through delivery unmodified (#79)", () => {
+    const stream = newStream(clock().now);
+    stream.push({
+      kind: "selected",
+      anchor: "rennet:occ/x#L2-L5@additions",
+      elementSummary: "auth guard",
+      excerpt: "const exact = bytes;\nreturn exact;",
+      seq: 5,
+    });
+    expect(stream.entries()).toEqual([
+      {
+        event: "selected",
+        anchor: "rennet:occ/x#L2-L5@additions",
+        elementSummary: "auth guard",
+        excerpt: "const exact = bytes;\nreturn exact;",
+        seq: 5,
+      },
+    ]);
+  });
+
   it("a proposal dismissal teaches: outcome + edited payload are carried", () => {
     const c = clock();
     const stream = newStream(c.now);
@@ -140,6 +160,33 @@ describe("ContextUpdateStream — request-time view injection (Q5)", () => {
     const request = buildOrchestratorRequest("what is this?", view, stream.startTurn());
     expect(request.contextEvents).toHaveLength(1);
     expect(request.contextEvents[0]).toMatchObject({ event: "selected", anchor: "x" });
+  });
+
+  it("renders a span-bearing selected event into the inspectable request bytes (#79)", () => {
+    const stream = newStream(clock().now);
+    stream.push({
+      kind: "selected",
+      anchor: "rennet:occ/x#L2-L5@additions",
+      elementSummary: "auth guard",
+      excerpt: "const exact = bytes;\nreturn exact;",
+      seq: 9,
+    });
+    const request = buildOrchestratorRequest(
+      "is this safe?",
+      { expandedCohorts: [] },
+      stream.startTurn(),
+    );
+    const expected = {
+      event: "selected" as const,
+      anchor: "rennet:occ/x#L2-L5@additions",
+      elementSummary: "auth guard",
+      excerpt: "const exact = bytes;\nreturn exact;",
+      seq: 9,
+    };
+    expect(request.contextEvents).toEqual([expected]);
+    expect(
+      renderOpenAssembledPrompt(JSON.stringify(request.viewContext), request.contextEvents),
+    ).toContain(`- ${JSON.stringify(expected)}`);
   });
 
   it("snapshots expandedCohorts — a later mutation of the caller array does not rewrite the request", () => {

@@ -3,7 +3,11 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Query, Options as SdkOptions } from "@anthropic-ai/claude-agent-sdk";
-import { buildReviewCanvases } from "@rennet/core";
+import {
+  buildOrchestratorRequest,
+  buildReviewCanvases,
+  renderOpenAssembledPrompt,
+} from "@rennet/core";
 import { sha256Hex } from "@rennet/protocol";
 import type { ContextSendRecord, PatchFile, Patchset, Review } from "@rennet/types";
 import { afterEach, describe, expect, it } from "vitest";
@@ -193,6 +197,55 @@ describe("deriveOrchestratorPrimerState — honest primer from live state", () =
 });
 
 describe("runOrchestratorTurn — wiring proof (no model)", () => {
+  it("carries exact selected-span bytes into the live turn context", async () => {
+    const { review, pipeline, backend, snapshot } = await liveReview();
+    const primer = deriveOrchestratorPrimerState(pipeline, backend, snapshot);
+    const fake = fakeQuery([resultFrame("done")]);
+    const selected = {
+      kind: "selected" as const,
+      anchor: "rennet:hunk/c1-h1#L1-L2@additions",
+      elementSummary: "moreA",
+      excerpt: "export const added = 3;\nexport function moreA() {}",
+      seq: 17,
+    };
+
+    await runOrchestratorTurn(backend, primer, "Is this safe?", {
+      claudePath: "/fake/claude",
+      cwd: review.repositoryRoot,
+      loadQuery: fake.loadQuery,
+      userActs: [selected],
+    });
+
+    const append = (fake.captured()?.systemPrompt as { append?: string } | undefined)?.append;
+    expect(append).toContain(
+      `- ${JSON.stringify({
+        event: "selected",
+        anchor: selected.anchor,
+        elementSummary: selected.elementSummary,
+        excerpt: selected.excerpt,
+        seq: selected.seq,
+      })}`,
+    );
+  });
+
+  it("fabricates no selection when the ask has none and drains an empty viewing batcher as a no-op", async () => {
+    const { review, pipeline, backend, snapshot } = await liveReview();
+    const primer = deriveOrchestratorPrimerState(pipeline, backend, snapshot);
+    const fake = fakeQuery([resultFrame("done")]);
+
+    await runOrchestratorTurn(backend, primer, "What changed?", {
+      claudePath: "/fake/claude",
+      cwd: review.repositoryRoot,
+      loadQuery: fake.loadQuery,
+      userActs: [],
+    });
+
+    const append = (fake.captured()?.systemPrompt as { append?: string } | undefined)?.append;
+    expect(append).toContain('"expandedCohorts"');
+    expect(append).not.toContain('"event":"selected"');
+    expect(append).not.toContain('"event":"viewing"');
+  });
+
   it("appends assembled context after the primer, records the exact append, and preserves primer-only bytes when absent", async () => {
     const { review, pipeline, backend, snapshot } = await liveReview();
     const primer = deriveOrchestratorPrimerState(pipeline, backend, snapshot);
@@ -214,7 +267,9 @@ describe("runOrchestratorTurn — wiring proof (no model)", () => {
     });
     const fedAppend = (fedQuery.captured()?.systemPrompt as { append?: string } | undefined)
       ?.append;
-    const expectedAppend = `${fed.session.primer.text}\n\n<<<rennet:layer context>>>\n${context}`;
+    const viewContext = buildOrchestratorRequest("Anything.", backend.view()).viewContext;
+    const deixisContext = renderOpenAssembledPrompt(JSON.stringify(viewContext), []);
+    const expectedAppend = `${fed.session.primer.text}\n\n<<<rennet:layer context>>>\n${context}\n\n${deixisContext}`;
     expect(fedAppend).toBe(expectedAppend);
     expect(records).toEqual([
       expect.objectContaining({
@@ -237,7 +292,7 @@ describe("runOrchestratorTurn — wiring proof (no model)", () => {
     });
     const absentAppend = (absentQuery.captured()?.systemPrompt as { append?: string } | undefined)
       ?.append;
-    expect(absentAppend).toBe(absent.session.primer.text);
+    expect(absentAppend).toBe(`${absent.session.primer.text}\n\n${deixisContext}`);
   });
 
   it("hands the canvasOps@2 server to query() and surfaces the tool call", async () => {

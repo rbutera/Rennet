@@ -6,7 +6,7 @@ import {
   type OrchestratorTurnResult,
   runOrchestratorTurn,
 } from "@rennet/adapters";
-import type { ReviewPipelineResult } from "@rennet/core";
+import type { CanvasOpsEffect, ReviewPipelineResult, UserAct } from "@rennet/core";
 import type { Review } from "@rennet/types";
 import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
 
@@ -66,6 +66,11 @@ export interface OrchestratorTurnAvailable {
 
 export type OrchestratorTurnOutcome = OrchestratorTurnAvailable | OrchestratorTurnUnavailable;
 
+export interface OrchestratorTurnPointing {
+  readonly onFocus?: (anchor: string) => void;
+  readonly userActs?: readonly UserAct[];
+}
+
 /** Drive ONE orchestrator turn for a live review + built pipeline + question.
  *  `onDelta` (issue #251) streams each token as it arrives; omit it for a
  *  non-streaming turn that only reads the final text. `abortController` (issue #251,
@@ -78,6 +83,7 @@ export type OrchestratorTurnRunner = (
   question: string,
   onDelta?: (text: string) => void,
   abortController?: AbortController,
+  pointing?: OrchestratorTurnPointing,
 ) => Promise<OrchestratorTurnOutcome>;
 
 /**
@@ -87,7 +93,7 @@ export type OrchestratorTurnRunner = (
  * `unavailable` rather than crashing (mirroring the pipeline's honest degradation).
  */
 export function createOrchestratorTurnRunner(deps: OrchestratorRunnerDeps): OrchestratorTurnRunner {
-  return async (review, pipeline, question, onDelta, abortController) => {
+  return async (review, pipeline, question, onDelta, abortController, pointing) => {
     const claudePath = await deps.resolveClaudePath();
     if (!claudePath) {
       return {
@@ -96,9 +102,19 @@ export function createOrchestratorTurnRunner(deps: OrchestratorRunnerDeps): Orch
       };
     }
 
+    const configuredApplyEffects = deps.backend?.core?.applyEffects;
     const { backend, snapshot } = await createDesktopReviewBackend(review, pipeline, {
       ...(deps.baseDir ? { baseDir: deps.baseDir } : {}),
       ...deps.backend,
+      core: {
+        ...deps.backend?.core,
+        applyEffects: (effects: readonly CanvasOpsEffect[]) => {
+          configuredApplyEffects?.(effects);
+          for (const effect of effects) {
+            if (effect.kind === "focus") pointing?.onFocus?.(effect.target);
+          }
+        },
+      },
     });
     const primer = deriveOrchestratorPrimerState(pipeline, backend, snapshot);
     const contextFeed = await createDesktopReviewContextFeed(review, {
@@ -121,6 +137,7 @@ export function createOrchestratorTurnRunner(deps: OrchestratorRunnerDeps): Orch
           ? {}
           : { assembledContext: contextFeed.assembledContext }),
         onSend: contextFeed.onSend,
+        ...(pointing?.userActs ? { userActs: pointing.userActs } : {}),
         // #251 criterion 4: hand the SDK the AbortController so `before-quit` can cancel
         // the live claude turn. Absent → an uncancellable turn (fully back-compat).
         ...(abortController ? { abortController } : {}),

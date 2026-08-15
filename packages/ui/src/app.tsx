@@ -1,5 +1,6 @@
 import {
   type AppearanceScheme,
+  type CommandInput,
   openSpecRequirementCoverageKey,
   type Project,
   type ProjectDetail as ProjectDetailData,
@@ -486,6 +487,13 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // opens its own thread — `anchor.key` is only for margin alignment/grouping. This is
   // the felt gap: talk to the AI right on the line you are reading.
   const [discussRequests, setDiscussRequests] = useState<readonly DiscussRequest[]>([]);
+  const [spanSelection, setSpanSelection] = useState<
+    NonNullable<CommandInput<"review.ask">["selection"]> | undefined
+  >(undefined);
+  const [agentFocus, setAgentFocus] = useState<{ anchor: string; nonce: number } | undefined>(
+    undefined,
+  );
+  const agentFocusNonce = useRef(0);
   // The EPHEMERAL per-item refinement state (issue #19), keyed by collation-item
   // id. An adopted refinement is durable on the item (`item.refined`); this map
   // holds only the in-flight/failed/no-change states the refine turn produces.
@@ -625,6 +633,14 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // paper — the outcome was built from the prior review's draft. Clear it so a
   // stale dry-run summary never lingers over a different review.
   const reviewId = review?.id;
+  useEffect(() => {
+    if (!reviewId || !bridge.onAskStream) return;
+    return bridge.onAskStream(reviewId, (event) => {
+      if (event.kind !== "ask-focus") return;
+      agentFocusNonce.current += 1;
+      setAgentFocus({ anchor: event.anchor, nonce: agentFocusNonce.current });
+    });
+  }, [bridge, reviewId]);
   // The active patchset id, a stable string across the 1500ms freshness poll (which
   // swaps a byte-identical Review behind a fresh object ref). A REGENERATE changes it
   // under the SAME reviewId — the signal the flagged effect keys on so it refetches
@@ -753,6 +769,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     // starts with none, so a prior review's opened lines never reopen against the
     // remounted (review-keyed) conversation host.
     setDiscussRequests([]);
+    setSpanSelection(undefined);
+    setAgentFocus(undefined);
+    agentFocusNonce.current = 0;
     // Reset the LIFTED view store's review-scoped state (lens/zoom/selection/cursor/
     // cohorts/overlay), preserving the scheme. The store now outlives a single review
     // (it was lifted here for the ⌘K palette), so without this reset, opening review B
@@ -2167,6 +2186,8 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                           ])
                       : undefined
                   }
+                  agentFocus={agentFocus}
+                  onSpanSelect={(selection) => setSpanSelection(selection ?? undefined)}
                 />
               </div>
               {/* Frame 06's unified conversation: anchored line/range/chunk threads and
@@ -2192,6 +2213,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                   // reviewer clicked a discuss glyph on. The panel opens a private thread
                   // per new request in the stream — the code column never reflows.
                   autoOpenRequests={discussRequests}
+                  selection={spanSelection}
                 />
               ) : null}
             </div>

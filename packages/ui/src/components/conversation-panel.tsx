@@ -1,4 +1,4 @@
-import type { RennetBridge } from "@rennet/protocol";
+import type { CommandInput, RennetBridge } from "@rennet/protocol";
 import { useEffect, useRef, useState } from "react";
 import { type AskMode, type AskReviewResult, DEFAULT_ASK_MODE } from "../canvas/ask";
 import type {
@@ -22,6 +22,7 @@ export interface ConversationPanelProps {
   reviewId: string;
   anchors: readonly ConversationAnchor[];
   autoOpenRequests?: readonly DiscussRequest[];
+  selection?: NonNullable<CommandInput<"review.ask">["selection"]>;
   timeoutMs?: number;
   onPromote?(event: PromotionEvent): void;
 }
@@ -194,12 +195,14 @@ function PanelSurface({
   reviewId,
   timeoutMs,
   anchors,
+  selection,
 }: {
   state: ConversationHostRenderState;
   bridge: RennetBridge;
   reviewId: string;
   timeoutMs: number;
   anchors: readonly ConversationAnchor[];
+  selection?: NonNullable<CommandInput<"review.ask">["selection"]>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [draft, setDraft] = useState("");
@@ -265,6 +268,7 @@ function PanelSurface({
         reviewId,
         mode,
         question: body,
+        ...(selection === undefined ? {} : { selection }),
       });
       const timeout = new Promise<never>((_resolve, reject) => {
         timer = setTimeout(
@@ -483,6 +487,7 @@ export function ConversationPanel({
   reviewId,
   anchors,
   autoOpenRequests = [],
+  selection,
   timeoutMs = DEFAULT_CONVERSATION_TIMEOUT_MS,
   onPromote,
 }: ConversationPanelProps) {
@@ -492,6 +497,7 @@ export function ConversationPanel({
       reviewId={reviewId}
       anchors={anchors}
       autoOpenRequests={autoOpenRequests}
+      selection={selection}
       timeoutMs={timeoutMs}
       onPromote={onPromote}
       render={(state) => (
@@ -501,6 +507,7 @@ export function ConversationPanel({
           reviewId={reviewId}
           timeoutMs={timeoutMs}
           anchors={anchors}
+          selection={selection}
         />
       )}
     />

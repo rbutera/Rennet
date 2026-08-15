@@ -46,7 +46,7 @@ import {
   type OpenSpecReviewAnchor,
 } from "../canvas/openspec";
 import type { CoverageMosaic } from "../canvas/read-state";
-import { buildRowRegistry, type Mark, placeMarks } from "../canvas/registrar";
+import { buildRowRegistry, type Mark, placeMarks, resolveAnchorToRows } from "../canvas/registrar";
 import { createViewStore, useViewStore, type ViewStore } from "../canvas/store";
 import type { SymbolInspection, SymbolLookupPort } from "../canvas/symbol";
 import { BatchView } from "./batch-view";
@@ -226,6 +226,10 @@ export interface CanvasWorkspaceProps {
    * (additive: existing callers/tests unchanged).
    */
   onDiscuss?: (anchor: ConversationAnchor) => void;
+  /** The reviewer's current code span, owned by the app and carried on the next ask. */
+  onSpanSelect?: (selection: { anchor: string; excerpt: string } | null) => void;
+  /** Main→renderer agent pointing; nonce makes repeated same-anchor focus deliberate. */
+  agentFocus?: { anchor: string; nonce: number };
 }
 
 /** One inspected name in the navigation history: loading, errored, or resolved. */
@@ -329,6 +333,17 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   // Deixis: the anchor the agent (or the index) is pointing at — the CodeView
   // pulses its span. Cleared as the user moves on.
   const [focusAnchor, setFocusAnchor] = useState<string | null>(null);
+  const [focusNonce, setFocusNonce] = useState(0);
+
+  function pointAt(anchor: string): void {
+    setFocusAnchor(anchor);
+    setFocusNonce((current) => current + 1);
+  }
+
+  function clearPointing(): void {
+    setFocusAnchor(null);
+    props.onSpanSelect?.(null);
+  }
   // The hypothesis reading frame (issue #178/#181), folded from the flagged review's
   // committed hypothesis + its predicted-risk cross-check. BOTH ride the SAME
   // FlaggedReview on purpose — the cross-check references the hypothesis's per-pass
@@ -499,6 +514,50 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     return [...ids];
   }
 
+  // Agent focus is externally driven and presentational. Resolve it all the way to
+  // a real row before moving anything; malformed/orphan targets clear any prior pulse
+  // and otherwise do nothing. Crucially this never calls `select()` — the agent cannot
+  // manufacture user deixis.
+  const deliverAgentFocus = useRef<(requested: { anchor: string; nonce: number }) => void>(
+    () => undefined,
+  );
+  deliverAgentFocus.current = (requested) => {
+    const parsed = parseAnchor(requested.anchor);
+    if (!parsed.ok) {
+      setFocusAnchor(null);
+      return;
+    }
+    const element = canvas.layers.analysis.elements.find((candidate) =>
+      renderedOccurrenceIdsForElementOn(canvas, candidate).includes(parsed.anchor.id),
+    );
+    const elementDiff = element ? props.diffFor?.(element.elementKey) : undefined;
+    if (!element || !elementDiff) {
+      setFocusAnchor(null);
+      return;
+    }
+    const resolution = resolveAnchorToRows(
+      buildRowRegistry({
+        diff: elementDiff.diff,
+        hunkOccurrences: elementDiff.hunkOccurrences,
+      }),
+      parsed.anchor,
+    );
+    if (resolution.outcome !== "resolved" || resolution.rawIndices.length === 0) {
+      setFocusAnchor(null);
+      return;
+    }
+    store.getState().setCursor(requested.anchor);
+    store.getState().setZoom({ level: "diff", elementKey: element.elementKey });
+    setFocusAnchor(requested.anchor);
+    setFocusNonce(requested.nonce);
+  };
+  const agentFocusAnchor = props.agentFocus?.anchor;
+  const agentFocusNonce = props.agentFocus?.nonce;
+  useEffect(() => {
+    if (agentFocusAnchor === undefined || agentFocusNonce === undefined) return;
+    deliverAgentFocus.current({ anchor: agentFocusAnchor, nonce: agentFocusNonce });
+  }, [agentFocusAnchor, agentFocusNonce]);
+
   // The index's orphan verdict is AUTHORITATIVE (issue #84 P0-2), not the old coarse
   // "is the occurrence in the changeset" test. The coarse test misses the fine cases —
   // a present occurrence whose span falls out of its slice, or an element whose mapping
@@ -590,6 +649,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   // Navigate to a mark's in-code home: select its element, zoom to the diff, and
   // point at its anchor. The index navigates TO the mark; it never houses it.
   function navigateToMark(entry: MarkIndexEntry): void {
+    clearPointing();
     const parsed = parseAnchor(entry.anchor);
     if (parsed.ok) {
       // Resolve the element that actually RENDERS the mark's hunk, not one whose ANCHOR
@@ -605,7 +665,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         store.getState().setZoom({ level: "diff", elementKey: element.elementKey });
       }
     }
-    setFocusAnchor(entry.anchor);
+    pointAt(entry.anchor);
   }
 
   function emit(writes: DispositionWrite[]): void {
@@ -672,6 +732,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     props.mosaic !== undefined;
 
   function selectElement(elementKey: string): void {
+    clearPointing();
     const element = canvas.layers.analysis.elements.find((el) => el.elementKey === elementKey);
     store.getState().select(elementKey);
     if (element) store.getState().setCursor(element.anchor);
@@ -684,6 +745,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   // target canvas directly rather than the render-closure `canvas`, which would be
   // stale straight after the angle change.
   function navigateToCounterpart(target: CounterpartTarget): void {
+    clearPointing();
     const targetCanvas = props.canvases[target.angle];
     if (target.angle !== angle) store.getState().setAngle(target.angle);
     const element = targetCanvas?.layers.analysis.elements.find(
@@ -699,6 +761,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   // does not own it. Set the cursor + deixis focus so the span at the anchor
   // pulses; if the anchor resolves to a placed element, zoom to its diff too.
   function jumpToAnchor(anchor: string): void {
+    clearPointing();
     store.getState().setCursor(anchor);
     const parsed = parseAnchor(anchor);
     if (parsed.ok) {
@@ -711,7 +774,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         store.getState().setZoom({ level: "diff", elementKey: element.elementKey });
       }
     }
-    setFocusAnchor(anchor);
+    pointAt(anchor);
   }
 
   // Jump from a possibly-related risk in the reading frame to the finding the lexical
@@ -743,8 +806,9 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   // code actually shows. No canvas owns the hunk (its lineage dropped) ⇒ a best-effort
   // cursor+focus point, never a throw.
   function jumpToHunkAnchor(anchor: string): void {
+    clearPointing();
     store.getState().setCursor(anchor);
-    setFocusAnchor(anchor);
+    pointAt(anchor);
     const parsed = parseAnchor(anchor);
     if (!parsed.ok) return;
     const targetId = parsed.anchor.id;
@@ -812,6 +876,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   // exists on the new canvas, re-center on it (zoom to element); otherwise fall
   // back to the roll-up. The cursor anchor itself is preserved across the change.
   function goToAngle(nextAngle: CanvasAngle): void {
+    clearPointing();
     const view = viewAfterRotate(props.canvases[nextAngle], store.getState().cursorAnchor);
     store.getState().setAngle(nextAngle);
     store.getState().select(view.selection);
@@ -846,7 +911,10 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   // decision context. A doc-anchored element with no diff still renders nothing
   // (honest empty), never a fixture.
   const codeAltitude = zoom.level === "diff" || zoom.level === "element";
-  const diff = codeAltitude && selection ? props.diffFor?.(selection) : undefined;
+  const displayedElementKey =
+    zoom.level === "element" || zoom.level === "diff" ? zoom.elementKey : selection;
+  const diff =
+    codeAltitude && displayedElementKey ? props.diffFor?.(displayedElementKey) : undefined;
 
   // The impl↔test counterpart jump (Rai, wireframes #7): resolved for the shown file
   // against this review's changed-file inventory, ACROSS lenses and by the SET of
@@ -869,8 +937,8 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
   // The occurrence the shown diff renders, and the marks that belong to it. Marks
   // for other elements are not this view's concern (they are not orphans — they
   // live on their own element's diff); the CodeView only receives its occurrence's.
-  const selectedElement = selection
-    ? canvas.layers.analysis.elements.find((element) => element.elementKey === selection)
+  const selectedElement = displayedElementKey
+    ? canvas.layers.analysis.elements.find((element) => element.elementKey === displayedElementKey)
     : undefined;
   const shownOccurrenceIds = selectedElement
     ? renderedOccurrenceIdsForElementOn(canvas, selectedElement)
@@ -1088,6 +1156,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
                     marks={shownMarks}
                     renderMarkCard={renderMarkCard}
                     focusAnchor={focusAnchor ?? undefined}
+                    focusNonce={focusNonce}
                     counterpart={
                       counterpart
                         ? {
@@ -1099,6 +1168,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
                     }
                     onSymbolClick={props.symbolLookup ? inspectSymbol : undefined}
                     onDiscuss={props.onDiscuss}
+                    onSpanSelect={props.onSpanSelect}
                   />
                   {pinned ? null : inspector}
                 </div>

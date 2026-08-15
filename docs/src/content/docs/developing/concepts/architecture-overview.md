@@ -181,6 +181,9 @@ sequenceDiagram
   Harness-->>Main: Token deltas
   Main-->>UI: Push deltas keyed by review and turn
   UI->>UI: Coalesce and paint partial answer
+  Harness->>Main: canvas.focus effect
+  Main-->>UI: Push ask-focus keyed by review
+  UI->>UI: Scroll once and pulse the exact span
   Harness-->>Main: Final answer
   Main->>Store: Replace placeholder with one durable completion
   Main-->>UI: Push final body

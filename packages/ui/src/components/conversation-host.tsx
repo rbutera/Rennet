@@ -1,4 +1,4 @@
-import type { PersistedThreadWire, RennetBridge } from "@rennet/protocol";
+import type { CommandInput, PersistedThreadWire, RennetBridge } from "@rennet/protocol";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { type AskMode, DEFAULT_ASK_MODE } from "../canvas/ask";
 import {
@@ -109,6 +109,7 @@ export interface ConversationHostProps {
    * ⇒ margin-driven opening only (the existing behaviour; unchanged for old callers).
    */
   autoOpenRequests?: readonly DiscussRequest[];
+  selection?: NonNullable<CommandInput<"review.ask">["selection"]>;
   /** UI timeout for a single turn; defaults to {@link DEFAULT_CONVERSATION_TIMEOUT_MS}. */
   timeoutMs?: number;
   /**
@@ -143,6 +144,7 @@ export function ConversationHost({
   reviewId,
   anchors,
   autoOpenRequests = [],
+  selection,
   timeoutMs = DEFAULT_CONVERSATION_TIMEOUT_MS,
   onPromote,
   render,
@@ -400,6 +402,7 @@ export function ConversationHost({
         turnId,
         anchor: thread.anchor,
         turnBody: body,
+        ...(selection === undefined ? {} : { selection }),
       });
       // Race a UI timeout so a turn that never settles cannot leave the thread stuck.
       const timeout = new Promise<never>((_resolve, reject) => {

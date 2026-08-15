@@ -11,7 +11,9 @@ import {
   type RepoFreshness,
   type ReviewBackendState,
   type RunLedgerHeadline,
+  renderOpenAssembledPrompt,
   summarizeCanvasCounts,
+  type UserAct,
 } from "@rennet/core";
 import { renderLayer } from "@rennet/instructions";
 import type { Canvas, ContextSendRecord } from "@rennet/types";
@@ -215,6 +217,7 @@ export interface OrchestratorTurnDeps {
   readonly onDelta?: (text: string) => void;
   readonly assembledContext?: string;
   readonly onSend?: (record: ContextSendRecord) => void;
+  readonly userActs?: readonly UserAct[];
 }
 
 /** The outcome of one live orchestrator turn. */
@@ -253,6 +256,12 @@ export async function runOrchestratorTurn(
     { primer, harness: "claude", fresh: true },
     deps.loadSdk,
   );
+  for (const act of deps.userActs ?? []) session.stream.push(act);
+  const request = session.buildRequest(question, backend.view());
+  const deixisContext = renderOpenAssembledPrompt(
+    JSON.stringify(request.viewContext),
+    request.contextEvents,
+  );
 
   const serverPrefix = `mcp__${CANVAS_OPS_SERVER_NAME}`;
   const wiredOps = session.attachedToolNames();
@@ -285,10 +294,11 @@ export async function runOrchestratorTurn(
           },
     );
 
-  const systemAppend =
-    deps.assembledContext === undefined
-      ? session.primer.text
-      : `${session.primer.text}\n\n${renderLayer("context", deps.assembledContext)}`;
+  const systemAppend = [
+    session.primer.text,
+    ...(deps.assembledContext === undefined ? [] : [renderLayer("context", deps.assembledContext)]),
+    deixisContext,
+  ].join("\n\n");
   const options: SdkOptions = {
     cwd: deps.cwd,
     pathToClaudeCodeExecutable: deps.claudePath,

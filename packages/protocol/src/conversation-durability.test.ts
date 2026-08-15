@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { z } from "zod";
 import {
   conversationAnchorSchema,
   inFlightTurnSchema,
@@ -21,6 +22,16 @@ const UUID = "00000000-0000-0000-0000-000000000000";
 // ─────────────────────────────────────────────────────────────────────────────
 
 describe("reviewAskStreamEvent round-trips each variant (#251)", () => {
+  it("ask-focus carries the pointed-at anchor byte-identically (#79)", () => {
+    const event = {
+      kind: "ask-focus" as const,
+      anchor: "rennet:occ/x#L2-L5@additions",
+      threadId: "th",
+      turnId: "tn",
+    };
+    expect(reviewAskStreamEventSchema.parse(event)).toEqual(event);
+  });
+
   it("ask-delta carries thread, turn, channel, and the token delta", () => {
     const event = {
       kind: "ask-delta" as const,
@@ -168,6 +179,37 @@ describe("review.reattach command + review.ask back-compat (#251)", () => {
     expect(input.mode).toBe("orchestrator");
     expect(input.threadId).toBeUndefined();
     expect(input.anchor).toBeUndefined();
+    expect(input).not.toHaveProperty("selection");
+  });
+
+  it("review.ask carries an ambient span selection byte-identically (#79)", () => {
+    const selection = {
+      anchor: "rennet:occ/x#L2-L5@additions",
+      excerpt: "const exact = bytes;\nreturn exact;",
+    };
+    const input = parseCommandInput("review.ask", {
+      commandId: UUID,
+      reviewId: "r",
+      question: "is this safe?",
+      selection,
+    });
+    expect(input).toMatchObject({ selection });
+  });
+
+  it("documents that an undeclared selection is silently stripped by the old schema shape (#79)", () => {
+    const fieldlessAskSchema = z.object({
+      commandId: z.uuid(),
+      reviewId: z.string().min(1),
+      mode: z.enum(["orchestrator", "both"]).default("orchestrator"),
+      question: z.string().min(1),
+    });
+    const parsed = fieldlessAskSchema.parse({
+      commandId: UUID,
+      reviewId: "r",
+      question: "is this safe?",
+      selection: { anchor: "rennet:occ/x#L2-L5@additions", excerpt: "exact bytes" },
+    });
+    expect(parsed).not.toHaveProperty("selection");
   });
 
   it("review.ask accepts the #251 persistence fields when supplied", () => {

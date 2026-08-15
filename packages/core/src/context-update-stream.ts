@@ -30,7 +30,7 @@ export interface SeqRange {
  * stands for — the "never silent" guarantee made concrete.
  */
 export type DeliveredEvent =
-  | { event: "selected"; anchor: string; elementSummary: string; seq: number }
+  | { event: "selected"; anchor: string; elementSummary: string; excerpt?: string; seq: number }
   | { event: "disposed"; anchor: string; type: DispositionType; body: string; seq: number }
   | {
       event: "proposal-adjudicated";
@@ -55,7 +55,7 @@ export type DeliveredEvent =
  * through the batcher; the other three deliver immediately in seq order.
  */
 export type UserAct =
-  | { kind: "selected"; anchor: string; elementSummary: string; seq: number }
+  | { kind: "selected"; anchor: string; elementSummary: string; excerpt?: string; seq: number }
   | { kind: "disposed"; anchor: string; type: DispositionType; body: string; seq: number }
   | {
       kind: "proposal-adjudicated";
@@ -250,12 +250,14 @@ export class ContextUpdateStream {
     // land in the log AFTER this event (R35 — never reorder).
     this.flushViewingBefore(act.seq);
     if (act.kind === "selected") {
-      this.deliver({
+      const selected: DeliveredEvent = {
         event: "selected",
         anchor: act.anchor,
         elementSummary: act.elementSummary,
+        ...(act.excerpt === undefined ? {} : { excerpt: act.excerpt }),
         seq: act.seq,
-      });
+      };
+      this.deliver(selected);
       return;
     }
     if (act.kind === "disposed") {

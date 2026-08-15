@@ -259,6 +259,8 @@ export interface DispatchDeps {
       /** Token-stream sink (#251): each orchestrator token as it arrives, when the ask
        *  is a streamed one. Absent for a one-shot #139 ask. */
       onDelta?: (text: string) => void;
+      selection?: { anchor: string; excerpt?: string };
+      onFocus?: (anchor: string) => void;
       /** Cancels the turn (#251 criterion 4): the LiveTurnRegistry's controller for this
        *  turn, threaded to the claude SDK so `before-quit` reaps it. Absent → an
        *  uncancellable turn (fully back-compat: no registry wired). */
@@ -900,6 +902,15 @@ export function createDispatch(
                 delta,
               })
           : undefined;
+        const onOrchestratorFocus = ctx?.emitAskStream
+          ? (anchor: string) =>
+              ctx.emitAskStream?.({
+                kind: "ask-focus",
+                anchor,
+                ...(input.threadId ? { threadId: input.threadId } : {}),
+                ...(input.turnId ? { turnId: input.turnId } : {}),
+              })
+          : undefined;
         // #251 persistence: BEFORE the turn runs, record the thread, the reviewer's
         // question, and a `streaming` placeholder for the orchestrator answer. If the
         // process dies here, the placeholder is already on disk and re-attach recovers
@@ -955,6 +966,8 @@ export function createDispatch(
                 review,
                 question,
                 ...(onOrchestratorDelta ? { onDelta: onOrchestratorDelta } : {}),
+                ...(onOrchestratorFocus ? { onFocus: onOrchestratorFocus } : {}),
+                ...(input.selection ? { selection: input.selection } : {}),
                 ...(liveTurn ? { abortController: liveTurn } : {}),
               }),
             askCodex: (question) =>

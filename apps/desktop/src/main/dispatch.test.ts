@@ -13,14 +13,15 @@ import {
   ReviewService,
   type ReviewStorePort,
 } from "@rennet/core";
-import type {
-  DetectedHarness,
-  DiscoveryResult,
-  ProcessedRepoSummary,
-  Project,
-  ProjectKind,
-  ProjectProcessEvent,
-  ReviewAskStreamEvent,
+import {
+  type DetectedHarness,
+  type DiscoveryResult,
+  type ProcessedRepoSummary,
+  type Project,
+  type ProjectKind,
+  type ProjectProcessEvent,
+  type ReviewAskStreamEvent,
+  reviewAskStreamEventSchema,
 } from "@rennet/protocol";
 import type {
   Canvas,
@@ -219,6 +220,8 @@ function harness(
         review: Review;
         question: string;
         onDelta?: (text: string) => void;
+        selection?: { anchor: string; excerpt?: string };
+        onFocus?: (anchor: string) => void;
       }) => Promise<AskAnswer>
     >(async () => ({ model: "Orchestrator · Claude", answer: "orchestrator's answer" })),
     askCodex: vi.fn<(input: { review: Review; question: string }) => Promise<AskAnswer>>(
@@ -2037,6 +2040,43 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
     });
     expect(reviewAsk.askOrchestrator).toHaveBeenCalledWith({ review, question: "q" });
     expect(reviewAsk.askCodex).toHaveBeenCalledWith({ review, question: "q" });
+  });
+
+  it("passes selection without fabrication and emits focus on the existing ask stream", async () => {
+    const { dispatch, reviewAsk, review } = await openReview();
+    const selection = {
+      anchor: "rennet:hunk/c1-h1#L1-L2@additions",
+      excerpt: "const a = 1;\nconst b = 2;",
+    };
+    reviewAsk.askOrchestrator.mockImplementationOnce(async ({ onFocus }) => {
+      onFocus?.("rennet:hunk/c1-h1#L2@additions");
+      return { model: "Orchestrator · Claude", answer: "a" };
+    });
+    const events: ReviewAskStreamEvent[] = [];
+
+    await dispatch(
+      "review.ask",
+      {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        question: "this?",
+        selection,
+        threadId: "th",
+        turnId: "tn",
+      },
+      { emitAskStream: (event) => events.push(event) },
+    );
+
+    expect(reviewAsk.askOrchestrator).toHaveBeenCalledWith(
+      expect.objectContaining({ review, question: "this?", selection }),
+    );
+    const focus = events.find((event) => event.kind === "ask-focus");
+    expect(reviewAskStreamEventSchema.parse(focus)).toEqual({
+      kind: "ask-focus",
+      anchor: "rennet:hunk/c1-h1#L2@additions",
+      threadId: "th",
+      turnId: "tn",
+    });
   });
 });
 

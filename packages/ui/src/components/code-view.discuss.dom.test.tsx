@@ -24,7 +24,12 @@ const OCC: RenderedHunkOccurrence[][] = [
   [{ id: "H", oldStart: 10, oldLines: 3, newStart: 10, newLines: 4 }],
 ];
 
-function mountView(onDiscuss?: (anchor: ConversationAnchor) => void) {
+type SpanSelection = { anchor: string; excerpt: string };
+
+function mountView(
+  onDiscuss?: (anchor: ConversationAnchor) => void,
+  onSpanSelect?: (selection: SpanSelection | null) => void,
+) {
   return mount(
     <CodeView
       path="src/rate/bucket.ts"
@@ -34,6 +39,7 @@ function mountView(onDiscuss?: (anchor: ConversationAnchor) => void) {
       viewportHeight={480}
       renderAll
       onDiscuss={onDiscuss}
+      onSpanSelect={onSpanSelect}
       onDispose={() => undefined}
     />,
   );
@@ -44,6 +50,45 @@ function discussGlyphs(container: HTMLElement): HTMLButtonElement[] {
 }
 
 describe("CodeView — the in-diff discuss affordances (issue #36)", () => {
+  it("plain-click reports the exact occurrence-relative single-line span and excerpt (#79)", () => {
+    const selected: (SpanSelection | null)[] = [];
+    const { container } = mountView(
+      () => undefined,
+      (selection) => selected.push(selection),
+    );
+    const addition = discussGlyphs(container).find(
+      (glyph) => glyph.getAttribute("data-cv-discuss-side") === "additions",
+    );
+    if (!addition) throw new Error("need an addition glyph");
+    fireEvent.click(addition);
+    expect(selected).toEqual([
+      {
+        anchor: "rennet:hunk/H#L1@additions",
+        excerpt: "  const b = 3;",
+      },
+    ]);
+  });
+
+  it("same-side shift-click reports the exact occurrence-relative range and excerpt (#79)", () => {
+    const selected: (SpanSelection | null)[] = [];
+    const { container } = mountView(
+      () => undefined,
+      (selection) => selected.push(selection),
+    );
+    const additions = discussGlyphs(container).filter(
+      (glyph) => glyph.getAttribute("data-cv-discuss-side") === "additions",
+    );
+    const first = additions[0];
+    const second = additions[1];
+    if (!first || !second) throw new Error("need two addition glyphs");
+    fireEvent.click(first);
+    fireEvent.click(second, { shiftKey: true });
+    expect(selected.at(-1)).toEqual({
+      anchor: "rennet:hunk/H#L1-L2@additions",
+      excerpt: "  const b = 3;\n  const c = 4;",
+    });
+  });
+
   it("renders a per-line discuss glyph only on content rows with a real file line", () => {
     const { container } = mountView(() => undefined);
     const glyphs = discussGlyphs(container);

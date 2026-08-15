@@ -169,6 +169,7 @@ export type {
   RowKind,
   RowRegistry,
   RowResolution,
+  SpanAnchorResult,
 } from "./canvas/registrar";
 export {
   buildRowRegistry,
@@ -176,6 +177,7 @@ export {
   markIndexItems,
   placeMarks,
   resolveAnchorToRows,
+  spanAnchorForRows,
 } from "./canvas/registrar";
 // The staging semantics (issue #109 — the review heart): the ink/blue material law
 // (approve never publishes; request-change always does; comment/question default to

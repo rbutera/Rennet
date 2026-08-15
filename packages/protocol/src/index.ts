@@ -1050,6 +1050,12 @@ export type TurnStatus = z.infer<typeof turnStatusSchema>;
 // so the two event families can never collide on a shared discriminator.
 export const reviewAskStreamEventSchema = z.discriminatedUnion("kind", [
   z.object({
+    kind: z.literal("ask-focus"),
+    anchor: z.string().min(1),
+    threadId: z.string().min(1).optional(),
+    turnId: z.string().min(1).optional(),
+  }),
+  z.object({
     kind: z.literal("ask-delta"),
     threadId: z.string().min(1),
     turnId: z.string().min(1),
@@ -2048,6 +2054,12 @@ export const commandDefinitions = {
       threadId: z.string().min(1).optional(),
       turnId: z.string().min(1).optional(),
       anchor: conversationAnchorSchema.optional(),
+      selection: z
+        .object({
+          anchor: z.string().min(1),
+          excerpt: z.string().optional(),
+        })
+        .optional(),
       // The reviewer's RAW question for this turn (not the folded transcript), persisted
       // as the "you" message so a re-attached thread shows what was asked. #251.
       turnBody: z.string().optional(),

@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Query } from "@anthropic-ai/claude-agent-sdk";
-import type { LoadSdkQuery } from "@rennet/adapters";
+import type { LoadCanvasOpsSdk, LoadSdkQuery } from "@rennet/adapters";
 import { buildReviewCanvases, type ReviewPipelineResult } from "@rennet/core";
 import { sha256Hex } from "@rennet/protocol";
 import type { PatchFile, Patchset, Review } from "@rennet/types";
@@ -108,6 +108,50 @@ function fakeQuery(frames: readonly unknown[]): { loadQuery: LoadSdkQuery; calls
 }
 
 describe("createOrchestratorTurnRunner — the desktop composition", () => {
+  it("delivers a canvas.focus effect to the injected focus sink exactly once", async () => {
+    const { review, pipeline } = await liveReview();
+    let focusHandler: ((args: Record<string, unknown>) => Promise<unknown>) | undefined;
+    const loadSdk = (() =>
+      Promise.resolve({
+        tool: (
+          name: string,
+          _description: string,
+          _shape: unknown,
+          handler: (args: Record<string, unknown>) => Promise<unknown>,
+        ) => {
+          if (name === "canvas.focus") focusHandler = handler;
+          return { name, handler };
+        },
+        createSdkMcpServer: (config: { name: string }) => ({
+          type: "sdk",
+          name: config.name,
+          instance: {},
+        }),
+      })) as unknown as LoadCanvasOpsSdk;
+    const loadQuery = (() =>
+      Promise.resolve((): Query => {
+        async function* gen(): AsyncGenerator<unknown> {
+          if (!focusHandler) throw new Error("focus tool was not registered");
+          await focusHandler({ target: "rennet:hunk/c1-h1#L1@additions" });
+          yield { type: "result", subtype: "success", is_error: false, result: "done" };
+        }
+        return gen() as unknown as Query;
+      })) as unknown as LoadSdkQuery;
+    const focused: string[] = [];
+    const run = createOrchestratorTurnRunner({
+      baseDir: tempBaseDir(),
+      resolveClaudePath: () => Promise.resolve("/fake/claude"),
+      loadQuery,
+      loadSdk,
+    });
+
+    await run(review, pipeline, "point", undefined, undefined, {
+      onFocus: (anchor) => focused.push(anchor),
+    });
+
+    expect(focused).toEqual(["rennet:hunk/c1-h1#L1@additions"]);
+  });
+
   it("returns a typed unavailable (spawning no model) when no claude is discovered", async () => {
     const { review, pipeline } = await liveReview();
     const fake = fakeQuery([]);

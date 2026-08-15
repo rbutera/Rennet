@@ -8,6 +8,7 @@ import {
   markIndexItems,
   placeMarks,
   resolveAnchorToRows,
+  spanAnchorForRows,
 } from "./registrar";
 
 // A two-hunk unified diff over one file. Traced by hand so every row's identity
@@ -218,6 +219,73 @@ describe("resolveAnchorToRows — an anchor-grammar span resolves to exactly the
     });
     const res = resolveAnchorToRows(nlReg, anchor("rennet:hunk/H#L2@context"));
     expect(res).toEqual({ outcome: "orphan", reason: "out-of-bounds" });
+  });
+});
+
+describe("spanAnchorForRows — minting and resolving are exact inverses (#79)", () => {
+  it("uses occurrence-relative side ordinals when the hunk does not start at line 1", () => {
+    const reg = buildRowRegistry({ diff: TWO_HUNK, hunkOccurrences: TWO_HUNK_OCC });
+    const minted = spanAnchorForRows(reg, { line: 11, endLine: 12, side: "additions" });
+    expect(minted).toEqual({
+      outcome: "minted",
+      anchor: "rennet:hunk/H0#L1-L2@additions",
+      rawIndices: [5, 6],
+    });
+    if (minted.outcome !== "minted") throw new Error("fixture selection did not mint");
+    const parsed = parseAnchor(minted.anchor);
+    if (!parsed.ok) throw new Error(`minted anchor did not parse: ${parsed.reason}`);
+    expect(resolveAnchorToRows(reg, parsed.anchor)).toMatchObject({
+      outcome: "resolved",
+      rawIndices: minted.rawIndices,
+    });
+  });
+
+  it("round-trips within the selected oversize-split occurrence", () => {
+    const diff = [
+      "@@ -101,6 +101,6 @@",
+      " line one",
+      "-old two",
+      "+new two",
+      " line three",
+      "-old four",
+      "+new four",
+      " line five",
+      " line six",
+    ].join("\n");
+    const reg = buildRowRegistry({
+      diff,
+      hunkOccurrences: [
+        [
+          { id: "frag-a", oldStart: 101, oldLines: 3, newStart: 101, newLines: 3 },
+          { id: "frag-b", oldStart: 104, oldLines: 3, newStart: 104, newLines: 3 },
+        ],
+      ],
+    });
+    const minted = spanAnchorForRows(reg, { line: 104, side: "additions" });
+    expect(minted).toEqual({
+      outcome: "minted",
+      anchor: "rennet:hunk/frag-b#L1@additions",
+      rawIndices: [6],
+    });
+    if (minted.outcome !== "minted") throw new Error("fixture selection did not mint");
+    const parsed = parseAnchor(minted.anchor);
+    if (!parsed.ok) throw new Error(`minted anchor did not parse: ${parsed.reason}`);
+    expect(resolveAnchorToRows(reg, parsed.anchor)).toMatchObject({
+      outcome: "resolved",
+      rawIndices: minted.rawIndices,
+    });
+  });
+
+  it("returns distinguished failures instead of throwing or crossing occurrence identity", () => {
+    const reg = buildRowRegistry({ diff: TWO_HUNK, hunkOccurrences: TWO_HUNK_OCC });
+    expect(spanAnchorForRows(reg, { line: 999, side: "additions" })).toEqual({
+      outcome: "failure",
+      reason: "no-rows",
+    });
+    expect(spanAnchorForRows(reg, { line: 11, endLine: 41, side: "additions" })).toEqual({
+      outcome: "failure",
+      reason: "cross-occurrence",
+    });
   });
 });
 

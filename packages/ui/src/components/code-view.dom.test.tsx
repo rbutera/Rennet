@@ -91,6 +91,52 @@ describe("CodeView — mounted scroll interaction (the #11 frozen-window bug)", 
     expect(container.querySelector('[data-raw-index="0"]')).toBeNull();
   });
 
+  it("moves once per nonce, never re-scrolls on an unchanged render, and re-points on a new nonce (#79)", async () => {
+    const props = {
+      path: "src/big.ts",
+      diff: bigDiff(400),
+      hunkOccurrences: [[{ id: "H", oldStart: 1, oldLines: 400, newStart: 1, newLines: 400 }]],
+      rowHeight: 18,
+      viewportHeight: 480,
+      focusAnchor: "rennet:hunk/H#L200@additions",
+    } as const;
+    const { container, rerender } = mount(<CodeView {...props} focusNonce={1} />);
+    const scrollEl = container.querySelector<HTMLElement>(".code-view-scroll");
+    if (!scrollEl) throw new Error("scroll container did not mount");
+    await waitFor(() => expect(scrollEl.scrollTop).toBeGreaterThan(150 * 18));
+
+    fireEvent.scroll(scrollEl, { target: { scrollTop: 900 } });
+    expect(scrollEl.scrollTop).toBe(900);
+    rerender(<CodeView {...props} focusNonce={1} />);
+    await Promise.resolve();
+    expect(scrollEl.scrollTop).toBe(900);
+
+    rerender(<CodeView {...props} focusNonce={2} />);
+    await waitFor(() => expect(scrollEl.scrollTop).toBeGreaterThan(150 * 18));
+    expect(container.querySelector(".cv-focus")?.getAttribute("data-focus-nonce")).toBe("2");
+  });
+
+  it("malformed and orphan focus anchors are honest no-ops", async () => {
+    const base = {
+      path: "src/big.ts",
+      diff: bigDiff(400),
+      hunkOccurrences: [[{ id: "H", oldStart: 1, oldLines: 400, newStart: 1, newLines: 400 }]],
+      rowHeight: 18,
+      viewportHeight: 480,
+    } as const;
+    const { container, rerender } = mount(
+      <CodeView {...base} focusAnchor="not-an-anchor" focusNonce={1} />,
+    );
+    const scrollEl = container.querySelector<HTMLElement>(".code-view-scroll");
+    if (!scrollEl) throw new Error("scroll container did not mount");
+    expect(scrollEl.scrollTop).toBe(0);
+    expect(container.querySelector(".cv-focus")).toBeNull();
+    rerender(<CodeView {...base} focusAnchor="rennet:hunk/NOPE#L1@additions" focusNonce={2} />);
+    await Promise.resolve();
+    expect(scrollEl.scrollTop).toBe(0);
+    expect(container.querySelector(".cv-focus")).toBeNull();
+  });
+
   it("starts each test from a clean document (the harness unmounts between tests)", () => {
     // Proves afterEach(cleanup) from the shared harness fired: the previous test's
     // tree is gone before this one mounts. Guards downstream slices against

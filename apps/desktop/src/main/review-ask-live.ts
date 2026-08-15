@@ -5,6 +5,7 @@ import {
   DEFAULT_CODEX_UTILITY_MODEL,
   type ReviewPipelineResult,
 } from "@rennet/core";
+import { parseAnchor } from "@rennet/protocol";
 import type { Patchset, Review } from "@rennet/types";
 import type { OrchestratorTurnRunner } from "./orchestrator";
 
@@ -86,6 +87,8 @@ export interface LiveReviewAskPorts {
     question: string;
     /** Token-stream sink (#251): each orchestrator token as it arrives. */
     onDelta?: (text: string) => void;
+    selection?: { anchor: string; excerpt?: string };
+    onFocus?: (anchor: string) => void;
     /** Cancels the turn (#251 criterion 4): threaded to the SDK's `abortController`
      *  so `before-quit` reaps the live claude turn. */
     abortController?: AbortController;
@@ -98,6 +101,32 @@ export interface LiveReviewAskPorts {
   }): Promise<AskAnswer>;
 }
 
+function selectionElementSummary(pipeline: ReviewPipelineResult, anchor: string): string {
+  const selected = parseAnchor(anchor);
+  if (!selected.ok) return anchor;
+  for (const canvas of Object.values(pipeline.canvases)) {
+    for (const element of canvas.layers.analysis.elements) {
+      const placed = parseAnchor(element.anchor);
+      if (
+        placed.ok &&
+        placed.anchor.kind === selected.anchor.kind &&
+        placed.anchor.id === selected.anchor.id
+      ) {
+        return element.title;
+      }
+      const diff = pipeline.elementDiffs[element.elementKey];
+      if (
+        diff?.hunkOccurrences.some((hunk) =>
+          hunk.some((occurrence) => occurrence.id === selected.anchor.id),
+        )
+      ) {
+        return element.title;
+      }
+    }
+  }
+  return anchor;
+}
+
 /**
  * Build the LIVE review.ask ports. Drop-in for `reviewAskFixturePorts()`: the same
  * `{ review, question } → AskAnswer` shape the dispatch path calls through the real
@@ -106,13 +135,41 @@ export interface LiveReviewAskPorts {
  */
 export function createLiveReviewAskPorts(deps: LiveReviewAskDeps): LiveReviewAskPorts {
   return {
-    async askOrchestrator({ review, question, onDelta, abortController }) {
+    async askOrchestrator({ review, question, onDelta, selection, onFocus, abortController }) {
       const pipeline = await deps.buildPipeline(review);
+      const pointing =
+        selection || onFocus
+          ? {
+              ...(onFocus ? { onFocus } : {}),
+              ...(selection
+                ? {
+                    userActs: [
+                      {
+                        kind: "selected" as const,
+                        anchor: selection.anchor,
+                        elementSummary: selectionElementSummary(pipeline, selection.anchor),
+                        ...(selection.excerpt === undefined ? {} : { excerpt: selection.excerpt }),
+                        seq: 1,
+                      },
+                    ],
+                  }
+                : {}),
+            }
+          : undefined;
       // Thread the AbortController only when present, so a non-reaping caller still
       // invokes the runner with exactly four args (the runner's back-compat shape).
-      const outcome = abortController
-        ? await deps.orchestratorTurn(review, pipeline, question, onDelta, abortController)
-        : await deps.orchestratorTurn(review, pipeline, question, onDelta);
+      const outcome = pointing
+        ? await deps.orchestratorTurn(
+            review,
+            pipeline,
+            question,
+            onDelta,
+            abortController,
+            pointing,
+          )
+        : abortController
+          ? await deps.orchestratorTurn(review, pipeline, question, onDelta, abortController)
+          : await deps.orchestratorTurn(review, pipeline, question, onDelta);
       if (!outcome.available) {
         // Fail-closed, honest: no `claude` on the machine → an answer that SAYS so,
         // never a fabricated one. (The primary answer is always produced, in every

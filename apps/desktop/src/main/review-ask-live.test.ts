@@ -70,6 +70,62 @@ const pipeline = {} as ReviewPipelineResult;
 const buildPipeline = () => Promise.resolve(pipeline);
 
 describe("createLiveReviewAskPorts — askOrchestrator", () => {
+  it("turns a span selection into one selected act with its placed element title", async () => {
+    const turn = vi.fn<OrchestratorTurnRunner>(() => Promise.resolve(completed("ok")));
+    const selectedPipeline = {
+      ...pipeline,
+      canvases: {
+        sequence: {
+          layers: {
+            analysis: {
+              elements: [
+                {
+                  elementKey: "el-1",
+                  anchor: "rennet:hunk/c1-h1",
+                  title: "Retry policy",
+                },
+              ],
+            },
+          },
+        },
+      },
+      elementDiffs: {
+        "el-1": {
+          hunkOccurrences: [[{ id: "c1-h1" }]],
+        },
+      },
+    } as unknown as ReviewPipelineResult;
+    const ports = createLiveReviewAskPorts({
+      buildPipeline: () => Promise.resolve(selectedPipeline),
+      orchestratorTurn: turn,
+    });
+    const selection = {
+      anchor: "rennet:hunk/c1-h1#L1-L2@additions",
+      excerpt: "a\nb",
+    };
+
+    await ports.askOrchestrator({ review: review(), question: "this?", selection });
+
+    expect(turn).toHaveBeenCalledWith(
+      expect.anything(),
+      selectedPipeline,
+      "this?",
+      undefined,
+      undefined,
+      {
+        userActs: [
+          {
+            kind: "selected",
+            anchor: selection.anchor,
+            elementSummary: "Retry policy",
+            excerpt: selection.excerpt,
+            seq: 1,
+          },
+        ],
+      },
+    );
+  });
+
   it("builds the pipeline over the given review, drives the turn, and returns its final text", async () => {
     const turn = vi.fn<OrchestratorTurnRunner>(() =>
       Promise.resolve(completed("the retry-after is in milliseconds")),
