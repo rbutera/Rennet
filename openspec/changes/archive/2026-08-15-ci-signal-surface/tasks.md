@@ -41,7 +41,7 @@
 ## 7. Gate, reconcile, hand off
 
 - [x] 7.1 Run the full gate `NX_DAEMON=false pnpm check`; confirm exit 0 with a positive control capable of failing (re-run one red-proof from 1.3/2.2/5.2 to prove the suite can fire). Reconcile the whole-suite test total against the pre-change baseline — verify the number, do not trust memory.
-- [ ] 7.2 Commit per-group with descriptive messages, push, verify the push landed (`git rev-parse origin/<branch>` equals local HEAD). Report the tip, the counted whole-branch diff, the gate total, and the named deferrals (re-run CI, deep log parsing, #183 verify-ui, retrospective-review CI, base-branch differential). Do NOT self-review; the orchestrator owns the gate. On merge, archive this OpenSpec change on the real outcome.
+- [x] 7.2 Commit per-group with descriptive messages, push, verify the push landed (`git rev-parse origin/<branch>` equals local HEAD). Report the tip, the counted whole-branch diff, the gate total, and the named deferrals (re-run CI, deep log parsing, #183 verify-ui, retrospective-review CI, base-branch differential). Do NOT self-review; the orchestrator owns the gate. On merge, archive this OpenSpec change on the real outcome.
 
 ## 8. PR #317 honesty and never-blocks fix pass
 
