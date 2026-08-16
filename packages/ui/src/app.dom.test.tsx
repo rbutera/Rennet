@@ -10,7 +10,7 @@
 // The assertions are behavioural (the recorded command input; the rendered result),
 // never a presence check.
 import type { CommandInput, CommandOutput, RennetBridge } from "@rennet/protocol";
-import type { Review } from "@rennet/types";
+import type { FlaggedReview, Review } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { reviewComments, reviewCommentsPayload } from "./canvas/publish";
@@ -57,12 +57,20 @@ const review: Review = {
 // A recording fake bridge: bootstrap / setDisposition / checkFreshness resolve the
 // ready review; `publish.review` records its input and returns a well-formed
 // dry-run output (nothing posted). The app never opens Canvases here.
-function recordingBridge(ready: Review): {
+function recordingBridge(
+  ready: Review,
+  flaggedReview: FlaggedReview = {
+    status: "ok",
+    findings: [],
+    patchsetId: ready.activePatchsetId,
+  },
+): {
   bridge: RennetBridge;
   calls: CommandInput<"publish.review">[];
 } {
   const calls: CommandInput<"publish.review">[] = [];
   const invoke = async (name: string, input: unknown): Promise<unknown> => {
+    if (name === "flagged.review") return flaggedReview;
     if (name === "publish.review") {
       const publishInput = input as CommandInput<"publish.review">;
       calls.push(publishInput);
@@ -168,5 +176,49 @@ describe("RennetApp — the Sign button runs the real publish engine (wire-sign-
       expect(result?.getAttribute("data-dry-run")).toBe("true");
       expect(result?.textContent).toContain("COMMENT");
     });
+  });
+
+  it("feeds a patchset-bound flagged blocker through the live app into PublishSheet", async () => {
+    const { bridge } = recordingBridge(review, {
+      status: "ok",
+      findings: [],
+      patchsetId: "patch-one",
+      blockingStates: [
+        {
+          reason: "binary",
+          path: "assets/logo.png",
+          detail: "assets/logo.png: binary file; its content was not ingested.",
+        },
+      ],
+    });
+    const { container, getByRole, getByText } = mount(<RennetApp bridge={bridge} />);
+
+    const destination = () => container.querySelector(".destination-frame");
+    await waitFor(() => expect(destination()).not.toBeNull());
+    fireEvent.click(getByRole("tab", { name: "Files" }));
+    fireEvent.click(getByRole("button", { name: "Mark read" }));
+    await waitFor(() => expect(destination()?.getAttribute("data-staged-count")).toBe("1"));
+    fireEvent.click(getByRole("tab", { name: "Review to post" }));
+    await waitFor(() => expect(destination()?.getAttribute("data-mode")).toBe("other-pr"));
+
+    const openDraft = container.querySelector<HTMLButtonElement>(".destination-open-draft");
+    if (!openDraft) throw new Error("the open-draft control did not render");
+    fireEvent.click(openDraft);
+    await waitFor(() => expect(container.querySelector(".collation-canvas")).not.toBeNull());
+    const stageBox = container.querySelector<HTMLInputElement>(".collation-item-stage-box");
+    if (!stageBox) throw new Error("the stage toggle did not render");
+    fireEvent.click(stageBox);
+    const signDraft = container.querySelector<HTMLButtonElement>(".collation-sign");
+    if (!signDraft) throw new Error("the draft sign control did not render");
+    fireEvent.click(signDraft);
+
+    await waitFor(() => {
+      const disclosure = container.querySelector(".publish-sheet .flagged-blocked-ingestion");
+      expect(disclosure).not.toBeNull();
+      expect(disclosure?.getAttribute("role")).toBe("note");
+    });
+    expect(getByText("Not fully ingested")).toBeTruthy();
+    expect(container.querySelector('[data-reason="binary"]')).toBeTruthy();
+    expect(getByText(/binary file; its content was not ingested/)).toBeTruthy();
   });
 });

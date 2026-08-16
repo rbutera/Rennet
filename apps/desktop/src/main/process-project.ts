@@ -67,7 +67,12 @@ export function createProcessProject(deps: ProcessProjectDeps) {
           baseRef: result.manifest.baseRef,
         };
         repos.push(summary);
-        emit({ kind: "repo-done", repo, summary });
+        emit({
+          kind: "repo-done",
+          repo,
+          summary,
+          artifact: { kind: "project", projectId: project.id },
+        });
       } catch (reason) {
         const message = reason instanceof Error ? reason.message : String(reason);
         repos.push({ repo, path, ok: false, error: message });

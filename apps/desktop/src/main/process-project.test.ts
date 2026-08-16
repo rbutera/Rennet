@@ -79,7 +79,8 @@ describe("createProcessProject — the initial context dump wiring", () => {
       listProjects: () => [project()],
     });
 
-    const { repos } = await processProject({ projectId: "p1" }, () => undefined);
+    const events: ProjectProcessEvent[] = [];
+    const { repos } = await processProject({ projectId: "p1" }, (event) => events.push(event));
     expect(repos).toEqual([
       {
         repo: "orbital",
@@ -92,6 +93,9 @@ describe("createProcessProject — the initial context dump wiring", () => {
         baseRef: "trunk",
       },
     ]);
+    expect(events.find((event) => event.kind === "repo-done")).toMatchObject({
+      artifact: { kind: "project", projectId: "p1" },
+    });
   });
 
   it("carries a per-repo failure softly and keeps building the rest of the workspace", async () => {

@@ -50,6 +50,32 @@ The decision is not “streams are bad.” Every push seam still needs four thin
 That gives Rennet the useful parts of reactive design without hiding durable
 review state inside operator closures.
 
+## The progress-narration seam
+
+The `rennet:progress` push (main to renderer, keyed by `commandId`, typed as
+`ProjectProcessEvent`) is one such live seam, and it obeys the four-point
+discipline above: dispatch owns the terminal event so the stream and the
+command's resolved value always agree, and the renderer folds the stream into UI
+state that a re-read of durable truth can always reconstruct.
+
+The processing slot renders through the shared narration organ (`ProgressFeed`
+plus the processing-specific `deriveProgressView` fold in `packages/ui`). The
+renderer keeps one command UUID per project for the session, and main deduplicates
+a live `project.process` run by that UUID while retaining a bounded replay suffix,
+so remounting the processing consumer reattaches instead of starting a second
+concurrent snapshot build. A successful repo line carries the processed project
+artifact through the real consumer and opens that project; the fold also derives
+that anchor from a successful resolved summary when the push channel degrades.
+
+The rest of issue #71 is not live yet. The capture/review pipeline does not emit
+progress events and its busy surface does not consume `ProgressFeed`; protocol
+variants for that path should arrive with real emitters and a renderer. The
+proactive-rehydration broadcast also has no renderer listener or project-card
+indicator. A run epoch, completed-summary return path, and an integration proof
+that runs every narrated slot with the model utility port stubbed are still
+unchecked OpenSpec tasks. The pure processing fold needs no model input, but that
+fact alone is not the cross-pipeline zero-model proof.
+
 ## When to revisit it
 
 Reopen the decision if Rennet needs several non-trivial time or combination

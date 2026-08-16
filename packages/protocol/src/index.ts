@@ -745,11 +745,23 @@ export const processedRepoSummarySchema = z.object({
 export type ProcessedRepoSummary = z.infer<typeof processedRepoSummarySchema>;
 
 /**
- * A single live-narration event pushed while a project processes. `repo-start`
- * and `repo-done` bracket each repo; `stage` fires as the build advances, each
- * carrying a real `note` (and often a real `detail`, e.g. "412 files"); `done`
- * fires once at the end with the full per-repo summary. `repo-error` is a SOFT
- * failure for one repo — processing continues, and `done` still fires.
+ * A typed reference to the project a landed processing line produced (issue #71
+ * anchoring). A landed progress event may carry one so the renderer can navigate
+ * to it via the existing flow handlers; a line with no ref is honestly inert.
+ */
+export const progressArtifactRefSchema = z.object({
+  kind: z.literal("project"),
+  projectId: z.string().min(1),
+});
+export type ProgressArtifactRef = z.infer<typeof progressArtifactRefSchema>;
+
+/**
+ * A single live-narration event pushed while a project processes. `repo-start` and
+ * `repo-done` bracket each repo; `stage` fires
+ * as the build advances, each carrying a real `note` (and often a real `detail`,
+ * e.g. "412 files"); `done` fires once at the end with the full per-repo summary.
+ * `repo-error` is a SOFT failure for one repo — processing continues, and `done`
+ * still fires.
  */
 export const projectProcessEventSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -772,6 +784,8 @@ export const projectProcessEventSchema = z.discriminatedUnion("kind", [
     kind: z.literal("repo-done"),
     repo: z.string().min(1),
     summary: processedRepoSummarySchema,
+    /** The landed artifact this repo produced, for anchoring (optional). */
+    artifact: progressArtifactRefSchema.optional(),
   }),
   z.object({
     kind: z.literal("repo-error"),
@@ -990,6 +1004,14 @@ export const reviewHypothesisSchema = objectSchemaFor<ReviewHypothesis>()({
   ),
   repoContextPresent: z.boolean(),
 });
+// Incomplete-ingestion blocker (R18, #309): content the deterministic floor could
+// not ingest. Rides FlaggedReview so it reaches the Flagged lens and PublishSheet
+// as render-only honest copy. `path` is null for a patchset-wide truncation.
+const flaggedBlockingStateSchema = z.object({
+  reason: z.enum(["truncated", "binary", "submodule"]),
+  path: z.string().nullable(),
+  detail: z.string(),
+});
 export const flaggedReviewSchema: z.ZodType<FlaggedReview> = z.union([
   z.object({
     status: z.literal("ok"),
@@ -1004,12 +1026,17 @@ export const flaggedReviewSchema: z.ZodType<FlaggedReview> = z.union([
     // bind it to the canvases it is shown beside and drop a result that regenerate
     // left stale. Additive optional — absent ⇒ unbound (pre-#160 shape).
     patchsetId: z.string().min(1).optional(),
+    // Incomplete-ingestion blockers (R18, #309). Declared on BOTH branches or the
+    // strict boundary strips it (Rule 80). Additive optional — absent ⇒ pre-#309.
+    blockingStates: z.array(flaggedBlockingStateSchema).optional(),
   }),
   z.object({
     status: z.literal("failed"),
     reason: z.string(),
     // CI facts survive even when the model review fails; omission strips them.
     ciSignal: ciSignalSchema.optional(),
+    patchsetId: z.string().min(1).optional(),
+    blockingStates: z.array(flaggedBlockingStateSchema).optional(),
   }),
 ]);
 

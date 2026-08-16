@@ -450,11 +450,23 @@ function toForgeReviewTarget(target: {
 export interface DispatchContext {
   emitProgress?(event: ProjectProcessEvent): void;
   /**
+   * Stable identity for the renderer receiving progress. A remount replaces that
+   * renderer's sink instead of adding a second sender for the same live run.
+   */
+  progressRecipientId?: string | number;
+  /**
    * The push sink for a conversation's token STREAM (issue #251) — the transport binds
    * it to the renderer's `onAskStream` channel, keyed by `reviewId`. Absent for a bridge
    * with no push channel (a #139 one-shot ask resolves its final value with no stream).
    */
   emitAskStream?(event: ReviewAskStreamEvent): void;
+}
+
+interface LiveProjectRun {
+  projectId: string;
+  events: ProjectProcessEvent[];
+  recipients: Map<unknown, (event: ProjectProcessEvent) => void>;
+  result: Promise<{ repos: ProcessedRepoSummary[] }>;
 }
 
 export function createDispatch(
@@ -471,6 +483,16 @@ export function createDispatch(
   // SEQUENTIAL call (the first has left the set), so the adapter's query-before-post
   // idempotency still yields exactly one review.
   const realPostInFlight = new Set<string>();
+  const liveProjectRuns = new Map<string, LiveProjectRun>();
+  const progressReplayLimit = 256;
+
+  function attachProjectProgress(run: LiveProjectRun, ctx?: DispatchContext): void {
+    const sink = ctx?.emitProgress;
+    if (!sink) return;
+    const recipient = ctx.progressRecipientId ?? sink;
+    run.recipients.set(recipient, sink);
+    for (const event of run.events) sink(event);
+  }
 
   function assertAllowedRepository(repositoryPath: string): void {
     if (!allowedRoots.has(repositoryPath)) throw new Error("Repository access was not granted");
@@ -834,10 +856,35 @@ export function createDispatch(
         // resolved value, so both always agree. Soft per-repo failures are carried
         // in the summaries (never a throw), so one bad repo never aborts the rest.
         const input = parseCommandInput(name, rawInput);
-        const emit = ctx?.emitProgress ?? (() => undefined);
-        const { repos } = await deps.processProject({ projectId: input.projectId }, emit);
-        emit({ kind: "done", repos });
-        return parseCommandOutput(name, { repos });
+        const existing = liveProjectRuns.get(input.commandId);
+        if (existing) {
+          if (existing.projectId !== input.projectId)
+            throw new Error("A live project.process command ID cannot address another project");
+          attachProjectProgress(existing, ctx);
+          return parseCommandOutput(name, await existing.result);
+        }
+
+        const events: ProjectProcessEvent[] = [];
+        const recipients = new Map<unknown, (event: ProjectProcessEvent) => void>();
+        const emit = (event: ProjectProcessEvent): void => {
+          events.push(event);
+          if (events.length > progressReplayLimit)
+            events.splice(0, events.length - progressReplayLimit);
+          for (const recipient of recipients.values()) recipient(event);
+        };
+        const result = Promise.resolve().then(async () => {
+          try {
+            const { repos } = await deps.processProject({ projectId: input.projectId }, emit);
+            emit({ kind: "done", repos });
+            return { repos };
+          } finally {
+            liveProjectRuns.delete(input.commandId);
+          }
+        });
+        const run = { projectId: input.projectId, events, recipients, result };
+        liveProjectRuns.set(input.commandId, run);
+        attachProjectProgress(run, ctx);
+        return parseCommandOutput(name, await result);
       }
       // ── Project detail: the unified smart list (issue #37) ────────────────────
       case "project.detail": {
@@ -872,10 +919,7 @@ export function createDispatch(
         const flagged = await deps.flaggedReview(review, input.deepReview ?? true);
         // Stamp the patchset this result was computed against (#160/P0-2) so the renderer
         // can bind it to the canvases beside it and discard a regenerate-stale result.
-        return parseCommandOutput(
-          name,
-          flagged.status === "ok" ? { ...flagged, patchsetId: review.activePatchsetId } : flagged,
-        );
+        return parseCommandOutput(name, { ...flagged, patchsetId: review.activePatchsetId });
       }
       // ── Ask the AI a question about the review (issue #139) ────────────────────
       case "review.ask": {

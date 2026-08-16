@@ -106,6 +106,14 @@ sends that artifact. Internal review state, orchestrator chatter, and refinement
 history are not part of the outbound shape unless the reviewer has turned them
 into a disposition on the draft.
 
+When the review ran over partially-ingested content (R18: a truncated tail, a
+binary blob, or a submodule pointer), the paper discloses those blockers before
+the sign control, so a signer knows the review was not a full read before
+attesting to it. This disclosure is non-gating honest copy: it never blocks,
+delays, or adds an acknowledgement to the sign path—the reviewer finishes and
+publishes anyway if they choose, and the hold budget, keyboard sign, and
+degradation-ledger gate are unchanged by its presence.
+
 ## What is live
 
 The destination frame, editable collation canvas, comment refinement, paper,

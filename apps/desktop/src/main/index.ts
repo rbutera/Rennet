@@ -136,6 +136,7 @@ import { attachCiSignal } from "./ci-signal";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
 import { createDispatch } from "./dispatch";
 import { createLiveDraftPrBodyPort } from "./draft-pr-body-live";
+import { stampBlockingStates } from "./flagged-blocking-states";
 import { projectUnavailableDeepVerification } from "./flagged-review-verification";
 import { createLiveComposeBundle } from "./handoff-compose-live";
 import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
@@ -1165,7 +1166,7 @@ async function runFlaggedReviewWithContextFeed(
     surfacedReview = attachRiskCrossCheck(surfaced, hypothesis);
   }
 
-  return attachCiSignal({
+  const withCiSignal = await attachCiSignal({
     review: surfacedReview,
     ...(review.postTarget === undefined ? {} : { postTarget: review.postTarget }),
     patchset,
@@ -1181,6 +1182,12 @@ async function runFlaggedReviewWithContextFeed(
     ...(ciRefinementTurn === undefined ? {} : { refineTurn: ciRefinementTurn }),
     budget: sharedBudget,
   });
+  // R18/#309: stamp the deterministic incomplete-ingestion blockers from the
+  // decomposition we already computed — ok and failed alike (blocked ingestion is
+  // deterministic, not a model result, so it survives a failed model run). The
+  // Flagged lens + PublishSheet disclose it as render-only honest copy; it NEVER
+  // gates the sign (Rule Zero). Mirrors the #160 patchsetId stamp.
+  return stampBlockingStates(withCiSignal, decomposition);
 }
 
 async function runFlaggedReview(review: Review, deepReview = true): Promise<FlaggedReview> {
@@ -1397,7 +1404,11 @@ function registerCommandHandler(): void {
             event.sender.send(ASK_STREAM_CHANNEL, { reviewId, event: streamEvent });
         }
       : undefined;
-    return dispatch(name, input, { emitProgress, emitAskStream });
+    return dispatch(name, input, {
+      emitProgress,
+      progressRecipientId: event.sender.id,
+      emitAskStream,
+    });
   });
 }
 

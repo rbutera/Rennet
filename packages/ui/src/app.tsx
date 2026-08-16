@@ -1623,6 +1623,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           }
           postLabel={review?.postTarget ? previewTargetLabel(review.postTarget) : undefined}
           pending={publishing}
+          // Disclose blocked ingestion (R18/#309) from the PATCHSET-BOUND flagged
+          // result, so a regenerate-stale result never discloses the wrong patchset's
+          // gaps. Render-only honest copy — it never gates the sign (Rule Zero).
+          blockingStates={boundFlaggedReview?.blockingStates}
           onBack={() => {
             // Editing lives on the draft; a returned-to edit invalidates the outcome.
             setPublishResult(undefined);

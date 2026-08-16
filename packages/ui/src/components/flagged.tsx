@@ -1,4 +1,10 @@
-import type { CiFailure, CiSignal, DualReviewNote } from "@rennet/types";
+import type {
+  CiFailure,
+  CiSignal,
+  DecompositionBlockingReason,
+  DecompositionBlockingState,
+  DualReviewNote,
+} from "@rennet/types";
 import type { ReactNode } from "react";
 import type { FlaggedIndex, FlaggedRow } from "../canvas/flagged";
 
@@ -209,6 +215,50 @@ function FlagRow({
   );
 }
 
+const BLOCKING_REASON_LABEL: Record<DecompositionBlockingReason, string> = {
+  truncated: "Truncated",
+  binary: "Binary",
+  submodule: "Submodule",
+};
+
+/**
+ * The blocked-ingestion disclosure (R18, issue #309): render-only honest copy that
+ * some captured content was NOT ingested, so an absence of findings over it is not
+ * evidence it was reviewed. It NEVER adds a confirmation, acknowledgement, or gate
+ * (Rule Zero) — it is a plain list the reader sees, shared verbatim with the
+ * PublishSheet's disclosure. Rendered only when `states` is non-empty.
+ */
+export function BlockedIngestionDisclosure({
+  states,
+  heading = "Some content was not ingested",
+}: {
+  states: readonly DecompositionBlockingState[];
+  /** The disclosure heading; the PublishSheet reuses this block with "Not fully ingested". */
+  heading?: string;
+}) {
+  if (states.length === 0) return null;
+  return (
+    <div className="flagged-blocked-ingestion" role="note">
+      <p className="flagged-blocked-head">{heading}</p>
+      <ul className="flagged-blocked-list">
+        {states.map((state) => (
+          <li
+            // Keyed on reason + path + detail: the detail line is unique per blocker
+            // (each names its own file/reason), so no array index is needed and the
+            // list is render-only regardless.
+            key={`${state.reason}:${state.path ?? "*"}:${state.detail}`}
+            className="flagged-blocked-item"
+            data-reason={state.reason}
+          >
+            <span className="flagged-blocked-reason">{BLOCKING_REASON_LABEL[state.reason]}</span>
+            <span className="flagged-blocked-detail">{state.detail}</span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 export function FlaggedLens({
   index,
   onJumpToAnchor,
@@ -235,10 +285,15 @@ export function FlaggedLens({
           </p>
           <p className="flagged-failed-reason">{index.reason}</p>
         </div>
+        <BlockedIngestionDisclosure states={index.blockingStates ?? []} />
         <CiSignalPanel signal={index.ciSignal} />
       </div>
     );
   }
+
+  // The incomplete-ingestion blockers carried through the fold (#309). Empty ⇒ the
+  // pre-#309 honest all-clear renders unchanged.
+  const blockingStates = index.blockingStates ?? [];
 
   return (
     <div className="flagged-canvas">
@@ -268,9 +323,19 @@ export function FlaggedLens({
       </div>
       <CiSignalPanel signal={index.ciSignal} />
       {index.total === 0 ? (
-        <p className="flagged-empty">
-          Reviewed. Nothing was flagged — this angle ran clean, it was not skipped.
-        </p>
+        blockingStates.length > 0 ? (
+          // Blocked ingestion makes the unconditional "ran clean" copy a lie: nothing
+          // was flagged only IN WHAT COULD BE READ. Qualified copy + the disclosure
+          // replace it (R18/#309). This is honest copy, not a gate.
+          <p className="flagged-empty flagged-empty-qualified">
+            Nothing was flagged in what could be read — but some content was not ingested, so this
+            is not a full all-clear.
+          </p>
+        ) : (
+          <p className="flagged-empty">
+            Reviewed. Nothing was flagged — this angle ran clean, it was not skipped.
+          </p>
+        )
       ) : (
         <ol className="flags">
           {index.rows.map((row) => (
@@ -278,6 +343,9 @@ export function FlaggedLens({
           ))}
         </ol>
       )}
+      {/* An absence of findings over un-ingested content is not evidence it was
+          reviewed, so the disclosure renders beside findings too (#309). */}
+      <BlockedIngestionDisclosure states={blockingStates} />
     </div>
   );
 }

@@ -6,6 +6,7 @@ import {
   canonicalPrSubmissionPayload,
   canonicalReviewPayload,
   composeHandoffBundle,
+  decompose,
   type ForgePublishPort,
   type ForgeReviewEvent,
   type ForgeReviewPost,
@@ -173,6 +174,7 @@ function harness(
     liveTurns?: DispatchDeps["liveTurns"];
     submitPullRequest?: DispatchDeps["submitPullRequest"];
     draftDeltaDigest?: DispatchDeps["draftDeltaDigest"];
+    flaggedReview?: DispatchDeps["flaggedReview"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -316,7 +318,9 @@ function harness(
     // Recording spy so a test can assert what `deepReview` the dispatch passed the
     // runner — the whole point of the default-dual mandate is that guarantee at the
     // real command boundary. The stub answers with an honestly-empty ran-clean set.
-    flaggedReview: flaggedReviewSpy,
+    // A test may override the runner (e.g. to stamp #309 blockingStates like the live
+    // runner does) via `extra.flaggedReview`.
+    flaggedReview: extra.flaggedReview ?? flaggedReviewSpy,
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
     reviewAsk,
     threadPersistence,
@@ -626,12 +630,72 @@ describe("createDispatch — flagged.review routing (the live finding runner, is
     expect(result).toEqual({ status: "ok", findings: [], patchsetId: review.activePatchsetId });
   });
 
+  it("stamps a failed result with the active patchset before it crosses the protocol boundary", async () => {
+    const flaggedReview = vi.fn(
+      async (): Promise<FlaggedReview> => ({
+        status: "failed",
+        reason: "both seats down",
+      }),
+    );
+    const { dispatch } = harness(undefined, {}, { flaggedReview });
+    const review = await capturedReview(dispatch);
+    await expect(dispatch("flagged.review", { reviewId: review.id })).resolves.toEqual({
+      status: "failed",
+      reason: "both seats down",
+      patchsetId: review.activePatchsetId,
+    });
+  });
+
   it("refuses flagged.review for a stale or unknown review id (the runner spends a model turn)", async () => {
     const { dispatch } = harness();
     await capturedReview(dispatch);
     await expect(dispatch("flagged.review", { reviewId: randomUUID() })).rejects.toThrow(
       /Review not found/,
     );
+  });
+
+  it("preserves pre-stamped blockingStates through the flagged.review protocol boundary (R18/#309)", async () => {
+    // This runner test double deliberately pre-stamps the real deterministic
+    // decomposition's blockers. The assertion guards the separate Rule-80 strip
+    // surface: dropping `blockingStates` from `flaggedReviewSchema` makes it red.
+    const binaryPatchset: Patchset = {
+      ...patchset(),
+      files: [
+        {
+          path: "assets/logo.png",
+          status: "modified",
+          additions: 0,
+          deletions: 0,
+          binary: true,
+          patch: "",
+        },
+      ],
+      rawDiff: "Binary files a/assets/logo.png and b/assets/logo.png differ\n",
+      byteLength: 1,
+    };
+    const flaggedReview = vi.fn(async (): Promise<FlaggedReview> => {
+      const decomposition = decompose(binaryPatchset);
+      return { status: "ok", findings: [], blockingStates: decomposition.blockingStates };
+    });
+    const { dispatch } = harness(
+      undefined,
+      {},
+      {
+        capturePort: { capture: () => Promise.resolve(binaryPatchset) },
+        flaggedReview,
+      },
+    );
+    const review = await capturedReview(dispatch);
+    const result = (await dispatch("flagged.review", { reviewId: review.id })) as FlaggedReview;
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("expected an ok review");
+    expect(result.blockingStates).toEqual([
+      {
+        reason: "binary",
+        path: "assets/logo.png",
+        detail: expect.stringContaining("binary file") as unknown as string,
+      },
+    ]);
   });
 
   it("defaults to DUAL-model review when deepReview is OMITTED (Rai's mandate: not opt-in)", async () => {
@@ -1712,6 +1776,7 @@ function frontDoorHarness(seed: {
   detected?: DetectedHarness[];
   processEvents?: ProjectProcessEvent[];
   processedRepos?: ProcessedRepoSummary[];
+  processProject?: DispatchDeps["processProject"];
 }): {
   dispatch: ReturnType<typeof createDispatch>;
   allowedRoots: Set<string>;
@@ -1768,11 +1833,13 @@ function frontDoorHarness(seed: {
         return { project, projects: [...stored] };
       },
     },
-    processProject: (input, emit) => {
-      processCalls.push(input);
-      for (const event of seed.processEvents ?? []) emit(event);
-      return Promise.resolve({ repos: seed.processedRepos ?? [] });
-    },
+    processProject:
+      seed.processProject ??
+      ((input, emit) => {
+        processCalls.push(input);
+        for (const event of seed.processEvents ?? []) emit(event);
+        return Promise.resolve({ repos: seed.processedRepos ?? [] });
+      }),
     discoverProject: (input) => {
       discoverCalls.push(input);
       return Promise.resolve({ ...discovery, path: input.path, kind: input.kind });
@@ -1939,6 +2006,69 @@ describe("createDispatch — front door (issue #29)", () => {
       projectId: "p1",
     })) as { repos: ProcessedRepoSummary[] };
     expect(out.repos).toEqual([summary]);
+  });
+
+  it("project.process replays a live run on remount and does not start a second build", async () => {
+    const summary: ProcessedRepoSummary = {
+      repo: "atlas",
+      path: "/orbital/atlas",
+      ok: true,
+      files: 12,
+      symbols: 8,
+    };
+    let emitFromBuild: ((event: ProjectProcessEvent) => void) | undefined;
+    let finishBuild: ((value: { repos: ProcessedRepoSummary[] }) => void) | undefined;
+    const processCalls: { projectId: string }[] = [];
+    const buildResult = new Promise<{ repos: ProcessedRepoSummary[] }>((resolve) => {
+      finishBuild = resolve;
+    });
+    const { dispatch } = frontDoorHarness({
+      processProject: (input, emit) => {
+        processCalls.push(input);
+        emitFromBuild = emit;
+        emit({ kind: "repo-start", repo: "atlas", index: 1, total: 1 });
+        return buildResult;
+      },
+    });
+    const commandId = randomUUID();
+    const beforeRemount: ProjectProcessEvent[] = [];
+    const afterRemount: ProjectProcessEvent[] = [];
+
+    const first = dispatch(
+      "project.process",
+      { commandId, projectId: "p1" },
+      {
+        progressRecipientId: "renderer-1",
+        emitProgress: (event) => beforeRemount.push(event),
+      },
+    );
+    await vi.waitFor(() =>
+      expect(beforeRemount.map((event) => event.kind)).toEqual(["repo-start"]),
+    );
+
+    const remounted = dispatch(
+      "project.process",
+      { commandId, projectId: "p1" },
+      {
+        progressRecipientId: "renderer-1",
+        emitProgress: (event) => afterRemount.push(event),
+      },
+    );
+    await vi.waitFor(() => expect(afterRemount.map((event) => event.kind)).toEqual(["repo-start"]));
+    expect(processCalls).toEqual([{ projectId: "p1" }]);
+
+    emitFromBuild?.({
+      kind: "repo-done",
+      repo: "atlas",
+      summary,
+      artifact: { kind: "project", projectId: "p1" },
+    });
+    finishBuild?.({ repos: [summary] });
+
+    await expect(first).resolves.toEqual({ repos: [summary] });
+    await expect(remounted).resolves.toEqual({ repos: [summary] });
+    expect(beforeRemount.map((event) => event.kind)).toEqual(["repo-start"]);
+    expect(afterRemount.map((event) => event.kind)).toEqual(["repo-start", "repo-done", "done"]);
   });
 });
 
