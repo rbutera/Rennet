@@ -984,9 +984,12 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   }, [canvasFetchKey]);
 
   // The Flagged lens (issue #138): fetch the automated review layer's findings for
-  // the open review over the real command boundary. It carries NO model spend and
-  // is independent of the harness-consent gate, so it loads on its own — and its
-  // own try/catch means a flagged fetch failure never disturbs the canvas load.
+  // the open review over the real command boundary. This is NOT a cheap read — the
+  // `flagged.review` command runs the full budget-ceilinged hypothesis + dual-model +
+  // verify pipeline on review open. That eager auto-run is intended MVP behaviour
+  // (#158): the product's core output should be there when the review opens, ceilinged
+  // by `createInvocationBudget`, not withheld behind an on-lens ritual. Its own
+  // try/catch means a flagged fetch failure never disturbs the canvas load.
   // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the active patchset (#160/P0-2), not the churning review object.
   useEffect(() => {
     if (!reviewId) return;
@@ -1100,9 +1103,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   }, [reviewId, bridge]);
 
   // The Noise lens (issue #34): fetch the low-signal churn grouped away for the open
-  // review over the real command boundary. Like the flagged fetch it carries NO
-  // model spend and is independent of the harness-consent gate, so it loads on its
-  // own — and its own try/catch means a noise fetch failure never disturbs the
+  // review over the real command boundary. UNLIKE the flagged fetch this is a
+  // deterministic mechanical-rules pass — it carries NO model spend — so it loads on
+  // its own, and its own try/catch means a noise fetch failure never disturbs the
   // canvas load or the flagged fetch.
   useEffect(() => {
     if (!reviewId) return;
