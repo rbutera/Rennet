@@ -1,4 +1,4 @@
-import type { GlobalConfig } from "@rennet/protocol";
+import type { GlobalConfig, Locus } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import {
   BUILTIN_SCHEME,
@@ -118,7 +118,7 @@ describe("settings registry + generic resolve (#28)", () => {
   });
 
   it("folds offers in LAYER_ORDER with exactly one effective contribution", () => {
-    const resolved = resolve(SETTINGS_REGISTRY.locus, {
+    const resolved = resolve<Locus>(SETTINGS_REGISTRY.locus, {
       detected: { kind: "wsl", distro: "Ubuntu" },
     });
     expect(resolved.value).toEqual({ kind: "wsl", distro: "Ubuntu" });
@@ -131,7 +131,7 @@ describe("settings registry + generic resolve (#28)", () => {
   });
 
   it("a repo override outranks detection, keeping the suppressed detected offer", () => {
-    const resolved = resolve(SETTINGS_REGISTRY.locus, {
+    const resolved = resolve<Locus>(SETTINGS_REGISTRY.locus, {
       detected: { kind: "wsl", distro: "Ubuntu" },
       repo: { kind: "host" },
     });

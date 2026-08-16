@@ -1533,16 +1533,28 @@ export function createDispatch(
         // propagates to the renderer rather than overwriting unparseable bytes.
         const input = parseCommandInput(name, rawInput);
         if (!deps.settings) {
-          return parseCommandOutput(name, {
-            scheme: input.scheme,
-            schemeProvenance: {
-              layer: "global",
-              contributions: [
-                { layer: "builtin", value: "system", effective: false },
-                { layer: "global", value: input.scheme, effective: true },
-              ],
-            },
-          });
+          // A null scheme RESETS to the builtin (`system`); a concrete scheme sets it.
+          return parseCommandOutput(
+            name,
+            input.scheme === null
+              ? {
+                  scheme: "system",
+                  schemeProvenance: {
+                    layer: "builtin",
+                    contributions: [{ layer: "builtin", value: "system", effective: true }],
+                  },
+                }
+              : {
+                  scheme: input.scheme,
+                  schemeProvenance: {
+                    layer: "global",
+                    contributions: [
+                      { layer: "builtin", value: "system", effective: false },
+                      { layer: "global", value: input.scheme, effective: true },
+                    ],
+                  },
+                },
+          );
         }
         const scheme = deps.settings.setAppearance(input.scheme);
         // Re-resolve so the surface renders the resolver's own provenance answer.
@@ -1591,6 +1603,39 @@ export function createDispatch(
           locus: input.locus,
         });
         return parseCommandOutput(name, result);
+      }
+      case "settings.resetRepoValue": {
+        // Reset a repo-scoped value to inheritance (drop the repo-layer entry;
+        // visibility also re-applies the gitignore switch). A plain write, no gate
+        // (Rule Zero). Absent dep ⇒ a typed `unresolved` no-op.
+        const input = parseCommandInput(name, rawInput);
+        if (!deps.settings) {
+          return parseCommandOutput(name, { status: "unresolved", key: input.key, project: null });
+        }
+        return parseCommandOutput(
+          name,
+          await deps.settings.resetRepoValue({
+            projectId: input.projectId,
+            repoPath: input.repoPath,
+            key: input.key,
+          }),
+        );
+      }
+      case "settings.pinRepoValue": {
+        // Pin a repo-scoped value at the repo layer (set-to-current-effective).
+        // Absent dep ⇒ a typed `unresolved` no-op.
+        const input = parseCommandInput(name, rawInput);
+        if (!deps.settings) {
+          return parseCommandOutput(name, { status: "unresolved", key: input.key, project: null });
+        }
+        return parseCommandOutput(
+          name,
+          await deps.settings.pinRepoValue({
+            projectId: input.projectId,
+            repoPath: input.repoPath,
+            key: input.key,
+          }),
+        );
       }
       default: {
         // Exhaustiveness guard: every CommandName is routed above, so `name` is

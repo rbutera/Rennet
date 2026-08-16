@@ -25,6 +25,7 @@ function makeDeps(overrides: Partial<SettingsCompositionDeps> = {}): {
     loadConfigState: string[];
     applyVisibility: { repoKey: string; repoRoot: string; target: ProjectVisibility }[];
     applyLocus: { repoKey: string; locus: Locus | null }[];
+    clearRepoValue: { repoKey: string; field: "visibility" | "locus" }[];
     discoverWorkspaceRepos: number;
     updateGlobal: number;
   };
@@ -33,6 +34,7 @@ function makeDeps(overrides: Partial<SettingsCompositionDeps> = {}): {
     loadConfigState: [] as string[],
     applyVisibility: [] as { repoKey: string; repoRoot: string; target: ProjectVisibility }[],
     applyLocus: [] as { repoKey: string; locus: Locus | null }[],
+    clearRepoValue: [] as { repoKey: string; field: "visibility" | "locus" }[],
     discoverWorkspaceRepos: 0,
     updateGlobal: 0,
   };
@@ -61,10 +63,194 @@ function makeDeps(overrides: Partial<SettingsCompositionDeps> = {}): {
     applyLocus: ({ repoKey, locus }) => {
       calls.applyLocus.push({ repoKey, locus });
     },
+    clearRepoValue: ({ repoKey, field }) => {
+      calls.clearRepoValue.push({ repoKey, field });
+    },
     ...overrides,
   };
   return { deps, calls };
 }
+
+/**
+ * A composition over a MUTABLE fake config store: writes (applyVisibility,
+ * applyLocus, clearRepoValue) mutate the backing config, so a post-write
+ * re-resolution reads the state the write left behind — the honest path reset/pin
+ * take (they re-resolve the row from the live store after writing).
+ */
+function statefulDeps(
+  initial: { visibility?: ProjectVisibility; promoted?: boolean; locus?: Locus } = {},
+  opts: { malformed?: boolean; project?: Project } = {},
+): {
+  deps: SettingsCompositionDeps;
+  store: { visibility?: ProjectVisibility; promoted?: boolean; locus?: Locus };
+  calls: {
+    applyVisibility: ProjectVisibility[];
+    applyLocus: (Locus | null)[];
+    clearRepoValue: ("visibility" | "locus")[];
+    saved: number;
+  };
+} {
+  const store: { visibility?: ProjectVisibility; promoted?: boolean; locus?: Locus } = {
+    ...initial,
+  };
+  const calls = {
+    applyVisibility: [] as ProjectVisibility[],
+    applyLocus: [] as (Locus | null)[],
+    clearRepoValue: [] as ("visibility" | "locus")[],
+    saved: 0,
+  };
+  const deps: SettingsCompositionDeps = {
+    listProjects: () => [opts.project ?? project()],
+    loadConfigState: () =>
+      opts.malformed
+        ? { status: "malformed", config: null }
+        : { status: "ok", config: { ...store } },
+    readGlobalState: () => ({ status: "ok", config: { version: 1 } }),
+    updateGlobal: (update) => update({ version: 1 }),
+    gitTopLevel: async (workingPath) => workingPath,
+    discoverWorkspaceRepos: async () => [],
+    loadGuidance: () => ({ dropped: 0, reason: "absent" }),
+    applyVisibility: async ({ repoRoot, target }) => {
+      calls.applyVisibility.push(target);
+      store.visibility = target;
+      calls.saved += 1;
+      return { changed: true, gitignorePath: `${repoRoot}/.rennet/.gitignore` };
+    },
+    applyLocus: ({ locus }) => {
+      calls.applyLocus.push(locus);
+      if (locus === null) delete store.locus;
+      else store.locus = locus;
+      calls.saved += 1;
+    },
+    clearRepoValue: ({ field }) => {
+      calls.clearRepoValue.push(field);
+      delete store[field];
+      calls.saved += 1;
+    },
+  };
+  return { deps, store, calls };
+}
+
+describe("createSettingsComposition — locus through the ladder (#28)", () => {
+  it("get() carries locusProvenance naming `detected` when auto-detected, suppressed offer present", async () => {
+    const { deps } = makeDeps();
+    const view = await createSettingsComposition(deps).get();
+    const row = view.projects[0];
+    expect(row?.locusProvenance.layer).toBe("detected");
+    expect(row?.locusOverridden).toBe(false);
+    // The detected offer is present as a contribution (host, alongside the builtin).
+    expect(row?.locusProvenance.contributions.map((c) => c.layer)).toContain("detected");
+  });
+
+  it("get() names `repo` when a persisted override wins, keeping the suppressed detected offer", async () => {
+    const { deps } = makeDeps({
+      loadConfigState: () => ({
+        status: "ok",
+        config: { locus: { kind: "wsl", distro: "Debian" } },
+      }),
+    });
+    const row = (await createSettingsComposition(deps).get()).projects[0];
+    expect(row?.locusProvenance.layer).toBe("repo");
+    expect(row?.locusOverridden).toBe(true);
+    expect(row?.locusProvenance.contributions.find((c) => c.layer === "detected")?.effective).toBe(
+      false,
+    );
+  });
+});
+
+describe("createSettingsComposition — reset / pin (#28)", () => {
+  it("resetRepoValue(visibility) clears the repo key AND drives the switch toward the newly effective value", async () => {
+    const { deps, store, calls } = statefulDeps({ visibility: "git-visible" });
+    const outcome = await createSettingsComposition(deps).resetRepoValue({
+      projectId: "p1",
+      repoPath: "/orbital",
+      key: "visibility",
+    });
+    expect(outcome.status).toBe("applied");
+    // The switch ran toward the effective (builtin) `local`, so `.gitignore` matches.
+    expect(calls.applyVisibility).toEqual(["local"]);
+    // The repo-layer entry is removed — the row now inherits.
+    expect(calls.clearRepoValue).toEqual(["visibility"]);
+    expect(store.visibility).toBeUndefined();
+    expect(outcome.project?.visibility).toBe("local");
+    expect(outcome.project?.visibilityProvenance.layer).toBe("builtin");
+  });
+
+  it("resetRepoValue(locus) clears the override back to auto-detection (setRepoLocus(null) behaviour)", async () => {
+    const { deps, store } = statefulDeps({ locus: { kind: "wsl", distro: "Debian" } });
+    const outcome = await createSettingsComposition(deps).resetRepoValue({
+      projectId: "p1",
+      repoPath: "/orbital",
+      key: "locus",
+    });
+    expect(outcome.status).toBe("applied");
+    expect(store.locus).toBeUndefined();
+    // `/orbital` is a host path, so detection wins after the reset.
+    expect(outcome.project?.locus).toEqual({ kind: "host" });
+    expect(outcome.project?.locusOverridden).toBe(false);
+    expect(outcome.project?.locusProvenance.layer).toBe("detected");
+  });
+
+  it("pinRepoValue(locus) writes the currently detected locus at the repo layer and the row flips to `repo`", async () => {
+    const { deps, store, calls } = statefulDeps(
+      {},
+      {
+        project: project({
+          path: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
+          openPath: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
+        }),
+      },
+    );
+    const outcome = await createSettingsComposition(deps).pinRepoValue({
+      projectId: "p1",
+      repoPath: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
+      key: "locus",
+    });
+    expect(outcome.status).toBe("applied");
+    expect(calls.applyLocus).toEqual([{ kind: "wsl", distro: "Ubuntu" }]);
+    expect(store.locus).toEqual({ kind: "wsl", distro: "Ubuntu" });
+    expect(outcome.project?.locusOverridden).toBe(true);
+    expect(outcome.project?.locusProvenance.layer).toBe("repo");
+  });
+
+  it("reset/pin return `unresolved` for a repoPath not in the project, writing nothing", async () => {
+    const { deps, calls } = statefulDeps({ visibility: "git-visible" });
+    const composition = createSettingsComposition(deps);
+    const reset = await composition.resetRepoValue({
+      projectId: "p1",
+      repoPath: "/not/this/repo",
+      key: "visibility",
+    });
+    const pin = await composition.pinRepoValue({
+      projectId: "p1",
+      repoPath: "/not/this/repo",
+      key: "locus",
+    });
+    expect(reset.status).toBe("unresolved");
+    expect(reset.project).toBeNull();
+    expect(pin.status).toBe("unresolved");
+    expect(calls.saved).toBe(0);
+  });
+
+  it("reset/pin REFUSE a malformed config (Rule 75), writing nothing", async () => {
+    const { deps, calls } = statefulDeps({}, { malformed: true });
+    const composition = createSettingsComposition(deps);
+    const reset = await composition.resetRepoValue({
+      projectId: "p1",
+      repoPath: "/orbital",
+      key: "visibility",
+    });
+    const pin = await composition.pinRepoValue({
+      projectId: "p1",
+      repoPath: "/orbital",
+      key: "locus",
+    });
+    expect(reset.status).toBe("malformed");
+    expect(reset.project).toBeNull();
+    expect(pin.status).toBe("malformed");
+    expect(calls.saved).toBe(0);
+  });
+});
 
 describe("createSettingsComposition — repo identity (git top level)", () => {
   it("keys a nested subdir on its git TOP LEVEL, not the raw open path", async () => {
