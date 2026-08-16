@@ -41,6 +41,7 @@ import type {
   ValidationReport,
 } from "@rennet/types";
 import { absentBudgetGrant } from "./invocation-budget";
+import type { TurnExecutorFacts } from "./harness-run-turn";
 
 /**
  * The offered manifest for the decomposition angle: the SUBSTANTIVE hunks only.
@@ -108,7 +109,13 @@ export function deterministicProposalBody(decomposition: Decomposition): Decompo
 
 /** The result of one decomposition turn: the emitted body, or a turn-level failure. */
 export type DecompositionTurnResult =
-  | { readonly status: "emitted"; readonly body: unknown; readonly tokens?: RspTokenUsage }
+  | {
+      readonly status: "emitted";
+      readonly body: unknown;
+      readonly tokens?: RspTokenUsage;
+      /** Executor provenance facts, when the executor reported them (#88). */
+      readonly executor?: TurnExecutorFacts;
+    }
   | { readonly status: "failed"; readonly message: string };
 
 /** The provenance a caller knows before the run; the rest is stamped per attempt. */
@@ -225,18 +232,22 @@ function buildProvenance(
   inputDigest: string,
   runId: string,
   tokens: RspTokenUsage,
+  executor?: TurnExecutorFacts,
 ): RspProvenance {
+  // Honest executor provenance (#88): when the turn reported what actually ran
+  // (a Codex utility-port turn → utility/light), stamp that; otherwise the seat's
+  // default (agentic/heavy for a Claude harness turn, deterministic for the floor).
   return {
     harness: seed.harness,
     harnessVersion: seed.harnessVersion,
     adapterVersion: seed.adapterVersion,
     model: seed.model,
     modelReportedBy: seed.modelReportedBy,
-    tier: route === "deterministic" ? "deterministic" : "heavy",
-    route,
+    tier: executor?.tier ?? (route === "deterministic" ? "deterministic" : "heavy"),
+    route: executor?.route ?? route,
     runId,
     inputDigest,
-    capability: seed.capability,
+    capability: executor?.capability ?? seed.capability,
     tokens,
     reportedUsd: null,
     derivedUsd: null,
@@ -333,6 +344,7 @@ export async function runDecompositionAngle(
       inputDigest,
       newRunId(),
       turn.tokens ?? ZERO_TOKENS,
+      turn.executor,
     );
     const document = buildEnvelope(turn.body, decomposition.patchsetId, provenance, mintDocId());
     const report = validateDocument({ document, patchset: patchsetRef, manifest });

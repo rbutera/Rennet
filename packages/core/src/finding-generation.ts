@@ -58,10 +58,17 @@ import type {
   ValidationReport,
 } from "@rennet/types";
 import { absentBudgetGrant } from "./invocation-budget";
+import type { TurnExecutorFacts } from "./harness-run-turn";
 
 /** The result of one finding turn: the emitted body, or a turn-level failure. */
 export type FindingTurnResult =
-  | { readonly status: "emitted"; readonly body: unknown; readonly tokens?: RspTokenUsage }
+  | {
+      readonly status: "emitted";
+      readonly body: unknown;
+      readonly tokens?: RspTokenUsage;
+      /** Executor provenance facts, when the executor reported them (#88). */
+      readonly executor?: TurnExecutorFacts;
+    }
   | { readonly status: "failed"; readonly message: string };
 
 /** The provenance a caller knows before the run; the rest is stamped per attempt. */
@@ -325,18 +332,22 @@ function buildProvenance(
   inputDigest: string,
   runId: string,
   tokens: RspTokenUsage,
+  executor?: TurnExecutorFacts,
 ): RspProvenance {
+  // Honest executor provenance (#88): the dual-model finding pass runs its Codex
+  // seat through the utility port; when that turn reports its facts (utility/light),
+  // stamp them instead of the agentic/heavy default a Claude harness turn earns.
   return {
     harness: seed.harness,
     harnessVersion: seed.harnessVersion,
     adapterVersion: seed.adapterVersion,
     model: seed.model,
     modelReportedBy: seed.modelReportedBy,
-    tier: "heavy",
-    route: "agentic",
+    tier: executor?.tier ?? "heavy",
+    route: executor?.route ?? "agentic",
     runId,
     inputDigest,
-    capability: seed.capability,
+    capability: executor?.capability ?? seed.capability,
     tokens,
     reportedUsd: null,
     derivedUsd: null,
@@ -462,7 +473,13 @@ export async function runFindingAngle(input: RunFindingAngleInput): Promise<RunF
     }
     const { findings, culled } = cullResult;
     const body: FindingBody = { findings };
-    const provenance = buildProvenance(seed, inputDigest, newRunId(), turn.tokens ?? ZERO_TOKENS);
+    const provenance = buildProvenance(
+      seed,
+      inputDigest,
+      newRunId(),
+      turn.tokens ?? ZERO_TOKENS,
+      turn.executor,
+    );
     const document = buildEnvelope(body, patchsetId, provenance, mintDocId());
     const report = validateDocument({ document, patchset: patchsetRef, manifest });
     if (report.admitted) {
