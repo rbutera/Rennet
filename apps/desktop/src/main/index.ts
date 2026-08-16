@@ -1944,7 +1944,7 @@ app.whenReady().then(async () => {
             // Clear the override back to auto-detection (drop the field entirely).
             const next: Record<string, unknown> = { ...current };
             delete next.locus;
-            return next as typeof current;
+            return next as unknown as typeof current;
           }
           return { ...current, locus };
         });
