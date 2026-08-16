@@ -787,6 +787,15 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setOpenSpecChange(undefined);
     setOpenSpecCoverage(undefined);
     setContextManifest(undefined);
+    // The collation draft is review-scoped: it accumulates ONLY from acts on THIS
+    // review (mark-read, per-anchor writes), and nothing reloads it per review. So
+    // without clearing it, opening review B after A keeps A's dispositions — B's
+    // destination frame, sign paper, and (the leak this closes) the composed handoff
+    // would all form against A's asks. Clear the draft and its ephemeral refine states
+    // so B starts empty. The handoff fingerprint keys on the draft, so this also fires
+    // the compose invalidation, dropping any bundle composed against A.
+    setDraft([]);
+    setRefineStates({});
     // The PR-body draft (#74) is review-scoped: a fresh review starts with an empty,
     // un-drafted composer so review A's account never lingers over review B. Bump the
     // draft generation so a turn still in flight for the PREVIOUS review is dropped on
@@ -1201,9 +1210,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // it never loops (pending/error/composed all fall through) and never re-fires a
   // failed compose on its own — a disposition change re-arms it. The fail-closed floor
   // means even a model failure yields a runnable `composed:false` bundle, not a dead
-  // end; a genuine transport failure surfaces as the honest error state.
-  // ponytail: no re-entry retry after a transport error — recompose is armed by a
-  // disposition change; add a retry control if the floor ever starts throwing in practice.
+  // end; a genuine transport failure surfaces as the honest error state. Leaving the
+  // surface resets that error to idle (the effect below), so a re-entry recomposes
+  // fresh rather than dead-ending on a stale transport error until a disposition edit.
   useEffect(() => {
     if (currentSurface.kind !== "handoff") return;
     if (handoffComposed !== undefined || handoffComposeState !== "idle") return;
@@ -1228,6 +1237,14 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       }
     })();
   }, [currentSurface.kind, handoffComposed, handoffComposeState, bridge]);
+  // A transport error is not sticky: on LEAVING the handoff surface, reset the compose
+  // state from `error` back to `idle` so the next entry recomposes (the entry effect
+  // above fires only from idle). Without this, a failed compose forces the reviewer to
+  // make an artificial disposition edit just to re-arm the surface — the C5 dead-end.
+  useEffect(() => {
+    if (currentSurface.kind === "handoff") return;
+    setHandoffComposeState((state) => (state === "error" ? "idle" : state));
+  }, [currentSurface.kind]);
   // Run the previewed bundle (issue #72). The stored bundle is passed UNTOUCHED —
   // same object, same digest — so MAIN verifies exactly what the paper showed; the
   // renderer never recomposes, edits, or substitutes it (the spec's "the run receives
@@ -1239,6 +1256,13 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     const composed = handoffComposed;
     if (!openReview || !composed) return;
     if (handoffRun.status === "pending") return; // re-entry guard
+    // Capture the compose generation at run start. Every invalidation (a disposition
+    // edit OR a review switch — both change the handoff fingerprint) bumps it and
+    // resets the run to idle. So a run resolving AFTER such a change is stale: its
+    // outcome belongs to a bundle/review that is no longer on screen, and applying it
+    // would render A's run result on B's paper. Drop it, exactly as the compose turn
+    // drops a superseded result.
+    const generation = handoffComposeGeneration.current;
     setHandoffRun({ status: "pending" });
     try {
       const outcome = await bridge.invoke("review.handoff.run", {
@@ -1246,8 +1270,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         reviewId: openReview.id,
         bundle: composed.bundle,
       });
+      if (handoffComposeGeneration.current !== generation) return; // superseded
       setHandoffRun(outcome);
     } catch (reason) {
+      if (handoffComposeGeneration.current !== generation) return; // superseded
       setHandoffRun({
         status: "failed",
         reason: reason instanceof Error ? reason.message : String(reason),
@@ -1610,35 +1636,47 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         />
       ) : null}
       {currentSurface.kind === "handoff" ? (
-        handoffComposed ? (
-          <HandoffPaper
-            bundle={handoffComposed.bundle}
-            runState={handoffRun}
-            onRun={() => void runHandoff()}
-            onBack={() => navigate(navigateBack())}
-          />
-        ) : (
-          <section
-            className="handoff-pending"
-            role="status"
-            data-compose-state={handoffComposeState}
-          >
-            <button
-              type="button"
-              className="handoff-paper-back"
-              onClick={() => navigate(navigateBack())}
+        // The handoff surface is a MODAL, mounted the same way PublishSheet is: a
+        // fixed, full-viewport backdrop (reusing `.publish-sheet-backdrop`) with
+        // dialog semantics, so the paper sits OVER the destination frame rather than
+        // in document flow beneath a still-active frame. (C4.)
+        <div
+          className="publish-sheet-backdrop"
+          role="dialog"
+          aria-modal="true"
+          aria-label="Handoff"
+        >
+          {handoffComposed ? (
+            <HandoffPaper
+              bundle={handoffComposed.bundle}
+              runState={handoffRun}
+              onRun={() => void runHandoff()}
+              onBack={() => navigate(navigateBack())}
+            />
+          ) : (
+            <section
+              className="handoff-pending"
+              role="status"
+              data-compose-state={handoffComposeState}
             >
-              Back
-            </button>
-            {handoffComposeState === "error" ? (
-              <p className="handoff-compose-error" role="alert">
-                Composing the handoff failed. Change a disposition to try again.
-              </p>
-            ) : (
-              <p className="handoff-composing">Composing the handoff…</p>
-            )}
-          </section>
-        )
+              <button
+                type="button"
+                className="handoff-paper-back"
+                onClick={() => navigate(navigateBack())}
+              >
+                Back
+              </button>
+              {handoffComposeState === "error" ? (
+                <p className="handoff-compose-error" role="alert">
+                  Composing the handoff failed. Go back and reopen, or change a disposition, to try
+                  again.
+                </p>
+              ) : (
+                <p className="handoff-composing">Composing the handoff…</p>
+              )}
+            </section>
+          )}
+        </div>
       ) : null}
     </div>
   );
