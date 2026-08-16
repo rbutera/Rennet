@@ -151,10 +151,11 @@ deterministic Repo Map refresh, GitHub review publication, and own-branch
 push-plus-PR submission are wired on current `main`.
 
 The handoff bundle, capable harness turn, checkpoints, successor capture,
-exact-evidence carry, and optional composition command also exist. They are not a
-renderer-to-renderer loop yet: no renderer call invokes the acting command, and
-the acting command still rebuilds the mechanical bundle instead of consuming the
-composer's exact output.
+exact-evidence carry, and model composer are wired end to end. The acting command
+runs the composer's exact output bound by its digest, refusing a tampered or stale
+bundle, and the renderer composes, previews, and invokes it from the own-branch
+destination, surfacing the run outcome truthfully. Consuming the successor
+patchset into a delta re-review is the next seam.
 
 The architecture still contains deliberate future seams: additional harnesses,
 remote/mobile clients, and public release machinery are not all live merely
