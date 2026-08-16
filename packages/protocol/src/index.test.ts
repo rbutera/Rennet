@@ -5,6 +5,9 @@ import {
   dispositionSchema,
   isCommandName,
   parseCommandInput,
+  parseCommandOutput,
+  settingsLayerSchema,
+  settingsProjectSchema,
 } from "./index";
 
 describe("command protocol", () => {
@@ -213,5 +216,110 @@ describe("delta account schema — hunk grain + handoff attribution round-trip (
     const parsed = deltaAccountSchema.parse(legacy);
     expect(parsed.beyondAskHunks).toBeUndefined();
     expect(parsed.asks[0]?.handoffTask).toBeUndefined();
+  });
+});
+
+describe("settings v1 — registry ladder wire shapes (#28)", () => {
+  const provenance = {
+    layer: "detected" as const,
+    contributions: [
+      { layer: "builtin" as const, value: "host", effective: false },
+      { layer: "detected" as const, value: "WSL · Ubuntu", effective: true },
+    ],
+  };
+  const repoProvenance = {
+    layer: "repo" as const,
+    contributions: [{ layer: "repo" as const, value: "local", effective: true }],
+  };
+  const project = {
+    projectId: "p1",
+    name: "orbital",
+    repoPath: "/orbital",
+    visibility: "local" as const,
+    visibilityProvenance: repoProvenance,
+    promoted: false,
+    promotedProvenance: repoProvenance,
+    locus: { kind: "wsl" as const, distro: "Ubuntu" },
+    locusOverridden: false,
+    locusProvenance: provenance,
+    configMalformed: false,
+  };
+
+  it("settingsLayerSchema accepts the new `detected` rung", () => {
+    expect(settingsLayerSchema.parse("detected")).toBe("detected");
+  });
+
+  it("settingsProjectSchema accepts the old row and normalizes locusProvenance", () => {
+    expect(settingsProjectSchema.parse(project).locusProvenance.layer).toBe("detected");
+    const withoutProvenance: Record<string, unknown> = { ...project };
+    delete withoutProvenance.locusProvenance;
+    expect(settingsProjectSchema.parse(withoutProvenance).locusProvenance).toEqual({
+      layer: "detected",
+      contributions: [{ layer: "detected", value: "WSL · Ubuntu", effective: true }],
+    });
+    expect(
+      settingsProjectSchema.parse({ ...withoutProvenance, locusOverridden: true }).locusProvenance,
+    ).toEqual({
+      layer: "repo",
+      contributions: [{ layer: "repo", value: "WSL · Ubuntu", effective: true }],
+    });
+    const withoutOverridden: Record<string, unknown> = { ...project };
+    delete withoutOverridden.locusOverridden;
+    expect(() => settingsProjectSchema.parse(withoutOverridden)).toThrow();
+  });
+
+  it("setRepoLocus outcome carries the freshly re-resolved row", () => {
+    const outcome = parseCommandOutput("settings.setRepoLocus", {
+      status: "applied",
+      locus: project.locus,
+      locusOverridden: true,
+      project: {
+        ...project,
+        locusOverridden: true,
+        locusProvenance: {
+          layer: "repo",
+          contributions: [{ layer: "repo", value: "WSL · Ubuntu", effective: true }],
+        },
+      },
+    });
+    expect(outcome.project?.locusProvenance.layer).toBe("repo");
+  });
+
+  it("resetRepoValue / pinRepoValue payloads parse for the two repo keys", () => {
+    for (const command of ["settings.resetRepoValue", "settings.pinRepoValue"] as const) {
+      expect(
+        parseCommandInput(command, { projectId: "p1", repoPath: "/o", key: "visibility" }).key,
+      ).toBe("visibility");
+      expect(
+        parseCommandInput(command, { projectId: "p1", repoPath: "/o", key: "locus" }).key,
+      ).toBe("locus");
+      // A non-repo-scoped key (e.g. scheme) is rejected — reset/pin are repo-scoped.
+      expect(() =>
+        parseCommandInput(command, { projectId: "p1", repoPath: "/o", key: "scheme" }),
+      ).toThrow();
+    }
+  });
+
+  it("reset/pin outcome parses with the re-resolved row", () => {
+    const outcome = parseCommandOutput("settings.resetRepoValue", {
+      status: "applied",
+      key: "visibility",
+      project,
+    });
+    expect(outcome.status).toBe("applied");
+    expect(outcome.project?.repoPath).toBe("/orbital");
+    // A refused/unresolved write carries a null row (nothing was written).
+    expect(
+      parseCommandOutput("settings.pinRepoValue", {
+        status: "malformed",
+        key: "locus",
+        project: null,
+      }).project,
+    ).toBeNull();
+  });
+
+  it("setAppearance accepts a null scheme (reset to the builtin) additively", () => {
+    expect(parseCommandInput("settings.setAppearance", { scheme: null }).scheme).toBeNull();
+    expect(parseCommandInput("settings.setAppearance", { scheme: "light" }).scheme).toBe("light");
   });
 });

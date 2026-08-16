@@ -4,6 +4,7 @@ import {
   detectLocus,
   escapePath,
   type Locus,
+  resolveLocus,
   resolvePromoted,
   resolveScheme,
   resolveVisibility,
@@ -16,6 +17,8 @@ import type {
   SetRepoVisibilityOutcome,
   SettingsGuidance,
   SettingsProject,
+  SettingsRepoValueKey,
+  SettingsRepoWriteOutcome,
   SettingsView,
 } from "@rennet/protocol";
 
@@ -67,6 +70,12 @@ export interface SettingsCompositionDeps {
    * auto-detection). A plain config write — never a gate (Rule Zero).
    */
   applyLocus(input: { repoKey: string; locus: Locus | null }): void;
+  /**
+   * Delete a repo-scoped config field, dropping the repo-layer entry so the value
+   * falls back down the ladder (Reset). A plain config write — never a gate. The
+   * adapter's Rule-75 guard refuses when the file is malformed.
+   */
+  clearRepoValue(input: { repoKey: string; field: SettingsRepoValueKey }): void;
 }
 
 interface RepoTarget {
@@ -81,7 +90,7 @@ interface RepoTarget {
 export interface SettingsComposition {
   get(): Promise<SettingsView>;
   guidance(projectId: string, repoPath: string): Promise<SettingsGuidance>;
-  setAppearance(scheme: SettingsView["scheme"]): SettingsView["scheme"];
+  setAppearance(scheme: SettingsView["scheme"] | null): SettingsView["scheme"];
   setRepoVisibility(input: {
     projectId: string;
     repoPath: string;
@@ -92,6 +101,16 @@ export interface SettingsComposition {
     repoPath: string;
     locus: Locus | null;
   }): Promise<SetRepoLocusOutcome>;
+  resetRepoValue(input: {
+    projectId: string;
+    repoPath: string;
+    key: SettingsRepoValueKey;
+  }): Promise<SettingsRepoWriteOutcome>;
+  pinRepoValue(input: {
+    projectId: string;
+    repoPath: string;
+    key: SettingsRepoValueKey;
+  }): Promise<SettingsRepoWriteOutcome>;
 }
 
 export function createSettingsComposition(deps: SettingsCompositionDeps): SettingsComposition {
@@ -135,6 +154,54 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
     return targets;
   };
 
+  // Resolve ONE repo's row from the LIVE store — the resolver's own answer for
+  // every setting, provenance and all. Reused by `get()` and by reset/pin, so a
+  // post-write re-resolution renders exactly what the engine now resolves (never a
+  // hand-recomputed account that could disagree). A malformed config never leaks
+  // its unparseable values: the row shows builtin/detected defaults and refuses edits.
+  const resolveRow = (
+    project: Project,
+    target: RepoTarget,
+    multiRepo: boolean,
+  ): SettingsProject => {
+    const configState = deps.loadConfigState(target.repoKey);
+    const configMalformed = configState.status === "malformed";
+    const config = configState.status === "ok" ? configState.config : null;
+    const visibility = resolveVisibility(config?.visibility);
+    const promoted = resolvePromoted(config?.promoted);
+    // Locus resolves THROUGH the ladder (detected < repo), not around it —
+    // `locusOverridden` is derived from the resolved layer, not a side-channel.
+    const locus = resolveLocus(detectLocus(target.repoPath), config?.locus);
+    return {
+      projectId: project.id,
+      name: multiRepo ? `${project.name} · ${basename(target.repoPath)}` : project.name,
+      repoPath: target.repoPath,
+      visibility: visibility.value,
+      visibilityProvenance: visibility.provenance,
+      promoted: promoted.value,
+      promotedProvenance: promoted.provenance,
+      locus: locus.value,
+      locusOverridden: locus.layer === "repo",
+      locusProvenance: locus.provenance,
+      configMalformed,
+    };
+  };
+
+  // Re-resolve the LIVE target for a repo-scoped write: the project must still exist
+  // and own `repoPath` (a checkout may have gone). Returns the target + project +
+  // multiRepo flag so a row can be re-resolved after the write.
+  const liveTarget = async (
+    projectId: string,
+    repoPath: string,
+  ): Promise<{ project: Project; target: RepoTarget; multiRepo: boolean } | null> => {
+    const project = deps.listProjects().find((entry) => entry.id === projectId);
+    if (!project) return null;
+    const targets = await targetsFor(project);
+    const target = targets.find((entry) => entry.repoPath === repoPath);
+    if (!target) return null;
+    return { project, target, multiRepo: targets.length > 1 };
+  };
+
   return {
     get: async (): Promise<SettingsView> => {
       const schemeState = deps.readGlobalState();
@@ -147,27 +214,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         for (const target of targets) {
           if (emittedRepoPaths.has(target.repoPath)) continue;
           emittedRepoPaths.add(target.repoPath);
-          const configState = deps.loadConfigState(target.repoKey);
-          const configMalformed = configState.status === "malformed";
-          // A malformed config never leaks its (unparseable) values into the
-          // resolver — the row shows builtin defaults and refuses edits.
-          const config = configState.status === "ok" ? configState.config : null;
-          const visibility = resolveVisibility(config?.visibility);
-          const promoted = resolvePromoted(config?.promoted);
-          // A malformed config never leaks a locus override; the row auto-detects.
-          const locus = config?.locus ?? detectLocus(target.repoPath);
-          projects.push({
-            projectId: project.id,
-            name: multiRepo ? `${project.name} · ${basename(target.repoPath)}` : project.name,
-            repoPath: target.repoPath,
-            visibility: visibility.value,
-            visibilityProvenance: visibility.provenance,
-            promoted: promoted.value,
-            promotedProvenance: promoted.provenance,
-            locus,
-            locusOverridden: config?.locus !== undefined,
-            configMalformed,
-          });
+          projects.push(resolveRow(project, target, multiRepo));
         }
       }
       return {
@@ -201,14 +248,22 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       };
     },
 
-    setAppearance: (scheme: SettingsView["scheme"]): SettingsView["scheme"] => {
+    setAppearance: (scheme: SettingsView["scheme"] | null): SettingsView["scheme"] => {
       // `updateGlobal` REFUSES (throws) when the config is malformed, so an edit can
-      // never overwrite unparseable bytes; the caller surfaces the error.
-      deps.updateGlobal((current) => ({
-        ...current,
-        appearance: { ...current.appearance, scheme },
-      }));
-      return scheme;
+      // never overwrite unparseable bytes; the caller surfaces the error. A `null`
+      // scheme RESETS to the builtin — drop the stored entry so it falls back down
+      // the ladder (a plain write, Rule Zero — the global-layer reset).
+      deps.updateGlobal((current) => {
+        if (scheme === null) {
+          const appearance = { ...current.appearance };
+          delete appearance.scheme;
+          return { ...current, appearance };
+        }
+        return { ...current, appearance: { ...current.appearance, scheme } };
+      });
+      // A set returns the value just written; a reset re-resolves the effective
+      // value the cleared ladder now yields (the builtin).
+      return scheme ?? resolveScheme(deps.readGlobalState().config).value;
     },
 
     setRepoVisibility: async (input: {
@@ -258,26 +313,99 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       repoPath: string;
       locus: Locus | null;
     }): Promise<SetRepoLocusOutcome> => {
-      const project = deps.listProjects().find((entry) => entry.id === input.projectId);
-      const target = project
-        ? (await targetsFor(project)).find((entry) => entry.repoPath === input.repoPath)
-        : undefined;
-      if (!target) {
-        return { status: "unresolved", locus: detectLocus(input.repoPath), locusOverridden: false };
-      }
-      // Refuse a malformed config before any write (Rule 75), mirroring visibility.
-      if (deps.loadConfigState(target.repoKey).status === "malformed") {
+      const live = await liveTarget(input.projectId, input.repoPath);
+      if (!live) {
+        const locus = resolveLocus(detectLocus(input.repoPath), undefined);
         return {
-          status: "malformed",
-          locus: detectLocus(target.repoPath),
+          status: "unresolved",
+          locus: locus.value,
           locusOverridden: false,
+          project: null,
         };
       }
-      deps.applyLocus({ repoKey: target.repoKey, locus: input.locus });
+      // Refuse a malformed config before any write (Rule 75), mirroring visibility.
+      if (deps.loadConfigState(live.target.repoKey).status === "malformed") {
+        const locus = resolveLocus(detectLocus(live.target.repoPath), undefined);
+        return {
+          status: "malformed",
+          locus: locus.value,
+          locusOverridden: false,
+          project: null,
+        };
+      }
+      deps.applyLocus({ repoKey: live.target.repoKey, locus: input.locus });
+      const project = resolveRow(live.project, live.target, live.multiRepo);
       return {
         status: "applied",
-        locus: input.locus ?? detectLocus(target.repoPath),
-        locusOverridden: input.locus !== null,
+        locus: project.locus,
+        locusOverridden: project.locusOverridden,
+        project,
+      };
+    },
+
+    // Reset a repo-scoped value to inheritance: drop the repo-layer entry so the
+    // value falls back down the ladder. For VISIBILITY this also re-applies the
+    // gitignore switch toward the newly effective value FIRST, so `.rennet/.gitignore`
+    // matches the value the row will now resolve to — a reset that changed the
+    // effective value without applying it would be a lie in the UI (design Dec. 4).
+    // Both mirror `setRepoVisibility`'s live re-resolution and Rule-75 refusal.
+    resetRepoValue: async (input: {
+      projectId: string;
+      repoPath: string;
+      key: SettingsRepoValueKey;
+    }): Promise<SettingsRepoWriteOutcome> => {
+      const live = await liveTarget(input.projectId, input.repoPath);
+      if (!live) return { status: "unresolved", key: input.key, project: null };
+      if (deps.loadConfigState(live.target.repoKey).status === "malformed") {
+        return { status: "malformed", key: input.key, project: null };
+      }
+      if (input.key === "visibility") {
+        // The effective value once the repo entry is gone (builtin `local` today).
+        const effective = resolveVisibility(undefined).value;
+        await deps.applyVisibility({
+          repoKey: live.target.repoKey,
+          repoRoot: live.target.repoRoot,
+          target: effective,
+        });
+      }
+      deps.clearRepoValue({ repoKey: live.target.repoKey, field: input.key });
+      return {
+        status: "applied",
+        key: input.key,
+        project: resolveRow(live.project, live.target, live.multiRepo),
+      };
+    },
+
+    // Pin a repo-scoped value at the repo layer: write the CURRENT effective value
+    // explicitly, so a change in a lower layer or in detection no longer moves it
+    // (chiefly: freeze an auto-detected locus). Set-to-current-effective, so it
+    // reuses the SAME setters the explicit controls use — no new write path.
+    pinRepoValue: async (input: {
+      projectId: string;
+      repoPath: string;
+      key: SettingsRepoValueKey;
+    }): Promise<SettingsRepoWriteOutcome> => {
+      const live = await liveTarget(input.projectId, input.repoPath);
+      if (!live) return { status: "unresolved", key: input.key, project: null };
+      if (deps.loadConfigState(live.target.repoKey).status === "malformed") {
+        return { status: "malformed", key: input.key, project: null };
+      }
+      // Resolve the value at command time (not the renderer's snapshot), then write
+      // it at the repo layer through the setter that owns that key's side effects.
+      const current = resolveRow(live.project, live.target, live.multiRepo);
+      if (input.key === "visibility") {
+        await deps.applyVisibility({
+          repoKey: live.target.repoKey,
+          repoRoot: live.target.repoRoot,
+          target: current.visibility,
+        });
+      } else {
+        deps.applyLocus({ repoKey: live.target.repoKey, locus: current.locus });
+      }
+      return {
+        status: "applied",
+        key: input.key,
+        project: resolveRow(live.project, live.target, live.multiRepo),
       };
     },
   };

@@ -40,6 +40,13 @@ const view: SettingsView = {
       },
       locus: { kind: "host" },
       locusOverridden: false,
+      locusProvenance: {
+        layer: "detected",
+        contributions: [
+          { layer: "builtin", value: "host", effective: false },
+          { layer: "detected", value: "host", effective: true },
+        ],
+      },
       configMalformed: false,
     },
   ],
@@ -62,11 +69,12 @@ function fakeBridge(overrides: Partial<Record<string, unknown>> = {}): {
   calls: { name: string; input: unknown }[];
 } {
   const calls: { name: string; input: unknown }[] = [];
+  const settingsView = (overrides["settings.get"] as SettingsView) ?? view;
   const invoke = async (name: string, input: unknown): Promise<unknown> => {
     calls.push({ name, input });
     switch (name) {
       case "settings.get":
-        return (overrides["settings.get"] as SettingsView) ?? view;
+        return settingsView;
       case "settings.guidance":
         return (overrides["settings.guidance"] as SettingsGuidance) ?? guidance;
       case "settings.setAppearance": {
@@ -101,10 +109,73 @@ function fakeBridge(overrides: Partial<Record<string, unknown>> = {}): {
         const locus = (
           input as { locus: { kind: "host" } | { kind: "wsl"; distro: string } | null }
         ).locus;
+        const current = settingsView.projects[0];
+        if (!current) throw new Error("settings fixture requires a project row");
+        const resolvedLocus = locus ?? current.locus;
+        const project = locus
+          ? {
+              ...current,
+              locus: resolvedLocus,
+              locusOverridden: true,
+              locusProvenance: {
+                layer: "repo" as const,
+                contributions: [
+                  ...current.locusProvenance.contributions
+                    .filter((contribution) => contribution.layer !== "repo")
+                    .map((contribution) => ({ ...contribution, effective: false })),
+                  {
+                    layer: "repo" as const,
+                    value: resolvedLocus.kind === "host" ? "host" : `WSL · ${resolvedLocus.distro}`,
+                    effective: true,
+                  },
+                ],
+              },
+            }
+          : { ...current, locusOverridden: false };
         return {
           status: "applied",
-          locus: locus ?? { kind: "host" },
+          locus: resolvedLocus,
           locusOverridden: locus !== null,
+          project,
+        };
+      }
+      case "settings.resetRepoValue": {
+        if (overrides["settings.resetRepoValue"]) return overrides["settings.resetRepoValue"];
+        const key = (input as { key: "visibility" | "locus" }).key;
+        // A reset re-resolves the row to its inherited value (builtin/detected).
+        return {
+          status: "applied",
+          key,
+          project: {
+            ...view.projects[0],
+            visibility: "local",
+            visibilityProvenance: {
+              layer: "builtin",
+              contributions: [{ layer: "builtin", value: "local", effective: true }],
+            },
+          },
+        };
+      }
+      case "settings.pinRepoValue": {
+        if (overrides["settings.pinRepoValue"]) return overrides["settings.pinRepoValue"];
+        const key = (input as { key: "visibility" | "locus" }).key;
+        // A pin freezes the current effective value at the repo layer.
+        return {
+          status: "applied",
+          key,
+          project: {
+            ...view.projects[0],
+            locus: { kind: "host" },
+            locusOverridden: true,
+            locusProvenance: {
+              layer: "repo",
+              contributions: [
+                { layer: "builtin", value: "host", effective: false },
+                { layer: "detected", value: "host", effective: false },
+                { layer: "repo", value: "host", effective: true },
+              ],
+            },
+          },
         };
       }
       default:
@@ -228,5 +299,163 @@ describe("SettingsScreen", () => {
     expect(container.querySelector(".settings-guidance-empty")?.textContent).toContain(
       "built-in checklist",
     );
+  });
+});
+
+describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
+  // A repo-set variant: visibility explicitly set at the repo layer, so its row
+  // offers Reset (not Pin). Locus stays detected, so ITS row offers Pin.
+  const repoSetView: SettingsView = {
+    ...view,
+    projects: view.projects.map((p) => ({
+      ...p,
+      visibility: "git-visible",
+      visibilityProvenance: {
+        layer: "repo",
+        contributions: [
+          { layer: "builtin", value: "local", effective: false },
+          { layer: "repo", value: "git-visible", effective: true },
+        ],
+      },
+    })),
+  };
+
+  async function openRepoTab(bridge: RennetBridge) {
+    const mounted = mount(<SettingsScreen bridge={bridge} onBack={vi.fn()} />);
+    await waitFor(() => expect(mounted.container.querySelector(".settings-tab")).not.toBeNull());
+    fireEvent.click(mounted.getByRole("tab", { name: "Repo" }));
+    await waitFor(() => expect(mounted.container.querySelector(".settings-seg")).not.toBeNull());
+    return mounted;
+  }
+
+  it("Explain: the locus row renders its resolver contributions", async () => {
+    const { bridge } = fakeBridge();
+    const { container } = await openRepoTab(bridge);
+    // The locus row's provenance lists the ladder contributions (builtin + detected).
+    const items = [...container.querySelectorAll(".settings-prov-item")].map((n) => n.textContent);
+    expect(items.some((t) => t?.includes("detected"))).toBe(true);
+    expect(items.some((t) => t?.includes("builtin"))).toBe(true);
+    const locusLabel = [...container.querySelectorAll(".settings-k")].find(
+      (node) => node.textContent === "Execution locus",
+    );
+    expect(locusLabel?.closest(".settings-row")?.querySelector(".settings-prov")?.textContent).toBe(
+      "detected",
+    );
+  });
+
+  it("an explicit Host edit replaces the detected row with repo-effective provenance", async () => {
+    const detectedWslView: SettingsView = {
+      ...view,
+      projects: view.projects.map((project) => ({
+        ...project,
+        repoPath: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
+        locus: { kind: "wsl", distro: "Ubuntu" },
+        locusProvenance: {
+          layer: "detected",
+          contributions: [
+            { layer: "builtin", value: "host", effective: false },
+            { layer: "detected", value: "WSL · Ubuntu", effective: true },
+          ],
+        },
+      })),
+    };
+    const { bridge } = fakeBridge({ "settings.get": detectedWslView });
+    const { container, getByRole } = await openRepoTab(bridge);
+
+    fireEvent.click(getByRole("button", { name: "Host" }));
+
+    const locusLabel = [...container.querySelectorAll(".settings-k")].find(
+      (node) => node.textContent === "Execution locus",
+    );
+    const locusRow = locusLabel?.closest(".settings-row");
+    await waitFor(() =>
+      expect(locusRow?.querySelector(".settings-prov-item.on")?.textContent).toBe("repo: host"),
+    );
+    expect(locusRow?.querySelector(".settings-reset")).not.toBeNull();
+    expect(locusRow?.querySelector(".settings-pin")).toBeNull();
+  });
+
+  it("an inheriting/detected row shows Pin and NOT Reset", async () => {
+    const { bridge } = fakeBridge();
+    const { container } = await openRepoTab(bridge);
+    // visibility inherits (builtin) and locus is detected → both offer Pin, none Reset.
+    expect(container.querySelector(".settings-pin")).not.toBeNull();
+    expect(container.querySelector(".settings-reset")).toBeNull();
+  });
+
+  it("a repo-set row shows Reset and NOT Pin for that value", async () => {
+    const { bridge } = fakeBridge({ "settings.get": repoSetView });
+    const { container } = await openRepoTab(bridge);
+    // The visibility row is repo-set → it offers Reset.
+    expect(container.querySelector(".settings-reset")).not.toBeNull();
+  });
+
+  it("clicking Reset invokes settings.resetRepoValue and re-renders from the returned row", async () => {
+    const { bridge, calls } = fakeBridge({ "settings.get": repoSetView });
+    const { container, getByRole } = await openRepoTab(bridge);
+    fireEvent.click(getByRole("button", { name: /reset/i }));
+    await waitFor(() => expect(calls.some((c) => c.name === "settings.resetRepoValue")).toBe(true));
+    const call = calls.find((c) => c.name === "settings.resetRepoValue");
+    const input = call?.input as { key: string };
+    expect(input.key).toBe("visibility");
+    // The row re-renders from the outcome: visibility now inherits (Pin reappears).
+    await waitFor(() => expect(container.querySelector(".settings-pin")).not.toBeNull());
+  });
+
+  it("clicking Pin on a detected locus invokes settings.pinRepoValue with key locus", async () => {
+    const { bridge, calls } = fakeBridge();
+    const { getByRole } = await openRepoTab(bridge);
+    // The locus row's Pin (there are two Pins — visibility + locus; pick locus by title).
+    fireEvent.click(getByRole("button", { name: /pin the execution locus/i }));
+    await waitFor(() => expect(calls.some((c) => c.name === "settings.pinRepoValue")).toBe(true));
+    const call = calls.find((c) => c.name === "settings.pinRepoValue");
+    const input = call?.input as { key: string };
+    expect(input.key).toBe("locus");
+  });
+
+  it("no confirmation ceremony: Reset completes in a single interaction, no dialog appears", async () => {
+    const { bridge, calls } = fakeBridge({ "settings.get": repoSetView });
+    const { baseElement, getByRole } = await openRepoTab(bridge);
+    fireEvent.click(getByRole("button", { name: /reset/i }));
+    // The write fired on the FIRST click — no intermediate confirm step.
+    await waitFor(() => expect(calls.some((c) => c.name === "settings.resetRepoValue")).toBe(true));
+    expect(baseElement.querySelector('[role="dialog"]')).toBeNull();
+    expect(baseElement.querySelector(".settings-confirm")).toBeNull();
+  });
+
+  it("a malformed repo row disables Reset/Pin and never invokes them", async () => {
+    const malformedView: SettingsView = {
+      ...repoSetView,
+      projects: repoSetView.projects.map((p) => ({ ...p, configMalformed: true })),
+    };
+    const { bridge, calls } = fakeBridge({ "settings.get": malformedView });
+    const { container } = await openRepoTab(bridge);
+    const control = container.querySelector<HTMLButtonElement>(".settings-reset, .settings-pin");
+    expect(control?.disabled).toBe(true);
+    if (control) fireEvent.click(control);
+    expect(calls.some((c) => c.name === "settings.resetRepoValue")).toBe(false);
+    expect(calls.some((c) => c.name === "settings.pinRepoValue")).toBe(false);
+  });
+
+  it("the global appearance offers a reset when it is set, clearing back to the builtin", async () => {
+    const globalSetView: SettingsView = {
+      ...view,
+      scheme: "light",
+      schemeProvenance: {
+        layer: "global",
+        contributions: [
+          { layer: "builtin", value: "system", effective: false },
+          { layer: "global", value: "light", effective: true },
+        ],
+      },
+    };
+    const { bridge, calls } = fakeBridge({ "settings.get": globalSetView });
+    const { container, getByRole } = mount(<SettingsScreen bridge={bridge} onBack={vi.fn()} />);
+    await waitFor(() => expect(container.querySelector(".settings-seg")).not.toBeNull());
+    fireEvent.click(getByRole("button", { name: /reset appearance/i }));
+    await waitFor(() => expect(calls.some((c) => c.name === "settings.setAppearance")).toBe(true));
+    const call = calls.find((c) => c.name === "settings.setAppearance");
+    const input = call?.input as { scheme: unknown };
+    expect(input.scheme).toBeNull();
   });
 });

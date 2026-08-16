@@ -98,6 +98,7 @@ import {
   recordSeatSend,
   resolveAssignment,
   resolveDualSeat,
+  resolveLocus,
   reviewInvocationCeiling,
   runCoverageMapping,
   runDecisionAngle,
@@ -240,7 +241,7 @@ function locusForRepo(repoRoot: string): Locus {
   } catch {
     key = escapePath(repoRoot);
   }
-  return liveSnapshotStore.loadConfig(key)?.locus ?? detectLocus(repoRoot);
+  return resolveLocus(detectLocus(repoRoot), liveSnapshotStore.loadConfig(key)?.locus).value;
 }
 
 const gitForRepo = gitForRepoFactory(locusForRepo);
@@ -1983,6 +1984,15 @@ app.whenReady().then(async () => {
             return next as unknown as typeof current;
           }
           return { ...current, locus };
+        });
+      },
+      clearRepoValue: ({ repoKey, field }) => {
+        // Drop a repo-scoped field so the value falls back down the ladder (Reset).
+        // `updateConfig` refuses a malformed file (Rule 75), so nothing is clobbered.
+        snapshotStore.updateConfig(repoKey, (current) => {
+          const next: Record<string, unknown> = { ...current };
+          delete next[field];
+          return next as unknown as typeof current;
         });
       },
     }),

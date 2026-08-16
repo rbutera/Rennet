@@ -2718,9 +2718,10 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
         repoPath: string;
         locus: { kind: "host" } | { kind: "wsl"; distro: string } | null;
       }) => ({
-        status: "applied" as const,
+        status: "unresolved" as const,
         locus: input.locus ?? { kind: "host" as const },
-        locusOverridden: input.locus !== null,
+        locusOverridden: false,
+        project: null,
       }),
     );
     const guidance = vi.fn(async () => ({ rules: [], reason: "absent" as const, dropped: 0 }));
@@ -2741,6 +2742,16 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
       setAppearance,
       setRepoVisibility,
       setRepoLocus,
+      resetRepoValue: vi.fn(async (input: { key: "visibility" | "locus" }) => ({
+        status: "applied" as const,
+        key: input.key,
+        project: null,
+      })),
+      pinRepoValue: vi.fn(async (input: { key: "visibility" | "locus" }) => ({
+        status: "applied" as const,
+        key: input.key,
+        project: null,
+      })),
     };
     const { dispatch } = harness(undefined, { settings });
 
