@@ -25,5 +25,5 @@
 ## 4. Spec promotion, gate, reconcile
 
 - [x] 4.1 Land `specs/handoff-bundle-composition/spec.md` as the capability spec of record; reference (do NOT delta) `model-council`'s existing handoff-bundle routing entry.
-- [ ] 4.2 Run the full gate (`NX_DAEMON=false pnpm check` or the repo's canonical target); confirm exit 0 AND `Successfully ran target`; reconcile the test total against the baseline (verify the number, do not trust it). Commit per-group with descriptive messages, push the branch, report the tip sha, the counted whole-branch diff, the gate total, and anything scoped out (#73 traceMap consumption) named specifically.
-- [ ] 4.3 Do NOT self-review; the orchestrator owns the gate. On merge, archive this OpenSpec change on the real outcome.
+- [x] 4.2 Run the full gate (`NX_DAEMON=false pnpm check` or the repo's canonical target); confirm exit 0 AND `Successfully ran target`; reconcile the test total against the baseline (verify the number, do not trust it). Commit per-group with descriptive messages, push the branch, report the tip sha, the counted whole-branch diff, the gate total, and anything scoped out (#73 traceMap consumption) named specifically.
+- [x] 4.3 Do NOT self-review; the orchestrator owns the gate. On merge, archive this OpenSpec change on the real outcome.
