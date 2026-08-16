@@ -237,4 +237,23 @@ describe("createClaudeHarness", () => {
     expect(discovery.chosen).toBeNull();
     expect(discovery.health.state).toBe("unavailable");
   });
+
+  it("points the SDK at a WSL launcher (not the distro binary) for a WSL locus", async () => {
+    const launcherInputs: { distro: string; distroClaudePath: string }[] = [];
+    const { adapter, discovery } = await createClaudeHarness({
+      locus: { kind: "wsl", distro: "Ubuntu" },
+      discoveryDeps: discoveryDeps({ locus: { kind: "wsl", distro: "Ubuntu" } }),
+      loadQuery: fakeLoadQuery([]),
+      makeWslLauncher: (input) => {
+        launcherInputs.push(input);
+        return `C:\\launchers\\claude-${input.distro}.cmd`;
+      },
+    });
+    // The distro binary was discovered, but pathToClaudeCodeExecutable is the launcher.
+    expect(discovery.chosen?.path).toBe("/home/rai/.local/bin/claude");
+    expect(adapter?.descriptor.binaryPath).toBe("C:\\launchers\\claude-Ubuntu.cmd");
+    expect(launcherInputs).toEqual([
+      { distro: "Ubuntu", distroClaudePath: "/home/rai/.local/bin/claude" },
+    ]);
+  });
 });

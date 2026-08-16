@@ -250,10 +250,19 @@ const watcher = new RepoWatcher();
 // memoized: discovery spawns the user's login shell, so it runs on first use
 // (the first `review.canvases`) rather than at launch, and passes the full
 // process env so the spawned harness inherits PATH/HOME.
-let claudeHarness: Promise<ClaudeHarnessResult> | null = null;
-function getClaudeHarness(): Promise<ClaudeHarnessResult> {
-  claudeHarness ??= createClaudeHarness({ env: process.env });
-  return claudeHarness;
+// Memoized PER LOCUS (add-windows-support): the host harness is shared as before; a
+// WSL-locus project gets a harness that discovers and runs the distro's own `claude`
+// through a generated launcher (createClaudeHarness), with capability identical to
+// native. Keyed by distro so each distro is composed at most once.
+const claudeHarnesses = new Map<string, Promise<ClaudeHarnessResult>>();
+function getClaudeHarness(locus: Locus = HOST_LOCUS): Promise<ClaudeHarnessResult> {
+  const key = locus.kind === "wsl" ? `wsl:${locus.distro}` : "host";
+  let harness = claudeHarnesses.get(key);
+  if (!harness) {
+    harness = createClaudeHarness({ env: process.env, locus });
+    claudeHarnesses.set(key, harness);
+  }
+  return harness;
 }
 
 // The Codex seat, wired to a RESOLVED ABSOLUTE `codex` binary (#66, #69, R39;
@@ -1582,7 +1591,7 @@ app.whenReady().then(async () => {
           filesTouched: [],
         };
       }
-      const { adapter } = await getClaudeHarness();
+      const { adapter } = await getClaudeHarness(locus);
       if (!adapter) {
         return {
           status: "failed",
@@ -1601,9 +1610,13 @@ app.whenReady().then(async () => {
     chooseRepository,
     openPullRequest,
     startWatching: (root: string) =>
-      watcher.start(root, () => {
-        repositoryDirty = true;
-      }),
+      watcher.start(
+        root,
+        () => {
+          repositoryDirty = true;
+        },
+        locusForRepo(root),
+      ),
     isRepositoryDirty: () => repositoryDirty,
     setRepositoryDirty: (value: boolean) => {
       repositoryDirty = value;

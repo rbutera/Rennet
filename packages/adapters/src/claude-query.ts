@@ -1,4 +1,5 @@
 import type { Query, Options as SdkOptions } from "@anthropic-ai/claude-agent-sdk";
+import { HOST_LOCUS, type Locus } from "@rennet/core";
 import type { ClaudeQueryArgs, ClaudeQueryFn, ClaudeQueryOptions } from "./claude-adapter";
 import { CLAUDE_TESTED_RANGE, ClaudeAdapter } from "./claude-adapter";
 import {
@@ -7,7 +8,9 @@ import {
   defaultDiscoveryDeps,
   discoverClaude,
   type VersionRange,
+  wslDiscoveryDeps,
 } from "./harness-discovery";
+import { generateWslClaudeLauncher } from "./wsl-launcher";
 
 /**
  * The composition root for the Claude harness transport.
@@ -104,7 +107,7 @@ export function createClaudeQueryFn(loadQuery: LoadClaudeQuery = loadRealQuery):
 }
 
 export interface ClaudeHarnessDeps {
-  /** Discovery effects; defaults to the real login-shell/filesystem/exec effects. */
+  /** Discovery effects; defaults to the locus-appropriate real effects. */
   readonly discoveryDeps?: DiscoveryDeps;
   /** Version floor/ceiling the adapter has been exercised against. */
   readonly range?: VersionRange;
@@ -112,6 +115,18 @@ export interface ClaudeHarnessDeps {
   readonly loadQuery?: LoadClaudeQuery;
   /** Base environment the spawned `claude` inherits (the SDK replaces the child env). */
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /**
+   * The project's execution locus (add-windows-support). A WSL locus discovers the
+   * distro's `claude` and runs it through a generated `wsl.exe` launcher pointed at
+   * by `pathToClaudeCodeExecutable`, with capability identical to native. Defaults to
+   * the host.
+   */
+  readonly locus?: Locus;
+  /**
+   * Build the launcher path for a WSL locus. Injectable so a test can avoid touching
+   * the filesystem; defaults to writing a real `.cmd` launcher under the OS temp.
+   */
+  readonly makeWslLauncher?: (input: { distro: string; distroClaudePath: string }) => string;
 }
 
 export interface ClaudeHarnessResult {
@@ -131,12 +146,27 @@ export async function createClaudeHarness(
   deps: ClaudeHarnessDeps = {},
 ): Promise<ClaudeHarnessResult> {
   const range = deps.range ?? CLAUDE_TESTED_RANGE;
-  const discovery = await discoverClaude(deps.discoveryDeps ?? defaultDiscoveryDeps(), range);
+  const locus = deps.locus ?? HOST_LOCUS;
+  const discoveryDeps =
+    deps.discoveryDeps ??
+    (locus.kind === "wsl" ? await wslDiscoveryDeps(locus.distro) : defaultDiscoveryDeps());
+  const discovery = await discoverClaude(discoveryDeps, range);
   if (!discovery.chosen) {
     return { adapter: null, discovery };
   }
+  // For a WSL locus the SDK cannot spawn the distro-resident ELF `claude` directly, so
+  // it targets a generated launcher that execs it inside the distro (spike 1.2). The
+  // adapter's acting capability is unchanged — the launcher only relocates WHERE the
+  // real `claude` runs, never WHAT it may do (Rule Zero: no capability reduction).
+  const binaryPath =
+    locus.kind === "wsl"
+      ? (deps.makeWslLauncher ?? generateWslClaudeLauncher)({
+          distro: locus.distro,
+          distroClaudePath: discovery.chosen.path,
+        })
+      : discovery.chosen.path;
   const adapter = new ClaudeAdapter({
-    binaryPath: discovery.chosen.path,
+    binaryPath,
     version: discovery.chosen.version,
     queryFn: createClaudeQueryFn(deps.loadQuery),
     ...(deps.env ? { env: deps.env } : {}),

@@ -402,3 +402,8 @@ export {
   type RemoteIdentity,
   resolveForgeRemote,
 } from "./worktree-discovery";
+export {
+  generateWslClaudeLauncher,
+  type WslClaudeLauncherInput,
+  wslClaudeLauncherScript,
+} from "./wsl-launcher";
