@@ -72,6 +72,7 @@ const manifest: ContextManifest = {
 
 function bridgeWith(contextManifest?: ContextManifest): RennetBridge {
   const invoke = async (name: string): Promise<unknown> => {
+    if (name === "app.bootstrap") return { review, repositoryPresent: true };
     if (name === "review.canvases") {
       return {
         canvases: demoCanvases(),
@@ -118,7 +119,7 @@ describe("RennetApp — the context-composition inspector mount (#30)", () => {
     };
     const state = { current: review };
     const invoke = async (name: string, input: unknown): Promise<unknown> => {
-      if (name === "app.bootstrap") return { review };
+      if (name === "app.bootstrap") return { review, repositoryPresent: true };
       if (name === "review.checkFreshness") return { review: state.current };
       if (name === "review.canvases") {
         const reviewId = (input as { reviewId: string }).reviewId;

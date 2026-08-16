@@ -39,7 +39,7 @@ function fakeBridge(scheme: "dark" | "light" | "system"): RennetBridge {
   const invoke = async (name: string): Promise<unknown> => {
     switch (name) {
       case "app.bootstrap":
-        return { review: null };
+        return { review: null, repositoryPresent: false };
       case "settings.get":
         return {
           scheme,

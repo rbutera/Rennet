@@ -111,6 +111,7 @@ function harness() {
   const publishCalls: CommandInput<"publish.review">[] = [];
   const reattach = { called: 0 };
   const invoke = async (name: string, _input: unknown): Promise<unknown> => {
+    if (name === "app.bootstrap") return { review, repositoryPresent: true };
     if (name === "review.canvases") return { canvases: demoCanvases(), elementDiffs: {} };
     // The REAL re-attach seam: the conversation host invokes this on mount, and this
     // returns exactly what the store would — the persisted private conversation. Counting

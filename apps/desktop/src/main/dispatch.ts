@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import {
   type AskAnswer,
   askReview,
@@ -108,6 +109,13 @@ export interface DispatchDeps {
   ): Promise<Review>;
   /** Begin watching a captured repository root for on-disk changes. */
   startWatching(root: string): void;
+  /**
+   * Whether a persisted review's recorded repository root still exists on disk
+   * (issue #324). The one fact only main can cheaply provide for load/bootstrap, so
+   * the renderer shows honest missing-context status and skips freshness. Injectable
+   * for tests; defaults to `node:fs` existsSync.
+   */
+  repositoryExists?(root: string): boolean;
   isRepositoryDirty(): boolean;
   setRepositoryDirty(dirty: boolean): void;
   /**
@@ -499,6 +507,13 @@ export function createDispatch(
     if (!allowedRoots.has(repositoryPath)) throw new Error("Repository access was not granted");
   }
 
+  function assertReviewRepository(review: Review, repositoryPath: string): void {
+    if (repositoryPath !== review.repositoryRoot) {
+      throw new Error("Repository path does not match this review");
+    }
+    assertAllowedRepository(review.repositoryRoot);
+  }
+
   /**
    * The egress target-binding gate (issue #21, most-permissive-fault): a real post is
    * legitimate ONLY against the review's OWN pull request. `requestConsent` and the
@@ -519,11 +534,20 @@ export function createDispatch(
     }
   }
 
-  /** The latest review, asserted to be the one addressed (freshness/canvases path). */
-  function requireLatestReview(reviewId: string): Review {
-    const current = service.bootstrap();
-    if (!current || current.id !== reviewId) throw new Error("Review not found");
-    return current;
+  const repositoryExists = deps.repositoryExists ?? existsSync;
+
+  /**
+   * Resolve a review by id from the store (issue #324). Replaces the old
+   * latest-pin (`requireLatestReview`): every id-addressed command now resolves the
+   * exact review it names, so a reopened OLDER review works everywhere — the pin
+   * was a one-review-era convenience, never a safety property (repo-touching
+   * commands still pass `assertAllowedRepository`, publish still binds to the
+   * review's own `postTarget`). A pure read: it appends nothing.
+   */
+  function requireReviewById(reviewId: string): Review {
+    const review = service.reviewById(reviewId);
+    if (!review) throw new Error("Review not found");
+    return review;
   }
 
   /** The review's active patchset (the handoff bundle's baseline). */
@@ -542,11 +566,12 @@ export function createDispatch(
       case "app.bootstrap": {
         parseCommandInput(name, rawInput);
         const review = service.bootstrap();
-        if (review) {
+        const repositoryPresent = review !== null && repositoryExists(review.repositoryRoot);
+        if (review && repositoryPresent) {
           allowedRoots.add(review.repositoryRoot);
           deps.startWatching(review.repositoryRoot);
         }
-        return parseCommandOutput(name, { review });
+        return parseCommandOutput(name, { review, repositoryPresent });
       }
       case "repository.choose": {
         parseCommandInput(name, rawInput);
@@ -580,6 +605,24 @@ export function createDispatch(
         allowedRoots.add(review.repositoryRoot);
         return parseCommandOutput(name, { review });
       }
+      case "review.load": {
+        // Reopen any persisted review by id (issue #324) — a PURE READ. Resolve by
+        // id (plain "Review not found" otherwise); the review renders exactly as
+        // persisted. `repositoryPresent` is the one fact the renderer needs to show
+        // honest missing-context status and skip the freshness watcher. Only when
+        // the root still exists do we grant + watch it (watching a missing path is
+        // noise; an absent root also stays out of allowedRoots, so nothing
+        // repo-touching can run against a path that isn't there — honesty about
+        // capability, not a gate: the persisted review always returns).
+        const input = parseCommandInput(name, rawInput);
+        const review = requireReviewById(input.reviewId);
+        const repositoryPresent = repositoryExists(review.repositoryRoot);
+        if (repositoryPresent) {
+          allowedRoots.add(review.repositoryRoot);
+          deps.startWatching(review.repositoryRoot);
+        }
+        return parseCommandOutput(name, { review, repositoryPresent });
+      }
       case "review.setDisposition": {
         const input = parseCommandInput(name, rawInput);
         const review = service.setDisposition(
@@ -594,8 +637,8 @@ export function createDispatch(
       }
       case "review.checkFreshness": {
         const input = parseCommandInput(name, rawInput);
-        assertAllowedRepository(input.repoPath);
-        const current = requireLatestReview(input.reviewId);
+        const current = requireReviewById(input.reviewId);
+        assertReviewRepository(current, input.repoPath);
         if (!deps.isRepositoryDirty()) return parseCommandOutput(name, { review: current });
         const review = await service.checkFreshness(
           input.commandId,
@@ -621,7 +664,7 @@ export function createDispatch(
         const input = parseCommandInput(name, rawInput);
         // Refuse to mint a token for a stale or unknown review id; only the current
         // review can be published from this session.
-        const review = requireLatestReview(input.reviewId);
+        const review = requireReviewById(input.reviewId);
         const target = toForgeReviewTarget(input.target);
         // Bind the mint to the review's OWN pull request (issue #21): a local capture
         // (no postTarget) or a mismatched target cannot even obtain a token, so the
@@ -648,7 +691,7 @@ export function createDispatch(
         // post from a retrospective review, in ANY permission mode, because this runs
         // ahead of the mode/consent branch entirely. A single fault (forged mode,
         // replayed token, renderer bug) cannot clear it — it is not on that circuit.
-        const addressed = requireLatestReview(input.reviewId);
+        const addressed = requireReviewById(input.reviewId);
         if (addressed.retrospective) {
           throw new Error(
             "Publish refused: this is a retrospective review — it is read-only and nothing can be posted.",
@@ -745,7 +788,8 @@ export function createDispatch(
         // and open a real PR. The sign-click is the whole authorization — no consent
         // token: pushing your own branch is not publishing (AGENTS.md).
         const input = parseCommandInput(name, rawInput);
-        const review = requireLatestReview(input.reviewId);
+        const review = requireReviewById(input.reviewId);
+        assertAllowedRepository(review.repositoryRoot);
 
         // (0) A retrospective review is read-only over a merged/any PR — there is no
         // own branch to submit. Refuse the whole command, matching the review egress.
@@ -793,8 +837,8 @@ export function createDispatch(
       }
       case "review.canvases": {
         const input = parseCommandInput(name, rawInput);
-        assertAllowedRepository(input.repoPath);
-        const review = requireLatestReview(input.reviewId);
+        const review = requireReviewById(input.reviewId);
+        assertReviewRepository(review, input.repoPath);
         // Running the review harness (the model spend) is Rennet's entire job — it
         // just runs. No permission mode, no consent token: opening Canvases composes
         // the model turn directly.
@@ -914,7 +958,7 @@ export function createDispatch(
         // so — as with `review.canvases` — we resolve the addressed review (a stale or
         // unknown id is refused) and hand the runner the review, never a bare id.
         const input = parseCommandInput(name, rawInput);
-        const review = requireLatestReview(input.reviewId);
+        const review = requireReviewById(input.reviewId);
         // Dual-model is the DEFAULT (Rai's mandate, 2026-08-11): an omitted flag runs
         // BOTH provider seats. Only an explicit `false` opts down to single-Claude.
         const flagged = await deps.flaggedReview(review, input.deepReview ?? true);
@@ -937,7 +981,7 @@ export function createDispatch(
         // patchsets. Asking a model is Rennet's whole job — it just runs against the
         // current review; there is no permission gate and no consent token, and a
         // question always answers against the latest code rather than ever refusing.
-        const review = requireLatestReview(input.reviewId);
+        const review = requireReviewById(input.reviewId);
         const mode = input.mode ?? "orchestrator";
         // #251 streaming: with a thread + turn AND a push channel, stream the
         // orchestrator's tokens live and emit a terminal event per channel. Absent →
@@ -1113,7 +1157,7 @@ export function createDispatch(
         // answer is genuinely empty — zero persisted threads, zero tracked in-flight
         // turns — NOT a fabricated set; this is the seam persistence (§3/§5) plugs into.
         const input = parseCommandInput(name, rawInput);
-        requireLatestReview(input.reviewId);
+        requireReviewById(input.reviewId);
         if (!deps.reattachThreads) {
           return parseCommandOutput(name, { threads: [], inFlight: [] });
         }
@@ -1131,7 +1175,7 @@ export function createDispatch(
         // reaches GitHub later, through the same hold-to-sign path as any comment.
         // With no refiner wired, answer an honest `unavailable` rather than throwing.
         const input = parseCommandInput(name, rawInput);
-        const review = requireLatestReview(input.reviewId);
+        const review = requireReviewById(input.reviewId);
         if (!deps.refineComment) {
           return parseCommandOutput(name, {
             status: "unavailable",
@@ -1156,7 +1200,7 @@ export function createDispatch(
         // Compose the bundle from the addressed dispositions + the active patchset and
         // return it with a disclosure the UI shows. Pure — no session, no spend.
         const input = parseCommandInput(name, rawInput);
-        const review = requireLatestReview(input.reviewId);
+        const review = requireReviewById(input.reviewId);
         const bundle = buildHandoffBundle({
           reviewId: review.id,
           patchset: activePatchsetOf(review),
@@ -1174,7 +1218,7 @@ export function createDispatch(
         // is fully capable (Bash included, Rai's call); it executes the composed, ordered,
         // verbatim work order, and we capture the delta after.
         const input = parseCommandInput(name, rawInput);
-        const review = requireLatestReview(input.reviewId);
+        const review = requireReviewById(input.reviewId);
         assertAllowedRepository(review.repositoryRoot);
         const priorActive = activePatchsetOf(review);
         const bundle = input.bundle;
@@ -1280,7 +1324,7 @@ export function createDispatch(
         // With no drafter wired, answer an honest `unavailable` rather than throwing —
         // the renderer keeps the deterministic composed body.
         const input = parseCommandInput(name, rawInput);
-        const review = requireLatestReview(input.reviewId);
+        const review = requireReviewById(input.reviewId);
         if (!deps.draftPrBody) {
           return parseCommandOutput(name, {
             status: "unavailable",
@@ -1310,7 +1354,7 @@ export function createDispatch(
         // don't carry. The RESULT posts NOTHING. With no producer wired, or on any
         // failed/absent turn, the renderer shows the facts with no headline.
         const input = parseCommandInput(name, rawInput);
-        const review = requireLatestReview(input.reviewId);
+        const review = requireReviewById(input.reviewId);
         const account = review.deltaAccount;
         if (account === undefined) {
           return parseCommandOutput(name, {
@@ -1335,7 +1379,7 @@ export function createDispatch(
         // floor), so a failed/absent composer yields `composed:false` — a real,
         // complete bundle — never a throw and never a lossy authoring.
         const input = parseCommandInput(name, rawInput);
-        const review = requireLatestReview(input.reviewId);
+        const review = requireReviewById(input.reviewId);
         const mechanical = buildHandoffBundle({
           reviewId: review.id,
           patchset: activePatchsetOf(review),
@@ -1354,7 +1398,7 @@ export function createDispatch(
         // (a stale or unknown id is refused) and hand the runner the review, never a
         // bare id.
         const input = parseCommandInput(name, rawInput);
-        const review = requireLatestReview(input.reviewId);
+        const review = requireReviewById(input.reviewId);
         return parseCommandOutput(name, await deps.noiseReview(review));
       }
       // ── The symbol inspector (wireframes #8) ───────────────────────────────────
@@ -1364,7 +1408,7 @@ export function createDispatch(
         // reads. With no symbolic backend wired, answer honestly `unavailable` for
         // both sections rather than throwing (the UI degrades to a clear message).
         const input = parseCommandInput(name, rawInput);
-        const review = requireLatestReview(input.reviewId);
+        const review = requireReviewById(input.reviewId);
         if (!deps.symbolLookup) {
           return parseCommandOutput(name, {
             name: input.name,
@@ -1387,7 +1431,7 @@ export function createDispatch(
         // then read + parse. No reader wired, or no change in the patchset ⇒ `null`,
         // and the Spec angle shows its honest empty state.
         const input = parseCommandInput(name, rawInput);
-        const review = requireLatestReview(input.reviewId);
+        const review = requireReviewById(input.reviewId);
         return parseCommandOutput(
           name,
           deps.openSpecChange ? await deps.openSpecChange(review) : null,
@@ -1400,7 +1444,7 @@ export function createDispatch(
         // review (a stale/unknown id is refused) and hand the runner the review.
         // Unwired ⇒ `null` (the Spec view renders no coverage chips), never a fixture.
         const input = parseCommandInput(name, rawInput);
-        const review = requireLatestReview(input.reviewId);
+        const review = requireReviewById(input.reviewId);
         return parseCommandOutput(
           name,
           deps.openSpecCoverage ? await deps.openSpecCoverage(review) : null,
@@ -1409,7 +1453,7 @@ export function createDispatch(
       // ── Open a review file in the editor (wireframes #8) ───────────────────────
       case "review.openInEditor": {
         const input = parseCommandInput(name, rawInput);
-        const review = requireLatestReview(input.reviewId);
+        const review = requireReviewById(input.reviewId);
         if (!deps.openInEditor) return parseCommandOutput(name, { ok: false });
         return parseCommandOutput(
           name,
@@ -1440,7 +1484,7 @@ export function createDispatch(
         // L2 write as a separate `canvas.disposition` from the renderer (accepting
         // is a user act); there is no durable L3 canvas-op store in this slice (#13).
         const input = parseCommandInput(name, rawInput);
-        const review = requireLatestReview(input.reviewId);
+        const review = requireReviewById(input.reviewId);
         return parseCommandOutput(name, { review });
       }
       case "canvas.setCohortExpansion":

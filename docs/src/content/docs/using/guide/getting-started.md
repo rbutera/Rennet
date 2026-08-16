@@ -63,6 +63,24 @@ zooms out. Commands at a zoom limit and the already-active lens are omitted
 instead of appearing as dead entries. Key remapping and native menu parity are
 not live yet.
 
+## Reopen old reviews, and pick up where you left off
+
+Every review Rennet captures is persisted locally, so you can reopen an older one
+at any time — not just the most recent — and read it exactly as it was captured:
+its files, diff, read states, dispositions, delta account, and conversation
+threads. Reopening is a plain read; nothing re-runs and nothing is asked of you.
+
+If the working tree that review came from is no longer on disk, Rennet still opens
+the review and simply says so — “The original worktree is gone — showing the review
+as captured.” The captured content stays fully readable; only the live AI review,
+which needs the original repository to run, reports that it is unavailable.
+
+Rennet also remembers where you were. When you quit and reopen, it restores your
+back/forward navigation stack and lands you on the surface you left, reloading its
+content as you arrive. If something along that trail can no longer load, Rennet
+drops just that entry with a plain note and falls back to the nearest place that
+still opens — the Projects home always does.
+
 ## Local-first does not mean offline-only
 
 There is no Rennet backend and no Rennet telemetry service. A selected harness

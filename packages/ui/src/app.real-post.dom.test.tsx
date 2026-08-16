@@ -92,6 +92,7 @@ function recordingBridge(
   const publishCalls: CommandInput<"publish.review">[] = [];
   let minted = 0;
   const invoke = async (name: string, input: unknown): Promise<unknown> => {
+    if (name === "app.bootstrap") return { review: ready, repositoryPresent: true };
     if (name === "publish.requestConsent") {
       consentCalls.push(input as CommandInput<"publish.requestConsent">);
       minted += 1;

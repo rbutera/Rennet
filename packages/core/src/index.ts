@@ -1004,6 +1004,15 @@ export class ReviewService {
     return this.capture(commandId, repositoryPath, reviewId);
   }
 
+  /**
+   * Read any persisted review by id (issue #324) — the pure read behind
+   * `review.load` and every id-addressed dispatch command. Independent of which
+   * review is globally-latest; appends nothing. Returns null for an unknown id.
+   */
+  reviewById(reviewId: string): Review | null {
+    return this.store.reviewById(reviewId);
+  }
+
   private requireReview(reviewId: string): Review {
     const review = this.store.reviewById(reviewId);
     if (!review || review.id !== reviewId) throw new Error("Review not found");

@@ -51,7 +51,7 @@ function harness() {
   const asks: CommandInput<"review.ask">[] = [];
   const listeners = new Set<(event: ReviewAskStreamEvent) => void>();
   const invoke = async (name: string, input: unknown): Promise<unknown> => {
-    if (name === "app.bootstrap") return { review };
+    if (name === "app.bootstrap") return { review, repositoryPresent: true };
     if (name === "settings.get") return { scheme: "dark" };
     if (name === "review.canvases") {
       return {

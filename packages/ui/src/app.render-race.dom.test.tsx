@@ -100,7 +100,7 @@ describe("RennetApp — the live-canvas render race (#59)", () => {
     const invoke = async (name: string): Promise<unknown> => {
       switch (name) {
         case "app.bootstrap":
-          return { review: freshClone() };
+          return { review: freshClone(), repositoryPresent: true };
         // Opening Canvases fires the enrichment fetch directly — running the harness
         // is Rennet's whole job, so there is no consent gate to clear.
         case "review.checkFreshness":
@@ -164,7 +164,7 @@ describe("RennetApp — the live-canvas render race (#59)", () => {
     const invoke = async (name: string): Promise<unknown> => {
       switch (name) {
         case "app.bootstrap":
-          return { review: freshClone() };
+          return { review: freshClone(), repositoryPresent: true };
         case "review.checkFreshness":
           return { review: freshClone() };
         case "review.canvases":

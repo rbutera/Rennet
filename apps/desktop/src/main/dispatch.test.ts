@@ -177,12 +177,14 @@ function harness(
     submitPullRequest?: DispatchDeps["submitPullRequest"];
     draftDeltaDigest?: DispatchDeps["draftDeltaDigest"];
     flaggedReview?: DispatchDeps["flaggedReview"];
+    repositoryExists?: DispatchDeps["repositoryExists"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
   service: ReviewService;
   store: InMemoryStore;
   allowedRoots: Set<string>;
+  startWatching: ReturnType<typeof vi.fn>;
   buildCanvases: ReturnType<typeof vi.fn>;
   publishPort: ForgePublishPort & { posts: ForgeReviewPost[] };
   publishConsent: PublishConsentAuthority;
@@ -204,6 +206,7 @@ function harness(
   const store = new InMemoryStore();
   const service = new ReviewService(capture, store);
   const allowedRoots = new Set<string>();
+  const startWatching = vi.fn<(root: string) => void>();
   let dirty = false;
   const buildCanvases = vi.fn(() =>
     Promise.resolve({
@@ -277,7 +280,8 @@ function harness(
         // its OWN pull request.
         ...(retrospective ? {} : { postTarget: SANDBOX_TARGET }),
       }),
-    startWatching: () => undefined,
+    startWatching,
+    repositoryExists: extra.repositoryExists ?? (() => true),
     isRepositoryDirty: () => dirty,
     setRepositoryDirty: (value) => {
       dirty = value;
@@ -341,6 +345,7 @@ function harness(
     service,
     store,
     allowedRoots,
+    startWatching,
     buildCanvases,
     publishPort,
     publishConsent,
@@ -350,6 +355,13 @@ function harness(
     refineCommentSpy,
     draftPrBodySpy,
   };
+}
+
+/** The shared harness with a few `extra` deps threaded (e.g. repositoryExists for #324). */
+function harnessWith(extra: {
+  repositoryExists?: DispatchDeps["repositoryExists"];
+}): ReturnType<typeof harness> {
+  return harness(fakePublishPort(), {}, extra);
 }
 
 async function capturedReview(dispatch: ReturnType<typeof createDispatch>): Promise<Review> {
@@ -594,11 +606,17 @@ describe("createDispatch — canvas.* routing (issue #54)", () => {
   });
 
   it("still serves the preserved MVP commands (app.bootstrap, review.setDisposition)", async () => {
-    const { dispatch } = harness();
+    const { dispatch, startWatching } = harness();
     const review = await capturedReview(dispatch);
+    startWatching.mockClear();
 
-    const boot = (await dispatch("app.bootstrap", {})) as { review: Review | null };
+    const boot = (await dispatch("app.bootstrap", {})) as {
+      review: Review | null;
+      repositoryPresent: boolean;
+    };
     expect(boot.review?.id).toBe(review.id);
+    expect(boot.repositoryPresent).toBe(true);
+    expect(startWatching).toHaveBeenCalledWith(review.repositoryRoot);
 
     const set = (await dispatch("review.setDisposition", {
       commandId: randomUUID(),
@@ -612,13 +630,14 @@ describe("createDispatch — canvas.* routing (issue #54)", () => {
   });
 
   it("denies review.canvases for a repository that was never granted", async () => {
-    const { dispatch } = harness();
+    const { dispatch, allowedRoots } = harness();
     const review = await capturedReview(dispatch);
+    allowedRoots.delete(review.repositoryRoot);
     await expect(
       dispatch("review.canvases", {
         commandId: randomUUID(),
         reviewId: review.id,
-        repoPath: "/not-granted",
+        repoPath: review.repositoryRoot,
       }),
     ).rejects.toThrow(/access was not granted/);
   });
@@ -790,6 +809,166 @@ describe("createDispatch — review.reattach (issue #251, the honest pre-persist
     await expect(
       dispatch("review.reattach", { commandId: randomUUID(), reviewId: randomUUID() }),
     ).rejects.toThrow(/Review not found/);
+  });
+});
+
+describe("createDispatch — review.load (reopen a persisted review by id, #324)", () => {
+  // Two captures under the same repo → two distinct persisted reviews; the second
+  // is the globally-latest. Loading the OLDER one must succeed WITHOUT the latest-pin.
+  async function twoReviews(dispatch: ReturnType<typeof createDispatch>) {
+    await dispatch("repository.choose", {});
+    const older = (
+      (await dispatch("review.capture", { commandId: randomUUID(), repoPath: REPO })) as {
+        review: Review;
+      }
+    ).review;
+    const newer = (
+      (await dispatch("review.capture", { commandId: randomUUID(), repoPath: REPO })) as {
+        review: Review;
+      }
+    ).review;
+    return { older, newer };
+  }
+
+  it("loads the OLDER review by id while a newer one exists, present-root, appending no event", async () => {
+    const { dispatch, store, allowedRoots, startWatching } = harnessWith({
+      repositoryExists: () => true,
+    });
+    const { older, newer } = await twoReviews(dispatch);
+    expect(older.id).not.toBe(newer.id);
+    const latestBefore = (await dispatch("app.bootstrap", {})) as { review: Review | null };
+    const eventsBefore = JSON.stringify(store.events);
+    startWatching.mockClear();
+    const result = (await dispatch("review.load", {
+      commandId: randomUUID(),
+      reviewId: older.id,
+    })) as { review: Review; repositoryPresent: boolean };
+    expect(result.review.id).toBe(older.id);
+    expect(result.repositoryPresent).toBe(true);
+    // A present root is watched + granted (mirrors bootstrap).
+    expect(allowedRoots.has(older.repositoryRoot)).toBe(true);
+    expect(startWatching).toHaveBeenCalledWith(older.repositoryRoot);
+    // Pure read: the globally-latest identity and serialized events are byte-identical,
+    // and a second load returns the same review.
+    const latestAfter = (await dispatch("app.bootstrap", {})) as { review: Review | null };
+    expect(latestAfter.review?.id).toBe(latestBefore.review?.id);
+    expect(JSON.stringify(store.events)).toBe(eventsBefore);
+    const again = (await dispatch("review.load", {
+      commandId: randomUUID(),
+      reviewId: older.id,
+    })) as { review: Review };
+    expect(again.review.id).toBe(older.id);
+    expect(JSON.stringify(store.events)).toBe(eventsBefore);
+  });
+
+  it("after loading the older review, id-addressed commands resolve it (no latest-pin)", async () => {
+    const { dispatch } = harnessWith({ repositoryExists: () => true });
+    const { older } = await twoReviews(dispatch);
+    await dispatch("review.load", { commandId: randomUUID(), reviewId: older.id });
+    // reattach + canvases addressed to the OLDER id must resolve, not throw "Review not found".
+    const reattached = await dispatch("review.reattach", {
+      commandId: randomUUID(),
+      reviewId: older.id,
+    });
+    expect(reattached).toEqual({ threads: [], inFlight: [] });
+    await expect(
+      dispatch("review.canvases", {
+        commandId: randomUUID(),
+        reviewId: older.id,
+        repoPath: older.repositoryRoot,
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it("fails plainly for an unknown id", async () => {
+    const { dispatch } = harnessWith({ repositoryExists: () => true });
+    await twoReviews(dispatch);
+    await expect(
+      dispatch("review.load", { commandId: randomUUID(), reviewId: randomUUID() }),
+    ).rejects.toThrow(/Review not found/);
+  });
+
+  it("a missing root loads the review but does NOT grant it: a follow-up repo command still refuses", async () => {
+    const { dispatch, allowedRoots, startWatching } = harnessWith({
+      repositoryExists: () => false,
+    });
+    const { older } = await twoReviews(dispatch);
+    allowedRoots.clear(); // drop the capture-time grant, to prove load does not re-add it
+    startWatching.mockClear();
+    const result = (await dispatch("review.load", {
+      commandId: randomUUID(),
+      reviewId: older.id,
+    })) as { review: Review; repositoryPresent: boolean };
+    expect(result.review.id).toBe(older.id);
+    expect(result.repositoryPresent).toBe(false);
+    expect(allowedRoots.has(older.repositoryRoot)).toBe(false);
+    expect(startWatching).not.toHaveBeenCalled();
+    // A repo-touching command against the absent root is refused (not granted by load).
+    await expect(
+      dispatch("review.canvases", {
+        commandId: randomUUID(),
+        reviewId: older.id,
+        repoPath: older.repositoryRoot,
+      }),
+    ).rejects.toThrow(/Repository access was not granted/);
+  });
+
+  it("bootstrap reports a deleted latest root without granting or watching it", async () => {
+    const { dispatch, allowedRoots, startWatching } = harnessWith({
+      repositoryExists: () => false,
+    });
+    const { newer } = await twoReviews(dispatch);
+    allowedRoots.clear();
+    startWatching.mockClear();
+
+    const result = (await dispatch("app.bootstrap", {})) as {
+      review: Review | null;
+      repositoryPresent: boolean;
+    };
+
+    expect(result.review?.id).toBe(newer.id);
+    expect(result.repositoryPresent).toBe(false);
+    expect(allowedRoots.has(newer.repositoryRoot)).toBe(false);
+    expect(startWatching).not.toHaveBeenCalled();
+  });
+
+  it("binds freshness and canvases to the addressed review's stored repository root", async () => {
+    const { dispatch, allowedRoots, buildCanvases } = harnessWith({
+      repositoryExists: () => true,
+    });
+    const { older } = await twoReviews(dispatch);
+    allowedRoots.add("/allowed-but-unrelated");
+
+    await expect(
+      dispatch("review.checkFreshness", {
+        commandId: randomUUID(),
+        reviewId: older.id,
+        repoPath: "/allowed-but-unrelated",
+      }),
+    ).rejects.toThrow(/does not match this review/i);
+    await expect(
+      dispatch("review.canvases", {
+        commandId: randomUUID(),
+        reviewId: older.id,
+        repoPath: "/allowed-but-unrelated",
+      }),
+    ).rejects.toThrow(/does not match this review/i);
+    expect(buildCanvases).not.toHaveBeenCalled();
+
+    await expect(
+      dispatch("review.checkFreshness", {
+        commandId: randomUUID(),
+        reviewId: older.id,
+        repoPath: older.repositoryRoot,
+      }),
+    ).resolves.toEqual({ review: older });
+    await expect(
+      dispatch("review.canvases", {
+        commandId: randomUUID(),
+        reviewId: older.id,
+        repoPath: older.repositoryRoot,
+      }),
+    ).resolves.toBeDefined();
   });
 });
 
@@ -1584,6 +1763,31 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
     });
   });
 
+  it("refuses plainly when the review's own root is not admitted", async () => {
+    const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>(async () => ({
+      url: "https://github.com/acme/widget/pull/7",
+      number: 7,
+      reused: false,
+    }));
+    const { dispatch, allowedRoots } = harness(
+      fakePublishPort(),
+      {},
+      { capturePort: ownBranchCapture(), submitPullRequest },
+    );
+    const review = await capturedReview(dispatch);
+    allowedRoots.delete(review.repositoryRoot);
+
+    await expect(
+      dispatch("publish.submitPr", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        submission: SUBMISSION,
+        payload: PAYLOAD,
+      }),
+    ).rejects.toThrow(/Repository access was not granted/);
+    expect(submitPullRequest).not.toHaveBeenCalled();
+  });
+
   it("refuses when the signed payload does not match the submission (what you see is what leaves)", async () => {
     const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>();
     const { dispatch } = harness(
@@ -2146,9 +2350,10 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
 
   it("hands BOTH legs one resolved snapshot — a mid-ask patchset swap cannot cross them (P1-2)", async () => {
     const { dispatch, reviewAsk, service, review } = await openReview();
-    // Resolution goes through `service.bootstrap()`; resolve-once means EXACTLY one
-    // call feeds both legs. Per-leg resolution (the bug) would call it twice.
-    const bootstrapSpy = vi.spyOn(service, "bootstrap");
+    // Resolution goes through `service.reviewById()` (the by-id resolver, #324);
+    // resolve-once means EXACTLY one call feeds both legs. Per-leg resolution (the
+    // bug) would call it twice.
+    const resolveSpy = vi.spyOn(service, "reviewById");
     const seen: string[] = [];
     reviewAsk.askOrchestrator.mockImplementation(async ({ review: r }: { review: Review }) => {
       seen.push(`o:${r.activePatchsetId}`);
@@ -2164,7 +2369,7 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
       mode: "both",
       question: "q",
     });
-    expect(bootstrapSpy).toHaveBeenCalledTimes(1);
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
     expect(seen).toEqual([`o:${review.activePatchsetId}`, `c:${review.activePatchsetId}`]);
   });
 

@@ -79,6 +79,7 @@ function harness() {
   const answers = [A1, A2, A3];
   let turn = 0;
   const invoke = async (name: string, _input: unknown): Promise<unknown> => {
+    if (name === "app.bootstrap") return { review, repositoryPresent: true };
     if (name === "review.canvases") return { canvases: demoCanvases(), elementDiffs: {} };
     if (name === "review.reattach") return { threads: [] };
     if (name === "review.ask") {

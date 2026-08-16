@@ -81,7 +81,7 @@ function makeBridge(opts: {
   const invoke = async (name: string): Promise<unknown> => {
     switch (name) {
       case "app.bootstrap":
-        return { review: clone() };
+        return { review: clone(), repositoryPresent: true };
       case "review.checkFreshness":
         return { review: clone() };
       case "review.canvases":
