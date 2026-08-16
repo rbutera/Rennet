@@ -1,7 +1,7 @@
 ## MODIFIED Requirements
 
 ### Requirement: Discovery resolves the harness without asking a shell to resolve a binary
-Discovery SHALL harvest the login-shell PATH where a POSIX login shell exists, union it with a curated set of known locations for the current platform, resolve candidate binaries itself by directory listing plus an executable check, and SHALL NOT use `which`, `command -v`, or `where` to resolve a binary name. On Windows, harvesting SHALL use the process environment (no POSIX shell), the PATH delimiter SHALL be the platform's (`;`), candidate matching SHALL recognise Windows executable shims (`.exe`, `.cmd`, `.bat`, `.ps1`), and curated locations SHALL cover Windows per-user install directories.
+Discovery SHALL harvest the login-shell PATH where a POSIX login shell exists, union it with a curated set of known locations for the current platform, resolve candidate binaries itself by directory listing plus an executable check, and SHALL NOT use `which`, `command -v`, or `where` to resolve a binary name. On Windows, harvesting SHALL use the process environment (no POSIX shell), the PATH delimiter SHALL be the platform's (`;`), candidate matching SHALL recognise directly launchable Windows executable shims (`.exe`, `.cmd`, `.bat`), and curated locations SHALL cover Windows per-user install directories. A `.ps1` file SHALL NOT be reported as executable because the shipped no-shell launcher cannot run it directly.
 
 #### Scenario: The GUI-inherited PATH omits the real location
 - **WHEN** the login-shell PATH does not contain the directory holding `claude`, and `claude` is a shell function interactively

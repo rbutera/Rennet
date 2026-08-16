@@ -16,7 +16,7 @@ The desktop app SHALL start in development mode and package into an unsigned dis
 - **THEN** a launchable unsigned artifact is produced with the harness SDK's vendored executables stripped, matching the existing packaging rule
 
 ### Requirement: Binary resolution understands Windows PATH semantics
-On Windows, resolving any external binary (`claude`, `codex`, `git`, `gh`, editor CLIs) SHALL split PATH on the platform delimiter (`;`), SHALL recognise Windows executable shims (`.exe`, `.cmd`, `.bat`, `.ps1` per PATHEXT), and SHALL include curated Windows install locations (per-user npm/bun/scoop installs, `%LOCALAPPDATA%` program directories) alongside PATH entries.
+On Windows, resolving any external binary (`claude`, `codex`, `git`, `gh`, editor CLIs) SHALL split PATH on the platform delimiter (`;`), SHALL recognise directly launchable Windows executable shims (`.exe`, `.cmd`, `.bat`), and SHALL include curated Windows install locations (per-user npm/bun/scoop installs, `%LOCALAPPDATA%` program directories) alongside PATH entries. PowerShell scripts are not a resolved executable form in this slice.
 
 #### Scenario: claude installed as a .cmd shim
 - **WHEN** the user's `claude` is an npm-installed `claude.cmd` on a `;`-delimited PATH

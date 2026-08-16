@@ -4,8 +4,8 @@ Rennet today is developed and packaged exclusively for macOS (`forge.config.cjs`
 
 ## What Changes
 
-- Rennet's desktop app runs on native Windows: harness discovery (`claude`, `codex`, `gh`) understands Windows `PATH` semantics (`;` delimiter, `PATHEXT`, `.cmd`/`.exe`/`.ps1` shims), Windows install locations, and probes without a POSIX login shell.
-- A new **execution locus** concept: every repo-facing process (git, gh, claude, codex) and repo-facing filesystem access runs either on the host OS or inside a named WSL distro, chosen per project. WSL is a first-class mode, not a fallback: the app runs on Windows, the project, git, and harness binaries live in the distro, and Rennet drives them there (via `wsl.exe -d <distro>` execution and `\\wsl$\<distro>` UNC paths where read-only file access suffices).
+- Rennet's desktop app runs on native Windows: harness discovery (`claude`, `codex`, `gh`) understands Windows `PATH` semantics (`;` delimiter, `PATHEXT`, `.cmd`/`.exe`/`.bat` shims), Windows install locations, and probes without a POSIX login shell.
+- A new **execution locus** concept chooses the host OS or a named WSL distro per project. This slice routes capture, checkpoint, submodule probes, PR-open git, project discovery/detail/cleanup, snapshot git, settings/visibility git, submit-push, and the Claude handoff write turn through that locus. Windows-side filesystem reads use the distro's UNC view. Codex-in-WSL and the remaining review-pipeline locus joins are explicitly deferred rather than claimed as complete.
 - The Claude adapter's `pathToClaudeCodeExecutable` contract extends to the WSL locus, where the SDK cannot spawn a distro-resident binary from Windows Node directly.
 - Editor open (`open-in-editor.ts`) resolves Windows editor installs, and in WSL mode opens VS Code-family editors with their WSL remote so `path:line` still lands.
 - Command palette / shortcut *labels* become platform-aware (`⌘K` → `Ctrl+K` on Windows); the handlers already accept `metaKey || ctrlKey`.
@@ -19,7 +19,7 @@ Non-goals: no consent gates, no capability restrictions in WSL mode (Rule Zero �
 ### New Capabilities
 
 - `windows-native-runtime`: Rennet desktop running natively on Windows — Windows-aware binary/PATH semantics, no POSIX shell dependence, platform-aware shortcut labels, path handling that survives drive letters and backslashes, dev-run and unsigned packaging on win32.
-- `wsl-execution-mode`: the per-project execution locus — selecting a WSL distro, running all repo-facing processes (git, gh, harnesses) inside it, translating paths between Windows and distro views, and surfacing locus health honestly in the UI.
+- `wsl-execution-mode`: the per-project execution locus — selecting a WSL distro, routing the operations shipped in this slice into it, translating paths between Windows and distro views, and surfacing locus health honestly in the UI. Codex and remaining review-pipeline joins stay named as deferred.
 
 ### Modified Capabilities
 

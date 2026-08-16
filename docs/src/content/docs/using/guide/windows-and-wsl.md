@@ -3,12 +3,12 @@ title: Windows and WSL
 description: Run Rennet natively on Windows, or drive a project that lives inside a WSL distro, with the execution locus chosen per project.
 ---
 
-Rennet runs on Windows two ways, and it treats both as first-class. A project on
-a Windows drive runs everything on the host. A project that lives inside a
-[WSL](https://learn.microsoft.com/windows/wsl/) distro runs git, the harnesses,
-and every repo-facing command **inside that distro** — the Windows app drives it
-there. Which one a project uses is its **execution locus**, and Rennet picks it
-automatically from the project's path.
+Rennet runs on Windows two ways. A project on a Windows drive uses the host. A
+project that lives inside a [WSL](https://learn.microsoft.com/windows/wsl/)
+distro can route the supported git and Claude handoff operations into that
+distro while the Windows app keeps its filesystem view through UNC. Which one a
+project uses is its **execution locus**, and Rennet picks it automatically from
+the project's path.
 
 ## The execution locus
 
@@ -16,8 +16,8 @@ Every project carries an execution locus: the **host**, or a named **WSL distro*
 
 - Open a project at a Windows path like `C:\dev\repo` and its locus is the host.
 - Open a project that resides in a distro — a `\\wsl.localhost\Ubuntu\home\you\repo`
-  path — and its locus is that distro (`Ubuntu` here). git, `gh`, `claude`, and
-  `codex` all run inside the distro, against the distro-native repo path.
+  path — and its locus is that distro (`Ubuntu` here). The operations listed in
+  [What runs in the distro](#what-runs-in-the-distro) use its distro-native path.
 
 The locus is a plain setting, not a prompt. You can see it and change it under a
 project's settings (**Execution locus**): force the host, name a different WSL
@@ -58,8 +58,8 @@ is `Ctrl+[` / `Ctrl+]`.
 ```mermaid
 flowchart LR
   app[Rennet on Windows] -->|wsl.exe| distro[Ubuntu distro]
-  distro --> git[git / gh in the distro]
-  distro --> claude[claude / codex in the distro]
+  distro --> git[shipped git operations]
+  distro --> claude[Claude handoff turn]
   distro --> repo[/home/you/repo]
 ```
 
@@ -69,17 +69,32 @@ do. Rennet drives them there.
 **Requirements**
 
 - WSL 2 with your distro installed and running.
-- Inside the distro: `git`, `gh` (for GitHub work), and your coding harness
-  (`claude`, optionally `codex`), authenticated with your own subscription as
-  usual. Rennet reads no credential — the distro's own `claude` login is used.
+- Inside the distro: `git` and `claude`, authenticated with your own subscription
+  as usual. Rennet reads no credential — the distro's own `claude` login is used.
 - Open the project by its distro path (`\\wsl.localhost\<distro>\home\you\repo`),
   or open it from inside the distro; the locus is detected from the path.
 
-Everything a review or a handoff runs — capture, tests, the write-enabled agent
-turn, the push that submits a pull request — executes inside the distro with the
-same capability as native. Open-in-editor uses the editor's WSL remote so
-`path:line` lands on the distro file. Rennet watches the repo by polling on WSL
-(inotify events do not cross the WSL filesystem boundary reliably).
+### What runs in the distro
+
+This slice routes these operations through the configured WSL distro:
+
+- git capture, checkpoint, submodule probes, and submit-push;
+- local PR-open git, project discovery/detail, and worktree cleanup;
+- snapshot generation and settings/visibility git operations;
+- the write-enabled Claude handoff turn, including tests or pushes the harness runs.
+
+Open-in-editor uses the editor's WSL remote so `path:line` lands on the distro
+file. Rennet watches the repo by polling on WSL because inotify events do not
+cross the WSL filesystem boundary reliably. Windows-side untracked/spec reads,
+snapshot identity, watching, and editor launch use the matching UNC path.
+
+### Current ceiling
+
+Codex execution inside WSL is deferred: its executor still owns host-side scratch
+and session paths. A WSL workflow therefore degrades to the Claude seat where that
+seat is wired; it does not substitute a Windows Codex binary. The remaining
+review-pipeline Claude/locus joins are also deferred, so this slice does not claim
+that every read or model turn in a full review runs in the distro.
 
 ## What Rennet never does
 
@@ -88,7 +103,8 @@ same capability as native. Open-in-editor uses the editor's WSL remote so
 - It never publishes anything a person can see until you sign it. Pushing a review
   branch is not publishing — the coding-agent loop pushes freely, because
   submitting a pull request requires a push.
-- On a WSL project it never runs a host binary against the distro repo.
+- It never silently changes a WSL path to a differently configured distro. The
+  status names both distros and stops the wrong-target operation.
 
 ## Next steps
 
