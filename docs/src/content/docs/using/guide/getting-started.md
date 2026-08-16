@@ -90,6 +90,7 @@ machine” promise.
 
 ## Next steps
 
+- [Windows and WSL](/using/guide/windows-and-wsl/) covers running on Windows, natively or driving a WSL distro.
 - [User journey](/using/guide/user-journey/) gives the full intended experience.
 - [Reviewing a GitHub PR](/using/guide/reviewing-a-github-pr/) follows the live team path.
 - [Common questions](/using/concepts/common-questions/) covers GitHub, models, credentials, and local-first behavior.

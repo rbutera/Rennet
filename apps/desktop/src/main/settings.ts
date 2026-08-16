@@ -1,10 +1,18 @@
 import { basename } from "node:path";
 import type { ConventionCatalogueLoad } from "@rennet/adapters";
-import { escapePath, resolvePromoted, resolveScheme, resolveVisibility } from "@rennet/core";
+import {
+  detectLocus,
+  escapePath,
+  type Locus,
+  resolvePromoted,
+  resolveScheme,
+  resolveVisibility,
+} from "@rennet/core";
 import type {
   GlobalConfig,
   Project,
   ProjectVisibility,
+  SetRepoLocusOutcome,
   SetRepoVisibilityOutcome,
   SettingsGuidance,
   SettingsProject,
@@ -28,11 +36,12 @@ export interface SettingsCompositionDeps {
    * A project's snapshot-store config state, keyed by the escaped git-top-level
    * key. Distinguishes absent (safe) / ok / malformed (edits refused).
    */
-  loadConfigState(
-    repoKey: string,
-  ):
+  loadConfigState(repoKey: string):
     | { status: "absent" | "malformed"; config: null }
-    | { status: "ok"; config: { visibility?: ProjectVisibility; promoted?: boolean } };
+    | {
+        status: "ok";
+        config: { visibility?: ProjectVisibility; promoted?: boolean; locus?: Locus };
+      };
   /** The global (app-side) config state. */
   readGlobalState(): { status: "absent" | "ok" | "malformed"; config: GlobalConfig };
   /** Persist a global-config edit. MUST itself refuse a malformed file (throw). */
@@ -53,6 +62,11 @@ export interface SettingsCompositionDeps {
     repoRoot: string;
     target: ProjectVisibility;
   }): Promise<{ changed: boolean; gitignorePath: string }>;
+  /**
+   * Persist a repo's execution-locus override, or clear it (`locus: null` ⇒ back to
+   * auto-detection). A plain config write — never a gate (Rule Zero).
+   */
+  applyLocus(input: { repoKey: string; locus: Locus | null }): void;
 }
 
 interface RepoTarget {
@@ -73,6 +87,11 @@ export interface SettingsComposition {
     repoPath: string;
     visibility: ProjectVisibility;
   }): Promise<SetRepoVisibilityOutcome>;
+  setRepoLocus(input: {
+    projectId: string;
+    repoPath: string;
+    locus: Locus | null;
+  }): Promise<SetRepoLocusOutcome>;
 }
 
 export function createSettingsComposition(deps: SettingsCompositionDeps): SettingsComposition {
@@ -135,6 +154,8 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
           const config = configState.status === "ok" ? configState.config : null;
           const visibility = resolveVisibility(config?.visibility);
           const promoted = resolvePromoted(config?.promoted);
+          // A malformed config never leaks a locus override; the row auto-detects.
+          const locus = config?.locus ?? detectLocus(target.repoPath);
           projects.push({
             projectId: project.id,
             name: multiRepo ? `${project.name} · ${basename(target.repoPath)}` : project.name,
@@ -143,6 +164,8 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
             visibilityProvenance: visibility.provenance,
             promoted: promoted.value,
             promotedProvenance: promoted.provenance,
+            locus,
+            locusOverridden: config?.locus !== undefined,
             configMalformed,
           });
         }
@@ -227,6 +250,34 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         visibility: input.visibility,
         changed: applied.changed,
         gitignorePath: applied.gitignorePath,
+      };
+    },
+
+    setRepoLocus: async (input: {
+      projectId: string;
+      repoPath: string;
+      locus: Locus | null;
+    }): Promise<SetRepoLocusOutcome> => {
+      const project = deps.listProjects().find((entry) => entry.id === input.projectId);
+      const target = project
+        ? (await targetsFor(project)).find((entry) => entry.repoPath === input.repoPath)
+        : undefined;
+      if (!target) {
+        return { status: "unresolved", locus: detectLocus(input.repoPath), locusOverridden: false };
+      }
+      // Refuse a malformed config before any write (Rule 75), mirroring visibility.
+      if (deps.loadConfigState(target.repoKey).status === "malformed") {
+        return {
+          status: "malformed",
+          locus: detectLocus(target.repoPath),
+          locusOverridden: false,
+        };
+      }
+      deps.applyLocus({ repoKey: target.repoKey, locus: input.locus });
+      return {
+        status: "applied",
+        locus: input.locus ?? detectLocus(target.repoPath),
+        locusOverridden: input.locus !== null,
       };
     },
   };

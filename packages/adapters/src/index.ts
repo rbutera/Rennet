@@ -16,7 +16,7 @@ export {
   createCanvasOpsServer,
   type LoadCanvasOpsSdk,
 } from "./canvas-ops-server";
-export { GitCheckpointStore, repoHasSubmodules } from "./checkpoint-store";
+export { checkpointGitCommand, GitCheckpointStore, repoHasSubmodules } from "./checkpoint-store";
 export {
   type ClaudeCiRefinementTurnOptions,
   createClaudeCiRefinementTurn,
@@ -100,6 +100,7 @@ export {
   failedDecisionsRunStatus,
   okDecisionsRunStatus,
 } from "./decisions-fixture";
+export { executeExternalCommand } from "./external-command";
 export {
   defaultGlobalConfigPath,
   FileConfigStore,
@@ -141,8 +142,10 @@ export {
   captureRangePatchset,
   DEFAULT_VISIBLE_BYTE_LIMIT,
   execaGit,
+  execaGitFor,
   FILE_VISIBLE_BYTE_LIMIT,
   type GitExec,
+  gitForRepoFactory,
   parseChangedPaths,
   parseCounts,
   parseUnifiedDiffFiles,
@@ -193,6 +196,7 @@ export {
   discoverClaude,
   discoverCodex,
   type VersionRange,
+  wslDiscoveryDeps,
 } from "./harness-discovery";
 export {
   type KnowledgeBackendPart,
@@ -399,3 +403,8 @@ export {
   type RemoteIdentity,
   resolveForgeRemote,
 } from "./worktree-discovery";
+export {
+  type WslClaudeExecutable,
+  type WslClaudeLauncherInput,
+  wslClaudeExecutable,
+} from "./wsl-launcher";

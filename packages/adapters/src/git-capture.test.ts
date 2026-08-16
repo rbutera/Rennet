@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { GitCaptureAdapter } from "./git-capture";
+import type { GitExec } from "./git-range-diff";
 
 const directories: string[] = [];
 
@@ -29,6 +30,52 @@ afterEach(() => {
 });
 
 describe("GitCaptureAdapter", () => {
+  it("keeps the Windows-view root for WSL file reads, identity, and snapshot pinning", async () => {
+    const windowsRoot = "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo";
+    const distroRoot = "/home/rai/repo";
+    const readPaths: string[] = [];
+    const pinnedRoots: string[] = [];
+    const run: GitExec = async (_root, args) => {
+      const command = args.join(" ");
+      if (command === "rev-parse --show-toplevel") return `${distroRoot}\n`;
+      if (command === "rev-parse --git-common-dir") return `${distroRoot}/.git\n`;
+      if (command === "rev-parse HEAD") return "head\n";
+      if (command === "symbolic-ref --short -q HEAD") return "feature\n";
+      if (command === "symbolic-ref --quiet --short refs/remotes/origin/HEAD") {
+        return "origin/main\n";
+      }
+      if (command === "rev-parse --verify origin/main^{commit}") return "base\n";
+      if (command === "merge-base origin/main HEAD") return "base\n";
+      if (command === "diff --binary --full-index --no-ext-diff --no-textconv base --") return "";
+      if (command === "diff --name-status -z base --") return "";
+      if (command === "diff --numstat -z base --") return "";
+      if (command === "ls-files --others --exclude-standard -z") return "untracked.txt\0";
+      if (command === "log --format=%s base..head") return "";
+      throw new Error(`unexpected git command: ${command}`);
+    };
+
+    const patchset = await new GitCaptureAdapter(
+      undefined,
+      (repoRoot) => {
+        pinnedRoots.push(repoRoot);
+        return "snapshot";
+      },
+      () => ({ kind: "wsl", distro: "Ubuntu" }),
+      {
+        gitFor: () => run,
+        readFile: (async (path) => {
+          readPaths.push(path.toString());
+          return Buffer.from("untracked\n");
+        }) as typeof import("node:fs/promises").readFile,
+      },
+    ).capture(windowsRoot);
+
+    expect(readPaths).toEqual([`${windowsRoot}\\untracked.txt`]);
+    expect(pinnedRoots).toEqual([windowsRoot]);
+    expect(patchset.repository.root).toBe(windowsRoot);
+    expect(patchset.repository.commonDir).toBe(`${windowsRoot}\\.git`);
+  });
+
   it("stamps the effective project snapshot identity resolved at capture time", async () => {
     const root = repository();
     const seen: string[] = [];

@@ -56,6 +56,7 @@ export * from "./knowledge";
 export * from "./knowledge-generation";
 export * from "./lineage-matcher";
 export * from "./lineage-matcher-fixtures";
+export * from "./locus";
 export * from "./model-council";
 export * from "./noise-generation";
 export * from "./novelty-ledger";
