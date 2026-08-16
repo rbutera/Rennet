@@ -72,9 +72,20 @@ function RunOutcome({ state }: { state: HandoffRunState }) {
       );
     case "failed":
       return (
-        <p className="handoff-run-failed" role="alert" data-run-status="failed">
-          The write session failed: {state.reason}
-        </p>
+        <div className="handoff-run-outcome" role="alert" data-run-status="failed">
+          <p className="handoff-run-failed">The write session failed: {state.reason}</p>
+          {state.filesTouched.length === 0 ? null : (
+            // A failed agent can still have MUTATED files before it failed. The
+            // protocol carries `filesTouched` on failure precisely so the human is
+            // never told "it failed" while a partial write sits unmentioned — surface
+            // exactly what changed on disk.
+            <p className="handoff-run-touched">
+              {state.filesTouched.length} file
+              {state.filesTouched.length === 1 ? "" : "s"} changed before it failed:{" "}
+              {state.filesTouched.join(", ")}
+            </p>
+          )}
+        </div>
       );
   }
 }
@@ -95,6 +106,12 @@ export function HandoffPaper({
 }) {
   const preview = handoffPreview(bundle);
   const running = runState.status === "pending";
+  // The run is a one-shot from a given preview. Once it reaches ANY terminal outcome
+  // (ran / refused / unavailable / failed) the button stays disabled — re-clicking it
+  // would re-run the SAME bundle against a tree the last run may have mutated. The
+  // path to run again is a fresh compose, which an invalidation (a disposition change)
+  // arms by resetting the run to idle. So `idle` is the only runnable state.
+  const runnable = runState.status === "idle";
   return (
     <section
       className="handoff-paper"
@@ -155,7 +172,7 @@ export function HandoffPaper({
           <button
             type="button"
             className="handoff-paper-run"
-            disabled={running || preview.taskCount === 0}
+            disabled={!runnable || preview.taskCount === 0}
             onClick={() => onRun()}
           >
             {running ? "Running…" : "Run the handoff"}
