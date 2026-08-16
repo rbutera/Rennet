@@ -1,9 +1,11 @@
+import type { ComposedHandoffBundle, ComposedTask } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import type { CollationDraft } from "./collation";
 import {
   composePrSubmission,
   composePrSubmissionBody,
   deriveReviewEvent,
+  handoffPreview,
   type LineAnchors,
   type PublishContext,
   previewPublishTarget,
@@ -285,5 +287,91 @@ describe("the local-preview publish target", () => {
       headOid: "2",
     });
     expect(target.repo.name).toBe("repository");
+  });
+});
+
+// ── The stage-6 handoff preview (issue #72) ────────────────────────────────────
+
+describe("handoffPreview — the stage-6 composed-bundle preview", () => {
+  const ask = (id: string, path: string, instruction: string): ComposedTask["asks"][number] => ({
+    id,
+    path,
+    type: "request-change",
+    instruction,
+    context: "",
+  });
+
+  /**
+   * A composed bundle whose tasks are in a DELIBERATELY non-alphabetical order (z before
+   * a). `prompt` is rendered in that SAME task order — the run executes this prompt, so
+   * the prompt IS the executed order. `composed` toggles the floor vs authored case.
+   */
+  function bundleFixture(composed: boolean): ComposedHandoffBundle {
+    const tasks: ComposedTask[] = [
+      {
+        title: composed ? "Fix the later file first" : "",
+        sourceDispositions: ["d1"],
+        asks: [ask("d1", "src/z.ts", "ZEBRA-BODY")],
+      },
+      {
+        title: composed ? "Then the earlier one" : "",
+        sourceDispositions: ["d0"],
+        asks: [ask("d0", "src/a.ts", "APPLE-BODY")],
+      },
+    ];
+    // Prompt in task order — z then a (what the run turn runs).
+    const prompt = [
+      "# Review handoff",
+      "### 1. src/z.ts",
+      "ZEBRA-BODY",
+      "### 2. src/a.ts",
+      "APPLE-BODY",
+    ].join("\n");
+    return {
+      reviewId: "r1",
+      patchsetId: "p1",
+      tasks,
+      prompt,
+      digest: "abc",
+      composed,
+      traceMap: { d1: 0, d0: 1 },
+    };
+  }
+
+  it("surfaces ordered tasks, member asks, and the executable heading", () => {
+    const preview = handoffPreview(bundleFixture(true));
+    expect(preview.taskCount).toBe(2);
+    expect(preview.askCount).toBe(2);
+    expect(preview.tasks[0]?.order).toBe(1);
+    expect(preview.tasks[0]?.heading).toBe("src/z.ts");
+    expect(preview.tasks[0]?.asks[0]?.body).toBe("ZEBRA-BODY");
+    expect(preview.tasks[0]?.asks[0]?.typeLabel).toBe("requested change");
+  });
+
+  it("surfaces the model title as PREVIEW-ONLY metadata, separate from the executable heading", () => {
+    const preview = handoffPreview(bundleFixture(true));
+    expect(preview.composed).toBe(true);
+    // The model's title is carried for the human's eyes…
+    expect(preview.tasks[0]?.title).toBe("Fix the later file first");
+    // …but the executable heading is the mechanical one (the ask path), NOT the title.
+    expect(preview.tasks[0]?.heading).toBe("src/z.ts");
+  });
+
+  it("renders the mechanical floor HONESTLY as un-composed (composed:false, empty titles)", () => {
+    const preview = handoffPreview(bundleFixture(false));
+    expect(preview.composed).toBe(false);
+    expect(preview.tasks.every((task) => task.title === "")).toBe(true);
+  });
+
+  it("cannot show a different order than the run executes — preview order equals the prompt order", () => {
+    const bundle = bundleFixture(true);
+    const preview = handoffPreview(bundle);
+    // The run executes `bundle.prompt`; the preview reads `bundle.tasks`. Their order is
+    // the SAME by construction: task N's heading appears at position N in the prompt.
+    // RED-proof: sort `preview.tasks` by heading (a before z) and this fires.
+    const headingPositions = preview.tasks.map((task) => bundle.prompt.indexOf(task.heading));
+    const sorted = [...headingPositions].sort((a, b) => a - b);
+    expect(headingPositions).toEqual(sorted);
+    expect(preview.tasks.map((task) => task.heading)).toEqual(["src/z.ts", "src/a.ts"]);
   });
 });
