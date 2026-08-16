@@ -687,8 +687,8 @@ export interface ValidationReport {
  * gitlink pointer advance is a real change whose CONTENT the text floor cannot
  * ingest. Classifying them mechanical keeps them out of the substantive review
  * surface (they must never read as reviewed content) while the parallel
- * `Decomposition.ingestionGaps` disclosure names them as un-ingested so an
- * absence of findings over them is not mistaken for cleanliness.
+ * `Decomposition.blockingStates` names them as un-ingested so an absence of
+ * findings over them cannot let a done or publish gate report completeness.
  */
 export type MechanicalClass =
   | "lockfile"
@@ -788,30 +788,27 @@ export interface DecompositionResidueItem {
   reason: string;
 }
 
-/** The reason the floor could not fully ingest a piece of the captured change. */
-export type IngestionGapKind = "diff-truncated" | "binary" | "submodule";
+/** The reason decomposition cannot certify the captured change as complete. */
+export type DecompositionBlockingReason = "truncated" | "binary" | "submodule";
 
 /**
- * A first-class disclosure that the deterministic floor could NOT fully ingest
- * some captured content (R18: binary / submodule / truncated inputs are
- * first-class). Its presence is the operative fact for a done/publish surface:
- * an absence of findings over the affected content is NOT evidence of
- * cleanliness — the exact false-clear this floor exists to prevent.
+ * A first-class blocking state showing that the deterministic floor could not
+ * fully ingest some captured content (R18: binary / submodule / truncated
+ * inputs are first-class). Its presence is the operative fact for a done or
+ * publish gate: an absence of findings over the affected content is not
+ * evidence of cleanliness, which is the exact false-clear this floor prevents.
  *
  * This is the patchset-level companion to `residue` (which proves hunk-placement
  * totality). `residue` can only speak in terms of a `hunkId`; a truncated tail
- * has no hunk to point at, so incomplete ingestion needs its own carrier.
- *
- * Per R18 this DISCLOSES rather than hard-blocks: "the user finishes and
- * publishes anyway if they choose". A done/publish gate MUST surface a non-empty
- * `ingestionGaps` (Rule Zero forbids turning that disclosure into a consent
- * gate), but the human keeps the final act.
+ * has no hunk to point at, so incomplete ingestion needs its own carrier. A
+ * consumer can refuse a false-clear with `blockingStates.length > 0` without
+ * re-deriving capture semantics from hunks or patch text.
  */
-export interface IngestionGap {
-  readonly kind: IngestionGapKind;
-  /** The file the gap applies to, or `null` for a patchset-wide gap. */
+export interface DecompositionBlockingState {
+  readonly reason: DecompositionBlockingReason;
+  /** The file that triggered the state, or `null` for patchset-wide truncation. */
   readonly path: string | null;
-  /** Human-facing disclosure copy for the sheet. */
+  /** Human-facing explanation for the sheet or refusal surface. */
   readonly detail: string;
 }
 
@@ -831,13 +828,13 @@ export interface Decomposition {
   readingOrder: string[];
   residue: DecompositionResidueItem[];
   /**
-   * Incomplete-ingestion disclosures (R18). Empty ⇒ the floor fully ingested
-   * every captured byte. Non-empty ⇒ some content (a truncated tail, a binary
-   * blob, a submodule pointer's child repo) was not ingested, so "reviewed
-   * clean" cannot be claimed over it. Deterministically ordered: any
-   * patchset-wide gap first, then per-file gaps in path order.
+   * Incomplete-ingestion blockers (R18). Empty means the floor fully ingested
+   * every captured byte. Non-empty means some content (a truncated tail, a
+   * binary blob, or a submodule pointer's child repo) was not ingested, so a
+   * done or publish gate must not claim completeness. Deterministically ordered:
+   * any patchset-wide state first, then per-file states in path order.
    */
-  ingestionGaps: IngestionGap[];
+  blockingStates: DecompositionBlockingState[];
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

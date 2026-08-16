@@ -22,12 +22,12 @@
 
 import {
   type Decomposition,
+  type DecompositionBlockingState,
   type DecompositionChunk,
   type DecompositionEdge,
   DIFF_TRUNCATION_MARKER,
   type Hunk,
   type HunkClassification,
-  type IngestionGap,
   type MechanicalClass,
   type PatchFile,
   type Patchset,
@@ -403,7 +403,7 @@ function isFormattingOnly(body: readonly string[]): boolean {
 function fileMechanicalClass(file: PatchFile): MechanicalClass | null {
   // Un-ingestable content first: a binary blob or a submodule pointer must never
   // read as reviewed substantive change, whatever its path (R18). The parallel
-  // ingestion-gap disclosure names it as un-ingested.
+  // blocking state names it as un-ingested.
   if (isSubmoduleChange(file)) return "submodule";
   if (isBinaryFile(file)) return "binary";
   if (isLockfile(file.path)) return "lockfile";
@@ -413,15 +413,19 @@ function fileMechanicalClass(file: PatchFile): MechanicalClass | null {
 }
 
 /**
- * The incomplete-ingestion disclosures for a patchset (R18). Deterministic: any
- * patchset-wide truncation first, then per-file gaps in the caller's (path-sorted)
- * file order. A file can carry more than one gap (e.g. a truncated binary).
+ * The incomplete-ingestion blockers for a patchset (R18). Deterministic: any
+ * patchset-wide truncation first, then per-file states in the caller's
+ * path-sorted file order. A file can carry more than one state, for example a
+ * truncated binary.
  */
-function collectIngestionGaps(patchset: Patchset, files: readonly PatchFile[]): IngestionGap[] {
-  const gaps: IngestionGap[] = [];
+function collectBlockingStates(
+  patchset: Patchset,
+  files: readonly PatchFile[],
+): DecompositionBlockingState[] {
+  const states: DecompositionBlockingState[] = [];
   if (patchset.truncated) {
-    gaps.push({
-      kind: "diff-truncated",
+    states.push({
+      reason: "truncated",
       path: null,
       detail:
         "The captured diff was truncated at the size cap; changes past the cut were not " +
@@ -431,27 +435,27 @@ function collectIngestionGaps(patchset: Patchset, files: readonly PatchFile[]): 
   }
   for (const file of files) {
     if (isTruncatedFile(file.patch)) {
-      gaps.push({
-        kind: "diff-truncated",
+      states.push({
+        reason: "truncated",
         path: file.path,
         detail: `${file.path}: the diff was truncated at the size cap; content past the cut was not ingested.`,
       });
     }
     if (isSubmoduleChange(file)) {
-      gaps.push({
-        kind: "submodule",
+      states.push({
+        reason: "submodule",
         path: file.path,
         detail: `${file.path}: submodule change; the child repository's own content is not part of this diff.`,
       });
     } else if (isBinaryFile(file)) {
-      gaps.push({
-        kind: "binary",
+      states.push({
+        reason: "binary",
         path: file.path,
         detail: `${file.path}: binary file; its content is not text-diffable and was not ingested for review.`,
       });
     }
   }
-  return gaps;
+  return states;
 }
 
 // ── Reading layers ───────────────────────────────────────────────────────────
@@ -644,7 +648,7 @@ export function decompose(patchset: Patchset, options: DecomposeOptions = {}): D
       }
       // Binary blobs and submodule pointers are caught by `fileMechanicalClass`
       // above, so they classify `binary` / `submodule` (never substantive) and
-      // route to the skimmable appendix, with a parallel ingestion-gap disclosure.
+      // route to the skimmable appendix, with a parallel blocking state.
       // Only a genuinely empty bodyless file with no signal at all stays
       // substantive here.
       emit(synthetic, mechanical === null ? "substantive" : "mechanical", mechanical);
@@ -828,7 +832,7 @@ export function decompose(patchset: Patchset, options: DecomposeOptions = {}): D
     edges,
     readingOrder,
     residue: [],
-    ingestionGaps: collectIngestionGaps(patchset, files),
+    blockingStates: collectBlockingStates(patchset, files),
   };
 }
 
