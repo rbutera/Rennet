@@ -41,4 +41,4 @@ One branch, five debts. Red-first positive controls wherever code changes; close
 - [x] 6.1 Update `docs/src/content/docs/developing/concepts/canvas-model.md` (`:34`, `:148`): the claims canvas is removed, five angles, Decisions owns the ground; describe the retired-angle normalization for old reviews.
 - [x] 6.2 Sweep the docsite for any other page naming the Claims lens or the swept behaviors (`grep -ri "claims" docs/src/content/docs`) and correct what reads wrong after this change.
 - [x] 6.3 Mark the delivery-order wave-5 entry done (`docs/src/content/docs/developing/reference/delivery-order.md`), matching the struck-through style of waves 1–3.
-- [ ] 6.4 `pnpm check` green (full gate, with the red-first tests from 1.1/2.1/3.1 as the positive controls); close #221, #239, #88, #158, #71 in the PR.
+- [x] 6.4 `pnpm check` green (full gate, with the red-first tests from 1.1/2.1/3.1 as the positive controls); close #221, #239, #88, #158, #71 in the PR.
