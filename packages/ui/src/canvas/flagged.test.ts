@@ -236,9 +236,18 @@ describe("flaggedForPatchset — bind the result to the active patchset (#160/P0
     expect(flaggedForPatchset(review, "patch-two")).toBe(review);
   });
 
-  it("passes a FAILED result through (a failure is patchset-independent)", () => {
+  it("passes an UNSTAMPED failed result through (older host — unbound)", () => {
     const failed: FlaggedReview = { status: "failed", reason: "both seats down" };
     expect(flaggedForPatchset(failed, "patch-two")).toBe(failed);
+  });
+
+  it("DROPS a failed result stamped for patchset A when patchset B is active", () => {
+    const failed = {
+      status: "failed",
+      reason: "both seats down",
+      patchsetId: "patch-one",
+    } as FlaggedReview;
+    expect(flaggedForPatchset(failed, "patch-two")).toBeUndefined();
   });
 
   it("returns undefined for an undefined result (nothing loaded yet)", () => {
@@ -255,6 +264,17 @@ describe("buildFlaggedIndex — incomplete-ingestion blockingStates fold (R18/#3
   it("carries well-formed blockingStates onto the ok index", () => {
     const index = buildFlaggedIndex({ status: "ok", findings: [], blockingStates: states });
     if (index.state !== "ok") throw new Error("expected ok");
+    expect(index.blockingStates).toEqual(states);
+  });
+
+  it("carries only well-formed blockingStates onto the failed index", () => {
+    const malformed = { reason: "bogus", path: 7, detail: null };
+    const index = buildFlaggedIndex({
+      status: "failed",
+      reason: "model unavailable",
+      blockingStates: [malformed, ...states] as readonly DecompositionBlockingState[],
+    });
+    if (index.state !== "failed") throw new Error("expected failed");
     expect(index.blockingStates).toEqual(states);
   });
 

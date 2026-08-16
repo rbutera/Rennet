@@ -285,6 +285,7 @@ export function FlaggedLens({
           </p>
           <p className="flagged-failed-reason">{index.reason}</p>
         </div>
+        <BlockedIngestionDisclosure states={index.blockingStates ?? []} />
         <CiSignalPanel signal={index.ciSignal} />
       </div>
     );

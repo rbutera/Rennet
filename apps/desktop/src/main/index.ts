@@ -129,6 +129,7 @@ import { attachCiSignal } from "./ci-signal";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
 import { createDispatch } from "./dispatch";
 import { createLiveDraftPrBodyPort } from "./draft-pr-body-live";
+import { stampBlockingStates } from "./flagged-blocking-states";
 import { projectUnavailableDeepVerification } from "./flagged-review-verification";
 import { createLiveComposeBundle } from "./handoff-compose-live";
 import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
@@ -1132,9 +1133,7 @@ async function runFlaggedReviewWithContextFeed(
   // deterministic, not a model result, so it survives a failed model run). The
   // Flagged lens + PublishSheet disclose it as render-only honest copy; it NEVER
   // gates the sign (Rule Zero). Mirrors the #160 patchsetId stamp.
-  return withCiSignal.status === "ok"
-    ? { ...withCiSignal, blockingStates: decomposition.blockingStates }
-    : { ...withCiSignal, blockingStates: decomposition.blockingStates };
+  return stampBlockingStates(withCiSignal, decomposition);
 }
 
 async function runFlaggedReview(review: Review, deepReview = true): Promise<FlaggedReview> {

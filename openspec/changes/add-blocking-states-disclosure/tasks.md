@@ -25,3 +25,11 @@
 ## 5. Gate
 
 - [x] 5.1 Run `pnpm check` clean; confirm the new DOM tests were seen red first (comment out the disclosure once locally) so the positive control is real.
+
+## 6. Review follow-up
+
+- [x] 6.1 Patchset-bind failed `FlaggedReview` results through types, protocol, dispatch, and `flaggedForPatchset`; prove a failure stamped for patchset A cannot bind to active patchset B.
+- [x] 6.2 Carry sanitised `blockingStates` through the failed `FlaggedIndex` variant and disclose them alongside the unchanged "Couldn't check" state; DOM-test both blocker and no-blocker cases.
+- [x] 6.3 Extract the runner's unconditional `blockingStates` stamp into an exported pure helper and mutation-proof both `ok` and `failed` arms; retain and accurately name the separate schema-strip proof.
+- [x] 6.4 Add one `RennetApp` DOM test proving a patchset-bound flagged blocker reaches the live PublishSheet prop, and verify it turns red when that prop is temporarily removed.
+- [x] 6.5 Run `NX_DAEMON=false pnpm check` clean, review the final diff, and create the requested single conventional commit without pushing.

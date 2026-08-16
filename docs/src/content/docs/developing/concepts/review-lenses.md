@@ -113,9 +113,9 @@ blob, or a submodule pointer), Flagged carries that as its `blockingStates` and
 discloses it: the empty state no longer says “ran clean, not skipped” but instead
 states that nothing was flagged **in what could be read**, followed by one line per
 blocker naming its reason and detail. The disclosure renders even beside findings,
-because an absence of findings over un-ingested content is not evidence it was
-reviewed. It is honest copy only—it never adds a confirmation, acknowledgement, or
-gate.
+and it remains visible beside “Couldn't check” when the model review fails,
+because model outcome does not change which bytes deterministic ingestion missed.
+It is honest copy only—it never adds a confirmation, acknowledgement, or gate.
 
 For GitHub pull requests, Flagged also carries a collapsible CI signal for the
 pinned head. Deterministic path overlap turns attributable failures into

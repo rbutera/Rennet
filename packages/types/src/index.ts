@@ -1322,6 +1322,8 @@ export type FlaggedReview =
       status: "failed";
       reason: string;
       ciSignal?: CiSignal;
+      /** The active patchset this failed result was computed against. See the `ok` variant. */
+      patchsetId?: string;
       /** Incomplete-ingestion blockers (R18, issue #309). See the `ok` variant; stamped even on a failed run because blocked ingestion is deterministic, not a model result. */
       blockingStates?: readonly DecompositionBlockingState[];
     };

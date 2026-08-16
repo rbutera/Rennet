@@ -630,6 +630,22 @@ describe("createDispatch — flagged.review routing (the live finding runner, is
     expect(result).toEqual({ status: "ok", findings: [], patchsetId: review.activePatchsetId });
   });
 
+  it("stamps a failed result with the active patchset before it crosses the protocol boundary", async () => {
+    const flaggedReview = vi.fn(
+      async (): Promise<FlaggedReview> => ({
+        status: "failed",
+        reason: "both seats down",
+      }),
+    );
+    const { dispatch } = harness(undefined, {}, { flaggedReview });
+    const review = await capturedReview(dispatch);
+    await expect(dispatch("flagged.review", { reviewId: review.id })).resolves.toEqual({
+      status: "failed",
+      reason: "both seats down",
+      patchsetId: review.activePatchsetId,
+    });
+  });
+
   it("refuses flagged.review for a stale or unknown review id (the runner spends a model turn)", async () => {
     const { dispatch } = harness();
     await capturedReview(dispatch);
@@ -638,14 +654,10 @@ describe("createDispatch — flagged.review routing (the live finding runner, is
     );
   });
 
-  it("carries the patchset's incomplete-ingestion blockingStates through the flagged.review boundary (R18/#309)", async () => {
-    // The live runner stamps `decomposition.blockingStates` onto its result so the
-    // Flagged lens + PublishSheet can disclose blocked ingestion. Here a binary-only
-    // patchset is captured and the runner override mirrors the live stamp exactly —
-    // it runs the REAL deterministic `decompose` and returns its blockingStates. The
-    // assertion proves the field survives the flagged.review command boundary
-    // (protocol schema + dispatch), the exact Rule-80 strip surface. Positive control:
-    // dropping `blockingStates` from `flaggedReviewSchema` strips it here → red.
+  it("preserves pre-stamped blockingStates through the flagged.review protocol boundary (R18/#309)", async () => {
+    // This runner test double deliberately pre-stamps the real deterministic
+    // decomposition's blockers. The assertion guards the separate Rule-80 strip
+    // surface: dropping `blockingStates` from `flaggedReviewSchema` makes it red.
     const binaryPatchset: Patchset = {
       ...patchset(),
       files: [

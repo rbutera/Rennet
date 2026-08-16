@@ -1035,6 +1035,7 @@ export const flaggedReviewSchema: z.ZodType<FlaggedReview> = z.union([
     reason: z.string(),
     // CI facts survive even when the model review fails; omission strips them.
     ciSignal: ciSignalSchema.optional(),
+    patchsetId: z.string().min(1).optional(),
     blockingStates: z.array(flaggedBlockingStateSchema).optional(),
   }),
 ]);

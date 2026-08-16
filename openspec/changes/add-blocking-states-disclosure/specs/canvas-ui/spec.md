@@ -18,3 +18,10 @@ The Flagged lens SHALL receive the review's incomplete-ingestion blocking states
 
 - **WHEN** the Flagged lens renders a review with one or more findings and non-empty blocking states
 - **THEN** the blocked-ingestion disclosure renders beside the findings, because an absence of findings over un-ingested content is not evidence it was reviewed
+
+#### Scenario: Blocked ingestion is disclosed when automated review fails
+
+- **WHEN** the Flagged lens renders a failed automated review with non-empty deterministic blocking states
+- **THEN** the existing "Couldn't check" state remains visible and the blocked-ingestion disclosure renders beside it
+- **AND WHEN** the failed review has no blocking states
+- **THEN** the failed state renders exactly as it did before the disclosure change

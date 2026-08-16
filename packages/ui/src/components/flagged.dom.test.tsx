@@ -173,6 +173,32 @@ describe("FlaggedLens — the flagged index surface", () => {
     expect(container.querySelector(".flagged-empty")).toBeNull();
     expect(getByText(/Couldn't check/)).toBeTruthy();
     expect(getByText(/harness timed out/)).toBeTruthy();
+    expect(container.innerHTML).toBe(
+      '<div class="flagged-canvas"><div class="flagged-failed" role="status"><p class="flagged-failed-head">Couldn\'t check</p><p class="flagged-failed-body">The automated review runner did not complete, so this is not an all-clear.</p><p class="flagged-failed-reason">harness timed out</p></div></div>',
+    );
+  });
+
+  it("discloses blocked ingestion alongside a FAILED review", () => {
+    const { container, getByText } = mount(
+      <FlaggedLens
+        index={buildFlaggedIndex({
+          status: "failed",
+          reason: "harness timed out",
+          blockingStates: [
+            {
+              reason: "binary",
+              path: "assets/logo.png",
+              detail: "assets/logo.png: binary file; its content was not ingested.",
+            },
+          ],
+        })}
+        onJumpToAnchor={vi.fn()}
+      />,
+    );
+    expect(container.querySelector(".flagged-failed")).toBeTruthy();
+    expect(getByText(/Couldn't check/)).toBeTruthy();
+    expect(container.querySelector('[data-reason="binary"]')).toBeTruthy();
+    expect(getByText(/binary file; its content was not ingested/)).toBeTruthy();
   });
 
   it("renders passing CI, no checks, unavailable, and absent as four distinct surfaces", () => {

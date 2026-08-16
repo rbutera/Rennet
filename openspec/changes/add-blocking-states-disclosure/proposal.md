@@ -6,7 +6,7 @@ The decomposition floor already emits `Decomposition.blockingStates` (R18: `trun
 
 - `FlaggedReview` (both `ok` and `failed` variants) gains an additive optional `blockingStates` field, stamped by the desktop `flagged.review` runner from the deterministic decomposition it already computes (`decompose(activePatchset)` — no new pipeline, no model spend).
 - The protocol `flaggedReviewSchema` admits the new optional field so it crosses the command boundary.
-- The Flagged lens renders a blocked-ingestion disclosure whenever `blockingStates` is non-empty, and the unqualified "ran clean" copy becomes unreachable in that case — the empty state is qualified: nothing was flagged *in what could be read*.
+- The Flagged lens renders a blocked-ingestion disclosure whenever `blockingStates` is non-empty, including beside a failed model review, and the unqualified "ran clean" copy becomes unreachable in that case — the empty state is qualified: nothing was flagged *in what could be read*.
 - The PublishSheet renders the same disclosure before the sign control. It is honest copy only: it never feeds `ledgerBlocksSign`, `resolveSign`, or any acknowledgement — per R18 the user finishes and publishes anyway if they choose, and per Rule Zero no new gate or ceremony is added.
 - A DOM test proves a review over a truncated/binary-only patch cannot display an unqualified "ran clean" state (fails if the disclosure is deleted).
 
