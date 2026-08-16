@@ -5,6 +5,9 @@ import {
   dispositionSchema,
   isCommandName,
   parseCommandInput,
+  parseCommandOutput,
+  settingsLayerSchema,
+  settingsProjectSchema,
 } from "./index";
 
 describe("command protocol", () => {
@@ -213,5 +216,75 @@ describe("delta account schema — hunk grain + handoff attribution round-trip (
     const parsed = deltaAccountSchema.parse(legacy);
     expect(parsed.beyondAskHunks).toBeUndefined();
     expect(parsed.asks[0]?.handoffTask).toBeUndefined();
+  });
+});
+
+describe("settings v1 — registry ladder wire shapes (#28)", () => {
+  const provenance = {
+    layer: "detected" as const,
+    contributions: [
+      { layer: "builtin" as const, value: "host", effective: false },
+      { layer: "detected" as const, value: "WSL · Ubuntu", effective: true },
+    ],
+  };
+  const repoProvenance = {
+    layer: "repo" as const,
+    contributions: [{ layer: "repo" as const, value: "local", effective: true }],
+  };
+  const project = {
+    projectId: "p1",
+    name: "orbital",
+    repoPath: "/orbital",
+    visibility: "local" as const,
+    visibilityProvenance: repoProvenance,
+    promoted: false,
+    promotedProvenance: repoProvenance,
+    locus: { kind: "wsl" as const, distro: "Ubuntu" },
+    locusOverridden: false,
+    locusProvenance: provenance,
+    configMalformed: false,
+  };
+
+  it("settingsLayerSchema accepts the new `detected` rung", () => {
+    expect(settingsLayerSchema.parse("detected")).toBe("detected");
+  });
+
+  it("settingsProjectSchema REQUIRES locusProvenance (and keeps locusOverridden)", () => {
+    expect(settingsProjectSchema.parse(project).locusProvenance.layer).toBe("detected");
+    const { locusProvenance: _dropped, ...withoutProvenance } = project;
+    expect(() => settingsProjectSchema.parse(withoutProvenance)).toThrow();
+    const { locusOverridden: _o, ...withoutOverridden } = project;
+    expect(() => settingsProjectSchema.parse(withoutOverridden)).toThrow();
+  });
+
+  it("resetRepoValue / pinRepoValue payloads parse for the two repo keys", () => {
+    for (const command of ["settings.resetRepoValue", "settings.pinRepoValue"] as const) {
+      expect(parseCommandInput(command, { projectId: "p1", repoPath: "/o", key: "visibility" }).key).toBe(
+        "visibility",
+      );
+      expect(parseCommandInput(command, { projectId: "p1", repoPath: "/o", key: "locus" }).key).toBe("locus");
+      // A non-repo-scoped key (e.g. scheme) is rejected — reset/pin are repo-scoped.
+      expect(() => parseCommandInput(command, { projectId: "p1", repoPath: "/o", key: "scheme" })).toThrow();
+    }
+  });
+
+  it("reset/pin outcome parses with the re-resolved row", () => {
+    const outcome = parseCommandOutput("settings.resetRepoValue", {
+      status: "applied",
+      key: "visibility",
+      project,
+    });
+    expect(outcome.status).toBe("applied");
+    expect(outcome.project?.repoPath).toBe("/orbital");
+    // A refused/unresolved write carries a null row (nothing was written).
+    expect(
+      parseCommandOutput("settings.pinRepoValue", { status: "malformed", key: "locus", project: null })
+        .project,
+    ).toBeNull();
+  });
+
+  it("setAppearance accepts a null scheme (reset to the builtin) additively", () => {
+    expect(parseCommandInput("settings.setAppearance", { scheme: null }).scheme).toBeNull();
+    expect(parseCommandInput("settings.setAppearance", { scheme: "light" }).scheme).toBe("light");
   });
 });

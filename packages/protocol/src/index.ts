@@ -1498,8 +1498,14 @@ export const globalConfigSchema = z.object({
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
-/** Which ladder layer a resolved value came from. `builtin` < `global` < `repo`. */
-export const settingsLayerSchema = z.enum(["builtin", "global", "repo"]);
+/**
+ * Which ladder layer a resolved value came from. Precedence (lowest→highest):
+ * `builtin` < `detected` < `global` < `repo`. `detected` is the environment-derived
+ * rung (today: execution-locus auto-detection) — a machine guess any explicit user
+ * choice beats. The single source of precedence is `LAYER_ORDER` in `@rennet/core`;
+ * this enum only names the members, it does not order them.
+ */
+export const settingsLayerSchema = z.enum(["builtin", "detected", "global", "repo"]);
 export type SettingsLayer = z.infer<typeof settingsLayerSchema>;
 
 /**
@@ -1541,6 +1547,13 @@ export const settingsProjectSchema = z.object({
    */
   locus: locusSchema,
   locusOverridden: z.boolean(),
+  /**
+   * The resolver's own provenance for the locus — the `detected < repo` ladder
+   * (`detected` when auto-detected, `repo` when a persisted override wins, always
+   * listing the suppressed detected offer as a non-effective contribution). Computed
+   * fresh per read, never persisted; `locusOverridden` is derived (`layer === "repo"`).
+   */
+  locusProvenance: resolvedProvenanceSchema,
   /**
    * The repo's `config.json` exists but is malformed (or carries an invalid
    * value). The row then shows builtin defaults and REFUSES edits, so a write can
@@ -1591,6 +1604,29 @@ export const setRepoLocusOutcomeSchema = z.object({
   locusOverridden: z.boolean(),
 });
 export type SetRepoLocusOutcome = z.infer<typeof setRepoLocusOutcomeSchema>;
+
+/**
+ * The repo-scoped settings keys that can be reset-to-inherit and pinned-at-repo.
+ * Only the two editable repo-layer settings with a write path — visibility (the
+ * gitignore switch) and locus (the override store). Promotion is read-through here,
+ * and appearance is a global-layer key (reset via `setAppearance` with a null scheme).
+ */
+export const settingsRepoValueKeySchema = z.enum(["visibility", "locus"]);
+export type SettingsRepoValueKey = z.infer<typeof settingsRepoValueKeySchema>;
+
+/**
+ * The outcome of a Reset (clear the repo-layer entry, fall back down the ladder) or
+ * Pin (write the current effective value at the repo layer). `applied` carries the
+ * FRESHLY re-resolved row so the surface re-renders the resolver's own answer; a
+ * `status` other than `applied` means NOTHING was written (an unresolved checkout or
+ * a refused-because-malformed config, Rule 75) and `project` is null.
+ */
+export const settingsRepoWriteOutcomeSchema = z.object({
+  status: z.enum(["applied", "unresolved", "malformed"]),
+  key: settingsRepoValueKeySchema,
+  project: settingsProjectSchema.nullable(),
+});
+export type SettingsRepoWriteOutcome = z.infer<typeof settingsRepoWriteOutcomeSchema>;
 
 /** One convention rule shown in the per-repo guidance panel (never model-facing). */
 export const settingsConventionRuleSchema = z.object({
@@ -2326,7 +2362,12 @@ export const commandDefinitions = {
   // A personal, app-side preference the renderer consumes as `data-scheme`.
   // Side-effect-free — writes only `~/.rennet/config.json`, never a repo.
   "settings.setAppearance": {
-    input: z.object({ scheme: appearanceSchemeSchema }),
+    // `scheme: null` RESETS the global appearance to the builtin (`system`) — clears
+    // the `~/.rennet/config.json` entry so the value falls back down the ladder. A
+    // plain write, no ceremony (Rule Zero). Refused (throws) when the config is
+    // malformed, like every other write. The output `scheme` is always the resolved
+    // concrete value (builtin after a reset).
+    input: z.object({ scheme: appearanceSchemeSchema.nullable() }),
     output: z.object({
       scheme: appearanceSchemeSchema,
       schemeProvenance: resolvedProvenanceSchema,
@@ -2361,6 +2402,34 @@ export const commandDefinitions = {
       locus: locusSchema.nullable(),
     }),
     output: setRepoLocusOutcomeSchema,
+  },
+  // ── Settings: reset a repo-scoped value to inheritance (issue #28) ──────────
+  // Clear the repo-layer entry for `key` so the value falls back down the ladder.
+  // For visibility this ALSO re-applies the gitignore switch toward the newly
+  // effective value (a reset that changed the effective value without applying it
+  // would be a lie in the UI). A plain config write, no ceremony (Rule Zero);
+  // refused when the config is malformed (Rule 75). `repoPath` addresses the row.
+  "settings.resetRepoValue": {
+    input: z.object({
+      projectId: z.string().min(1),
+      repoPath: z.string().min(1),
+      key: settingsRepoValueKeySchema,
+    }),
+    output: settingsRepoWriteOutcomeSchema,
+  },
+  // ── Settings: pin a repo-scoped value at the repo layer (issue #28) ─────────
+  // Write the CURRENT effective value explicitly at the repo layer, so a change in
+  // a lower layer or in detection no longer moves it (chiefly: freeze an
+  // auto-detected locus). Defined as set-to-current-effective, so it reuses the
+  // same write path as the explicit controls — no new validation. Refused when
+  // malformed (Rule 75). `repoPath` addresses the row.
+  "settings.pinRepoValue": {
+    input: z.object({
+      projectId: z.string().min(1),
+      repoPath: z.string().min(1),
+      key: settingsRepoValueKeySchema,
+    }),
+    output: settingsRepoWriteOutcomeSchema,
   },
   // ── The review→agent handoff loop (issue #18, Contracts §2.1 destination B) ──
   // Batch the reviewer's open request-change/comment dispositions into a task bundle,
