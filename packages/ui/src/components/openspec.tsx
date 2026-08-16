@@ -438,7 +438,11 @@ export function OpenSpecView({
   const showRaw = rawView && view.raw !== undefined;
 
   return (
-    <div className="openspec-view" data-change={view.name} data-view={showRaw ? "raw" : "structured"}>
+    <div
+      className="openspec-view"
+      data-change={view.name}
+      data-view={showRaw ? "raw" : "structured"}
+    >
       {showRaw && view.raw ? <RawArtifacts raw={view.raw} /> : null}
       <header className="ospec-header">
         <div className="ospec-header-title">

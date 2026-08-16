@@ -57,8 +57,8 @@ import type {
   RspTokenUsage,
   ValidationReport,
 } from "@rennet/types";
-import { absentBudgetGrant } from "./invocation-budget";
 import type { TurnExecutorFacts } from "./harness-run-turn";
+import { absentBudgetGrant } from "./invocation-budget";
 
 /** The result of one finding turn: the emitted body, or a turn-level failure. */
 export type FindingTurnResult =

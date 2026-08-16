@@ -40,8 +40,8 @@ import type {
   RspTokenUsage,
   ValidationReport,
 } from "@rennet/types";
-import { absentBudgetGrant } from "./invocation-budget";
 import type { TurnExecutorFacts } from "./harness-run-turn";
+import { absentBudgetGrant } from "./invocation-budget";
 
 /**
  * The offered manifest for the decomposition angle: the SUBSTANTIVE hunks only.

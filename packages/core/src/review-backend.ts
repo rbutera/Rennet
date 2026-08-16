@@ -108,13 +108,7 @@ export interface ReviewBackendState {
 }
 
 /** A stable canonical angle order for choosing a default active canvas. */
-const ANGLE_ORDER: readonly CanvasAngle[] = [
-  "flagged",
-  "decisions",
-  "spec",
-  "sequence",
-  "noise",
-];
+const ANGLE_ORDER: readonly CanvasAngle[] = ["flagged", "decisions", "spec", "sequence", "noise"];
 
 /** All built canvases as an array, in canonical angle order. */
 function canvasList(pipeline: ReviewPipelineResult): Canvas[] {
