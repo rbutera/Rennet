@@ -720,6 +720,11 @@ button {
   tab-size: 2;
   white-space: pre;
 }
+.diff-line.is-delta-focus {
+  color: var(--text);
+  background: var(--accent-soft);
+  outline: none;
+}
 .angle-row {
   display: flex;
   justify-content: space-between;

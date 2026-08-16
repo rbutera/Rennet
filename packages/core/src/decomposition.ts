@@ -343,7 +343,7 @@ function isSubmoduleChange(file: PatchFile): boolean {
  * blank-line frame at end-of-patch keeps a source line that happens to contain
  * the literal marker text from raising a false truncation gap.
  */
-function isTruncatedFile(patch: string): boolean {
+export function patchHasTruncationFrame(patch: string): boolean {
   const trimmed = patch.replace(/\s+$/, "");
   if (!trimmed.endsWith(DIFF_TRUNCATION_MARKER)) return false;
   const before = trimmed.slice(0, trimmed.length - DIFF_TRUNCATION_MARKER.length);
@@ -434,7 +434,7 @@ function collectBlockingStates(
     });
   }
   for (const file of files) {
-    if (isTruncatedFile(file.patch)) {
+    if (patchHasTruncationFrame(file.patch)) {
       states.push({
         reason: "truncated",
         path: file.path,

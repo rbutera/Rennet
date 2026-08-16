@@ -1220,17 +1220,21 @@ export function createDispatch(
         // Hand the verified bundle's ask trace to the capture (issue #73 wave 3): the
         // traceMap + task titles MATERIALISED per ask, so the successor's delta account
         // attributes each ask to the composed task that ran it. A SMALL projection —
-        // anchor identity + task index + preview title, NO prompts/bodies/contexts — so
-        // nothing an agent executes enters the event log.
-        const handoffTrace: HandoffAskTrace[] = bundle.tasks.flatMap((task, index) =>
-          task.asks.map((ask) => ({
-            path: ask.path,
-            ...(ask.span !== undefined ? { span: ask.span } : {}),
-            ...(ask.side !== undefined ? { side: ask.side } : {}),
-            type: ask.type,
-            taskIndex: index,
-            taskTitle: task.title,
-          })),
+        // ask id + anchor identity + task index + preview title, NO prompts/bodies/contexts
+        // — so nothing an agent executes enters the event log.
+        const handoffTrace: HandoffAskTrace[] = bundle.tasks.flatMap((task) =>
+          task.asks.map((ask) => {
+            const taskIndex = bundle.traceMap[ask.id] as number;
+            return {
+              id: ask.id,
+              path: ask.path,
+              ...(ask.span !== undefined ? { span: ask.span } : {}),
+              ...(ask.side !== undefined ? { side: ask.side } : {}),
+              type: ask.type,
+              taskIndex,
+              taskTitle: bundle.tasks[taskIndex]?.title ?? "",
+            };
+          }),
         );
         const updated = await service.capture(
           input.commandId,

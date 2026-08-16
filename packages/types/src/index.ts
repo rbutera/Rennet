@@ -3496,12 +3496,13 @@ export interface ComposedHandoffBundle {
  * The ask trace a handoff run hands to the successor capture (issue #73 wave 3) — the
  * verified bundle's `traceMap` and task titles MATERIALISED per ask, projected down to
  * exactly what the delta account needs to attribute each ask to its composed task. One
- * entry per bundle ask: its anchor identity (path + span + side + type, so the fold
- * matches it to a review disposition) plus the `taskIndex` and preview `taskTitle` the
- * traceMap assigns it. Deliberately a SMALL projection — no prompts, no instruction
- * bodies, no contexts — so nothing an agent executes enters the event log.
+ * entry per bundle ask: its stable id, anchor identity (path + span + side + type, so
+ * the fold matches it to a review disposition), and the `taskIndex` plus preview
+ * `taskTitle` the traceMap assigns it. Deliberately a SMALL projection — no prompts, no
+ * instruction bodies, no contexts — so nothing an agent executes enters the event log.
  */
 export interface HandoffAskTrace {
+  readonly id: string;
   readonly path: string;
   readonly span?: AnchorSpan;
   readonly side?: AnchorSide;

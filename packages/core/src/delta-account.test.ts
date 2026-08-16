@@ -19,8 +19,16 @@ function ask(
   };
 }
 
-function file(path: string, patch: string) {
-  return { path, status: "modified" as const, additions: 1, deletions: 0, binary: false, patch };
+function file(path: string, patch: string, previousPath?: string) {
+  return {
+    path,
+    status: previousPath === undefined ? ("modified" as const) : ("renamed" as const),
+    additions: 1,
+    deletions: 0,
+    binary: false,
+    patch,
+    ...(previousPath === undefined ? {} : { previousPath }),
+  };
 }
 
 function patchset(id: string, files: ReturnType<typeof file>[]): Patchset {
@@ -236,13 +244,48 @@ describe("newHunksBetween — content-identity new-hunk detection (#73 wave 3)",
     expect(found[0]?.hunk.newStart).toBe(40);
   });
 
-  it("a TRUNCATED file (marker on either side) yields NO hunk claims — path grain only", () => {
+  it("a producer-framed TRUNCATED file (marker on either side) yields NO hunk claims — path grain only", () => {
     const prior = patchset("p1", [
-      file("big.ts", `@@ -1,2 +1,2 @@\n-a\n+b\n${DIFF_TRUNCATION_MARKER}`),
+      file("big.ts", `@@ -1,2 +1,2 @@\n-a\n+b\n\n${DIFF_TRUNCATION_MARKER}`),
     ]);
     const successor = patchset("p2", [
-      file("big.ts", `@@ -1,2 +1,2 @@\n-a\n+B\n@@ -99,1 +99,1 @@\n+new\n${DIFF_TRUNCATION_MARKER}`),
+      file(
+        "big.ts",
+        `@@ -1,2 +1,2 @@\n-a\n+B\n@@ -99,1 +99,1 @@\n+new\n\n${DIFF_TRUNCATION_MARKER}`,
+      ),
     ]);
+    expect(newHunksBetween(prior, successor)).toEqual([]);
+  });
+
+  it("a source line containing the literal marker still participates in hunk accounting", () => {
+    const markerSource = `+export const marker = "${DIFF_TRUNCATION_MARKER}";`;
+    const prior = patchset("p1", [file("marker.ts", `@@ -1,0 +1,1 @@\n${markerSource}`)]);
+    const successor = patchset("p2", [
+      file(
+        "marker.ts",
+        `@@ -1,0 +1,1 @@\n${markerSource}\n@@ -20,0 +21,1 @@\n+export const added = true;`,
+      ),
+    ]);
+
+    const found = newHunksBetween(prior, successor);
+    expect(found).toHaveLength(1);
+    expect(found[0]?.hunk.newStart).toBe(21);
+  });
+
+  it("matches identical hunks through a chained rename's stable source", () => {
+    const patch = "@@ -10,1 +10,1 @@\n-old\n+new";
+    const prior = patchset("p1", [file("mid.ts", patch, "old.ts")]);
+    const successor = patchset("p2", [file("new.ts", patch, "old.ts")]);
+
+    expect(newHunksBetween(prior, successor)).toEqual([]);
+  });
+
+  it("degrades a truncated chained rename to path grain without false hunks", () => {
+    const prior = patchset("p1", [
+      file("mid.ts", `@@ -10,1 +10,1 @@\n-old\n+new\n\n${DIFF_TRUNCATION_MARKER}`, "old.ts"),
+    ]);
+    const successor = patchset("p2", [file("new.ts", "@@ -10,1 +10,1 @@\n-old\n+new", "old.ts")]);
+
     expect(newHunksBetween(prior, successor)).toEqual([]);
   });
 
@@ -257,6 +300,60 @@ describe("newHunksBetween — content-identity new-hunk detection (#73 wave 3)",
 });
 
 describe("buildDeltaAccount — hunk buckets and the four-fact fixture at hunk grain (#73 wave 3)", () => {
+  it("does not cover a pure insertion with a deletion-side ask at the same line", () => {
+    const additionsAsk = ask("a.ts", "Remove the old line", { startLine: 10, endLine: 10 });
+    const deletionAsk: Disposition = {
+      ...additionsAsk,
+      anchor: { ...additionsAsk.anchor, side: "deletions" },
+    };
+    const account = buildDeltaAccount({
+      asks: [deletionAsk],
+      carried: [deletionAsk],
+      changedPaths: ["a.ts"],
+      prior: patchset("p1", [file("a.ts", "")]),
+      successor: patchset("p2", [file("a.ts", "@@ -10,0 +10,1 @@\n+inserted")]),
+    });
+
+    expect(account.beyondAskHunks).toEqual([
+      expect.objectContaining({ path: "a.ts", span: { startLine: 10 }, bucket: "asked-file" }),
+    ]);
+  });
+
+  it("does not cover a pure deletion with an insertion-side ask at the same line", () => {
+    const insertionAsk = ask("a.ts", "Insert the replacement", { startLine: 10, endLine: 10 });
+    const account = buildDeltaAccount({
+      asks: [insertionAsk],
+      carried: [insertionAsk],
+      changedPaths: ["a.ts"],
+      prior: patchset("p1", [file("a.ts", "")]),
+      successor: patchset("p2", [file("a.ts", "@@ -10,1 +10,0 @@\n-removed")]),
+    });
+
+    expect(account.beyondAskHunks).toEqual([
+      expect.objectContaining({
+        path: "a.ts",
+        span: { startLine: 10 },
+        side: "deletions",
+        bucket: "asked-file",
+      }),
+    ]);
+  });
+
+  it("does not cover an adjacent non-overlapping span", () => {
+    const adjacentAsk = ask("a.ts", "Change the next line", { startLine: 11, endLine: 11 });
+    const account = buildDeltaAccount({
+      asks: [adjacentAsk],
+      carried: [adjacentAsk],
+      changedPaths: ["a.ts"],
+      prior: patchset("p1", [file("a.ts", "")]),
+      successor: patchset("p2", [file("a.ts", "@@ -10,0 +10,1 @@\n+inserted")]),
+    });
+
+    expect(account.beyondAskHunks).toEqual([
+      expect.objectContaining({ path: "a.ts", span: { startLine: 10 }, bucket: "asked-file" }),
+    ]);
+  });
+
   it("classifies an unasked-file hunk into the loud unasked-file bucket", () => {
     const askA = ask("a.ts", "Fix a", { startLine: 1, endLine: 2 });
     const prior = patchset("p1", [file("a.ts", "@@ -1,2 +1,2 @@\n-a\n+b")]);
@@ -339,6 +436,7 @@ describe("buildDeltaAccount — hunk buckets and the four-fact fixture at hunk g
       changedPaths: [],
       handoff: [
         {
+          id: "d0",
           path: "a.ts",
           span: { startLine: 1, endLine: 2 },
           side: "additions",

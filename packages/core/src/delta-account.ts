@@ -1,17 +1,22 @@
-import {
-  type AnchorSide,
-  type AnchorSpan,
-  type DeltaAccount,
-  type DeltaAskAccount,
-  type DeltaBeyondHunk,
-  DIFF_TRUNCATION_MARKER,
-  type Disposition,
-  type DispositionAnchor,
-  type DispositionType,
-  type HandoffAskTrace,
-  type Patchset,
+import type {
+  AnchorSide,
+  AnchorSpan,
+  DeltaAccount,
+  DeltaAskAccount,
+  DeltaBeyondHunk,
+  Disposition,
+  DispositionAnchor,
+  DispositionType,
+  HandoffAskTrace,
+  Patchset,
 } from "@rennet/types";
-import { addedOf, deletedOf, parseFilePatch, type RawHunk } from "./decomposition";
+import {
+  addedOf,
+  deletedOf,
+  parseFilePatch,
+  patchHasTruncationFrame,
+  type RawHunk,
+} from "./decomposition";
 
 /**
  * The delta re-review account (issue #73) — the DETERMINISTIC, model-free half.
@@ -103,7 +108,8 @@ export interface NewHunk {
 
 /** The changed-line CONTENT identity of a hunk: its added + deleted line bytes, with
  *  context lines and header line numbers excluded — so a hunk that merely drifted
- *  (same edits, shifted line numbers) has the SAME identity and is not "new" (D1). */
+ *  (same edits, shifted line numbers) has the SAME identity and is not "new" (D1).
+ *  Split/merged-hunk restructuring over-reports as new, the safe direction per D1. */
 function hunkChangeIdentity(body: readonly string[]): string {
   return JSON.stringify([addedOf(body), deletedOf(body)]);
 }
@@ -120,6 +126,13 @@ function hunkChangeIdentity(body: readonly string[]): string {
  */
 export function newHunksBetween(prior: Patchset, successor: Patchset): NewHunk[] {
   const priorByPath = new Map(prior.files.map((file) => [file.path, file] as const));
+  // A prior rename is addressable by both its current path and its stable source, so
+  // old→mid followed by old→new still resolves to the same file on the next capture.
+  for (const file of prior.files) {
+    if (file.previousPath !== undefined && !priorByPath.has(file.previousPath)) {
+      priorByPath.set(file.previousPath, file);
+    }
+  }
   const result: NewHunk[] = [];
   for (const file of successor.files) {
     // The prior counterpart: same path, or the rename source when the successor renamed it.
@@ -129,8 +142,8 @@ export function newHunksBetween(prior: Patchset, successor: Patchset): NewHunk[]
     // Truncation fallback (D6): a content-lossy patch on either side cannot certify hunk
     // identity, so this file makes no hunk claim (it still participates at path grain).
     if (
-      file.patch.includes(DIFF_TRUNCATION_MARKER) ||
-      (priorFile?.patch.includes(DIFF_TRUNCATION_MARKER) ?? false)
+      patchHasTruncationFrame(file.patch) ||
+      (priorFile !== undefined && patchHasTruncationFrame(priorFile.patch))
     ) {
       continue;
     }
@@ -154,7 +167,8 @@ export function newHunksBetween(prior: Patchset, successor: Patchset): NewHunk[]
   return result;
 }
 
-/** Inclusive 1-based line ranges for a hunk's new-file and old-file images. */
+/** Inclusive 1-based line ranges for a hunk's new-file and old-file images.
+ *  A zero-length image is `[start, start - 1]`: empty, so it intersects nothing. */
 function hunkRanges(hunk: RawHunk): {
   newRange: readonly [number, number];
   oldRange: readonly [number, number];
@@ -162,8 +176,8 @@ function hunkRanges(hunk: RawHunk): {
 } {
   const pureDeletion = addedOf(hunk.body).length === 0 && deletedOf(hunk.body).length > 0;
   return {
-    newRange: [hunk.newStart, hunk.newStart + Math.max(hunk.newLines, 1) - 1],
-    oldRange: [hunk.oldStart, hunk.oldStart + Math.max(hunk.oldLines, 1) - 1],
+    newRange: [hunk.newStart, hunk.newStart + hunk.newLines - 1],
+    oldRange: [hunk.oldStart, hunk.oldStart + hunk.oldLines - 1],
     pureDeletion,
   };
 }

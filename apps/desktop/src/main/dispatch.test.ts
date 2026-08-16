@@ -99,6 +99,7 @@ class InMemoryStore implements ReviewStorePort {
   #latest: Review | null = null;
   readonly #byId = new Map<string, Review>();
   readonly #receipts = new Map<string, Review>();
+  readonly events: ReviewEvent[] = [];
   latestReview(repositoryRoot?: string): Review | null {
     if (repositoryRoot === undefined) return this.#latest;
     return this.#latest && this.#latest.repositoryRoot === repositoryRoot ? this.#latest : null;
@@ -109,7 +110,8 @@ class InMemoryStore implements ReviewStorePort {
   receipt(commandId: string, digest: string): Review | null {
     return this.#receipts.get(`${commandId}:${digest}`) ?? null;
   }
-  commit(commandId: string, digest: string, _events: ReviewEvent[], result: Review): Review {
+  commit(commandId: string, digest: string, events: ReviewEvent[], result: Review): Review {
+    this.events.push(...events);
     this.#latest = result;
     this.#byId.set(result.id, result);
     this.#receipts.set(`${commandId}:${digest}`, result);
@@ -179,6 +181,7 @@ function harness(
 ): {
   dispatch: ReturnType<typeof createDispatch>;
   service: ReviewService;
+  store: InMemoryStore;
   allowedRoots: Set<string>;
   buildCanvases: ReturnType<typeof vi.fn>;
   publishPort: ForgePublishPort & { posts: ForgeReviewPost[] };
@@ -198,7 +201,8 @@ function harness(
   const capture: PatchsetCapturePort = extra.capturePort ?? {
     capture: () => Promise.resolve(patchset()),
   };
-  const service = new ReviewService(capture, new InMemoryStore());
+  const store = new InMemoryStore();
+  const service = new ReviewService(capture, store);
   const allowedRoots = new Set<string>();
   let dirty = false;
   const buildCanvases = vi.fn(() =>
@@ -335,6 +339,7 @@ function harness(
   return {
     dispatch: createDispatch(deps),
     service,
+    store,
     allowedRoots,
     buildCanvases,
     publishPort,
@@ -2796,6 +2801,51 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
     expect(ask?.handoffTask?.index).toBe(0);
     // R28 still holds: the prior patchset survives byte-identical alongside the successor.
     expect(out.result.review.patchsets.map((p) => p.id)).toContain(priorActiveId);
+  });
+
+  it("persists ask ids and the verified bundle's non-identity traceMap projection", async () => {
+    const { dispatch, store } = harness(
+      undefined,
+      {},
+      {
+        capturePort: twoPhaseCapture(),
+        runHandoffTurn: async () => HANDOFF_TURN,
+      },
+    );
+    const review = await capturedReview(dispatch);
+    const bundle = await composeBundleFor(dispatch, review.id, [
+      { path: "src/a.ts", type: "request-change", body: "add a guard clause" },
+      { path: "src/unrelated.ts", type: "request-change", body: "tighten the helper" },
+    ]);
+    const nonIdentityBundle = {
+      ...bundle,
+      traceMap: { d0: 1, d1: 0 },
+    };
+
+    await dispatch("review.handoff.run", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      bundle: nonIdentityBundle,
+    });
+
+    const activated = store.events.find(
+      (event): event is Extract<ReviewEvent, { type: "PatchsetActivated" }> =>
+        event.type === "PatchsetActivated" && event.patchset.id === "patch-2",
+    );
+    expect(activated?.handoff).toEqual([
+      expect.objectContaining({
+        id: "d0",
+        path: "src/a.ts",
+        taskIndex: 1,
+        taskTitle: bundle.tasks[1]?.title,
+      }),
+      expect.objectContaining({
+        id: "d1",
+        path: "src/unrelated.ts",
+        taskIndex: 0,
+        taskTitle: bundle.tasks[0]?.title,
+      }),
+    ]);
   });
 
   it("run reports the deterministic carry's REAL non-zero count, not a fabricated constant (issue #254)", async () => {
