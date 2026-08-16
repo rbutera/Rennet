@@ -1659,8 +1659,8 @@ const composedHandoffBundleSchema = objectSchemaFor<ComposedHandoffBundle>()({
 
 // The council resolution that produced a compose turn (issue #72, task 2.2) — "why
 // did this model run." A discriminated union so a `resolved` seat carries its
-// harness/model/effort/summary and the `unavailable` floor carries only a summary
-// (the honest no-seat case), each an inspectable, distinct provenance state.
+// harness/model/effort/summary plus an optional turn failure, while an `unavailable`
+// floor carries only the reason no seat ran. These are distinct provenance states.
 const composeResolutionSchema = z.discriminatedUnion("status", [
   z.object({
     status: z.literal("resolved"),
@@ -1668,6 +1668,7 @@ const composeResolutionSchema = z.discriminatedUnion("status", [
     model: z.string().min(1),
     effort: z.string().min(1),
     summary: z.string(),
+    failureReason: z.string().min(1).optional(),
   }),
   z.object({ status: z.literal("unavailable"), summary: z.string() }),
 ]) satisfies z.ZodType<ComposeResolution>;

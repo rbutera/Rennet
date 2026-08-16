@@ -3466,10 +3466,10 @@ export interface ComposedHandoffBundle {
  * this model run." `status: "resolved"` carries the seat the council picked — harness,
  * model, effort — and the one-line resolution `summary` from the resolution trace, so
  * the product can answer the provenance question the same way the pipeline lenses do.
- * `status: "unavailable"` is the honest floor case: no seat was installed (or the
- * budget refused before a seat ran), so no model resolution exists — `summary` names
- * why. It is recorded WITH the compose outcome; a composed bundle carries the
- * resolution that produced it, the floor carries an unavailable one.
+ * `status: "unavailable"` means no seat ran (none was installed, discovery failed, or
+ * the budget refused before the turn), so `summary` names why. A resolved seat remains
+ * resolved when its turn fails or its output is rejected; `failureReason` then records
+ * why the bundle fell back without lying that no seat existed.
  */
 export type ComposeResolution =
   | {
@@ -3478,5 +3478,7 @@ export type ComposeResolution =
       readonly model: string;
       readonly effort: string;
       readonly summary: string;
+      /** Why the resolved seat fell back to the mechanical bundle, when it did. */
+      readonly failureReason?: string;
     }
   | { readonly status: "unavailable"; readonly summary: string };

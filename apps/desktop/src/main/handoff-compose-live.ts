@@ -202,8 +202,9 @@ export interface LiveComposeInput {
 /**
  * The outcome of one live compose (issue #72, task 2.2): the composed bundle plus the
  * council resolution that produced it, so `review.handoff.compose` can answer "why did
- * this model run." A model-composed bundle carries the `resolved` seat; the floor path
- * (no seat, a refused budget, or a probe rejection) carries an honest `unavailable`.
+ * this model run." A model-composed bundle carries the `resolved` seat. A floor with
+ * no turn carries `unavailable`; a resolved seat that failed keeps its provenance and
+ * records the actual `failureReason`.
  */
 export interface LiveComposeResult {
   readonly bundle: ComposedHandoffBundle;
@@ -245,7 +246,7 @@ export function createLiveComposeBundle(
         if (harness === "codex" && executor !== null) {
           port = codexComposePort(executor, resolved.model, resolved.effort);
         } else if (harness === "claude-code" && claudePort !== null) {
-          port = claudeComposePort(claudePort, repoRoot);
+          port = claudeComposePort(claudePort, repoRoot, resolved.model);
         }
         if (port !== null) {
           // The seat the turn will run on — recorded WITH the outcome (task 2.2) so the
@@ -279,13 +280,31 @@ export function createLiveComposeBundle(
       }
     }
 
-    // No seat, a refused budget, or a probe rejection: compose with an unavailable port
-    // so the core router returns the deterministic mechanical floor (a real, complete
-    // bundle) and the recorded resolution stays `unavailable`.
+    // No seat, a refused budget, or a probe rejection uses an unavailable port. A real
+    // seat is observed so a failed/malformed outcome can explain the floor without
+    // being mislabeled as "no seat installed".
+    let seatFailureReason: string | undefined;
     const composePort: ComposePort =
-      port ??
-      (() => Promise.resolve({ status: "unavailable", reason: "no compose seat installed" }));
+      port === null
+        ? () => Promise.resolve({ status: "unavailable", reason: resolution.summary })
+        : async (prompt) => {
+            try {
+              const outcome = await port(prompt);
+              if (outcome.status !== "emitted") seatFailureReason = outcome.reason;
+              return outcome;
+            } catch (error) {
+              seatFailureReason = `the compose turn threw: ${describeThrow(error)}`;
+              throw error;
+            }
+          };
     const composed = await composeHandoffBundle(bundle, composePort);
+    if (!composed.composed && port !== null && resolution.status === "resolved") {
+      resolution = {
+        ...resolution,
+        failureReason:
+          seatFailureReason ?? "the compose seat returned a composition that failed validation",
+      };
+    }
     return { bundle: composed, resolution };
   };
 }

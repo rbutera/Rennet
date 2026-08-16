@@ -1776,7 +1776,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
    * it was computed from, so a later staged edit clears it (design D1). A late result
    * against a since-changed set is discarded (the generation guard, mirroring the
    * PR-body draft). The compose command never yields an error bundle — it always
-   * returns a complete one, floor-marked when the model was unavailable — so the only
+   * returns a complete one, floor-marked with its compose resolution — so the only
    * "failed" state is an IPC-level throw.
    */
   async function composeHandoff(): Promise<void> {
@@ -1801,7 +1801,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       // Drop a superseded result: the staged set moved while the turn was in flight.
       if (generation !== composeGeneration.current) return;
       setHandoffComposition({ signature, bundle: result.bundle });
-      setComposeState({ status: "composed" });
+      setComposeState({ status: "composed", resolution: result.resolution });
     } catch (err) {
       if (generation !== composeGeneration.current) return;
       setComposeState({

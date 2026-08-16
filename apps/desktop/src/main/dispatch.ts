@@ -16,6 +16,7 @@ import {
   mechanicalComposition,
   type ReviewService,
   resolveReviewEvent,
+  traceMapFromTasks,
   verifyComposedBundle,
 } from "@rennet/core";
 import {
@@ -1152,7 +1153,7 @@ export function createDispatch(
           // baseline. The trusted mechanical `tasks` stay put; the executed contract is
           // the previewed composed prompt.
           runBundle = { ...bundle, prompt: input.composed.prompt };
-          executedTraceMap = input.composed.traceMap;
+          executedTraceMap = traceMapFromTasks(input.composed.tasks);
           executedComposed = input.composed.composed;
         }
         if (!deps.runHandoffTurn) {

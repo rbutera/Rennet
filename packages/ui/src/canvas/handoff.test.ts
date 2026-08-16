@@ -55,6 +55,21 @@ describe("handoffStagedSignature", () => {
     expect(handoffStagedSignature(reordered, "ps-1")).toBe(handoffStagedSignature(DRAFT, "ps-1"));
   });
 
+  it("changes when same-path/anchor/type notes are reordered, matching core's stable tie order", () => {
+    const tied: CollationDraft = [
+      item({ id: "1", raw: "first" }),
+      item({ id: "2", raw: "second" }),
+    ];
+    const reordered: CollationDraft = [
+      tied[1] as CollationDraft[number],
+      tied[0] as CollationDraft[number],
+    ];
+
+    expect(handoffStagedSignature(reordered, "ps-1")).not.toBe(
+      handoffStagedSignature(tied, "ps-1"),
+    );
+  });
+
   it("changes when a body is reworded", () => {
     const reworded: CollationDraft = [item({ id: "1", raw: "a DIFFERENT ask" }), ...DRAFT.slice(1)];
     expect(handoffStagedSignature(reworded, "ps-1")).not.toBe(

@@ -1,4 +1,9 @@
-import type { ComposableAsk, ComposedHandoffBundle, DispositionType } from "@rennet/types";
+import type {
+  ComposableAsk,
+  ComposedHandoffBundle,
+  ComposeResolution,
+  DispositionType,
+} from "@rennet/types";
 import {
   type CollationDraft,
   type CollationItem,
@@ -92,13 +97,21 @@ export interface PrDraftValues {
  * in the host's held state (`handoffComposition`), so it is NOT here — this carries
  * only the transient/outcome status the canvas shows beside the action. Absent ⇒ idle
  * (offer "Compose the handoff"). A compose never returns an error bundle — it always
- * yields a complete one, floor-marked when the model was unavailable — so `failed`
- * covers only an IPC-level throw.
+ * yields a complete one, floor-marked with the actual no-seat or seat-failure reason —
+ * so `failed` covers only an IPC-level throw.
  */
 export type HandoffComposeState =
   | { readonly status: "composing" }
-  | { readonly status: "composed" }
+  | { readonly status: "composed"; readonly resolution: ComposeResolution }
   | { readonly status: "failed"; readonly reason: string };
+
+function handoffFloorExplanation(resolution: ComposeResolution | undefined): string {
+  if (resolution?.status === "resolved" && resolution.failureReason !== undefined) {
+    return `${resolution.harness} composition failed: ${resolution.failureReason}.`;
+  }
+  if (resolution?.status === "unavailable") return `${resolution.summary}.`;
+  return "Composition returned the mechanical pass-through.";
+}
 
 /** The human-facing anchor label for a composed ask ("lines A–B, additions" / "whole file"). */
 function askAnchorLabel(ask: ComposableAsk): string {
@@ -392,8 +405,12 @@ export function CollationDraftCanvas({
                     data-status="floor"
                     role="note"
                   >
-                    Not model-composed — no compose seat was available, so this is the plain
-                    pass-through list of every note, one task each. Nothing was lost.
+                    Not model-composed —{" "}
+                    {handoffFloorExplanation(
+                      composeState?.status === "composed" ? composeState.resolution : undefined,
+                    )}{" "}
+                    This is the plain pass-through list of every note, one task each. Nothing was
+                    lost.
                   </p>
                 )}
                 <ol className="collation-handoff-tasks" aria-label="Composed handoff tasks">

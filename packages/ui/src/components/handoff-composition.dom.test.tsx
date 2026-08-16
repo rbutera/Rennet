@@ -152,12 +152,25 @@ describe("collation draft canvas — composition (own-branch)", () => {
         onChange={() => undefined}
         onComposeHandoff={() => undefined}
         handoffComposition={FLOOR}
+        composeState={{
+          status: "composed",
+          resolution: {
+            status: "resolved",
+            harness: "codex",
+            model: "gpt-5.5-codex",
+            effort: "medium",
+            summary: "M24 · council-table",
+            failureReason: "the compose turn returned no groups array",
+          },
+        }}
       />,
     );
     const result = container.querySelector<HTMLElement>('[data-testid="handoff-result"]');
     expect(result?.getAttribute("data-composed")).toBe("false");
     expect(container.querySelector('[data-testid="handoff-floor-note"]')).not.toBeNull();
     expect(container.textContent).toContain("Not model-composed");
+    expect(container.textContent).toContain("the compose turn returned no groups array");
+    expect(container.textContent).not.toContain("no compose seat was available");
   });
 });
 

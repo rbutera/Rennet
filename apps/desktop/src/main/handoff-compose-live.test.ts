@@ -172,7 +172,7 @@ describe("createLiveComposeBundle", () => {
   });
 
   it("adopts a valid authoring from the Claude seat when Codex is absent", async () => {
-    const { port } = fakeClaude(VALID_PROPOSAL);
+    const { port, lastSpec } = fakeClaude(VALID_PROPOSAL);
     const compose = createLiveComposeBundle({
       claudePort: () => Promise.resolve(port),
       codexExecutor: () => Promise.resolve(null),
@@ -181,7 +181,10 @@ describe("createLiveComposeBundle", () => {
     expect(composed.composed).toBe(true);
     expect(composed.tasks).toHaveLength(2);
     expect(resolution.status).toBe("resolved");
-    if (resolution.status === "resolved") expect(resolution.harness).toBe("claude-code");
+    if (resolution.status === "resolved") {
+      expect(resolution.harness).toBe("claude-code");
+      expect(lastSpec()?.model).toBe(resolution.model);
+    }
   });
 
   it("returns the mechanical floor + an unavailable resolution when NO seat is installed", async () => {
@@ -201,9 +204,13 @@ describe("createLiveComposeBundle", () => {
       claudePort: () => Promise.resolve(null),
       codexExecutor: () => Promise.resolve(fakeCodex({ groups: "garbage" })),
     });
-    const { bundle: composed } = await compose({ bundle: bundle(), repoRoot: "/repo" });
+    const { bundle: composed, resolution } = await compose({ bundle: bundle(), repoRoot: "/repo" });
     expect(composed.composed).toBe(false);
     expect(composed.tasks).toHaveLength(3);
+    expect(resolution).toMatchObject({
+      status: "resolved",
+      failureReason: "the compose turn returned no groups array",
+    });
   });
 });
 

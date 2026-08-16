@@ -54,10 +54,10 @@ function toHandoffDisposition(item: CollationItem): HandoffDisposition {
  * A stable signature of the staged handoff set — the renderer's staleness key
  * (design D1). It changes IFF the staged payload the server would rebuild the
  * mechanical bundle from changes: the active patchset plus every addressed
- * disposition's path/type/effective-body/anchor. It is order-INDEPENDENT (sorted the
- * way the core bundle re-sorts its tasks), so a pure reorder of the draft — which the
- * server re-sorts away — does not needlessly invalidate a held composition, while any
- * reword / retype / withdraw / stage change that alters the payload does.
+ * disposition's path/type/effective-body/anchor. It uses the same stable ordering as
+ * core: path/span/type are canonical, while otherwise-tied notes preserve draft order.
+ * A reorder only invalidates when it changes the mechanical bundle's order; any reword
+ * / retype / withdraw / stage change that alters the payload also invalidates.
  */
 export function handoffStagedSignature(draft: CollationDraft, patchsetId: string): string {
   const dispositions = handoffDispositions(draft)
@@ -74,7 +74,7 @@ export function handoffStagedSignature(draft: CollationDraft, patchsetId: string
       const rightStart = right.span?.startLine ?? 0;
       if (leftStart !== rightStart) return leftStart - rightStart;
       if (left.type !== right.type) return left.type < right.type ? -1 : 1;
-      return left.body < right.body ? -1 : left.body > right.body ? 1 : 0;
+      return 0;
     });
   return JSON.stringify({ patchsetId, dispositions });
 }

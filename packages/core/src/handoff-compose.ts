@@ -249,6 +249,7 @@ function composedDigest(tasks: readonly ComposedTask[]): string {
           path: ask.path,
           type: ask.type,
           instruction: ask.instruction,
+          context: ask.context,
           span: ask.span ?? null,
           side: ask.side ?? null,
         })),
@@ -257,16 +258,23 @@ function composedDigest(tasks: readonly ComposedTask[]): string {
   );
 }
 
+/** Derive the source-disposition trace from the verified task partition. */
+export function traceMapFromTasks(
+  tasks: readonly ComposedTask[],
+): Readonly<Record<string, number>> {
+  const traceMap: Record<string, number> = {};
+  tasks.forEach((task, index) => {
+    for (const id of task.sourceDispositions) traceMap[id] = index;
+  });
+  return traceMap;
+}
+
 function assemble(
   reviewId: string,
   patchsetId: string,
   tasks: readonly ComposedTask[],
   composed: boolean,
 ): ComposedHandoffBundle {
-  const traceMap: Record<string, number> = {};
-  tasks.forEach((task, index) => {
-    for (const id of task.sourceDispositions) traceMap[id] = index;
-  });
   return {
     reviewId,
     patchsetId,
@@ -274,7 +282,7 @@ function assemble(
     prompt: renderComposedPrompt(tasks),
     digest: composedDigest(tasks),
     composed,
-    traceMap,
+    traceMap: traceMapFromTasks(tasks),
   };
 }
 
@@ -371,6 +379,7 @@ function askIdentityEqual(left: ComposableAsk, right: ComposableAsk): boolean {
     left.path === right.path &&
     left.type === right.type &&
     left.instruction === right.instruction &&
+    left.context === right.context &&
     JSON.stringify(left.span ?? null) === JSON.stringify(right.span ?? null) &&
     (left.side ?? null) === (right.side ?? null)
   );
@@ -393,11 +402,23 @@ export function verifyComposedBundle(
   composed: ComposedHandoffBundle,
   mechanical: HandoffBundle,
 ): ComposedVerification {
+  if (composed.reviewId !== mechanical.reviewId || composed.patchsetId !== mechanical.patchsetId) {
+    return {
+      ok: false,
+      reason: "the composed bundle is stale: its review or patchset identity no longer matches",
+    };
+  }
   // (a) Integrity: the supplied digest must match a recomputation over the tasks.
   if (composedDigest(composed.tasks) !== composed.digest) {
     return {
       ok: false,
       reason: "the composed bundle's digest does not match its tasks (corrupted composition)",
+    };
+  }
+  if (renderComposedPrompt(composed.tasks) !== composed.prompt) {
+    return {
+      ok: false,
+      reason: "the composed bundle's prompt is stale or tampered",
     };
   }
   const mechanicalAsks = asksFromBundle(mechanical);
@@ -418,6 +439,15 @@ export function verifyComposedBundle(
   // (b2) Byte-identical bodies/anchors: each cited ask must equal the CURRENT ask.
   const mechanicalById = new Map(mechanicalAsks.map((ask) => [ask.id, ask] as const));
   for (const task of composed.tasks) {
+    if (
+      task.asks.length !== task.sourceDispositions.length ||
+      task.asks.some((ask, index) => ask.id !== task.sourceDispositions[index])
+    ) {
+      return {
+        ok: false,
+        reason: "the composed bundle's task membership does not match its source dispositions",
+      };
+    }
     for (const ask of task.asks) {
       const trusted = mechanicalById.get(ask.id);
       if (trusted === undefined || !askIdentityEqual(ask, trusted)) {
