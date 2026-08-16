@@ -745,11 +745,38 @@ export const processedRepoSummarySchema = z.object({
 export type ProcessedRepoSummary = z.infer<typeof processedRepoSummarySchema>;
 
 /**
- * A single live-narration event pushed while a project processes. `repo-start`
- * and `repo-done` bracket each repo; `stage` fires as the build advances, each
- * carrying a real `note` (and often a real `detail`, e.g. "412 files"); `done`
- * fires once at the end with the full per-repo summary. `repo-error` is a SOFT
- * failure for one repo — processing continues, and `done` still fires.
+ * A typed reference to the artifact a landed narration line produced (issue #71
+ * anchoring): a processed project, or a captured/generated review. A terminal or
+ * landed progress event may carry one so the renderer can navigate to it via the
+ * existing flow handlers; a line with no ref is honestly inert, never a dead link.
+ */
+export const progressArtifactRefSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("project"), projectId: z.string().min(1) }),
+  z.object({ kind: z.literal("review"), reviewId: z.string().min(1) }),
+]);
+export type ProgressArtifactRef = z.infer<typeof progressArtifactRefSchema>;
+
+/**
+ * A single live-narration event pushed while a project processes OR a review is
+ * captured/generated (issue #71: one progress vocabulary on one transport).
+ *
+ * Processing (issue #29): `repo-start`/`repo-done` bracket each repo; `stage` fires
+ * as the build advances, each carrying a real `note` (and often a real `detail`,
+ * e.g. "412 files"); `done` fires once at the end with the full per-repo summary.
+ * `repo-error` is a SOFT failure for one repo — processing continues, and `done`
+ * still fires.
+ *
+ * Capture/review (issue #71): `capture`/`floor`/`angle` fire at the review
+ * pipeline's real deterministic seams (capture milestones, deterministic-floor
+ * completion, per-angle admission — counts/ids/titles only, never model prose);
+ * `review-done` is the terminal event that agrees with the command's resolved
+ * value and carries the review anchor; `review-error` is a soft failure narrated
+ * honestly while the run continues. Every capture/review payload is deterministic:
+ * a complete feed requires NO model call.
+ *
+ * The union is discriminated by `kind` and grows additively — consumers that fold
+ * only the repo kinds skip the capture/review kinds (and any future kind) rather
+ * than throwing, so older folds keep compiling and behaving unchanged.
  */
 export const projectProcessEventSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -772,6 +799,8 @@ export const projectProcessEventSchema = z.discriminatedUnion("kind", [
     kind: z.literal("repo-done"),
     repo: z.string().min(1),
     summary: processedRepoSummarySchema,
+    /** The landed artifact this repo produced, for anchoring (optional). */
+    artifact: progressArtifactRefSchema.optional(),
   }),
   z.object({
     kind: z.literal("repo-error"),
@@ -781,6 +810,36 @@ export const projectProcessEventSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("done"),
     repos: z.array(processedRepoSummarySchema),
+  }),
+  // ── capture/review milestones (issue #71) — deterministic, no model prose ────
+  z.object({
+    kind: z.literal("capture"),
+    /** A deterministic, app-authored milestone line ("Captured the working tree"). */
+    note: z.string().min(1),
+    /** A real, specific detail when known ("128 changed files"). */
+    detail: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("floor"),
+    /** A deterministic-floor completion line ("Built the deterministic floor"). */
+    note: z.string().min(1),
+    detail: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("angle"),
+    /** The admitted angle's real title (from the pipeline's own record). */
+    title: z.string().min(1),
+    /** An optional deterministic note ("admitted"). */
+    note: z.string().optional(),
+  }),
+  z.object({
+    kind: z.literal("review-done"),
+    /** The review this run produced, for anchoring the terminal line (optional). */
+    artifact: progressArtifactRefSchema.optional(),
+  }),
+  z.object({
+    kind: z.literal("review-error"),
+    message: z.string().min(1),
   }),
 ]);
 export type ProjectProcessEvent = z.infer<typeof projectProcessEventSchema>;

@@ -238,6 +238,16 @@ export { HypothesisReadingFrame } from "./components/hypothesis";
 export type { MarkIndexEntry } from "./components/mark-index";
 export { MarkIndex } from "./components/mark-index";
 export { OrphanTray } from "./components/orphan-tray";
+// The shared narration-feed organ (issue #71): one feed component + one pure fold
+// for every narrated slot (processing, context refresh, capture/review wait).
+export { ProgressFeed } from "./components/progress-feed";
+export type { ProcessingView, RepoBlockView } from "./components/progress-feed-fold";
+export {
+  deriveProgressView,
+  doneSummaryLine,
+  failedSummaryLine,
+  summaryLine,
+} from "./components/progress-feed-fold";
 export { PublishSheet } from "./components/publish-sheet";
 export { SettingsScreen } from "./components/settings-screen";
 export type { CanvasWorkspaceProps, DiffResolver } from "./components/workspace";

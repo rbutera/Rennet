@@ -50,6 +50,23 @@ The decision is not “streams are bad.” Every push seam still needs four thin
 That gives Rennet the useful parts of reactive design without hiding durable
 review state inside operator closures.
 
+## The progress-narration seam
+
+The `rennet:progress` push (main to renderer, keyed by `commandId`, typed as
+`ProjectProcessEvent`) is one such live seam, and it obeys the four-point
+discipline above: dispatch owns the terminal event so the stream and the
+command's resolved value always agree, and the renderer folds the stream into UI
+state that a re-read of durable truth can always reconstruct.
+
+Every narrated slot renders through a single shared narration organ
+(`ProgressFeed` plus the pure `deriveProgressView` fold in `@rennet/ui`), not a
+per-slot copy. The fold is a pure function of the deterministic event stream, so
+the feed is complete with no model call; unknown or future event kinds on the
+union are skipped rather than thrown on, which lets the event vocabulary grow
+additively (the capture and review milestones share the same channel). A landed
+feed line can carry a typed artifact reference so activating it navigates to the
+project or review it produced; a line with no reference stays honestly inert.
+
 ## When to revisit it
 
 Reopen the decision if Rennet needs several non-trivial time or combination
