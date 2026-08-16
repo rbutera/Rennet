@@ -1,7 +1,7 @@
 // @vitest-environment happy-dom
 import type { Project, ProjectDetail as ProjectDetailData, RennetBridge } from "@rennet/protocol";
 import type { Review } from "@rennet/types";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";
 import { NAV_HISTORY_STORAGE_KEY, serialize } from "./nav/history";
@@ -140,6 +140,11 @@ function navigationBridge(
   };
   return { invoke: invoke as unknown as RennetBridge["invoke"] };
 }
+
+// These tests seed the persisted navigation blob (recents + the v3 back/forward
+// stack). Clear it after each so a persisted stack never leaks into another test file
+// running in the same worker and hijacks its boot restore.
+afterEach(() => localStorage.clear());
 
 describe("RennetApp navigation spine", () => {
   it("shows only the Projects root crumb while bootstrap is still loading", () => {
@@ -389,7 +394,10 @@ describe("RennetApp navigation spine", () => {
 });
 
 describe("RennetApp navigation-stack restore across restarts (#324/#297)", () => {
-  function seedStack(stack: Array<Record<string, unknown>>, future: Array<Record<string, unknown>> = []) {
+  function seedStack(
+    stack: Array<Record<string, unknown>>,
+    future: Array<Record<string, unknown>> = [],
+  ) {
     localStorage.clear();
     localStorage.setItem(
       NAV_HISTORY_STORAGE_KEY,
@@ -410,7 +418,10 @@ describe("RennetApp navigation-stack restore across restarts (#324/#297)", () =>
 
     await waitFor(() => expect(container.querySelector(".canvas-app")).not.toBeNull());
     expect(calls).toContainEqual(
-      expect.objectContaining({ name: "review.load", input: expect.objectContaining({ reviewId: review.id }) }),
+      expect.objectContaining({
+        name: "review.load",
+        input: expect.objectContaining({ reviewId: review.id }),
+      }),
     );
     const breadcrumb = getByRole("navigation", { name: "Breadcrumb" });
     expect(breadcrumb.textContent).toContain(project.name);
@@ -482,9 +493,7 @@ describe("RennetApp navigation-stack restore across restarts (#324/#297)", () =>
       <RennetApp bridge={navigationBridge(null, calls, { repositoryPresent: false })} />,
     );
 
-    await waitFor(() =>
-      expect(getByText(/original worktree is gone/i)).not.toBeNull(),
-    );
+    await waitFor(() => expect(getByText(/original worktree is gone/i)).not.toBeNull());
     // The live review surfaces are honestly unavailable — no doomed canvas load fired.
     expect(container.querySelector(".canvas-app")).toBeNull();
     expect(calls.some((call) => call.name === "review.canvases")).toBe(false);

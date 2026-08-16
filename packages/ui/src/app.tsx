@@ -103,15 +103,15 @@ import {
   navHistoryReducer,
   back as navigateBack,
   forward as navigateForward,
-  parse as parseNavigation,
   type PersistedNavState,
+  parse as parseNavigation,
   push as pushSurface,
   type RecentSurface,
   recordRecent,
   type Surface,
-  surfaceIdentity,
   type SurfaceLabels,
   serialize as serializeNavigation,
+  surfaceIdentity,
 } from "./nav/history";
 import type { SmartRow } from "./project/smart-list";
 
@@ -443,10 +443,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   }, [currentSurface, navigationReady]);
   // Persist recents AND the back/forward stack (#297 remainder) on every change, so a
   // restart reopens where the user left off.
-  useEffect(
-    () => persistNav(recents, navigation.stack, navigation.future),
-    [recents, navigation],
-  );
+  useEffect(() => persistNav(recents, navigation.stack, navigation.future), [recents, navigation]);
   // The legacy direct-entry capability is palette-only. It is an overlay beside
   // the surface stack, never a location recorded in navigation history.
   const [directEntryOpen, setDirectEntryOpen] = useState(false);
@@ -715,6 +712,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // another surface's content (the #305 regression class). A tip that can no longer
   // load is dropped with a plain status, flooring to the nearest restorable ancestor
   // (the Projects root always restores).
+  // biome-ignore lint/correctness/useExhaustiveDependencies: loadProjectDetail is a stable-by-intent body function (reads only bridge + setters); listing it would re-run the effect every render. The load-firing decision is keyed on currentSurface/review/projectDetail, which ARE listed.
   useEffect(() => {
     if (review === undefined) return; // bootstrap still resolving; the reducer holds the stack
     const surface = currentSurface;
@@ -2628,8 +2626,8 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
             <p className="eyebrow">AI REVIEW</p>
             <h2>The live review needs the original repository.</h2>
             <p>
-              The worktree this review was captured from is gone, so the AI review can't
-              run. The captured diff and your dispositions are all still here.
+              The worktree this review was captured from is gone, so the AI review can't run. The
+              captured diff and your dispositions are all still here.
             </p>
           </section>
         ) : loadFailed ? (

@@ -1,11 +1,6 @@
 import type { PatchFile, Patchset, Review } from "@rennet/types";
 import { describe, expect, it } from "vitest";
-import {
-  foldReview,
-  type PatchsetCapturePort,
-  ReviewService,
-  type ReviewStorePort,
-} from "./index";
+import { foldReview, type PatchsetCapturePort, ReviewService, type ReviewStorePort } from "./index";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // ReviewService.reviewById — the pure by-id read behind review.load (#324).

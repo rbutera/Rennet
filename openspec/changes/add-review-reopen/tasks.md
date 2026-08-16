@@ -93,6 +93,6 @@ control) proving the behavior is absent, then makes it pass. Gate is
 
 ## 6. Gate
 
-- [ ] 6.1 Full `pnpm check` green across the workspace; confirm at least one
+- [x] 6.1 Full `pnpm check` green across the workspace; confirm at least one
       test in each RED group was observed failing before its implementation
       landed (positive controls).

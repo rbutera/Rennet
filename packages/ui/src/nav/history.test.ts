@@ -258,9 +258,9 @@ describe("persisted navigation (v3 stack + recents)", () => {
     ];
 
     expect(
-      parse(JSON.stringify({ version: NAV_HISTORY_VERSION, recents, stack: [], future: [] })).recents.map(
-        surfaceIdentity,
-      ),
+      parse(
+        JSON.stringify({ version: NAV_HISTORY_VERSION, recents, stack: [], future: [] }),
+      ).recents.map(surfaceIdentity),
     ).toEqual([
       "project:p0",
       "project:p1",
