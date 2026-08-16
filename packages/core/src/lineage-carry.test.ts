@@ -1,5 +1,5 @@
 import { parseCommandOutput } from "@rennet/protocol";
-import type { Disposition, PatchFile, Patchset, Review } from "@rennet/types";
+import type { Disposition, HandoffAskTrace, PatchFile, Patchset, Review } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { carryDispositionsByLineage, fileContentDigest, foldReview } from "./index";
 
@@ -261,5 +261,47 @@ describe("carryDispositionsByLineage", () => {
     expect(paths(orphaned)).toEqual(["gone.ts"]);
     // Nothing is lost: every input disposition lands in exactly one tray.
     expect(carried.length + orphaned.length).toBe(dispositions.length);
+  });
+});
+
+describe("delta account — handoff task attribution on a traced activation (#73 wave 3)", () => {
+  function withA(): Review {
+    let review = created(patchsetOf("p1", [file("a.ts", "A1")]));
+    review = withDisposition(review, "a.ts", "A1");
+    return review;
+  }
+
+  function activateWithHandoff(
+    review: Review,
+    patchset: Patchset,
+    handoff: readonly HandoffAskTrace[],
+  ): Review {
+    return foldReview(review, {
+      type: "PatchsetActivated",
+      version: 1,
+      reviewId: review.id,
+      patchset,
+      handoff,
+    });
+  }
+
+  it("attributes the ask to its composed task when the activation carries a matching trace", () => {
+    const successor = activateWithHandoff(withA(), patchsetOf("p2", [file("a.ts", "A2")]), [
+      { id: "d0", path: "a.ts", type: "approve", taskIndex: 1, taskTitle: "Fix the export" },
+    ]);
+    const ask = successor.deltaAccount?.asks.find((entry) => entry.path === "a.ts");
+    expect(ask?.handoffTask).toEqual({ index: 1, title: "Fix the export" });
+  });
+
+  it("carries no attribution on a regenerate (no handoff on the activation)", () => {
+    const successor = activate(withA(), patchsetOf("p2", [file("a.ts", "A2")]));
+    expect(successor.deltaAccount?.asks[0]?.handoffTask).toBeUndefined();
+  });
+
+  it("an unmatched trace ask degrades to no attribution (belt-and-braces)", () => {
+    const successor = activateWithHandoff(withA(), patchsetOf("p2", [file("a.ts", "A2")]), [
+      { id: "d1", path: "other.ts", type: "approve", taskIndex: 3, taskTitle: "Unrelated" },
+    ]);
+    expect(successor.deltaAccount?.asks[0]?.handoffTask).toBeUndefined();
   });
 });

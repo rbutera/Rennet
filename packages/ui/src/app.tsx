@@ -7,6 +7,8 @@ import {
   type RennetBridge,
 } from "@rennet/protocol";
 import type {
+  AnchorSide,
+  AnchorSpan,
   CanvasAngle,
   ContextManifest,
   DecisionsRunStatus,
@@ -60,6 +62,7 @@ import {
   reviewComments,
   reviewCommentsPayload,
 } from "./canvas/publish";
+import { buildRowRegistry, type RegistryRow } from "./canvas/registrar";
 import { publishedItems } from "./canvas/staging";
 import { createViewStore, useViewStore } from "./canvas/store";
 import { buildCommands, type CommandContext, type Screen } from "./command/commands";
@@ -162,21 +165,50 @@ function activePatchset(review: Review): Patchset {
   return patchset;
 }
 
+interface DiffFocus {
+  readonly path: string;
+  readonly span: AnchorSpan;
+  readonly side?: AnchorSide;
+  readonly nonce: number;
+}
+
+function rowIsFocused(row: RegistryRow, focus: DiffFocus | undefined): boolean {
+  if (focus === undefined || row.fileLine === null || row.kind !== "content") return false;
+  const endLine = focus.span.endLine ?? focus.span.startLine;
+  if (row.fileLine < focus.span.startLine || row.fileLine > endLine) return false;
+  if (focus.side === "deletions") return row.side === "deletions";
+  if (focus.side === "additions") return row.side === "additions";
+  return row.side !== "deletions";
+}
+
 export function ReviewWorkspace({
   review,
   selectedPath,
+  focus,
   onSelectPath,
   onSetRead,
   onRegenerate,
 }: {
   review: Review;
   selectedPath?: string;
+  focus?: DiffFocus;
   onSelectPath(path: string): void;
   onSetRead(path: string, read: boolean): void;
   onRegenerate(): void;
 }) {
   const patchset = activePatchset(review);
   const selected = patchset.files.find((file) => file.path === selectedPath) ?? patchset.files[0];
+  const diffRows = useMemo(
+    () => buildRowRegistry({ diff: selected?.patch ?? "" }).rows,
+    [selected?.patch],
+  );
+  const diffRef = useRef<HTMLPreElement>(null);
+  useEffect(() => {
+    if (focus === undefined || focus.path !== selected?.path) return;
+    const first = diffRef.current?.querySelector<HTMLElement>('[data-delta-focus="true"]');
+    first?.focus({ preventScroll: true });
+    first?.scrollIntoView?.({ block: "center" });
+  }, [focus, selected?.path]);
   // Read-state is derived: a file is "read" iff it carries a disposition.
   const readPaths = new Set(review.dispositions.map((disposition) => disposition.anchor.path));
   const percentage = patchset.files.length
@@ -269,7 +301,26 @@ export function ReviewWorkspace({
               </button>
             ) : null}
           </div>
-          <pre className="diff">{selected?.patch || "There is no diff to display."}</pre>
+          <pre className="diff" ref={diffRef}>
+            {selected
+              ? diffRows.map((row, index) => {
+                  const focused = focus?.path === selected.path && rowIsFocused(row, focus);
+                  return (
+                    <span
+                      key={row.rawIndex}
+                      className={`diff-line${focused ? " is-delta-focus" : ""}`}
+                      data-delta-focus={focused ? "true" : undefined}
+                      data-file-line={row.fileLine ?? undefined}
+                      data-side={row.side ?? undefined}
+                      tabIndex={focused ? -1 : undefined}
+                    >
+                      {row.text}
+                      {index < diffRows.length - 1 ? "\n" : ""}
+                    </span>
+                  );
+                })
+              : "There is no diff to display."}
+          </pre>
         </section>
 
         <aside className="angle-panel" aria-label="Review angles">
@@ -342,6 +393,8 @@ function persistRecents(recents: readonly RecentSurface[]): void {
 export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const [review, setReview] = useState<Review | null | undefined>(undefined);
   const [selectedPath, setSelectedPath] = useState<string>();
+  const [diffFocus, setDiffFocus] = useState<DiffFocus>();
+  const diffFocusNonce = useRef(0);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   const [navigation, navigate] = useReducer(navHistoryReducer, {
@@ -810,6 +863,8 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setSpanSelection(undefined);
     setAgentFocus(undefined);
     agentFocusNonce.current = 0;
+    setDiffFocus(undefined);
+    diffFocusNonce.current = 0;
     // Reset the LIFTED view store's review-scoped state (lens/zoom/selection/cursor/
     // cohorts/overlay), preserving the scheme. The store now outlives a single review
     // (it was lifted here for the ⌘K palette), so without this reset, opening review B
@@ -2227,14 +2282,26 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           before the view tabs, stating what the returned patchset did to each ask and
           what it changed beyond them. Present only on a successor (a regenerate that
           carried asks); absent on a first capture. Informational — gates nothing.
-          Anchoring an item opens the Files view on that path (the moved hunk[s]). */}
+          Anchoring an item opens the Files view on that path and focuses its carried
+          span when the account names one. */}
       {review?.deltaAccount ? (
         <DeltaAccountPanel
           account={review.deltaAccount}
           digest={deltaDigest}
-          onAnchor={(path) => {
+          onAnchor={(path, span, side) => {
             setView("review");
             setSelectedPath(path);
+            if (span === undefined) {
+              setDiffFocus(undefined);
+              return;
+            }
+            diffFocusNonce.current += 1;
+            setDiffFocus({
+              path,
+              span,
+              ...(side !== undefined ? { side } : {}),
+              nonce: diffFocusNonce.current,
+            });
           }}
         />
       ) : null}
@@ -2427,7 +2494,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         <ReviewWorkspace
           review={review}
           selectedPath={selectedPath}
-          onSelectPath={setSelectedPath}
+          focus={diffFocus}
+          onSelectPath={(path) => {
+            setSelectedPath(path);
+            setDiffFocus(undefined);
+          }}
           onSetRead={(path, read) => void setFileRead(path, read)}
           onRegenerate={() => void regenerate()}
         />

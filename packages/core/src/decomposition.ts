@@ -75,7 +75,7 @@ export interface DecomposeOptions {
 
 // ── Raw hunk parsing ─────────────────────────────────────────────────────────
 
-interface RawHunk {
+export interface RawHunk {
   oldStart: number;
   oldLines: number;
   newStart: number;
@@ -84,14 +84,14 @@ interface RawHunk {
   body: string[];
 }
 
-interface ParsedFile {
+export interface ParsedFile {
   hunks: RawHunk[];
   hasModeChange: boolean;
 }
 
 const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
-function parseFilePatch(patch: string): ParsedFile {
+export function parseFilePatch(patch: string): ParsedFile {
   const lines = patch.split("\n");
   const hunks: RawHunk[] = [];
   let current: RawHunk | null = null;
@@ -123,11 +123,11 @@ function parseFilePatch(patch: string): ParsedFile {
   return { hunks, hasModeChange };
 }
 
-function addedOf(body: readonly string[]): string[] {
+export function addedOf(body: readonly string[]): string[] {
   return body.filter((l) => l.charAt(0) === "+").map((l) => l.slice(1));
 }
 
-function deletedOf(body: readonly string[]): string[] {
+export function deletedOf(body: readonly string[]): string[] {
   return body.filter((l) => l.charAt(0) === "-").map((l) => l.slice(1));
 }
 
@@ -343,7 +343,7 @@ function isSubmoduleChange(file: PatchFile): boolean {
  * blank-line frame at end-of-patch keeps a source line that happens to contain
  * the literal marker text from raising a false truncation gap.
  */
-function isTruncatedFile(patch: string): boolean {
+export function patchHasTruncationFrame(patch: string): boolean {
   const trimmed = patch.replace(/\s+$/, "");
   if (!trimmed.endsWith(DIFF_TRUNCATION_MARKER)) return false;
   const before = trimmed.slice(0, trimmed.length - DIFF_TRUNCATION_MARKER.length);
@@ -434,7 +434,7 @@ function collectBlockingStates(
     });
   }
   for (const file of files) {
-    if (isTruncatedFile(file.patch)) {
+    if (patchHasTruncationFrame(file.patch)) {
       states.push({
         reason: "truncated",
         path: file.path,

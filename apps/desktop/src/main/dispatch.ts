@@ -51,6 +51,7 @@ import type {
   DispositionType,
   ElementDiffs,
   FlaggedReview,
+  HandoffAskTrace,
   HandoffBundle,
   HandoffRunResult,
   NoiseReview,
@@ -1215,7 +1216,32 @@ export function createDispatch(
         // same-path code merely CHANGED, or cannot be verified, reopens and enters
         // NEITHER count (see #266 — that reopened case is currently unsurfaced). The
         // fuzzy occurrence matcher deliberately does NOT drive this carry (issue #254 / #16).
-        const updated = await service.capture(input.commandId, review.repositoryRoot, review.id);
+        //
+        // Hand the verified bundle's ask trace to the capture (issue #73 wave 3): the
+        // traceMap + task titles MATERIALISED per ask, so the successor's delta account
+        // attributes each ask to the composed task that ran it. A SMALL projection —
+        // ask id + anchor identity + task index + preview title, NO prompts/bodies/contexts
+        // — so nothing an agent executes enters the event log.
+        const handoffTrace: HandoffAskTrace[] = bundle.tasks.flatMap((task) =>
+          task.asks.map((ask) => {
+            const taskIndex = bundle.traceMap[ask.id] as number;
+            return {
+              id: ask.id,
+              path: ask.path,
+              ...(ask.span !== undefined ? { span: ask.span } : {}),
+              ...(ask.side !== undefined ? { side: ask.side } : {}),
+              type: ask.type,
+              taskIndex,
+              taskTitle: bundle.tasks[taskIndex]?.title ?? "",
+            };
+          }),
+        );
+        const updated = await service.capture(
+          input.commandId,
+          review.repositoryRoot,
+          review.id,
+          handoffTrace,
+        );
         deps.setRepositoryDirty(false);
         // R28 immutability: the pre-handoff patchset must survive byte-identical. Its
         // id is content-addressed over (repository, files, bytes), so the SAME id still

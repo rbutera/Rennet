@@ -7,6 +7,7 @@ import {
   type DispositionAnchor,
   type DispositionRelevanceJudge,
   type DispositionType,
+  type HandoffAskTrace,
   type PatchFile,
   type Patchset,
   type PublishThread,
@@ -91,7 +92,20 @@ export type ReviewEvent =
       /** The real PR post-target (issue #21); present only on a non-retrospective PR review. */
       postTarget?: ReviewPostTarget;
     }
-  | { type: "PatchsetActivated"; version: 1; reviewId: string; patchset: Patchset }
+  | {
+      type: "PatchsetActivated";
+      version: 1;
+      reviewId: string;
+      patchset: Patchset;
+      /**
+       * The handoff run's ask trace (issue #73 wave 3): the verified bundle's per-ask
+       * traceMap + task titles, so the fold's delta account can attribute each ask to
+       * the composed task that carried it. Present ONLY when a handoff run captured this
+       * activation; absent for every regenerate and every existing persisted event, so
+       * version stays 1 and the field replays as absent (no attribution).
+       */
+      handoff?: readonly HandoffAskTrace[];
+    }
   | {
       type: "DispositionSet";
       version: 1;
@@ -649,6 +663,14 @@ export function foldReview(current: Review | null, event: ReviewEvent): Review {
                   ? [{ from: file.previousPath, to: file.path }]
                   : [],
               ),
+              // The two patchsets, so the account carries HUNK grain beyond-asks (#73
+              // wave 3) — including an unrequested hunk inside an asked file, which path
+              // grain cannot see.
+              prior: priorPatchset,
+              successor: event.patchset,
+              // A handoff run's ask trace, when this activation came from one — so each
+              // ask names the composed task that ran it. Absent on a regenerate.
+              ...(event.handoff ? { handoff: event.handoff } : {}),
             })
           : undefined;
       return {
@@ -755,8 +777,21 @@ export class ReviewService {
     return this.store.latestReview();
   }
 
-  async capture(commandId: string, repositoryPath: string, reviewId?: string): Promise<Review> {
-    const digest = payloadDigest({ repositoryPath, reviewId });
+  async capture(
+    commandId: string,
+    repositoryPath: string,
+    reviewId?: string,
+    /**
+     * The handoff run's ask trace (issue #73 wave 3): the verified bundle's per-ask
+     * traceMap + task titles, threaded so the successor's delta account can attribute
+     * each ask to the composed task that ran it. Only the handoff-run path supplies it;
+     * a plain capture/regenerate omits it (its digest and event stay byte-identical).
+     */
+    handoff?: readonly HandoffAskTrace[],
+  ): Promise<Review> {
+    // Only fold `handoff` into the digest when present, so a regenerate's idempotency
+    // digest is unchanged from before this field existed (back-compat receipts).
+    const digest = payloadDigest({ repositoryPath, reviewId, ...(handoff ? { handoff } : {}) });
     const receipt = this.store.receipt(commandId, digest);
     if (receipt) return receipt;
 
@@ -764,7 +799,13 @@ export class ReviewService {
     const current = this.store.latestReview(repositoryPath);
     const event: ReviewEvent =
       current && current.id === reviewId
-        ? { type: "PatchsetActivated", version: 1, reviewId: current.id, patchset }
+        ? {
+            type: "PatchsetActivated",
+            version: 1,
+            reviewId: current.id,
+            patchset,
+            ...(handoff ? { handoff } : {}),
+          }
         : { type: "ReviewCreated", version: 1, reviewId: uuidv7(), patchset };
     const review = foldReview(current && event.type !== "ReviewCreated" ? current : null, event);
     return this.store.commit(commandId, digest, [event], review);

@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { commandDefinitions, dispositionSchema, isCommandName, parseCommandInput } from "./index";
+import {
+  commandDefinitions,
+  deltaAccountSchema,
+  dispositionSchema,
+  isCommandName,
+  parseCommandInput,
+} from "./index";
 
 describe("command protocol", () => {
   it("rejects malformed command payloads", () => {
@@ -106,5 +112,51 @@ describe("ordering is agent-owned: no user-approval command exists (issue #9)", 
       (name) => /order/i.test(name) && /(approve|accept|confirm|dispose)/i.test(name),
     );
     expect(orderingApproval).toEqual([]);
+  });
+});
+
+describe("delta account schema — hunk grain + handoff attribution round-trip (#73 wave 3)", () => {
+  it("round-trips beyondAskHunks and per-ask handoffTask through the IPC schema", () => {
+    const account = {
+      asks: [
+        {
+          path: "a.ts",
+          span: { startLine: 10, endLine: 11 },
+          side: "additions" as const,
+          type: "request-change" as const,
+          summary: "Fix the loop bound",
+          status: "partially-addressed" as const,
+          handoffTask: { index: 2, title: "Tighten the parser" },
+        },
+      ],
+      beyondAsks: ["d.ts"],
+      beyondAskHunks: [
+        {
+          path: "a.ts",
+          span: { startLine: 40, endLine: 41 },
+          bucket: "asked-file" as const,
+          excerpt: "+d",
+        },
+        {
+          path: "d.ts",
+          span: { startLine: 3 },
+          side: "deletions" as const,
+          bucket: "unasked-file" as const,
+          excerpt: "-gone",
+        },
+      ],
+    };
+    const parsed = deltaAccountSchema.parse(account);
+    expect(parsed).toEqual(account);
+  });
+
+  it("still parses a LEGACY account with no hunk-grain fields (additive-optional)", () => {
+    const legacy = {
+      asks: [{ path: "a.ts", type: "comment" as const, summary: "", status: "untouched" as const }],
+      beyondAsks: ["d.ts"],
+    };
+    const parsed = deltaAccountSchema.parse(legacy);
+    expect(parsed.beyondAskHunks).toBeUndefined();
+    expect(parsed.asks[0]?.handoffTask).toBeUndefined();
   });
 });

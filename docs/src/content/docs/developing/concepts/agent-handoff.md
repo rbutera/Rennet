@@ -213,6 +213,47 @@ but it does not currently drive disposition carry in the handoff loop. This
 separation avoids turning “looks similar” into “the reviewer already approved
 this.” See [delta re-review and lineage](/developing/concepts/delta-rereview-and-lineage/).
 
+## What the delta account narrates (hunk grain)
+
+The successor's delta account is deterministic and model-free. Per staged ask it
+reports addressed / partially-addressed / untouched from the byte-verified carry,
+and it partitions the successor's changes into "covered by an ask" and "beyond the
+asks." As of [#73](https://github.com/rbutera/rennet/issues/73) the beyond-asks
+half is computed at **hunk grain**, not just path grain.
+
+A successor hunk is _new_ when its changed-line content (added plus deleted line
+bytes, context and header line numbers excluded) matches no hunk in the prior
+patch for that file or its rename source — so pure line-number drift is not a
+change. The same raw-hunk parser the decomposition floor uses does the parsing;
+there is no second diff parser. Each new hunk that no ask covers (an ask targets
+the file path-grained, or its anchored span intersects the hunk's range) is
+reported in one of two named buckets:
+
+- **unasked-file** — a hunk in a file no ask targeted (the loud scope-creep).
+- **asked-file** — a hunk inside a file an ask _did_ target, but outside every
+  asked span. Path grain cannot see this: the file is "covered", so the extra
+  change vanishes into "partially addressed." Hunk grain surfaces it.
+
+Both buckets are honest narration of work the agent was allowed to do. The
+account never presents a beyond-ask hunk as a violation, a warning to
+acknowledge, or a reason to block anything — it gates nothing (Rule Zero). A
+file whose patch is truncated degrades honestly to path grain for that file, and
+a review persisted before hunk grain existed validates and renders as the
+path-grain account it is.
+
+### The traceMap is now consumed
+
+The composed bundle's `traceMap` maps every ask id to the task it landed in. When
+`review.handoff.run` captures the successor, it hands the verified bundle's ask
+trace — the id-stamped anchors, the `traceMap`, and each task's preview title, a
+small projection with **no prompts or instruction bodies** — to the capture. The
+delta account matches each staged ask to its bundle ask by anchor identity and
+stamps the composed task's index and title, so the account can narrate "ran as
+task 2 — 'Tighten the parser'." The traceMap attributes _asks_, never hunks: the
+write turn is one opaque agent session with no per-task execution telemetry, so
+claiming "task 2 caused this hunk" would be a guess, and the account carries only
+verifiable facts. A plain regenerate carries no trace and computes identically.
+
 ## The commands and owners
 
 | Concern | Owner |
