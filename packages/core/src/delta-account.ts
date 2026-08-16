@@ -302,7 +302,12 @@ export function buildDeltaAccount(input: {
   // Computed ONLY when both patchsets are supplied — else absent (path grain / legacy).
   const beyondAskHunks =
     prior !== undefined && successor !== undefined
-      ? classifyBeyondHunks(newHunksBetween(prior, successor), asks, carriedPathByIdentity, coveredPaths)
+      ? classifyBeyondHunks(
+          newHunksBetween(prior, successor),
+          asks,
+          carriedPathByIdentity,
+          coveredPaths,
+        )
       : undefined;
 
   return {

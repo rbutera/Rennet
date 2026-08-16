@@ -131,8 +131,11 @@ describe("DeltaAccountPanel — hunk grain + attribution (#73 wave 3)", () => {
   it("activating a hunk row navigates to the hunk's SPAN, not just its path", () => {
     const onAnchor = vi.fn();
     const { container } = mount(<DeltaAccountPanel account={hunkAccount} onAnchor={onAnchor} />);
-    const askedRow = [...container.querySelectorAll<HTMLButtonElement>('[data-testid="delta-account-hunk"] button, button[data-testid="delta-account-hunk"]')]
-      .find((el) => el.textContent?.includes("40"));
+    const askedRow = [
+      ...container.querySelectorAll<HTMLButtonElement>(
+        '[data-testid="delta-account-hunk"] button, button[data-testid="delta-account-hunk"]',
+      ),
+    ].find((el) => el.textContent?.includes("40"));
     fireEvent.click(askedRow as HTMLButtonElement);
     expect(onAnchor).toHaveBeenCalledWith("a.ts", { startLine: 40, endLine: 42 }, undefined);
   });

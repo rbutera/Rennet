@@ -1750,9 +1750,6 @@ button {
   inline-size: 100%;
   text-align: start;
 }
-.delta-account-hunk-item[data-bucket="unasked-file"] .delta-account-hunk-bucket {
-  color: var(--amber);
-}
 .delta-account-hunk-span {
   flex: none;
   font-size: 11px;
@@ -1762,6 +1759,9 @@ button {
   flex: none;
   font-size: 11px;
   color: var(--text-faint);
+}
+.delta-account-hunk-item[data-bucket="unasked-file"] .delta-account-hunk-bucket {
+  color: var(--amber);
 }
 .delta-account-hunk-excerpt {
   min-inline-size: 0;

@@ -257,9 +257,7 @@ const deltaAskAccountSchema = objectSchemaFor<DeltaAskAccount>()({
   status: deltaAskStatusSchema,
   // Handoff task attribution (issue #73 wave 3). Optional + additive: absent on a
   // regenerate and on every legacy account, so old snapshots parse unchanged.
-  handoffTask: z
-    .object({ index: z.number().int().nonnegative(), title: z.string() })
-    .optional(),
+  handoffTask: z.object({ index: z.number().int().nonnegative(), title: z.string() }).optional(),
 });
 // Hunk-grain beyond-asks (issue #73 wave 3): one uncovered new hunk, its file line range
 // and bucket. `side: "deletions"` on a pure-deletion hunk (range is the old-file image).

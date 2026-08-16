@@ -237,7 +237,9 @@ describe("newHunksBetween — content-identity new-hunk detection (#73 wave 3)",
   });
 
   it("a TRUNCATED file (marker on either side) yields NO hunk claims — path grain only", () => {
-    const prior = patchset("p1", [file("big.ts", `@@ -1,2 +1,2 @@\n-a\n+b\n${DIFF_TRUNCATION_MARKER}`)]);
+    const prior = patchset("p1", [
+      file("big.ts", `@@ -1,2 +1,2 @@\n-a\n+b\n${DIFF_TRUNCATION_MARKER}`),
+    ]);
     const successor = patchset("p2", [
       file("big.ts", `@@ -1,2 +1,2 @@\n-a\n+B\n@@ -99,1 +99,1 @@\n+new\n${DIFF_TRUNCATION_MARKER}`),
     ]);

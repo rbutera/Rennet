@@ -1,4 +1,9 @@
-import type { DeltaAccount, DeltaAskStatus, DeltaBeyondHunk, DeltaDigestResult } from "@rennet/types";
+import type {
+  DeltaAccount,
+  DeltaAskStatus,
+  DeltaBeyondHunk,
+  DeltaDigestResult,
+} from "@rennet/types";
 
 export type { DeltaDigestResult };
 
@@ -14,7 +19,8 @@ const BUCKET_PHRASE: Record<DeltaBeyondHunk["bucket"], string> = {
 /** One beyond-ask hunk as a prompt line: path, line range, and its bucket phrasing. */
 function describeBeyondHunk(hunk: DeltaBeyondHunk): string {
   const { startLine, endLine } = hunk.span;
-  const range = endLine !== undefined && endLine !== startLine ? `${startLine}–${endLine}` : `${startLine}`;
+  const range =
+    endLine !== undefined && endLine !== startLine ? `${startLine}–${endLine}` : `${startLine}`;
   return `${hunk.path} line${range.includes("–") ? "s" : ""} ${range} — ${BUCKET_PHRASE[hunk.bucket]}`;
 }
 

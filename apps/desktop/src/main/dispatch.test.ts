@@ -2731,16 +2731,44 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
         calls += 1;
         return Promise.resolve(
           calls === 1
-            ? { ...patchset(), id: "pa1", files: [
-                { path: "src/a.ts", status: "modified", additions: 1, deletions: 0, binary: false, patch: "A1" },
-              ], rawDiff: "A1" }
-            : { ...patchset(), id: "pa2", files: [
-                { path: "src/a.ts", status: "modified", additions: 2, deletions: 0, binary: false, patch: "A2" },
-              ], rawDiff: "A2" },
+            ? {
+                ...patchset(),
+                id: "pa1",
+                files: [
+                  {
+                    path: "src/a.ts",
+                    status: "modified",
+                    additions: 1,
+                    deletions: 0,
+                    binary: false,
+                    patch: "A1",
+                  },
+                ],
+                rawDiff: "A1",
+              }
+            : {
+                ...patchset(),
+                id: "pa2",
+                files: [
+                  {
+                    path: "src/a.ts",
+                    status: "modified",
+                    additions: 2,
+                    deletions: 0,
+                    binary: false,
+                    patch: "A2",
+                  },
+                ],
+                rawDiff: "A2",
+              },
         );
       },
     };
-    const { dispatch } = harness(undefined, {}, { capturePort, runHandoffTurn: async () => HANDOFF_TURN });
+    const { dispatch } = harness(
+      undefined,
+      {},
+      { capturePort, runHandoffTurn: async () => HANDOFF_TURN },
+    );
     const review = await capturedReview(dispatch);
     // Stage a disposition the bundle ask will match by anchor identity.
     await dispatch("review.setDisposition", {
