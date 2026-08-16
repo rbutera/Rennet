@@ -20,22 +20,22 @@ control) proving the behavior is absent, then makes it pass. Gate is
 
 ## 2. Dispatch: load handler + kill the latest-pin
 
-- [ ] 2.1 RED: dispatch test — with two persisted reviews, `review.load` of the
+- [x] 2.1 RED: dispatch test — with two persisted reviews, `review.load` of the
       OLDER id returns it as persisted with `repositoryPresent` reflecting an
       `existsSync` of its root, and appends no event (store event count
       unchanged; a second load returns the same review). Fails (no handler).
-- [ ] 2.2 RED: dispatch test — after loading the older review,
+- [x] 2.2 RED: dispatch test — after loading the older review,
       `review.reattach` and `review.canvases` addressed to that id resolve it
       (no "Review not found"). Fails on `requireLatestReview`.
-- [ ] 2.3 Implement the `review.load` handler: resolve by id via
+- [x] 2.3 Implement the `review.load` handler: resolve by id via
       `service.reviewById`, plain "Review not found" otherwise; when the root
       exists, `allowedRoots.add` + `startWatching`; when absent, neither.
-- [ ] 2.4 Replace `requireLatestReview` with `requireReviewById` (by-id via
+- [x] 2.4 Replace `requireLatestReview` with `requireReviewById` (by-id via
       `service.reviewById`) for every id-addressed caller; keep
       `service.bootstrap()` for `app.bootstrap` only. Both RED tests green;
       existing dispatch tests stay green (positive control that the rename
       changed resolution, not behavior, for the latest review).
-- [ ] 2.5 Test: `review.load` of a review whose root is missing does NOT add
+- [x] 2.5 Test: `review.load` of a review whose root is missing does NOT add
       the missing path to `allowedRoots` (a follow-up repo-addressed command
       against that path still refuses) while the load itself succeeded.
 

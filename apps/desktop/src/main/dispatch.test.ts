@@ -177,6 +177,7 @@ function harness(
     submitPullRequest?: DispatchDeps["submitPullRequest"];
     draftDeltaDigest?: DispatchDeps["draftDeltaDigest"];
     flaggedReview?: DispatchDeps["flaggedReview"];
+    repositoryExists?: DispatchDeps["repositoryExists"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -290,6 +291,7 @@ function harness(
     ...(extra.runHandoffTurn ? { runHandoffTurn: extra.runHandoffTurn } : {}),
     ...(extra.composeBundle ? { composeBundle: extra.composeBundle } : {}),
     ...(extra.liveTurns ? { liveTurns: extra.liveTurns } : {}),
+    ...(extra.repositoryExists ? { repositoryExists: extra.repositoryExists } : {}),
     // Front-door deps (issue #29): a trivial in-memory projects capability plus
     // stub discovery/detection. The dedicated front-door tests exercise these
     // handlers directly; the shared harness only needs them to satisfy the shape.
@@ -350,6 +352,13 @@ function harness(
     refineCommentSpy,
     draftPrBodySpy,
   };
+}
+
+/** The shared harness with a few `extra` deps threaded (e.g. repositoryExists for #324). */
+function harnessWith(extra: {
+  repositoryExists?: DispatchDeps["repositoryExists"];
+}): ReturnType<typeof harness> {
+  return harness(fakePublishPort(), {}, extra);
 }
 
 async function capturedReview(dispatch: ReturnType<typeof createDispatch>): Promise<Review> {
@@ -790,6 +799,96 @@ describe("createDispatch — review.reattach (issue #251, the honest pre-persist
     await expect(
       dispatch("review.reattach", { commandId: randomUUID(), reviewId: randomUUID() }),
     ).rejects.toThrow(/Review not found/);
+  });
+});
+
+describe("createDispatch — review.load (reopen a persisted review by id, #324)", () => {
+  // Two captures under the same repo → two distinct persisted reviews; the second
+  // is the globally-latest. Loading the OLDER one must succeed WITHOUT the latest-pin.
+  async function twoReviews(dispatch: ReturnType<typeof createDispatch>) {
+    await dispatch("repository.choose", {});
+    const older = (
+      (await dispatch("review.capture", { commandId: randomUUID(), repoPath: REPO })) as {
+        review: Review;
+      }
+    ).review;
+    const newer = (
+      (await dispatch("review.capture", { commandId: randomUUID(), repoPath: REPO })) as {
+        review: Review;
+      }
+    ).review;
+    return { older, newer };
+  }
+
+  it("loads the OLDER review by id while a newer one exists, present-root, appending no event", async () => {
+    const { dispatch, store, allowedRoots } = harnessWith({ repositoryExists: () => true });
+    const { older, newer } = await twoReviews(dispatch);
+    expect(older.id).not.toBe(newer.id);
+    const eventsBefore = store.events.length;
+    const result = (await dispatch("review.load", {
+      commandId: randomUUID(),
+      reviewId: older.id,
+    })) as { review: Review; repositoryPresent: boolean };
+    expect(result.review.id).toBe(older.id);
+    expect(result.repositoryPresent).toBe(true);
+    // A present root is watched + granted (mirrors bootstrap).
+    expect(allowedRoots.has(older.repositoryRoot)).toBe(true);
+    // Pure read: no event appended, and a second load returns the same review.
+    expect(store.events.length).toBe(eventsBefore);
+    const again = (await dispatch("review.load", {
+      commandId: randomUUID(),
+      reviewId: older.id,
+    })) as { review: Review };
+    expect(again.review.id).toBe(older.id);
+    expect(store.events.length).toBe(eventsBefore);
+  });
+
+  it("after loading the older review, id-addressed commands resolve it (no latest-pin)", async () => {
+    const { dispatch } = harnessWith({ repositoryExists: () => true });
+    const { older } = await twoReviews(dispatch);
+    await dispatch("review.load", { commandId: randomUUID(), reviewId: older.id });
+    // reattach + canvases addressed to the OLDER id must resolve, not throw "Review not found".
+    const reattached = await dispatch("review.reattach", {
+      commandId: randomUUID(),
+      reviewId: older.id,
+    });
+    expect(reattached).toEqual({ threads: [], inFlight: [] });
+    await expect(
+      dispatch("review.canvases", {
+        commandId: randomUUID(),
+        reviewId: older.id,
+        repoPath: older.repositoryRoot,
+      }),
+    ).resolves.toBeDefined();
+  });
+
+  it("fails plainly for an unknown id", async () => {
+    const { dispatch } = harnessWith({ repositoryExists: () => true });
+    await twoReviews(dispatch);
+    await expect(
+      dispatch("review.load", { commandId: randomUUID(), reviewId: randomUUID() }),
+    ).rejects.toThrow(/Review not found/);
+  });
+
+  it("a missing root loads the review but does NOT grant it: a follow-up repo command still refuses", async () => {
+    const { dispatch, allowedRoots } = harnessWith({ repositoryExists: () => false });
+    const { older } = await twoReviews(dispatch);
+    allowedRoots.clear(); // drop the capture-time grant, to prove load does not re-add it
+    const result = (await dispatch("review.load", {
+      commandId: randomUUID(),
+      reviewId: older.id,
+    })) as { review: Review; repositoryPresent: boolean };
+    expect(result.review.id).toBe(older.id);
+    expect(result.repositoryPresent).toBe(false);
+    expect(allowedRoots.has(older.repositoryRoot)).toBe(false);
+    // A repo-touching command against the absent root is refused (not granted by load).
+    await expect(
+      dispatch("review.canvases", {
+        commandId: randomUUID(),
+        reviewId: older.id,
+        repoPath: older.repositoryRoot,
+      }),
+    ).rejects.toThrow(/Repository access was not granted/);
   });
 });
 
@@ -2146,9 +2245,10 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
 
   it("hands BOTH legs one resolved snapshot — a mid-ask patchset swap cannot cross them (P1-2)", async () => {
     const { dispatch, reviewAsk, service, review } = await openReview();
-    // Resolution goes through `service.bootstrap()`; resolve-once means EXACTLY one
-    // call feeds both legs. Per-leg resolution (the bug) would call it twice.
-    const bootstrapSpy = vi.spyOn(service, "bootstrap");
+    // Resolution goes through `service.reviewById()` (the by-id resolver, #324);
+    // resolve-once means EXACTLY one call feeds both legs. Per-leg resolution (the
+    // bug) would call it twice.
+    const resolveSpy = vi.spyOn(service, "reviewById");
     const seen: string[] = [];
     reviewAsk.askOrchestrator.mockImplementation(async ({ review: r }: { review: Review }) => {
       seen.push(`o:${r.activePatchsetId}`);
@@ -2164,7 +2264,7 @@ describe("createDispatch — review.ask routing (issue #139)", () => {
       mode: "both",
       question: "q",
     });
-    expect(bootstrapSpy).toHaveBeenCalledTimes(1);
+    expect(resolveSpy).toHaveBeenCalledTimes(1);
     expect(seen).toEqual([`o:${review.activePatchsetId}`, `c:${review.activePatchsetId}`]);
   });
 
