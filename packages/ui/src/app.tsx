@@ -98,14 +98,18 @@ import { runBatched } from "./concurrency";
 import {
   ascendTo as ascendNavigationTo,
   crumb as deriveCrumb,
+  NAV_HISTORY_LEGACY_KEY,
   NAV_HISTORY_STORAGE_KEY,
   navHistoryReducer,
   back as navigateBack,
   forward as navigateForward,
   parse as parseNavigation,
+  type PersistedNavState,
   push as pushSurface,
   type RecentSurface,
   recordRecent,
+  type Surface,
+  surfaceIdentity,
   type SurfaceLabels,
   serialize as serializeNavigation,
 } from "./nav/history";
@@ -374,17 +378,30 @@ function mechanicalFallbackDetail(engine: ReviewEngine): string {
   return "This review's model-invocation budget was spent before it finished, so parts of what you see are the diff's structure, not AI findings.";
 }
 
-function readStoredRecents(): RecentSurface[] {
+// Read the persisted navigation blob (#324/#297): the v3 stack + future + recents,
+// falling back to the pre-stack v2 key so an upgrade keeps the user's recents. A
+// bad/absent blob degrades to the clean default (no migration ceremony).
+function readStoredNav(): PersistedNavState {
   try {
-    return parseNavigation(globalThis.localStorage?.getItem(NAV_HISTORY_STORAGE_KEY)).recents;
+    const raw =
+      globalThis.localStorage?.getItem(NAV_HISTORY_STORAGE_KEY) ??
+      globalThis.localStorage?.getItem(NAV_HISTORY_LEGACY_KEY);
+    return parseNavigation(raw);
   } catch {
-    return [];
+    return { recents: [], stack: [], future: [] };
   }
 }
 
-function persistRecents(recents: readonly RecentSurface[]): void {
+function persistNav(
+  recents: readonly RecentSurface[],
+  stack: readonly Surface[],
+  future: readonly Surface[],
+): void {
   try {
-    globalThis.localStorage?.setItem(NAV_HISTORY_STORAGE_KEY, serializeNavigation(recents));
+    globalThis.localStorage?.setItem(
+      NAV_HISTORY_STORAGE_KEY,
+      serializeNavigation(recents, stack, future),
+    );
   } catch {
     return;
   }
@@ -392,24 +409,44 @@ function persistRecents(recents: readonly RecentSurface[]): void {
 
 export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const [review, setReview] = useState<Review | null | undefined>(undefined);
+  // Whether the open review's original repository root still exists on disk (#324).
+  // True for a fresh capture/openPr/bootstrap review; set from the load result when a
+  // persisted review is reopened by id. A gone root behaves like a snapshot review
+  // (no freshness watcher, no live canvases) plus a plain status line (D6).
+  const [repositoryPresent, setRepositoryPresent] = useState(true);
   const [selectedPath, setSelectedPath] = useState<string>();
   const [diffFocus, setDiffFocus] = useState<DiffFocus>();
   const diffFocusNonce = useRef(0);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
-  const [navigation, navigate] = useReducer(navHistoryReducer, {
-    stack: [{ kind: "projects" }],
-    future: [],
+  // Read the persisted navigation blob ONCE at mount (#324/#297).
+  const storedNav = useRef<PersistedNavState | null>(null);
+  if (storedNav.current === null) storedNav.current = readStoredNav();
+  const [navigation, navigate] = useReducer(navHistoryReducer, null, () => {
+    const stored = storedNav.current ?? { recents: [], stack: [], future: [] };
+    // A persisted stack wins: the app reopens where the user left off. Absent → the
+    // default Projects root (fresh install, or a v2/corrupt blob that carried no stack).
+    return stored.stack.length > 0
+      ? { stack: stored.stack, future: stored.future }
+      : { stack: [{ kind: "projects" as const }], future: [] };
   });
   const currentSurface = navigation.stack.at(-1) ?? { kind: "projects" as const };
-  const [recents, setRecents] = useState<RecentSurface[]>(readStoredRecents);
+  const [recents, setRecents] = useState<RecentSurface[]>(() => storedNav.current?.recents ?? []);
+  // The landing rehydrator's in-flight guard (#324): the surface identity currently
+  // being reopened, so a re-render never double-fires a load.
+  const rehydrating = useRef<string | null>(null);
   const navigationReady = review !== undefined;
   useEffect(() => {
     if (!navigationReady) return;
     if (currentSurface.kind !== "project" && currentSurface.kind !== "projects") return;
     setRecents((current) => recordRecent(current, currentSurface));
   }, [currentSurface, navigationReady]);
-  useEffect(() => persistRecents(recents), [recents]);
+  // Persist recents AND the back/forward stack (#297 remainder) on every change, so a
+  // restart reopens where the user left off.
+  useEffect(
+    () => persistNav(recents, navigation.stack, navigation.future),
+    [recents, navigation],
+  );
   // The legacy direct-entry capability is palette-only. It is an overlay beside
   // the surface stack, never a location recorded in navigation history.
   const [directEntryOpen, setDirectEntryOpen] = useState(false);
@@ -656,13 +693,72 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     bridge
       .invoke("app.bootstrap", {})
       .then(({ review: restored }) => {
-        if (restored) navigate(pushSurface({ kind: "review", reviewId: restored.id }));
         setReview(restored);
+        // A persisted stack restored (more than the Projects root) wins for
+        // navigation — the rehydrator reconciles the held review to the tip. Only
+        // when NO stack was restored do we land the latest review as before (#297).
+        const hadRestoredStack = (storedNav.current?.stack.length ?? 0) > 0;
+        if (restored && !hadRestoredStack) {
+          navigate(pushSurface({ kind: "review", reviewId: restored.id }));
+        }
       })
       .catch((reason: unknown) =>
         setError(reason instanceof Error ? reason.message : String(reason)),
       );
   }, [bridge]);
+
+  // The landing rehydrator (#324/#297): load whatever the surface we land on needs —
+  // review-family → review.load (by id); project → project.detail + projects.list. One
+  // mechanism serves boot restore, back/forward into a not-yet-loaded surface, and any
+  // programmatic navigation, so there is no separate boot special-path. While a surface
+  // rehydrates the render shows the loading treatment under its own crumb — never
+  // another surface's content (the #305 regression class). A tip that can no longer
+  // load is dropped with a plain status, flooring to the nearest restorable ancestor
+  // (the Projects root always restores).
+  useEffect(() => {
+    if (review === undefined) return; // bootstrap still resolving; the reducer holds the stack
+    const surface = currentSurface;
+    const identity = surfaceIdentity(surface);
+    const isReviewFamily =
+      surface.kind === "review" ||
+      surface.kind === "draft" ||
+      surface.kind === "paper" ||
+      surface.kind === "handoff";
+    if (isReviewFamily) {
+      if (review && review.id === surface.reviewId) return; // already held
+      if (rehydrating.current === identity) return; // in flight
+      rehydrating.current = identity;
+      const reviewId = surface.reviewId;
+      void bridge
+        .invoke("review.load", { commandId: crypto.randomUUID(), reviewId })
+        .then((result) => {
+          rehydrating.current = null;
+          setReview(result.review);
+          setRepositoryPresent(result.repositoryPresent);
+        })
+        .catch((reason: unknown) => {
+          rehydrating.current = null;
+          setError(reason instanceof Error ? reason.message : String(reason));
+          navigate(navigateBack()); // drop the entry; floor to the nearest ancestor
+        });
+      return;
+    }
+    if (surface.kind === "project") {
+      if (projectDetail && projectDetail.id === surface.projectId) return; // already loaded
+      if (rehydrating.current === identity) return; // in flight
+      rehydrating.current = identity;
+      void loadProjectDetail(surface.projectId)
+        .then(() => {
+          rehydrating.current = null;
+        })
+        .catch((reason: unknown) => {
+          rehydrating.current = null;
+          setError(reason instanceof Error ? reason.message : String(reason));
+          navigate(navigateBack());
+        });
+    }
+    // The Projects root needs no data — nothing to rehydrate.
+  }, [currentSurface, review, projectDetail, bridge]);
 
   // The reviewer's appearance scheme (wireframe #15), fetched once so the front
   // door themes to it. Settings updates it live via `onSchemeChange`. Fail-quiet:
@@ -795,7 +891,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   }, [reviewId]);
 
   useEffect(() => {
-    if (!review || review.status === "invalid" || isSnapshotReview) return;
+    // A gone repository root (a reopened review, #324) is watched like a snapshot: no
+    // working-tree freshness poll runs against a path that isn't there (D6).
+    if (!review || review.status === "invalid" || isSnapshotReview || !repositoryPresent) return;
     let checking = false;
     const timer = window.setInterval(() => {
       if (checking) return;
@@ -815,7 +913,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         });
     }, 1500);
     return () => window.clearInterval(timer);
-  }, [bridge, review, isSnapshotReview]);
+  }, [bridge, review, isSnapshotReview, repositoryPresent]);
 
   useEffect(() => {
     if (!patchset?.files.some((file) => file.path === selectedPath)) {
@@ -1052,6 +1150,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // biome-ignore lint/correctness/useExhaustiveDependencies: reloadNonce re-triggers the load on retry; review is read via reviewRef, keyed by canvasFetchKey.
   useEffect(() => {
     if (view !== "canvases") return;
+    // A reopened review whose repository is gone (#324) can't run the live pipeline —
+    // the renderer already knows this and skips straight to the honest unavailable
+    // state instead of firing a load that must fail (D6). No `review.canvases` invoked.
+    if (!repositoryPresent) return;
     // Read the review off the ref, NOT the dependency array: this effect is keyed on
     // `canvasFetchKey` (review id + active patchset), so a no-op 1500ms freshness
     // poll — which swaps in a byte-identical `Review` behind a fresh object
@@ -1095,7 +1197,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     return () => {
       cancelled = true;
     };
-  }, [view, canvasFetchKey, bridge, reloadNonce]);
+  }, [view, canvasFetchKey, bridge, reloadNonce, repositoryPresent]);
 
   // Retry the live load for the current review (the honest-failure and mechanical-
   // fallback surfaces both offer this). Clearing the load-once guard + bumping the
@@ -1119,6 +1221,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         repoPath: path,
       });
       setReview(result.review);
+      setRepositoryPresent(true); // a fresh capture/openPr always has its repo present
       setDirectEntryOpen(false);
       navigate(ascendNavigationTo(0));
       navigate(pushSurface({ kind: "review", reviewId: result.review.id }));
@@ -1160,6 +1263,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         retrospective,
       });
       setReview(result.review);
+      setRepositoryPresent(true); // a fresh capture/openPr always has its repo present
       navigate(pushSurface({ kind: "review", reviewId: result.review.id }));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -1177,6 +1281,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         repoPath: project.openPath,
       });
       setReview(result.review);
+      setRepositoryPresent(true); // a fresh capture/openPr always has its repo present
       navigate(pushSurface({ kind: "review", reviewId: result.review.id }));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -1206,6 +1311,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         retrospective: prRetrospective,
       });
       setReview(result.review);
+      setRepositoryPresent(true); // a fresh capture/openPr always has its repo present
       setDirectEntryOpen(false);
       navigate(ascendNavigationTo(0));
       navigate(pushSurface({ kind: "review", reviewId: result.review.id }));
@@ -1973,6 +2079,18 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     navigate(ascendNavigationTo(0));
   }
 
+  // Load a project's detail substrate + its row in the projects list (issue #37),
+  // shared by the palette's `goToRecent` and the landing rehydrator (#324). Throws if
+  // the project is no longer available, so the rehydrator can floor honestly.
+  async function loadProjectDetail(projectId: string): Promise<void> {
+    const detail = await bridge.invoke("project.detail", { projectId });
+    const { projects } = await bridge.invoke("projects.list", {});
+    const project = projects.find((candidate) => candidate.id === projectId);
+    if (!project) throw new Error(`Project ${projectId} is no longer available.`);
+    setProjectDetail(project);
+    setProjectDetailData(detail);
+  }
+
   async function goToRecent(surface: RecentSurface): Promise<void> {
     if (surface.kind === "projects") {
       goToProjects();
@@ -1981,12 +2099,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
 
     setError(undefined);
     try {
-      const detail = await bridge.invoke("project.detail", { projectId: surface.projectId });
-      const { projects } = await bridge.invoke("projects.list", {});
-      const project = projects.find((candidate) => candidate.id === surface.projectId);
-      if (!project) throw new Error(`Project ${surface.projectId} is no longer available.`);
-      setProjectDetail(project);
-      setProjectDetailData(detail);
+      await loadProjectDetail(surface.projectId);
       setDirectEntryOpen(false);
       navigate(pushSurface(surface));
     } catch (reason) {
@@ -2230,10 +2343,33 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     );
   }
 
+  // While a landed surface's content rehydrates (#324/#297) — its held review or
+  // cached project detail does not yet match the tip — show the loading treatment
+  // under the tip's OWN crumb. Never fall through to render another surface's content
+  // under this crumb (the exact #305 regression class the spec forbids).
+  const reviewTipId =
+    currentSurface.kind === "review" ||
+    currentSurface.kind === "draft" ||
+    currentSurface.kind === "paper" ||
+    currentSurface.kind === "handoff"
+      ? currentSurface.reviewId
+      : undefined;
+  const surfaceRehydrating =
+    (currentSurface.kind === "project" && projectDetail?.id !== currentSurface.projectId) ||
+    (reviewTipId !== undefined && review?.id !== reviewTipId);
+  if (surfaceRehydrating) {
+    return navigationSurface(
+      <>
+        {error ? <div className="error-toast">{error}</div> : null}
+        <div className="loading">Reopening…</div>
+      </>,
+    );
+  }
+
   // Project detail (issue #37): clicking a project row opens its unified smart list —
   // local work + every PR in one surface. Its payload stays cached while a child
   // review is open, so Back can reveal this exact parent surface without refetching.
-  if (currentSurface.kind === "project" && projectDetail) {
+  if (currentSurface.kind === "project" && projectDetail?.id === currentSurface.projectId) {
     return navigationSurface(
       <>
         {error ? <div className="error-toast">{error}</div> : null}
@@ -2278,6 +2414,15 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     <>
       {error ? <div className="error-toast">{error}</div> : null}
       {busy ? <div className="busy-bar" /> : null}
+      {/* The worktree-gone status (#324): a reopened review whose original repository
+          root no longer exists shows the persisted review as captured, plainly stated.
+          Informational — it blocks nothing (Rule Zero); the files, dispositions, and
+          delta account below all render from persisted state. */}
+      {!repositoryPresent ? (
+        <div className="worktree-gone-status" role="status">
+          The original worktree is gone — showing the review as captured.
+        </div>
+      ) : null}
       {/* The delta re-review account (issue #73): at the TOP of a successor review,
           before the view tabs, stating what the returned patchset did to each ask and
           what it changed beyond them. Present only on a successor (a regenerate that
@@ -2474,6 +2619,19 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
               ) : null}
             </div>
           </>
+        ) : !repositoryPresent ? (
+          // The repo is gone (#324): the live AI review needs the original working
+          // tree to run, so it is honestly unavailable — never a doomed load, never a
+          // demo. The captured Files, dispositions, and delta account remain fully
+          // readable (the review surface above renders them from persisted state).
+          <section className="canvas-primer" role="status">
+            <p className="eyebrow">AI REVIEW</p>
+            <h2>The live review needs the original repository.</h2>
+            <p>
+              The worktree this review was captured from is gone, so the AI review can't
+              run. The captured diff and your dispositions are all still here.
+            </p>
+          </section>
         ) : loadFailed ? (
           <section className="canvas-primer" role="alert">
             <p className="eyebrow">AI REVIEW</p>

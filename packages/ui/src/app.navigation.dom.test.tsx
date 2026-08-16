@@ -84,12 +84,21 @@ const projectDetail: ProjectDetailData = {
 function navigationBridge(
   restored: Review | null,
   calls: Array<{ name: string; input: unknown }> = [],
+  opts: { repositoryPresent?: boolean; loadPending?: boolean } = {},
 ): RennetBridge {
   const invoke = async (name: string, input?: unknown): Promise<unknown> => {
     calls.push({ name, input });
     switch (name) {
       case "app.bootstrap":
         return { review: restored };
+      case "review.load": {
+        if (opts.loadPending) return new Promise<never>(() => undefined);
+        const id = (input as { reviewId?: string }).reviewId;
+        return {
+          review: id === directReview.id ? directReview : review,
+          repositoryPresent: opts.repositoryPresent ?? true,
+        };
+      }
       case "settings.get":
         return {
           scheme: "dark",
@@ -376,5 +385,111 @@ describe("RennetApp navigation spine", () => {
     const breadcrumb = getByRole("navigation", { name: "Breadcrumb" });
     expect(within(breadcrumb).getAllByRole("button")).toHaveLength(1);
     expect((getByRole("button", { name: "Back" }) as HTMLButtonElement).disabled).toBe(true);
+  });
+});
+
+describe("RennetApp navigation-stack restore across restarts (#324/#297)", () => {
+  function seedStack(stack: Array<Record<string, unknown>>, future: Array<Record<string, unknown>> = []) {
+    localStorage.clear();
+    localStorage.setItem(
+      NAV_HISTORY_STORAGE_KEY,
+      serialize([{ kind: "project", projectId: project.id }], stack as never, future as never),
+    );
+  }
+
+  it("restores a persisted projects › project › review stack on boot and Back rehydrates the project", async () => {
+    const calls: Array<{ name: string; input: unknown }> = [];
+    seedStack([
+      { kind: "projects" },
+      { kind: "project", projectId: project.id },
+      { kind: "review", reviewId: review.id },
+    ]);
+    // No bootstrap review: the persisted stack alone drives the restore, landing on
+    // the review via review.load.
+    const { container, getByRole } = mount(<RennetApp bridge={navigationBridge(null, calls)} />);
+
+    await waitFor(() => expect(container.querySelector(".canvas-app")).not.toBeNull());
+    expect(calls).toContainEqual(
+      expect.objectContaining({ name: "review.load", input: expect.objectContaining({ reviewId: review.id }) }),
+    );
+    const breadcrumb = getByRole("navigation", { name: "Breadcrumb" });
+    expect(breadcrumb.textContent).toContain(project.name);
+    expect(breadcrumb.textContent).toContain(review.repositoryRoot);
+
+    fireEvent.click(getByRole("button", { name: "Back" }));
+    await waitFor(() => expect(container.querySelector(".project-detail")).not.toBeNull());
+    expect(calls).toContainEqual({ name: "project.detail", input: { projectId: project.id } });
+    expect(container.querySelector(".canvas-app")).toBeNull();
+  });
+
+  it("shows the loading treatment under the review crumb while the tip rehydrates — never another surface's content (#305)", async () => {
+    seedStack([
+      { kind: "projects" },
+      { kind: "project", projectId: project.id },
+      { kind: "review", reviewId: review.id },
+    ]);
+    // review.load never resolves: we must see the review crumb + a loading state, and
+    // NEVER the front door / project detail / a stale review rendered under the crumb.
+    const { container, getByRole } = mount(
+      <RennetApp bridge={navigationBridge(null, [], { loadPending: true })} />,
+    );
+
+    // The tip crumb shows the review (by id until its label resolves) — proof we are
+    // under the review's OWN crumb, not another surface's.
+    await waitFor(() => {
+      const breadcrumb = getByRole("navigation", { name: "Breadcrumb" });
+      expect(breadcrumb.textContent).toContain(review.id);
+    });
+    expect(container.querySelector(".canvas-app")).toBeNull();
+    expect(container.querySelector(".project-detail")).toBeNull();
+    expect(container.querySelector(".front-door")).toBeNull();
+    expect(container.textContent).toContain("Reopening");
+  });
+
+  it("floors to the nearest restorable ancestor when a restored tip cannot reopen", async () => {
+    seedStack([
+      { kind: "projects" },
+      { kind: "project", projectId: project.id },
+      { kind: "review", reviewId: review.id },
+    ]);
+    // Both the review AND the project fail to reopen → the app floors all the way to
+    // the Projects root, naming what could not be reopened.
+    const calls: Array<{ name: string; input: unknown }> = [];
+    const invoke = async (name: string, input?: unknown): Promise<unknown> => {
+      calls.push({ name, input });
+      if (name === "review.load") throw new Error("This review could not be reopened.");
+      if (name === "project.detail") throw new Error("This project could not be reopened.");
+      return (
+        navigationBridge(null).invoke as (command: string, value?: unknown) => Promise<unknown>
+      )(name, input);
+    };
+    const { container, getByText } = mount(
+      <RennetApp bridge={{ invoke: invoke as unknown as RennetBridge["invoke"] }} />,
+    );
+
+    await waitFor(() => expect(container.querySelector(".front-door")).not.toBeNull());
+    expect(getByText("This project could not be reopened.")).not.toBeNull();
+  });
+
+  it("a reopened review whose worktree is gone shows the plain status, runs no freshness poll, and offers no live canvases", async () => {
+    const calls: Array<{ name: string; input: unknown }> = [];
+    seedStack([
+      { kind: "projects" },
+      { kind: "project", projectId: project.id },
+      { kind: "review", reviewId: review.id },
+    ]);
+    const { container, getByText } = mount(
+      <RennetApp bridge={navigationBridge(null, calls, { repositoryPresent: false })} />,
+    );
+
+    await waitFor(() =>
+      expect(getByText(/original worktree is gone/i)).not.toBeNull(),
+    );
+    // The live review surfaces are honestly unavailable — no doomed canvas load fired.
+    expect(container.querySelector(".canvas-app")).toBeNull();
+    expect(calls.some((call) => call.name === "review.canvases")).toBe(false);
+    // No working-tree freshness poll runs against the missing root.
+    await new Promise((resolve) => setTimeout(resolve, 1700));
+    expect(calls.some((call) => call.name === "review.checkFreshness")).toBe(false);
   });
 });

@@ -52,30 +52,30 @@ control) proving the behavior is absent, then makes it pass. Gate is
 
 ## 4. Renderer: landing rehydrator + restore + honest missing context
 
-- [ ] 4.1 RED: DOM test — a persisted v3 stack `projects › project › review`
+- [x] 4.1 RED: DOM test — a persisted v3 stack `projects › project › review`
       restores on boot: the app lands on the review (via a mocked
       `review.load`), the breadcrumb shows the full trail, and back rehydrates
       the project surface via `project.detail`. Fails (stack not restored).
-- [ ] 4.2 RED: DOM test — while a landed surface is rehydrating, the loading
+- [x] 4.2 RED: DOM test — while a landed surface is rehydrating, the loading
       treatment shows; another surface's content never renders under its crumb
       (the #305 regression control).
-- [ ] 4.3 RED: DOM test — `review.load` rejecting for the restored tip drops
+- [x] 4.3 RED: DOM test — `review.load` rejecting for the restored tip drops
       the entry with a plain status naming what could not be reopened and lands
       on the nearest restorable ancestor; a fully unrestorable stack lands on
       Projects.
-- [ ] 4.4 RED: DOM test — a review loaded with `repositoryPresent: false`
+- [x] 4.4 RED: DOM test — a review loaded with `repositoryPresent: false`
       renders the persisted files/dispositions, shows the plain
       worktree-gone status line, starts NO freshness poll (no
       `review.checkFreshness` calls fire), and the canvases view shows the
       honest unavailable state without invoking `review.canvases`.
-- [ ] 4.5 Implement: boot-time stack restore (persisted stack wins over the
+- [x] 4.5 Implement: boot-time stack restore (persisted stack wins over the
       bootstrap push; `app.bootstrap` still supplies the held review), the
       landing rehydrator effect (review-family → `review.load`; project →
       extracted `project.detail` + `projects.list` reload shared with
       `goToRecent`), rehydration loading state, failure flooring, the
       missing-root status line, and the freshness/canvases skip keyed on
       `repositoryPresent`. All group-4 tests green.
-- [ ] 4.6 Persist stack + future on navigation changes (same localStorage write
+- [x] 4.6 Persist stack + future on navigation changes (same localStorage write
       path as recents); test that navigating then re-mounting restores the same
       stack.
 
