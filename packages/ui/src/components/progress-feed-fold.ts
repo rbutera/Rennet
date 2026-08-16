@@ -6,9 +6,9 @@ import type {
 } from "@rennet/protocol";
 
 /**
- * The shared narration-feed fold (issue #71). This is the ONE pure fold every
- * narrated slot's feed derives from — extracted verbatim from the processing
- * screen's private `deriveView` so there is a single organ, not a copy per slot.
+ * The processing narration-feed fold (issue #71), extracted from the processing
+ * screen's private `deriveView`. Other narrated slots supply their own fold to the
+ * shared `ProgressFeed` component.
  *
  * It folds an ordered `ProjectProcessEvent[]` (plus the command's resolved
  * per-repo summary) into a per-repo view: a headline (the latest real stage note),
@@ -17,8 +17,7 @@ import type {
  * never scripted text.
  *
  * Unknown event kinds are skipped, never thrown on, so the progress-event union
- * can keep growing (the capture/review milestones, #71) without breaking older
- * consumers of this fold.
+ * can grow without breaking this processing consumer.
  */
 
 /** One repo's live block: its completed-stage trail and outcome. */
@@ -113,25 +112,25 @@ export function deriveProgressView(
       }
       case "done":
         break;
-      // Unknown / not-repo-shaped kinds (the capture/review milestones, #71) are
-      // tolerated: they never belong to a repo trail, so this fold skips them. A
-      // capture/review slot renders through the same organ over its own fold.
+      // Unknown / not-repo-shaped kinds are tolerated: they never belong to a repo
+      // trail, so this processing fold skips them.
       default:
         break;
     }
   }
 
-  // If the final summary arrived but per-repo events did not (degraded bridge),
-  // synthesise blocks from the resolved summaries so the done state still reads.
-  if (blocks.size === 0 && repos.length > 0) {
-    for (const summary of repos)
-      blocks.set(summary.repo, {
-        repo: summary.repo,
-        state: summary.ok ? "done" : "error",
-        trail: [],
-        summary: summary.ok ? summary : undefined,
-        error: summary.ok ? undefined : summary.error,
-      });
+  // Fill any blocks omitted by a degraded or truncated replay from the resolved
+  // summaries so the terminal state still includes every repository.
+  for (const summary of repos) {
+    if (blocks.has(summary.repo)) continue;
+    blocks.set(summary.repo, {
+      repo: summary.repo,
+      state: summary.ok ? "done" : "error",
+      trail: [],
+      summary: summary.ok ? summary : undefined,
+      error: summary.ok ? undefined : summary.error,
+      anchor: summary.ok ? { kind: "project", projectId: project.id } : undefined,
+    });
   }
 
   const headline = latestDetail ? `${latestNote} · ${latestDetail}` : latestNote;

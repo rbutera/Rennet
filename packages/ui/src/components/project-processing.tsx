@@ -9,6 +9,16 @@ import { ArrowRightIcon, CheckIcon, SparkleIcon, TriangleIcon } from "./icons";
 import { ProgressFeed } from "./progress-feed";
 import { deriveProgressView } from "./progress-feed-fold";
 
+const processCommandIds = new Map<string, string>();
+
+function processCommandId(projectId: string): string {
+  const existing = processCommandIds.get(projectId);
+  if (existing) return existing;
+  const created = crypto.randomUUID();
+  processCommandIds.set(projectId, created);
+  return created;
+}
+
 /**
  * The processing screen (issue #29, Rai's wireframe #2): after a project is added,
  * Rennet builds each included repo's ProjectSnapshot — the INITIAL CONTEXT DUMP.
@@ -51,11 +61,11 @@ export function ProjectProcessing({
     if (started.current) return;
     started.current = true;
 
-    // Key the run on a stable per-project id (issue #71, D3): a re-mount derives
-    // the SAME UUID, so a remount re-attaches to the main-owned live run instead
-    // of minting a fresh identity. Main deduplicates concurrent invocations and
-    // replays the bounded live backlog; `started` only guards this mount.
-    const commandId = project.id;
+    // Keep one protocol-valid command UUID per project for this renderer session,
+    // so a remount re-attaches to the main-owned live run instead of minting a
+    // fresh identity. Main deduplicates concurrent invocations and replays the
+    // bounded live backlog; `started` only guards this mount.
+    const commandId = processCommandId(project.id);
     const unsubscribe = bridge.onProgress?.(commandId, (event) => {
       setEvents((prior) => [...prior, event]);
       if (event.kind === "done") setRepos(event.repos);

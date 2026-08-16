@@ -745,35 +745,23 @@ export const processedRepoSummarySchema = z.object({
 export type ProcessedRepoSummary = z.infer<typeof processedRepoSummarySchema>;
 
 /**
- * A typed reference to the artifact a landed narration line produced (issue #71
- * anchoring): a processed project, or a captured/generated review. A terminal or
- * landed progress event may carry one so the renderer can navigate to it via the
- * existing flow handlers; a line with no ref is honestly inert, never a dead link.
+ * A typed reference to the project a landed processing line produced (issue #71
+ * anchoring). A landed progress event may carry one so the renderer can navigate
+ * to it via the existing flow handlers; a line with no ref is honestly inert.
  */
-export const progressArtifactRefSchema = z.discriminatedUnion("kind", [
-  z.object({ kind: z.literal("project"), projectId: z.string().min(1) }),
-  z.object({ kind: z.literal("review"), reviewId: z.string().min(1) }),
-]);
+export const progressArtifactRefSchema = z.object({
+  kind: z.literal("project"),
+  projectId: z.string().min(1),
+});
 export type ProgressArtifactRef = z.infer<typeof progressArtifactRefSchema>;
 
 /**
- * A single live-narration event pushed while a project processes OR a review is
- * captured/generated (issue #71: one progress vocabulary on one transport).
- *
- * Processing (issue #29): `repo-start`/`repo-done` bracket each repo; `stage` fires
+ * A single live-narration event pushed while a project processes. `repo-start` and
+ * `repo-done` bracket each repo; `stage` fires
  * as the build advances, each carrying a real `note` (and often a real `detail`,
  * e.g. "412 files"); `done` fires once at the end with the full per-repo summary.
  * `repo-error` is a SOFT failure for one repo — processing continues, and `done`
  * still fires.
- *
- * Capture/review (issue #71): `capture`/`floor`/`angle` reserve structured events
- * for the review pipeline's real deterministic seams (counts/ids/titles only,
- * never model prose). Their production emission and feed consumer remain tracked
- * by the unchecked OpenSpec tasks.
- *
- * The union is discriminated by `kind` and grows additively — consumers that fold
- * only the repo kinds skip the capture/review kinds (and any future kind) rather
- * than throwing, so older folds keep compiling and behaving unchanged.
  */
 export const projectProcessEventSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -807,34 +795,6 @@ export const projectProcessEventSchema = z.discriminatedUnion("kind", [
   z.object({
     kind: z.literal("done"),
     repos: z.array(processedRepoSummarySchema),
-  }),
-  // ── capture/review milestones (issue #71) — deterministic, no model prose ────
-  z.strictObject({
-    kind: z.literal("capture"),
-    milestone: z.enum(["working-tree", "patchset"]),
-    changedFiles: z.number().int().nonnegative().optional(),
-  }),
-  z.strictObject({
-    kind: z.literal("floor"),
-    occurrenceCount: z.number().int().nonnegative(),
-    chunkCount: z.number().int().nonnegative(),
-  }),
-  z.strictObject({
-    kind: z.literal("angle"),
-    angle: canvasAngleSchema,
-    /** The admitted angle's real title (from the pipeline's own record). */
-    title: z.string().min(1),
-    admittedDocuments: z.number().int().nonnegative(),
-    rejectedDocuments: z.number().int().nonnegative(),
-  }),
-  z.object({
-    kind: z.literal("review-done"),
-    /** The review this run produced, for anchoring the terminal line (optional). */
-    artifact: progressArtifactRefSchema.optional(),
-  }),
-  z.object({
-    kind: z.literal("review-error"),
-    message: z.string().min(1),
   }),
 ]);
 export type ProjectProcessEvent = z.infer<typeof projectProcessEventSchema>;

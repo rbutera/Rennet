@@ -1,11 +1,5 @@
 import { describe, expect, it } from "vitest";
-import {
-  commandDefinitions,
-  dispositionSchema,
-  isCommandName,
-  parseCommandInput,
-  projectProcessEventSchema,
-} from "./index";
+import { commandDefinitions, dispositionSchema, isCommandName, parseCommandInput } from "./index";
 
 describe("command protocol", () => {
   it("rejects malformed command payloads", () => {
@@ -50,50 +44,6 @@ describe("command protocol", () => {
         body: "",
       }),
     ).toThrow();
-  });
-});
-
-describe("structured narrated-progress events (issue #71)", () => {
-  it("accepts deterministic capture, floor, and angle fields", () => {
-    expect(
-      projectProcessEventSchema.safeParse({
-        kind: "capture",
-        milestone: "patchset",
-        changedFiles: 12,
-      }).success,
-    ).toBe(true);
-    expect(
-      projectProcessEventSchema.safeParse({
-        kind: "floor",
-        occurrenceCount: 8,
-        chunkCount: 3,
-      }).success,
-    ).toBe(true);
-    expect(
-      projectProcessEventSchema.safeParse({
-        kind: "angle",
-        angle: "spec",
-        title: "Specification",
-        admittedDocuments: 2,
-        rejectedDocuments: 1,
-      }).success,
-    ).toBe(true);
-  });
-
-  it.each([
-    { kind: "capture", milestone: "patchset", note: "Captured the working tree" },
-    { kind: "capture", milestone: "patchset", detail: "12 changed files" },
-    { kind: "floor", occurrenceCount: 8, chunkCount: 3, note: "Built the floor" },
-    {
-      kind: "angle",
-      angle: "spec",
-      title: "Specification",
-      admittedDocuments: 2,
-      rejectedDocuments: 0,
-      note: "admitted",
-    },
-  ])("rejects free-form prose payloads: $kind", (event) => {
-    expect(projectProcessEventSchema.safeParse(event).success).toBe(false);
   });
 });
 

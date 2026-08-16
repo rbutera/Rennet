@@ -59,21 +59,22 @@ command's resolved value always agree, and the renderer folds the stream into UI
 state that a re-read of durable truth can always reconstruct.
 
 The processing slot renders through the shared narration organ (`ProgressFeed`
-plus the pure `deriveProgressView` fold in `@rennet/ui`). Main deduplicates a
-live `project.process` run by its stable project UUID and keeps a bounded replay
-prefix, so remounting the processing consumer reattaches instead of starting a
-second concurrent snapshot build. A successful repo line carries the processed
-project artifact through the real consumer and opens that project; an
-anchorless line stays inert.
+plus the processing-specific `deriveProgressView` fold in `packages/ui`). The
+renderer keeps one command UUID per project for the session, and main deduplicates
+a live `project.process` run by that UUID while retaining a bounded replay suffix,
+so remounting the processing consumer reattaches instead of starting a second
+concurrent snapshot build. A successful repo line carries the processed project
+artifact through the real consumer and opens that project; the fold also derives
+that anchor from a successful resolved summary when the push channel degrades.
 
-The rest of issue #71 is not live yet. The protocol reserves strict structured
-capture, deterministic-floor, and per-angle events, but the capture/review
-pipeline does not emit them and its busy surface does not consume
-`ProgressFeed`. The proactive-rehydration broadcast also has no renderer
-listener or project-card indicator. A run epoch, completed-summary return path,
-and an integration proof that runs every narrated slot with the model utility
-port stubbed are still unchecked OpenSpec tasks. The pure processing fold needs
-no model input, but that fact alone is not the cross-pipeline zero-model proof.
+The rest of issue #71 is not live yet. The capture/review pipeline does not emit
+progress events and its busy surface does not consume `ProgressFeed`; protocol
+variants for that path should arrive with real emitters and a renderer. The
+proactive-rehydration broadcast also has no renderer listener or project-card
+indicator. A run epoch, completed-summary return path, and an integration proof
+that runs every narrated slot with the model utility port stubbed are still
+unchecked OpenSpec tasks. The pure processing fold needs no model input, but that
+fact alone is not the cross-pipeline zero-model proof.
 
 ## When to revisit it
 

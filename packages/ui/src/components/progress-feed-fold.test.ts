@@ -16,7 +16,7 @@ const repoProject: Project = {
 
 const workspace: Project = { ...repoProject, name: "ws", kind: "workspace", repoCount: 2 };
 
-describe("deriveProgressView — the shared narration fold (issue #71)", () => {
+describe("deriveProgressView — the processing narration fold (issue #71)", () => {
   it("collapses a re-emitted stage into one trail row and upgrades it with the detail", () => {
     // A stage fires twice (start, then with a real detail) — the fold must keep ONE
     // trail row for it and carry the arrived detail, not stack two rows.
@@ -76,26 +76,41 @@ describe("deriveProgressView — the shared narration fold (issue #71)", () => {
     expect(view.repoBlocks[0]?.trail).toEqual([]);
   });
 
-  it("tolerates unknown / not-repo-shaped kinds — skips them, never throws, repo trail intact", () => {
-    // The capture/review milestones (#71) ride the SAME union but are not repo-shaped;
-    // an older repo-only fold must skip them (and any future kind cast in) without
-    // disturbing the repo blocks it does understand.
+  it("fills repos omitted by a truncated replay from the terminal summaries", () => {
+    const laterSummary: ProcessedRepoSummary = {
+      repo: "atlas-docs",
+      path: "/ws/atlas-docs",
+      ok: true,
+      files: 3,
+      symbols: 1,
+    };
+    const repos: ProcessedRepoSummary[] = [
+      { repo: "atlas", path: "/ws/atlas", ok: true, files: 10, symbols: 4 },
+      laterSummary,
+    ];
+    const partialReplay: ProjectProcessEvent[] = [
+      { kind: "repo-start", repo: "atlas-docs", index: 2, total: 2 },
+      {
+        kind: "repo-done",
+        repo: "atlas-docs",
+        summary: laterSummary,
+        artifact: { kind: "project", projectId: "p1" },
+      },
+      { kind: "done", repos },
+    ];
+
+    const view = deriveProgressView(partialReplay, repos, workspace);
+    expect(new Set(view.repoBlocks.map((block) => block.repo))).toEqual(
+      new Set(["atlas", "atlas-docs"]),
+    );
+    expect(view.repoBlocks).toHaveLength(2);
+  });
+
+  it("tolerates an unknown kind without disturbing the repo trail", () => {
     const events: ProjectProcessEvent[] = [
       { kind: "repo-start", repo: "orbital", index: 1, total: 1 },
-      { kind: "capture", milestone: "patchset", changedFiles: 128 },
-      { kind: "floor", occurrenceCount: 8, chunkCount: 3 },
-      {
-        kind: "angle",
-        angle: "flagged",
-        title: "Flagged",
-        admittedDocuments: 2,
-        rejectedDocuments: 0,
-      },
-      { kind: "review-done" },
-      { kind: "review-error", message: "one angle timed out" },
-      { kind: "stage", repo: "orbital", stage: "build", note: "Building the repo map" },
-      // A kind this fold has never heard of — still skipped, never thrown on.
       { kind: "not-a-real-kind" } as unknown as ProjectProcessEvent,
+      { kind: "stage", repo: "orbital", stage: "build", note: "Building the repo map" },
     ];
     expect(() => deriveProgressView(events, [], repoProject)).not.toThrow();
     const view = deriveProgressView(events, [], repoProject);
