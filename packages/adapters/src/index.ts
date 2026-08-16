@@ -194,6 +194,8 @@ export {
   discoverClaude,
   discoverCodex,
   type VersionRange,
+  wslCodexDiscoveryDeps,
+  wslDiscoveryDeps,
 } from "./harness-discovery";
 export {
   type KnowledgeBackendPart,

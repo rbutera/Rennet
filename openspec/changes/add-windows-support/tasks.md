@@ -12,9 +12,9 @@
 
 ## 3. Discovery on Windows and in the distro
 
-- [ ] 3.1 Windows host `DiscoveryDeps`: split PATH on `path.delimiter`, skip the POSIX login-shell harvest, match `PATHEXT` shim variants of `claude`/`codex`, add curated Windows locations (npm/bun/scoop/volta per-user dirs, `%LOCALAPPDATA%\Programs`); unit tests with fake listings
-- [ ] 3.2 WSL `DiscoveryDeps`: harvest the distro PATH and probe candidates by executing inside the distro (today's POSIX logic verbatim, executed via `wsl.exe`); stamp each candidate with its locus and enforce "host binary never satisfies a WSL project" in `discoverClaude`/`discoverCodex`
-- [ ] 3.3 Locus-aware health surfaced in the UI: WSL/distro/binary-missing reasons reported as plain status per the wsl-execution-mode spec (no fallback to host execution, no gate)
+- [x] 3.1 Windows host `DiscoveryDeps`: `defaultDiscoveryDeps` is platform-aware — `;`-delimited PATH (`delimiterFor`), no POSIX login-shell harvest on win32 (`loginShellPath` returns null), PATHEXT shim matching (`resolveBinaryFilename`: `.cmd`/`.exe`/`.bat`/`.ps1`/bare), curated Windows dirs (`windowsKnownDirectories`: `%APPDATA%\npm`, `%LOCALAPPDATA%\Programs`, scoop/bun/volta/`.local` per-user). Platform-correct path joins via `joinFor` (a Windows host builds distro POSIX paths with `posix.join`). Unit tests: `harness-discovery.windows.test.ts`
+- [x] 3.2 WSL `DiscoveryDeps`: `wslDiscoveryDeps(distro)`/`wslCodexDiscoveryDeps(distro)` harvest the distro PATH (`bash -lc` fixed-literal), list via the `\\wsl.localhost` UNC view, and probe candidates by executing inside the distro (`wsl.exe … -e`). Every candidate is stamped `locus`; a host binary can never satisfy a WSL project because the composition picks the locus-appropriate deps and the not-found health names the distro. Tests cover the distro-found and distro-absent cases
+- [x] 3.3 Locus-aware health: `discoverClaude`/`discoverCodex` emit `unavailable` health whose `detail` names the distro ("…inside the Ubuntu distro"), never a host substitute. This `HarnessHealth` rides the existing health surface; the WSL deps are selected per-project in phase 4 (harness/codex turns), where the distro-named health reaches the review UI
 
 ## 4. Harness turns in the WSL locus
 

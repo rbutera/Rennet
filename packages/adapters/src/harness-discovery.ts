@@ -1,9 +1,24 @@
 import { constants } from "node:fs";
 import { access, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
-import type { HarnessHealth } from "@rennet/core";
+import { posix as posixPath, resolve, win32 as win32Path } from "node:path";
+import {
+  type HarnessHealth,
+  HOST_LOCUS,
+  type Locus,
+  locusCommand,
+  toWindowsView,
+} from "@rennet/core";
 import { execa } from "execa";
+
+/**
+ * Join path segments for a platform, NOT the host's (add-windows-support). A Windows
+ * host resolving a WSL distro's dirs must build POSIX paths (`/home/u/.local/bin`),
+ * so the distro/POSIX branch uses `path.posix.join`; the Windows branch uses win32.
+ */
+function joinFor(platform: NodeJS.Platform | undefined): (...parts: string[]) => string {
+  return platform === "win32" ? win32Path.join : posixPath.join;
+}
 
 /**
  * Harness discovery (slice 1, Claude Code only).
@@ -31,6 +46,15 @@ export interface DiscoveryDeps {
   isExecutable(path: string): Promise<boolean>;
   /** Execute `<path> --version` and return the parsed version, or `null`. */
   probeVersion(path: string): Promise<string | null>;
+  /**
+   * The platform the binaries live on (add-windows-support). `win32` ⇒ `;`-delimited
+   * PATH, PATHEXT shim matching (`claude.cmd`/`.exe`/…), Windows curated dirs. Absent
+   * ⇒ POSIX (macOS/Linux, and the Linux INSIDE a WSL distro). This is the platform of
+   * the LOCUS, not necessarily of the host running Rennet.
+   */
+  readonly platform?: NodeJS.Platform;
+  /** The locus these candidates belong to (add-windows-support). Absent ⇒ host. */
+  readonly locus?: Locus;
 }
 
 export interface DiscoveredCandidate {
@@ -38,6 +62,38 @@ export interface DiscoveredCandidate {
   readonly version: string | null;
   /** True when the path came from a curated known location rather than a PATH entry. */
   readonly fromKnownLocation: boolean;
+  /** The locus this candidate lives on (add-windows-support). */
+  readonly locus: Locus;
+}
+
+/** The PATH delimiter for a platform: `;` on Windows, `:` elsewhere. */
+function delimiterFor(platform: NodeJS.Platform | undefined): string {
+  return platform === "win32" ? ";" : ":";
+}
+
+// The executable shim extensions discovery recognises on Windows (PATHEXT subset,
+// plus the bare name for a wrapperless install). `.cmd` first: npm global installs
+// `claude.cmd`/`codex.cmd`, the common case.
+const WINDOWS_BINARY_EXTENSIONS = [".cmd", ".exe", ".bat", ".ps1", ""] as const;
+
+/**
+ * Resolve which filename in a directory listing IS the binary, honouring Windows
+ * shims (add-windows-support). POSIX: the bare name if present. Windows: the first
+ * of `name.cmd`/`.exe`/`.bat`/`.ps1`/`name` that the directory actually contains.
+ */
+function resolveBinaryFilename(
+  entries: readonly string[],
+  base: string,
+  platform: NodeJS.Platform | undefined,
+): string | null {
+  if (platform === "win32") {
+    for (const extension of WINDOWS_BINARY_EXTENSIONS) {
+      const candidate = `${base}${extension}`;
+      if (entries.includes(candidate)) return candidate;
+    }
+    return null;
+  }
+  return entries.includes(base) ? base : null;
 }
 
 export interface DiscoveryResult {
@@ -53,12 +109,44 @@ export interface VersionRange {
 
 const CLAUDE_BINARY = "claude";
 
-/** Curated locations, checked even when they are not on PATH (the launchd case). */
-function knownDirectories(home: string): readonly string[] {
+/** Curated Windows per-user install locations for `base` (`claude`/`codex`). */
+function windowsKnownDirectories(base: string): readonly string[] {
+  const join = win32Path.join;
+  const env = process.env;
+  const localAppData = env.LOCALAPPDATA;
+  const appData = env.APPDATA;
+  const userProfile = env.USERPROFILE ?? env.HOME ?? "";
+  const dirs: string[] = [];
+  // npm global (`%APPDATA%\npm\claude.cmd`), the most common shim location.
+  if (appData) dirs.push(join(appData, "npm"));
+  if (localAppData) {
+    dirs.push(join(localAppData, "Programs", base)); // per-user "Programs" installs
+    dirs.push(join(localAppData, base, "bin"));
+  }
+  if (userProfile) {
+    dirs.push(join(userProfile, ".local", "bin"));
+    dirs.push(join(userProfile, ".bun", "bin"));
+    dirs.push(join(userProfile, "scoop", "shims")); // scoop per-user
+    dirs.push(join(userProfile, ".volta", "bin"));
+  }
+  return dirs;
+}
+
+/**
+ * Curated locations, checked even when they are not on PATH (the launchd case, and
+ * the GUI-inherited-PATH case). POSIX by default; on Windows the per-user install
+ * dirs; inside a WSL distro the POSIX set plus linuxbrew (add-windows-support).
+ */
+function knownDirectories(home: string, platform: NodeJS.Platform | undefined): readonly string[] {
+  if (platform === "win32") {
+    return [...windowsKnownDirectories(CLAUDE_BINARY)];
+  }
+  const join = posixPath.join;
   return [
     join(home, ".local", "bin"),
     join(home, ".claude", "local"),
     "/opt/homebrew/bin",
+    "/home/linuxbrew/.linuxbrew/bin",
     "/usr/local/bin",
     join(home, ".bun", "bin"),
     join(home, ".asdf", "shims"),
@@ -66,8 +154,8 @@ function knownDirectories(home: string): readonly string[] {
   ];
 }
 
-function splitPath(value: string): readonly string[] {
-  return value.split(":").filter((entry) => entry.length > 0);
+function splitPath(value: string, delimiter: string): readonly string[] {
+  return value.split(delimiter).filter((entry) => entry.length > 0);
 }
 
 /** Numeric-tuple version compare. Returns <0, 0, or >0. Non-numeric segments sort as 0. */
@@ -97,12 +185,19 @@ export async function discoverClaude(
   deps: DiscoveryDeps,
   range: VersionRange,
 ): Promise<DiscoveryResult> {
-  const known = knownDirectories(deps.home);
+  const locus = deps.locus ?? HOST_LOCUS;
+  const delimiter = delimiterFor(deps.platform);
+  const join = joinFor(deps.platform);
+  const known = knownDirectories(deps.home, deps.platform);
   const knownSet = new Set(known);
   const harvested = await deps.loginShellPath();
   const directories: string[] = [];
   const seen = new Set<string>();
-  for (const directory of [...splitPath(harvested ?? ""), ...splitPath(deps.envPath), ...known]) {
+  for (const directory of [
+    ...splitPath(harvested ?? "", delimiter),
+    ...splitPath(deps.envPath, delimiter),
+    ...known,
+  ]) {
     if (!seen.has(directory)) {
       seen.add(directory);
       directories.push(directory);
@@ -113,13 +208,14 @@ export async function discoverClaude(
   const resolved = new Set<string>();
   for (const directory of directories) {
     const entries = await deps.listDir(directory);
-    if (!entries.includes(CLAUDE_BINARY)) continue;
-    const path = join(directory, CLAUDE_BINARY);
+    const filename = resolveBinaryFilename(entries, CLAUDE_BINARY, deps.platform);
+    if (filename === null) continue;
+    const path = join(directory, filename);
     if (resolved.has(path)) continue;
     if (!(await deps.isExecutable(path))) continue;
     resolved.add(path);
     const version = await deps.probeVersion(path);
-    candidates.push({ path, version, fromKnownLocation: knownSet.has(directory) });
+    candidates.push({ path, version, fromKnownLocation: knownSet.has(directory), locus });
   }
 
   // Rank: a known-location hit with a version first, then highest version, then
@@ -135,6 +231,9 @@ export async function discoverClaude(
   const best = ranked[0];
 
   if (!best) {
+    // Name the distro in the reason so a WSL-locus miss reads "…inside the Ubuntu
+    // distro", never a host binary silently chosen (harness-discovery spec).
+    const where = locus.kind === "wsl" ? ` inside the ${locus.distro} distro` : "";
     return {
       candidates,
       chosen: null,
@@ -143,8 +242,8 @@ export async function discoverClaude(
         reason: candidates.length > 0 ? "spawn-failed" : "not-found",
         detail:
           candidates.length > 0
-            ? "A claude binary was found but did not report a version."
-            : "No claude binary found on PATH or in any known location.",
+            ? `A claude binary was found${where} but did not report a version.`
+            : `No claude binary found on PATH or in any known location${where}.`,
       },
     };
   }
@@ -156,10 +255,22 @@ export async function discoverClaude(
   };
 }
 
-/** The default effects: real login shell, filesystem, and process execution. */
+/**
+ * The default effects: real login shell, filesystem, and process execution.
+ *
+ * On Windows there is NO POSIX login shell to harvest (windows-native-runtime spec):
+ * `loginShellPath` returns `null` and discovery proceeds from the process env plus
+ * the curated Windows locations, and `probeVersion` runs the shim directly (execa
+ * launches a `.cmd`/`.bat` through the Windows launcher). PATH is `;`-delimited and
+ * candidate matching honours PATHEXT — all driven by `platform`.
+ */
 export function defaultDiscoveryDeps(): DiscoveryDeps {
+  const platform = process.platform;
   return {
+    platform,
+    locus: HOST_LOCUS,
     async loginShellPath(): Promise<string | null> {
+      if (platform === "win32") return null; // no POSIX shell on Windows
       const shell = process.env.SHELL ?? "/bin/zsh";
       try {
         const result = await execa(shell, ["-ilc", 'printf %s "$PATH"'], {
@@ -181,8 +292,10 @@ export function defaultDiscoveryDeps(): DiscoveryDeps {
       }
     },
     async isExecutable(path: string): Promise<boolean> {
+      // On Windows, X_OK is not meaningful for a `.cmd`/`.exe`; presence + a readable
+      // check is the signal, and the version probe is the real proof (as on POSIX).
       try {
-        await access(path, constants.X_OK);
+        await access(path, platform === "win32" ? constants.F_OK : constants.X_OK);
         return true;
       } catch {
         return false;
@@ -191,6 +304,110 @@ export function defaultDiscoveryDeps(): DiscoveryDeps {
     async probeVersion(path: string): Promise<string | null> {
       try {
         const result = await execa(path, ["--version"], { reject: false, shell: false });
+        if (result.exitCode !== 0) return null;
+        const match = result.stdout.match(/\d+\.\d+\.\d+/);
+        return match ? match[0] : null;
+      } catch {
+        return null;
+      }
+    },
+  };
+}
+
+// ── WSL-locus discovery (add-windows-support) ──────────────────────────────────
+//
+// Discovery INSIDE a distro: the exact POSIX algorithm above, executed across the
+// wsl.exe boundary. PATH is harvested from the distro's login shell, directory
+// listings read the distro filesystem through its `\\wsl.localhost\<distro>\…` UNC
+// view (spike: UNC reads are clean), and executability/version probes run the
+// candidate INSIDE the distro via `wsl.exe … -e`. Every candidate is stamped with
+// the WSL locus, so a host binary can never satisfy a WSL-locus project: the
+// composition picks these deps for a WSL project and the host deps for a host one.
+
+/** Run a fixed-literal command in the distro and return trimmed stdout, or null. */
+async function wslProbe(distro: string, argv: readonly string[]): Promise<string | null> {
+  const command = locusCommand({ kind: "wsl", distro }, argv[0] ?? "", argv.slice(1));
+  try {
+    const result = await execa(command.file, [...command.args], {
+      reject: false,
+      shell: false,
+      stdin: "ignore",
+    });
+    return result.exitCode === 0 ? result.stdout : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Discovery effects for a WSL distro. `home`/`loginShellPath` are harvested from the
+ * distro's own login shell (a fixed-literal `bash -lc` payload — the one sanctioned
+ * `-e bash -lc` use, since the payload is not user data). Listings read the distro
+ * via UNC; executability and version probes run inside the distro. Async because the
+ * distro home must be probed before the deps can be built.
+ */
+export async function wslDiscoveryDeps(distro: string): Promise<DiscoveryDeps> {
+  const locus: Locus = { kind: "wsl", distro };
+  const home = (await wslProbe(distro, ["bash", "-lc", 'printf %s "$HOME"'])) ?? "/root";
+  return {
+    platform: "linux",
+    locus,
+    home,
+    envPath: "", // the distro's PATH is harvested via loginShellPath, not the host env
+    loginShellPath: () => wslProbe(distro, ["bash", "-lc", 'printf %s "$PATH"']),
+    async listDir(directory: string): Promise<readonly string[]> {
+      try {
+        return await readdir(toWindowsView(directory, distro));
+      } catch {
+        return [];
+      }
+    },
+    async isExecutable(path: string): Promise<boolean> {
+      const command = locusCommand(locus, "test", ["-x", path]);
+      try {
+        const result = await execa(command.file, [...command.args], {
+          reject: false,
+          shell: false,
+          stdin: "ignore",
+        });
+        return result.exitCode === 0;
+      } catch {
+        return false;
+      }
+    },
+    async probeVersion(path: string): Promise<string | null> {
+      const command = locusCommand(locus, path, ["--version"]);
+      try {
+        const result = await execa(command.file, [...command.args], {
+          reject: false,
+          shell: false,
+          stdin: "ignore",
+        });
+        if (result.exitCode !== 0) return null;
+        const match = result.stdout.match(/\d+\.\d+\.\d+/);
+        return match ? match[0] : null;
+      } catch {
+        return null;
+      }
+    },
+  };
+}
+
+/** WSL codex discovery: the WSL deps with the codex-safe (stdin-closed, timed) probe. */
+export async function wslCodexDiscoveryDeps(distro: string): Promise<DiscoveryDeps> {
+  const base = await wslDiscoveryDeps(distro);
+  const locus: Locus = { kind: "wsl", distro };
+  return {
+    ...base,
+    async probeVersion(path: string): Promise<string | null> {
+      const command = locusCommand(locus, path, ["--version"]);
+      try {
+        const result = await execa(command.file, [...command.args], {
+          reject: false,
+          shell: false,
+          stdin: "ignore",
+          timeout: 10_000,
+        });
         if (result.exitCode !== 0) return null;
         const match = result.stdout.match(/\d+\.\d+\.\d+/);
         return match ? match[0] : null;
@@ -257,7 +474,13 @@ export function defaultCodexDiscoveryDeps(): DiscoveryDeps {
 async function codexKnownDirectories(
   home: string,
   listDir: (directory: string) => Promise<readonly string[]>,
+  platform: NodeJS.Platform | undefined,
 ): Promise<{ readonly dirs: readonly string[]; readonly shimsDir: string }> {
+  if (platform === "win32") {
+    // Windows codex installs are npm/scoop shims, not asdf; no asdf-install scan.
+    return { dirs: windowsKnownDirectories(CODEX_BINARY), shimsDir: "" };
+  }
+  const join = posixPath.join;
   const asdfInstallsRoot = join(home, ".asdf", "installs", "nodejs");
   const versions = await listDir(asdfInstallsRoot);
   const asdfInstallBins = versions.map((version) => join(asdfInstallsRoot, version, "bin"));
@@ -267,6 +490,7 @@ async function codexKnownDirectories(
       ...asdfInstallBins,
       join(home, ".local", "bin"),
       "/opt/homebrew/bin",
+      "/home/linuxbrew/.linuxbrew/bin",
       "/usr/local/bin",
       join(home, ".bun", "bin"),
       join(home, ".volta", "bin"),
@@ -279,7 +503,7 @@ async function codexKnownDirectories(
 /** True when `binaryPath` is the codex under the asdf shims directory — the
  *  unreliable indirection we prefer to skip whenever a real install is present. */
 function isAsdfShim(binaryPath: string, shimsDir: string): boolean {
-  return binaryPath === join(shimsDir, CODEX_BINARY);
+  return shimsDir.length > 0 && binaryPath === posixPath.join(shimsDir, CODEX_BINARY);
 }
 
 /** Options for {@link discoverCodex}. */
@@ -316,7 +540,7 @@ export async function discoverCodex(
       const version = await deps.probeVersion(path);
       if (version !== null) {
         return {
-          candidates: [{ path, version, fromKnownLocation: true }],
+          candidates: [{ path, version, fromKnownLocation: true, locus: HOST_LOCUS }],
           chosen: { path, version },
           health: { state: "ready", version },
         };
@@ -324,12 +548,23 @@ export async function discoverCodex(
     }
   }
 
-  const { dirs: known, shimsDir } = await codexKnownDirectories(deps.home, deps.listDir);
+  const locus = deps.locus ?? HOST_LOCUS;
+  const delimiter = delimiterFor(deps.platform);
+  const join = joinFor(deps.platform);
+  const { dirs: known, shimsDir } = await codexKnownDirectories(
+    deps.home,
+    deps.listDir,
+    deps.platform,
+  );
   const knownSet = new Set(known);
   const harvested = await deps.loginShellPath();
   const directories: string[] = [];
   const seen = new Set<string>();
-  for (const directory of [...splitPath(harvested ?? ""), ...splitPath(deps.envPath), ...known]) {
+  for (const directory of [
+    ...splitPath(harvested ?? "", delimiter),
+    ...splitPath(deps.envPath, delimiter),
+    ...known,
+  ]) {
     if (!seen.has(directory)) {
       seen.add(directory);
       directories.push(directory);
@@ -340,15 +575,18 @@ export async function discoverCodex(
   const resolved = new Set<string>();
   for (const directory of directories) {
     const entries = await deps.listDir(directory);
-    if (!entries.includes(CODEX_BINARY)) continue;
-    // Normalize to ABSOLUTE so a relative PATH entry (e.g. ".") never yields a
+    const filename = resolveBinaryFilename(entries, CODEX_BINARY, deps.platform);
+    if (filename === null) continue;
+    // Host: normalize to ABSOLUTE so a relative PATH entry (e.g. ".") never yields a
     // relative `chosen.path` that codex-exec would resolve against its scratch cwd.
-    const path = resolve(join(directory, CODEX_BINARY));
+    // WSL: keep the distro-native POSIX path (resolve would corrupt it on a Windows host).
+    const joined = join(directory, filename);
+    const path = locus.kind === "host" ? resolve(joined) : joined;
     if (resolved.has(path)) continue;
     if (!(await deps.isExecutable(path))) continue;
     resolved.add(path);
     const version = await deps.probeVersion(path);
-    candidates.push({ path, version, fromKnownLocation: knownSet.has(directory) });
+    candidates.push({ path, version, fromKnownLocation: knownSet.has(directory), locus });
   }
 
   const withVersion = candidates.filter(
@@ -368,6 +606,7 @@ export async function discoverCodex(
   const best = ranked[0];
 
   if (!best) {
+    const where = locus.kind === "wsl" ? ` inside the ${locus.distro} distro` : "";
     return {
       candidates,
       chosen: null,
@@ -376,8 +615,8 @@ export async function discoverCodex(
         reason: candidates.length > 0 ? "spawn-failed" : "not-found",
         detail:
           candidates.length > 0
-            ? "A codex binary was found but did not report a version."
-            : "No codex binary found on PATH or in any known location.",
+            ? `A codex binary was found${where} but did not report a version.`
+            : `No codex binary found on PATH or in any known location${where}.`,
       },
     };
   }
