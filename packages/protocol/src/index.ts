@@ -1476,6 +1476,18 @@ export const projectVisibilitySchema = z.enum(["local", "git-visible"]);
 export type ProjectVisibility = z.infer<typeof projectVisibilitySchema>;
 
 /**
+ * A project's execution locus on the wire (add-windows-support): the host OS, or a
+ * named WSL distro. Structurally identical to the `Locus` type in `@rennet/types`
+ * that the execution seam uses; kept as a schema here because `protocol` may not
+ * import `core`.
+ */
+export const locusSchema = z.union([
+  z.object({ kind: z.literal("host") }),
+  z.object({ kind: z.literal("wsl"), distro: z.string().min(1) }),
+]);
+export type Locus = z.infer<typeof locusSchema>;
+
+/**
  * The global (layer 1) config document, stored at `~/.rennet/config.json`. Every
  * field beyond `version` is optional so an untouched install is a trivially-valid
  * (or absent) `{ version }`; defaults are read-through, never migrated in.
@@ -1522,6 +1534,14 @@ export const settingsProjectSchema = z.object({
   promoted: z.boolean(),
   promotedProvenance: resolvedProvenanceSchema,
   /**
+   * The project's effective execution locus (add-windows-support): the persisted
+   * override if set, else auto-detected from `repoPath` (a `\\wsl$` root ⇒ that
+   * distro, else host). `locusOverridden` is true when it came from the config,
+   * false when auto-detected — so the UI can show detected-vs-chosen.
+   */
+  locus: locusSchema,
+  locusOverridden: z.boolean(),
+  /**
    * The repo's `config.json` exists but is malformed (or carries an invalid
    * value). The row then shows builtin defaults and REFUSES edits, so a write can
    * never overwrite bytes we could not parse (Rule 75). Absent config ⇒ `false`.
@@ -1558,6 +1578,19 @@ export const setRepoVisibilityOutcomeSchema = z.object({
   gitignorePath: z.string(),
 });
 export type SetRepoVisibilityOutcome = z.infer<typeof setRepoVisibilityOutcomeSchema>;
+
+/** The outcome of a repo-locus override write (add-windows-support). */
+export const setRepoLocusOutcomeSchema = z.object({
+  /**
+   * `applied` — the override was written (`locus` is the resolved effective value);
+   * `unresolved` — the project/checkout could not be resolved (nothing written);
+   * `malformed` — the repo config is malformed, so the edit was REFUSED (Rule 75).
+   */
+  status: z.enum(["applied", "unresolved", "malformed"]),
+  locus: locusSchema,
+  locusOverridden: z.boolean(),
+});
+export type SetRepoLocusOutcome = z.infer<typeof setRepoLocusOutcomeSchema>;
 
 /** One convention rule shown in the per-repo guidance panel (never model-facing). */
 export const settingsConventionRuleSchema = z.object({
@@ -2300,6 +2333,19 @@ export const commandDefinitions = {
       visibility: projectVisibilitySchema,
     }),
     output: setRepoVisibilityOutcomeSchema,
+  },
+  // ── Settings: set (or clear) a repo's execution-locus override ─────────────
+  // A plain editable setting (add-windows-support, Rule Zero — never a gate). The
+  // override records `locus` in the repo's config; `locus: null` clears it back to
+  // auto-detection. Refused when the config is malformed (Rule 75), like
+  // visibility. `repoPath` addresses the row (validated against the project).
+  "settings.setRepoLocus": {
+    input: z.object({
+      projectId: z.string().min(1),
+      repoPath: z.string().min(1),
+      locus: locusSchema.nullable(),
+    }),
+    output: setRepoLocusOutcomeSchema,
   },
   // ── The review→agent handoff loop (issue #18, Contracts §2.1 destination B) ──
   // Batch the reviewer's open request-change/comment dispositions into a task bundle,

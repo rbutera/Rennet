@@ -4,6 +4,7 @@ import {
   buildCommands,
   type CommandContext,
   filterCommands,
+  formatKeybinding,
   fuzzyScore,
   type Screen,
 } from "./commands";
@@ -199,5 +200,18 @@ describe("fuzzy filter", () => {
   it("scores a non-subsequence as null", () => {
     expect(fuzzyScore("Zoom in", "xyz")).toBeNull();
     expect(fuzzyScore("Zoom in", "zi")).not.toBeNull();
+  });
+});
+
+describe("formatKeybinding (add-windows-support)", () => {
+  it("renders a mod+ chord as ⌘ on macOS and Ctrl on Windows/Linux", () => {
+    expect(formatKeybinding("mod+[", true)).toBe("⌘[");
+    expect(formatKeybinding("mod+[", false)).toBe("Ctrl+[");
+    expect(formatKeybinding("mod+K", false)).toBe("Ctrl+K");
+  });
+
+  it("passes a bare key through unchanged", () => {
+    expect(formatKeybinding("l", true)).toBe("l");
+    expect(formatKeybinding("l", false)).toBe("l");
   });
 });

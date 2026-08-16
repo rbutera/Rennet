@@ -6,6 +6,7 @@ import {
   buildHandoffBundle,
   canonicalPrSubmissionPayload,
   canonicalReviewPayload,
+  detectLocus,
   disclosureFor,
   type ForgePrSubmission,
   type ForgePrSubmissionOutcome,
@@ -13,6 +14,7 @@ import {
   type ForgeReviewTarget,
   forgeTargetKey,
   type HandoffTurnOutcome,
+  type Locus,
   mechanicalComposition,
   type ReviewService,
   resolveReviewEvent,
@@ -34,6 +36,7 @@ import {
   parseCommandOutput,
   type ReattachResult,
   type ReviewAskStreamEvent,
+  type SetRepoLocusOutcome,
   type SetRepoVisibilityOutcome,
   type SettingsGuidance,
   type SettingsView,
@@ -417,6 +420,11 @@ export interface DispatchDeps {
       repoPath: string;
       visibility: ProjectVisibility;
     }): Promise<SetRepoVisibilityOutcome>;
+    setRepoLocus(input: {
+      projectId: string;
+      repoPath: string;
+      locus: Locus | null;
+    }): Promise<SetRepoLocusOutcome>;
   };
 }
 
@@ -1518,6 +1526,25 @@ export function createDispatch(
           projectId: input.projectId,
           repoPath: input.repoPath,
           visibility: input.visibility,
+        });
+        return parseCommandOutput(name, result);
+      }
+      case "settings.setRepoLocus": {
+        // A plain editable setting (add-windows-support, Rule Zero — no gate). Writes
+        // the repo's locus override (or clears it back to auto-detection when
+        // `locus` is null). Absent dep ⇒ a typed `unresolved` no-op.
+        const input = parseCommandInput(name, rawInput);
+        if (!deps.settings) {
+          return parseCommandOutput(name, {
+            status: "unresolved",
+            locus: detectLocus(input.repoPath),
+            locusOverridden: false,
+          });
+        }
+        const result = await deps.settings.setRepoLocus({
+          projectId: input.projectId,
+          repoPath: input.repoPath,
+          locus: input.locus,
         });
         return parseCommandOutput(name, result);
       }

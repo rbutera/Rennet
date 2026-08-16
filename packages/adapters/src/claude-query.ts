@@ -1,4 +1,6 @@
+import { tmpdir } from "node:os";
 import type { Query, Options as SdkOptions } from "@anthropic-ai/claude-agent-sdk";
+import { HOST_LOCUS, type Locus } from "@rennet/core";
 import type { ClaudeQueryArgs, ClaudeQueryFn, ClaudeQueryOptions } from "./claude-adapter";
 import { CLAUDE_TESTED_RANGE, ClaudeAdapter } from "./claude-adapter";
 import {
@@ -7,7 +9,9 @@ import {
   defaultDiscoveryDeps,
   discoverClaude,
   type VersionRange,
+  wslDiscoveryDeps,
 } from "./harness-discovery";
+import { wslClaudeExecutable } from "./wsl-launcher";
 
 /**
  * The composition root for the Claude harness transport.
@@ -62,6 +66,9 @@ export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
     // adapter already assembled (base env spread + scoped session marker).
     env: { ...options.env },
   };
+  if (options.executableArgs !== undefined) {
+    sdkOptions.executableArgs = [...options.executableArgs];
+  }
   if (options.abortController) sdkOptions.abortController = options.abortController;
   if (options.model !== undefined) sdkOptions.model = options.model;
   if (options.allowedTools !== undefined) sdkOptions.allowedTools = [...options.allowedTools];
@@ -104,7 +111,7 @@ export function createClaudeQueryFn(loadQuery: LoadClaudeQuery = loadRealQuery):
 }
 
 export interface ClaudeHarnessDeps {
-  /** Discovery effects; defaults to the real login-shell/filesystem/exec effects. */
+  /** Discovery effects; defaults to the locus-appropriate real effects. */
   readonly discoveryDeps?: DiscoveryDeps;
   /** Version floor/ceiling the adapter has been exercised against. */
   readonly range?: VersionRange;
@@ -112,6 +119,25 @@ export interface ClaudeHarnessDeps {
   readonly loadQuery?: LoadClaudeQuery;
   /** Base environment the spawned `claude` inherits (the SDK replaces the child env). */
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /** Host-local cwd for the Windows `wsl.exe` child; injectable for tests. */
+  readonly hostTransportCwd?: string;
+  /**
+   * The project's execution locus (add-windows-support). A WSL locus discovers the
+   * distro's `claude` and points the SDK directly at `wsl.exe`, with the distro
+   * command carried as prepended executable argv. Defaults to the host.
+   */
+  readonly locus?: Locus;
+  /**
+   * The distro-native repo cwd (e.g. `/home/rai/repo`) passed to `wsl.exe --cd`.
+   * Optional; when absent the turn runs in the distro login home.
+   */
+  readonly wslCwd?: string;
+  /** Build the SDK's directly-spawnable WSL executable specification. */
+  readonly makeWslExecutable?: (input: {
+    distro: string;
+    distroClaudePath: string;
+    distroCwd?: string;
+  }) => { pathToClaudeCodeExecutable: string; executableArgs: string[] };
 }
 
 export interface ClaudeHarnessResult {
@@ -131,12 +157,28 @@ export async function createClaudeHarness(
   deps: ClaudeHarnessDeps = {},
 ): Promise<ClaudeHarnessResult> {
   const range = deps.range ?? CLAUDE_TESTED_RANGE;
-  const discovery = await discoverClaude(deps.discoveryDeps ?? defaultDiscoveryDeps(), range);
+  const locus = deps.locus ?? HOST_LOCUS;
+  const discoveryDeps =
+    deps.discoveryDeps ??
+    (locus.kind === "wsl" ? await wslDiscoveryDeps(locus.distro) : defaultDiscoveryDeps());
+  const discovery = await discoverClaude(discoveryDeps, range);
   if (!discovery.chosen) {
     return { adapter: null, discovery };
   }
+  const executable =
+    locus.kind === "wsl"
+      ? (deps.makeWslExecutable ?? wslClaudeExecutable)({
+          distro: locus.distro,
+          distroClaudePath: discovery.chosen.path,
+          ...(deps.wslCwd === undefined ? {} : { distroCwd: deps.wslCwd }),
+        })
+      : { pathToClaudeCodeExecutable: discovery.chosen.path, executableArgs: undefined };
   const adapter = new ClaudeAdapter({
-    binaryPath: discovery.chosen.path,
+    binaryPath: executable.pathToClaudeCodeExecutable,
+    ...(executable.executableArgs === undefined
+      ? {}
+      : { executableArgs: executable.executableArgs }),
+    ...(locus.kind === "wsl" ? { transportCwd: deps.hostTransportCwd ?? tmpdir() } : {}),
     version: discovery.chosen.version,
     queryFn: createClaudeQueryFn(deps.loadQuery),
     ...(deps.env ? { env: deps.env } : {}),

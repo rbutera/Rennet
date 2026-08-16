@@ -69,6 +69,8 @@ export interface ClaudeQueryOptions {
   readonly cwd: string;
   /** The user's own installed binary. R2: keeps auth on their subscription. */
   readonly pathToClaudeCodeExecutable: string;
+  /** Arguments prepended by the SDK before its own Claude argv (WSL transport). */
+  readonly executableArgs?: readonly string[];
   readonly model?: string;
   readonly allowedTools?: readonly string[];
   readonly disallowedTools?: readonly string[];
@@ -431,6 +433,9 @@ const IMPLEMENTED_CAPABILITIES: readonly CapabilityName[] = [
 
 export interface ClaudeAdapterConfig {
   readonly binaryPath: string;
+  readonly executableArgs?: readonly string[];
+  /** Host-side cwd used only for spawning the transport process. */
+  readonly transportCwd?: string;
   /** Injected SDK transport. The composition root supplies the real `query`. */
   readonly queryFn: ClaudeQueryFn;
   readonly version?: string;
@@ -578,8 +583,11 @@ export class ClaudeAdapter implements HarnessPort {
     // `spec.allowedTools` still narrows it (configuration, not a gate).
     const allowedTools = spec.allowedTools ?? SESSION_ALLOWED_TOOLS;
     return {
-      cwd: spec.cwd,
+      cwd: this.#config.transportCwd ?? spec.cwd,
       pathToClaudeCodeExecutable: this.#config.binaryPath,
+      ...(this.#config.executableArgs === undefined
+        ? {}
+        : { executableArgs: this.#config.executableArgs }),
       permissionMode: "bypassPermissions",
       env,
       abortController: abort,

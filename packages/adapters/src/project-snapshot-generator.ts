@@ -126,10 +126,16 @@ export interface GenerateResult {
 }
 
 export class ProjectSnapshotGenerator {
-  constructor(private readonly deps: { git?: GitExec; store?: ProjectSnapshotStore } = {}) {}
+  constructor(
+    private readonly deps: {
+      git?: GitExec;
+      gitForRepo?: (repoRoot: string) => GitExec;
+      store?: ProjectSnapshotStore;
+    } = {},
+  ) {}
 
-  private get git(): GitExec {
-    return this.deps.git ?? execaGit;
+  private gitFor(repoRoot: string): GitExec {
+    return this.deps.gitForRepo?.(repoRoot) ?? this.deps.git ?? execaGit;
   }
 
   /**
@@ -146,15 +152,16 @@ export class ProjectSnapshotGenerator {
     root: string;
   }> {
     const progress = options.onProgress;
+    const git = this.gitFor(repoRoot);
     progress?.({ stage: "resolve", note: "Finding the default branch" });
     const base = await resolveBaseRef(repoRoot, {
-      git: this.git,
+      git,
       explicitBaseRef: options.explicitBaseRef,
     });
     progress?.({ stage: "resolve", note: "Finding the default branch", detail: base.baseRef });
 
     progress?.({ stage: "tree", note: "Reading the file tree" });
-    const files = await listTree(base.root, base.baseOid, this.git);
+    const files = await listTree(base.root, base.baseOid, git);
     progress?.({
       stage: "tree",
       note: "Reading the file tree",
@@ -162,7 +169,7 @@ export class ProjectSnapshotGenerator {
     });
 
     progress?.({ stage: "workspace", note: "Mapping the workspace" });
-    const workspace = await readWorkspaceStructure(base.root, files, this.git);
+    const workspace = await readWorkspaceStructure(base.root, files, git);
     progress?.({
       stage: "workspace",
       note: "Mapping the workspace",
@@ -171,7 +178,7 @@ export class ProjectSnapshotGenerator {
 
     progress?.({ stage: "conventions", note: "Learning conventions & ownership" });
     const conventions = readConventions(files);
-    const ownership = await readOwnership(base.root, files, this.git);
+    const ownership = await readOwnership(base.root, files, git);
     const tests = readTests(files, workspace.scopes);
 
     const inputs: SnapshotStructuralInputs = {
@@ -201,6 +208,7 @@ export class ProjectSnapshotGenerator {
     const referenceExtractor = options.referenceExtractor ?? structuralReferenceExtractor;
     const referenceExtractorId = options.referenceExtractorId ?? DEFAULT_REFERENCE_EXTRACTOR_ID;
     const { inputs, eligible, root } = await this.gather(repoRoot, options);
+    const git = this.gitFor(repoRoot);
 
     const previousSymbolShards =
       options.previousSymbols ?? this.loadPreviousSymbols(inputs.repoKey);
@@ -237,7 +245,7 @@ export class ProjectSnapshotGenerator {
     const extracted: SymbolShard[] = [];
     const extractedReferences: ReferenceShard[] = [];
     for (const file of toRead.values()) {
-      const text = await readBlobText(root, file.blobOid, this.git);
+      const text = await readBlobText(root, file.blobOid, git);
       if (symbolToExtract.has(file.blobOid)) {
         extracted.push(extractSymbolShard(file, text, extractor, extractorId));
       }

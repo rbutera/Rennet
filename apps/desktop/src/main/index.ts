@@ -35,7 +35,8 @@ import {
   discoverWorktreeIdentities,
   enrichKnowledgeForRepo,
   ensureProjectSnapshotPin,
-  execaGit,
+  execaGitFor,
+  executeExternalCommand,
   FileConfigStore,
   FileProjectStore,
   FileThreadStore,
@@ -46,6 +47,7 @@ import {
   GitHubForgeAdapter,
   GitHubPrSubmissionAdapter,
   GitHubPublishAdapter,
+  gitForRepoFactory,
   type HttpFetch,
   KnowledgeStore,
   loadConventionCatalogue,
@@ -79,12 +81,18 @@ import {
   DEFAULT_MAX_HARNESS_INVOCATIONS,
   DEFAULT_REVIEW_INTELLIGENCE_BUDGET,
   decompose,
+  detectLocus,
+  escapePath,
   type FanInIndex,
   type ForgePrSubmission,
   type ForgePrSubmissionOutcome,
   fanInIndexFromSnapshot,
   guardSeatTurn,
   type HarnessTurnResult,
+  HOST_LOCUS,
+  type Locus,
+  LocusDistroMismatchError,
+  locusCommand,
   patchsetIntentToReviewIntent,
   ReviewService,
   recordSeatSend,
@@ -97,6 +105,8 @@ import {
   runHandoffTurn as runHandoffTurnCore,
   runHypothesisPass,
   runNoiseAngle,
+  toDistroPath,
+  toWindowsView,
   verifyFlaggedReview,
 } from "@rennet/core";
 import {
@@ -136,6 +146,7 @@ import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./li
 import { LiveTurnRegistry } from "./live-turn-registry";
 import {
   createEditorLaunchEffects,
+  editorLaunchSpec,
   performOpenInEditor,
   resolveEditorExecutables,
 } from "./open-in-editor";
@@ -185,7 +196,8 @@ function getEditorExecutables(): Promise<string[]> {
 const editorLaunchEffects = createEditorLaunchEffects({
   resolveExecutables: getEditorExecutables,
   async spawn(executable, args) {
-    await execFileAsync(executable, args);
+    const spec = editorLaunchSpec(executable, args);
+    await executeExternalCommand(spec.file, spec.args);
   },
   openPath: async (absPath) => (await shell.openPath(absPath)) === "",
 });
@@ -212,8 +224,32 @@ if (process.env.RENNET_USER_DATA) app.setPath("userData", process.env.RENNET_USE
 
 const liveSnapshotStore = snapshotStoreFor();
 const liveNoveltyLifecycle = new NoveltyLifecycleRegistry();
-const capture = new GitCaptureAdapter(undefined, (repoRoot, baseOid) =>
-  ensureProjectSnapshotPin(liveSnapshotStore, repoRoot, baseOid),
+
+/**
+ * The effective execution locus for a repo path (add-windows-support): the persisted
+ * per-project override if set, else auto-detected from the path (a `\\wsl$` root ⇒
+ * that distro, else host). Every repo-facing spawn in this composition routes
+ * through it, so a WSL-locus project's git/harness run inside the distro (Rule Zero:
+ * a plain resolution, never a gate). The store keys on the realpath-canonical top
+ * level, matching how settings resolves the same identity.
+ */
+function locusForRepo(repoRoot: string): Locus {
+  let key: string;
+  try {
+    key = escapePath(realpathSync(repoRoot));
+  } catch {
+    key = escapePath(repoRoot);
+  }
+  return liveSnapshotStore.loadConfig(key)?.locus ?? detectLocus(repoRoot);
+}
+
+const gitForRepo = gitForRepoFactory(locusForRepo);
+
+const capture = new GitCaptureAdapter(
+  undefined,
+  (repoRoot, baseOid) =>
+    ensureProjectSnapshotPin(liveSnapshotStore, repoRoot, baseOid, gitForRepo(repoRoot)),
+  locusForRepo,
 );
 const watcher = new RepoWatcher();
 
@@ -224,10 +260,27 @@ const watcher = new RepoWatcher();
 // memoized: discovery spawns the user's login shell, so it runs on first use
 // (the first `review.canvases`) rather than at launch, and passes the full
 // process env so the spawned harness inherits PATH/HOME.
-let claudeHarness: Promise<ClaudeHarnessResult> | null = null;
-function getClaudeHarness(): Promise<ClaudeHarnessResult> {
-  claudeHarness ??= createClaudeHarness({ env: process.env });
-  return claudeHarness;
+// Memoized PER LOCUS+CWD (add-windows-support): the host harness is shared as before;
+// a WSL-locus project gets a harness that discovers and runs the distro's own `claude`
+// through `wsl.exe` (createClaudeHarness), with capability identical to native. The
+// memo key includes the distro cwd because it is prepended to every SDK spawn; each
+// distro+repo is composed at most once. `distroCwd` is the distro-native repo path.
+const claudeHarnesses = new Map<string, Promise<ClaudeHarnessResult>>();
+function getClaudeHarness(
+  locus: Locus = HOST_LOCUS,
+  distroCwd?: string,
+): Promise<ClaudeHarnessResult> {
+  const key = locus.kind === "wsl" ? `wsl:${locus.distro}:${distroCwd ?? ""}` : "host";
+  let harness = claudeHarnesses.get(key);
+  if (!harness) {
+    harness = createClaudeHarness({
+      env: process.env,
+      locus,
+      ...(distroCwd === undefined ? {} : { wslCwd: distroCwd }),
+    });
+    claudeHarnesses.set(key, harness);
+  }
+  return harness;
 }
 
 // The Codex seat, wired to a RESOLVED ABSOLUTE `codex` binary (#66, #69, R39;
@@ -298,9 +351,13 @@ function getCodexAvailability(): Promise<CodexAvailability> {
 // probe that finds nothing simply drops that harness; the line degrades to
 // whatever was found (or nothing), never an error.
 let harnessDetection: Promise<DetectedHarness[]> | null = null;
-async function probeGhVersion(): Promise<string | null> {
+// The gh probe is locus-aware (add-windows-support): host = `gh --version`, WSL =
+// `wsl.exe -d <distro> -e gh --version`. The ambient first-run line is a MACHINE
+// probe, so it uses the host; a per-project WSL gh probe passes the project's locus.
+async function probeGhVersion(locus: Locus = HOST_LOCUS): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync("gh", ["--version"], { env: process.env });
+    const { file, args } = locusCommand(locus, "gh", ["--version"]);
+    const { stdout } = await execFileAsync(file, args, { env: process.env });
     return stdout.match(/\d+\.\d+\.\d+/)?.[0] ?? null;
   } catch {
     return null;
@@ -332,6 +389,10 @@ const publishHttp: HttpFetch = async (url, init) => {
   return { status: res.status, headers: res.headers, text: () => res.text() };
 };
 
+// `gh auth token` resolves the REST bearer on the host. For a WSL-locus project the
+// git push already runs in the distro (see `submitPullRequest`); binding this token
+// read to the distro's own `gh` is the remaining WSL publish-auth item tracked in the
+// add-windows-support change (the host token still authenticates the REST create).
 const runGhAuthToken: GhRunner = async () => {
   try {
     const { stdout, stderr } = await execFileAsync("gh", ["auth", "token"], { env: process.env });
@@ -447,16 +508,17 @@ async function openPullRequest(
   }
   const token = await resolveGitHubToken();
   const forge = new GitHubForgeAdapter({ http: publishHttp, token });
+  const gitInLocus = gitForRepo(repoPath);
   const source = new GitHubChangesetSource({
     forge,
-    git: execaGit,
-    pin: createRefPinner(execaGit),
+    git: gitInLocus,
+    pin: createRefPinner(gitInLocus),
     // The candidate set is the single local clone the user picked. Identity
     // matching (owner/name vs the repo's remotes) decides whether it is the
     // right clone; it never falls back to a path-name guess.
-    worktrees: { list: async () => [await discoverWorktreeIdentities(execaGit, repoPath)] },
+    worktrees: { list: async () => [await discoverWorktreeIdentities(gitInLocus, repoPath)] },
     resolveProjectSnapshotId: (root, baseOid) =>
-      ensureProjectSnapshotPin(liveSnapshotStore, root, baseOid),
+      ensureProjectSnapshotPin(liveSnapshotStore, root, baseOid, gitInLocus),
   });
   const result = await source.open(prRef);
   if (!result.pin) {
@@ -691,8 +753,10 @@ function loadReviewOwnershipRules(review: Review): Promise<readonly OwnershipRul
       loadShard: (repoKey, digest) => snapshotStoreFor().loadShard(repoKey, digest),
       resolveRepoKey: async (repositoryRoot) => {
         try {
-          return (await resolveBaseRef(repositoryRoot, { git: execaGit })).repoKey;
-        } catch {
+          return (await resolveBaseRef(repositoryRoot, { git: gitForRepo(repositoryRoot) }))
+            .repoKey;
+        } catch (error) {
+          if (error instanceof LocusDistroMismatchError) throw error;
           return null;
         }
       },
@@ -716,8 +780,9 @@ async function loadReviewFanInIndex(review: Review): Promise<FanInIndex | undefi
   if (!root) return undefined;
   let repoKey: string | null;
   try {
-    repoKey = (await resolveBaseRef(root, { git: execaGit })).repoKey;
-  } catch {
+    repoKey = (await resolveBaseRef(root, { git: gitForRepo(root) })).repoKey;
+  } catch (error) {
+    if (error instanceof LocusDistroMismatchError) throw error;
     return undefined;
   }
   if (!repoKey) return undefined;
@@ -1079,7 +1144,7 @@ async function runFlaggedReviewWithContextFeed(
     const readFileWindow = createVerificationFileReaderForPatchset({
       patchset,
       hunks: decomposition.hunks,
-      git: execaGit,
+      git: gitForRepo(patchset.repository.root),
     });
     const runTurn = createVerificationTurn(adapter, { cwd: review.repositoryRoot });
     // BUDGET-GATE (Rule 75, vital money circuit): `maxVerifications` caps how many
@@ -1158,7 +1223,7 @@ async function runFlaggedReview(review: Review, deepReview = true): Promise<Flag
  */
 async function runLiveCoverage(review: Review): Promise<OpenSpecCoverage | null> {
   const patchset = activePatchset(review);
-  const change = await readOpenSpecChange(patchset, execaGit);
+  const change = await readOpenSpecChange(patchset, gitForRepo(patchset.repository.root));
   if (!change) return null;
 
   // The requirements are the authority — the producer iterates and completes them, so
@@ -1418,7 +1483,7 @@ app.whenReady().then(async () => {
   // SHARED with the settings surface (below) so the per-project `config.json`
   // (visibility/promotion) they read and write is the same one the generator keys.
   const snapshotStore = liveSnapshotStore;
-  const snapshotGenerator = new ProjectSnapshotGenerator({ store: snapshotStore });
+  const snapshotGenerator = new ProjectSnapshotGenerator({ store: snapshotStore, gitForRepo });
   // Proactive rehydration (#143/#243): keep each already-built project's structural
   // snapshot and knowledge warm as its reference branch advances. The background pass narrates on the SAME
   // `rennet:progress` push the processing screen uses, under a stable command id, so
@@ -1488,10 +1553,13 @@ app.whenReady().then(async () => {
     headRef: string;
     submission: ForgePrSubmission;
   }): Promise<ForgePrSubmissionOutcome> => {
+    // Git runs inside the project's locus (add-windows-support): a WSL-locus repo's
+    // remote lookup and push execute in the distro, against the distro-native repo.
+    const gitInLocus = execaGitFor(locusForRepo(input.repoRoot));
     // Resolve ONE GitHub remote — the single source for BOTH the push destination and
     // the PR repo, so they can never disagree (prefer `origin`, the North Star of your
     // own repo). A repo with no GitHub remote has nowhere to open a PR — say so.
-    const remote = await resolveForgeRemote(execaGit, input.repoRoot);
+    const remote = await resolveForgeRemote(gitInLocus, input.repoRoot);
     if (!remote) {
       throw new Error(
         "No GitHub remote is configured for this repository, so there is nowhere to open a pull request.",
@@ -1499,7 +1567,7 @@ app.whenReady().then(async () => {
     }
     // Push the NAMED reviewed branch, not the current HEAD: the PR must open from the
     // branch the review is about, even if HEAD has since moved to another branch.
-    await execaGit(input.repoRoot, [
+    await gitInLocus(input.repoRoot, [
       "push",
       remote.name,
       `refs/heads/${input.headRef}:refs/heads/${input.headRef}`,
@@ -1545,7 +1613,11 @@ app.whenReady().then(async () => {
     // (R2 subscription OAuth). Refuses a repo with submodules (Codex F6) and answers an
     // honest failed turn when no `claude` is installed — never a fabricated success.
     runHandoffTurn: async ({ repoRoot, prompt }) => {
-      if (await repoHasSubmodules(repoRoot)) {
+      const locus = locusForRepo(repoRoot);
+      // The SDK prepends this distro cwd to its direct wsl.exe spawn.
+      const distroCwd =
+        locus.kind === "wsl" ? (toDistroPath(repoRoot, locus.distro) ?? undefined) : undefined;
+      if (await repoHasSubmodules(repoRoot, locus)) {
         return {
           status: "failed",
           reason:
@@ -1554,7 +1626,7 @@ app.whenReady().then(async () => {
           filesTouched: [],
         };
       }
-      const { adapter } = await getClaudeHarness();
+      const { adapter } = await getClaudeHarness(locus, distroCwd);
       if (!adapter) {
         return {
           status: "failed",
@@ -1567,15 +1639,19 @@ app.whenReady().then(async () => {
         repoRoot,
         prompt,
         runPort: claudeHandoffRunPort(adapter),
-        checkpoint: new GitCheckpointStore(repoRoot),
+        checkpoint: new GitCheckpointStore(repoRoot, locus),
       });
     },
     chooseRepository,
     openPullRequest,
     startWatching: (root: string) =>
-      watcher.start(root, () => {
-        repositoryDirty = true;
-      }),
+      watcher.start(
+        root,
+        () => {
+          repositoryDirty = true;
+        },
+        locusForRepo(root),
+      ),
     isRepositoryDirty: () => repositoryDirty,
     setRepositoryDirty: (value: boolean) => {
       repositoryDirty = value;
@@ -1608,7 +1684,7 @@ app.whenReady().then(async () => {
       return result;
     },
     discoverProject: ({ path, kind }) =>
-      discoverProject(defaultProjectDiscoveryDeps(execaGit), path, kind),
+      discoverProject(defaultProjectDiscoveryDeps(gitForRepo(path)), path, kind),
     detectHarnesses,
     // Project detail (issue #37): the unified smart list's substrate. The LOCAL half
     // is real worktrees/branches with dirty/ahead/behind from git; B2 wires the live
@@ -1621,25 +1697,27 @@ app.whenReady().then(async () => {
         return { viewer: { login: "you" }, locals: [], prs: [], truncated: false };
       }
       const prSource = await resolveProjectPrSource();
+      const projectRoot = project.openPath || project.path;
       return loadProjectDetail(
-        defaultProjectDetailSourceDeps(execaGit, prSource ?? undefined),
+        defaultProjectDetailSourceDeps(gitForRepo(projectRoot), prSource ?? undefined),
         project,
       );
     },
     // The merged-PR row's clean-up (B2), for real: `git worktree remove <path>` run
     // from the project's root. Non-forcing — a dirty worktree is refused and reported
     // ok:false, never swept. The `worktreeId` is the worktree path (LocalWork.id).
-    cleanupWorktree: ({ projectId, worktreeId }) =>
-      cleanupWorktree(
+    cleanupWorktree: async ({ projectId, worktreeId }) => {
+      const project = projectStore.list().find((entry) => entry.id === projectId);
+      const projectRoot = project ? project.openPath || project.path : null;
+      if (!projectRoot) return { ok: false };
+      return cleanupWorktree(
         {
-          git: execaGit,
-          resolveProjectRoot: async (id) => {
-            const project = projectStore.list().find((entry) => entry.id === id);
-            return project ? project.openPath || project.path : null;
-          },
+          git: gitForRepo(projectRoot),
+          resolveProjectRoot: async () => projectRoot,
         },
         { projectId, worktreeId },
-      ),
+      );
+    },
     // The Flagged lens (issue #138): the automated review layer's findings. This is
     // the LIVE finding-generation runner (#32) — a real model turn over the review's
     // diff. Dual-review aggregation (#41) + per-finding verification (#179) run by
@@ -1657,7 +1735,10 @@ app.whenReady().then(async () => {
     // reviewed patchset selected, read from the review's checked-out root. Deterministic
     // and model-free — no gate, no spend. `null` when the review touches no
     // `openspec/changes/<name>/`, replacing the frozen fixture with the real change.
-    openSpecChange: (review) => readOpenSpecChange(activePatchset(review), execaGit),
+    openSpecChange: (review) => {
+      const patchset = activePatchset(review);
+      return readOpenSpecChange(patchset, gitForRepo(patchset.repository.root));
+    },
     // The Spec view's requirement→hunk coverage (wireframes #9 / R53): the produced
     // mapping a budget-gated model turn grounds against the offered hunks. `null` (no
     // change) or `status:"failed"` (no seat / refusal / failed turn) ⇒ no chips.
@@ -1709,6 +1790,7 @@ app.whenReady().then(async () => {
         repositoryRoot: review.repositoryRoot,
         path,
         line,
+        locus: locusForRepo(review.repositoryRoot),
       }),
     reviewAsk: createLiveReviewAskPorts({
       // Dispatch resolves + freshness-pins the review (and its patchset) and hands the
@@ -1853,21 +1935,29 @@ app.whenReady().then(async () => {
         let topLevel: string;
         try {
           topLevel = (
-            await execaGit(workingPath, ["rev-parse", "--show-toplevel"], { reject: true })
+            await gitForRepo(workingPath)(workingPath, ["rev-parse", "--show-toplevel"], {
+              reject: true,
+            })
           ).trim();
-        } catch {
+        } catch (error) {
+          if (error instanceof LocusDistroMismatchError) throw error;
           return null;
         }
         if (!topLevel) return null;
         try {
-          return realpathSync(topLevel);
+          const locus = locusForRepo(workingPath);
+          const hostTopLevel =
+            locus.kind === "wsl" && topLevel.startsWith("/")
+              ? toWindowsView(topLevel, locus.distro)
+              : topLevel;
+          return realpathSync(hostTopLevel);
         } catch {
           return null;
         }
       },
       discoverWorkspaceRepos: async (project) => {
         const result = await discoverProject(
-          defaultProjectDiscoveryDeps(execaGit),
+          defaultProjectDiscoveryDeps(gitForRepo(project.path)),
           project.path,
           "workspace",
         );
@@ -1880,9 +1970,20 @@ app.whenReady().then(async () => {
           repoKey,
           repoRoot,
           target,
-          execaGit,
+          gitForRepo(repoRoot),
         );
         return { changed: preview.changed, gitignorePath: preview.gitignorePath };
+      },
+      applyLocus: ({ repoKey, locus }) => {
+        snapshotStore.updateConfig(repoKey, (current) => {
+          if (locus === null) {
+            // Clear the override back to auto-detection (drop the field entirely).
+            const next: Record<string, unknown> = { ...current };
+            delete next.locus;
+            return next as unknown as typeof current;
+          }
+          return { ...current, locus };
+        });
       },
     }),
   });

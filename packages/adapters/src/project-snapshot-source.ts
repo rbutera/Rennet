@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { escapePath } from "@rennet/core";
+import { detectLocus, escapePath, toWindowsView } from "@rennet/core";
 import type {
   BaseRefResolution,
   ConventionEntry,
@@ -70,7 +70,12 @@ export async function resolveBaseRef(
   options: { git?: GitExec; explicitBaseRef?: string } = {},
 ): Promise<ResolvedBase> {
   const git = options.git ?? execaGit;
-  const topLevel = (await git(root, ["rev-parse", "--show-toplevel"], { reject: true })).trim();
+  const gitTopLevel = (await git(root, ["rev-parse", "--show-toplevel"], { reject: true })).trim();
+  const locus = detectLocus(root);
+  const topLevel =
+    locus.kind === "wsl" && gitTopLevel.startsWith("/")
+      ? toWindowsView(gitTopLevel, locus.distro)
+      : gitTopLevel;
   // The store key is the escaped, realpath-canonical top-level PATH (design §1.1),
   // so a worktree on a branch keys its own local-first entry. `realpath` is the
   // node I/O half of the escaped-path scheme; `escapePath` (core) is the pure half.

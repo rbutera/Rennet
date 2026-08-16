@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { dirname, isAbsolute, resolve } from "node:path";
+import { HOST_LOCUS, type Locus, locusCommand } from "@rennet/core";
 import {
   DIFF_TRUNCATION_MARKER,
   type FileChangeStatus,
@@ -42,16 +43,36 @@ export type GitExec = (
   options?: { reject?: boolean },
 ) => Promise<string>;
 
-/** The real git runner (no shell, keeps the final newline so diffs are byte-exact). */
-export const execaGit: GitExec = async (root, arguments_, options) => {
-  const result = await execa("git", arguments_, {
-    cwd: root,
-    reject: options?.reject ?? true,
-    shell: false,
-    stripFinalNewline: false,
-  });
-  return result.stdout;
-};
+/**
+ * The real git runner for a project's locus (add-windows-support). Host: `git` in
+ * `root`, unchanged. WSL: `wsl.exe -d <distro> --cd <distro-root> -e git …` — the
+ * `-e` form passes argv byte-verbatim, and the diff bytes are what git INSIDE the
+ * distro reports (spike: stdout is clean UTF-8/LF through the boundary). No shell,
+ * keeps the final newline so diffs stay byte-exact.
+ */
+export function execaGitFor(locus: Locus): GitExec {
+  return async (root, arguments_, options) => {
+    const { file, args, cwd } = locusCommand(locus, "git", arguments_, root);
+    const result = await execa(file, [...args], {
+      ...(cwd === undefined ? {} : { cwd }),
+      reject: options?.reject ?? true,
+      shell: false,
+      stripFinalNewline: false,
+    });
+    return result.stdout;
+  };
+}
+
+/** Build the fixed-locus runner used by one repo-facing composition seam. */
+export function gitForRepoFactory(
+  locusForRepo: (repoRoot: string) => Locus,
+  runnerForLocus: (locus: Locus) => GitExec = execaGitFor,
+): (repoRoot: string) => GitExec {
+  return (repoRoot) => runnerForLocus(locusForRepo(repoRoot));
+}
+
+/** The host git runner — today's behaviour on macOS/Linux/native-Windows. */
+export const execaGit: GitExec = execaGitFor(HOST_LOCUS);
 
 export function parseChangedPaths(output: string): ChangedPath[] {
   const fields = output.split("\0");

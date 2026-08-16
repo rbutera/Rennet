@@ -1,5 +1,6 @@
 import type {
   AppearanceScheme,
+  Locus,
   ProjectVisibility,
   RennetBridge,
   ResolvedProvenance,
@@ -20,9 +21,11 @@ import { ArrowLeftIcon, RennetMark, SlidersIcon } from "./icons";
  *     (read-through), plus the per-repo GUIDANCE catalogue the review runners read.
  *
  * Every value shows its PROVENANCE (which ladder layer it resolved from) — the
- * resolver's own answer, never a recomputed one. The four wireframe rows that do
- * not exist as consumed config yet (execution mode, worktree location, the two
- * harness selectors) are deliberately absent rather than faked as dead rows.
+ * resolver's own answer, never a recomputed one. The EXECUTION LOCUS (host vs a
+ * named WSL distro) is a plain editable setting (add-windows-support): auto-detected
+ * from the repo path, overridable, cleared back to auto with one click. The
+ * remaining wireframe rows not yet consumed config (worktree location, the two
+ * harness selectors) stay deliberately absent rather than faked as dead rows.
  */
 
 const SCHEMES: readonly { id: AppearanceScheme; label: string; hint: string }[] = [
@@ -38,6 +41,11 @@ const VISIBILITIES: readonly { id: ProjectVisibility; label: string; hint: strin
 
 function messageFrom(reason: unknown): string {
   return reason instanceof Error ? reason.message : String(reason);
+}
+
+/** Human label for an execution locus: "the host" or "WSL · <distro>". */
+function describeLocus(locus: Locus): string {
+  return locus.kind === "host" ? "the host" : `WSL · ${locus.distro}`;
 }
 
 /** The provenance chip: where a value resolved from, in the ladder's own words. */
@@ -221,6 +229,20 @@ export function SettingsScreen({
                     : current,
                 )
               }
+              onLocusResolved={(repoPath, locus, overridden) =>
+                setView((current) =>
+                  current
+                    ? {
+                        ...current,
+                        projects: current.projects.map((project) =>
+                          project.repoPath === repoPath
+                            ? { ...project, locus, locusOverridden: overridden }
+                            : project,
+                        ),
+                      }
+                    : current,
+                )
+              }
             />
           )
         ) : null}
@@ -237,6 +259,7 @@ function RepoPanel({
   selectedRepoPath,
   onSelect,
   onVisibilityResolved,
+  onLocusResolved,
 }: {
   bridge: RennetBridge;
   projects: readonly SettingsProject[];
@@ -244,11 +267,13 @@ function RepoPanel({
   selectedRepoPath: string | null;
   onSelect(repoPath: string): void;
   onVisibilityResolved(repoPath: string, visibility: ProjectVisibility): void;
+  onLocusResolved(repoPath: string, locus: Locus, overridden: boolean): void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
   const [note, setNote] = useState<string>();
   const [guidance, setGuidance] = useState<SettingsGuidance | null>(null);
+  const [distroInput, setDistroInput] = useState("");
 
   const selectedProjectId = selected?.projectId;
   useEffect(() => {
@@ -282,6 +307,40 @@ function RepoPanel({
           result.changed
             ? `Updated ${result.gitignorePath}`
             : "No .gitignore change was needed for that setting.",
+        );
+      } else if (result.status === "unresolved") {
+        setError("This repository could not be resolved — nothing was changed.");
+      } else {
+        setError("This repository's config is malformed — the change was refused to protect it.");
+      }
+    } catch (reason) {
+      setError(messageFrom(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // The execution locus is a plain editable setting (add-windows-support, Rule Zero
+  // — never a gate): override to host, override to a named WSL distro, or clear the
+  // override back to the value auto-detected from the repo path.
+  async function chooseLocus(locus: Locus | null): Promise<void> {
+    if (!selected || busy || selected.configMalformed) return;
+    setBusy(true);
+    setError(undefined);
+    setNote(undefined);
+    try {
+      const result = await bridge.invoke("settings.setRepoLocus", {
+        projectId: selected.projectId,
+        repoPath: selected.repoPath,
+        locus,
+      });
+      if (result.status === "applied") {
+        onLocusResolved(selected.repoPath, result.locus, result.locusOverridden);
+        setDistroInput("");
+        setNote(
+          result.locusOverridden
+            ? `Execution locus set to ${describeLocus(result.locus)}.`
+            : "Execution locus reset to the auto-detected value.",
         );
       } else if (result.status === "unresolved") {
         setError("This repository could not be resolved — nothing was changed.");
@@ -349,6 +408,62 @@ function RepoPanel({
                 {selected.promoted ? "Promoted" : "Not promoted"}
               </span>
               <Provenance provenance={selected.promotedProvenance} />
+            </div>
+          </div>
+
+          <div className="settings-row">
+            <div className="settings-row-label">
+              <span className="settings-k">Execution locus</span>
+              <span className="settings-d">
+                where git and the harness run — the host, or a WSL distro
+              </span>
+            </div>
+            <div className="settings-row-value">
+              <span className="settings-readthrough">
+                {describeLocus(selected.locus)}
+                {selected.locusOverridden ? "" : " (auto-detected)"}
+              </span>
+              <fieldset className="settings-seg" aria-label="Execution locus">
+                <button
+                  type="button"
+                  title="Run git and the harness on the host OS"
+                  aria-pressed={selected.locus.kind === "host"}
+                  className={`settings-seg-btn${selected.locus.kind === "host" ? " on" : ""}`}
+                  onClick={() => void chooseLocus({ kind: "host" })}
+                  disabled={busy || selected.configMalformed}
+                >
+                  Host
+                </button>
+                {selected.locusOverridden ? (
+                  <button
+                    type="button"
+                    title="Clear the override and use the auto-detected locus"
+                    className="settings-seg-btn"
+                    onClick={() => void chooseLocus(null)}
+                    disabled={busy || selected.configMalformed}
+                  >
+                    Reset to auto
+                  </button>
+                ) : null}
+              </fieldset>
+              <div className="settings-locus-distro">
+                <input
+                  type="text"
+                  aria-label="WSL distro name"
+                  placeholder="WSL distro (e.g. Ubuntu)"
+                  value={distroInput}
+                  onChange={(event) => setDistroInput(event.target.value)}
+                  disabled={busy || selected.configMalformed}
+                />
+                <button
+                  type="button"
+                  className="settings-seg-btn"
+                  onClick={() => void chooseLocus({ kind: "wsl", distro: distroInput.trim() })}
+                  disabled={busy || selected.configMalformed || distroInput.trim().length === 0}
+                >
+                  Use WSL distro
+                </button>
+              </div>
             </div>
           </div>
 

@@ -1,4 +1,4 @@
-import { escapePath } from "@rennet/core";
+import { escapePath, type Locus } from "@rennet/core";
 import type { Project, ProjectVisibility } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createSettingsComposition, type SettingsCompositionDeps } from "./settings";
@@ -24,6 +24,7 @@ function makeDeps(overrides: Partial<SettingsCompositionDeps> = {}): {
   calls: {
     loadConfigState: string[];
     applyVisibility: { repoKey: string; repoRoot: string; target: ProjectVisibility }[];
+    applyLocus: { repoKey: string; locus: Locus | null }[];
     discoverWorkspaceRepos: number;
     updateGlobal: number;
   };
@@ -31,6 +32,7 @@ function makeDeps(overrides: Partial<SettingsCompositionDeps> = {}): {
   const calls = {
     loadConfigState: [] as string[],
     applyVisibility: [] as { repoKey: string; repoRoot: string; target: ProjectVisibility }[],
+    applyLocus: [] as { repoKey: string; locus: Locus | null }[],
     discoverWorkspaceRepos: 0,
     updateGlobal: 0,
   };
@@ -55,6 +57,9 @@ function makeDeps(overrides: Partial<SettingsCompositionDeps> = {}): {
     applyVisibility: async ({ repoKey, repoRoot, target }) => {
       calls.applyVisibility.push({ repoKey, repoRoot, target });
       return { changed: true, gitignorePath: `${repoRoot}/.rennet/.gitignore` };
+    },
+    applyLocus: ({ repoKey, locus }) => {
+      calls.applyLocus.push({ repoKey, locus });
     },
     ...overrides,
   };
@@ -192,5 +197,80 @@ describe("createSettingsComposition — write outcomes + provenance", () => {
     const scheme = createSettingsComposition(deps).setAppearance("light");
     expect(scheme).toBe("light");
     expect(calls.updateGlobal).toBe(1);
+  });
+
+  it("auto-detects a WSL-UNC project's locus, unset override", async () => {
+    const { deps } = makeDeps({
+      listProjects: () => [
+        project({
+          path: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
+          openPath: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
+        }),
+      ],
+      gitTopLevel: async (p) => p,
+    });
+    const view = await createSettingsComposition(deps).get();
+    const row = view.projects[0];
+    expect(row?.locus).toEqual({ kind: "wsl", distro: "Ubuntu" });
+    expect(row?.locusOverridden).toBe(false);
+  });
+
+  it("a host project auto-detects the host locus", async () => {
+    const { deps } = makeDeps();
+    const view = await createSettingsComposition(deps).get();
+    expect(view.projects[0]?.locus).toEqual({ kind: "host" });
+    expect(view.projects[0]?.locusOverridden).toBe(false);
+  });
+
+  it("surfaces a persisted locus override with locusOverridden true", async () => {
+    const { deps } = makeDeps({
+      loadConfigState: () => ({
+        status: "ok",
+        config: { locus: { kind: "wsl", distro: "Debian" } },
+      }),
+    });
+    const view = await createSettingsComposition(deps).get();
+    expect(view.projects[0]?.locus).toEqual({ kind: "wsl", distro: "Debian" });
+    expect(view.projects[0]?.locusOverridden).toBe(true);
+  });
+
+  it("setRepoLocus writes the override through applyLocus", async () => {
+    const { deps, calls } = makeDeps();
+    const outcome = await createSettingsComposition(deps).setRepoLocus({
+      projectId: "p1",
+      repoPath: "/orbital",
+      locus: { kind: "wsl", distro: "Ubuntu" },
+    });
+    expect(outcome.status).toBe("applied");
+    expect(outcome.locus).toEqual({ kind: "wsl", distro: "Ubuntu" });
+    expect(outcome.locusOverridden).toBe(true);
+    expect(calls.applyLocus).toEqual([
+      { repoKey: escapePath("/orbital"), locus: { kind: "wsl", distro: "Ubuntu" } },
+    ]);
+  });
+
+  it("setRepoLocus with null clears the override (back to auto-detect)", async () => {
+    const { deps, calls } = makeDeps();
+    const outcome = await createSettingsComposition(deps).setRepoLocus({
+      projectId: "p1",
+      repoPath: "/orbital",
+      locus: null,
+    });
+    expect(outcome.status).toBe("applied");
+    expect(outcome.locusOverridden).toBe(false);
+    expect(calls.applyLocus).toEqual([{ repoKey: escapePath("/orbital"), locus: null }]);
+  });
+
+  it("setRepoLocus refuses a malformed config (Rule 75)", async () => {
+    const { deps, calls } = makeDeps({
+      loadConfigState: () => ({ status: "malformed", config: null }),
+    });
+    const outcome = await createSettingsComposition(deps).setRepoLocus({
+      projectId: "p1",
+      repoPath: "/orbital",
+      locus: { kind: "wsl", distro: "Ubuntu" },
+    });
+    expect(outcome.status).toBe("malformed");
+    expect(calls.applyLocus).toEqual([]);
   });
 });
