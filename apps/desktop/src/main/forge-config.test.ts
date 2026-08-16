@@ -20,6 +20,7 @@ const savedEnv = new Map(APPLE_VARS.map((key) => [key, process.env[key]]));
 type ForgeConfig = {
   packagerConfig: {
     icon: string;
+    ignore: RegExp[];
     osxSign: {
       identity: string;
       continueOnError?: boolean;
@@ -27,6 +28,7 @@ type ForgeConfig = {
     };
     osxNotarize?: { appleId: string; appleIdPassword: string; teamId: string };
   };
+  makers: { platforms?: string[] | null }[];
 };
 
 function loadConfig(env: Partial<Record<(typeof APPLE_VARS)[number], string>>): ForgeConfig {
@@ -76,6 +78,21 @@ describe("forge.config.cjs signing", () => {
       APPLE_SIGNING_IDENTITY: "Developer ID Application: Test (ABCDE12345)",
     });
     expect("osxNotarize" in packagerConfig).toBe(false);
+  });
+
+  it("ships an unsigned win32 ZIP maker (add-windows-support)", () => {
+    const { makers } = loadConfig({});
+    const win32Makers = makers.filter((maker) => maker.platforms?.includes("win32"));
+    expect(win32Makers.length).toBeGreaterThanOrEqual(1);
+  });
+
+  it("the harness-SDK exclusion strips a vendored .exe (Windows) as well as a bare cli", () => {
+    const { packagerConfig } = loadConfig({});
+    const matches = (p: string) => packagerConfig.ignore.some((re) => re.test(p));
+    expect(matches("/app/node_modules/@anthropic-ai/claude-agent-sdk/cli/cli.exe")).toBe(true);
+    expect(matches("/app/node_modules/@anthropic-ai/claude-agent-sdk/vendor/claude")).toBe(true);
+    // An ordinary app file is NOT excluded.
+    expect(matches("/app/node_modules/@rennet/adapters/dist/index.js")).toBe(false);
   });
 
   it("all four creds enable notarytool notarization", () => {

@@ -1750,6 +1750,7 @@ app.whenReady().then(async () => {
         repositoryRoot: review.repositoryRoot,
         path,
         line,
+        locus: locusForRepo(review.repositoryRoot),
       }),
     reviewAsk: createLiveReviewAskPorts({
       // Dispatch resolves + freshness-pins the review (and its patchset) and hands the

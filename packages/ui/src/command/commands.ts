@@ -36,7 +36,9 @@ export interface Command {
   /** The section the command groups under in the palette. */
   group: string;
   /**
-   * The declared keybinding label (e.g. "⌘K", "l"). The registry is its canonical
+   * The declared keybinding, as a platform-NEUTRAL token: `mod+[` for a
+   * Cmd/Ctrl chord (rendered `⌘[` on macOS, `Ctrl+[` on Windows/Linux via
+   * {@link formatKeybinding}), or a bare key like `l`. The registry is its canonical
    * home so it is remappable; optional because most palette entries have no default.
    */
   keybinding?: string;
@@ -135,7 +137,7 @@ export function buildCommands(ctx: CommandContext): Command[] {
       id: "nav.back",
       title: "Back",
       group: "Navigate",
-      keybinding: "⌘[",
+      keybinding: "mod+[",
       run: ctx.back,
     });
   }
@@ -144,7 +146,7 @@ export function buildCommands(ctx: CommandContext): Command[] {
       id: "nav.forward",
       title: "Forward",
       group: "Navigate",
-      keybinding: "⌘]",
+      keybinding: "mod+]",
       run: ctx.forward,
     });
   }
@@ -351,4 +353,29 @@ export function filterCommands(commands: Command[], query: string): Command[] {
   });
   scored.sort((a, b) => a.cost - b.cost || a.index - b.index);
   return scored.map((entry) => entry.command);
+}
+
+/**
+ * Whether the renderer is running on macOS — decides the modifier SYMBOL only
+ * (add-windows-support). Safe when `navigator` is absent (SSR/tests): defaults to
+ * non-mac. `userAgentData.platform` is preferred (`navigator.platform` is deprecated)
+ * with a graceful fallback.
+ */
+export function isMacPlatform(): boolean {
+  if (typeof navigator === "undefined") return false;
+  const uaPlatform = (navigator as unknown as { userAgentData?: { platform?: string } })
+    .userAgentData?.platform;
+  const platform = uaPlatform ?? navigator.platform ?? navigator.userAgent ?? "";
+  return /mac/i.test(platform);
+}
+
+/**
+ * Render a keybinding token for display (add-windows-support). A `mod+X` chord shows
+ * as `⌘X` on macOS and `Ctrl+X` on Windows/Linux; a bare key (`l`, `h`) renders
+ * as-is. The handlers accept `metaKey || ctrlKey`, so only the LABEL is platform-aware.
+ */
+export function formatKeybinding(token: string, mac: boolean = isMacPlatform()): string {
+  if (!token.startsWith("mod+")) return token;
+  const key = token.slice("mod+".length);
+  return mac ? `⌘${key}` : `Ctrl+${key}`;
 }

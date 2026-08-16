@@ -66,11 +66,20 @@ const osxNotarize = canNotarize
     }
   : undefined;
 
+// The app icon, per the platform the packaging RUNS on (add-windows-support). The
+// path is given WITHOUT extension so @electron/packager appends `.icns` on macOS and
+// `.ico` on Windows; the two brand exports live in separate dirs, so the base path is
+// chosen here rather than relying on a single shared base.
+const appIcon =
+  process.platform === "win32"
+    ? path.join(__dirname, "../../brand/exports/app-icons/windows/rennet-white-on-black")
+    : path.join(__dirname, "../../brand/exports/app-icons/macos/rennet-white-on-black");
+
 module.exports = {
   packagerConfig: {
     asar: true,
     executableName: "Rennet",
-    icon: path.join(__dirname, "../../brand/exports/app-icons/macos/rennet-white-on-black"),
+    icon: appIcon,
     ignore: [
       /^\/node_modules/,
       /^\/src/,
@@ -83,7 +92,10 @@ module.exports = {
     ...(osxNotarize ? { osxNotarize } : {}),
     prune: false,
   },
-  makers: [new MakerZIP({}, ["darwin"]), new MakerDMG({}, ["darwin"])],
+  // win32 ships an UNSIGNED ZIP for slice 1 (add-windows-support). Squirrel/WiX
+  // installers, code signing, and auto-update are the separate Windows-release slice
+  // (mirrors #298 for macOS) — deliberately not added here.
+  makers: [new MakerZIP({}, ["darwin"]), new MakerDMG({}, ["darwin"]), new MakerZIP({}, ["win32"])],
   hooks: {
     packageAfterExtract: async (_forgeConfig, buildPath, _electronVersion, platform) => {
       const electronPath =

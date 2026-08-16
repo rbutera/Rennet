@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { type Command, filterCommands } from "../command/commands";
+import { type Command, filterCommands, formatKeybinding } from "../command/commands";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The ⌘K command palette (wireframes screen 16). A searchable, keyboard-driven
@@ -125,7 +125,9 @@ export function CommandPalette({ open, commands, onClose }: CommandPaletteProps)
                   <span className="command-palette-group">{command.group}</span>
                   <span className="command-palette-title">{command.title}</span>
                   {command.keybinding ? (
-                    <kbd className="command-palette-key">{command.keybinding}</kbd>
+                    <kbd className="command-palette-key">
+                      {formatKeybinding(command.keybinding)}
+                    </kbd>
                   ) : null}
                 </button>
               </li>

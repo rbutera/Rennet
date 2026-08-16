@@ -24,10 +24,10 @@
 
 ## 5. Windows-native app surface
 
-- [ ] 5.1 Editor resolution on Windows: extend `open-in-editor.ts` with known Windows install locations for the `EDITOR_CLIS` family (per-user `%LOCALAPPDATA%` and system installs, `.cmd` launchers); WSL-locus opens go through the editor's WSL remote with UNC fallback per spec
-- [ ] 5.2 Platform-aware keybinding labels: `commands.ts` keybindings as `mod+`-style data rendered `⌘`/`Ctrl` per platform; handlers unchanged
-- [ ] 5.3 Forge config: add `MakerZIP` for `win32`, add a `.ico` icon export, confirm `HARNESS_SDK_FILE_EXCLUSIONS` already covers `.exe` vendored binaries (it does — keep the test)
-- [ ] 5.4 Dev-run on Windows: fix whatever `nx run rennet-desktop:start` trips over on win32 (native deps, scripts); note zsh-only steps in PACKAGING.md as macOS-scoped
+- [x] 5.1 Editor resolution on Windows: `open-in-editor.ts` adds `windowsEditorLocations` (per-user `%LOCALAPPDATA%\Programs\…\bin\<cli>.cmd` + Program Files, VS Code/Cursor/Insiders/VSCodium/Sublime) and `.cmd`/`.exe` PATH-shim matching on win32; `editorOpenArgs` launches a WSL-locus open via `--remote wsl+<distro> -g <distro-path>:line` with a `-g` fallback; `performOpenInEditor` threads the locus. Tested (per-user location + WSL-remote args; the `;`-PATH shim case relies on win32 `node:path` at runtime → lancelot)
+- [x] 5.2 Platform-aware keybinding labels: `commands.ts` keybindings are `mod+`-style tokens; `formatKeybinding`/`isMacPlatform` render `⌘X` (macOS) or `Ctrl+X` (Windows/Linux); the palette renders through it; handlers unchanged (still `metaKey || ctrlKey`). Tested
+- [x] 5.3 Forge config: `new MakerZIP({}, ["win32"])` added; the app icon selects the Windows `.ico` (`brand/exports/app-icons/windows/rennet-white-on-black`) when packaging on win32; the fuses hook already handles `electron.exe`; `HARNESS_SDK_FILE_EXCLUSIONS` covers `.exe` — asserted by a kept/extended `forge-config.test.ts`
+- [x] 5.4 Dev-run on Windows: audited the main process for POSIX-only startup hazards — the only ones (login-shell PATH harvest, editor bundles) are already platform-guarded (discovery returns null loginShellPath on win32; macOS `.app` bundles gated on `darwin`); `node:path`/`homedir` are platform-correct at runtime. The `start`/`package`/`make` targets are cross-platform (Vite + electron). PACKAGING.md gained a Windows section scoping every zsh/`hdiutil`/Apple-signing/DMG step as macOS-only. A live win32 GUI dev-run remains a lancelot manual check (no Windows-side node here)
 
 ## 6. Verification on lancelot and docs
 

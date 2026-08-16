@@ -1,8 +1,10 @@
-# Packaging the Rennet desktop app (macOS)
+# Packaging the Rennet desktop app
 
-Rennet ships as a macOS `.dmg`. This doc covers the two builds: the **default
-unsigned build** (works with no Apple account) and the **signed + notarized
-build** (one step, Rai runs it when releasing).
+Rennet's primary build is a macOS `.dmg`; it also builds an unsigned **Windows
+(win32) ZIP** (see the Windows section at the end). The macOS part below covers the
+two builds: the **default unsigned build** (works with no Apple account) and the
+**signed + notarized build** (one step, Rai runs it when releasing). The signing,
+notarization, and DMG steps are macOS-only.
 
 ## Prerequisites
 
@@ -122,3 +124,43 @@ Gatekeeper warning described above, and it is the only difference.
 `osxNotarize` conditionally, so no certificate or secret is ever hardcoded. See
 the comments at the top of that file. The hardened-runtime entitlements live in
 `apps/desktop/entitlements.plist` and are applied only on the signed path.
+
+## Windows (win32) — unsigned ZIP
+
+Rennet also runs on Windows, natively and driving a WSL distro (see the Windows +
+WSL install guide under `docs/` → Using Rennet → Getting started). Windows **release
+engineering — code signing, a Squirrel/WiX installer, and auto-update — is a
+separate slice** (the Windows counterpart of the macOS signing work); slice 1 ships
+only an unsigned ZIP.
+
+Every step above from the "signed + notarized" build onward is **macOS-only**: the
+Apple env vars, `osxSign`/`osxNotarize`, `codesign`/`stapler`/`spctl`, the DMG
+maker's native addons (`macos-alias`, `fs-xattr`), and the `hdiutil` shell snippets
+(zsh/bash) do not apply on Windows and are not required there.
+
+### Dev run
+
+```powershell
+pnpm install
+pnpm exec nx run rennet-desktop:start
+```
+
+The `start` target builds with Vite and launches Electron — the same
+cross-platform targets used on macOS. There is **no POSIX login shell on Windows**:
+harness discovery uses the process environment plus curated Windows install
+locations (`%APPDATA%\npm`, `%LOCALAPPDATA%\Programs`, scoop/bun/volta), so no
+`zsh`/`bash` is needed. For a WSL-locus project, `git`/`gh`/`claude`/`codex` run
+inside the distro via `wsl.exe ... -e`; only WSL itself is required on the host.
+
+### Build the ZIP
+
+```powershell
+pnpm exec nx run rennet-desktop:package
+pnpm exec nx run rennet-desktop:make
+```
+
+`forge.config.cjs` adds `new MakerZIP({}, ["win32"])` and selects the Windows
+`.ico` (`brand/exports/app-icons/windows/rennet-white-on-black.ico`) when packaging
+runs on Windows. The Electron fuses hook already flips `electron.exe`, and the
+harness-SDK vendored-executable exclusion strips a bundled `claude.exe` the same way
+it strips the macOS `cli`.

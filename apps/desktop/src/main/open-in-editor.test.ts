@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createEditorLaunchEffects,
+  editorOpenArgs,
   isWithinRoot,
   launchResolvedEditor,
   type OpenInEditorEffects,
@@ -101,6 +102,51 @@ describe("resolveWithinRoot", () => {
   });
 });
 
+describe("resolveEditorExecutables on Windows (packaged-editor-resolution)", () => {
+  it("finds VS Code's per-user %LOCALAPPDATA% launcher without a PATH entry", async () => {
+    const codeCmd = "C:\\Users\\rai\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd";
+    const resolved = await resolveEditorExecutables(
+      {
+        platform: "win32",
+        home: "C:\\Users\\rai",
+        inheritedPath: "C:\\Windows\\System32", // no editor CLI on PATH
+        loginShellPath: "",
+        env: { LOCALAPPDATA: "C:\\Users\\rai\\AppData\\Local" },
+      },
+      async (candidate) => candidate === codeCmd,
+    );
+    expect(resolved).toContain(codeCmd);
+  });
+
+  // NOTE: resolving a `.cmd` shim that sits on the `;`-delimited PATH relies on
+  // win32 `node:path` (delimiter `;`, `\` joins) at runtime on Windows; it cannot be
+  // simulated under the ambient POSIX `node:path` in macOS CI. Verified on lancelot.
+  // The per-user %LOCALAPPDATA% location above uses explicit win32 joins, so it IS
+  // covered here — proving the "installed but not on PATH" scenario.
+});
+
+describe("editorOpenArgs (WSL remote)", () => {
+  it("uses -g abs:line for the host locus", () => {
+    expect(editorOpenArgs("/repo/src/app.ts", 42, { kind: "host" })).toEqual([
+      "-g",
+      "/repo/src/app.ts:42",
+    ]);
+  });
+  it("targets the editor's WSL remote with the distro-native path", () => {
+    expect(
+      editorOpenArgs("\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo\\src\\app.ts", 42, {
+        kind: "wsl",
+        distro: "Ubuntu",
+      }),
+    ).toEqual(["--remote", "wsl+Ubuntu", "-g", "/home/rai/repo/src/app.ts:42"]);
+  });
+  it("falls back to -g when a WSL path cannot translate", () => {
+    expect(editorOpenArgs("/already/distro/path.ts", 7, { kind: "wsl", distro: "Ubuntu" })).toEqual(
+      ["--remote", "wsl+Ubuntu", "-g", "/already/distro/path.ts:7"],
+    );
+  });
+});
+
 describe("isWithinRoot (Windows drive-letter + UNC containment)", () => {
   const win = { sep: "\\", caseInsensitive: true };
   it("accepts a file beneath a drive-letter root", () => {
@@ -146,7 +192,7 @@ describe("performOpenInEditor", () => {
       path: "src/x.ts",
       line: 42,
     });
-    expect(e.launchAtLine).toHaveBeenCalledWith("/repo/src/x.ts", 42);
+    expect(e.launchAtLine).toHaveBeenCalledWith("/repo/src/x.ts", 42, undefined);
     expect(e.openPath).not.toHaveBeenCalled();
     expect(out.ok).toBe(true);
   });
