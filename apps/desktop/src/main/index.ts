@@ -103,6 +103,7 @@ import {
   runHandoffTurn as runHandoffTurnCore,
   runHypothesisPass,
   runNoiseAngle,
+  toDistroPath,
   verifyFlaggedReview,
 } from "@rennet/core";
 import {
@@ -250,16 +251,25 @@ const watcher = new RepoWatcher();
 // memoized: discovery spawns the user's login shell, so it runs on first use
 // (the first `review.canvases`) rather than at launch, and passes the full
 // process env so the spawned harness inherits PATH/HOME.
-// Memoized PER LOCUS (add-windows-support): the host harness is shared as before; a
-// WSL-locus project gets a harness that discovers and runs the distro's own `claude`
+// Memoized PER LOCUS+CWD (add-windows-support): the host harness is shared as before;
+// a WSL-locus project gets a harness that discovers and runs the distro's own `claude`
 // through a generated launcher (createClaudeHarness), with capability identical to
-// native. Keyed by distro so each distro is composed at most once.
+// native. The WSL launcher BAKES the distro repo cwd (cmd.exe cannot hold the SDK's
+// UNC cwd — verified on lancelot), so the memo key includes the cwd; each distro+repo
+// is composed at most once. `distroCwd` is the distro-native repo path.
 const claudeHarnesses = new Map<string, Promise<ClaudeHarnessResult>>();
-function getClaudeHarness(locus: Locus = HOST_LOCUS): Promise<ClaudeHarnessResult> {
-  const key = locus.kind === "wsl" ? `wsl:${locus.distro}` : "host";
+function getClaudeHarness(
+  locus: Locus = HOST_LOCUS,
+  distroCwd?: string,
+): Promise<ClaudeHarnessResult> {
+  const key = locus.kind === "wsl" ? `wsl:${locus.distro}:${distroCwd ?? ""}` : "host";
   let harness = claudeHarnesses.get(key);
   if (!harness) {
-    harness = createClaudeHarness({ env: process.env, locus });
+    harness = createClaudeHarness({
+      env: process.env,
+      locus,
+      ...(distroCwd === undefined ? {} : { wslCwd: distroCwd }),
+    });
     claudeHarnesses.set(key, harness);
   }
   return harness;
@@ -1582,6 +1592,8 @@ app.whenReady().then(async () => {
     // honest failed turn when no `claude` is installed — never a fabricated success.
     runHandoffTurn: async ({ repoRoot, prompt }) => {
       const locus = locusForRepo(repoRoot);
+      // The WSL launcher bakes the distro repo cwd (cmd.exe can't hold a UNC cwd).
+      const distroCwd = locus.kind === "wsl" ? (toDistroPath(repoRoot) ?? undefined) : undefined;
       if (await repoHasSubmodules(repoRoot, locus)) {
         return {
           status: "failed",
@@ -1591,7 +1603,7 @@ app.whenReady().then(async () => {
           filesTouched: [],
         };
       }
-      const { adapter } = await getClaudeHarness(locus);
+      const { adapter } = await getClaudeHarness(locus, distroCwd);
       if (!adapter) {
         return {
           status: "failed",

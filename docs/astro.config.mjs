@@ -32,6 +32,7 @@ export default defineConfig({
                 label: "Guide",
                 items: [
                   { label: "Getting started", link: "/using/guide/getting-started/" },
+                  { label: "Windows and WSL", link: "/using/guide/windows-and-wsl/" },
                   {
                     label: "Reviewing a GitHub PR",
                     link: "/using/guide/reviewing-a-github-pr/",

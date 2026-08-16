@@ -97,3 +97,18 @@ Native-Windows → `wsl.exe -d Ubuntu --cd <repo> -e /home/rai/.local/bin/claude
 **Phase 2+ may proceed on the current design**, with one binding amendment: every locus process spawn uses `wsl.exe … -e <argv>`, never `-- <argv>`.
 
 *(Scratch left on lancelot under `/tmp/spike*.sh`, `/tmp/argdump.sh`, `/tmp/argtest*.sh`, `/tmp/claudetest.sh`, `/tmp/streamtest.sh`, `/tmp/spikerepo/`, `/tmp/so.bin`, `/tmp/se.txt` — read-only probes plus a throwaway git repo; nothing outside `/tmp` touched, nothing installed.)*
+
+## Phase 6 verification findings (lancelot, 2026-08-16)
+
+Headless verification of the implementation's actual generated commands, driven from
+inside the WSL2 distro via native-Windows interop (`/mnt/c/Windows/System32/wsl.exe`,
+`cmd.exe`, `powershell.exe`). All passed except where noted; nothing outside `/tmp`
+touched, nothing installed.
+
+- **git-in-distro (capture/checkpoint/submit):** `wsl.exe -d Ubuntu --cd <repo> -e git rev-parse --show-toplevel` returned the repo path, rc 0. The checkpoint `GIT_INDEX_FILE` cross-boundary form `... -e env GIT_INDEX_FILE=/tmp/x.index git add -A` then `git write-tree` returned a real tree OID, rc 0 — confirms the `env`-prefix design for the WSL checkpoint index.
+- **Discovery:** PATH harvest `-e bash -lc 'printf %s "$PATH"'` returns the real distro PATH (`/home/rai/.local/bin`, ...). `listDir` via the `\\wsl.localhost\Ubuntu\...` UNC view from native PowerShell lists the distro `claude`. Both clean.
+- **wslpath / paths:** `-e wslpath -u` translates both a `C:\...` path (to `/mnt/c/...`) and a `\\wsl.localhost\Ubuntu\home\rai\repo` UNC path (to `/home/rai/repo`), rc 0.
+- **Claude launcher — DESIGN CORRECTION (binding).** The Phase-1 spike's cwd-agnostic `%CD%`+`wslpath` launcher is BROKEN: the SDK sets the child cwd to the repo's `\\wsl.localhost\...` UNC path, and cmd.exe cannot hold a UNC cwd — it prints "UNC paths are not supported. Defaulting to Windows directory", so `%CD%` becomes `C:\Windows`. The launcher was changed to BAKE the distro repo cwd (`--cd /home/rai/repo` literal, no `%CD%`), making it per-(distro, repo). With that fix, a real streamed turn through the launcher — `cmd.exe /c "<C:\...\claude-Ubuntu.cmd>" -p --output-format stream-json --verbose --input-format text`, prompt on stdin — returned a complete stream-json result envelope (`{"type":"result",...,"terminal_reason":"completed"}`), `is_error:true` only because the distro account is logged out (`"Not logged in - Please run /login"`), exactly as in spike 1.2. The launcher must live at a REAL Windows temp path (`os.tmpdir()`), never a UNC path, or cmd.exe cannot execute it. `getClaudeHarness` is memoized per (distro, distroCwd) accordingly.
+- **Bare-name resolution via `-e`:** `-e <prog>` resolves `prog` against the distro's NON-login PATH. `git` is reliably there (`/usr/bin/git`), so `execaGitFor` bare-`git` works. `gh` (linuxbrew-only) is NOT on that PATH — `-e gh` fails `execvpe(gh)`. This only affects the deferred gh-in-distro path (the submit's git push resolves fine; the REST token stays host-side), and reinforces that a WSL gh probe must use the DISCOVERED ABSOLUTE path, not the bare name.
+
+**Remaining, genuinely un-runnable here (no Windows-side node/GUI):** a live win32 GUI dev-run and a packaged-ZIP boot; a full WSL review through the pipeline (needs the project locus carried to the review sites + a logged-in distro account). These are the honest manual lancelot checks listed in the PR.

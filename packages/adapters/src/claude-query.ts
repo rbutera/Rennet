@@ -123,10 +123,20 @@ export interface ClaudeHarnessDeps {
    */
   readonly locus?: Locus;
   /**
+   * The distro-native repo cwd (e.g. `/home/rai/repo`), baked into the WSL launcher's
+   * `--cd` (cmd.exe cannot inherit the SDK's UNC cwd — lancelot 2026-08-16). Optional;
+   * when absent the launcher runs in the distro login home.
+   */
+  readonly wslCwd?: string;
+  /**
    * Build the launcher path for a WSL locus. Injectable so a test can avoid touching
    * the filesystem; defaults to writing a real `.cmd` launcher under the OS temp.
    */
-  readonly makeWslLauncher?: (input: { distro: string; distroClaudePath: string }) => string;
+  readonly makeWslLauncher?: (input: {
+    distro: string;
+    distroClaudePath: string;
+    distroCwd?: string;
+  }) => string;
 }
 
 export interface ClaudeHarnessResult {
@@ -163,6 +173,7 @@ export async function createClaudeHarness(
       ? (deps.makeWslLauncher ?? generateWslClaudeLauncher)({
           distro: locus.distro,
           distroClaudePath: discovery.chosen.path,
+          ...(deps.wslCwd === undefined ? {} : { distroCwd: deps.wslCwd }),
         })
       : discovery.chosen.path;
   const adapter = new ClaudeAdapter({
