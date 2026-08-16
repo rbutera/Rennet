@@ -1103,9 +1103,8 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   }, [reviewId, bridge]);
 
   // The Noise lens (issue #34): fetch the low-signal churn grouped away for the open
-  // review over the real command boundary. UNLIKE the flagged fetch this is a
-  // deterministic mechanical-rules pass — it carries NO model spend — so it loads on
-  // its own, and its own try/catch means a noise fetch failure never disturbs the
+  // review over the real command boundary. It spends a budgeted model invocation like
+  // flagged; its own try/catch means a noise fetch failure never disturbs the
   // canvas load or the flagged fetch.
   useEffect(() => {
     if (!reviewId) return;

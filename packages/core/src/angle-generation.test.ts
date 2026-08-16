@@ -1,10 +1,14 @@
-import { DECOMPOSITION_PROPOSAL_CONTRACT } from "@rennet/instructions";
-import { sha256Hex } from "@rennet/protocol";
+import {
+  DECOMPOSITION_PROPOSAL_CONTRACT,
+  DECOMPOSITION_SKELETON_CONTRACT,
+} from "@rennet/instructions";
+import { CHUNK_ASSIGNABLE_ANGLES, sha256Hex } from "@rennet/protocol";
 import type {
   DecompositionProposalBody,
   PatchFile,
   Patchset,
   RspCapabilitySnapshot,
+  RspEnvelope,
 } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import {
@@ -14,6 +18,8 @@ import {
   deterministicProposalBody,
   runDecompositionAngle,
 } from "./angle-generation";
+import { createCodexRunTurn } from "./codex-run-turn";
+import type { CodexUtilityPort, CodexUtilityResult } from "./codex-utility-port";
 import { decompose } from "./decomposition";
 import { createInvocationBudget } from "./invocation-budget";
 
@@ -85,6 +91,66 @@ const SEED: DecompositionProvenanceSeed = {
   capability: CAPABILITY,
 };
 
+const PORT_CAPABILITY: RspCapabilitySnapshot = {
+  structuredOutput: {
+    implementedByAdapter: true,
+    advertisedByHarness: true,
+    availableInSession: true,
+  },
+  perCallModelSelection: {
+    implementedByAdapter: false,
+    advertisedByHarness: false,
+    availableInSession: false,
+  },
+};
+
+function codexEnvelope(body: DecompositionProposalBody): RspEnvelope {
+  return {
+    rsp: 1,
+    docType: "decomposition.proposal",
+    schemaVersion: 1,
+    docId: "PORT_DOC",
+    patchsetId: PATCHSET.id,
+    provenance: {
+      harness: "codex",
+      harnessVersion: "0.9.0",
+      adapterVersion: "0.1.0",
+      model: "gpt-5.6-terra",
+      modelReportedBy: "config",
+      tier: "light",
+      route: "utility",
+      runId: "port_run",
+      inputDigest: "sha256:port",
+      capability: PORT_CAPABILITY,
+      tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, reasoning: null, total: 2 },
+      reportedUsd: null,
+      derivedUsd: null,
+    },
+    body,
+    x: {},
+  };
+}
+
+function codexPort(body: DecompositionProposalBody): CodexUtilityPort {
+  return {
+    complete: async (): Promise<CodexUtilityResult> => ({
+      status: "admitted",
+      document: codexEnvelope(body),
+      report: {
+        docType: "decomposition.proposal",
+        admission: "atomic",
+        admitted: true,
+        errors: [],
+        admittedItemCount: null,
+        rejectedItemCount: 0,
+        rejectedItems: [],
+      },
+      tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, reasoning: null, total: 2 },
+      attempts: [],
+    }),
+  };
+}
+
 function scriptedTurn(
   bodies: unknown[],
 ): (prompt: string, attempt: number) => Promise<DecompositionTurnResult> {
@@ -108,6 +174,18 @@ describe("buildOfferedManifest", () => {
     expect(manifest.occurrences.every((occurrence) => occurrence.kind === "hunk")).toBe(true);
     // The lockfile hunk is mechanical, so it is not offered.
     expect(manifest.occurrences.length).toBeLessThan(DECOMPOSITION.hunks.length);
+  });
+});
+
+describe("decomposition prompt angle vocabulary", () => {
+  it("advertises exactly the V104 chunk-assignable set", () => {
+    for (const contract of [DECOMPOSITION_SKELETON_CONTRACT, DECOMPOSITION_PROPOSAL_CONTRACT]) {
+      const advertised = contract.discipline
+        .match(/closed set: ([^.]+)\./)?.[1]
+        ?.split(",")
+        .map((angle) => angle.trim());
+      expect(advertised).toEqual([...CHUNK_ASSIGNABLE_ANGLES]);
+    }
   });
 });
 
@@ -158,7 +236,7 @@ describe("runDecompositionAngle", () => {
     const present = await capture(context);
 
     expect(sha256Hex(absent)).toBe(
-      "ca4fbab8d58477ab2ac63eda1fd9635d1080b71d210f3d80f4f14dbf8d57f5d4",
+      "0b39d2f9ab6197a48bbe2f0a6b43e9b353a6d11e566dacff503c18115d006c91",
     );
     expect(absent).not.toContain("<<<rennet:layer context>>>");
     expect(present).toContain(
@@ -187,6 +265,30 @@ describe("runDecompositionAngle", () => {
     expect(result.document.provenance.route).toBe("agentic");
     expect(result.attempts).toHaveLength(1);
     expect(result.attempts[0]?.outcome).toBe("admitted");
+  });
+
+  it("prefers a Codex utility turn's executor provenance over the seed (#88)", async () => {
+    const manifest = buildOfferedManifest(DECOMPOSITION);
+    const body = deterministicProposalBody(DECOMPOSITION);
+    const runTurn = createCodexRunTurn(codexPort(body), {
+      docType: "decomposition.proposal",
+      patchset: { id: PATCHSET.id },
+      manifest,
+      model: "gpt-5.6-terra",
+      effort: "medium",
+    });
+    const result = await runDecompositionAngle({
+      decomposition: DECOMPOSITION,
+      contract: DECOMPOSITION_PROPOSAL_CONTRACT,
+      manifest,
+      provenance: SEED,
+      runTurn,
+      budget: createInvocationBudget(10),
+    });
+
+    expect(result.document.provenance.route).toBe("utility");
+    expect(result.document.provenance.tier).toBe("light");
+    expect(result.document.provenance.capability).toEqual(PORT_CAPABILITY);
   });
 
   it("feeds a rejection back and admits on the retry", async () => {

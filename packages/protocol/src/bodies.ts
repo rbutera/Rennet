@@ -29,21 +29,6 @@ import { z } from "zod";
  */
 export const CHUNK_ASSIGNABLE_ANGLES = ["sequence", "decisions", "blast-radius"] as const;
 
-/**
- * Chunk angles a persisted decomposition may still carry but the product no longer
- * admits (issue #221 retired `claims`). The persistence read path strips these so an
- * old review still opens — a chunk whose only angle was retired simply drops off every
- * angle queue, while a co-declared live angle survives. Newly produced docs cannot
- * declare a retired angle: V104 rejects it.
- */
-export const RETIRED_CHUNK_ANGLES = ["claims"] as const;
-
-/** Strip retired angle values from a persisted chunk's angle list (normalize-on-read). */
-export function stripRetiredChunkAngles(angles: readonly string[]): string[] {
-  const retired = new Set<string>(RETIRED_CHUNK_ANGLES);
-  return angles.filter((angle) => !retired.has(angle));
-}
-
 const EDGE_KINDS = ["enables", "evidenced-by", "contradicts", "duplicates", "refactor-of"] as const;
 
 // ── Structural body shape schemas (V108 gate) ────────────────────────────────

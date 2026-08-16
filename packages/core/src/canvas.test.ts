@@ -244,52 +244,6 @@ describe("L1 placement is a deterministic pure function (AC2)", () => {
     ]);
     expect(canvas.overlay).toEqual([{ target: "rennet:chunk/c2", docId: "doc-prop" }]);
   });
-
-  it("opens a persisted proposal carrying a retired claims chunk angle (#221 normalize-on-read)", () => {
-    // A decomposition admitted before #221 may carry `claims` on a chunk. The read
-    // path strips the retired value so the review still opens: the chunk stays in the
-    // sequence reading order, and a co-declared `blast-radius` still paints amber.
-    // `claims` is retired from `ChunkAngle`, but a doc persisted before #221 may still
-    // carry it on disk — cast to model that out-of-type persisted value.
-    const legacyProposal = {
-      chunks: [
-        { chunkId: "c1", title: "schema", hunkIds: ["h1"], angles: ["claims"], rationale: "base" },
-        {
-          chunkId: "c2",
-          title: "core",
-          hunkIds: ["h2"],
-          angles: ["claims", "blast-radius"],
-          rationale: "mid",
-        },
-        { chunkId: "c3", title: "ui", hunkIds: ["h3"], angles: ["sequence"], rationale: "top" },
-      ],
-      edges: [{ from: "c1", to: "c2", kind: "enables" }],
-      readingOrder: ["c1", "c2", "c3"],
-      residue: [],
-    } as unknown as DecompositionProposalBody;
-    const legacyDoc: AdmittedDocument = {
-      docId: "doc-legacy",
-      docType: "decomposition.proposal",
-      body: legacyProposal,
-    };
-    const canvas = buildCanvas({
-      reviewId: "rev1",
-      patchsetId: "ps_1",
-      angle: "sequence",
-      admittedDocs: [legacyDoc],
-      decomposition: DECOMP,
-      dispositions: [],
-      canvasEvents: [],
-    });
-    // The claims-only chunk is still reachable via the sequence reading order.
-    expect(canvas.layers.analysis.elements.map((e) => e.anchor)).toEqual([
-      "rennet:chunk/c1",
-      "rennet:chunk/c2",
-      "rennet:chunk/c3",
-    ]);
-    // `blast-radius` survives the strip and still paints.
-    expect(canvas.overlay).toEqual([{ target: "rennet:chunk/c2", docId: "doc-legacy" }]);
-  });
 });
 
 // ── AC3: L2 is user-sovereign, enforced structurally ─────────────────────────

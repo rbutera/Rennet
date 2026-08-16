@@ -18,6 +18,13 @@ import {
 import { mount } from "../test/dom";
 import { OpenSpecView } from "./openspec";
 
+const RAW_PROPOSAL_MD =
+  '\n# Proposal\n\nRAW-MARKER-PROPOSAL verbatim off disk.\n\n```ts\nconst raw = "proposal";\n```\n\n';
+const RAW_DESIGN_MD =
+  "\n# Design\n\nRAW-MARKER-DESIGN verbatim off disk.\n\n```mermaid\ngraph LR\n  A --> B\n```\n\n";
+const RAW_SPEC_MD =
+  "\n## MODIFIED\n\nRAW-MARKER-SPEC verbatim.\n\n```gherkin\nWHEN raw\nTHEN exact\n```\n\n";
+
 const CHANGE: OpenSpecChange = {
   name: "add-review-intelligence-core",
   proposal: {
@@ -124,11 +131,9 @@ const CHANGE: OpenSpecChange = {
     },
   ],
   raw: {
-    proposalMd: "# Proposal\n\nRAW-MARKER-PROPOSAL verbatim off disk.\n",
-    designMd: "# Design\n\nRAW-MARKER-DESIGN verbatim off disk.\n",
-    specDeltas: [
-      { capability: "review-hypothesis-pass", md: "## MODIFIED\n\nRAW-MARKER-SPEC verbatim.\n" },
-    ],
+    proposalMd: RAW_PROPOSAL_MD,
+    designMd: RAW_DESIGN_MD,
+    specDeltas: [{ capability: "review-hypothesis-pass", md: RAW_SPEC_MD }],
   },
 };
 
@@ -206,9 +211,9 @@ describe("OpenSpecView — raw markdown one keystroke away (#239)", () => {
     await user.keyboard("r");
     const raw = container.querySelector(".ospec-raw");
     expect(raw).not.toBeNull();
-    expect(raw?.textContent).toContain("RAW-MARKER-PROPOSAL verbatim off disk.");
-    expect(raw?.textContent).toContain("RAW-MARKER-DESIGN verbatim off disk.");
-    expect(raw?.textContent).toContain("RAW-MARKER-SPEC verbatim.");
+    expect(
+      [...container.querySelectorAll("pre.ospec-raw-text")].map((pre) => pre.textContent),
+    ).toEqual([RAW_PROPOSAL_MD, RAW_DESIGN_MD, RAW_SPEC_MD]);
     // Structured rendering is gone while raw is showing.
     expect(queryByText("Rennet must supersede /review-pr.")).toBeNull();
 

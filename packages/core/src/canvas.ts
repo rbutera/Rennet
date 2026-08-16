@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { parseAnchor, stripRetiredChunkAngles } from "@rennet/protocol";
+import { parseAnchor } from "@rennet/protocol";
 import type {
   AnalysisCohort,
   AnalysisElement,
@@ -381,9 +381,9 @@ export function projectBlastRadius(admittedDocs: AdmittedDocument[]): BlastRadiu
   for (const doc of admittedDocs) {
     if (!isProposalBody(doc.body)) continue;
     for (const chunk of doc.body.chunks) {
-      // Normalize-on-read: a persisted decomposition (pre-#221) may carry a retired
-      // angle; strip it before reading membership so an old review still opens.
-      if (stripRetiredChunkAngles(chunk.angles).includes("blast-radius")) {
+      // Legacy unknown angles are inert. If a future retired angle changes projection
+      // semantics, normalize `chunk.angles` here and pin the observable canvas output.
+      if (chunk.angles.includes("blast-radius")) {
         paint.push({ target: `rennet:chunk/${chunk.chunkId}`, docId: doc.docId });
       }
     }

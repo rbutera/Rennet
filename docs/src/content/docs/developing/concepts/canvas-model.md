@@ -33,11 +33,10 @@ explains their behavior, provenance, and shared read-coverage floor.
 > **Retired surface (#221):** the `claims` canvas is gone. `CanvasAngle`,
 > `ChunkAngle`, `CANVAS_ANGLES`, and the `claim` doc type no longer include it —
 > the Decisions lens owns that ground. A decomposition persisted before the
-> retirement may still carry a `claims` chunk angle; the canvas read path strips
-> retired angles (`stripRetiredChunkAngles`) so an old review still opens, while the
-> validator rejects a newly declared `claims` angle with V104. Claim and requirement
-> links remain useful infrastructure for Spec coverage, test links, and
-> unclaimed-change detection.
+> retirement may still carry a `claims` chunk angle; it is inert at the current
+> projection boundaries, while the validator rejects a newly declared `claims`
+> angle with V104. Claim and requirement links remain useful infrastructure for
+> Spec coverage, test links, and unclaimed-change detection.
 
 ## Four layers, one surface
 

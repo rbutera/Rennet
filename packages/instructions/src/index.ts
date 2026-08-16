@@ -61,7 +61,7 @@ export const DECOMPOSITION_SKELETON_CONTRACT: PromptContract = {
   input:
     "You are given the offered occurrence manifest: the immutable id of every hunk in this change. Reference only those ids. An id you were not given is rejected at parse time, so never invent a hunk id.",
   discipline:
-    "Assign every offered hunk to exactly one chunk, never to two. A chunk's angles come only from the closed set: sequence, decisions, claims, blast-radius.",
+    "Assign every offered hunk to exactly one chunk, never to two. A chunk's angles come only from the closed set: sequence, decisions, blast-radius.",
   failureValve:
     "If you cannot place a hunk, list it in residue with a short reason. Say you could not place it; never guess a chunk to make the residue empty.",
   ordering:
@@ -79,7 +79,7 @@ export const DECOMPOSITION_PROPOSAL_CONTRACT: PromptContract = {
   input:
     "You are given the offered occurrence manifest: the immutable id of every hunk in this change. Reference only those ids. An id you were not given is rejected at parse time, so never invent a hunk id.",
   discipline:
-    "Partition the hunks: every offered hunk appears in exactly one chunk or in residue, never twice and never invented. Edges connect chunk ids you declared and the edge graph must be acyclic. A chunk's angles come only from the closed set: sequence, decisions, claims, blast-radius. Never assign a chunk to noise or to spec.",
+    "Partition the hunks: every offered hunk appears in exactly one chunk or in residue, never twice and never invented. Edges connect chunk ids you declared and the edge graph must be acyclic. A chunk's angles come only from the closed set: sequence, decisions, blast-radius. Never assign a chunk to noise or to spec.",
   failureValve:
     "If you cannot place a hunk, list it in residue with a short reason. Say you could not place it; never guess a chunk to make the residue empty.",
   ordering:

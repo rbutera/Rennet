@@ -6,12 +6,7 @@ import type {
   ProposalChunk,
 } from "@rennet/types";
 import { describe, expect, it } from "vitest";
-import {
-  bodyJsonSchema,
-  CHUNK_ASSIGNABLE_ANGLES,
-  RETIRED_CHUNK_ANGLES,
-  stripRetiredChunkAngles,
-} from "./bodies";
+import { bodyJsonSchema, CHUNK_ASSIGNABLE_ANGLES } from "./bodies";
 import { computeInputDigest, validateDocument } from "./rsp";
 
 /** Fixture accessor: a chunk that must exist, without a non-null assertion. */
@@ -229,22 +224,6 @@ describe("V104 — only chunk-assignable angles", () => {
     const report = validate(proposalDoc(body));
     expect(report.admitted).toBe(false);
     expect(codes(report)).toContain("V104");
-  });
-});
-
-describe("retired chunk angles — normalize-on-read for persisted docs (#221)", () => {
-  it("names the retired set", () => {
-    expect([...RETIRED_CHUNK_ANGLES]).toEqual(["claims"]);
-  });
-
-  it("strips retired values but keeps live angles, order preserved", () => {
-    expect(stripRetiredChunkAngles(["claims", "blast-radius"])).toEqual(["blast-radius"]);
-    expect(stripRetiredChunkAngles(["sequence", "claims", "decisions"])).toEqual([
-      "sequence",
-      "decisions",
-    ]);
-    // A chunk whose only angle was claims drops off every angle queue (design.md 2).
-    expect(stripRetiredChunkAngles(["claims"])).toEqual([]);
   });
 });
 
