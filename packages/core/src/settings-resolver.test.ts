@@ -154,9 +154,7 @@ describe("settings registry + generic resolve (#28)", () => {
 
   it("REFUSES an offer at a layer the key does not permit", () => {
     // Scheme permits builtin < global; a `repo` offer is not allowed.
-    expect(() =>
-      resolve(SETTINGS_REGISTRY.scheme, { repo: "dark" } as never),
-    ).toThrow(/repo/);
+    expect(() => resolve(SETTINGS_REGISTRY.scheme, { repo: "dark" } as never)).toThrow(/repo/);
     // Visibility permits builtin < repo; a `detected` offer is not allowed.
     expect(() =>
       resolve(SETTINGS_REGISTRY.visibility, { detected: "git-visible" } as never),

@@ -24,6 +24,14 @@ project's settings (**Execution locus**): force the host, name a different WSL
 distro, or reset to the auto-detected value. There is no confirmation step — the
 setting simply takes effect.
 
+The row also shows **where the value came from** (Explain): `detected` when it is
+auto-detected from the path, `repo` when you have set an explicit override. When the
+locus is auto-detected, a **Pin** control writes the currently detected distro as an
+explicit override, so a later path or detection change no longer moves it — useful
+for freezing a distro you have committed to. When it is overridden, a **Reset**
+control clears the override and returns the row to auto-detection. Both are plain
+config writes with no confirmation.
+
 Rennet never silently substitutes one locus for another. If a WSL locus is
 unavailable — WSL not installed, the distro stopped, or a required binary missing
 inside it — the harness status says so plainly and names the distro. It does not

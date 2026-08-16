@@ -333,7 +333,8 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     fireEvent.click(getByRole("button", { name: /reset/i }));
     await waitFor(() => expect(calls.some((c) => c.name === "settings.resetRepoValue")).toBe(true));
     const call = calls.find((c) => c.name === "settings.resetRepoValue");
-    expect((call?.input as { key: string }).key).toBe("visibility");
+    const input = call?.input as { key: string };
+    expect(input.key).toBe("visibility");
     // The row re-renders from the outcome: visibility now inherits (Pin reappears).
     await waitFor(() => expect(container.querySelector(".settings-pin")).not.toBeNull());
   });
@@ -345,7 +346,8 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     fireEvent.click(getByRole("button", { name: /pin the execution locus/i }));
     await waitFor(() => expect(calls.some((c) => c.name === "settings.pinRepoValue")).toBe(true));
     const call = calls.find((c) => c.name === "settings.pinRepoValue");
-    expect((call?.input as { key: string }).key).toBe("locus");
+    const input = call?.input as { key: string };
+    expect(input.key).toBe("locus");
   });
 
   it("no confirmation ceremony: Reset completes in a single interaction, no dialog appears", async () => {
@@ -390,6 +392,7 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     fireEvent.click(getByRole("button", { name: /reset appearance/i }));
     await waitFor(() => expect(calls.some((c) => c.name === "settings.setAppearance")).toBe(true));
     const call = calls.find((c) => c.name === "settings.setAppearance");
-    expect((call?.input as { scheme: unknown }).scheme).toBeNull();
+    const input = call?.input as { scheme: unknown };
+    expect(input.scheme).toBeNull();
   });
 });

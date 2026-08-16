@@ -2741,6 +2741,16 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
       setAppearance,
       setRepoVisibility,
       setRepoLocus,
+      resetRepoValue: vi.fn(async (input: { key: "visibility" | "locus" }) => ({
+        status: "applied" as const,
+        key: input.key,
+        project: null,
+      })),
+      pinRepoValue: vi.fn(async (input: { key: "visibility" | "locus" }) => ({
+        status: "applied" as const,
+        key: input.key,
+        project: null,
+      })),
     };
     const { dispatch } = harness(undefined, { settings });
 

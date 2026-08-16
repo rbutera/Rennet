@@ -61,7 +61,7 @@ function Provenance({ provenance }: { provenance: ResolvedProvenance }) {
   return (
     <span className="settings-prov-wrap">
       <span className={`settings-prov${setHere ? " settings-prov-set" : ""}`}>{label}</span>
-      <span className="settings-prov-list" aria-label="Where this value came from">
+      <span className="settings-prov-list">
         {provenance.contributions.map((c) => (
           <span
             key={c.layer}

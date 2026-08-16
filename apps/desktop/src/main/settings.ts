@@ -90,7 +90,7 @@ interface RepoTarget {
 export interface SettingsComposition {
   get(): Promise<SettingsView>;
   guidance(projectId: string, repoPath: string): Promise<SettingsGuidance>;
-  setAppearance(scheme: SettingsView["scheme"]): SettingsView["scheme"];
+  setAppearance(scheme: SettingsView["scheme"] | null): SettingsView["scheme"];
   setRepoVisibility(input: {
     projectId: string;
     repoPath: string;

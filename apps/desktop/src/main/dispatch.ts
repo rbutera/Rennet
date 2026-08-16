@@ -15,7 +15,6 @@ import {
   type ForgeReviewTarget,
   forgeTargetKey,
   type HandoffTurnOutcome,
-  type Locus,
   mechanicalComposition,
   type ReviewService,
   resolveReviewEvent,
@@ -32,15 +31,10 @@ import {
   type ProjectDetail,
   type ProjectKind,
   type ProjectProcessEvent,
-  type ProjectVisibility,
   parseCommandInput,
   parseCommandOutput,
   type ReattachResult,
   type ReviewAskStreamEvent,
-  type SetRepoLocusOutcome,
-  type SetRepoVisibilityOutcome,
-  type SettingsGuidance,
-  type SettingsView,
 } from "@rennet/protocol";
 import type {
   AnchorSide,
@@ -71,6 +65,7 @@ import type {
 } from "@rennet/types";
 import type { OrchestratorTurnRunner } from "./orchestrator";
 import { type PublishConsentAuthority, publishConsentKey } from "./publish-consent-authority";
+import type { SettingsComposition } from "./settings";
 
 /**
  * The command router (issue #54), extracted from the electron main so it can be
@@ -419,21 +414,7 @@ export interface DispatchDeps {
    * `setRepoVisibility` runs the real map-visibility switch (a repo `.gitignore`
    * write). Optional: absent ⇒ the settings commands are simply unavailable.
    */
-  readonly settings?: {
-    get(): Promise<SettingsView>;
-    guidance(projectId: string, repoPath: string): Promise<SettingsGuidance>;
-    setAppearance(scheme: SettingsView["scheme"]): SettingsView["scheme"];
-    setRepoVisibility(input: {
-      projectId: string;
-      repoPath: string;
-      visibility: ProjectVisibility;
-    }): Promise<SetRepoVisibilityOutcome>;
-    setRepoLocus(input: {
-      projectId: string;
-      repoPath: string;
-      locus: Locus | null;
-    }): Promise<SetRepoLocusOutcome>;
-  };
+  readonly settings?: SettingsComposition;
 }
 
 /** Lift the wire target shape into the core `ForgeReviewTarget` nouns. */
