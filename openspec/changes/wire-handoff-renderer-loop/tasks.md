@@ -26,3 +26,14 @@
 - [x] 4.1 Update docs in the same change: product-and-vision "What is live" (the handoff loop is now live end to end through the renderer), delivery-order, agent-handoff.md ("the renderer's in-app trigger is the one remaining join" seam closes). A reader must not be left wrong.
 - [x] 4.2 `NX_DAEMON=false pnpm check` green (exit 0 AND "Successfully ran target"); commit per-group with descriptive messages; report tip sha, diff stats, gate totals.
 - [ ] 4.3 Do NOT self-review; the orchestrator owns review and merge. Archive this OpenSpec change on the real outcome post-merge.
+
+## 5. Dual-review fixes (PR #325)
+
+- [x] 5.1 C1 — clear the collation draft (and refine states) on review change, so review B never inherits review A's dispositions/handoff. Two-review regression test.
+- [x] 5.2 C2 — capture the compose generation at run start; drop a run outcome that resolves after an invalidation or review change. Deferred-promise stale-run test.
+- [x] 5.3 C3 — a blank effective body is not an actionable handoff ask (a neutral mark-read is not a work order); guards both `handoffDispositions` and the affordance predicate. Negative blank-comment test; fixtures author a real body.
+- [x] 5.4 C4 — mount the handoff surface as a modal (reusing `.publish-sheet-backdrop` + dialog semantics), not a bare section in document flow. DOM shell assertion.
+- [x] 5.5 O1 — the run button is disabled on any terminal outcome; a fresh compose (invalidation) is the path to run again.
+- [x] 5.6 C5 — a failed compose is not a re-entry dead-end: leaving the surface resets the error to idle so re-entry recomposes. Failure→back→re-entry test.
+- [x] 5.7 C6 — a failed run renders the files it mutated before failing (`filesTouched`), never a bare error.
+- [x] 5.8 C7/N1 — the pending assertion is real (deferred promise, asserts pending + disabled before resolving); stale header comment corrected.

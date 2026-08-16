@@ -46,7 +46,9 @@ integrity binding, the preview, and the in-app trigger are all in place.
 The source material is the draft the reviewer already shaped. `request-change`
 and actionable `comment` dispositions become tasks. Approvals mean “leave this
 alone,” while questions stay in the review conversation, so neither becomes an
-edit instruction.
+edit instruction. A `comment` with a blank effective body is not actionable
+either — a neutral mark-read carries no instruction, so it never becomes a task
+and never lights the handoff affordance.
 
 The mechanical bundle contains:
 
