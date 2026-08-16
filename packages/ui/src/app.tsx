@@ -51,6 +51,7 @@ import { type DispositionWrite, withoutProposal, zoomReducer } from "./canvas/lo
 import type { OpenSpecCoverageIndex } from "./canvas/openspec";
 import {
   deriveReviewEvent,
+  handoffDispositions,
   type PublishContext,
   previewPublishTarget,
   previewTargetLabel,
@@ -75,6 +76,7 @@ import { ConversationPanel } from "./components/conversation-panel";
 import { DeltaAccountPanel } from "./components/delta-account-panel";
 import { DestinationFrame } from "./components/destination-frame";
 import { FrontDoor } from "./components/front-door";
+import { HandoffPaper, type HandoffRunState } from "./components/handoff-paper";
 import {
   ArrowLeftIcon,
   ArrowRightIcon,
@@ -530,6 +532,30 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // and the state disables the sign control so the paper reflects the pending post.
   const publishingRef = useRef(false);
   const [publishing, setPublishing] = useState(false);
+
+  // The STAGE-6 HANDOFF (issue #72): the own-branch review hands its actionable
+  // dispositions to a coding agent. `handoffComposed` is the composed bundle the
+  // handoff paper previews — obtained from `review.handoff.compose` on surface entry
+  // and treated as OPAQUE and IMMUTABLE between compose and run (the run passes this
+  // exact object, digest and all). `handoffComposeState` is the compose lifecycle;
+  // `handoffRun` is the run lifecycle, holding the `review.handoff.run` discriminated
+  // outcome verbatim. A disposition change clears the bundle and resets the run (the
+  // effect below), so re-entering the surface recomposes — the digest/stale guard in
+  // MAIN is the backstop, this invalidation is the mechanism (Decision 3).
+  // Typed as the run command's OWN bundle shape (the zod-inferred mutable form), so
+  // the exact object the compose command returned flows into the run command untouched
+  // — no readonly/mutable coercion, no restructuring between preview and run.
+  const [handoffComposed, setHandoffComposed] = useState<
+    { bundle: CommandInput<"review.handoff.run">["bundle"] } | undefined
+  >(undefined);
+  const [handoffComposeState, setHandoffComposeState] = useState<"idle" | "pending" | "error">(
+    "idle",
+  );
+  const [handoffRun, setHandoffRun] = useState<HandoffRunState>({ status: "idle" });
+  // The generation of the current compose turn: bumped on every invalidation so a
+  // late compose result for dispositions that have since changed is DROPPED rather
+  // than shown (the same stale-result guard `prDraftGeneration` uses).
+  const handoffComposeGeneration = useRef(0);
 
   // The command palette (wireframes screen 16). The view store is LIFTED here so the
   // palette's Lens/Zoom/Appearance commands drive the SAME store the CanvasWorkspace
@@ -1148,6 +1174,88 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setReview(result.review);
   }
 
+  // ── The stage-6 handoff loop (issue #72): compose → preview → run ────────────
+  // The effective handoff dispositions (addressed types, effective bodies, draft
+  // order) are what `review.handoff.compose` is handed and what the affordance counts
+  // as actionable. Fingerprinting them drives the invalidation: when they change, the
+  // stored bundle is stale and the run must not use it.
+  const handoffAsks = handoffDispositions(draft);
+  const handoffDispositionsFingerprint = JSON.stringify({
+    reviewId,
+    patchsetId: activePatchsetId,
+    asks: handoffAsks,
+  });
+  // Invalidate the composed bundle whenever the effective dispositions change
+  // (Decision 3): bump the compose generation (dropping any in-flight compose),
+  // clear the bundle, and reset the run. This implements the spec's "recomposing
+  // replaces the preview" in the renderer; MAIN's digest/stale refusal is the backstop.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional — fire ON the fingerprint change; the body reads only stable setters + the generation ref, never the fingerprint, so biome reads the dep as "unnecessary", but dropping it would stop the invalidation.
+  useEffect(() => {
+    handoffComposeGeneration.current += 1;
+    setHandoffComposed(undefined);
+    setHandoffComposeState("idle");
+    setHandoffRun({ status: "idle" });
+  }, [handoffDispositionsFingerprint]);
+  // Compose on handoff-surface entry (Decision 2): one light-tier turn over the
+  // effective dispositions. Fires only from the idle state with no stored bundle, so
+  // it never loops (pending/error/composed all fall through) and never re-fires a
+  // failed compose on its own — a disposition change re-arms it. The fail-closed floor
+  // means even a model failure yields a runnable `composed:false` bundle, not a dead
+  // end; a genuine transport failure surfaces as the honest error state.
+  // ponytail: no re-entry retry after a transport error — recompose is armed by a
+  // disposition change; add a retry control if the floor ever starts throwing in practice.
+  useEffect(() => {
+    if (currentSurface.kind !== "handoff") return;
+    if (handoffComposed !== undefined || handoffComposeState !== "idle") return;
+    const openReview = reviewRef.current;
+    if (!openReview) return;
+    const dispositions = handoffDispositions(draftRef.current);
+    const generation = handoffComposeGeneration.current;
+    setHandoffComposeState("pending");
+    void (async () => {
+      try {
+        const { bundle } = await bridge.invoke("review.handoff.compose", {
+          commandId: crypto.randomUUID(),
+          reviewId: openReview.id,
+          dispositions,
+        });
+        if (handoffComposeGeneration.current !== generation) return; // superseded
+        setHandoffComposed({ bundle });
+        setHandoffComposeState("idle");
+      } catch {
+        if (handoffComposeGeneration.current !== generation) return;
+        setHandoffComposeState("error");
+      }
+    })();
+  }, [currentSurface.kind, handoffComposed, handoffComposeState, bridge]);
+  // Run the previewed bundle (issue #72). The stored bundle is passed UNTOUCHED —
+  // same object, same digest — so MAIN verifies exactly what the paper showed; the
+  // renderer never recomposes, edits, or substitutes it (the spec's "the run receives
+  // the previewed bundle"). The discriminated outcome is stored verbatim: a refusal
+  // renders as a refusal, a failure as an error, and no non-success is dressed as
+  // success. Consuming the new patchset into a delta re-review is #73, out of scope.
+  async function runHandoff(): Promise<void> {
+    const openReview = reviewRef.current;
+    const composed = handoffComposed;
+    if (!openReview || !composed) return;
+    if (handoffRun.status === "pending") return; // re-entry guard
+    setHandoffRun({ status: "pending" });
+    try {
+      const outcome = await bridge.invoke("review.handoff.run", {
+        commandId: crypto.randomUUID(),
+        reviewId: openReview.id,
+        bundle: composed.bundle,
+      });
+      setHandoffRun(outcome);
+    } catch (reason) {
+      setHandoffRun({
+        status: "failed",
+        reason: reason instanceof Error ? reason.message : String(reason),
+        filesTouched: [],
+      });
+    }
+  }
+
   // The always-present destination chrome and the two surfaces it opens (R40):
   // frame → collation draft canvas (editable glass) → paper (sign). dispose ==
   // staged flows through here; signing this shell performs NO Git/GitHub mutation
@@ -1446,6 +1554,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         onOpenDraft={() => {
           if (review) navigate(pushSurface({ kind: "draft", reviewId: review.id }));
         }}
+        onHandoff={() => {
+          if (review) navigate(pushSurface({ kind: "handoff", reviewId: review.id }));
+        }}
       />
       {currentSurface.kind === "draft" ? (
         <CollationDraftCanvas
@@ -1497,6 +1608,37 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
             returnToReview();
           }}
         />
+      ) : null}
+      {currentSurface.kind === "handoff" ? (
+        handoffComposed ? (
+          <HandoffPaper
+            bundle={handoffComposed.bundle}
+            runState={handoffRun}
+            onRun={() => void runHandoff()}
+            onBack={() => navigate(navigateBack())}
+          />
+        ) : (
+          <section
+            className="handoff-pending"
+            role="status"
+            data-compose-state={handoffComposeState}
+          >
+            <button
+              type="button"
+              className="handoff-paper-back"
+              onClick={() => navigate(navigateBack())}
+            >
+              Back
+            </button>
+            {handoffComposeState === "error" ? (
+              <p className="handoff-compose-error" role="alert">
+                Composing the handoff failed. Change a disposition to try again.
+              </p>
+            ) : (
+              <p className="handoff-composing">Composing the handoff…</p>
+            )}
+          </section>
+        )
       ) : null}
     </div>
   );
@@ -1858,7 +2000,8 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     const inReview =
       currentSurface.kind === "review" ||
       currentSurface.kind === "draft" ||
-      currentSurface.kind === "paper";
+      currentSurface.kind === "paper" ||
+      currentSurface.kind === "handoff";
     return (
       <div className="navigation-shell">
         <header className="navigation-titlebar">
