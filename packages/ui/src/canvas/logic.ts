@@ -126,7 +126,7 @@ function targetsForScope(canvas: Canvas, scope: ApprovalScope): string[] {
       if (chunkId) {
         addChunk(chunkId);
       } else {
-        // A flat doc-angle element (spec/claims/noise) has no code chunk; the
+        // A flat doc-angle element (spec/noise) has no code chunk; the
         // element's own anchor is its disposition key.
         const element = canvas.layers.analysis.elements.find((el) => el.elementKey === key);
         if (element) paths.add(element.anchor);
@@ -427,8 +427,8 @@ export function blastReasonsByChunk(canvas: Canvas): Map<string, string> {
  * The substrate chunk id an element anchor lives in, for resolving blast-radius
  * paint on a FLAT canvas (sequence) the SAME way the decisions canvas does: a
  * `chunk/<id>` anchor names its chunk directly; a `hunk/<id>` anchor resolves
- * through its containing chunk. Anything else (a `doc/<id>` anchor on spec/claims/
- * noise, an unknown id) has no code chunk and returns undefined — so blast amber,
+ * through its containing chunk. Anything else (a `doc/<id>` anchor on spec/noise,
+ * an unknown id) has no code chunk and returns undefined — so blast amber,
  * which is file/chunk-grained, never lands on a document element. A chunk id absent
  * from the substrate (a proposal chunk) is returned as-is and simply matches no
  * painted chunk, so it never false-paints.

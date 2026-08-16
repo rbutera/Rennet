@@ -20,12 +20,38 @@
 
 import { renderLayer } from "@rennet/instructions";
 import { bodyJsonSchema, sha256Hex } from "@rennet/protocol";
-import type { ContextSendRecord, RspDocType, RspTokenUsage } from "@rennet/types";
+import type {
+  ContextSendRecord,
+  RspCapabilitySnapshot,
+  RspDocType,
+  RspRoute,
+  RspTier,
+  RspTokenUsage,
+} from "@rennet/types";
 import type { HarnessPort } from "./harness";
+
+/**
+ * The executor facts a turn may report about what actually ran it (issue #88). A
+ * Codex utility-port turn fills these from the port's honest provenance (`utility`/
+ * `light` + the per-call capability snapshot); a Claude harness turn leaves them
+ * absent, so the runner stamps its `agentic`/`heavy` defaults. This lets the runner
+ * record the executor that ran, not the seed's default route.
+ */
+export interface TurnExecutorFacts {
+  readonly route: RspRoute;
+  readonly tier: RspTier;
+  readonly capability: RspCapabilitySnapshot;
+}
 
 /** The turn result shape shared by `runDecompositionAngle` and `runOrderingPass`. */
 export type HarnessTurnResult =
-  | { readonly status: "emitted"; readonly body: unknown; readonly tokens?: RspTokenUsage }
+  | {
+      readonly status: "emitted";
+      readonly body: unknown;
+      readonly tokens?: RspTokenUsage;
+      /** Executor provenance facts, when the executor reported them (#88). */
+      readonly executor?: TurnExecutorFacts;
+    }
   | { readonly status: "failed"; readonly message: string };
 
 const CONTEXT_LAYER_PREFIX = "<<<rennet:layer context>>>\n";

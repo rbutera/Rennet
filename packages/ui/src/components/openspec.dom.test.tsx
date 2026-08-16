@@ -18,6 +18,13 @@ import {
 import { mount } from "../test/dom";
 import { OpenSpecView } from "./openspec";
 
+const RAW_PROPOSAL_MD =
+  '\n# Proposal\n\nRAW-MARKER-PROPOSAL verbatim off disk.\n\n```ts\nconst raw = "proposal";\n```\n\n';
+const RAW_DESIGN_MD =
+  "\n# Design\n\nRAW-MARKER-DESIGN verbatim off disk.\n\n```mermaid\ngraph LR\n  A --> B\n```\n\n";
+const RAW_SPEC_MD =
+  "\n## MODIFIED\n\nRAW-MARKER-SPEC verbatim.\n\n```gherkin\nWHEN raw\nTHEN exact\n```\n\n";
+
 const CHANGE: OpenSpecChange = {
   name: "add-review-intelligence-core",
   proposal: {
@@ -123,6 +130,11 @@ const CHANGE: OpenSpecChange = {
       ],
     },
   ],
+  raw: {
+    proposalMd: RAW_PROPOSAL_MD,
+    designMd: RAW_DESIGN_MD,
+    specDeltas: [{ capability: "review-hypothesis-pass", md: RAW_SPEC_MD }],
+  },
 };
 
 describe("OpenSpecView — structured rendering", () => {
@@ -180,6 +192,35 @@ describe("OpenSpecView — structured rendering", () => {
     expect(table?.querySelectorAll("th")).toHaveLength(2);
     expect(table?.querySelectorAll("tbody tr")).toHaveLength(1);
     expect(container.querySelector(".ospec-code")?.textContent).toContain("runHypothesisPass");
+  });
+});
+
+describe("OpenSpecView — raw markdown one keystroke away (#239)", () => {
+  it("defaults to structured, flips to verbatim raw on the keystroke, and back", async () => {
+    const view = buildOpenSpecView(CHANGE);
+    const { container, queryByText, user } = mount(
+      <OpenSpecView view={view} onDispose={vi.fn()} />,
+    );
+
+    // Fresh render is structured: the parsed why paragraph shows, no raw markdown.
+    expect(queryByText("Rennet must supersede /review-pr.")).not.toBeNull();
+    expect(container.querySelector(".ospec-raw")).toBeNull();
+    expect(container.textContent).not.toContain("RAW-MARKER-PROPOSAL");
+
+    // One keystroke flips to the verbatim raw artifact text.
+    await user.keyboard("r");
+    const raw = container.querySelector(".ospec-raw");
+    expect(raw).not.toBeNull();
+    expect(
+      [...container.querySelectorAll("pre.ospec-raw-text")].map((pre) => pre.textContent),
+    ).toEqual([RAW_PROPOSAL_MD, RAW_DESIGN_MD, RAW_SPEC_MD]);
+    // Structured rendering is gone while raw is showing.
+    expect(queryByText("Rennet must supersede /review-pr.")).toBeNull();
+
+    // The same keystroke returns the structured view unchanged.
+    await user.keyboard("r");
+    expect(container.querySelector(".ospec-raw")).toBeNull();
+    expect(queryByText("Rennet must supersede /review-pr.")).not.toBeNull();
   });
 });
 

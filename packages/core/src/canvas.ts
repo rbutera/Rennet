@@ -52,7 +52,6 @@ const DOC_TYPE_ANGLE: Partial<Record<RspDocType, CanvasAngle>> = {
   "decision.record": "decisions",
   "decomposition.proposal": "sequence",
   "spec.model": "spec",
-  claim: "claims",
   "noise.patternProposal": "noise",
   anomaly: "noise",
   finding: "flagged",
@@ -344,10 +343,9 @@ function projectFlagged(docs: AdmittedDocument[]): AnalysisLayer {
 }
 
 /**
- * Place the flat angles (spec/claims/noise). Rich per-element bodies are #26; the
- * M0 projection is honest and deterministic: one element per admitted document of
- * the matching angle, ordered by derived key. `claim` renders empty-but-honest
- * when there are no admitted claim documents.
+ * Place the flat angles (spec/noise). Rich per-element bodies are #26; the M0
+ * projection is honest and deterministic: one element per admitted document of the
+ * matching angle, ordered by derived key.
  */
 function projectFlat(_angle: CanvasAngle, docs: AdmittedDocument[]): AnalysisLayer {
   const elements = docs
@@ -383,6 +381,8 @@ export function projectBlastRadius(admittedDocs: AdmittedDocument[]): BlastRadiu
   for (const doc of admittedDocs) {
     if (!isProposalBody(doc.body)) continue;
     for (const chunk of doc.body.chunks) {
+      // Legacy unknown angles are inert. If a future retired angle changes projection
+      // semantics, normalize `chunk.angles` here and pin the observable canvas output.
       if (chunk.angles.includes("blast-radius")) {
         paint.push({ target: `rennet:chunk/${chunk.chunkId}`, docId: doc.docId });
       }

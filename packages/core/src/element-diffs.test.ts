@@ -106,9 +106,9 @@ describe("buildElementDiffs", () => {
   it("resolves a hunk anchor to that single hunk and skips doc-anchored elements", () => {
     const hunkId = decomposition.hunks[0]?.id ?? "";
     expect(hunkId).not.toBe("");
-    const set = setWith("claims", [
+    const set = setWith("noise", [
       { elementKey: "eh", docId: "d", anchor: `rennet:hunk/${hunkId}`, kind: "hunk", title: "H" },
-      { elementKey: "ed", docId: "d2", anchor: "rennet:doc/d2", kind: "claim", title: "D" },
+      { elementKey: "ed", docId: "d2", anchor: "rennet:doc/d2", kind: "doc", title: "D" },
     ]);
 
     const diffs = buildElementDiffs(set, decomposition, patchset);
@@ -153,7 +153,7 @@ describe("buildElementDiffs", () => {
     // The second decomposition hunk is the one whose new-side starts at 21 (HUNK_B).
     const second = twoHunkDecomp.hunks.find((hunk) => hunk.newStart === 21);
     expect(second).toBeDefined();
-    const set = setWith("claims", [
+    const set = setWith("noise", [
       {
         elementKey: "e2",
         docId: "d",

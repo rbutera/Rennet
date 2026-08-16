@@ -80,7 +80,17 @@ export function createCodexRunTurn(
     });
 
     if (result.status === "admitted") {
-      return { status: "emitted", body: result.document.body, tokens: result.tokens };
+      // Carry the port's HONEST provenance back to the runner (#88): the codex
+      // utility port built `route:"utility"`, `tier:"light"`, and a per-call
+      // capability snapshot; without this the runner would re-stamp the seat's
+      // `agentic`/`heavy` defaults over a turn the utility port actually ran.
+      const { route, tier, capability } = result.document.provenance;
+      return {
+        status: "emitted",
+        body: result.document.body,
+        tokens: result.tokens,
+        executor: { route, tier, capability },
+      };
     }
     if (result.status === "rejected") {
       return { status: "failed", message: rejectionMessage(result.report.errors) };

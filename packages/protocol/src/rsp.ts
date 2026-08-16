@@ -68,7 +68,6 @@ export const RSP_DOC_TYPES = [
   "ordering",
   "rollup-narration",
   "decision.record",
-  "claim",
   "adjudication",
   "test.mapping",
   "noise.patternProposal",
@@ -114,7 +113,6 @@ export const DOC_TYPE_REGISTRY: Readonly<Record<RspDocType, DocTypeSpec>> = {
     supportedSchemaVersions: [1],
     itemsPointer: "/body/decisions",
   },
-  claim: { admission: "itemwise", supportedSchemaVersions: [1] },
   adjudication: { admission: "atomic", supportedSchemaVersions: [1] },
   "test.mapping": {
     admission: "itemwise",

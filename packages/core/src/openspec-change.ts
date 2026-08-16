@@ -610,5 +610,16 @@ export function parseOpenSpecChange(source: OpenSpecChangeSource): OpenSpecChang
     design: source.designMd !== undefined ? parseDesign(source.designMd) : undefined,
     tasks: source.tasksMd !== undefined ? parseTasks(source.tasksMd) : undefined,
     specDeltas,
+    // Carry the raw artifact text verbatim alongside the parsed model (#239): the
+    // Spec viewer flips to it one keystroke away, never a re-serialization.
+    raw: {
+      ...(source.proposalMd !== undefined ? { proposalMd: source.proposalMd } : {}),
+      ...(source.designMd !== undefined ? { designMd: source.designMd } : {}),
+      ...(source.tasksMd !== undefined ? { tasksMd: source.tasksMd } : {}),
+      specDeltas: (source.specDeltas ?? []).map((delta) => ({
+        capability: delta.capability,
+        md: delta.md,
+      })),
+    },
   };
 }
