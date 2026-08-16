@@ -1,3 +1,4 @@
+import { LocusDistroMismatchError } from "@rennet/core";
 import type { GitExec } from "./git-range-diff";
 
 /**
@@ -33,7 +34,8 @@ export async function cleanupWorktree(
     // uncommitted work is never swept. The renderer restores the annotation on ok:false.
     await deps.git(root, ["worktree", "remove", input.worktreeId], { reject: true });
     return { ok: true };
-  } catch {
+  } catch (error) {
+    if (error instanceof LocusDistroMismatchError) throw error;
     // A dirty worktree, a missing path, or a locked worktree: all report honestly as
     // "not cleaned" so the surface never claims a removal that did not happen.
     return { ok: false };

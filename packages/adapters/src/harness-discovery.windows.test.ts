@@ -62,6 +62,21 @@ describe("discoverClaude on Windows (windows-native-runtime)", () => {
     expect(harvested).toBe(true);
     expect(result.chosen?.path).toBe(`${npmDir}\\claude.exe`);
   });
+
+  it("does not report a PowerShell script as directly executable", async () => {
+    const dir = "C:\\tools";
+    const result = await discoverClaude(
+      deps({
+        platform: "win32",
+        envPath: dir,
+        listDir: (candidate) => Promise.resolve(candidate === dir ? ["claude.ps1"] : []),
+        probeVersion: () => Promise.resolve("2.1.100"),
+      }),
+      RANGE,
+    );
+    expect(result.chosen).toBeNull();
+    expect(result.candidates).toEqual([]);
+  });
 });
 
 describe("discoverClaude in a WSL distro (harness-discovery spec)", () => {

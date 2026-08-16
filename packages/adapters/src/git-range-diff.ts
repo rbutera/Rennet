@@ -63,6 +63,14 @@ export function execaGitFor(locus: Locus): GitExec {
   };
 }
 
+/** Build the fixed-locus runner used by one repo-facing composition seam. */
+export function gitForRepoFactory(
+  locusForRepo: (repoRoot: string) => Locus,
+  runnerForLocus: (locus: Locus) => GitExec = execaGitFor,
+): (repoRoot: string) => GitExec {
+  return (repoRoot) => runnerForLocus(locusForRepo(repoRoot));
+}
+
 /** The host git runner — today's behaviour on macOS/Linux/native-Windows. */
 export const execaGit: GitExec = execaGitFor(HOST_LOCUS);
 

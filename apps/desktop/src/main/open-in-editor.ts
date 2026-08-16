@@ -126,7 +126,7 @@ export async function resolveEditorExecutables(
  */
 export function editorOpenArgs(absPath: string, line: number, locus: Locus): string[] {
   if (locus.kind === "wsl") {
-    const distroPath = toDistroPath(absPath);
+    const distroPath = toDistroPath(absPath, locus.distro);
     if (distroPath !== null) {
       return ["--remote", `wsl+${locus.distro}`, "-g", `${distroPath}:${line}`];
     }
@@ -180,6 +180,17 @@ export interface EditorLaunchEffectsInput {
   resolveExecutables(): Promise<string[]>;
   spawn(executable: string, args: string[]): Promise<void>;
   openPath(absPath: string): Promise<boolean>;
+}
+
+export interface EditorLaunchSpec {
+  readonly file: string;
+  readonly args: readonly string[];
+  readonly shell: false;
+}
+
+/** Preserve a resolved editor shim and its arguments as a no-shell execution spec. */
+export function editorLaunchSpec(executable: string, args: readonly string[]): EditorLaunchSpec {
+  return { file: executable, args: [...args], shell: false };
 }
 
 export function createEditorLaunchEffects(input: EditorLaunchEffectsInput): OpenInEditorEffects {

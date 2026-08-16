@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createEditorLaunchEffects,
+  editorLaunchSpec,
   editorOpenArgs,
   isWithinRoot,
   launchResolvedEditor,
@@ -86,6 +87,21 @@ describe("createEditorLaunchEffects", () => {
 
     await bound.launchAtLine("/repo/src/y.ts", 8);
     expect(resolveExecutables).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("editorLaunchSpec", () => {
+  it("keeps a Windows .cmd editor shim as the execa target with exact argv", () => {
+    expect(
+      editorLaunchSpec(
+        "C:\\Users\\rai\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd",
+        ["--remote", "wsl+Ubuntu", "-g", "/home/rai/my repo/src/app.ts:42"],
+      ),
+    ).toEqual({
+      file: "C:\\Users\\rai\\AppData\\Local\\Programs\\Microsoft VS Code\\bin\\code.cmd",
+      args: ["--remote", "wsl+Ubuntu", "-g", "/home/rai/my repo/src/app.ts:42"],
+      shell: false,
+    });
   });
 });
 

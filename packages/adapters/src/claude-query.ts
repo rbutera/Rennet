@@ -1,3 +1,4 @@
+import { tmpdir } from "node:os";
 import type { Query, Options as SdkOptions } from "@anthropic-ai/claude-agent-sdk";
 import { HOST_LOCUS, type Locus } from "@rennet/core";
 import type { ClaudeQueryArgs, ClaudeQueryFn, ClaudeQueryOptions } from "./claude-adapter";
@@ -10,7 +11,7 @@ import {
   type VersionRange,
   wslDiscoveryDeps,
 } from "./harness-discovery";
-import { generateWslClaudeLauncher } from "./wsl-launcher";
+import { wslClaudeExecutable } from "./wsl-launcher";
 
 /**
  * The composition root for the Claude harness transport.
@@ -65,6 +66,9 @@ export function toSdkOptions(options: ClaudeQueryOptions): SdkOptions {
     // adapter already assembled (base env spread + scoped session marker).
     env: { ...options.env },
   };
+  if (options.executableArgs !== undefined) {
+    sdkOptions.executableArgs = [...options.executableArgs];
+  }
   if (options.abortController) sdkOptions.abortController = options.abortController;
   if (options.model !== undefined) sdkOptions.model = options.model;
   if (options.allowedTools !== undefined) sdkOptions.allowedTools = [...options.allowedTools];
@@ -115,28 +119,25 @@ export interface ClaudeHarnessDeps {
   readonly loadQuery?: LoadClaudeQuery;
   /** Base environment the spawned `claude` inherits (the SDK replaces the child env). */
   readonly env?: Readonly<Record<string, string | undefined>>;
+  /** Host-local cwd for the Windows `wsl.exe` child; injectable for tests. */
+  readonly hostTransportCwd?: string;
   /**
    * The project's execution locus (add-windows-support). A WSL locus discovers the
-   * distro's `claude` and runs it through a generated `wsl.exe` launcher pointed at
-   * by `pathToClaudeCodeExecutable`, with capability identical to native. Defaults to
-   * the host.
+   * distro's `claude` and points the SDK directly at `wsl.exe`, with the distro
+   * command carried as prepended executable argv. Defaults to the host.
    */
   readonly locus?: Locus;
   /**
-   * The distro-native repo cwd (e.g. `/home/rai/repo`), baked into the WSL launcher's
-   * `--cd` (cmd.exe cannot inherit the SDK's UNC cwd — lancelot 2026-08-16). Optional;
-   * when absent the launcher runs in the distro login home.
+   * The distro-native repo cwd (e.g. `/home/rai/repo`) passed to `wsl.exe --cd`.
+   * Optional; when absent the turn runs in the distro login home.
    */
   readonly wslCwd?: string;
-  /**
-   * Build the launcher path for a WSL locus. Injectable so a test can avoid touching
-   * the filesystem; defaults to writing a real `.cmd` launcher under the OS temp.
-   */
-  readonly makeWslLauncher?: (input: {
+  /** Build the SDK's directly-spawnable WSL executable specification. */
+  readonly makeWslExecutable?: (input: {
     distro: string;
     distroClaudePath: string;
     distroCwd?: string;
-  }) => string;
+  }) => { pathToClaudeCodeExecutable: string; executableArgs: string[] };
 }
 
 export interface ClaudeHarnessResult {
@@ -164,20 +165,20 @@ export async function createClaudeHarness(
   if (!discovery.chosen) {
     return { adapter: null, discovery };
   }
-  // For a WSL locus the SDK cannot spawn the distro-resident ELF `claude` directly, so
-  // it targets a generated launcher that execs it inside the distro (spike 1.2). The
-  // adapter's acting capability is unchanged — the launcher only relocates WHERE the
-  // real `claude` runs, never WHAT it may do (Rule Zero: no capability reduction).
-  const binaryPath =
+  const executable =
     locus.kind === "wsl"
-      ? (deps.makeWslLauncher ?? generateWslClaudeLauncher)({
+      ? (deps.makeWslExecutable ?? wslClaudeExecutable)({
           distro: locus.distro,
           distroClaudePath: discovery.chosen.path,
           ...(deps.wslCwd === undefined ? {} : { distroCwd: deps.wslCwd }),
         })
-      : discovery.chosen.path;
+      : { pathToClaudeCodeExecutable: discovery.chosen.path, executableArgs: undefined };
   const adapter = new ClaudeAdapter({
-    binaryPath,
+    binaryPath: executable.pathToClaudeCodeExecutable,
+    ...(executable.executableArgs === undefined
+      ? {}
+      : { executableArgs: executable.executableArgs }),
+    ...(locus.kind === "wsl" ? { transportCwd: deps.hostTransportCwd ?? tmpdir() } : {}),
     version: discovery.chosen.version,
     queryFn: createClaudeQueryFn(deps.loadQuery),
     ...(deps.env ? { env: deps.env } : {}),

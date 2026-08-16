@@ -38,6 +38,19 @@ export interface LocusCommand {
 // Case-insensitive host part; the distro name is the first UNC segment.
 const WSL_UNC_RE = /^\\\\wsl(?:\.localhost|\$)\\([^\\]+)(?:\\(.*))?$/i;
 
+export class LocusDistroMismatchError extends Error {
+  override readonly name = "LocusDistroMismatchError";
+
+  constructor(
+    readonly pathDistro: string,
+    readonly locusDistro: string,
+  ) {
+    super(
+      `WSL path names distro "${pathDistro}" but the execution locus names distro "${locusDistro}".`,
+    );
+  }
+}
+
 /**
  * Detect a project's locus from its root path. A project living under a
  * `\\wsl$`/`\\wsl.localhost` UNC root is a WSL-locus project on the named distro;
@@ -56,9 +69,17 @@ export function detectLocus(projectPath: string): Locus {
  * - Anything else (a `C:\…` host path, a relative path) → `null` (not translatable).
  * Spaces and non-ASCII are literal characters and pass through untouched.
  */
-export function toDistroPath(path: string): string | null {
+export function toDistroPath(path: string, expectedDistro?: string): string | null {
   const match = WSL_UNC_RE.exec(path);
   if (match) {
+    const pathDistro = match[1];
+    if (
+      expectedDistro !== undefined &&
+      pathDistro !== undefined &&
+      pathDistro.toLowerCase() !== expectedDistro.toLowerCase()
+    ) {
+      throw new LocusDistroMismatchError(pathDistro, expectedDistro);
+    }
     const rest = match[2] ?? "";
     return `/${rest.replace(/\\/g, "/")}`;
   }
@@ -94,7 +115,7 @@ export function locusCommand(
   }
   const wslArgs: string[] = ["-d", locus.distro];
   if (cwd !== undefined) {
-    wslArgs.push("--cd", toDistroPath(cwd) ?? cwd);
+    wslArgs.push("--cd", toDistroPath(cwd, locus.distro) ?? cwd);
   }
   wslArgs.push("-e", program, ...args);
   return { file: WSL_EXE, args: wslArgs };

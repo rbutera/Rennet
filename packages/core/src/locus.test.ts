@@ -63,6 +63,18 @@ describe("toDistroPath", () => {
   it("maps the distro root", () => {
     expect(toDistroPath("\\\\wsl.localhost\\Ubuntu")).toBe("/");
   });
+
+  it("translates a UNC path when its distro matches the expected locus", () => {
+    expect(toDistroPath("\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo", "Ubuntu")).toBe(
+      "/home/rai/repo",
+    );
+  });
+
+  it("rejects a UNC path whose distro differs from the expected locus", () => {
+    expect(() => toDistroPath("\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo", "Debian")).toThrow(
+      /Ubuntu.*Debian/,
+    );
+  });
 });
 
 describe("toWindowsView", () => {
@@ -125,6 +137,13 @@ describe("locusCommand", () => {
       "pr",
       "create",
     ]);
+  });
+
+  it("refuses to execute a UNC path in a differently configured distro", () => {
+    const wsl: Locus = { kind: "wsl", distro: "Debian" };
+    expect(() =>
+      locusCommand(wsl, "git", ["status"], "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo"),
+    ).toThrow(/Ubuntu.*Debian/);
   });
 
   it("omits --cd when no cwd is given (WSL)", () => {

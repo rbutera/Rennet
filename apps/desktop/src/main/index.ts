@@ -35,8 +35,8 @@ import {
   discoverWorktreeIdentities,
   enrichKnowledgeForRepo,
   ensureProjectSnapshotPin,
-  execaGit,
   execaGitFor,
+  executeExternalCommand,
   FileConfigStore,
   FileProjectStore,
   FileThreadStore,
@@ -47,6 +47,7 @@ import {
   GitHubForgeAdapter,
   GitHubPrSubmissionAdapter,
   GitHubPublishAdapter,
+  gitForRepoFactory,
   type HttpFetch,
   KnowledgeStore,
   loadConventionCatalogue,
@@ -90,6 +91,7 @@ import {
   type HarnessTurnResult,
   HOST_LOCUS,
   type Locus,
+  LocusDistroMismatchError,
   locusCommand,
   patchsetIntentToReviewIntent,
   ReviewService,
@@ -104,6 +106,7 @@ import {
   runHypothesisPass,
   runNoiseAngle,
   toDistroPath,
+  toWindowsView,
   verifyFlaggedReview,
 } from "@rennet/core";
 import {
@@ -143,6 +146,7 @@ import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./li
 import { LiveTurnRegistry } from "./live-turn-registry";
 import {
   createEditorLaunchEffects,
+  editorLaunchSpec,
   performOpenInEditor,
   resolveEditorExecutables,
 } from "./open-in-editor";
@@ -192,7 +196,8 @@ function getEditorExecutables(): Promise<string[]> {
 const editorLaunchEffects = createEditorLaunchEffects({
   resolveExecutables: getEditorExecutables,
   async spawn(executable, args) {
-    await execFileAsync(executable, args);
+    const spec = editorLaunchSpec(executable, args);
+    await executeExternalCommand(spec.file, spec.args);
   },
   openPath: async (absPath) => (await shell.openPath(absPath)) === "",
 });
@@ -238,9 +243,12 @@ function locusForRepo(repoRoot: string): Locus {
   return liveSnapshotStore.loadConfig(key)?.locus ?? detectLocus(repoRoot);
 }
 
+const gitForRepo = gitForRepoFactory(locusForRepo);
+
 const capture = new GitCaptureAdapter(
   undefined,
-  (repoRoot, baseOid) => ensureProjectSnapshotPin(liveSnapshotStore, repoRoot, baseOid),
+  (repoRoot, baseOid) =>
+    ensureProjectSnapshotPin(liveSnapshotStore, repoRoot, baseOid, gitForRepo(repoRoot)),
   locusForRepo,
 );
 const watcher = new RepoWatcher();
@@ -254,10 +262,9 @@ const watcher = new RepoWatcher();
 // process env so the spawned harness inherits PATH/HOME.
 // Memoized PER LOCUS+CWD (add-windows-support): the host harness is shared as before;
 // a WSL-locus project gets a harness that discovers and runs the distro's own `claude`
-// through a generated launcher (createClaudeHarness), with capability identical to
-// native. The WSL launcher BAKES the distro repo cwd (cmd.exe cannot hold the SDK's
-// UNC cwd — verified on lancelot), so the memo key includes the cwd; each distro+repo
-// is composed at most once. `distroCwd` is the distro-native repo path.
+// through `wsl.exe` (createClaudeHarness), with capability identical to native. The
+// memo key includes the distro cwd because it is prepended to every SDK spawn; each
+// distro+repo is composed at most once. `distroCwd` is the distro-native repo path.
 const claudeHarnesses = new Map<string, Promise<ClaudeHarnessResult>>();
 function getClaudeHarness(
   locus: Locus = HOST_LOCUS,
@@ -501,16 +508,17 @@ async function openPullRequest(
   }
   const token = await resolveGitHubToken();
   const forge = new GitHubForgeAdapter({ http: publishHttp, token });
+  const gitInLocus = gitForRepo(repoPath);
   const source = new GitHubChangesetSource({
     forge,
-    git: execaGit,
-    pin: createRefPinner(execaGit),
+    git: gitInLocus,
+    pin: createRefPinner(gitInLocus),
     // The candidate set is the single local clone the user picked. Identity
     // matching (owner/name vs the repo's remotes) decides whether it is the
     // right clone; it never falls back to a path-name guess.
-    worktrees: { list: async () => [await discoverWorktreeIdentities(execaGit, repoPath)] },
+    worktrees: { list: async () => [await discoverWorktreeIdentities(gitInLocus, repoPath)] },
     resolveProjectSnapshotId: (root, baseOid) =>
-      ensureProjectSnapshotPin(liveSnapshotStore, root, baseOid),
+      ensureProjectSnapshotPin(liveSnapshotStore, root, baseOid, gitInLocus),
   });
   const result = await source.open(prRef);
   if (!result.pin) {
@@ -745,8 +753,10 @@ function loadReviewOwnershipRules(review: Review): Promise<readonly OwnershipRul
       loadShard: (repoKey, digest) => snapshotStoreFor().loadShard(repoKey, digest),
       resolveRepoKey: async (repositoryRoot) => {
         try {
-          return (await resolveBaseRef(repositoryRoot, { git: execaGit })).repoKey;
-        } catch {
+          return (await resolveBaseRef(repositoryRoot, { git: gitForRepo(repositoryRoot) }))
+            .repoKey;
+        } catch (error) {
+          if (error instanceof LocusDistroMismatchError) throw error;
           return null;
         }
       },
@@ -770,8 +780,9 @@ async function loadReviewFanInIndex(review: Review): Promise<FanInIndex | undefi
   if (!root) return undefined;
   let repoKey: string | null;
   try {
-    repoKey = (await resolveBaseRef(root, { git: execaGit })).repoKey;
-  } catch {
+    repoKey = (await resolveBaseRef(root, { git: gitForRepo(root) })).repoKey;
+  } catch (error) {
+    if (error instanceof LocusDistroMismatchError) throw error;
     return undefined;
   }
   if (!repoKey) return undefined;
@@ -1133,7 +1144,7 @@ async function runFlaggedReviewWithContextFeed(
     const readFileWindow = createVerificationFileReaderForPatchset({
       patchset,
       hunks: decomposition.hunks,
-      git: execaGit,
+      git: gitForRepo(patchset.repository.root),
     });
     const runTurn = createVerificationTurn(adapter, { cwd: review.repositoryRoot });
     // BUDGET-GATE (Rule 75, vital money circuit): `maxVerifications` caps how many
@@ -1212,7 +1223,7 @@ async function runFlaggedReview(review: Review, deepReview = true): Promise<Flag
  */
 async function runLiveCoverage(review: Review): Promise<OpenSpecCoverage | null> {
   const patchset = activePatchset(review);
-  const change = await readOpenSpecChange(patchset, execaGit);
+  const change = await readOpenSpecChange(patchset, gitForRepo(patchset.repository.root));
   if (!change) return null;
 
   // The requirements are the authority — the producer iterates and completes them, so
@@ -1472,7 +1483,7 @@ app.whenReady().then(async () => {
   // SHARED with the settings surface (below) so the per-project `config.json`
   // (visibility/promotion) they read and write is the same one the generator keys.
   const snapshotStore = liveSnapshotStore;
-  const snapshotGenerator = new ProjectSnapshotGenerator({ store: snapshotStore });
+  const snapshotGenerator = new ProjectSnapshotGenerator({ store: snapshotStore, gitForRepo });
   // Proactive rehydration (#143/#243): keep each already-built project's structural
   // snapshot and knowledge warm as its reference branch advances. The background pass narrates on the SAME
   // `rennet:progress` push the processing screen uses, under a stable command id, so
@@ -1603,8 +1614,9 @@ app.whenReady().then(async () => {
     // honest failed turn when no `claude` is installed — never a fabricated success.
     runHandoffTurn: async ({ repoRoot, prompt }) => {
       const locus = locusForRepo(repoRoot);
-      // The WSL launcher bakes the distro repo cwd (cmd.exe can't hold a UNC cwd).
-      const distroCwd = locus.kind === "wsl" ? (toDistroPath(repoRoot) ?? undefined) : undefined;
+      // The SDK prepends this distro cwd to its direct wsl.exe spawn.
+      const distroCwd =
+        locus.kind === "wsl" ? (toDistroPath(repoRoot, locus.distro) ?? undefined) : undefined;
       if (await repoHasSubmodules(repoRoot, locus)) {
         return {
           status: "failed",
@@ -1672,7 +1684,7 @@ app.whenReady().then(async () => {
       return result;
     },
     discoverProject: ({ path, kind }) =>
-      discoverProject(defaultProjectDiscoveryDeps(execaGit), path, kind),
+      discoverProject(defaultProjectDiscoveryDeps(gitForRepo(path)), path, kind),
     detectHarnesses,
     // Project detail (issue #37): the unified smart list's substrate. The LOCAL half
     // is real worktrees/branches with dirty/ahead/behind from git; B2 wires the live
@@ -1685,25 +1697,27 @@ app.whenReady().then(async () => {
         return { viewer: { login: "you" }, locals: [], prs: [], truncated: false };
       }
       const prSource = await resolveProjectPrSource();
+      const projectRoot = project.openPath || project.path;
       return loadProjectDetail(
-        defaultProjectDetailSourceDeps(execaGit, prSource ?? undefined),
+        defaultProjectDetailSourceDeps(gitForRepo(projectRoot), prSource ?? undefined),
         project,
       );
     },
     // The merged-PR row's clean-up (B2), for real: `git worktree remove <path>` run
     // from the project's root. Non-forcing — a dirty worktree is refused and reported
     // ok:false, never swept. The `worktreeId` is the worktree path (LocalWork.id).
-    cleanupWorktree: ({ projectId, worktreeId }) =>
-      cleanupWorktree(
+    cleanupWorktree: async ({ projectId, worktreeId }) => {
+      const project = projectStore.list().find((entry) => entry.id === projectId);
+      const projectRoot = project ? project.openPath || project.path : null;
+      if (!projectRoot) return { ok: false };
+      return cleanupWorktree(
         {
-          git: execaGit,
-          resolveProjectRoot: async (id) => {
-            const project = projectStore.list().find((entry) => entry.id === id);
-            return project ? project.openPath || project.path : null;
-          },
+          git: gitForRepo(projectRoot),
+          resolveProjectRoot: async () => projectRoot,
         },
         { projectId, worktreeId },
-      ),
+      );
+    },
     // The Flagged lens (issue #138): the automated review layer's findings. This is
     // the LIVE finding-generation runner (#32) — a real model turn over the review's
     // diff. Dual-review aggregation (#41) + per-finding verification (#179) run by
@@ -1721,7 +1735,10 @@ app.whenReady().then(async () => {
     // reviewed patchset selected, read from the review's checked-out root. Deterministic
     // and model-free — no gate, no spend. `null` when the review touches no
     // `openspec/changes/<name>/`, replacing the frozen fixture with the real change.
-    openSpecChange: (review) => readOpenSpecChange(activePatchset(review), execaGit),
+    openSpecChange: (review) => {
+      const patchset = activePatchset(review);
+      return readOpenSpecChange(patchset, gitForRepo(patchset.repository.root));
+    },
     // The Spec view's requirement→hunk coverage (wireframes #9 / R53): the produced
     // mapping a budget-gated model turn grounds against the offered hunks. `null` (no
     // change) or `status:"failed"` (no seat / refusal / failed turn) ⇒ no chips.
@@ -1918,21 +1935,29 @@ app.whenReady().then(async () => {
         let topLevel: string;
         try {
           topLevel = (
-            await execaGit(workingPath, ["rev-parse", "--show-toplevel"], { reject: true })
+            await gitForRepo(workingPath)(workingPath, ["rev-parse", "--show-toplevel"], {
+              reject: true,
+            })
           ).trim();
-        } catch {
+        } catch (error) {
+          if (error instanceof LocusDistroMismatchError) throw error;
           return null;
         }
         if (!topLevel) return null;
         try {
-          return realpathSync(topLevel);
+          const locus = locusForRepo(workingPath);
+          const hostTopLevel =
+            locus.kind === "wsl" && topLevel.startsWith("/")
+              ? toWindowsView(topLevel, locus.distro)
+              : topLevel;
+          return realpathSync(hostTopLevel);
         } catch {
           return null;
         }
       },
       discoverWorkspaceRepos: async (project) => {
         const result = await discoverProject(
-          defaultProjectDiscoveryDeps(execaGit),
+          defaultProjectDiscoveryDeps(gitForRepo(project.path)),
           project.path,
           "workspace",
         );
@@ -1945,7 +1970,7 @@ app.whenReady().then(async () => {
           repoKey,
           repoRoot,
           target,
-          execaGit,
+          gitForRepo(repoRoot),
         );
         return { changed: preview.changed, gitignorePath: preview.gitignorePath };
       },

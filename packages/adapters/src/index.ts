@@ -100,6 +100,7 @@ export {
   failedDecisionsRunStatus,
   okDecisionsRunStatus,
 } from "./decisions-fixture";
+export { executeExternalCommand } from "./external-command";
 export {
   defaultGlobalConfigPath,
   FileConfigStore,
@@ -144,6 +145,7 @@ export {
   execaGitFor,
   FILE_VISIBLE_BYTE_LIMIT,
   type GitExec,
+  gitForRepoFactory,
   parseChangedPaths,
   parseCounts,
   parseUnifiedDiffFiles,
@@ -194,7 +196,6 @@ export {
   discoverClaude,
   discoverCodex,
   type VersionRange,
-  wslCodexDiscoveryDeps,
   wslDiscoveryDeps,
 } from "./harness-discovery";
 export {
@@ -403,7 +404,7 @@ export {
   resolveForgeRemote,
 } from "./worktree-discovery";
 export {
-  generateWslClaudeLauncher,
+  type WslClaudeExecutable,
   type WslClaudeLauncherInput,
-  wslClaudeLauncherScript,
+  wslClaudeExecutable,
 } from "./wsl-launcher";

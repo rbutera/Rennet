@@ -74,12 +74,12 @@ function delimiterFor(platform: NodeJS.Platform | undefined): string {
 // The executable shim extensions discovery recognises on Windows (PATHEXT subset,
 // plus the bare name for a wrapperless install). `.cmd` first: npm global installs
 // `claude.cmd`/`codex.cmd`, the common case.
-const WINDOWS_BINARY_EXTENSIONS = [".cmd", ".exe", ".bat", ".ps1", ""] as const;
+const WINDOWS_BINARY_EXTENSIONS = [".cmd", ".exe", ".bat", ""] as const;
 
 /**
  * Resolve which filename in a directory listing IS the binary, honouring Windows
  * shims (add-windows-support). POSIX: the bare name if present. Windows: the first
- * of `name.cmd`/`.exe`/`.bat`/`.ps1`/`name` that the directory actually contains.
+ * of `name.cmd`/`.exe`/`.bat`/`name` that the directory actually contains.
  */
 function resolveBinaryFilename(
   entries: readonly string[],
@@ -382,31 +382,6 @@ export async function wslDiscoveryDeps(distro: string): Promise<DiscoveryDeps> {
           reject: false,
           shell: false,
           stdin: "ignore",
-        });
-        if (result.exitCode !== 0) return null;
-        const match = result.stdout.match(/\d+\.\d+\.\d+/);
-        return match ? match[0] : null;
-      } catch {
-        return null;
-      }
-    },
-  };
-}
-
-/** WSL codex discovery: the WSL deps with the codex-safe (stdin-closed, timed) probe. */
-export async function wslCodexDiscoveryDeps(distro: string): Promise<DiscoveryDeps> {
-  const base = await wslDiscoveryDeps(distro);
-  const locus: Locus = { kind: "wsl", distro };
-  return {
-    ...base,
-    async probeVersion(path: string): Promise<string | null> {
-      const command = locusCommand(locus, path, ["--version"]);
-      try {
-        const result = await execa(command.file, [...command.args], {
-          reject: false,
-          shell: false,
-          stdin: "ignore",
-          timeout: 10_000,
         });
         if (result.exitCode !== 0) return null;
         const match = result.stdout.match(/\d+\.\d+\.\d+/);

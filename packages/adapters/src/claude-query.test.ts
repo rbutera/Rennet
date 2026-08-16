@@ -91,6 +91,13 @@ describe("toSdkOptions", () => {
     expect(sdk.abortController).toBe(abortController);
     expect((sdk.env as Record<string, string>).PATH).toBe("/usr/bin");
   });
+
+  it("passes executableArgs through as discrete SDK argv", () => {
+    const sdk = toSdkOptions(
+      baseOptions({ executableArgs: ["-d", "Ubuntu", "-e", "/home/rai/bin/claude"] }),
+    );
+    expect(sdk.executableArgs).toEqual(["-d", "Ubuntu", "-e", "/home/rai/bin/claude"]);
+  });
 });
 
 describe("createClaudeQueryFn", () => {
@@ -238,22 +245,40 @@ describe("createClaudeHarness", () => {
     expect(discovery.health.state).toBe("unavailable");
   });
 
-  it("points the SDK at a WSL launcher (not the distro binary) for a WSL locus", async () => {
-    const launcherInputs: { distro: string; distroClaudePath: string }[] = [];
+  it("points the SDK directly at wsl.exe with the distro claude in executableArgs", async () => {
+    const executableInputs: { distro: string; distroClaudePath: string }[] = [];
+    let captured: CapturedSdkParams | undefined;
     const { adapter, discovery } = await createClaudeHarness({
       locus: { kind: "wsl", distro: "Ubuntu" },
       discoveryDeps: discoveryDeps({ locus: { kind: "wsl", distro: "Ubuntu" } }),
-      loadQuery: fakeLoadQuery([]),
-      makeWslLauncher: (input) => {
-        launcherInputs.push(input);
-        return `C:\\launchers\\claude-${input.distro}.cmd`;
+      loadQuery: fakeLoadQuery([], (params) => {
+        captured = params;
+      }),
+      hostTransportCwd: "C:\\Users\\rai\\AppData\\Local\\Temp",
+      makeWslExecutable: (input) => {
+        executableInputs.push(input);
+        return {
+          pathToClaudeCodeExecutable: "wsl.exe",
+          executableArgs: ["-d", input.distro, "-e", input.distroClaudePath],
+        };
       },
     });
-    // The distro binary was discovered, but pathToClaudeCodeExecutable is the launcher.
     expect(discovery.chosen?.path).toBe("/home/rai/.local/bin/claude");
-    expect(adapter?.descriptor.binaryPath).toBe("C:\\launchers\\claude-Ubuntu.cmd");
-    expect(launcherInputs).toEqual([
+    expect(adapter?.descriptor.binaryPath).toBe("wsl.exe");
+    expect(executableInputs).toEqual([
       { distro: "Ubuntu", distroClaudePath: "/home/rai/.local/bin/claude" },
+    ]);
+    const session = await adapter?.createSession({
+      cwd: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo with spaces",
+    });
+    await session?.send({ prompt: "probe" });
+    if (session) await drain(session);
+    expect(captured?.options?.cwd).toBe("C:\\Users\\rai\\AppData\\Local\\Temp");
+    expect(captured?.options?.executableArgs).toEqual([
+      "-d",
+      "Ubuntu",
+      "-e",
+      "/home/rai/.local/bin/claude",
     ]);
   });
 });
