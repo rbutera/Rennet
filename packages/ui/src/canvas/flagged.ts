@@ -1,5 +1,7 @@
 import type {
   CiSignal,
+  DecompositionBlockingReason,
+  DecompositionBlockingState,
   DualReviewNote,
   FindingAgreement,
   FindingElement,
@@ -65,7 +67,13 @@ export interface FlaggedRow {
  * user "all clear" when the truth is "we could not check".
  */
 export type FlaggedIndex =
-  | { state: "failed"; reason: string; ciSignal?: CiSignal }
+  | {
+      state: "failed";
+      reason: string;
+      ciSignal?: CiSignal;
+      /** Deterministic incomplete-ingestion blockers survive a failed model run. */
+      blockingStates?: readonly DecompositionBlockingState[];
+    }
   | {
       state: "ok";
       rows: FlaggedRow[];
@@ -82,6 +90,14 @@ export type FlaggedIndex =
       dual?: DualReviewNote;
       /** Informational CI state for the reviewed head. It never gates an action. */
       ciSignal?: CiSignal;
+      /**
+       * Incomplete-ingestion blockers (R18, issue #309) carried from the review's
+       * decomposition floor. Non-empty means some content (a truncated tail, binary
+       * blob, or submodule pointer) was NOT ingested, so an empty index is not an
+       * all-clear. The surface discloses this as render-only honest copy — it NEVER
+       * gates any action (Rule Zero). Absent/empty ⇒ the pre-#309 honest all-clear.
+       */
+      blockingStates?: readonly DecompositionBlockingState[];
     };
 
 const SEVERITY_RANK: Record<FindingSeverity, number> = { high: 0, medium: 1, low: 2 };
@@ -162,24 +178,19 @@ function isVerification(value: unknown): value is FindingVerification {
 /**
  * Bind a flagged result to the patchset the surface is currently showing (issue
  * #160/P0-2). A REGENERATE activates a new patchset under the same review id, so an
- * `ok` result the boundary stamped with a now-superseded `patchsetId` is about the
+ * result the boundary stamped with a now-superseded `patchsetId` is about the
  * OLD diff — returning it would let the new canvases render beside stale findings,
  * a hypothesis, and cross-check statuses that are internally consistent and wrong.
  * Such a result is dropped to `undefined` (the frame + lens hide until the new
- * patchset's flagged review lands). A `failed` result carries no patchset and passes
- * through (a failure is patchset-independent); an unstamped `ok` result (an older
- * host) is treated as unbound and passes through, exactly the pre-#160 behaviour.
+ * patchset's flagged review lands). An unstamped result (an older host) is treated
+ * as unbound and passes through, exactly the pre-#160 behavior.
  */
 export function flaggedForPatchset(
   review: FlaggedReview | undefined,
   activePatchsetId: string | undefined,
 ): FlaggedReview | undefined {
   if (!review) return undefined;
-  if (
-    review.status === "ok" &&
-    review.patchsetId !== undefined &&
-    review.patchsetId !== activePatchsetId
-  ) {
+  if (review.patchsetId !== undefined && review.patchsetId !== activePatchsetId) {
     return undefined;
   }
   return review;
@@ -188,10 +199,12 @@ export function flaggedForPatchset(
 /** Fold a review's flagged input into the ordered index the surface renders. */
 export function buildFlaggedIndex(review: FlaggedReview): FlaggedIndex {
   if (review.status === "failed") {
+    const blockingStates = sanitiseBlockingStates(review.blockingStates);
     return {
       state: "failed",
       reason: review.reason,
       ...(review.ciSignal ? { ciSignal: review.ciSignal } : {}),
+      ...(blockingStates.length > 0 ? { blockingStates } : {}),
     };
   }
   // Defensive: a host or fixture that hands back a malformed input (no findings
@@ -218,7 +231,34 @@ export function buildFlaggedIndex(review: FlaggedReview): FlaggedIndex {
     total: rows.length,
     ...(isDualNote(review.dual) ? { dual: review.dual } : {}),
     ...(review.ciSignal ? { ciSignal: review.ciSignal } : {}),
+    // Carry the incomplete-ingestion blockers through, additively (#309). Only
+    // well-formed states survive the guard; an absent or empty set carries nothing,
+    // so a fully-ingested review is byte-identical to its pre-#309 index.
+    ...(() => {
+      const blockingStates = sanitiseBlockingStates(review.blockingStates);
+      return blockingStates.length > 0 ? { blockingStates } : {};
+    })(),
   };
+}
+
+const BLOCKING_REASONS: readonly DecompositionBlockingReason[] = [
+  "truncated",
+  "binary",
+  "submodule",
+];
+
+/** A defensive guard for the optional incomplete-ingestion states (a malformed entry is dropped). */
+function sanitiseBlockingStates(value: unknown): readonly DecompositionBlockingState[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is DecompositionBlockingState => {
+    if (typeof entry !== "object" || entry === null) return false;
+    const state = entry as Record<string, unknown>;
+    return (
+      BLOCKING_REASONS.includes(state.reason as DecompositionBlockingReason) &&
+      (state.path === null || typeof state.path === "string") &&
+      typeof state.detail === "string"
+    );
+  });
 }
 
 /** A defensive guard for the optional dual-review note (a malformed note is ignored). */

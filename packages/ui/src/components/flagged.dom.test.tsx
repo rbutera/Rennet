@@ -101,6 +101,65 @@ describe("FlaggedLens — the flagged index surface", () => {
     expect(container.querySelector(".flagged-empty")).toBeTruthy();
     expect(container.querySelector(".flagged-failed")).toBeNull();
     expect(getByText(/ran clean, it was not skipped/)).toBeTruthy();
+    // No blocking states ⇒ no disclosure (the honest all-clear is unqualified).
+    expect(container.querySelector(".flagged-blocked-ingestion")).toBeNull();
+  });
+
+  it("does NOT claim 'ran clean' when ingestion was blocked, and discloses each blocker (R18/#309)", () => {
+    const { container, getByText, queryByText } = mount(
+      <FlaggedLens
+        index={buildFlaggedIndex({
+          status: "ok",
+          findings: [],
+          blockingStates: [
+            {
+              reason: "binary",
+              path: "assets/logo.png",
+              detail: "assets/logo.png: binary file; its content is not text-diffable.",
+            },
+            {
+              reason: "truncated",
+              path: null,
+              detail: "The captured diff was truncated at the size cap; the tail was not ingested.",
+            },
+          ],
+        })}
+        onJumpToAnchor={vi.fn()}
+      />,
+    );
+    // The unqualified all-clear is UNREACHABLE over blocked ingestion.
+    expect(queryByText(/ran clean, it was not skipped/)).toBeNull();
+    // The qualified empty state says nothing was flagged in WHAT COULD BE READ.
+    expect(getByText(/Nothing was flagged in what could be read/)).toBeTruthy();
+    // The disclosure lists every blocker with its reason and detail.
+    const disclosure = container.querySelector(".flagged-blocked-ingestion");
+    expect(disclosure).toBeTruthy();
+    const items = [...(disclosure?.querySelectorAll(".flagged-blocked-item") ?? [])];
+    expect(items.map((el) => el.getAttribute("data-reason"))).toEqual(["binary", "truncated"]);
+    expect(getByText(/binary file; its content is not text-diffable/)).toBeTruthy();
+    expect(getByText(/the tail was not ingested/)).toBeTruthy();
+  });
+
+  it("discloses blocked ingestion BESIDE findings — an absence of findings over un-ingested content is not an all-clear (#309)", () => {
+    const { container } = mount(
+      <FlaggedLens
+        index={buildFlaggedIndex({
+          ...REVIEW,
+          blockingStates: [
+            {
+              reason: "submodule",
+              path: "vendor/dep",
+              detail: "vendor/dep: submodule change; the child repo's content is not in this diff.",
+            },
+          ],
+        })}
+        onJumpToAnchor={vi.fn()}
+      />,
+    );
+    // Findings still render AND the disclosure renders beside them.
+    expect(container.querySelectorAll(".flag").length).toBe(3);
+    expect(container.querySelector(".flagged-blocked-ingestion")).toBeTruthy();
+    expect(container.querySelector('[data-reason="submodule"]')).toBeTruthy();
   });
 
   it("renders a DISTINCT failed state for a runner that did not complete", () => {
@@ -114,6 +173,32 @@ describe("FlaggedLens — the flagged index surface", () => {
     expect(container.querySelector(".flagged-empty")).toBeNull();
     expect(getByText(/Couldn't check/)).toBeTruthy();
     expect(getByText(/harness timed out/)).toBeTruthy();
+    expect(container.innerHTML).toBe(
+      '<div class="flagged-canvas"><div class="flagged-failed" role="status"><p class="flagged-failed-head">Couldn\'t check</p><p class="flagged-failed-body">The automated review runner did not complete, so this is not an all-clear.</p><p class="flagged-failed-reason">harness timed out</p></div></div>',
+    );
+  });
+
+  it("discloses blocked ingestion alongside a FAILED review", () => {
+    const { container, getByText } = mount(
+      <FlaggedLens
+        index={buildFlaggedIndex({
+          status: "failed",
+          reason: "harness timed out",
+          blockingStates: [
+            {
+              reason: "binary",
+              path: "assets/logo.png",
+              detail: "assets/logo.png: binary file; its content was not ingested.",
+            },
+          ],
+        })}
+        onJumpToAnchor={vi.fn()}
+      />,
+    );
+    expect(container.querySelector(".flagged-failed")).toBeTruthy();
+    expect(getByText(/Couldn't check/)).toBeTruthy();
+    expect(container.querySelector('[data-reason="binary"]')).toBeTruthy();
+    expect(getByText(/binary file; its content was not ingested/)).toBeTruthy();
   });
 
   it("renders passing CI, no checks, unavailable, and absent as four distinct surfaces", () => {

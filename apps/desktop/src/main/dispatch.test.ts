@@ -6,6 +6,7 @@ import {
   canonicalPrSubmissionPayload,
   canonicalReviewPayload,
   composeHandoffBundle,
+  decompose,
   type ForgePublishPort,
   type ForgeReviewEvent,
   type ForgeReviewPost,
@@ -173,6 +174,7 @@ function harness(
     liveTurns?: DispatchDeps["liveTurns"];
     submitPullRequest?: DispatchDeps["submitPullRequest"];
     draftDeltaDigest?: DispatchDeps["draftDeltaDigest"];
+    flaggedReview?: DispatchDeps["flaggedReview"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -316,7 +318,9 @@ function harness(
     // Recording spy so a test can assert what `deepReview` the dispatch passed the
     // runner — the whole point of the default-dual mandate is that guarantee at the
     // real command boundary. The stub answers with an honestly-empty ran-clean set.
-    flaggedReview: flaggedReviewSpy,
+    // A test may override the runner (e.g. to stamp #309 blockingStates like the live
+    // runner does) via `extra.flaggedReview`.
+    flaggedReview: extra.flaggedReview ?? flaggedReviewSpy,
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
     reviewAsk,
     threadPersistence,
@@ -626,12 +630,72 @@ describe("createDispatch — flagged.review routing (the live finding runner, is
     expect(result).toEqual({ status: "ok", findings: [], patchsetId: review.activePatchsetId });
   });
 
+  it("stamps a failed result with the active patchset before it crosses the protocol boundary", async () => {
+    const flaggedReview = vi.fn(
+      async (): Promise<FlaggedReview> => ({
+        status: "failed",
+        reason: "both seats down",
+      }),
+    );
+    const { dispatch } = harness(undefined, {}, { flaggedReview });
+    const review = await capturedReview(dispatch);
+    await expect(dispatch("flagged.review", { reviewId: review.id })).resolves.toEqual({
+      status: "failed",
+      reason: "both seats down",
+      patchsetId: review.activePatchsetId,
+    });
+  });
+
   it("refuses flagged.review for a stale or unknown review id (the runner spends a model turn)", async () => {
     const { dispatch } = harness();
     await capturedReview(dispatch);
     await expect(dispatch("flagged.review", { reviewId: randomUUID() })).rejects.toThrow(
       /Review not found/,
     );
+  });
+
+  it("preserves pre-stamped blockingStates through the flagged.review protocol boundary (R18/#309)", async () => {
+    // This runner test double deliberately pre-stamps the real deterministic
+    // decomposition's blockers. The assertion guards the separate Rule-80 strip
+    // surface: dropping `blockingStates` from `flaggedReviewSchema` makes it red.
+    const binaryPatchset: Patchset = {
+      ...patchset(),
+      files: [
+        {
+          path: "assets/logo.png",
+          status: "modified",
+          additions: 0,
+          deletions: 0,
+          binary: true,
+          patch: "",
+        },
+      ],
+      rawDiff: "Binary files a/assets/logo.png and b/assets/logo.png differ\n",
+      byteLength: 1,
+    };
+    const flaggedReview = vi.fn(async (): Promise<FlaggedReview> => {
+      const decomposition = decompose(binaryPatchset);
+      return { status: "ok", findings: [], blockingStates: decomposition.blockingStates };
+    });
+    const { dispatch } = harness(
+      undefined,
+      {},
+      {
+        capturePort: { capture: () => Promise.resolve(binaryPatchset) },
+        flaggedReview,
+      },
+    );
+    const review = await capturedReview(dispatch);
+    const result = (await dispatch("flagged.review", { reviewId: review.id })) as FlaggedReview;
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("expected an ok review");
+    expect(result.blockingStates).toEqual([
+      {
+        reason: "binary",
+        path: "assets/logo.png",
+        detail: expect.stringContaining("binary file") as unknown as string,
+      },
+    ]);
   });
 
   it("defaults to DUAL-model review when deepReview is OMITTED (Rai's mandate: not opt-in)", async () => {

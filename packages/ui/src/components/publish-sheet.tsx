@@ -1,3 +1,4 @@
+import type { DecompositionBlockingState } from "@rennet/types";
 import { useRef, useState } from "react";
 import {
   bucketLedgerEntries,
@@ -16,6 +17,7 @@ import {
   type ReviewComment,
   targetItemCount,
 } from "../canvas/publish";
+import { BlockedIngestionDisclosure } from "./flagged";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The PAPER (issue #22 core; NARROWED by R40, issue #101). The ONLY solid object
@@ -109,6 +111,7 @@ export function PublishSheet({
   willPost = false,
   postLabel,
   pending = false,
+  blockingStates = [],
   onSign,
   onBack,
   onClose,
@@ -165,6 +168,15 @@ export function PublishSheet({
    * the caller is the real protection; this is its visible reflection.
    */
   pending?: boolean;
+  /**
+   * Incomplete-ingestion blockers (R18, issue #309) for the review being signed. When
+   * non-empty, the sheet discloses them before the sign control so a signer knows the
+   * review ran over partially-ingested content. RENDER-ONLY honest copy: it NEVER
+   * feeds `ledgerBlocksSign`, `resolveSign`, the ack state, or the ledger signature —
+   * per Rule Zero it adds no gate, delay, or acknowledgement to the sign path. Absent
+   * or empty ⇒ no disclosure, and the sheet is byte-identical to its pre-#309 form.
+   */
+  blockingStates?: readonly DecompositionBlockingState[];
   onSign?: (payload: string) => void;
   /** Back to the collation draft — editing lives there, never here (R40). */
   onBack?: () => void;
@@ -350,6 +362,13 @@ export function PublishSheet({
         <pre className="publish-sheet-preview" data-testid="publish-preview">
           {payload}
         </pre>
+
+        {/* Blocked-ingestion disclosure (R18, issue #309): honest copy that the review
+            ran over partially-ingested content, shown before the sign control. It is
+            RENDER-ONLY — it never touches `ledgerBlocksSign`/`resolveSign`/`acknowledged`
+            or any gate, so the sign path is identical with or without it (Rule Zero).
+            Absent/empty ⇒ nothing renders. */}
+        <BlockedIngestionDisclosure states={blockingStates} heading="Not fully ingested" />
 
         {/* The degradation-ledger sign-gate (issue #80) + its #22 content. When the
             run degraded, the reviewer cannot sign until they acknowledge what

@@ -1004,6 +1004,14 @@ export const reviewHypothesisSchema = objectSchemaFor<ReviewHypothesis>()({
   ),
   repoContextPresent: z.boolean(),
 });
+// Incomplete-ingestion blocker (R18, #309): content the deterministic floor could
+// not ingest. Rides FlaggedReview so it reaches the Flagged lens and PublishSheet
+// as render-only honest copy. `path` is null for a patchset-wide truncation.
+const flaggedBlockingStateSchema = z.object({
+  reason: z.enum(["truncated", "binary", "submodule"]),
+  path: z.string().nullable(),
+  detail: z.string(),
+});
 export const flaggedReviewSchema: z.ZodType<FlaggedReview> = z.union([
   z.object({
     status: z.literal("ok"),
@@ -1018,12 +1026,17 @@ export const flaggedReviewSchema: z.ZodType<FlaggedReview> = z.union([
     // bind it to the canvases it is shown beside and drop a result that regenerate
     // left stale. Additive optional — absent ⇒ unbound (pre-#160 shape).
     patchsetId: z.string().min(1).optional(),
+    // Incomplete-ingestion blockers (R18, #309). Declared on BOTH branches or the
+    // strict boundary strips it (Rule 80). Additive optional — absent ⇒ pre-#309.
+    blockingStates: z.array(flaggedBlockingStateSchema).optional(),
   }),
   z.object({
     status: z.literal("failed"),
     reason: z.string(),
     // CI facts survive even when the model review fails; omission strips them.
     ciSignal: ciSignalSchema.optional(),
+    patchsetId: z.string().min(1).optional(),
+    blockingStates: z.array(flaggedBlockingStateSchema).optional(),
   }),
 ]);
 
