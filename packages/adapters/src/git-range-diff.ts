@@ -154,21 +154,42 @@ export function parseUnifiedDiffFiles(diff: string): PatchFile[] {
     let path: string | undefined;
     let additions = 0;
     let deletions = 0;
+    // Unified diffs are POSITIONAL: file metadata (`--- `/`+++ ` path headers, mode
+    // changes, renames) is legal only in a block's preamble, before the first `@@`
+    // hunk header; after it, every line is hunk content carrying a one-character role
+    // prefix (`+`, `-`, ` `, `\`). Without this flag an ordinary added body line whose
+    // CONTENT begins `++ b/…` renders as `+++ b/…` and matched the destination-path
+    // branch, RE-KEYING the whole block to the wrong file (last-write-wins) with no
+    // ingestion gap recorded: a silent false-clear (#310). The same body lines were
+    // also dropped from the counts by the `+++`/`---` exclusions. `inHunk` latches
+    // once set — a body line cannot start with `@@`, so the flag cannot be spoofed
+    // from content, and the fail-safe direction is to COUNT a doubtful line as change,
+    // never PROMOTE it to metadata.
+    let inHunk = false;
     for (const line of lines) {
-      if (line.startsWith("new file mode")) status = "added";
-      else if (line.startsWith("deleted file mode")) status = "deleted";
-      else if (line.startsWith("rename from ")) {
-        status = "renamed";
-        previousPath = unprefix(line.slice("rename from ".length));
-      } else if (line.startsWith("rename to ")) {
-        path = unprefix(line.slice("rename to ".length));
-      } else if (line.startsWith("--- ") && !line.startsWith("--- /dev/null")) {
-        previousPath ??= unprefix(line.slice(4));
-      } else if (line.startsWith("+++ ") && !line.startsWith("+++ /dev/null")) {
-        path = unprefix(line.slice(4));
-      } else if (line.startsWith("+") && !line.startsWith("+++")) {
+      if (line.startsWith("@@")) {
+        inHunk = true;
+        continue;
+      }
+      if (!inHunk) {
+        if (line.startsWith("new file mode")) status = "added";
+        else if (line.startsWith("deleted file mode")) status = "deleted";
+        else if (line.startsWith("rename from ")) {
+          status = "renamed";
+          previousPath = unprefix(line.slice("rename from ".length));
+        } else if (line.startsWith("rename to ")) {
+          path = unprefix(line.slice("rename to ".length));
+        } else if (line.startsWith("--- ") && !line.startsWith("--- /dev/null")) {
+          previousPath ??= unprefix(line.slice(4));
+        } else if (line.startsWith("+++ ") && !line.startsWith("+++ /dev/null")) {
+          path = unprefix(line.slice(4));
+        }
+      } else if (line.startsWith("+")) {
+        // In-hunk: classify by first character only. No `+++`/`---` exclusions —
+        // headers are structurally confined to the preamble now, so a `+++ …`-rendered
+        // in-hunk line IS an addition (this is the #310 miscount, fixed).
         additions += 1;
-      } else if (line.startsWith("-") && !line.startsWith("---")) {
+      } else if (line.startsWith("-")) {
         deletions += 1;
       }
     }

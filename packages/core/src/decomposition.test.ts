@@ -558,6 +558,27 @@ describe("incomplete ingestion (R18)", () => {
   });
 });
 
+// ── Hunk-body content is never metadata (#310, core sibling pin) ─────────────
+
+describe("parseFilePatch keeps `+++`/`---`-rendered body lines as hunk body (#310)", () => {
+  // #310 named this core parser as a possible sibling of the adapters re-key bug.
+  // Audit finding: it is NOT — metadata is read only in the preamble (`current ===
+  // null`), hunk headers match the anchored HUNK_HEADER regex, and in-hunk lines are
+  // classified by `charAt(0)` alone. This test PINS that: if a refactor ever flattened
+  // core into the flat adapters shape (matching `+++ ` anywhere), the added line would
+  // be dropped from the body and this reddens.
+  it("an added line rendered `+++ b/other.txt` inside a hunk is carried as an addition", () => {
+    const path = "changed.txt";
+    const patch = filePatch(path, [{ lines: [" context", "+++ b/other.txt", "+ordinary add"] }]);
+    const result = decompose(patchset([file(path, patch)]));
+    // No metadata effect: every hunk keys to the real file, none to `other.txt`.
+    expect(result.hunks.map((h) => h.filePath)).toEqual([path]);
+    // The adversarial line is body content: an addition carrying `++ b/other.txt`
+    // (its one-character `+` prefix stripped), alongside the ordinary add.
+    expect(result.hunks[0]?.addedLines).toEqual(["++ b/other.txt", "ordinary add"]);
+  });
+});
+
 // ── Chunking and the ≤400 budget ─────────────────────────────────────────────
 
 describe("chunking", () => {
