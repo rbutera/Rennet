@@ -15,4 +15,4 @@
 ## 3. Gate and hand off
 
 - [x] 3.1 Run the affected gate from the worktree root (`pnpm nx affected -t lint,typecheck,test,build --base=origin/main`); GREEN means typecheck AND lint AND test all pass with 0 failing tests, read from the output values, not the exit code.
-- [ ] 3.2 Commit with descriptive messages, push the branch, open the PR (base `main`) referencing #310. Word the PR body so no closing keyword sits next to an issue number unless auto-close is intended. Note in the PR that bytes-first / non-ASCII hardening is deliberately out of scope and still owed.
+- [x] 3.2 Commit with descriptive messages, push the branch, open the PR (base `main`) referencing #310. Word the PR body so no closing keyword sits next to an issue number unless auto-close is intended. Note in the PR that bytes-first / non-ASCII hardening is deliberately out of scope and still owed.
