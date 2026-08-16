@@ -36,9 +36,7 @@ export interface SettingsCompositionDeps {
    * A project's snapshot-store config state, keyed by the escaped git-top-level
    * key. Distinguishes absent (safe) / ok / malformed (edits refused).
    */
-  loadConfigState(
-    repoKey: string,
-  ):
+  loadConfigState(repoKey: string):
     | { status: "absent" | "malformed"; config: null }
     | {
         status: "ok";

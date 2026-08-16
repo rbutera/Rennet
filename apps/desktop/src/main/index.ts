@@ -1941,8 +1941,10 @@ app.whenReady().then(async () => {
       applyLocus: ({ repoKey, locus }) => {
         snapshotStore.updateConfig(repoKey, (current) => {
           if (locus === null) {
-            const { locus: _dropped, ...rest } = current;
-            return rest;
+            // Clear the override back to auto-detection (drop the field entirely).
+            const next: Record<string, unknown> = { ...current };
+            delete next.locus;
+            return next as typeof current;
           }
           return { ...current, locus };
         });
