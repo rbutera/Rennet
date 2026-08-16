@@ -9,7 +9,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { detectLocus, type Locus } from "@rennet/core";
+import type { Locus } from "@rennet/core";
 import { canonicalize, sha256Hex } from "@rennet/protocol";
 import type {
   BuiltSnapshot,
@@ -105,8 +105,8 @@ export interface ProjectConfig {
   readonly visibility?: ProjectVisibility;
   /**
    * The project's execution locus override (add-windows-support). Absent ⇒
-   * auto-detected from the project path via {@link effectiveLocus} (a `\\wsl$`
-   * root ⇒ that distro, else host). A plain editable setting, never a gate.
+   * resolved through core's settings registry using the project path as the
+   * detected offer. A plain editable setting, never a gate.
    */
   readonly locus?: Locus;
 }
@@ -117,15 +117,6 @@ function isValidLocus(value: unknown): value is Locus {
   const record = value as Record<string, unknown>;
   if (record.kind === "host") return true;
   return record.kind === "wsl" && typeof record.distro === "string" && record.distro.length > 0;
-}
-
-/**
- * The project's effective locus: the persisted override if set, else auto-detected
- * from the project's path (a `\\wsl.localhost`/`\\wsl$` root ⇒ its distro, else the
- * host). The override is what makes the locus a "see and change" setting.
- */
-export function effectiveLocus(config: ProjectConfig | null, projectPath: string): Locus {
-  return config?.locus ?? detectLocus(projectPath);
 }
 
 /**

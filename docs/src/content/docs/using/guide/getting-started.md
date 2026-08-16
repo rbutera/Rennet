@@ -81,6 +81,27 @@ content as you arrive. If something along that trail can no longer load, Rennet
 drops just that entry with a plain note and falls back to the nearest place that
 still opens — the Projects home always does.
 
+## Settings explain themselves
+
+The settings surface has two scopes. **Global** holds your personal appearance
+scheme (dark, light, or follow the system); **Repo** holds each project's map
+visibility and its [execution locus](/using/guide/windows-and-wsl/#the-execution-locus).
+
+Every value shows **where it came from** (Explain): the built-in default, an
+auto-`detected` environment value, your global preference, or an explicit
+per-repo setting — the resolver's own answer, not a guess. Two controls sit on
+each repo row. **Reset** appears when a value is set explicitly for the repo: it
+clears that entry and the value falls back to whatever the rest of the ladder
+resolves (resetting map visibility also re-applies the git-ignore switch so the
+files match). **Pin** appears when a value is inherited or detected: it writes the
+current effective value as an explicit per-repo setting, so a later change
+elsewhere no longer moves it. The appearance scheme has the same reset back to the
+system default.
+
+All of it is plain config writes with no confirmation step. If a project's config
+file cannot be parsed, that row shows the built-in defaults and disables editing so
+the unreadable file is never overwritten.
+
 ## Local-first does not mean offline-only
 
 There is no Rennet backend and no Rennet telemetry service. A selected harness

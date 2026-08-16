@@ -1,10 +1,15 @@
-import type {
-  AppearanceScheme,
-  GlobalConfig,
-  ProjectVisibility,
-  ResolvedProvenance,
-  SettingsLayer,
+import {
+  type AppearanceScheme,
+  appearanceSchemeSchema,
+  type GlobalConfig,
+  type Locus,
+  locusSchema,
+  type ProjectVisibility,
+  projectVisibilitySchema,
+  type ResolvedProvenance,
+  type SettingsLayer,
 } from "@rennet/protocol";
+import { HOST_LOCUS } from "./locus";
 
 /**
  * The settings resolver — provenance is the return type, not a feature (Settings
@@ -13,10 +18,18 @@ import type {
  * lowest-first list of contributions, so the surface renders the RESOLVER's own
  * answer rather than a recomputed one that could silently disagree with the engine.
  *
- * The ladder is `builtin < global < repo` (a slice of the plan's eight layers —
- * the ones that exist as consumed config today). Precedence is specificity-wins:
- * the highest layer that offered a value is effective; the rest are inert
- * contributions, kept so "why is this value X?" is always answerable on the surface.
+ * The ladder is `builtin < detected < global < repo` (the four layers with a live
+ * producer today; `LAYER_ORDER` is the single source of precedence). `detected` is
+ * the environment-derived rung — today, execution-locus auto-detection — so a value
+ * the machine guessed enters the ladder as an ordinary contribution any explicit
+ * user choice beats. Precedence is specificity-wins: the highest offered layer is
+ * effective; the rest are inert contributions, kept so "why is this value X?" is
+ * always answerable on the surface.
+ *
+ * Every consumed setting is DECLARED once in `SETTINGS_REGISTRY` (its validator,
+ * builtin default, permitted layers, merge strategy, and provenance renderer), and
+ * both the generic `resolve` and the settings surface derive from it — adding a
+ * setting is one registry entry, not a new resolve function plus hand-wired plumbing.
  *
  * Pure: no I/O, no clock. The adapters read the files; this only merges.
  */
@@ -28,36 +41,115 @@ export interface Resolved<T> {
   readonly provenance: ResolvedProvenance;
 }
 
+/**
+ * The single lowest→highest precedence list. Future rungs (a `workspace` layer
+ * between `global` and `repo`, a `changeset` layer above `repo`) slot in as one
+ * enum member + one insertion here — no re-keying of stored values, because files
+ * never store a layer name; a layer is WHERE a file is.
+ */
+export const LAYER_ORDER: readonly SettingsLayer[] = ["builtin", "detected", "global", "repo"];
+
+/**
+ * One setting's declaration: its validator (reused from the protocol schemas so it
+ * cannot drift from the malformed-config check), its builtin default, the layers
+ * permitted to set it, its merge strategy, and how a value renders for provenance.
+ */
+export interface SettingDeclaration<T> {
+  readonly key: string;
+  /** Validate/parse an unknown value to `T` (reuses the protocol zod schema). */
+  readonly validate: (value: unknown) => T;
+  readonly builtinDefault: T;
+  readonly layers: readonly SettingsLayer[];
+  readonly merge: "replace";
+  readonly render: (value: T) => string;
+}
+
 /** The built-in defaults — the base of every ladder, owned by nobody, ever. */
 export const BUILTIN_SCHEME: AppearanceScheme = "system";
 export const BUILTIN_VISIBILITY: ProjectVisibility = "local";
 export const BUILTIN_PROMOTED = false;
 
+const identity = (value: string): string => value;
+/** Provenance string for a locus: `"host"` or `"WSL · <distro>"` (design Decision 3). */
+const renderLocus = (locus: Locus): string =>
+  locus.kind === "host" ? "host" : `WSL · ${locus.distro}`;
+
+const SCHEME_SETTING: SettingDeclaration<AppearanceScheme> = {
+  key: "scheme",
+  validate: (value) => appearanceSchemeSchema.parse(value),
+  builtinDefault: BUILTIN_SCHEME,
+  layers: ["builtin", "global"],
+  merge: "replace",
+  render: identity,
+};
+
+const VISIBILITY_SETTING: SettingDeclaration<ProjectVisibility> = {
+  key: "visibility",
+  validate: (value) => projectVisibilitySchema.parse(value),
+  builtinDefault: BUILTIN_VISIBILITY,
+  layers: ["builtin", "repo"],
+  merge: "replace",
+  render: identity,
+};
+
+const PROMOTED_SETTING: SettingDeclaration<boolean> = {
+  key: "promoted",
+  // No protocol schema for a bare flag; a boolean IS its own validator.
+  validate: (value) => {
+    if (typeof value !== "boolean") throw new Error("promoted must be a boolean");
+    return value;
+  },
+  builtinDefault: BUILTIN_PROMOTED,
+  layers: ["builtin", "repo"],
+  merge: "replace",
+  render: (value) => String(value),
+};
+
+const LOCUS_SETTING: SettingDeclaration<Locus> = {
+  key: "locus",
+  validate: (value) => locusSchema.parse(value),
+  builtinDefault: HOST_LOCUS,
+  layers: ["builtin", "detected", "repo"],
+  merge: "replace",
+  render: renderLocus,
+};
+
+/** Every consumed setting, keyed by id. Adding a setting is one entry here. */
+export const SETTINGS_REGISTRY = {
+  scheme: SCHEME_SETTING,
+  visibility: VISIBILITY_SETTING,
+  promoted: PROMOTED_SETTING,
+  locus: LOCUS_SETTING,
+} as const;
+
 /**
- * Fold a lowest-first list of `(layer, value?)` offers into a `Resolved<T>`. The
- * last defined offer wins (specificity: later layers are more specific); every
- * offer that supplied a value becomes a contribution, exactly one flagged
- * effective. `render` stringifies a value for the provenance display (so a boolean
- * setting like promotion carries `"true"`/`"false"` on the surface). The builtin
- * offer must always supply a value, so a result is total.
+ * Resolve a setting by folding its offers in `LAYER_ORDER`. `builtin` always
+ * contributes the declared default (so a result is total); every other layer
+ * contributes only if it offered a defined value AND the declaration permits it —
+ * an offer at a forbidden layer is a programming error and throws. The last
+ * (highest) contribution is effective; every offer is kept as a contribution so the
+ * surface can explain the value. `replace` is the only strategy any registered key
+ * needs today (each offer wholly supersedes the lower ones).
  */
-function fold<T>(
-  offers: ReadonlyArray<{ layer: SettingsLayer; value: T | undefined }>,
-  render: (value: T) => string,
+export function resolve<T>(
+  decl: SettingDeclaration<T>,
+  offers: Partial<Record<SettingsLayer, T | undefined>>,
 ): Resolved<T> {
   const contributions: ResolvedProvenance["contributions"] = [];
   let effectiveLayer: SettingsLayer = "builtin";
-  let effectiveValue: T | undefined;
-  for (const offer of offers) {
-    if (offer.value === undefined) continue;
-    contributions.push({ layer: offer.layer, value: render(offer.value), effective: false });
-    effectiveLayer = offer.layer;
-    effectiveValue = offer.value;
+  let effectiveValue: T = decl.builtinDefault;
+  for (const layer of LAYER_ORDER) {
+    const value = layer === "builtin" ? decl.builtinDefault : offers[layer];
+    if (value === undefined) continue;
+    if (layer !== "builtin" && !decl.layers.includes(layer)) {
+      throw new Error(`settings: layer "${layer}" may not set "${decl.key}"`);
+    }
+    contributions.push({ layer, value: decl.render(value), effective: false });
+    effectiveLayer = layer;
+    effectiveValue = value;
   }
-  // The last contribution pushed IS the effective one (offers are lowest-first, so
-  // the last defined value is the most specific). Flag it in place.
   const last = contributions.at(-1);
-  if (last === undefined || effectiveValue === undefined) {
+  if (last === undefined) {
     throw new Error("settings resolver: no builtin value supplied (unreachable)");
   }
   last.effective = true;
@@ -68,20 +160,12 @@ function fold<T>(
   };
 }
 
-const identity = (value: string): string => value;
-
 /**
  * Resolve the appearance scheme: builtin `system`, overridden by the global
  * personal config. There is no repo layer for a personal preference.
  */
 export function resolveScheme(global: GlobalConfig): Resolved<AppearanceScheme> {
-  return fold<AppearanceScheme>(
-    [
-      { layer: "builtin", value: BUILTIN_SCHEME },
-      { layer: "global", value: global.appearance?.scheme },
-    ],
-    identity,
-  );
+  return resolve(SCHEME_SETTING, { global: global.appearance?.scheme });
 }
 
 /**
@@ -93,13 +177,7 @@ export function resolveScheme(global: GlobalConfig): Resolved<AppearanceScheme> 
 export function resolveVisibility(
   repoVisibility: ProjectVisibility | undefined,
 ): Resolved<ProjectVisibility> {
-  return fold<ProjectVisibility>(
-    [
-      { layer: "builtin", value: BUILTIN_VISIBILITY },
-      { layer: "repo", value: repoVisibility },
-    ],
-    identity,
-  );
+  return resolve(VISIBILITY_SETTING, { repo: repoVisibility });
 }
 
 /**
@@ -109,11 +187,15 @@ export function resolveVisibility(
  * or an explicit repo-set value (the wireframe's "every row states its source").
  */
 export function resolvePromoted(repoPromoted: boolean | undefined): Resolved<boolean> {
-  return fold<boolean>(
-    [
-      { layer: "builtin", value: BUILTIN_PROMOTED },
-      { layer: "repo", value: repoPromoted },
-    ],
-    (value) => String(value),
-  );
+  return resolve(PROMOTED_SETTING, { repo: repoPromoted });
+}
+
+/**
+ * Resolve a project's execution locus through the ladder (not around it): builtin
+ * `host`, the `detected` environment guess (auto-detection from the repo path), and
+ * the persisted `repo` override, in that precedence. `detected` is the value
+ * detection offers; `repoValue` is the persisted override or `undefined`.
+ */
+export function resolveLocus(detected: Locus, repoValue: Locus | undefined): Resolved<Locus> {
+  return resolve(LOCUS_SETTING, { detected, repo: repoValue });
 }
