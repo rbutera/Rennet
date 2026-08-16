@@ -6,7 +6,12 @@ import type {
   ProposalChunk,
 } from "@rennet/types";
 import { describe, expect, it } from "vitest";
-import { bodyJsonSchema, CHUNK_ASSIGNABLE_ANGLES } from "./bodies";
+import {
+  bodyJsonSchema,
+  CHUNK_ASSIGNABLE_ANGLES,
+  RETIRED_CHUNK_ANGLES,
+  stripRetiredChunkAngles,
+} from "./bodies";
 import { computeInputDigest, validateDocument } from "./rsp";
 
 /** Fixture accessor: a chunk that must exist, without a non-null assertion. */
@@ -92,7 +97,7 @@ const VALID_PROPOSAL: DecompositionProposalBody = {
 const VALID_SKELETON: DecompositionSkeletonBody = {
   chunks: [
     { chunkId: "c1", hunkIds: ["h1"], angles: ["sequence"] },
-    { chunkId: "c2", hunkIds: ["h2", "h3"], angles: ["claims"] },
+    { chunkId: "c2", hunkIds: ["h2", "h3"], angles: ["decisions"] },
   ],
   readingOrder: ["c1", "c2"],
   residue: [],
@@ -198,18 +203,21 @@ describe("V103 — acyclic edges + topological reading-order cover", () => {
 });
 
 describe("V104 — only chunk-assignable angles", () => {
-  it("exposes the closed set", () => {
-    expect([...CHUNK_ASSIGNABLE_ANGLES]).toEqual([
-      "sequence",
-      "decisions",
-      "claims",
-      "blast-radius",
-    ]);
+  it("exposes the closed set (claims retired, #221)", () => {
+    expect([...CHUNK_ASSIGNABLE_ANGLES]).toEqual(["sequence", "decisions", "blast-radius"]);
   });
 
   it("rejects a chunk assigned to noise", () => {
     const body = clone(VALID_PROPOSAL);
     (chunkAt(body, 0) as { angles: string[] }).angles = ["noise"];
+    const report = validate(proposalDoc(body));
+    expect(report.admitted).toBe(false);
+    expect(codes(report)).toContain("V104");
+  });
+
+  it("rejects a chunk assigned to the retired claims angle (#221)", () => {
+    const body = clone(VALID_PROPOSAL);
+    (chunkAt(body, 0) as { angles: string[] }).angles = ["claims"];
     const report = validate(proposalDoc(body));
     expect(report.admitted).toBe(false);
     expect(codes(report)).toContain("V104");
@@ -221,6 +229,22 @@ describe("V104 — only chunk-assignable angles", () => {
     const report = validate(proposalDoc(body));
     expect(report.admitted).toBe(false);
     expect(codes(report)).toContain("V104");
+  });
+});
+
+describe("retired chunk angles — normalize-on-read for persisted docs (#221)", () => {
+  it("names the retired set", () => {
+    expect([...RETIRED_CHUNK_ANGLES]).toEqual(["claims"]);
+  });
+
+  it("strips retired values but keeps live angles, order preserved", () => {
+    expect(stripRetiredChunkAngles(["claims", "blast-radius"])).toEqual(["blast-radius"]);
+    expect(stripRetiredChunkAngles(["sequence", "claims", "decisions"])).toEqual([
+      "sequence",
+      "decisions",
+    ]);
+    // A chunk whose only angle was claims drops off every angle queue (design.md 2).
+    expect(stripRetiredChunkAngles(["claims"])).toEqual([]);
   });
 });
 

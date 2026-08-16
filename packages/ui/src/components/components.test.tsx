@@ -14,8 +14,8 @@ function countOccurrences(html: string, needle: string): number {
   return html.split(needle).length - 1;
 }
 
-describe("LensSwitcher — six canvases, blast-radius is overlay only", () => {
-  it("renders exactly six selectable canvas tabs and a separate overlay toggle", () => {
+describe("LensSwitcher — five canvases, blast-radius is overlay only, no Claims (#221)", () => {
+  it("renders exactly five selectable canvas tabs, no Claims, and a separate overlay toggle", () => {
     const html = renderToStaticMarkup(
       <LensSwitcher
         angle="decisions"
@@ -26,8 +26,10 @@ describe("LensSwitcher — six canvases, blast-radius is overlay only", () => {
         onToggleScheme={noop}
       />,
     );
-    expect(countOccurrences(html, 'role="tab"')).toBe(6);
-    // Blast radius is a toggle (aria-pressed), never a sixth tab.
+    expect(countOccurrences(html, 'role="tab"')).toBe(5);
+    // The Claims lens is retired — Decisions owns that ground (#221).
+    expect(html).not.toContain(">Claims<");
+    // Blast radius is a toggle (aria-pressed), never a tab.
     expect(html).toContain("Blast radius");
     expect(html).toContain('aria-pressed="false"');
     expect(html).not.toContain('role="tab" aria-selected="false">Blast');
@@ -100,16 +102,16 @@ describe("DecisionsCanvas — roll-up, honest counts, no truncation", () => {
 });
 
 describe("FlatCanvas — empty-but-honest", () => {
-  it("says an empty claims angle is empty, not unchecked", () => {
+  it("says an empty flat angle is empty, honestly", () => {
     const html = renderToStaticMarkup(
       <FlatCanvas
-        canvas={demoCanvases().claims}
+        canvas={demoCanvases().flagged}
         overlayOn={false}
         onApproveScope={noop}
         onSelectElement={noop}
       />,
     );
-    expect(html).toContain("empty, not unchecked");
+    expect(html).toContain("This angle is empty.");
   });
 
   it("lists spec requirements", () => {
@@ -167,24 +169,24 @@ describe("L3 marks — visually distinct as the agent's hand", () => {
   });
 });
 
-describe("CanvasWorkspace — the six canvases, on screen", () => {
+describe("CanvasWorkspace — the five canvases, on screen", () => {
   it("renders the decisions canvas by default with its lens switcher", () => {
     const html = renderToStaticMarkup(
       <CanvasWorkspace canvases={demoCanvases()} store={createViewStore()} />,
     );
     expect(html).toContain("canvas-app");
-    expect(countOccurrences(html, 'role="tab"')).toBe(6);
+    expect(countOccurrences(html, 'role="tab"')).toBe(5);
     expect(html).toContain("decisions-canvas");
     expect(html).toContain('data-scheme="dark"');
   });
 
   it("switches to a flat canvas for a lens with no dedicated view", () => {
-    // "claims" has no dedicated lens (flagged/noise/decisions/spec do), so it falls
-    // through to the FlatCanvas. ("spec" is now exhaustive — the viewer for a change or
-    // the explicit no-change empty state; see the spec-angle empty-state test.)
-    const store = createViewStore({ angle: "claims" });
+    // "sequence" is the flat fall-through: flagged/noise/decisions/spec each have a
+    // dedicated view, so only sequence renders the FlatCanvas. ("spec" is now
+    // exhaustive — the viewer for a change or the explicit no-change empty state.)
+    const store = createViewStore({ angle: "sequence" });
     const html = renderToStaticMarkup(<CanvasWorkspace canvases={demoCanvases()} store={store} />);
-    expect(html).toContain("flat-claims");
+    expect(html).toContain("flat-sequence");
     expect(html).not.toContain("decisions-canvas");
   });
 

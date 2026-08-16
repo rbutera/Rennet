@@ -8,7 +8,7 @@
  *   V100 totality        — ⋃chunks.hunks ∪ residue == the offered hunk set, exactly
  *   V101 no duplication  — no hunk occurrence placed in two chunks
  *   V103 acyclic order   — edges are a DAG; readingOrder is a topological cover
- *   V104 angle set       — a chunk may only declare sequence/decisions/claims/blast-radius
+ *   V104 angle set       — a chunk may only declare sequence/decisions/blast-radius
  *   V105 rationale       — every proposal chunk carries a non-empty rationale
  *   V106 completeness    — chunk ids are unique; every referenced chunk is declared
  *   V108 body shape      — the body has the right structural shape at all (gate)
@@ -24,9 +24,25 @@ import { z } from "zod";
 
 /**
  * The closed set of angles a chunk may be assigned to. Excludes `noise` (verified
- * only by deterministic checkers) and `spec` (a queue over requirements). V104.
+ * only by deterministic checkers) and `spec` (a queue over requirements). The
+ * `claims` angle is retired (issue #221; the Decisions lens owns that ground). V104.
  */
-export const CHUNK_ASSIGNABLE_ANGLES = ["sequence", "decisions", "claims", "blast-radius"] as const;
+export const CHUNK_ASSIGNABLE_ANGLES = ["sequence", "decisions", "blast-radius"] as const;
+
+/**
+ * Chunk angles a persisted decomposition may still carry but the product no longer
+ * admits (issue #221 retired `claims`). The persistence read path strips these so an
+ * old review still opens — a chunk whose only angle was retired simply drops off every
+ * angle queue, while a co-declared live angle survives. Newly produced docs cannot
+ * declare a retired angle: V104 rejects it.
+ */
+export const RETIRED_CHUNK_ANGLES = ["claims"] as const;
+
+/** Strip retired angle values from a persisted chunk's angle list (normalize-on-read). */
+export function stripRetiredChunkAngles(angles: readonly string[]): string[] {
+  const retired = new Set<string>(RETIRED_CHUNK_ANGLES);
+  return angles.filter((angle) => !retired.has(angle));
+}
 
 const EDGE_KINDS = ["enables", "evidenced-by", "contradicts", "duplicates", "refactor-of"] as const;
 

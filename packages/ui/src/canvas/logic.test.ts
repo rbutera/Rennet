@@ -179,14 +179,17 @@ describe("zoomReducer — roll-up → cohort → element → diff, both directio
 });
 
 describe("rotateLens + refocusCursor — five lenses, fixed cursor hunk", () => {
-  it("blast-radius is NOT one of the selectable canvases (flagged is, issue #138)", () => {
-    expect(CANVAS_LENSES).toHaveLength(6);
+  it("blast-radius is NOT one of the selectable canvases (flagged is, issue #138); Claims is gone (#221)", () => {
+    expect(CANVAS_LENSES).toHaveLength(5);
     expect(CANVAS_LENSES).not.toContain("blast-radius");
+    expect(CANVAS_LENSES).not.toContain("claims");
     expect(CANVAS_LENSES).toContain("flagged");
   });
 
-  it("rotation cycles the angles both directions (flagged is the last, #138)", () => {
+  it("rotation cycles spec → sequence → decisions → noise → flagged, both directions (#138, #221)", () => {
     expect(rotateLens("spec", 1)).toBe("sequence");
+    expect(rotateLens("sequence", 1)).toBe("decisions");
+    expect(rotateLens("decisions", 1)).toBe("noise");
     expect(rotateLens("noise", 1)).toBe("flagged");
     expect(rotateLens("flagged", 1)).toBe("spec");
     expect(rotateLens("spec", -1)).toBe("flagged");

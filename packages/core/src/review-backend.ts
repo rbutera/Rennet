@@ -113,7 +113,6 @@ const ANGLE_ORDER: readonly CanvasAngle[] = [
   "decisions",
   "spec",
   "sequence",
-  "claims",
   "noise",
 ];
 

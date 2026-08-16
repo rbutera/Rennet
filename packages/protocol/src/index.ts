@@ -310,7 +310,7 @@ export const reviewSchema = objectSchemaFor<Review>()({
 // failing-capable schema (not a passthrough) so the IPC output surface has a real
 // positive control, mirroring the `Canvas` shape in `@rennet/types`.
 
-const canvasAngleSchema = z.enum(["spec", "sequence", "decisions", "claims", "noise", "flagged"]);
+const canvasAngleSchema = z.enum(["spec", "sequence", "decisions", "noise", "flagged"]);
 
 const substrateChunkRefSchema = objectSchemaFor<SubstrateChunkRef>()({
   chunkId: z.string(),
@@ -418,7 +418,6 @@ const canvasSetSchema = z.object({
   spec: canvasSchema,
   sequence: canvasSchema,
   decisions: canvasSchema,
-  claims: canvasSchema,
   noise: canvasSchema,
   // The flagged angle (issue #138) — placed by `projectFlagged`; empty until the
   // finding runner lands, but always present so the set stays exhaustive.
