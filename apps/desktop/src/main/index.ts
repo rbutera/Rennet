@@ -1343,7 +1343,11 @@ function registerCommandHandler(): void {
             event.sender.send(ASK_STREAM_CHANNEL, { reviewId, event: streamEvent });
         }
       : undefined;
-    return dispatch(name, input, { emitProgress, emitAskStream });
+    return dispatch(name, input, {
+      emitProgress,
+      progressRecipientId: event.sender.id,
+      emitAskStream,
+    });
   });
 }
 

@@ -5,7 +5,19 @@ import type {
   RennetBridge,
 } from "@rennet/protocol";
 import { useEffect, useRef, useState } from "react";
-import { ArrowRightIcon, CheckIcon, GitBranchIcon, SparkleIcon, TriangleIcon } from "./icons";
+import { ArrowRightIcon, CheckIcon, SparkleIcon, TriangleIcon } from "./icons";
+import { ProgressFeed } from "./progress-feed";
+import { deriveProgressView } from "./progress-feed-fold";
+
+const processCommandIds = new Map<string, string>();
+
+function processCommandId(projectId: string): string {
+  const existing = processCommandIds.get(projectId);
+  if (existing) return existing;
+  const created = crypto.randomUUID();
+  processCommandIds.set(projectId, created);
+  return created;
+}
 
 /**
  * The processing screen (issue #29, Rai's wireframe #2): after a project is added,
@@ -14,6 +26,11 @@ import { ArrowRightIcon, CheckIcon, GitBranchIcon, SparkleIcon, TriangleIcon } f
  * time. The narration is wired to the REAL generator stages streamed over the
  * bridge's `onProgress` channel (resolve → tree → workspace → conventions →
  * symbols → build → verify → store), never scripted text.
+ *
+ * The event-fold and the per-repo trail rendering now live in the SHARED narration
+ * organ (`ProgressFeed` + `deriveProgressView`, issue #71): this screen is its first
+ * live consumer. Context refresh and capture/review remain intended consumers;
+ * their production wiring is tracked by the unchecked issue #71 tasks.
  *
  * When the bridge has no push channel the screen degrades gracefully: a calm
  * spinner, then the completion summary from the command's resolved value. No gate,
@@ -44,7 +61,11 @@ export function ProjectProcessing({
     if (started.current) return;
     started.current = true;
 
-    const commandId = crypto.randomUUID();
+    // Keep one protocol-valid command UUID per project for this renderer session,
+    // so a remount re-attaches to the main-owned live run instead of minting a
+    // fresh identity. Main deduplicates concurrent invocations and replays the
+    // bounded live backlog; `started` only guards this mount.
+    const commandId = processCommandId(project.id);
     const unsubscribe = bridge.onProgress?.(commandId, (event) => {
       setEvents((prior) => [...prior, event]);
       if (event.kind === "done") setRepos(event.repos);
@@ -64,7 +85,7 @@ export function ProjectProcessing({
     return () => unsubscribe?.();
   }, [bridge, project.id]);
 
-  const view = deriveView(events, repos, project);
+  const view = deriveProgressView(events, repos, project);
 
   if (phase === "failed") {
     return (
@@ -115,13 +136,12 @@ export function ProjectProcessing({
         </p>
       </div>
 
-      {view.repoBlocks.length > 0 ? (
-        <div className="processing-repos">
-          {view.repoBlocks.map((block) => (
-            <RepoBlock key={block.repo} block={block} />
-          ))}
-        </div>
-      ) : null}
+      <ProgressFeed
+        blocks={view.repoBlocks}
+        onAnchor={(artifact) => {
+          if (artifact.kind === "project" && artifact.projectId === project.id) onOpen();
+        }}
+      />
 
       {done ? (
         <div className="processing-actions">
@@ -138,195 +158,4 @@ export function ProjectProcessing({
       ) : null}
     </div>
   );
-}
-
-/* ── one repo's live block ─────────────────────────────────────────────────── */
-
-interface RepoBlockView {
-  repo: string;
-  state: "processing" | "done" | "error";
-  /** The completed-stage trail (note + optional detail), oldest first. */
-  trail: { stage: string; note: string; detail?: string }[];
-  summary?: ProcessedRepoSummary;
-  error?: string;
-}
-
-function RepoBlock({ block }: { block: RepoBlockView }) {
-  return (
-    <div className="processing-repo" data-state={block.state}>
-      <p className="processing-repo-head">
-        <span className="processing-repo-icon" aria-hidden="true">
-          {block.state === "error" ? <TriangleIcon size={13} /> : <GitBranchIcon size={13} />}
-        </span>
-        <span className="processing-repo-name">{block.repo}</span>
-        {block.state === "done" && block.summary ? (
-          <span className="processing-repo-counts">{summaryLine(block.summary)}</span>
-        ) : null}
-        {block.state === "error" ? (
-          <span className="processing-repo-counts is-error">{block.error}</span>
-        ) : null}
-      </p>
-      {block.trail.length > 0 ? (
-        <ol className="processing-trail">
-          {block.trail.map((entry, index) => {
-            const last = index === block.trail.length - 1;
-            const active = block.state === "processing" && last;
-            return (
-              <li key={entry.stage} className={`processing-step${active ? " is-active" : ""}`}>
-                <span className="processing-step-mark" aria-hidden="true">
-                  {active ? <span className="processing-dot" /> : <CheckIcon size={12} />}
-                </span>
-                <span className="processing-step-note">{entry.note}</span>
-                {entry.detail ? (
-                  <span className="processing-step-detail">{entry.detail}</span>
-                ) : null}
-              </li>
-            );
-          })}
-        </ol>
-      ) : null}
-    </div>
-  );
-}
-
-/* ── deriving the view from the real event stream ──────────────────────────── */
-
-interface ProcessingView {
-  headline: string;
-  sub: string;
-  doneSummary: string;
-  /** The sub-line for the all-repos-failed completion state. */
-  failedSummary: string;
-  repoBlocks: RepoBlockView[];
-}
-
-/**
- * Fold the ordered event stream into a per-repo view. Every line comes from a
- * real event: the headline is the latest stage's note, the trail is the stages a
- * repo has actually completed, the counts are the built snapshot's real totals.
- */
-function deriveView(
-  events: readonly ProjectProcessEvent[],
-  repos: readonly ProcessedRepoSummary[],
-  project: Project,
-): ProcessingView {
-  const blocks = new Map<string, RepoBlockView>();
-  function ensure(repo: string): RepoBlockView {
-    const existing = blocks.get(repo);
-    if (existing) return existing;
-    const created: RepoBlockView = { repo, state: "processing", trail: [] };
-    blocks.set(repo, created);
-    return created;
-  }
-
-  let total = 0;
-  let currentIndex = 0;
-  let latestNote = "Getting ready";
-  let latestDetail: string | undefined;
-  let currentRepo: string | undefined;
-
-  for (const event of events) {
-    switch (event.kind) {
-      case "repo-start": {
-        total = event.total;
-        currentIndex = event.index;
-        currentRepo = event.repo;
-        ensure(event.repo);
-        latestNote = "Reading the repository";
-        latestDetail = undefined;
-        break;
-      }
-      case "stage": {
-        const block = ensure(event.repo);
-        // Collapse repeated emissions of the same stage (start then detail) into a
-        // single trail row, upgrading it with the detail when it arrives.
-        const tail = block.trail[block.trail.length - 1];
-        if (tail && tail.stage === event.stage) {
-          tail.note = event.note;
-          if (event.detail) tail.detail = event.detail;
-        } else {
-          block.trail.push({ stage: event.stage, note: event.note, detail: event.detail });
-        }
-        currentRepo = event.repo;
-        latestNote = event.note;
-        latestDetail = event.detail;
-        break;
-      }
-      case "repo-done": {
-        const block = ensure(event.repo);
-        block.state = "done";
-        block.summary = event.summary;
-        break;
-      }
-      case "repo-error": {
-        const block = ensure(event.repo);
-        block.state = "error";
-        block.error = event.message;
-        break;
-      }
-      case "done":
-        break;
-    }
-  }
-
-  // If the final summary arrived but per-repo events did not (degraded bridge),
-  // synthesise blocks from the resolved summaries so the done state still reads.
-  if (blocks.size === 0 && repos.length > 0) {
-    for (const summary of repos)
-      blocks.set(summary.repo, {
-        repo: summary.repo,
-        state: summary.ok ? "done" : "error",
-        trail: [],
-        summary: summary.ok ? summary : undefined,
-        error: summary.ok ? undefined : summary.error,
-      });
-  }
-
-  const headline = latestDetail ? `${latestNote} · ${latestDetail}` : latestNote;
-  const sub =
-    total > 1 && currentRepo
-      ? `${currentRepo} — repo ${currentIndex} of ${total}`
-      : currentRepo
-        ? currentRepo
-        : project.kind === "workspace"
-          ? "Building the workspace map"
-          : "Building the repo map";
-
-  return {
-    headline,
-    sub,
-    doneSummary: doneSummaryLine(repos, project),
-    failedSummary: failedSummaryLine(repos, project),
-    repoBlocks: [...blocks.values()],
-  };
-}
-
-function failedSummaryLine(repos: readonly ProcessedRepoSummary[], project: Project): string {
-  const noun = project.kind === "workspace" ? "repositories" : "repository";
-  if (repos.length > 1) return `None of the ${repos.length} ${noun} could be read.`;
-  const only = repos[0];
-  return only?.error
-    ? `The ${noun} could not be read: ${only.error}`
-    : `The ${noun} could not be read.`;
-}
-
-function doneSummaryLine(repos: readonly ProcessedRepoSummary[], project: Project): string {
-  const ok = repos.filter((repo) => repo.ok);
-  const failed = repos.length - ok.length;
-  if (repos.length === 0) return "The context map is ready.";
-  const files = ok.reduce((sum, repo) => sum + (repo.files ?? 0), 0);
-  const symbols = ok.reduce((sum, repo) => sum + (repo.symbols ?? 0), 0);
-  const repoWord = project.kind === "workspace" ? `${ok.length} repos · ` : "";
-  const failedTail = failed > 0 ? ` · ${failed} could not be read` : "";
-  return `${repoWord}${plural(files, "file")} mapped, ${plural(symbols, "symbol")} indexed${failedTail}`;
-}
-
-function summaryLine(summary: ProcessedRepoSummary): string {
-  const parts = [plural(summary.files ?? 0, "file"), plural(summary.symbols ?? 0, "symbol")];
-  if ((summary.references ?? 0) > 0) parts.push(plural(summary.references ?? 0, "reference"));
-  return parts.join(" · ");
-}
-
-function plural(count: number, one: string): string {
-  return `${count} ${count === 1 ? one : `${one}s`}`;
 }

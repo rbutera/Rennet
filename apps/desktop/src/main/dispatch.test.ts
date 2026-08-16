@@ -1712,6 +1712,7 @@ function frontDoorHarness(seed: {
   detected?: DetectedHarness[];
   processEvents?: ProjectProcessEvent[];
   processedRepos?: ProcessedRepoSummary[];
+  processProject?: DispatchDeps["processProject"];
 }): {
   dispatch: ReturnType<typeof createDispatch>;
   allowedRoots: Set<string>;
@@ -1768,11 +1769,13 @@ function frontDoorHarness(seed: {
         return { project, projects: [...stored] };
       },
     },
-    processProject: (input, emit) => {
-      processCalls.push(input);
-      for (const event of seed.processEvents ?? []) emit(event);
-      return Promise.resolve({ repos: seed.processedRepos ?? [] });
-    },
+    processProject:
+      seed.processProject ??
+      ((input, emit) => {
+        processCalls.push(input);
+        for (const event of seed.processEvents ?? []) emit(event);
+        return Promise.resolve({ repos: seed.processedRepos ?? [] });
+      }),
     discoverProject: (input) => {
       discoverCalls.push(input);
       return Promise.resolve({ ...discovery, path: input.path, kind: input.kind });
@@ -1939,6 +1942,69 @@ describe("createDispatch — front door (issue #29)", () => {
       projectId: "p1",
     })) as { repos: ProcessedRepoSummary[] };
     expect(out.repos).toEqual([summary]);
+  });
+
+  it("project.process replays a live run on remount and does not start a second build", async () => {
+    const summary: ProcessedRepoSummary = {
+      repo: "atlas",
+      path: "/orbital/atlas",
+      ok: true,
+      files: 12,
+      symbols: 8,
+    };
+    let emitFromBuild: ((event: ProjectProcessEvent) => void) | undefined;
+    let finishBuild: ((value: { repos: ProcessedRepoSummary[] }) => void) | undefined;
+    const processCalls: { projectId: string }[] = [];
+    const buildResult = new Promise<{ repos: ProcessedRepoSummary[] }>((resolve) => {
+      finishBuild = resolve;
+    });
+    const { dispatch } = frontDoorHarness({
+      processProject: (input, emit) => {
+        processCalls.push(input);
+        emitFromBuild = emit;
+        emit({ kind: "repo-start", repo: "atlas", index: 1, total: 1 });
+        return buildResult;
+      },
+    });
+    const commandId = randomUUID();
+    const beforeRemount: ProjectProcessEvent[] = [];
+    const afterRemount: ProjectProcessEvent[] = [];
+
+    const first = dispatch(
+      "project.process",
+      { commandId, projectId: "p1" },
+      {
+        progressRecipientId: "renderer-1",
+        emitProgress: (event) => beforeRemount.push(event),
+      },
+    );
+    await vi.waitFor(() =>
+      expect(beforeRemount.map((event) => event.kind)).toEqual(["repo-start"]),
+    );
+
+    const remounted = dispatch(
+      "project.process",
+      { commandId, projectId: "p1" },
+      {
+        progressRecipientId: "renderer-1",
+        emitProgress: (event) => afterRemount.push(event),
+      },
+    );
+    await vi.waitFor(() => expect(afterRemount.map((event) => event.kind)).toEqual(["repo-start"]));
+    expect(processCalls).toEqual([{ projectId: "p1" }]);
+
+    emitFromBuild?.({
+      kind: "repo-done",
+      repo: "atlas",
+      summary,
+      artifact: { kind: "project", projectId: "p1" },
+    });
+    finishBuild?.({ repos: [summary] });
+
+    await expect(first).resolves.toEqual({ repos: [summary] });
+    await expect(remounted).resolves.toEqual({ repos: [summary] });
+    expect(beforeRemount.map((event) => event.kind)).toEqual(["repo-start"]);
+    expect(afterRemount.map((event) => event.kind)).toEqual(["repo-start", "repo-done", "done"]);
   });
 });
 

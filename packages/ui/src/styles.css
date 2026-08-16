@@ -2650,6 +2650,23 @@ button {
 .processing-repo-name {
   font-weight: 600;
 }
+/* An anchored (landed) feed line: a real control that navigates to its artifact
+ * (issue #71). Reset the button chrome so it reads as the name, underlined on
+ * hover to signal it is activatable; an anchorless line stays a plain span. */
+.processing-repo-name.is-anchor {
+  appearance: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: 600;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.processing-repo-name.is-anchor:hover {
+  text-decoration: underline;
+}
 .processing-repo-counts {
   margin-left: auto;
   font-size: 12px;
