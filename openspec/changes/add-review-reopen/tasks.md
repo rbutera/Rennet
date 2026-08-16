@@ -6,16 +6,16 @@ control) proving the behavior is absent, then makes it pass. Gate is
 
 ## 1. Protocol + core: `review.load`
 
-- [ ] 1.1 RED: protocol test asserting `review.load` is a known command with
+- [x] 1.1 RED: protocol test asserting `review.load` is a known command with
       input `{ commandId, reviewId }` and output `{ review, repositoryPresent }`
       — fails on current `commandDefinitions`.
-- [ ] 1.2 Add the `review.load` command definition to
+- [x] 1.2 Add the `review.load` command definition to
       `packages/protocol/src/index.ts` (input: commandId + non-empty reviewId;
       output: `reviewSchema` + `repositoryPresent: z.boolean()`); test green.
-- [ ] 1.3 RED: core test asserting `ReviewService.reviewById` returns a
+- [x] 1.3 RED: core test asserting `ReviewService.reviewById` returns a
       persisted review by id when a newer review exists, and null for an
       unknown id — fails (method absent).
-- [ ] 1.4 Expose `ReviewService.reviewById(reviewId)` delegating to
+- [x] 1.4 Expose `ReviewService.reviewById(reviewId)` delegating to
       `ReviewStorePort.reviewById`; test green.
 
 ## 2. Dispatch: load handler + kill the latest-pin

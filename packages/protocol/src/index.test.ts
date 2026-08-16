@@ -53,6 +53,55 @@ describe("command protocol", () => {
   });
 });
 
+describe("review.load — reopen a persisted review by id (#324)", () => {
+  it("is a known command taking { commandId, reviewId }", () => {
+    expect(isCommandName("review.load")).toBe(true);
+    const parsed = parseCommandInput("review.load", {
+      commandId: "92e8f263-a7ee-4fd8-9c11-40c9f6682661",
+      reviewId: "review-7",
+    });
+    expect(parsed).toEqual({
+      commandId: "92e8f263-a7ee-4fd8-9c11-40c9f6682661",
+      reviewId: "review-7",
+    });
+  });
+
+  it("rejects an empty reviewId", () => {
+    expect(() =>
+      parseCommandInput("review.load", {
+        commandId: "92e8f263-a7ee-4fd8-9c11-40c9f6682661",
+        reviewId: "",
+      }),
+    ).toThrow();
+  });
+
+  it("outputs { review, repositoryPresent }", () => {
+    const output = commandDefinitions["review.load"].output;
+    // repositoryPresent is required, boolean; review is the review schema.
+    expect(output.safeParse({ review: null, repositoryPresent: true }).success).toBe(false);
+    // A minimal valid review shape is exercised elsewhere; here we prove the boolean is required.
+    expect(
+      output.safeParse({
+        review: {
+          id: "r",
+          repository: {
+            id: "repo",
+            root: "/repo",
+            commonDir: "/repo/.git",
+            baseRef: "main",
+            baseOid: "b",
+            headOid: "h",
+          },
+          patchsets: [],
+          activePatchsetId: "",
+          status: "active",
+          dispositions: [],
+        },
+      }).success,
+    ).toBe(false);
+  });
+});
+
 describe("span-grained disposition anchor schema (issue #78)", () => {
   const base = { type: "comment", body: "" } as const;
 

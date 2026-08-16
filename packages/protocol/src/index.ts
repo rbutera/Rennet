@@ -1733,6 +1733,21 @@ export const commandDefinitions = {
     }),
     output: z.object({ review: reviewSchema }),
   },
+  // ── review.load: reopen any persisted review by id (issue #324) ────────────
+  // A PURE READ. Returns the review exactly as folded from its persisted events —
+  // no event is appended, and the id need not be the globally-latest review. The
+  // one extra fact main provides is `repositoryPresent`: whether the review's
+  // recorded repository root still exists on disk, so the renderer can show honest
+  // missing-context status and skip the working-tree freshness watcher. The
+  // existing freshness/delta machinery decides staleness AFTER the load; nothing
+  // here blocks the load (Rule Zero — reading the user's own local state).
+  "review.load": {
+    input: z.object({
+      commandId: commandIdSchema,
+      reviewId: z.string().min(1),
+    }),
+    output: z.object({ review: reviewSchema, repositoryPresent: z.boolean() }),
+  },
   "review.setDisposition": {
     input: z.object({
       commandId: commandIdSchema,
