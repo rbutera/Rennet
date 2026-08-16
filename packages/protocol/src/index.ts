@@ -23,6 +23,7 @@ import type {
   DecisionWhy,
   DeltaAccount,
   DeltaAskAccount,
+  DeltaBeyondHunk,
   DeltaDigestResult,
   Disposition,
   DispositionAnchor,
@@ -254,10 +255,27 @@ const deltaAskAccountSchema = objectSchemaFor<DeltaAskAccount>()({
   type: dispositionTypeSchema,
   summary: z.string(),
   status: deltaAskStatusSchema,
+  // Handoff task attribution (issue #73 wave 3). Optional + additive: absent on a
+  // regenerate and on every legacy account, so old snapshots parse unchanged.
+  handoffTask: z
+    .object({ index: z.number().int().nonnegative(), title: z.string() })
+    .optional(),
 });
-const deltaAccountSchema = objectSchemaFor<DeltaAccount>()({
+// Hunk-grain beyond-asks (issue #73 wave 3): one uncovered new hunk, its file line range
+// and bucket. `side: "deletions"` on a pure-deletion hunk (range is the old-file image).
+const deltaBeyondHunkSchema = objectSchemaFor<DeltaBeyondHunk>()({
+  path: z.string().min(1),
+  span: anchorSpanSchema,
+  side: anchorSideSchema.optional(),
+  bucket: z.enum(["unasked-file", "asked-file"]),
+  excerpt: z.string(),
+});
+export const deltaAccountSchema = objectSchemaFor<DeltaAccount>()({
   asks: z.array(deltaAskAccountSchema),
   beyondAsks: z.array(z.string()),
+  // Hunk grain (issue #73 wave 3). Optional + additive: ABSENT ⇒ a legacy path-grain
+  // account (render path grain only); an EMPTY ARRAY ⇒ computed, nothing beyond.
+  beyondAskHunks: z.array(deltaBeyondHunkSchema).optional(),
 });
 
 export const reviewSchema = objectSchemaFor<Review>()({

@@ -36,9 +36,15 @@ Both current GitHub destinations are wired end to end:
   view-model plus paper component render that composed bundle before it runs; and
   the own-branch destination offers a "Hand off to agent" path that composes on
   surface entry, previews, and runs the exact previewed bundle from one action,
-  surfacing the outcome truthfully. The next slice is consuming the run's
-  successor patchset into a delta re-review (#73). The fuzzy sub-file matcher
-  exists but is not connected to disposition carry. When the acting path is
+  surfacing the outcome truthfully. The run's successor patchset now feeds a
+  HUNK-GRAIN delta re-review (#73): the deterministic account names the exact
+  hunks the agent changed beyond the asks — including an unrequested hunk inside
+  an asked file, which path grain cannot see — and consumes the composed bundle's
+  `traceMap` to attribute each ask to the task that ran it. The fuzzy sub-file
+  matcher exists but is DELIBERATELY not connected to disposition carry (a
+  confident fuzzy `move` can point a human's approval at code they never read —
+  issues #16/#254/#266 own that seam); the delta carry stays the byte-verified
+  one. When the acting path is
   called, the agent is allowed to edit and test with the full harness tool surface.
 - Blast radius, the project knowledge lifecycle, IPC field-fidelity fixes,
   shell-enabled verification turns, and honest invocation-budget behavior have
@@ -57,7 +63,7 @@ issues in the same motion.
 
 1. ~~Wire the handoff renderer loop~~ — **done** (#72 closed; #323 + #325 on `main`).
 2. ~~[#309 — blockingStates disclosure](https://github.com/rbutera/rennet/issues/309)~~ — **delivered**: the flagged runner now stamps the decomposition floor's `blockingStates` (R18) onto its `FlaggedReview` result (ok and failed alike); the Flagged lens replaces the unqualified "ran clean" copy with a qualified all-clear plus a per-blocker disclosure when ingestion was blocked, and the PublishSheet discloses the same blockers before the sign control. The disclosure is render-only honest copy — it never feeds `ledgerBlocksSign`/`resolveSign` or adds any acknowledgement (Rule Zero), proven by a DOM test that a sufficient hold still signs with the disclosure present.
-3. [#73 — hunk-grain beyond-asks](https://github.com/rbutera/rennet/issues/73): consume the handoff run's `traceMap` and structured hunks so the delta re-review narrates what the agent changed, including work beyond the asks. Completes the agent loop.
+3. ~~[#73 — hunk-grain beyond-asks](https://github.com/rbutera/rennet/issues/73)~~ — **delivered**: the delta re-review consumes the handoff run's `traceMap` and the decomposition floor's structured hunks so the deterministic, model-free account narrates the exact hunks the agent changed beyond the asks — the loud unasked-file bucket AND the quiet asked-file bucket (an unrequested hunk inside an asked file, which path grain structurally misses) — and attributes each ask to the composed task that ran it. Content-identity over changed-line bytes (pure line drift is not change), per-file truncation degrades honestly to path grain, all fields additive-optional (legacy snapshots validate and render unchanged), and the account gates nothing (Rule Zero). The fuzzy sub-file matcher stays deliberately unconnected to disposition carry (#16/#254/#266). Completes the agent loop.
 4. [#324 — `review.load` by id](https://github.com/rbutera/rennet/issues/324) plus the final [#297](https://github.com/rbutera/rennet/issues/297) follow-up: reopen a persisted review without its original PR/worktree context, then restore the navigation stack across restarts.
 5. Product-debt sweep, one branch: [#158](https://github.com/rbutera/rennet/issues/158) remainder, [#71](https://github.com/rbutera/rennet/issues/71) verify-or-close, [#239](https://github.com/rbutera/rennet/issues/239) raw-markdown keystroke, [#88](https://github.com/rbutera/rennet/issues/88) provenance re-stamping (three sites), and [#221](https://github.com/rbutera/rennet/issues/221) — Rai's verdict is **drop the Claims lens**.
 6. Windows support, phase 1: the WSL interop spike on the lancelot test bed (`wsl.exe` stdio + the Claude SDK launcher shim). A gate for the whole `add-windows-support` change: it can invalidate the design, so nothing later in that change starts before it reports. May run in parallel with waves 2–5 (disjoint files).

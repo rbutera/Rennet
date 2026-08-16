@@ -1725,6 +1725,53 @@ button {
 .delta-account-beyond-item {
   padding: 3px 6px;
 }
+/* The composed task that ran an ask on a handoff run (#73 wave 3) — narration only. */
+.delta-account-task {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+/* Hunk-grain beyond-asks (#73 wave 3): the exact changes beyond the asks, each row
+   anchoring to its span. NARRATION, not a second alarm — quieter than the amber alert;
+   the asked-file bucket is the case path grain cannot show. */
+.delta-account-hunks {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.delta-account-hunk-item {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 3px 6px;
+  inline-size: 100%;
+  text-align: start;
+}
+.delta-account-hunk-item[data-bucket="unasked-file"] .delta-account-hunk-bucket {
+  color: var(--amber);
+}
+.delta-account-hunk-span {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-soft);
+}
+.delta-account-hunk-bucket {
+  flex: none;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.delta-account-hunk-excerpt {
+  min-inline-size: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 11px;
+  color: var(--text-faint);
+}
 
 /* ── The "what was sent" inspector (issue #30) ─────────────────────────────── */
 /* Informational, model-free, gate-free: it shows the REAL assembled context — in

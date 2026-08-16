@@ -1,6 +1,22 @@
-import type { DeltaAccount, DeltaAskStatus, DeltaDigestResult } from "@rennet/types";
+import type { DeltaAccount, DeltaAskStatus, DeltaBeyondHunk, DeltaDigestResult } from "@rennet/types";
 
 export type { DeltaDigestResult };
+
+/** How many beyond-ask hunks the prompt enumerates before "…and N more" (honest cap). */
+const DIGEST_HUNK_CAP = 10;
+
+/** A plain-English label for a beyond-ask hunk's bucket — narration, never an accusation. */
+const BUCKET_PHRASE: Record<DeltaBeyondHunk["bucket"], string> = {
+  "unasked-file": "in a file no ask targeted",
+  "asked-file": "in an asked file, outside the asked lines",
+};
+
+/** One beyond-ask hunk as a prompt line: path, line range, and its bucket phrasing. */
+function describeBeyondHunk(hunk: DeltaBeyondHunk): string {
+  const { startLine, endLine } = hunk.span;
+  const range = endLine !== undefined && endLine !== startLine ? `${startLine}–${endLine}` : `${startLine}`;
+  return `${hunk.path} line${range.includes("–") ? "s" : ""} ${range} — ${BUCKET_PHRASE[hunk.bucket]}`;
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // review.deltaDigest — the light-tier prose over the delta account (#73 / M25,
@@ -79,6 +95,18 @@ export function buildDeltaDigestPrompt(account: DeltaAccount): string {
     lines.push("- (none)");
   } else {
     for (const path of account.beyondAsks) lines.push(`- ${path}`);
+  }
+  // Hunk-grain beyond-asks (issue #73 wave 3): the exact changes beyond the asks, still
+  // built from ONLY the account. Enumeration is CAPPED with an honest "and N more" so a
+  // large delta does not bloat the prompt while the count stays truthful. Absent (legacy
+  // account) or empty ⇒ no section, so an account with no hunk fields yields today's prompt.
+  const hunks = account.beyondAskHunks ?? [];
+  if (hunks.length > 0) {
+    lines.push("", "The exact changes beyond the asks (hunk grain):");
+    const shown = hunks.slice(0, DIGEST_HUNK_CAP);
+    for (const hunk of shown) lines.push(`- ${describeBeyondHunk(hunk)}`);
+    const remaining = hunks.length - shown.length;
+    if (remaining > 0) lines.push(`- …and ${remaining} more`);
   }
   lines.push(
     "",

@@ -201,6 +201,32 @@ export interface DeltaAskAccount {
   /** A short excerpt of the ask body, for the account's "what moved" line. */
   readonly summary: string;
   readonly status: DeltaAskStatus;
+  /**
+   * The composed task that carried this ask on a handoff run (issue #73 wave 3): the
+   * task's `index` in the verified bundle's `traceMap` plus its preview `title`, so the
+   * account can narrate "ran as task 2 — 'Tighten the parser'". Present ONLY when the
+   * successor was captured by a handoff run whose ask trace matched this ask; a plain
+   * regenerate carries none. Attribution is narration — it never alters `status`.
+   */
+  readonly handoffTask?: { readonly index: number; readonly title: string };
+}
+
+/**
+ * One change the successor made BEYOND every ask, at HUNK grain (issue #73 wave 3). A
+ * new hunk (its changed-line content appears in no prior hunk for the file or its rename
+ * source) that no ask covers. `span` is the hunk's file line range — the new-file range,
+ * or the OLD-file range for a pure-deletion hunk (with `side: "deletions"`). `bucket`
+ * separates a hunk in a file NO ask targeted (`"unasked-file"`, the loud scope-creep) from
+ * one inside an asked file but outside every asked span (`"asked-file"`). BOTH are honest
+ * narration of work the agent was allowed to do — never a violation, warning, or gate.
+ * `excerpt` is the first changed line, bounded — the human hook to the change.
+ */
+export interface DeltaBeyondHunk {
+  readonly path: string;
+  readonly span: AnchorSpan;
+  readonly side?: AnchorSide;
+  readonly bucket: "unasked-file" | "asked-file";
+  readonly excerpt: string;
 }
 
 /**
@@ -211,10 +237,17 @@ export interface DeltaAskAccount {
  * partition is total by construction: every changed path is either an ask's path or a
  * beyond-asks path, never silently dropped. This structured account is complete on its
  * own; optional light-tier prose (M25) only rephrases it and adds no fact.
+ *
+ * `beyondAskHunks` (issue #73 wave 3) is the HUNK-grain detail layered on top: the exact
+ * beyond-ask hunks, including one inside an asked file that path grain cannot see. It is
+ * ABSENT on a legacy account computed before hunk grain existed (⇒ render path grain
+ * only) and an EMPTY ARRAY when hunk grain WAS computed and found nothing beyond — the
+ * two are distinct, so the panel never shows precision it did not compute.
  */
 export interface DeltaAccount {
   readonly asks: readonly DeltaAskAccount[];
   readonly beyondAsks: readonly string[];
+  readonly beyondAskHunks?: readonly DeltaBeyondHunk[];
 }
 
 /**
@@ -3457,4 +3490,22 @@ export interface ComposedHandoffBundle {
   readonly digest: string;
   readonly composed: boolean;
   readonly traceMap: Readonly<Record<string, number>>;
+}
+
+/**
+ * The ask trace a handoff run hands to the successor capture (issue #73 wave 3) — the
+ * verified bundle's `traceMap` and task titles MATERIALISED per ask, projected down to
+ * exactly what the delta account needs to attribute each ask to its composed task. One
+ * entry per bundle ask: its anchor identity (path + span + side + type, so the fold
+ * matches it to a review disposition) plus the `taskIndex` and preview `taskTitle` the
+ * traceMap assigns it. Deliberately a SMALL projection — no prompts, no instruction
+ * bodies, no contexts — so nothing an agent executes enters the event log.
+ */
+export interface HandoffAskTrace {
+  readonly path: string;
+  readonly span?: AnchorSpan;
+  readonly side?: AnchorSide;
+  readonly type: DispositionType;
+  readonly taskIndex: number;
+  readonly taskTitle: string;
 }

@@ -75,7 +75,7 @@ export interface DecomposeOptions {
 
 // ── Raw hunk parsing ─────────────────────────────────────────────────────────
 
-interface RawHunk {
+export interface RawHunk {
   oldStart: number;
   oldLines: number;
   newStart: number;
@@ -84,14 +84,14 @@ interface RawHunk {
   body: string[];
 }
 
-interface ParsedFile {
+export interface ParsedFile {
   hunks: RawHunk[];
   hasModeChange: boolean;
 }
 
 const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@/;
 
-function parseFilePatch(patch: string): ParsedFile {
+export function parseFilePatch(patch: string): ParsedFile {
   const lines = patch.split("\n");
   const hunks: RawHunk[] = [];
   let current: RawHunk | null = null;
@@ -123,11 +123,11 @@ function parseFilePatch(patch: string): ParsedFile {
   return { hunks, hasModeChange };
 }
 
-function addedOf(body: readonly string[]): string[] {
+export function addedOf(body: readonly string[]): string[] {
   return body.filter((l) => l.charAt(0) === "+").map((l) => l.slice(1));
 }
 
-function deletedOf(body: readonly string[]): string[] {
+export function deletedOf(body: readonly string[]): string[] {
   return body.filter((l) => l.charAt(0) === "-").map((l) => l.slice(1));
 }
 

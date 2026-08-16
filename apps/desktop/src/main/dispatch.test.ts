@@ -2722,6 +2722,54 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
     expect(out.result.orphaned).toBe(out.result.review.orphaned?.length ?? 0);
   });
 
+  it("run's captured review attributes each ask to its composed task (traceMap consumed, #73 wave 3)", async () => {
+    // A capture yielding a distinct successor so the fold stamps a delta account: p1 has
+    // src/a.ts; the successor changes it (addressed).
+    let calls = 0;
+    const capturePort: PatchsetCapturePort = {
+      capture: () => {
+        calls += 1;
+        return Promise.resolve(
+          calls === 1
+            ? { ...patchset(), id: "pa1", files: [
+                { path: "src/a.ts", status: "modified", additions: 1, deletions: 0, binary: false, patch: "A1" },
+              ], rawDiff: "A1" }
+            : { ...patchset(), id: "pa2", files: [
+                { path: "src/a.ts", status: "modified", additions: 2, deletions: 0, binary: false, patch: "A2" },
+              ], rawDiff: "A2" },
+        );
+      },
+    };
+    const { dispatch } = harness(undefined, {}, { capturePort, runHandoffTurn: async () => HANDOFF_TURN });
+    const review = await capturedReview(dispatch);
+    // Stage a disposition the bundle ask will match by anchor identity.
+    await dispatch("review.setDisposition", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      patchsetId: review.activePatchsetId,
+      path: "src/a.ts",
+      disposition: "request-change",
+      body: "add a guard clause",
+    });
+    const bundle = await composeBundleFor(dispatch, review.id, [
+      { path: "src/a.ts", type: "request-change", body: "add a guard clause" },
+    ]);
+    const priorActiveId = review.activePatchsetId;
+    const out = (await dispatch("review.handoff.run", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      bundle,
+    })) as { status: string; result: { review: Review } };
+
+    expect(out.status).toBe("ran");
+    // The traceMap is consumed: the ask names the composed task that ran it.
+    const ask = out.result.review.deltaAccount?.asks.find((entry) => entry.path === "src/a.ts");
+    expect(ask?.handoffTask).toBeDefined();
+    expect(ask?.handoffTask?.index).toBe(0);
+    // R28 still holds: the prior patchset survives byte-identical alongside the successor.
+    expect(out.result.review.patchsets.map((p) => p.id)).toContain(priorActiveId);
+  });
+
   it("run reports the deterministic carry's REAL non-zero count, not a fabricated constant (issue #254)", async () => {
     // A file that stays BYTE-IDENTICAL across the handoff capture — its approval MUST
     // carry, so the reported `carriedForward` must be a real 1, pinned to the outcome.

@@ -2233,6 +2233,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           account={review.deltaAccount}
           digest={deltaDigest}
           onAnchor={(path) => {
+            // Open the Files view on the anchored path. A hunk-grain row also carries the
+            // exact span (#73 wave 3); the file substrate here navigates by path, so the
+            // span rides through to the same file (the reviewer lands on the changed file
+            // and reads the hunk in context). Span-precise scroll is #16's seam.
             setView("review");
             setSelectedPath(path);
           }}

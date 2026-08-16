@@ -88,3 +88,67 @@ describe("draftDeltaDigest — the honesty floor (#73/M25)", () => {
     expect(port).toHaveBeenCalledOnce();
   });
 });
+
+describe("buildDeltaDigestPrompt — hunk-grain facts (#73 wave 3)", () => {
+  const hunkAccount: DeltaAccount = {
+    asks: account.asks,
+    beyondAsks: ["src/metrics/emit.ts"],
+    beyondAskHunks: [
+      {
+        path: "src/rate/keys.ts",
+        span: { startLine: 40, endLine: 42 },
+        bucket: "asked-file",
+        excerpt: "+  const extra = compute();",
+      },
+      {
+        path: "src/metrics/emit.ts",
+        span: { startLine: 5 },
+        bucket: "unasked-file",
+        excerpt: "+emit()",
+      },
+    ],
+  };
+
+  it("lists each beyond-ask hunk's path, range, and bucket", () => {
+    const prompt = buildDeltaDigestPrompt(hunkAccount);
+    expect(prompt).toContain("src/rate/keys.ts lines 40–42");
+    expect(prompt).toContain("in an asked file, outside the asked lines");
+    expect(prompt).toContain("src/metrics/emit.ts line 5");
+    expect(prompt).toContain("in a file no ask targeted");
+  });
+
+  it("contains nothing outside the structured account (no excerpt-only invented code)", () => {
+    // The prompt states ranges + buckets from the account; it must not leak diff text the
+    // account does not carry. The excerpt is account data, but the grounding rule holds:
+    // every path/line in the prompt appears in the account.
+    const prompt = buildDeltaDigestPrompt(hunkAccount);
+    for (const line of prompt.split("\n")) {
+      const pathMatch = line.match(/src\/[\w/.-]+/);
+      if (!pathMatch) continue;
+      const known =
+        hunkAccount.asks.some((a) => a.path === pathMatch[0]) ||
+        hunkAccount.beyondAsks.includes(pathMatch[0]) ||
+        (hunkAccount.beyondAskHunks ?? []).some((h) => h.path === pathMatch[0]);
+      expect(known).toBe(true);
+    }
+  });
+
+  it("caps enumeration with an honest 'and N more' on a large delta", () => {
+    const many: DeltaAccount = {
+      asks: [],
+      beyondAsks: [],
+      beyondAskHunks: Array.from({ length: 14 }, (_unused, index) => ({
+        path: `src/f${index}.ts`,
+        span: { startLine: index + 1 },
+        bucket: "unasked-file" as const,
+        excerpt: `+line ${index}`,
+      })),
+    };
+    const prompt = buildDeltaDigestPrompt(many);
+    expect(prompt).toContain("…and 4 more"); // 14 − cap(10)
+  });
+
+  it("an account with NO hunk fields yields today's prompt (no hunk section)", () => {
+    expect(buildDeltaDigestPrompt(account)).not.toContain("hunk grain");
+  });
+});

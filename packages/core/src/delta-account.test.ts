@@ -1,6 +1,6 @@
-import type { Disposition, Patchset } from "@rennet/types";
+import { DIFF_TRUNCATION_MARKER, type Disposition, type Patchset } from "@rennet/types";
 import { describe, expect, it } from "vitest";
-import { buildDeltaAccount, changedPathsBetween } from "./delta-account";
+import { buildDeltaAccount, changedPathsBetween, newHunksBetween } from "./delta-account";
 
 // A span-grained ask on `path`, or path-grained when `span` is omitted.
 function ask(
@@ -181,5 +181,178 @@ describe("changedPathsBetween — the deterministic changed-path signal", () => 
     const prior = patchset("p1", [file("a.ts", "@@ -1 +1 @@\n-same")]);
     const successor = patchset("p2", [file("a.ts", "@@ -1 +1 @@\n-same")]);
     expect(changedPathsBetween(prior, successor)).toEqual([]);
+  });
+});
+
+// ── Hunk-grain beyond-asks (#73 delta re-review, wave 3) ─────────────────────
+// The case PATH grain structurally cannot see: an unrequested hunk INSIDE an asked
+// file. Path grain reports the file "partially addressed" (an ask covers it), so the
+// extra change vanishes. Hunk grain must surface it in the asked-file bucket.
+describe("buildDeltaAccount — hunk-grain beyond-asks (#73 wave 3)", () => {
+  // a.ts: the asked span (lines 10–11) carries byte-identically, AND the agent adds a
+  // second, non-overlapping hunk (lines 40–41) no ask targets.
+  const priorA = patchset("p1", [file("a.ts", "@@ -10,2 +10,2 @@\n-a\n+b")]);
+  const successorA = patchset("p2", [
+    file("a.ts", "@@ -10,2 +10,2 @@\n-a\n+b\n@@ -40,2 +40,2 @@\n-c\n+d"),
+  ]);
+  const askA = ask("a.ts", "Fix the loop bound", { startLine: 10, endLine: 11 });
+
+  it("surfaces an unrequested hunk inside an asked file (the case path grain misses)", () => {
+    const account = buildDeltaAccount({
+      asks: [askA],
+      carried: [askA], // the flagged span survived byte-identical…
+      changedPaths: ["a.ts"], // …but the agent changed a.ts elsewhere.
+      prior: priorA,
+      successor: successorA,
+    });
+    // Path grain alone: a.ts is "partially addressed" and NOTHING beyond (an ask
+    // covers the file) — the extra hunk is invisible.
+    expect(account.asks[0]?.status).toBe("partially-addressed");
+    expect(account.beyondAsks).toEqual([]);
+    // Hunk grain: the second hunk surfaces in the asked-file bucket with its range.
+    expect(account.beyondAskHunks).toBeDefined();
+    const hunk = account.beyondAskHunks?.find((entry) => entry.path === "a.ts");
+    expect(hunk?.bucket).toBe("asked-file");
+    expect(hunk?.span.startLine).toBe(40);
+  });
+});
+
+describe("newHunksBetween — content-identity new-hunk detection (#73 wave 3)", () => {
+  it("pure line-number DRIFT yields no new hunk (identical changed lines, shifted lines)", () => {
+    // Same edit (-a/+b), different header line numbers (the base moved down by 20).
+    const prior = patchset("p1", [file("a.ts", "@@ -10,2 +10,2 @@\n-a\n+b")]);
+    const successor = patchset("p2", [file("a.ts", "@@ -30,2 +30,2 @@\n-a\n+b")]);
+    expect(newHunksBetween(prior, successor)).toEqual([]);
+  });
+
+  it("finds a genuinely new hunk (changed-line content absent from the prior patch)", () => {
+    const prior = patchset("p1", [file("a.ts", "@@ -10,2 +10,2 @@\n-a\n+b")]);
+    const successor = patchset("p2", [
+      file("a.ts", "@@ -10,2 +10,2 @@\n-a\n+b\n@@ -40,2 +40,2 @@\n-c\n+d"),
+    ]);
+    const found = newHunksBetween(prior, successor);
+    expect(found).toHaveLength(1);
+    expect(found[0]?.path).toBe("a.ts");
+    expect(found[0]?.hunk.newStart).toBe(40);
+  });
+
+  it("a TRUNCATED file (marker on either side) yields NO hunk claims — path grain only", () => {
+    const prior = patchset("p1", [file("big.ts", `@@ -1,2 +1,2 @@\n-a\n+b\n${DIFF_TRUNCATION_MARKER}`)]);
+    const successor = patchset("p2", [
+      file("big.ts", `@@ -1,2 +1,2 @@\n-a\n+B\n@@ -99,1 +99,1 @@\n+new\n${DIFF_TRUNCATION_MARKER}`),
+    ]);
+    expect(newHunksBetween(prior, successor)).toEqual([]);
+  });
+
+  it("multiset-matches duplicate identical hunks (each prior hunk absorbs at most one)", () => {
+    // Prior has ONE (-x/+y); successor has TWO. One is drift, the second is genuinely new.
+    const prior = patchset("p1", [file("a.ts", "@@ -1,2 +1,2 @@\n-x\n+y")]);
+    const successor = patchset("p2", [
+      file("a.ts", "@@ -1,2 +1,2 @@\n-x\n+y\n@@ -50,2 +50,2 @@\n-x\n+y"),
+    ]);
+    expect(newHunksBetween(prior, successor)).toHaveLength(1);
+  });
+});
+
+describe("buildDeltaAccount — hunk buckets and the four-fact fixture at hunk grain (#73 wave 3)", () => {
+  it("classifies an unasked-file hunk into the loud unasked-file bucket", () => {
+    const askA = ask("a.ts", "Fix a", { startLine: 1, endLine: 2 });
+    const prior = patchset("p1", [file("a.ts", "@@ -1,2 +1,2 @@\n-a\n+b")]);
+    const successor = patchset("p2", [
+      file("a.ts", "@@ -1,2 +1,2 @@\n-a\n+b"),
+      file("d.ts", "@@ -5,2 +5,2 @@\n-c\n+e"), // nobody asked about d.ts
+    ]);
+    const account = buildDeltaAccount({
+      asks: [askA],
+      carried: [askA],
+      changedPaths: ["d.ts"],
+      prior,
+      successor,
+    });
+    const hunk = account.beyondAskHunks?.find((entry) => entry.path === "d.ts");
+    expect(hunk?.bucket).toBe("unasked-file");
+    expect(hunk?.span.startLine).toBe(5);
+  });
+
+  it("the four-fact fixture at hunk grain: 2 addressed, 1 untouched, 1 unrequested hunk", () => {
+    // a.ts, b.ts addressed (their asked span changed → did not carry); c.ts untouched
+    // (carried, unchanged); an unrequested hunk lands in a.ts beyond the asked span.
+    const askA = ask("a.ts", "Rename a", { startLine: 1, endLine: 2 });
+    const askB = ask("b.ts", "Guard b", { startLine: 1, endLine: 2 });
+    const askC = ask("c.ts", "Drop c", { startLine: 1, endLine: 2 });
+    const prior = patchset("p1", [
+      file("a.ts", "@@ -1,2 +1,2 @@\n-a\n+a1"),
+      file("b.ts", "@@ -1,2 +1,2 @@\n-b\n+b1"),
+      file("c.ts", "@@ -1,2 +1,2 @@\n-c\n+c1"),
+    ]);
+    const successor = patchset("p2", [
+      // a.ts: the asked span changed (addressed) AND a second unrequested hunk at line 40.
+      file("a.ts", "@@ -1,2 +1,2 @@\n-a\n+a2\n@@ -40,2 +40,2 @@\n-z\n+z2"),
+      file("b.ts", "@@ -1,2 +1,2 @@\n-b\n+b2"), // addressed
+      file("c.ts", "@@ -1,2 +1,2 @@\n-c\n+c1"), // untouched (identical)
+    ]);
+    const account = buildDeltaAccount({
+      asks: [askA, askB, askC],
+      carried: [askC], // only c.ts's span survived byte-identical
+      changedPaths: ["a.ts", "b.ts"],
+      prior,
+      successor,
+    });
+    const status = (path: string) => account.asks.find((entry) => entry.path === path)?.status;
+    expect(status("a.ts")).toBe("addressed");
+    expect(status("b.ts")).toBe("addressed");
+    expect(status("c.ts")).toBe("untouched");
+    // The fourth fact at hunk grain: the unrequested a.ts hunk in the asked-file bucket.
+    const beyond = account.beyondAskHunks ?? [];
+    expect(beyond).toHaveLength(1);
+    expect(beyond[0]?.path).toBe("a.ts");
+    expect(beyond[0]?.bucket).toBe("asked-file");
+    expect(beyond[0]?.span.startLine).toBe(40);
+  });
+
+  it("computes an EMPTY array (not absent) when patchsets are given but nothing is beyond", () => {
+    const askA = ask("a.ts", "Fix a", { startLine: 1, endLine: 2 });
+    const prior = patchset("p1", [file("a.ts", "@@ -1,2 +1,2 @@\n-a\n+b")]);
+    const successor = patchset("p2", [file("a.ts", "@@ -1,2 +1,2 @@\n-a\n+c")]);
+    const account = buildDeltaAccount({
+      asks: [askA],
+      carried: [],
+      changedPaths: ["a.ts"],
+      prior,
+      successor,
+    });
+    expect(account.beyondAskHunks).toEqual([]); // computed, nothing beyond
+  });
+
+  it("is ABSENT (legacy path grain) when patchsets are NOT supplied", () => {
+    const account = buildDeltaAccount({ asks: [], carried: [], changedPaths: [] });
+    expect(account.beyondAskHunks).toBeUndefined();
+  });
+
+  it("attributes an ask to its composed task from the handoff trace (narration only)", () => {
+    const askA = ask("a.ts", "Fix a", { startLine: 1, endLine: 2 });
+    const account = buildDeltaAccount({
+      asks: [askA],
+      carried: [askA],
+      changedPaths: [],
+      handoff: [
+        {
+          path: "a.ts",
+          span: { startLine: 1, endLine: 2 },
+          side: "additions",
+          type: "request-change",
+          taskIndex: 2,
+          taskTitle: "Tighten the parser",
+        },
+      ],
+    });
+    expect(account.asks[0]?.handoffTask).toEqual({ index: 2, title: "Tighten the parser" });
+    expect(account.asks[0]?.status).toBe("untouched"); // attribution never alters status
+  });
+
+  it("carries NO attribution on a regenerate (no handoff trace)", () => {
+    const askA = ask("a.ts", "Fix a", { startLine: 1, endLine: 2 });
+    const account = buildDeltaAccount({ asks: [askA], carried: [askA], changedPaths: [] });
+    expect(account.asks[0]?.handoffTask).toBeUndefined();
   });
 });
