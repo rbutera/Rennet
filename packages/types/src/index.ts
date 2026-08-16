@@ -3293,6 +3293,26 @@ export interface OpenSpecChange {
   readonly design?: OpenSpecDesign;
   readonly tasks?: OpenSpecTasks;
   readonly specDeltas: readonly OpenSpecSpecDelta[];
+  /**
+   * The verbatim raw markdown of the change's artifacts, as read off disk (issue
+   * #239). Carried alongside the parsed model so the Spec viewer can offer the raw
+   * text one keystroke away — the structured rendering stays the default, and raw is
+   * the escape hatch #33 promised. Absent when the reader did not carry it (older
+   * producers, or a change parsed from a source without raw retention).
+   */
+  readonly raw?: OpenSpecChangeRaw;
+}
+
+/**
+ * The raw markdown of an OpenSpec change's artifacts, verbatim as read from disk —
+ * never a re-serialization of the parsed model (issue #239). `specDeltas` is empty
+ * rather than absent when there are no spec files.
+ */
+export interface OpenSpecChangeRaw {
+  readonly proposalMd?: string;
+  readonly designMd?: string;
+  readonly tasksMd?: string;
+  readonly specDeltas: readonly { readonly capability: string; readonly md: string }[];
 }
 
 /**

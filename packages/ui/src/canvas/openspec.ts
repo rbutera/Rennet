@@ -6,6 +6,7 @@ import type {
   OpenSpecArtifact,
   OpenSpecCapabilityNote,
   OpenSpecChange,
+  OpenSpecChangeRaw,
   OpenSpecDeltaOperation,
   OpenSpecDesignSection,
   OpenSpecProposal,
@@ -345,6 +346,8 @@ export interface OpenSpecViewModel {
   readonly taskGroups: readonly OpenSpecTaskGroupView[];
   readonly specDeltas: readonly OpenSpecDeltaView[];
   readonly summary: OpenSpecSummary;
+  /** The verbatim raw artifact markdown (#239), for the one-keystroke raw view. */
+  readonly raw?: OpenSpecChangeRaw;
 }
 
 /**
@@ -451,6 +454,7 @@ export function buildOpenSpecView(
     taskGroups,
     specDeltas,
     summary,
+    ...(change.raw ? { raw: change.raw } : {}),
   };
 }
 

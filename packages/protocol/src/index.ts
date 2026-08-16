@@ -45,6 +45,7 @@ import type {
   NoiseReview,
   OpenSpecCapabilityNote,
   OpenSpecChange,
+  OpenSpecChangeRaw,
   OpenSpecCoverage,
   OpenSpecCoverageEdge,
   OpenSpecDesign,
@@ -1428,12 +1429,19 @@ const openSpecSpecDeltaSchema = objectSchemaFor<OpenSpecSpecDelta>()({
   ),
   source: openSpecSourceSchema.optional(),
 });
+const openSpecChangeRawSchema = objectSchemaFor<OpenSpecChangeRaw>()({
+  proposalMd: z.string().optional(),
+  designMd: z.string().optional(),
+  tasksMd: z.string().optional(),
+  specDeltas: z.array(z.object({ capability: z.string(), md: z.string() })),
+});
 export const openSpecChangeSchema = objectSchemaFor<OpenSpecChange>()({
   name: z.string(),
   proposal: openSpecProposalSchema.optional(),
   design: openSpecDesignSchema.optional(),
   tasks: openSpecTasksSchema.optional(),
   specDeltas: z.array(openSpecSpecDeltaSchema),
+  raw: openSpecChangeRawSchema.optional(),
 });
 
 // ── The Spec view's requirement→hunk coverage (wireframes #9 / R53) ────────────
