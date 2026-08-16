@@ -138,11 +138,11 @@ The intended own-branch loop sends requested changes to a capable coding
 harness, then captures a successor patchset, carries only exact unaffected
 review state, and focuses the next pass on what moved.
 
-The backend can build and run the mechanical bundle, bracket the turn with Git
-checkpoints, and capture the successor. It also exposes a model-backed composer.
-The current renderer calls neither handoff command, and the acting command does
-not yet accept the composer's exact output, so this loop is not end to end in the
-shipped surface.
+The backend builds and runs the bundle, brackets the turn with Git checkpoints,
+and captures the successor, and a model-backed composer shapes the notes. The
+renderer now composes, previews, and runs the bundle from the own-branch
+destination, and the acting command executes the composer's exact output bound by
+its digest, so this loop is end to end in the shipped surface.
 
 Signing the finished own-branch paper pushes the named branch and opens the
 previewed pull request. The next precision work is narrower: richer sub-file

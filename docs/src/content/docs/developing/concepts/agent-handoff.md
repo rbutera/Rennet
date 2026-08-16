@@ -5,9 +5,14 @@ description: How review requests become one coding-agent work order, a new patch
 
 Agent handoff is the intended author-side loop: collect the changes you want,
 hand them to the coding harness, capture what it edits, then review only the
-resulting delta. The backend pieces exist, but the current renderer does not yet
-invoke this loop. Today, signing your own-branch paper pushes the branch and
-opens the pull request instead.
+resulting delta. As of
+[#72](https://github.com/rbutera/rennet/issues/72) this loop is reachable in the
+app: an own-branch review with an actionable disposition offers a "Hand off to
+agent" path alongside the PR-submission sign path. It opens a handoff paper that
+composes the bundle, previews it, and runs it — the renderer wiring that was the
+last missing join is now in place. Signing your own-branch paper still pushes the
+branch and opens the pull request; the handoff is the other action off the same
+own-branch destination.
 
 ## The loop
 
@@ -27,22 +32,23 @@ flowchart TD
 Most of the machinery is live behind typed main-process commands: the mechanical
 bundle, write-enabled runner, workspace checkpoints, successor capture, exact
 carry, delta account, optional digest, and PR submission. As of
-[#72](https://github.com/rbutera/rennet/issues/72), `review.handoff.run` now
-accepts and executes the exact composed bundle `review.handoff.compose` produced,
-bound by its digest — it no longer rebuilds a mechanical bundle from the raw
-dispositions. A pure stage-6 preview view-model (`handoffPreview`) and paper
-component render that composed bundle before it runs. One join is still missing
-from the shipped product path: the live renderer journey does not yet invoke
-`review.handoff.run` or mount the stage-6 paper (no button wires the loop end to
-end). The composed-bundle→run integrity binding and the preview are in place; the
-in-app trigger is the remaining wiring.
+[#72](https://github.com/rbutera/rennet/issues/72), `review.handoff.run` accepts
+and executes the exact composed bundle `review.handoff.compose` produced, bound by
+its digest — it no longer rebuilds a mechanical bundle from the raw dispositions.
+A pure stage-6 preview view-model (`handoffPreview`) and paper component render
+that composed bundle before it runs, and the renderer now wires the whole loop:
+the own-branch destination composes on surface entry, previews via `HandoffPaper`,
+and runs the exact previewed bundle from one action. The composed-bundle→run
+integrity binding, the preview, and the in-app trigger are all in place.
 
 ## From dispositions to a work order
 
 The source material is the draft the reviewer already shaped. `request-change`
 and actionable `comment` dispositions become tasks. Approvals mean “leave this
 alone,” while questions stay in the review conversation, so neither becomes an
-edit instruction.
+edit instruction. A `comment` with a blank effective body is not actionable
+either — a neutral mark-read carries no instruction, so it never becomes a task
+and never lights the handoff affordance.
 
 The mechanical bundle contains:
 
@@ -213,24 +219,23 @@ this.” See [delta re-review and lineage](/developing/concepts/delta-rereview-a
 |---|---|
 | Bundle filtering, anchored context, deterministic prompt | `packages/core/src/handoff-loop.ts` |
 | Agent-friendly ordering, narration, and the compose→run integrity check | `packages/core/src/handoff-compose.ts` |
-| Stage-6 composed-bundle preview view-model | `packages/ui/src/canvas/publish.ts` (`handoffPreview`) |
+| Stage-6 composed-bundle preview view-model | `packages/ui/src/canvas/publish.ts` (`handoffPreview`, `handoffDispositions`) |
 | Write-enabled harness turn behind the main-process command | `packages/adapters/src/handoff-run-live.ts` |
 | Checkpoint and turn diff | `packages/adapters/src/checkpoint-store.ts` |
 | Command routing and successor capture | `apps/desktop/src/main/dispatch.ts` |
 | Delta facts | `packages/core/src/delta-account.ts` |
-| Draft, paper, and sign interaction | `packages/ui/src/app.tsx` |
+| Draft, handoff paper, run action, and sign interaction | `packages/ui/src/app.tsx`, `packages/ui/src/components/handoff-paper.tsx` |
 
-The renderer never gets direct process authority. The one remaining join is the
-in-app trigger: the live journey does not yet call `review.handoff.run` or mount
-the stage-6 paper. The desktop main process already resolves the current review,
-verifies and runs the composed bundle, captures the result, and returns a
-validated output.
+The renderer never gets direct process authority. The in-app trigger is now
+wired: the own-branch destination composes the bundle on handoff-surface entry
+(`review.handoff.compose`), previews it on the stage-6 paper, and calls
+`review.handoff.run` with that exact bundle from one action. The desktop main
+process resolves the current review, verifies and runs the composed bundle,
+captures the result, and returns a validated output the paper renders truthfully.
 
 ## Current edge
 
-The first product seam is the in-app trigger — wiring the renderer to compose,
-preview on the stage-6 paper, and invoke `review.handoff.run` with that exact
-composed bundle. After that, the main precision seam is sub-file lineage
+With the in-app trigger wired, the main precision seam is sub-file lineage
 across a changed patchset. The fuzzy matcher can classify it, but handoff carry
 still stays on the deterministic floor. That means Rennet can reopen more work
 than strictly necessary; it does not silently carry uncertain review state.

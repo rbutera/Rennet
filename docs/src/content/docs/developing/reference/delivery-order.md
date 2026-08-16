@@ -7,7 +7,7 @@ Read this before choosing product work. It outranks the ordering implied by
 issue numbers, priority labels, and historical plans. Re-check the linked issues
 before acting: this page is orientation, while GitHub is the live queue.
 
-Last checked against `main` and GitHub on 2026-08-14.
+Last checked against `main` and GitHub on 2026-08-16.
 
 ## Rule Zero
 
@@ -29,14 +29,17 @@ Both current GitHub destinations are wired end to end:
 - A review of your own branch can produce a drafted title and body, sign, push
   the named branch, and create the pull request. The create path is idempotent by
   head branch and surfaces the resulting URL.
-- The coding-agent handoff backend and exact-evidence delta carry have landed.
-  Per #72, `review.handoff.run` now executes the exact composed bundle
-  `review.handoff.compose` produced (digest-bound, refusing a tampered or stale
-  bundle), and a pure stage-6 preview view-model plus paper component render that
-  composed bundle before it runs — the renderer's in-app trigger for the acting
-  command is the one remaining join. The fuzzy sub-file matcher exists but is not
-  connected to disposition carry. When the acting path is called, the agent is
-  allowed to edit and test with the full harness tool surface.
+- The coding-agent handoff backend and exact-evidence delta carry have landed,
+  and the renderer now wires the loop end to end. Per #72, `review.handoff.run`
+  executes the exact composed bundle `review.handoff.compose` produced
+  (digest-bound, refusing a tampered or stale bundle); a pure stage-6 preview
+  view-model plus paper component render that composed bundle before it runs; and
+  the own-branch destination offers a "Hand off to agent" path that composes on
+  surface entry, previews, and runs the exact previewed bundle from one action,
+  surfacing the outcome truthfully. The next slice is consuming the run's
+  successor patchset into a delta re-review (#73). The fuzzy sub-file matcher
+  exists but is not connected to disposition carry. When the acting path is
+  called, the agent is allowed to edit and test with the full harness tool surface.
 - Blast radius, the project knowledge lifecycle, IPC field-fidelity fixes,
   shell-enabled verification turns, and honest invocation-budget behavior have
   all landed since the previous delivery-order snapshot.
@@ -48,21 +51,17 @@ not rebuild them from old issue prose.
 
 ### Complete the context and regeneration spine
 
-The remaining open P1 issues describe the deeper review-context contract:
+The deterministic ContextManifest (#30), the `context.ask` knowledge tool (#15),
+and affected-only regeneration (#38) have all landed on `main`: the models see the
+right material, the reviewer can ask for missing context, and a new patchset no
+longer forces a full restart. The one remaining open item here is:
 
-1. [#30 — deterministic ContextManifest](https://github.com/rbutera/rennet/issues/30): make the assembled fleet context inspectable and reproducible.
-2. [#15 — context.ask](https://github.com/rbutera/rennet/issues/15): give the orchestrator one honest retrieval tool over project knowledge.
-3. [#38 — affected-only regeneration](https://github.com/rbutera/rennet/issues/38): turn patchset invalidation into a useful successor-review experience.
-4. [#28 — settings v1](https://github.com/rbutera/rennet/issues/28): finish the layered resolver and settings surface without turning setup into ceremony.
-
-These reinforce the core loop: the models see the right material, the reviewer
-can ask for missing context, and a new patchset does not force a full restart.
+1. [#28 — settings v1](https://github.com/rbutera/rennet/issues/28): finish the layered resolver and settings surface without turning setup into ceremony.
 
 ### Make the agent loop easier to read
 
-- [#72](https://github.com/rbutera/rennet/issues/72) composes several review notes into one coherent work order — the composed bundle now runs (digest-bound) and previews on the stage-6 paper; the remaining slice is the in-app trigger that invokes it.
+- [#72](https://github.com/rbutera/rennet/issues/72) composes several review notes into one coherent work order — the composed bundle runs (digest-bound), previews on the stage-6 paper, and the renderer now wires compose→preview→run end to end from the own-branch destination.
 - [#73](https://github.com/rbutera/rennet/issues/73) narrates what the coding agent changed, including work beyond the asks.
-- [#182](https://github.com/rbutera/rennet/issues/182) brings CI signal into the review without turning it into a blocker.
 
 ### Release when the external pieces are ready
 

@@ -2,9 +2,15 @@ import type {
   ComposableAsk,
   ComposedHandoffBundle,
   DispositionType,
+  HandoffDisposition,
   RepositoryProvenance,
 } from "@rennet/types";
-import { type CollationDraft, type CollationItem, effectiveBody } from "./collation";
+import {
+  type CollationDraft,
+  type CollationItem,
+  collationItems,
+  effectiveBody,
+} from "./collation";
 import type { DestinationMode } from "./destination";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -376,6 +382,40 @@ export function refinedCount(comments: readonly ReviewComment[]): number {
 // `layer:ui`: `@rennet/types` only, no `@rennet/core` — the composed bundle is the
 // input; nothing here re-derives order or re-runs the model.
 // ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The disposition types a coding agent addresses — `request-change` and `comment`,
+ * both of which ask for or suggest a code edit. `approve` means "leave it" and
+ * `question` is answered in conversation, so neither is handed off. This is the
+ * UI-side twin of core's `HANDOFF_ADDRESSED_TYPES`; the `layer:ui` boundary forbids
+ * importing `@rennet/core`, and the compose command's mechanical floor filters the
+ * SAME way — so what the renderer counts as actionable equals what compose runs.
+ */
+const HANDOFF_ADDRESSED_TYPES: readonly DispositionType[] = ["request-change", "comment"];
+
+/**
+ * The effective handoff dispositions from the collation draft — every addressed
+ * item (request-change / comment) as a `HandoffDisposition`, IN DRAFT ORDER, with
+ * the effective body (refined-if-kept, else the sovereign raw). This is exactly what
+ * `review.handoff.compose` is handed; compose re-filters the same way, so an
+ * approve/question never reaches the agent even if passed. Pure: no React, no DOM.
+ *
+ * A BLANK effective body is dropped: a neutral "mark-read" comment carries an empty
+ * body (it records "I read this file", not an instruction), and an empty ask would
+ * compose an empty work order for the coding agent to act on. So the actionable set
+ * — which also drives the ≥1-actionable-ask handoff affordance (destination-frame) —
+ * is exactly the addressed items that actually say something.
+ */
+export function handoffDispositions(draft: CollationDraft): HandoffDisposition[] {
+  return collationItems(draft)
+    .filter((write) => HANDOFF_ADDRESSED_TYPES.includes(write.type) && write.body.trim() !== "")
+    .map((write) => ({
+      path: write.path,
+      type: write.type,
+      body: write.body,
+      ...(write.span && write.side ? { span: write.span, side: write.side } : {}),
+    }));
+}
 
 const HANDOFF_TYPE_LABEL: Record<DispositionType, string> = {
   approve: "approval",

@@ -113,8 +113,10 @@ batched review post, and own-branch push-plus-PR submission are wired through th
 renderer. The paper has a back action; edits happen on the draft.
 
 The write-enabled handoff and delta-recapture machinery is wired behind typed
-main-process commands, but the renderer does not invoke it. The handoff composer
-is also a separate command whose result is not yet passed into the acting run.
+main-process commands, and the renderer now invokes it: an own-branch review
+composes, previews, and runs the handoff bundle. The composer's exact output is
+what the acting run executes, bound by its digest. Consuming the successor
+patchset into a delta re-review is the next seam.
 
 The deeper orchestrator-on-draft experience is still incomplete. The UI explains
 the proposal model, and `canvasOps@2` can raise proposals, but free-form

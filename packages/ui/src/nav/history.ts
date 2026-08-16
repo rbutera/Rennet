@@ -3,7 +3,8 @@ export type Surface =
   | { kind: "project"; projectId: string }
   | { kind: "review"; reviewId: string }
   | { kind: "draft"; reviewId: string }
-  | { kind: "paper"; reviewId: string };
+  | { kind: "paper"; reviewId: string }
+  | { kind: "handoff"; reviewId: string };
 
 export type NavHistoryState = {
   stack: Surface[];
@@ -45,6 +46,7 @@ export function surfaceIdentity(surface: Surface): string {
     case "review":
     case "draft":
     case "paper":
+    case "handoff":
       return `${surface.kind}:${surface.reviewId}`;
   }
 }
@@ -191,6 +193,8 @@ export function crumb(stack: Surface[], labels?: SurfaceLabels): CrumbSegment[] 
         return { label: "Draft", kind: surface.kind, index };
       case "paper":
         return { label: "Paper", kind: surface.kind, index };
+      case "handoff":
+        return { label: "Handoff", kind: surface.kind, index };
       default: {
         const exhaustive: never = surface;
         return exhaustive;
