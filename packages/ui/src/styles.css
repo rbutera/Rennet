@@ -3521,6 +3521,36 @@ button {
   background: var(--private-fill);
   border-color: var(--private-line);
 }
+.settings-prov-wrap {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+/* Explain: the full lowest-first ladder, the effective contribution emphasised. */
+.settings-prov-list {
+  display: inline-flex;
+  gap: 5px;
+  flex-wrap: wrap;
+}
+.settings-prov-item {
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  color: var(--text-faint);
+  border: 1px dashed var(--hairline-strong);
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+.settings-prov-item.on {
+  color: var(--private);
+  border-style: solid;
+  border-color: var(--private-line);
+}
+/* Reset/Pin share the segmented-button styling; nothing ceremonial. */
+.settings-reset,
+.settings-pin {
+  font-size: 11.5px;
+}
 .settings-note,
 .settings-applied {
   margin: 12px 0 0;

@@ -6,6 +6,7 @@ import type {
   ResolvedProvenance,
   SettingsGuidance,
   SettingsProject,
+  SettingsRepoValueKey,
   SettingsView,
 } from "@rennet/protocol";
 import { useEffect, useState } from "react";
@@ -48,11 +49,74 @@ function describeLocus(locus: Locus): string {
   return locus.kind === "host" ? "the host" : `WSL · ${locus.distro}`;
 }
 
-/** The provenance chip: where a value resolved from, in the ladder's own words. */
+/**
+ * Explain: the value's provenance rendered as the RESOLVER's own answer — a summary
+ * chip ("set here"/"default") plus the full lowest-first list of contributing layers,
+ * the effective one flagged. Never a recomputed account that could disagree with the
+ * engine; the surface shows exactly what the resolver returned.
+ */
 function Provenance({ provenance }: { provenance: ResolvedProvenance }) {
   const setHere = provenance.layer !== "builtin";
   const label = setHere ? "set here" : "default";
-  return <span className={`settings-prov${setHere ? " settings-prov-set" : ""}`}>{label}</span>;
+  return (
+    <span className="settings-prov-wrap">
+      <span className={`settings-prov${setHere ? " settings-prov-set" : ""}`}>{label}</span>
+      <span className="settings-prov-list" aria-label="Where this value came from">
+        {provenance.contributions.map((c) => (
+          <span
+            key={c.layer}
+            className={`settings-prov-item${c.effective ? " on" : ""}`}
+          >{`${c.layer}: ${c.value}`}</span>
+        ))}
+      </span>
+    </span>
+  );
+}
+
+/**
+ * The Reset/Pin slot for a repo-scoped row (design Decision 5): a value explicitly
+ * set at the repo layer shows Reset (drop the repo entry, inherit down the ladder);
+ * an inheriting/detected value shows Pin (freeze the current effective value at the
+ * repo layer). Plain reads and writes — no confirmation, no gate (Rule Zero).
+ */
+function ResetPin({
+  layer,
+  resetLabel,
+  pinTitle,
+  onReset,
+  onPin,
+  disabled,
+}: {
+  layer: ResolvedProvenance["layer"];
+  resetLabel: string;
+  pinTitle: string;
+  onReset(): void;
+  onPin(): void;
+  disabled: boolean;
+}) {
+  return layer === "repo" ? (
+    <button
+      type="button"
+      className="settings-reset settings-seg-btn"
+      aria-label={resetLabel}
+      title="Clear the repo-layer value and inherit down the ladder"
+      onClick={onReset}
+      disabled={disabled}
+    >
+      {resetLabel}
+    </button>
+  ) : (
+    <button
+      type="button"
+      className="settings-pin settings-seg-btn"
+      aria-label={pinTitle}
+      title={pinTitle}
+      onClick={onPin}
+      disabled={disabled}
+    >
+      Pin here
+    </button>
+  );
 }
 
 export function SettingsScreen({
@@ -87,8 +151,10 @@ export function SettingsScreen({
       .catch((reason: unknown) => setError(messageFrom(reason)));
   }, [bridge]);
 
-  async function chooseScheme(scheme: AppearanceScheme): Promise<void> {
-    if (busy || view?.scheme === scheme) return;
+  // Set a concrete scheme, or RESET to the builtin (`scheme: null`) — the global-layer
+  // reset (clear the stored entry, fall back to `system`). A plain write, no ceremony.
+  async function chooseScheme(scheme: AppearanceScheme | null): Promise<void> {
+    if (busy || (scheme !== null && view?.scheme === scheme)) return;
     setBusy(true);
     setError(undefined);
     try {
@@ -172,6 +238,18 @@ export function SettingsScreen({
                   ))}
                 </fieldset>
                 <Provenance provenance={view.schemeProvenance} />
+                {view.schemeProvenance.layer === "global" ? (
+                  <button
+                    type="button"
+                    className="settings-reset settings-seg-btn"
+                    aria-label="Reset appearance to the system default"
+                    title="Clear the stored appearance and follow the OS again"
+                    onClick={() => void chooseScheme(null)}
+                    disabled={busy || view.appearanceMalformed}
+                  >
+                    Reset to default
+                  </button>
+                ) : null}
               </div>
             </div>
             {view.appearanceMalformed ? (
@@ -243,6 +321,18 @@ export function SettingsScreen({
                     : current,
                 )
               }
+              onRowReplaced={(next) =>
+                setView((current) =>
+                  current
+                    ? {
+                        ...current,
+                        projects: current.projects.map((project) =>
+                          project.repoPath === next.repoPath ? next : project,
+                        ),
+                      }
+                    : current,
+                )
+              }
             />
           )
         ) : null}
@@ -260,6 +350,7 @@ function RepoPanel({
   onSelect,
   onVisibilityResolved,
   onLocusResolved,
+  onRowReplaced,
 }: {
   bridge: RennetBridge;
   projects: readonly SettingsProject[];
@@ -268,6 +359,8 @@ function RepoPanel({
   onSelect(repoPath: string): void;
   onVisibilityResolved(repoPath: string, visibility: ProjectVisibility): void;
   onLocusResolved(repoPath: string, locus: Locus, overridden: boolean): void;
+  /** Replace a whole row with the resolver's freshly re-resolved answer (Reset/Pin). */
+  onRowReplaced(project: SettingsProject): void;
 }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
@@ -354,6 +447,43 @@ function RepoPanel({
     }
   }
 
+  // Reset (drop the repo-layer entry, inherit) and Pin (freeze the current effective
+  // value at the repo layer). Both re-render the row from the resolver's own answer
+  // returned by the command — never a hand-recomputed provenance. A `status` other
+  // than `applied` means nothing was written, so the surface says so and stays put.
+  async function resetPin(
+    command: "settings.resetRepoValue" | "settings.pinRepoValue",
+    key: SettingsRepoValueKey,
+  ): Promise<void> {
+    if (!selected || busy || selected.configMalformed) return;
+    setBusy(true);
+    setError(undefined);
+    setNote(undefined);
+    try {
+      const result = await bridge.invoke(command, {
+        projectId: selected.projectId,
+        repoPath: selected.repoPath,
+        key,
+      });
+      if (result.status === "applied" && result.project) {
+        onRowReplaced(result.project);
+        setNote(
+          command === "settings.resetRepoValue"
+            ? "Reset to the inherited value."
+            : "Pinned the current value at this repo.",
+        );
+      } else if (result.status === "unresolved") {
+        setError("This repository could not be resolved — nothing was changed.");
+      } else {
+        setError("This repository's config is malformed — the change was refused to protect it.");
+      }
+    } catch (reason) {
+      setError(messageFrom(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <section className="settings-panel" aria-label="Repository settings">
       <div className="settings-picker" role="tablist" aria-label="Repository">
@@ -395,6 +525,14 @@ function RepoPanel({
                 ))}
               </fieldset>
               <Provenance provenance={selected.visibilityProvenance} />
+              <ResetPin
+                layer={selected.visibilityProvenance.layer}
+                resetLabel="Reset to inherit"
+                pinTitle="Pin the map visibility at its current value"
+                onReset={() => void resetPin("settings.resetRepoValue", "visibility")}
+                onPin={() => void resetPin("settings.pinRepoValue", "visibility")}
+                disabled={busy || selected.configMalformed}
+              />
             </div>
           </div>
 
@@ -434,18 +572,16 @@ function RepoPanel({
                 >
                   Host
                 </button>
-                {selected.locusOverridden ? (
-                  <button
-                    type="button"
-                    title="Clear the override and use the auto-detected locus"
-                    className="settings-seg-btn"
-                    onClick={() => void chooseLocus(null)}
-                    disabled={busy || selected.configMalformed}
-                  >
-                    Reset to auto
-                  </button>
-                ) : null}
               </fieldset>
+              <Provenance provenance={selected.locusProvenance} />
+              <ResetPin
+                layer={selected.locusProvenance.layer}
+                resetLabel="Reset to auto"
+                pinTitle="Pin the execution locus at its detected value"
+                onReset={() => void resetPin("settings.resetRepoValue", "locus")}
+                onPin={() => void resetPin("settings.pinRepoValue", "locus")}
+                disabled={busy || selected.configMalformed}
+              />
               <div className="settings-locus-distro">
                 <input
                   type="text"
