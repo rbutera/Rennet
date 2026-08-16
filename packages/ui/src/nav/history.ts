@@ -13,8 +13,16 @@ export type NavHistoryState = {
 
 export type RecentSurface = Extract<Surface, { kind: "projects" | "project" }>;
 
-export type PersistedRecentsState = {
+/**
+ * The persisted navigation blob (issue #324 / #297 remainder): recents PLUS the
+ * back/forward stack, so the app reopens where the user left off. `stack`/`future`
+ * carry any surface kind — review-family surfaces are restorable now that
+ * `review.load` exists, so the old #305 recents-only exclusion is gone.
+ */
+export type PersistedNavState = {
   recents: RecentSurface[];
+  stack: Surface[];
+  future: Surface[];
 };
 
 export type NavHistoryAction =
@@ -116,10 +124,12 @@ export function navHistoryReducer(
   }
 }
 
-export const NAV_HISTORY_VERSION = 2;
+export const NAV_HISTORY_VERSION = 3;
 export const NAV_HISTORY_STORAGE_KEY = `rennet.nav.v${NAV_HISTORY_VERSION}`;
+/** The pre-stack (recents-only) key, still read once on upgrade to keep recents. */
+export const NAV_HISTORY_LEGACY_KEY = "rennet.nav.v2";
 
-const cleanRecents = (): PersistedRecentsState => ({ recents: [] });
+const cleanState = (): PersistedNavState => ({ recents: [], stack: [], future: [] });
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -137,34 +147,76 @@ function isRecentSurface(value: unknown): value is RecentSurface {
   }
 }
 
-export function serialize(recents: readonly RecentSurface[]): string {
-  return JSON.stringify({ version: NAV_HISTORY_VERSION, recents });
+/** A full surface (any kind) is valid iff its kind is known and its id is non-empty. */
+function isValidSurface(value: unknown): value is Surface {
+  if (!isRecord(value) || typeof value.kind !== "string") return false;
+  switch (value.kind) {
+    case "projects":
+      return true;
+    case "project":
+      return typeof value.projectId === "string" && value.projectId.length > 0;
+    case "review":
+    case "draft":
+    case "paper":
+    case "handoff":
+      return typeof value.reviewId === "string" && value.reviewId.length > 0;
+    default:
+      return false;
+  }
 }
 
-export function parse(raw: string | null | undefined): PersistedRecentsState {
-  if (!raw) return cleanRecents();
+/** Validated recents: known kind, deduped by identity, capped. Invalid → empty. */
+function parseRecents(value: unknown): RecentSurface[] {
+  if (!Array.isArray(value) || !value.every(isRecentSurface)) return [];
+  const identities = new Set<string>();
+  const recents: RecentSurface[] = [];
+  for (const surface of value as RecentSurface[]) {
+    const identity = surfaceIdentity(surface);
+    if (identities.has(identity)) continue;
+    identities.add(identity);
+    recents.push(surface);
+    if (recents.length === RECENT_LIMIT) break;
+  }
+  return recents;
+}
+
+/**
+ * A validated surface list (stack/future): absent → empty; a present-but-wrong or
+ * any-invalid-entry list → null, so the caller drops the whole stack (recents
+ * survive independently — a bad stack entry never wipes recents).
+ */
+function parseSurfaceList(value: unknown): Surface[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value) || !value.every(isValidSurface)) return null;
+  return value as Surface[];
+}
+
+export function serialize(
+  recents: readonly RecentSurface[],
+  stack: readonly Surface[] = [],
+  future: readonly Surface[] = [],
+): string {
+  return JSON.stringify({ version: NAV_HISTORY_VERSION, recents, stack, future });
+}
+
+export function parse(raw: string | null | undefined): PersistedNavState {
+  if (!raw) return cleanState();
   try {
     const value: unknown = JSON.parse(raw);
-    if (
-      !isRecord(value) ||
-      value.version !== NAV_HISTORY_VERSION ||
-      !Array.isArray(value.recents) ||
-      !value.recents.every(isRecentSurface)
-    )
-      return cleanRecents();
-
-    const identities = new Set<string>();
-    const recents: RecentSurface[] = [];
-    for (const surface of value.recents) {
-      const identity = surfaceIdentity(surface);
-      if (identities.has(identity)) continue;
-      identities.add(identity);
-      recents.push(surface);
-      if (recents.length === RECENT_LIMIT) break;
+    if (!isRecord(value)) return cleanState();
+    // A v2 blob (recents-only) keeps its recents across the upgrade — no stack then.
+    if (value.version === 2) {
+      return { recents: parseRecents(value.recents), stack: [], future: [] };
     }
-    return { recents };
+    if (value.version !== NAV_HISTORY_VERSION) return cleanState();
+    const recents = parseRecents(value.recents);
+    const stack = parseSurfaceList(value.stack);
+    const future = parseSurfaceList(value.future);
+    // Any invalid stack/future entry invalidates the whole stack, not the recents.
+    if (stack === null || future === null) return { recents, stack: [], future: [] };
+    return { recents, stack, future };
   } catch {
-    return cleanRecents();
+    return cleanState();
   }
 }
 

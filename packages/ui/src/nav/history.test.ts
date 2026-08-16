@@ -173,31 +173,78 @@ describe("recent surfaces", () => {
   });
 });
 
-describe("persisted recents", () => {
-  const persisted = { recents: [project, projects] };
+describe("persisted navigation (v3 stack + recents)", () => {
+  const persisted = { recents: [project, projects], stack: [], future: [] };
 
-  it("survives a reload through the versioned blob", () => {
-    const raw = serialize(persisted.recents);
-
-    expect(JSON.parse(raw)).toEqual({
-      version: NAV_HISTORY_VERSION,
-      recents: persisted.recents,
-    });
-    expect(parse(raw)).toEqual(persisted);
+  it("is version 3", () => {
+    expect(NAV_HISTORY_VERSION).toBe(3);
   });
 
-  it("returns empty recents for absent, malformed, mismatched, or invalid blobs", () => {
-    const clean = { recents: [] };
+  it("serialize emits { version: 3, recents, stack, future } and round-trips all three", () => {
+    const stack: Surface[] = [projects, project, review];
+    const future: Surface[] = [draft];
+    const raw = serialize([project, projects], stack, future);
+
+    expect(JSON.parse(raw)).toEqual({
+      version: 3,
+      recents: [project, projects],
+      stack,
+      future,
+    });
+    expect(parse(raw)).toEqual({ recents: [project, projects], stack, future });
+  });
+
+  it("review-family surfaces are legal in the persisted stack (the #305 exclusion is gone)", () => {
+    const stack: Surface[] = [projects, project, review, draft, paper];
+    const raw = serialize([], stack, []);
+    expect(parse(raw).stack).toEqual(stack);
+  });
+
+  it("serialize with no stack/future defaults them to empty arrays", () => {
+    expect(JSON.parse(serialize([project]))).toEqual({
+      version: 3,
+      recents: [project],
+      stack: [],
+      future: [],
+    });
+  });
+
+  it("keeps a v2 blob's recents with an empty stack (no migration ceremony)", () => {
+    const v2 = JSON.stringify({ version: 2, recents: [project, projects] });
+    expect(parse(v2)).toEqual({ recents: [project, projects], stack: [], future: [] });
+  });
+
+  it("returns the clean default for absent, malformed, or unknown-version blobs", () => {
+    const clean = { recents: [], stack: [], future: [] };
 
     expect(parse(undefined)).toEqual(clean);
     expect(parse(null)).toEqual(clean);
     expect(parse("not json")).toEqual(clean);
     expect(
-      parse(JSON.stringify({ version: NAV_HISTORY_VERSION + 1, recents: persisted.recents })),
+      parse(JSON.stringify({ version: 99, recents: persisted.recents, stack: [], future: [] })),
     ).toEqual(clean);
-    expect(parse(JSON.stringify({ version: NAV_HISTORY_VERSION, recents: [review] }))).toEqual(
-      clean,
-    );
+  });
+
+  it("drops the stack but keeps valid recents when a stack entry is invalid", () => {
+    const raw = JSON.stringify({
+      version: 3,
+      recents: [project],
+      stack: [projects, { kind: "review", reviewId: "" }],
+      future: [],
+    });
+    expect(parse(raw)).toEqual({ recents: [project], stack: [], future: [] });
+  });
+
+  it("still parses recents when they are invalid (recents empty, stack preserved)", () => {
+    const raw = JSON.stringify({
+      version: 3,
+      recents: [review],
+      stack: [projects, project],
+      future: [],
+    });
+    // A review is not a legal RECENT (projects/project only) → recents drop to empty,
+    // but the stack (where review IS legal) survives.
+    expect(parse(raw)).toEqual({ recents: [], stack: [projects, project], future: [] });
   });
 
   it("globally dedupes first occurrences and caps parsed recents", () => {
@@ -211,7 +258,9 @@ describe("persisted recents", () => {
     ];
 
     expect(
-      parse(JSON.stringify({ version: NAV_HISTORY_VERSION, recents })).recents.map(surfaceIdentity),
+      parse(JSON.stringify({ version: NAV_HISTORY_VERSION, recents, stack: [], future: [] })).recents.map(
+        surfaceIdentity,
+      ),
     ).toEqual([
       "project:p0",
       "project:p1",

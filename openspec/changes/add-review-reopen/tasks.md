@@ -41,12 +41,12 @@ control) proving the behavior is absent, then makes it pass. Gate is
 
 ## 3. Nav history: persisted stack (v3)
 
-- [ ] 3.1 RED: `nav/history` tests — serialize emits
+- [x] 3.1 RED: `nav/history` tests — serialize emits
       `{ version: 3, recents, stack, future }`; parse restores all three from
       v3; parse of a v2 blob keeps its recents with an empty stack; corrupt or
       unknown-version blobs yield the clean default; an invalid stack entry
       drops the stack but keeps valid recents. Fail on the v2 shape.
-- [ ] 3.2 Bump `NAV_HISTORY_VERSION` to 3, extend `serialize`/`parse` with
+- [x] 3.2 Bump `NAV_HISTORY_VERSION` to 3, extend `serialize`/`parse` with
       shape-validated stack + future (every `Surface` kind legal, including
       review-family); tests green.
 
