@@ -1307,8 +1307,24 @@ export type FlaggedReview =
        * the structural belt-and-braces.
        */
       patchsetId?: string;
+      /**
+       * Incomplete-ingestion blockers (R18, issue #309), stamped by the flagged
+       * runner from the deterministic `decompose()` it already computes. Non-empty
+       * means some captured content (a truncated tail, a binary blob, or a submodule
+       * pointer) was NOT ingested, so an absence of findings over it is not an
+       * all-clear. The Flagged lens and PublishSheet disclose it as render-only
+       * honest copy — it NEVER gates the sign (Rule Zero). Additive: absent ⇒ the
+       * pre-#309 shape.
+       */
+      blockingStates?: readonly DecompositionBlockingState[];
     }
-  | { status: "failed"; reason: string; ciSignal?: CiSignal };
+  | {
+      status: "failed";
+      reason: string;
+      ciSignal?: CiSignal;
+      /** Incomplete-ingestion blockers (R18, issue #309). See the `ok` variant; stamped even on a failed run because blocked ingestion is deterministic, not a model result. */
+      blockingStates?: readonly DecompositionBlockingState[];
+    };
 
 // ─── review.ask: ask the AI a question, one model or both (issue #139) ────────
 //

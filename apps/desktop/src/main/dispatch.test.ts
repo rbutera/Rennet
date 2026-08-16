@@ -6,6 +6,7 @@ import {
   canonicalPrSubmissionPayload,
   canonicalReviewPayload,
   composeHandoffBundle,
+  decompose,
   type ForgePublishPort,
   type ForgeReviewEvent,
   type ForgeReviewPost,
@@ -173,6 +174,7 @@ function harness(
     liveTurns?: DispatchDeps["liveTurns"];
     submitPullRequest?: DispatchDeps["submitPullRequest"];
     draftDeltaDigest?: DispatchDeps["draftDeltaDigest"];
+    flaggedReview?: DispatchDeps["flaggedReview"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -316,7 +318,9 @@ function harness(
     // Recording spy so a test can assert what `deepReview` the dispatch passed the
     // runner — the whole point of the default-dual mandate is that guarantee at the
     // real command boundary. The stub answers with an honestly-empty ran-clean set.
-    flaggedReview: flaggedReviewSpy,
+    // A test may override the runner (e.g. to stamp #309 blockingStates like the live
+    // runner does) via `extra.flaggedReview`.
+    flaggedReview: extra.flaggedReview ?? flaggedReviewSpy,
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
     reviewAsk,
     threadPersistence,
@@ -632,6 +636,54 @@ describe("createDispatch — flagged.review routing (the live finding runner, is
     await expect(dispatch("flagged.review", { reviewId: randomUUID() })).rejects.toThrow(
       /Review not found/,
     );
+  });
+
+  it("carries the patchset's incomplete-ingestion blockingStates through the flagged.review boundary (R18/#309)", async () => {
+    // The live runner stamps `decomposition.blockingStates` onto its result so the
+    // Flagged lens + PublishSheet can disclose blocked ingestion. Here a binary-only
+    // patchset is captured and the runner override mirrors the live stamp exactly —
+    // it runs the REAL deterministic `decompose` and returns its blockingStates. The
+    // assertion proves the field survives the flagged.review command boundary
+    // (protocol schema + dispatch), the exact Rule-80 strip surface. Positive control:
+    // dropping `blockingStates` from `flaggedReviewSchema` strips it here → red.
+    const binaryPatchset: Patchset = {
+      ...patchset(),
+      files: [
+        {
+          path: "assets/logo.png",
+          status: "modified",
+          additions: 0,
+          deletions: 0,
+          binary: true,
+          patch: "",
+        },
+      ],
+      rawDiff: "Binary files a/assets/logo.png and b/assets/logo.png differ\n",
+      byteLength: 1,
+    };
+    const flaggedReview = vi.fn(async (): Promise<FlaggedReview> => {
+      const decomposition = decompose(binaryPatchset);
+      return { status: "ok", findings: [], blockingStates: decomposition.blockingStates };
+    });
+    const { dispatch } = harness(
+      undefined,
+      {},
+      {
+        capturePort: { capture: () => Promise.resolve(binaryPatchset) },
+        flaggedReview,
+      },
+    );
+    const review = await capturedReview(dispatch);
+    const result = (await dispatch("flagged.review", { reviewId: review.id })) as FlaggedReview;
+    expect(result.status).toBe("ok");
+    if (result.status !== "ok") throw new Error("expected an ok review");
+    expect(result.blockingStates).toEqual([
+      {
+        reason: "binary",
+        path: "assets/logo.png",
+        detail: expect.stringContaining("binary file") as unknown as string,
+      },
+    ]);
   });
 
   it("defaults to DUAL-model review when deepReview is OMITTED (Rai's mandate: not opt-in)", async () => {

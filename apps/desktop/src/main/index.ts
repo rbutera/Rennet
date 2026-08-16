@@ -1111,7 +1111,7 @@ async function runFlaggedReviewWithContextFeed(
     surfacedReview = attachRiskCrossCheck(surfaced, hypothesis);
   }
 
-  return attachCiSignal({
+  const withCiSignal = await attachCiSignal({
     review: surfacedReview,
     ...(review.postTarget === undefined ? {} : { postTarget: review.postTarget }),
     patchset,
@@ -1127,6 +1127,14 @@ async function runFlaggedReviewWithContextFeed(
     ...(ciRefinementTurn === undefined ? {} : { refineTurn: ciRefinementTurn }),
     budget: sharedBudget,
   });
+  // R18/#309: stamp the deterministic incomplete-ingestion blockers from the
+  // decomposition we already computed — ok and failed alike (blocked ingestion is
+  // deterministic, not a model result, so it survives a failed model run). The
+  // Flagged lens + PublishSheet disclose it as render-only honest copy; it NEVER
+  // gates the sign (Rule Zero). Mirrors the #160 patchsetId stamp.
+  return withCiSignal.status === "ok"
+    ? { ...withCiSignal, blockingStates: decomposition.blockingStates }
+    : { ...withCiSignal, blockingStates: decomposition.blockingStates };
 }
 
 async function runFlaggedReview(review: Review, deepReview = true): Promise<FlaggedReview> {

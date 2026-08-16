@@ -1,4 +1,4 @@
-import type { FindingElement, FlaggedReview } from "@rennet/types";
+import type { DecompositionBlockingState, FindingElement, FlaggedReview } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { buildFlaggedIndex, flaggedForPatchset, isFinding } from "./flagged";
 
@@ -243,5 +243,61 @@ describe("flaggedForPatchset — bind the result to the active patchset (#160/P0
 
   it("returns undefined for an undefined result (nothing loaded yet)", () => {
     expect(flaggedForPatchset(undefined, "patch-two")).toBeUndefined();
+  });
+});
+
+describe("buildFlaggedIndex — incomplete-ingestion blockingStates fold (R18/#309)", () => {
+  const states = [
+    { reason: "binary" as const, path: "assets/logo.png", detail: "binary blob not ingested" },
+    { reason: "truncated" as const, path: null, detail: "tail truncated at the cap" },
+  ];
+
+  it("carries well-formed blockingStates onto the ok index", () => {
+    const index = buildFlaggedIndex({ status: "ok", findings: [], blockingStates: states });
+    if (index.state !== "ok") throw new Error("expected ok");
+    expect(index.blockingStates).toEqual(states);
+  });
+
+  it("survives the fold beside findings", () => {
+    const index = buildFlaggedIndex({
+      status: "ok",
+      findings: [finding({ findingId: "a", severity: "high" })],
+      blockingStates: states,
+    });
+    if (index.state !== "ok") throw new Error("expected ok");
+    expect(index.total).toBe(1);
+    expect(index.blockingStates).toEqual(states);
+  });
+
+  it("omits the field entirely when absent or empty (pre-#309 shape)", () => {
+    const absent = buildFlaggedIndex({ status: "ok", findings: [] });
+    if (absent.state !== "ok") throw new Error("expected ok");
+    expect(absent.blockingStates).toBeUndefined();
+    const empty = buildFlaggedIndex({ status: "ok", findings: [], blockingStates: [] });
+    if (empty.state !== "ok") throw new Error("expected ok");
+    expect(empty.blockingStates).toBeUndefined();
+  });
+
+  it("drops a malformed entry defensively (a bad reason never reaches the surface)", () => {
+    // A deliberately malformed entry (bad reason, wrong-typed path/detail) alongside a
+    // valid one; the guard must keep only the valid entry. Cast through `unknown` so the
+    // malformed shape crosses the typed boundary the way a bad host payload would.
+    const malformed = {
+      reason: "bogus",
+      path: 1,
+      detail: 2,
+    } as unknown as DecompositionBlockingState;
+    const valid: DecompositionBlockingState = {
+      reason: "binary",
+      path: "assets/logo.png",
+      detail: "binary blob not ingested",
+    };
+    const index = buildFlaggedIndex({
+      status: "ok",
+      findings: [],
+      blockingStates: [malformed, valid],
+    });
+    if (index.state !== "ok") throw new Error("expected ok");
+    expect(index.blockingStates).toEqual([valid]);
   });
 });

@@ -1,5 +1,7 @@
 import type {
   CiSignal,
+  DecompositionBlockingReason,
+  DecompositionBlockingState,
   DualReviewNote,
   FindingAgreement,
   FindingElement,
@@ -82,6 +84,14 @@ export type FlaggedIndex =
       dual?: DualReviewNote;
       /** Informational CI state for the reviewed head. It never gates an action. */
       ciSignal?: CiSignal;
+      /**
+       * Incomplete-ingestion blockers (R18, issue #309) carried from the review's
+       * decomposition floor. Non-empty means some content (a truncated tail, binary
+       * blob, or submodule pointer) was NOT ingested, so an empty index is not an
+       * all-clear. The surface discloses this as render-only honest copy — it NEVER
+       * gates any action (Rule Zero). Absent/empty ⇒ the pre-#309 honest all-clear.
+       */
+      blockingStates?: readonly DecompositionBlockingState[];
     };
 
 const SEVERITY_RANK: Record<FindingSeverity, number> = { high: 0, medium: 1, low: 2 };
@@ -218,7 +228,34 @@ export function buildFlaggedIndex(review: FlaggedReview): FlaggedIndex {
     total: rows.length,
     ...(isDualNote(review.dual) ? { dual: review.dual } : {}),
     ...(review.ciSignal ? { ciSignal: review.ciSignal } : {}),
+    // Carry the incomplete-ingestion blockers through, additively (#309). Only
+    // well-formed states survive the guard; an absent or empty set carries nothing,
+    // so a fully-ingested review is byte-identical to its pre-#309 index.
+    ...(() => {
+      const blockingStates = sanitiseBlockingStates(review.blockingStates);
+      return blockingStates.length > 0 ? { blockingStates } : {};
+    })(),
   };
+}
+
+const BLOCKING_REASONS: readonly DecompositionBlockingReason[] = [
+  "truncated",
+  "binary",
+  "submodule",
+];
+
+/** A defensive guard for the optional incomplete-ingestion states (a malformed entry is dropped). */
+function sanitiseBlockingStates(value: unknown): readonly DecompositionBlockingState[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((entry): entry is DecompositionBlockingState => {
+    if (typeof entry !== "object" || entry === null) return false;
+    const state = entry as Record<string, unknown>;
+    return (
+      BLOCKING_REASONS.includes(state.reason as DecompositionBlockingReason) &&
+      (state.path === null || typeof state.path === "string") &&
+      typeof state.detail === "string"
+    );
+  });
 }
 
 /** A defensive guard for the optional dual-review note (a malformed note is ignored). */

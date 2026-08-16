@@ -532,3 +532,88 @@ describe("honesty affordance: the own-branch shell discloses what the sign does"
     expect(notice?.textContent).not.toContain("#21");
   });
 });
+
+describe("blocked-ingestion disclosure (R18/#309): honest copy that NEVER gates the sign", () => {
+  const blockingStates = [
+    {
+      reason: "binary" as const,
+      path: "assets/logo.png",
+      detail:
+        "assets/logo.png: binary file; its content is not text-diffable and was not ingested.",
+    },
+    {
+      reason: "truncated" as const,
+      path: null,
+      detail: "The captured diff was truncated at the size cap; the tail was not ingested.",
+    },
+  ];
+
+  it("(a) discloses each blocker before the sign control when ingestion was blocked", () => {
+    const { container, getByText } = mount(
+      <PublishSheet
+        {...paper(stagedDraft(...writes))}
+        variant={destinationVariant("other-pr")}
+        blockingStates={blockingStates}
+      />,
+    );
+    const disclosure = container.querySelector(".flagged-blocked-ingestion");
+    if (!disclosure) throw new Error("the blocked-ingestion disclosure did not mount");
+    expect(getByText("Not fully ingested")).toBeTruthy();
+    const reasons = [...disclosure.querySelectorAll(".flagged-blocked-item")].map((el) =>
+      el.getAttribute("data-reason"),
+    );
+    expect(reasons).toEqual(["binary", "truncated"]);
+    // The disclosure sits BEFORE the sign control in document order.
+    const sign = signButton(container);
+    expect(
+      disclosure.compareDocumentPosition(sign) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
+    // It carries no checkbox, no button — it is render-only, not an ack step.
+    expect(disclosure.querySelector("input")).toBeNull();
+    expect(disclosure.querySelector("button")).toBeNull();
+  });
+
+  it("(b) a sufficient hold STILL signs with the disclosure present — no new gate (Rule Zero)", () => {
+    const draft = stagedDraft(...writes);
+    const signed: string[] = [];
+    const { container } = mount(
+      <PublishSheet
+        {...paper(draft)}
+        variant={destinationVariant("other-pr")}
+        blockingStates={blockingStates}
+        onSign={(payload) => signed.push(payload)}
+      />,
+    );
+    // No ledger here: the ONLY thing on the sheet beyond the baseline is the
+    // disclosure. If anyone wired blockingStates into the sign gate, this hold would
+    // NOT emit — the test reddens. The sign completes exactly as it would without it.
+    pointerHold(signButton(container), 850);
+    expect(signed).toEqual([collationPayload(draft)]);
+  });
+
+  it("(b′) the keyboard sign path is likewise unaffected by the disclosure", () => {
+    const draft = stagedDraft(...writes);
+    const signed: string[] = [];
+    const { container } = mount(
+      <PublishSheet
+        {...paper(draft)}
+        variant={destinationVariant("own-branch")}
+        blockingStates={blockingStates}
+        onSign={(payload) => signed.push(payload)}
+      />,
+    );
+    keyboardHold(signButton(container), 850);
+    expect(signed).toEqual([collationPayload(draft)]);
+  });
+
+  it("(c) renders NO disclosure when ingestion was complete (byte-identical to pre-#309)", () => {
+    const { container } = mount(
+      <PublishSheet
+        {...paper(stagedDraft(...writes))}
+        variant={destinationVariant("other-pr")}
+        blockingStates={[]}
+      />,
+    );
+    expect(container.querySelector(".flagged-blocked-ingestion")).toBeNull();
+  });
+});
