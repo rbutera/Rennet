@@ -116,13 +116,13 @@ The protocol registry currently knows these families:
 |---|---|
 | Intent and structure | `spec.model`, `decomposition.skeleton`, `decomposition.proposal`, `ordering` |
 | Review narration and judgment | `rollup-narration`, `decision.record`, `finding`, `review.hypothesis` |
-| Evidence links | `claim`, `adjudication`, `test.mapping` |
+| Evidence links | `adjudication`, `test.mapping` |
 | Low-signal change | `noise.patternProposal`, `noise`, `anomaly` |
 | Feedback | `validation.report` |
 
 Registration does not imply that every family has a complete live producer.
 Rich body schemas and runners are live for decomposition, ordering, narration,
-findings, decisions, noise, and review hypotheses. Spec, claim, adjudication,
+findings, decisions, noise, and review hypotheses. Spec, adjudication,
 test-mapping, pattern-proposal, anomaly, and some validation-report flows remain
 partial or deferred. Read call sites and `BODY_SCHEMAS`, not the registry alone,
 when checking shipped behaviour.
