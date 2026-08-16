@@ -81,13 +81,13 @@ control) proving the behavior is absent, then makes it pass. Gate is
 
 ## 5. Docs (same change — definition of done)
 
-- [ ] 5.1 `docs/src/content/docs/developing/reference/delivery-order.md`: mark
+- [x] 5.1 `docs/src/content/docs/developing/reference/delivery-order.md`: mark
       wave 4 delivered with a one-paragraph summary (review.load by id, by-id
       dispatch resolution, nav-stack restore; #324 closed, #297 closed).
-- [ ] 5.2 `docs/src/content/docs/using/guide/getting-started.md`: the
+- [x] 5.2 `docs/src/content/docs/using/guide/getting-started.md`: the
       wayfinding paragraph gains reopening old reviews + picking up where you
       left off after a restart, including the honest worktree-gone status.
-- [ ] 5.3 `docs/src/content/docs/developing/concepts/architecture-overview.md`:
+- [x] 5.3 `docs/src/content/docs/developing/concepts/architecture-overview.md`:
       persistence section states reviews are loadable by id (`review.load`) and
       navigation state persists as renderer-local UI state.
 
