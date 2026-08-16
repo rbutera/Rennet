@@ -6,9 +6,8 @@ import { summaryLine } from "./progress-feed-fold";
 /**
  * The ONE shared narration-feed organ (issue #71): a spinner-over-feed rendering of
  * the per-repo blocks a run produces. Extracted verbatim from `ProjectProcessing`'s
- * inline `.processing-repos` + `RepoBlock` so the processing screen, the context-
- * refresh indicator, and the capture/review wait render the SAME component, never a
- * parallel copy of the fold or the trail rendering.
+ * inline `.processing-repos` + `RepoBlock`. The processing screen is wired now;
+ * context refresh and capture/review are tracked as later consumers by issue #71.
  *
  * Completed stages fold into a compact done-ledger (each trail row a checked line),
  * the in-progress row keeps its live dot, and a soft repo error renders honestly.

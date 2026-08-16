@@ -766,13 +766,10 @@ export type ProgressArtifactRef = z.infer<typeof progressArtifactRefSchema>;
  * `repo-error` is a SOFT failure for one repo — processing continues, and `done`
  * still fires.
  *
- * Capture/review (issue #71): `capture`/`floor`/`angle` fire at the review
- * pipeline's real deterministic seams (capture milestones, deterministic-floor
- * completion, per-angle admission — counts/ids/titles only, never model prose);
- * `review-done` is the terminal event that agrees with the command's resolved
- * value and carries the review anchor; `review-error` is a soft failure narrated
- * honestly while the run continues. Every capture/review payload is deterministic:
- * a complete feed requires NO model call.
+ * Capture/review (issue #71): `capture`/`floor`/`angle` reserve structured events
+ * for the review pipeline's real deterministic seams (counts/ids/titles only,
+ * never model prose). Their production emission and feed consumer remain tracked
+ * by the unchecked OpenSpec tasks.
  *
  * The union is discriminated by `kind` and grows additively — consumers that fold
  * only the repo kinds skip the capture/review kinds (and any future kind) rather
@@ -812,25 +809,23 @@ export const projectProcessEventSchema = z.discriminatedUnion("kind", [
     repos: z.array(processedRepoSummarySchema),
   }),
   // ── capture/review milestones (issue #71) — deterministic, no model prose ────
-  z.object({
+  z.strictObject({
     kind: z.literal("capture"),
-    /** A deterministic, app-authored milestone line ("Captured the working tree"). */
-    note: z.string().min(1),
-    /** A real, specific detail when known ("128 changed files"). */
-    detail: z.string().optional(),
+    milestone: z.enum(["working-tree", "patchset"]),
+    changedFiles: z.number().int().nonnegative().optional(),
   }),
-  z.object({
+  z.strictObject({
     kind: z.literal("floor"),
-    /** A deterministic-floor completion line ("Built the deterministic floor"). */
-    note: z.string().min(1),
-    detail: z.string().optional(),
+    occurrenceCount: z.number().int().nonnegative(),
+    chunkCount: z.number().int().nonnegative(),
   }),
-  z.object({
+  z.strictObject({
     kind: z.literal("angle"),
+    angle: canvasAngleSchema,
     /** The admitted angle's real title (from the pipeline's own record). */
     title: z.string().min(1),
-    /** An optional deterministic note ("admitted"). */
-    note: z.string().optional(),
+    admittedDocuments: z.number().int().nonnegative(),
+    rejectedDocuments: z.number().int().nonnegative(),
   }),
   z.object({
     kind: z.literal("review-done"),

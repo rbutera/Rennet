@@ -1,5 +1,5 @@
 import type { ProcessedRepoSummary, Project, ProjectProcessEvent } from "@rennet/protocol";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { deriveProgressView } from "./progress-feed-fold";
 
 const repoProject: Project = {
@@ -82,9 +82,15 @@ describe("deriveProgressView — the shared narration fold (issue #71)", () => {
     // disturbing the repo blocks it does understand.
     const events: ProjectProcessEvent[] = [
       { kind: "repo-start", repo: "orbital", index: 1, total: 1 },
-      { kind: "capture", note: "Captured the working tree", detail: "128 changed files" },
-      { kind: "floor", note: "Built the deterministic floor" },
-      { kind: "angle", title: "Security review", note: "admitted" },
+      { kind: "capture", milestone: "patchset", changedFiles: 128 },
+      { kind: "floor", occurrenceCount: 8, chunkCount: 3 },
+      {
+        kind: "angle",
+        angle: "flagged",
+        title: "Flagged",
+        admittedDocuments: 2,
+        rejectedDocuments: 0,
+      },
       { kind: "review-done" },
       { kind: "review-error", message: "one angle timed out" },
       { kind: "stage", repo: "orbital", stage: "build", note: "Building the repo map" },
@@ -122,62 +128,5 @@ describe("deriveProgressView — the shared narration fold (issue #71)", () => {
     ];
     const inert = deriveProgressView(withoutAnchor, [], repoProject);
     expect(inert.repoBlocks[0]?.anchor).toBeUndefined();
-  });
-
-  it("is complete with ZERO model calls: the feed derives wholly from deterministic events (#71, task 7)", () => {
-    // The fold is a pure function of the deterministic event stream and the resolved
-    // per-repo summary — the model utility port is not an input, so a complete feed
-    // cannot depend on model output. We spy on a stand-in model port and prove it is
-    // never touched while the feed is fully derived.
-    const modelPort = { generate: vi.fn() };
-    const events: ProjectProcessEvent[] = [
-      { kind: "repo-start", repo: "orbital", index: 1, total: 1 },
-      {
-        kind: "stage",
-        repo: "orbital",
-        stage: "resolve",
-        note: "Finding the default branch",
-        detail: "main",
-      },
-      {
-        kind: "stage",
-        repo: "orbital",
-        stage: "tree",
-        note: "Reading the file tree",
-        detail: "412 files",
-      },
-      { kind: "stage", repo: "orbital", stage: "build", note: "Building the repo map" },
-      {
-        kind: "repo-done",
-        repo: "orbital",
-        summary: {
-          repo: "orbital",
-          path: "/orbital",
-          ok: true,
-          files: 412,
-          symbols: 260,
-          references: 900,
-        },
-      },
-    ];
-    const repos: ProcessedRepoSummary[] = [
-      { repo: "orbital", path: "/orbital", ok: true, files: 412, symbols: 260, references: 900 },
-    ];
-
-    const view = deriveProgressView(events, repos, repoProject);
-
-    // Every part of the feed is present: headline (latest real line), the full trail
-    // with real details, the block outcome, and the terminal done summary with real
-    // counts. Nothing is a placeholder.
-    expect(view.headline).toBe("Building the repo map");
-    expect((view.repoBlocks[0]?.trail ?? []).map((row) => row.note)).toEqual([
-      "Finding the default branch",
-      "Reading the file tree",
-      "Building the repo map",
-    ]);
-    expect(view.repoBlocks[0]?.state).toBe("done");
-    expect(view.doneSummary).toBe("412 files mapped, 260 symbols indexed");
-    // And no model invocation was needed to produce any of it.
-    expect(modelPort.generate).not.toHaveBeenCalled();
   });
 });

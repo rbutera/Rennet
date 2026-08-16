@@ -58,14 +58,22 @@ discipline above: dispatch owns the terminal event so the stream and the
 command's resolved value always agree, and the renderer folds the stream into UI
 state that a re-read of durable truth can always reconstruct.
 
-Every narrated slot renders through a single shared narration organ
-(`ProgressFeed` plus the pure `deriveProgressView` fold in `@rennet/ui`), not a
-per-slot copy. The fold is a pure function of the deterministic event stream, so
-the feed is complete with no model call; unknown or future event kinds on the
-union are skipped rather than thrown on, which lets the event vocabulary grow
-additively (the capture and review milestones share the same channel). A landed
-feed line can carry a typed artifact reference so activating it navigates to the
-project or review it produced; a line with no reference stays honestly inert.
+The processing slot renders through the shared narration organ (`ProgressFeed`
+plus the pure `deriveProgressView` fold in `@rennet/ui`). Main deduplicates a
+live `project.process` run by its stable project UUID and keeps a bounded replay
+prefix, so remounting the processing consumer reattaches instead of starting a
+second concurrent snapshot build. A successful repo line carries the processed
+project artifact through the real consumer and opens that project; an
+anchorless line stays inert.
+
+The rest of issue #71 is not live yet. The protocol reserves strict structured
+capture, deterministic-floor, and per-angle events, but the capture/review
+pipeline does not emit them and its busy surface does not consume
+`ProgressFeed`. The proactive-rehydration broadcast also has no renderer
+listener or project-card indicator. A run epoch, completed-summary return path,
+and an integration proof that runs every narrated slot with the model utility
+port stubbed are still unchecked OpenSpec tasks. The pure processing fold needs
+no model input, but that fact alone is not the cross-pipeline zero-model proof.
 
 ## When to revisit it
 

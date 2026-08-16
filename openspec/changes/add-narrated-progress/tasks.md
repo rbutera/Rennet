@@ -1,14 +1,12 @@
 # Tasks — add-narrated-progress (#71)
 
-> **Slice status (this PR):** the foundational, behaviour-preserving vertical has
-> shipped — the shared organ + pure fold (extracted from the processing screen with
-> its DOM guard intact), the additive protocol widening, anchoring, and the
-> zero-model completeness proof. The deeper main-process/renderer wiring that
-> threads progress through the review-capture pipeline and adds the in-memory
-> replay buffer (tasks 3.2-3.4, 4, 5) is deliberately staged as a reviewed
-> follow-up rather than force-landed onto the flagship review path — it follows the
-> design's own "ship in consumer order, extraction first" migration plan. Unchecked
-> boxes below are that follow-up.
+> **Implementation status corrected after PR #321 review:** the proposal, design,
+> and specification still describe the whole issue #71 capability. Commit
+> `df13f0c`'s task scope was not superseded by the first implementation slice.
+> This branch currently ships the shared processing feed, structured review-event
+> vocabulary, live-run dedup/replay, and processing-artifact navigation. Every
+> unchecked item below remains required to complete issue #71; “follow-up” is not
+> a scope removal.
 
 ## 1. Extract the shared organ (behaviour-preserving)
 
@@ -25,31 +23,31 @@
 
 ## 3. Stable ids + replay (leave and return)
 
-- [x] 3.1 Key `project.process` progress on a deterministic per-run id (project id) instead of a renderer-minted UUID; renderer derives the same id on re-mount
-- [ ] 3.2 Main keeps a bounded in-memory event log per live run; a mid-run subscriber receives the backlog as a replay prefix then live events; terminal event clears the buffer — **DEFERRED (follow-up)**
-- [ ] 3.3 Projects list subscribes to live-run ids and shows the in-progress glyph on a project card until the terminal event arrives — **DEFERRED (follow-up)**
-- [ ] 3.4 Returning to the processing slot mid-run re-attaches (replay + live); returning after completion shows the completed summary including per-repo failures — DOM tests for both, mounted through the real bridge seam (composition-root test, not props-only) — **DEFERRED (follow-up)**
+- [ ] 3.1 Key `project.process` progress on a deterministic per-run id (project id + run epoch) instead of a renderer-minted UUID; renderer derives the same id on re-mount. **Partial:** the stable project UUID is live; a distinct run epoch is not.
+- [x] 3.2 Main keeps a bounded in-memory event log per live run; a mid-run subscriber receives the backlog as a replay prefix then live events; terminal event clears the buffer
+- [ ] 3.3 Projects list subscribes to live-run ids and shows the in-progress glyph on a project card until the terminal event arrives
+- [ ] 3.4 Returning to the processing slot mid-run re-attaches (replay + live); returning after completion shows the completed summary including per-repo failures — DOM tests for both, mounted through the real bridge seam (composition-root test, not props-only). **Partial:** dispatcher-level remount replay is red-proofed; project-card state and the completed-summary composition test are not implemented.
 
 ## 4. The capture/review wait narrates
 
-- [ ] 4.1 Emit deterministic progress events from the capture/review pipeline's real seams (capture complete, floor completion, per-angle admission) through the dispatch `emitProgress` context; dispatch owns the terminal event so stream and resolved value agree — **DEFERRED (follow-up; the union + transport are ready)**
-- [ ] 4.2 Replace the mute busy-bar during capture/regenerate/review-generation with the shared `ProgressFeed` (spinner-over-feed); keep the graceful no-push-channel degraded mode — **DEFERRED (follow-up)**
-- [ ] 4.3 Soft failures render honestly in the feed and the run continues (workspace one-repo-fails precedent) — **DEFERRED (follow-up; `review-error` kind is defined)**
+- [ ] 4.1 Emit deterministic progress events from the capture/review pipeline's real seams (capture complete, floor completion, per-angle admission) through the dispatch `emitProgress` context; dispatch owns the terminal event so stream and resolved value agree. **The structured union exists; production emission does not.**
+- [ ] 4.2 Replace the mute busy-bar during capture/regenerate/review-generation with the shared `ProgressFeed` (spinner-over-feed); keep the graceful no-push-channel degraded mode
+- [ ] 4.3 Soft failures render honestly in the feed and the run continues (workspace one-repo-fails precedent)
 
 ## 5. Refresh narration lights up
 
-- [ ] 5.1 Renderer subscribes to `PROACTIVE_REHYDRATION_COMMAND_ID` and surfaces background passes through the shared organ as ambient chrome (project-card glyph + compact line); never a modal takeover — **DEFERRED (follow-up)**
-- [ ] 5.2 DOM test: a rehydration event stream produces the ambient indicator without replacing the current surface — **DEFERRED (follow-up)**
+- [ ] 5.1 Renderer subscribes to `PROACTIVE_REHYDRATION_COMMAND_ID` and surfaces background passes through the shared organ as ambient chrome (project-card glyph + compact line); never a modal takeover
+- [ ] 5.2 DOM test: a rehydration event stream produces the ambient indicator without replacing the current surface
 
 ## 6. Anchors
 
-- [x] 6.1 Fold surfaces the optional artifact ref as an anchor on landed lines; consumers navigate via existing flow handlers (open project detail, open review)
+- [ ] 6.1 Fold surfaces the optional artifact ref as an anchor on landed lines; consumers navigate via existing flow handlers (open project detail, open review). **Partial:** project processing emits and opens its project artifact through the real consumer; review emission/navigation awaits task 4.
 - [x] 6.2 A line without an artifact renders as plain text: not focusable-as-link, no dead navigation — test both directions
 
 ## 7. Zero-model completeness proof
 
-- [x] 7.1 Test: run the narrated fold with the model utility port stubbed out; assert the feed is complete (lines, details, ledger, terminal state) and no model invocation occurred
-- [x] 7.2 Red-proof it: make one feed line stop deriving from a real event and confirm the test reddens for THAT reason; revert
+- [ ] 7.1 Test: run the narrated slots with the model utility port stubbed out; assert the feed is complete (lines, details, ledger, terminal state) and no model invocation occurred
+- [ ] 7.2 Red-proof it: make one feed line depend on model output in a scratch mutation and confirm the test reddens for THAT reason; revert
 
 ## 8. Wrap-up
 

@@ -120,7 +120,7 @@ describe("ProjectProcessing — the initial context dump with live narration", (
     if (!call) throw new Error("project.process was not invoked");
     const processInput = call.input as { projectId: string; commandId?: string };
     expect(processInput.projectId).toBe("p1");
-    expect(processInput.commandId).toBeTruthy();
+    expect(processInput.commandId).toBe("p1");
 
     // The narration trail shows the REAL stage notes + details that were streamed.
     await waitFor(() =>
@@ -139,6 +139,30 @@ describe("ProjectProcessing — the initial context dump with live narration", (
 
     // "Open orbital" fires the open callback.
     fireEvent.click(getByRole("button", { name: /Open orbital/ }));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it("wires a landed project artifact through the real processing consumer", async () => {
+    const events: ProjectProcessEvent[] = [
+      { kind: "repo-start", repo: "orbital", index: 1, total: 1 },
+      {
+        kind: "repo-done",
+        repo: "orbital",
+        summary: { repo: "orbital", path: "/orbital", ok: true, files: 5, symbols: 3 },
+        artifact: { kind: "project", projectId: "p1" },
+      },
+    ];
+    const { bridge } = fakeBridge({
+      events,
+      repos: [{ repo: "orbital", path: "/orbital", ok: true, files: 5, symbols: 3 }],
+    });
+    const onOpen = vi.fn();
+    const { getByRole } = mount(
+      <ProjectProcessing bridge={bridge} project={project} onDone={vi.fn()} onOpen={onOpen} />,
+    );
+
+    const landed = await waitFor(() => getByRole("button", { name: "orbital" }));
+    fireEvent.click(landed);
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 

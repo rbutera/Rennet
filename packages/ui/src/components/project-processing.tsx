@@ -19,8 +19,8 @@ import { deriveProgressView } from "./progress-feed-fold";
  *
  * The event-fold and the per-repo trail rendering now live in the SHARED narration
  * organ (`ProgressFeed` + `deriveProgressView`, issue #71): this screen is its first
- * consumer, so the same feed drives the context-refresh indicator and the
- * capture/review wait — one organ, no bespoke copy.
+ * live consumer. Context refresh and capture/review remain intended consumers;
+ * their production wiring is tracked by the unchecked issue #71 tasks.
  *
  * When the bridge has no push channel the screen degrades gracefully: a calm
  * spinner, then the completion summary from the command's resolved value. No gate,
@@ -52,10 +52,10 @@ export function ProjectProcessing({
     started.current = true;
 
     // Key the run on a stable per-project id (issue #71, D3): a re-mount derives
-    // the SAME id, so leave-and-return re-attaches to the live feed instead of
-    // minting a fresh identity that orphans the run. `project.process` is one run
-    // per project (`started` guards a double-build within this mount).
-    const commandId = `project.process:${project.id}`;
+    // the SAME UUID, so a remount re-attaches to the main-owned live run instead
+    // of minting a fresh identity. Main deduplicates concurrent invocations and
+    // replays the bounded live backlog; `started` only guards this mount.
+    const commandId = project.id;
     const unsubscribe = bridge.onProgress?.(commandId, (event) => {
       setEvents((prior) => [...prior, event]);
       if (event.kind === "done") setRepos(event.repos);
@@ -126,7 +126,12 @@ export function ProjectProcessing({
         </p>
       </div>
 
-      <ProgressFeed blocks={view.repoBlocks} />
+      <ProgressFeed
+        blocks={view.repoBlocks}
+        onAnchor={(artifact) => {
+          if (artifact.kind === "project" && artifact.projectId === project.id) onOpen();
+        }}
+      />
 
       {done ? (
         <div className="processing-actions">
