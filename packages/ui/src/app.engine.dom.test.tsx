@@ -53,6 +53,7 @@ const review: Review = {
 /** A bridge whose live load reports the given engine provenance. */
 function bridgeWithEngine(engine: ReviewEngine): RennetBridge {
   const invoke = async (name: string): Promise<unknown> => {
+    if (name === "app.bootstrap") return { review, repositoryPresent: true };
     if (name === "review.canvases") return { canvases: demoCanvases(), elementDiffs: {}, engine };
     return { review };
   };

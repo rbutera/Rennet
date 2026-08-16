@@ -30,6 +30,9 @@ no gate to design (Rule Zero).
   working-tree freshness watcher (like a snapshot review), and live model
   surfaces that need the repo report their existing honest unavailable states.
   No confirmation, no gate — the persisted review always shows.
+  `app.bootstrap` reports the same presence fact for its latest review and only
+  admits or watches that root when it exists, so its fast path cannot bypass the
+  missing-context behavior.
 - Navigation-stack persistence (#297 remainder): the persisted nav state grows
   from recents-only to the full back/forward stack (additive, versioned local
   UI state; an unreadable or older blob degrades to the current recents-only
@@ -38,6 +41,8 @@ no gate to design (Rule Zero).
   for review-family surfaces, `project.detail` for project surfaces). An entry
   that can no longer load is dropped with a plain status, flooring to the
   nearest restorable ancestor (the Projects root always restores).
+  Failed entries are discarded rather than moved into Forward; persisted routes
+  are topology-validated and both stack halves are capped at 100 entries.
 - Docs updated in the same change: delivery-order wave-4 entry, getting-started
   wayfinding paragraph, architecture-overview persistence section.
 
@@ -60,7 +65,8 @@ None.
 
 ## Impact
 
-- `packages/protocol/src/index.ts`: one new command definition (`review.load`).
+- `packages/protocol/src/index.ts`: one new command definition (`review.load`) and
+  an additive `repositoryPresent` result on `app.bootstrap`.
 - `packages/core/src/index.ts`: expose `ReviewService.reviewById` (delegates to
   the existing `ReviewStorePort.reviewById`).
 - `apps/desktop/src/main/dispatch.ts`: `review.load` handler; the by-id

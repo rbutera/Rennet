@@ -62,6 +62,7 @@ function draftingBridge(ready: Review, drafted: DraftOutput, deferred = false) {
     release = resolve;
   });
   const invoke = async (name: string, input: unknown): Promise<unknown> => {
+    if (name === "app.bootstrap") return { review: ready, repositoryPresent: true };
     if (name === "review.draftPrBody") {
       calls.push(input as CommandInput<"review.draftPrBody">);
       if (deferred) await gate;

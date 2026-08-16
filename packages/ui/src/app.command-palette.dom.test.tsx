@@ -54,7 +54,7 @@ const review: Review = {
 // workspace's own commands are live regardless of the canvas load.
 function bridge(): RennetBridge {
   const invoke = async (name: string): Promise<unknown> => {
-    if (name === "app.bootstrap") return { review };
+    if (name === "app.bootstrap") return { review, repositoryPresent: true };
     if (name === "review.checkFreshness") return { review };
     if (name === "flagged.review") return { status: "ok", findings: [] };
     if (name === "noise.review") return { status: "ok", groups: [] };
@@ -151,7 +151,7 @@ describe("RennetApp — the lifted store resets on review change (regression)", 
     const byId: Record<string, Review> = { "review-a": reviewA, "review-b": reviewB };
     const enriched = { canvases: demoCanvases(), elementDiffs: {} };
     const invoke = async (name: string, input: unknown): Promise<unknown> => {
-      if (name === "app.bootstrap") return { review: reviewA };
+      if (name === "app.bootstrap") return { review: reviewA, repositoryPresent: true };
       if (name === "review.checkFreshness") {
         const id = (input as { reviewId: string }).reviewId;
         return { review: byId[id] ?? reviewA };

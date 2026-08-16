@@ -4,7 +4,7 @@ import type { Review } from "@rennet/types";
 import { afterEach, describe, expect, it } from "vitest";
 import { RennetApp } from "./app";
 import { demoCanvases } from "./canvas/fixtures";
-import { NAV_HISTORY_STORAGE_KEY, serialize } from "./nav/history";
+import { NAV_HISTORY_STORAGE_KEY, parse, serialize } from "./nav/history";
 import { fireEvent, mount, waitFor, within } from "./test/dom";
 
 const project: Project = {
@@ -84,13 +84,20 @@ const projectDetail: ProjectDetailData = {
 function navigationBridge(
   restored: Review | null,
   calls: Array<{ name: string; input: unknown }> = [],
-  opts: { repositoryPresent?: boolean; loadPending?: boolean } = {},
+  opts: {
+    repositoryPresent?: boolean;
+    bootstrapRepositoryPresent?: boolean;
+    loadPending?: boolean;
+  } = {},
 ): RennetBridge {
   const invoke = async (name: string, input?: unknown): Promise<unknown> => {
     calls.push({ name, input });
     switch (name) {
       case "app.bootstrap":
-        return { review: restored };
+        return {
+          review: restored,
+          repositoryPresent: restored ? (opts.bootstrapRepositoryPresent ?? true) : false,
+        };
       case "review.load": {
         if (opts.loadPending) return new Promise<never>(() => undefined);
         const id = (input as { reviewId?: string }).reviewId;
@@ -352,7 +359,10 @@ describe("RennetApp navigation spine", () => {
 
     fireEvent.click(recentProject);
     await waitFor(() => expect(container.querySelector(".project-detail")).not.toBeNull());
-    expect(getByRole("navigation", { name: "Breadcrumb" }).textContent).toContain(project.name);
+    const breadcrumb = getByRole("navigation", { name: "Breadcrumb" });
+    expect(breadcrumb.textContent).toContain(project.name);
+    expect(breadcrumb.textContent).not.toContain(review.repositoryRoot);
+    expect(within(breadcrumb).getAllByRole("button")).toHaveLength(2);
   });
 
   it("records only project locations, never an unresolvable review visit", async () => {
@@ -404,6 +414,30 @@ describe("RennetApp navigation-stack restore across restarts (#324/#297)", () =>
       serialize([{ kind: "project", projectId: project.id }], stack as never, future as never),
     );
   }
+
+  it("persists navigation performed by the mounted app and restores it after a real remount", async () => {
+    localStorage.clear();
+    const first = mount(<RennetApp bridge={navigationBridge(null)} />);
+    await waitFor(() => expect(first.container.querySelector(".project-row")).not.toBeNull());
+    fireEvent.click(first.container.querySelector(".project-row") as HTMLButtonElement);
+    await waitFor(() => expect(first.container.querySelector(".project-detail")).not.toBeNull());
+    await waitFor(() =>
+      expect(parse(localStorage.getItem(NAV_HISTORY_STORAGE_KEY)).stack).toEqual([
+        { kind: "projects" },
+        { kind: "project", projectId: project.id },
+      ]),
+    );
+
+    first.unmount();
+    const calls: Array<{ name: string; input: unknown }> = [];
+    const second = mount(<RennetApp bridge={navigationBridge(null, calls)} />);
+
+    await waitFor(() => expect(second.container.querySelector(".project-detail")).not.toBeNull());
+    expect(calls).toContainEqual({ name: "project.detail", input: { projectId: project.id } });
+    expect(second.getByRole("navigation", { name: "Breadcrumb" }).textContent).toContain(
+      project.name,
+    );
+  });
 
   it("restores a persisted projects › project › review stack on boot and Back rehydrates the project", async () => {
     const calls: Array<{ name: string; input: unknown }> = [];
@@ -458,11 +492,14 @@ describe("RennetApp navigation-stack restore across restarts (#324/#297)", () =>
   });
 
   it("floors to the nearest restorable ancestor when a restored tip cannot reopen", async () => {
-    seedStack([
-      { kind: "projects" },
-      { kind: "project", projectId: project.id },
-      { kind: "review", reviewId: review.id },
-    ]);
+    seedStack(
+      [
+        { kind: "projects" },
+        { kind: "project", projectId: project.id },
+        { kind: "review", reviewId: review.id },
+      ],
+      [{ kind: "draft", reviewId: review.id }],
+    );
     // Both the review AND the project fail to reopen → the app floors all the way to
     // the Projects root, naming what could not be reopened.
     const calls: Array<{ name: string; input: unknown }> = [];
@@ -480,6 +517,26 @@ describe("RennetApp navigation-stack restore across restarts (#324/#297)", () =>
 
     await waitFor(() => expect(container.querySelector(".front-door")).not.toBeNull());
     expect(getByText("This project could not be reopened.")).not.toBeNull();
+    await waitFor(() => {
+      const persisted = parse(localStorage.getItem(NAV_HISTORY_STORAGE_KEY));
+      expect(persisted.stack).toEqual([{ kind: "projects" }]);
+      expect(persisted.future).toEqual([]);
+    });
+  });
+
+  it("a deleted latest worktree restored from bootstrap shows missing status and starts no live work", async () => {
+    const calls: Array<{ name: string; input: unknown }> = [];
+    seedStack([{ kind: "projects" }, { kind: "review", reviewId: review.id }]);
+    const { container, getByText } = mount(
+      <RennetApp bridge={navigationBridge(review, calls, { bootstrapRepositoryPresent: false })} />,
+    );
+
+    await waitFor(() => expect(getByText(/original worktree is gone/i)).not.toBeNull());
+    expect(container.querySelector(".canvas-app")).toBeNull();
+    expect(calls.some((call) => call.name === "review.load")).toBe(false);
+    expect(calls.some((call) => call.name === "review.canvases")).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 1700));
+    expect(calls.some((call) => call.name === "review.checkFreshness")).toBe(false);
   });
 
   it("a reopened review whose worktree is gone shows the plain status, runs no freshness poll, and offers no live canvases", async () => {

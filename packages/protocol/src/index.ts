@@ -1726,7 +1726,7 @@ const composedHandoffBundleSchema = objectSchemaFor<ComposedHandoffBundle>()({
 export const commandDefinitions = {
   "app.bootstrap": {
     input: z.object({}),
-    output: z.object({ review: reviewSchema.nullable() }),
+    output: z.object({ review: reviewSchema.nullable(), repositoryPresent: z.boolean() }),
   },
   "repository.choose": {
     input: z.object({}),

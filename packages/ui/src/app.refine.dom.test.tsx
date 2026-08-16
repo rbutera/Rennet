@@ -52,6 +52,7 @@ const review: Review = {
 function refineBridge(ready: Review, result: CommandOutput<"review.refine">) {
   const calls: CommandInput<"review.refine">[] = [];
   const invoke = async (name: string, input: unknown): Promise<unknown> => {
+    if (name === "app.bootstrap") return { review: ready, repositoryPresent: true };
     if (name === "review.refine") {
       calls.push(input as CommandInput<"review.refine">);
       return result;

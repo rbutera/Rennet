@@ -144,14 +144,18 @@ flowchart TB
   most recent, and reports whether its recorded repository root still exists so the
   renderer can show honest missing-context status. Every id-addressed command
   resolves the review it names from the store rather than assuming the globally
-  latest one, so an older reopened review is fully addressable.
+  latest one, so an older reopened review is fully addressable. Bootstrap reports
+  the same repository-presence fact for the latest review, and repository-dependent
+  commands bind their caller path to the addressed review's stored root.
 - **Navigation state** (the back/forward surface stack plus recents) is
   renderer-local UI state, persisted to a versioned `localStorage` blob and restored
   on the next launch, so the app reopens where the user left off. It is deliberately
   separate from the durable event store: a landing rehydrator reloads each surface's
   content as the user arrives on it, an unreadable or older blob degrades to
   recents-only with no migration step, and an entry that can no longer load is
-  dropped in favour of the nearest surface that still opens.
+  discarded from both Back and Forward in favour of the nearest surface that still
+  opens. The parser rejects unrooted or cross-review breadcrumb routes, and each
+  stack half is capped at 100 entries so the local blob stays bounded.
 - Review harnesses currently run against the live checkout. The separate
   immutable materialisation and prompt-staging cache described by the long-term
   contract is not implemented yet.

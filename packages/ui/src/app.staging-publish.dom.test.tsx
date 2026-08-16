@@ -72,6 +72,7 @@ function recordingBridge(ready: Review): {
   const calls: CommandInput<"publish.review">[] = [];
   const submits: CommandInput<"publish.submitPr">[] = [];
   const invoke = async (name: string, input: unknown): Promise<unknown> => {
+    if (name === "app.bootstrap") return { review: ready, repositoryPresent: true };
     if (name === "publish.review") {
       calls.push(input as CommandInput<"publish.review">);
       const output: CommandOutput<"publish.review"> = {

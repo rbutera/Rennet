@@ -30,7 +30,8 @@ export type NavHistoryAction =
   | { type: "back" }
   | { type: "forward" }
   | { type: "ascendTo"; index: number }
-  | { type: "replaceTop"; surface: Surface };
+  | { type: "replaceTop"; surface: Surface }
+  | { type: "discardTip" };
 
 export type CrumbSegment = {
   label: string;
@@ -44,6 +45,8 @@ export type SurfaceLabels = {
 };
 
 export const RECENT_LIMIT = 8;
+/** Local navigation stays bounded so persistence cannot grow until storage writes fail. */
+export const NAV_HISTORY_LIMIT = 100;
 
 export function surfaceIdentity(surface: Surface): string {
   switch (surface.kind) {
@@ -89,27 +92,42 @@ export const replaceTop = (surface: Surface): NavHistoryAction => ({
   surface,
 });
 
+export const discardTip = (): NavHistoryAction => ({ type: "discardTip" });
+
+function cappedStack(stack: readonly Surface[]): Surface[] {
+  if (stack.length <= NAV_HISTORY_LIMIT) return [...stack];
+  if (stack[0]?.kind !== "projects") return stack.slice(-NAV_HISTORY_LIMIT);
+  let prefixLength = 1;
+  if (stack[prefixLength]?.kind === "project") prefixLength += 1;
+  if (stack[prefixLength]?.kind === "review") prefixLength += 1;
+  return [...stack.slice(0, prefixLength), ...stack.slice(-(NAV_HISTORY_LIMIT - prefixLength))];
+}
+
+function cappedFuture(future: readonly Surface[]): Surface[] {
+  return future.slice(-NAV_HISTORY_LIMIT);
+}
+
 export function navHistoryReducer(
   state: NavHistoryState,
   action: NavHistoryAction,
 ): NavHistoryState {
   switch (action.type) {
     case "push":
-      return { stack: [...state.stack, action.surface], future: [] };
+      return { stack: cappedStack([...state.stack, action.surface]), future: [] };
     case "back": {
       if (state.stack.length <= 1) return state;
       const surface = state.stack.at(-1);
       if (!surface) return state;
       return {
         stack: state.stack.slice(0, -1),
-        future: [...state.future, surface],
+        future: cappedFuture([...state.future, surface]),
       };
     }
     case "forward": {
       const surface = state.future.at(-1);
       if (!surface) return state;
       return {
-        stack: [...state.stack, surface],
+        stack: cappedStack([...state.stack, surface]),
         future: state.future.slice(0, -1),
       };
     }
@@ -121,6 +139,13 @@ export function navHistoryReducer(
         stack: [...state.stack.slice(0, -1), action.surface],
         future: [],
       };
+    case "discardTip": {
+      const remaining = state.stack.slice(0, -1);
+      return {
+        stack: remaining.length > 0 ? remaining : [{ kind: "projects" }],
+        future: [],
+      };
+    }
   }
 }
 
@@ -191,12 +216,40 @@ function parseSurfaceList(value: unknown): Surface[] | null {
   return value as Surface[];
 }
 
+function hasValidTopology(stack: readonly Surface[], future: readonly Surface[]): boolean {
+  if (stack.length === 0) return future.length === 0;
+  const route = [...stack, ...future.toReversed()];
+  if (route[0]?.kind !== "projects") return false;
+  let index = 1;
+  if (route[index]?.kind === "project") index += 1;
+  if (index === route.length) return true;
+  const review = route[index];
+  if (review?.kind !== "review") return false;
+  index += 1;
+  for (; index < route.length; index += 1) {
+    const surface = route[index];
+    if (
+      !surface ||
+      (surface.kind !== "draft" && surface.kind !== "paper" && surface.kind !== "handoff") ||
+      surface.reviewId !== review.reviewId
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
 export function serialize(
   recents: readonly RecentSurface[],
   stack: readonly Surface[] = [],
   future: readonly Surface[] = [],
 ): string {
-  return JSON.stringify({ version: NAV_HISTORY_VERSION, recents, stack, future });
+  return JSON.stringify({
+    version: NAV_HISTORY_VERSION,
+    recents,
+    stack: cappedStack(stack),
+    future: cappedFuture(future),
+  });
 }
 
 export function parse(raw: string | null | undefined): PersistedNavState {
@@ -212,9 +265,12 @@ export function parse(raw: string | null | undefined): PersistedNavState {
     const recents = parseRecents(value.recents);
     const stack = parseSurfaceList(value.stack);
     const future = parseSurfaceList(value.future);
-    // Any invalid stack/future entry invalidates the whole stack, not the recents.
-    if (stack === null || future === null) return { recents, stack: [], future: [] };
-    return { recents, stack, future };
+    // Any malformed or semantically impossible route invalidates the whole stack,
+    // not the recents. Forward is stored in pop order, so validate it reversed.
+    if (stack === null || future === null || !hasValidTopology(stack, future)) {
+      return { recents, stack: [], future: [] };
+    }
+    return { recents, stack: cappedStack(stack), future: cappedFuture(future) };
   } catch {
     return cleanState();
   }

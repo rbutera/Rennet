@@ -152,6 +152,7 @@ function harness(
   const runCalls: CommandInput<"review.handoff.run">[] = [];
   const composed: ComposedBundle[] = [];
   const invoke = async (name: string, input: unknown): Promise<unknown> => {
+    if (name === "app.bootstrap") return { review, repositoryPresent: true };
     if (name === "review.handoff.compose") {
       composeCalls.push(input as CommandInput<"review.handoff.compose">);
       // The FIRST compose is a transport failure (the honest error state); a later

@@ -67,13 +67,15 @@ safety property: every command still takes an explicit reviewId, repo-touching
 commands still pass `assertAllowedRepository`, and publish targets still bind
 to the review's own `postTarget`.
 
-**D3 — main's load handler mirrors bootstrap, conditionally.** On
-`review.load`: resolve by id (plain "Review not found" otherwise), check
+**D3 — load and bootstrap admit/watch only a present root.** On `review.load`:
+resolve by id (plain "Review not found" otherwise), check
 `existsSync(repositoryRoot)`; only when present, `allowedRoots.add(root)` +
 `startWatching(root)` (watching a missing path is noise; an absent root also
 stays out of `allowedRoots`, so nothing repo-touching can run against a path
 that isn't there — that is honesty about capability, not a gate: the persisted
-review itself always returns).
+review itself always returns). `app.bootstrap` performs the same existence check
+and returns the same `repositoryPresent` fact for its nullable latest review, so
+the renderer never guesses presence on the bootstrap-same-id fast path.
 
 **D4 — renderer: one landing rehydrator instead of a boot-special-path.** A
 single effect watches the current surface: review-family surface whose id ≠ the
@@ -82,21 +84,25 @@ held review's id → `review.load`; project surface whose id ≠ the cached
 `goToRecent` logic, extracted). While rehydrating, the surface shows the
 existing loading treatment — never another surface's content under the crumb
 (the exact #305 bug class). On failure: plain error toast naming what could not
-be reopened, and the entry is dropped (navigate back / floor to the nearest
-ancestor; the Projects root needs no data). This one mechanism serves boot
+be reopened, and a discard-tip action removes the entry and invalidates Forward
+(floor to the nearest ancestor; the Projects root needs no data). This one mechanism serves boot
 restore, back/forward into a not-yet-loaded surface, and any future programmatic
 navigation — no separate restore ceremony. `app.bootstrap` keeps returning the
-latest review; when a persisted stack restores, the stack wins for navigation
-and the rehydrator reconciles the held review to the tip.
+latest review plus its presence; when a persisted stack restores, the stack wins
+for navigation and the rehydrator reconciles the held review to the tip.
 
 **D5 — nav persistence: version 3, additive, forgiving parser.** The persisted
 blob becomes `{ version: 3, recents, stack, future }` under a `rennet.nav.v3`
 key. Parsing accepts v3 fully and a v2 blob's recents (three lines — keeps the
 user's recents across the upgrade); anything else degrades to the clean default.
 Every restored surface is shape-validated (known kind + non-empty id) exactly as
-recents are today; any invalid entry invalidates only the stack, not the
-recents. `review` surfaces are now legal in the persisted stack because D1–D4
-make them restorable — the #305 exclusion is deleted, not worked around.
+recents are today. The whole route is also topology-validated: Projects is the
+root, Project is optional beneath it, Review starts the review family, and every
+review descendant carries that same review id. Any invalid entry or topology
+invalidates only the stack, not the recents. Stack and Forward are each capped at
+100 entries during mutation, serialization, and parse so a stale oversized blob
+cannot survive a quota failure. `review` surfaces are legal because D1–D4 make
+them restorable — the #305 exclusion is deleted, not worked around.
 
 **D6 — missing-root reviews behave like snapshot reviews.** The renderer treats
 `repositoryPresent: false` the way it treats `isSnapshotReview`: no 1.5s
@@ -105,6 +111,13 @@ freshness poll, no watcher — plus one plain status line on the review surface
 dependent live surfaces (canvases) fail into their existing honest failed/
 unavailable states with retry; the Files view, dispositions, delta account, and
 reattached threads render fully from persisted state.
+
+**D7 — repo-touching commands bind id and root before acting.** Freshness and
+canvas commands resolve the addressed review first, require the caller path to
+equal that review's stored `repositoryRoot`, then require that root to be admitted.
+Own-branch PR submission requires the review's stored root to be admitted exactly
+like `review.handoff.run`. This is command-to-review correctness, not an approval
+step; a loaded review follows the unchanged happy path.
 
 ## Risks / Trade-offs
 

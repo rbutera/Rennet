@@ -184,6 +184,7 @@ function harness(
   service: ReviewService;
   store: InMemoryStore;
   allowedRoots: Set<string>;
+  startWatching: ReturnType<typeof vi.fn>;
   buildCanvases: ReturnType<typeof vi.fn>;
   publishPort: ForgePublishPort & { posts: ForgeReviewPost[] };
   publishConsent: PublishConsentAuthority;
@@ -205,6 +206,7 @@ function harness(
   const store = new InMemoryStore();
   const service = new ReviewService(capture, store);
   const allowedRoots = new Set<string>();
+  const startWatching = vi.fn<(root: string) => void>();
   let dirty = false;
   const buildCanvases = vi.fn(() =>
     Promise.resolve({
@@ -278,7 +280,8 @@ function harness(
         // its OWN pull request.
         ...(retrospective ? {} : { postTarget: SANDBOX_TARGET }),
       }),
-    startWatching: () => undefined,
+    startWatching,
+    repositoryExists: extra.repositoryExists ?? (() => true),
     isRepositoryDirty: () => dirty,
     setRepositoryDirty: (value) => {
       dirty = value;
@@ -291,7 +294,6 @@ function harness(
     ...(extra.runHandoffTurn ? { runHandoffTurn: extra.runHandoffTurn } : {}),
     ...(extra.composeBundle ? { composeBundle: extra.composeBundle } : {}),
     ...(extra.liveTurns ? { liveTurns: extra.liveTurns } : {}),
-    ...(extra.repositoryExists ? { repositoryExists: extra.repositoryExists } : {}),
     // Front-door deps (issue #29): a trivial in-memory projects capability plus
     // stub discovery/detection. The dedicated front-door tests exercise these
     // handlers directly; the shared harness only needs them to satisfy the shape.
@@ -343,6 +345,7 @@ function harness(
     service,
     store,
     allowedRoots,
+    startWatching,
     buildCanvases,
     publishPort,
     publishConsent,
@@ -603,11 +606,17 @@ describe("createDispatch — canvas.* routing (issue #54)", () => {
   });
 
   it("still serves the preserved MVP commands (app.bootstrap, review.setDisposition)", async () => {
-    const { dispatch } = harness();
+    const { dispatch, startWatching } = harness();
     const review = await capturedReview(dispatch);
+    startWatching.mockClear();
 
-    const boot = (await dispatch("app.bootstrap", {})) as { review: Review | null };
+    const boot = (await dispatch("app.bootstrap", {})) as {
+      review: Review | null;
+      repositoryPresent: boolean;
+    };
     expect(boot.review?.id).toBe(review.id);
+    expect(boot.repositoryPresent).toBe(true);
+    expect(startWatching).toHaveBeenCalledWith(review.repositoryRoot);
 
     const set = (await dispatch("review.setDisposition", {
       commandId: randomUUID(),
@@ -621,13 +630,14 @@ describe("createDispatch — canvas.* routing (issue #54)", () => {
   });
 
   it("denies review.canvases for a repository that was never granted", async () => {
-    const { dispatch } = harness();
+    const { dispatch, allowedRoots } = harness();
     const review = await capturedReview(dispatch);
+    allowedRoots.delete(review.repositoryRoot);
     await expect(
       dispatch("review.canvases", {
         commandId: randomUUID(),
         reviewId: review.id,
-        repoPath: "/not-granted",
+        repoPath: review.repositoryRoot,
       }),
     ).rejects.toThrow(/access was not granted/);
   });
@@ -821,10 +831,14 @@ describe("createDispatch — review.load (reopen a persisted review by id, #324)
   }
 
   it("loads the OLDER review by id while a newer one exists, present-root, appending no event", async () => {
-    const { dispatch, store, allowedRoots } = harnessWith({ repositoryExists: () => true });
+    const { dispatch, store, allowedRoots, startWatching } = harnessWith({
+      repositoryExists: () => true,
+    });
     const { older, newer } = await twoReviews(dispatch);
     expect(older.id).not.toBe(newer.id);
-    const eventsBefore = store.events.length;
+    const latestBefore = (await dispatch("app.bootstrap", {})) as { review: Review | null };
+    const eventsBefore = JSON.stringify(store.events);
+    startWatching.mockClear();
     const result = (await dispatch("review.load", {
       commandId: randomUUID(),
       reviewId: older.id,
@@ -833,14 +847,18 @@ describe("createDispatch — review.load (reopen a persisted review by id, #324)
     expect(result.repositoryPresent).toBe(true);
     // A present root is watched + granted (mirrors bootstrap).
     expect(allowedRoots.has(older.repositoryRoot)).toBe(true);
-    // Pure read: no event appended, and a second load returns the same review.
-    expect(store.events.length).toBe(eventsBefore);
+    expect(startWatching).toHaveBeenCalledWith(older.repositoryRoot);
+    // Pure read: the globally-latest identity and serialized events are byte-identical,
+    // and a second load returns the same review.
+    const latestAfter = (await dispatch("app.bootstrap", {})) as { review: Review | null };
+    expect(latestAfter.review?.id).toBe(latestBefore.review?.id);
+    expect(JSON.stringify(store.events)).toBe(eventsBefore);
     const again = (await dispatch("review.load", {
       commandId: randomUUID(),
       reviewId: older.id,
     })) as { review: Review };
     expect(again.review.id).toBe(older.id);
-    expect(store.events.length).toBe(eventsBefore);
+    expect(JSON.stringify(store.events)).toBe(eventsBefore);
   });
 
   it("after loading the older review, id-addressed commands resolve it (no latest-pin)", async () => {
@@ -871,9 +889,12 @@ describe("createDispatch — review.load (reopen a persisted review by id, #324)
   });
 
   it("a missing root loads the review but does NOT grant it: a follow-up repo command still refuses", async () => {
-    const { dispatch, allowedRoots } = harnessWith({ repositoryExists: () => false });
+    const { dispatch, allowedRoots, startWatching } = harnessWith({
+      repositoryExists: () => false,
+    });
     const { older } = await twoReviews(dispatch);
     allowedRoots.clear(); // drop the capture-time grant, to prove load does not re-add it
+    startWatching.mockClear();
     const result = (await dispatch("review.load", {
       commandId: randomUUID(),
       reviewId: older.id,
@@ -881,6 +902,7 @@ describe("createDispatch — review.load (reopen a persisted review by id, #324)
     expect(result.review.id).toBe(older.id);
     expect(result.repositoryPresent).toBe(false);
     expect(allowedRoots.has(older.repositoryRoot)).toBe(false);
+    expect(startWatching).not.toHaveBeenCalled();
     // A repo-touching command against the absent root is refused (not granted by load).
     await expect(
       dispatch("review.canvases", {
@@ -889,6 +911,64 @@ describe("createDispatch — review.load (reopen a persisted review by id, #324)
         repoPath: older.repositoryRoot,
       }),
     ).rejects.toThrow(/Repository access was not granted/);
+  });
+
+  it("bootstrap reports a deleted latest root without granting or watching it", async () => {
+    const { dispatch, allowedRoots, startWatching } = harnessWith({
+      repositoryExists: () => false,
+    });
+    const { newer } = await twoReviews(dispatch);
+    allowedRoots.clear();
+    startWatching.mockClear();
+
+    const result = (await dispatch("app.bootstrap", {})) as {
+      review: Review | null;
+      repositoryPresent: boolean;
+    };
+
+    expect(result.review?.id).toBe(newer.id);
+    expect(result.repositoryPresent).toBe(false);
+    expect(allowedRoots.has(newer.repositoryRoot)).toBe(false);
+    expect(startWatching).not.toHaveBeenCalled();
+  });
+
+  it("binds freshness and canvases to the addressed review's stored repository root", async () => {
+    const { dispatch, allowedRoots, buildCanvases } = harnessWith({
+      repositoryExists: () => true,
+    });
+    const { older } = await twoReviews(dispatch);
+    allowedRoots.add("/allowed-but-unrelated");
+
+    await expect(
+      dispatch("review.checkFreshness", {
+        commandId: randomUUID(),
+        reviewId: older.id,
+        repoPath: "/allowed-but-unrelated",
+      }),
+    ).rejects.toThrow(/does not match this review/i);
+    await expect(
+      dispatch("review.canvases", {
+        commandId: randomUUID(),
+        reviewId: older.id,
+        repoPath: "/allowed-but-unrelated",
+      }),
+    ).rejects.toThrow(/does not match this review/i);
+    expect(buildCanvases).not.toHaveBeenCalled();
+
+    await expect(
+      dispatch("review.checkFreshness", {
+        commandId: randomUUID(),
+        reviewId: older.id,
+        repoPath: older.repositoryRoot,
+      }),
+    ).resolves.toEqual({ review: older });
+    await expect(
+      dispatch("review.canvases", {
+        commandId: randomUUID(),
+        reviewId: older.id,
+        repoPath: older.repositoryRoot,
+      }),
+    ).resolves.toBeDefined();
   });
 });
 
@@ -1681,6 +1761,31 @@ describe("createDispatch — publish.submitPr (own-branch submission, issue #257
       headRef: "feat/reviewed",
       submission: SUBMISSION,
     });
+  });
+
+  it("refuses plainly when the review's own root is not admitted", async () => {
+    const submitPullRequest = vi.fn<NonNullable<DispatchDeps["submitPullRequest"]>>(async () => ({
+      url: "https://github.com/acme/widget/pull/7",
+      number: 7,
+      reused: false,
+    }));
+    const { dispatch, allowedRoots } = harness(
+      fakePublishPort(),
+      {},
+      { capturePort: ownBranchCapture(), submitPullRequest },
+    );
+    const review = await capturedReview(dispatch);
+    allowedRoots.delete(review.repositoryRoot);
+
+    await expect(
+      dispatch("publish.submitPr", {
+        commandId: randomUUID(),
+        reviewId: review.id,
+        submission: SUBMISSION,
+        payload: PAYLOAD,
+      }),
+    ).rejects.toThrow(/Repository access was not granted/);
+    expect(submitPullRequest).not.toHaveBeenCalled();
   });
 
   it("refuses when the signed payload does not match the submission (what you see is what leaves)", async () => {

@@ -98,6 +98,7 @@ import { runBatched } from "./concurrency";
 import {
   ascendTo as ascendNavigationTo,
   crumb as deriveCrumb,
+  discardTip as discardNavigationTip,
   NAV_HISTORY_LEGACY_KEY,
   NAV_HISTORY_STORAGE_KEY,
   navHistoryReducer,
@@ -410,10 +411,9 @@ function persistNav(
 export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const [review, setReview] = useState<Review | null | undefined>(undefined);
   // Whether the open review's original repository root still exists on disk (#324).
-  // True for a fresh capture/openPr/bootstrap review; set from the load result when a
-  // persisted review is reopened by id. A gone root behaves like a snapshot review
-  // (no freshness watcher, no live canvases) plus a plain status line (D6).
-  const [repositoryPresent, setRepositoryPresent] = useState(true);
+  // Set by bootstrap/load; fresh capture/openPr paths set it true. A gone root behaves
+  // like a snapshot review (no freshness watcher, no live canvases) plus a plain status.
+  const [repositoryPresent, setRepositoryPresent] = useState(false);
   const [selectedPath, setSelectedPath] = useState<string>();
   const [diffFocus, setDiffFocus] = useState<DiffFocus>();
   const diffFocusNonce = useRef(0);
@@ -689,8 +689,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   useEffect(() => {
     bridge
       .invoke("app.bootstrap", {})
-      .then(({ review: restored }) => {
+      .then(({ review: restored, repositoryPresent: restoredRepositoryPresent }) => {
         setReview(restored);
+        setRepositoryPresent(restoredRepositoryPresent);
         // A persisted stack restored (more than the Projects root) wins for
         // navigation — the rehydrator reconciles the held review to the tip. Only
         // when NO stack was restored do we land the latest review as before (#297).
@@ -737,7 +738,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         .catch((reason: unknown) => {
           rehydrating.current = null;
           setError(reason instanceof Error ? reason.message : String(reason));
-          navigate(navigateBack()); // drop the entry; floor to the nearest ancestor
+          navigate(discardNavigationTip());
         });
       return;
     }
@@ -752,7 +753,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         .catch((reason: unknown) => {
           rehydrating.current = null;
           setError(reason instanceof Error ? reason.message : String(reason));
-          navigate(navigateBack());
+          navigate(discardNavigationTip());
         });
     }
     // The Projects root needs no data — nothing to rehydrate.
@@ -2099,6 +2100,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     try {
       await loadProjectDetail(surface.projectId);
       setDirectEntryOpen(false);
+      navigate(ascendNavigationTo(0));
       navigate(pushSurface(surface));
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));

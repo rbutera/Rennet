@@ -18,7 +18,7 @@ The system SHALL load any persisted review by its id as a pure read: the load SH
 - **THEN** the load fails with a plain not-found error and no review state changes
 
 ### Requirement: Loading discloses whether the original repository is still present
-The system SHALL report, with each load, whether the review's recorded repository root currently exists on disk, so callers can render honest status instead of guessing. The report SHALL NOT block or alter the loaded review.
+The system SHALL report, with each load and with latest-review bootstrap, whether the review's recorded repository root currently exists on disk, so callers can render honest status instead of guessing. The report SHALL NOT block or alter the loaded review, and a missing root SHALL NOT be admitted or watched.
 
 #### Scenario: The original worktree is gone
 - **WHEN** a persisted review is loaded and its repository root no longer exists
@@ -27,3 +27,14 @@ The system SHALL report, with each load, whether the review's recorded repositor
 #### Scenario: The repository is still present
 - **WHEN** a persisted review is loaded and its repository root exists
 - **THEN** the load returns the review marked as having a present repository, and the existing freshness machinery may subsequently mark it stale — after the load, never blocking it
+
+### Requirement: Repository work is bound to the addressed review
+The system SHALL resolve a review id before repository-dependent work, require the caller path to equal that review's stored repository root, and require that root to be admitted. Own-branch submission SHALL use the same stored-root admission rule as the review handoff write path.
+
+#### Scenario: An allowed path belongs to another review
+- **WHEN** freshness or canvases names review A but supplies a separately allowed path B
+- **THEN** the command refuses before capturing, appending, or running the canvas pipeline
+
+#### Scenario: Submission names an unadmitted review root
+- **WHEN** own-branch submission names a persisted review whose stored root is not admitted
+- **THEN** submission refuses plainly without pushing or opening a pull request

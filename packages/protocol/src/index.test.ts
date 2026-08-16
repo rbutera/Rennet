@@ -54,6 +54,12 @@ describe("command protocol", () => {
 });
 
 describe("review.load — reopen a persisted review by id (#324)", () => {
+  it("app.bootstrap reports presence for its nullable latest review", () => {
+    const output = commandDefinitions["app.bootstrap"].output;
+    expect(output.safeParse({ review: null, repositoryPresent: false }).success).toBe(true);
+    expect(output.safeParse({ review: null }).success).toBe(false);
+  });
+
   it("is a known command taking { commandId, reviewId }", () => {
     expect(isCommandName("review.load")).toBe(true);
     const parsed = parseCommandInput("review.load", {

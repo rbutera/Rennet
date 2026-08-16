@@ -110,7 +110,7 @@ describe("RennetApp — the flagged frame does not go stale on regenerate (#160/
     const invoke = async (name: string): Promise<unknown> => {
       switch (name) {
         case "app.bootstrap":
-          return { review: structuredClone(current) };
+          return { review: structuredClone(current), repositoryPresent: true };
         case "review.checkFreshness":
           return { review: structuredClone(current) };
         case "review.canvases":

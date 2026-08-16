@@ -54,7 +54,7 @@ const review: Review = {
 
 const bridge: RennetBridge = {
   invoke: (async (name: string) => {
-    if (name === "app.bootstrap") return { review };
+    if (name === "app.bootstrap") return { review, repositoryPresent: true };
     if (name === "settings.get") return { scheme: "system", appearanceMalformed: false };
     if (name === "review.deltaDigest") return { status: "unavailable", reason: "test" };
     if (name === "flagged.review") return { status: "ok", findings: [] };

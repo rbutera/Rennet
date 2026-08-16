@@ -3,7 +3,9 @@ import {
   ascendTo,
   back,
   crumb,
+  discardTip,
   forward,
+  NAV_HISTORY_LIMIT,
   NAV_HISTORY_VERSION,
   type NavHistoryState,
   navHistoryReducer,
@@ -84,6 +86,41 @@ describe("navigation history laws", () => {
 
     expect(next.stack).toHaveLength(state.stack.length);
     expect(next.stack.at(-1)).toEqual({ kind: "review", reviewId: "r2" });
+    expect(next.future).toEqual([]);
+  });
+
+  it("discardTip removes a failed surface, clears forward history, and floors a lone tip", () => {
+    const failedReview: Surface = { kind: "review", reviewId: "gone" };
+    expect(
+      navHistoryReducer(
+        { stack: [projects, project, failedReview], future: [paper] },
+        discardTip(),
+      ),
+    ).toEqual({ stack: [projects, project], future: [] });
+    expect(navHistoryReducer({ stack: [failedReview], future: [paper] }, discardTip())).toEqual({
+      stack: [projects],
+      future: [],
+    });
+  });
+
+  it("caps pushes and drops the oldest non-root history beyond the documented limit", () => {
+    const descendants: Surface[] = Array.from({ length: NAV_HISTORY_LIMIT - 3 }, () => ({
+      kind: "paper",
+      reviewId: "r1",
+    }));
+    const oldest: Surface = { kind: "draft", reviewId: "r1" };
+    const newest: Surface = { kind: "handoff", reviewId: "r1" };
+    const state: NavHistoryState = {
+      stack: [projects, review, oldest, ...descendants],
+      future: [paper],
+    };
+
+    const next = navHistoryReducer(state, push(newest));
+
+    expect(next.stack).toHaveLength(NAV_HISTORY_LIMIT);
+    expect(next.stack[0]).toEqual(projects);
+    expect(next.stack).not.toContainEqual(oldest);
+    expect(next.stack.at(-1)).toEqual(newest);
     expect(next.future).toEqual([]);
   });
 });
@@ -198,6 +235,56 @@ describe("persisted navigation (v3 stack + recents)", () => {
     const stack: Surface[] = [projects, project, review, draft, paper];
     const raw = serialize([], stack, []);
     expect(parse(raw).stack).toEqual(stack);
+  });
+
+  it("drops topologically invalid stacks but keeps recents", () => {
+    const mismatchedReviewFamily = JSON.stringify({
+      version: NAV_HISTORY_VERSION,
+      recents: [project],
+      stack: [
+        projects,
+        { kind: "review", reviewId: "review-a" },
+        { kind: "draft", reviewId: "review-b" },
+      ],
+      future: [],
+    });
+    const rootlessReview = JSON.stringify({
+      version: NAV_HISTORY_VERSION,
+      recents: [project],
+      stack: [{ kind: "review", reviewId: "review-a" }],
+      future: [],
+    });
+
+    expect(parse(mismatchedReviewFamily)).toEqual({ recents: [project], stack: [], future: [] });
+    expect(parse(rootlessReview)).toEqual({ recents: [project], stack: [], future: [] });
+  });
+
+  it("keeps a legal rooted stack with one review identity across descendants", () => {
+    const stack: Surface[] = [projects, project, review, draft, paper];
+    expect(parse(serialize([], stack, [])).stack).toEqual(stack);
+  });
+
+  it("trims overlong parsed stack and future arrays to the documented limit", () => {
+    const descendants: Surface[] = Array.from({ length: NAV_HISTORY_LIMIT + 3 }, () => ({
+      kind: "draft",
+      reviewId: "r1",
+    }));
+    const future: Surface[] = Array.from({ length: NAV_HISTORY_LIMIT + 4 }, () => ({
+      kind: "paper",
+      reviewId: "r1",
+    }));
+    const raw = JSON.stringify({
+      version: NAV_HISTORY_VERSION,
+      recents: [],
+      stack: [projects, review, ...descendants],
+      future,
+    });
+
+    const parsed = parse(raw);
+    expect(parsed.stack).toHaveLength(NAV_HISTORY_LIMIT);
+    expect(parsed.stack[0]).toEqual(projects);
+    expect(parsed.stack[1]).toEqual(review);
+    expect(parsed.future).toHaveLength(NAV_HISTORY_LIMIT);
   });
 
   it("serialize with no stack/future defaults them to empty arrays", () => {

@@ -83,7 +83,7 @@ function makeBridge(state: { freshnessReview: Review }, calls: FlaggedCall[]): R
   const invoke = async (name: string, input: unknown): Promise<unknown> => {
     switch (name) {
       case "app.bootstrap":
-        return { review: reviewWithId("A") };
+        return { review: reviewWithId("A"), repositoryPresent: true };
       case "review.checkFreshness":
         return { review: state.freshnessReview };
       case "review.canvases":

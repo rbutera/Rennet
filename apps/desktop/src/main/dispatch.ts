@@ -111,9 +111,9 @@ export interface DispatchDeps {
   startWatching(root: string): void;
   /**
    * Whether a persisted review's recorded repository root still exists on disk
-   * (issue #324). The one fact only main can cheaply provide for `review.load`, so
-   * the renderer shows honest missing-context status and skips the freshness
-   * watcher. Injectable for tests; defaults to `node:fs` existsSync.
+   * (issue #324). The one fact only main can cheaply provide for load/bootstrap, so
+   * the renderer shows honest missing-context status and skips freshness. Injectable
+   * for tests; defaults to `node:fs` existsSync.
    */
   repositoryExists?(root: string): boolean;
   isRepositoryDirty(): boolean;
@@ -507,6 +507,13 @@ export function createDispatch(
     if (!allowedRoots.has(repositoryPath)) throw new Error("Repository access was not granted");
   }
 
+  function assertReviewRepository(review: Review, repositoryPath: string): void {
+    if (repositoryPath !== review.repositoryRoot) {
+      throw new Error("Repository path does not match this review");
+    }
+    assertAllowedRepository(review.repositoryRoot);
+  }
+
   /**
    * The egress target-binding gate (issue #21, most-permissive-fault): a real post is
    * legitimate ONLY against the review's OWN pull request. `requestConsent` and the
@@ -559,11 +566,12 @@ export function createDispatch(
       case "app.bootstrap": {
         parseCommandInput(name, rawInput);
         const review = service.bootstrap();
-        if (review) {
+        const repositoryPresent = review !== null && repositoryExists(review.repositoryRoot);
+        if (review && repositoryPresent) {
           allowedRoots.add(review.repositoryRoot);
           deps.startWatching(review.repositoryRoot);
         }
-        return parseCommandOutput(name, { review });
+        return parseCommandOutput(name, { review, repositoryPresent });
       }
       case "repository.choose": {
         parseCommandInput(name, rawInput);
@@ -629,8 +637,8 @@ export function createDispatch(
       }
       case "review.checkFreshness": {
         const input = parseCommandInput(name, rawInput);
-        assertAllowedRepository(input.repoPath);
         const current = requireReviewById(input.reviewId);
+        assertReviewRepository(current, input.repoPath);
         if (!deps.isRepositoryDirty()) return parseCommandOutput(name, { review: current });
         const review = await service.checkFreshness(
           input.commandId,
@@ -781,6 +789,7 @@ export function createDispatch(
         // token: pushing your own branch is not publishing (AGENTS.md).
         const input = parseCommandInput(name, rawInput);
         const review = requireReviewById(input.reviewId);
+        assertAllowedRepository(review.repositoryRoot);
 
         // (0) A retrospective review is read-only over a merged/any PR — there is no
         // own branch to submit. Refuse the whole command, matching the review egress.
@@ -828,8 +837,8 @@ export function createDispatch(
       }
       case "review.canvases": {
         const input = parseCommandInput(name, rawInput);
-        assertAllowedRepository(input.repoPath);
         const review = requireReviewById(input.reviewId);
+        assertReviewRepository(review, input.repoPath);
         // Running the review harness (the model spend) is Rennet's entire job — it
         // just runs. No permission mode, no consent token: opening Canvases composes
         // the model turn directly.

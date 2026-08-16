@@ -96,3 +96,17 @@ control) proving the behavior is absent, then makes it pass. Gate is
 - [x] 6.1 Full `pnpm check` green across the workspace; confirm at least one
       test in each RED group was observed failing before its implementation
       landed (positive controls).
+
+## 7. Review correctness follow-up
+
+- [x] 7.1 Make latest-review bootstrap presence-aware; admit/watch only an existing
+      root and consume its presence in the renderer even when the restored id matches.
+- [x] 7.2 Bind freshness and canvases to the addressed review's stored root.
+- [x] 7.3 Require own-branch submission's review root to be admitted, matching handoff.
+- [x] 7.4 Discard failed restore tips and invalid Forward history instead of using Back.
+- [x] 7.5 Reject unrooted, illegal-transition, and cross-review persisted routes.
+- [x] 7.6 Cap stack and Forward at 100 entries in mutation, serialization, and parse.
+- [x] 7.7 Add and mutation-prove a mounted navigation, unmount, remount persistence test.
+- [x] 7.8 Strengthen load purity to byte-identical events/latest identity and make
+      watcher calls observable for present and missing roots.
+- [x] 7.9 Run `NX_DAEMON=false pnpm check` green after the follow-up.
