@@ -47,27 +47,38 @@ Both current GitHub destinations are wired end to end:
 That closes the most obvious “review buddy cannot finish the review” holes. Do
 not rebuild them from old issue prose.
 
-## What matters next
+## What matters next: the wave order
 
-### Complete the context and regeneration spine
+The build sequence is a numbered wave list (Rai's decision, 2026-08-16). Work
+proceeds wave by wave; at most two waves run in parallel, and only when they
+touch disjoint files. Each wave is one OpenSpec change (trivial sweeps excepted),
+implemented against its tasks and dual-reviewed before merge, and closes its
+issues in the same motion.
 
-The deterministic ContextManifest (#30), the `context.ask` knowledge tool (#15),
-and affected-only regeneration (#38) have all landed on `main`: the models see the
-right material, the reviewer can ask for missing context, and a new patchset no
-longer forces a full restart. The one remaining open item here is:
+1. ~~Wire the handoff renderer loop~~ — **done** (#72 closed; #323 + #325 on `main`).
+2. [#309 — blockingStates disclosure](https://github.com/rbutera/rennet/issues/309): the Flagged clean-state and PublishSheet must disclose blocked ingestion instead of claiming "ran clean". The worst live UI lie; small diff.
+3. [#73 — hunk-grain beyond-asks](https://github.com/rbutera/rennet/issues/73): consume the handoff run's `traceMap` and structured hunks so the delta re-review narrates what the agent changed, including work beyond the asks. Completes the agent loop.
+4. [#324 — `review.load` by id](https://github.com/rbutera/rennet/issues/324) plus the final [#297](https://github.com/rbutera/rennet/issues/297) follow-up: reopen a persisted review without its original PR/worktree context, then restore the navigation stack across restarts.
+5. Product-debt sweep, one branch: [#158](https://github.com/rbutera/rennet/issues/158) remainder, [#71](https://github.com/rbutera/rennet/issues/71) verify-or-close, [#239](https://github.com/rbutera/rennet/issues/239) raw-markdown keystroke, [#88](https://github.com/rbutera/rennet/issues/88) provenance re-stamping (three sites), and [#221](https://github.com/rbutera/rennet/issues/221) — Rai's verdict is **drop the Claims lens**.
+6. Windows support, phase 1: the WSL interop spike on the lancelot test bed (`wsl.exe` stdio + the Claude SDK launcher shim). A gate for the whole `add-windows-support` change: it can invalidate the design, so nothing later in that change starts before it reports. May run in parallel with waves 2–5 (disjoint files).
+7. Windows support, phases 2–6: locus seam and path translation, per-locus discovery, harness turns in WSL, the native Windows surface, then verification on lancelot in both modes. Files the Windows release-engineering follow-up (signing/installer/updater) as its own issue, mirroring #298.
+8. [#28 — settings v1 remainder](https://github.com/rbutera/rennet/issues/28): schema registry, the full eight-layer resolver, records, and the per-repo Explain/Reset/Pin surface. After Windows, which reshapes what settings must express (per-locus values).
+9. [#44 — command palette registry and menu bar](https://github.com/rbutera/rennet/issues/44): conflict detection, persistent user overrides, and a menu bar built from the same registry. After settings, which owns the override store.
+10. Deferred tier, in dependency order as appetite allows: [#25](https://github.com/rbutera/rennet/issues/25) Codex app-server adapter → [#41](https://github.com/rbutera/rennet/issues/41) cross-harness adjudication with seeded ground truth → [#26](https://github.com/rbutera/rennet/issues/26) omp slot; [#183](https://github.com/rbutera/rennet/issues/183) verify-ui independently.
+11. Polish sweep ([#316](https://github.com/rbutera/rennet/issues/316), [#65](https://github.com/rbutera/rennet/issues/65), [#89](https://github.com/rbutera/rennet/issues/89), [#92](https://github.com/rbutera/rennet/issues/92), [#75](https://github.com/rbutera/rennet/issues/75), [#223](https://github.com/rbutera/rennet/issues/223)), then [#85](https://github.com/rbutera/rennet/issues/85) — the full design and usability pass — as the closing milestone. The accumulated `styles.css` design-system debt belongs here.
 
-1. [#28 — settings v1](https://github.com/rbutera/rennet/issues/28): finish the layered resolver and settings surface without turning setup into ceremony.
-
-### Make the agent loop easier to read
-
-- [#72](https://github.com/rbutera/rennet/issues/72) composes several review notes into one coherent work order — the composed bundle runs (digest-bound), previews on the stage-6 paper, and the renderer now wires compose→preview→run end to end from the own-branch destination.
-- [#73](https://github.com/rbutera/rennet/issues/73) narrates what the coding agent changed, including work beyond the asks.
+After wave 5 (plus the human-only #298 setup), Rennet is feature-complete as
+specced: both doors, the full loop including the agent handoff, honest UI.
+Waves 6+ are expansion, not completion.
 
 ### Release when the external pieces are ready
 
 [Issue #298](https://github.com/rbutera/rennet/issues/298) owns public macOS
-signing, GitHub release publishing, and updates. It is blocked on external setup,
-not on another in-product ceremony.
+signing, GitHub release publishing, and updates. It is blocked on Rai's
+human-only checklist (Apple enrolment, certificates, repository visibility,
+CI secrets), not on another in-product ceremony. It unblocks the moment the
+checklist comment lands, independent of every wave above. [#225](https://github.com/rbutera/rennet/issues/225)
+stays parked behind remote-PR sourcing.
 
 ## How to read an issue
 
