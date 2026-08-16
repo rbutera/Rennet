@@ -165,9 +165,8 @@ button {
   gap: 7px;
   margin: 5px 0 4px;
   padding: 3px 8px;
-  border: 0;
-  border-left: 2px solid var(--private);
-  border-radius: 0 6px 6px 0;
+  border: 1px solid var(--private-line);
+  border-radius: 6px;
   background: var(--private-fill);
   color: inherit;
   text-align: left;
@@ -210,8 +209,7 @@ button {
   width: 100%;
   margin: 5px 0 4px;
   padding: 4px 8px;
-  border: 0;
-  border-left: 2px solid var(--private);
+  border: 1px solid var(--private-line);
   background: var(--private-fill);
   color: var(--private);
   font: 500 10px / 1.3 var(--mono);
@@ -224,7 +222,7 @@ button {
   justify-content: space-between;
   gap: 8px;
   padding: 5px 8px;
-  border-left: 2px solid var(--private);
+  border: 1px solid var(--private-line);
   background: var(--private-fill);
   color: var(--private);
   font: 500 10px / 1.2 var(--mono);
@@ -2944,31 +2942,23 @@ button {
   box-shadow: var(--raised-shadow);
   overflow: hidden;
 }
-/* State law: local = backlight private glow; my PR = accent stripe; teammate PR =
- * neutral; needs-you = amber stripe (attention); merged/read-only = green + dimmed. */
+/* State law: local = backlight private glow; my PR = accent border tint; teammate PR =
+ * neutral; needs-you = amber border (attention); merged/read-only = green + dimmed. */
 .smart-row[data-kind="local"] {
   border-color: var(--private-line);
   background: var(--private-surface);
   box-shadow: var(--raised-shadow), var(--private-glow);
 }
 .smart-row[data-kind="pr"][data-mine="true"] {
-  box-shadow:
-    var(--raised-shadow),
-    inset 3px 0 0 var(--accent-soft-line);
+  border-color: var(--accent-soft-line);
 }
 .smart-row[data-needs-you="true"] {
   border-color: var(--amber-line);
-  box-shadow:
-    var(--raised-shadow),
-    inset 3px 0 0 var(--amber);
 }
 .smart-row[data-read-only="true"] {
   border-color: var(--green-line);
   background: var(--surface);
   opacity: 0.82;
-  box-shadow:
-    var(--raised-shadow),
-    inset 3px 0 0 var(--green-line);
 }
 .smart-row-open {
   flex: 1;
