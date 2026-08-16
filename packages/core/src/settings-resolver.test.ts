@@ -3,9 +3,13 @@ import { describe, expect, it } from "vitest";
 import {
   BUILTIN_SCHEME,
   BUILTIN_VISIBILITY,
+  LAYER_ORDER,
+  resolve,
+  resolveLocus,
   resolvePromoted,
   resolveScheme,
   resolveVisibility,
+  SETTINGS_REGISTRY,
 } from "./settings-resolver";
 
 describe("resolveScheme", () => {
@@ -93,5 +97,75 @@ describe("resolvePromoted", () => {
       value: "true",
       effective: true,
     });
+  });
+});
+
+describe("settings registry + generic resolve (#28)", () => {
+  it("registers exactly the four live keys, each with a builtin default that passes its own validator and merge=replace", () => {
+    const keys = Object.keys(SETTINGS_REGISTRY).sort();
+    expect(keys).toEqual(["locus", "promoted", "scheme", "visibility"]);
+    for (const decl of Object.values(SETTINGS_REGISTRY)) {
+      expect(decl.merge).toBe("replace");
+      expect(decl.layers).toContain("builtin");
+      // The builtin default round-trips through the key's own validator.
+      expect(() => decl.validate(decl.builtinDefault)).not.toThrow();
+      expect(decl.validate(decl.builtinDefault)).toEqual(decl.builtinDefault);
+    }
+  });
+
+  it("LAYER_ORDER is the single lowest→highest precedence list", () => {
+    expect(LAYER_ORDER).toEqual(["builtin", "detected", "global", "repo"]);
+  });
+
+  it("folds offers in LAYER_ORDER with exactly one effective contribution", () => {
+    const resolved = resolve(SETTINGS_REGISTRY.locus, {
+      detected: { kind: "wsl", distro: "Ubuntu" },
+    });
+    expect(resolved.value).toEqual({ kind: "wsl", distro: "Ubuntu" });
+    expect(resolved.layer).toBe("detected");
+    expect(resolved.provenance.contributions).toEqual([
+      { layer: "builtin", value: "host", effective: false },
+      { layer: "detected", value: "WSL · Ubuntu", effective: true },
+    ]);
+    expect(resolved.provenance.contributions.filter((c) => c.effective)).toHaveLength(1);
+  });
+
+  it("a repo override outranks detection, keeping the suppressed detected offer", () => {
+    const resolved = resolve(SETTINGS_REGISTRY.locus, {
+      detected: { kind: "wsl", distro: "Ubuntu" },
+      repo: { kind: "host" },
+    });
+    expect(resolved.layer).toBe("repo");
+    expect(resolved.value).toEqual({ kind: "host" });
+    expect(resolved.provenance.contributions.map((c) => c.layer)).toEqual([
+      "builtin",
+      "detected",
+      "repo",
+    ]);
+    expect(resolved.provenance.contributions.find((c) => c.layer === "detected")?.effective).toBe(
+      false,
+    );
+  });
+
+  it("detected-only ⇒ effective layer is detected", () => {
+    const resolved = resolveLocus({ kind: "wsl", distro: "Debian" }, undefined);
+    expect(resolved.layer).toBe("detected");
+  });
+
+  it("REFUSES an offer at a layer the key does not permit", () => {
+    // Scheme permits builtin < global; a `repo` offer is not allowed.
+    expect(() =>
+      resolve(SETTINGS_REGISTRY.scheme, { repo: "dark" } as never),
+    ).toThrow(/repo/);
+    // Visibility permits builtin < repo; a `detected` offer is not allowed.
+    expect(() =>
+      resolve(SETTINGS_REGISTRY.visibility, { detected: "git-visible" } as never),
+    ).toThrow();
+  });
+
+  it("resolveLocus: repo override wins over detection", () => {
+    const resolved = resolveLocus({ kind: "host" }, { kind: "wsl", distro: "Ubuntu" });
+    expect(resolved.layer).toBe("repo");
+    expect(resolved.value).toEqual({ kind: "wsl", distro: "Ubuntu" });
   });
 });
