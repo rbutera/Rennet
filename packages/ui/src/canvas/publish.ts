@@ -399,10 +399,16 @@ const HANDOFF_ADDRESSED_TYPES: readonly DispositionType[] = ["request-change", "
  * the effective body (refined-if-kept, else the sovereign raw). This is exactly what
  * `review.handoff.compose` is handed; compose re-filters the same way, so an
  * approve/question never reaches the agent even if passed. Pure: no React, no DOM.
+ *
+ * A BLANK effective body is dropped: a neutral "mark-read" comment carries an empty
+ * body (it records "I read this file", not an instruction), and an empty ask would
+ * compose an empty work order for the coding agent to act on. So the actionable set
+ * — which also drives the ≥1-actionable-ask handoff affordance (destination-frame) —
+ * is exactly the addressed items that actually say something.
  */
 export function handoffDispositions(draft: CollationDraft): HandoffDisposition[] {
   return collationItems(draft)
-    .filter((write) => HANDOFF_ADDRESSED_TYPES.includes(write.type))
+    .filter((write) => HANDOFF_ADDRESSED_TYPES.includes(write.type) && write.body.trim() !== "")
     .map((write) => ({
       path: write.path,
       type: write.type,
