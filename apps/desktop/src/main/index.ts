@@ -1537,7 +1537,7 @@ app.whenReady().then(async () => {
     // turn diff. Reuses the SAME memoized `claude` discovery the review pipeline uses
     // (R2 subscription OAuth). Refuses a repo with submodules (Codex F6) and answers an
     // honest failed turn when no `claude` is installed — never a fabricated success.
-    runHandoffTurn: async ({ repoRoot, bundle }) => {
+    runHandoffTurn: async ({ repoRoot, prompt }) => {
       if (await repoHasSubmodules(repoRoot)) {
         return {
           status: "failed",
@@ -1558,7 +1558,7 @@ app.whenReady().then(async () => {
       }
       return runHandoffTurnCore({
         repoRoot,
-        bundle,
+        prompt,
         runPort: claudeHandoffRunPort(adapter),
         checkpoint: new GitCheckpointStore(repoRoot),
       });

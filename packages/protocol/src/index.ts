@@ -1651,13 +1651,16 @@ const handoffRunResultSchema = objectSchemaFor<HandoffRunResult>()({
  * The `review.handoff.run` outcome. A discriminated union so every non-success is
  * an HONEST, distinct state the renderer can render, never a fabricated result:
  *   • `ran`         — the write turn completed and a new patchset was captured.
- *   • `refused`     — the consent token was absent / forged / bound to a different
- *                     bundle (the explicit-act + spend-disclosed gates fired).
+ *   • `refused`     — the composed bundle handed to the run did not match its own
+ *                     digest/prompt or was composed against a different review/patchset
+ *                     than is active now (issue #72). Integrity, not a consent gate: the
+ *                     honest outcome is re-compose, never run an order nobody composed.
  *   • `unavailable` — no coding harness is installed to run the write session.
  *   • `failed`      — the write turn ran but did not complete.
  */
 const handoffRunOutputSchema = z.discriminatedUnion("status", [
   z.object({ status: z.literal("ran"), result: handoffRunResultSchema }),
+  z.object({ status: z.literal("refused"), reason: z.string() }),
   z.object({ status: z.literal("unavailable"), reason: z.string() }),
   // A failed turn carries the files the agent changed BEFORE erroring (Codex F4), so a
   // partial mutation on disk is surfaced to the reviewer rather than hidden.
@@ -2330,8 +2333,16 @@ export const commandDefinitions = {
     input: z.object({
       commandId: commandIdSchema,
       reviewId: z.string().min(1),
-      /** The dispositions to hand off; the bundle is rebuilt from them + the active patchset. */
-      dispositions: z.array(handoffDispositionSchema),
+      /**
+       * The COMPOSED bundle to run (issue #72) — the exact one `review.handoff.compose`
+       * produced, NOT a re-derivation from dispositions. The run executes this bundle's
+       * ordered, verbatim `prompt`, bound by its `digest`: the handler recomputes the
+       * digest + prompt from the tasks and refuses a bundle that no longer matches
+       * (`verifyComposedBundle`), so the write session provably runs what was composed.
+       * A `composed:false` mechanical floor is a legitimate thing to run — but only when
+       * it IS the composed bundle, never as a silent stand-in for a lost `composed:true`.
+       */
+      bundle: composedHandoffBundleSchema,
     }),
     output: handoffRunOutputSchema,
   },

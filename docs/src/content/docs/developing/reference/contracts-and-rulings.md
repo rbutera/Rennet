@@ -106,7 +106,7 @@ the old conflict no longer controls current work; the row records the replacemen
 | **R12** | `append` is the fourth settings merge strategy and is limited to guidance prose, with layer-labelled concatenation. |
 | **R13** | Adapter capabilities include per-call model selection and advertised models. Capabilities begin false and are demonstrated by conformance. |
 | **R17** | Commands produce durable receipts and events; projections rebuild from them. Publication has explicit `outcome-unknown` and query-before-retry recovery. Private events cannot change outbound bytes. |
-| **R18** | Diff ingestion stays byte-safe. Binaries, submodules, mode-only changes, oversize splits, and incomplete ingestion are first-class and visible in the review residue. |
+| **R18** | Diff ingestion stays byte-safe. Binaries, submodules, mode-only changes, oversize splits, and incomplete ingestion are first-class. Truncated, binary, or submodule capture leaves an explicit decomposition blocking state, so a done or publish gate cannot report completeness. |
 | **R19** | Public protocol is transport-neutral and JSON-Schema-first; private commands and events are Zod-first. Remote clients receive recipient-specific projections, never raw host paths or event envelopes. |
 | **R20** | `@rennet/ui` imports only `types`, `protocol`, and browser-safe dependencies; it never imports `core`. |
 | **R21** | The live package spine is `types`, `protocol`, `instructions`, `core`, `adapters`, and `ui`, composed by `apps/desktop`; boundary arrows are checked in CI. |

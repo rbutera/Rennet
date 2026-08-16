@@ -121,13 +121,18 @@ lenses, dual-model analysis, refinement, signing, and a real GitHub post.
 
 The own-branch submission path is live: Rennet drafts the pull request, signs,
 pushes the named branch, and opens the previewed pull request. The coding-agent
-handoff is not yet live through the renderer. Its mechanical bundle, capable
-runner, checkpoint capture, successor patchset, deterministic carry, and model
-composer exist behind main-process commands, but the renderer does not invoke
-the acting command and the composed bundle is not yet threaded into it. Richer
-sub-file lineage, project-processing narration, and parts of the
-code-intelligence experience are also intended destinations rather than
-finished surfaces.
+handoff is now live through the renderer too: an own-branch review with an
+actionable disposition offers a "Hand off to agent" path that composes the
+bundle, previews it on the stage-6 paper, and runs it from one action. The whole
+chain is threaded end to end — mechanical bundle, capable runner, checkpoint
+capture, successor patchset, deterministic carry, and model composer behind
+main-process commands; an acting command that executes the exact composed bundle
+(bound by its digest, refusing a tampered or stale one); and the renderer trigger
+that composes, previews, and invokes it, surfacing the run outcome truthfully.
+Consuming the run's successor patchset into a delta re-review is the next seam.
+Richer sub-file lineage, project-processing narration, and parts of the
+code-intelligence experience are also intended destinations rather than finished
+surfaces.
 
 These docs mark those seams explicitly. A designed flow is useful context, but
 it is not reported as shipped merely because a schema or mockup exists.

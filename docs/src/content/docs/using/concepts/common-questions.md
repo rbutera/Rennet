@@ -58,10 +58,11 @@ Today, the live renderer lets you shape and sign the pull-request title and body
 then Rennet pushes the named branch and opens that pull request.
 
 The next loop turns your requested changes into a coding-agent bundle, lets the
-agent edit and test, captures a successor patchset, and shows the delta. The
-backend runner and capture machinery exist, but that acting command is not yet
-invoked by the renderer, and its separate model-composed bundle is not yet
-threaded into the run.
+agent edit and test, captures a successor patchset, and shows the delta. Handing
+off is live: an own-branch review composes, previews, and runs the bundle from the
+renderer, and the acting command executes that exact model-composed bundle,
+threaded and bound by its digest. Seeing the successor patchset as a delta
+re-review is the part still to come.
 
 When you sign the finished paper, Rennet pushes the named branch and opens the
 previewed pull request. The richer fuzzy sub-file lineage work is separate: the

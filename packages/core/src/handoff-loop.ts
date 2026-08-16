@@ -340,7 +340,14 @@ export type HandoffTurnOutcome =
 
 export interface RunHandoffTurnInput {
   readonly repoRoot: string;
-  readonly bundle: HandoffBundle;
+  /**
+   * The work-order prompt the write turn executes. For a #72 handoff this is the
+   * COMPOSED bundle's `prompt` (ordered, grouped, verbatim) — the run turn genuinely
+   * needs nothing else from the bundle, so it takes the prompt directly rather than a
+   * whole bundle. The compose→run digest binding lives at the dispatch boundary
+   * (`verifyComposedBundle`), which proves this prompt is the one that was composed.
+   */
+  readonly prompt: string;
   readonly runPort: HandoffRunPort;
   readonly checkpoint: CheckpointPort;
   readonly signal?: AbortSignal;
@@ -368,7 +375,7 @@ export async function runHandoffTurn(input: RunHandoffTurnInput): Promise<Handof
   try {
     const outcome = await input.runPort({
       cwd: input.repoRoot,
-      prompt: input.bundle.prompt,
+      prompt: input.prompt,
       ...(input.signal === undefined ? {} : { signal: input.signal }),
     });
     // ALWAYS take the post-checkpoint — the turn ran, so whatever it changed (even

@@ -40,7 +40,7 @@ function decomposition(): Decomposition {
     edges: [{ from: "c1", to: "c2", kind: "enables" }],
     readingOrder: ["c1", "c2"],
     residue: [],
-    ingestionGaps: [],
+    blockingStates: [],
   };
 }
 

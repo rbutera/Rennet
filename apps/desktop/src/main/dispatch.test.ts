@@ -2,8 +2,10 @@ import { randomUUID } from "node:crypto";
 import { buildGitHubReviewRequest } from "@rennet/adapters";
 import {
   type AskAnswer,
+  type ComposePort,
   canonicalPrSubmissionPayload,
   canonicalReviewPayload,
+  composeHandoffBundle,
   type ForgePublishPort,
   type ForgeReviewEvent,
   type ForgeReviewPost,
@@ -26,6 +28,7 @@ import {
 import type {
   Canvas,
   CanvasAngle,
+  ComposedHandoffBundle,
   ContextManifest,
   FlaggedReview,
   PatchFile,
@@ -2569,6 +2572,29 @@ const HANDOFF_DISPOSITIONS = [
   { path: "src/a.ts", type: "request-change" as const, body: "add a guard clause" },
 ];
 
+/**
+ * Compose the bundle for a review (issue #72) — the exact bundle `review.handoff.run`
+ * now consumes. With no composer wired the dispatch returns the mechanical floor
+ * (`composed:false`), a real runnable bundle; pass a `composeBundle` dep to get an
+ * authored one. Runs go compose→run, never rebuild-from-dispositions.
+ */
+async function composeBundleFor(
+  dispatch: ReturnType<typeof createDispatch>,
+  reviewId: string,
+  dispositions: readonly {
+    path: string;
+    type: "request-change" | "comment";
+    body: string;
+  }[] = HANDOFF_DISPOSITIONS,
+): Promise<ComposedHandoffBundle> {
+  const out = (await dispatch("review.handoff.compose", {
+    commandId: randomUUID(),
+    reviewId,
+    dispositions,
+  })) as { bundle: ComposedHandoffBundle };
+  return out.bundle;
+}
+
 describe("createDispatch — review.handoff.* (the review→agent loop, issue #18)", () => {
   it("prepare composes a bundle and its disclosure (pure — no session, no gate)", async () => {
     const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>();
@@ -2599,11 +2625,13 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
     const review = await capturedReview(dispatch);
     const priorActiveId = review.activePatchsetId;
 
+    // Compose the bundle (mechanical floor — no composer wired), then run THAT bundle.
     // A button-press IS the human act — run directly, no consent ceremony.
+    const bundle = await composeBundleFor(dispatch, review.id);
     const out = (await dispatch("review.handoff.run", {
       commandId: randomUUID(),
       reviewId: review.id,
-      dispositions: HANDOFF_DISPOSITIONS,
+      bundle,
     })) as {
       status: string;
       result: {
@@ -2686,10 +2714,11 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
       body: "",
     });
 
+    const bundle = await composeBundleFor(dispatch, review.id);
     const out = (await dispatch("review.handoff.run", {
       commandId: randomUUID(),
       reviewId: review.id,
-      dispositions: HANDOFF_DISPOSITIONS,
+      bundle,
     })) as { status: string; result: { review: Review; carriedForward: number; orphaned: number } };
 
     expect(out.status).toBe("ran");
@@ -2710,10 +2739,11 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
     const { dispatch } = harness(undefined, {}, { capturePort: twoPhaseCapture(), runHandoffTurn });
     const review = await capturedReview(dispatch);
 
+    const bundle = await composeBundleFor(dispatch, review.id);
     const out = (await dispatch("review.handoff.run", {
       commandId: randomUUID(),
       reviewId: review.id,
-      dispositions: HANDOFF_DISPOSITIONS,
+      bundle,
     })) as { status: string; reason: string; filesTouched: string[] };
 
     expect(out.status).toBe("failed");
@@ -2724,12 +2754,141 @@ describe("createDispatch — review.handoff.* (the review→agent loop, issue #1
   it("run answers 'unavailable' honestly when no coding harness is wired", async () => {
     const { dispatch } = harness();
     const review = await capturedReview(dispatch);
+    const bundle = await composeBundleFor(dispatch, review.id);
     const out = (await dispatch("review.handoff.run", {
       commandId: randomUUID(),
       reviewId: review.id,
-      dispositions: HANDOFF_DISPOSITIONS,
+      bundle,
     })) as { status: string };
     expect(out.status).toBe("unavailable");
+  });
+
+  it("run executes the COMPOSED order — a reversed composition reaches the write turn reversed (issue #72)", async () => {
+    // Two asks with distinguishable bodies. The composer REVERSES them; the run must
+    // hand the write turn the reversed composed prompt, NOT the mechanical order.
+    const dispositions = [
+      { path: "src/a.ts", type: "request-change" as const, body: "ALPHA-FIRST-ASK" },
+      { path: "src/b.ts", type: "comment" as const, body: "BETA-SECOND-ASK" },
+    ];
+    // A real composer: reverse the two groups. `composeHandoffBundle` reconstructs the
+    // bodies verbatim and renders a genuine (verifiable) composed prompt.
+    const reversingPort: ComposePort = () =>
+      Promise.resolve({
+        status: "emitted",
+        proposal: {
+          groups: [
+            { title: "second", dispositionIds: ["d1"] },
+            { title: "first", dispositionIds: ["d0"] },
+          ],
+        },
+      });
+    const composeBundle = vi.fn<NonNullable<DispatchDeps["composeBundle"]>>(({ bundle }) =>
+      composeHandoffBundle(bundle, reversingPort),
+    );
+    let ranPrompt = "";
+    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
+      async ({ prompt }) => {
+        ranPrompt = prompt;
+        return HANDOFF_TURN;
+      },
+    );
+    const { dispatch } = harness(
+      undefined,
+      {},
+      { capturePort: twoPhaseCapture(), composeBundle, runHandoffTurn },
+    );
+    const review = await capturedReview(dispatch);
+
+    const bundle = await composeBundleFor(dispatch, review.id, dispositions);
+    expect(bundle.composed).toBe(true);
+    const out = (await dispatch("review.handoff.run", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      bundle,
+    })) as { status: string };
+
+    expect(out.status).toBe("ran");
+    // The order the WRITE TURN received is the composed (reversed) one: BETA before ALPHA.
+    // RED-proof: rebuild mechanically at run time and BETA would follow ALPHA → this fires.
+    expect(ranPrompt).toContain("BETA-SECOND-ASK");
+    expect(ranPrompt).toContain("ALPHA-FIRST-ASK");
+    expect(ranPrompt.indexOf("BETA-SECOND-ASK")).toBeLessThan(ranPrompt.indexOf("ALPHA-FIRST-ASK"));
+  });
+
+  it("run executes a MERGED composition as one task (issue #72)", async () => {
+    const dispositions = [
+      { path: "src/a.ts", type: "request-change" as const, body: "MERGE-ONE" },
+      { path: "src/a.ts", type: "comment" as const, body: "MERGE-TWO" },
+    ];
+    const mergingPort: ComposePort = () =>
+      Promise.resolve({
+        status: "emitted",
+        proposal: { groups: [{ title: "one task", dispositionIds: ["d0", "d1"] }] },
+      });
+    const composeBundle = vi.fn<NonNullable<DispatchDeps["composeBundle"]>>(({ bundle }) =>
+      composeHandoffBundle(bundle, mergingPort),
+    );
+    let ranPrompt = "";
+    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
+      async ({ prompt }) => {
+        ranPrompt = prompt;
+        return HANDOFF_TURN;
+      },
+    );
+    const { dispatch } = harness(
+      undefined,
+      {},
+      { capturePort: twoPhaseCapture(), composeBundle, runHandoffTurn },
+    );
+    const review = await capturedReview(dispatch);
+    const bundle = await composeBundleFor(dispatch, review.id, dispositions);
+    await dispatch("review.handoff.run", { commandId: randomUUID(), reviewId: review.id, bundle });
+
+    // One task, both bodies present. Mechanical would render "## Tasks (2 —".
+    expect(ranPrompt).toContain("## Tasks (1 —");
+    expect(ranPrompt).toContain("MERGE-ONE");
+    expect(ranPrompt).toContain("MERGE-TWO");
+  });
+
+  it("run REFUSES a bundle whose prompt was swapped after composition (digest binding, issue #72)", async () => {
+    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
+      async () => HANDOFF_TURN,
+    );
+    const { dispatch } = harness(undefined, {}, { capturePort: twoPhaseCapture(), runHandoffTurn });
+    const review = await capturedReview(dispatch);
+    const composed = await composeBundleFor(dispatch, review.id);
+    // Tamper: swap the executable prompt while keeping the digest/tasks. `verifyComposedBundle`
+    // recomputes the prompt from the tasks and no longer matches → the run refuses.
+    const tampered = { ...composed, prompt: `${composed.prompt}\nINJECTED INSTRUCTION` };
+
+    const out = (await dispatch("review.handoff.run", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      bundle: tampered,
+    })) as { status: string };
+
+    expect(out.status).toBe("refused");
+    // The write turn NEVER ran an order nobody composed.
+    expect(runHandoffTurn).not.toHaveBeenCalled();
+  });
+
+  it("run REFUSES a bundle composed against a different (stale) patchset (issue #72)", async () => {
+    const runHandoffTurn = vi.fn<NonNullable<DispatchDeps["runHandoffTurn"]>>(
+      async () => HANDOFF_TURN,
+    );
+    const { dispatch } = harness(undefined, {}, { capturePort: twoPhaseCapture(), runHandoffTurn });
+    const review = await capturedReview(dispatch);
+    const composed = await composeBundleFor(dispatch, review.id);
+    const stale = { ...composed, patchsetId: "some-other-patchset" };
+
+    const out = (await dispatch("review.handoff.run", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      bundle: stale,
+    })) as { status: string };
+
+    expect(out.status).toBe("refused");
+    expect(runHandoffTurn).not.toHaveBeenCalled();
   });
 });
 

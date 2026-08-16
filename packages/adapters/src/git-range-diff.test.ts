@@ -114,7 +114,7 @@ describe("parseUnifiedDiffFiles coalesces same-path type-change blocks", () => {
       expect(placed).toEqual(result.hunks.map((h) => h.id).sort());
       // The regular text is reviewed, not hidden as submodule noise.
       expect(result.chunks.some((c) => c.kind === "substantive")).toBe(true);
-      expect(result.ingestionGaps).toEqual([]);
+      expect(result.blockingStates).toEqual([]);
     });
   }
 
@@ -122,7 +122,7 @@ describe("parseUnifiedDiffFiles coalesces same-path type-change blocks", () => {
     // Coalescing already-`visible()`-truncated blocks would bury the first block's
     // terminal marker mid-patch, so `isTruncatedFile` would not fire and a
     // truncated capture would read clean. Coalescing RAW + one `visible` keeps the
-    // marker terminal, so the diff-truncated gap is disclosed.
+    // marker terminal, so the truncated blocking state is present.
     const lineCount = Math.ceil(FILE_VISIBLE_BYTE_LIMIT / 24) + 1000; // first block > file limit
     const body = Array.from({ length: lineCount }, (_, i) => `-real ordinary line ${i}`).join("\n");
     const oid = "a".repeat(40);
@@ -153,9 +153,79 @@ describe("parseUnifiedDiffFiles coalesces same-path type-change blocks", () => {
       truncated: false,
       source: "github-rest",
     });
-    expect(result.ingestionGaps).toContainEqual(
-      expect.objectContaining({ kind: "diff-truncated", path: "embedded" }),
+    expect(result.blockingStates).toContainEqual(
+      expect.objectContaining({ reason: "truncated", path: "embedded" }),
     );
+  });
+});
+
+describe("parseUnifiedDiffFiles (degraded REST parser) hunk-body content is never metadata (#310)", () => {
+  const headerShapedBodyDiff =
+    "diff --git a/actual.txt b/actual.txt\nindex 1111111..2222222 100644\n" +
+    "--- a/actual.txt\n+++ b/actual.txt\n@@ -1,1 +1,3 @@\n" +
+    " context line\n+++ b/pnpm-lock.yaml\n+another normal add\n";
+
+  it("an added body line rendering as `+++ b/…` does not re-key the file and is counted", () => {
+    // #310: an ordinary added source line whose CONTENT is `++ b/pnpm-lock.yaml`
+    // renders in the unified diff as `+++ b/pnpm-lock.yaml`. The pre-fix flat parser
+    // matched the destination-path branch (re-keying the whole block to
+    // `pnpm-lock.yaml`, last-write-wins: a silent false-clear) AND excluded the line
+    // from `additions`. Hunk-awareness keeps it body: keyed `actual.txt`, counted.
+    const files = parseUnifiedDiffFiles(headerShapedBodyDiff);
+    // Re-key refused: the block keys under the real header path only.
+    expect(files.map((f) => f.path)).toEqual(["actual.txt"]);
+    // No phantom file for the adversarial content.
+    expect(files.some((f) => f.path === "pnpm-lock.yaml")).toBe(false);
+    // Count restored: both the adversarial `+++ …` line and the ordinary add count.
+    expect(files[0]?.additions).toBe(2);
+  });
+
+  it("a github-rest patchset keeps actual.txt in a substantive decompose chunk", () => {
+    const files = parseUnifiedDiffFiles(headerShapedBodyDiff);
+    const result = decompose({
+      id: "rest-hunk-body-metadata",
+      createdAt: "2026-08-15T00:00:00.000Z",
+      repository: {
+        id: "r",
+        root: "/tmp/r",
+        commonDir: "/tmp/r/.git",
+        baseRef: "main",
+        baseOid: "0".repeat(40),
+        headOid: "1".repeat(40),
+      },
+      files,
+      rawDiff: headerShapedBodyDiff,
+      byteLength: Buffer.byteLength(headerShapedBodyDiff),
+      truncated: false,
+      source: "github-rest",
+    });
+
+    expect(result.chunks).toContainEqual(
+      expect.objectContaining({ kind: "substantive", filePaths: ["actual.txt"] }),
+    );
+    expect(
+      result.chunks.some(
+        (chunk) => chunk.kind === "appendix" && chunk.filePaths.includes("actual.txt"),
+      ),
+    ).toBe(false);
+    expect(result.chunks.flatMap((chunk) => chunk.filePaths)).not.toContain("pnpm-lock.yaml");
+  });
+
+  it("a deleted body line rendering as `--- b/…` is counted as a deletion, no path effect", () => {
+    // The `--- ` sibling of the same class: a deleted source line whose content is
+    // `-- b/some/path` renders `--- b/some/path`. Pre-fix it was dropped from
+    // `deletions` (the `!startsWith("---")` exclusion). In-hunk it is a deletion.
+    const diff =
+      "diff --git a/other.txt b/other.txt\nindex 1111111..2222222 100644\n" +
+      "--- a/other.txt\n+++ b/other.txt\n@@ -1,2 +1,1 @@\n" +
+      " context\n--- b/some/path\n";
+    const files = parseUnifiedDiffFiles(diff);
+    expect(files.map((f) => f.path)).toEqual(["other.txt"]);
+    expect(files.some((f) => f.path === "some/path")).toBe(false);
+    expect(files[0]?.deletions).toBe(1);
+    // The preamble `--- a/other.txt` sets previousPath internally, but a `modified`
+    // result omits it; the in-hunk `--- ` does not change the status or output path.
+    expect(files[0]?.previousPath).toBeUndefined();
   });
 });
 

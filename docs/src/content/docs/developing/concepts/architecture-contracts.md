@@ -163,7 +163,7 @@ Every patchset freezes:
 
 - its base and Git head, or immutable working-tree snapshot;
 - committed, staged, unstaged, and non-ignored untracked changes;
-- file modes, renames, deletions, binaries, submodules, and ingestion gaps;
+- file modes, renames, deletions, binaries, submodules, and decomposition blocking states;
 - review intent: PR title and body or local branch/commit intent, plus relevant
   spec snapshots and digests;
 - the project-context identity used for analysis.

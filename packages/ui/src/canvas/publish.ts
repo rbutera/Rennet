@@ -1,5 +1,16 @@
-import type { DispositionType, RepositoryProvenance } from "@rennet/types";
-import { type CollationDraft, type CollationItem, effectiveBody } from "./collation";
+import type {
+  ComposableAsk,
+  ComposedHandoffBundle,
+  DispositionType,
+  HandoffDisposition,
+  RepositoryProvenance,
+} from "@rennet/types";
+import {
+  type CollationDraft,
+  type CollationItem,
+  collationItems,
+  effectiveBody,
+} from "./collation";
 import type { DestinationMode } from "./destination";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -351,6 +362,145 @@ function draftBodyCount(submission: PrSubmission): number {
 /** Read the refined-vs-raw split for a set of comments (for the sheet's marker). */
 export function refinedCount(comments: readonly ReviewComment[]): number {
   return comments.filter((comment) => comment.refined).length;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The STAGE-6 HANDOFF PREVIEW (issue #72) — a pure view-model over a
+// `ComposedHandoffBundle`, so the reviewer SEES the composed work order before the
+// write session runs it. "What you see is what leaves" (R33): this reads the SAME
+// ordered `tasks` the run executes (the run runs `bundle.prompt`, which is the
+// verbatim render of these same tasks in this same order), so the preview cannot show
+// an order the run does not run.
+//
+// ⭐ HONEST about authoring: `composed` is surfaced verbatim — a mechanical-floor
+// bundle (`composed:false`, empty titles) renders as an un-composed list, never
+// dressed as authored prose. And the model's `title` is carried as PREVIEW-ONLY
+// metadata, SEPARATE from `heading` (the executable per-task heading derived
+// mechanically from the trusted ask paths): the title reaches the human's eyes here
+// but never the coding agent's work order.
+//
+// `layer:ui`: `@rennet/types` only, no `@rennet/core` — the composed bundle is the
+// input; nothing here re-derives order or re-runs the model.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The disposition types a coding agent addresses — `request-change` and `comment`,
+ * both of which ask for or suggest a code edit. `approve` means "leave it" and
+ * `question` is answered in conversation, so neither is handed off. This is the
+ * UI-side twin of core's `HANDOFF_ADDRESSED_TYPES`; the `layer:ui` boundary forbids
+ * importing `@rennet/core`, and the compose command's mechanical floor filters the
+ * SAME way — so what the renderer counts as actionable equals what compose runs.
+ */
+const HANDOFF_ADDRESSED_TYPES: readonly DispositionType[] = ["request-change", "comment"];
+
+/**
+ * The effective handoff dispositions from the collation draft — every addressed
+ * item (request-change / comment) as a `HandoffDisposition`, IN DRAFT ORDER, with
+ * the effective body (refined-if-kept, else the sovereign raw). This is exactly what
+ * `review.handoff.compose` is handed; compose re-filters the same way, so an
+ * approve/question never reaches the agent even if passed. Pure: no React, no DOM.
+ *
+ * A BLANK effective body is dropped: a neutral "mark-read" comment carries an empty
+ * body (it records "I read this file", not an instruction), and an empty ask would
+ * compose an empty work order for the coding agent to act on. So the actionable set
+ * — which also drives the ≥1-actionable-ask handoff affordance (destination-frame) —
+ * is exactly the addressed items that actually say something.
+ */
+export function handoffDispositions(draft: CollationDraft): HandoffDisposition[] {
+  return collationItems(draft)
+    .filter((write) => HANDOFF_ADDRESSED_TYPES.includes(write.type) && write.body.trim() !== "")
+    .map((write) => ({
+      path: write.path,
+      type: write.type,
+      body: write.body,
+      ...(write.span && write.side ? { span: write.span, side: write.side } : {}),
+    }));
+}
+
+const HANDOFF_TYPE_LABEL: Record<DispositionType, string> = {
+  approve: "approval",
+  "request-change": "requested change",
+  comment: "comment",
+  question: "question",
+};
+
+/** The human-facing anchor label for a previewed ask ("lines A–B, RIGHT" / "whole file"). */
+function previewAnchorLabel(ask: ComposableAsk): string {
+  if (ask.span === undefined) return "whole file";
+  const end = ask.span.endLine ?? ask.span.startLine;
+  const range =
+    end === ask.span.startLine
+      ? `line ${ask.span.startLine}`
+      : `lines ${ask.span.startLine}–${end}`;
+  return ask.side === undefined ? range : `${range}, ${ask.side}`;
+}
+
+/** The executable heading for a previewed task — the distinct ask paths, in order. */
+function previewHeading(asks: readonly ComposableAsk[]): string {
+  const paths: string[] = [];
+  for (const ask of asks) {
+    if (!paths.includes(ask.path)) paths.push(ask.path);
+  }
+  return paths.length === 0 ? "task" : paths.join(", ");
+}
+
+/** One member ask of a previewed handoff task — path, anchor, type, verbatim body. */
+export interface HandoffPreviewAsk {
+  readonly path: string;
+  readonly type: DispositionType;
+  readonly typeLabel: string;
+  readonly anchor: string;
+  /** The effective instruction body, VERBATIM — the reviewer's own words. */
+  readonly body: string;
+}
+
+/** One previewed handoff task, in execution order. */
+export interface HandoffPreviewTask {
+  /** 1-based execution position (matches the executable prompt's `### N.` heading). */
+  readonly order: number;
+  /** The executable heading (mechanical, from the ask paths) — what the agent reads. */
+  readonly heading: string;
+  /**
+   * The model's connective line — PREVIEW-ONLY metadata, NEVER in the executable
+   * prompt. Empty string for the mechanical floor (`composed:false`).
+   */
+  readonly title: string;
+  readonly asks: readonly HandoffPreviewAsk[];
+}
+
+/** The stage-6 handoff preview view-model. */
+export interface HandoffPreview {
+  /** TRUE iff a validated model authoring was adopted; FALSE for the mechanical floor. */
+  readonly composed: boolean;
+  readonly taskCount: number;
+  readonly askCount: number;
+  readonly tasks: readonly HandoffPreviewTask[];
+}
+
+/**
+ * Build the stage-6 preview from the composed bundle. Pure: it reads the SAME ordered
+ * `tasks` the run executes and never re-derives order or re-runs the model. The
+ * `title` rides along as preview-only metadata; the `heading` is the executable one.
+ */
+export function handoffPreview(bundle: ComposedHandoffBundle): HandoffPreview {
+  const tasks: HandoffPreviewTask[] = bundle.tasks.map((task, index) => ({
+    order: index + 1,
+    heading: previewHeading(task.asks),
+    title: task.title,
+    asks: task.asks.map((ask) => ({
+      path: ask.path,
+      type: ask.type,
+      typeLabel: HANDOFF_TYPE_LABEL[ask.type],
+      anchor: previewAnchorLabel(ask),
+      body: ask.instruction,
+    })),
+  }));
+  return {
+    composed: bundle.composed,
+    taskCount: tasks.length,
+    askCount: tasks.reduce((total, task) => total + task.asks.length, 0),
+    tasks,
+  };
 }
 
 export type { CollationItem };

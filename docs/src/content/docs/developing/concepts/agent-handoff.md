@@ -5,9 +5,14 @@ description: How review requests become one coding-agent work order, a new patch
 
 Agent handoff is the intended author-side loop: collect the changes you want,
 hand them to the coding harness, capture what it edits, then review only the
-resulting delta. The backend pieces exist, but the current renderer does not yet
-invoke this loop. Today, signing your own-branch paper pushes the branch and
-opens the pull request instead.
+resulting delta. As of
+[#72](https://github.com/rbutera/rennet/issues/72) this loop is reachable in the
+app: an own-branch review with an actionable disposition offers a "Hand off to
+agent" path alongside the PR-submission sign path. It opens a handoff paper that
+composes the bundle, previews it, and runs it — the renderer wiring that was the
+last missing join is now in place. Signing your own-branch paper still pushes the
+branch and opens the pull request; the handoff is the other action off the same
+own-branch destination.
 
 ## The loop
 
@@ -26,23 +31,24 @@ flowchart TD
 
 Most of the machinery is live behind typed main-process commands: the mechanical
 bundle, write-enabled runner, workspace checkpoints, successor capture, exact
-carry, delta account, optional digest, and PR submission. Two joins are still
-missing from the shipped product path:
-
-- the renderer does not call `review.handoff.run`;
-- `review.handoff.compose` returns a composed bundle, but
-  `review.handoff.run` rebuilds and executes the mechanical bundle instead of
-  accepting that exact composed result.
-
-That is why [#72](https://github.com/rbutera/rennet/issues/72) remains open even
-though its composer and validation code are present.
+carry, delta account, optional digest, and PR submission. As of
+[#72](https://github.com/rbutera/rennet/issues/72), `review.handoff.run` accepts
+and executes the exact composed bundle `review.handoff.compose` produced, bound by
+its digest — it no longer rebuilds a mechanical bundle from the raw dispositions.
+A pure stage-6 preview view-model (`handoffPreview`) and paper component render
+that composed bundle before it runs, and the renderer now wires the whole loop:
+the own-branch destination composes on surface entry, previews via `HandoffPaper`,
+and runs the exact previewed bundle from one action. The composed-bundle→run
+integrity binding, the preview, and the in-app trigger are all in place.
 
 ## From dispositions to a work order
 
 The source material is the draft the reviewer already shaped. `request-change`
 and actionable `comment` dispositions become tasks. Approvals mean “leave this
 alone,” while questions stay in the review conversation, so neither becomes an
-edit instruction.
+edit instruction. A `comment` with a blank effective body is not actionable
+either — a neutral mark-read carries no instruction, so it never becomes a task
+and never lights the handoff affordance.
 
 The mechanical bundle contains:
 
@@ -54,10 +60,10 @@ The mechanical bundle contains:
 - a stable digest of the ordered tasks.
 
 `buildHandoffBundle()` in `packages/core/src/handoff-loop.ts` owns this plain,
-deterministic shape. The separate `review.handoff.compose` command can merge
-related asks, choose a useful order, and add a short narrative without changing
-which asks are in the bundle. The composer is real, but its output is not yet the
-input to the acting turn.
+deterministic shape. The separate `review.handoff.compose` command merges related
+asks, chooses a useful order, and adds a short narrative without changing which
+asks are in the bundle. Its output IS the input to the acting turn: `review.handoff.run`
+now runs the composed bundle's ordered, verbatim prompt.
 
 ```mermaid
 flowchart LR
@@ -66,8 +72,7 @@ flowchart LR
   filter -->|approve or question| local["Keep in review"]
   task --> bundle["Mechanical bundle"]
   bundle --> composer["Composed work order command"]
-  bundle --> turn["Current acting turn<br/>mechanical bundle"]
-  composer -. "not threaded through yet" .-> turn
+  composer --> turn["Acting turn<br/>runs the composed bundle"]
 ```
 
 The mechanical partition remains the authority. Composition may make the work
@@ -75,9 +80,11 @@ order easier to follow, but it may not invent a task or lose one.
 
 ## The acting turn
 
-When invoked, `review.handoff.run` rebuilds the mechanical bundle from the
-current patchset, checkpoints the working tree, and starts one Claude Code
-session in the repository root. The session has the harness's full default tool
+When invoked, `review.handoff.run` receives the composed bundle, verifies its
+integrity (its digest and prompt recompute from its tasks, and it was composed
+against the currently-active patchset — otherwise the run is refused rather than
+executing an order nobody composed), checkpoints the working tree, and starts one
+Claude Code session in the repository root running the composed prompt. The session has the harness's full default tool
 surface, including shell access. That lets the agent edit, inspect, format, and
 test the work it just changed.
 
@@ -211,22 +218,24 @@ this.” See [delta re-review and lineage](/developing/concepts/delta-rereview-a
 | Concern | Owner |
 |---|---|
 | Bundle filtering, anchored context, deterministic prompt | `packages/core/src/handoff-loop.ts` |
-| Agent-friendly ordering and narration, not yet threaded into run | `packages/core/src/handoff-compose.ts` |
+| Agent-friendly ordering, narration, and the compose→run integrity check | `packages/core/src/handoff-compose.ts` |
+| Stage-6 composed-bundle preview view-model | `packages/ui/src/canvas/publish.ts` (`handoffPreview`, `handoffDispositions`) |
 | Write-enabled harness turn behind the main-process command | `packages/adapters/src/handoff-run-live.ts` |
 | Checkpoint and turn diff | `packages/adapters/src/checkpoint-store.ts` |
 | Command routing and successor capture | `apps/desktop/src/main/dispatch.ts` |
 | Delta facts | `packages/core/src/delta-account.ts` |
-| Draft, paper, and sign interaction | `packages/ui/src/app.tsx` |
+| Draft, handoff paper, run action, and sign interaction | `packages/ui/src/app.tsx`, `packages/ui/src/components/handoff-paper.tsx` |
 
-The renderer never gets direct process authority. Once the missing renderer join
-is added, it should invoke the typed command; the desktop main process already
-resolves the current review again, runs the turn, captures the result, and
-returns a validated output.
+The renderer never gets direct process authority. The in-app trigger is now
+wired: the own-branch destination composes the bundle on handoff-surface entry
+(`review.handoff.compose`), previews it on the stage-6 paper, and calls
+`review.handoff.run` with that exact bundle from one action. The desktop main
+process resolves the current review, verifies and runs the composed bundle,
+captures the result, and returns a validated output the paper renders truthfully.
 
 ## Current edge
 
-The first product seam is wiring the renderer through one exact composed bundle
-into the acting command. After that, the main precision seam is sub-file lineage
+With the in-app trigger wired, the main precision seam is sub-file lineage
 across a changed patchset. The fuzzy matcher can classify it, but handoff carry
 still stays on the deterministic floor. That means Rennet can reopen more work
 than strictly necessary; it does not silently carry uncertain review state.

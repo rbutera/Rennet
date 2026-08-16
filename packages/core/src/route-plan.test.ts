@@ -23,7 +23,7 @@ function decompositionWith(chunks: DecompositionChunk[]): Decomposition {
     edges: [],
     readingOrder: chunks.map((chunk) => chunk.chunkId),
     residue: [],
-    ingestionGaps: [],
+    blockingStates: [],
   };
 }
 

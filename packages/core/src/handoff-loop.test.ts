@@ -285,7 +285,7 @@ describe("runHandoffTurn", () => {
 
     const result = await runHandoffTurn({
       repoRoot: "/repo",
-      bundle: A_BUNDLE(),
+      prompt: A_BUNDLE().prompt,
       runPort,
       checkpoint: cp.port,
     });
@@ -314,7 +314,7 @@ describe("runHandoffTurn", () => {
     const cp = makeCheckpoint({ diff: "…", paths: ["src/foo.ts", "src/unrelated.ts"] });
     const result = await runHandoffTurn({
       repoRoot: "/repo",
-      bundle: A_BUNDLE(),
+      prompt: A_BUNDLE().prompt,
       runPort: runPortReturning({ status: "completed", finalText: "done" }),
       checkpoint: cp.port,
     });
@@ -329,7 +329,7 @@ describe("runHandoffTurn", () => {
     const cp = makeCheckpoint({ diff: partialDiff, paths: ["src/half.ts"] });
     const result = await runHandoffTurn({
       repoRoot: "/repo",
-      bundle: A_BUNDLE(),
+      prompt: A_BUNDLE().prompt,
       runPort: runPortReturning({ status: "failed", reason: "harness overloaded" }),
       checkpoint: cp.port,
     });
@@ -349,7 +349,7 @@ describe("runHandoffTurn", () => {
     // A discard failure is swallowed — the run still returns its real result.
     const result = await runHandoffTurn({
       repoRoot: "/repo",
-      bundle: A_BUNDLE(),
+      prompt: A_BUNDLE().prompt,
       runPort: runPortReturning({ status: "completed", finalText: "done" }),
       checkpoint: cp.port,
     });

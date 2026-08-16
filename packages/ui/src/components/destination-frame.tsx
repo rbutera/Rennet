@@ -4,6 +4,7 @@ import {
   type DestinationVariant,
   destinationVariant,
 } from "../canvas/destination";
+import { handoffDispositions } from "../canvas/publish";
 import { laneCounts } from "../canvas/staging";
 import { ArrowRightIcon, TargetIcon } from "./icons";
 
@@ -31,6 +32,7 @@ export function DestinationFrame({
   mode,
   onSelectMode,
   onOpenDraft,
+  onHandoff,
 }: {
   draft: CollationDraft;
   mode: DestinationMode;
@@ -38,10 +40,19 @@ export function DestinationFrame({
   onSelectMode?: (mode: DestinationMode) => void;
   /** Open the collation draft canvas (#101) — collate, edit, then sign. */
   onOpenDraft?: () => void;
+  /**
+   * Open the stage-6 handoff paper (#72) — compose the bundle, preview it, run it.
+   * Only offered on own-branch with at least one actionable ask; absent ⇒ no button.
+   */
+  onHandoff?: () => void;
 }) {
   const variant: DestinationVariant = destinationVariant(mode);
   const items = collationItems(draft);
   const empty = items.length === 0;
+  // The handoff path is own-branch only, and only when there is something a coding
+  // agent can act on (a request-change or comment). No actionable ask ⇒ no button.
+  const handoffCount = handoffDispositions(draft).length;
+  const canHandoff = onHandoff !== undefined && mode === "own-branch" && handoffCount > 0;
   // The ink/blue split (issue #109): how many dispositions travel to the PR vs stay
   // private on this machine (the wireframe's "N private" pill).
   const lanes = laneCounts(draft);
@@ -123,6 +134,12 @@ export function DestinationFrame({
           Open the draft
           <ArrowRightIcon size={14} />
         </button>
+        {canHandoff ? (
+          <button type="button" className="destination-handoff" onClick={() => onHandoff?.()}>
+            Hand off to agent
+            <ArrowRightIcon size={14} />
+          </button>
+        ) : null}
       </footer>
     </aside>
   );
