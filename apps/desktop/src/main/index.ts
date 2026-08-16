@@ -36,6 +36,7 @@ import {
   enrichKnowledgeForRepo,
   ensureProjectSnapshotPin,
   execaGit,
+  execaGitFor,
   FileConfigStore,
   FileProjectStore,
   FileThreadStore,
@@ -79,12 +80,17 @@ import {
   DEFAULT_MAX_HARNESS_INVOCATIONS,
   DEFAULT_REVIEW_INTELLIGENCE_BUDGET,
   decompose,
+  detectLocus,
+  escapePath,
   type FanInIndex,
   type ForgePrSubmission,
   type ForgePrSubmissionOutcome,
   fanInIndexFromSnapshot,
   guardSeatTurn,
   type HarnessTurnResult,
+  HOST_LOCUS,
+  type Locus,
+  locusCommand,
   patchsetIntentToReviewIntent,
   ReviewService,
   recordSeatSend,
@@ -211,8 +217,29 @@ if (process.env.RENNET_USER_DATA) app.setPath("userData", process.env.RENNET_USE
 
 const liveSnapshotStore = snapshotStoreFor();
 const liveNoveltyLifecycle = new NoveltyLifecycleRegistry();
-const capture = new GitCaptureAdapter(undefined, (repoRoot, baseOid) =>
-  ensureProjectSnapshotPin(liveSnapshotStore, repoRoot, baseOid),
+
+/**
+ * The effective execution locus for a repo path (add-windows-support): the persisted
+ * per-project override if set, else auto-detected from the path (a `\\wsl$` root ⇒
+ * that distro, else host). Every repo-facing spawn in this composition routes
+ * through it, so a WSL-locus project's git/harness run inside the distro (Rule Zero:
+ * a plain resolution, never a gate). The store keys on the realpath-canonical top
+ * level, matching how settings resolves the same identity.
+ */
+function locusForRepo(repoRoot: string): Locus {
+  let key: string;
+  try {
+    key = escapePath(realpathSync(repoRoot));
+  } catch {
+    key = escapePath(repoRoot);
+  }
+  return liveSnapshotStore.loadConfig(key)?.locus ?? detectLocus(repoRoot);
+}
+
+const capture = new GitCaptureAdapter(
+  undefined,
+  (repoRoot, baseOid) => ensureProjectSnapshotPin(liveSnapshotStore, repoRoot, baseOid),
+  locusForRepo,
 );
 const watcher = new RepoWatcher();
 
@@ -297,9 +324,13 @@ function getCodexAvailability(): Promise<CodexAvailability> {
 // probe that finds nothing simply drops that harness; the line degrades to
 // whatever was found (or nothing), never an error.
 let harnessDetection: Promise<DetectedHarness[]> | null = null;
-async function probeGhVersion(): Promise<string | null> {
+// The gh probe is locus-aware (add-windows-support): host = `gh --version`, WSL =
+// `wsl.exe -d <distro> -e gh --version`. The ambient first-run line is a MACHINE
+// probe, so it uses the host; a per-project WSL gh probe passes the project's locus.
+async function probeGhVersion(locus: Locus = HOST_LOCUS): Promise<string | null> {
   try {
-    const { stdout } = await execFileAsync("gh", ["--version"], { env: process.env });
+    const { file, args } = locusCommand(locus, "gh", ["--version"]);
+    const { stdout } = await execFileAsync(file, args, { env: process.env });
     return stdout.match(/\d+\.\d+\.\d+/)?.[0] ?? null;
   } catch {
     return null;
@@ -331,6 +362,10 @@ const publishHttp: HttpFetch = async (url, init) => {
   return { status: res.status, headers: res.headers, text: () => res.text() };
 };
 
+// `gh auth token` resolves the REST bearer on the host. For a WSL-locus project the
+// git push already runs in the distro (see `submitPullRequest`); binding this token
+// read to the distro's own `gh` is the remaining WSL publish-auth item tracked in the
+// add-windows-support change (the host token still authenticates the REST create).
 const runGhAuthToken: GhRunner = async () => {
   try {
     const { stdout, stderr } = await execFileAsync("gh", ["auth", "token"], { env: process.env });
@@ -1477,10 +1512,13 @@ app.whenReady().then(async () => {
     headRef: string;
     submission: ForgePrSubmission;
   }): Promise<ForgePrSubmissionOutcome> => {
+    // Git runs inside the project's locus (add-windows-support): a WSL-locus repo's
+    // remote lookup and push execute in the distro, against the distro-native repo.
+    const gitInLocus = execaGitFor(locusForRepo(input.repoRoot));
     // Resolve ONE GitHub remote — the single source for BOTH the push destination and
     // the PR repo, so they can never disagree (prefer `origin`, the North Star of your
     // own repo). A repo with no GitHub remote has nowhere to open a PR — say so.
-    const remote = await resolveForgeRemote(execaGit, input.repoRoot);
+    const remote = await resolveForgeRemote(gitInLocus, input.repoRoot);
     if (!remote) {
       throw new Error(
         "No GitHub remote is configured for this repository, so there is nowhere to open a pull request.",
@@ -1488,7 +1526,7 @@ app.whenReady().then(async () => {
     }
     // Push the NAMED reviewed branch, not the current HEAD: the PR must open from the
     // branch the review is about, even if HEAD has since moved to another branch.
-    await execaGit(input.repoRoot, [
+    await gitInLocus(input.repoRoot, [
       "push",
       remote.name,
       `refs/heads/${input.headRef}:refs/heads/${input.headRef}`,
@@ -1534,7 +1572,8 @@ app.whenReady().then(async () => {
     // (R2 subscription OAuth). Refuses a repo with submodules (Codex F6) and answers an
     // honest failed turn when no `claude` is installed — never a fabricated success.
     runHandoffTurn: async ({ repoRoot, prompt }) => {
-      if (await repoHasSubmodules(repoRoot)) {
+      const locus = locusForRepo(repoRoot);
+      if (await repoHasSubmodules(repoRoot, locus)) {
         return {
           status: "failed",
           reason:
@@ -1556,7 +1595,7 @@ app.whenReady().then(async () => {
         repoRoot,
         prompt,
         runPort: claudeHandoffRunPort(adapter),
-        checkpoint: new GitCheckpointStore(repoRoot),
+        checkpoint: new GitCheckpointStore(repoRoot, locus),
       });
     },
     chooseRepository,
@@ -1872,6 +1911,15 @@ app.whenReady().then(async () => {
           execaGit,
         );
         return { changed: preview.changed, gitignorePath: preview.gitignorePath };
+      },
+      applyLocus: ({ repoKey, locus }) => {
+        snapshotStore.updateConfig(repoKey, (current) => {
+          if (locus === null) {
+            const { locus: _dropped, ...rest } = current;
+            return rest;
+          }
+          return { ...current, locus };
+        });
       },
     }),
   });

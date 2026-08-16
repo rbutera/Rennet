@@ -2372,6 +2372,17 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
         gitignorePath: `${input.repoPath}/.rennet/.gitignore`,
       }),
     );
+    const setRepoLocus = vi.fn(
+      async (input: {
+        projectId: string;
+        repoPath: string;
+        locus: { kind: "host" } | { kind: "wsl"; distro: string } | null;
+      }) => ({
+        status: "applied" as const,
+        locus: input.locus ?? { kind: "host" as const },
+        locusOverridden: input.locus !== null,
+      }),
+    );
     const guidance = vi.fn(async () => ({ rules: [], reason: "absent" as const, dropped: 0 }));
     const settings = {
       get: async () => ({
@@ -2389,6 +2400,7 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
       guidance,
       setAppearance,
       setRepoVisibility,
+      setRepoLocus,
     };
     const { dispatch } = harness(undefined, { settings });
 

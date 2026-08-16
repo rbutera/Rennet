@@ -5,10 +5,10 @@
 
 ## 2. Locus seam and path handling
 
-- [ ] 2.1 Add the `Locus` type to project context (`{kind:"host"} | {kind:"wsl", distro}`), auto-detected from a `\\wsl$`/`\\wsl.localhost` project root, visible and editable in project settings (plain setting, no confirmation ceremony)
-- [ ] 2.2 Implement `toDistroPath`/`toWindowsView` as pure functions with unit tests (spaces, non-ASCII, drive letters, both UNC prefixes)
-- [ ] 2.3 Route the injected `git` runners (`git-capture.ts`, `git-range-diff.ts`, `checkpoint-store.ts`) and the gh probes (`apps/desktop/src/main/index.ts:302,336`) through the locus: host = today's spawn, WSL = `wsl.exe -d <distro> --` with distro-native cwd; unit-test the WSL argv construction with injected effects
-- [ ] 2.4 Audit absolute-path handling for Windows: `escape-path.ts` (drive letters), `resolveWithinRoot` in `open-in-editor.ts` (case-insensitive drive letters, UNC roots), worktree discovery, `.rennet/` project keys; add regression tests for `C:\` and `\\wsl.localhost` roots
+- [x] 2.1 Add the `Locus` type (`packages/types`, re-exported from `core`), auto-detected via `detectLocus` from a `\\wsl$`/`\\wsl.localhost` project root; persisted override in `ProjectConfig.locus` + `effectiveLocus`; visible AND editable in project settings via `settings.setRepoLocus` (composition + adapter + IPC + renderer control), plain setting, no ceremony
+- [x] 2.2 Implemented `toDistroPath`/`toWindowsView`/`locusCommand`/`detectLocus` as pure node-free functions with unit tests (spaces, non-ASCII, drive letters, both `\\wsl$` and `\\wsl.localhost` prefixes, round-trip) — `packages/core/src/locus.ts`
+- [x] 2.3 Routed the injected `git` runners through the locus: `execaGitFor(locus)` (git-range-diff), `GitCaptureAdapter` (per-path resolver), `GitCheckpointStore` (+ the `GIT_INDEX_FILE` cross-boundary fix via an in-distro `env` prefix), `repoHasSubmodules`; composition threads `locusForRepo` into capture/checkpoint/submit-push. gh probe is locus-aware (`probeGhVersion(locus)`); the ambient line stays host (machine probe) and `gh auth token` publish-auth-in-distro is the one documented WSL partial (git push already runs in-locus). Uses `-e`/`--exec` per the spike amendment. Argv unit-tested (`locus.test.ts`, `checkpoint-store.locus.test.ts`)
+- [x] 2.4 Audited absolute-path handling: `escape-path.ts` already folds `\`/`:` (added `C:\` + `\\wsl.localhost` regression tests); hardened `resolveWithinRoot` with a pure, separator-injectable `isWithinRoot` (case-insensitive drive letters on win32, UNC roots) + tests. `.rennet/` project keys go through `escapePath` (covered); worktree discovery reads the same escaped keys
 
 ## 3. Discovery on Windows and in the distro
 

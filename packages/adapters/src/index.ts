@@ -16,7 +16,7 @@ export {
   createCanvasOpsServer,
   type LoadCanvasOpsSdk,
 } from "./canvas-ops-server";
-export { GitCheckpointStore, repoHasSubmodules } from "./checkpoint-store";
+export { checkpointGitCommand, GitCheckpointStore, repoHasSubmodules } from "./checkpoint-store";
 export {
   type ClaudeCiRefinementTurnOptions,
   createClaudeCiRefinementTurn,
@@ -141,6 +141,7 @@ export {
   captureRangePatchset,
   DEFAULT_VISIBLE_BYTE_LIMIT,
   execaGit,
+  execaGitFor,
   FILE_VISIBLE_BYTE_LIMIT,
   type GitExec,
   parseChangedPaths,

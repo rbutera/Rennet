@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   createEditorLaunchEffects,
+  isWithinRoot,
   launchResolvedEditor,
   type OpenInEditorEffects,
   performOpenInEditor,
@@ -97,6 +98,35 @@ describe("resolveWithinRoot", () => {
   });
   it("allows the root itself", () => {
     expect(resolveWithinRoot("/repo", ".")).toBe("/repo");
+  });
+});
+
+describe("isWithinRoot (Windows drive-letter + UNC containment)", () => {
+  const win = { sep: "\\", caseInsensitive: true };
+  it("accepts a file beneath a drive-letter root", () => {
+    expect(isWithinRoot("C:\\dev\\repo", "C:\\dev\\repo\\src\\app.ts", win)).toBe(true);
+  });
+  it("accepts the root itself", () => {
+    expect(isWithinRoot("C:\\dev\\repo", "C:\\dev\\repo", win)).toBe(true);
+  });
+  it("is case-insensitive on the drive letter (C: vs c:)", () => {
+    expect(isWithinRoot("C:\\dev\\repo", "c:\\dev\\repo\\src\\app.ts", win)).toBe(true);
+  });
+  it("rejects a sibling that shares a prefix but escapes the root", () => {
+    expect(isWithinRoot("C:\\dev\\repo", "C:\\dev\\repo-secret\\x.ts", win)).toBe(false);
+  });
+  it("accepts a file under a WSL UNC root", () => {
+    expect(
+      isWithinRoot(
+        "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
+        "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo\\src\\app.ts",
+        win,
+      ),
+    ).toBe(true);
+  });
+  it("stays exact (case-sensitive) on POSIX", () => {
+    expect(isWithinRoot("/repo", "/repo/src/x.ts", { sep: "/" })).toBe(true);
+    expect(isWithinRoot("/repo", "/Repo/src/x.ts", { sep: "/" })).toBe(false);
   });
 });
 

@@ -1,13 +1,14 @@
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, resolve } from "node:path";
-import type { PatchsetCapturePort } from "@rennet/core";
+import { detectLocus, type Locus, type PatchsetCapturePort } from "@rennet/core";
 import type { PatchFile, Patchset, PatchsetIntent, PatchsetSpecSnapshot } from "@rennet/types";
-import { execa } from "execa";
 import {
   type Counts,
   DEFAULT_VISIBLE_BYTE_LIMIT,
+  execaGitFor,
   FILE_VISIBLE_BYTE_LIMIT,
+  type GitExec,
   parseChangedPaths,
   parseCounts,
   visible,
@@ -19,23 +20,31 @@ import { snapshotSpec, specPathsOf } from "./patchset-intent-capture";
 // identically. This adapter keeps the working-tree-specific pieces: base
 // resolution, untracked-file synthesis, and the index+unstaged+untracked union.
 
-async function git(repositoryPath: string, arguments_: string[], reject = true): Promise<string> {
-  const result = await execa("git", arguments_, {
-    cwd: repositoryPath,
-    reject,
-    shell: false,
-    stripFinalNewline: false,
-  });
-  return result.stdout;
+// Every git spawn goes through an injected, locus-aware runner (add-windows-support):
+// host = `git` in cwd; WSL = `wsl.exe -d <distro> --cd <distro-cwd> -e git …`.
+async function git(
+  run: GitExec,
+  repositoryPath: string,
+  arguments_: string[],
+  reject = true,
+): Promise<string> {
+  return run(repositoryPath, arguments_, { reject });
 }
 
-async function succeeds(repositoryPath: string, arguments_: string[]): Promise<boolean> {
-  const result = await execa("git", arguments_, {
-    cwd: repositoryPath,
-    reject: false,
-    shell: false,
-  });
-  return result.exitCode === 0;
+async function succeeds(
+  run: GitExec,
+  repositoryPath: string,
+  arguments_: string[],
+): Promise<boolean> {
+  // `GitExec` surfaces failure as a throw (reject:true) or, with reject:false, a
+  // resolved empty stdout — but we need the exit code. A non-zero exit under
+  // reject:false does not throw, so a throw here means the command genuinely failed.
+  try {
+    await run(repositoryPath, arguments_, { reject: true });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function quotedGitPath(path: string): string {
@@ -70,9 +79,13 @@ async function untrackedPatch(
   };
 }
 
-async function resolveBase(repositoryRoot: string): Promise<{ baseRef: string; baseOid: string }> {
+async function resolveBase(
+  run: GitExec,
+  repositoryRoot: string,
+): Promise<{ baseRef: string; baseOid: string }> {
   const originHead = (
     await git(
+      run,
       repositoryRoot,
       ["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"],
       false,
@@ -81,13 +94,13 @@ async function resolveBase(repositoryRoot: string): Promise<{ baseRef: string; b
   const candidates = [originHead, "origin/main", "origin/master", "main", "master"].filter(Boolean);
   let baseRef: string | undefined;
   for (const candidate of candidates) {
-    if (await succeeds(repositoryRoot, ["rev-parse", "--verify", `${candidate}^{commit}`])) {
+    if (await succeeds(run, repositoryRoot, ["rev-parse", "--verify", `${candidate}^{commit}`])) {
       baseRef = candidate;
       break;
     }
   }
   if (!baseRef) baseRef = "HEAD";
-  const baseOid = (await git(repositoryRoot, ["merge-base", baseRef, "HEAD"])).trim();
+  const baseOid = (await git(run, repositoryRoot, ["merge-base", baseRef, "HEAD"])).trim();
   return { baseRef, baseOid };
 }
 
@@ -98,22 +111,30 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
       repositoryRoot: string,
       baseOid: string,
     ) => Promise<string | undefined> | string | undefined,
+    /**
+     * Resolve the project's execution locus from the repo path (add-windows-support).
+     * Defaults to auto-detection: a `\\wsl$` root ⇒ that distro, else host. The
+     * composition passes a resolver that also honours the persisted override.
+     */
+    private readonly resolveLocus: (repositoryPath: string) => Locus = detectLocus,
   ) {}
 
   async capture(repositoryPath: string): Promise<Patchset> {
-    const root = (await git(repositoryPath, ["rev-parse", "--show-toplevel"])).trim();
-    const commonDirValue = (await git(root, ["rev-parse", "--git-common-dir"])).trim();
+    // The locus follows the repo PATH (a `\\wsl$` project runs git in its distro).
+    const run = execaGitFor(this.resolveLocus(repositoryPath));
+    const root = (await git(run, repositoryPath, ["rev-parse", "--show-toplevel"])).trim();
+    const commonDirValue = (await git(run, root, ["rev-parse", "--git-common-dir"])).trim();
     const commonDir = isAbsolute(commonDirValue) ? commonDirValue : resolve(root, commonDirValue);
-    const headOid = (await git(root, ["rev-parse", "HEAD"])).trim();
+    const headOid = (await git(run, root, ["rev-parse", "HEAD"])).trim();
     // The head's branch ref (the current branch name), for an own-branch PR `head`
     // (#107). `symbolic-ref --short -q` prints the branch and exits 0 on a branch,
     // and exits non-zero (empty, no throw with `reject=false`) on a detached HEAD —
     // where there is no branch to submit from, so `headRef` stays absent honestly.
     const headRef =
-      (await git(root, ["symbolic-ref", "--short", "-q", "HEAD"], false)).trim() || undefined;
-    const { baseRef, baseOid } = await resolveBase(root);
+      (await git(run, root, ["symbolic-ref", "--short", "-q", "HEAD"], false)).trim() || undefined;
+    const { baseRef, baseOid } = await resolveBase(run, root);
 
-    const trackedDiff = await git(root, [
+    const trackedDiff = await git(run, root, [
       "diff",
       "--binary",
       "--full-index",
@@ -123,16 +144,18 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
       "--",
     ]);
     const changedPaths = parseChangedPaths(
-      await git(root, ["diff", "--name-status", "-z", baseOid, "--"]),
+      await git(run, root, ["diff", "--name-status", "-z", baseOid, "--"]),
     );
-    const counts = parseCounts(await git(root, ["diff", "--numstat", "-z", baseOid, "--"]));
-    const untrackedPaths = (await git(root, ["ls-files", "--others", "--exclude-standard", "-z"]))
+    const counts = parseCounts(await git(run, root, ["diff", "--numstat", "-z", baseOid, "--"]));
+    const untrackedPaths = (
+      await git(run, root, ["ls-files", "--others", "--exclude-standard", "-z"])
+    )
       .split("\0")
       .filter(Boolean);
 
     const files: PatchFile[] = [];
     for (const changedPath of changedPaths) {
-      const patch = await git(root, [
+      const patch = await git(run, root, [
         "diff",
         "--binary",
         "--full-index",
@@ -185,7 +208,7 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
       .update(bytes)
       .digest("hex");
 
-    const intent = await captureLocalIntent(root, baseOid, headOid, files);
+    const intent = await captureLocalIntent(run, root, baseOid, headOid, files);
     const projectSnapshotId = await this.resolveProjectSnapshotId?.(root, baseOid);
 
     return {
@@ -211,12 +234,13 @@ export class GitCaptureAdapter implements PatchsetCapturePort {
  * change what the review was captured against.
  */
 async function captureLocalIntent(
+  run: GitExec,
   root: string,
   baseOid: string,
   headOid: string,
   files: readonly PatchFile[],
 ): Promise<PatchsetIntent> {
-  const log = await git(root, ["log", "--format=%s", `${baseOid}..${headOid}`], false);
+  const log = await git(run, root, ["log", "--format=%s", `${baseOid}..${headOid}`], false);
   const commitSubjects = log
     .split("\n")
     .map((line) => line.trim())

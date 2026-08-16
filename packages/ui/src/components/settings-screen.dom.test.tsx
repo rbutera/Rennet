@@ -38,6 +38,8 @@ const view: SettingsView = {
         layer: "builtin",
         contributions: [{ layer: "builtin", value: "false", effective: true }],
       },
+      locus: { kind: "host" },
+      locusOverridden: false,
       configMalformed: false,
     },
   ],
@@ -91,6 +93,19 @@ function fakeBridge(overrides: Partial<Record<string, unknown>> = {}): {
           changed: true,
           gitignorePath: "/orbital/.rennet/.gitignore",
         } satisfies SetRepoVisibilityOutcome;
+      }
+      case "settings.setRepoLocus": {
+        if (overrides["settings.setRepoLocus"]) {
+          return overrides["settings.setRepoLocus"];
+        }
+        const locus = (
+          input as { locus: { kind: "host" } | { kind: "wsl"; distro: string } | null }
+        ).locus;
+        return {
+          status: "applied",
+          locus: locus ?? { kind: "host" },
+          locusOverridden: locus !== null,
+        };
       }
       default:
         throw new Error(`unexpected command: ${name}`);

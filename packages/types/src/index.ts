@@ -1,5 +1,13 @@
 export type FileChangeStatus = "added" | "modified" | "deleted" | "renamed";
 
+/**
+ * A project's execution locus (add-windows-support): where its repo-facing
+ * processes and files live — the host OS, or a named WSL distro. Defined here (the
+ * leaf package) so both the execution seam in `core` and the wire schema in
+ * `protocol` share one shape.
+ */
+export type Locus = { readonly kind: "host" } | { readonly kind: "wsl"; readonly distro: string };
+
 export interface RepositoryProvenance {
   id: string;
   root: string;

@@ -40,4 +40,17 @@ describe("escapePath", () => {
   it("leaves a segment with no separators untouched", () => {
     expect(escapePath("noseparators")).toBe("noseparators");
   });
+
+  it("keys a drive-letter absolute path (Windows host)", () => {
+    // A `C:\dev\repo` project key must be a single flat segment, `:` and `\` folded.
+    expect(escapePath("C:\\dev\\repo")).toBe("C-dev-repo");
+  });
+
+  it("keys a WSL UNC path (add-windows-support)", () => {
+    // The leading `\\` collapses with the following `wsl.localhost` separator to one
+    // dash, so a distro-resident project has a stable, flat key.
+    expect(escapePath("\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo")).toBe(
+      "-wsl.localhost-Ubuntu-home-rai-repo",
+    );
+  });
 });

@@ -1,5 +1,28 @@
 import { delimiter, join, resolve, sep } from "node:path";
 
+/**
+ * Whether `target` is contained within `root` (equal to it or beneath it). Pure and
+ * separator-injectable so the Windows drive-letter case is testable off-Windows
+ * (add-windows-support). On Windows the comparison is case-insensitive — `C:\Dev` and
+ * `c:\dev` are the same directory — and the separator is `\`; a bare `startsWith`
+ * without the trailing separator would let `/rootX` masquerade as inside `/root`.
+ */
+export function isWithinRoot(
+  root: string,
+  target: string,
+  options: { sep?: string; caseInsensitive?: boolean } = {},
+): boolean {
+  const separator = options.sep ?? sep;
+  const fold = options.caseInsensitive
+    ? (value: string) => value.toLowerCase()
+    : (value: string) => value;
+  const foldedRoot = fold(root);
+  const foldedTarget = fold(target);
+  if (foldedTarget === foldedRoot) return true;
+  const prefix = foldedRoot.endsWith(separator) ? foldedRoot : foldedRoot + separator;
+  return foldedTarget.startsWith(prefix);
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // review.openInEditor — open a review file, honouring the LINE (Rai, wireframes #8).
 //
@@ -82,7 +105,11 @@ export async function launchResolvedEditor(
 export function resolveWithinRoot(repositoryRoot: string, relPath: string): string | null {
   const root = resolve(repositoryRoot);
   const target = resolve(root, relPath);
-  if (target !== root && !target.startsWith(root + sep)) return null;
+  // Case-insensitive on Windows so a drive-letter/case mismatch (`C:\` vs `c:\`)
+  // does not read as an escape (add-windows-support).
+  if (!isWithinRoot(root, target, { caseInsensitive: process.platform === "win32" })) {
+    return null;
+  }
   return target;
 }
 

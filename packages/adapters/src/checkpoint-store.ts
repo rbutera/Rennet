@@ -2,7 +2,13 @@ import { randomUUID } from "node:crypto";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { CheckpointPort, CheckpointRef } from "@rennet/core";
+import {
+  type CheckpointPort,
+  type CheckpointRef,
+  HOST_LOCUS,
+  type Locus,
+  locusCommand,
+} from "@rennet/core";
 import { execa } from "execa";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -32,23 +38,79 @@ import { execa } from "execa";
 const CHECKPOINT_REF_PREFIX = "refs/rennet/checkpoints/";
 const CHECKPOINT_MESSAGE = "rennet: handoff checkpoint";
 
-async function git(root: string, arguments_: string[], env?: NodeJS.ProcessEnv): Promise<string> {
-  const result = await execa("git", arguments_, {
-    cwd: root,
+/**
+ * The `GIT_INDEX_FILE` a checkpoint stages into. On the host it's a host temp path
+ * passed via execa's `env`. Across the WSL boundary, execa's `env` does NOT reach
+ * the distro process (WSLENV would be needed), so the checkpoint index lives at a
+ * DISTRO temp path and the var is set INSIDE the distro by prefixing the spawn with
+ * `env GIT_INDEX_FILE=… git …` (add-windows-support). `-e` passes it byte-verbatim.
+ */
+function checkpointIndexPath(locus: Locus): string {
+  const name = `rennet-checkpoint-${randomUUID()}.index`;
+  return locus.kind === "wsl" ? `/tmp/${name}` : join(tmpdir(), name);
+}
+
+/**
+ * Build the checkpoint git spawn for a locus (pure, testable). On the host with a
+ * `gitIndexFile` the var rides in execa's `env`; across the WSL boundary execa's env
+ * does not reach the distro, so the spawn is prefixed `env GIT_INDEX_FILE=… git …`
+ * inside the distro (add-windows-support). Returns the spawn plus the host-only env.
+ */
+export function checkpointGitCommand(
+  locus: Locus,
+  root: string,
+  arguments_: string[],
+  gitIndexFile?: string,
+): { file: string; args: readonly string[]; cwd?: string; env?: NodeJS.ProcessEnv } {
+  let program = "git";
+  let programArgs = arguments_;
+  if (gitIndexFile !== undefined && locus.kind === "wsl") {
+    program = "env";
+    programArgs = [`GIT_INDEX_FILE=${gitIndexFile}`, "git", ...arguments_];
+  }
+  const command = locusCommand(locus, program, programArgs, root);
+  const env =
+    gitIndexFile !== undefined && locus.kind === "host"
+      ? { ...process.env, GIT_INDEX_FILE: gitIndexFile }
+      : undefined;
+  return { ...command, ...(env ? { env } : {}) };
+}
+
+async function runGit(
+  locus: Locus,
+  root: string,
+  arguments_: string[],
+  options: { reject?: boolean; gitIndexFile?: string } = {},
+) {
+  const { file, args, cwd, env } = checkpointGitCommand(
+    locus,
+    root,
+    arguments_,
+    options.gitIndexFile,
+  );
+  return execa(file, [...args], {
+    ...(cwd === undefined ? {} : { cwd }),
+    reject: options.reject ?? true,
     shell: false,
     stripFinalNewline: true,
     ...(env ? { env } : {}),
   });
+}
+
+async function git(
+  locus: Locus,
+  root: string,
+  arguments_: string[],
+  gitIndexFile?: string,
+): Promise<string> {
+  const result = await runGit(locus, root, arguments_, { gitIndexFile });
   return result.stdout;
 }
 
 /** Resolve HEAD's commit OID, or null in a repository with no commits yet. */
-async function headOid(root: string): Promise<string | null> {
-  const result = await execa("git", ["rev-parse", "--verify", "--quiet", "HEAD"], {
-    cwd: root,
+async function headOid(locus: Locus, root: string): Promise<string | null> {
+  const result = await runGit(locus, root, ["rev-parse", "--verify", "--quiet", "HEAD"], {
     reject: false,
-    shell: false,
-    stripFinalNewline: true,
   });
   return result.exitCode === 0 && result.stdout ? result.stdout : null;
 }
@@ -59,7 +121,11 @@ async function headOid(root: string): Promise<string | null> {
  * `core` never imports this git-bound module — the desktop composition root wires it.
  */
 export class GitCheckpointStore implements CheckpointPort {
-  constructor(private readonly root: string) {}
+  /** The project's execution locus (add-windows-support). Defaults to the host. */
+  constructor(
+    private readonly root: string,
+    private readonly locus: Locus = HOST_LOCUS,
+  ) {}
 
   /**
    * Snapshot the current working tree into a hidden checkpoint ref and return it.
@@ -69,33 +135,50 @@ export class GitCheckpointStore implements CheckpointPort {
    * between two checkpoints is exactly what the agent changed.
    */
   async capture(): Promise<CheckpointRef> {
-    const indexFile = join(tmpdir(), `rennet-checkpoint-${randomUUID()}.index`);
-    const env: NodeJS.ProcessEnv = { ...process.env, GIT_INDEX_FILE: indexFile };
+    const indexFile = checkpointIndexPath(this.locus);
     try {
       // An empty temp index + `add -A` stages the LITERAL working tree (all present,
       // non-ignored files). No pathspec, no deletions-vs-HEAD subtlety: the resulting
       // tree is the working tree as it stands right now.
-      await git(this.root, ["add", "-A"], env);
-      const tree = await git(this.root, ["write-tree"], env);
-      const parent = await headOid(this.root);
+      await git(this.locus, this.root, ["add", "-A"], indexFile);
+      const tree = await git(this.locus, this.root, ["write-tree"], indexFile);
+      const parent = await headOid(this.locus, this.root);
       const commit = await git(
+        this.locus,
         this.root,
         parent
           ? ["commit-tree", tree, "-p", parent, "-m", CHECKPOINT_MESSAGE]
           : ["commit-tree", tree, "-m", CHECKPOINT_MESSAGE],
-        env,
+        indexFile,
       );
       const ref = `${CHECKPOINT_REF_PREFIX}${randomUUID()}`;
       // A hidden ref — off every branch. `-c core.logAllRefUpdates=false` suppresses a
       // reflog even when the user's config is `always` (Codex F5: without this, a
       // reflog IS written for refs/rennet/*, so the "reflog stays clean" claim only
       // holds when we force it off here).
-      await git(this.root, ["-c", "core.logAllRefUpdates=false", "update-ref", ref, commit]);
+      await git(this.locus, this.root, [
+        "-c",
+        "core.logAllRefUpdates=false",
+        "update-ref",
+        ref,
+        commit,
+      ]);
       return { ref, commit };
     } finally {
-      // The temp index is disposable — never leave it behind.
-      await rm(indexFile, { force: true });
+      // The temp index is disposable — never leave it behind. On the host it's a
+      // host temp file; in the distro it's a distro temp file, removed in-distro.
+      await this.removeCheckpointIndex(indexFile);
     }
+  }
+
+  /** Remove the throwaway checkpoint index at its locus (host fs vs in-distro rm). */
+  private async removeCheckpointIndex(indexFile: string): Promise<void> {
+    if (this.locus.kind === "host") {
+      await rm(indexFile, { force: true });
+      return;
+    }
+    const command = locusCommand(this.locus, "rm", ["-f", indexFile]);
+    await execa(command.file, [...command.args], { reject: false, shell: false });
   }
 
   /**
@@ -104,7 +187,7 @@ export class GitCheckpointStore implements CheckpointPort {
    * authoritative file list — parsing this display diff loses quoted/spaced paths.
    */
   async diff(from: CheckpointRef, to: CheckpointRef): Promise<string> {
-    return git(this.root, [
+    return git(this.locus, this.root, [
       "diff",
       "--no-color",
       "--no-ext-diff",
@@ -121,7 +204,7 @@ export class GitCheckpointStore implements CheckpointPort {
    * where such a path renders as `"a/…" "b/…"` and is silently dropped.
    */
   async changedPaths(from: CheckpointRef, to: CheckpointRef): Promise<readonly string[]> {
-    const out = await git(this.root, [
+    const out = await git(this.locus, this.root, [
       "diff",
       "--name-only",
       "-z",
@@ -134,11 +217,7 @@ export class GitCheckpointStore implements CheckpointPort {
 
   /** Delete a checkpoint ref once the loop no longer needs it — best-effort hygiene. */
   async discard(ref: CheckpointRef): Promise<void> {
-    await execa("git", ["update-ref", "-d", ref.ref], {
-      cwd: this.root,
-      reject: false,
-      shell: false,
-    });
+    await runGit(this.locus, this.root, ["update-ref", "-d", ref.ref], { reject: false });
   }
 }
 
@@ -150,12 +229,10 @@ export class GitCheckpointStore implements CheckpointPort {
  * recursive submodule checkpointing is the follow-up. `git submodule status` lists one
  * line per submodule (empty when there are none).
  */
-export async function repoHasSubmodules(repoRoot: string): Promise<boolean> {
-  const result = await execa("git", ["submodule", "status"], {
-    cwd: repoRoot,
-    reject: false,
-    shell: false,
-    stripFinalNewline: true,
-  });
+export async function repoHasSubmodules(
+  repoRoot: string,
+  locus: Locus = HOST_LOCUS,
+): Promise<boolean> {
+  const result = await runGit(locus, repoRoot, ["submodule", "status"], { reject: false });
   return result.exitCode === 0 && result.stdout.trim().length > 0;
 }
