@@ -1528,39 +1528,51 @@ export type ResolvedProvenance = z.infer<typeof resolvedProvenanceSchema>;
  * repos are reachable, not collapsed onto the first. `repoPath` is the canonical
  * git top-level path that addresses the row for reads and writes.
  */
-export const settingsProjectSchema = z.object({
-  projectId: z.string().min(1),
-  name: z.string().min(1),
-  /** The canonical git top-level path of THIS repo — the row's stable address. */
-  repoPath: z.string().min(1),
-  /** The resolved effective visibility, with the layer it came from. */
-  visibility: projectVisibilitySchema,
-  visibilityProvenance: resolvedProvenanceSchema,
-  /** The resolved effective promotion state, with the layer it came from. */
-  promoted: z.boolean(),
-  promotedProvenance: resolvedProvenanceSchema,
-  /**
-   * The project's effective execution locus (add-windows-support): the persisted
-   * override if set, else auto-detected from `repoPath` (a `\\wsl$` root ⇒ that
-   * distro, else host). `locusOverridden` is true when it came from the config,
-   * false when auto-detected — so the UI can show detected-vs-chosen.
-   */
-  locus: locusSchema,
-  locusOverridden: z.boolean(),
-  /**
-   * The resolver's own provenance for the locus — the `detected < repo` ladder
-   * (`detected` when auto-detected, `repo` when a persisted override wins, always
-   * listing the suppressed detected offer as a non-effective contribution). Computed
-   * fresh per read, never persisted; `locusOverridden` is derived (`layer === "repo"`).
-   */
-  locusProvenance: resolvedProvenanceSchema,
-  /**
-   * The repo's `config.json` exists but is malformed (or carries an invalid
-   * value). The row then shows builtin defaults and REFUSES edits, so a write can
-   * never overwrite bytes we could not parse (Rule 75). Absent config ⇒ `false`.
-   */
-  configMalformed: z.boolean(),
-});
+export const settingsProjectSchema = z
+  .object({
+    projectId: z.string().min(1),
+    name: z.string().min(1),
+    /** The canonical git top-level path of THIS repo — the row's stable address. */
+    repoPath: z.string().min(1),
+    /** The resolved effective visibility, with the layer it came from. */
+    visibility: projectVisibilitySchema,
+    visibilityProvenance: resolvedProvenanceSchema,
+    /** The resolved effective promotion state, with the layer it came from. */
+    promoted: z.boolean(),
+    promotedProvenance: resolvedProvenanceSchema,
+    /**
+     * The project's effective execution locus (add-windows-support): the persisted
+     * override if set, else auto-detected from `repoPath` (a `\\wsl$` root ⇒ that
+     * distro, else host). `locusOverridden` is true when it came from the config,
+     * false when auto-detected — so the UI can show detected-vs-chosen.
+     */
+    locus: locusSchema,
+    locusOverridden: z.boolean(),
+    /**
+     * The resolver's own provenance for the locus — the `detected < repo` ladder
+     * (`detected` when auto-detected, `repo` when a persisted override wins, always
+     * listing the suppressed detected offer as a non-effective contribution). Computed
+     * fresh per read, never persisted; `locusOverridden` is derived (`layer === "repo"`).
+     */
+    locusProvenance: resolvedProvenanceSchema.optional(),
+    /**
+     * The repo's `config.json` exists but is malformed (or carries an invalid
+     * value). The row then shows builtin defaults and REFUSES edits, so a write can
+     * never overwrite bytes we could not parse (Rule 75). Absent config ⇒ `false`.
+     */
+    configMalformed: z.boolean(),
+  })
+  .transform((project) => {
+    const layer = project.locusOverridden ? ("repo" as const) : ("detected" as const);
+    const value = project.locus.kind === "host" ? "host" : `WSL · ${project.locus.distro}`;
+    return {
+      ...project,
+      locusProvenance: project.locusProvenance ?? {
+        layer,
+        contributions: [{ layer, value, effective: true }],
+      },
+    };
+  });
 export type SettingsProject = z.infer<typeof settingsProjectSchema>;
 
 /** The whole settings view: the global layer plus every repo's repo layer. */
@@ -1593,16 +1605,27 @@ export const setRepoVisibilityOutcomeSchema = z.object({
 export type SetRepoVisibilityOutcome = z.infer<typeof setRepoVisibilityOutcomeSchema>;
 
 /** The outcome of a repo-locus override write (add-windows-support). */
-export const setRepoLocusOutcomeSchema = z.object({
-  /**
-   * `applied` — the override was written (`locus` is the resolved effective value);
-   * `unresolved` — the project/checkout could not be resolved (nothing written);
-   * `malformed` — the repo config is malformed, so the edit was REFUSED (Rule 75).
-   */
-  status: z.enum(["applied", "unresolved", "malformed"]),
-  locus: locusSchema,
-  locusOverridden: z.boolean(),
-});
+export const setRepoLocusOutcomeSchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("applied"),
+    locus: locusSchema,
+    locusOverridden: z.boolean(),
+    /** The fresh resolver-owned row after the override was written. */
+    project: settingsProjectSchema,
+  }),
+  z.object({
+    status: z.literal("unresolved"),
+    locus: locusSchema,
+    locusOverridden: z.boolean(),
+    project: z.null(),
+  }),
+  z.object({
+    status: z.literal("malformed"),
+    locus: locusSchema,
+    locusOverridden: z.boolean(),
+    project: z.null(),
+  }),
+]);
 export type SetRepoLocusOutcome = z.infer<typeof setRepoLocusOutcomeSchema>;
 
 /**

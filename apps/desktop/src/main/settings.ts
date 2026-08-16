@@ -313,26 +313,33 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       repoPath: string;
       locus: Locus | null;
     }): Promise<SetRepoLocusOutcome> => {
-      const project = deps.listProjects().find((entry) => entry.id === input.projectId);
-      const target = project
-        ? (await targetsFor(project)).find((entry) => entry.repoPath === input.repoPath)
-        : undefined;
-      if (!target) {
-        return { status: "unresolved", locus: detectLocus(input.repoPath), locusOverridden: false };
-      }
-      // Refuse a malformed config before any write (Rule 75), mirroring visibility.
-      if (deps.loadConfigState(target.repoKey).status === "malformed") {
+      const live = await liveTarget(input.projectId, input.repoPath);
+      if (!live) {
+        const locus = resolveLocus(detectLocus(input.repoPath), undefined);
         return {
-          status: "malformed",
-          locus: detectLocus(target.repoPath),
+          status: "unresolved",
+          locus: locus.value,
           locusOverridden: false,
+          project: null,
         };
       }
-      deps.applyLocus({ repoKey: target.repoKey, locus: input.locus });
+      // Refuse a malformed config before any write (Rule 75), mirroring visibility.
+      if (deps.loadConfigState(live.target.repoKey).status === "malformed") {
+        const locus = resolveLocus(detectLocus(live.target.repoPath), undefined);
+        return {
+          status: "malformed",
+          locus: locus.value,
+          locusOverridden: false,
+          project: null,
+        };
+      }
+      deps.applyLocus({ repoKey: live.target.repoKey, locus: input.locus });
+      const project = resolveRow(live.project, live.target, live.multiRepo);
       return {
         status: "applied",
-        locus: input.locus ?? detectLocus(target.repoPath),
-        locusOverridden: input.locus !== null,
+        locus: project.locus,
+        locusOverridden: project.locusOverridden,
+        project,
       };
     },
 

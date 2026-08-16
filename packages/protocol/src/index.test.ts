@@ -249,14 +249,40 @@ describe("settings v1 — registry ladder wire shapes (#28)", () => {
     expect(settingsLayerSchema.parse("detected")).toBe("detected");
   });
 
-  it("settingsProjectSchema REQUIRES locusProvenance (and keeps locusOverridden)", () => {
+  it("settingsProjectSchema accepts the old row and normalizes locusProvenance", () => {
     expect(settingsProjectSchema.parse(project).locusProvenance.layer).toBe("detected");
     const withoutProvenance: Record<string, unknown> = { ...project };
     delete withoutProvenance.locusProvenance;
-    expect(() => settingsProjectSchema.parse(withoutProvenance)).toThrow();
+    expect(settingsProjectSchema.parse(withoutProvenance).locusProvenance).toEqual({
+      layer: "detected",
+      contributions: [{ layer: "detected", value: "WSL · Ubuntu", effective: true }],
+    });
+    expect(
+      settingsProjectSchema.parse({ ...withoutProvenance, locusOverridden: true }).locusProvenance,
+    ).toEqual({
+      layer: "repo",
+      contributions: [{ layer: "repo", value: "WSL · Ubuntu", effective: true }],
+    });
     const withoutOverridden: Record<string, unknown> = { ...project };
     delete withoutOverridden.locusOverridden;
     expect(() => settingsProjectSchema.parse(withoutOverridden)).toThrow();
+  });
+
+  it("setRepoLocus outcome carries the freshly re-resolved row", () => {
+    const outcome = parseCommandOutput("settings.setRepoLocus", {
+      status: "applied",
+      locus: project.locus,
+      locusOverridden: true,
+      project: {
+        ...project,
+        locusOverridden: true,
+        locusProvenance: {
+          layer: "repo",
+          contributions: [{ layer: "repo", value: "WSL · Ubuntu", effective: true }],
+        },
+      },
+    });
+    expect(outcome.project?.locusProvenance.layer).toBe("repo");
   });
 
   it("resetRepoValue / pinRepoValue payloads parse for the two repo keys", () => {

@@ -1,6 +1,6 @@
 ## 1. Protocol (additive wire shapes)
 
-- [x] 1.1 RED: extend `packages/protocol/src/index.test.ts` — `settingsLayerSchema` accepts `"detected"`; `settingsProjectSchema` requires `locusProvenance`; new `settings.resetRepoValue` / `settings.pinRepoValue` command payload + outcome schemas parse; `locusOverridden` stays required and accepted exactly as today (the view is computed fresh per `get()`, never persisted, so requiring `locusProvenance` breaks no stored data). Watch the tests fail.
+- [x] 1.1 RED: extend `packages/protocol/src/index.test.ts` — `settingsLayerSchema` accepts `"detected"`; `settingsProjectSchema` accepts the old shape without `locusProvenance` and normalizes it to the canonical new shape; new `settings.resetRepoValue` / `settings.pinRepoValue` command payload + outcome schemas parse; `locusOverridden` stays required and accepted exactly as today. Watch the tests fail.
 - [x] 1.2 GREEN: add `"detected"` to `settingsLayerSchema`, `locusProvenance` to `settingsProjectSchema`, and the two command schemas in `packages/protocol/src/index.ts` (~1500 region), wired into the command union.
 
 ## 2. Core: registry + generic resolver

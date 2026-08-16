@@ -52,6 +52,12 @@ The per-repo settings surface SHALL, for every repo-scoped setting: display the 
 ### Requirement: Old configs parse additively with no migration
 Existing global and per-repo config files written before this capability SHALL parse and resolve unchanged: absent keys resolve down the ladder, no migration step runs, and no file is rewritten except by an explicit user edit through the surface.
 
+Existing settings-view rows without `locusProvenance` SHALL be accepted at the protocol boundary and normalized to the canonical new row shape with derived locus provenance. No protocol version handshake or migration ceremony SHALL be introduced.
+
 #### Scenario: A pre-existing repo config keeps its meaning
 - **WHEN** a repo config written before this capability (for example carrying only `version` and `visibility`) is read
 - **THEN** its values resolve at the repo layer exactly as before, and the file is not rewritten by the read
+
+#### Scenario: An old settings row normalizes at the boundary
+- **WHEN** a settings-view row without `locusProvenance` is parsed
+- **THEN** it is accepted and the parsed row carries derived `detected` or `repo` locus provenance matching `locusOverridden`

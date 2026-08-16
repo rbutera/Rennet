@@ -31,7 +31,7 @@ A `SettingDeclaration<T>` record: `key`, a validate function (reuse the protocol
 `settingsLayerSchema` becomes `["builtin", "detected", "global", "repo"]`. Precedence is defined once (`LAYER_ORDER` in core); the fold sorts offers by it, so a future rung (workspace between global and repo, changeset above repo) is one enum member + one list insertion, no re-keying of stored values (files never store layer names; layers are where a file IS). Detection below `global`/`repo` because detection is an environmental guess and any explicit user choice must beat it — this is exactly the current `config?.locus ?? detectLocus(...)` semantics, expressed as ladder order. Alternative rejected: `detected` above `global` — no key today has both a global and a detected producer, but if one ever does, "the machine guessed" outranking "the user chose globally" is the wrong default.
 
 **3. Locus resolution moves into the resolver; the wire shape grows additively.**
-Composition passes `{ detected: detectLocus(repoPath), repo: config?.locus }` as offers; the resolver returns `Resolved<Locus>`. `settingsProjectSchema` gains `locusProvenance: resolvedProvenanceSchema` (additive); `locusOverridden` is kept and derived (`layer === "repo"`), so existing renderer code and tests keep working. Rendering a locus for provenance uses the existing `describeLocus`-style string ("host" / "WSL · Ubuntu").
+Composition passes `{ detected: detectLocus(repoPath), repo: config?.locus }` as offers; the resolver returns `Resolved<Locus>`. `settingsProjectSchema` gains canonical `locusProvenance: resolvedProvenanceSchema` output while accepting and normalizing the old input shape where it is absent; `locusOverridden` is kept and derived (`layer === "repo"`). Rendering a locus for provenance uses the existing `describeLocus`-style string ("host" / "WSL · Ubuntu").
 
 **4. Reset and Pin are two small commands over the existing write path, not a new store.**
 - `settings.resetRepoValue { projectId, repoPath, key }` — `updateConfig` deleting the key's field. For locus this collapses to the shipped `setRepoLocus(null)`; visibility reset additionally runs the real visibility switch toward the newly effective value so `.rennet/.gitignore` matches (the value falling back to `local` must actually re-apply local semantics — a reset that changes the effective value without applying it would be a lie in the UI).
@@ -50,7 +50,7 @@ A row explicitly set at the repo layer shows Reset ("inherit"); an inheriting/de
 
 ## Migration Plan
 
-None needed: enum growth and new optional fields are additive; old configs parse unchanged (spec requirement); no file format changes; no data migration. Rollback is reverting the change.
+None needed: enum growth and protocol normalization are additive; old config files and old settings rows parse unchanged (spec requirement); no file format changes; no data migration. Rollback is reverting the change.
 
 ## Open Questions
 

@@ -1576,6 +1576,7 @@ export function createDispatch(
             status: "unresolved",
             locus: detectLocus(input.repoPath),
             locusOverridden: false,
+            project: null,
           });
         }
         const result = await deps.settings.setRepoLocus({

@@ -51,13 +51,13 @@ function describeLocus(locus: Locus): string {
 
 /**
  * Explain: the value's provenance rendered as the RESOLVER's own answer — a summary
- * chip ("set here"/"default") plus the full lowest-first list of contributing layers,
- * the effective one flagged. Never a recomputed account that could disagree with the
- * engine; the surface shows exactly what the resolver returned.
+ * chip ("set here"/"detected"/"default") plus the full lowest-first list of
+ * contributing layers, the effective one flagged. Never a recomputed account that
+ * could disagree with the engine; the surface shows exactly what the resolver returned.
  */
 function Provenance({ provenance }: { provenance: ResolvedProvenance }) {
-  const setHere = provenance.layer !== "builtin";
-  const label = setHere ? "set here" : "default";
+  const setHere = provenance.layer === "global" || provenance.layer === "repo";
+  const label = provenance.layer === "detected" ? "detected" : setHere ? "set here" : "default";
   return (
     <span className="settings-prov-wrap">
       <span className={`settings-prov${setHere ? " settings-prov-set" : ""}`}>{label}</span>
@@ -307,20 +307,6 @@ export function SettingsScreen({
                     : current,
                 )
               }
-              onLocusResolved={(repoPath, locus, overridden) =>
-                setView((current) =>
-                  current
-                    ? {
-                        ...current,
-                        projects: current.projects.map((project) =>
-                          project.repoPath === repoPath
-                            ? { ...project, locus, locusOverridden: overridden }
-                            : project,
-                        ),
-                      }
-                    : current,
-                )
-              }
               onRowReplaced={(next) =>
                 setView((current) =>
                   current
@@ -349,7 +335,6 @@ function RepoPanel({
   selectedRepoPath,
   onSelect,
   onVisibilityResolved,
-  onLocusResolved,
   onRowReplaced,
 }: {
   bridge: RennetBridge;
@@ -358,8 +343,7 @@ function RepoPanel({
   selectedRepoPath: string | null;
   onSelect(repoPath: string): void;
   onVisibilityResolved(repoPath: string, visibility: ProjectVisibility): void;
-  onLocusResolved(repoPath: string, locus: Locus, overridden: boolean): void;
-  /** Replace a whole row with the resolver's freshly re-resolved answer (Reset/Pin). */
+  /** Replace a whole row with the resolver's freshly re-resolved answer. */
   onRowReplaced(project: SettingsProject): void;
 }) {
   const [busy, setBusy] = useState(false);
@@ -428,11 +412,11 @@ function RepoPanel({
         locus,
       });
       if (result.status === "applied") {
-        onLocusResolved(selected.repoPath, result.locus, result.locusOverridden);
+        onRowReplaced(result.project);
         setDistroInput("");
         setNote(
-          result.locusOverridden
-            ? `Execution locus set to ${describeLocus(result.locus)}.`
+          result.project.locusOverridden
+            ? `Execution locus set to ${describeLocus(result.project.locus)}.`
             : "Execution locus reset to the auto-detected value.",
         );
       } else if (result.status === "unresolved") {

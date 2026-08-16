@@ -69,11 +69,12 @@ function fakeBridge(overrides: Partial<Record<string, unknown>> = {}): {
   calls: { name: string; input: unknown }[];
 } {
   const calls: { name: string; input: unknown }[] = [];
+  const settingsView = (overrides["settings.get"] as SettingsView) ?? view;
   const invoke = async (name: string, input: unknown): Promise<unknown> => {
     calls.push({ name, input });
     switch (name) {
       case "settings.get":
-        return (overrides["settings.get"] as SettingsView) ?? view;
+        return settingsView;
       case "settings.guidance":
         return (overrides["settings.guidance"] as SettingsGuidance) ?? guidance;
       case "settings.setAppearance": {
@@ -108,10 +109,34 @@ function fakeBridge(overrides: Partial<Record<string, unknown>> = {}): {
         const locus = (
           input as { locus: { kind: "host" } | { kind: "wsl"; distro: string } | null }
         ).locus;
+        const current = settingsView.projects[0];
+        if (!current) throw new Error("settings fixture requires a project row");
+        const resolvedLocus = locus ?? current.locus;
+        const project = locus
+          ? {
+              ...current,
+              locus: resolvedLocus,
+              locusOverridden: true,
+              locusProvenance: {
+                layer: "repo" as const,
+                contributions: [
+                  ...current.locusProvenance.contributions
+                    .filter((contribution) => contribution.layer !== "repo")
+                    .map((contribution) => ({ ...contribution, effective: false })),
+                  {
+                    layer: "repo" as const,
+                    value: resolvedLocus.kind === "host" ? "host" : `WSL · ${resolvedLocus.distro}`,
+                    effective: true,
+                  },
+                ],
+              },
+            }
+          : { ...current, locusOverridden: false };
         return {
           status: "applied",
-          locus: locus ?? { kind: "host" },
+          locus: resolvedLocus,
           locusOverridden: locus !== null,
+          project,
         };
       }
       case "settings.resetRepoValue": {
@@ -310,6 +335,44 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     const items = [...container.querySelectorAll(".settings-prov-item")].map((n) => n.textContent);
     expect(items.some((t) => t?.includes("detected"))).toBe(true);
     expect(items.some((t) => t?.includes("builtin"))).toBe(true);
+    const locusLabel = [...container.querySelectorAll(".settings-k")].find(
+      (node) => node.textContent === "Execution locus",
+    );
+    expect(locusLabel?.closest(".settings-row")?.querySelector(".settings-prov")?.textContent).toBe(
+      "detected",
+    );
+  });
+
+  it("an explicit Host edit replaces the detected row with repo-effective provenance", async () => {
+    const detectedWslView: SettingsView = {
+      ...view,
+      projects: view.projects.map((project) => ({
+        ...project,
+        repoPath: "\\\\wsl.localhost\\Ubuntu\\home\\rai\\repo",
+        locus: { kind: "wsl", distro: "Ubuntu" },
+        locusProvenance: {
+          layer: "detected",
+          contributions: [
+            { layer: "builtin", value: "host", effective: false },
+            { layer: "detected", value: "WSL · Ubuntu", effective: true },
+          ],
+        },
+      })),
+    };
+    const { bridge } = fakeBridge({ "settings.get": detectedWslView });
+    const { container, getByRole } = await openRepoTab(bridge);
+
+    fireEvent.click(getByRole("button", { name: "Host" }));
+
+    const locusLabel = [...container.querySelectorAll(".settings-k")].find(
+      (node) => node.textContent === "Execution locus",
+    );
+    const locusRow = locusLabel?.closest(".settings-row");
+    await waitFor(() =>
+      expect(locusRow?.querySelector(".settings-prov-item.on")?.textContent).toBe("repo: host"),
+    );
+    expect(locusRow?.querySelector(".settings-reset")).not.toBeNull();
+    expect(locusRow?.querySelector(".settings-pin")).toBeNull();
   });
 
   it("an inheriting/detected row shows Pin and NOT Reset", async () => {
@@ -352,12 +415,12 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
 
   it("no confirmation ceremony: Reset completes in a single interaction, no dialog appears", async () => {
     const { bridge, calls } = fakeBridge({ "settings.get": repoSetView });
-    const { container, getByRole } = await openRepoTab(bridge);
+    const { baseElement, getByRole } = await openRepoTab(bridge);
     fireEvent.click(getByRole("button", { name: /reset/i }));
     // The write fired on the FIRST click — no intermediate confirm step.
     await waitFor(() => expect(calls.some((c) => c.name === "settings.resetRepoValue")).toBe(true));
-    expect(container.querySelector('[role="dialog"]')).toBeNull();
-    expect(container.querySelector(".settings-confirm")).toBeNull();
+    expect(baseElement.querySelector('[role="dialog"]')).toBeNull();
+    expect(baseElement.querySelector(".settings-confirm")).toBeNull();
   });
 
   it("a malformed repo row disables Reset/Pin and never invokes them", async () => {

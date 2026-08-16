@@ -98,6 +98,7 @@ import {
   recordSeatSend,
   resolveAssignment,
   resolveDualSeat,
+  resolveLocus,
   reviewInvocationCeiling,
   runCoverageMapping,
   runDecisionAngle,
@@ -240,7 +241,7 @@ function locusForRepo(repoRoot: string): Locus {
   } catch {
     key = escapePath(repoRoot);
   }
-  return liveSnapshotStore.loadConfig(key)?.locus ?? detectLocus(repoRoot);
+  return resolveLocus(detectLocus(repoRoot), liveSnapshotStore.loadConfig(key)?.locus).value;
 }
 
 const gitForRepo = gitForRepoFactory(locusForRepo);
