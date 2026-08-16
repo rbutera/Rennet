@@ -11,6 +11,7 @@ import type {
   ProjectProcessEvent,
   RennetBridge,
 } from "@rennet/protocol";
+import { parseCommandInput } from "@rennet/protocol";
 import { describe, expect, it, vi } from "vitest";
 import { fireEvent, mount, waitFor } from "../test/dom";
 import { ProjectProcessing } from "./project-processing";
@@ -120,7 +121,7 @@ describe("ProjectProcessing — the initial context dump with live narration", (
     if (!call) throw new Error("project.process was not invoked");
     const processInput = call.input as { projectId: string; commandId?: string };
     expect(processInput.projectId).toBe("p1");
-    expect(processInput.commandId).toBeTruthy();
+    expect(processInput.commandId).toBeTypeOf("string");
 
     // The narration trail shows the REAL stage notes + details that were streamed.
     await waitFor(() =>
@@ -139,6 +140,116 @@ describe("ProjectProcessing — the initial context dump with live narration", (
 
     // "Open orbital" fires the open callback.
     fireEvent.click(getByRole("button", { name: /Open orbital/ }));
+    expect(onOpen).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses one parser-valid command UUID for a non-UUID project id across remounts", async () => {
+    const first = fakeBridge({ noProgress: true });
+    const firstMount = mount(
+      <ProjectProcessing
+        bridge={first.bridge}
+        project={project}
+        onDone={vi.fn()}
+        onOpen={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(first.calls).toHaveLength(1));
+    firstMount.unmount();
+
+    const second = fakeBridge({ noProgress: true });
+    mount(
+      <ProjectProcessing
+        bridge={second.bridge}
+        project={project}
+        onDone={vi.fn()}
+        onOpen={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(second.calls).toHaveLength(1));
+
+    const firstInput = parseCommandInput("project.process", first.calls[0]?.input);
+    const secondInput = parseCommandInput("project.process", second.calls[0]?.input);
+    expect(firstInput.projectId).toBe("p1");
+    expect(secondInput.commandId).toBe(firstInput.commandId);
+  });
+
+  it("renders the live running state from a deferred bridge", async () => {
+    let listener: ((event: ProjectProcessEvent) => void) | undefined;
+    let finish: ((value: { repos: ProcessedRepoSummary[] }) => void) | undefined;
+    const result = new Promise<{ repos: ProcessedRepoSummary[] }>((resolve) => {
+      finish = resolve;
+    });
+    const bridge: RennetBridge = {
+      invoke: ((_name: string, input: unknown) => {
+        parseCommandInput("project.process", input);
+        return result;
+      }) as RennetBridge["invoke"],
+      onProgress: (_commandId, next) => {
+        listener = next;
+        return () => {
+          listener = undefined;
+        };
+      },
+    };
+    const workspace: Project = { ...project, name: "ws", kind: "workspace", repoCount: 2 };
+    const { container } = mount(
+      <ProjectProcessing bridge={bridge} project={workspace} onDone={vi.fn()} onOpen={vi.fn()} />,
+    );
+
+    await waitFor(() => expect(listener).toBeTypeOf("function"));
+    listener?.({ kind: "repo-start", repo: "atlas-docs", index: 2, total: 2 });
+    listener?.({
+      kind: "stage",
+      repo: "atlas-docs",
+      stage: "resolve",
+      note: "Finding the default branch",
+      detail: "main",
+    });
+    listener?.({
+      kind: "stage",
+      repo: "atlas-docs",
+      stage: "tree",
+      note: "Reading the file tree",
+      detail: "12 files",
+    });
+
+    await waitFor(() => expect(container.querySelectorAll(".processing-step")).toHaveLength(2));
+    const steps = container.querySelectorAll(".processing-step");
+    expect(steps[0]?.classList.contains("is-active")).toBe(false);
+    expect(steps[0]?.querySelector("svg")).not.toBeNull();
+    expect(steps[1]?.classList.contains("is-active")).toBe(true);
+    expect(steps[1]?.querySelector(".processing-dot")).not.toBeNull();
+    expect(container.querySelector(".processing-headline")?.textContent).toContain(
+      "Reading the file tree · 12 files",
+    );
+    expect(container.querySelector(".processing-sub")?.textContent).toBe(
+      "atlas-docs — repo 2 of 2",
+    );
+
+    finish?.({ repos: [] });
+  });
+
+  it("wires a landed project artifact through the real processing consumer", async () => {
+    const events: ProjectProcessEvent[] = [
+      { kind: "repo-start", repo: "orbital", index: 1, total: 1 },
+      {
+        kind: "repo-done",
+        repo: "orbital",
+        summary: { repo: "orbital", path: "/orbital", ok: true, files: 5, symbols: 3 },
+        artifact: { kind: "project", projectId: "p1" },
+      },
+    ];
+    const { bridge } = fakeBridge({
+      events,
+      repos: [{ repo: "orbital", path: "/orbital", ok: true, files: 5, symbols: 3 }],
+    });
+    const onOpen = vi.fn();
+    const { getByRole } = mount(
+      <ProjectProcessing bridge={bridge} project={project} onDone={vi.fn()} onOpen={onOpen} />,
+    );
+
+    const landed = await waitFor(() => getByRole("button", { name: "orbital" }));
+    fireEvent.click(landed);
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
@@ -197,8 +308,9 @@ describe("ProjectProcessing — the initial context dump with live narration", (
       noProgress: true,
       repos: [{ repo: "orbital", path: "/orbital", ok: true, files: 5, symbols: 3 }],
     });
-    const { container } = mount(
-      <ProjectProcessing bridge={bridge} project={project} onDone={vi.fn()} onOpen={vi.fn()} />,
+    const onOpen = vi.fn();
+    const { container, getByRole } = mount(
+      <ProjectProcessing bridge={bridge} project={project} onDone={vi.fn()} onOpen={onOpen} />,
     );
 
     await waitFor(() =>
@@ -208,6 +320,8 @@ describe("ProjectProcessing — the initial context dump with live narration", (
     expect(container.querySelector(".processing-step")).toBeNull();
     expect(container.textContent).toContain("orbital is ready");
     expect(container.textContent).toContain("5 files mapped");
+    fireEvent.click(getByRole("button", { name: "orbital" }));
+    expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
   it("shows a legible failure when the command cannot start", async () => {
