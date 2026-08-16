@@ -16,6 +16,7 @@ import {
   mechanicalComposition,
   type ReviewService,
   resolveReviewEvent,
+  verifyComposedBundle,
 } from "@rennet/core";
 import {
   type CommandName,
@@ -167,7 +168,8 @@ export interface DispatchDeps {
    */
   readonly runHandoffTurn?: (input: {
     repoRoot: string;
-    bundle: HandoffBundle;
+    /** The composed bundle's ordered, verbatim work-order prompt (issue #72). */
+    prompt: string;
   }) => Promise<HandoffTurnOutcome>;
   /**
    * The handoff-bundle composer (issue #72, Model Council M24): the light-tier
@@ -1114,24 +1116,43 @@ export function createDispatch(
       }
       case "review.handoff.run": {
         // The write-enabled turn. Clicking run IS the human act — no consent gate (Rule
-        // Zero). Rebuild the bundle from the dispositions + the active patchset, run the
-        // fully-capable write session (Bash included, Rai's call), and capture the delta.
+        // Zero). Run the COMPOSED bundle (issue #72) — the exact one `review.handoff.compose`
+        // produced — NOT a mechanical re-derivation from the dispositions. The write session
+        // is fully capable (Bash included, Rai's call); it executes the composed, ordered,
+        // verbatim work order, and we capture the delta after.
         const input = parseCommandInput(name, rawInput);
         const review = requireLatestReview(input.reviewId);
         assertAllowedRepository(review.repositoryRoot);
         const priorActive = activePatchsetOf(review);
-        const bundle = buildHandoffBundle({
-          reviewId: review.id,
-          patchset: priorActive,
-          dispositions: input.dispositions,
-        });
+        const bundle = input.bundle;
+        // The compose→run digest binding (issue #72): the run executes the bundle that
+        // was composed, provably. `verifyComposedBundle` recomputes the digest + prompt
+        // from the tasks, so a bundle whose prompt or a body was swapped after composition
+        // is refused rather than run; and the bundle must have been composed against THIS
+        // review's currently-active patchset, or it is stale (re-compose, never run-anyway).
+        // Integrity, not a gate — the mechanical floor (`composed:false`) verifies and runs
+        // exactly like a `composed:true` bundle; this refuses only an order nobody composed.
+        if (
+          bundle.reviewId !== review.id ||
+          bundle.patchsetId !== priorActive.id ||
+          !verifyComposedBundle(bundle)
+        ) {
+          return parseCommandOutput(name, {
+            status: "refused",
+            reason:
+              "the composed bundle does not match this review's active patchset or its own digest — re-compose before running",
+          });
+        }
         if (!deps.runHandoffTurn) {
           return parseCommandOutput(name, {
             status: "unavailable",
             reason: "no coding harness is available to run the handoff",
           });
         }
-        const turn = await deps.runHandoffTurn({ repoRoot: review.repositoryRoot, bundle });
+        const turn = await deps.runHandoffTurn({
+          repoRoot: review.repositoryRoot,
+          prompt: bundle.prompt,
+        });
         if (turn.status === "failed") {
           // Surface the files the agent changed before erroring (Codex F4) — the working
           // tree was modified even though the turn failed; hiding it defeats totality.

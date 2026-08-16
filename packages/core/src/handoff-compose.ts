@@ -351,3 +351,21 @@ export async function composeHandoffBundle(
   }
   return composed;
 }
+
+/**
+ * The compose→run integrity check (issue #72). The run boundary executes the bundle
+ * that `composeHandoffBundle` produced, and this proves — by recomputation — that the
+ * bundle handed to the run is the SAME bytes that were composed: its `digest` is the
+ * genuine digest of its `tasks`, and its executable `prompt` is the faithful render of
+ * those tasks. A bundle whose prompt or a task body was swapped after composition
+ * (digest or prompt no longer matches the tasks) fails this check, so the run refuses
+ * it rather than executing an order nobody composed. This is INTEGRITY, not a consent
+ * gate: the mechanical floor (`composed:false`) passes exactly like a `composed:true`
+ * bundle, because both are reconstructed the same deterministic way.
+ */
+export function verifyComposedBundle(bundle: ComposedHandoffBundle): boolean {
+  return (
+    composedDigest(bundle.tasks) === bundle.digest &&
+    renderComposedPrompt(bundle.tasks) === bundle.prompt
+  );
+}
