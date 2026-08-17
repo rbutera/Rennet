@@ -703,7 +703,7 @@
   font: inherit;
   color: inherit;
   cursor: pointer;
-  border-radius: 2px;
+  border-radius: 4px;
 }
 .rtok-symbol:hover {
   text-decoration: underline;
@@ -969,7 +969,7 @@
   color: var(--text-soft);
 }
 .collation-count strong {
-  font-size: 20px;
+  font-size: 19px;
   color: var(--accent);
 }
 .collation-back {
@@ -1106,7 +1106,7 @@
   height: 22px;
   display: grid;
   place-items: center;
-  border-radius: 7px;
+  border-radius: 6px;
   font-size: 11px;
   font-weight: 800;
   color: var(--accent-contrast);
@@ -1123,7 +1123,7 @@
 }
 .collation-item-type {
   border: 1px solid var(--hairline-strong);
-  border-radius: 7px;
+  border-radius: 6px;
   padding: 5px 8px;
   font: inherit;
   font-size: 11px;
@@ -1253,7 +1253,7 @@
 }
 .collation-act {
   border: 1px solid var(--hairline-strong);
-  border-radius: 7px;
+  border-radius: 8px;
   padding: 5px 10px;
   font-size: 11px;
   font-weight: 650;
@@ -1297,7 +1297,7 @@
 }
 .collation-sign {
   border: 0;
-  border-radius: 9px;
+  border-radius: 8px;
   padding: 11px 20px;
   font-size: 14px;
   font-weight: 750;
@@ -1754,7 +1754,7 @@
 .hypothesis-scope-in li,
 .hypothesis-scope-out li {
   color: var(--text-soft);
-  font-size: 12.5px;
+  font-size: 13px;
   line-height: 1.35;
 }
 .hypothesis-risks-head {
@@ -3165,7 +3165,7 @@ button.ospec-covchip:focus-visible {
 }
 .ospec-progress {
   height: 6px;
-  border-radius: 3px;
+  border-radius: 4px;
   background: var(--surface-2);
   border: 1px solid var(--hairline);
   overflow: hidden;
@@ -3505,7 +3505,7 @@ button.ospec-covchip:focus-visible {
   border: 1px solid var(--hairline-strong);
   background: none;
   color: var(--text);
-  border-radius: 7px;
+  border-radius: 8px;
   padding: 3px 10px;
   font: 11px / 1.4 var(--sans);
   cursor: pointer;
@@ -3570,7 +3570,7 @@ button.ospec-covchip:focus-visible {
   appearance: none;
   border: 1px solid var(--hairline);
   background: var(--raised);
-  border-radius: 7px;
+  border-radius: 6px;
   padding: 3px 8px;
   font: 11px / 1.3 var(--mono);
   color: var(--text);

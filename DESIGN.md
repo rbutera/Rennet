@@ -132,6 +132,28 @@ Display headings may grow to `6rem`, use `0.94–1.0` line height, and never tra
 roughly 1.5–1.6 line height. The same roles apply across marketing and desktop; the desktop keeps a
 smaller, more spatially stable scale.
 
+### Desktop scale
+
+The desktop product renders at a denser, enumerated type ramp — smaller than the marketing scale
+and spatially stable across the review chrome:
+
+`10 / 11 / 12 / 13 / 14 / 16 / 19 / 22` px, plus the front-door display expression
+`clamp(34px, 5vw, 56px)`.
+
+- **10px** micro — uppercase micro-caps, the smallest legible chrome.
+- **11px** meta — dense secondary metadata, counts, pins.
+- **12px** chrome — the standard chrome label and control text.
+- **13px** reading — in-canvas reading text and descriptions.
+- **14px** emphasis — emphasised labels and dense titles.
+- **16px** body — comfortable body and input text (shared with marketing).
+- **19px** section — screen and section headings.
+- **22px** title — the largest in-app screen title.
+
+Fractional px sizes are not used: each one was a split-the-difference nudge between two steps. The
+ramp is enforced for `packages/ui` by the design detector, whose machine-readable source is
+[`packages/ui/DESIGN.md`](packages/ui/DESIGN.md) (it sits inside the package because the detector
+resolves a design system by walking up from the scanned file and stops at the package boundary).
+
 ## Layout
 
 The marketing page follows this reading order:
@@ -179,6 +201,21 @@ Controls use 10px corners and review or proof surfaces use 10–14px corners. Bo
 and structural. A paper may carry one deeper corner when it reinforces the document metaphor, but
 the logo remains identity rather than recurring layout geometry. Avoid pills for containers and
 avoid ornamental clipping that competes with the evidence.
+
+### Desktop radius scale
+
+The desktop product uses an enumerated radius scale: `4 / 6 / 8 / 12 / 16` px, with two geometry
+exemptions that are shape rather than scale — `999px` (the pill, for chips and counts only, never
+containers) and `50%` (circles).
+
+- **4px** micro — inline code chips and the smallest tokens.
+- **6px** chip — small chips and segmented controls.
+- **8px** control — the standard control, button, and icon corner.
+- **12px** surface — review surfaces, cards, and body panels.
+- **16px** window — the window shell and the handoff paper's deeper corner.
+
+This scale is enforced for `packages/ui` by the design detector; its source is
+[`packages/ui/DESIGN.md`](packages/ui/DESIGN.md).
 
 ## Components
 

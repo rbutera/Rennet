@@ -151,7 +151,7 @@ button {
   gap: 7px;
 }
 .chat-message-name.nm {
-  font-size: 12.5px;
+  font-size: 13px;
   font-weight: 600;
 }
 .chat-message-type.ty {
@@ -189,7 +189,7 @@ button {
 .chat-message-interrupted {
   margin: 2px 0 0;
   color: var(--text);
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.5;
 }
 .chat-message-interrupted,
@@ -427,7 +427,7 @@ button {
   padding: 6px 3px;
   color: var(--text-soft);
   background: transparent;
-  font-size: 9px;
+  font-size: 10px;
   line-height: 1;
   cursor: pointer;
 }
@@ -459,7 +459,7 @@ button {
   display: grid;
   place-items: center;
   border: 1px solid var(--accent-soft-line);
-  border-radius: 9px;
+  border-radius: 8px;
   color: var(--accent);
   background: var(--accent-soft);
 }
@@ -485,7 +485,7 @@ button {
   color: var(--text);
   background: var(--surface-2);
   padding: 5px 8px;
-  border-radius: 5px;
+  border-radius: 4px;
   font-family: var(--mono);
 }
 
@@ -536,7 +536,7 @@ button {
 .progress-track {
   height: 3px;
   background: var(--surface-2);
-  border-radius: 9px;
+  border-radius: 8px;
   overflow: hidden;
 }
 .progress-track span {
@@ -752,7 +752,7 @@ button {
 }
 .snapshot-card span {
   color: var(--text-faint);
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 0.12em;
 }
 .snapshot-card code {
@@ -898,7 +898,7 @@ button {
   display: grid;
   place-items: center;
   border: 1px solid var(--accent-soft-line);
-  border-radius: 15px;
+  border-radius: 16px;
   color: var(--accent);
   background: var(--accent-soft);
   box-shadow: var(--private-glow);
@@ -1011,7 +1011,7 @@ button {
 }
 .destination-title {
   margin: 2px 0 0;
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--text);
 }
@@ -1032,7 +1032,7 @@ button {
 .destination-modes button {
   flex: 1;
   border: 0;
-  border-radius: 5px;
+  border-radius: 6px;
   padding: 5px 6px;
   font-size: 11px;
   font-weight: 600;
@@ -1083,7 +1083,7 @@ button {
   gap: 8px;
   padding: 5px 7px;
   border: 1px solid var(--hairline);
-  border-radius: 7px;
+  border-radius: 8px;
   background: var(--surface);
 }
 .destination-staged-type {
@@ -1091,7 +1091,7 @@ button {
   height: 18px;
   display: grid;
   place-items: center;
-  border-radius: 5px;
+  border-radius: 6px;
   font-size: 10px;
   font-weight: 800;
   color: var(--accent-contrast);
@@ -1161,7 +1161,7 @@ button {
   gap: 14px;
   padding: 26px;
   border: 1px solid var(--sheet-hairline);
-  border-radius: 14px;
+  border-radius: 16px;
   color: var(--sheet-text);
   background: var(--sheet-bg);
   box-shadow: var(--sheet-glow);
@@ -1232,7 +1232,7 @@ button {
   font-weight: 800;
   letter-spacing: 0.04em;
   padding: 3px 6px;
-  border-radius: 5px;
+  border-radius: 6px;
   color: var(--sheet-bg);
   background: var(--sheet-soft);
   text-transform: uppercase;
@@ -1281,7 +1281,7 @@ button {
   align-items: center;
   gap: 7px;
   border: 1px solid var(--sheet-hairline);
-  border-radius: 9px;
+  border-radius: 8px;
   padding: 10px 16px;
   font-size: 13px;
   font-weight: 650;
@@ -1294,7 +1294,7 @@ button {
   align-items: center;
   gap: 8px;
   border: 0;
-  border-radius: 9px;
+  border-radius: 8px;
   padding: 11px 22px;
   font-size: 14px;
   font-weight: 700;
@@ -1372,7 +1372,7 @@ button {
   gap: 10px;
   padding: 14px;
   border: 1px solid var(--sheet-hairline);
-  border-radius: 10px;
+  border-radius: 12px;
 }
 .publish-sheet-pr-head {
   display: flex;
@@ -1386,7 +1386,7 @@ button {
   letter-spacing: 0.06em;
   text-transform: uppercase;
   padding: 3px 7px;
-  border-radius: 5px;
+  border-radius: 6px;
   color: var(--sheet-bg);
   background: var(--sheet-soft);
 }
@@ -1459,7 +1459,7 @@ button {
 }
 .publish-sheet-comment-raw {
   justify-self: end;
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -1514,7 +1514,7 @@ button {
   gap: 12px;
   padding: 26px;
   border: 1px solid var(--hairline);
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--surface);
   box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
 }
@@ -1960,7 +1960,7 @@ button {
 }
 .canvas-primer h2 {
   margin: 0;
-  font-size: 20px;
+  font-size: 19px;
   font-weight: 600;
   color: var(--text);
 }
@@ -2016,13 +2016,13 @@ button {
   display: grid;
   place-items: center;
   border: 1px solid var(--accent-soft-line);
-  border-radius: 9px;
+  border-radius: 8px;
   color: var(--accent);
   background: var(--accent-soft);
 }
 .front-door-bar h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: 19px;
   font-weight: var(--display-weight);
   letter-spacing: var(--display-track);
   color: var(--text);
@@ -2090,11 +2090,11 @@ button {
   place-items: center;
   margin-bottom: 10px;
   border: 1px solid var(--hairline-strong);
-  border-radius: 11px;
+  border-radius: 12px;
   color: var(--text-soft);
 }
 .add-card-title {
-  font-size: 18px;
+  font-size: 19px;
   font-weight: var(--display-weight);
 }
 .add-card-sub {
@@ -2132,7 +2132,7 @@ button {
   display: grid;
   place-items: center;
   border: 1px solid var(--hairline);
-  border-radius: 9px;
+  border-radius: 8px;
   color: var(--accent);
 }
 .project-row-main {
@@ -2142,7 +2142,7 @@ button {
   min-width: 0;
 }
 .project-row-name {
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 650;
 }
 .project-row-path {
@@ -2249,7 +2249,7 @@ button {
   display: grid;
   place-items: center;
   border: 1px solid var(--hairline);
-  border-radius: 9px;
+  border-radius: 8px;
   color: var(--accent);
 }
 .type-card-body {
@@ -2258,7 +2258,7 @@ button {
   gap: 2px;
 }
 .type-card-title {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 650;
 }
 .type-card-sub {
@@ -2409,7 +2409,7 @@ button {
   gap: 8px;
   margin: 8px 0 14px;
   color: var(--text);
-  font-size: 15px;
+  font-size: 14px;
   font-weight: 650;
 }
 .found-in-icon {
@@ -2442,7 +2442,7 @@ button {
   display: grid;
   place-items: center;
   border: 1px solid var(--hairline);
-  border-radius: 9px;
+  border-radius: 8px;
   color: var(--text-soft);
 }
 .worktree-main {
@@ -2875,7 +2875,7 @@ button {
   min-width: 0;
 }
 .project-detail-name {
-  font-size: 18px;
+  font-size: 19px;
   font-weight: var(--display-weight);
   letter-spacing: var(--display-track);
   color: var(--text);
@@ -3235,7 +3235,7 @@ button {
   background: transparent;
   color: var(--text);
   font-family: var(--sans);
-  font-size: 15px;
+  font-size: 16px;
   outline: none;
 }
 .command-palette-input::placeholder {
@@ -3310,7 +3310,7 @@ button {
   display: grid;
   place-items: center;
   border: 1px solid var(--hairline-strong);
-  border-radius: 9px;
+  border-radius: 8px;
   background: var(--surface-2);
   color: var(--text-soft);
   cursor: pointer;
@@ -3349,7 +3349,7 @@ button {
   border-radius: 8px;
   background: var(--surface-2);
   color: var(--text-soft);
-  font-size: 12.5px;
+  font-size: 12px;
   cursor: pointer;
 }
 .settings-back:hover {
@@ -3363,13 +3363,13 @@ button {
   display: grid;
   place-items: center;
   border: 1px solid var(--accent-soft-line);
-  border-radius: 9px;
+  border-radius: 8px;
   color: var(--accent);
   background: var(--accent-soft);
 }
 .settings-bar h1 {
   margin: 0;
-  font-size: 18px;
+  font-size: 19px;
   font-weight: var(--display-weight);
   letter-spacing: var(--display-track);
   color: var(--text);
@@ -3440,10 +3440,10 @@ button {
 .settings-pick {
   padding: 5px 11px;
   border: 1px solid var(--hairline-strong);
-  border-radius: 7px;
+  border-radius: 8px;
   background: transparent;
   color: var(--text-soft);
-  font-size: 12.5px;
+  font-size: 13px;
   cursor: pointer;
 }
 .settings-pick.on {
@@ -3467,12 +3467,12 @@ button {
   gap: 3px;
 }
 .settings-k {
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 600;
   color: var(--text);
 }
 .settings-d {
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--text-faint);
 }
 .settings-row-value {
@@ -3496,7 +3496,7 @@ button {
   border-right: 1px solid var(--hairline);
   background: var(--surface-2);
   color: var(--text-soft);
-  font-size: 12.5px;
+  font-size: 12px;
   cursor: pointer;
 }
 .settings-seg-btn:last-child {
@@ -3515,12 +3515,12 @@ button {
   color: var(--text-soft);
 }
 .settings-prov {
-  font-size: 10.5px;
+  font-size: 10px;
   letter-spacing: 0.04em;
   text-transform: uppercase;
   color: var(--text-faint);
   border: 1px solid var(--hairline-strong);
-  border-radius: 5px;
+  border-radius: 6px;
   padding: 2px 7px;
 }
 .settings-prov-set {
@@ -3556,12 +3556,12 @@ button {
 /* Reset/Pin share the segmented-button styling; nothing ceremonial. */
 .settings-reset,
 .settings-pin {
-  font-size: 11.5px;
+  font-size: 11px;
 }
 .settings-note,
 .settings-applied {
   margin: 12px 0 0;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--text-faint);
 }
 .settings-applied {
@@ -3574,12 +3574,12 @@ button {
   border-radius: var(--chip-radius);
   background: var(--amber-surface);
   color: var(--amber);
-  font-size: 12.5px;
+  font-size: 12px;
   line-height: 1.5;
 }
 .settings-malformed code {
   font-family: var(--code);
-  font-size: 11.5px;
+  font-size: 11px;
 }
 .settings-empty {
   display: flex;
@@ -3606,7 +3606,7 @@ button {
   padding: 10px 13px;
   background: var(--surface-2);
   border-bottom: 1px solid var(--hairline);
-  font-size: 11.5px;
+  font-size: 12px;
   letter-spacing: 0.05em;
   text-transform: uppercase;
   color: var(--text-faint);
@@ -3648,7 +3648,7 @@ button {
   color: var(--text);
 }
 .settings-rule-why {
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--text-soft);
 }
 .settings-sev {
@@ -3657,7 +3657,7 @@ button {
   font-size: 10px;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  border-radius: 5px;
+  border-radius: 6px;
   padding: 2px 7px;
   border: 1px solid var(--hairline-strong);
   color: var(--text-faint);
@@ -3730,10 +3730,10 @@ button {
 }
 .settings-key-conflict {
   color: var(--warning, #d08a2a);
-  font-size: 11.5px;
+  font-size: 11px;
 }
 .settings-key-recording-note,
 .settings-key-invalid {
   color: var(--warning, #d08a2a);
-  font-size: 11.5px;
+  font-size: 11px;
 }
