@@ -1,4 +1,16 @@
 export {
+  type ClaudeAdjudicationTurnOptions,
+  createClaudeAdjudicationTurn,
+  createCodexAdjudicationTurn,
+} from "./adjudication-backend";
+export {
+  ADJUDICATION_CALIBRATION_ARTIFACT_PATH,
+  type AdjudicationCalibration,
+  type ClassCalibrationRecord,
+  isEmptyAdjudicationCalibration,
+  readAdjudicationCalibration,
+} from "./adjudication-calibration";
+export {
   BaselineAdvanceCoordinator,
   type BaselineAdvanceDeps,
   type BaselineWatchHandle,

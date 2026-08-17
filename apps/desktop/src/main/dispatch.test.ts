@@ -31,6 +31,7 @@ import type {
   CanvasAngle,
   ComposedHandoffBundle,
   ContextManifest,
+  FindingElement,
   FlaggedReview,
   PatchFile,
   Patchset,
@@ -247,8 +248,8 @@ function harness(
   // placeholder BEFORE the turn and the durable answer AFTER (the crash-recovery seam).
   const threadPersistence = { upsertThread: vi.fn(), putMessage: vi.fn() };
   const flaggedReviewSpy = vi.fn<DispatchDeps["flaggedReview"]>(async () => ({
-    status: "ok",
-    findings: [],
+    review: { status: "ok", findings: [] },
+    adjudication: null,
   }));
   // The comment-refinement producer (issue #19) as a recording spy, so a test can
   // assert the LIVE command path invokes it with the RESOLVED review + exact input —
@@ -590,7 +591,7 @@ describe("createDispatch — canvas.* routing (issue #54)", () => {
 
     flaggedReviewSpy.mockImplementationOnce(async (_review, _deepReview, session) => {
       session.budget.tryConsume("flagged-pipeline");
-      return { status: "ok", findings: [] };
+      return { review: { status: "ok", findings: [] }, adjudication: null };
     });
     await dispatch("flagged.review", { reviewId: review.id, deepReview: false });
     const flaggedSession = flaggedReviewSpy.mock.calls[0]?.[2];
@@ -695,12 +696,10 @@ describe("createDispatch — flagged.review routing (the live finding runner, is
   });
 
   it("stamps a failed result with the active patchset before it crosses the protocol boundary", async () => {
-    const flaggedReview = vi.fn(
-      async (): Promise<FlaggedReview> => ({
-        status: "failed",
-        reason: "both seats down",
-      }),
-    );
+    const flaggedReview = vi.fn<DispatchDeps["flaggedReview"]>(async () => ({
+      review: { status: "failed", reason: "both seats down" },
+      adjudication: null,
+    }));
     const { dispatch } = harness(undefined, {}, { flaggedReview });
     const review = await capturedReview(dispatch);
     await expect(dispatch("flagged.review", { reviewId: review.id })).resolves.toEqual({
@@ -737,9 +736,16 @@ describe("createDispatch — flagged.review routing (the live finding runner, is
       rawDiff: "Binary files a/assets/logo.png and b/assets/logo.png differ\n",
       byteLength: 1,
     };
-    const flaggedReview = vi.fn(async (): Promise<FlaggedReview> => {
+    const flaggedReview = vi.fn<DispatchDeps["flaggedReview"]>(async () => {
       const decomposition = decompose(binaryPatchset);
-      return { status: "ok", findings: [], blockingStates: decomposition.blockingStates };
+      return {
+        review: {
+          status: "ok" as const,
+          findings: [],
+          blockingStates: decomposition.blockingStates,
+        },
+        adjudication: null,
+      };
     });
     const { dispatch } = harness(
       undefined,
@@ -777,6 +783,119 @@ describe("createDispatch — flagged.review routing (the live finding runner, is
     const review = await capturedReview(dispatch);
     await dispatch("flagged.review", { reviewId: review.id, deepReview: false });
     expect(flaggedReviewSpy.mock.calls[0]?.[1]).toBe(false);
+  });
+
+  it("delivers verified rows while adjudication is still pending, then exposes the enrichment", async () => {
+    let resolveAdjudication: ((review: FlaggedReview) => void) | undefined;
+    const adjudication = new Promise<FlaggedReview>((resolve) => {
+      resolveAdjudication = resolve;
+    });
+    const pendingFinding: FindingElement = {
+      findingId: "f1",
+      anchor: "rennet:hunk/h1",
+      summary: "the loop overruns the array",
+      severity: "high",
+      agreement: {
+        kind: "disagree",
+        answers: [
+          { model: "Claude", answer: "the loop overruns" },
+          { model: "Codex", answer: "no concern raised here" },
+        ],
+      },
+    };
+    const flaggedReview = vi.fn<DispatchDeps["flaggedReview"]>(async () => ({
+      review: { status: "ok", findings: [pendingFinding] },
+      adjudication,
+    }));
+    const { dispatch } = harness(undefined, {}, { flaggedReview });
+    const review = await capturedReview(dispatch);
+
+    const immediate = (await dispatch("flagged.review", {
+      reviewId: review.id,
+    })) as FlaggedReview;
+    expect(immediate.status).toBe("ok");
+    if (immediate.status !== "ok") throw new Error("expected ok");
+    expect(immediate.findings).toHaveLength(1);
+    expect(immediate.findings[0]?.agreement.kind).toBe("disagree");
+    expect(
+      immediate.findings[0]?.agreement.kind === "disagree"
+        ? immediate.findings[0].agreement.adjudication
+        : undefined,
+    ).toBeUndefined();
+    await expect(
+      dispatch("flagged.adjudication", {
+        reviewId: review.id,
+        patchsetId: review.activePatchsetId,
+        deepReview: true,
+      }),
+    ).resolves.toEqual({ status: "pending" });
+
+    resolveAdjudication?.({
+      status: "ok",
+      findings: [
+        {
+          ...pendingFinding,
+          agreement: {
+            kind: "disagree",
+            answers: [
+              { model: "Claude", answer: "the loop overruns" },
+              { model: "Codex", answer: "no concern raised here" },
+            ],
+            adjudication: {
+              verdict: "supported",
+              evidence: "line 4 reads items[items.length]",
+              adjudicatedBy: "opus-4.8 (claude-code)",
+            },
+          },
+        },
+      ],
+    });
+
+    await vi.waitFor(async () => {
+      const enriched = await dispatch("flagged.adjudication", {
+        reviewId: review.id,
+        patchsetId: review.activePatchsetId,
+        deepReview: true,
+      });
+      expect(enriched).toMatchObject({
+        status: "complete",
+        review: {
+          findings: [{ agreement: { adjudication: { verdict: "supported" } } }],
+        },
+      });
+    });
+  });
+
+  it("a hung adjudication never blocks the initial flagged rows", async () => {
+    const never = new Promise<FlaggedReview>(() => undefined);
+    const flaggedReview = vi.fn<DispatchDeps["flaggedReview"]>(async () => ({
+      review: {
+        status: "ok",
+        findings: [
+          {
+            findingId: "f1",
+            anchor: "rennet:hunk/h1",
+            summary: "a contested concern",
+            severity: "medium",
+            agreement: {
+              kind: "disagree",
+              answers: [
+                { model: "Claude", answer: "concern" },
+                { model: "Codex", answer: "no concern raised here" },
+              ],
+            },
+          },
+        ],
+      },
+      adjudication: never,
+    }));
+    const { dispatch } = harness(undefined, {}, { flaggedReview });
+    const review = await capturedReview(dispatch);
+
+    await expect(dispatch("flagged.review", { reviewId: review.id })).resolves.toMatchObject({
+      status: "ok",
+      findings: [{ findingId: "f1" }],
+    });
   });
 });
 
@@ -1240,7 +1359,10 @@ describe("createDispatch — publish.review egress (issue #21)", () => {
     ];
     const requests: PublishResult[] = [];
     for (const ciSignal of signals) {
-      flaggedReviewSpy.mockResolvedValueOnce({ status: "ok", findings: [], ciSignal });
+      flaggedReviewSpy.mockResolvedValueOnce({
+        review: { status: "ok", findings: [], ciSignal },
+        adjudication: null,
+      });
       await dispatch("flagged.review", { reviewId: review.id });
       requests.push(
         (await dispatch("publish.review", {
@@ -2097,7 +2219,8 @@ function frontDoorHarness(seed: {
     projectDetail: () =>
       Promise.resolve({ viewer: { login: "rai" }, locals: [], prs: [], truncated: false }),
     cleanupWorktree: () => Promise.resolve({ ok: true }),
-    flaggedReview: () => Promise.resolve({ status: "ok", findings: [] }),
+    flaggedReview: () =>
+      Promise.resolve({ review: { status: "ok", findings: [] }, adjudication: null }),
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
     reviewAsk: {
       askOrchestrator: () =>

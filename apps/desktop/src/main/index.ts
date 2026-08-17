@@ -13,8 +13,10 @@ import {
   type CodexAvailability,
   claudeHandoffRunPort,
   cleanupWorktree,
+  createClaudeAdjudicationTurn,
   createClaudeCiRefinementTurn,
   createClaudeHarness,
+  createCodexAdjudicationTurn,
   createCodexCiRefinementTurn,
   createCodexExecutor,
   createCodexTurnTransport,
@@ -74,6 +76,7 @@ import {
 } from "@rennet/adapters";
 import {
   type AdmittedDocument,
+  adjudicateFlaggedReview,
   attachRiskCrossCheck,
   buildOfferedManifest,
   buildReviewCanvases,
@@ -143,7 +146,7 @@ import type {
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shell } from "electron";
 import { attachCiSignal } from "./ci-signal";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
-import { createDispatch } from "./dispatch";
+import { createDispatch, type FlaggedReviewRun } from "./dispatch";
 import { createLiveDraftPrBodyPort } from "./draft-pr-body-live";
 import { stampBlockingStates } from "./flagged-blocking-states";
 import { projectUnavailableDeepVerification } from "./flagged-review-verification";
@@ -1066,7 +1069,7 @@ async function runFlaggedReviewWithContextFeed(
   deepReview: boolean,
   contextFeed: ReviewContextFeed,
   session: ReviewIntelligenceSession,
-): Promise<FlaggedReview> {
+): Promise<FlaggedReviewRun> {
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
   const sharedBudget = session.budget;
@@ -1170,6 +1173,7 @@ async function runFlaggedReviewWithContextFeed(
   // DEEP review that absence must ANNOUNCE itself (P0-3, below), never surface a chipless
   // finding that reads as "nothing to check."
   let surfacedReview: FlaggedReview;
+  let adjudicationOptions: Parameters<typeof adjudicateFlaggedReview>[1] | undefined;
   if (deepReview && adapter) {
     const readFileWindow = createVerificationFileReaderForPatchset({
       patchset,
@@ -1191,11 +1195,42 @@ async function runFlaggedReviewWithContextFeed(
       budget: sharedBudget,
       maxVerifications: DEFAULT_REVIEW_INTELLIGENCE_BUDGET.verification.maxVerifications,
     });
+    // Cross-harness adjudication (#41): AFTER verification, on the surviving rows
+    // (a refuted row is already dropped). When the two seats DISAGREED, one fresh
+    // turn per contested row on the seat the council resolves for the `adjudication`
+    // job asks the real code who is right — a genuine third opinion, drawn from the
+    // SAME shared review budget. The verdict rides the disagree arm; it never drops,
+    // hides, or gates a row (Rule Zero). Absent an executor for the resolved harness,
+    // rows surface unadjudicated (honest degradation).
+    const adjResolution = resolveAssignment("adjudication", { availability: { installed } });
+    const adjudicationTurn =
+      adjResolution.kind !== "model"
+        ? undefined
+        : adjResolution.harness === "codex" && codexResolution.executor
+          ? createCodexAdjudicationTurn(codexResolution.executor, {
+              model: adjResolution.model,
+              effort: adjResolution.effort,
+            })
+          : adjResolution.harness === "claude-code" && adapter
+            ? createClaudeAdjudicationTurn(adapter, {
+                cwd: review.repositoryRoot,
+                model: adjResolution.model,
+              })
+            : undefined;
+    if (adjResolution.kind === "model" && adjudicationTurn) {
+      adjudicationOptions = {
+        manifest,
+        readFileWindow,
+        runTurn: adjudicationTurn,
+        adjudicatedBy: `${adjResolution.model} (${adjResolution.harness})`,
+        budget: sharedBudget,
+        maxAdjudications: DEFAULT_REVIEW_INTELLIGENCE_BUDGET.adjudication.maxAdjudications,
+      };
+    }
     // The predicted-risk cross-check (#181), the LAST transform: reconcile the
-    // hypothesis's predicted risks against the VERIFIED findings (after refuted
-    // ones were dropped), so a risk marked `confirmed` is addressed by a finding
-    // that actually surfaces. Deterministic, $0 — absent a hypothesis it returns
-    // `verified` unchanged.
+    // hypothesis's predicted risks against the surfaced findings, so a risk marked
+    // `confirmed` is addressed by a finding that actually surfaces. Deterministic,
+    // $0 — absent a hypothesis it returns the review unchanged.
     surfacedReview = attachRiskCrossCheck(verified, hypothesis);
   } else {
     // Reaching here under DEEP review means there is no Claude verifier (e.g. a
@@ -1228,14 +1263,21 @@ async function runFlaggedReviewWithContextFeed(
   // deterministic, not a model result, so it survives a failed model run). The
   // Flagged lens + PublishSheet disclose it as render-only honest copy; it NEVER
   // gates the sign (Rule Zero). Mirrors the #160 patchsetId stamp.
-  return stampBlockingStates(withCiSignal, decomposition);
+  const immediate = stampBlockingStates(withCiSignal, decomposition);
+  const adjudication =
+    adjudicationOptions &&
+    immediate.status === "ok" &&
+    immediate.findings.some((finding) => finding.agreement.kind === "disagree")
+      ? adjudicateFlaggedReview(immediate, adjudicationOptions).then(({ review }) => review)
+      : null;
+  return { review: immediate, adjudication };
 }
 
 async function runFlaggedReview(
   review: Review,
   deepReview: boolean,
   session: ReviewIntelligenceSession,
-): Promise<FlaggedReview> {
+): Promise<FlaggedReviewRun> {
   const contextFeed = await createDesktopReviewContextFeed(review, {
     onError: reportContextFeedError,
   });

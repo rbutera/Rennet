@@ -95,8 +95,9 @@ different jobs:
   with coverage chips only when a real mapping exists.
 - Decisions groups implementer choices with evidence, reconstructed reasoning,
   and discernible alternatives.
-- Flagged indexes automated findings by severity, agreement, verification, and
-  code anchor without pretending they are the reviewer's verdict.
+- Flagged indexes automated findings by severity, agreement, verification, the
+  cross-harness adjudication verdict on a contested row, and code anchor without
+  pretending they are the reviewer's verdict.
 - Noise groups low-signal churn, names whether a rule or model judged it, and lets
   you pull anything back with **not noise?**
 
