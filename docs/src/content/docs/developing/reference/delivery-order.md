@@ -139,6 +139,36 @@ The one carried-over sub-item from the wave list is wave 7's live win32
 verification matrix on lancelot (hermetic tests pass; the on-hardware run is
 pending). Release engineering still waits on the human-only checklist below.
 
+### The app server wave (approved 2026-08-17)
+
+Rai approved a second wave list: refactor Rennet around a local app server /
+daemon so the desktop app, a full-fat browser client, a CLI, and later a
+native mobile app are all clients of one protocol. The
+[app server plan](/developing/reference/app-server-plan/) is the authority for
+this wave; the [research digest](/developing/reference/app-server-research/)
+is its evidence base. Phases run strictly in order (0 → 5); the mobile design
+pass ([#382](https://github.com/rbutera/rennet/issues/382)) can run in
+parallel from any point and gates only phase 6.
+
+0. [#376 — protocol handshake, envelope, and versioning
+   discipline](https://github.com/rbutera/rennet/issues/376)
+1. [#377 — extract `packages/server`](https://github.com/rbutera/rennet/issues/377)
+2. [#378 — WebSocket transport + `WsRennetBridge`; renderer becomes client
+   #1](https://github.com/rbutera/rennet/issues/378)
+3. [#379 — detached daemon, reviews survive app quit, `rennet`
+   CLI](https://github.com/rbutera/rennet/issues/379)
+4. [#380 — remote surface: R19 projection, pairing,
+   Tailscale-first](https://github.com/rbutera/rennet/issues/380)
+5. [#381 — Browser Rennet: one UI, two shells, local or remote
+   daemon](https://github.com/rbutera/rennet/issues/381)
+6. [#383 — native mobile app](https://github.com/rbutera/rennet/issues/383),
+   **gated on [#382](https://github.com/rbutera/rennet/issues/382)** (the
+   mobile design pass: ideation doc, wireframes, impeccable planning pass,
+   Rai's sign-off).
+
+Wave conventions apply: one OpenSpec change per phase, dual review, docs
+updated in the same change, issues closed in the same motion.
+
 ### Release when the external pieces are ready
 
 [Issue #298](https://github.com/rbutera/rennet/issues/298) owns public macOS
