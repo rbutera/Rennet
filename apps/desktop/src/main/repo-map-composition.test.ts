@@ -12,8 +12,8 @@ describe("desktop Repo Map composition", () => {
     expect(source).toContain(
       "runNoveltyPass: (repoKey) => liveNoveltyLifecycle.advanceRepo(repoKey)",
     );
-    expect(source).toContain(
-      "resolveKnowledgePort: async () => (await getClaudeHarness()).adapter",
-    );
+    // The orchestrator's knowledge port resolves the review's locus per call (#334).
+    expect(source).toContain("resolveKnowledgePort: async (repoRoot) => {");
+    expect(source).toContain("const { locus, distroCwd } = locusContextForRepo(repoRoot);");
   });
 });

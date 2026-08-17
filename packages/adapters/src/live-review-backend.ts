@@ -258,7 +258,12 @@ export interface LiveBackendDeps {
   readonly maxSnapshotFiles?: number;
   /** Optional model port; when present, missing knowledge is enriched in the background. */
   readonly knowledgePort?: HarnessPort;
-  readonly resolveKnowledgePort?: () => Promise<HarnessPort | null>;
+  /**
+   * Resolve the enrichment/answer harness for a repo. Receives the review's
+   * repository root (#334) so the composition root can resolve the project's locus
+   * per call — a WSL project's knowledge turn runs inside the distro, not host-side.
+   */
+  readonly resolveKnowledgePort?: (repoRoot: string) => Promise<HarnessPort | null>;
   readonly onKnowledgeError?: (error: unknown) => void;
   readonly noveltyLifecycle?: NoveltyLifecycleRegistry;
   readonly compositionStore?: RepoCompositionStore;
@@ -387,7 +392,8 @@ export async function createLiveCanvasOpsBackend(
   const currentBase = deps.store.loadManifest(repoKey);
   if (!knowledgeStore.loadLocal(repoKey) && currentBase) {
     void (async () => {
-      const port = deps.knowledgePort ?? (await deps.resolveKnowledgePort?.());
+      const port =
+        deps.knowledgePort ?? (await deps.resolveKnowledgePort?.(review.repositoryRoot));
       if (!port) return;
       await enrichKnowledgeForRepo({
         reader: new ProjectContextReader(deps.store),
@@ -420,7 +426,8 @@ export async function createLiveCanvasOpsBackend(
     reader,
     knowledgeStore,
     resolve: resolveContextFor(review, repoKey),
-    resolvePort: async () => deps.knowledgePort ?? (await deps.resolveKnowledgePort?.()) ?? null,
+    resolvePort: async () =>
+      deps.knowledgePort ?? (await deps.resolveKnowledgePort?.(review.repositoryRoot)) ?? null,
     repoRoot: review.repositoryRoot,
     budget: deps.budget ?? pipeline.invocationBudget,
     onAttempt: (attempt) => {

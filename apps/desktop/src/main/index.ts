@@ -33,6 +33,7 @@ import {
   createVerificationTurn,
   defaultCodexDiscoveryDeps,
   defaultCodexExecEffects,
+  defaultCodexTransportEffects,
   defaultDiscoveryDeps,
   defaultGlobalConfigPath,
   defaultOmpDiscoveryDeps,
@@ -84,6 +85,7 @@ import {
   runKnowledgeDeltaForRepo,
   SqliteReviewStore,
   snapshotStoreFor,
+  wslDiscoveryDeps,
 } from "@rennet/adapters";
 import {
   type AdmittedDocument,
@@ -274,6 +276,18 @@ function locusForRepo(repoRoot: string): Locus {
   return resolveLocus(detectLocus(repoRoot), liveSnapshotStore.loadConfig(key)?.locus).value;
 }
 
+/**
+ * The locus + distro-native cwd for a repo, the shape every read-pipeline harness
+ * site threads (#334). For a WSL locus `distroCwd` is the distro-native repo path
+ * the SDK/`--cd` needs; for the host it is absent and the pair is today's behaviour.
+ */
+function locusContextForRepo(repoRoot: string): { locus: Locus; distroCwd?: string } {
+  const locus = locusForRepo(repoRoot);
+  const distroCwd =
+    locus.kind === "wsl" ? (toDistroPath(repoRoot, locus.distro) ?? undefined) : undefined;
+  return distroCwd === undefined ? { locus } : { locus, distroCwd };
+}
+
 const gitForRepo = gitForRepoFactory(locusForRepo);
 
 const capture = new GitCaptureAdapter(
@@ -342,51 +356,80 @@ interface CodexResolution {
   /** The resolved codex version, stamped as harness provenance, or null. */
   readonly version: string | null;
 }
-let codexResolution: Promise<CodexResolution> | null = null;
-function getCodexResolution(): Promise<CodexResolution> {
-  codexResolution ??= (async (): Promise<CodexResolution> => {
-    const explicitBin = process.env.RENNET_CODEX_BIN;
-    const result = await discoverCodex(defaultCodexDiscoveryDeps(), {
-      ...(explicitBin && explicitBin.length > 0 ? { explicitBin } : {}),
-    });
-    const chosen = result.chosen;
-    if (!chosen) {
+// Memoized PER LOCUS (add-windows-support / #334), like the Claude harness: the host
+// resolution is shared as before; a WSL-locus project discovers and runs the DISTRO's
+// own `codex` (distro discovery deps, locus-wrapped executor + transport, distro-side
+// scratch). The utility executor and agentic transport carry the locus so every spawn
+// enters the distro through `locusCommand` — a WSL review is dual-harness rather than
+// degrading to single-Claude.
+const codexResolutions = new Map<string, Promise<CodexResolution>>();
+function getCodexResolution(locus: Locus = HOST_LOCUS): Promise<CodexResolution> {
+  const key = locus.kind === "wsl" ? `wsl:${locus.distro}` : "host";
+  let resolution = codexResolutions.get(key);
+  if (!resolution) {
+    resolution = (async (): Promise<CodexResolution> => {
+      const explicitBin = process.env.RENNET_CODEX_BIN;
+      const discoveryDeps =
+        locus.kind === "wsl" ? await wslDiscoveryDeps(locus.distro) : defaultCodexDiscoveryDeps();
+      const result = await discoverCodex(discoveryDeps, {
+        // The RENNET_CODEX_BIN override is a host path; it never applies to a distro.
+        ...(locus.kind === "host" && explicitBin && explicitBin.length > 0
+          ? { explicitBin }
+          : {}),
+      });
+      const chosen = result.chosen;
+      if (!chosen) {
+        return {
+          availability: { available: false, version: null },
+          port: null,
+          executor: null,
+          agenticPort: null,
+          binPath: null,
+          version: null,
+        };
+      }
+      const executor = createCodexExecutor(defaultCodexExecEffects, {
+        bin: chosen.path,
+        harnessVersion: chosen.version,
+        ...(locus.kind === "wsl" ? { locus } : {}),
+      });
+      const transport = createCodexTurnTransport(chosen.path, defaultCodexTransportEffects, locus);
+      const capabilityEvidence = await deriveCodexImplementedEvidence(chosen.path);
       return {
-        availability: { available: false, version: null },
-        port: null,
-        executor: null,
-        agenticPort: null,
-        binPath: null,
-        version: null,
+        availability: { available: true, version: chosen.version },
+        port: createCodexUtilityAdapter({ executor }),
+        executor,
+        agenticPort: (mcpServers) =>
+          new CodexAdapter({
+            binaryPath: chosen.path,
+            transport,
+            version: chosen.version,
+            ...(capabilityEvidence === undefined ? {} : { capabilityEvidence }),
+            mcpServers,
+          }),
+        binPath: chosen.path,
+        version: chosen.version,
       };
-    }
-    const executor = createCodexExecutor(defaultCodexExecEffects, {
-      bin: chosen.path,
-      harnessVersion: chosen.version,
-    });
-    const transport = createCodexTurnTransport(chosen.path);
-    const capabilityEvidence = await deriveCodexImplementedEvidence(chosen.path);
-    return {
-      availability: { available: true, version: chosen.version },
-      port: createCodexUtilityAdapter({ executor }),
-      executor,
-      agenticPort: (mcpServers) =>
-        new CodexAdapter({
-          binaryPath: chosen.path,
-          transport,
-          version: chosen.version,
-          ...(capabilityEvidence === undefined ? {} : { capabilityEvidence }),
-          mcpServers,
-        }),
-      binPath: chosen.path,
-      version: chosen.version,
-    };
-  })();
-  return codexResolution;
+    })();
+    codexResolutions.set(key, resolution);
+  }
+  return resolution;
 }
 
 function getCodexAvailability(): Promise<CodexAvailability> {
   return getCodexResolution().then((resolution) => resolution.availability);
+}
+
+// The locus-aware seat probes the live producers (refine, draft-PR-body, delta digest,
+// compose) are bound to (#334). Each resolves the review's locus, so a WSL project's
+// light-tier turn runs the distro's claude/codex — not the host's.
+async function claudeAdapterForRepo(repoRoot: string): Promise<HarnessPort | null> {
+  const { locus, distroCwd } = locusContextForRepo(repoRoot);
+  return (await getClaudeHarness(locus, distroCwd)).adapter ?? null;
+}
+async function codexExecutorForRepo(repoRoot: string): Promise<CodexExecutor | null> {
+  const { locus } = locusContextForRepo(repoRoot);
+  return (await getCodexResolution(locus)).executor;
 }
 
 // ── The omp resolution (#26) ───────────────────────────────────────────────────
@@ -661,8 +704,9 @@ async function buildCanvasesForReviewWithContextFeed(
   contextManifest?: ContextManifest;
 }> {
   const patchset = activePatchset(review);
-  const { adapter } = await getClaudeHarness();
-  const codexResolution = await getCodexResolution();
+  const { locus, distroCwd } = locusContextForRepo(review.repositoryRoot);
+  const { adapter } = await getClaudeHarness(locus, distroCwd);
+  const codexResolution = await getCodexResolution(locus);
   const codex = codexResolution.availability;
   const codexPort = codexResolution.port;
   // KNOWN §7 DEVIATION (documented in the openspec change's design.md): the
@@ -1132,9 +1176,10 @@ async function runFlaggedReviewWithContextFeed(
   session: ReviewIntelligenceSession,
 ): Promise<FlaggedReviewRun> {
   const patchset = activePatchset(review);
-  const { adapter } = await getClaudeHarness();
+  const { locus, distroCwd } = locusContextForRepo(review.repositoryRoot);
+  const { adapter } = await getClaudeHarness(locus, distroCwd);
   const sharedBudget = session.budget;
-  const codexResolution = await getCodexResolution();
+  const codexResolution = await getCodexResolution(locus);
   const codex = codexResolution.availability;
   const codexPort = codexResolution.port;
   const decomposition = decompose(patchset);
@@ -1432,7 +1477,8 @@ async function runLiveCoverage(review: Review): Promise<OpenSpecCoverage | null>
   // No requirements ⇒ an honest empty OK (nothing to map, no chips).
   if (requirements.length === 0) return { status: "ok", edges: [] };
 
-  const { adapter } = await getClaudeHarness();
+  const { locus, distroCwd } = locusContextForRepo(review.repositoryRoot);
+  const { adapter } = await getClaudeHarness(locus, distroCwd);
   // No model seat ⇒ cannot compute; honest failed (no chips), never a fabricated zero.
   if (!adapter) return { status: "failed", edges: [] };
 
@@ -1514,7 +1560,8 @@ async function runNoiseReviewWithContextFeed(
   contextFeed: ReviewContextFeed,
 ): Promise<NoiseReview> {
   const patchset = activePatchset(review);
-  const { adapter } = await getClaudeHarness();
+  const { locus, distroCwd } = locusContextForRepo(review.repositoryRoot);
+  const { adapter } = await getClaudeHarness(locus, distroCwd);
   if (!adapter) {
     return { status: "failed", reason: "no model harness is available to classify noise" };
   }
@@ -1715,7 +1762,8 @@ app.whenReady().then(async () => {
     },
     runNoveltyPass: (repoKey) => liveNoveltyLifecycle.advanceRepo(repoKey),
     runKnowledgePass: async ({ repoKey, repoRoot, fromOid, toOid }) => {
-      const { adapter } = await getClaudeHarness();
+      const { locus, distroCwd } = locusContextForRepo(repoRoot);
+      const { adapter } = await getClaudeHarness(locus, distroCwd);
       if (!adapter) return false;
       const reader = new ProjectContextReader(snapshotStore);
       const knowledgeStore = new KnowledgeStore(snapshotStore);
@@ -1801,9 +1849,11 @@ app.whenReady().then(async () => {
   // here; the conversational command that would drive a turn per user question is
   // the DEFERRED UI loop.
   const orchestratorTurn = createOrchestratorTurnRunner({
-    resolveHarness: async () => {
-      const claude = await getClaudeHarness();
-      const codex = await getCodexResolution();
+    resolveLocus: locusForRepo,
+    resolveHarness: async (repoRoot) => {
+      const { locus, distroCwd } = locusContextForRepo(repoRoot);
+      const claude = await getClaudeHarness(locus, distroCwd);
+      const codex = await getCodexResolution(locus);
       const claudePresent = claude.adapter !== null;
       const codexPresent = codex.agenticPort !== null;
       // omp fallback (#26): the deliberately minimal selection policy lives in the pure
@@ -1851,7 +1901,10 @@ app.whenReady().then(async () => {
     },
     env: process.env,
     backend: {
-      resolveKnowledgePort: async () => (await getClaudeHarness()).adapter,
+      resolveKnowledgePort: async (repoRoot) => {
+        const { locus, distroCwd } = locusContextForRepo(repoRoot);
+        return (await getClaudeHarness(locus, distroCwd)).adapter;
+      },
       noveltyLifecycle: liveNoveltyLifecycle,
     },
   });
@@ -2041,7 +2094,10 @@ app.whenReady().then(async () => {
           budget: createInvocationBudget(0),
         });
         const live = await createDesktopReviewBackend(headReview, pipeline, {
-          resolveKnowledgePort: async () => (await getClaudeHarness()).adapter,
+          resolveKnowledgePort: async (repoRoot) => {
+            const { locus, distroCwd } = locusContextForRepo(repoRoot);
+            return (await getClaudeHarness(locus, distroCwd)).adapter;
+          },
           noveltyLifecycle: liveNoveltyLifecycle,
         });
         return live.backend;
@@ -2073,21 +2129,19 @@ app.whenReady().then(async () => {
       orchestratorTurn,
       askCodex: async ({ review, question, abortController }) => {
         // The ask executor is bound to the RESOLVED absolute codex, same as the
-        // pipeline seat (bead workspace-6qp15). A null binPath means no codex
-        // resolved — surface that honestly rather than shelling a bad `codex`.
-        const codex = await getCodexResolution();
-        if (codex.binPath === null) {
+        // pipeline seat (bead workspace-6qp15), and to the review's locus (#334) so a
+        // WSL project asks the distro's codex. A null executor means no codex resolved
+        // — surface that honestly rather than shelling a bad `codex`.
+        const { locus } = locusContextForRepo(review.repositoryRoot);
+        const codex = await getCodexResolution(locus);
+        if (codex.executor === null) {
           return {
             model: CODEX_ASK_LABEL,
             answer: "Codex is not installed, so no second opinion is available.",
           };
         }
-        const executor = createCodexExecutor(defaultCodexExecEffects, {
-          bin: codex.binPath,
-          ...(codex.version ? { harnessVersion: codex.version } : {}),
-        });
         // Thread the quit-abort controller (#251 criterion 4) → execa's cancelSignal.
-        return createLiveCodexAsk({ executor })({
+        return createLiveCodexAsk({ executor: codex.executor })({
           review,
           question,
           ...(abortController ? { abortController } : {}),
@@ -2105,15 +2159,8 @@ app.whenReady().then(async () => {
     // adapter (a light read-only session with the inline schema, the same
     // structured-output mechanism every pipeline lens seat uses; no docType).
     refineComment: createLiveRefinePort({
-      claudePort: async () => (await getClaudeHarness()).adapter ?? null,
-      codexExecutor: async () => {
-        const codex = await getCodexResolution();
-        if (codex.binPath === null) return null;
-        return createCodexExecutor(defaultCodexExecEffects, {
-          bin: codex.binPath,
-          ...(codex.version ? { harnessVersion: codex.version } : {}),
-        });
-      },
+      claudePort: claudeAdapterForRepo,
+      codexExecutor: codexExecutorForRepo,
     }),
     // review.draftPrBody (issue #74, M26): the LIVE PR-body drafting producer. The
     // own-branch destination's paper opens with an HONEST ACCOUNT of the change,
@@ -2123,15 +2170,8 @@ app.whenReady().then(async () => {
     // workspace-6qp15). Degrades to an honest `unavailable` (the deterministic
     // composed body still previews) when neither seat is installed. Posts NOTHING.
     draftPrBody: createLiveDraftPrBodyPort({
-      claudePort: async () => (await getClaudeHarness()).adapter ?? null,
-      codexExecutor: async () => {
-        const codex = await getCodexResolution();
-        if (codex.binPath === null) return null;
-        return createCodexExecutor(defaultCodexExecEffects, {
-          bin: codex.binPath,
-          ...(codex.version ? { harnessVersion: codex.version } : {}),
-        });
-      },
+      claudePort: claudeAdapterForRepo,
+      codexExecutor: codexExecutorForRepo,
     }),
     // review.deltaDigest (issue #73 / M25): the LIVE delta re-review digest producer.
     // Rephrases the successor review's DETERMINISTIC delta account into a one-glance
@@ -2141,15 +2181,8 @@ app.whenReady().then(async () => {
     // Fed ONLY the structured account, it can add no fact the facts don't carry. Posts
     // NOTHING and gates nothing.
     draftDeltaDigest: createLiveDeltaDigestPort({
-      claudePort: async () => (await getClaudeHarness()).adapter ?? null,
-      codexExecutor: async () => {
-        const codex = await getCodexResolution();
-        if (codex.binPath === null) return null;
-        return createCodexExecutor(defaultCodexExecEffects, {
-          bin: codex.binPath,
-          ...(codex.version ? { harnessVersion: codex.version } : {}),
-        });
-      },
+      claudePort: claudeAdapterForRepo,
+      codexExecutor: codexExecutorForRepo,
     }),
     // #251 re-attach: reload the conversation threads persisted for a review, crash-
     // recovered (a turn left streaming by a dead process reads back interrupted). No
@@ -2171,15 +2204,8 @@ app.whenReady().then(async () => {
     // (claude adapter + codex executor); one batched turn, exec-free (read-only). No
     // seat installed ⇒ the core router returns the mechanical floor.
     composeBundle: createLiveComposeBundle({
-      claudePort: async () => (await getClaudeHarness()).adapter ?? null,
-      codexExecutor: async () => {
-        const codex = await getCodexResolution();
-        if (codex.binPath === null) return null;
-        return createCodexExecutor(defaultCodexExecEffects, {
-          bin: codex.binPath,
-          ...(codex.version ? { harnessVersion: codex.version } : {}),
-        });
-      },
+      claudePort: claudeAdapterForRepo,
+      codexExecutor: codexExecutorForRepo,
     }),
     // The settings surface (wireframe #15): the config ladder over the REAL stores.
     // `get` resolves the global appearance layer (`~/.rennet/config.json`) plus every
