@@ -11,10 +11,10 @@ Red-first: every code change lands its failing control before the fix. Close-wit
 
 ## 2. #89 — harness follows the model
 
-- [ ] 2.1 RED: add a test in `packages/core/src/model-council.test.ts` reproducing the issue's incoherent pair (task override `{ model: <codex model>, harness: "claude-code" }` shape, adapted to the post-change type by asserting on the model-only override): resolution harness AND `trace.summary` name `providerHarness(model)`. Confirm the trace/harness assertion fails today.
-- [ ] 2.2 Delete `harness` from the override type in `packages/core/src/model-council.ts`; derive `harness = providerHarness(model)` after all overrides on every model-resolving path; remove the two independent-pin lines (~546, ~560).
-- [ ] 2.3 Grep the repo for any override-`harness` producer or test assertion (`overrides.*harness`, `tierOverride.harness`, `taskOverride.harness`) and delete dead references; typecheck is the sweep's control.
-- [ ] 2.4 Docs: fix any docsite page describing overrides as able to pin harness (grep `docs/src/content/docs` for the resolver's override description).
+- [x] 2.1 RED: add a test in `packages/core/src/model-council.test.ts` reproducing the issue's incoherent pair (task override `{ model: <codex model>, harness: "claude-code" }` shape, adapted to the post-change type by asserting on the model-only override): resolution harness AND `trace.summary` name `providerHarness(model)`. Confirm the trace/harness assertion fails today.
+- [x] 2.2 Delete `harness` from the override type in `packages/core/src/model-council.ts`; derive `harness = providerHarness(model)` after all overrides on every model-resolving path; remove the two independent-pin lines (~546, ~560).
+- [x] 2.3 Grep the repo for any override-`harness` producer or test assertion (`overrides.*harness`, `tierOverride.harness`, `taskOverride.harness`) and delete dead references; typecheck is the sweep's control.
+- [x] 2.4 Docs: fix any docsite page describing overrides as able to pin harness (grep `docs/src/content/docs` for the resolver's override description).
 
 ## 3. #92 — tokenizer items 1–2
 

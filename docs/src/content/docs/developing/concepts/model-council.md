@@ -54,6 +54,10 @@ The precedence order is:
 3. The council table for the installed-provider scenario.
 4. The harness default when no table applies.
 
+An override sets the **model** and/or **effort** only — never the harness. The
+harness always derives from the resolved model's provider, on every resolving path,
+so no override can produce a model/harness pair that names different providers.
+
 Changing a default model is a catalogue/table edit. Product code asks for a job
 such as `comment-refinement` or `comprehension-ordering`; it does not grow its own
 provider switch.

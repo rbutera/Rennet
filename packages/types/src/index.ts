@@ -2099,11 +2099,14 @@ export interface CouncilAvailability {
   readonly installed: readonly CouncilHarnessId[];
 }
 
-/** A per-field override; any field may be set independently of the others. */
+/**
+ * A per-field override. Sets `model` and/or `effort` only — harness is NOT
+ * overridable (#89): it always derives from the resolved model's provider, so no
+ * override can produce a model/harness pair that names different providers.
+ */
 export interface CouncilOverridePick {
   readonly model?: CouncilModel;
   readonly effort?: CouncilEffort;
-  readonly harness?: CouncilHarnessId;
 }
 
 /**

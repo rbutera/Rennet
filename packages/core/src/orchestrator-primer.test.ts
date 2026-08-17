@@ -140,7 +140,7 @@ describe("assemblePrimer", () => {
       freshness: Array.from({ length: 10 }, (_, i) => ({
         repoId: `repo_${String(i).padStart(2, "0")}`,
         snapshotId: `snap_${i}`,
-        verdict: (i % 3 === 0 ? "current" : "stale") as const,
+        verdict: i % 3 === 0 ? ("current" as const) : ("stale" as const),
       })),
       canvasState: Array.from({ length: 4 }, (_, r) => r).flatMap((r) =>
         CANVAS_ANGLES.map((angle, i) => ({

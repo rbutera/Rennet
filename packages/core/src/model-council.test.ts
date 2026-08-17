@@ -215,6 +215,24 @@ describe("resolveAssignment — override precedence (acceptance 1)", () => {
     expect(resolved.trace.summary).toContain("tier=heavy");
     expect(resolved.trace.summary).toContain("both providers");
   });
+
+  it("an overridden model always runs on its own provider's harness — no incoherent pin (#89)", () => {
+    // decomposition-proposal resolves to a claude model on claude-code by default.
+    // A task override pinning a codex model flips the harness to codex, and the
+    // trace summary names that same harness. No input can produce a resolution whose
+    // model and harness name different providers — the override carries model/effort
+    // only; harness derives from the resolved model on every path.
+    const resolved = resolveAssignment(
+      "decomposition-proposal",
+      ctx(BOTH, {
+        overrides: { task: { "decomposition-proposal": { model: "gpt-5.6-luna" as const } } },
+      }),
+    );
+    if (resolved.kind !== "model") throw new Error("expected a model resolution");
+    expect(resolved.model).toBe("gpt-5.6-luna");
+    expect(resolved.harness).toBe("codex"); // derived from the pinned codex model
+    expect(resolved.trace.summary).toContain("(codex)"); // trace records the coherent pair
+  });
 });
 
 describe("resolveAssignment — R39 cross-harness (acceptance 4)", () => {
