@@ -1,4 +1,10 @@
 // @vitest-environment happy-dom
+//
+// ConversationPanel is now the thin wrapper over the live ConversationHost MARGIN path
+// (issue #356): one aligned `ConversationCluster` per thread, not the retired flat
+// `PanelSurface` stream. These proofs drive the margin — opening a thread from a discuss
+// control, asking in that thread's own composer, and the honest states (orphaned,
+// interrupted, pending, per-thread error, the "both" two-card result) the cluster owns.
 
 import type { CommandInput, RennetBridge } from "@rennet/protocol";
 import type { AskReviewResult } from "@rennet/types";
@@ -41,9 +47,13 @@ const bothAnswers: AskReviewResult = {
 
 function fakeBridge({
   ask = answer("The bridge answered."),
+  askRejects,
   threads = [],
 }: {
   ask?: AskReviewResult | Promise<AskReviewResult>;
+  /** The turn REJECTS with this message — thrown lazily inside `invoke` so no rejected
+   *  promise dangles unhandled between construction and the host's await. */
+  askRejects?: string;
   threads?: {
     threadId: string;
     anchor: ConversationAnchor;
@@ -60,22 +70,52 @@ function fakeBridge({
   const invoke = (async (name: string, input: unknown) => {
     calls.push({ name, input });
     if (name === "review.reattach") return { threads, inFlight: [] };
-    if (name === "review.ask") return ask;
+    if (name === "review.ask") {
+      if (askRejects !== undefined) throw new Error(askRejects);
+      return ask;
+    }
     throw new Error(`unexpected command ${name}`);
   }) as RennetBridge["invoke"];
   return { bridge: { invoke }, calls };
 }
 
-function compose(container: HTMLElement, body: string): void {
-  const input = container.querySelector<HTMLTextAreaElement>(".conversation-panel-input");
-  const send = container.querySelector<HTMLButtonElement>(".conversation-panel-send");
-  if (!input || !send) throw new Error("conversation composer is missing");
-  fireEvent.change(input, { target: { value: body } });
-  fireEvent.click(send);
+/** Open a fresh thread on the panel's first discussable anchor, returning its cluster. */
+async function openThread(container: HTMLElement): Promise<HTMLElement> {
+  const discuss = container.querySelector<HTMLButtonElement>(".discuss-control");
+  if (!discuss) throw new Error("no discuss control to open a thread");
+  fireEvent.click(discuss);
+  return waitFor(() => {
+    const cluster = container.querySelector<HTMLElement>(".conversation-cluster");
+    if (!cluster) throw new Error("thread cluster did not open");
+    return cluster;
+  });
 }
 
-describe("ConversationPanel", () => {
-  it("renders one stream where a line message has a reply chip and icon but a general ask has no chip", async () => {
+/** Ask in a thread cluster's own composer and wait for the expected answer text. */
+async function askInCluster(cluster: HTMLElement, body: string, expected: string): Promise<void> {
+  const input = cluster.querySelector<HTMLTextAreaElement>(".conversation-composer-input");
+  const send = cluster.querySelector<HTMLButtonElement>(".conversation-composer-send");
+  if (!input || !send) throw new Error("thread composer is missing");
+  fireEvent.change(input, { target: { value: body } });
+  fireEvent.click(send);
+  await waitFor(() => expect(cluster.textContent?.includes(expected)).toBe(true));
+}
+
+describe("ConversationPanel (margin path)", () => {
+  it("keeps the diff column's fixed sibling shell so the conversation column never nests in the diff", () => {
+    const h = fakeBridge();
+    const { container } = mount(
+      <ConversationPanel bridge={h.bridge} reviewId="review-shell" anchors={[LINE_ANCHOR]} />,
+    );
+    const shell = container.querySelector<HTMLElement>(".conversation-panel-shell");
+    expect(shell).not.toBeNull();
+    // The aligned rail lives inside the shell — one column, sibling to the diff.
+    expect(shell?.querySelector(".conversation-margin")).not.toBeNull();
+    // A discuss control is offered for the anchor with no open thread yet.
+    expect(shell?.querySelector(".discuss-control")).not.toBeNull();
+  });
+
+  it("re-attaches a persisted thread as an aligned cluster carrying its anchor key and message", async () => {
     const h = fakeBridge({
       threads: [
         {
@@ -89,31 +129,19 @@ describe("ConversationPanel", () => {
       <ConversationPanel bridge={h.bridge} reviewId="review-42" anchors={[LINE_ANCHOR]} />,
     );
 
-    await waitFor(() => expect(container.querySelectorAll(".chat-row")).toHaveLength(1));
-    expect(container.querySelectorAll(".conversation-panel-stream")).toHaveLength(1);
-    const anchored = container.querySelector<HTMLElement>('.chat-row[data-ask-type="question"]');
-    expect(anchored?.querySelector(".chat-type-icon")).not.toBeNull();
-    expect(anchored?.getAttribute("data-lane")).toBe("blue");
-    expect(anchored?.classList.contains("is-private")).toBe(true);
-    expect(anchored?.querySelector(".replychip-reference")?.textContent).toBe(
-      "src/rate/keys.ts · L44-L47",
-    );
-    expect(anchored?.querySelector(".replychip-context")?.textContent).toBe(
-      "if (err) return { allowed: true }",
-    );
-
-    compose(container, "Does the fallback share state?");
-    await waitFor(() =>
-      expect(
-        container.querySelector('.chat-row[data-ask-type="general-ask"][data-author="harness"]'),
-      ).not.toBeNull(),
-    );
-    const generalRows = container.querySelectorAll('.chat-row[data-ask-type="general-ask"]');
-    expect(generalRows).toHaveLength(2);
-    for (const row of generalRows) expect(row.querySelector(".replychip")).toBeNull();
+    const cluster = await waitFor(() => {
+      const found = container.querySelector<HTMLElement>(".conversation-cluster");
+      if (!found) throw new Error("re-attached thread did not render");
+      return found;
+    });
+    expect(cluster.getAttribute("data-anchor-key")).toBe(LINE_ANCHOR.key);
+    expect(cluster.getAttribute("data-lane")).toBe("blue");
+    expect(cluster.classList.contains("is-private")).toBe(true);
+    expect(cluster.querySelector(".conversation-head-anchor")?.textContent).toBe(LINE_ANCHOR.label);
+    expect(cluster.querySelector(".thread-message-body")?.textContent).toBe("Why fail open?");
   });
 
-  it("marks a re-attached gone-file thread orphaned and suppresses its stale live-anchor chip", async () => {
+  it("marks a re-attached gone-file thread orphaned with an honest banner and no live anchor", async () => {
     const goneAnchor: ConversationAnchor = {
       kind: "line",
       label: "src/gone.ts:10",
@@ -140,205 +168,180 @@ describe("ConversationPanel", () => {
     const { container, rerender } = mount(
       <ConversationPanel bridge={h.bridge} reviewId="review-orphan" anchors={[]} />,
     );
-    await waitFor(() => expect(container.querySelector(".chat-row")).not.toBeNull());
+    await waitFor(() => expect(container.querySelector(".conversation-cluster")).not.toBeNull());
 
     rerender(
       <ConversationPanel bridge={h.bridge} reviewId="review-orphan" anchors={[presentAnchor]} />,
     );
 
     const orphaned = await waitFor(() => {
-      const row = container.querySelector<HTMLElement>('.chat-row[data-orphaned="true"]');
-      if (!row) throw new Error("gone-file thread has not resolved as orphaned");
-      return row;
+      const cluster = container.querySelector<HTMLElement>(
+        '.conversation-cluster[data-orphaned="true"]',
+      );
+      if (!cluster) throw new Error("gone-file thread has not resolved as orphaned");
+      return cluster;
     });
     expect(orphaned.querySelector(".conversation-orphaned")?.textContent).toMatch(
       /no longer in the diff/i,
     );
-    expect(orphaned.querySelector(".replychip")).toBeNull();
-    expect(orphaned.textContent).not.toContain("src/gone.ts · L10");
+    expect(orphaned.classList.contains("is-orphaned")).toBe(true);
   });
 
-  it("renders only the truthful line reference when persisted anchor context is missing or blank", async () => {
-    const missing: ConversationAnchor = {
+  it("renders two re-attached line threads as two clusters, each labelled by its own anchor", async () => {
+    const first: ConversationAnchor = {
       kind: "line",
       label: "src/rate/keys.ts:12",
       key: "line|src/rate/keys.ts|additions|12",
       side: "additions",
       path: "src/rate/keys.ts",
     };
-    const blank: ConversationAnchor = {
+    const second: ConversationAnchor = {
       kind: "line",
       label: "src/rate/keys.ts:13",
       key: "line|src/rate/keys.ts|additions|13",
       side: "additions",
       path: "src/rate/keys.ts",
-      context: "   ",
     };
     const h = fakeBridge({
       threads: [
         {
-          threadId: "missing-context",
-          anchor: missing,
-          messages: [{ id: "missing-message", author: "you", body: "Missing context" }],
+          threadId: "first-context",
+          anchor: first,
+          messages: [{ id: "first-message", author: "you", body: "First" }],
         },
         {
-          threadId: "blank-context",
-          anchor: blank,
-          messages: [{ id: "blank-message", author: "you", body: "Blank context" }],
+          threadId: "second-context",
+          anchor: second,
+          messages: [{ id: "second-message", author: "you", body: "Second" }],
         },
       ],
     });
     const { container } = mount(
-      <ConversationPanel bridge={h.bridge} reviewId="review-context" anchors={[missing, blank]} />,
+      <ConversationPanel bridge={h.bridge} reviewId="review-context" anchors={[first, second]} />,
     );
 
-    await waitFor(() => expect(container.querySelectorAll(".replychip")).toHaveLength(2));
+    await waitFor(() =>
+      expect(container.querySelectorAll(".conversation-cluster")).toHaveLength(2),
+    );
     expect(
-      [...container.querySelectorAll(".replychip-reference")].map((node) => node.textContent),
-    ).toEqual(["src/rate/keys.ts · L12", "src/rate/keys.ts · L13"]);
-    expect(container.querySelectorAll(".replychip-context")).toHaveLength(0);
-    expect(container.textContent).not.toContain("Line text unavailable");
+      [...container.querySelectorAll(".conversation-head-anchor")].map((n) => n.textContent),
+    ).toEqual([first.label, second.label]);
   });
 
-  it("submits a general question directly to review.ask with no permission step and paints the answer", async () => {
-    const h = fakeBridge({ ask: answer("No. Each worker holds its own bucket.") });
+  it("sends a thread turn to review.ask with no permission step and paints the answer", async () => {
+    const h = fakeBridge({ ask: answer("Each worker holds its own bucket.") });
     const { container } = mount(
-      <ConversationPanel bridge={h.bridge} reviewId="review-general" anchors={[]} />,
+      <ConversationPanel bridge={h.bridge} reviewId="review-general" anchors={[LINE_ANCHOR]} />,
     );
 
-    compose(container, "Does the fallback bucket share state across workers?");
-    await waitFor(() =>
-      expect(container.querySelector('.chat-row[data-author="harness"]')?.textContent).toContain(
-        "Each worker holds its own bucket",
-      ),
+    const cluster = await openThread(container);
+    await askInCluster(
+      cluster,
+      "Does the fallback bucket share state?",
+      "Each worker holds its own",
     );
 
     const askCalls = h.calls.filter((call) => call.name === "review.ask");
     expect(askCalls).toHaveLength(1);
     const input = askCalls[0]?.input as CommandInput<"review.ask">;
-    expect(input).toMatchObject({
-      reviewId: "review-general",
-      mode: "orchestrator",
-      question: "Does the fallback bucket share state across workers?",
-    });
-    expect(input.anchor).toBeUndefined();
-    expect(input.threadId).toBeUndefined();
+    expect(input).toMatchObject({ reviewId: "review-general", mode: "orchestrator" });
+    expect(input.turnBody).toBe("Does the fallback bucket share state?");
+    expect(input.anchor).toEqual(LINE_ANCHOR);
     expect(Object.keys(input)).not.toContain("permission");
-    const generalAnswer = container.querySelector(
-      '.chat-row[data-ask-type="general-ask"][data-author="harness"]',
-    );
-    expect(generalAnswer?.querySelector(".chat-message-actions")).toBeNull();
-    expect(generalAnswer?.querySelectorAll(".chat-message-text")).toHaveLength(1);
-    expect(generalAnswer?.querySelector(".ask-answer-card")).toBeNull();
-    expect(generalAnswer?.querySelector(".ask-answers-foot")).toBeNull();
+    // The answer is a durable harness card, not an inline ask-answers comparison surface.
+    expect(cluster.querySelector('.thread-message[data-author="harness"]')).not.toBeNull();
+    expect(cluster.querySelector(".ask-answer-card")).toBeNull();
   });
 
-  it("offers both routes from the one composer and renders a both result as two unsynthesised cards", async () => {
+  it("offers both routes from the thread composer and renders a both result as two unsynthesised cards", async () => {
     const h = fakeBridge({ ask: bothAnswers });
     const { container } = mount(
-      <ConversationPanel bridge={h.bridge} reviewId="review-both" anchors={[]} />,
+      <ConversationPanel bridge={h.bridge} reviewId="review-both" anchors={[LINE_ANCHOR]} />,
     );
+    const cluster = await openThread(container);
 
-    const composer = container.querySelector<HTMLElement>(".conversation-panel-composer");
-    const options = composer?.querySelector<HTMLButtonElement>('[aria-label="ask options"]');
-    if (!composer || !options) throw new Error("the composer ask routing is missing");
-    expect(composer.getAttribute("data-ask-mode")).toBe("orchestrator");
-    expect(options.getAttribute("aria-expanded")).toBe("false");
-
+    const options = cluster.querySelector<HTMLButtonElement>('[aria-label="ask options"]');
+    if (!options) throw new Error("the thread composer's ask routing is missing");
+    expect(cluster.querySelector(".conversation-composer")?.getAttribute("data-ask-mode")).toBe(
+      "orchestrator",
+    );
     fireEvent.click(options);
-    const routes = [...composer.querySelectorAll<HTMLElement>('[role="menuitemradio"]')];
-    expect(routes.map((route) => route.textContent)).toEqual([
-      "Ask the orchestratordefault",
-      "Ask both modelstwo answers",
-    ]);
-    const both = composer.querySelector<HTMLButtonElement>('.ask-menu-item[data-mode="both"]');
+    const both = cluster.querySelector<HTMLButtonElement>(
+      '.conversation-route-item[data-mode="both"]',
+    );
     if (!both) throw new Error("both-model routing is missing from the composer");
     fireEvent.click(both);
-    expect(composer.getAttribute("data-ask-mode")).toBe("both");
+    expect(cluster.querySelector(".conversation-composer")?.getAttribute("data-ask-mode")).toBe(
+      "both",
+    );
 
-    compose(container, "Do the models agree?");
-    await waitFor(() => expect(container.querySelectorAll(".ask-answer-card")).toHaveLength(2));
+    await askInCluster(cluster, "Do the models agree?", "The Codex second opinion.");
 
     const askCalls = h.calls.filter((call) => call.name === "review.ask");
     expect(askCalls).toHaveLength(1);
-    const input = askCalls[0]?.input as CommandInput<"review.ask">;
-    expect(input).toMatchObject({
-      reviewId: "review-both",
-      mode: "both",
-      question: "Do the models agree?",
-    });
-    expect(Object.keys(input)).not.toContain("permission");
+    expect(askCalls[0]?.input).toMatchObject({ reviewId: "review-both", mode: "both" });
 
-    const comparison = container.querySelector<HTMLElement>(
-      '.chat-row[data-ask-type="general-ask"][data-author="harness"] .ask-answers',
-    );
-    const comparisonRow = comparison?.closest<HTMLElement>('.chat-row[data-author="harness"]');
-    expect(comparisonRow?.querySelector(".chat-message-name")?.textContent).toBe("Both models");
-    expect(comparison?.getAttribute("data-count")).toBe("2");
-    expect(comparison?.querySelector(".ask-question-echo")).toBeNull();
+    // Two durable harness cards, one per model — no synthesis, no merged card.
+    const harness = cluster.querySelectorAll('.thread-message[data-author="harness"]');
+    expect(harness).toHaveLength(2);
     expect(
-      [...container.querySelectorAll(".chat-message-text")].filter(
-        (message) => message.textContent === "Do the models agree?",
-      ),
-    ).toHaveLength(1);
-    expect(
-      [...(comparison?.querySelectorAll(".ask-answer-head") ?? [])].map(
-        (label) => label.textContent,
-      ),
+      [...harness].map((card) => card.querySelector(".thread-message-model span")?.textContent),
     ).toEqual(["Orchestrator · Claude", "Codex"]);
-    expect(comparison?.querySelectorAll(".ask-answer-body")).toHaveLength(2);
-    expect(comparison?.querySelector(".ask-answers-foot")?.textContent).toMatch(
-      /no synthesis.*two answers.*you decide/i,
-    );
-    expect(comparison?.querySelector('[data-model="merged"]')).toBeNull();
-    expect(comparison?.querySelector(".ask-synthesis")).toBeNull();
-    expect(container.querySelectorAll('.chat-row[data-author="harness"]')).toHaveLength(1);
+    expect(cluster.querySelector(".ask-synthesis")).toBeNull();
   });
 
-  it("reports a both-mode timeout neutrally, preserves the question, and re-enables the input", async () => {
+  it("reports a thread-turn timeout honestly and re-enables the composer", async () => {
     const h = fakeBridge({ ask: new Promise<AskReviewResult>(() => undefined) });
     const { container } = mount(
-      <ConversationPanel bridge={h.bridge} reviewId="review-timeout" anchors={[]} timeoutMs={20} />,
+      <ConversationPanel
+        bridge={h.bridge}
+        reviewId="review-timeout"
+        anchors={[LINE_ANCHOR]}
+        timeoutMs={20}
+      />,
     );
-    const options = container.querySelector<HTMLButtonElement>('[aria-label="ask options"]');
-    if (!options) throw new Error("ask options are missing");
-    fireEvent.click(options);
-    const both = container.querySelector<HTMLButtonElement>('.ask-menu-item[data-mode="both"]');
-    if (!both) throw new Error("both-model option is missing");
-    fireEvent.click(both);
+    const cluster = await openThread(container);
+    const input = cluster.querySelector<HTMLTextAreaElement>(".conversation-composer-input");
+    const send = cluster.querySelector<HTMLButtonElement>(".conversation-composer-send");
+    if (!input || !send) throw new Error("thread composer is missing");
+    fireEvent.change(input, { target: { value: "Which model timed out?" } });
+    fireEvent.click(send);
 
-    compose(container, "Which model timed out?");
     const alert = await waitFor(() => {
-      const current = container.querySelector<HTMLElement>('[role="alert"]');
-      if (!current) throw new Error("timeout alert has not appeared");
+      const current = cluster.querySelector<HTMLElement>(".conversation-error");
+      if (!current) throw new Error("timeout error has not appeared");
       return current;
     });
-    expect(alert.textContent).toBe("The AI did not answer in time. Try asking again.");
-    expect(alert.textContent).not.toMatch(/orchestrator/i);
-    const input = container.querySelector<HTMLTextAreaElement>(".conversation-panel-input");
-    expect(input?.value).toBe("Which model timed out?");
-    expect(input?.disabled).toBe(false);
+    expect(alert.textContent).toMatch(/did not answer in time/i);
+    expect(
+      cluster.querySelector<HTMLTextAreaElement>(".conversation-composer-input")?.disabled,
+    ).toBe(false);
   });
 
-  it("surfaces a rejected general ask and preserves its question for retry", async () => {
-    const h = fakeBridge({ ask: Promise.reject(new Error("the models are unavailable")) });
+  it("surfaces a rejected thread ask honestly and keeps the composer usable", async () => {
+    const h = fakeBridge({ askRejects: "the models are unavailable" });
     const { container } = mount(
-      <ConversationPanel bridge={h.bridge} reviewId="review-error" anchors={[]} />,
+      <ConversationPanel bridge={h.bridge} reviewId="review-error" anchors={[LINE_ANCHOR]} />,
     );
+    const cluster = await openThread(container);
+    const input = cluster.querySelector<HTMLTextAreaElement>(".conversation-composer-input");
+    const send = cluster.querySelector<HTMLButtonElement>(".conversation-composer-send");
+    if (!input || !send) throw new Error("thread composer is missing");
+    fireEvent.change(input, { target: { value: "Can either model answer?" } });
+    fireEvent.click(send);
 
-    compose(container, "Can either model answer?");
     const alert = await waitFor(() => {
-      const current = container.querySelector<HTMLElement>('[role="alert"]');
+      const current = cluster.querySelector<HTMLElement>(".conversation-error");
       if (!current) throw new Error("bridge error has not appeared");
       return current;
     });
     expect(alert.textContent).toBe("the models are unavailable");
-    const input = container.querySelector<HTMLTextAreaElement>(".conversation-panel-input");
-    expect(input?.value).toBe("Can either model answer?");
-    expect(input?.disabled).toBe(false);
+    expect(
+      cluster.querySelector<HTMLTextAreaElement>(".conversation-composer-input")?.disabled,
+    ).toBe(false);
   });
 
-  it("auto-opens a line reply with its chip and sends the anchored turn through review.ask", async () => {
+  it("auto-opens a line thread from a diff-originated request and sends the anchored turn", async () => {
     const h = fakeBridge({ ask: answer("It follows the review plan.") });
     const { container } = mount(
       <ConversationPanel
@@ -349,52 +352,35 @@ describe("ConversationPanel", () => {
       />,
     );
 
-    const opened = await waitFor(() => {
-      const row = container.querySelector<HTMLElement>(
-        '.chat-row--anchor-context[data-anchor-key="range|src/rate/keys.ts|additions|44|47"]',
+    const cluster = await waitFor(() => {
+      const found = container.querySelector<HTMLElement>(
+        `.conversation-cluster[data-anchor-key="${LINE_ANCHOR.key}"]`,
       );
-      if (!row) throw new Error("anchored row has not opened");
-      return row;
+      if (!found) throw new Error("anchored thread has not auto-opened");
+      return found;
     });
-    expect(opened.querySelector(".chat-type-icon")).not.toBeNull();
-    expect(opened.querySelector(".replychip-reference")?.textContent).toBe(
-      "src/rate/keys.ts · L44-L47",
-    );
+    expect(cluster.querySelector(".conversation-head-anchor")?.textContent).toBe(LINE_ANCHOR.label);
 
-    compose(container, "Why does this fail open?");
-    await waitFor(() =>
-      expect(h.calls.filter((call) => call.name === "review.ask")).toHaveLength(1),
-    );
+    await askInCluster(cluster, "Why does this fail open?", "It follows the review plan.");
     const input = h.calls.find((call) => call.name === "review.ask")
       ?.input as CommandInput<"review.ask">;
     expect(input.anchor).toEqual(LINE_ANCHOR);
     expect(input.turnBody).toBe("Why does this fail open?");
-    await waitFor(() =>
-      expect(container.querySelector('.chat-row[data-author="harness"]')?.textContent).toContain(
-        "It follows the review plan.",
-      ),
-    );
   });
 
-  it("toggles the expanded class and back", () => {
+  it("opens a fresh thread from a discuss control (one thread per anchor)", async () => {
     const h = fakeBridge();
     const { container } = mount(
-      <ConversationPanel bridge={h.bridge} reviewId="review-expand" anchors={[]} />,
+      <ConversationPanel bridge={h.bridge} reviewId="review-open" anchors={[LINE_ANCHOR]} />,
     );
-    const panel = container.querySelector<HTMLElement>(".conversation-panel");
-    const toggle = container.querySelector<HTMLButtonElement>(".conversation-panel-expand");
-    if (!panel || !toggle) throw new Error("expand control is missing");
-
-    expect(panel.classList.contains("conversation-panel--expanded")).toBe(false);
-    fireEvent.click(toggle);
-    expect(panel.classList.contains("conversation-panel--expanded")).toBe(true);
-    expect(toggle.getAttribute("aria-pressed")).toBe("true");
-    fireEvent.click(toggle);
-    expect(panel.classList.contains("conversation-panel--expanded")).toBe(false);
-    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(container.querySelectorAll(".conversation-cluster")).toHaveLength(0);
+    await openThread(container);
+    expect(container.querySelectorAll(".conversation-cluster")).toHaveLength(1);
+    // Its anchor is no longer discussable — the control is spent, so no double-open.
+    expect(container.querySelector(".discuss-control")).toBeNull();
   });
 
-  it("shows a selectable active context for a chunk thread and lets the reviewer clear it", async () => {
+  it("opens a chunk thread carrying its chunk anchor key and its own composer", async () => {
     const h = fakeBridge();
     const { container } = mount(
       <ConversationPanel
@@ -405,35 +391,18 @@ describe("ConversationPanel", () => {
       />,
     );
 
-    const contextRow = await waitFor(() => {
-      const row = container.querySelector<HTMLElement>(
-        '.chat-row--anchor-context[data-anchor-kind="chunk"][data-active="true"]',
+    const cluster = await waitFor(() => {
+      const found = container.querySelector<HTMLElement>(
+        '.conversation-cluster[data-anchor-kind="chunk"]',
       );
-      if (!row) throw new Error("active chunk context is not visible");
-      return row;
+      if (!found) throw new Error("chunk thread did not open");
+      return found;
     });
-    expect(contextRow.querySelector(".conversation-anchor-context")?.textContent).toContain(
-      CHUNK_ANCHOR.label,
-    );
-    expect(
-      container.querySelector(".conversation-panel-composer")?.getAttribute("data-anchor-kind"),
-    ).toBe("chunk");
-
-    const clear = container.querySelector<HTMLButtonElement>('[aria-label="Clear thread reply"]');
-    if (!clear) throw new Error("active chunk context has no clear control");
-    fireEvent.click(clear);
-    expect(container.querySelector(".conversation-composer-context")).toBeNull();
-    expect(
-      container.querySelector(".conversation-panel-composer")?.getAttribute("data-anchor-kind"),
-    ).toBe("general");
-
-    fireEvent.click(contextRow.querySelector(".conversation-anchor-context") as HTMLButtonElement);
-    expect(
-      container.querySelector(".conversation-panel-composer")?.getAttribute("data-anchor-kind"),
-    ).toBe("chunk");
+    expect(cluster.getAttribute("data-anchor-key")).toBe(CHUNK_ANCHOR.key);
+    expect(cluster.querySelector(".conversation-composer-input")).not.toBeNull();
   });
 
-  it("re-attaches an interrupted turn and renders it honestly in the unified stream", async () => {
+  it("re-attaches an interrupted turn and renders it honestly in its cluster", async () => {
     const h = fakeBridge({
       threads: [
         {
@@ -451,13 +420,14 @@ describe("ConversationPanel", () => {
     );
 
     const interrupted = await waitFor(() => {
-      const row = container.querySelector<HTMLElement>('.chat-row[data-status="interrupted"]');
-      if (!row) throw new Error("interrupted row has not re-attached");
-      return row;
+      const card = container.querySelector<HTMLElement>(
+        '.thread-message[data-status="interrupted"]',
+      );
+      if (!card) throw new Error("interrupted turn has not re-attached");
+      return card;
     });
-    expect(interrupted.querySelector(".chat-message-interrupted")?.textContent).toMatch(
+    expect(interrupted.querySelector(".thread-message-interrupted")?.textContent).toMatch(
       /interrupted before it finished/i,
     );
-    expect(interrupted.querySelector(".replychip")).not.toBeNull();
   });
 });

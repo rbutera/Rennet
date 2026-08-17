@@ -427,6 +427,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const [selectedPath, setSelectedPath] = useState<string>();
   const [diffFocus, setDiffFocus] = useState<DiffFocus>();
   const diffFocusNonce = useRef(0);
+  // The review heart's ONE diff scroll container (issue #356): CodeView populates it via
+  // `scrollContainerRef`, and the conversation column reads it to align each thread panel
+  // to the code row it discusses. Null when no diff surface is mounted (another canvas
+  // angle) ⇒ the rail stacks honestly. Held here so both sibling columns share the element.
+  const diffScrollRef = useRef<HTMLElement | null>(null);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   // Read the persisted navigation blob ONCE at mount (#324/#297).
@@ -2707,6 +2712,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                   agentFocus={agentFocus}
                   onAgentFocusConsumed={consumeAgentFocus}
                   onSpanSelect={(selection) => setSpanSelection(selection ?? undefined)}
+                  // Expose the diff scroll container (issue #356) so the conversation
+                  // column's rail aligns each thread panel to the row it discusses.
+                  diffScrollRef={diffScrollRef}
                 />
               </div>
               {/* Frame 06's unified conversation: anchored line/range/chunk threads and
@@ -2733,6 +2741,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                   // per new request in the stream — the code column never reflows.
                   autoOpenRequests={discussRequests}
                   selection={spanSelection}
+                  // The same diff scroll container CodeView populates (issue #356): the
+                  // margin rail aligns each thread panel to its on-window anchor row, and
+                  // stacks honestly when the row is off-window or the diff is unmounted.
+                  diffRef={diffScrollRef}
                 />
               ) : null}
             </div>

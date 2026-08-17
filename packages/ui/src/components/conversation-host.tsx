@@ -1,5 +1,5 @@
 import type { CommandInput, PersistedThreadWire, RennetBridge } from "@rennet/protocol";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
 import { type AskMode, DEFAULT_ASK_MODE } from "../canvas/ask";
 import {
   addMessage,
@@ -118,6 +118,14 @@ export interface ConversationHostProps {
    * promote affordances still fire, they just have nowhere to route yet.
    */
   onPromote?(event: PromotionEvent): void;
+  /**
+   * The diff column the margin rail aligns against (issue #356). Forwarded straight to
+   * `ConversationMargin`: each thread whose anchor row is rendered in the windowed diff is
+   * offset to meet that row; an off-window or unmatched anchor stacks. Absent ⇒ every panel
+   * stacks (the honest default). Ignored when `render` is set (the alternate surface owns
+   * its own layout).
+   */
+  diffRef?: RefObject<HTMLElement | null>;
   /** Alternate presentation over the same live conversation engine. */
   render?(state: ConversationHostRenderState): ReactNode;
 }
@@ -147,6 +155,7 @@ export function ConversationHost({
   selection,
   timeoutMs = DEFAULT_CONVERSATION_TIMEOUT_MS,
   onPromote,
+  diffRef,
   render,
 }: ConversationHostProps) {
   const [threads, setThreads] = useState<readonly ConversationThread[]>([]);
@@ -490,6 +499,7 @@ export function ConversationHost({
         onSubThread={openSubThread}
         pendingThreadIds={pending}
         errorByThread={errors}
+        diffRef={diffRef}
       />
     </div>
   );

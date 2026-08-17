@@ -174,7 +174,9 @@ describe("RennetApp — a persisted private conversation never reaches the publi
     // because the corpus is the STORE output, not the screen — a persisted body must not
     // leak whether or not it is currently mounted.)
     fireEvent.click(getByRole("tab", { name: "Canvases" }));
-    await waitFor(() => expect(container.querySelector(".conversation-panel")).not.toBeNull());
+    await waitFor(() =>
+      expect(container.querySelector(".conversation-panel-shell")).not.toBeNull(),
+    );
     await waitFor(() => expect(reattach.called).toBeGreaterThanOrEqual(1));
 
     // Open the draft, stage the comment to ink, freeze the paper, and hold-to-sign.
