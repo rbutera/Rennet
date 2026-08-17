@@ -67,7 +67,7 @@ Each verify-ui observation SHALL surface as a finding anchored to the UI file it
 
 ### Requirement: The status is honest, additive, and never a gate
 
-The review result SHALL carry a UI-verification status — pending while late enrichment runs, ran (with screenshot references), not-UI, or unavailable (with reason), carrying the classifier version — as an additive field on either FlaggedReview branch. A review without it SHALL validate, transport, and render exactly as before this capability existed, and the transport SHALL NOT strip the field when present. The immediate response SHALL say when late enrichment was scheduled independently of whether any finding needs adjudication. The status and the verify-ui findings SHALL NOT feed any sign, publish, or disposition gate.
+The successful review result SHALL carry a UI-verification status — pending while late enrichment runs, ran (with screenshot references), not-UI, or unavailable (with reason), carrying the classifier version — as an additive field on the `ok` FlaggedReview branch. A review without it SHALL validate, transport, and render exactly as before this capability existed, and the transport SHALL NOT strip the field when present. The immediate response SHALL say when late enrichment was scheduled independently of whether any finding needs adjudication. A failed base review carries no findings and is outside verify-ui's result surface. The status and the verify-ui findings SHALL NOT feed any sign, publish, or disposition gate.
 
 #### Scenario: a legacy review renders unchanged
 
@@ -86,7 +86,13 @@ The review result SHALL carry a UI-verification status — pending while late en
 
 ### Requirement: Screenshots are isolated, bounded, retained, and rendered in the Flagged lens
 
-Captured screenshots SHALL be stored in an app-owned namespace unique to the review, patchset, and run. Only the namespace bound to the completed enrichment SHALL be exposed; a completed newer run SHALL remove the same patchset's superseded run, and old patchset namespaces SHALL be pruned opportunistically to bound growth without changing FlaggedReview's transient eager-rerun lifecycle. The evidence read SHALL realpath-confine a regular file, stat before reading, cap one screenshot at 8 MiB, cap screenshot references per run, and cap the data-URL wire string. When the pass ran, the Flagged lens SHALL display captured screenshots inline; when pending or unavailable, the lens and its empty state SHALL say why no full all-clear exists; when the changeset had no UI, the lens SHALL show nothing about UI verification.
+Captured screenshot files SHALL persist on disk in an app-owned namespace unique to the review, patchset, and run until bounded retention prunes them. `FlaggedReview`, its UI-verification status, and the references mounted by the renderer remain transient: reopening a review eagerly recomputes them just like CI signal and `blockingStates`, rather than restoring the prior run. Only the namespace bound to the completed current enrichment SHALL be exposed; a completed newer run SHALL remove the same patchset's superseded run, and old patchset namespaces SHALL be pruned opportunistically to bound growth. The evidence read SHALL realpath-confine a regular file, stat before reading, cap one screenshot at 8 MiB, cap screenshot references per run, and cap the data-URL wire string. When the pass ran, the Flagged lens SHALL display captured screenshots inline; when pending or unavailable, the lens and its empty state SHALL say why no full all-clear exists; when the changeset had no UI, the lens SHALL show nothing about UI verification.
+
+#### Scenario: reopening recomputes the transient evidence status
+
+- **WHEN** a review whose prior verify-ui run captured screenshots is reopened later by id
+- **THEN** the eager Flagged review recomputes verify-ui status and evidence references for the reopened run
+- **AND** prior screenshot files may remain in their bounded run namespace, but the renderer does not remount stale references from the prior transient result
 
 #### Scenario: a slow stale run cannot overwrite current evidence
 

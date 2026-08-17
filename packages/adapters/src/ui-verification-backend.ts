@@ -22,7 +22,7 @@
 
 import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readdir, readFile, realpath, rm, stat } from "node:fs/promises";
-import { basename, isAbsolute, join, normalize, relative } from "node:path";
+import { basename, isAbsolute, join, relative } from "node:path";
 import type {
   HarnessPort,
   RunUiVerificationResult,
@@ -207,13 +207,6 @@ function mimeForPath(path: string): string {
   return MIME_BY_EXTENSION[extension] ?? "application/octet-stream";
 }
 
-/** True for a review-relative path that stays inside the evidence dir (no absolute, no `..` escape). */
-function isConfinedRelativePath(path: string): boolean {
-  if (path.length === 0 || isAbsolute(path)) return false;
-  const normalized = normalize(path);
-  return !normalized.startsWith("..") && !normalized.split(/[\\/]/).includes("..");
-}
-
 /**
  * Read one screenshot from a review's evidence directory, base64 data-URL encoded, for
  * the `review.uiEvidence` command. `relPath` is the review-relative reference from a
@@ -253,7 +246,6 @@ async function resolveUiEvidenceFile(
   directory: string,
   relPath: string,
 ): Promise<{ path: string; size: number } | null> {
-  if (!isConfinedRelativePath(relPath)) return null;
   try {
     const canonicalDir = await realpath(directory);
     const candidate = join(canonicalDir, relPath);

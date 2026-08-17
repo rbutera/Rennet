@@ -72,14 +72,6 @@ describe("applyUiVerification (#183)", () => {
       reason: "could not mount the UI change",
     });
   });
-
-  it("stamps status on a failed base review without inventing findings", () => {
-    const failed: FlaggedReview = { status: "failed", reason: "model unavailable" };
-    expect(applyUiVerification(failed, RAN_RESULT)).toEqual({
-      ...failed,
-      uiVerification: RAN_RESULT.status,
-    });
-  });
 });
 
 describe("applyImmediateUiVerification (#183)", () => {
@@ -90,6 +82,7 @@ describe("applyImmediateUiVerification (#183)", () => {
       deepReview: true,
       verifierAvailable: true,
     });
+    if (result.status !== "ok") throw new Error("expected ok");
     expect(result.uiVerification).toEqual({ status: "pending", classifierVersion: 1 });
   });
 
@@ -100,6 +93,7 @@ describe("applyImmediateUiVerification (#183)", () => {
       deepReview: true,
       verifierAvailable: false,
     });
+    if (result.status !== "ok") throw new Error("expected ok");
     expect(result.uiVerification).toEqual({
       status: "unavailable",
       classifierVersion: 1,
