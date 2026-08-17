@@ -33,11 +33,15 @@ On Windows, PATH harvesting and binary probing SHALL NOT depend on `$SHELL`, zsh
 - **THEN** discovery completes using the process environment and curated locations, without attempting to spawn a POSIX shell
 
 ### Requirement: Shortcut labels are platform-aware
-Displayed keybinding labels SHALL show `Ctrl`-based labels on Windows and `⌘`-based labels on macOS. Handlers SHALL continue to accept both `metaKey` and `ctrlKey` so behaviour is unchanged.
+Displayed keybinding labels SHALL show `Ctrl`-based labels on Windows and `⌘`-based labels on macOS. A `mod+` chord SHALL require the platform-primary modifier: `ctrlKey` on Windows/Linux and `metaKey` on macOS.
 
 #### Scenario: Command palette label on Windows
 - **WHEN** the command palette is shown on Windows
 - **THEN** its keybinding renders as `Ctrl+K`, and pressing Ctrl+K opens it
+
+#### Scenario: Control is not Command on macOS
+- **WHEN** the command palette binding is `mod+k` on macOS
+- **THEN** Command+K opens it and Control+K does not match it
 
 ### Requirement: Path handling survives Windows absolute paths
 Repo-relative paths SHALL remain `/`-normalised everywhere they cross package boundaries (the existing convention). Absolute-path handling — project keys, worktree discovery, escape-to-filesystem mapping, within-root containment checks — SHALL be correct for drive-letter and UNC absolute paths, including case-insensitive drive letters.
