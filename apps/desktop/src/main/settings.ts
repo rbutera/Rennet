@@ -229,9 +229,7 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         appearanceMalformed: schemeState.status === "malformed",
         projects,
         // The stored override map, verbatim (#44). Additive: absent field ⇒ omitted.
-        ...(schemeState.config.keybindings
-          ? { keybindings: schemeState.config.keybindings }
-          : {}),
+        ...(schemeState.config.keybindings ? { keybindings: schemeState.config.keybindings } : {}),
       };
     },
 

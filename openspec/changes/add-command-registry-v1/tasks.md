@@ -39,4 +39,4 @@ Red-first throughout: each behaviour lands as a failing test before its implemen
 
 ## 7. Gate
 
-- [ ] 7.1 `pnpm check` green (includes the positive controls from 1.1); push only after.
+- [x] 7.1 `pnpm check` green (includes the positive controls from 1.1); push only after.

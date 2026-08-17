@@ -336,15 +336,18 @@ describe("settings v1 — registry ladder wire shapes (#28)", () => {
   });
 
   it("setKeybinding: a string sets, null unbinds, omitted resets (#44)", () => {
-    expect(parseCommandInput("settings.setKeybinding", { id: "nav.back", keybinding: "mod+e" })).toEqual(
-      { id: "nav.back", keybinding: "mod+e" },
-    );
+    expect(
+      parseCommandInput("settings.setKeybinding", { id: "nav.back", keybinding: "mod+e" }),
+    ).toEqual({ id: "nav.back", keybinding: "mod+e" });
     expect(
       parseCommandInput("settings.setKeybinding", { id: "nav.back", keybinding: null }).keybinding,
     ).toBeNull();
-    expect(parseCommandInput("settings.setKeybinding", { id: "nav.back" }).keybinding).toBeUndefined();
     expect(
-      parseCommandOutput("settings.setKeybinding", { keybindings: { "nav.back": "mod+e" } }).keybindings,
+      parseCommandInput("settings.setKeybinding", { id: "nav.back" }).keybinding,
+    ).toBeUndefined();
+    expect(
+      parseCommandOutput("settings.setKeybinding", { keybindings: { "nav.back": "mod+e" } })
+        .keybindings,
     ).toEqual({ "nav.back": "mod+e" });
   });
 });

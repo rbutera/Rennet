@@ -45,16 +45,16 @@ import {
   type OpenSpecCoverageIndex,
   type OpenSpecReviewAnchor,
 } from "../canvas/openspec";
+import type { CoverageMosaic } from "../canvas/read-state";
+import { buildRowRegistry, type Mark, placeMarks, resolveAnchorToRows } from "../canvas/registrar";
+import { createViewStore, useViewStore, type ViewStore } from "../canvas/store";
+import type { SymbolInspection, SymbolLookupPort } from "../canvas/symbol";
 import {
   catalogueDef,
   chordFromEvent,
   type KeybindingOverrides,
   matchKeybinding,
 } from "../command/commands";
-import type { CoverageMosaic } from "../canvas/read-state";
-import { buildRowRegistry, type Mark, placeMarks, resolveAnchorToRows } from "../canvas/registrar";
-import { createViewStore, useViewStore, type ViewStore } from "../canvas/store";
-import type { SymbolInspection, SymbolLookupPort } from "../canvas/symbol";
 import { BatchView } from "./batch-view";
 import { CodeView } from "./code-view";
 import { CoverageMosaicView } from "./coverage";
@@ -919,7 +919,11 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     // The zoom keys route through the registry (#44), so a remapped `zoom.in`/`zoom.out`
     // takes effect. `[`/`]` lens rotation and the arrow/Escape synonyms are affordances,
     // not registry chords, and stay matched literally.
-    const zoomMatch = matchKeybinding(ZOOM_COMMANDS, chordFromEvent(event), props.keybindingOverrides);
+    const zoomMatch = matchKeybinding(
+      ZOOM_COMMANDS,
+      chordFromEvent(event),
+      props.keybindingOverrides,
+    );
     if (event.key === "]") rotateAndRefocus(1);
     else if (event.key === "[") rotateAndRefocus(-1);
     else if (zoomMatch?.id === "zoom.in" || event.key === "ArrowRight")

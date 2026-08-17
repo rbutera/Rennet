@@ -424,11 +424,7 @@ export function matchKeybinding<T extends { id: string; keybinding?: string }>(
 }
 
 /** A pressed keyboard event reduced to a normalized chord (mod = Cmd or Ctrl). */
-export function chordFromEvent(event: {
-  key: string;
-  metaKey: boolean;
-  ctrlKey: boolean;
-}): Chord {
+export function chordFromEvent(event: { key: string; metaKey: boolean; ctrlKey: boolean }): Chord {
   return { mod: event.metaKey || event.ctrlKey, key: event.key.toLowerCase() };
 }
 

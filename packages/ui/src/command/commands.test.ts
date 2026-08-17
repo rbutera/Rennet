@@ -2,9 +2,9 @@ import { describe, expect, it, vi } from "vitest";
 import type { RecentSurface } from "../nav/history";
 import {
   buildCommands,
-  catalogueDef,
   COMMAND_CATALOGUE,
   type CommandContext,
+  catalogueDef,
   chordFromEvent,
   effectiveKeybinding,
   filterCommands,
@@ -279,12 +279,12 @@ describe("matchKeybinding", () => {
   ];
 
   it("matches a mod chord and a bare key, and misses when nothing binds", () => {
-    expect(matchKeybinding(commands, chordFromEvent({ key: "k", metaKey: true, ctrlKey: false }))?.id).toBe(
-      "palette.toggle",
-    );
-    expect(matchKeybinding(commands, chordFromEvent({ key: "l", metaKey: false, ctrlKey: false }))?.id).toBe(
-      "zoom.in",
-    );
+    expect(
+      matchKeybinding(commands, chordFromEvent({ key: "k", metaKey: true, ctrlKey: false }))?.id,
+    ).toBe("palette.toggle");
+    expect(
+      matchKeybinding(commands, chordFromEvent({ key: "l", metaKey: false, ctrlKey: false }))?.id,
+    ).toBe("zoom.in");
     expect(
       matchKeybinding(commands, chordFromEvent({ key: "z", metaKey: false, ctrlKey: false })),
     ).toBeUndefined();
@@ -293,10 +293,18 @@ describe("matchKeybinding", () => {
   it("honours overrides: the new chord runs, the replaced chord does not", () => {
     const overrides = { "nav.back": "mod+e" };
     expect(
-      matchKeybinding(commands, chordFromEvent({ key: "e", metaKey: true, ctrlKey: false }), overrides)?.id,
+      matchKeybinding(
+        commands,
+        chordFromEvent({ key: "e", metaKey: true, ctrlKey: false }),
+        overrides,
+      )?.id,
     ).toBe("nav.back");
     expect(
-      matchKeybinding(commands, chordFromEvent({ key: "[", metaKey: true, ctrlKey: false }), overrides),
+      matchKeybinding(
+        commands,
+        chordFromEvent({ key: "[", metaKey: true, ctrlKey: false }),
+        overrides,
+      ),
     ).toBeUndefined();
   });
 
@@ -361,4 +369,4 @@ describe("menuTemplate", () => {
     // A command the front door DOES offer is enabled.
     expect(byId.get("nav.settings")?.enabled).toBe(true);
   });
-})
+});

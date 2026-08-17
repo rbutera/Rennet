@@ -486,9 +486,7 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     fireEvent.click(backRow?.querySelector("button") as HTMLButtonElement);
     const recorder = getByLabelText("Press the new chord for Back");
     fireEvent.keyDown(recorder, { key: "e", metaKey: true });
-    await waitFor(() =>
-      expect(calls.some((c) => c.name === "settings.setKeybinding")).toBe(true),
-    );
+    await waitFor(() => expect(calls.some((c) => c.name === "settings.setKeybinding")).toBe(true));
     const set = calls.find((c) => c.name === "settings.setKeybinding");
     expect(set?.input).toEqual({ id: "nav.back", keybinding: "mod+e" });
 
@@ -497,14 +495,18 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
       row.textContent?.includes("Back"),
     );
     fireEvent.click(
-      [...(backRow2?.querySelectorAll("button") ?? [])].find((b) => b.textContent === "Unbind") as HTMLButtonElement,
+      [...(backRow2?.querySelectorAll("button") ?? [])].find(
+        (b) => b.textContent === "Unbind",
+      ) as HTMLButtonElement,
     );
     await waitFor(() =>
       expect(
-        calls.filter((c) => c.name === "settings.setKeybinding").some((c) => {
-          const input = c.input as { keybinding?: unknown };
-          return input.keybinding === null;
-        }),
+        calls
+          .filter((c) => c.name === "settings.setKeybinding")
+          .some((c) => {
+            const input = c.input as { keybinding?: unknown };
+            return input.keybinding === null;
+          }),
       ).toBe(true),
     );
 
@@ -519,10 +521,12 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     fireEvent.click(resetBtn as HTMLButtonElement);
     await waitFor(() =>
       expect(
-        calls.filter((c) => c.name === "settings.setKeybinding").some((c) => {
-          const input = c.input as Record<string, unknown>;
-          return input.id === "nav.back" && !("keybinding" in input);
-        }),
+        calls
+          .filter((c) => c.name === "settings.setKeybinding")
+          .some((c) => {
+            const input = c.input as Record<string, unknown>;
+            return input.id === "nav.back" && !("keybinding" in input);
+          }),
       ).toBe(true),
     );
   });
@@ -548,9 +552,7 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     fireEvent.click(forwardRow?.querySelector("button") as HTMLButtonElement);
     const recorder = container.querySelector(".settings-key-recorder") as HTMLInputElement;
     fireEvent.keyDown(recorder, { key: "[", metaKey: true });
-    await waitFor(() =>
-      expect(calls.some((c) => c.name === "settings.setKeybinding")).toBe(true),
-    );
+    await waitFor(() => expect(calls.some((c) => c.name === "settings.setKeybinding")).toBe(true));
     // No confirmation dialog/element is ever rendered.
     expect(container.querySelector("[role='alertdialog']")).toBeNull();
   });

@@ -67,9 +67,9 @@ import { publishedItems } from "./canvas/staging";
 import { createViewStore, useViewStore } from "./canvas/store";
 import {
   buildCommands,
-  chordFromEvent,
   type Command,
   type CommandContext,
+  chordFromEvent,
   type KeybindingOverrides,
   matchKeybinding,
   menuTemplate,

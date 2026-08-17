@@ -114,7 +114,9 @@ describe("CommandPalette", () => {
       { id: "zoom.in", title: "Zoom in", group: "Zoom", keybinding: "l", run: vi.fn() },
     ];
     const { container } = mount(<CommandPalette open={true} commands={list} onClose={vi.fn()} />);
-    const conflicting = [...container.querySelectorAll(".command-palette-key[data-conflict='true']")];
+    const conflicting = [
+      ...container.querySelectorAll(".command-palette-key[data-conflict='true']"),
+    ];
     expect(conflicting.length).toBe(2);
     // Each names its counterpart in the disclosure.
     const titles = conflicting.map((node) => node.getAttribute("title"));
@@ -132,7 +134,12 @@ describe("CommandPalette", () => {
       { id: "nav.back", title: "Back", group: "Navigate", keybinding: "mod+[", run: vi.fn() },
     ];
     const { container } = mount(
-      <CommandPalette open={true} commands={list} overrides={{ "nav.back": "mod+e" }} onClose={vi.fn()} />,
+      <CommandPalette
+        open={true}
+        commands={list}
+        overrides={{ "nav.back": "mod+e" }}
+        onClose={vi.fn()}
+      />,
     );
     const key = container.querySelector(".command-palette-key");
     expect(key?.textContent).toMatch(/e$/);

@@ -70,7 +70,9 @@ function bridge(keybindings: Record<string, string | null>): RennetBridge {
 
 describe("RennetApp — keybinding overrides at dispatch (#44)", () => {
   it("a remapped palette.toggle opens on the new chord; the old ⌘K no longer does", async () => {
-    const { container, getByText } = mount(<RennetApp bridge={bridge({ "palette.toggle": "mod+j" })} />);
+    const { container, getByText } = mount(
+      <RennetApp bridge={bridge({ "palette.toggle": "mod+j" })} />,
+    );
     await waitFor(() => expect(getByText("Canvases")).toBeTruthy());
     // The override has been fetched (settings.get resolved) before we press.
     await waitFor(() => expect(getByText("Canvases")).toBeTruthy());
@@ -85,7 +87,9 @@ describe("RennetApp — keybinding overrides at dispatch (#44)", () => {
   });
 
   it("a remapped nav.back runs on its new chord and the default stops navigating", async () => {
-    const { getByText, queryByText } = mount(<RennetApp bridge={bridge({ "nav.back": "mod+e" })} />);
+    const { getByText, queryByText } = mount(
+      <RennetApp bridge={bridge({ "nav.back": "mod+e" })} />,
+    );
     await waitFor(() => expect(getByText("Canvases")).toBeTruthy());
 
     // The default ⌘[ is now dead — pressing it leaves us on the workspace.

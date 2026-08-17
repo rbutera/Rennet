@@ -63,7 +63,8 @@ describe("buildApplicationMenu (#44)", () => {
     expect(template.map((entry) => entry.role)).not.toContain("appMenu");
 
     const back = findItem(template, "Back");
-    (back?.click as () => void)();
+    const click = back?.click as (() => void) | undefined;
+    click?.();
     expect(onRun).toHaveBeenCalledWith("nav.back");
     expect(onRun).toHaveBeenCalledTimes(1);
   });

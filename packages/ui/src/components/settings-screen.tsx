@@ -11,9 +11,9 @@ import type {
 } from "@rennet/protocol";
 import { useEffect, useState } from "react";
 import {
-  chordFromEvent,
   COMMAND_CATALOGUE,
   type CommandDef,
+  chordFromEvent,
   effectiveKeybinding,
   findConflicts,
   formatKeybinding,
@@ -456,11 +456,11 @@ function KeyboardPanel({
               </div>
               <div className="settings-row-value settings-key-value">
                 {recording === def.id ? (
-                  // biome-ignore lint/a11y/noStaticElementInteractions: a transient chord recorder — the focused capture field IS the control, dismissed by Escape or a captured key.
                   <input
                     type="text"
                     readOnly
-                    autoFocus
+                    // Focus on mount so the very next keystroke is captured as the chord.
+                    ref={(node) => node?.focus()}
                     className="settings-key-recorder"
                     aria-label={`Press the new chord for ${catalogueLabel(def)}`}
                     placeholder="Press a chord…"
