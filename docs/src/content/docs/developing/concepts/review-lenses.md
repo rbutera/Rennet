@@ -107,6 +107,13 @@ finding is removed by the deterministic review result. A failed runner is shown
 as a failure, not “nothing flagged.” The row jumps to the mark at its code
 anchor—the index is not a second home for the finding.
 
+When two providers **disagree** about a row, a third chip can appear beside their
+two verbatim answers: the cross-harness adjudication verdict (issue #41). It reads
+**code supports the flag**, **code contradicts this flag**, or an honest **could not
+adjudicate** with its reason. It is a third opinion, not the final word—it rides
+beside both answers, never replacing them, and no verdict value ever hides or drops
+the row. A row with no adjudication renders exactly as before.
+
 An empty result is only an all-clear when the whole change was ingested. When the
 decomposition floor could not ingest some content (R18: a truncated tail, a binary
 blob, or a submodule pointer), Flagged carries that as its `blockingStates` and
@@ -129,13 +136,21 @@ no-checks, incomplete, and unavailable are distinct states, and both the forge
 read and optional refinement have independent deadlines. This signal is
 information only: no review, sign, or publish handler consults it.
 
-Today, a dual review matches nearby anchors and compares severity to decide
-whether two findings concur. It does not yet recognise differently worded
-claims as the same claim, reason about their polarity, or ask each provider to
-adjudicate a contested claim as supported, contradicted, or unclear. That
-semantic reconciliation is the next step tracked in
-[issue #41](https://github.com/rbutera/rennet/issues/41); the current agreement
-label should be read as location-and-severity agreement, not a settled verdict.
+A dual review matches nearby anchors and compares severity to decide whether two
+findings concur. The agreement label is still location-and-severity agreement, not
+a settled verdict—it does not recognise differently worded claims as the same claim.
+But when the seats **disagree** (a solo, or a severity conflict), Rennet now asks the
+code who is right ([issue #41](https://github.com/rbutera/rennet/issues/41), delivered):
+one fresh turn on the Model Council's `adjudication` seat—by design a different model
+family than either reviewer—reads both labelled answers with explicit polarity plus
+the real code window and returns **supported**, **contradicted**, or **insufficient**.
+Divergence is the only trigger (a concurring row spends nothing), the pass draws from
+the one shared review budget and is capped, and the verdict informs the disagree flare
+without ever gating, dropping, or reordering it. Whether that explicit adjudication
+measurably beats raw overlap is measured on a seeded synthetic ground-truth corpus and
+recorded, from real runs only, into a committed calibration table—informational, never
+a gate. Deliberately not built: N=3 same-model self-consistency (no single-provider
+divergence source exists) and any ship gate keyed on the verdict.
 
 ## Noise is the visible remainder
 

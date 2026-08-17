@@ -13,8 +13,10 @@ import {
   type CodexAvailability,
   claudeHandoffRunPort,
   cleanupWorktree,
+  createClaudeAdjudicationTurn,
   createClaudeCiRefinementTurn,
   createClaudeHarness,
+  createCodexAdjudicationTurn,
   createCodexCiRefinementTurn,
   createCodexExecutor,
   createCodexTurnTransport,
@@ -74,6 +76,7 @@ import {
 } from "@rennet/adapters";
 import {
   type AdmittedDocument,
+  adjudicateFlaggedReview,
   attachRiskCrossCheck,
   buildOfferedManifest,
   buildReviewCanvases,
@@ -1191,12 +1194,46 @@ async function runFlaggedReviewWithContextFeed(
       budget: sharedBudget,
       maxVerifications: DEFAULT_REVIEW_INTELLIGENCE_BUDGET.verification.maxVerifications,
     });
+    // Cross-harness adjudication (#41): AFTER verification, on the surviving rows
+    // (a refuted row is already dropped). When the two seats DISAGREED, one fresh
+    // turn per contested row on the seat the council resolves for the `adjudication`
+    // job asks the real code who is right — a genuine third opinion, drawn from the
+    // SAME shared review budget. The verdict rides the disagree arm; it never drops,
+    // hides, or gates a row (Rule Zero). Absent an executor for the resolved harness,
+    // rows surface unadjudicated (honest degradation).
+    const adjResolution = resolveAssignment("adjudication", { availability: { installed } });
+    const adjudicationTurn =
+      adjResolution.kind !== "model"
+        ? undefined
+        : adjResolution.harness === "codex" && codexResolution.executor
+          ? createCodexAdjudicationTurn(codexResolution.executor, {
+              model: adjResolution.model,
+              effort: adjResolution.effort,
+            })
+          : adjResolution.harness === "claude-code" && adapter
+            ? createClaudeAdjudicationTurn(adapter, {
+                cwd: review.repositoryRoot,
+                model: adjResolution.model,
+              })
+            : undefined;
+    const adjudicated =
+      adjResolution.kind === "model" && adjudicationTurn
+        ? (
+            await adjudicateFlaggedReview(verified, {
+              manifest,
+              readFileWindow,
+              runTurn: adjudicationTurn,
+              adjudicatedBy: `${adjResolution.model} (${adjResolution.harness})`,
+              budget: sharedBudget,
+              maxAdjudications: DEFAULT_REVIEW_INTELLIGENCE_BUDGET.adjudication.maxAdjudications,
+            })
+          ).review
+        : verified;
     // The predicted-risk cross-check (#181), the LAST transform: reconcile the
-    // hypothesis's predicted risks against the VERIFIED findings (after refuted
-    // ones were dropped), so a risk marked `confirmed` is addressed by a finding
-    // that actually surfaces. Deterministic, $0 — absent a hypothesis it returns
-    // `verified` unchanged.
-    surfacedReview = attachRiskCrossCheck(verified, hypothesis);
+    // hypothesis's predicted risks against the surfaced findings, so a risk marked
+    // `confirmed` is addressed by a finding that actually surfaces. Deterministic,
+    // $0 — absent a hypothesis it returns the review unchanged.
+    surfacedReview = attachRiskCrossCheck(adjudicated, hypothesis);
   } else {
     // Reaching here under DEEP review means there is no Claude verifier (e.g. a
     // Codex-only review). Announce that honestly: every finding that WOULD have been

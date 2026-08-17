@@ -28,7 +28,12 @@ an order, find evidence, and show disagreement. You decide what is correct,
 which comments survive, and which verdict gets signed.
 
 When two models disagree, Rennet keeps both answers visible. It does not invent
-a confident synthesis to make the disagreement disappear.
+a confident synthesis to make the disagreement disappear. It can add a **third
+opinion** beside them: an adjudication turn reads the real code around the
+contested spot and says whether it **supports the flag**, **contradicts** it, or
+**could not adjudicate**. That chip is a tiebreak hint, not a ruling—both original
+answers stay, the row never disappears because of it, and you still decide what is
+correct.
 
 ## Why not just prompt a model?
 
