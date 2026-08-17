@@ -22,6 +22,19 @@ export {
   createCanvasOpsServer,
   type LoadCanvasOpsSdk,
 } from "./canvas-ops-server";
+export {
+  type ClaudeAdjudicationTurnOptions,
+  createClaudeAdjudicationTurn,
+  createCodexAdjudicationTurn,
+} from "./adjudication-backend";
+export {
+  type AdjudicationCalibration,
+  ADJUDICATION_CALIBRATION_ARTIFACT_PATH,
+  type ClassCalibrationRecord,
+  isEmptyAdjudicationCalibration,
+  readAdjudicationCalibration,
+  recordAdjudicationCalibration,
+} from "./adjudication-calibration";
 export { checkpointGitCommand, GitCheckpointStore, repoHasSubmodules } from "./checkpoint-store";
 export {
   type ClaudeCiRefinementTurnOptions,
