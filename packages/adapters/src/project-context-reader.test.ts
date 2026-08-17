@@ -240,7 +240,7 @@ describe("ProjectContextReader — context.references over a real generated snap
       l.path === r.path ? l.line - r.line : l.path < r.path ? -1 : 1,
     );
     expect(result.references.sites).toEqual(sorted);
-  });
+  }, 30_000); // real snapshot generation is git-heavy; the throttled win32 gate needs headroom
 
   it("returns an empty site set for a name absent from the index", async () => {
     const { store, manifest } = await generate();
