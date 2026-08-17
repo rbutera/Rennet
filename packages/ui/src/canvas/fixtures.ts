@@ -167,7 +167,7 @@ function sequenceCanvas(): Canvas {
   };
 }
 
-/** A flat angle canvas (spec/claims/noise) with a handful of honest elements. */
+/** A flat angle canvas (spec/noise) with a handful of honest elements. */
 function flatCanvas(angle: CanvasAngle, kind: string, titles: string[]): Canvas {
   const chunks = demoChunks();
   const elements = titles.map((title, index) => ({
@@ -202,7 +202,6 @@ export function demoCanvases(): Record<CanvasAngle, Canvas> {
       "Read state is defined by an action",
       "Decisions are never truncated",
     ]),
-    claims: flatCanvas("claims", "claim", []),
     noise: flatCanvas("noise", "group", [
       "Formatting-only churn in three files",
       "Import reordering across the module",

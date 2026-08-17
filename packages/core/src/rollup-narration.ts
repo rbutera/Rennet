@@ -57,7 +57,7 @@ import type {
   ValidationReport,
 } from "@rennet/types";
 import { buildOfferedManifest } from "./angle-generation";
-import type { HarnessTurnResult } from "./harness-run-turn";
+import type { HarnessTurnResult, TurnExecutorFacts } from "./harness-run-turn";
 import { absentBudgetGrant } from "./invocation-budget";
 
 /** The stable node key of the whole-changeset roll-up altitude. */
@@ -372,6 +372,7 @@ function buildProvenance(
   inputDigest: string,
   runId: string,
   tokens: RspTokenUsage,
+  executor?: TurnExecutorFacts,
 ): RspProvenance {
   return {
     harness: seed.harness,
@@ -379,12 +380,13 @@ function buildProvenance(
     adapterVersion: seed.adapterVersion,
     model: seed.model,
     modelReportedBy: seed.modelReportedBy,
-    // Narration is a LIGHT-tier job (council row 6); the route is agentic/utility.
-    tier: "light",
-    route: "agentic",
+    // Prefer what executed the turn; a plain Claude harness turn reports no facts,
+    // so narration keeps its light/agentic seat defaults.
+    tier: executor?.tier ?? "light",
+    route: executor?.route ?? "agentic",
     runId,
     inputDigest,
-    capability: seed.capability,
+    capability: executor?.capability ?? seed.capability,
     tokens,
     reportedUsd: null,
     derivedUsd: null,
@@ -492,7 +494,13 @@ export async function runRollupNarration(
       continue;
     }
 
-    const provenance = buildProvenance(seed, inputDigest, newRunId(), turn.tokens ?? ZERO_TOKENS);
+    const provenance = buildProvenance(
+      seed,
+      inputDigest,
+      newRunId(),
+      turn.tokens ?? ZERO_TOKENS,
+      turn.executor,
+    );
     const document = buildEnvelope(turn.body, patchsetId, provenance, mintDocId());
     const report = validateDocument({ document, patchset: patchsetRef, manifest });
     if (report.admitted) {

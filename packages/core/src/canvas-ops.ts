@@ -739,20 +739,14 @@ const recomputeTool: CanvasOpsTool = {
       name: "angle",
       type: "enum",
       optional: true,
-      enum: ["spec", "sequence", "decisions", "claims", "noise"],
+      enum: ["spec", "sequence", "decisions", "noise"],
       description: "Restrict to one canvas angle.",
     },
   ],
   handle(args, backend) {
     const scope = requireString(args, "scope");
     if (!scope) return fail("invalid-input", "canvas.recompute requires a scope");
-    const angle = enumArg(args, "angle", [
-      "spec",
-      "sequence",
-      "decisions",
-      "claims",
-      "noise",
-    ] as const);
+    const angle = enumArg(args, "angle", ["spec", "sequence", "decisions", "noise"] as const);
     const plan = backend.planRecompute(scope, angle);
     // Refused ⇒ a VISIBLE refusal in the envelope, and NO recompute effect (the
     // budget gate refused before any model would run — R10).

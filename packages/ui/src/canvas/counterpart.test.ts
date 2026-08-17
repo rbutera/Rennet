@@ -54,7 +54,6 @@ function reviewCanvases(
       spec: build("spec"),
       sequence: build("sequence"),
       decisions: build("decisions"),
-      claims: build("claims"),
       noise: build("noise"),
       flagged: build("flagged"),
     },

@@ -392,7 +392,7 @@ export type CommandResult<T> = { ok: true; value: T } | { ok: false; error: Comm
 //
 // The document substrate every fleet emission passes through: a universal
 // envelope, a provenance block, an anchor grammar, and the deterministic
-// validator gate. Per-docType body schemas (decomposition, decision, claim, …)
+// validator gate. Per-docType body schemas (decomposition, decision, …)
 // land with angle generation (#8); this slice is the core machinery, so `body`
 // is deliberately opaque here.
 //
@@ -415,7 +415,6 @@ export type RspDocType =
   | "ordering"
   | "rollup-narration"
   | "decision.record"
-  | "claim"
   | "adjudication"
   | "test.mapping"
   | "noise.patternProposal"
@@ -890,10 +889,10 @@ export interface Decomposition {
 /**
  * The angles a chunk may be assigned to. Deliberately a CLOSED set that excludes
  * `noise` (verified only by deterministic checkers, never chunk membership) and
- * `spec` (a queue over requirements, joined to code through claim documents).
- * Enforced by validator rule V104.
+ * `spec` (a queue over requirements). The `claims` angle is retired (issue #221):
+ * the Decisions lens owns that ground. Enforced by validator rule V104.
  */
-export type ChunkAngle = "sequence" | "decisions" | "claims" | "blast-radius";
+export type ChunkAngle = "sequence" | "decisions" | "blast-radius";
 
 /** A chunk in a `decomposition.skeleton` body: boundaries + angle assignment only. */
 export interface SkeletonChunk {
@@ -1075,14 +1074,13 @@ export interface RollupNarrationBody {
  * overlay, not a canvas (Canvas Paradigm §1 — promoting it to a sixth canvas
  * would silently turn the overlay into a writable queue).
  */
-export type CanvasAngle = "spec" | "sequence" | "decisions" | "claims" | "noise" | "flagged";
+export type CanvasAngle = "spec" | "sequence" | "decisions" | "noise" | "flagged";
 
 /** The canvas angles as a frozen list, in a stable order. */
 export const CANVAS_ANGLES: readonly CanvasAngle[] = [
   "spec",
   "sequence",
   "decisions",
-  "claims",
   "noise",
   "flagged",
 ] as const;
@@ -3295,6 +3293,26 @@ export interface OpenSpecChange {
   readonly design?: OpenSpecDesign;
   readonly tasks?: OpenSpecTasks;
   readonly specDeltas: readonly OpenSpecSpecDelta[];
+  /**
+   * The verbatim raw markdown of the change's artifacts, as read off disk (issue
+   * #239). Carried alongside the parsed model so the Spec viewer can offer the raw
+   * text one keystroke away — the structured rendering stays the default, and raw is
+   * the escape hatch #33 promised. Absent when the reader did not carry it (older
+   * producers, or a change parsed from a source without raw retention).
+   */
+  readonly raw?: OpenSpecChangeRaw;
+}
+
+/**
+ * The raw markdown of an OpenSpec change's artifacts, verbatim as read from disk —
+ * never a re-serialization of the parsed model (issue #239). `specDeltas` is empty
+ * rather than absent when there are no spec files.
+ */
+export interface OpenSpecChangeRaw {
+  readonly proposalMd?: string;
+  readonly designMd?: string;
+  readonly tasksMd?: string;
+  readonly specDeltas: readonly { readonly capability: string; readonly md: string }[];
 }
 
 /**

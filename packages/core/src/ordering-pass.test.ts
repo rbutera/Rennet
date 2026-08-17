@@ -1,7 +1,14 @@
 import { ORDERING_CONTRACT } from "@rennet/instructions";
 import { sha256Hex } from "@rennet/protocol";
-import type { DecompositionProposalBody, OrderingBody, RspCapabilitySnapshot } from "@rennet/types";
+import type {
+  DecompositionProposalBody,
+  OrderingBody,
+  RspCapabilitySnapshot,
+  RspEnvelope,
+} from "@rennet/types";
 import { describe, expect, it } from "vitest";
+import { createCodexRunTurn } from "./codex-run-turn";
+import type { CodexUtilityPort, CodexUtilityResult } from "./codex-utility-port";
 import { createInvocationBudget } from "./invocation-budget";
 import {
   buildChunkManifest,
@@ -249,5 +256,105 @@ describe("resolveLiveOrder — the canvas consumes the live order (agent ≠ bas
     expect(live.readingOrder).toEqual(["c1", "c2", "c3"]);
     expect(live.route).toBe("deterministic");
     expect(live.readingOrder).toEqual(result.baselineOrder);
+  });
+});
+
+// ── #88: the stamped provenance reflects the executor that actually ran ────────
+
+/** The port's own honest capability snapshot — deliberately DIFFERENT from SEED's,
+ *  so a test that reads it back proves the capability came from the port, not the seed. */
+const PORT_CAPABILITY: RspCapabilitySnapshot = {
+  structuredOutput: {
+    implementedByAdapter: true,
+    advertisedByHarness: true,
+    availableInSession: true,
+  },
+  perCallModelSelection: {
+    implementedByAdapter: false,
+    advertisedByHarness: false,
+    availableInSession: false,
+  },
+};
+
+/** An admitted `ordering` envelope stamped with the codex utility port's HONEST
+ *  provenance (utility/light + its per-call capability), as the real port builds it. */
+function utilityEnvelope(body: OrderingBody): RspEnvelope {
+  return {
+    rsp: 1,
+    docType: "ordering",
+    schemaVersion: 1,
+    docId: "PORT_DOC",
+    patchsetId: PATCHSET_ID,
+    provenance: {
+      harness: "codex",
+      harnessVersion: "0.9.0",
+      adapterVersion: "0.1.0",
+      model: "gpt-5.6-terra",
+      modelReportedBy: "config",
+      tier: "light",
+      route: "utility",
+      runId: "port_run",
+      inputDigest: "sha256:port",
+      capability: PORT_CAPABILITY,
+      tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, reasoning: null, total: 2 },
+      reportedUsd: null,
+      derivedUsd: null,
+      effort: "medium",
+    },
+    body,
+    x: {},
+  };
+}
+
+function codexPort(body: OrderingBody): CodexUtilityPort {
+  return {
+    complete: async (): Promise<CodexUtilityResult> => ({
+      status: "admitted",
+      document: utilityEnvelope(body),
+      report: {
+        docType: "ordering",
+        admission: "atomic",
+        admitted: true,
+        errors: [],
+        admittedItemCount: null,
+        rejectedItemCount: 0,
+        rejectedItems: [],
+      },
+      tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, reasoning: null, total: 2 },
+      attempts: [],
+    }),
+  };
+}
+
+describe("runOrderingPass — provenance reflects the executor (#88)", () => {
+  it("stamps utility/light with the port's capability when the Codex utility port ran the turn", async () => {
+    const runTurn = createCodexRunTurn(codexPort(AGENT_ORDER), {
+      docType: "ordering",
+      patchset: { id: PATCHSET_ID },
+      manifest: buildChunkManifest(PROPOSAL),
+      model: "gpt-5.6-terra",
+      effort: "medium",
+    });
+    const result = await runOrderingPass(base({ runTurn }));
+
+    expect(result.admitted).toBe(true);
+    // The executor's truth, threaded end-to-end through the runner's re-stamp.
+    expect(result.document.provenance.route).toBe("utility");
+    expect(result.document.provenance.tier).toBe("light");
+    expect(result.document.provenance.capability).toEqual(PORT_CAPABILITY);
+    // The runner still owns identity: docId/inputDigest are the pass's, not the port's.
+    expect(result.document.docId).not.toBe("PORT_DOC");
+    expect(result.document.provenance.inputDigest).toMatch(/^sha256:/);
+    expect(result.document.provenance.inputDigest).not.toBe("sha256:port");
+    // resolveLiveOrder reports the executor's route for the live agent order.
+    expect(resolveLiveOrder(result).route).toBe("utility");
+  });
+
+  it("keeps agentic/heavy with the seed capability for a Claude harness turn (fallback proven)", async () => {
+    // A plain injected turn (as createHarnessRunTurn yields) reports no executor facts.
+    const result = await runOrderingPass(base());
+    expect(result.document.provenance.route).toBe("agentic");
+    expect(result.document.provenance.tier).toBe("heavy");
+    expect(result.document.provenance.capability).toEqual(CAPABILITY);
   });
 });

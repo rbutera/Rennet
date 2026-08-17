@@ -1,4 +1,10 @@
-import type { DispositionType, OpenSpecBlock, OpenSpecScenario } from "@rennet/types";
+import type {
+  DispositionType,
+  OpenSpecBlock,
+  OpenSpecChangeRaw,
+  OpenSpecScenario,
+} from "@rennet/types";
+import { useEffect, useState } from "react";
 import type { AskMode, AskReviewResult } from "../canvas/ask";
 import {
   classifyCoverage,
@@ -14,8 +20,10 @@ import { DispositionCluster } from "./disposition-cluster";
 // ─────────────────────────────────────────────────────────────────────────────
 // The Spec angle: a STRUCTURED viewer for an OpenSpec change (Rai, wireframes #9).
 //
-// The change's artifacts have a KNOWN shape, so this renders them structured —
-// never a raw-markdown dump. The proposal reads as why / what-changes /
+// The change's artifacts have a KNOWN shape, so this renders them structured by
+// default. The raw markdown is one keystroke away, never the default (issue #239 /
+// #33): press `r` to flip the visible artifacts to their verbatim on-disk text and
+// back. The proposal reads as why / what-changes /
 // capabilities / impact; the design as a sectioned document with a table of
 // contents; the tasks as a checklist with an honest progress roll-up; the spec
 // deltas as the requirement → scenario tree with ADDED/MODIFIED/REMOVED badges and
@@ -360,6 +368,31 @@ function SpecDelta({
   );
 }
 
+/**
+ * The raw escape hatch (#239): the change's artifacts as verbatim markdown read off
+ * disk, each in its own `<pre>` — no re-serialization, no re-rendering. Structured is
+ * the default; this shows only when the reviewer presses the raw-view key.
+ */
+function RawArtifacts({ raw }: { raw: OpenSpecChangeRaw }) {
+  const files: { label: string; md: string }[] = [];
+  if (raw.proposalMd !== undefined) files.push({ label: "proposal.md", md: raw.proposalMd });
+  if (raw.designMd !== undefined) files.push({ label: "design.md", md: raw.designMd });
+  if (raw.tasksMd !== undefined) files.push({ label: "tasks.md", md: raw.tasksMd });
+  for (const delta of raw.specDeltas) {
+    files.push({ label: `specs/${delta.capability}/spec.md`, md: delta.md });
+  }
+  return (
+    <section className="ospec-raw" aria-label="Raw markdown">
+      {files.map((file) => (
+        <div className="ospec-raw-file" key={file.label}>
+          <h3 className="ospec-raw-name">{file.label}</h3>
+          <pre className="ospec-raw-text">{file.md}</pre>
+        </div>
+      ))}
+    </section>
+  );
+}
+
 export function OpenSpecView({
   view,
   onDispose,
@@ -379,8 +412,38 @@ export function OpenSpecView({
   onJumpToHunk?(anchor: string): void;
 }) {
   const { summary, proposal } = view;
+
+  // Raw markdown one keystroke away (#239): structured is the default; `r` flips the
+  // visible artifacts to their verbatim on-disk text and back. Only bound when the
+  // change carried its raw source — no raw ⇒ nothing to flip to, honestly inert.
+  const [rawView, setRawView] = useState(false);
+  const hasRaw = view.raw !== undefined;
+  useEffect(() => {
+    if (!hasRaw) return;
+    function onKey(event: KeyboardEvent): void {
+      if (event.key !== "r" || event.metaKey || event.ctrlKey || event.altKey) return;
+      // A keystroke inside a text field is the reviewer typing, not a view command.
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        (target instanceof HTMLElement && target.isContentEditable)
+      )
+        return;
+      setRawView((raw) => !raw);
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [hasRaw]);
+  const showRaw = rawView && view.raw !== undefined;
+
   return (
-    <div className="openspec-view" data-change={view.name}>
+    <div
+      className="openspec-view"
+      data-change={view.name}
+      data-view={showRaw ? "raw" : "structured"}
+    >
+      {showRaw && view.raw ? <RawArtifacts raw={view.raw} /> : null}
       <header className="ospec-header">
         <div className="ospec-header-title">
           <span className="ospec-kicker">OpenSpec change</span>
@@ -426,7 +489,7 @@ export function OpenSpecView({
         </section>
       ) : null}
 
-      {proposal ? (
+      {!showRaw && proposal ? (
         <section className="ospec-proposal" aria-label="Proposal">
           <div className="ospec-section-head">
             <h3 className="ospec-section-title">Proposal</h3>
@@ -511,7 +574,7 @@ export function OpenSpecView({
         </section>
       ) : null}
 
-      {view.specDeltas.length > 0 ? (
+      {!showRaw && view.specDeltas.length > 0 ? (
         <section className="ospec-deltas" aria-label="Spec deltas">
           <h3 className="ospec-section-title">Spec deltas</h3>
           {view.specDeltas.map((delta) => (
@@ -525,7 +588,7 @@ export function OpenSpecView({
         </section>
       ) : null}
 
-      {view.taskGroups.length > 0 ? (
+      {!showRaw && view.taskGroups.length > 0 ? (
         <section className="ospec-tasks" aria-label="Tasks">
           <div className="ospec-section-head">
             <h3 className="ospec-section-title">Tasks</h3>
@@ -586,7 +649,7 @@ export function OpenSpecView({
         </section>
       ) : null}
 
-      {view.designSections.length > 0 ? (
+      {!showRaw && view.designSections.length > 0 ? (
         <section className="ospec-design" aria-label="Design">
           <h3 className="ospec-section-title">Design</h3>
           <nav className="ospec-toc" aria-label="Design contents">

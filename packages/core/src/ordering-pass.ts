@@ -46,6 +46,7 @@ import type {
   ValidationError,
   ValidationReport,
 } from "@rennet/types";
+import type { TurnExecutorFacts } from "./harness-run-turn";
 import { absentBudgetGrant } from "./invocation-budget";
 
 /**
@@ -80,7 +81,13 @@ export function deterministicOrderingBody(proposal: DecompositionProposalBody): 
 
 /** The result of one ordering turn: the emitted body, or a turn-level failure. */
 export type OrderingTurnResult =
-  | { readonly status: "emitted"; readonly body: unknown; readonly tokens?: RspTokenUsage }
+  | {
+      readonly status: "emitted";
+      readonly body: unknown;
+      readonly tokens?: RspTokenUsage;
+      /** Executor provenance facts, when the executor reported them (#88). */
+      readonly executor?: TurnExecutorFacts;
+    }
   | { readonly status: "failed"; readonly message: string };
 
 /** The provenance a caller knows before the run; the rest is stamped per attempt. */
@@ -238,18 +245,22 @@ function buildProvenance(
   inputDigest: string,
   runId: string,
   tokens: RspTokenUsage,
+  executor?: TurnExecutorFacts,
 ): RspProvenance {
+  // Honest executor provenance (#88): when the turn reported what actually ran
+  // (a Codex utility-port turn → utility/light), stamp that; otherwise the seat's
+  // default (agentic/heavy for a Claude harness turn, deterministic for the floor).
   return {
     harness: seed.harness,
     harnessVersion: seed.harnessVersion,
     adapterVersion: seed.adapterVersion,
     model: seed.model,
     modelReportedBy: seed.modelReportedBy,
-    tier: route === "deterministic" ? "deterministic" : "heavy",
-    route,
+    tier: executor?.tier ?? (route === "deterministic" ? "deterministic" : "heavy"),
+    route: executor?.route ?? route,
     runId,
     inputDigest,
-    capability: seed.capability,
+    capability: executor?.capability ?? seed.capability,
     tokens,
     reportedUsd: null,
     derivedUsd: null,
@@ -347,6 +358,7 @@ export async function runOrderingPass(input: RunOrderingPassInput): Promise<RunO
       inputDigest,
       newRunId(),
       turn.tokens ?? ZERO_TOKENS,
+      turn.executor,
     );
     const document = buildEnvelope(turn.body, patchsetId, provenance, mintDocId());
     const report = validateDocument({ document, patchset: patchsetRef, manifest });

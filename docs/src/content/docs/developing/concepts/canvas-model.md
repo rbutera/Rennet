@@ -30,10 +30,13 @@ Spec is a structured document; Decisions is a judgment queue; Flagged is an
 index; Noise is the visible remainder. [Review lenses](/developing/concepts/review-lenses/)
 explains their behavior, provenance, and shared read-coverage floor.
 
-> **Current implementation detail:** `CanvasAngle` still includes a transitional
-> `claims` canvas. The current product direction retires that surface. Claim and
-> requirement links remain useful infrastructure for Spec coverage, test links,
-> and unclaimed-change detection.
+> **Retired surface (#221):** the `claims` canvas is gone. `CanvasAngle`,
+> `ChunkAngle`, `CANVAS_ANGLES`, and the `claim` doc type no longer include it —
+> the Decisions lens owns that ground. A decomposition persisted before the
+> retirement may still carry a `claims` chunk angle; it is inert at the current
+> projection boundaries, while the validator rejects a newly declared `claims`
+> angle with V104. Claim and requirement links remain useful infrastructure for
+> Spec coverage, test links, and unclaimed-change detection.
 
 ## Four layers, one surface
 
@@ -145,10 +148,10 @@ blast-radius paint, event-folded L3 state, user and orchestrator command
 vocabularies, the `canvasOps@2` surface, and renderer canvases. Spec, Sequence,
 Decisions, Flagged, and Noise all have live product paths.
 
-Two pieces are still settling. The stale `claims` canvas remains in the type and
-projector even though the product roster retired it, and some flat projections
-still expose less detail than their final surface calls for. Those are migration
-edges, not a second product model.
+One piece is still settling: some flat projections still expose less detail than
+their final surface calls for. That is a migration edge, not a second product
+model. (The `claims` canvas that used to sit here is gone — retired in #221, with
+normalize-on-read handling any decomposition persisted before the removal.)
 
 ## Code map
 

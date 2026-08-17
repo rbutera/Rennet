@@ -7,9 +7,13 @@ import type {
   Hunk,
   RollupNarrationBody,
   RspCapabilitySnapshot,
+  RspEnvelope,
 } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
+import { buildOfferedManifest } from "./angle-generation";
+import { createCodexRunTurn } from "./codex-run-turn";
+import type { CodexUtilityPort, CodexUtilityResult } from "./codex-utility-port";
 import type { HarnessTurnResult } from "./harness-run-turn";
 import { createInvocationBudget } from "./invocation-budget";
 import {
@@ -45,6 +49,19 @@ const SEED = {
   modelReportedBy: "config" as const,
   capability: CAP,
   effort: "low",
+};
+
+const PORT_CAPABILITY: RspCapabilitySnapshot = {
+  structuredOutput: {
+    implementedByAdapter: true,
+    advertisedByHarness: true,
+    availableInSession: true,
+  },
+  perCallModelSelection: {
+    implementedByAdapter: false,
+    advertisedByHarness: false,
+    availableInSession: false,
+  },
 };
 
 function hunk(id: string): Hunk {
@@ -135,6 +152,53 @@ function bodyFor(nodes: NarrationNode[]): RollupNarrationBody {
 
 function emit(body: unknown): HarnessTurnResult {
   return { status: "emitted", body };
+}
+
+function codexEnvelope(body: RollupNarrationBody): RspEnvelope {
+  return {
+    rsp: 1,
+    docType: "rollup-narration",
+    schemaVersion: 1,
+    docId: "PORT_DOC",
+    patchsetId: "ps_1",
+    provenance: {
+      harness: "codex",
+      harnessVersion: "0.9.0",
+      adapterVersion: "0.1.0",
+      model: "gpt-5.6-terra",
+      modelReportedBy: "config",
+      tier: "light",
+      route: "utility",
+      runId: "port_run",
+      inputDigest: "sha256:port",
+      capability: PORT_CAPABILITY,
+      tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, reasoning: null, total: 2 },
+      reportedUsd: null,
+      derivedUsd: null,
+    },
+    body,
+    x: {},
+  };
+}
+
+function codexPort(body: RollupNarrationBody): CodexUtilityPort {
+  return {
+    complete: async (): Promise<CodexUtilityResult> => ({
+      status: "admitted",
+      document: codexEnvelope(body),
+      report: {
+        docType: "rollup-narration",
+        admission: "atomic",
+        admitted: true,
+        errors: [],
+        admittedItemCount: null,
+        rejectedItemCount: 0,
+        rejectedItems: [],
+      },
+      tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, reasoning: null, total: 2 },
+      attempts: [],
+    }),
+  };
 }
 
 async function captureNarrationPayload(input: Decomposition): Promise<Record<string, unknown>> {
@@ -228,6 +292,32 @@ describe("runRollupNarration — admission", () => {
     for (const node of nodes) {
       expect(result.narrations.get(node.anchor)?.oneLine).toBe(`one-line for ${node.anchor}`);
     }
+  });
+
+  it("stamps a Codex utility turn's executor provenance instead of the seed (#88)", async () => {
+    const nodes = offeredNarrationNodes(canvases());
+    const input = decomposition();
+    const manifest = buildOfferedManifest(input);
+    const runTurn = createCodexRunTurn(codexPort(bodyFor(nodes)), {
+      docType: "rollup-narration",
+      patchset: { id: input.patchsetId },
+      manifest,
+      model: "gpt-5.6-terra",
+      effort: "medium",
+    });
+    const result = await runRollupNarration({
+      nodes,
+      decomposition: input,
+      patchsetId: input.patchsetId,
+      contract: ROLLUP_NARRATION_CONTRACT,
+      provenance: SEED,
+      runTurn,
+      budget: createInvocationBudget(10),
+    });
+
+    expect(result.document?.provenance.route).toBe("utility");
+    expect(result.document?.provenance.tier).toBe("light");
+    expect(result.document?.provenance.capability).toEqual(PORT_CAPABILITY);
   });
 
   it("grounds the prompt with every small chunk's real hunk lines", async () => {

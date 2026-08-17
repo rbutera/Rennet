@@ -7,13 +7,9 @@ import {
 } from "../canvas/logic";
 import { DispositionBar } from "./disposition";
 
-// The flat canvases (sequence / spec / claims / noise): a single ordered list of
-// elements, each disposable. `claims` renders empty-but-honest when no claim
-// documents have been admitted, rather than pretending coverage exists.
-
-const EMPTY_COPY: Partial<Record<string, string>> = {
-  claims: "No claims have been admitted yet. This angle is empty, not unchecked.",
-};
+// The flat canvases (sequence / spec / noise): a single ordered list of elements,
+// each disposable. An empty flat canvas renders honestly empty rather than
+// pretending coverage exists.
 
 export function FlatCanvas({
   canvas,
@@ -51,7 +47,7 @@ export function FlatCanvas({
         />
       </div>
       {elements.length === 0 ? (
-        <p className="canvas-empty">{EMPTY_COPY[canvas.angle] ?? "This angle is empty."}</p>
+        <p className="canvas-empty">This angle is empty.</p>
       ) : (
         <ol className="flat-elements">
           {elements.map((element) => {

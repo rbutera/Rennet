@@ -124,6 +124,35 @@ describe("createCodexRunTurn", () => {
     expect(complete).toHaveBeenCalledTimes(1);
   });
 
+  it("carries the port's honest executor facts back on the emitted turn (#88)", async () => {
+    const doc = envelope({ readingOrder: ["c1"], rationale: "logical" });
+    const { port } = portReturning({
+      status: "admitted",
+      document: doc,
+      report: admittedReport(),
+      tokens: TOKENS,
+      attempts: [],
+    });
+
+    const runTurn = createCodexRunTurn(port, {
+      docType: "ordering",
+      patchset: PATCHSET,
+      manifest: MANIFEST,
+      model: "gpt-5.6-terra",
+      effort: "medium",
+    });
+
+    const turn = await runTurn("the prompt", 0);
+    if (turn.status !== "emitted") throw new Error("unreachable");
+    // The runner re-stamps the envelope, but must stamp WHAT RAN: the port's
+    // utility/light route and its per-call capability, not the seat's default.
+    expect(turn.executor).toEqual({
+      route: "utility",
+      tier: "light",
+      capability: doc.provenance.capability,
+    });
+  });
+
   it("passes the seat's docType, model, effort, patchset, manifest, and maxRetries:0 to the port", async () => {
     const { port, complete } = portReturning({
       status: "admitted",

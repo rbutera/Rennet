@@ -1,7 +1,9 @@
 import { sha256Hex } from "@rennet/protocol";
-import type { PatchFile, Patchset, RspCapabilitySnapshot } from "@rennet/types";
+import type { PatchFile, Patchset, RspCapabilitySnapshot, RspEnvelope } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { buildOfferedManifest } from "./angle-generation";
+import { createCodexRunTurn } from "./codex-run-turn";
+import type { CodexUtilityPort, CodexUtilityResult } from "./codex-utility-port";
 import { decompose } from "./decomposition";
 import {
   type FindingProvenanceSeed,
@@ -80,6 +82,66 @@ const SEED: FindingProvenanceSeed = {
   modelReportedBy: "harness",
   capability: CAPABILITY,
 };
+
+const PORT_CAPABILITY: RspCapabilitySnapshot = {
+  structuredOutput: {
+    implementedByAdapter: true,
+    advertisedByHarness: true,
+    availableInSession: true,
+  },
+  perCallModelSelection: {
+    implementedByAdapter: false,
+    advertisedByHarness: false,
+    availableInSession: false,
+  },
+};
+
+function codexEnvelope(body: unknown): RspEnvelope {
+  return {
+    rsp: 1,
+    docType: "finding",
+    schemaVersion: 1,
+    docId: "PORT_DOC",
+    patchsetId: PATCHSET.id,
+    provenance: {
+      harness: "codex",
+      harnessVersion: "0.9.0",
+      adapterVersion: "0.1.0",
+      model: "gpt-5.6-terra",
+      modelReportedBy: "config",
+      tier: "light",
+      route: "utility",
+      runId: "port_run",
+      inputDigest: "sha256:port",
+      capability: PORT_CAPABILITY,
+      tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, reasoning: null, total: 2 },
+      reportedUsd: null,
+      derivedUsd: null,
+    },
+    body,
+    x: {},
+  };
+}
+
+function codexPort(body: unknown): CodexUtilityPort {
+  return {
+    complete: async (): Promise<CodexUtilityResult> => ({
+      status: "admitted",
+      document: codexEnvelope(body),
+      report: {
+        docType: "finding",
+        admission: "atomic",
+        admitted: true,
+        errors: [],
+        admittedItemCount: null,
+        rejectedItemCount: 0,
+        rejectedItems: [],
+      },
+      tokens: { input: 1, output: 1, cacheRead: 0, cacheWrite: 0, reasoning: null, total: 2 },
+      attempts: [],
+    }),
+  };
+}
 
 /** A mocked harness turn that emits the given body on attempt 0, then fails. */
 function emits(body: unknown): (prompt: string, attempt: number) => Promise<FindingTurnResult> {
@@ -160,6 +222,28 @@ describe("runFindingAngle — the live finding runner (issue #32)", () => {
     // The emitted document is a real admitted `finding` doc.
     expect(result.document?.docType).toBe("finding");
     expect(result.report?.admitted).toBe(true);
+  });
+
+  it("prefers a Codex utility turn's executor provenance over the seed (#88)", async () => {
+    const runTurn = createCodexRunTurn(codexPort({ findings: [modelFinding()] }), {
+      docType: "finding",
+      patchset: { id: PATCHSET.id },
+      manifest: MANIFEST,
+      model: "gpt-5.6-terra",
+      effort: "medium",
+    });
+    const result = await runFindingAngle({
+      patchsetId: PATCHSET.id,
+      manifest: MANIFEST,
+      provenance: SEED,
+      runTurn,
+      budget: createInvocationBudget(5),
+    });
+
+    expect(result.status).toBe("ok");
+    expect(result.document?.provenance.route).toBe("utility");
+    expect(result.document?.provenance.tier).toBe("light");
+    expect(result.document?.provenance.capability).toEqual(PORT_CAPABILITY);
   });
 
   it("normalises the vote even when the model reports a different one", async () => {

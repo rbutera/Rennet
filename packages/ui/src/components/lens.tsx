@@ -6,7 +6,6 @@ const ANGLE_LABELS: Record<CanvasAngle, string> = {
   spec: "Spec",
   sequence: "Sequence",
   decisions: "Decisions",
-  claims: "Claims",
   noise: "Noise",
   flagged: "Flagged",
 };
