@@ -368,7 +368,7 @@ interface CodexResolution {
 // enters the distro through `locusCommand` — a WSL review is dual-harness rather than
 // degrading to single-Claude.
 const codexResolutions = new Map<string, Promise<CodexResolution>>();
-function getCodexResolution(locus: Locus = HOST_LOCUS): Promise<CodexResolution> {
+function getCodexResolution(locus: Locus): Promise<CodexResolution> {
   const key = locus.kind === "wsl" ? `wsl:${locus.distro}` : "host";
   let resolution = codexResolutions.get(key);
   if (!resolution) {
@@ -420,7 +420,7 @@ function getCodexResolution(locus: Locus = HOST_LOCUS): Promise<CodexResolution>
 }
 
 function getCodexAvailability(): Promise<CodexAvailability> {
-  return getCodexResolution().then((resolution) => resolution.availability);
+  return getCodexResolution(HOST_LOCUS).then((resolution) => resolution.availability);
 }
 
 // The locus-aware seat probes the live producers (refine, draft-PR-body, delta digest,

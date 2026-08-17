@@ -22,8 +22,9 @@ describe("locus threading in MAIN", () => {
 
   it("threads a repo-derived locus into every getClaudeHarness call (no host-default)", () => {
     const calls = callArgs("getClaudeHarness");
-    // The 10 read-pipeline + handoff sites all pass `(locus, distroCwd)`.
-    expect(calls.length).toBeGreaterThanOrEqual(10);
+    // Exactly the 10 read-pipeline + handoff sites, all `(locus, distroCwd)`. Exact,
+    // not `>=`: a new host-default site added later must fail this, not slip under a floor.
+    expect(calls).toHaveLength(10);
     for (const arg of calls) {
       // Every call threads the repo-resolved `locus` variable — never `HOST_LOCUS`,
       // never a zero-arg host default.
@@ -33,13 +34,22 @@ describe("locus threading in MAIN", () => {
 
   it("threads a repo-derived locus into every getCodexResolution review turn", () => {
     const calls = callArgs("getCodexResolution");
-    expect(calls.length).toBeGreaterThanOrEqual(4);
-    for (const arg of calls) {
-      // Review turns pass the repo-resolved `locus`; the sole zero-arg call is the
-      // host-global availability boot probe (no repo in scope), explicitly allowed.
-      const ok = arg === "" || arg.startsWith("locus");
-      expect(ok, `getCodexResolution(${arg}) must thread locus (or be the host probe)`).toBe(true);
-    }
+    // Exactly 6 call sites. Five review turns thread the repo-resolved `locus`; the one
+    // exception is the host-global availability boot probe, which passes `HOST_LOCUS`
+    // explicitly (no repo in scope). There is NO zero-arg form — the default parameter
+    // was removed, so `getCodexResolution()` no longer typechecks (mutation-reddens at
+    // compile). This guards the remaining risk: a review site hardcoding HOST_LOCUS.
+    expect(calls).toHaveLength(6);
+    const hostCalls = calls.filter((arg) => arg === "HOST_LOCUS");
+    const locusCalls = calls.filter((arg) => arg.startsWith("locus"));
+    expect(hostCalls).toHaveLength(1);
+    expect(locusCalls).toHaveLength(5);
+    // Bind that one HOST_LOCUS call to the boot probe specifically: it lives in
+    // `getCodexAvailability`, not in any review turn. Hardcoding HOST_LOCUS at a review
+    // site would push this count past 1 AND fail this line-context check.
+    expect(source).toContain(
+      "function getCodexAvailability(): Promise<CodexAvailability> {\n  return getCodexResolution(HOST_LOCUS)",
+    );
   });
 
   it("threads the locus through the read-pipeline via locusContextForRepo", () => {
