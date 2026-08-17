@@ -4,14 +4,14 @@ import { ClaudeAdapter } from "./claude-adapter";
 import {
   matchesConformanceMatrix,
   readTestedRange,
-  TESTED_RANGE_ARTIFACT_PATH,
   type TestedRange,
+  testedRangeArtifactPath,
 } from "./harness-tested-range";
 
 /** Read the artifact straight from disk — an INDEPENDENT source from the reader's
  *  static import, so a hand-edited constant that drifts from the file is caught. */
 function artifactFromDisk(): Record<string, TestedRange> {
-  return JSON.parse(readFileSync(TESTED_RANGE_ARTIFACT_PATH, "utf8"));
+  return JSON.parse(readFileSync(testedRangeArtifactPath(), "utf8"));
 }
 
 describe("harness tested-range artifact", () => {

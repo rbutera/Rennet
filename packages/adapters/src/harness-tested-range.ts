@@ -24,10 +24,16 @@ export interface TestedRange {
   readonly maxTested: string;
 }
 
-/** The committed artifact path — the one file a real run records into. */
-export const TESTED_RANGE_ARTIFACT_PATH = fileURLToPath(
-  new URL("./harness-tested-range.json", import.meta.url),
-);
+/**
+ * The committed artifact path — the one file a real run records into. Lazy: under
+ * the desktop bundler the `new URL(..., import.meta.url)` asset reference inlines
+ * as a `data:` URI, and an eager `fileURLToPath(data:)` throws ERR_INVALID_URL_SCHEME
+ * at import time, killing the packaged main before `app.ready`. Only the gated
+ * real conformance run (unbundled, real file URL) ever calls this.
+ */
+export function testedRangeArtifactPath(): string {
+  return fileURLToPath(new URL("./harness-tested-range.json", import.meta.url));
+}
 
 type RecordedRanges = Partial<Record<HarnessId, TestedRange>>;
 
@@ -65,7 +71,7 @@ export function readTestedRange(id: HarnessId): TestedRange | null {
  * as written.
  */
 export async function recordTestedRange(id: HarnessId, version: string): Promise<TestedRange> {
-  const raw = await readFile(TESTED_RANGE_ARTIFACT_PATH, "utf8");
+  const raw = await readFile(testedRangeArtifactPath(), "utf8");
   const ranges = JSON.parse(raw) as RecordedRanges;
   const current = ranges[id];
   const next: TestedRange = current
@@ -75,6 +81,6 @@ export async function recordTestedRange(id: HarnessId, version: string): Promise
       }
     : { min: version, maxTested: version };
   const updated: RecordedRanges = { ...ranges, [id]: next };
-  await writeFile(TESTED_RANGE_ARTIFACT_PATH, `${JSON.stringify(updated, null, 2)}\n`, "utf8");
+  await writeFile(testedRangeArtifactPath(), `${JSON.stringify(updated, null, 2)}\n`, "utf8");
   return next;
 }
