@@ -226,7 +226,10 @@ export function mapCodexError(err: CodexTurnError): HarnessError {
         ? { class: "overloaded", origin: "transport", retryable: true }
         : { class: "protocol", origin: "transport", retryable: false };
   }
-  if (classified === null && (err.source === "exit" || err.source === "spawn")) {
+  if (
+    classified === null &&
+    (err.source === "exit" || err.source === "spawn" || err.source === "parse")
+  ) {
     classified =
       err.source === "spawn"
         ? { class: "harness-unavailable", origin: "harness", retryable: false }

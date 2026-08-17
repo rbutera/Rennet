@@ -237,10 +237,10 @@ describe("CodexAdapter", () => {
     const session = await adapter(t.fn).createSession({ cwd: "/repo" });
     await session.send({ prompt: "go" });
     const { outcome } = await drain(session);
-    if (outcome?.status === "failed") {
-      expect(outcome.error.message).toBe(message);
-      expect(outcome.error.class).toBe("auth");
-    }
+    expect(outcome?.status).toBe("failed");
+    if (outcome?.status !== "failed") throw new Error("expected a failed outcome");
+    expect(outcome.error.message).toBe(message);
+    expect(outcome.error.class).toBe("auth");
   });
 
   it("cancels the turn when the signal aborts", async () => {

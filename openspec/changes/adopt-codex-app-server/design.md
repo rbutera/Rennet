@@ -21,7 +21,9 @@ Keep the shipped session model: spawn `codex app-server` per turn, `initialize` 
 
 ### D2 — Transport seam and naming
 
-`createCodexTurnTransport` keeps its name and injected-deps shape (spawn fn, locus) but speaks JSON-RPC: compose spawn argv (`codex app-server`, `--ignore-user-config`-equivalent config overrides preserved), write newline-delimited requests, parse stdout lines, route notifications into the existing native-frame normalization. The line protocol is ~30 lines (readline over stdout, JSON.parse, id-correlation map); **no new dependency**.
+`createCodexTurnTransport` keeps its name and injected-deps shape (spawn fn, locus) but speaks JSON-RPC: compose spawn argv (`codex app-server`), write newline-delimited requests, parse stdout lines, route notifications into the existing native-frame normalization. The line protocol is ~30 lines (readline over stdout, JSON.parse, id-correlation map); **no new dependency**.
+
+**Config isolation (verified empirical correction):** `codex app-server` REJECTS `--ignore-user-config` ("unexpected argument" — tested against the real binary), so the flag cannot be carried over from the exec transport. Determinism is instead pinned for the load-bearing key: the spawn composes a FULL-TABLE `-c mcp_servers=<inline TOML>` override, which REPLACES the entire `mcp_servers` table (never merges), so ONLY Rennet's canvasOps MCP server (or none, `mcp_servers={}`) is configured for the child regardless of the user's `~/.codex` config. Other user config keys load as they do for every rich client of the app-server — the exec-era "one-shot must not inherit the full agent config" isolation is not achievable via a flag here, and only the MCP surface is load-bearing for a turn.
 
 ### D3 — Frame mapping
 
@@ -67,5 +69,5 @@ New Developing reference page `codex-app-server.md`: framing, method surface use
 ## Rejected
 
 - **Daemon/proxy mode** (`app-server daemon`): shared state across turns, no present need. Revisit if spawn latency ever matters.
-- **Connecting to ChatGPT desktop's own running app-server**: undocumented socket ownership, versioned private surface, and the Store ACL problem on Windows; spawning our own child of the same binary gets the identical capability honestly.
+- **Attaching to an already-running app-server** (raised by Rai 2026-08-17; probed live before rejecting): ChatGPT desktop's own app-server is a private stdio child (observed: `codex app-server --analytics-default-enabled` under ChatGPT.app) — another process's stdio is not attachable. The `~/.codex/app-server-control/app-server-control.sock` daemon that was also running belongs to codex's SSH remote-control bootstrap, not the desktop app; it refused raw JSONL (silence), refused plain HTTP (connection failed), reports remote control `disabled`, and `codex app-server proxy` behavior drifted between the two installed versions (bundled 0.144: silent close; CLI 0.146: "control socket is already in use"). The surface is websocket-over-upgrade, auth-gated (`--ws-auth`), and upstream-flagged experimental. Meanwhile the reuse that matters already holds by construction: a spawned child shares `CODEX_HOME` — same login, same account, threads visible to the desktop app's rollout store. Revisit as an attach-first seam if OpenAI stabilizes the control socket.
 - **Keeping exec as fallback for old binaries**: two native surfaces to test forever; discovery instead reports honest unavailability with the version found (D5/D8).

@@ -43,6 +43,7 @@ import {
   defaultSpawnAppServer,
   runCodexTurn,
   type SpawnAppServer,
+  spawnFailureFrame,
 } from "./codex-app-server";
 import { sanitizeSchemaForCodex } from "./codex-exec";
 import {
@@ -91,12 +92,14 @@ export function createCodexTurnTransport(
       const program = runtimePath ?? bin;
       const programArgs = runtimePath === undefined ? args : [bin, ...args];
       const cmd = locusCommand(locus, program, programArgs, spec.cwd);
-      const conn = effects.spawn({
-        bin: cmd.file,
-        args: cmd.args,
-        cwd: cmd.cwd,
-        ...(spec.signal === undefined ? {} : { signal: spec.signal }),
-      });
+      let conn: ReturnType<SpawnAppServer>;
+      try {
+        conn = effects.spawn({ bin: cmd.file, args: cmd.args, cwd: cmd.cwd });
+      } catch (error) {
+        // A synchronous spawn throw must surface inside the event stream, not escape it.
+        yield spawnFailureFrame(error);
+        return;
+      }
       yield* runCodexTurn(conn, {
         cwd: turnCwd,
         prompt: spec.prompt,

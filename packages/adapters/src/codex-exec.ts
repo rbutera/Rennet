@@ -36,6 +36,7 @@ import {
   defaultSpawnAppServer,
   runCodexTurn,
   type SpawnAppServer,
+  spawnFailureFrame,
 } from "./codex-app-server";
 import type { CodexSessionReadResult } from "./codex-session-usage";
 
@@ -201,12 +202,15 @@ export function createCodexExecutor(
     const program = runtimePath ?? bin;
     const programArgs = runtimePath === undefined ? args : [bin, ...args];
     const cmd = locusCommand(locus, program, programArgs, cwd);
-    const conn = effects.spawn({
-      bin: cmd.file,
-      args: cmd.args,
-      cwd: cmd.cwd,
-      ...(req.signal === undefined ? {} : { signal: req.signal }),
-    });
+    let conn: ReturnType<SpawnAppServer>;
+    try {
+      conn = effects.spawn({ bin: cmd.file, args: cmd.args, cwd: cmd.cwd });
+    } catch (error) {
+      const frame = spawnFailureFrame(error);
+      const reason = frame.error?.message ?? "codex app-server failed to spawn";
+      reportFailure(reason);
+      throw new Error(reason, { cause: error });
+    }
     let terminal: CodexTurnResultFrame | null = null;
     for await (const frame of runCodexTurn(conn, {
       cwd,

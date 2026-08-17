@@ -1,14 +1,18 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { Readable } from "node:stream";
 import { describe, expect, it } from "vitest";
 import {
   type AppServerConnection,
+  type AppServerExit,
   type AppServerTurnParams,
   buildAppServerArgs,
   type CodexTurnResultFrame,
   defaultSpawnAppServer,
   mapTokenUsageBreakdown,
+  probeAppServerHandshake,
+  readAppServerMessages,
   runCodexTurn,
 } from "./codex-app-server";
 
@@ -58,43 +62,56 @@ type Handler = (
   close: () => void,
 ) => void;
 
+interface Scripted {
+  conn: AppServerConnection;
+  sent: Record<string, unknown>[];
+  order: string[];
+  killed: () => boolean;
+  resolveExit: (exit: AppServerExit) => void;
+}
+
 function scriptedConnection(
   handler: Handler,
-  exitValue: { exitCode: number | null; stderr: string; aborted: boolean } = {
-    exitCode: 0,
-    stderr: "",
-    aborted: false,
-  },
-): { conn: AppServerConnection; sent: Record<string, unknown>[]; killed: () => boolean } {
+  opts: { exit?: AppServerExit; deferExit?: boolean } = {},
+): Scripted {
   const q = makeQueue<Record<string, unknown>>();
   const sent: Record<string, unknown>[] = [];
+  const order: string[] = [];
   let killed = false;
+  let resolveExit!: (exit: AppServerExit) => void;
+  const exit = opts.deferExit
+    ? new Promise<AppServerExit>((resolve) => {
+        resolveExit = resolve;
+      })
+    : Promise.resolve(opts.exit ?? { exitCode: 0, stderr: "", aborted: false });
+  if (!opts.deferExit) resolveExit = () => undefined;
   const conn: AppServerConnection = {
     send: (message) => {
       sent.push(message);
+      if (typeof message.method === "string") order.push(`send:${message.method}`);
       handler(message, q.push, q.close);
     },
     messages: q.iterable,
     kill: () => {
       killed = true;
+      order.push("kill");
       q.close();
     },
-    exit: Promise.resolve(exitValue),
+    exit,
   };
-  return { conn, sent, killed: () => killed };
+  return { conn, sent, order, killed: () => killed, resolveExit };
 }
 
-/** The stock happy-path script: init → thread → turn, streaming a text item, usage,
- *  and a completed turn carrying the final agent message. */
+/** A realistic happy script: init → thread → turn ACK(inProgress) → stream → completed. */
 function happyHandler(finalText = '{"ok":true}'): Handler {
   return (msg, reply) => {
-    const method = msg.method;
-    const id = msg.id;
-    if (method === "initialize") {
-      reply({ id, result: {} });
-    } else if (method === "thread/start") {
+    const { method, id } = msg;
+    if (method === "initialize") reply({ id, result: {} });
+    else if (method === "thread/start")
       reply({ id, result: { thread: { id: "th_1" }, model: "gpt-5.6-obs" } });
-    } else if (method === "turn/start") {
+    else if (method === "turn/start") {
+      // The ACK response carries status "inProgress" — MUST NOT terminate the turn.
+      reply({ id, result: { turn: { id: "turn_1", status: "inProgress", items: [] } } });
       reply({ method: "turn/started", params: { threadId: "th_1", turn: { id: "turn_1" } } });
       reply({
         method: "item/agentMessage/delta",
@@ -102,11 +119,17 @@ function happyHandler(finalText = '{"ok":true}'): Handler {
       });
       reply({
         method: "item/completed",
-        params: { item: { id: "i", type: "agentMessage", text: finalText } },
+        params: {
+          threadId: "th_1",
+          turnId: "turn_1",
+          item: { id: "i", type: "agentMessage", text: finalText },
+        },
       });
       reply({
         method: "thread/tokenUsage/updated",
         params: {
+          threadId: "th_1",
+          turnId: "turn_1",
           tokenUsage: {
             total: {
               inputTokens: 10,
@@ -149,36 +172,33 @@ const PARAMS: AppServerTurnParams = {
 };
 
 describe("runCodexTurn", () => {
-  it("handshakes init → initialized → thread/start → turn/start, then completes", async () => {
+  it("handshakes init → initialized → thread/start → turn/start, then completes on turn/completed", async () => {
     const { conn, sent } = scriptedConnection(happyHandler());
     const { terminal } = await drive(conn, { ...PARAMS, model: "gpt-5.6-obs", effort: "high" });
 
-    // The exact ordered handshake.
     expect(sent.map((m) => m.method)).toEqual([
       "initialize",
       "initialized",
       "thread/start",
       "turn/start",
     ]);
-    // `initialized` MUST follow the init response, before thread/start.
     const init = sent[0] as Record<string, unknown>;
     expect((init.params as { clientInfo?: { name?: string } }).clientInfo?.name).toBe("rennet");
 
-    // turn/start carries the full-capability posture and the turn-scoped outputSchema.
     const turn = sent[3]?.params as Record<string, unknown>;
     expect(turn.threadId).toBe("th_1");
     expect(turn.input).toEqual([{ type: "text", text: "go" }]);
     expect(turn.sandboxPolicy).toEqual({ type: "dangerFullAccess" });
     expect(turn.approvalPolicy).toBe("never");
-    expect(turn.model).toBe("gpt-5.6-obs");
     expect(turn.effort).toBe("high");
     expect(turn.outputSchema).toEqual({ type: "object" });
 
-    // thread/start also composes never-ask approvals + full-access sandbox shorthand.
     const thread = sent[2]?.params as Record<string, unknown>;
     expect(thread.approvalPolicy).toBe("never");
     expect(thread.sandbox).toBe("danger-full-access");
 
+    // The turn/start ACK carried status "inProgress" — the run did NOT mis-terminate;
+    // it completed only on turn/completed.
     expect(terminal.status).toBe("completed");
     expect(terminal.finalMessage).toBe('{"ok":true}');
     expect(terminal.model).toBe("gpt-5.6-obs");
@@ -190,6 +210,35 @@ describe("runCodexTurn", () => {
       reasoning: 1,
       total: 13,
     });
+  });
+
+  it("does not terminate on the turn/start ACK response (status inProgress)", async () => {
+    // A turn/start response arrives with status inProgress and NO items; the run
+    // must keep running until the real turn/completed notification.
+    const handler: Handler = (msg, reply) => {
+      const { method, id } = msg;
+      if (method === "initialize") reply({ id, result: {} });
+      else if (method === "thread/start") reply({ id, result: { thread: { id: "t" } } });
+      else if (method === "turn/start") {
+        reply({ id, result: { turn: { id: "tn", status: "inProgress", items: [] } } });
+        reply({
+          method: "item/completed",
+          params: {
+            threadId: "t",
+            turnId: "tn",
+            item: { id: "i", type: "agentMessage", text: "done" },
+          },
+        });
+        reply({
+          method: "turn/completed",
+          params: { threadId: "t", turn: { id: "tn", status: "completed", items: [] } },
+        });
+      }
+    };
+    const { conn } = scriptedConnection(handler);
+    const { terminal } = await drive(conn, PARAMS);
+    expect(terminal.status).toBe("completed");
+    expect(terminal.finalMessage).toBe("done");
   });
 
   it("passes every app-server notification through, never dropped", async () => {
@@ -212,7 +261,7 @@ describe("runCodexTurn", () => {
       const { method, id } = msg;
       if (method === "initialize") reply({ id, result: {} });
       else if (method === "thread/start") reply({ id, result: { thread: { id: "t" } } });
-      else if (method === "turn/start") {
+      else if (method === "turn/start")
         reply({
           method: "turn/completed",
           params: {
@@ -224,7 +273,6 @@ describe("runCodexTurn", () => {
             },
           },
         });
-      }
     };
     const { conn } = scriptedConnection(handler);
     const { terminal } = await drive(conn, PARAMS);
@@ -234,7 +282,7 @@ describe("runCodexTurn", () => {
     expect(terminal.error?.codexErrorInfo).toBe("usageLimitExceeded");
   });
 
-  it("maps a JSON-RPC error response to a failed terminal", async () => {
+  it("maps a JSON-RPC error response (to one of our requests) to a failed terminal", async () => {
     const handler: Handler = (msg, reply) => {
       const { method, id } = msg;
       if (method === "initialize") reply({ id, result: {} });
@@ -249,7 +297,140 @@ describe("runCodexTurn", () => {
     expect(terminal.error?.code).toBe(-32001);
   });
 
-  it("interrupts on abort and resolves to cancelled after turn/completed(interrupted)", async () => {
+  it("ignores a FOREIGN error response (id we never sent) and still completes", async () => {
+    const handler: Handler = (msg, reply) => {
+      const { method, id } = msg;
+      if (method === "initialize") reply({ id, result: {} });
+      else if (method === "thread/start") reply({ id, result: { thread: { id: "t" } } });
+      else if (method === "turn/start") {
+        reply({ id: 9999, error: { code: -1, message: "not ours" } }); // foreign id
+        reply({
+          method: "turn/completed",
+          params: { threadId: "t", turn: { id: "tn", status: "completed", items: [] } },
+        });
+      }
+    };
+    const { conn } = scriptedConnection(handler);
+    const { terminal } = await drive(conn, PARAMS);
+    expect(terminal.status).toBe("completed");
+  });
+
+  it("ignores FOREIGN-thread notifications (surfaced, but neither mutating nor terminating)", async () => {
+    const handler: Handler = (msg, reply) => {
+      const { method, id } = msg;
+      if (method === "initialize") reply({ id, result: {} });
+      else if (method === "thread/start") reply({ id, result: { thread: { id: "mine" } } });
+      else if (method === "turn/start") {
+        // A concurrent OTHER thread's chatter must not touch our final text/usage or end us.
+        reply({
+          method: "item/completed",
+          params: {
+            threadId: "other",
+            turnId: "x",
+            item: { id: "j", type: "agentMessage", text: "STOLEN" },
+          },
+        });
+        reply({
+          method: "turn/completed",
+          params: {
+            threadId: "other",
+            turn: { id: "x", status: "failed", error: { message: "not mine" } },
+          },
+        });
+        // Our own turn then completes cleanly.
+        reply({
+          method: "item/completed",
+          params: {
+            threadId: "mine",
+            turnId: "tn",
+            item: { id: "i", type: "agentMessage", text: "mine" },
+          },
+        });
+        reply({
+          method: "turn/completed",
+          params: { threadId: "mine", turn: { id: "tn", status: "completed", items: [] } },
+        });
+      }
+    };
+    const { conn } = scriptedConnection(handler);
+    const { frames, terminal } = await drive(conn, PARAMS);
+    // The foreign notifications were surfaced (never dropped)…
+    expect(
+      frames.filter((f) => (f as { params?: { threadId?: string } }).params?.threadId === "other"),
+    ).toHaveLength(2);
+    // …but did not steal our final text or terminate us as failed.
+    expect(terminal.status).toBe("completed");
+    expect(terminal.finalMessage).toBe("mine");
+  });
+
+  it("answers a server approval request with the method's schema-valid decision", async () => {
+    const handler: Handler = (msg, reply) => {
+      const { method, id } = msg;
+      if (method === "initialize") reply({ id, result: {} });
+      else if (method === "thread/start") reply({ id, result: { thread: { id: "t" } } });
+      else if (method === "turn/start") {
+        reply({ id: 99, method: "item/commandExecution/requestApproval", params: {} });
+        reply({
+          method: "turn/completed",
+          params: { threadId: "t", turn: { id: "tn", status: "completed", items: [] } },
+        });
+      }
+    };
+    const { conn, sent } = scriptedConnection(handler);
+    const { frames, terminal } = await drive(conn, PARAMS);
+    const reply = sent.find((m) => m.id === 99 && "result" in m);
+    expect(reply).toBeDefined();
+    // v2 CommandExecutionRequestApprovalResponse requires decision "accept" — NOT an invented field.
+    expect((reply?.result as { decision?: string } | undefined)?.decision).toBe("accept");
+    expect(
+      frames.some(
+        (f) => (f as { method?: string }).method === "item/commandExecution/requestApproval",
+      ),
+    ).toBe(true);
+    expect(terminal.status).toBe("completed");
+  });
+
+  it("maps a pre-terminal process exit to a failed terminal (source exit)", async () => {
+    const handler: Handler = (msg, reply, close) => {
+      const { method, id } = msg;
+      if (method === "initialize") reply({ id, result: {} });
+      else if (method === "thread/start") reply({ id, result: { thread: { id: "t" } } });
+      else if (method === "turn/start") close();
+    };
+    const { conn } = scriptedConnection(handler, {
+      exit: { exitCode: 1, stderr: "boom", aborted: false },
+    });
+    const { terminal } = await drive(conn, PARAMS);
+    expect(terminal.status).toBe("failed");
+    expect(terminal.error?.source).toBe("exit");
+  });
+
+  it("maps a spawn failure (exit carries spawnError) to a failed terminal (source spawn)", async () => {
+    const handler: Handler = (_msg, _reply, close) => close();
+    const { conn } = scriptedConnection(handler, {
+      exit: { exitCode: null, stderr: "", aborted: false, spawnError: "spawn codex ENOENT" },
+    });
+    const { terminal } = await drive(conn, PARAMS);
+    expect(terminal.status).toBe("failed");
+    expect(terminal.error?.source).toBe("spawn");
+    expect(terminal.error?.message).toMatch(/ENOENT/);
+  });
+
+  it("maps an unparseable stdout line to a failed terminal (source parse)", async () => {
+    const handler: Handler = (msg, reply) => {
+      const { method, id } = msg;
+      if (method === "initialize") reply({ id, result: {} });
+      else if (method === "thread/start") reply({ id, result: { thread: { id: "t" } } });
+      else if (method === "turn/start")
+        reply({ __rennetParseError: "<html>gateway timeout</html>" });
+    };
+    const { conn } = scriptedConnection(handler);
+    const { terminal } = await drive(conn, PARAMS);
+    expect(terminal.status).toBe("failed");
+    expect(terminal.error?.source).toBe("parse");
+  });
+
+  it("interrupts on abort, sends turn/interrupt BEFORE kill, and awaits exit before resolving", async () => {
     const abort = new AbortController();
     const handler: Handler = (msg, reply) => {
       const { method, id } = msg;
@@ -263,70 +444,38 @@ describe("runCodexTurn", () => {
           params: { threadId: "t", turn: { id: "tn", status: "interrupted" } },
         });
     };
-    const { conn, sent } = scriptedConnection(handler);
-    const iterate = drive(conn, { ...PARAMS, signal: abort.signal });
-    // Let the turn get to `turn/started`, then abort.
+    const s = scriptedConnection(handler, { deferExit: true });
+    let settled = false;
+    const running = drive(s.conn, { ...PARAMS, signal: abort.signal }).then((r) => {
+      settled = true;
+      return r;
+    });
     await new Promise((resolve) => setTimeout(resolve, 10));
     abort.abort();
-    const { terminal } = await iterate;
-    expect(sent.some((m) => m.method === "turn/interrupt")).toBe(true);
+    // Give the interrupt→turn/completed(interrupted)→kill sequence a tick.
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // turn/interrupt was sent, and it was sent BEFORE the kill.
+    expect(s.sent.some((m) => m.method === "turn/interrupt")).toBe(true);
+    expect(s.order.indexOf("send:turn/interrupt")).toBeLessThan(s.order.indexOf("kill"));
+    // The run has NOT resolved yet — the finally is awaiting the process exit.
+    expect(settled).toBe(false);
+    s.resolveExit({ exitCode: 0, stderr: "", aborted: false });
+    const { terminal } = await running;
     expect(terminal.status).toBe("cancelled");
-  });
-
-  it("maps a pre-terminal process exit to a failed terminal", async () => {
-    const handler: Handler = (msg, reply, close) => {
-      const { method, id } = msg;
-      if (method === "initialize") reply({ id, result: {} });
-      else if (method === "thread/start") reply({ id, result: { thread: { id: "t" } } });
-      else if (method === "turn/start") close(); // process died before completing
-    };
-    const { conn } = scriptedConnection(handler, {
-      exitCode: 1,
-      stderr: "boom",
-      aborted: false,
-    });
-    const { terminal } = await drive(conn, PARAMS);
-    expect(terminal.status).toBe("failed");
-    expect(terminal.error?.source).toBe("exit");
-  });
-
-  it("answers a server-initiated approval request affirmatively and surfaces it", async () => {
-    const handler: Handler = (msg, reply) => {
-      const { method, id } = msg;
-      if (method === "initialize") reply({ id, result: {} });
-      else if (method === "thread/start") reply({ id, result: { thread: { id: "t" } } });
-      else if (method === "turn/start") {
-        reply({ id: 99, method: "applyPatchApproval", params: {} });
-        reply({
-          method: "turn/completed",
-          params: { threadId: "t", turn: { id: "tn", status: "completed", items: [] } },
-        });
-      }
-    };
-    const { conn, sent } = scriptedConnection(handler);
-    const { frames, terminal } = await drive(conn, PARAMS);
-    // The approval got an affirmative response, never queued for a human.
-    const reply = sent.find((m) => m.id === 99 && "result" in m);
-    expect(reply).toBeDefined();
-    expect((reply?.result as { approved?: boolean } | undefined)?.approved).toBe(true);
-    // And it is surfaced as evidence in the frame stream.
-    expect(frames.some((f) => (f as { method?: string }).method === "applyPatchApproval")).toBe(
-      true,
-    );
-    expect(terminal.status).toBe("completed");
   });
 });
 
 describe("buildAppServerArgs", () => {
-  it("prefixes app-server and rides canvasOps MCP URLs on -c overrides", () => {
-    const args = buildAppServerArgs({ canvasops: { url: "http://127.0.0.1:5000/mcp" } });
-    expect(args[0]).toBe("app-server");
-    expect(args).toContain("-c");
-    expect(args).toContain("mcp_servers.canvasops.url=http://127.0.0.1:5000/mcp");
+  it("pins a FULL-TABLE mcp_servers override (only canvasOps, replacing user config)", () => {
+    expect(buildAppServerArgs({ canvasops: { url: "http://127.0.0.1:5000/mcp" } })).toEqual([
+      "app-server",
+      "-c",
+      'mcp_servers={canvasops={url="http://127.0.0.1:5000/mcp"}}',
+    ]);
   });
 
-  it("is just app-server when no MCP servers are supplied", () => {
-    expect(buildAppServerArgs()).toEqual(["app-server"]);
+  it("emits an EMPTY full-table override when no MCP servers are supplied (isolates user MCP)", () => {
+    expect(buildAppServerArgs()).toEqual(["app-server", "-c", "mcp_servers={}"]);
   });
 });
 
@@ -341,6 +490,84 @@ describe("mapTokenUsageBreakdown", () => {
         totalTokens: 105,
       }),
     ).toEqual({ input: 40, output: 5, cacheRead: 60, cacheWrite: 0, reasoning: 2, total: 105 });
+  });
+});
+
+describe("readAppServerMessages (stdout parser)", () => {
+  async function collect(chunks: string[]): Promise<Record<string, unknown>[]> {
+    const out: Record<string, unknown>[] = [];
+    for await (const message of readAppServerMessages(Readable.from(chunks))) out.push(message);
+    return out;
+  }
+
+  it("handles multiple frames per chunk, a line split across chunks, and a trailing unterminated line", async () => {
+    const messages = await collect([
+      '{"method":"a"}\n{"me',
+      'thod":"b"}\n',
+      '{"method":"c"}', // no trailing newline — must still be emitted on stream end
+    ]);
+    expect(messages.map((m) => m.method)).toEqual(["a", "b", "c"]);
+  });
+
+  it("surfaces a malformed line as a parse-error sentinel (never silently dropped)", async () => {
+    const messages = await collect(['{"method":"a"}\n', "not json at all\n", '{"method":"b"}\n']);
+    expect(messages[0]?.method).toBe("a");
+    expect(messages[1]?.__rennetParseError).toBe("not json at all");
+    expect(messages[2]?.method).toBe("b");
+  });
+});
+
+describe("probeAppServerHandshake", () => {
+  function spawnFrom(handler: Handler) {
+    return () => scriptedConnection(handler).conn;
+  }
+
+  it("certifies only on an initialize RESPONSE with the right id and a result", async () => {
+    const ok = await probeAppServerHandshake({
+      candidate: { path: "/codex" },
+      spawn: spawnFrom((msg, reply) => {
+        if (msg.method === "initialize") reply({ id: msg.id, result: { userAgent: "codex" } });
+      }),
+    });
+    expect(ok).toBe(true);
+  });
+
+  it("does NOT certify when initialize answers with an ERROR", async () => {
+    const ok = await probeAppServerHandshake({
+      candidate: { path: "/codex" },
+      spawn: spawnFrom((msg, reply) => {
+        if (msg.method === "initialize")
+          reply({ id: msg.id, error: { code: -32600, message: "bad" } });
+      }),
+    });
+    expect(ok).toBe(false);
+  });
+
+  it("ignores an unrelated notification first, then certifies on the real response", async () => {
+    const ok = await probeAppServerHandshake({
+      candidate: { path: "/codex" },
+      spawn: spawnFrom((msg, reply) => {
+        if (msg.method === "initialize") {
+          reply({ method: "warning", params: { message: "hi" } });
+          reply({ id: msg.id, result: {} });
+        }
+      }),
+    });
+    expect(ok).toBe(true);
+  });
+
+  it("does NOT certify on a wrong-id response only", async () => {
+    const ok = await probeAppServerHandshake({
+      candidate: { path: "/codex" },
+      timeoutMs: 50,
+      spawn: spawnFrom((msg, reply, close) => {
+        if (msg.method === "initialize") {
+          reply({ id: 2, result: {} }); // never id 1
+          close();
+        }
+      }),
+    });
+    expect(ok).toBe(false);
   });
 });
 
@@ -399,4 +626,15 @@ describe("defaultSpawnAppServer", () => {
       }
     },
   );
+
+  it("reports a spawn failure (ENOENT) as spawnError on exit, not a throw", async () => {
+    const conn = defaultSpawnAppServer({
+      bin: "/no/such/codex-binary-xyz",
+      args: ["app-server"],
+      cwd: undefined,
+    });
+    const exit = await conn.exit;
+    expect(exit.spawnError).toBeDefined();
+    conn.kill();
+  });
 });

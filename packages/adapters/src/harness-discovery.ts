@@ -10,42 +10,7 @@ import {
   toWindowsView,
 } from "@rennet/core";
 import { execa } from "execa";
-import { CODEX_CLIENT_INFO, defaultSpawnAppServer } from "./codex-app-server";
-
-/** Bounded `codex app-server` handshake: spawn, send `initialize`, resolve true iff
- *  the child answers a JSON-RPC line within the timeout, then kill. Never throws. */
-async function realAppServerHandshake(
-  candidate: { readonly path: string; readonly runtimePath?: string },
-  locus: Locus,
-  timeoutMs = 10_000,
-): Promise<boolean> {
-  const args = ["app-server"];
-  const program = candidate.runtimePath ?? candidate.path;
-  const programArgs = candidate.runtimePath === undefined ? args : [candidate.path, ...args];
-  const cmd = locusCommand(locus, program, programArgs);
-  const conn = defaultSpawnAppServer({ bin: cmd.file, args: cmd.args, cwd: undefined });
-  let timer: NodeJS.Timeout | undefined;
-  try {
-    conn.send({ id: 1, method: "initialize", params: { clientInfo: CODEX_CLIENT_INFO } });
-    return await Promise.race([
-      (async () => {
-        for await (const message of conn.messages) {
-          void message; // any well-formed line means it answered as an app-server
-          return true;
-        }
-        return false;
-      })(),
-      new Promise<boolean>((resolve) => {
-        timer = setTimeout(() => resolve(false), timeoutMs);
-      }),
-    ]);
-  } catch {
-    return false;
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-    conn.kill();
-  }
-}
+import { probeAppServerHandshake } from "./codex-app-server";
 
 /**
  * Join path segments for a platform, NOT the host's (add-windows-support). A Windows
@@ -498,7 +463,7 @@ export async function wslDiscoveryDeps(distro: string): Promise<DiscoveryDeps> {
         return null;
       }
     },
-    appServerHandshake: (candidate) => realAppServerHandshake(candidate, locus),
+    appServerHandshake: (candidate) => probeAppServerHandshake({ candidate, locus }),
   };
 }
 
@@ -546,7 +511,7 @@ export function defaultCodexDiscoveryDeps(): DiscoveryDeps {
         return null;
       }
     },
-    appServerHandshake: (candidate) => realAppServerHandshake(candidate, HOST_LOCUS),
+    appServerHandshake: (candidate) => probeAppServerHandshake({ candidate, locus: HOST_LOCUS }),
   };
 }
 

@@ -108,10 +108,34 @@ describe("Codex transport locus composition", () => {
     expect(call.bin).toBe("codex");
     expect(call.args[0]).toBe("app-server");
     expect(call.cwd).toBe("/home/rai/repo");
-    // canvasOps MCP URL rides a spawn-time -c override.
-    expect(call.args).toContain("mcp_servers.canvasops.url=http://127.0.0.1:5000/mcp");
+    // canvasOps MCP URL rides a spawn-time FULL-TABLE -c override (replaces user config).
+    expect(call.args).toContain("-c");
+    expect(call.args).toContain('mcp_servers={canvasops={url="http://127.0.0.1:5000/mcp"}}');
     // turn/start ran in the host repo cwd.
     expect(turnStarts[0]?.cwd).toBe("/home/rai/repo");
+  });
+
+  it("surfaces a synchronous spawn throw inside the event stream (never escapes it)", async () => {
+    const effects: CodexTransportEffects = {
+      spawn: () => {
+        throw new Error("boom: spawn EACCES");
+      },
+    };
+    const frames: unknown[] = [];
+    for await (const frame of createCodexTurnTransport(
+      "codex",
+      effects,
+    )({
+      cwd: "/repo",
+      prompt: "go",
+    })) {
+      frames.push(frame);
+    }
+    const terminal = frames.find((f) => (f as { rennet?: string }).rennet === "turn-result") as
+      | { status?: string; error?: { source?: string } }
+      | undefined;
+    expect(terminal?.status).toBe("failed");
+    expect(terminal?.error?.source).toBe("spawn");
   });
 
   it("wsl locus wraps the spawn in wsl.exe -e with a distro-native turn cwd", async () => {
