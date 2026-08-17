@@ -320,7 +320,8 @@ function canvasStateSection(rows: readonly CanvasStateSummary[]): string[] {
   if (rows.length <= PRIMER_MAX_CANVAS_ROWS) return rows.map(canvasStateLine);
   const shown = rows.slice(0, PRIMER_MAX_CANVAS_ROWS);
   const rest = rows.slice(PRIMER_MAX_CANVAS_ROWS);
-  const sum = (pick: (r: CanvasStateSummary) => number) => rest.reduce((acc, r) => acc + pick(r), 0);
+  const sum = (pick: (r: CanvasStateSummary) => number) =>
+    rest.reduce((acc, r) => acc + pick(r), 0);
   const elements = sum((r) => r.elements);
   const dispositioned = sum((r) => r.coverage.dispositioned);
   const paths = sum((r) => r.coverage.paths);

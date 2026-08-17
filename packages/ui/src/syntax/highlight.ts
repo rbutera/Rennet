@@ -97,8 +97,7 @@ function readNumber(code: string, i: number): number {
   if (code.charAt(j) === "0" && j + 1 < n) {
     const prefix = code.charAt(j + 1).toLowerCase();
     if (prefix === "x" || prefix === "b" || prefix === "o") {
-      const isRadixDigit =
-        prefix === "x" ? isHexDigit : prefix === "b" ? isBinDigit : isOctDigit;
+      const isRadixDigit = prefix === "x" ? isHexDigit : prefix === "b" ? isBinDigit : isOctDigit;
       j += 2;
       const digitsStart = j;
       while (j < n && (isRadixDigit(code.charAt(j)) || code.charAt(j) === "_")) j += 1;
