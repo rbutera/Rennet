@@ -2,12 +2,14 @@
  * Rennet documentation theme — Starlight override.
  *
  * PROVENANCE. Every colour, radius, and type role below is taken from — or
- * derived by stated interpolation from — the product's design system, so the
- * docs track the app and the marketing site:
- *   - packages/ui/src/tokens.css  — canonical palette (dark "bioluminescent
- *     twilight" default + light "bright room"); the main site copies it verbatim.
- *   - DESIGN.md (repo root)       — type roles, semantic hues, radii, do's/don'ts.
- * When tokens.css changes, update the hex values here in the same change.
+ * derived by stated interpolation from — the marketing site's palette, so the
+ * docs read as the same public surface:
+ *   - apps/marketing/src/styles/global.css — canonical marketing palette
+ *     (warm light canvas #f4f2ed, cool dark canvas #0e1116, blue/amber/green).
+ *   - DESIGN.md (repo root) — type roles, semantic hues, radii, do's/don'ts.
+ * When the marketing palette changes, update the hex values here in the same
+ * change. Neutral-ramp intermediates (gray-1/2/7, inline-code chip) are stated
+ * interpolations between marketing ink/ink-soft/line/canvas, not new hues.
  *
  * DOCTRINE (kept, not reinvented):
  *   - Monochrome carries the identity. Three semantic hues only:
@@ -28,35 +30,35 @@
   /* Neutral ramp. Starlight semantics: --sl-color-white = highest-contrast
      (headings/strong), gray-2 = body text, gray-3 = muted, gray-5 = borders,
      gray-6 = sidebar/nav surface, black = page canvas. */
-  --sl-color-white: #f0f2f5;
-  --sl-color-gray-1: #dce0e6;
-  --sl-color-gray-2: #c6cbd3; /* body text */
-  --sl-color-gray-3: #8b929c; /* muted / secondary */
-  --sl-color-gray-4: #565c66;
-  --sl-color-gray-5: #2d333b; /* borders (DESIGN dark-line) */
-  --sl-color-gray-6: #171a21; /* sidebar / nav surface (tokens --surface) */
+  --sl-color-white: #f1f0eb; /* marketing --ink */
+  --sl-color-gray-1: #d9dad6;
+  --sl-color-gray-2: #c1c6cb; /* body text */
+  --sl-color-gray-3: #a8b0ba; /* muted (marketing --ink-soft) */
+  --sl-color-gray-4: #4d5660; /* marketing --line-strong */
+  --sl-color-gray-5: #2d333b; /* borders (marketing --line) */
+  --sl-color-gray-6: #15191f; /* sidebar / nav surface (marketing --surface) */
   --sl-color-gray-7: #12151b;
-  --sl-color-black: #0e1116; /* canvas (DESIGN dark-canvas) */
+  --sl-color-black: #0e1116; /* canvas (marketing --canvas) */
 
   /* Review blue — the one link/selection/structure hue. */
-  --sl-color-accent-low: #172532; /* subtle fill (tokens --accent-surface) */
-  --sl-color-accent: #3f7fb5; /* mid: indicators, borders */
-  --sl-color-accent-high: #8cc0e8; /* bright: link text (tokens --accent) */
+  --sl-color-accent-low: #1c303d; /* subtle fill (marketing --blue-soft) */
+  --sl-color-accent: #5f96bd; /* mid: indicators, borders */
+  --sl-color-accent-high: #8bbddd; /* bright: link text (marketing --blue) */
 
-  /* Semantic aside hues, mapped onto Starlight's blue/orange/red + a green for
-     tip. tokens.css *-fill / *-line translucent pairs. */
-  --sl-color-blue: rgba(111, 178, 201, 0.35); /* note border (--private-line) */
-  --sl-color-blue-high: #a9d0ee;
-  --sl-color-blue-low: rgba(111, 178, 201, 0.13); /* note fill */
-  --sl-color-orange: rgba(214, 167, 91, 0.38); /* caution border (--amber-line) */
-  --sl-color-orange-high: #e2b266;
-  --sl-color-orange-low: rgba(214, 167, 91, 0.12);
-  --sl-color-red: rgba(219, 122, 106, 0.4); /* danger border (--danger) */
-  --sl-color-red-high: #e59684;
-  --sl-color-red-low: rgba(219, 122, 106, 0.13);
-  --sl-color-green: rgba(102, 169, 124, 0.38); /* tip border (--green-line) */
-  --sl-color-green-high: #8cc79e;
-  --sl-color-green-low: rgba(102, 169, 124, 0.14);
+  /* Semantic aside hues on Starlight's blue/orange/red + a green for tip.
+     Solid *-soft fills and hue-derived 1px borders, per marketing. */
+  --sl-color-blue: rgba(139, 189, 221, 0.35); /* note border */
+  --sl-color-blue-high: #a9cee7;
+  --sl-color-blue-low: #1c303d; /* note fill (marketing --blue-soft) */
+  --sl-color-orange: rgba(221, 166, 100, 0.38); /* caution border */
+  --sl-color-orange-high: #dda664; /* marketing --amber */
+  --sl-color-orange-low: #342619; /* marketing --amber-soft */
+  --sl-color-red: rgba(217, 139, 131, 0.4); /* danger border */
+  --sl-color-red-high: #d98b83; /* marketing --red */
+  --sl-color-red-low: #3b2424; /* marketing --red-soft */
+  --sl-color-green: rgba(136, 188, 155, 0.38); /* tip border */
+  --sl-color-green-high: #88bc9b; /* marketing --green */
+  --sl-color-green-low: #1d3026; /* marketing --green-soft */
 
   --sl-color-text: var(--sl-color-gray-2);
   --sl-color-text-accent: var(--sl-color-accent-high);
@@ -65,7 +67,7 @@
   --sl-color-bg: var(--sl-color-black);
   --sl-color-bg-nav: #0e1116; /* opaque chrome */
   --sl-color-bg-sidebar: var(--sl-color-gray-6);
-  --sl-color-bg-inline-code: #1c2029; /* solid chip, not translucent */
+  --sl-color-bg-inline-code: #1a1f27; /* solid chip (marketing --surface-strong) */
   --sl-color-bg-accent: var(--sl-color-accent-high);
 
   --sl-color-hairline: var(--sl-color-gray-5);
@@ -83,24 +85,22 @@
   --sl-font-mono: ui-monospace, "SF Mono", Menlo, monospace;
   --rennet-display: "Helvetica Neue", "Instrument Sans Variable", Arial, sans-serif;
 
-  /* Button ink (design-system primary: inverted against the field). */
-  --rennet-btn-bg: #edeff2;
-  --rennet-btn-text: #101318;
+  /* Button ink (marketing --inverse / --inverse-text). */
+  --rennet-btn-bg: #e9e7e1;
+  --rennet-btn-text: #12151a;
   --rennet-btn-border: rgba(255, 255, 255, 0.5);
 
-  /* Wordmark ink (tokens --mark-ink): monochrome identity, never link blue. */
-  --rennet-mark-ink: #f7f4ee;
+  /* Selection: tinted from review blue. */
+  --rennet-selection: rgba(139, 189, 221, 0.25);
 
-  /* Selection: tinted from the private backlight blue. */
-  --rennet-selection: rgba(111, 178, 201, 0.26);
-
-  /* Code frame surface (expressive-code): opaque, 1px hairline, 12px radius. */
-  --ec-codeBg: #14161b; /* tokens --code-bg */
-  --ec-frm-edBg: #14161b;
-  --ec-frm-trmBg: #14161b;
-  --ec-frm-edTabBarBg: #12141a;
-  --ec-frm-edActTabBg: #14161b;
-  --ec-frm-trmTtbBg: #12141a;
+  /* Code frame surface (expressive-code): opaque, 1px hairline, 12px radius.
+     Marketing --surface for the code field, gray-7 for tab bars. */
+  --ec-codeBg: #15191f;
+  --ec-frm-edBg: #15191f;
+  --ec-frm-trmBg: #15191f;
+  --ec-frm-edTabBarBg: #12151b;
+  --ec-frm-edActTabBg: #15191f;
+  --ec-frm-trmTtbBg: #12151b;
   --ec-brdCol: var(--sl-color-gray-5);
   --ec-frm-edTabBarBrdBtmCol: var(--sl-color-gray-5);
   --ec-frm-trmTtbBrdBtmCol: var(--sl-color-gray-5);
@@ -123,57 +123,55 @@
  *  LIGHT — "bright room"                                        *
  * ============================================================ */
 :root[data-theme="light"] {
-  --sl-color-white: #12151a; /* darkest text/headings (DESIGN light-ink) */
-  --sl-color-gray-1: #1e2126; /* tokens light --text */
-  --sl-color-gray-2: #363b43; /* body text */
-  --sl-color-gray-3: #59616b; /* muted (DESIGN light-muted) */
-  --sl-color-gray-4: #8a919b;
-  --sl-color-gray-5: #d5dae1; /* borders */
-  --sl-color-gray-6: #eef1f5; /* sidebar / nav surface */
-  --sl-color-gray-7: #e7ebf0;
-  --sl-color-black: #f3f5f8; /* canvas (tokens light --surface) */
+  --sl-color-white: #111419; /* darkest text/headings (marketing --ink) */
+  --sl-color-gray-1: #23272d;
+  --sl-color-gray-2: #343a41; /* body text */
+  --sl-color-gray-3: #59616b; /* muted (marketing --ink-soft) */
+  --sl-color-gray-4: #aaa8a2; /* marketing --line-strong */
+  --sl-color-gray-5: #d7d4cd; /* borders (marketing --line, warm) */
+  --sl-color-gray-6: #fcfbf8; /* sidebar / nav surface (marketing --surface) */
+  --sl-color-gray-7: #f7f5f0;
+  --sl-color-black: #f4f2ed; /* canvas (marketing --canvas, warm) */
 
-  --sl-color-accent-low: #e8f0f7; /* tokens light --accent-surface */
-  --sl-color-accent: #3f82bb;
-  --sl-color-accent-high: #2a6fae; /* links (tokens light --accent) */
+  --sl-color-accent-low: #e0ebf1; /* marketing --blue-soft */
+  --sl-color-accent: #4a7fa4; /* mid: indicators, borders */
+  --sl-color-accent-high: #396f96; /* links (marketing --blue) */
 
-  --sl-color-blue: rgba(60, 140, 168, 0.32); /* note border */
-  --sl-color-blue-high: #24657f;
-  --sl-color-blue-low: rgba(60, 140, 168, 0.1);
-  --sl-color-orange: rgba(178, 110, 31, 0.32); /* caution */
-  --sl-color-orange-high: #96590f;
-  --sl-color-orange-low: rgba(178, 110, 31, 0.1);
-  --sl-color-red: rgba(178, 59, 43, 0.34); /* danger */
-  --sl-color-red-high: #b23b2b;
-  --sl-color-red-low: rgba(178, 59, 43, 0.09);
-  --sl-color-green: rgba(62, 122, 78, 0.3); /* tip */
-  --sl-color-green-high: #2e6b45;
-  --sl-color-green-low: rgba(62, 122, 78, 0.11);
+  --sl-color-blue: rgba(57, 111, 150, 0.32); /* note border */
+  --sl-color-blue-high: #2e5a7a;
+  --sl-color-blue-low: #e0ebf1; /* marketing --blue-soft */
+  --sl-color-orange: rgba(168, 97, 37, 0.32); /* caution */
+  --sl-color-orange-high: #8a4f1e; /* darkened marketing --amber for text */
+  --sl-color-orange-low: #f1e2d0; /* marketing --amber-soft */
+  --sl-color-red: rgba(170, 76, 69, 0.34); /* danger */
+  --sl-color-red-high: #8f3f39; /* darkened marketing --red for text */
+  --sl-color-red-low: #f1dfdc; /* marketing --red-soft */
+  --sl-color-green: rgba(65, 116, 91, 0.3); /* tip */
+  --sl-color-green-high: #35604b; /* darkened marketing --green for text */
+  --sl-color-green-low: #dce9e0; /* marketing --green-soft */
 
-  --sl-color-bg-nav: #f3f5f8; /* opaque chrome */
-  --sl-color-bg-inline-code: #e6eaf0;
+  --sl-color-bg-nav: #f4f2ed; /* opaque chrome */
+  --sl-color-bg-inline-code: #edeae3; /* warm chip between line and canvas */
 
-  --sl-color-hairline-light: rgba(30, 40, 52, 0.06);
-  --sl-color-hairline-shade: rgba(46, 58, 72, 0.14);
+  --sl-color-hairline-light: rgba(17, 20, 25, 0.05);
+  --sl-color-hairline-shade: rgba(26, 31, 37, 0.14);
 
-  --sl-shadow-sm: 0 1px 2px rgba(46, 58, 72, 0.12);
-  --sl-shadow-md: 0 2px 10px rgba(46, 58, 72, 0.12);
-  --sl-shadow-lg: 0 14px 40px rgba(46, 58, 72, 0.18);
+  --sl-shadow-sm: 0 1px 2px rgba(26, 31, 37, 0.12);
+  --sl-shadow-md: 0 2px 10px rgba(26, 31, 37, 0.12);
+  --sl-shadow-lg: 0 14px 40px rgba(26, 31, 37, 0.18);
 
-  --rennet-btn-bg: #1e2126; /* dark ink button on a light field */
-  --rennet-btn-text: #ffffff;
+  --rennet-btn-bg: #11151a; /* marketing --inverse: dark ink on a light field */
+  --rennet-btn-text: #f5f3ee; /* marketing --inverse-text */
   --rennet-btn-border: #0f1115;
 
-  --rennet-mark-ink: #0b0d10;
+  --rennet-selection: rgba(57, 111, 150, 0.16);
 
-  --rennet-selection: rgba(42, 111, 174, 0.18);
-
-  --ec-codeBg: #ffffff; /* tokens light --code-bg */
+  --ec-codeBg: #ffffff; /* marketing --surface-strong */
   --ec-frm-edBg: #ffffff;
   --ec-frm-trmBg: #ffffff;
-  --ec-frm-edTabBarBg: #eef1f5;
+  --ec-frm-edTabBarBg: #f7f5f0;
   --ec-frm-edActTabBg: #ffffff;
-  --ec-frm-trmTtbBg: #eef1f5;
+  --ec-frm-trmTtbBg: #f7f5f0;
 
   --pagefind-ui-background: #ffffff;
 }
@@ -182,14 +180,12 @@
  *  Type — display voice on headings, comfortable body rhythm   *
  * ============================================================ */
 
-/* Site title matches the main site's wordmark exactly (site/styles.css
-   .wordmark): body sans at 650, +0.005em, mark-ink. */
-.site-title,
-a.site-title {
-  font-family: var(--sl-font);
-  font-weight: 650;
-  letter-spacing: 0.005em;
-  color: var(--rennet-mark-ink);
+/* The header identity is the traced lockup SVG (replacesTitle in
+   astro.config.mjs) — same asset the marketing site mastheads. Size it to the
+   header and never restyle its geometry. */
+.site-title img {
+  height: 1.75rem;
+  width: auto;
 }
 
 /* Prose measure: Starlight's layout reads this from the root, so it must be
