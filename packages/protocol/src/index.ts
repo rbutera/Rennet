@@ -2675,6 +2675,13 @@ export function parseCommandOutput<K extends CommandName>(
 export interface RennetBridge {
   invoke<K extends CommandName>(name: K, input: CommandInput<K>): Promise<CommandOutput<K>>;
   /**
+   * The host OS platform (`process.platform`), so the renderer can gate
+   * platform-specific chrome — e.g. reserving the macOS traffic-light inset only on
+   * `"darwin"`. Optional: a non-Electron host (tests) omits it and the renderer skips
+   * platform gating (default, un-inset chrome).
+   */
+  platform?: string;
+  /**
    * Subscribe to live progress events pushed by a long-running command, keyed by
    * the `commandId` the caller passes to `invoke`. Returns an unsubscribe. Today
    * this carries `project.process`'s snapshot-build narration. Optional: a bridge

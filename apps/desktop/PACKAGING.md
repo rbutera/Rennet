@@ -146,7 +146,11 @@ pnpm exec nx run rennet-desktop:start
 ```
 
 The `start` target builds with Vite and launches Electron — the same
-cross-platform targets used on macOS. There is **no POSIX login shell on Windows**:
+cross-platform targets used on macOS. The dev run has no exe-embedded icon, so the
+window loads the brand `.ico` from `brand/exports/app-icons/windows/` directly and
+sets a stable taskbar identity (`com.rennet.desktop`); if the brand file is missing
+it falls back to Electron's default icon rather than failing. There is **no POSIX
+login shell on Windows**:
 harness discovery uses the process environment plus curated Windows install
 locations (`%APPDATA%\npm`, `%LOCALAPPDATA%\Programs`, scoop/bun/volta), so no
 `zsh`/`bash` is needed. For a WSL-locus project, `git`/`gh`/`claude`/`codex` run

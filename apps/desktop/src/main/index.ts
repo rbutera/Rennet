@@ -194,6 +194,7 @@ import { loadReviewOwnership } from "./review-ownership";
 import { buildReviewCanvasesInput } from "./review-pipeline-input";
 import { createSettingsComposition } from "./settings";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
+import { APP_USER_MODEL_ID, brandWindowIcon } from "./window-identity";
 
 const execFileAsync = promisify(execFile);
 
@@ -1724,6 +1725,11 @@ async function createWindow(): Promise<void> {
         ? { backgroundMaterial: "acrylic" as const, backgroundColor: "#00000000" }
         : { transparent: true, backgroundColor: "#00000000" }),
     title: "Rennet",
+    // Dev runs (and Linux) have no exe-embedded icon, so without this they show the
+    // default Electron icon in the titlebar/taskbar. Resolved lazily and only when
+    // the brand file exists — the packaged win32 exe carries the `.ico` itself, so a
+    // missing file degrades to Electron's default rather than throwing.
+    icon: brandWindowIcon(__dirname, process.platform),
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
       contextIsolation: true,
@@ -1743,6 +1749,9 @@ async function createWindow(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  // Stable Windows taskbar/toast identity — set before any window so grouping,
+  // pinning, and notifications attach to this AUMID instead of a per-exe default.
+  if (process.platform === "win32") app.setAppUserModelId(APP_USER_MODEL_ID);
   store = new SqliteReviewStore(join(app.getPath("userData"), "rennet.sqlite"));
   projectStore = new FileProjectStore(join(app.getPath("userData"), "projects.json"));
   service = new ReviewService(capture, store);

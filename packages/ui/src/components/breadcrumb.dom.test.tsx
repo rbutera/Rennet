@@ -20,7 +20,7 @@ describe("Breadcrumb", () => {
 
     expect(buttons).toHaveLength(stack.length);
     expect(buttons.map((button) => button.textContent?.trim())).toEqual([
-      "⌂Projects",
+      "Projects",
       "orbital",
       "feat/rate-limiting",
       "Draft",

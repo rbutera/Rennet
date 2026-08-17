@@ -18,6 +18,7 @@ import {
   targetItemCount,
 } from "../canvas/publish";
 import { BlockedIngestionDisclosure } from "./flagged";
+import { ArrowLeftIcon } from "./icons";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The PAPER (issue #22 core; NARROWED by R40, issue #101). The ONLY solid object
@@ -520,7 +521,7 @@ export function PublishSheet({
             {/* The paper's OTHER action (R40): back to the draft, where editing
                 lives. The paper itself is sign-only. */}
             <button type="button" className="publish-sheet-back" onClick={() => onBack?.()}>
-              ← Back to the draft
+              <ArrowLeftIcon size={13} /> Back to the draft
             </button>
             <button
               type="button"
@@ -606,7 +607,7 @@ function renderPrSubmission(submission: PrSubmission) {
       </div>
       <p className="publish-sheet-pr-branches" data-testid="pr-branches">
         <code className="publish-sheet-pr-base">{submission.base}</code>
-        <span aria-hidden="true"> ← </span>
+        <ArrowLeftIcon size={11} />
         <code className="publish-sheet-pr-head-ref">{submission.head}</code>
       </p>
       <div className="publish-sheet-pr-body" data-testid="pr-body">

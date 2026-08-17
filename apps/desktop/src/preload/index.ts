@@ -13,6 +13,9 @@ const MENU_UPDATE_CHANNEL = "rennet:menu-update";
 const MENU_RUN_CHANNEL = "rennet:menu-run";
 
 const bridge: RennetBridge = {
+  // The host platform, so the renderer can gate macOS-only chrome (traffic-light
+  // inset). Available in the sandboxed preload's `process` polyfill.
+  platform: process.platform,
   invoke: (name, input) => ipcRenderer.invoke("rennet:invoke", { name, input }),
   // Subscribe to a command's live progress, keyed by the `commandId` the caller
   // passes to `invoke`. Filters the shared push channel to this invocation and

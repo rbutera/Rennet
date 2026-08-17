@@ -20,7 +20,8 @@ import {
   type KeybindingOverrides,
   normalizeChord,
 } from "../command/commands";
-import { ArrowLeftIcon, RennetMark, SlidersIcon } from "./icons";
+import { RennetBrandMark } from "./brand-mark";
+import { ArrowLeftIcon, SlidersIcon } from "./icons";
 
 /**
  * The settings screen — the config ladder (wireframe #15) over the REAL `~/.rennet`
@@ -293,7 +294,7 @@ export function SettingsScreen({
             <section className="settings-panel">
               <div className="settings-empty">
                 <span className="settings-empty-mark" aria-hidden="true">
-                  <RennetMark size={26} />
+                  <RennetBrandMark size={22} />
                 </span>
                 <p>No projects yet. Add one from the front door to configure it here.</p>
               </div>

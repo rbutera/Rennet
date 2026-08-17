@@ -973,6 +973,9 @@
   color: var(--accent);
 }
 .collation-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   border: 1px solid var(--hairline-strong);
   border-radius: var(--chip-radius);
   padding: 6px 12px;
@@ -1067,7 +1070,7 @@
   color: var(--text-soft);
 }
 .collation-pr-draft-status[data-status="failed"] {
-  color: var(--danger, #c0392b);
+  color: var(--danger);
 }
 .collation-empty {
   margin: 0;
@@ -1296,6 +1299,9 @@
   color: var(--text-soft);
 }
 .collation-sign {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   border: 0;
   border-radius: 8px;
   padding: 11px 20px;
@@ -2841,7 +2847,7 @@
 }
 .conversation-error {
   margin: 0;
-  color: var(--danger, #c0392b);
+  color: var(--danger);
   font: 500 12px / 1.4 var(--sans);
 }
 
@@ -3302,6 +3308,8 @@ button.ospec-covchip:focus-visible {
 }
 .ospec-task-check {
   flex: none;
+  display: inline-flex;
+  align-items: center;
   color: var(--green);
 }
 
