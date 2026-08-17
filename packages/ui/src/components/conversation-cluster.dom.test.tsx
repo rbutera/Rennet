@@ -9,6 +9,7 @@
 //   • and — the load-bearing law — opening/growing a thread does NOT reflow the diff
 //     column (the margin is a sibling; the diff DOM is unchanged).
 
+import { useRef } from "react";
 import { describe, expect, it } from "vitest";
 import type { ConversationAnchor } from "../canvas/conversation";
 import {
@@ -232,5 +233,90 @@ describe("ConversationMargin — the right-margin column", () => {
     fireEvent.change(secondInput, { target: { value: "org key change?" } });
     fireEvent.click(secondSend);
     expect(asks).toEqual([["b", "org key change?"]]);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// IN-RAIL ANCHOR ALIGNMENT (#36 deferred → #85, canvas-ui spec delta). A thread
+// whose anchor row is rendered in the windowed diff is offset so its panel top
+// meets that row; a thread whose row is off-window falls back to stacked order
+// with no synthetic offset. Alignment is applied within the rail only and never
+// reflows the diff column. happy-dom reports zero-size rects, so a rendered row
+// yields offset 0 (present, derived) and an off-window row yields no offset.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("ConversationMargin — in-rail anchor alignment (#36 → #85)", () => {
+  const VISIBLE: ConversationAnchor = {
+    kind: "range",
+    label: "src/rate/bucket.ts",
+    key: "src/rate/bucket.ts#L44-47",
+  };
+  const OFFSCREEN: ConversationAnchor = {
+    kind: "line",
+    label: "src/rate/keys.ts:18",
+    key: "keys#L18",
+  };
+
+  function AlignHost({
+    threads,
+    renderedKeys,
+  }: {
+    threads: Parameters<typeof ConversationMargin>[0]["threads"];
+    renderedKeys: readonly string[];
+  }) {
+    const diffRef = useRef<HTMLDivElement>(null);
+    return (
+      <div className="review-heart-split">
+        <div className="diff-column" data-testid="diff" ref={diffRef}>
+          {renderedKeys.map((key) => (
+            <div className="code-view-row" data-anchor-key={key} key={key}>
+              row
+            </div>
+          ))}
+        </div>
+        <ConversationMargin threads={threads} diffRef={diffRef} />
+      </div>
+    );
+  }
+
+  function diffNodeCount(container: HTMLElement): number {
+    const diff = container.querySelector('[data-testid="diff"]');
+    return diff ? diff.querySelectorAll("*").length : -1;
+  }
+
+  it("a visible anchor row aligns its thread (offset derived from the row)", () => {
+    const thread = openThread("t1", VISIBLE);
+    const { container } = mount(<AlignHost threads={[thread]} renderedKeys={[VISIBLE.key]} />);
+    const panel = container.querySelector(
+      `.conversation-cluster[data-anchor-key="${VISIBLE.key}"]`,
+    );
+    expect(panel).not.toBeNull();
+    expect(panel?.getAttribute("data-align-offset")).not.toBeNull();
+    expect(panel?.getAttribute("style") ?? "").toContain("translateY");
+  });
+
+  it("an off-window anchor falls back to stacked order (no synthetic offset)", () => {
+    const thread = openThread("t2", OFFSCREEN);
+    // The window renders a DIFFERENT anchor row; this thread's row is off-screen.
+    const { container } = mount(<AlignHost threads={[thread]} renderedKeys={[VISIBLE.key]} />);
+    const panel = container.querySelector(
+      `.conversation-cluster[data-anchor-key="${OFFSCREEN.key}"]`,
+    );
+    expect(panel).not.toBeNull();
+    expect(panel?.getAttribute("data-align-offset")).toBeNull();
+    expect(panel?.getAttribute("style") ?? "").not.toContain("translateY");
+  });
+
+  it("alignment never reflows the diff column (scenario 3)", () => {
+    const rowsOnly = mount(<AlignHost threads={[]} renderedKeys={[VISIBLE.key, OFFSCREEN.key]} />);
+    const baseline = diffNodeCount(rowsOnly.container);
+    cleanup();
+    const aligned = mount(
+      <AlignHost
+        threads={[openThread("a", VISIBLE), openThread("b", OFFSCREEN)]}
+        renderedKeys={[VISIBLE.key, OFFSCREEN.key]}
+      />,
+    );
+    expect(aligned.container.querySelectorAll(".conversation-cluster")).toHaveLength(2);
+    expect(diffNodeCount(aligned.container)).toBe(baseline);
   });
 });

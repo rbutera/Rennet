@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { type RefObject, useLayoutEffect, useRef, useState } from "react";
 import { ASK_OPTIONS, type AskMode, DEFAULT_ASK_MODE } from "../canvas/ask";
 import type {
   ConversationAnchor,
@@ -205,6 +205,13 @@ export interface ConversationClusterProps {
    * fixture answer.
    */
   error?: string;
+  /**
+   * In-rail alignment offset in px (#36 → #85): the panel top is translated to meet
+   * its anchor row in the diff window. Undefined ⇒ the panel stacks in document order
+   * (the honest fallback when the anchor row is off-window). The offset is applied as
+   * a transform, so it never affects the diff column or the panel's own layout box.
+   */
+  alignOffset?: number;
 }
 
 /**
@@ -221,6 +228,7 @@ export function ConversationCluster({
   onAsk,
   pending = false,
   error,
+  alignOffset,
 }: ConversationClusterProps) {
   const [draft, setDraft] = useState("");
   // The per-turn routing (#139): a thread starts at its own route (orchestrator by
@@ -257,6 +265,8 @@ export function ConversationCluster({
       data-anchor-key={thread.anchor.key}
       data-route={thread.route}
       {...(orphaned ? { "data-orphaned": "true" } : {})}
+      {...(alignOffset != null ? { "data-align-offset": String(alignOffset) } : {})}
+      style={alignOffset != null ? { transform: `translateY(${alignOffset}px)` } : undefined}
       aria-label={`Private thread on ${thread.anchor.kind} ${thread.anchor.label}`}
     >
       <header className="conversation-head">
@@ -372,6 +382,16 @@ export interface ConversationMarginProps {
   pendingThreadIds?: ReadonlySet<string>;
   /** The last failure per thread id, surfaced honestly in that thread's panel. */
   errorByThread?: Readonly<Record<string, string>>;
+  /**
+   * The diff column this rail aligns against (#36 → #85). When provided, each thread
+   * whose anchor row (a `[data-anchor-key]` element in the diff) is rendered in the
+   * windowed diff is offset so its panel top meets that row; a thread whose row is
+   * outside the window falls back to stacked document order. Absent ⇒ every panel
+   * stacks (the honest default, and the only behaviour when no diff is measured). The
+   * offset is read from the rendered row and applied within the rail only — the diff
+   * column is never touched, so it cannot reflow.
+   */
+  diffRef?: RefObject<HTMLElement | null>;
 }
 
 /**
@@ -388,9 +408,12 @@ export function ConversationMargin({
   onAsk,
   pendingThreadIds,
   errorByThread,
+  diffRef,
 }: ConversationMarginProps) {
+  const railRef = useRef<HTMLElement>(null);
+  const alignments = useRailAlignments(railRef, diffRef, threads);
   return (
-    <section className="conversation-margin" aria-label="Conversation threads">
+    <section className="conversation-margin" aria-label="Conversation threads" ref={railRef}>
       {threads.map((thread) => (
         <ConversationCluster
           key={thread.id}
@@ -402,8 +425,74 @@ export function ConversationMargin({
           onAsk={onAsk ? (body, mode) => onAsk(thread.id, body, mode) : undefined}
           pending={pendingThreadIds?.has(thread.id) ?? false}
           error={errorByThread?.[thread.id]}
+          alignOffset={alignments[thread.anchor.key]}
         />
       ))}
     </section>
   );
+}
+
+/**
+ * Measure each thread's in-rail alignment offset from the rendered diff window
+ * (#36 → #85). For every thread whose anchor row (`[data-anchor-key]`) is painted in
+ * the windowed diff, the offset is that row's top relative to the rail's top; a
+ * thread whose row is off-window is omitted, so its panel stacks. Recomputed on diff
+ * scroll and on resize, since the windowed renderer swaps which rows exist. Returns
+ * `{}` (all stacked) when no diff is measured — the honest default. The offset is
+ * read-only against the diff DOM, never a write, so alignment cannot reflow the diff.
+ */
+function useRailAlignments(
+  railRef: RefObject<HTMLElement | null>,
+  diffRef: RefObject<HTMLElement | null> | undefined,
+  threads: readonly ConversationThread[],
+): Readonly<Record<string, number>> {
+  const [alignments, setAlignments] = useState<Readonly<Record<string, number>>>({});
+  // A stable key of the anchors in play, so the effect re-measures when the set of
+  // threads (or their anchors) changes without depending on the fresh array identity.
+  const anchorKeys = threads.map((thread) => thread.anchor.key).join(" ");
+  useLayoutEffect(() => {
+    const diff = diffRef?.current;
+    const rail = railRef.current;
+    if (!diff || !rail) {
+      setAlignments((prev) => (Object.keys(prev).length === 0 ? prev : {}));
+      return;
+    }
+    const measure = (): void => {
+      const railTop = rail.getBoundingClientRect().top;
+      const rows = new Map<string, Element>();
+      for (const el of diff.querySelectorAll("[data-anchor-key]")) {
+        const key = el.getAttribute("data-anchor-key");
+        if (key && !rows.has(key)) rows.set(key, el); // the topmost row for a key wins
+      }
+      const next: Record<string, number> = {};
+      for (const key of anchorKeys.split(" ")) {
+        if (key === "") continue;
+        const row = rows.get(key);
+        if (!row) continue; // off-window ⇒ stacked fallback, never a synthetic offset
+        next[key] = Math.max(0, Math.round(row.getBoundingClientRect().top - railTop));
+      }
+      setAlignments((prev) => (sameOffsets(prev, next) ? prev : next));
+    };
+    measure();
+    diff.addEventListener("scroll", measure, { passive: true });
+    window.addEventListener("resize", measure);
+    // The windowed diff re-lays-out as rows enter/leave; a ResizeObserver catches the
+    // height churn a scroll listener alone would miss. Guarded — not every host DOM
+    // (older happy-dom) defines it, and its absence just means fewer re-measures.
+    const observer =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => measure()) : undefined;
+    observer?.observe(diff);
+    return () => {
+      diff.removeEventListener("scroll", measure);
+      window.removeEventListener("resize", measure);
+      observer?.disconnect();
+    };
+  }, [railRef, diffRef, anchorKeys]);
+  return alignments;
+}
+
+function sameOffsets(a: Readonly<Record<string, number>>, b: Readonly<Record<string, number>>): boolean {
+  const aKeys = Object.keys(a);
+  if (aKeys.length !== Object.keys(b).length) return false;
+  return aKeys.every((key) => a[key] === b[key]);
 }
