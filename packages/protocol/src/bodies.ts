@@ -306,6 +306,62 @@ export function coverageMappingJsonSchema(): unknown {
 }
 
 /**
+ * The verify-ui TURN's structured-output shape (issue #183). Like verification
+ * (#179) and coverage (R53), verify-ui is a DERIVED, display-time judgement — not a
+ * stored RSP document — so it lives here as a standalone projected schema. One turn
+ * per review mounts the changed UI surface with whatever the project affords,
+ * captures screenshots into the review's evidence directory, and reports:
+ *   • `mounted`      — true when it rendered the change (tests/storybook/dev-server);
+ *                      false when it could only do a labelled STATIC review.
+ *   • `method`       — how it mounted (or `none`/`static`), for the honest disclosure.
+ *   • `attempted`    — what it tried, so a could-not-mount result carries its account.
+ *   • `screenshots`  — `{ path, label }` with `path` RELATIVE to the evidence dir the
+ *                      prompt named (the turn writes the PNGs there); empty is honest.
+ *   • `observations` — the a11y / intent-mismatch / visual defects it found, each
+ *                      anchored to a changed file (with a line when it can name one)
+ *                      and an `impact` the runner maps to a finding severity.
+ * The runner GROUNDS this itself (a screenshot claim without an observed exec is
+ * treated as a static, inconclusive result), so it does not lean on the RSP
+ * validator. A malformed emission falls to the honest `unavailable` disclosure —
+ * never a fabricated all-clear.
+ */
+const uiVerificationObservationSchema = z
+  .object({
+    file: z.string().min(1),
+    line: z.number().int().positive().optional(),
+    impact: z.enum(["high", "medium", "low"]),
+    summary: z.string().min(1),
+    evidence: z.string(),
+  })
+  .loose();
+
+const uiVerificationScreenshotSchema = z
+  .object({ path: z.string().min(1), label: z.string() })
+  .loose();
+
+const uiVerificationTurnBodySchema = z
+  .object({
+    mounted: z.boolean(),
+    method: z.enum(["tests", "storybook", "dev-server", "static", "none"]),
+    attempted: z.string(),
+    screenshots: z.array(uiVerificationScreenshotSchema),
+    observations: z.array(uiVerificationObservationSchema),
+  })
+  .loose();
+
+/**
+ * The JSON Schema the verify-ui turn is constrained to (issue #183). Projected from
+ * the Zod shape with the meta-schema `$schema` stripped for the same reason
+ * `bodyJsonSchema` strips it (the `claude` CLI validator cannot resolve the 2020-12
+ * meta-schema ref). Standalone — verify-ui is not an `RspDocType`.
+ */
+export function uiVerificationJsonSchema(): unknown {
+  const projected = z.toJSONSchema(uiVerificationTurnBodySchema) as Record<string, unknown>;
+  delete projected.$schema;
+  return projected;
+}
+
+/**
  * The stable join key for one requirement's coverage: its capability plus its exact
  * requirement name. The coverage producer (core) and the Spec view (ui) both compute
  * this from the same raw values, so the produced mapping keys to the rendered

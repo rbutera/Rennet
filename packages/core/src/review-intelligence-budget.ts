@@ -20,6 +20,10 @@ export interface ReviewIntelligenceBudget {
     /** Max contested (disagree) rows adjudicated per review; the rest surface capped. */
     readonly maxAdjudications: number;
   };
+  readonly uiVerification: {
+    /** Max verify-ui turns per review (issue #183); the frozen default is 1. */
+    readonly maxTurns: number;
+  };
 }
 
 export const DEFAULT_REVIEW_INTELLIGENCE_BUDGET: ReviewIntelligenceBudget = Object.freeze({
@@ -29,6 +33,7 @@ export const DEFAULT_REVIEW_INTELLIGENCE_BUDGET: ReviewIntelligenceBudget = Obje
   dualModel: Object.freeze({ enabled: true, lenses: Object.freeze(["flagged"] as const) }),
   verification: Object.freeze({ maxVerifications: 6, batchSize: 3 }),
   adjudication: Object.freeze({ maxAdjudications: 4 }),
+  uiVerification: Object.freeze({ maxTurns: 1 }),
 });
 
 export function reviewInvocationCeiling(

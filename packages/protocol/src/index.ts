@@ -74,6 +74,8 @@ import type {
   SymbolInspection,
   SymbolNeighbor,
   SymbolNeighbors,
+  UiScreenshot,
+  UiVerification,
 } from "@rennet/types";
 import { z } from "zod";
 
@@ -1043,12 +1045,43 @@ const flaggedBlockingStateSchema = z.object({
   path: z.string().nullable(),
   detail: z.string(),
 });
+/**
+ * The verify-ui status (issue #183). Additive optional on the `ok` flagged review.
+ * This field MUST be declared here or the strict `flagged.review` command boundary
+ * silently strips it (Rule 80 delivery gap): the honest ran/not-ui/unavailable
+ * status and its screenshot references would never reach the renderer, and the
+ * Flagged lens would show no verify-ui strip even when the pass ran. The screenshot
+ * BYTES never ride this shape — only `{ path, label }` references the renderer reads
+ * on demand via `review.uiEvidence`, so the review payload stays small.
+ */
+export const uiScreenshotSchema = objectSchemaFor<UiScreenshot>()({
+  path: z.string().min(1),
+  label: z.string(),
+});
+export const uiVerificationSchema: z.ZodType<UiVerification> = z.union([
+  objectSchemaFor<Extract<UiVerification, { status: "ran" }>>()({
+    status: z.literal("ran"),
+    screenshots: z.array(uiScreenshotSchema),
+    observationCount: z.number(),
+    mounted: z.boolean(),
+  }),
+  objectSchemaFor<Extract<UiVerification, { status: "not-ui" }>>()({
+    status: z.literal("not-ui"),
+  }),
+  objectSchemaFor<Extract<UiVerification, { status: "unavailable" }>>()({
+    status: z.literal("unavailable"),
+    reason: z.string(),
+  }),
+]);
 export const flaggedReviewSchema: z.ZodType<FlaggedReview> = z.union([
   z.object({
     status: z.literal("ok"),
     findings: z.array(findingElementSchema),
     dual: dualReviewNoteSchema.optional(),
     crossChecks: z.array(riskCrossCheckSchema).optional(),
+    // The verify-ui status (#183). MUST be declared or the strict command boundary
+    // strips it (Rule 80). Additive optional — absent ⇒ the pre-#183 shape.
+    uiVerification: uiVerificationSchema.optional(),
     // Additive informational CI signal (#182). This MUST be declared on BOTH
     // branches or the strict command boundary silently strips it (Rule 80).
     ciSignal: ciSignalSchema.optional(),
@@ -2234,6 +2267,25 @@ export const commandDefinitions = {
       z.object({ status: z.literal("complete"), review: flaggedReviewSchema }),
       z.object({ status: z.literal("absent") }),
       z.object({ status: z.literal("failed"), reason: z.string().min(1) }),
+    ]),
+  },
+  // ── verify-ui evidence read (issue #183) ───────────────────────────────────
+  // A PURE READ: return one screenshot the verify-ui pass captured for a review,
+  // base64 data-URL encoded, so the Flagged lens strip can render it as a thumbnail
+  // without the bytes ever riding the review snapshot or the flagged payload. `path`
+  // is the review-relative reference from a `UiScreenshot`; resolution is CONFINED
+  // to the review's evidence directory — a path that escapes it, or a file that no
+  // longer resolves, returns `not-found` (that is correctness of the read, not a
+  // consent gate: the strip then shows a plain missing-evidence note). No spend, no
+  // model turn, no egress.
+  "review.uiEvidence": {
+    input: z.object({
+      reviewId: z.string().min(1),
+      path: z.string().min(1),
+    }),
+    output: z.discriminatedUnion("status", [
+      z.object({ status: z.literal("ok"), dataUrl: z.string().min(1) }),
+      z.object({ status: z.literal("not-found") }),
     ]),
   },
   // ── Ask the AI a question about the review (issue #139) ────────────────────

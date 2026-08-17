@@ -1261,6 +1261,47 @@ export interface FindingVerification {
 }
 
 /**
+ * One screenshot the verify-ui turn captured (issue #183). `path` is RELATIVE to
+ * the review's evidence directory, so it stays portable across `review.load` and a
+ * move of the app's store; `label` is the human caption ("mobile viewport",
+ * "focus ring"). The bytes never ride this shape — the renderer reads them on
+ * demand via the `review.uiEvidence` command, so the review snapshot and IPC
+ * payload stay small.
+ */
+export interface UiScreenshot {
+  path: string;
+  label: string;
+}
+
+/**
+ * The additive verify-ui status (issue #183) that rides an `ok` FlaggedReview. It
+ * is INFORMATIONAL and never a gate (Rule Zero): sign and publish behave exactly
+ * as they would without it. The three states are kept DISTINCT on purpose, and the
+ * asymmetry is load-bearing (Rule 75/81ak, could-not-check beats a false clear):
+ *
+ *   • `ran`         — the turn mounted (or statically reviewed) the change and
+ *                     produced observations (surfaced as ordinary findings) plus any
+ *                     `screenshots`. `mounted` is false when the turn could only do a
+ *                     labelled static review (no screenshot claimed).
+ *   • `not-ui`      — the deterministic classifier found no UI-surface file, so no
+ *                     turn ran and nothing was spent. This is "not applicable", NOT
+ *                     an all-clear.
+ *   • `unavailable` — the turn could not run or could not mount (no verifier, the
+ *                     shared budget was exhausted, or the turn failed/returned
+ *                     nothing usable). `reason` says which. This is disclosed as
+ *                     inconclusive, NEVER reported as "no UI problems found".
+ */
+export type UiVerification =
+  | {
+      status: "ran";
+      screenshots: UiScreenshot[];
+      observationCount: number;
+      mounted: boolean;
+    }
+  | { status: "not-ui" }
+  | { status: "unavailable"; reason: string };
+
+/**
  * Attribution of a failing CI check. Uncertainty is always `unclassified`, never
  * `environmental`: an unknown failure stays visible instead of being waved away
  * as infrastructure.
@@ -1396,6 +1437,15 @@ export type FlaggedReview =
        * pre-#309 shape.
        */
       blockingStates?: readonly DecompositionBlockingState[];
+      /**
+       * The verify-ui status (issue #183), when a UI-touching changeset ran the
+       * pass. Additive and optional: a review without it validates and renders
+       * exactly as before this capability (a non-UI changeset omits it, or carries
+       * `not-ui`). Its observations surface as ordinary `findings` above — this
+       * field only carries the ran/not-ui/unavailable status and the screenshot
+       * references. It NEVER gates the sign (Rule Zero).
+       */
+      uiVerification?: UiVerification;
     }
   | {
       status: "failed";

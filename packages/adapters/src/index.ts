@@ -170,6 +170,17 @@ export {
   type VerificationTurnOptions,
 } from "./finding-verification-backend";
 export {
+  createExecObservingTurn,
+  EXEC_OUTPUT_TAIL,
+  type ExecObservingTurnOptions,
+} from "./exec-observing-turn";
+export {
+  createUiVerificationTurn,
+  readUiEvidence,
+  resolveUiEvidenceDir,
+  type UiVerificationTurnOptions,
+} from "./ui-verification-backend";
+export {
   emptyFlaggedReviewFixture,
   failedFlaggedReviewFixture,
   flaggedReviewFixture,

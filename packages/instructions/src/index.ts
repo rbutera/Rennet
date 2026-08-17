@@ -690,6 +690,98 @@ export function renderFindingAdjudicationPrompt(
   ].join("\n");
 }
 
+// ── The verify-ui contract (issue #183) ──────────────────────────────────────
+
+/**
+ * The verify-ui contract (issue #183). NOT a `PromptContract` (it elicits no RSP
+ * `docType` and surfaces no lens): it is the small dedicated instruction that drives
+ * ONE fresh capable session to MOUNT a UI-touching change with whatever the reviewed
+ * project affords, screenshot it, run an accessibility check, and compare what
+ * rendered against the review's captured design intent. Its discipline is the
+ * afford-what-exists ladder and the honest could-not-mount disclosure: Rennet bundles
+ * no browser or a11y runtime, so absence is a disclosure, never a fabricated clear
+ * (Rule 75/81ak, could-not-check beats a false clear).
+ */
+export interface UiVerificationContract {
+  /** Bumped when the SLOT SET or its wording changes (A/B-able against verify quality). */
+  readonly version: number;
+  readonly role: string;
+  readonly task: string;
+  readonly discipline: string;
+  readonly failureValve: string;
+}
+
+export const UI_VERIFICATION_CONTRACT: UiVerificationContract = {
+  version: 1,
+  role: "You verify a UI-touching change by RENDERING it. You are working INSIDE the reviewed repository, with a shell, and you MAY install, build, and run the project — its tests, its storybook, its dev server, any browser automation it already has — to mount the changed surface and SEE it, rather than only read the diff. Rennet bundles no browser, screenshot, or accessibility runtime: you use what THIS project affords, and you report honestly when it affords nothing.",
+  task: "Mount the changed UI surface and, once it renders, (1) capture screenshots of the rendered change as PNG files WRITTEN INTO the evidence directory named below, referencing each by a path RELATIVE to that directory; (2) run an accessibility check with whatever tooling the project affords; (3) compare what rendered against the stated design intent below, and report each accessibility violation, intent mismatch, or visual defect as an observation anchored to the changed file it concerns (with a line when you can name one) and an impact of high/medium/low. Set `mounted` true only when you actually rendered the change; set `method` to how you mounted it. The exact JSON shape is enforced separately as a structured-output constraint; do not restate it.",
+  discipline:
+    "Prefer, in order: the project's own component/DOM tests you can extend to render the changed component; its storybook; its dev server plus any installed browser automation (playwright et al.); and, only as a floor, a STATIC markup/DOM review — which you MUST label by setting `method` to `static` and `mounted` false, claiming NO screenshot you did not actually capture. The commands you run are observed independently as proof the mount ran, so ground `mounted: true` and any screenshot in what you actually executed, not in intent. Report what you SAW; do not invent a violation to look thorough, and do not wave away a real one.",
+  failureValve:
+    "If you cannot mount the change with anything the project affords, set `mounted` false, `method` to `none`, and put what you attempted in `attempted` — that is the honest could-not-mount disclosure, surfaced to the human as inconclusive, NEVER as 'no UI problems found'. An empty `observations` from a real mount is an honest 'nothing found'; an empty `observations` from a failed mount is NOT — the `mounted` flag and `attempted` keep them apart. Never claim a screenshot you did not capture.",
+};
+
+/**
+ * One changed UI file handed to the verify-ui turn: its path and the hunk lines that
+ * changed in it (best-effort; may be empty when unavailable).
+ */
+export interface UiVerificationPromptFile {
+  readonly path: string;
+  readonly hunk: string;
+}
+
+/**
+ * Render the verify-ui prompt (issue #183): the contract's four slots, the design
+ * intent (PR title/body + spec snapshots the review already captured — nothing new
+ * is ingested), the absolute evidence directory to write PNGs into, and the changed
+ * UI files with their hunks. Pure and deterministic — the same inputs render
+ * byte-for-byte identically.
+ */
+export function renderUiVerificationPrompt(
+  contract: UiVerificationContract,
+  input: {
+    readonly files: readonly UiVerificationPromptFile[];
+    readonly designIntent: string;
+    readonly evidenceDir: string;
+  },
+): string {
+  const files = input.files
+    .map((file) =>
+      [
+        `### ${file.path}`,
+        file.hunk.trim().length > 0 ? `Changed hunk:\n${file.hunk}` : "Changed hunk: (unavailable)",
+      ].join("\n"),
+    )
+    .join("\n\n");
+  return [
+    `# Rennet verify-ui: mount, screenshot, a11y@${contract.version}`,
+    "",
+    "## Role",
+    contract.role,
+    "",
+    "## Task",
+    contract.task,
+    "",
+    "## Discipline",
+    contract.discipline,
+    "",
+    "## Failure valve",
+    contract.failureValve,
+    "",
+    "## Design intent (what the change is meant to do — the review's captured intent)",
+    input.designIntent.trim().length > 0
+      ? input.designIntent
+      : "(no stated intent was captured for this review — compare against the change itself)",
+    "",
+    "## Evidence directory (write your screenshot PNGs here; reference each by a path relative to it)",
+    input.evidenceDir,
+    "",
+    "## Changed UI files",
+    files,
+    "",
+  ].join("\n");
+}
+
 // ── Prompt assembly (§6.3) ────────────────────────────────────────────────────
 
 /** The fixed layer order. Earlier is higher priority; later layers drop first. */
