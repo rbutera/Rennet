@@ -15,30 +15,33 @@ export function NavRail({
 }) {
   return (
     <nav className="nav-rail" aria-label="Navigation">
+      {/* Back/forward read as one paired control, so they sit SIDE BY SIDE
+          (icon-only, tooltip carries the word) rather than stacked like the
+          destination buttons below. */}
       <div className="nav-rail-history">
         <button
           type="button"
-          className="nav-rail-button"
+          className="nav-rail-button nav-rail-button-paired"
           aria-label="Back"
+          title="Back"
           disabled={!canBack}
           onClick={onBack}
         >
           <span className="nav-rail-glyph" aria-hidden="true">
             ←
           </span>
-          <span>Back</span>
         </button>
         <button
           type="button"
-          className="nav-rail-button"
+          className="nav-rail-button nav-rail-button-paired"
           aria-label="Forward"
+          title="Forward"
           disabled={!canForward}
           onClick={onForward}
         >
           <span className="nav-rail-glyph" aria-hidden="true">
             →
           </span>
-          <span>Forward</span>
         </button>
       </div>
 
