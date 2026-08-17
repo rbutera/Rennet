@@ -51,9 +51,15 @@ saveExact: true
 # approving their builds is scoped and safe. Every other package stays blocked.
 #   - macos-alias: writes the DMG's .DS_Store icon layout (volume.node)
 #   - fs-xattr:    reads/writes extended attributes on the DMG (xattr.node)
+#   - electron-winstaller: its install script (script/select-7z-arch.js) copies the
+#     arch-correct vendor 7z binary to vendor/7z.exe; without it the Squirrel maker
+#     dies inside Update.exe with Win32Exception "The system cannot find the file
+#     specified" (electron/forge#3900, fixed upstream by allowlisting the build).
+#     Build-only packaging tooling, never shipped inside the app.
 onlyBuiltDependencies:
   - macos-alias
   - fs-xattr
+  - electron-winstaller
 
 # @anthropic-ai/claude-agent-sdk declares three NON-optional peers
 # (zod, @anthropic-ai/sdk, @modelcontextprotocol/sdk). Its main entry (sdk.mjs,
