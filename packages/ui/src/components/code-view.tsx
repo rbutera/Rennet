@@ -1,6 +1,6 @@
 import { parseAnchor } from "@rennet/protocol";
 import type { AnchorSide, DispositionType, RenderedHunkOccurrence } from "@rennet/types";
-import { type ReactNode, useEffect, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from "react";
 import {
   type ConversationAnchor,
   chunkAnchorKey,
@@ -126,6 +126,15 @@ export interface CodeViewProps {
   onDiscuss?: (anchor: ConversationAnchor) => void;
   /** Reports the reviewer's current line/range selection as an RSP span + exact excerpt. */
   onSpanSelect?: (selection: { anchor: string; excerpt: string } | null) => void;
+
+  /**
+   * Exposes the diff scroll container (`.code-view-scroll`) upward (issue #356), so the
+   * review heart's conversation rail can query rendered rows by their `data-anchor-key`
+   * and align a thread panel to the code it discusses. Populated on mount via a merge
+   * ref alongside the internal scroll ref. Absent ⇒ nothing is exposed and CodeView
+   * behaves exactly as before (additive; the rail then stacks its panels honestly).
+   */
+  scrollContainerRef?: RefObject<HTMLElement | null>;
 }
 
 /**
@@ -264,6 +273,7 @@ export function CodeView({
   onSymbolClick,
   onDiscuss,
   onSpanSelect,
+  scrollContainerRef,
 }: CodeViewProps) {
   // The live scroll position: seeded from the prop (which the node-count control
   // test and any programmatic positioning inject), then advanced by the user's
@@ -321,6 +331,17 @@ export function CodeView({
   // The scroll container, so a focus-driven jump can move the REAL viewport (setting
   // window state alone leaves the DOM at scrollTop 0, painting blank spacer).
   const scrollRef = useRef<HTMLDivElement>(null);
+  // Merge ref: the scroll container serves the internal focus-jump (scrollRef) AND, when
+  // the host asks, is exposed upward (issue #356) so the conversation rail can query its
+  // rows by anchor key. Set synchronously at commit — before the rail's layout effect
+  // reads it — which a passive effect could not guarantee across sibling subtrees.
+  const attachScroll = useCallback(
+    (element: HTMLDivElement | null) => {
+      scrollRef.current = element;
+      if (scrollContainerRef) scrollContainerRef.current = element;
+    },
+    [scrollContainerRef],
+  );
 
   // Language for syntax highlighting, inferred once from the path extension.
   // Unknown/absent extension → null → plain text (fail-closed, no fabricated colour).
@@ -429,7 +450,7 @@ export function CodeView({
         ) : null}
       </header>
       <div
-        ref={scrollRef}
+        ref={attachScroll}
         className="code-view-scroll"
         style={{ height: `${viewportHeight}px` }}
         onScroll={(event) => setScroll(event.currentTarget.scrollTop)}
@@ -437,8 +458,15 @@ export function CodeView({
         data-rendered-rows={visible.length}
         data-window-start={range.start}
       >
-        {/* A spacer preserves scroll height for the rows above the window. */}
-        <div className="code-view-spacer" style={{ height: `${range.start * rowHeight}px` }} />
+        {/* A spacer preserves scroll height for the rows above the window. It also carries
+            the CHUNK anchor key (issue #356): the whole file/chunk's alignment target, at
+            the top of the scrollable content, so a chunk-anchored thread aligns to the
+            chunk. Line keys (distinct grammar) never collide with it. */}
+        <div
+          className="code-view-spacer"
+          data-anchor-key={chunkAnchorKey(path)}
+          style={{ height: `${range.start * rowHeight}px` }}
+        />
         {visible.map((row) => {
           const glowMarks = glow.get(row.rawIndex);
           const gutterMarks = gutter.get(row.rawIndex);
@@ -454,6 +482,14 @@ export function CodeView({
           const discussLineNo =
             row.kind === "content" && row.fileLine != null && discussSide !== undefined
               ? row.fileLine
+              : undefined;
+          // The row's LINE anchor key (issue #356) — the SAME grammar `discussLine` mints
+          // for a thread opened here, so the conversation rail's `[data-anchor-key]` lookup
+          // finds exactly this row and aligns the thread's panel to it. Only content rows
+          // with a real (side, line) carry it; a meta/header row anchors nothing.
+          const anchorKey =
+            discussLineNo !== undefined && discussSide !== undefined
+              ? lineAnchorKey(path, discussSide, discussLineNo)
               : undefined;
           // The discuss glyph's title. A range preview only when the recorded start is on
           // the SAME side as this row (a cross-side shift-click starts a fresh line).
@@ -488,6 +524,7 @@ export function CodeView({
               className={className}
               key={isFocus ? `${row.rawIndex}:${focusNonce}` : row.rawIndex}
               data-raw-index={row.rawIndex}
+              data-anchor-key={anchorKey}
               data-side={row.side ?? undefined}
               data-file-line={row.fileLine ?? undefined}
               data-side-ordinal={row.sideOrdinal ?? undefined}
