@@ -68,10 +68,18 @@ describe("CodexAdapter", () => {
       { type: "thread.started", thread_id: "th_1" },
       { type: "turn.started" },
       { type: "item.updated", item: { item_type: "agent_message", text: "wor" } },
-      { type: "item.completed", item: { item_type: "agent_message", text: JSON.stringify(structured) } },
+      {
+        type: "item.completed",
+        item: { item_type: "agent_message", text: JSON.stringify(structured) },
+      },
       {
         type: "turn.completed",
-        usage: { input_tokens: 10, cached_input_tokens: 2, output_tokens: 5, reasoning_output_tokens: 1 },
+        usage: {
+          input_tokens: 10,
+          cached_input_tokens: 2,
+          output_tokens: 5,
+          reasoning_output_tokens: 1,
+        },
       },
       RESULT_OK(JSON.stringify(structured)),
     ]);
@@ -106,11 +114,7 @@ describe("CodexAdapter", () => {
 
   it("surfaces an unmodelled frame as passthrough with the raw native", async () => {
     const weird = { type: "mystery.frame", payload: 42 };
-    const t = fakeTransport([
-      { type: "thread.started", thread_id: "th" },
-      weird,
-      RESULT_OK(null),
-    ]);
+    const t = fakeTransport([{ type: "thread.started", thread_id: "th" }, weird, RESULT_OK(null)]);
     const session = await adapter(t.fn).createSession({ cwd: "/repo" });
     await session.send({ prompt: "go" });
     const { events } = await drain(session);
@@ -123,7 +127,10 @@ describe("CodexAdapter", () => {
     const t = fakeTransport([
       { type: "thread.started", thread_id: "th" },
       { type: "item.completed", item: { item_type: "command_execution", command: "ls" } },
-      { type: "item.completed", item: { item_type: "mcp_tool_call", server: "canvasops", tool: "canvas.read" } },
+      {
+        type: "item.completed",
+        item: { item_type: "mcp_tool_call", server: "canvasops", tool: "canvas.read" },
+      },
       { type: "item.completed", item: { item_type: "file_change", changes: [] } },
       RESULT_OK(null),
     ]);
@@ -131,7 +138,9 @@ describe("CodexAdapter", () => {
     await session.send({ prompt: "go" });
     const { events } = await drain(session);
     const kinds = events
-      .filter((e): e is Extract<HarnessEvent, { kind: "tool.started" }> => e.kind === "tool.started")
+      .filter(
+        (e): e is Extract<HarnessEvent, { kind: "tool.started" }> => e.kind === "tool.started",
+      )
       .map((e) => e.call.kind);
     expect(kinds).toEqual(["exec", "mcp", "write"]);
   });

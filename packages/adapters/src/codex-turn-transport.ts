@@ -30,11 +30,11 @@ import {
   type CodexTurnSpec,
   type CodexTurnTransport,
 } from "./codex-adapter";
-import { CODEX_EXEC_BIN, sanitizeSchemaForCodex } from "./codex-exec";
+import { sanitizeSchemaForCodex } from "./codex-exec";
 import {
-  defaultDiscoveryDeps,
   type DiscoveryDeps,
   type DiscoveryResult,
+  defaultDiscoveryDeps,
   discoverCodex,
 } from "./harness-discovery";
 
@@ -93,7 +93,7 @@ async function* realSpawn(
   }
   const result = await child;
   const aborted = result.isCanceled === true || signal?.aborted === true;
-  let lastMessage: string | null = null;
+  let lastMessage: string | null;
   try {
     lastMessage = (await readOut(outPath)).trim() || null;
   } catch {
@@ -175,7 +175,12 @@ const SELF_CONFORMANCE_TRANSPORT: CodexTurnTransport = (spec: CodexTurnSpec) => 
     yield { type: "item.completed", item: { item_type: "agent_message", text: '{"ok":true}' } };
     yield {
       type: "turn.completed",
-      usage: { input_tokens: 1, cached_input_tokens: 0, output_tokens: 1, reasoning_output_tokens: 0 },
+      usage: {
+        input_tokens: 1,
+        cached_input_tokens: 0,
+        output_tokens: 1,
+        reasoning_output_tokens: 0,
+      },
     };
     yield {
       rennet: "turn-result",
@@ -223,9 +228,7 @@ export interface CodexHarnessResult {
  * (with the discovery health) when no binary is found, so a caller surfaces an
  * unavailable state rather than crashing.
  */
-export async function createCodexHarness(
-  deps: CodexHarnessDeps = {},
-): Promise<CodexHarnessResult> {
+export async function createCodexHarness(deps: CodexHarnessDeps = {}): Promise<CodexHarnessResult> {
   const discoveryDeps = deps.discoveryDeps ?? defaultDiscoveryDeps();
   const discovery = await discoverCodex(discoveryDeps, {
     ...(deps.explicitBin === undefined ? {} : { explicitBin: deps.explicitBin }),

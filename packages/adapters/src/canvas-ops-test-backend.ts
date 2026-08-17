@@ -54,7 +54,10 @@ export function decisionsDoc(): AdmittedDocument {
 }
 
 /** A minimal backend sufficient for registration + the describe→read round-trip. */
-export function makeCanvasOpsTestBackend(): { backend: CanvasOpsBackend; applied: CanvasOpsEffect[] } {
+export function makeCanvasOpsTestBackend(): {
+  backend: CanvasOpsBackend;
+  applied: CanvasOpsEffect[];
+} {
   const decomp = decomposition();
   const docs = [decisionsDoc()];
   const applied: CanvasOpsEffect[] = [];

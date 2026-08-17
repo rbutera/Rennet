@@ -28,8 +28,9 @@ describe("harness tested-range artifact", () => {
     const adapter = new ClaudeAdapter({
       binaryPath: "/x/claude",
       queryFn: () => ({
-        // biome-ignore lint/correctness/useYield: an empty async iterable never yields.
-        async *[Symbol.asyncIterator]() {},
+        async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
+          for (const frame of [] as unknown[]) yield frame;
+        },
       }),
     });
     expect(adapter.descriptor.testedRange).toEqual(artifactFromDisk()["claude-code"]);

@@ -263,10 +263,17 @@ function createCodexNormalizer(
     if (frame.exitCode !== 0 || seenError) {
       const error =
         seenError ??
-        mapCodexError(frame.stderr?.trim() || `codex exec exited ${frame.exitCode}`, frame.exitCode);
+        mapCodexError(
+          frame.stderr?.trim() || `codex exec exited ${frame.exitCode}`,
+          frame.exitCode,
+        );
       return [
         { ...envelope(context, frame), kind: "error", error },
-        { ...envelope(context, frame), kind: "session.ended", outcome: { status: "failed", error } },
+        {
+          ...envelope(context, frame),
+          kind: "session.ended",
+          outcome: { status: "failed", error },
+        },
       ];
     }
     const raw = frame.lastMessage ?? lastMessageText;

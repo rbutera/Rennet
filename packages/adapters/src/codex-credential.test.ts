@@ -22,7 +22,7 @@ function recordingEffects(): { effects: CodexTransportEffects; accessed: string[
       accessed.push(prefix);
       return Promise.resolve(`${prefix}scratch`);
     },
-    writeFile: (path, _data) => {
+    writeFile: (path) => {
       accessed.push(path);
       return Promise.resolve();
     },

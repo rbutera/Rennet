@@ -2,17 +2,14 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { CANVAS_OPS_TOOLS, type ElementDetail, type OpsEnvelope } from "@rennet/core";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  type CanvasOpsExternalServer,
-  startCanvasOpsExternalServer,
-} from "./canvas-ops-external";
+import { type CanvasOpsExternalServer, startCanvasOpsExternalServer } from "./canvas-ops-external";
 import { makeCanvasOpsTestBackend } from "./canvas-ops-test-backend";
 
 let server: CanvasOpsExternalServer | null = null;
 const clients: Client[] = [];
 
 afterEach(async () => {
-  for (const client of clients) await client.close().catch(() => {});
+  for (const client of clients) await client.close().catch(() => undefined);
   clients.length = 0;
   if (server) await server.close();
   server = null;

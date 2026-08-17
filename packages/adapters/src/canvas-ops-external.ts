@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
+import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import {
   bootOrchestratorSession,
   CANVAS_OPS_TOOLS,
@@ -83,7 +83,7 @@ export async function startCanvasOpsExternalServer(
   await mcp.connect(transport);
 
   const http: Server = createServer((req, res) => {
-    if (!req.url || !req.url.startsWith(MCP_PATH)) {
+    if (!req.url?.startsWith(MCP_PATH)) {
       res.writeHead(404).end();
       return;
     }

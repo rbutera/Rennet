@@ -26,7 +26,10 @@ describe("harness conformance — real codex (gated)", () => {
     "certifies codex over the real binary and records its tested range",
     async () => {
       const { adapter, discovery } = await createCodexHarness();
-      expect(adapter, `no codex binary discovered: ${JSON.stringify(discovery.health)}`).not.toBeNull();
+      expect(
+        adapter,
+        `no codex binary discovered: ${JSON.stringify(discovery.health)}`,
+      ).not.toBeNull();
       if (!adapter) return;
 
       // A real run in a real git repo cwd (this worktree). Passing checks earn the

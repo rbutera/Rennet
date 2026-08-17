@@ -10,13 +10,8 @@ import {
   type HarnessSession,
   type SessionOutcome,
   type SessionSpec,
-  type TurnInput,
 } from "./harness";
-import {
-  CONFORMANCE_CHECKS,
-  type ConformanceReport,
-  runConformance,
-} from "./harness-conformance";
+import { CONFORMANCE_CHECKS, type ConformanceReport, runConformance } from "./harness-conformance";
 
 // ── A scripted fake HarnessPort (no adapters, no SDK, no process) ────────────
 //
@@ -97,7 +92,7 @@ function fakePort(shape: FakeShape): HarnessPort {
             yield buildTerminal();
           },
         },
-        send(_input: TurnInput): Promise<string> {
+        send(): Promise<string> {
           return Promise.resolve("t1");
         },
         interrupt(): Promise<void> {

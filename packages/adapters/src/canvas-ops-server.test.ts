@@ -1,14 +1,13 @@
 import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
-import { type ElementDetail, type OpsEnvelope } from "@rennet/core";
+import type { ElementDetail, OpsEnvelope } from "@rennet/core";
 import { describe, expect, it } from "vitest";
-import { makeCanvasOpsTestBackend, PATCHSET_ID } from "./canvas-ops-test-backend";
 import {
   buildCanvasOpsTools,
   CANVAS_OPS_INSTRUCTIONS,
   CANVAS_OPS_SERVER_NAME,
   createCanvasOpsServer,
 } from "./canvas-ops-server";
-
+import { makeCanvasOpsTestBackend, PATCHSET_ID } from "./canvas-ops-test-backend";
 
 /** Parse the envelope out of an SDK CallToolResult's text content. */
 function envelopeOf(result: CallToolResult): OpsEnvelope {
