@@ -48,6 +48,7 @@ import type {
   OfferedManifest,
   RspTokenUsage,
 } from "@rennet/types";
+import { NO_CONCERN_ANSWER } from "./finding-reconcile";
 import type { VerificationFileReader, VerificationFileWindow } from "./finding-verification";
 import { absentBudgetGrant } from "./invocation-budget";
 
@@ -140,8 +141,6 @@ export async function runFindingAdjudication(
   let supported = 0;
   let contradicted = 0;
   let insufficient = 0;
-  let adjudicated = 0;
-  let adjudicationTurns = 0;
   const cappedFindingIds: string[] = [];
   const budgetRefusedFindingIds: string[] = [];
   let tokensSpent: RspTokenUsage | null = null;
@@ -173,9 +172,16 @@ export async function runFindingAdjudication(
     cappedFindingIds.push(finding.findingId);
   }
 
-  // 3. One budget-gated adjudication turn per contested row within the cap.
-  for (const finding of ranked.slice(0, maxAdjudications)) {
-    const window = await readWindowSafely(input.readFileWindow, finding.anchor);
+  // 3. Resolve the real windows concurrently, then reserve the shared budget in
+  //    deterministic severity order. The selected model turns start together: one
+  //    slow or hung adjudicator cannot serialize the other independent rows.
+  const selected = ranked.slice(0, maxAdjudications);
+  const windows = await Promise.all(
+    selected.map((finding) => readWindowSafely(input.readFileWindow, finding.anchor)),
+  );
+  const turns: Array<{ finding: FindingElement; prompt: string }> = [];
+  for (const [index, finding] of selected.entries()) {
+    const window = windows[index];
     if (window === undefined) {
       stamp(finding.findingId, "insufficient", UNREADABLE_CAVEAT);
       continue;
@@ -189,7 +195,13 @@ export async function runFindingAdjudication(
       continue;
     }
 
-    const answers = finding.agreement.kind === "disagree" ? finding.agreement.answers : [];
+    const answers =
+      finding.agreement.kind === "disagree"
+        ? finding.agreement.answers.map((answer) => ({
+            ...answer,
+            flagged: answer.answer !== NO_CONCERN_ANSWER,
+          }))
+        : [];
     const prompt = renderFindingAdjudicationPrompt(contract, {
       file: window,
       row: {
@@ -200,24 +212,31 @@ export async function runFindingAdjudication(
         hunk: hunkTextForAnchor(finding.anchor, input.manifest),
       },
     });
+    turns.push({ finding, prompt });
+  }
 
-    const turn = await runTurnSafely(input.runTurn, prompt);
-    adjudicationTurns += 1;
-    adjudicated += 1;
+  const emitted = await Promise.all(
+    turns.map(async ({ finding, prompt }) => ({
+      finding,
+      turn: await runTurnSafely(input.runTurn, prompt),
+    })),
+  );
+  const adjudicationTurns = emitted.length;
+  const adjudicated = emitted.length;
 
+  for (const { finding, turn } of emitted) {
     if (turn.status === "failed") {
       stamp(finding.findingId, "insufficient", turnFailedCaveat(turn.message));
       continue;
     }
     if (turn.tokens) tokensSpent = addTokens(tokensSpent, turn.tokens);
 
-    const parsed = parseSingleAdjudication(turn.body);
+    const parsed = parseSingleAdjudication(turn.body, "a1");
     if (!parsed) {
       stamp(finding.findingId, "insufficient", NO_VERDICT_CAVEAT);
       continue;
     }
-    const evidence = parsed.evidence.trim().length > 0 ? parsed.evidence.trim() : NO_VERDICT_CAVEAT;
-    stamp(finding.findingId, parsed.verdict, evidence);
+    stamp(finding.findingId, parsed.verdict, parsed.evidence);
   }
 
   // 4. Reassemble in ORIGINAL order. NOTHING is dropped: a contested row gets its
@@ -259,11 +278,7 @@ export async function adjudicateFlaggedReview(
   if (review.status !== "ok") return { review, telemetry: emptyAdjudicationTelemetry() };
   const result = await runFindingAdjudication({ ...options, findings: review.findings });
   return {
-    review: {
-      status: "ok",
-      findings: result.findings,
-      ...(review.dual ? { dual: review.dual } : {}),
-    },
+    review: { ...review, findings: result.findings },
     telemetry: result.telemetry,
   };
 }
@@ -341,19 +356,22 @@ function renderSides(occurrence: ManifestOccurrence): string {
 }
 
 /** Parse the single verdict from a one-row adjudication turn's emitted body, defensively. */
-function parseSingleAdjudication(body: unknown): ParsedAdjudication | undefined {
+function parseSingleAdjudication(
+  body: unknown,
+  expectedRef: string,
+): ParsedAdjudication | undefined {
   if (typeof body !== "object" || body === null) return undefined;
   const list = (body as { adjudications?: unknown }).adjudications;
-  if (!Array.isArray(list)) return undefined;
-  for (const item of list) {
-    if (typeof item !== "object" || item === null) continue;
-    const record = item as Record<string, unknown>;
-    const verdict = record.verdict;
-    if (verdict !== "supported" && verdict !== "contradicted" && verdict !== "insufficient")
-      continue;
-    return { verdict, evidence: typeof record.evidence === "string" ? record.evidence : "" };
-  }
-  return undefined;
+  if (!Array.isArray(list) || list.length !== 1) return undefined;
+  const item = list[0];
+  if (typeof item !== "object" || item === null) return undefined;
+  const record = item as Record<string, unknown>;
+  if (record.ref !== expectedRef) return undefined;
+  const verdict = record.verdict;
+  if (verdict !== "supported" && verdict !== "contradicted" && verdict !== "insufficient")
+    return undefined;
+  if (typeof record.evidence !== "string" || record.evidence.trim().length === 0) return undefined;
+  return { verdict, evidence: record.evidence.trim() };
 }
 
 function sumNullable(a: number | null, b: number | null): number | null {

@@ -112,7 +112,11 @@ two verbatim answers: the cross-harness adjudication verdict (issue #41). It rea
 **code supports the flag**, **code contradicts this flag**, or an honest **could not
 adjudicate** with its reason. It is a third opinion, not the final word—it rides
 beside both answers, never replacing them, and no verdict value ever hides or drops
-the row. A row with no adjudication renders exactly as before.
+the row. A row with no adjudication renders exactly as before. The desktop returns the
+verified rows first, starts the capped adjudication turns concurrently against the
+remaining shared review budget, and exposes their result through a patchset-and-mode
+keyed follow-up read. The renderer updates that exact row set later; it never waits for
+adjudication on the initial delivery path.
 
 An empty result is only an all-clear when the whole change was ingested. When the
 decomposition floor could not ingest some content (R18: a truncated tail, a binary
@@ -149,7 +153,10 @@ the one shared review budget and is capped, and the verdict informs the disagree
 without ever gating, dropping, or reordering it. Whether that explicit adjudication
 measurably beats raw overlap is measured on a seeded synthetic ground-truth corpus and
 recorded, from real runs only, into a committed calibration table—informational, never
-a gate. Deliberately not built: N=3 same-model self-consistency (no single-provider
+a gate. Each real fixture is materialised into its own temporary repository and scored
+only against its seeded claim and anchor; failed, partial, duplicate, unknown, or
+ambiguous runs are refused before the table is atomically replaced. Deliberately not
+built: N=3 same-model self-consistency (no single-provider
 divergence source exists) and any ship gate keyed on the verdict.
 
 ## Noise is the visible remainder

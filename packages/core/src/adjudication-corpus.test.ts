@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   ADJUDICATION_CORPUS,
   type AdjudicationOutcome,
+  findCalibrationClaim,
   scoreAdjudicationCalibration,
 } from "./adjudication-corpus";
 
@@ -17,6 +18,10 @@ describe("ADJUDICATION_CORPUS shape (#41)", () => {
       expect(item.id).toBeTruthy();
       expect(["planted-bug", "clean"]).toContain(item.truth);
       expect(item.claimClass).toBeTruthy();
+      expect(item.filePath).toBeTruthy();
+      expect(item.claimAnchor).toBeTruthy();
+      expect(item.claimSummary).toBeTruthy();
+      expect(item.claimMarkerGroups.length).toBeGreaterThan(0);
       // Offered-manifest-shaped synthetic diff.
       expect(Array.isArray(item.manifest.occurrences)).toBe(true);
       expect(item.manifest.occurrences.length).toBeGreaterThan(0);
@@ -51,12 +56,20 @@ describe("ADJUDICATION_CORPUS shape (#41)", () => {
 
 describe("scoreAdjudicationCalibration (#41) — pure", () => {
   const items = ADJUDICATION_CORPUS;
+  const outcome = (
+    item: (typeof items)[number],
+    rest: Omit<AdjudicationOutcome, "id" | "claimAnchor" | "claimSummary">,
+  ): AdjudicationOutcome => ({
+    id: item.id,
+    claimAnchor: item.claimAnchor,
+    claimSummary: item.claimSummary,
+    ...rest,
+  });
 
   it("is pure: same inputs, same output", () => {
-    const outcomes: AdjudicationOutcome[] = items.map((i) => ({
-      id: i.id,
-      overlapFlagged: i.truth === "planted-bug",
-    }));
+    const outcomes: AdjudicationOutcome[] = items.map((i) =>
+      outcome(i, { overlapFlagged: i.truth === "planted-bug" }),
+    );
     expect(scoreAdjudicationCalibration(items, outcomes)).toEqual(
       scoreAdjudicationCalibration(items, outcomes),
     );
@@ -68,7 +81,7 @@ describe("scoreAdjudicationCalibration (#41) — pure", () => {
     const clean = items.find((i) => i.truth === "clean");
     if (!clean) throw new Error("expected a clean control item");
     const outcomes: AdjudicationOutcome[] = [
-      { id: clean.id, overlapFlagged: true, adjudicatedVerdict: "contradicted" },
+      outcome(clean, { overlapFlagged: true, adjudicatedVerdict: "contradicted" }),
     ];
     const table = scoreAdjudicationCalibration([clean], outcomes);
     const row = table.find((r) => r.claimClass === clean.claimClass);
@@ -81,7 +94,7 @@ describe("scoreAdjudicationCalibration (#41) — pure", () => {
     const clean = items.find((i) => i.truth === "clean");
     if (!clean) throw new Error("expected a clean control item");
     const outcomes: AdjudicationOutcome[] = [
-      { id: clean.id, overlapFlagged: true, adjudicatedVerdict: "insufficient" },
+      outcome(clean, { overlapFlagged: true, adjudicatedVerdict: "insufficient" }),
     ];
     const table = scoreAdjudicationCalibration([clean], outcomes);
     const row = table.find((r) => r.claimClass === clean.claimClass);
@@ -95,7 +108,7 @@ describe("scoreAdjudicationCalibration (#41) — pure", () => {
     const planted = items.find((i) => i.truth === "planted-bug");
     if (!planted) throw new Error("expected a planted item");
     const outcomes: AdjudicationOutcome[] = [
-      { id: planted.id, overlapFlagged: true, adjudicatedVerdict: "supported" },
+      outcome(planted, { overlapFlagged: true, adjudicatedVerdict: "supported" }),
     ];
     const table = scoreAdjudicationCalibration([planted], outcomes);
     const row = table.find((r) => r.claimClass === planted.claimClass);
@@ -103,5 +116,62 @@ describe("scoreAdjudicationCalibration (#41) — pure", () => {
     expect(row.overlapCorrect).toBe(1);
     expect(row.adjudicationCorrect).toBe(1);
     expect(row.items).toBe(1);
+  });
+
+  it("rejects missing, duplicate, and unknown outcomes before scoring", () => {
+    const [first, second] = items;
+    if (!first || !second) throw new Error("expected corpus items");
+    const firstOutcome = outcome(first, { overlapFlagged: false });
+    const secondOutcome = outcome(second, { overlapFlagged: false });
+
+    expect(() => scoreAdjudicationCalibration([first, second], [firstOutcome])).toThrow(
+      /Missing calibration outcomes/,
+    );
+    expect(() => scoreAdjudicationCalibration([first], [firstOutcome, firstOutcome])).toThrow(
+      /Duplicate calibration outcome/,
+    );
+    expect(() =>
+      scoreAdjudicationCalibration([first], [{ ...secondOutcome, id: "unknown" }]),
+    ).toThrow(/Unknown calibration outcome/);
+  });
+
+  it("rejects an outcome joined to the wrong seeded claim", () => {
+    const item = items[0];
+    if (!item) throw new Error("expected corpus item");
+    expect(() =>
+      scoreAdjudicationCalibration(
+        [item],
+        [{ ...outcome(item, { overlapFlagged: true }), claimSummary: "another claim" }],
+      ),
+    ).toThrow(/claim mismatch/);
+  });
+});
+
+describe("findCalibrationClaim (#41)", () => {
+  const item = ADJUDICATION_CORPUS[0];
+  if (!item) throw new Error("expected corpus item");
+  const finding = (findingId: string, summary: string) => ({
+    findingId,
+    anchor: item.claimAnchor,
+    summary,
+    severity: "high" as const,
+    agreement: { kind: "concur" as const, agree: 2, total: 2 },
+  });
+
+  it("selects the seeded claim, not an unrelated finding at the same anchor", () => {
+    const selected = findCalibrationClaim(item, [
+      finding("noise", "prefer a clearer variable name"),
+      finding("claim", "items.length creates an off-by-one read"),
+    ]);
+    expect(selected?.findingId).toBe("claim");
+  });
+
+  it("rejects ambiguous multiple matches", () => {
+    expect(() =>
+      findCalibrationClaim(item, [
+        finding("a", "items.length causes an off-by-one read"),
+        finding("b", "the loop overruns at items.length"),
+      ]),
+    ).toThrow(/Ambiguous calibration claim/);
   });
 });

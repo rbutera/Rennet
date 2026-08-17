@@ -5,7 +5,7 @@
  * asks for: per claim class, how often RAW overlap vs EXPLICIT adjudication matched the
  * seeded ground truth. It follows the `harness-tested-range.json` pattern exactly — it
  * is COMMITTED and only ever WRITTEN by the gated real calibration run
- * (`recordAdjudicationCalibration`), so its numbers are MEASURED, never hand-edited.
+ * (`recordCommittedAdjudicationCalibration`), so its numbers are MEASURED, never hand-edited.
  * Until a genuine run lands it holds the honest EMPTY shape (`recordedAt: null`, no
  * classes) — an absent measurement announces itself rather than inventing numbers.
  *
@@ -14,7 +14,9 @@
  * branches on it.
  */
 
-import { writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
+import { rename, rm, writeFile } from "node:fs/promises";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import committed from "./adjudication-calibration.json";
 
@@ -49,29 +51,51 @@ export function isEmptyAdjudicationCalibration(cal: AdjudicationCalibration): bo
   return cal.recordedAt === null && cal.classes.length === 0;
 }
 
-/**
- * Record a real calibration run into the committed artifact. Called ONLY by the gated
- * `.real` run — the numbers come from driving both installed harnesses over the corpus,
- * scoring overlap vs adjudication against the known truth. Overwrites the file with the
- * measured table; there is no hand-edit path. Returns what was written.
- */
-export async function recordAdjudicationCalibration(input: {
+interface CalibrationRecordInput {
   readonly binaries: Readonly<Record<string, string>>;
   readonly classes: readonly ClassCalibrationRecord[];
-  /** Injected only in tests to keep the round-trip deterministic; defaults to now. */
   readonly now?: Date;
-  /** Injected only in tests so a round-trip does not clobber the committed artifact. */
-  readonly path?: string;
-}): Promise<AdjudicationCalibration> {
+}
+
+/** Write a calibration table only to an explicitly named scratch path. */
+export async function recordAdjudicationCalibration(
+  input: CalibrationRecordInput & { readonly path: string },
+): Promise<AdjudicationCalibration> {
+  if (input.path === ADJUDICATION_CALIBRATION_ARTIFACT_PATH) {
+    throw new Error("The scratch calibration writer cannot write the committed artifact");
+  }
+  return record(input, input.path);
+}
+
+/** The env-gated real recorder is the only path to the committed artifact. */
+export async function recordCommittedAdjudicationCalibration(
+  input: CalibrationRecordInput,
+): Promise<AdjudicationCalibration> {
+  if (process.env.RENNET_LIVE_ADJUDICATION !== "1") {
+    throw new Error("Committed adjudication calibration writes require the gated real recorder");
+  }
+  return record(input, ADJUDICATION_CALIBRATION_ARTIFACT_PATH);
+}
+
+async function record(
+  input: CalibrationRecordInput,
+  path: string,
+): Promise<AdjudicationCalibration> {
   const table: AdjudicationCalibration = {
     recordedAt: (input.now ?? new Date()).toISOString(),
     binaries: { ...input.binaries },
     classes: input.classes.map((c) => ({ ...c })),
   };
-  await writeFile(
-    input.path ?? ADJUDICATION_CALIBRATION_ARTIFACT_PATH,
-    `${JSON.stringify(table, null, 2)}\n`,
-    "utf8",
-  );
+  await writeAtomically(path, `${JSON.stringify(table, null, 2)}\n`);
   return table;
+}
+
+async function writeAtomically(path: string, contents: string): Promise<void> {
+  const temporary = join(dirname(path), `.${basename(path)}.${process.pid}.${randomUUID()}.tmp`);
+  try {
+    await writeFile(temporary, contents, "utf8");
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true });
+  }
 }

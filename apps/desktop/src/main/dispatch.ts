@@ -250,7 +250,7 @@ export interface DispatchDeps {
     review: Review,
     deepReview: boolean,
     session: ReviewIntelligenceSession,
-  ): Promise<FlaggedReview>;
+  ): Promise<FlaggedReviewRun>;
   /**
    * The Noise lens's input (issue #34): the low-signal churn grouped away for a
    * review, each group tagged rule vs noise job. The LIVE noise-classification runner
@@ -471,6 +471,18 @@ interface LiveProjectRun {
   result: Promise<{ repos: ProcessedRepoSummary[] }>;
 }
 
+export interface FlaggedReviewRun {
+  /** Verified rows ready for immediate delivery. */
+  readonly review: FlaggedReview;
+  /** Optional post-hoc adjudication over those rows. Never awaited by `flagged.review`. */
+  readonly adjudication: Promise<FlaggedReview> | null;
+}
+
+type LiveFlaggedAdjudication =
+  | { readonly status: "pending" }
+  | { readonly status: "complete"; readonly review: FlaggedReview }
+  | { readonly status: "failed"; readonly reason: string };
+
 export function createDispatch(
   deps: DispatchDeps,
 ): (name: CommandName, rawInput: unknown, ctx?: DispatchContext) => Promise<unknown> {
@@ -487,7 +499,14 @@ export function createDispatch(
   // idempotency still yields exactly one review.
   const realPostInFlight = new Set<string>();
   const liveProjectRuns = new Map<string, LiveProjectRun>();
+  const liveFlaggedAdjudications = new Map<string, LiveFlaggedAdjudication>();
   const progressReplayLimit = 256;
+
+  const flaggedAdjudicationKey = (input: {
+    reviewId: string;
+    patchsetId: string;
+    deepReview: boolean;
+  }): string => JSON.stringify([input.reviewId, input.patchsetId, input.deepReview]);
 
   function attachProjectProgress(run: LiveProjectRun, ctx?: DispatchContext): void {
     const sink = ctx?.emitProgress;
@@ -959,10 +978,48 @@ export function createDispatch(
         // BOTH provider seats. Only an explicit `false` opts down to single-Claude.
         const deepReview = input.deepReview ?? true;
         const intelligenceSession = intelligenceSessions.enter(review, deepReview, "flagged");
-        const flagged = await deps.flaggedReview(review, deepReview, intelligenceSession);
+        const run = await deps.flaggedReview(review, deepReview, intelligenceSession);
+        const key = flaggedAdjudicationKey({
+          reviewId: review.id,
+          patchsetId: review.activePatchsetId,
+          deepReview,
+        });
+        if (run.adjudication) {
+          const pending: LiveFlaggedAdjudication = { status: "pending" };
+          liveFlaggedAdjudications.set(key, pending);
+          void run.adjudication.then(
+            (enriched) => {
+              if (liveFlaggedAdjudications.get(key) !== pending) return;
+              liveFlaggedAdjudications.set(key, {
+                status: "complete",
+                review: { ...enriched, patchsetId: review.activePatchsetId },
+              });
+            },
+            (reason: unknown) => {
+              if (liveFlaggedAdjudications.get(key) !== pending) return;
+              liveFlaggedAdjudications.set(key, {
+                status: "failed",
+                reason: reason instanceof Error ? reason.message : String(reason),
+              });
+            },
+          );
+        } else {
+          liveFlaggedAdjudications.delete(key);
+        }
         // Stamp the patchset this result was computed against (#160/P0-2) so the renderer
         // can bind it to the canvases beside it and discard a regenerate-stale result.
-        return parseCommandOutput(name, { ...flagged, patchsetId: review.activePatchsetId });
+        return parseCommandOutput(name, {
+          ...run.review,
+          patchsetId: review.activePatchsetId,
+        });
+      }
+      case "flagged.adjudication": {
+        const input = parseCommandInput(name, rawInput);
+        const result = liveFlaggedAdjudications.get(flaggedAdjudicationKey(input));
+        if (!result) return parseCommandOutput(name, { status: "absent" });
+        if (result.status === "pending") return parseCommandOutput(name, result);
+        if (result.status === "failed") return parseCommandOutput(name, result);
+        return parseCommandOutput(name, { status: "complete", review: result.review });
       }
       // ── Ask the AI a question about the review (issue #139) ────────────────────
       case "review.ask": {

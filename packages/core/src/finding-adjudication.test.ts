@@ -175,8 +175,8 @@ describe("runFindingAdjudication — prompt content (#41)", () => {
       adjudicatedBy: BY,
       budget: budget(),
     });
-    expect(captured).toContain("Claude answers:");
-    expect(captured).toContain("Codex answers: no concern raised here");
+    expect(captured).toContain("Claude FLAGGED this claim:");
+    expect(captured).toContain("Codex DID NOT FLAG this claim: no concern raised here");
     // The real window carries MORE than the offered hunk line.
     expect(captured).toContain("more real context than the hunk");
   });
@@ -199,6 +199,42 @@ describe("runFindingAdjudication — prompt content (#41)", () => {
 // ── 2.3 Honesty asymmetry — never a drop ──────────────────────────────────────
 
 describe("runFindingAdjudication — honest insufficient, never a drop (#41)", () => {
+  it.each([
+    {
+      name: "more than one emitted item",
+      body: {
+        adjudications: [
+          { ref: "a1", verdict: "supported", evidence: "line 1 proves it" },
+          { ref: "a1", verdict: "contradicted", evidence: "line 2 refutes it" },
+        ],
+      },
+    },
+    {
+      name: "a verdict for the wrong reference",
+      body: {
+        adjudications: [{ ref: "a2", verdict: "supported", evidence: "line 1 proves it" }],
+      },
+    },
+    {
+      name: "empty evidence",
+      body: { adjudications: [{ ref: "a1", verdict: "supported", evidence: "   " }] },
+    },
+  ])("stamps insufficient for $name", async ({ body }) => {
+    const result = await runFindingAdjudication({
+      findings: [solo("S1")],
+      manifest: MANIFEST,
+      readFileWindow: readAll,
+      runTurn: async () => ({ status: "emitted", body }),
+      adjudicatedBy: BY,
+      budget: budget(),
+    });
+
+    const finding = result.findings[0];
+    expect(finding?.agreement.kind === "disagree" && finding.agreement.adjudication?.verdict).toBe(
+      "insufficient",
+    );
+  });
+
   it("a thrown/guarded turn stamps insufficient with the reason, keeps the row", async () => {
     const throwing: AdjudicationTurn = async () => {
       throw new Error("session spawn failed");
@@ -288,6 +324,35 @@ describe("runFindingAdjudication — honest insufficient, never a drop (#41)", (
       budget: budget(),
     });
     expect(result.findings.map((f) => f.findingId)).toEqual(["A", "B", "C"]);
+  });
+
+  it("starts every budgeted adjudication turn concurrently", async () => {
+    let releaseFirst: (() => void) | undefined;
+    const firstBlocked = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const started: string[] = [];
+    const runTurn: AdjudicationTurn = async (prompt) => {
+      const finding = prompt.includes("return y.value") ? "B" : "A";
+      started.push(finding);
+      if (finding === "A") await firstBlocked;
+      return {
+        status: "emitted",
+        body: { adjudications: [{ ref: "a1", verdict: "supported", evidence: "line 1" }] },
+      };
+    };
+
+    const pending = runFindingAdjudication({
+      findings: [solo("A"), solo("B", { anchor: "rennet:hunk/h2" })],
+      manifest: MANIFEST,
+      readFileWindow: readAll,
+      runTurn,
+      adjudicatedBy: BY,
+      budget: budget(),
+    });
+    await vi.waitFor(() => expect(started).toEqual(["A", "B"]));
+    releaseFirst?.();
+    await expect(pending).resolves.toMatchObject({ telemetry: { adjudicationTurns: 2 } });
   });
 });
 

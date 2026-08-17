@@ -33,7 +33,9 @@ opinion** beside them: an adjudication turn reads the real code around the
 contested spot and says whether it **supports the flag**, **contradicts** it, or
 **could not adjudicate**. That chip is a tiebreak hint, not a ruling—both original
 answers stay, the row never disappears because of it, and you still decide what is
-correct.
+correct. The disputed row appears as soon as the review has verified it; adjudication
+runs afterward and adds the chip when it finishes. A slow or stuck adjudicator never
+holds the row off screen.
 
 ## Why not just prompt a model?
 

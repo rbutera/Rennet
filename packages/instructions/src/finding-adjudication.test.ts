@@ -48,8 +48,8 @@ describe("renderFindingAdjudicationPrompt (#41)", () => {
         severity: "high",
         anchor: "rennet:hunk/h1",
         answers: [
-          { model: "Claude", answer: "x may be null at return" },
-          { model: "Codex", answer: "no concern raised here" },
+          { model: "Claude", flagged: true, answer: "x may be null at return" },
+          { model: "Codex", flagged: false, answer: "no concern raised here" },
         ],
         hunk: "+ return x.value;",
       },
@@ -57,8 +57,8 @@ describe("renderFindingAdjudicationPrompt (#41)", () => {
     expect(prompt).toContain("packages/core/src/loader.ts");
     expect(prompt).toContain("10\tconst x = load();");
     expect(prompt).toContain("## Contested row a1");
-    expect(prompt).toContain("Claude answers: x may be null at return");
-    expect(prompt).toContain("Codex answers: no concern raised here");
+    expect(prompt).toContain("Claude FLAGGED this claim: x may be null at return");
+    expect(prompt).toContain("Codex DID NOT FLAG this claim: no concern raised here");
     expect(prompt).toContain("+ return x.value;");
   });
 
@@ -70,8 +70,8 @@ describe("renderFindingAdjudicationPrompt (#41)", () => {
         severity: "medium",
         anchor: "rennet:hunk/h1",
         answers: [
-          { model: "Claude", answer: "concern" },
-          { model: "Codex", answer: "no concern raised here" },
+          { model: "Claude", flagged: true, answer: "concern" },
+          { model: "Codex", flagged: false, answer: "no concern raised here" },
         ],
         hunk: "",
       },
@@ -87,8 +87,8 @@ describe("renderFindingAdjudicationPrompt (#41)", () => {
         severity: "low" as const,
         anchor: "rennet:hunk/h1",
         answers: [
-          { model: "Claude", answer: "s" },
-          { model: "Codex", answer: "t" },
+          { model: "Claude", flagged: true, answer: "s" },
+          { model: "Codex", flagged: true, answer: "t" },
         ],
         hunk: "h",
       },

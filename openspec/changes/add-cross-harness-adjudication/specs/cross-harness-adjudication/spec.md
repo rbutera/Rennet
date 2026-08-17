@@ -34,6 +34,11 @@ Each adjudicated row SHALL carry a verdict of exactly `supported` (the code evid
 - **WHEN** the shared budget or the per-review cap prevents adjudicating a contested row
 - **THEN** that row surfaces unadjudicated or as `insufficient` with the bound named as its reason, and is never dropped
 
+#### Scenario: Initial row delivery never waits on adjudication
+
+- **WHEN** verified disagree rows are ready and one or more adjudication turns remain pending or hang
+- **THEN** the initial flagged-review command returns those rows immediately, and a keyed follow-up read adds the verdicts only after they finish
+
 ### Requirement: The seeded ground-truth corpus is synthetic and Rennet-owned
 
 The calibration corpus SHALL consist entirely of Rennet-authored synthetic diffs — planted bugs and clean-control items — each committed with a known per-claim verdict and a claim class. No item SHALL derive from client repositories, client code, client pull requests, or any client data. Each corpus item SHALL be expressible as an offered manifest so the same finding and adjudication machinery that serves live reviews runs over it unmodified.
@@ -56,6 +61,11 @@ Scoring SHALL be a pure function comparing, per corpus item, raw overlap's answe
 
 - **WHEN** the opt-in real calibration run completes over the corpus with both harnesses installed
 - **THEN** the committed artifact records, per claim class, raw overlap's accuracy and explicit adjudication's accuracy against the known verdicts, and no other source can write it
+
+#### Scenario: A partial or ambiguous run records nothing
+
+- **WHEN** any corpus review fails, an outcome is missing, duplicated, unknown, joined to the wrong seeded claim, or matches multiple findings
+- **THEN** scoring fails before the committed table is atomically replaced
 
 ### Requirement: Contested generation is fresh-session independent
 

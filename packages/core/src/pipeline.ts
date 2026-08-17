@@ -70,11 +70,6 @@ import { type DecomposeOptions, decompose } from "./decomposition";
 import { runDualFindingReview } from "./dual-finding-review";
 import { resolveDualSeat } from "./dual-seat";
 import { buildElementDiffs } from "./element-diffs";
-import {
-  type AdjudicationTurn,
-  type RunFindingAdjudicationInput,
-  runFindingAdjudication,
-} from "./finding-adjudication";
 import type { FindingIntent } from "./finding-generation";
 import {
   markVerificationUnavailable,
@@ -175,20 +170,6 @@ export interface ReviewVerificationConfig {
   readonly contract?: RunFindingVerificationInput["contract"];
 }
 
-/**
- * Cross-harness adjudication (#41). When two seats disagree, the pipeline runs one
- * fresh turn per contested row on the seat the council resolves for the `adjudication`
- * job, AFTER verification, and stamps an informational verdict onto the disagree arm.
- * Absent, contested rows surface unadjudicated (the honest degraded path). The runTurn
- * is the caller's executor for the resolved adjudication harness; the pipeline stamps
- * the resolved seat's label as provenance so `adjudicatedBy` cannot lie.
- */
-export interface ReviewAdjudicationConfig {
-  readonly readFileWindow: VerificationFileReader;
-  readonly runTurn: AdjudicationTurn;
-  readonly contract?: RunFindingAdjudicationInput["contract"];
-}
-
 export interface ReviewPipelineInput {
   readonly reviewId: string;
   readonly patchset: Patchset;
@@ -220,7 +201,6 @@ export interface ReviewPipelineInput {
   readonly hypothesisConfig?: ReviewHypothesisConfig;
   readonly dualModelConfig?: ReviewDualModelConfig;
   readonly verificationConfig?: ReviewVerificationConfig;
-  readonly adjudicationConfig?: ReviewAdjudicationConfig;
   readonly provenance?: PipelineProvenanceSeed;
   /**
    * The Model Council context (installed harnesses + user overrides). When
@@ -611,30 +591,6 @@ export async function buildReviewCanvases(
       } else if (deepReviewOn) {
         const unavailable = markVerificationUnavailable(findingRun.review);
         if (unavailable.status === "ok") finalFindings = unavailable.findings;
-      }
-
-      // Cross-harness adjudication (#41): AFTER verification, on the surviving rows.
-      // A refuted row is already dropped above, so it never reaches here (ordering).
-      // The adjudicator is the seat the council resolves for the `adjudication` job —
-      // under `both` a different model family than the primary reviewer, a genuine
-      // third opinion. The verdict rides the disagree arm, never a drop, never a gate.
-      if (deepReviewOn && input.adjudicationConfig && input.council) {
-        const resolution = resolveAssignment("adjudication", input.council);
-        if (resolution.kind === "model") {
-          const adjudicated = await runFindingAdjudication({
-            findings: finalFindings,
-            manifest,
-            readFileWindow: input.adjudicationConfig.readFileWindow,
-            runTurn: input.adjudicationConfig.runTurn,
-            adjudicatedBy: `${resolution.model} (${resolution.harness})`,
-            budget,
-            maxAdjudications: intelligenceBudget.adjudication.maxAdjudications,
-            ...(input.adjudicationConfig.contract
-              ? { contract: input.adjudicationConfig.contract }
-              : {}),
-          });
-          finalFindings = adjudicated.findings;
-        }
       }
 
       const sourceDocId = findingRun.seatRuns

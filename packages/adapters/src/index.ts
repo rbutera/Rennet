@@ -9,7 +9,6 @@ export {
   type ClassCalibrationRecord,
   isEmptyAdjudicationCalibration,
   readAdjudicationCalibration,
-  recordAdjudicationCalibration,
 } from "./adjudication-calibration";
 export {
   BaselineAdvanceCoordinator,

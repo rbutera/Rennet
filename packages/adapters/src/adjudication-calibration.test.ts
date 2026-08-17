@@ -1,4 +1,4 @@
-import { readFile, rm } from "node:fs/promises";
+import { readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -8,6 +8,7 @@ import {
   isEmptyAdjudicationCalibration,
   readAdjudicationCalibration,
   recordAdjudicationCalibration,
+  recordCommittedAdjudicationCalibration,
 } from "./adjudication-calibration";
 
 // The committed calibration table (#41): it must PARSE, hold the honest EMPTY shape
@@ -25,6 +26,11 @@ describe("adjudication calibration artifact (#41)", () => {
 
   it("points at a real committed file path", () => {
     expect(ADJUDICATION_CALIBRATION_ARTIFACT_PATH).toContain("adjudication-calibration.json");
+  });
+
+  it("does not export the recorder from the public adapter barrel", async () => {
+    const barrel = await readFile(new URL("./index.ts", import.meta.url), "utf8");
+    expect(barrel).not.toContain("recordAdjudicationCalibration");
   });
 });
 
@@ -49,5 +55,24 @@ describe("recordAdjudicationCalibration (#41)", () => {
     const onDisk = JSON.parse(await readFile(scratch, "utf8")) as AdjudicationCalibration;
     expect(onDisk).toEqual(written);
     expect(isEmptyAdjudicationCalibration(onDisk)).toBe(false);
+    expect(
+      (await readdir(tmpdir())).filter((name) => name.includes(`adj-cal-${process.pid}.json.`)),
+    ).toEqual([]);
+  });
+
+  it("keeps the scratch writer away from the committed artifact", async () => {
+    await expect(
+      recordAdjudicationCalibration({
+        binaries: {},
+        classes: [],
+        path: ADJUDICATION_CALIBRATION_ARTIFACT_PATH,
+      }),
+    ).rejects.toThrow(/scratch calibration writer/);
+  });
+
+  it("refuses the committed recorder unless the real run is enabled", async () => {
+    await expect(
+      recordCommittedAdjudicationCalibration({ binaries: {}, classes: [] }),
+    ).rejects.toThrow(/gated real recorder/);
   });
 });

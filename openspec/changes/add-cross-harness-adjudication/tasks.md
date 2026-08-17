@@ -45,3 +45,15 @@ Red-first throughout: each numbered group starts with the failing test that prov
 - [x] 7.2 Update `docs/src/content/docs/developing/reference/delivery-order.md`: mark the #41 entry in wave 10 delivered with the honest one-paragraph account (what shipped, what was deliberately cut and why — N=3, the struck ship gate).
 - [x] 7.3 Full gate `sh -c 'pnpm check'` green with a positive control; verify zero spend in the gate; stage `openspec/` with `git add -f`.
 - [x] 7.4 PR closes #41; the closing note records the committed calibration table location and the deliberate cuts.
+
+## 8. Cross-harness adjudication follow-up fixes
+
+- [x] 8.1 RED then green: carry optional adjudication through the `flagged.review` command schema, preserving the old shape.
+- [x] 8.2 RED then green: return verified rows before adjudication; expose patchset-and-mode-keyed pending/complete enrichment and update the renderer later.
+- [x] 8.3 RED then green: start up to four budgeted adjudication turns concurrently and strictly require one `a1` verdict with non-empty evidence.
+- [x] 8.4 Materialise real corpus fixtures in isolated temporary repositories and supply their real file windows.
+- [x] 8.5 Make scorer input complete and exact: reject failed, missing, duplicate, unknown, wrong-claim, and ambiguous outcomes.
+- [x] 8.6 Share one production review budget across calibration generation and adjudication.
+- [x] 8.7 Remove the recorder from the public barrel, require explicit write authority, and replace the artifact atomically.
+- [x] 8.8 Delete the production-unused pipeline `adjudicationConfig` mirror; retain the verification configuration.
+- [x] 8.9 Add dispatch and DOM delivery tests proving pending/hung adjudication never blocks rows and completed enrichment lands.

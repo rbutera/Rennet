@@ -619,6 +619,8 @@ export const FINDING_ADJUDICATION_CONTRACT: AdjudicationContract = {
 export interface AdjudicationPromptAnswer {
   /** The seat label (e.g. "Claude", "Codex"). */
   readonly model: string;
+  /** Structural polarity: true when this seat raised the claim, false when it did not. */
+  readonly flagged: boolean;
   /** That seat's verbatim answer — a concern, or "no concern raised here" for a solo. */
   readonly answer: string;
 }
@@ -652,7 +654,12 @@ export function renderFindingAdjudicationPrompt(
     .split("\n")
     .map((line, index) => `${batch.file.startLine + index}\t${line}`)
     .join("\n");
-  const answers = batch.row.answers.map((a) => `- ${a.model} answers: ${a.answer}`).join("\n");
+  const answers = batch.row.answers
+    .map(
+      (answer) =>
+        `- ${answer.model} ${answer.flagged ? "FLAGGED this claim" : "DID NOT FLAG this claim"}: ${answer.answer}`,
+    )
+    .join("\n");
   return [
     `# Rennet cross-harness adjudication@${contract.version}`,
     "",

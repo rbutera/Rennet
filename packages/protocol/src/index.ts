@@ -30,6 +30,8 @@ import type {
   DualReviewNote,
   ElementDiff,
   ElementDiffs,
+  FindingAdjudication,
+  FindingAgreement,
   FindingElement,
   FindingModelAnswer,
   FindingVerification,
@@ -922,9 +924,22 @@ export const findingModelAnswerSchema = objectSchemaFor<FindingModelAnswer>()({
   model: z.string().min(1),
   answer: z.string(),
 });
-export const findingAgreementSchema = z.union([
-  z.object({ kind: z.literal("concur"), agree: z.number(), total: z.number() }),
-  z.object({ kind: z.literal("disagree"), answers: z.array(findingModelAnswerSchema) }),
+export const findingAdjudicationSchema = objectSchemaFor<FindingAdjudication>()({
+  verdict: z.enum(["supported", "contradicted", "insufficient"]),
+  evidence: z.string(),
+  adjudicatedBy: z.string().min(1),
+});
+export const findingAgreementSchema: z.ZodType<FindingAgreement> = z.union([
+  objectSchemaFor<Extract<FindingAgreement, { kind: "concur" }>>()({
+    kind: z.literal("concur"),
+    agree: z.number(),
+    total: z.number(),
+  }),
+  objectSchemaFor<Extract<FindingAgreement, { kind: "disagree" }>>()({
+    kind: z.literal("disagree"),
+    answers: z.array(findingModelAnswerSchema),
+    adjudication: findingAdjudicationSchema.optional(),
+  }),
 ]);
 /**
  * The reproduce-or-refute verification chip (issue #179). Additive optional on a
@@ -2202,6 +2217,24 @@ export const commandDefinitions = {
     // on; dual-model + per-finding verification (#179) are the default deep behaviour.
     input: z.object({ reviewId: z.string().min(1), deepReview: z.boolean().optional() }),
     output: flaggedReviewSchema,
+  },
+  // Adjudication is a late, informational enrichment (#41). The initial
+  // `flagged.review` response never waits for it; the renderer reads this
+  // patchset+mode-keyed state afterward and updates the already-visible rows when
+  // the independent turns finish. A hung turn therefore leaves this `pending`
+  // forever without holding the row-delivery command open (Rule Zero).
+  "flagged.adjudication": {
+    input: z.object({
+      reviewId: z.string().min(1),
+      patchsetId: z.string().min(1),
+      deepReview: z.boolean(),
+    }),
+    output: z.discriminatedUnion("status", [
+      z.object({ status: z.literal("pending") }),
+      z.object({ status: z.literal("complete"), review: flaggedReviewSchema }),
+      z.object({ status: z.literal("absent") }),
+      z.object({ status: z.literal("failed"), reason: z.string().min(1) }),
+    ]),
   },
   // ── Ask the AI a question about the review (issue #139) ────────────────────
   // The reviewer's question goes to the ORCHESTRATOR by default; `mode: "both"`

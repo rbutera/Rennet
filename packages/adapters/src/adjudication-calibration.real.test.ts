@@ -1,11 +1,19 @@
+import { execFile } from "node:child_process";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { promisify } from "node:util";
 import {
   ADJUDICATION_CORPUS,
   type AdjudicationOutcome,
   createHarnessRunTurn,
   createInvocationBudget,
+  DEFAULT_REVIEW_INTELLIGENCE_BUDGET,
   type FindingProvenanceSeed,
+  findCalibrationClaim,
   resolveAssignment,
   resolveDualSeat,
+  reviewInvocationCeiling,
   runDualFindingReview,
   runFindingAdjudication,
   scoreAdjudicationCalibration,
@@ -13,7 +21,7 @@ import {
 import type { CouncilResolveContext, FindingAdjudicationVerdict } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { createClaudeAdjudicationTurn, createCodexAdjudicationTurn } from "./adjudication-backend";
-import { recordAdjudicationCalibration } from "./adjudication-calibration";
+import { recordCommittedAdjudicationCalibration } from "./adjudication-calibration";
 import { createClaudeHarness } from "./claude-query";
 import { createCodexExecutor, createCodexUtilityAdapter } from "./codex-exec";
 import { createCodexHarness } from "./codex-turn-transport";
@@ -37,6 +45,7 @@ import { createCodexHarness } from "./codex-turn-transport";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const LIVE = process.env.RENNET_LIVE_ADJUDICATION === "1";
+const execFileAsync = promisify(execFile);
 
 const BASE_SEED: FindingProvenanceSeed = {
   harness: "claude-code",
@@ -73,7 +82,6 @@ describe("adjudication calibration — real dual harness (gated)", () => {
       expect(codex, "the calibration run needs a real codex binary").not.toBeNull();
       if (!claude || !codex) return;
 
-      const cwd = process.cwd();
       const council: CouncilResolveContext = {
         availability: { installed: ["claude-code", "codex"] },
       };
@@ -84,65 +92,125 @@ describe("adjudication calibration — real dual harness (gated)", () => {
       const adjResolution = resolveAssignment("adjudication", council);
       if (adjResolution.kind !== "model") throw new Error("expected a model adjudication seat");
       const adjudicatedBy = `${adjResolution.model} (${adjResolution.harness})`;
-      const adjudicationTurn =
-        adjResolution.harness === "codex"
-          ? createCodexAdjudicationTurn(executor, {
-              model: adjResolution.model,
-              effort: adjResolution.effort,
-            })
-          : createClaudeAdjudicationTurn(claude, { cwd, model: adjResolution.model });
-
       const outcomes: AdjudicationOutcome[] = [];
+      let contestedItems = 0;
+      let actualAdjudicationTurns = 0;
       for (const item of ADJUDICATION_CORPUS) {
-        const seats = resolveDualSeat({
-          council,
-          jobId: "finding-generation",
-          docType: "finding",
-          patchsetId: item.id,
-          manifest: item.manifest,
-          baseSeed: BASE_SEED,
-          claudeTurn: createHarnessRunTurn(claude, { docType: "finding", cwd }),
-          codexPort: createCodexUtilityAdapter({ executor }),
-        });
-        const { review } = await runDualFindingReview({
-          deepReview: true,
-          patchsetId: item.id,
-          manifest: item.manifest,
-          seats,
-          budget: createInvocationBudget(6),
-          mintDocId: idFactory(),
-          newRunId: () => "calibration",
-        });
-        if (review.status !== "ok") {
-          outcomes.push({ id: item.id, overlapFlagged: false });
-          continue;
+        const repository = await mkdtemp(join(tmpdir(), `rennet-adjudication-${item.id}-`));
+        try {
+          const file = join(repository, item.filePath);
+          await mkdir(dirname(file), { recursive: true });
+          const occurrence = item.manifest.occurrences.find(
+            (candidate) => candidate.id === item.claimAnchor.split("/").at(-1),
+          );
+          if (!occurrence) throw new Error(`Missing corpus occurrence for ${item.id}`);
+          const source = [
+            ...(occurrence.sides?.context ?? []),
+            ...(occurrence.sides?.additions ?? []),
+          ].join("\n");
+          await writeFile(file, `${source}\n`, "utf8");
+          await execFileAsync("git", ["init", "--quiet"], { cwd: repository });
+
+          // Production has ONE ceiling across generation and post-hoc adjudication.
+          const budget = createInvocationBudget(
+            reviewInvocationCeiling(DEFAULT_REVIEW_INTELLIGENCE_BUDGET, true),
+          );
+          const seats = resolveDualSeat({
+            council,
+            jobId: "finding-generation",
+            docType: "finding",
+            patchsetId: item.id,
+            manifest: item.manifest,
+            baseSeed: BASE_SEED,
+            claudeTurn: createHarnessRunTurn(claude, {
+              docType: "finding",
+              cwd: repository,
+            }),
+            codexPort: createCodexUtilityAdapter({ executor }),
+          });
+          const { review } = await runDualFindingReview({
+            deepReview: true,
+            patchsetId: item.id,
+            manifest: item.manifest,
+            seats,
+            budget,
+            mintDocId: idFactory(),
+            newRunId: () => "calibration",
+          });
+          if (review.status !== "ok") {
+            throw new Error(`Calibration review failed for ${item.id}: ${review.reason}`);
+          }
+
+          const claim = findCalibrationClaim(item, review.findings);
+          const overlapFlagged = claim !== undefined;
+          let verdict: FindingAdjudicationVerdict | undefined;
+          if (claim?.agreement.kind === "disagree") {
+            contestedItems += 1;
+            const adjudicationTurn =
+              adjResolution.harness === "codex"
+                ? createCodexAdjudicationTurn(executor, {
+                    model: adjResolution.model,
+                    effort: adjResolution.effort,
+                  })
+                : createClaudeAdjudicationTurn(claude, {
+                    cwd: repository,
+                    model: adjResolution.model,
+                  });
+            let adjudicationFailed = false;
+            const adjudicated = await runFindingAdjudication({
+              findings: [claim],
+              manifest: item.manifest,
+              readFileWindow: async () => {
+                const text = await readFile(file, "utf8");
+                return {
+                  path: item.filePath,
+                  startLine: 1,
+                  endLine: Math.max(1, text.trimEnd().split("\n").length),
+                  text: text.trimEnd(),
+                };
+              },
+              runTurn: async (prompt) => {
+                try {
+                  const result = await adjudicationTurn(prompt);
+                  if (result.status === "failed") adjudicationFailed = true;
+                  return result;
+                } catch (error) {
+                  adjudicationFailed = true;
+                  throw error;
+                }
+              },
+              adjudicatedBy,
+              budget,
+            });
+            actualAdjudicationTurns += adjudicated.telemetry.adjudicationTurns;
+            const adjudicatedClaim = adjudicated.findings[0];
+            verdict =
+              adjudicatedClaim?.agreement.kind === "disagree"
+                ? adjudicatedClaim.agreement.adjudication?.verdict
+                : undefined;
+            if (adjudicationFailed || adjudicated.telemetry.adjudicationTurns !== 1 || !verdict) {
+              throw new Error(`Contested calibration claim did not run a turn: ${item.id}`);
+            }
+          }
+          outcomes.push({
+            id: item.id,
+            claimAnchor: item.claimAnchor,
+            claimSummary: item.claimSummary,
+            overlapFlagged,
+            ...(verdict ? { adjudicatedVerdict: verdict } : {}),
+          });
+        } finally {
+          await rm(repository, { recursive: true, force: true });
         }
-        // Overlap's raw answer: did any row stand for this item after reconcile?
-        const overlapFlagged = review.findings.length > 0;
-        const adjudicated = await runFindingAdjudication({
-          findings: review.findings,
-          manifest: item.manifest,
-          readFileWindow: async () => undefined,
-          runTurn: adjudicationTurn,
-          adjudicatedBy,
-          budget: createInvocationBudget(6),
-        });
-        const contested = adjudicated.findings.find(
-          (f) => f.agreement.kind === "disagree" && f.agreement.adjudication !== undefined,
-        );
-        const verdict: FindingAdjudicationVerdict | undefined =
-          contested?.agreement.kind === "disagree"
-            ? contested.agreement.adjudication?.verdict
-            : undefined;
-        outcomes.push({
-          id: item.id,
-          overlapFlagged,
-          ...(verdict ? { adjudicatedVerdict: verdict } : {}),
-        });
       }
 
+      expect(outcomes).toHaveLength(ADJUDICATION_CORPUS.length);
+      expect(contestedItems, "the corpus run must produce contested seeded claims").toBeGreaterThan(
+        0,
+      );
+      expect(actualAdjudicationTurns).toBe(contestedItems);
       const classes = scoreAdjudicationCalibration(ADJUDICATION_CORPUS, outcomes);
-      const recorded = await recordAdjudicationCalibration({
+      const recorded = await recordCommittedAdjudicationCalibration({
         binaries: {
           "claude-code": claudeDiscovery.chosen?.version ?? "unknown",
           codex: codexDiscovery.chosen?.version ?? "unknown",
