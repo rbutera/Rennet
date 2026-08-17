@@ -138,12 +138,25 @@ starts become `tool.started`, while completed command and MCP items become
 `tool.output` with their native result and status. Interrupt and close terminate
 the whole process tree and await transport completion. Codex reports no per-turn
 cost or context-window capacity, so `costUsd` and `reportsContextWindow` stay
-honestly false. Host locus only; WSL codex is a later seam.
+honestly false.
+
+Both Codex spawn sites — the agentic `CodexTurnTransport` and the utility
+`CodexExecutor` — are locus-aware. They take the project's `Locus` and route every
+spawn through `locusCommand` (verbatim argv, no shell). For a WSL locus the turn
+scratch dir is minted inside the distro (`mktemp -d`), codex receives distro-native
+`-C`/`-o`/`--output-schema` paths, and the Windows side reads the captured results
+back through the UNC view. A host locus is byte-identical to the shipped path. The
+desktop resolves and memoizes a Codex seat per locus, exactly as it does the Claude
+harness, so a WSL project runs the distro's own `codex`.
 
 The desktop composition resolves the `orchestrator-chat` council assignment across
 both real adapters. A Claude-selected turn receives canvasOps in process; a
 Codex-selected turn reaches an injected `CodexTurnTransport` with the same backend
-served at its loopback MCP URL. The session event stream is subscribe-once.
+served at its loopback MCP URL. For a WSL Codex turn that URL must be reachable from
+inside the distro: the composition probes shared-localhost first, else binds the
+loopback to the WSL-facing host address the distro routes to (never `0.0.0.0`), and
+settles the turn as an honest failed turn when no route exists rather than running
+host-side. The session event stream is subscribe-once.
 
 ## omp is the third adapter
 

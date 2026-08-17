@@ -202,5 +202,7 @@ describe("RennetApp — the lifted store resets on review change (regression)", 
       expect(container.querySelector(".lens-tab.is-active")?.textContent).toBe("Decisions"),
     );
     expect(container.querySelector(".zoom-level")?.textContent).toBe("Roll-up");
-  });
+    // This heavy two-review render passes in ~1.8s alone but crosses the 5s default under
+    // full-suite CPU contention on the win32 runner (a slow-machine timeout, not a hang).
+  }, 20_000);
 });

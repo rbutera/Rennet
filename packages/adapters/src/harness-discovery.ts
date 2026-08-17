@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { access, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { posix as posixPath, resolve, win32 as win32Path } from "node:path";
+import { posix as posixPath, win32 as win32Path } from "node:path";
 import {
   type HarnessHealth,
   HOST_LOCUS,
@@ -18,6 +18,14 @@ import { execa } from "execa";
  */
 function joinFor(platform: NodeJS.Platform | undefined): (...parts: string[]) => string {
   return platform === "win32" ? win32Path.join : posixPath.join;
+}
+
+/** `path.resolve` for a platform, NOT the host's: mirrors joinFor so a host-locus
+ * candidate is normalized with the LOCUS platform's resolver. Native `resolve` would
+ * corrupt a POSIX path on a win32 host (and vice versa); in production the host deps
+ * carry `platform: process.platform`, so this is byte-identical to native `resolve`. */
+function resolveFor(platform: NodeJS.Platform | undefined): (...parts: string[]) => string {
+  return platform === "win32" ? win32Path.resolve : posixPath.resolve;
 }
 
 /**
@@ -68,6 +76,9 @@ export interface DiscoveredCandidate {
   readonly fromKnownLocation: boolean;
   /** The locus this candidate lives on (add-windows-support). */
   readonly locus: Locus;
+  /** The runtime a runtime-hosted candidate was probed and must be launched through
+   *  (a codex JS launcher under an asdf node install needs its sibling `node`). */
+  readonly runtimePath?: string;
 }
 
 /** The PATH delimiter for a platform: `;` on Windows, `:` elsewhere. */
@@ -547,6 +558,43 @@ export interface DiscoverCodexOptions {
  * nothing resolvable is found, so the caller fails LOUD (no Codex seat) rather
  * than launching a bad `codex` that would silently degrade dual-model to single.
  */
+/**
+ * The sibling `node` a codex candidate must run through, or null. A codex installed
+ * under an asdf node install (`~/.asdf/installs/nodejs/<ver>/bin/codex`) is a JS
+ * launcher whose `#!/usr/bin/env node` finds no `node` on a non-interactive PATH
+ * (asdf's shim init lives in the user's interactive shell rc, not `.profile`). Its
+ * runnable node is the sibling in the SAME install bin dir. Mirrors the omp/Bun
+ * precedent — probe and launch a runtime-hosted harness through its exact runtime.
+ */
+function pairedNodeRuntime(
+  codexPath: string,
+  platform: NodeJS.Platform | undefined,
+): string | null {
+  const p = platform === "win32" ? win32Path : posixPath;
+  const dir = p.dirname(codexPath);
+  if (!/[\\/]\.asdf[\\/]installs[\\/]nodejs[\\/][^\\/]+[\\/]bin$/.test(dir)) return null;
+  return p.join(dir, "node");
+}
+
+/**
+ * Probe a codex path, PLAIN first so a normal install (node on PATH) is byte-identical;
+ * only on a null plain probe does it fall back to the paired sibling `node`. Returns the
+ * version and, when the paired runtime was needed, the runtime to launch through.
+ */
+async function probeCodexCandidate(
+  deps: DiscoveryDeps,
+  path: string,
+): Promise<{ readonly version: string | null; readonly runtimePath?: string }> {
+  const version = await deps.probeVersion(path);
+  if (version !== null) return { version };
+  const node = pairedNodeRuntime(path, deps.platform);
+  if (node !== null && (await deps.isExecutable(node))) {
+    const paired = await deps.probeVersionWithRuntime?.(node, path);
+    if (paired != null) return { version: paired, runtimePath: node };
+  }
+  return { version: null };
+}
+
 export async function discoverCodex(
   deps: DiscoveryDeps,
   options: DiscoverCodexOptions = {},
@@ -556,13 +604,14 @@ export async function discoverCodex(
     // Normalize to ABSOLUTE: codex-exec spawns from a fresh scratch cwd, so a
     // relative override (e.g. "codex") must be anchored against the app's cwd
     // HERE, at resolution time, not left to resolve against the wrong dir later.
-    const path = resolve(options.explicitBin);
+    const path = resolveFor(deps.platform)(options.explicitBin);
     if (await deps.isExecutable(path)) {
-      const version = await deps.probeVersion(path);
+      const { version, runtimePath } = await probeCodexCandidate(deps, path);
       if (version !== null) {
+        const runtime = runtimePath === undefined ? {} : { runtimePath };
         return {
-          candidates: [{ path, version, fromKnownLocation: true, locus: HOST_LOCUS }],
-          chosen: { path, version },
+          candidates: [{ path, version, fromKnownLocation: true, locus: HOST_LOCUS, ...runtime }],
+          chosen: { path, version, ...runtime },
           health: { state: "ready", version },
         };
       }
@@ -602,16 +651,17 @@ export async function discoverCodex(
     // relative `chosen.path` that codex-exec would resolve against its scratch cwd.
     // WSL: keep the distro-native POSIX path (resolve would corrupt it on a Windows host).
     const joined = join(directory, filename);
-    const path = locus.kind === "host" ? resolve(joined) : joined;
+    const path = locus.kind === "host" ? resolveFor(deps.platform)(joined) : joined;
     if (resolved.has(path)) continue;
     if (!(await deps.isExecutable(path))) continue;
     resolved.add(path);
-    const version = await deps.probeVersion(path);
+    const { version, runtimePath } = await probeCodexCandidate(deps, path);
     candidates.push({
       path,
       version,
       fromKnownLocation: knownSet.has(directory),
       locus,
+      ...(runtimePath === undefined ? {} : { runtimePath }),
     });
   }
 
@@ -649,7 +699,11 @@ export async function discoverCodex(
 
   return {
     candidates,
-    chosen: { path: best.path, version: best.version },
+    chosen: {
+      path: best.path,
+      version: best.version,
+      ...(best.runtimePath === undefined ? {} : { runtimePath: best.runtimePath }),
+    },
     health: { state: "ready", version: best.version },
   };
 }
@@ -733,7 +787,7 @@ async function resolveCandidates(
     const filename = resolveBinaryFilename(entries, binary, deps.platform, deps.pathExt);
     if (filename === null) continue;
     const joined = join(directory, filename);
-    const path = locus.kind === "host" ? resolve(joined) : joined;
+    const path = locus.kind === "host" ? resolveFor(deps.platform)(joined) : joined;
     if (resolved.has(path)) continue;
     if (!(await deps.isExecutable(path))) continue;
     resolved.add(path);
@@ -792,7 +846,8 @@ export async function discoverOmp(
   let explicitOmp: DiscoveredCandidate | null = null;
   if (options.explicitBin !== undefined && options.explicitBin.length > 0) {
     const locus = deps.locus ?? HOST_LOCUS;
-    const path = locus.kind === "host" ? resolve(options.explicitBin) : options.explicitBin;
+    const path =
+      locus.kind === "host" ? resolveFor(deps.platform)(options.explicitBin) : options.explicitBin;
     if (await deps.isExecutable(path)) {
       explicitOmp = { path, version: null, fromKnownLocation: true, locus };
     }

@@ -9,12 +9,17 @@ import {
   type ToolOutcome,
 } from "@rennet/core";
 import type { NoveltyLedger, PatchFile, Patchset, ProjectSnapshotManifest } from "@rennet/types";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { noveltyBackend, type ResolvedNoveltyContext } from "./novelty-ledger-backend";
 import { NoveltyLedgerReader } from "./novelty-ledger-reader";
 import { ProjectContextReader } from "./project-context-reader";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
 import { ProjectSnapshotStore } from "./project-snapshot-store";
+
+// win32 git operations on a cold disk exceed vitest's 5s default (measured 6-11s on
+// lancelot); give this git-heavy suite room. Not a hang — the same tests pass fast on
+// macOS/Linux and complete well under this ceiling on Windows.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The FULL novelty-read path, end to end: a real generated ProjectSnapshot →
@@ -28,7 +33,8 @@ import { ProjectSnapshotStore } from "./project-snapshot-store";
 
 const scratch: string[] = [];
 afterEach(() => {
-  for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of scratch.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 function git(root: string, ...args: string[]): string {

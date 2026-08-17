@@ -8,9 +8,13 @@ import {
   bootOrchestratorSession,
   CANVAS_OPS_TOOLS,
   type CanvasOpsBackend,
+  HOST_LOCUS,
+  type Locus,
+  locusCommand,
   type OrchestratorSession,
   type OrchestratorSessionConfig,
 } from "@rennet/core";
+import { execa } from "execa";
 import {
   CANVAS_OPS_INSTRUCTIONS,
   CANVAS_OPS_SERVER_NAME,
@@ -47,6 +51,83 @@ export interface CanvasOpsExternalServer {
 export interface CanvasOpsExternalServerOptions {
   /** Test seam; production always binds an ephemeral port. */
   readonly port?: number;
+  /**
+   * The executing codex's locus (#334). A host locus binds the shipped 127.0.0.1
+   * loopback. A WSL locus must hand the distro an address it can actually reach:
+   * shared localhost under mirrored networking, else the WSL-facing host address
+   * (the distro's default-route gateway), with the listener bound no wider than
+   * that route. When neither route can be established the start FAILS (the turn
+   * settles failed) — never a 0.0.0.0 bind, never a silent host fallback.
+   */
+  readonly locus?: Locus;
+  /** Injectable distro-reachability probes; defaults to real in-distro commands. */
+  readonly reachability?: CanvasOpsReachability;
+  /**
+   * Test seam: bind a candidate listener to `(port, address)`. Defaults to a real
+   * bind. Injected so the successful gateway-bind path is testable off-Windows,
+   * where a real non-loopback bind is not portable — the fake binds loopback while
+   * the resolved URL still reflects the gateway address the probe selected.
+   */
+  readonly listen?: (http: Server, port: number, address: string) => Promise<void>;
+}
+
+/** The empirical distro→host reachability probes (design §Decisions.3). */
+export interface CanvasOpsReachability {
+  /**
+   * GET `path` from `addr:port` inside the distro and return the response body, or
+   * null when unreachable. The caller matches the body against the listener's own
+   * probe token, so a bare TCP success on a port squatted by an UNRELATED distro
+   * service (wrong or absent token) does not certify the route — a plain TCP
+   * connect is not proof the connection reached OUR canvasOps listener.
+   */
+  probe(addr: string, port: number, path: string): Promise<string | null>;
+  /** The distro's default-route gateway (the WSL-facing host address), or null. */
+  discoverGateway(): Promise<string | null>;
+}
+
+/**
+ * Real reachability probes, executed inside the distro through `locusCommand`
+ * (verbatim argv, no shell interpretation of user data — the addresses/ports/paths
+ * are our own values). The probe opens bash's `/dev/tcp` (no `curl`/`nc` needed),
+ * sends a minimal HTTP/1.0 GET for the probe path, and returns the raw response so
+ * the caller can require its own token in the body — a bare connect is not enough.
+ */
+export function defaultWslReachability(distro: string): CanvasOpsReachability {
+  const locus: Locus = { kind: "wsl", distro };
+  return {
+    async probe(addr, port, path) {
+      const { file, args } = locusCommand(locus, "bash", [
+        "-c",
+        `exec 3<>/dev/tcp/${addr}/${port} && ` +
+          `printf 'GET %s HTTP/1.0\\r\\nHost: %s\\r\\nConnection: close\\r\\n\\r\\n' '${path}' '${addr}' >&3 && ` +
+          `cat <&3`,
+      ]);
+      try {
+        const result = await execa(file, [...args], {
+          reject: false,
+          stdin: "ignore",
+          timeout: 3_000,
+        });
+        return result.exitCode === 0 ? result.stdout : null;
+      } catch {
+        return null;
+      }
+    },
+    async discoverGateway() {
+      const { file, args } = locusCommand(locus, "ip", ["-4", "route", "show", "default"]);
+      try {
+        const result = await execa(file, [...args], {
+          reject: false,
+          stdin: "ignore",
+          timeout: 3_000,
+        });
+        if (result.exitCode !== 0) return null;
+        return result.stdout.match(/default via (\S+)/)?.[1] ?? null;
+      } catch {
+        return null;
+      }
+    },
+  };
 }
 
 /** Build the canvasOps@2 `McpServer` bound to `backend` from the neutral catalogue. */
@@ -71,6 +152,9 @@ function buildExternalMcpServer(backend: CanvasOpsBackend): McpServer {
 }
 
 const MCP_PATH = "/mcp";
+/** Where the listener echoes its per-server probe token, so a distro reachability
+ *  probe can prove it reached THIS listener and not a squatter on the same port. */
+const PROBE_PATH = "/canvasops-probe";
 
 /**
  * Start the loopback canvasOps@2 streamable-HTTP server bound to `backend`. Binds
@@ -88,36 +172,28 @@ export async function startCanvasOpsExternalServer(
   });
   await mcp.connect(transport);
 
-  const http: Server = createServer((req, res) => {
-    if (!req.url?.startsWith(MCP_PATH)) {
-      res.writeHead(404).end();
-      return;
-    }
-    transport.handleRequest(req, res).catch(() => {
-      if (!res.headersSent) res.writeHead(500).end();
+  // Unguessable per-server token echoed on PROBE_PATH. A distro reachability probe
+  // must read this exact token back before an address is selected, so a bare TCP
+  // connect to a port squatted by an unrelated distro service cannot certify.
+  const probeToken = randomUUID();
+
+  const makeHttp = (): Server =>
+    createServer((req, res) => {
+      if (req.url === PROBE_PATH) {
+        res.writeHead(200, { "content-type": "text/plain" }).end(probeToken);
+        return;
+      }
+      if (!req.url?.startsWith(MCP_PATH)) {
+        res.writeHead(404).end();
+        return;
+      }
+      transport.handleRequest(req, res).catch(() => {
+        if (!res.headersSent) res.writeHead(500).end();
+      });
     });
-  });
 
-  let closed = false;
-  const close = async (): Promise<void> => {
-    if (closed) return;
-    closed = true;
-    const errors: unknown[] = [];
-    await transport.close().catch((error) => errors.push(error));
-    await mcp.close().catch((error) => errors.push(error));
-    if (http.listening) {
-      await new Promise<void>((resolve) =>
-        http.close((error) => {
-          if (error) errors.push(error);
-          resolve();
-        }),
-      );
-    }
-    if (errors.length > 0) throw new AggregateError(errors, "failed to close canvasOps server");
-  };
-
-  try {
-    await new Promise<void>((resolve, reject) => {
+  const listenOn = (http: Server, port: number, address: string): Promise<void> =>
+    new Promise<void>((resolve, reject) => {
       const onListening = (): void => {
         http.off("error", onError);
         resolve();
@@ -128,19 +204,88 @@ export async function startCanvasOpsExternalServer(
       };
       http.once("listening", onListening);
       http.once("error", onError);
-      http.listen(options.port ?? 0, "127.0.0.1");
+      http.listen(port, address);
     });
-  } catch (error) {
-    await close().catch(() => undefined);
-    throw error;
-  }
-  const address = http.address() as AddressInfo;
-  const url = `http://127.0.0.1:${address.port}${MCP_PATH}`;
 
-  return {
-    url,
-    close,
+  const closeHttp = (http: Server): Promise<void> =>
+    http.listening
+      ? new Promise<void>((resolve) => http.close(() => resolve()))
+      : Promise.resolve();
+
+  const closeShared = async (errors: unknown[]): Promise<void> => {
+    await transport.close().catch((error) => errors.push(error));
+    await mcp.close().catch((error) => errors.push(error));
   };
+
+  // Resolve the bind address + reachable URL. Host: the shipped 127.0.0.1 loopback.
+  // WSL: probe shared-localhost first, then the discovered gateway; bind the listener
+  // to exactly the address that passed, never wider. No route ⇒ throw (turn fails).
+  const locus = options.locus ?? HOST_LOCUS;
+  const doListen = options.listen ?? listenOn;
+  let http: Server;
+  let url: string;
+  if (locus.kind === "wsl") {
+    const reach = options.reachability ?? defaultWslReachability(locus.distro);
+    const candidates = ["127.0.0.1"];
+    const gateway = await reach.discoverGateway();
+    if (gateway && gateway !== "127.0.0.1") candidates.push(gateway);
+    let chosen: { readonly http: Server; readonly url: string } | null = null;
+    const tried: string[] = [];
+    for (const address of candidates) {
+      const candidate = makeHttp();
+      let port: number;
+      try {
+        await doListen(candidate, 0, address);
+        port = (candidate.address() as AddressInfo).port;
+      } catch {
+        await closeHttp(candidate);
+        tried.push(`${address} (bind failed)`);
+        continue;
+      }
+      // Reachable ONLY if the probe read back this listener's own token (not a bare
+      // TCP success against a squatting service on the same port).
+      const body = await reach.probe(address, port, PROBE_PATH);
+      if (body?.includes(probeToken)) {
+        chosen = { http: candidate, url: `http://${address}:${port}${MCP_PATH}` };
+        break;
+      }
+      await closeHttp(candidate);
+      tried.push(`${address}:${port}`);
+    }
+    if (!chosen) {
+      const errors: unknown[] = [];
+      await closeShared(errors);
+      throw new Error(
+        `canvasOps loopback surface is unreachable from the "${locus.distro}" WSL distro ` +
+          `(no distro-to-host route; tried ${tried.join(", ") || "no candidates"}). ` +
+          `The codex turn cannot use canvas operations.`,
+      );
+    }
+    http = chosen.http;
+    url = chosen.url;
+  } else {
+    http = makeHttp();
+    try {
+      await listenOn(http, options.port ?? 0, "127.0.0.1");
+    } catch (error) {
+      await closeHttp(http);
+      await closeShared([]);
+      throw error; // preserve the raw listen error (e.g. EADDRINUSE) for callers
+    }
+    url = `http://127.0.0.1:${(http.address() as AddressInfo).port}${MCP_PATH}`;
+  }
+
+  let closed = false;
+  const close = async (): Promise<void> => {
+    if (closed) return;
+    closed = true;
+    const errors: unknown[] = [];
+    await closeShared(errors);
+    await closeHttp(http).catch((error) => errors.push(error));
+    if (errors.length > 0) throw new AggregateError(errors, "failed to close canvasOps server");
+  };
+
+  return { url, close };
 }
 
 // ── Codex-slot sibling of orchestrator-session-server.ts ─────────────────────
@@ -148,8 +293,11 @@ export async function startCanvasOpsExternalServer(
 /** The booted session plus the loopback canvasOps@2 URL to hand to a codex session. */
 export interface AttachedCodexOrchestratorSession {
   session: OrchestratorSession;
-  /** Loopback canvasOps@2 URL; feeds `-c mcp_servers.canvasops.url=<url>`. */
-  readonly url: string;
+  /** Loopback canvasOps@2 URL (feeds `-c mcp_servers.canvasops.url=<url>`); null when
+   *  no distro-reachable route to the canvas surface could be established (#334). */
+  readonly url: string | null;
+  /** Present when `url` is null: the plain reason the canvas surface is unreachable. */
+  readonly unreachableReason?: string;
   /** The single lifecycle owner for the session's listener and MCP transport. */
   close(): Promise<void>;
 }
@@ -163,8 +311,21 @@ export interface AttachedCodexOrchestratorSession {
 export async function attachCodexOrchestratorSession(
   backend: CanvasOpsBackend,
   config: OrchestratorSessionConfig,
+  serverOptions: CanvasOpsExternalServerOptions = {},
 ): Promise<AttachedCodexOrchestratorSession> {
   const session = bootOrchestratorSession(config);
-  const external = await startCanvasOpsExternalServer(backend);
-  return { session, url: external.url, close: external.close };
+  try {
+    const external = await startCanvasOpsExternalServer(backend, serverOptions);
+    return { session, url: external.url, close: external.close };
+  } catch (error) {
+    // A WSL locus with no distro-to-host route: hand back the session with a null
+    // URL and the plain reason, so the caller settles the turn FAILED rather than
+    // silently running host-side against a WSL repo (spec: no silent substitute).
+    return {
+      session,
+      url: null,
+      unreachableReason: error instanceof Error ? error.message : String(error),
+      close: async () => undefined,
+    };
+  }
 }

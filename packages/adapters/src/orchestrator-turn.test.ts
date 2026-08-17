@@ -11,16 +11,22 @@ import {
 } from "@rennet/core";
 import { sha256Hex } from "@rennet/protocol";
 import type { ContextSendRecord, PatchFile, Patchset, Review } from "@rennet/types";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { CANVAS_OPS_SERVER_NAME } from "./canvas-ops-server";
 import { createLiveCanvasOpsBackend } from "./live-review-backend";
 import { attachOrchestratorSession } from "./orchestrator-session-server";
 import {
   deriveOrchestratorPrimerState,
   type LoadSdkQuery,
+  runCodexOrchestratorTurn,
   runOrchestratorTurn,
 } from "./orchestrator-turn";
 import { ProjectSnapshotStore } from "./project-snapshot-store";
+
+// win32 git operations on a cold disk exceed vitest's 5s default (measured 6-11s on
+// lancelot); give this git-heavy suite room. Not a hang — the same tests pass fast on
+// macOS/Linux and complete well under this ceiling on Windows.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The orchestrator-turn wiring proof (issue #13, wave 2), driven with NO model.
@@ -35,7 +41,8 @@ import { ProjectSnapshotStore } from "./project-snapshot-store";
 
 const scratch: string[] = [];
 afterEach(() => {
-  for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of scratch.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 function git(root: string, ...args: string[]): string {
@@ -392,5 +399,34 @@ describe("runOrchestratorTurn — wiring proof (no model)", () => {
     });
     // The off-surface `Read` call is not a canvasOps@2 op and is not surfaced.
     expect(result.toolCalls.map((c) => c.op)).toEqual(["context.map"]);
+  });
+});
+
+describe("runCodexOrchestratorTurn — no distro route settles failed, runs no substitute", () => {
+  it("resolves no port and creates no session when the canvas surface is unreachable", async () => {
+    const { review, pipeline, backend, snapshot } = await liveReview();
+    const primer = deriveOrchestratorPrimerState(pipeline, backend, snapshot);
+
+    // A WSL locus whose every reachability probe fails: no distro-to-host route.
+    let resolvePortCalls = 0;
+    const result = await runCodexOrchestratorTurn(backend, primer, "Is this safe?", {
+      cwd: review.repositoryRoot,
+      locus: { kind: "wsl", distro: "Ubuntu" },
+      reachability: { probe: async () => null, discoverGateway: async () => null },
+      // If this ever runs, the turn is silently substituting a host codex — the exact
+      // boundary the spec forbids. The throw + the call counter both redden that.
+      resolvePort: async () => {
+        resolvePortCalls += 1;
+        throw new Error("resolvePort must not run when the canvas surface is unreachable");
+      },
+    });
+
+    expect(result.outcome).toBe("failed");
+    expect(result.error?.class).toBe("harness-unavailable");
+    expect(result.error?.origin).toBe("adapter");
+    expect(result.error?.message).toMatch(/unreachable from the "Ubuntu" WSL distro/);
+    expect(result.toolCalls).toEqual([]);
+    // No port resolved ⇒ no harness session could have been created.
+    expect(resolvePortCalls).toBe(0);
   });
 });

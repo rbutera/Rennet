@@ -199,9 +199,10 @@ export interface LiveDraftPrBodyInput {
 /** The deps the live port is bound to (all injected so the module stays testable). */
 export interface LiveDraftPrBodyDeps {
   /** The Claude harness adapter, or null when no `claude` is installed. */
-  claudePort(): Promise<HarnessPort | null>;
-  /** The Codex executor resolved to the absolute binary (bead workspace-6qp15), or null. */
-  codexExecutor(): Promise<CodexExecutor | null>;
+  claudePort(repoRoot: string): Promise<HarnessPort | null>;
+  /** The Codex executor resolved to the absolute binary (bead workspace-6qp15), or null.
+   *  Receives the review's repo root (#334) so a WSL project resolves the distro seat. */
+  codexExecutor(repoRoot: string): Promise<CodexExecutor | null>;
 }
 
 /**
@@ -219,7 +220,10 @@ export function createLiveDraftPrBodyPort(
     // executable. The council resolves pr-body-draft to Codex (Luna low) whenever
     // Codex is installed (Table 1 + 3), and to Claude (Haiku low) on a Claude-only
     // machine (Table 2); both are now live.
-    const [claudePort, executor] = await Promise.all([deps.claudePort(), deps.codexExecutor()]);
+    const [claudePort, executor] = await Promise.all([
+      deps.claudePort(input.review.repositoryRoot),
+      deps.codexExecutor(input.review.repositoryRoot),
+    ]);
     const installed: CouncilHarnessId[] = [];
     if (claudePort !== null) installed.push("claude-code");
     if (executor !== null) installed.push("codex");

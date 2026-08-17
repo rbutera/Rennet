@@ -12,7 +12,10 @@ function tempProject(content?: string): { root: string; cleanup: () => void } {
     mkdirSync(join(root, ".rennet"), { recursive: true });
     writeFileSync(file, content);
   }
-  return { root, cleanup: () => rmSync(root, { recursive: true }) };
+  return {
+    root,
+    cleanup: () => rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }),
+  };
 }
 
 const VALID_RULE = {

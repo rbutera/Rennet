@@ -538,3 +538,66 @@ describe("stripNullDeep", () => {
     expect(stripNullDeep(null)).toBe(null);
   });
 });
+
+// ── Locus-aware scratch/argv (#334), hermetic (no real wsl.exe) ────────────────
+
+describe("createCodexExecutor locus composition", () => {
+  it("wsl locus mints distro scratch, routes through wsl.exe, and reads back via UNC", async () => {
+    const writes: { path: string; data: string }[] = [];
+    const removed: string[] = [];
+    let spec: CodexRunSpec | undefined;
+    const effects: CodexExecEffects = {
+      mkdtemp: async (prefix) => `${prefix}HOST-should-not-be-used`,
+      mintDistroScratch: async () => "/tmp/distro-codex",
+      writeFile: async (path, data) => {
+        writes.push({ path, data });
+      },
+      readFile: async () => "{}",
+      rm: async (path) => {
+        removed.push(path);
+      },
+      run: async (runSpec) => {
+        spec = runSpec;
+        return { exitCode: 0, stderr: "" };
+      },
+    };
+    const executor = createCodexExecutor(effects, {
+      locus: { kind: "wsl", distro: "Ubuntu" },
+    });
+
+    await executor({
+      model: "gpt-5.6-luna",
+      effort: "low",
+      prompt: "p",
+      outputSchema: { type: "object" },
+    });
+
+    // The spawn is wrapped: wsl.exe -d Ubuntu --cd /tmp/distro-codex -e codex …
+    expect(spec?.bin).toBe("wsl.exe");
+    expect(spec?.cwd).toBeUndefined();
+    expect(spec?.args.slice(0, 2)).toEqual(["-d", "Ubuntu"]);
+    const args = spec?.args ?? [];
+    expect(args[args.indexOf("--cd") + 1]).toBe("/tmp/distro-codex");
+    expect(args[args.indexOf("-e") + 1]).toBe("codex");
+    // -o and --output-schema are distro-native paths under the distro scratch.
+    expect(args[args.indexOf("-o") + 1]).toBe("/tmp/distro-codex/out.json");
+    expect(args[args.indexOf("--output-schema") + 1]).toBe("/tmp/distro-codex/schema.json");
+    // The Windows side writes/reads/cleans the same dir through its UNC view.
+    expect(writes[0]?.path).toBe("\\\\wsl.localhost\\Ubuntu\\tmp\\distro-codex\\schema.json");
+    expect(removed[0]).toBe("\\\\wsl.localhost\\Ubuntu\\tmp\\distro-codex");
+  });
+
+  it("wsl locus without a mintDistroScratch effect throws (never a host fallback)", async () => {
+    const effects: CodexExecEffects = {
+      mkdtemp: async (prefix) => `${prefix}XXXX`,
+      writeFile: async () => undefined,
+      readFile: async () => "{}",
+      rm: async () => undefined,
+      run: async () => ({ exitCode: 0, stderr: "" }),
+    };
+    const executor = createCodexExecutor(effects, { locus: { kind: "wsl", distro: "Ubuntu" } });
+    await expect(executor({ model: "m", effort: "low", prompt: "p" })).rejects.toThrow(
+      /mintDistroScratch/,
+    );
+  });
+});

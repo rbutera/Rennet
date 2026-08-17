@@ -4,8 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { carryDispositionsByLineage, fileContentDigest } from "@rennet/core";
 import type { Disposition } from "@rennet/types";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { GitCaptureAdapter } from "./git-capture";
+
+// win32 git operations on a cold disk exceed vitest's 5s default (measured 6-11s on
+// lancelot); give this git-heavy suite room. Not a hang — the same tests pass fast on
+// macOS/Linux and complete well under this ceiling on Windows.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 // Issue #16 High 3: prove with an ADAPTER-PRODUCED rename (not a synthetic
 // `"X"`/`"X"` patch adapters never emit) that a real git rename does NOT carry a
@@ -23,7 +28,7 @@ function git(root: string, ...arguments_: string[]): string {
 
 afterEach(() => {
   for (const directory of directories.splice(0))
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 describe("disposition carry across an adapter-produced git rename (issue #16)", () => {

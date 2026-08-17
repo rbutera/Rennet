@@ -21,6 +21,7 @@ interface Fixture {
   versions?: Record<string, string>;
   runtimeVersions?: Record<string, string>;
   pathExt?: string;
+  platform?: NodeJS.Platform;
 }
 
 function recordingDeps(fixture: Fixture): { deps: DiscoveryDeps; accessed: string[] } {
@@ -46,6 +47,7 @@ function recordingDeps(fixture: Fixture): { deps: DiscoveryDeps; accessed: strin
       return Promise.resolve(fixture.runtimeVersions?.[scriptPath] ?? null);
     },
     pathExt: fixture.pathExt,
+    platform: fixture.platform,
   };
   return { deps, accessed };
 }
@@ -252,6 +254,7 @@ describe("discoverCodex (bead workspace-6qp15)", () => {
     const abs = resolve("codex");
     const { deps } = recordingDeps({
       home: HOME,
+      platform: process.platform,
       executables: new Set([abs]),
       versions: { [abs]: "0.150.0" },
     });
@@ -268,6 +271,7 @@ describe("discoverCodex (bead workspace-6qp15)", () => {
       loginShellPath: ".",
       envPath: ".",
       home: HOME,
+      platform: process.platform,
       dirContents: { ".": ["codex"] },
       executables: new Set([abs]),
       versions: { [abs]: "0.144.1" },
@@ -276,6 +280,27 @@ describe("discoverCodex (bead workspace-6qp15)", () => {
     expect(result.chosen).not.toBeNull();
     expect(isAbsolute(result.chosen?.path ?? "")).toBe(true);
     expect(result.chosen?.path).toBe(abs);
+  });
+
+  it("pairs the sibling node for an asdf codex whose bare launcher finds no node", async () => {
+    // ~/.asdf/installs/nodejs/<ver>/bin/codex is a JS launcher; on a non-interactive
+    // PATH `node` is absent, so a bare `codex --version` fails. Discovery must fall back
+    // to the sibling node and carry it as chosen.runtimePath (mirrors the omp/Bun rule).
+    const codex = "/home/rai/.asdf/installs/nodejs/24.16.0/bin/codex";
+    const node = "/home/rai/.asdf/installs/nodejs/24.16.0/bin/node";
+    const { deps } = recordingDeps({
+      home: HOME,
+      dirContents: {
+        "/home/rai/.asdf/installs/nodejs": ["24.16.0"],
+        "/home/rai/.asdf/installs/nodejs/24.16.0/bin": ["codex", "node"],
+      },
+      // bare codex has no `versions` entry → the PLAIN probe returns null (env-node
+      // missing); only the paired runtime answers a version.
+      executables: new Set([codex, node]),
+      runtimeVersions: { [codex]: "0.150.0" },
+    });
+    const result = await discoverCodex(deps);
+    expect(result.chosen).toEqual({ path: codex, version: "0.150.0", runtimePath: node });
   });
 
   it("the real probe returns null (never throws) on a missing binary", async () => {

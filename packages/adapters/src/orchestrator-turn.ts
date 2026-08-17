@@ -7,6 +7,7 @@ import {
   type EnvelopeContext,
   type HarnessError,
   type HarnessPort,
+  type Locus,
   type OrchestratorPrimerState,
   type OrchestratorSession,
   type RepoFreshness,
@@ -18,7 +19,11 @@ import {
 } from "@rennet/core";
 import { renderLayer } from "@rennet/instructions";
 import type { Canvas, ContextSendRecord } from "@rennet/types";
-import { attachCodexOrchestratorSession } from "./canvas-ops-external";
+import {
+  attachCodexOrchestratorSession,
+  type CanvasOpsExternalServerOptions,
+  type CanvasOpsReachability,
+} from "./canvas-ops-external";
 import { CANVAS_OPS_SERVER_NAME, type LoadCanvasOpsSdk } from "./canvas-ops-server";
 import { normalizeClaudeFrame } from "./claude-adapter";
 import type { LiveSnapshotOutcome } from "./live-review-backend";
@@ -244,6 +249,18 @@ export interface CodexOrchestratorTurnDeps {
   readonly assembledContext?: string;
   readonly onSend?: (record: ContextSendRecord) => void;
   readonly userActs?: readonly UserAct[];
+  /**
+   * The executing codex's locus (#334). A WSL locus makes the canvasOps loopback
+   * surface bind to a distro-reachable address; when no route exists the turn
+   * settles failed rather than running host-side. Defaults to the host.
+   */
+  readonly locus?: Locus;
+  /**
+   * Test seam: inject the distro-reachability probes for a WSL locus. Production uses
+   * the real in-distro probes; a hermetic test drives the no-route boundary to prove
+   * no port is resolved and no session is created when the canvas surface is unreachable.
+   */
+  readonly reachability?: CanvasOpsReachability;
   /** Resolve the selected Codex adapter after the loopback MCP URL exists. */
   readonly resolvePort: (
     mcpServers: Readonly<Record<string, { readonly url: string }>>,
@@ -457,13 +474,37 @@ async function runExternalMcpOrchestratorTurn(
   deps: CodexOrchestratorTurnDeps,
   harness: "codex" | "omp",
 ): Promise<OrchestratorTurnResult> {
-  const attached = await attachCodexOrchestratorSession(backend, {
-    primer,
-    harness,
-    fresh: true,
-  });
+  const serverOptions: CanvasOpsExternalServerOptions = {
+    ...(deps.locus ? { locus: deps.locus } : {}),
+    ...(deps.reachability ? { reachability: deps.reachability } : {}),
+  };
+  const attached = await attachCodexOrchestratorSession(
+    backend,
+    { primer, harness, fresh: true },
+    serverOptions,
+  );
   let harnessSession: Awaited<ReturnType<HarnessPort["createSession"]>> | null = null;
   try {
+    // No distro-reachable canvas route (#334): settle failed with the plain reason,
+    // naming the unreachable surface — never a silent host-codex substitute.
+    if (attached.url === null) {
+      return {
+        session: attached.session,
+        toolCalls: [],
+        finalText: "",
+        outcome: "failed",
+        error: {
+          class: "harness-unavailable",
+          origin: "adapter",
+          message:
+            attached.unreachableReason ?? "the canvasOps surface is not reachable from the distro",
+          retryable: false,
+          retryableSource: "inferred",
+          nativeCode: null,
+        },
+      };
+    }
+    const canvasUrl = attached.url;
     for (const act of deps.userActs ?? []) attached.session.stream.push(act);
     const request = attached.session.buildRequest(question, backend.view());
     const deixisContext = renderOpenAssembledPrompt(
@@ -492,7 +533,7 @@ async function runExternalMcpOrchestratorTurn(
       }
     }
 
-    const port = await deps.resolvePort({ canvasops: { url: attached.url } });
+    const port = await deps.resolvePort({ canvasops: { url: canvasUrl } });
     harnessSession = await port.createSession({
       cwd: deps.cwd,
       ...(deps.model === undefined ? {} : { model: deps.model }),

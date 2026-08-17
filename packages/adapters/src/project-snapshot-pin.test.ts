@@ -3,14 +3,20 @@ import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { escapePath } from "@rennet/core";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { ProjectSnapshotGenerator } from "./project-snapshot-generator";
 import { ensureProjectSnapshotPin } from "./project-snapshot-pin";
 import { ProjectSnapshotStore } from "./project-snapshot-store";
 
+// win32 git operations on a cold disk exceed vitest's 5s default (measured 6-11s on
+// lancelot); give this git-heavy suite room. Not a hang — the same tests pass fast on
+// macOS/Linux and complete well under this ceiling on Windows.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
 const scratch: string[] = [];
 afterEach(() => {
-  for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true });
+  for (const path of scratch.splice(0))
+    rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 function git(root: string, ...args: string[]): string {

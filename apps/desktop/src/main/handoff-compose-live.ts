@@ -172,9 +172,10 @@ export function claudeComposePort(port: HarnessPort, cwd: string, model?: string
 /** The deps the live composer is bound to (all injected so the module stays testable). */
 export interface LiveComposeDeps {
   /** The Claude harness adapter, or null when no `claude` is installed. */
-  claudePort(): Promise<HarnessPort | null>;
-  /** The Codex executor resolved to the absolute binary, or null when no `codex`. */
-  codexExecutor(): Promise<CodexExecutor | null>;
+  claudePort(repoRoot: string): Promise<HarnessPort | null>;
+  /** The Codex executor resolved to the absolute binary, or null when no `codex`.
+   *  Receives the reviewed repo root (#334) so a WSL project resolves the distro seat. */
+  codexExecutor(repoRoot: string): Promise<CodexExecutor | null>;
 }
 
 /** The input to one compose call: the mechanical bundle + the reviewed repo root. */
@@ -200,7 +201,10 @@ export function createLiveComposeBundle(
     // whole IPC command — it sits OUTSIDE the core router's fallback boundary. Catch it
     // here and fall to the deterministic mechanical floor (a real, complete bundle).
     try {
-      const [claudePort, executor] = await Promise.all([deps.claudePort(), deps.codexExecutor()]);
+      const [claudePort, executor] = await Promise.all([
+        deps.claudePort(repoRoot),
+        deps.codexExecutor(repoRoot),
+      ]);
       const installed: CouncilHarnessId[] = [];
       if (claudePort !== null) installed.push("claude-code");
       if (executor !== null) installed.push("codex");

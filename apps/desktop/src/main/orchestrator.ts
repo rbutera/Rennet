@@ -10,7 +10,7 @@ import {
   runOmpOrchestratorTurn,
   runOrchestratorTurn,
 } from "@rennet/adapters";
-import type { CanvasOpsEffect, ReviewPipelineResult, UserAct } from "@rennet/core";
+import type { CanvasOpsEffect, Locus, ReviewPipelineResult, UserAct } from "@rennet/core";
 import type { Review } from "@rennet/types";
 import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
 
@@ -39,8 +39,18 @@ export interface OrchestratorRunnerDeps {
    * issue #188); a test injects a temp dir so it never touches the real home store.
    */
   readonly baseDir?: string;
-  /** Resolve the council-selected harness for this orchestrator turn. */
-  resolveHarness(): Promise<OrchestratorHarnessSelection | null>;
+  /**
+   * Resolve the council-selected harness for this orchestrator turn. Receives the
+   * review's repository root (#334) so the composition root resolves the project's
+   * locus — a WSL project runs the distro's claude/codex, not the host's.
+   */
+  resolveHarness(repoRoot: string): Promise<OrchestratorHarnessSelection | null>;
+  /**
+   * Resolve the project's execution locus (#334). Threaded into the codex/omp turn
+   * so the canvasOps loopback surface binds to a distro-reachable address; absent ⇒
+   * host, today's behaviour.
+   */
+  readonly resolveLocus?: (repoRoot: string) => Locus;
   /** Base env the spawned `claude` inherits (defaults to `process.env`). */
   readonly env?: Readonly<Record<string, string | undefined>>;
   /** Extra live-backend deps (git, size ceiling, core state). */
@@ -130,7 +140,7 @@ export type OrchestratorTurnRunner = (
  */
 export function createOrchestratorTurnRunner(deps: OrchestratorRunnerDeps): OrchestratorTurnRunner {
   return async (review, pipeline, question, onDelta, abortController, pointing) => {
-    const selection = await deps.resolveHarness();
+    const selection = await deps.resolveHarness(review.repositoryRoot);
     if (!selection) {
       return {
         available: false,
@@ -172,15 +182,19 @@ export function createOrchestratorTurnRunner(deps: OrchestratorRunnerDeps): Orch
         ...(pointing?.userActs ? { userActs: pointing.userActs } : {}),
         ...(abortController ? { abortController } : {}),
       };
+      // The distro-reachability of canvasOps depends on the project locus (#334):
+      // a WSL codex/omp turn binds the loopback to an address the distro can reach.
+      const locus = deps.resolveLocus?.(review.repositoryRoot);
+      const externalShared = locus && locus.kind === "wsl" ? { ...shared, locus } : shared;
       const result =
         selection.harness === "codex"
           ? await runCodexOrchestratorTurn(backend, primer, question, {
-              ...shared,
+              ...externalShared,
               resolvePort: selection.resolvePort,
             })
           : selection.harness === "omp"
             ? await runOmpOrchestratorTurn(backend, primer, question, {
-                ...shared,
+                ...externalShared,
                 resolvePort: selection.resolvePort,
               })
             : await runOrchestratorTurn(backend, primer, question, {

@@ -15,6 +15,11 @@ import {
 } from "./github-changeset-source";
 import { discoverWorktreeIdentities } from "./worktree-discovery";
 
+// win32 git operations on a cold disk exceed vitest's 5s default (measured 6-11s on
+// lancelot); give this git-heavy suite room. Not a hang — the same tests pass fast on
+// macOS/Linux and complete well under this ceiling on Windows.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
+
 const directories: string[] = [];
 
 function git(root: string, ...arguments_: string[]): string {
@@ -102,7 +107,7 @@ function worktreesOf(root: string): WorktreeProvider {
 
 afterEach(() => {
   for (const directory of directories.splice(0))
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 describe("GitHubChangesetSource — local-diff-first (acceptance #1, #4)", () => {

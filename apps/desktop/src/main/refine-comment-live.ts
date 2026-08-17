@@ -307,14 +307,15 @@ export interface LiveRefineDeps {
    * the "Claude not installed" half of the council availability and the "no Claude
    * seat to run" signal.
    */
-  claudePort(): Promise<HarnessPort | null>;
+  claudePort(repoRoot: string): Promise<HarnessPort | null>;
   /**
    * The Codex executor, resolved to the absolute binary (bead workspace-6qp15),
    * or null when no `codex` is installed. Null is both the "Codex not installed"
    * half of the council availability and the "no Codex seat to run" signal — the
    * port returns an honest `unavailable` rather than shelling a bad `codex`.
+   * Receives the review's repo root (#334) so a WSL project resolves the distro seat.
    */
-  codexExecutor(): Promise<CodexExecutor | null>;
+  codexExecutor(repoRoot: string): Promise<CodexExecutor | null>;
 }
 
 /**
@@ -332,7 +333,10 @@ export function createLiveRefinePort(
     // executable. The council resolves comment-refinement to Codex (Terra) whenever
     // Codex is installed (Table 1 + Table 3), and to Claude (Sonnet) on a
     // Claude-only machine (Table 2); both are now live.
-    const [claudePort, executor] = await Promise.all([deps.claudePort(), deps.codexExecutor()]);
+    const [claudePort, executor] = await Promise.all([
+      deps.claudePort(input.review.repositoryRoot),
+      deps.codexExecutor(input.review.repositoryRoot),
+    ]);
     const installed: CouncilHarnessId[] = [];
     if (claudePort !== null) installed.push("claude-code");
     if (executor !== null) installed.push("codex");

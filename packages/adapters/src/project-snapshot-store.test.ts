@@ -24,7 +24,8 @@ import {
 
 const scratch: string[] = [];
 afterEach(() => {
-  for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of scratch.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 function git(root: string, ...args: string[]): string {
@@ -64,21 +65,24 @@ describe("ProjectSnapshotStore — local-first layout (design §1.1)", () => {
   it("resolves the escaped-path layout: <baseDir>/<repoKey>/{config.json, map/{manifest.json, shards/}}", () => {
     const store = new ProjectSnapshotStore("/base");
     const paths = store.paths("-Users-rai-dev-rennet");
-    expect(paths.projectDir).toBe("/base/-Users-rai-dev-rennet");
-    expect(paths.configPath).toBe("/base/-Users-rai-dev-rennet/config.json");
-    expect(paths.mapDir).toBe("/base/-Users-rai-dev-rennet/map");
-    expect(paths.manifestPath).toBe("/base/-Users-rai-dev-rennet/map/manifest.json");
-    expect(paths.manifestsDir).toBe("/base/-Users-rai-dev-rennet/map/manifests");
-    expect(paths.shardsDir).toBe("/base/-Users-rai-dev-rennet/map/shards");
+    // The store lives on the HOST filesystem (native separators): assert with `join`
+    // so the expectation is win32-native on Windows and POSIX elsewhere.
+    const dir = join("/base", "-Users-rai-dev-rennet");
+    expect(paths.projectDir).toBe(dir);
+    expect(paths.configPath).toBe(join(dir, "config.json"));
+    expect(paths.mapDir).toBe(join(dir, "map"));
+    expect(paths.manifestPath).toBe(join(dir, "map", "manifest.json"));
+    expect(paths.manifestsDir).toBe(join(dir, "map", "manifests"));
+    expect(paths.shardsDir).toBe(join(dir, "map", "shards"));
     // Reserved homes for later waves — resolved now, populated later.
-    expect(paths.overlaysDir).toBe("/base/-Users-rai-dev-rennet/overlays");
-    expect(paths.knowledgeDir).toBe("/base/-Users-rai-dev-rennet/knowledge");
+    expect(paths.overlaysDir).toBe(join(dir, "overlays"));
+    expect(paths.knowledgeDir).toBe(join(dir, "knowledge"));
   });
 
   it("uses the escaped repoKey directly as the dir name (no sha256Hex hashing)", () => {
     const store = new ProjectSnapshotStore("/base");
     // The dir segment is the literal escaped key — human-legible, not a hash.
-    expect(store.paths("-a-b").projectDir).toBe("/base/-a-b");
+    expect(store.paths("-a-b").projectDir).toBe(join("/base", "-a-b"));
   });
 
   it("writes a generated snapshot under map/ and reads it back", async () => {
@@ -97,7 +101,7 @@ describe("ProjectSnapshotStore — local-first layout (design §1.1)", () => {
     expect(defaultProjectsBaseDir().endsWith(join(".rennet", "projects"))).toBe(true);
     // snapshotStoreFor with an explicit base composes a store at that base.
     const s = snapshotStoreFor("/tmp/x");
-    expect(s.paths("k").projectDir).toBe("/tmp/x/k");
+    expect(s.paths("k").projectDir).toBe(join("/tmp/x", "k"));
   });
 });
 
@@ -203,7 +207,7 @@ describe("ProjectSnapshotStore — path-keying: two checkouts get DISTINCT entri
     // top-level PATH, so a worktree on a branch gets its OWN local-first entry.
     const { root, oid } = initRepo("rennet-wt-main-");
     const wt = mkdtempSync(join(tmpdir(), "rennet-wt-linked-"));
-    rmSync(wt, { recursive: true, force: true }); // git worktree add wants a non-existent path
+    rmSync(wt, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 }); // git worktree add wants a non-existent path
     git(root, "worktree", "add", "--detach", wt, oid);
     scratch.push(wt);
 

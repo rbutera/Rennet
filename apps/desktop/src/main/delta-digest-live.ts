@@ -164,9 +164,10 @@ export function claudeDeltaDigestPort(port: HarnessPort, cwd: string): DeltaDige
 /** The deps the live producer is bound to (all injected so the module stays testable). */
 export interface LiveDeltaDigestDeps {
   /** The Claude harness adapter, or null when no `claude` is installed. */
-  claudePort(): Promise<HarnessPort | null>;
-  /** The Codex executor resolved to the absolute binary, or null. */
-  codexExecutor(): Promise<CodexExecutor | null>;
+  claudePort(repoRoot: string): Promise<HarnessPort | null>;
+  /** The Codex executor resolved to the absolute binary, or null. Receives the
+   *  review's repo root (#334) so a WSL project resolves the distro seat. */
+  codexExecutor(repoRoot: string): Promise<CodexExecutor | null>;
 }
 
 /**
@@ -180,7 +181,10 @@ export function createLiveDeltaDigestPort(
   deps: LiveDeltaDigestDeps,
 ): (input: { review: Review; account: DeltaAccount }) => Promise<DeltaDigestResult> {
   return async (input) => {
-    const [claudePort, executor] = await Promise.all([deps.claudePort(), deps.codexExecutor()]);
+    const [claudePort, executor] = await Promise.all([
+      deps.claudePort(input.review.repositoryRoot),
+      deps.codexExecutor(input.review.repositoryRoot),
+    ]);
     const installed: CouncilHarnessId[] = [];
     if (claudePort !== null) installed.push("claude-code");
     if (executor !== null) installed.push("codex");

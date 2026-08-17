@@ -1,3 +1,4 @@
+import { sep } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { GitExec } from "./git-range-diff";
 import { discoverProject, type ProjectDiscoveryDeps } from "./project-discovery";
@@ -15,7 +16,10 @@ function fakeGit(repos: Record<string, Record<string, string>>): {
   const calls: { root: string; args: string[] }[] = [];
   const git: GitExec = async (root, args) => {
     calls.push({ root, args: [...args] });
-    const table = repos[root] ?? {};
+    // Discovery joins `workspace/child` with the HOST separator, so on win32 `root`
+    // arrives back-slashed; the fixture keys are POSIX. Normalize for the lookup so
+    // the fake is separator-agnostic (the product's native join stays under test).
+    const table = repos[root] ?? repos[root.split(sep).join("/")] ?? {};
     // Key on a stable join of the leading verb + the ref it targets.
     const key = args.join(" ");
     return table[key] ?? "";

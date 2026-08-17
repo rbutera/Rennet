@@ -16,7 +16,9 @@
       "command": "pnpm exec eslint apps/desktop/src apps/desktop/e2e --max-warnings=0 && pnpm exec biome check apps/desktop/src apps/desktop/e2e apps/desktop/*.ts apps/desktop/*.cjs apps/desktop/*.json"
     },
     "typecheck": { "command": "pnpm exec tsc -p apps/desktop/tsconfig.json" },
-    "test": { "command": "pnpm exec vitest run --passWithNoTests apps/desktop/src" },
+    "test": {
+      "command": "pnpm exec vitest run --passWithNoTests -c apps/desktop/vitest.config.ts"
+    },
     "e2e": { "command": "pnpm exec playwright test -c apps/desktop/playwright.config.ts" },
     "package": {
       "cache": false,

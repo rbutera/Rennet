@@ -1,4 +1,4 @@
-import { delimiter, join, resolve, sep, win32 as win32Path } from "node:path";
+import { posix as posixPath, resolve, sep, win32 as win32Path } from "node:path";
 import { type Locus, toDistroPath } from "@rennet/core";
 
 /**
@@ -84,27 +84,32 @@ export async function resolveEditorExecutables(
   input: EditorResolutionInput,
   isExecutable: (candidate: string) => Promise<boolean>,
 ): Promise<string[]> {
+  // Build every candidate with the path flavour of the TARGET platform, not the host
+  // running Rennet: a win32 editor path uses `;`/`\`, a POSIX one uses `:`/`/`. In
+  // production `input.platform` is the host platform, so this is byte-identical to the
+  // native ops; it only diverges when the two disagree (the off-Windows test harness).
+  const p = input.platform === "win32" ? win32Path : posixPath;
   const pathDirectories = [
-    ...input.inheritedPath.split(delimiter),
-    ...input.loginShellPath.split(delimiter),
+    ...input.inheritedPath.split(p.delimiter),
+    ...input.loginShellPath.split(p.delimiter),
   ]
     .filter((directory) => directory.length > 0)
-    .map((directory) => resolve(directory));
+    .map((directory) => p.resolve(directory));
   const uniqueDirectories = [...new Set(pathDirectories)];
   const resolved: string[] = [];
 
   for (const cli of EDITOR_CLIS) {
     const candidates: string[] = [];
     for (const directory of uniqueDirectories) {
-      candidates.push(join(directory, cli));
+      candidates.push(p.join(directory, cli));
       // On Windows the CLI on PATH is a `.cmd`/`.exe` shim, not a bare name.
       if (input.platform === "win32") {
-        candidates.push(join(directory, `${cli}.cmd`), join(directory, `${cli}.exe`));
+        candidates.push(p.join(directory, `${cli}.cmd`), p.join(directory, `${cli}.exe`));
       }
     }
     const bundle = MACOS_EDITOR_BUNDLES[cli];
     if (input.platform === "darwin" && bundle !== undefined) {
-      candidates.push(join("/Applications", bundle), join(input.home, "Applications", bundle));
+      candidates.push(p.join("/Applications", bundle), p.join(input.home, "Applications", bundle));
     }
     if (input.platform === "win32") {
       candidates.push(...windowsEditorLocations(cli, input.env ?? process.env));

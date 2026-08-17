@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
+import { assertPnpmCommandShape, pnpmCommand } from "./pnpm-launcher.mjs";
 
 // SPDX licence identifiers we ship without further review. `Unlicense` is a
 // public-domain-equivalent dedication (transitive via fast-sha256, pulled by the
@@ -36,6 +37,10 @@ const allowedUnknownPackages = new Set([
   // stripped-at-packaging status; allowlisted BY NAME (the positive control below
   // still fires on any un-named Unknown-bucket package).
   "@anthropic-ai/claude-agent-sdk-linux-x64",
+  // Windows installs (win32, x64) surface the win32-x64 per-platform binary, the
+  // same way darwin surfaces darwin-arm64 and Linux CI surfaces linux-x64. Same
+  // knowingly-shipped SDK, same stripped-at-packaging status; allowlisted BY NAME.
+  "@anthropic-ai/claude-agent-sdk-win32-x64",
   // The remaining per-platform binaries are stripped at packaging and are not
   // installed on these platforms; add them here if a build ever surfaces one.
 ]);
@@ -92,10 +97,10 @@ export function assertGateCanFail(policy) {
 
 function main() {
   assertGateCanFail(POLICY);
+  assertPnpmCommandShape();
 
-  const report = JSON.parse(
-    execFileSync("pnpm", ["licenses", "list", "--json", "--prod"], { encoding: "utf8" }),
-  );
+  const { command, args } = pnpmCommand(["licenses", "list", "--json", "--prod"]);
+  const report = JSON.parse(execFileSync(command, args, { encoding: "utf8" }));
   const blocked = computeBlocked(report, POLICY);
 
   if (blocked.length > 0) {
