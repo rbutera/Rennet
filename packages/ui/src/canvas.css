@@ -2427,6 +2427,14 @@
   flex: 1 1 auto;
   min-width: 0;
 }
+/* The base conversation host: the discuss-verb row above the right-margin column,
+   plus the honest live states a turn passes through. Declared before its
+   `.review-heart-split >` override so specificity ascends (issue #36). */
+.conversation-host {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
 /* The conversation host wraps the margin, so IT is the fixed-width flex sibling of the
    diff column (issue #36). The diff column takes the rest and never reflows; the host
    holds the 340px margin and its per-anchor discuss controls. */
@@ -2740,12 +2748,8 @@
 
 /* The LIVE conversation host (issue #36): the discuss-verb row above the right-margin
  * column, plus the honest live states a turn passes through. No fixture fallback: a
- * pending turn reads as pending, a failed turn reads as failed. */
-.conversation-host {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
+ * pending turn reads as pending, a failed turn reads as failed. The base
+ * `.conversation-host` rule is declared earlier, before its specificity override. */
 .conversation-host-discuss {
   display: flex;
   flex-wrap: wrap;
