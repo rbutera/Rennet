@@ -217,7 +217,9 @@ export function buildFlaggedIndex(review: FlaggedReview): FlaggedIndex {
       state: "failed",
       reason: review.reason,
       ...(review.ciSignal ? { ciSignal: review.ciSignal } : {}),
-      ...(isUiVerification(review.uiVerification) ? { uiVerification: review.uiVerification } : {}),
+      // A failed review carries no verify-ui surface (#183/#354: failed results have
+      // no findings and are outside verify-ui) — the failed variant has no
+      // `uiVerification` field, so there is nothing to fold here.
       ...(blockingStates.length > 0 ? { blockingStates } : {}),
     };
   }

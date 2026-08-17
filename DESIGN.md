@@ -132,6 +132,29 @@ Display headings may grow to `6rem`, use `0.94–1.0` line height, and never tra
 roughly 1.5–1.6 line height. The same roles apply across marketing and desktop; the desktop keeps a
 smaller, more spatially stable scale.
 
+### Desktop scale
+
+The desktop product renders at a denser, enumerated type ramp — smaller than the marketing scale
+and spatially stable across the review chrome:
+
+`10 / 11 / 12 / 13 / 14 / 16 / 19 / 22` px, plus the front-door display expression
+`clamp(34px, 5vw, 56px)`.
+
+- **10px** micro — uppercase micro-caps, the smallest legible chrome.
+- **11px** meta — dense secondary metadata, counts, pins.
+- **12px** chrome — the standard chrome label and control text.
+- **13px** reading — in-canvas reading text and descriptions.
+- **14px** emphasis — emphasised labels and dense titles.
+- **16px** body — comfortable body and input text (shared with marketing).
+- **19px** section — screen and section headings.
+- **22px** title — the largest in-app screen title.
+
+Fractional px sizes are not used: each one was a split-the-difference nudge between two steps. The
+design detector checks `font-size` longhand against this ramp for `packages/ui`; the package's
+owned design-ramp test also checks `font:` shorthand. Both read the machine-readable source in
+[`packages/ui/DESIGN.md`](packages/ui/DESIGN.md), which sits inside the package because the detector
+resolves a design system by walking up from the scanned file and stops at the package boundary.
+
 ## Layout
 
 The marketing page follows this reading order:
@@ -175,27 +198,48 @@ exponential ease-out rather than bounce or perpetual ambient animation.
 
 ## Shapes
 
-Controls use 10px corners and review or proof surfaces use 10–14px corners. Borders are one pixel
-and structural. A paper may carry one deeper corner when it reinforces the document metaphor, but
-the logo remains identity rather than recurring layout geometry. Avoid pills for containers and
-avoid ornamental clipping that competes with the evidence.
+Marketing controls use 10px corners, and marketing review or proof surfaces use 10–14px corners.
+Desktop controls and surfaces use the on-ramp values in the desktop scale below. Borders are one
+pixel and structural. A paper may carry one deeper corner when it reinforces the document
+metaphor, but the logo remains identity rather than recurring layout geometry. Avoid pills for
+containers and avoid ornamental clipping that competes with the evidence.
+
+### Desktop radius scale
+
+The desktop product uses an enumerated radius scale: `4 / 6 / 8 / 12 / 16` px, with two geometry
+exemptions that are shape rather than scale — `999px` (the pill, for chips and counts only, never
+containers) and `50%` (circles).
+
+- **4px** micro — inline code chips and the smallest tokens.
+- **6px** chip — small chips and segmented controls.
+- **8px** control — the standard control, button, and icon corner.
+- **12px** surface — review surfaces, cards, and body panels.
+- **16px** window — the window shell and the handoff paper's deeper corner.
+
+The design detector checks `border-radius` against this scale for `packages/ui`; the package's
+owned design-ramp test additionally covers radius-bearing tokens. Their source is
+[`packages/ui/DESIGN.md`](packages/ui/DESIGN.md).
 
 ## Components
 
 ### Buttons
 
-- 56px minimum height, 10px radius, 24px horizontal padding.
+- Marketing primary buttons use a 56px minimum height, 10px radius, and 24px horizontal padding.
+- Desktop buttons use the 8px control radius; their height and padding follow the denser desktop
+  surface they inhabit.
 - Primary controls invert against their field; secondary actions are text links.
 - Hover lift is two pixels with a real downward shadow. Focus uses a three-pixel review-blue ring.
 - Touch targets are at least 44 by 44 pixels.
 
 ### Review and proof surfaces
 
-- 10–14px radius for cohorts, findings, conversations, provider results, and product frames.
+- Marketing review and proof surfaces use 10–14px corners. Desktop cohorts, findings,
+  conversations, provider results, and product frames use the 12px surface radius.
 - Use either a structural border or a broad ambient shadow; avoid a shadowed border around every
   object.
 - Code is always on an opaque surface. Product chrome may be translucent only in the desktop app.
-- The final paper may carry one deeper corner, but it remains a document rather than decoration.
+- The desktop handoff paper may use the 16px window radius, but it remains a document rather than
+  decoration.
 
 ### Provider marks
 

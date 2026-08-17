@@ -26,7 +26,14 @@
       { "name": "wide", "value": "1180px" },
       { "name": "stack", "value": "1000px" },
       { "name": "mobile", "value": "560px" }
-    ]
+    ],
+    "desktopScale": {
+      "purpose": "The dense desktop product scale for packages/ui. Enforced by the design detector via packages/ui/DESIGN.md, which sits inside the package because the detector stops walking up at the package boundary. Recorded here so the root machine artifact stays consistent with the documented ramp.",
+      "typeRampPx": [10, 11, 12, 13, 14, 16, 19, 22],
+      "displayClamp": "clamp(34px, 5vw, 56px)",
+      "radiusScalePx": [4, 6, 8, 12, 16],
+      "radiusGeometryExemptions": { "pill": "999px", "circle": "50%" }
+    }
   },
   "components": [
     {
