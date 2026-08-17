@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { detectLocus, escapePath, type Locus, resolveLocus } from "@rennet/core";
-import type { Project, ProjectVisibility } from "@rennet/protocol";
+import type { GlobalConfig, Project, ProjectVisibility } from "@rennet/protocol";
 import { describe, expect, it } from "vitest";
 import { createSettingsComposition, type SettingsCompositionDeps } from "./settings";
 
@@ -406,6 +406,43 @@ describe("createSettingsComposition — write outcomes + provenance", () => {
     const scheme = createSettingsComposition(deps).setAppearance("light");
     expect(scheme).toBe("light");
     expect(calls.updateGlobal).toBe(1);
+  });
+
+  it("setKeybinding persists a set, an unbind, and a reset — survival re-read (#44)", async () => {
+    // A STATEFUL fake store so a write is re-readable (the restart criterion).
+    let stored: GlobalConfig = { version: 1 };
+    const { deps } = makeDeps({
+      readGlobalState: () => ({ status: "ok", config: stored }),
+      updateGlobal: (update) => {
+        stored = update(stored);
+        return stored;
+      },
+    });
+    const composition = createSettingsComposition(deps);
+
+    // A string SETS the override; it re-reads from the store (survives restart).
+    composition.setKeybinding({ id: "nav.back", keybinding: "mod+e" });
+    expect((await composition.get()).keybindings).toEqual({ "nav.back": "mod+e" });
+
+    // A null UNBINDS explicitly (stored as null, distinct from reset).
+    composition.setKeybinding({ id: "zoom.in", keybinding: null });
+    expect((await composition.get()).keybindings).toEqual({ "nav.back": "mod+e", "zoom.in": null });
+
+    // Omitted keybinding RESETS: the entry is deleted (back to the catalogue default).
+    const afterReset = composition.setKeybinding({ id: "nav.back" });
+    expect(afterReset).toEqual({ "zoom.in": null });
+    expect((await composition.get()).keybindings).toEqual({ "zoom.in": null });
+  });
+
+  it("setKeybinding REFUSES a malformed config (Rule 75), writing nothing (#44)", () => {
+    const { deps } = makeDeps({
+      updateGlobal: () => {
+        throw new Error("refused: malformed global config");
+      },
+    });
+    expect(() =>
+      createSettingsComposition(deps).setKeybinding({ id: "nav.back", keybinding: "mod+e" }),
+    ).toThrow(/malformed/i);
   });
 
   it("auto-detects a WSL-UNC project's locus, unset override", async () => {

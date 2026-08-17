@@ -2,10 +2,18 @@ import { describe, expect, it, vi } from "vitest";
 import type { RecentSurface } from "../nav/history";
 import {
   buildCommands,
+  COMMAND_CATALOGUE,
   type CommandContext,
+  catalogueDef,
+  chordFromEvent,
+  effectiveKeybinding,
   filterCommands,
+  findConflicts,
   formatKeybinding,
   fuzzyScore,
+  matchKeybinding,
+  menuTemplate,
+  normalizeChord,
   type Screen,
 } from "./commands";
 
@@ -213,5 +221,263 @@ describe("formatKeybinding (add-windows-support)", () => {
   it("passes a bare key through unchanged", () => {
     expect(formatKeybinding("l", true)).toBe("l");
     expect(formatKeybinding("l", false)).toBe("l");
+  });
+});
+
+describe("command catalogue (single source)", () => {
+  it("carries palette.toggle + the bound commands with unique ids and default chords", () => {
+    const byId = new Map(COMMAND_CATALOGUE.map((def) => [def.id, def]));
+    expect(byId.get("palette.toggle")?.keybinding).toBe("mod+k");
+    expect(byId.get("nav.back")?.keybinding).toBe("mod+[");
+    expect(byId.get("nav.forward")?.keybinding).toBe("mod+]");
+    expect(byId.get("zoom.in")?.keybinding).toBe("l");
+    expect(byId.get("zoom.out")?.keybinding).toBe("h");
+    // Every id is unique.
+    expect(byId.size).toBe(COMMAND_CATALOGUE.length);
+  });
+
+  it("does not catalogue the dynamic recent/lens ids", () => {
+    const ids = COMMAND_CATALOGUE.map((def) => def.id);
+    expect(ids.some((id) => id.startsWith("recent."))).toBe(false);
+    expect(ids.some((id) => id.startsWith("lens."))).toBe(false);
+  });
+
+  it("catalogueDef resolves a known id and misses an unknown one", () => {
+    expect(catalogueDef("zoom.in")?.group).toBe("Zoom");
+    expect(catalogueDef("lens.spec")).toBeUndefined();
+  });
+
+  it("pins the full id/title/group/keybinding matrix across catalogue, palette, and menu contexts", () => {
+    const expected = [
+      ["palette.toggle", "Toggle command palette", "General", "mod+k"],
+      ["nav.back", "Back", "Navigate", "mod+["],
+      ["nav.forward", "Forward", "Navigate", "mod+]"],
+      ["nav.projects", "Back to projects", "Navigate", null],
+      ["nav.project", "Go to project…", "Navigate", null],
+      ["nav.draft", "Go to Draft", "Navigate", null],
+      ["nav.paper", "Go to Paper", "Navigate", null],
+      ["nav.settings", "Open Settings", "Navigate", null],
+      ["nav.openReview", "Open review…", "Navigate", null],
+      ["nav.reviewDirectly", "Review directly", "Navigate", null],
+      ["nav.files", "Show Files view", "Navigate", null],
+      ["nav.canvases", "Show Canvases view", "Navigate", null],
+      ["review.retry", "Retry the AI review", "Review", null],
+      ["review.regenerate", "Regenerate the review", "Review", null],
+      ["review.dual", "Dual-model review: switch to quick single-model", "Review", null],
+      ["zoom.in", "Zoom in", "Zoom", "l"],
+      ["zoom.out", "Zoom out", "Zoom", "h"],
+      ["view.overlay", "Paint the blast-radius overlay", "Appearance", null],
+      ["view.scheme", "Switch to the bright room", "Appearance", null],
+      ["door.choose", "Choose a repository", "Start", null],
+    ];
+    const workspace = context();
+    const matrix = menuTemplate(workspace).flatMap((section) =>
+      section.items.map((item) => [item.id, item.label, section.group, item.accelerator ?? null]),
+    );
+    expect(matrix).toEqual(expected);
+
+    const contexts = [
+      workspace,
+      context({ screen: "frontDoor", surfaceKind: "projects", canvasReady: false }),
+      context({
+        screen: "directEntry",
+        surfaceKind: "projects",
+        canvasReady: false,
+        deepReviewOn: false,
+        overlayOn: true,
+        scheme: "light",
+      }),
+    ];
+    for (const ctx of contexts) {
+      const menu = new Map(
+        menuTemplate(ctx)
+          .flatMap((section) => section.items.map((item) => ({ ...item, group: section.group })))
+          .map((item) => [item.id, item]),
+      );
+      for (const command of buildCommands(ctx)) {
+        const item = menu.get(command.id);
+        if (!item) continue;
+        expect([command.title, command.group, command.keybinding ?? null]).toEqual([
+          item.label,
+          item.group,
+          item.accelerator ?? null,
+        ]);
+      }
+      expect([...menu.keys()]).toEqual(COMMAND_CATALOGUE.map((definition) => definition.id));
+    }
+  });
+});
+
+describe("normalizeChord + effectiveKeybinding", () => {
+  it("parses a mod chord, a bare key, and rejects garbage", () => {
+    expect(normalizeChord("mod+[")).toEqual({ mod: true, key: "[" });
+    expect(normalizeChord("mod+K")).toEqual({ mod: true, key: "k" });
+    expect(normalizeChord("l")).toEqual({ mod: false, key: "l" });
+    expect(normalizeChord("")).toBeNull();
+    expect(normalizeChord("mod+")).toBeNull();
+    expect(normalizeChord("%%%")).toBeNull();
+  });
+
+  it("overlays the override map: default, override, explicit unbind", () => {
+    const def = { id: "nav.back", keybinding: "mod+[" };
+    expect(effectiveKeybinding(def, {})).toBe("mod+[");
+    expect(effectiveKeybinding(def, { "nav.back": "mod+e" })).toBe("mod+e");
+    expect(effectiveKeybinding(def, { "nav.back": null })).toBeNull();
+    // A command with no default and no override fires from no chord.
+    expect(effectiveKeybinding({ id: "review.retry" }, {})).toBeNull();
+    // A garbage stored token stays in the override map for Settings to report, while
+    // the effective binding falls back to the catalogue default.
+    expect(effectiveKeybinding(def, { "nav.back": "mod+" })).toBe("mod+[");
+  });
+});
+
+describe("matchKeybinding", () => {
+  const commands = [
+    { id: "palette.toggle", keybinding: "mod+k" },
+    { id: "nav.back", keybinding: "mod+[" },
+    { id: "zoom.in", keybinding: "l" },
+  ];
+
+  it("matches a mod chord and a bare key, and misses when nothing binds", () => {
+    expect(
+      matchKeybinding(commands, chordFromEvent({ key: "k", metaKey: true, ctrlKey: false }, true))
+        ?.id,
+    ).toBe("palette.toggle");
+    expect(
+      matchKeybinding(commands, chordFromEvent({ key: "l", metaKey: false, ctrlKey: false }))?.id,
+    ).toBe("zoom.in");
+    expect(
+      matchKeybinding(commands, chordFromEvent({ key: "z", metaKey: false, ctrlKey: false })),
+    ).toBeUndefined();
+  });
+
+  it("honours overrides: the new chord runs, the replaced chord does not", () => {
+    const overrides = { "nav.back": "mod+e" };
+    expect(
+      matchKeybinding(
+        commands,
+        chordFromEvent({ key: "e", metaKey: true, ctrlKey: false }, true),
+        overrides,
+      )?.id,
+    ).toBe("nav.back");
+    expect(
+      matchKeybinding(
+        commands,
+        chordFromEvent({ key: "[", metaKey: true, ctrlKey: false }, true),
+        overrides,
+      ),
+    ).toBeUndefined();
+  });
+
+  it("an unbound command matches no chord", () => {
+    expect(
+      matchKeybinding(commands, chordFromEvent({ key: "l", metaKey: false, ctrlKey: false }), {
+        "zoom.in": null,
+      }),
+    ).toBeUndefined();
+  });
+
+  it("resolves a collision to the first command in registry order", () => {
+    const colliding = [
+      { id: "nav.back", keybinding: "mod+[" },
+      { id: "nav.forward", keybinding: "mod+[" },
+    ];
+    expect(
+      matchKeybinding(colliding, chordFromEvent({ key: "[", metaKey: true, ctrlKey: false }, true))
+        ?.id,
+    ).toBe("nav.back");
+  });
+
+  it("requires the platform-primary modifier and rejects Shift/Alt combinations", () => {
+    const toggle = [{ id: "palette.toggle", keybinding: "mod+k" }];
+    expect(
+      matchKeybinding(toggle, chordFromEvent({ key: "k", metaKey: false, ctrlKey: true }, true)),
+    ).toBeUndefined();
+    expect(
+      matchKeybinding(
+        toggle,
+        chordFromEvent(
+          { key: "K", metaKey: true, ctrlKey: false, shiftKey: true, altKey: false },
+          true,
+        ),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("normalizes uppercase event keys and bracket symbols without losing them", () => {
+    expect(
+      matchKeybinding(
+        [{ id: "palette.toggle", keybinding: "mod+k" }],
+        chordFromEvent({ key: "K", metaKey: true, ctrlKey: false }, true),
+      )?.id,
+    ).toBe("palette.toggle");
+    expect(
+      matchKeybinding(
+        [{ id: "nav.back", keybinding: "mod+[" }],
+        chordFromEvent({ key: "[", metaKey: true, ctrlKey: false }, true),
+      )?.id,
+    ).toBe("nav.back");
+  });
+});
+
+describe("findConflicts", () => {
+  it("reports two commands on one effective chord and stays silent otherwise", () => {
+    const distinct = findConflicts([
+      { id: "nav.back", keybinding: "mod+[" },
+      { id: "nav.forward", keybinding: "mod+]" },
+    ]);
+    expect(distinct.size).toBe(0);
+
+    const collide = findConflicts([
+      { id: "nav.back", keybinding: "mod+[" },
+      { id: "zoom.in", keybinding: "mod+[" },
+    ]);
+    expect(collide.get("mod+[")).toEqual(["nav.back", "zoom.in"]);
+  });
+
+  it("detects a collision an override CREATES", () => {
+    const conflicts = findConflicts(
+      [
+        { id: "nav.back", keybinding: "mod+[" },
+        { id: "zoom.in", keybinding: "l" },
+      ],
+      { "zoom.in": "mod+[" },
+    );
+    expect(conflicts.get("mod+[")).toEqual(["nav.back", "zoom.in"]);
+  });
+});
+
+describe("menuTemplate", () => {
+  it("labels/accelerators from the catalogue+overrides, disables out-of-context, excludes dynamic", () => {
+    const sections = menuTemplate(context({ screen: "frontDoor", surfaceKind: "projects" }), {
+      "nav.back": "mod+e",
+    });
+    const items = sections.flatMap((section) => section.items);
+    const byId = new Map(items.map((item) => [item.id, item]));
+
+    // No dynamic entries ever.
+    expect(items.some((item) => item.id.startsWith("recent."))).toBe(false);
+    expect(items.some((item) => item.id.startsWith("lens."))).toBe(false);
+
+    // The override rides the accelerator (mod+ token preserved for MAIN to translate).
+    expect(byId.get("nav.back")?.accelerator).toBe("mod+e");
+
+    // On the front door, zoom.in is not offered → disabled, not absent.
+    expect(byId.get("zoom.in")?.enabled).toBe(false);
+    expect(byId.has("zoom.in")).toBe(true);
+
+    // The palette toggle is always enabled.
+    expect(byId.get("palette.toggle")?.enabled).toBe(true);
+
+    // A command the front door DOES offer is enabled.
+    expect(byId.get("nav.settings")?.enabled).toBe(true);
+  });
+
+  it("falls back from an invalid stored chord and never projects the invalid token", () => {
+    const sections = menuTemplate(context(), { "nav.back": "mod+" });
+    const back = sections
+      .flatMap((section) => section.items)
+      .find((item) => item.id === "nav.back");
+    expect(back?.accelerator).toBe("mod+[");
   });
 });

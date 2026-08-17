@@ -2752,6 +2752,11 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
         key: input.key,
         project: null,
       })),
+      setKeybinding: vi.fn((input: { id: string; keybinding?: string | null }) =>
+        input.keybinding === undefined || input.keybinding === null
+          ? {}
+          : { [input.id]: input.keybinding },
+      ),
     };
     const { dispatch } = harness(undefined, { settings });
 
@@ -2783,6 +2788,14 @@ describe("createDispatch — settings.* routing (the config ladder, wireframe #1
     expect(vis.status).toBe("applied");
     expect(vis.changed).toBe(true);
     expect(vis.gitignorePath).toContain(".gitignore");
+
+    // setKeybinding threads the payload to the dep and returns the stored map (#44).
+    const kb = (await dispatch("settings.setKeybinding", {
+      id: "nav.back",
+      keybinding: "mod+e",
+    })) as { keybindings: Record<string, string | null> };
+    expect(settings.setKeybinding).toHaveBeenCalledWith({ id: "nav.back", keybinding: "mod+e" });
+    expect(kb.keybindings).toEqual({ "nav.back": "mod+e" });
   });
 
   it("with NO settings dep wired, degrades to the builtin view + unresolved write (never throws)", async () => {

@@ -3,7 +3,10 @@ import {
   commandDefinitions,
   deltaAccountSchema,
   dispositionSchema,
+  globalConfigSchema,
   isCommandName,
+  menuRunPayloadSchema,
+  menuTemplateSectionsSchema,
   parseCommandInput,
   parseCommandOutput,
   settingsLayerSchema,
@@ -53,6 +56,24 @@ describe("command protocol", () => {
         body: "",
       }),
     ).toThrow();
+  });
+});
+
+describe("application menu wire protocol (#44)", () => {
+  it("parses valid update/run payloads and rejects malformed nested items", () => {
+    expect(
+      menuTemplateSectionsSchema.parse([
+        {
+          group: "Navigate",
+          items: [{ id: "nav.back", label: "Back", accelerator: "mod+[", enabled: true }],
+        },
+      ]),
+    ).toHaveLength(1);
+    expect(menuTemplateSectionsSchema.safeParse([{ group: "Navigate", items: null }]).success).toBe(
+      false,
+    );
+    expect(menuRunPayloadSchema.parse({ id: "nav.back" })).toEqual({ id: "nav.back" });
+    expect(menuRunPayloadSchema.safeParse({ id: "" }).success).toBe(false);
   });
 });
 
@@ -321,5 +342,32 @@ describe("settings v1 — registry ladder wire shapes (#28)", () => {
   it("setAppearance accepts a null scheme (reset to the builtin) additively", () => {
     expect(parseCommandInput("settings.setAppearance", { scheme: null }).scheme).toBeNull();
     expect(parseCommandInput("settings.setAppearance", { scheme: "light" }).scheme).toBe("light");
+  });
+
+  it("globalConfig parses keybindings additively — an old config without the field still parses (#44)", () => {
+    const withOverrides = globalConfigSchema.parse({
+      version: 1,
+      keybindings: { "nav.back": "mod+e", "zoom.in": null },
+    });
+    expect(withOverrides.keybindings).toEqual({ "nav.back": "mod+e", "zoom.in": null });
+    // Additive control: a config without the field parses unchanged.
+    const legacy = globalConfigSchema.parse({ version: 1 });
+    expect(legacy.keybindings).toBeUndefined();
+  });
+
+  it("setKeybinding: a string sets, null unbinds, omitted resets (#44)", () => {
+    expect(
+      parseCommandInput("settings.setKeybinding", { id: "nav.back", keybinding: "mod+e" }),
+    ).toEqual({ id: "nav.back", keybinding: "mod+e" });
+    expect(
+      parseCommandInput("settings.setKeybinding", { id: "nav.back", keybinding: null }).keybinding,
+    ).toBeNull();
+    expect(
+      parseCommandInput("settings.setKeybinding", { id: "nav.back" }).keybinding,
+    ).toBeUndefined();
+    expect(
+      parseCommandOutput("settings.setKeybinding", { keybindings: { "nav.back": "mod+e" } })
+        .keybindings,
+    ).toEqual({ "nav.back": "mod+e" });
   });
 });
