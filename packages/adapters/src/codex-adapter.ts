@@ -640,6 +640,9 @@ class CodexSession implements HarnessSession {
       for (const event of this.#failedTerminal(error)) queue.forcePush(event);
     };
     const enqueue = (event: HarnessEvent): void => {
+      // Once settled, the terminal is the LAST event — drop any remaining events
+      // of the same doomed normalized batch instead of enqueuing them after it.
+      if (ended) return;
       if (queue.push(event)) {
         if (event.kind === "session.ended") ended = true;
         return;
@@ -659,7 +662,10 @@ class CodexSession implements HarnessSession {
     void (async () => {
       try {
         for await (const frame of iterable) {
-          for (const event of normalize(frame)) enqueue(event);
+          for (const event of normalize(frame)) {
+            enqueue(event);
+            if (overflowTerminated) break; // settlement replaced the rest of this batch
+          }
           if (overflowTerminated) break; // stop consuming; the transport's finally kills the child
         }
         if (!ended) for (const event of finalize()) enqueue(event);

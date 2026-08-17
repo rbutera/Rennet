@@ -426,6 +426,40 @@ describe("CodexAdapter", () => {
     expect(events[events.length - 1]?.kind).toBe("session.ended");
   });
 
+  it("keeps the failed-at-ceiling terminal LAST when a multi-event frame straddles the ceiling", async () => {
+    const transport: CodexTurnTransport = () => ({
+      async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
+        yield { method: "model/verification", params: { n: 0 } };
+        yield { method: "model/verification", params: { n: 1 } };
+        // A fileChange item/completed normalizes to TWO events (tool.started +
+        // tool.output). The first crosses the ceiling and triggers settlement;
+        // the second must NOT land after the terminal.
+        yield {
+          method: "item/completed",
+          params: {
+            item: { id: "fc_1", type: "fileChange", status: "completed", changes: [] },
+          },
+        };
+      },
+    });
+    const codex = new CodexAdapter({
+      binaryPath: "/x/codex",
+      transport,
+      version: "0.146.0",
+      bufferCeiling: { maxEvents: 2, maxBytes: 64 * 1024 * 1024 },
+    });
+    const session = await codex.createSession({ cwd: "/repo" });
+    await session.send({ prompt: "go" });
+    await new Promise((resolve) => setImmediate(resolve));
+    const { events, outcome } = await drain(session);
+    expect(outcome?.status).toBe("failed");
+    const endeds = events.filter((e) => e.kind === "session.ended");
+    expect(endeds).toHaveLength(1);
+    expect(events[events.length - 1]?.kind).toBe("session.ended");
+    // The straddling batch's trailing event never lands after settlement.
+    expect(events.some((e) => e.kind === "tool.output")).toBe(false);
+  });
+
   it("rejects send() after a pre-send close() settles the session", async () => {
     const transport = fakeTransport([completed("completed")]); // never runs — closed pre-send
     const session = await adapter(transport.fn).createSession({ cwd: "/repo" });
