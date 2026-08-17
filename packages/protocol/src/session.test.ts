@@ -90,6 +90,19 @@ describe("session frames", () => {
     expect(parseSessionFrame(request)).toEqual(request);
   });
 
+  it("rejects malformed push-event payloads", () => {
+    expect(() =>
+      parseSessionFrame({ type: "progressEvent", commandId: "c", event: { kind: "not-a-real-kind" } }),
+    ).toThrow();
+    expect(() =>
+      parseSessionFrame({
+        type: "askStreamEvent",
+        reviewId: "r",
+        event: { kind: "not-a-real-kind" },
+      }),
+    ).toThrow();
+  });
+
   // 2.5
   it("accepts both a known rpcError code and a novel string code", () => {
     expect(parseSessionFrame({ ...rpcError, code: "incompatible_protocol" })).toMatchObject({
@@ -120,6 +133,14 @@ describe("checkProtocolCompatibility", () => {
       checkProtocolCompatibility(
         { version: 2, minCompatible: 1 },
         { version: 1, minCompatible: 1 },
+      ),
+    ).toEqual({
+      compatible: true,
+    });
+    expect(
+      checkProtocolCompatibility(
+        { version: 1, minCompatible: 1 },
+        { version: 2, minCompatible: 1 },
       ),
     ).toEqual({
       compatible: true,

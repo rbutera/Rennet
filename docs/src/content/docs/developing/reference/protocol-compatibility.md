@@ -23,6 +23,9 @@ This holds for the command payloads too. The envelope carries `command` inputs
 and outputs from [`commandDefinitions`](/developing/reference/contracts-and-rulings/)
 by reference — those schemas are the single authority for payload validation, and
 they obey the same append-only rule.
+Frame payloads (`request.input`, `response.output`, and `rpcError.details`) must
+be JSON-representable, and the command schemas in `commandDefinitions` remain the
+single validation authority for command inputs and outputs.
 
 ## One protocol version, with a window
 
@@ -35,6 +38,13 @@ build can still talk to. Two peers are compatible when each side's version is at
 or above the other side's minimum. Mixed versions are the normal state, not an
 error to design out — a phone on an old build and a freshly-updated daemon must
 coexist.
+
+The handshake divides that check according to the information each side has.
+The server checks the `hello.protocolVersion` against its own
+`MIN_COMPATIBLE_PROTOCOL_VERSION`; `hello` does not carry the client's minimum,
+so that is all the server can and needs to check. After `serverInfo` supplies
+both server version values, the client runs the full symmetric
+`checkProtocolCompatibility` helper.
 
 ```ts
 import { checkProtocolCompatibility, PROTOCOL_VERSION, MIN_COMPATIBLE_PROTOCOL_VERSION } from "@rennet/protocol";
@@ -57,8 +67,9 @@ sequenceDiagram
   participant C as Client
   participant S as Server
   C->>S: hello { clientId, clientType, protocolVersion }
+  S->>S: Check client protocolVersion against server minimum
   S->>C: serverInfo { version, protocolVersion, minCompatibleProtocolVersion, features }
-  Note over C,S: each side runs checkProtocolCompatibility against the other
+  C->>C: Run checkProtocolCompatibility with both version pairs
   C->>S: request { requestId, command, input }
   S-->>C: response { requestId, output }  ·or·  rpcError { requestId, code, message }
 ```
