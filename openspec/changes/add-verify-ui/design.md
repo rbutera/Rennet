@@ -9,8 +9,8 @@ Everything this change needs already exists as a pattern in the codebase; the de
 - **Deterministic versioned classifier**: `classifyNonObvious` / `NON_OBVIOUS_CLASSIFIER_VERSION` — verify-ui's UI-surface classifier follows it.
 - **Design intent**: `packages/core/src/patchset-intent.ts` (`patchsetIntentToReviewIntent`) already projects the frozen capture (PR title/body + spec snapshots) for the hypothesis and Decisions passes. Verify-ui consumes the same projection; nothing new is captured.
 - **Budget**: `packages/core/src/review-intelligence-budget.ts` — `ReviewIntelligenceBudget` gains `uiVerification: { maxTurns: 1 }`, and the pass draws on the same shared grant the other passes use.
-- **Pipeline slot**: `packages/core/src/pipeline.ts` runs finding verification inside the deep-review branch (line ~602); verify-ui runs right after it, before docs are admitted to canvases.
-- **Findings machinery**: pipeline already appends a synthesized `finding` doc to `admittedDocs`; verify-ui appends a second one. `FindingElement` (types/index.ts ~1260) is reused unchanged — `verification` chip included.
+- **Live Flagged slot**: `apps/desktop/src/main/index.ts` owns `runFlaggedReviewWithContextFeed`; after finding verification, risk cross-check, CI, and blocking-state stamping it classifies the patchset, stamps the immediate verify-ui state, and schedules the slow pass on the existing late-enrichment channel.
+- **Findings machinery**: `apps/desktop/src/main/flagged-ui-verification.ts` exposes `applyUiVerification`, which appends verify-ui observations to the same `FlaggedReview.findings` array and stamps the status. `FindingElement` is reused unchanged — `verification` chip included.
 
 ## Goals / Non-Goals
 
@@ -33,38 +33,41 @@ Rennet cannot know how an arbitrary project renders. The prompt directs the agen
 Two outputs, two homes:
 
 - **Observations** (a11y violation, intent mismatch, visual defect) map to `FindingElement`s — anchor = the implicated file (line when the turn can name one), severity mapped from the schema's impact level, `agreement: { kind: "concur", agree: 1, total: 1 }`, `verification: { verdict, evidence }` (`reproduced` when backed by an observed exec + screenshot, `inconclusive` for static-review observations). Appended as one `finding` doc to `admittedDocs`, so lens/disposition/publish/delta-carry are all inherited. No new disposition surface.
-- **Status** (`UiVerification` in `@rennet/types`): `{ status: "ran"; screenshots: UiScreenshot[]; observationCount: number; mounted: boolean } | { status: "not-ui" } | { status: "unavailable"; reason: string }` — additive optional on the pipeline result / persisted review snapshot, hand-written Zod in `protocol`. `UiScreenshot` is `{ path: string; label: string }` with `path` relative to the review's evidence directory (portable across `review.load` and machine moves of the store).
+- **Status** (`UiVerification` in `@rennet/types`): pending / ran / not-ui / unavailable, each carrying `classifierVersion`; `ran` adds screenshots, observation count, and the reconciled `mounted` fact. It is additive optional on both `FlaggedReview` branches with hand-written Zod in `protocol`. `UiScreenshot` is `{ path, label }`, where `path` includes the completed patchset/run namespace relative to the review evidence directory.
 
-### 4. Screenshots persist under the review's store directory
+### 4. Screenshots use isolated patchset/run namespaces with bounded retention
 
-The turn is told to write PNGs into `<review persistence root>/ui-evidence/`; the adapter resolves and creates the directory and passes its absolute path into the prompt. Persistence is free — the directory lives with the review the file-project-store already owns. `.rennet/` stays ignored and unstaged, per the fixed boundary.
+The turn writes into `<userData>/ui-evidence/<review-key>/<patchset-key>/<run-key>/`. Only the namespace bound to the completed enrichment is exposed in screenshot references, so a slow stale patchset or superseded run cannot overwrite the bytes a newer result renders. When the newest run for a patchset completes, it deletes superseded sibling runs; opportunistic pruning retains at most four completed patchset namespaces per review while protecting active runs. `.rennet/` stays ignored and unstaged.
+
+Persisting a verify-ui manifest/status with the review is deliberately declined. `FlaggedReview` is transient: CI signal and `blockingStates` have the same lifecycle, and the recorded #158 MVP settle eagerly reruns the review on open. Making only verify-ui durable would create a conflicting lifecycle and stale evidence/status beside freshly recomputed findings. Namespacing plus retention fixes the real concern — stale overwrites and unbounded screenshot growth — without introducing a persistence layer.
 
 ### 5. Renderer display via one small read command
 
-A new protocol command `review.uiEvidence` (`{ reviewId, path } → { dataUrl }` or a not-found result) reads a screenshot from the review's evidence directory and returns it base64-encoded; the Flagged lens strip renders `<img src={dataUrl}>` thumbnails. Path resolution is confined to the evidence directory (a path that escapes it is a not-found, which is correctness of the read, not a consent gate). A missing file renders the plain missing-evidence note the spec requires. No `file://` scheme games, no new webPreferences.
+A new protocol command `review.uiEvidence` reads one screenshot and returns a byte-bounded data URL, `not-found`, or `oversized`. The adapter realpath-canonicalizes the review directory and resolved file, requires a regular file whose real path stays beneath that directory, stats before reading, and caps a screenshot at 8 MiB. The core retains at most 12 screenshot references per run. A missing, escaping, symlinked-out, or oversized file degrades honestly; no `file://` scheme games and no new webPreferences.
 
-### 6. Pipeline wiring and degradation ladder
+### 6. Live late-enrichment wiring and degradation ladder
 
-In `pipeline.ts`, deep-review branch, after finding verification:
+In `runFlaggedReviewWithContextFeed`, after the immediate Flagged review is otherwise complete:
 
-1. Classifier over `input.patchset.files` (`UI_SURFACE_CLASSIFIER_VERSION = 1`: extensions `.tsx .jsx .vue .svelte .html .css .scss .less`, plus `.ts`/`.js` under a `renderer/`, `components/`, or `ui/` path segment). No match → status `not-ui`, done.
-2. No `uiVerificationConfig` injected (harness absent) → status `unavailable: "verifier unavailable"`, mirroring `markVerificationUnavailable`.
-3. Budget grant refused → status `unavailable: "invocation budget exhausted"`.
-4. Turn runs → parse schema output; malformed/failed turn → `unavailable` with the turn's reason (never a fabricated clear); ok → findings appended + status `ran`.
+1. Classifier over the active patchset files. No match → immediate `not-ui`, no turn.
+2. UI-touching deep review with no adapter → immediate `unavailable("verifier unavailable")`.
+3. UI-touching deep review with an adapter → immediate `pending` plus `lateEnrichmentScheduled: true`; `flagged.review` returns without awaiting the turn.
+4. `composeFlaggedLateEnrichment` starts verify-ui independently of adjudication, composes the eventual result with `applyUiVerification`, and clears the transient schedule bit. The renderer polls whenever the response says enrichment was scheduled, including all-concur and zero-row reviews.
+5. The required shared budget refuses excess spend as `unavailable`. A structured mount is certified only when its method agrees with a successful mount-relevant observed exec and at least one confined screenshot actually exists; every mismatch degrades to a labelled static review. Observations are accepted only for classified UI files and anchor to the containing or nearest reported-line hunk.
 
 Quick review tier: the pass simply does not run and the field is absent — same as every other deep-tier pass.
 
 ### 7. What keeps the guard honest (red-first controls)
 
-- A pipeline test with a UI-file patchset and a stub turn asserts the verify-ui finding doc **and** the `ran` status appear — this test fails if the pass is unplugged (the guard-deletion control).
+- An injectable late-enrichment composer test drives a deferred verify-ui result: the all-concur immediate review resolves first with its schedule signal, then the completed observations/status reach the renderer through the late channel.
 - The transport field-fidelity test asserts `uiVerification` survives IPC (the known silent-strip bug class).
-- A DOM test asserts a review without the field renders exactly as today (additive proof), and one asserts a `sign` still resolves with unresolved verify-ui findings present (Rule Zero control).
+- DOM tests assert a review without the field renders exactly as today, pending/unavailable empty results never claim a full all-clear, and the real sign-resolution plus publish command paths proceed identically for pending and unavailable verify-ui states (Rule Zero control).
 
 ## Risks / Trade-offs
 
 - **The turn's success is project-dependent.** Accepted: that is the honest shape of the feature. The degradation ladder discloses instead of pretending; the static-review floor still catches markup-level a11y issues.
 - **One turn may be thin for a large UI changeset.** Accepted for v1; the cap is a budget knob, and per-finding verification still runs on whatever the flagged lens raised.
-- **Screenshot size.** Thumbnails read on demand per image via `review.uiEvidence`, never inlined into the review snapshot, so persisted state and IPC payloads stay small.
+- **Screenshot size and growth.** Reads are capped at 8 MiB, data URLs have a protocol maximum, each run keeps at most 12 references, and retention keeps at most four completed patchset namespaces per review.
 
 ## Open Questions
 

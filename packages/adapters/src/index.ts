@@ -468,9 +468,14 @@ export {
   type TurnMetric,
 } from "./turn-metrics";
 export {
+  beginUiEvidenceRun,
+  bindUiEvidenceRun,
+  completeUiEvidenceRun,
   createUiVerificationTurn,
+  inspectUiEvidence,
+  MAX_RETAINED_UI_EVIDENCE_PATCHSETS,
   readUiEvidence,
-  resolveUiEvidenceDir,
+  type UiEvidenceRun,
   type UiVerificationTurnOptions,
 } from "./ui-verification-backend";
 export {

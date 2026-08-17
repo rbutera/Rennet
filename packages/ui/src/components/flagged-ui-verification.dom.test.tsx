@@ -34,7 +34,10 @@ describe("FlaggedLens — verify-ui strip (#183)", () => {
   });
 
   it("renders nothing for a not-ui status", () => {
-    const review: FlaggedReview = { ...BASE, uiVerification: { status: "not-ui" } };
+    const review: FlaggedReview = {
+      ...BASE,
+      uiVerification: { status: "not-ui", classifierVersion: 1 },
+    };
     const { container } = mount(
       <FlaggedLens index={buildFlaggedIndex(review)} onJumpToAnchor={vi.fn()} />,
     );
@@ -44,7 +47,11 @@ describe("FlaggedLens — verify-ui strip (#183)", () => {
   it("shows the honest could-not-check line for an unavailable status (never an all-clear)", () => {
     const review: FlaggedReview = {
       ...BASE,
-      uiVerification: { status: "unavailable", reason: "no browser tooling in the project" },
+      uiVerification: {
+        status: "unavailable",
+        classifierVersion: 1,
+        reason: "no browser tooling in the project",
+      },
     };
     const { container } = mount(
       <FlaggedLens index={buildFlaggedIndex(review)} onJumpToAnchor={vi.fn()} />,
@@ -54,11 +61,61 @@ describe("FlaggedLens — verify-ui strip (#183)", () => {
     expect(strip?.textContent).toContain("no browser tooling in the project");
   });
 
+  it("qualifies an empty review while verify-ui is pending", () => {
+    const review: FlaggedReview = {
+      status: "ok",
+      findings: [],
+      uiVerification: { status: "pending", classifierVersion: 1 },
+    };
+    const { container } = mount(
+      <FlaggedLens index={buildFlaggedIndex(review)} onJumpToAnchor={vi.fn()} />,
+    );
+    expect(container.textContent).toContain("UI check still running");
+    expect(container.textContent).toContain("not a full all-clear");
+    expect(container.textContent).not.toContain("ran clean");
+  });
+
+  it("qualifies an empty review when verify-ui is unavailable", () => {
+    const review: FlaggedReview = {
+      status: "ok",
+      findings: [],
+      uiVerification: {
+        status: "unavailable",
+        classifierVersion: 1,
+        reason: "verifier unavailable",
+      },
+    };
+    const { container } = mount(
+      <FlaggedLens index={buildFlaggedIndex(review)} onJumpToAnchor={vi.fn()} />,
+    );
+    expect(container.textContent).toContain("couldn't check the UI");
+    expect(container.textContent).toContain("not a full all-clear");
+    expect(container.textContent).not.toContain("ran clean");
+  });
+
+  it("shows verify-ui status even when the base finding review failed", () => {
+    const review: FlaggedReview = {
+      status: "failed",
+      reason: "finding seats failed",
+      uiVerification: {
+        status: "unavailable",
+        classifierVersion: 1,
+        reason: "verifier unavailable",
+      },
+    };
+    const { container } = mount(
+      <FlaggedLens index={buildFlaggedIndex(review)} onJumpToAnchor={vi.fn()} />,
+    );
+    expect(container.textContent).toContain("finding seats failed");
+    expect(container.textContent).toContain("verifier unavailable");
+  });
+
   it("loads and renders screenshot thumbnails from the injected loader", async () => {
     const review: FlaggedReview = {
       ...BASE,
       uiVerification: {
         status: "ran",
+        classifierVersion: 1,
         mounted: true,
         observationCount: 1,
         screenshots: [{ path: "login.png", label: "login form" }],
@@ -85,6 +142,7 @@ describe("FlaggedLens — verify-ui strip (#183)", () => {
       ...BASE,
       uiVerification: {
         status: "ran",
+        classifierVersion: 1,
         mounted: false,
         observationCount: 0,
         screenshots: [{ path: "gone.png", label: "removed shot" }],
@@ -109,7 +167,11 @@ describe("FlaggedLens — verify-ui strip (#183)", () => {
   it("never gates: an unavailable status beside unresolved findings still renders the flags (Rule Zero)", () => {
     const review: FlaggedReview = {
       ...BASE,
-      uiVerification: { status: "unavailable", reason: "could not mount" },
+      uiVerification: {
+        status: "unavailable",
+        classifierVersion: 1,
+        reason: "could not mount",
+      },
     };
     const { container } = mount(
       <FlaggedLens index={buildFlaggedIndex(review)} onJumpToAnchor={vi.fn()} />,

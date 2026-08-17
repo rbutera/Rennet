@@ -70,7 +70,7 @@ Each verify-ui observation SHALL surface as a finding anchored to the UI file it
 
 ### Requirement: The status is honest, additive, and never a gate
 
-The review result SHALL carry a UI-verification status — ran (with screenshot references), not-UI, or unavailable (with reason) — as an additive field: a review without it SHALL validate, transport, and render exactly as before this capability existed, and the transport SHALL NOT strip the field when present. The status and the verify-ui findings SHALL NOT feed any sign, publish, or disposition gate.
+The review result SHALL carry a UI-verification status — pending while late enrichment runs, ran (with screenshot references), not-UI, or unavailable (with reason), carrying the classifier version — as an additive field on either FlaggedReview branch. A review without it SHALL validate, transport, and render exactly as before this capability existed, and the transport SHALL NOT strip the field when present. The immediate response SHALL say when late enrichment was scheduled independently of whether any finding needs adjudication. The status and the verify-ui findings SHALL NOT feed any sign, publish, or disposition gate.
 
 #### Scenario: a legacy review renders unchanged
 
@@ -87,16 +87,23 @@ The review result SHALL carry a UI-verification status — ran (with screenshot 
 - **WHEN** a review's UI verification is unavailable, inconclusive, or carries unresolved verify-ui findings
 - **THEN** sign and publish behave exactly as they would without the field
 
-### Requirement: Screenshots persist with the review and render in the Flagged lens
+### Requirement: Screenshots are isolated, bounded, retained, and rendered in the Flagged lens
 
-Captured screenshots SHALL be stored with the review's persisted state so a reopened review (`review.load`) still shows them. When the pass ran, the Flagged lens SHALL display the captured screenshots inline; when it was unavailable, the lens SHALL show the one-line honest reason; when the changeset had no UI, the lens SHALL show nothing about UI verification.
+Captured screenshots SHALL be stored in an app-owned namespace unique to the review, patchset, and run. Only the namespace bound to the completed enrichment SHALL be exposed; a completed newer run SHALL remove the same patchset's superseded run, and old patchset namespaces SHALL be pruned opportunistically to bound growth without changing FlaggedReview's transient eager-rerun lifecycle. The evidence read SHALL realpath-confine a regular file, stat before reading, cap one screenshot at 8 MiB, cap screenshot references per run, and cap the data-URL wire string. When the pass ran, the Flagged lens SHALL display captured screenshots inline; when pending or unavailable, the lens and its empty state SHALL say why no full all-clear exists; when the changeset had no UI, the lens SHALL show nothing about UI verification.
 
-#### Scenario: a reopened review still shows its evidence
+#### Scenario: a slow stale run cannot overwrite current evidence
 
-- **WHEN** a review whose verify-ui pass captured screenshots is reopened later by id
-- **THEN** the Flagged lens renders the same screenshots from the review's persisted evidence
+- **WHEN** patchset A's slow verify-ui turn finishes after patchset B has produced an evidence file with the same basename
+- **THEN** each turn wrote a distinct namespace and only the completed enrichment's namespaced reference is exposed
+- **AND** A cannot overwrite or delete B's bound bytes
 
 #### Scenario: a missing screenshot file degrades honestly
 
-- **WHEN** a screenshot reference in a persisted review no longer resolves to a readable file
+- **WHEN** a screenshot reference in the completed transient review no longer resolves to a readable file
 - **THEN** the lens shows a plain missing-evidence note for that entry instead of a broken image or a crash
+
+#### Scenario: symlink escape and oversized evidence are refused before read
+
+- **WHEN** the final screenshot or an intermediate directory is a symlink whose real path leaves the canonical review evidence directory, or the regular file exceeds 8 MiB
+- **THEN** no bytes are read or returned
+- **AND** the command reports not-found or oversized honestly

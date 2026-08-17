@@ -258,7 +258,10 @@ export interface DispatchDeps {
    * escaping path or a missing file returns `null` (the strip shows a missing-evidence
    * note). A pure read confined to the review's evidence directory — no spend, no egress.
    */
-  readUiEvidence(reviewId: string, path: string): Promise<{ dataUrl: string } | null>;
+  readUiEvidence(
+    reviewId: string,
+    path: string,
+  ): Promise<{ status: "ok"; dataUrl: string } | { status: "oversized" } | null>;
   /**
    * The Noise lens's input (issue #34): the low-signal churn grouped away for a
    * review, each group tagged rule vs noise job. The LIVE noise-classification runner
@@ -482,7 +485,7 @@ interface LiveProjectRun {
 export interface FlaggedReviewRun {
   /** Verified rows ready for immediate delivery. */
   readonly review: FlaggedReview;
-  /** Optional post-hoc adjudication over those rows. Never awaited by `flagged.review`. */
+  /** Optional post-hoc adjudication and/or verify-ui enrichment. Never awaited by `flagged.review`. */
   readonly adjudication: Promise<FlaggedReview> | null;
 }
 
@@ -1019,6 +1022,7 @@ export function createDispatch(
         return parseCommandOutput(name, {
           ...run.review,
           patchsetId: review.activePatchsetId,
+          ...(run.adjudication ? { lateEnrichmentScheduled: true as const } : {}),
         });
       }
       case "flagged.adjudication": {
@@ -1038,10 +1042,7 @@ export function createDispatch(
         const input = parseCommandInput(name, rawInput);
         requireReviewById(input.reviewId);
         const evidence = await deps.readUiEvidence(input.reviewId, input.path);
-        return parseCommandOutput(
-          name,
-          evidence ? { status: "ok", dataUrl: evidence.dataUrl } : { status: "not-found" },
-        );
+        return parseCommandOutput(name, evidence ?? { status: "not-found" });
       }
       // ── Ask the AI a question about the review (issue #139) ────────────────────
       case "review.ask": {

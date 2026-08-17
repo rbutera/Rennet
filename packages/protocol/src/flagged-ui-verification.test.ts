@@ -1,4 +1,8 @@
-import type { FindingElement, UiVerification } from "@rennet/types";
+import {
+  type FindingElement,
+  MAX_UI_EVIDENCE_DATA_URL_LENGTH,
+  type UiVerification,
+} from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { parseCommandOutput } from "./index";
 
@@ -28,6 +32,7 @@ function finding(overrides: Partial<FindingElement> & { findingId: string }): Fi
 
 const RAN: Extract<UiVerification, { status: "ran" }> = {
   status: "ran",
+  classifierVersion: 1,
   screenshots: [
     { path: "login.png", label: "login form, desktop" },
     { path: "login-mobile.png", label: "login form, mobile" },
@@ -54,11 +59,16 @@ describe("flagged.review — verify-ui status delivery across the boundary (#183
     const output = parseCommandOutput("flagged.review", {
       status: "ok",
       findings: [],
-      uiVerification: { status: "unavailable", reason: "could not mount the UI change" },
+      uiVerification: {
+        status: "unavailable",
+        classifierVersion: 1,
+        reason: "could not mount the UI change",
+      },
     });
     if (output.status !== "ok") throw new Error("expected ok");
     expect(output.uiVerification).toEqual({
       status: "unavailable",
+      classifierVersion: 1,
       reason: "could not mount the UI change",
     });
   });
@@ -67,10 +77,40 @@ describe("flagged.review — verify-ui status delivery across the boundary (#183
     const output = parseCommandOutput("flagged.review", {
       status: "ok",
       findings: [],
-      uiVerification: { status: "not-ui" },
+      uiVerification: { status: "not-ui", classifierVersion: 1 },
     });
     if (output.status !== "ok") throw new Error("expected ok");
-    expect(output.uiVerification).toEqual({ status: "not-ui" });
+    expect(output.uiVerification).toEqual({ status: "not-ui", classifierVersion: 1 });
+  });
+
+  it("carries pending + the late-enrichment schedule independently of findings", () => {
+    const output = parseCommandOutput("flagged.review", {
+      status: "ok",
+      findings: [],
+      uiVerification: { status: "pending", classifierVersion: 1 },
+      lateEnrichmentScheduled: true,
+    });
+    if (output.status !== "ok") throw new Error("expected ok");
+    expect(output.uiVerification).toEqual({ status: "pending", classifierVersion: 1 });
+    expect(output.lateEnrichmentScheduled).toBe(true);
+  });
+
+  it("carries verify-ui status on the failed base-review branch", () => {
+    const output = parseCommandOutput("flagged.review", {
+      status: "failed",
+      reason: "finding seats failed",
+      uiVerification: {
+        status: "unavailable",
+        classifierVersion: 1,
+        reason: "verifier unavailable",
+      },
+    });
+    if (output.status !== "failed") throw new Error("expected failed");
+    expect(output.uiVerification).toEqual({
+      status: "unavailable",
+      classifierVersion: 1,
+      reason: "verifier unavailable",
+    });
   });
 
   it("round-trips an ok review WITHOUT the field unchanged (pre-#183 shape preserved)", () => {
@@ -91,6 +131,22 @@ describe("flagged.review — verify-ui status delivery across the boundary (#183
       }),
     ).toThrow();
   });
+
+  it("rejects more screenshot references than one run may expose", () => {
+    expect(() =>
+      parseCommandOutput("flagged.review", {
+        status: "ok",
+        findings: [],
+        uiVerification: {
+          ...RAN,
+          screenshots: Array.from({ length: 13 }, (_, index) => ({
+            path: `${index}.png`,
+            label: `${index}`,
+          })),
+        },
+      }),
+    ).toThrow();
+  });
 });
 
 describe("review.uiEvidence — the screenshot read command (#183)", () => {
@@ -105,5 +161,17 @@ describe("review.uiEvidence — the screenshot read command (#183)", () => {
   it("round-trips a not-found result (a missing/escaping path is honest, not a crash)", () => {
     const output = parseCommandOutput("review.uiEvidence", { status: "not-found" });
     expect(output).toEqual({ status: "not-found" });
+  });
+
+  it("round-trips an oversized result and bounds the data URL string", () => {
+    expect(parseCommandOutput("review.uiEvidence", { status: "oversized" })).toEqual({
+      status: "oversized",
+    });
+    expect(() =>
+      parseCommandOutput("review.uiEvidence", {
+        status: "ok",
+        dataUrl: "x".repeat(MAX_UI_EVIDENCE_DATA_URL_LENGTH + 1),
+      }),
+    ).toThrow();
   });
 });

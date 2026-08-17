@@ -1,6 +1,37 @@
 import type { RunUiVerificationResult } from "@rennet/core";
 import type { FlaggedReview } from "@rennet/types";
 
+export interface ImmediateUiVerificationInput {
+  readonly touchesUi: boolean;
+  readonly classifierVersion: number;
+  readonly deepReview: boolean;
+  readonly verifierAvailable: boolean;
+}
+
+/** Stamp the honest immediate state before any slow verify-ui turn can finish. */
+export function applyImmediateUiVerification(
+  review: FlaggedReview,
+  input: ImmediateUiVerificationInput,
+): FlaggedReview {
+  if (!input.touchesUi) {
+    return applyUiVerification(review, {
+      observations: [],
+      status: { status: "not-ui", classifierVersion: input.classifierVersion },
+    });
+  }
+  if (!input.deepReview) return review;
+  return applyUiVerification(review, {
+    observations: [],
+    status: input.verifierAvailable
+      ? { status: "pending", classifierVersion: input.classifierVersion }
+      : {
+          status: "unavailable",
+          classifierVersion: input.classifierVersion,
+          reason: "verifier unavailable",
+        },
+  });
+}
+
 /**
  * Fold a verify-ui result (issue #183) into a flagged review: append the pass's
  * observations to the findings (so they flow through the SAME lens, disposition,
@@ -17,7 +48,7 @@ export function applyUiVerification(
   review: FlaggedReview,
   result: RunUiVerificationResult,
 ): FlaggedReview {
-  if (review.status !== "ok") return review;
+  if (review.status !== "ok") return { ...review, uiVerification: result.status };
   return {
     ...review,
     findings: [...review.findings, ...result.observations],

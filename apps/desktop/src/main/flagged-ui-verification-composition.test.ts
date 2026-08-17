@@ -1,35 +1,57 @@
-import { readFileSync } from "node:fs";
+import type { RunUiVerificationResult } from "@rennet/core";
+import type { FlaggedReview } from "@rennet/types";
 import { describe, expect, it } from "vitest";
+import { composeFlaggedLateEnrichment } from "./flagged-late-enrichment";
 
-/**
- * The guard-deletion control (#183, the #339/#349 lesson): verify-ui must stay plugged
- * into the LIVE flagged flow, and it must be NON-BLOCKING. This reddens if the pass is
- * unplugged from `runFlaggedReviewWithContextFeed` or made to block row delivery.
- *
- * The behaviour of the fold itself (observations → findings, status stamped) is proven
- * in `flagged-ui-verification.test.ts`; this proves the WIRING, which a source-text
- * test is the honest tool for (the live flow needs Electron + a real harness to run).
- */
-describe("desktop verify-ui composition (#183)", () => {
-  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+function deferred<T>(): { promise: Promise<T>; resolve(value: T): void } {
+  let resolve!: (value: T) => void;
+  return {
+    promise: new Promise<T>((settle) => {
+      resolve = settle;
+    }),
+    resolve,
+  };
+}
 
-  it("classifies the changeset and runs the verify-ui pass in the live flagged flow", () => {
-    expect(source).toContain("classifyUiSurface(patchset.files)");
-    expect(source).toContain("runUiVerification({");
-    expect(source).toContain("applyUiVerification(");
-  });
+describe("desktop verify-ui late composition (#183)", () => {
+  it("delivers all-concur rows immediately and composes deferred verify-ui later", async () => {
+    const immediate: FlaggedReview = {
+      status: "ok",
+      findings: [],
+      uiVerification: { status: "pending", classifierVersion: 1 },
+    };
+    const ui = deferred<RunUiVerificationResult>();
+    const composed = composeFlaggedLateEnrichment({ immediate, uiVerification: ui.promise });
 
-  it("rides the non-blocking late-enrichment channel (never delays row delivery)", () => {
-    // Chained onto the same late promise as adjudication and returned as `adjudication`
-    // — the immediate review delivers now. If this becomes an `await` before the return
-    // (a blocking mount), the row delivery would stall.
-    expect(source).toContain(".then(uiVerificationRunner)");
-    expect(source).toContain("return { review: immediate, adjudication };");
-    // The runner is CHAINED onto the late promise, never awaited before the return.
-    expect(source).not.toContain("await uiVerificationRunner");
-  });
+    expect(composed.review).toEqual({ ...immediate, lateEnrichmentScheduled: true });
+    expect(composed.enrichment).not.toBeNull();
 
-  it("records not-ui synchronously (a backend-only changeset spends nothing)", () => {
-    expect(source).toContain('status: { status: "not-ui" }');
+    ui.resolve({
+      observations: [
+        {
+          findingId: "ui-verify:1",
+          anchor: "rennet:hunk/h1",
+          summary: "the dialog is clipped",
+          severity: "high",
+          agreement: { kind: "concur", agree: 1, total: 1 },
+          verification: { verdict: "reproduced", evidence: "captured in app.png" },
+        },
+      ],
+      status: {
+        status: "ran",
+        classifierVersion: 1,
+        mounted: true,
+        observationCount: 1,
+        screenshots: [{ path: "patch/run/app.png", label: "App" }],
+      },
+    });
+
+    await expect(composed.enrichment).resolves.toMatchObject({
+      status: "ok",
+      findings: [{ findingId: "ui-verify:1" }],
+      uiVerification: { status: "ran", screenshots: [{ path: "patch/run/app.png" }] },
+    });
+    const enriched = await composed.enrichment;
+    expect(enriched?.lateEnrichmentScheduled).toBeUndefined();
   });
 });

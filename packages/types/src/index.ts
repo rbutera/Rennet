@@ -1262,8 +1262,8 @@ export interface FindingVerification {
 
 /**
  * One screenshot the verify-ui turn captured (issue #183). `path` is RELATIVE to
- * the review's evidence directory, so it stays portable across `review.load` and a
- * move of the app's store; `label` is the human caption ("mobile viewport",
+ * the review's evidence directory and includes the completed patchset/run namespace;
+ * `label` is the human caption ("mobile viewport",
  * "focus ring"). The bytes never ride this shape — the renderer reads them on
  * demand via the `review.uiEvidence` command, so the review snapshot and IPC
  * payload stay small.
@@ -1273,16 +1273,27 @@ export interface UiScreenshot {
   label: string;
 }
 
+/** Maximum bytes `review.uiEvidence` will read for one screenshot. */
+export const MAX_UI_EVIDENCE_BYTES = 8 * 1024 * 1024;
+
+/** Maximum screenshot references retained from one verify-ui turn. */
+export const MAX_UI_SCREENSHOTS_PER_RUN = 12;
+
+/** Maximum wire length of an 8 MiB screenshot encoded as a data URL. */
+export const MAX_UI_EVIDENCE_DATA_URL_LENGTH = Math.ceil(MAX_UI_EVIDENCE_BYTES / 3) * 4 + 64;
+
 /**
- * The additive verify-ui status (issue #183) that rides an `ok` FlaggedReview. It
+ * The additive verify-ui status (issue #183) that rides either FlaggedReview branch. It
  * is INFORMATIONAL and never a gate (Rule Zero): sign and publish behave exactly
- * as they would without it. The three states are kept DISTINCT on purpose, and the
+ * as they would without it. The four states are kept DISTINCT on purpose, and the
  * asymmetry is load-bearing (Rule 75/81ak, could-not-check beats a false clear):
  *
  *   • `ran`         — the turn mounted (or statically reviewed) the change and
  *                     produced observations (surfaced as ordinary findings) plus any
  *                     `screenshots`. `mounted` is false when the turn could only do a
  *                     labelled static review (no screenshot claimed).
+ *   • `pending`     — MAIN scheduled the slow late pass; immediate findings render,
+ *                     but an empty result is not yet a full all-clear.
  *   • `not-ui`      — the deterministic classifier found no UI-surface file, so no
  *                     turn ran and nothing was spent. This is "not applicable", NOT
  *                     an all-clear.
@@ -1294,12 +1305,14 @@ export interface UiScreenshot {
 export type UiVerification =
   | {
       status: "ran";
+      classifierVersion: number;
       screenshots: UiScreenshot[];
       observationCount: number;
       mounted: boolean;
     }
-  | { status: "not-ui" }
-  | { status: "unavailable"; reason: string };
+  | { status: "pending"; classifierVersion: number }
+  | { status: "not-ui"; classifierVersion: number }
+  | { status: "unavailable"; classifierVersion: number; reason: string };
 
 /**
  * Attribution of a failing CI check. Uncertainty is always `unclassified`, never
@@ -1442,10 +1455,16 @@ export type FlaggedReview =
        * pass. Additive and optional: a review without it validates and renders
        * exactly as before this capability (a non-UI changeset omits it, or carries
        * `not-ui`). Its observations surface as ordinary `findings` above — this
-       * field only carries the ran/not-ui/unavailable status and the screenshot
+       * field only carries the pending/ran/not-ui/unavailable status and the screenshot
        * references. It NEVER gates the sign (Rule Zero).
        */
       uiVerification?: UiVerification;
+      /**
+       * MAIN scheduled a non-blocking enrichment for this exact review/patchset/mode.
+       * The renderer polls the late channel whenever this is true; it is independent
+       * of whether any row needs adjudication. Transient and informational only.
+       */
+      lateEnrichmentScheduled?: true;
     }
   | {
       status: "failed";
@@ -1455,6 +1474,10 @@ export type FlaggedReview =
       patchsetId?: string;
       /** Incomplete-ingestion blockers (R18, issue #309). See the `ok` variant; stamped even on a failed run because blocked ingestion is deterministic, not a model result. */
       blockingStates?: readonly DecompositionBlockingState[];
+      /** Verify-ui is independent of whether the base finding review completed. */
+      uiVerification?: UiVerification;
+      /** See the `ok` variant. Transient and informational only. */
+      lateEnrichmentScheduled?: true;
     };
 
 // ─── review.ask: ask the AI a question, one model or both (issue #139) ────────

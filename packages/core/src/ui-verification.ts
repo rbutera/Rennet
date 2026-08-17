@@ -46,8 +46,8 @@ import type {
   UiScreenshot,
   UiVerification,
 } from "@rennet/types";
+import { MAX_UI_SCREENSHOTS_PER_RUN } from "@rennet/types";
 import type { VerificationTurn } from "./finding-verification";
-import { absentBudgetGrant } from "./invocation-budget";
 
 // ── ① The deterministic UI-surface classifier ────────────────────────────────
 
@@ -145,10 +145,12 @@ export interface RunUiVerificationInput {
   readonly runTurn?: VerificationTurn;
   /**
    * The shared live invocation budget. Consulted before the ONE turn — a refusal
-   * records `unavailable` naming the budget (the pass never silently skips). Optional
-   * only as a test ergonomic (absent ⇒ the turn runs ungated, no ceiling).
+   * records `unavailable` naming the budget (the pass never silently skips). Required
+   * so a dropped caller argument cannot silently mint an unbounded model turn.
    */
-  readonly budget?: InvocationBudget;
+  readonly budget: InvocationBudget;
+  /** Filesystem-backed proof that a screenshot exists, is confined, regular, and bounded. */
+  readonly inspectEvidence: UiEvidenceInspector;
   /** Max verify-ui turns per review; the frozen default is 1. A value < 1 disables the turn. */
   readonly maxTurns?: number;
   readonly contract?: UiVerificationContract;
@@ -165,10 +167,20 @@ export interface RunUiVerificationResult {
 
 interface ParsedTurnBody {
   readonly mounted: boolean;
+  readonly method: UiVerificationMethod;
   readonly attempted: string;
   readonly screenshots: UiScreenshot[];
   readonly observations: ParsedObservation[];
 }
+
+type UiVerificationMethod = "tests" | "storybook" | "dev-server" | "static" | "none";
+
+export type UiEvidenceInspection =
+  | { readonly status: "present" }
+  | { readonly status: "not-found" }
+  | { readonly status: "oversized" };
+
+export type UiEvidenceInspector = (path: string) => Promise<UiEvidenceInspection>;
 
 interface ParsedObservation {
   readonly file: string;
@@ -191,20 +203,22 @@ export async function runUiVerification(
   // 1. The deterministic gate — zero spend. No UI file ⇒ not-ui, done.
   const classification = classifyUiSurface(input.files);
   if (!classification.touchesUi) {
-    return { observations: [], status: { status: "not-ui" } };
+    return {
+      observations: [],
+      status: { status: "not-ui", classifierVersion: classification.version },
+    };
   }
 
   // 2. No verifier injected, or the turn is disabled — the honest could-not-run.
   const maxTurns = normalizeTurns(input.maxTurns);
   if (input.runTurn === undefined || maxTurns < 1) {
-    return unavailable(VERIFIER_UNAVAILABLE_REASON);
+    return unavailable(VERIFIER_UNAVAILABLE_REASON, classification.version);
   }
 
   // 3. The one budget-gated turn. A refusal is disclosed, never silently skipped.
-  const grant: BudgetGrant =
-    input.budget?.tryConsume("ui-verification") ?? absentBudgetGrant("ui-verification");
+  const grant: BudgetGrant = input.budget.tryConsume("ui-verification");
   if (!grant.granted) {
-    return unavailable(BUDGET_REASON);
+    return unavailable(BUDGET_REASON, classification.version);
   }
 
   const contract = input.contract ?? UI_VERIFICATION_CONTRACT;
@@ -216,34 +230,74 @@ export async function runUiVerification(
 
   const turn = await runTurnSafely(input.runTurn, prompt);
   if (turn.status === "failed") {
-    return unavailable(couldNotMount(turn.message));
+    return unavailable(couldNotMount(turn.message), classification.version);
   }
 
   const parsed = parseTurnBody(turn.body);
   if (parsed === undefined) {
-    return unavailable(NO_RESULT_REASON);
+    return unavailable(NO_RESULT_REASON, classification.version);
   }
 
-  // Could-not-mount (§spec, Rule 75/81ak): the turn rendered nothing and found
-  // nothing — the honest inconclusive disclosure carrying what it attempted, NEVER
-  // reported as "no UI problems found".
-  const hasContent = parsed.observations.length > 0 || parsed.screenshots.length > 0;
+  const allowedFiles = new Set(classification.files);
+  const parsedObservations = parsed.observations.filter((observation) =>
+    allowedFiles.has(observation.file),
+  );
+  const inspectedScreenshots = await Promise.all(
+    parsed.screenshots.map(async (screenshot) => {
+      try {
+        return { screenshot, inspection: await input.inspectEvidence(screenshot.path) };
+      } catch {
+        return { screenshot, inspection: { status: "not-found" } as const };
+      }
+    }),
+  );
+  const screenshots = inspectedScreenshots
+    .filter(({ inspection }) => inspection.status === "present")
+    .map(({ screenshot }) => screenshot);
+
+  // Could-not-mount (§spec, Rule 75/81ak): the turn produced no confined, bounded
+  // screenshot and no valid UI-file observation. Never report that as a clean run.
+  const hasContent = parsedObservations.length > 0 || screenshots.length > 0;
   if (!parsed.mounted && !hasContent) {
     return unavailable(
       couldNotMount(parsed.attempted.trim().length > 0 ? parsed.attempted : NO_RESULT_REASON),
+      classification.version,
+    );
+  }
+  if (!hasContent) {
+    const oversized = inspectedScreenshots.some(
+      ({ inspection }) => inspection.status === "oversized",
+    );
+    return unavailable(
+      couldNotMount(
+        oversized
+          ? "the captured screenshot exceeded Rennet's 8 MiB evidence limit"
+          : "the turn did not leave a confined screenshot file",
+      ),
+      classification.version,
     );
   }
 
-  // The turn EXECUTED something to mount (issue #259 exec observation): a mounted,
-  // execution-backed observation is `reproduced`; a static one is `inconclusive`.
-  const executionBacked = (turn.execution?.commands.length ?? 0) > 0;
-  const grounded = parsed.mounted && executionBacked;
-  const anchorForFile = buildFileAnchors(input.hunks);
+  // A mount is certified only when all three accounts agree: the structured method
+  // names a real mount, a successful observed command is relevant to that method,
+  // and at least one confined screenshot file is actually present. Any mismatch
+  // degrades to a labelled static review; it never upgrades intent into proof.
+  const executionBacked =
+    turn.execution?.commands.some(
+      (command) => command.ok && commandMatchesMethod(command.command, parsed.method),
+    ) ?? false;
+  const grounded =
+    parsed.mounted &&
+    parsed.method !== "static" &&
+    parsed.method !== "none" &&
+    executionBacked &&
+    screenshots.length > 0;
+  const anchorForFile = buildFileAnchors(input.hunks, classification.files);
   const mintId = input.mintFindingId ?? ((index) => `ui-verify:${index + 1}`);
 
-  const observations: FindingElement[] = parsed.observations.map((observation, index) => ({
+  const observations: FindingElement[] = parsedObservations.map((observation, index) => ({
     findingId: mintId(index),
-    anchor: anchorForFile(observation.file),
+    anchor: anchorForFile(observation.file, observation.line),
     summary: observation.summary,
     severity: observation.severity,
     agreement: { kind: "concur", agree: 1, total: 1 },
@@ -260,7 +314,8 @@ export async function runUiVerification(
     observations,
     status: {
       status: "ran",
-      screenshots: parsed.screenshots,
+      classifierVersion: classification.version,
+      screenshots,
       observationCount: observations.length,
       mounted: grounded,
     },
@@ -269,8 +324,11 @@ export async function runUiVerification(
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function unavailable(reason: string): RunUiVerificationResult {
-  return { observations: [], status: { status: "unavailable", reason } };
+function unavailable(reason: string, classifierVersion: number): RunUiVerificationResult {
+  return {
+    observations: [],
+    status: { status: "unavailable", classifierVersion, reason },
+  };
 }
 
 function couldNotMount(why: string): string {
@@ -334,15 +392,51 @@ function designIntentText(intent: ReviewIntent | undefined): string {
  * still renders and identifies the file, it just does not jump. Anchoring is Rennet's
  * job, not the model's, so the turn only ever names a file.
  */
-function buildFileAnchors(hunks: readonly Hunk[]): (file: string) => string {
-  const firstHunkByFile = new Map<string, string>();
+function buildFileAnchors(
+  hunks: readonly Hunk[],
+  allowedFiles: readonly string[],
+): (file: string, line?: number) => string {
+  const allowed = new Set(allowedFiles);
+  const hunksByFile = new Map<string, Hunk[]>();
   for (const hunk of hunks) {
-    if (!firstHunkByFile.has(hunk.filePath)) firstHunkByFile.set(hunk.filePath, hunk.id);
+    if (!allowed.has(hunk.filePath)) continue;
+    const fileHunks = hunksByFile.get(hunk.filePath) ?? [];
+    fileHunks.push(hunk);
+    hunksByFile.set(hunk.filePath, fileHunks);
   }
-  return (file) => {
-    const hunkId = firstHunkByFile.get(file);
-    return hunkId !== undefined ? `rennet:hunk/${hunkId}` : `rennet:file/${file}`;
+  return (file, line) => {
+    if (!allowed.has(file)) return `rennet:file/${file}`;
+    const fileHunks = hunksByFile.get(file) ?? [];
+    const first = fileHunks[0];
+    if (!first) return `rennet:file/${file}`;
+    const selected =
+      line === undefined
+        ? first
+        : fileHunks.reduce(
+            (nearest, candidate) =>
+              hunkDistance(candidate, line) < hunkDistance(nearest, line) ? candidate : nearest,
+            first,
+          );
+    return `rennet:hunk/${selected.id}`;
   };
+}
+
+function hunkDistance(hunk: Hunk, line: number): number {
+  const start = hunk.newStart;
+  const end = start + Math.max(1, hunk.newLines) - 1;
+  if (line < start) return start - line;
+  if (line > end) return line - end;
+  return 0;
+}
+
+function commandMatchesMethod(command: string, method: UiVerificationMethod): boolean {
+  const value = command.toLowerCase();
+  if (method === "tests") return /(^|\s|:)(test|vitest|jest|playwright|cypress)(\s|$)/.test(value);
+  if (method === "storybook") return /(^|\s|:)storybook(\s|$)/.test(value);
+  if (method === "dev-server") {
+    return /(^|\s|:)(dev|serve|start|vite|next|nuxt|astro|webpack-dev-server)(\s|$)/.test(value);
+  }
+  return false;
 }
 
 /**
@@ -358,6 +452,7 @@ function parseTurnBody(body: unknown): ParsedTurnBody | undefined {
   if (typeof record.mounted !== "boolean") return undefined;
   return {
     mounted: record.mounted,
+    method: parseMethod(record.method),
     attempted: typeof record.attempted === "string" ? record.attempted : "",
     screenshots: parseScreenshots(record.screenshots),
     observations: parseObservations(record.observations),
@@ -367,7 +462,7 @@ function parseTurnBody(body: unknown): ParsedTurnBody | undefined {
 function parseScreenshots(value: unknown): UiScreenshot[] {
   if (!Array.isArray(value)) return [];
   const screenshots: UiScreenshot[] = [];
-  for (const item of value) {
+  for (const item of value.slice(0, MAX_UI_SCREENSHOTS_PER_RUN)) {
     if (typeof item !== "object" || item === null) continue;
     const record = item as Record<string, unknown>;
     if (typeof record.path !== "string" || record.path.length === 0) continue;
@@ -377,6 +472,16 @@ function parseScreenshots(value: unknown): UiScreenshot[] {
     });
   }
   return screenshots;
+}
+
+function parseMethod(value: unknown): UiVerificationMethod {
+  return value === "tests" ||
+    value === "storybook" ||
+    value === "dev-server" ||
+    value === "static" ||
+    value === "none"
+    ? value
+    : "none";
 }
 
 function parseObservations(value: unknown): ParsedObservation[] {

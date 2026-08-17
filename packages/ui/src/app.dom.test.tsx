@@ -222,4 +222,59 @@ describe("RennetApp — the Sign button runs the real publish engine (wire-sign-
     expect(container.querySelector('[data-reason="binary"]')).toBeTruthy();
     expect(getByText(/binary file; its content was not ingested/)).toBeTruthy();
   });
+
+  it.each([
+    {
+      label: "unavailable",
+      uiVerification: {
+        status: "unavailable" as const,
+        classifierVersion: 1,
+        reason: "verifier unavailable",
+      },
+    },
+    {
+      label: "unresolved",
+      uiVerification: { status: "pending" as const, classifierVersion: 1 },
+    },
+  ])(
+    "keeps real sign resolution and publish unchanged when verify-ui is $label",
+    async ({ uiVerification }) => {
+      const { bridge, calls } = recordingBridge(review, {
+        status: "ok",
+        findings: [],
+        patchsetId: "patch-one",
+        uiVerification,
+      });
+      const { container, getByRole } = mount(<RennetApp bridge={bridge} />);
+      const destination = () => container.querySelector(".destination-frame");
+      await waitFor(() => expect(destination()).not.toBeNull());
+      fireEvent.click(getByRole("tab", { name: "Files" }));
+      fireEvent.click(getByRole("button", { name: "Mark read" }));
+      await waitFor(() => expect(destination()?.getAttribute("data-staged-count")).toBe("1"));
+      fireEvent.click(getByRole("tab", { name: "Review to post" }));
+
+      const openDraft = container.querySelector<HTMLButtonElement>(".destination-open-draft");
+      if (!openDraft) throw new Error("the open-draft control did not render");
+      fireEvent.click(openDraft);
+      await waitFor(() => expect(container.querySelector(".collation-canvas")).not.toBeNull());
+      const stageBox = container.querySelector<HTMLInputElement>(".collation-item-stage-box");
+      if (!stageBox) throw new Error("the stage toggle did not render");
+      fireEvent.click(stageBox);
+      const signDraft = container.querySelector<HTMLButtonElement>(".collation-sign");
+      if (!signDraft) throw new Error("the draft sign control did not render");
+      fireEvent.click(signDraft);
+      await waitFor(() => expect(container.querySelector(".publish-sheet")).not.toBeNull());
+
+      const sign = container.querySelector<HTMLButtonElement>(".publish-sheet-sign");
+      if (!sign) throw new Error("the sign control did not render");
+      expect(sign.disabled).toBe(false);
+      fireEvent.mouseDown(sign);
+      await new Promise((resolve) => setTimeout(resolve, 850));
+      fireEvent.mouseUp(sign);
+
+      await waitFor(() => expect(calls).toHaveLength(1));
+      expect(calls[0]?.reviewId).toBe("review");
+      expect(calls[0]?.dryRun).not.toBe(false);
+    },
+  );
 });

@@ -293,6 +293,17 @@ function UiVerificationStrip({
   loadUiEvidence?: UiEvidenceLoader;
 }) {
   if (!status || status.status === "not-ui") return null;
+  if (status.status === "pending") {
+    return (
+      <div className="ui-verification ui-verification-pending" role="note" data-status="pending">
+        <span className="ui-verification-label">verify-ui</span>
+        <span className="ui-verification-reason">
+          UI check still running — the current findings are available, but this is not a full
+          all-clear.
+        </span>
+      </div>
+    );
+  }
   if (status.status === "unavailable") {
     return (
       <div
@@ -442,6 +453,7 @@ export function FlaggedLens({
         </div>
         <BlockedIngestionDisclosure states={index.blockingStates ?? []} />
         <CiSignalPanel signal={index.ciSignal} />
+        <UiVerificationStrip status={index.uiVerification} loadUiEvidence={loadUiEvidence} />
       </div>
     );
   }
@@ -479,7 +491,16 @@ export function FlaggedLens({
       <CiSignalPanel signal={index.ciSignal} />
       <UiVerificationStrip status={index.uiVerification} loadUiEvidence={loadUiEvidence} />
       {index.total === 0 ? (
-        blockingStates.length > 0 ? (
+        index.uiVerification?.status === "pending" ? (
+          <p className="flagged-empty flagged-empty-qualified">
+            Nothing has been flagged yet — the UI check is still running, so this is not a full
+            all-clear.
+          </p>
+        ) : index.uiVerification?.status === "unavailable" ? (
+          <p className="flagged-empty flagged-empty-qualified">
+            Nothing was flagged, but Rennet couldn't check the UI — this is not a full all-clear.
+          </p>
+        ) : blockingStates.length > 0 ? (
           // Blocked ingestion makes the unconditional "ran clean" copy a lie: nothing
           // was flagged only IN WHAT COULD BE READ. Qualified copy + the disclosure
           // replace it (R18/#309). This is honest copy, not a gate.

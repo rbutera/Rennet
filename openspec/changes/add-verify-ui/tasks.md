@@ -21,24 +21,29 @@ pass). A control that cannot fail is the bug class delivery-order names.
 ## 3. Adapters: the turn and the evidence directory
 
 - [x] 3.1 `createUiVerificationTurn` in `packages/adapters/src/ui-verification-backend.ts`, mirroring `createVerificationTurn` exactly (fresh capable session, output schema, exec observation with the paired/ambiguous rules); prompt carries the changed UI files + hunks, the `patchsetIntentToReviewIntent` projection as design intent, the afford-what-exists mounting ladder (project tests → storybook → dev server + installed automation → labelled static review), and the absolute evidence directory to write PNGs into
-- [x] 3.2 Resolve and create `<review persistence root>/ui-evidence/` in the backend; screenshot paths in the result are stored relative to it
-- [x] 3.3 Backend tests: schema round-trip, exec observation threading, a turn that wrote no screenshots yields `mounted: false`/static-labelled result
+- [x] 3.2 Create isolated review/patchset/run evidence namespaces under app user data; expose only the completed run namespace and prune superseded/old runs with bounded retention
+- [x] 3.3 Backend tests: schema round-trip, exec observation threading, canonical confinement (final and intermediate symlink escapes), regular-file and 8 MiB byte bounds, namespacing, stale completion, and retention
 
 ## 4. Pipeline + desktop wiring
 
-- [x] 4.1 Red-first guard-deletion control: pipeline test with a UI-file patchset and a stub turn asserting the verify-ui `finding` doc AND the `ran` status appear on the result — written and failing before 4.2
-- [x] 4.2 Wire `runUiVerification` into `pipeline.ts` deep-review branch after finding verification; append the observation doc to `admittedDocs`; stamp the status on the pipeline result; quick tier leaves the field absent
-- [x] 4.3 Thread the injected config through the desktop review backend the way `verificationConfig` flows; persist the status with the review snapshot so `review.load` reopens it intact
-- [x] 4.4 Implement `review.uiEvidence` in dispatch: read from the review's evidence directory only (an escaping path is not-found), return base64 data URL; missing file → not-found; test both
+- [x] 4.1 Behavioral guard-deletion control: drive the injectable late-enrichment composer with a deferred verify-ui result, proving immediate all-concur delivery followed by completed observations/status
+- [x] 4.2 Wire `runUiVerification` into desktop MAIN's live `runFlaggedReviewWithContextFeed`; stamp pending immediately, compose with `applyUiVerification`, and signal/poll late enrichment independently of adjudication; quick tier leaves the field absent
+- [x] 4.3 Keep `FlaggedReview` transient like CI signal and `blockingStates`; record the declined persistence decision and bound evidence growth with patchset/run retention
+- [x] 4.4 Implement `review.uiEvidence` as a realpath-confined, regular-file, stat-before-read, byte-bounded command; missing/escaping/symlinked-out → not-found, oversized → oversized
 
 ## 5. Renderer: the Flagged-lens strip
 
 - [x] 5.1 Verify-ui strip in `packages/ui/src/components/flagged.tsx`: `ran` → thumbnails via `review.uiEvidence` + observation count; `unavailable` → the one-line honest reason; `not-ui` or field absent → nothing rendered
 - [x] 5.2 DOM tests: additive proof (a review without the field renders exactly as today), unavailable line, thumbnails render from stubbed data URLs, missing-evidence note on a not-found image
-- [x] 5.3 Rule Zero control (red-first against any accidental gate): a review with unresolved verify-ui findings and an `unavailable` status still signs and publishes exactly as without the field
+- [x] 5.3 Rule Zero control: drive the real sign-resolution and publish command paths with pending and unavailable verify-ui states; both proceed exactly as without the field
 
 ## 6. Docs + gate (same change, definition of done)
 
 - [x] 6.1 `docs/src/content/docs/developing/reference/delivery-order.md`: mark the wave-10 #183 entry delivered with the shipped shape (classifier, one budgeted turn, findings + honest status, evidence strip)
 - [x] 6.2 `docs/src/content/docs/using/guide/user-journey.md`: the review-intelligence walkthrough gains the verify-ui step (what it does, what "could not mount" means, where screenshots appear)
 - [x] 6.3 `pnpm check` green; push and verify the remote ref matches local HEAD; close #183 in the merge
+
+## 7. Verify-ui pass #183 follow-up
+
+- [x] 7.1 Fix late-enrichment delivery, pending/unavailable honesty, failed-branch transport, required budgets, method/exec/file certification, reported-line anchoring, evidence confinement/limits/namespacing/retention, behavioral composition coverage, and the real Rule Zero sign/publish controls
+- [x] 7.2 `NX_DAEMON=false pnpm check` green; commit the follow-up with no push

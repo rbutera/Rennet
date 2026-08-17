@@ -10,6 +10,7 @@ describe("buildFlaggedIndex — verify-ui status carry (#183)", () => {
       ...OK,
       uiVerification: {
         status: "ran",
+        classifierVersion: 1,
         mounted: true,
         observationCount: 2,
         screenshots: [{ path: "a.png", label: "A" }],
@@ -18,6 +19,7 @@ describe("buildFlaggedIndex — verify-ui status carry (#183)", () => {
     if (index.state !== "ok") throw new Error("expected ok");
     expect(index.uiVerification).toEqual({
       status: "ran",
+      classifierVersion: 1,
       mounted: true,
       observationCount: 2,
       screenshots: [{ path: "a.png", label: "A" }],
@@ -27,14 +29,21 @@ describe("buildFlaggedIndex — verify-ui status carry (#183)", () => {
   it("carries unavailable and not-ui statuses", () => {
     const unavailable = buildFlaggedIndex({
       ...OK,
-      uiVerification: { status: "unavailable", reason: "no tooling" },
+      uiVerification: { status: "unavailable", classifierVersion: 1, reason: "no tooling" },
     });
     if (unavailable.state !== "ok") throw new Error("expected ok");
-    expect(unavailable.uiVerification).toEqual({ status: "unavailable", reason: "no tooling" });
+    expect(unavailable.uiVerification).toEqual({
+      status: "unavailable",
+      classifierVersion: 1,
+      reason: "no tooling",
+    });
 
-    const notUi = buildFlaggedIndex({ ...OK, uiVerification: { status: "not-ui" } });
+    const notUi = buildFlaggedIndex({
+      ...OK,
+      uiVerification: { status: "not-ui", classifierVersion: 1 },
+    });
     if (notUi.state !== "ok") throw new Error("expected ok");
-    expect(notUi.uiVerification).toEqual({ status: "not-ui" });
+    expect(notUi.uiVerification).toEqual({ status: "not-ui", classifierVersion: 1 });
   });
 
   it("drops a malformed status (a bad field renders as the pre-#183 shape)", () => {

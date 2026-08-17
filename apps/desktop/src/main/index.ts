@@ -7,12 +7,15 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   applyVisibilitySwitch,
+  beginUiEvidenceRun,
+  bindUiEvidenceRun,
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
   CodexAdapter,
   type CodexAvailability,
   claudeHandoffRunPort,
   cleanupWorktree,
+  completeUiEvidenceRun,
   createClaudeAdjudicationTurn,
   createClaudeCiRefinementTurn,
   createClaudeHarness,
@@ -59,6 +62,7 @@ import {
   GitHubPublishAdapter,
   gitForRepoFactory,
   type HttpFetch,
+  inspectUiEvidence,
   KnowledgeStore,
   loadConventionCatalogue,
   loadProjectDetail,
@@ -77,7 +81,6 @@ import {
   resolveBaseRef,
   resolveForgeRemote,
   resolveGitHubAuth,
-  resolveUiEvidenceDir,
   runKnowledgeDeltaForRepo,
   SqliteReviewStore,
   snapshotStoreFor,
@@ -159,8 +162,9 @@ import { createLiveDeltaDigestPort } from "./delta-digest-live";
 import { createDispatch, type FlaggedReviewRun } from "./dispatch";
 import { createLiveDraftPrBodyPort } from "./draft-pr-body-live";
 import { stampBlockingStates } from "./flagged-blocking-states";
+import { composeFlaggedLateEnrichment } from "./flagged-late-enrichment";
 import { projectUnavailableDeepVerification } from "./flagged-review-verification";
-import { applyUiVerification } from "./flagged-ui-verification";
+import { applyImmediateUiVerification } from "./flagged-ui-verification";
 import { createLiveComposeBundle } from "./handoff-compose-live";
 import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
 import { LiveTurnRegistry } from "./live-turn-registry";
@@ -1330,43 +1334,58 @@ async function runFlaggedReviewWithContextFeed(
   // it NEVER delays the immediate row/canvas delivery, and its observations (ordinary
   // findings) + status replace the rows via `flagged.adjudication` when it lands.
   const uiClassification = classifyUiSurface(patchset.files);
-  const immediate =
-    !uiClassification.touchesUi && stamped.status === "ok"
-      ? applyUiVerification(stamped, { observations: [], status: { status: "not-ui" } })
-      : stamped;
-  const uiVerificationRunner =
+  const immediate = applyImmediateUiVerification(stamped, {
+    touchesUi: uiClassification.touchesUi,
+    classifierVersion: uiClassification.version,
+    deepReview,
+    verifierAvailable: Boolean(adapter),
+  });
+  const uiVerification =
     deepReview && adapter && uiClassification.touchesUi
-      ? async (flaggedReview: FlaggedReview): Promise<FlaggedReview> => {
-          if (flaggedReview.status !== "ok") return flaggedReview;
-          const evidenceDir = await resolveUiEvidenceDir(
+      ? (async () => {
+          const evidenceRun = await beginUiEvidenceRun(
             join(app.getPath("userData"), "ui-evidence"),
             review.id,
+            patchset.id,
           );
-          const uiResult = await runUiVerification({
-            files: patchset.files,
-            hunks: decomposition.hunks,
-            ...(intent ? { intent } : {}),
-            evidenceDir,
-            runTurn: createUiVerificationTurn(adapter, { cwd: review.repositoryRoot }),
-            budget: sharedBudget,
-            maxTurns: DEFAULT_REVIEW_INTELLIGENCE_BUDGET.uiVerification.maxTurns,
-          });
-          return applyUiVerification(flaggedReview, uiResult);
-        }
-      : undefined;
+          try {
+            const uiResult = await runUiVerification({
+              files: patchset.files,
+              hunks: decomposition.hunks,
+              ...(intent ? { intent } : {}),
+              evidenceDir: evidenceRun.directory,
+              runTurn: createUiVerificationTurn(adapter, { cwd: review.repositoryRoot }),
+              budget: sharedBudget,
+              inspectEvidence: (path) => inspectUiEvidence(evidenceRun.directory, path),
+              maxTurns: DEFAULT_REVIEW_INTELLIGENCE_BUDGET.uiVerification.maxTurns,
+            });
+            const bound = bindUiEvidenceRun(uiResult, evidenceRun);
+            await completeUiEvidenceRun(
+              evidenceRun,
+              bound.status.status === "ran" && bound.status.screenshots.length > 0,
+            );
+            return bound;
+          } catch (error) {
+            await completeUiEvidenceRun(evidenceRun, false);
+            throw error;
+          }
+        })()
+      : null;
   const adjudicated =
     adjudicationOptions &&
     immediate.status === "ok" &&
     immediate.findings.some((finding) => finding.agreement.kind === "disagree")
       ? adjudicateFlaggedReview(immediate, adjudicationOptions).then(({ review }) => review)
       : null;
-  // verify-ui joins the SAME late channel, AFTER any adjudication (a refuted row is
-  // already gone, so it verifies the surviving surface). Neither is awaited before the
-  // return — the immediate review delivers now (Rule Zero / non-blocking).
-  const adjudication = uiVerificationRunner
-    ? (adjudicated ?? Promise.resolve(immediate)).then(uiVerificationRunner)
-    : adjudicated;
-  return { review: immediate, adjudication };
+  // The two late passes start independently and compose only when their results are
+  // ready. The immediate response says late enrichment was scheduled, so an all-concur
+  // or zero-row renderer polls too; neither turn delays row delivery (Rule Zero).
+  const composed = composeFlaggedLateEnrichment({
+    immediate,
+    adjudication: adjudicated,
+    uiVerification,
+  });
+  return { review: composed.review, adjudication: composed.enrichment };
 }
 
 async function runFlaggedReview(

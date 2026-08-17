@@ -75,6 +75,8 @@ export type FlaggedIndex =
       ciSignal?: CiSignal;
       /** Deterministic incomplete-ingestion blockers survive a failed model run. */
       blockingStates?: readonly DecompositionBlockingState[];
+      /** Verify-ui remains independently reportable when the base review fails. */
+      uiVerification?: UiVerification;
     }
   | {
       state: "ok";
@@ -215,6 +217,7 @@ export function buildFlaggedIndex(review: FlaggedReview): FlaggedIndex {
       state: "failed",
       reason: review.reason,
       ...(review.ciSignal ? { ciSignal: review.ciSignal } : {}),
+      ...(isUiVerification(review.uiVerification) ? { uiVerification: review.uiVerification } : {}),
       ...(blockingStates.length > 0 ? { blockingStates } : {}),
     };
   }
@@ -280,7 +283,8 @@ function sanitiseBlockingStates(value: unknown): readonly DecompositionBlockingS
 function isUiVerification(value: unknown): value is UiVerification {
   if (typeof value !== "object" || value === null) return false;
   const status = value as Record<string, unknown>;
-  if (status.status === "not-ui") return true;
+  if (typeof status.classifierVersion !== "number") return false;
+  if (status.status === "pending" || status.status === "not-ui") return true;
   if (status.status === "unavailable") return typeof status.reason === "string";
   if (status.status === "ran") {
     return (

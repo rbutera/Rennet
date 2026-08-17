@@ -70,6 +70,8 @@ describe("classifyUiSurface (#183) — the deterministic gate", () => {
 
 const UI_FILES: PatchFile[] = [file("src/App.tsx")];
 const HUNKS: Hunk[] = [hunk("h1", "src/App.tsx")];
+const budget = (): InvocationBudget => createInvocationBudget(20);
+const present = async (): Promise<{ status: "present" }> => ({ status: "present" });
 
 describe("runUiVerification (#183) — the ladder", () => {
   it("not-ui: a backend-only changeset spends nothing and records the distinct status", async () => {
@@ -78,15 +80,26 @@ describe("runUiVerification (#183) — the ladder", () => {
       files: [file("packages/core/src/pipeline.ts")],
       hunks: [],
       evidenceDir: "/ev",
+      budget: budget(),
+      inspectEvidence: present,
       runTurn: runTurn as unknown as VerificationTurn,
     });
-    expect(result.status).toEqual({ status: "not-ui" });
+    expect(result.status).toEqual({
+      status: "not-ui",
+      classifierVersion: UI_SURFACE_CLASSIFIER_VERSION,
+    });
     expect(result.observations).toEqual([]);
     expect(runTurn).not.toHaveBeenCalled();
   });
 
   it("unavailable: an absent verifier is disclosed, never a clear", async () => {
-    const result = await runUiVerification({ files: UI_FILES, hunks: HUNKS, evidenceDir: "/ev" });
+    const result = await runUiVerification({
+      files: UI_FILES,
+      hunks: HUNKS,
+      evidenceDir: "/ev",
+      budget: budget(),
+      inspectEvidence: present,
+    });
     expect(result.status.status).toBe("unavailable");
     if (result.status.status !== "unavailable") throw new Error("expected unavailable");
     expect(result.status.reason).toMatch(/no verifier/i);
@@ -100,6 +113,7 @@ describe("runUiVerification (#183) — the ladder", () => {
       hunks: HUNKS,
       evidenceDir: "/ev",
       budget: spent,
+      inspectEvidence: present,
       runTurn: runTurn as unknown as VerificationTurn,
     });
     expect(result.status.status).toBe("unavailable");
@@ -125,6 +139,8 @@ describe("runUiVerification (#183) — the ladder", () => {
       files: UI_FILES,
       hunks: HUNKS,
       evidenceDir: "/ev",
+      budget: budget(),
+      inspectEvidence: present,
       runTurn,
     });
     expect(result.status.status).toBe("unavailable");
@@ -145,6 +161,8 @@ describe("runUiVerification (#183) — the ladder", () => {
       files: UI_FILES,
       hunks: HUNKS,
       evidenceDir: "/ev",
+      budget: budget(),
+      inspectEvidence: present,
       runTurn,
     });
     expect(result.status.status).toBe("unavailable");
@@ -178,10 +196,13 @@ describe("runUiVerification (#183) — the ladder", () => {
       files: UI_FILES,
       hunks: HUNKS,
       evidenceDir: "/ev",
+      budget: budget(),
+      inspectEvidence: present,
       runTurn,
     });
     expect(result.status).toEqual({
       status: "ran",
+      classifierVersion: UI_SURFACE_CLASSIFIER_VERSION,
       screenshots: [{ path: "app.png", label: "App, default" }],
       observationCount: 1,
       mounted: true,
@@ -218,6 +239,8 @@ describe("runUiVerification (#183) — the ladder", () => {
       files: UI_FILES,
       hunks: HUNKS,
       evidenceDir: "/ev",
+      budget: budget(),
+      inspectEvidence: present,
       runTurn,
     });
     if (result.status.status !== "ran") throw new Error("expected ran");
@@ -225,5 +248,211 @@ describe("runUiVerification (#183) — the ladder", () => {
     expect(result.observations[0]?.verification?.verdict).toBe("inconclusive");
     // An empty evidence string falls back to the honest static caveat, never blank.
     expect(result.observations[0]?.verification?.evidence.length).toBeGreaterThan(0);
+  });
+
+  it("does not certify a mount when the structured method is static", async () => {
+    const result = await runUiVerification({
+      files: UI_FILES,
+      hunks: HUNKS,
+      evidenceDir: "/ev",
+      budget: budget(),
+      inspectEvidence: present,
+      runTurn: async () => ({
+        status: "emitted",
+        body: {
+          mounted: true,
+          method: "static",
+          attempted: "static review",
+          screenshots: [{ path: "app.png", label: "App" }],
+          observations: [
+            {
+              file: "src/App.tsx",
+              impact: "medium",
+              summary: "contrast is low",
+              evidence: "visual inspection",
+            },
+          ],
+        },
+        execution: { commands: [{ command: "pnpm storybook", ok: true, outputTail: "ready" }] },
+      }),
+    });
+    if (result.status.status !== "ran") throw new Error("expected ran");
+    expect(result.status.mounted).toBe(false);
+    expect(result.observations[0]?.verification?.verdict).toBe("inconclusive");
+  });
+
+  it("does not certify a mount from an unrelated successful exec", async () => {
+    const result = await runUiVerification({
+      files: UI_FILES,
+      hunks: HUNKS,
+      evidenceDir: "/ev",
+      budget: budget(),
+      inspectEvidence: present,
+      runTurn: async () => ({
+        status: "emitted",
+        body: {
+          mounted: true,
+          method: "storybook",
+          attempted: "storybook",
+          screenshots: [{ path: "app.png", label: "App" }],
+          observations: [
+            {
+              file: "src/App.tsx",
+              impact: "medium",
+              summary: "contrast is low",
+              evidence: "visual inspection",
+            },
+          ],
+        },
+        execution: { commands: [{ command: "echo ready", ok: true, outputTail: "ready" }] },
+      }),
+    });
+    if (result.status.status !== "ran") throw new Error("expected ran");
+    expect(result.status.mounted).toBe(false);
+    expect(result.observations[0]?.verification?.verdict).toBe("inconclusive");
+  });
+
+  it("does not certify a mount when the claimed screenshot is not present", async () => {
+    const result = await runUiVerification({
+      files: UI_FILES,
+      hunks: HUNKS,
+      evidenceDir: "/ev",
+      budget: budget(),
+      inspectEvidence: async () => ({ status: "not-found" }),
+      runTurn: async () => ({
+        status: "emitted",
+        body: {
+          mounted: true,
+          method: "storybook",
+          attempted: "storybook",
+          screenshots: [{ path: "missing.png", label: "App" }],
+          observations: [
+            {
+              file: "src/App.tsx",
+              impact: "medium",
+              summary: "contrast is low",
+              evidence: "visual inspection",
+            },
+          ],
+        },
+        execution: { commands: [{ command: "pnpm storybook", ok: true, outputTail: "ready" }] },
+      }),
+    });
+    if (result.status.status !== "ran") throw new Error("expected ran");
+    expect(result.status.mounted).toBe(false);
+    expect(result.status.screenshots).toEqual([]);
+    expect(result.observations[0]?.verification?.verdict).toBe("inconclusive");
+  });
+
+  it("anchors an observation to the containing or nearest hunk for its reported line", async () => {
+    const second = { ...hunk("h2", "src/App.tsx"), newStart: 100, newLines: 10 };
+    const first = { ...hunk("h1", "src/App.tsx"), newStart: 10, newLines: 5 };
+    const result = await runUiVerification({
+      files: UI_FILES,
+      hunks: [first, second],
+      evidenceDir: "/ev",
+      budget: budget(),
+      inspectEvidence: present,
+      runTurn: async () => ({
+        status: "emitted",
+        body: {
+          mounted: true,
+          method: "tests",
+          attempted: "component tests",
+          screenshots: [{ path: "app.png", label: "App" }],
+          observations: [
+            {
+              file: "src/App.tsx",
+              line: 105,
+              impact: "high",
+              summary: "the dialog is clipped",
+              evidence: "rendered at line 105",
+            },
+          ],
+        },
+        execution: { commands: [{ command: "pnpm test", ok: true, outputTail: "passed" }] },
+      }),
+    });
+    expect(result.observations[0]?.anchor).toBe("rennet:hunk/h2");
+  });
+
+  it("drops observations for files outside the classified UI set", async () => {
+    const result = await runUiVerification({
+      files: UI_FILES,
+      hunks: HUNKS,
+      evidenceDir: "/ev",
+      budget: budget(),
+      inspectEvidence: present,
+      runTurn: async () => ({
+        status: "emitted",
+        body: {
+          mounted: false,
+          method: "static",
+          attempted: "static review",
+          screenshots: [{ path: "app.png", label: "App" }],
+          observations: [
+            {
+              file: "packages/core/src/secret.ts",
+              impact: "high",
+              summary: "not a UI file",
+              evidence: "unrelated",
+            },
+          ],
+        },
+      }),
+    });
+    expect(result.observations).toEqual([]);
+  });
+
+  it("bounds screenshot references and filesystem checks per run", async () => {
+    const inspectEvidence = vi.fn(present);
+    const screenshots = Array.from({ length: 13 }, (_, index) => ({
+      path: `${index}.png`,
+      label: `shot ${index}`,
+    }));
+    const result = await runUiVerification({
+      files: UI_FILES,
+      hunks: HUNKS,
+      evidenceDir: "/ev",
+      budget: budget(),
+      inspectEvidence,
+      runTurn: async () => ({
+        status: "emitted",
+        body: {
+          mounted: false,
+          method: "static",
+          attempted: "static review",
+          screenshots,
+          observations: [],
+        },
+      }),
+    });
+    if (result.status.status !== "ran") throw new Error("expected ran");
+    expect(result.status.screenshots).toHaveLength(12);
+    expect(inspectEvidence).toHaveBeenCalledTimes(12);
+  });
+
+  it("reports an oversized-only capture as unavailable rather than a mounted clear", async () => {
+    const result = await runUiVerification({
+      files: UI_FILES,
+      hunks: HUNKS,
+      evidenceDir: "/ev",
+      budget: budget(),
+      inspectEvidence: async () => ({ status: "oversized" }),
+      runTurn: async () => ({
+        status: "emitted",
+        body: {
+          mounted: true,
+          method: "storybook",
+          attempted: "storybook",
+          screenshots: [{ path: "huge.png", label: "Huge" }],
+          observations: [],
+        },
+        execution: { commands: [{ command: "pnpm storybook", ok: true, outputTail: "ready" }] },
+      }),
+    });
+    expect(result.status.status).toBe("unavailable");
+    if (result.status.status !== "unavailable") throw new Error("expected unavailable");
+    expect(result.status.reason).toContain("8 MiB");
   });
 });

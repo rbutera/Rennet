@@ -6,7 +6,10 @@ describe("desktop flagged adjudication composition (#41)", () => {
     const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
 
     expect(source).toContain("adjudicateFlaggedReview(immediate, adjudicationOptions).then");
-    expect(source).toContain("return { review: immediate, adjudication };");
+    expect(source).toContain("composeFlaggedLateEnrichment({");
+    expect(source).toContain(
+      "return { review: composed.review, adjudication: composed.enrichment };",
+    );
     expect(source).not.toContain("await adjudicateFlaggedReview");
   });
 });

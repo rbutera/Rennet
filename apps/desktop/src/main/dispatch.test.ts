@@ -381,12 +381,27 @@ describe("createDispatch — review.uiEvidence (#183)", () => {
       {},
       {
         readUiEvidence: (reviewId, path) =>
-          Promise.resolve({ dataUrl: `data:image/png;base64,${reviewId}:${path}` }),
+          Promise.resolve({
+            status: "ok",
+            dataUrl: `data:image/png;base64,${reviewId}:${path}`,
+          }),
       },
     );
     const review = await capturedReview(dispatch);
     const result = await dispatch("review.uiEvidence", { reviewId: review.id, path: "a.png" });
     expect(result).toEqual({ status: "ok", dataUrl: `data:image/png;base64,${review.id}:a.png` });
+  });
+
+  it("preserves an oversized evidence status without reading bytes into IPC", async () => {
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      { readUiEvidence: () => Promise.resolve({ status: "oversized" }) },
+    );
+    const review = await capturedReview(dispatch);
+    await expect(
+      dispatch("review.uiEvidence", { reviewId: review.id, path: "huge.png" }),
+    ).resolves.toEqual({ status: "oversized" });
   });
 
   it("returns not-found when the evidence read yields null (missing/escaping — honest, not a crash)", async () => {
@@ -410,7 +425,8 @@ describe("createDispatch — review.uiEvidence (#183)", () => {
       fakePublishPort(),
       {},
       {
-        readUiEvidence: () => Promise.resolve({ dataUrl: "data:image/png;base64,AAAA" }),
+        readUiEvidence: () =>
+          Promise.resolve({ status: "ok", dataUrl: "data:image/png;base64,AAAA" }),
       },
     );
     await expect(
@@ -863,6 +879,7 @@ describe("createDispatch — flagged.review routing (the live finding runner, is
     expect(immediate.status).toBe("ok");
     if (immediate.status !== "ok") throw new Error("expected ok");
     expect(immediate.findings).toHaveLength(1);
+    expect(immediate.lateEnrichmentScheduled).toBe(true);
     expect(immediate.findings[0]?.agreement.kind).toBe("disagree");
     expect(
       immediate.findings[0]?.agreement.kind === "disagree"
