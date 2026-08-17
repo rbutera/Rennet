@@ -87,7 +87,7 @@ button {
   border-radius: var(--chip-radius);
   background: var(--surface);
   color: var(--text-soft);
-  font: 500 11.5px / 1 var(--sans);
+  font: 500 11px / 1 var(--sans);
   letter-spacing: 0;
   text-transform: none;
   cursor: pointer;
@@ -175,13 +175,13 @@ button {
 .replychip-reference.rl {
   flex: none;
   color: var(--private);
-  font: 500 9.5px / 1.2 var(--mono);
+  font: 500 10px / 1.2 var(--mono);
 }
 .replychip-context.rc {
   min-width: 0;
   overflow: hidden;
   color: var(--text-soft);
-  font: 500 10.5px / 1.2 var(--code);
+  font: 500 10px / 1.2 var(--code);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -257,7 +257,7 @@ button {
   outline: 0;
   background: transparent;
   color: var(--text);
-  font: 500 12.5px / 1.45 var(--sans);
+  font: 500 13px / 1.45 var(--sans);
 }
 .conversation-panel-send {
   padding: 6px 10px;
@@ -716,7 +716,7 @@ button {
   overflow: auto;
   color: var(--text-soft);
   /* Real code surface: the raw unified diff. Monospace via --code (chrome is sans). */
-  font: 11.5px / 1.55 var(--code);
+  font: 12px / 1.55 var(--code);
   tab-size: 2;
   white-space: pre;
 }
