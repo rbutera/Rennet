@@ -285,6 +285,10 @@ describe("ConversationMargin — in-rail anchor alignment (#36 → #85)", () => 
       this: HTMLElement,
     ) {
       const key = this.getAttribute("data-anchor-key");
+      // The diff element the rail measures against: a tall viewport so every rendered row
+      // sits inside it. The engine's viewport-rect test (Codex #3) needs a real box here;
+      // in this component test row PRESENCE is still what decides on/off-window.
+      if (this.classList.contains("diff-column")) return { ...rect(0), bottom: 1e6, height: 1e6 };
       if (this.classList.contains("conversation-margin")) return rect(100);
       if (key && this.classList.contains("code-view-row")) return rect(rowTops[key] ?? 0);
       if (key && this.classList.contains("conversation-cluster")) return rect(panelTops[key] ?? 0);

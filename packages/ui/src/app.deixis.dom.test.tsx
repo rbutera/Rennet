@@ -117,18 +117,21 @@ describe("RennetApp — two-way deixis routing (#79)", () => {
     );
     if (!addition) throw new Error("focused diff did not expose its addition row");
     fireEvent.click(addition);
-    const panel = container.querySelector<HTMLElement>(".conversation-panel");
-    if (!panel) throw new Error("conversation panel did not mount");
-    await waitFor(() =>
-      expect(
-        panel.querySelector(".conversation-panel-composer")?.getAttribute("data-thread-id"),
-      ).toBeTruthy(),
-    );
-    const input = panel.querySelector<HTMLTextAreaElement>(".conversation-panel-input");
-    const send = panel.querySelector<HTMLButtonElement>(".conversation-panel-send");
-    if (!input || !send) throw new Error("conversation composer did not mount");
-    fireEvent.change(input, { target: { value: "is this safe?" } });
-    fireEvent.click(send);
+    // The diff discuss glyph auto-opens a thread in the aligned margin; its cluster owns
+    // the composer that carries the span selection into the turn.
+    const cluster = await waitFor(() => {
+      const found = container.querySelector<HTMLElement>(".conversation-cluster");
+      if (!found) throw new Error("conversation thread did not open in the margin");
+      return found;
+    });
+    const composer = () => ({
+      input: cluster.querySelector<HTMLTextAreaElement>(".conversation-composer-input"),
+      send: cluster.querySelector<HTMLButtonElement>(".conversation-composer-send"),
+    });
+    const first = composer();
+    if (!first.input || !first.send) throw new Error("thread composer did not mount");
+    fireEvent.change(first.input, { target: { value: "is this safe?" } });
+    fireEvent.click(first.send);
     await waitFor(() => expect(h.asks).toHaveLength(1));
     expect(h.asks[0]?.selection).toEqual({
       anchor: "rennet:hunk/c1-h1#L1@additions",
@@ -136,8 +139,10 @@ describe("RennetApp — two-way deixis routing (#79)", () => {
     });
 
     fireEvent.click(getByRole("tab", { name: "Sequence" }));
-    fireEvent.change(input, { target: { value: "and now?" } });
-    fireEvent.click(send);
+    const second = composer();
+    if (!second.input || !second.send) throw new Error("thread composer did not persist");
+    fireEvent.change(second.input, { target: { value: "and now?" } });
+    fireEvent.click(second.send);
     await waitFor(() => expect(h.asks).toHaveLength(2));
     expect(h.asks[1]).not.toHaveProperty("selection");
   });

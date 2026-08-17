@@ -2565,8 +2565,12 @@
 }
 
 /* The thread panel — the private backlight material (a solid private surface plus
- * the inner glow, so text stays legible while the panel reads unmistakably local). */
-.conversation-cluster {
+ * the inner glow, so text stays legible while the panel reads unmistakably local).
+ * `.conversation-general` (the anchorless ask pinned at the rail's end, #356) shares
+ * the same box, but is NOT `.conversation-cluster` so the alignment engine never
+ * measures or offsets it — it simply stacks last. */
+.conversation-cluster,
+.conversation-general {
   display: flex;
   flex-direction: column;
   border: 1px solid var(--private-line);
