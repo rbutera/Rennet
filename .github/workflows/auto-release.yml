@@ -19,6 +19,9 @@
 name: Auto Release
 
 on:
+  # Manual escape hatch: cut a release from current main without an app-source
+  # push (e.g. after a build-infra fix that sits outside the trigger paths).
+  workflow_dispatch:
   push:
     branches: [main]
     # App source only — root package.json, docs/, and marketing are NOT triggers.
