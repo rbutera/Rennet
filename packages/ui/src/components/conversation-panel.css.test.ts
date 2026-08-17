@@ -10,25 +10,17 @@ function declaration(css: string, selector: string): string {
   return css.slice(open, close);
 }
 
-describe("ConversationPanel both-answer width contract", () => {
+// The conversation panel's flat `PanelSurface` stream (with its collapsed/expanded
+// both-answer overrides) was retired when the review heart adopted the aligned margin
+// (issue #356). The surviving `.ask-answers[data-count="2"]` two-column rule belongs to
+// the GLOBAL comparison surface (`AskAnswers`), still rendered by the OpenSpec viewer —
+// so this is the contract that must hold.
+describe("AskAnswers two-column comparison contract", () => {
   const canvas = readFileSync(fileURLToPath(new URL("../canvas.css", import.meta.url)), "utf8");
-  const styles = readFileSync(fileURLToPath(new URL("../styles.css", import.meta.url)), "utf8");
-  const collapsedSelector = '.conversation-panel .ask-answers[data-count="2"] .ask-answer-cards';
-  const expandedSelector =
-    '.conversation-panel--expanded .ask-answers[data-count="2"] .ask-answer-cards';
 
-  it("keeps global consumers such as OpenSpec two-column", () => {
+  it("keeps global consumers such as the OpenSpec viewer two-column", () => {
     expect(declaration(canvas, '.ask-answers[data-count="2"] .ask-answer-cards')).toMatch(
       /grid-template-columns:\s*1fr 1fr;/,
     );
-  });
-
-  it("stacks the two cards in the collapsed conversation panel", () => {
-    expect(declaration(styles, collapsedSelector)).toMatch(/grid-template-columns:\s*1fr;/);
-  });
-
-  it("restores two columns after the collapsed rule when the panel is expanded", () => {
-    expect(declaration(styles, expandedSelector)).toMatch(/grid-template-columns:\s*1fr 1fr;/);
-    expect(styles.indexOf(expandedSelector)).toBeGreaterThan(styles.indexOf(collapsedSelector));
   });
 });
