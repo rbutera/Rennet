@@ -185,6 +185,13 @@ button {
   display: grid;
   gap: 5px;
 }
+.nav-rail-history {
+  grid-template-columns: 1fr 1fr;
+}
+.nav-rail-button-paired {
+  min-height: 34px;
+  padding: 6px 0;
+}
 .nav-rail-button {
   min-height: 48px;
   display: grid;
