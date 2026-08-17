@@ -15,7 +15,7 @@ flowchart LR
   pipeline["Core review pipeline"] --> port["HarnessPort"]
   port --> claude["Claude adapter"]
   port --> codex["Codex adapter"]
-  port --> omp["Future omp adapter"]
+  port --> omp["omp adapter"]
   claude --> cli["User's installed claude"]
   codex --> codexcli["User's installed codex"]
   omp --> ompcli["User's installed omp"]
@@ -29,9 +29,11 @@ Electron APIs. The real process integration lives in `packages/adapters`, and
 the desktop app composes the two.
 
 The port currently covers descriptor and health data, session creation, one
-event stream per session, turn start, interrupt, and close. Two real adapters
-implement it — Claude Code and Codex — and one cross-adapter conformance suite
-runs against both. Resume, fork, and the omp adapter remain later slices.
+event stream per session, turn start, interrupt, and close. Three real adapters
+implement it — Claude Code, Codex, and omp — and one cross-adapter conformance
+suite runs against all three. Resume and fork remain later slices; the omp
+adapter exists but every capability flag stays false until its first gated real
+run (see below).
 
 ## One normalized event stream
 
@@ -143,6 +145,49 @@ both real adapters. A Claude-selected turn receives canvasOps in process; a
 Codex-selected turn reaches an injected `CodexTurnTransport` with the same backend
 served at its loopback MCP URL. The session event stream is subscribe-once.
 
+## omp is the third adapter
+
+The omp adapter drives the user's own installed `omp`
+(`@oh-my-pi/pi-coding-agent`, bin `omp` — never the abandoned npm namesake
+`oh-my-pi`), the harness R23 ratified as the third slot. It is the same shape as
+Codex: pure over an injected `OmpTurnTransport`, with the composition root
+spawning the discovered binary. The transport is `omp --mode rpc` — line-delimited
+JSON over stdin/stdout — not `omp acp`. ACP's distinguishing feature is a
+`session/request_permission` write-gating protocol, which is approval apparatus
+Rennet does not build (Rule Zero); RPC is also the surface `pi` shares, so the wire
+mapping stays inside that compatible subset and a future `pi` binary could ride the
+same normalization.
+
+```
+omp --mode rpc            # the pi-compatible RPC transport (never acp)
+    --auto-approve        # the Rule Zero acting path: full capability, no prompts
+    --no-session          # ephemeral, fresh per turn
+    --cwd <review worktree>
+    [--model <model>] [--config <loopback canvasOps@2 overlay>]
+# the prompt is a { "type": "prompt" } command on stdin, never a positional arg
+```
+
+One honesty constraint shapes the whole adapter: **no turn has ever been executed
+against `omp`.** Every wire shape comes from the installed `.d.ts` files, not an
+observed byte stream. So the decoders are tolerant and passthrough-by-default (a
+wrong guess surfaces as `passthrough`, never a dropped or misclaimed frame), the
+hermetic fakes model only documented shapes, and the descriptor is evidence-derived:
+every capability flag starts false and is set only from a passing conformance check.
+The hermetic run caps at `implementedByAdapter` and spends nothing; the outer layers
+(`advertisedByHarness`, `availableInSession`) and the recorded tested range are
+earned only by the gated real run (`RENNET_LIVE_OMP=1`), which runs the suite against
+the installed binary and, on a full expected-matrix match, records the version into
+`harness-tested-range.json`. Until then there is **no omp entry** in that artifact and
+every flag stays false — a wrong guess about omp's bytes cannot overclaim. The first
+real run corrects the fake and decoders against the observed truth.
+
+The desktop composition serves the `orchestrator-chat` seat with omp through the same
+external loopback MCP transport the Codex path uses — identical canvasOps@2 descriptors,
+same contract, no harness conditional in the canvasOps layer. The selection policy is
+deliberately minimal: omp serves the seat **only when neither Claude nor Codex is
+installed** (where the seat was previously unavailable entirely); whenever either is
+present, the Model Council's Claude/Codex assignment is unchanged.
+
 ## Discovery without shell tricks
 
 A desktop app launched from Finder does not inherit the same environment as an
@@ -161,6 +206,14 @@ Rennet therefore:
 Codex discovery also skips broken shims by probing with closed stdin and a hard
 timeout. Discovery proves that a binary runs; the adapter never opens Claude or
 Codex credential files.
+
+omp is a **runtime-dependent** harness: its bin is a TypeScript entry point executed
+by Bun (`engines.bun >= 1.3.14`). So omp discovery proves both the `omp` binary and a
+runnable `bun`, checking `~/.bun/bin` first. When `omp` is present but Bun is not,
+health degrades honestly — the reason **names the missing Bun runtime** and the
+resolved omp path is still reported, so the app can say "found omp but not Bun" rather
+than crashing at first spawn or claiming no omp is installed. This is a general
+discovery property for any future runtime-hosted harness, not omp-private logic.
 
 ## Capabilities are evidence, not a promise
 
