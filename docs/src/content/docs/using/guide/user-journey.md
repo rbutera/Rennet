@@ -98,6 +98,17 @@ different jobs:
 - Flagged indexes automated findings by severity, agreement, verification, the
   cross-harness adjudication verdict on a contested row, and code anchor without
   pretending they are the reviewer's verdict.
+  - When your changeset touches UI (a component, a stylesheet, a renderer file),
+    a **verify-ui** pass renders the change with whatever your project affords —
+    its own tests, storybook, a dev server, any browser automation it has —
+    screenshots it, runs an accessibility check, and compares what rendered against
+    the change's stated intent. Its observations arrive as ordinary flags you
+    disposition like any other, and a strip on Flagged shows the captured
+    screenshots inline. If it could not mount the change with anything your project
+    affords, it says so plainly — that is "could not check," never an all-clear —
+    and a backend-only changeset skips it entirely. Rennet bundles no browser or
+    accessibility tooling of its own, and verify-ui never blocks signing or
+    publishing.
 - Noise groups low-signal churn, names whether a rule or model judged it, and lets
   you pull anything back with **not noise?**
 
