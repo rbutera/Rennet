@@ -140,9 +140,32 @@ const findingModelAnswerBodySchema = z
   .object({ model: z.string().min(1), answer: z.string() })
   .loose();
 
+/**
+ * The cross-harness adjudication chip on a disagree row (issue #41): the three-way
+ * verdict + a one-line evidence + the adjudicating seat's honest label. ADDITIVE and
+ * OPTIONAL on the disagree arm — a disagree row with no `adjudication` validates
+ * exactly as before. `verdict` is the closed three-value vocabulary (shape-enforced),
+ * deliberately DISTINCT from the verification verdict so a contested row can never be
+ * dropped on any value. `evidence`/`adjudicatedBy` are any string here (the shape
+ * passes empty); the field never gates, so no dedicated non-emptiness code is spent.
+ */
+const findingAdjudicationBodySchema = z
+  .object({
+    verdict: z.enum(["supported", "contradicted", "insufficient"]),
+    evidence: z.string(),
+    adjudicatedBy: z.string(),
+  })
+  .loose();
+
 const findingAgreementBodySchema = z.union([
   z.object({ kind: z.literal("concur"), agree: z.number(), total: z.number() }).loose(),
-  z.object({ kind: z.literal("disagree"), answers: z.array(findingModelAnswerBodySchema) }).loose(),
+  z
+    .object({
+      kind: z.literal("disagree"),
+      answers: z.array(findingModelAnswerBodySchema),
+      adjudication: findingAdjudicationBodySchema.optional(),
+    })
+    .loose(),
 ]);
 
 /**
@@ -203,6 +226,41 @@ const findingVerificationTurnBodySchema = z
  */
 export function findingVerificationJsonSchema(): unknown {
   const projected = z.toJSONSchema(findingVerificationTurnBodySchema) as Record<string, unknown>;
+  delete projected.$schema;
+  return projected;
+}
+
+/**
+ * The per-row ADJUDICATION TURN's structured-output shape (issue #41). Like the
+ * verification turn (#179), adjudication is a micro-judgment attached to a contested
+ * finding, never a stored RSP document, so it lives here as a standalone projected
+ * schema. A turn covers ONE contested row (so the verdict is unambiguously that row's),
+ * emitting an array with a single `{ ref, verdict, evidence }` — `ref` is the reference
+ * key the runner fed in ("a1"), echoed back. The verdict vocabulary is DISTINCT from
+ * verification (supported/contradicted/insufficient, never reproduced/refuted) so no
+ * verdict can carry a drop semantic. The runner parses defensively; a missing/garbled
+ * entry falls to an honest `insufficient` (never a drop).
+ */
+const findingAdjudicationTurnItemSchema = z
+  .object({
+    ref: z.string().min(1),
+    verdict: z.enum(["supported", "contradicted", "insufficient"]),
+    evidence: z.string(),
+  })
+  .loose();
+
+const findingAdjudicationTurnBodySchema = z
+  .object({ adjudications: z.array(findingAdjudicationTurnItemSchema) })
+  .loose();
+
+/**
+ * The JSON Schema the per-row adjudication TURN is constrained to (issue #41).
+ * Projected from the Zod shape with the `$schema` meta ref stripped (same reason as
+ * `findingVerificationJsonSchema`: the `claude` CLI validator cannot resolve the
+ * 2020-12 meta-schema). Standalone — adjudication is not an `RspDocType`.
+ */
+export function findingAdjudicationJsonSchema(): unknown {
+  const projected = z.toJSONSchema(findingAdjudicationTurnBodySchema) as Record<string, unknown>;
   delete projected.$schema;
   return projected;
 }

@@ -161,6 +161,7 @@ describe("ReviewIntelligenceBudget defaults", () => {
       hypothesis: { maxTurns: 1 },
       dualModel: { enabled: true, lenses: ["flagged"] },
       verification: { maxVerifications: 6, batchSize: 3 },
+      adjudication: { maxAdjudications: 4 },
     });
     expect(reviewInvocationCeiling(DEFAULT_REVIEW_INTELLIGENCE_BUDGET, true)).toBe(12);
     expect(reviewInvocationCeiling(DEFAULT_REVIEW_INTELLIGENCE_BUDGET, false)).toBe(6);
@@ -364,5 +365,50 @@ describe("buildReviewCanvases review-intelligence sequence", () => {
 
     expect(result.routePlan.maxHarnessInvocations).toBe(3);
     expect(result.invocationBudget.max).toBe(3);
+  });
+});
+
+// The canvas pipeline carries verified disagree rows without adjudicating them.
+// Adjudication is a live desktop post-hoc enrichment; keeping a second optional
+// pipeline path here would be dead configuration with no production caller.
+
+function findingDoc(result: Awaited<ReturnType<typeof buildReviewCanvasesCore>>) {
+  const doc = result.admittedDocs.find((d) => d.docType === "finding");
+  if (!doc) throw new Error("expected an admitted finding document");
+  return (doc.body as { findings: Array<Record<string, unknown>> }).findings;
+}
+
+describe("buildReviewCanvases adjudication ownership (#41)", () => {
+  it("with no adjudication config the disagree row surfaces unadjudicated and the review completes", async () => {
+    const result = await buildReviewCanvases({
+      reviewId: "review-no-adjudicator",
+      patchset: PATCHSET,
+      dispositions: [],
+      budget: createInvocationBudget(12),
+      provenance: PROVENANCE,
+      council: { availability: { installed: ["claude-code", "codex"] } },
+      dualModelConfig: {
+        deepReviewOn: true,
+        codexPort: codexPort(() => ({ findings: [] }), []),
+        runFindingTurn: async () => ({ status: "emitted", body: findingBody(FINDING_ANCHOR) }),
+      },
+      verificationConfig: {
+        readFileWindow: async () => ({
+          path: "src/store.ts",
+          startLine: 1,
+          endLine: 2,
+          text: "export const key = branch;",
+        }),
+        runTurn: async () => ({
+          status: "emitted",
+          body: { verifications: [{ ref: "f1", verdict: "reproduced", evidence: "kept" }] },
+        }),
+      },
+    });
+    const findings = findingDoc(result);
+    expect(findings).toHaveLength(1);
+    const agreement = findings[0]?.agreement as Record<string, unknown>;
+    expect(agreement.kind).toBe("disagree");
+    expect(agreement.adjudication).toBeUndefined();
   });
 });

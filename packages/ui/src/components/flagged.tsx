@@ -4,6 +4,7 @@ import type {
   DecompositionBlockingReason,
   DecompositionBlockingState,
   DualReviewNote,
+  FindingAdjudication,
 } from "@rennet/types";
 import type { ReactNode } from "react";
 import type { FlaggedIndex, FlaggedRow } from "../canvas/flagged";
@@ -56,6 +57,38 @@ function Agreement({ row }: { row: FlaggedRow }) {
           </div>
         ))}
       </div>
+      <Adjudication adjudication={row.agreement.adjudication} />
+    </div>
+  );
+}
+
+const ADJUDICATION_LABEL = {
+  supported: "code supports the flag",
+  contradicted: "code contradicts this flag",
+  insufficient: "could not adjudicate",
+} as const;
+
+/**
+ * The cross-harness adjudication chip (issue #41): the third opinion on a contested
+ * row, rendered BESIDE both seats' verbatim answers — never replacing them, never
+ * hiding the row. When the two seats disagreed, an adjudication turn asked the real
+ * code who is right; `supported`/`contradicted` show which side the code backs, and
+ * `insufficient` is the honest "could not adjudicate" caveat (a failed/capped/budget-
+ * exhausted turn, or a genuine unknown). No verdict value drops the row (Rule Zero) —
+ * absent adjudication renders nothing, exactly as before this change. The verdict LABEL
+ * is Rennet chrome; the `evidence` is the adjudicator's own account and breathes, and
+ * `adjudicatedBy` names the seat so the reader sees whose opinion this is.
+ */
+function Adjudication({ adjudication }: { adjudication?: FindingAdjudication }) {
+  if (!adjudication) return null;
+  return (
+    <div
+      className={`flag-adjudication flag-adjudication-${adjudication.verdict}`}
+      data-adjudication={adjudication.verdict}
+    >
+      <span className="flag-adjudication-label">{ADJUDICATION_LABEL[adjudication.verdict]}</span>
+      <span className="flag-adjudication-evidence">{adjudication.evidence}</span>
+      <span className="flag-adjudication-seat">adjudicated by {adjudication.adjudicatedBy}</span>
     </div>
   );
 }

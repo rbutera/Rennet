@@ -19,6 +19,7 @@ import {
 import { v7 as uuidv7 } from "uuid";
 import { buildDeltaAccount, changedPathsBetween } from "./delta-account";
 
+export * from "./adjudication-corpus";
 export * from "./angle-generation";
 export * from "./blast-radius";
 export * from "./canvas";
@@ -41,6 +42,7 @@ export * from "./dual-finding-review";
 export * from "./dual-seat";
 export * from "./element-diffs";
 export * from "./escape-path";
+export * from "./finding-adjudication";
 export * from "./finding-generation";
 export * from "./finding-reconcile";
 export * from "./finding-verification";

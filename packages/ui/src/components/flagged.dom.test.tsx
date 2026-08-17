@@ -510,3 +510,118 @@ describe("FlaggedLens — the flagged index surface", () => {
     expect(container.querySelector(".flag-verification")).toBeNull();
   });
 });
+
+describe("FlaggedLens — cross-harness adjudication chip (#41)", () => {
+  function disagreeRow(
+    findingId: string,
+    adjudication?: {
+      verdict: "supported" | "contradicted" | "insufficient";
+      evidence: string;
+      adjudicatedBy: string;
+    },
+  ): FlaggedReview {
+    return {
+      status: "ok",
+      findings: [
+        {
+          findingId,
+          anchor: `rennet:hunk/${findingId}`,
+          summary: "a contested concern",
+          severity: "high",
+          agreement: {
+            kind: "disagree",
+            answers: [
+              { model: "Claude", answer: "this is a real leak" },
+              { model: "Codex", answer: "no concern raised here" },
+            ],
+            ...(adjudication ? { adjudication } : {}),
+          },
+        },
+      ],
+    };
+  }
+
+  it("shows a supported chip beside both verbatim answers", () => {
+    const review = disagreeRow("sup", {
+      verdict: "supported",
+      evidence: "line 12 dereferences the nullable result",
+      adjudicatedBy: "opus-4.8 (claude-code)",
+    });
+    const { container, getByText } = mount(
+      <FlaggedLens index={buildFlaggedIndex(review)} onJumpToAnchor={vi.fn()} />,
+    );
+    const chip = container.querySelector('[data-adjudication="supported"]');
+    expect(chip).toBeTruthy();
+    // Both verbatim answers still present — the chip rides beside them, never replaces.
+    expect(getByText(/this is a real leak/)).toBeTruthy();
+    expect(getByText(/no concern raised here/)).toBeTruthy();
+    expect(getByText(/line 12 dereferences/)).toBeTruthy();
+  });
+
+  it("shows a contradicted chip and keeps the row present", () => {
+    const review = disagreeRow("con", {
+      verdict: "contradicted",
+      evidence: "the guard at line 4 already handles it",
+      adjudicatedBy: "gpt-5.6-sol (codex)",
+    });
+    const { container } = mount(
+      <FlaggedLens index={buildFlaggedIndex(review)} onJumpToAnchor={vi.fn()} />,
+    );
+    expect(container.querySelector('[data-adjudication="contradicted"]')).toBeTruthy();
+    // The row is NOT dropped on a contradicted verdict.
+    expect(container.querySelector('[data-finding-id="con"]')).toBeTruthy();
+  });
+
+  it("shows an honest could-not-adjudicate chip for insufficient", () => {
+    const review = disagreeRow("ins", {
+      verdict: "insufficient",
+      evidence: "the adjudication budget was exhausted",
+      adjudicatedBy: "opus-4.8 (claude-code)",
+    });
+    const { container, getByText } = mount(
+      <FlaggedLens index={buildFlaggedIndex(review)} onJumpToAnchor={vi.fn()} />,
+    );
+    expect(container.querySelector('[data-adjudication="insufficient"]')).toBeTruthy();
+    expect(getByText(/could not adjudicate/i)).toBeTruthy();
+    expect(getByText(/budget was exhausted/)).toBeTruthy();
+  });
+
+  it("renders a disagree row with NO adjudication exactly as today (additive)", () => {
+    const review = disagreeRow("plain");
+    const { container } = mount(
+      <FlaggedLens index={buildFlaggedIndex(review)} onJumpToAnchor={vi.fn()} />,
+    );
+    expect(container.querySelector("[data-adjudication]")).toBeNull();
+    // Still a disagree flare with both answers.
+    expect(container.querySelector('[data-agreement="disagree"]')).toBeTruthy();
+    expect(container.querySelectorAll(".flag-answer")).toHaveLength(2);
+  });
+
+  it("NO verdict value hides or drops a row (structural no-gate assertion)", () => {
+    // Every verdict, plus none — all rows must survive to the DOM.
+    const review: FlaggedReview = {
+      status: "ok",
+      findings: (["supported", "contradicted", "insufficient"] as const).map((verdict, i) => ({
+        findingId: `row-${verdict}`,
+        anchor: `rennet:hunk/row-${i}`,
+        summary: "contested",
+        severity: "high" as const,
+        agreement: {
+          kind: "disagree" as const,
+          answers: [
+            { model: "Claude", answer: "flagged" },
+            { model: "Codex", answer: "no concern raised here" },
+          ],
+          adjudication: { verdict, evidence: "e", adjudicatedBy: "seat" },
+        },
+      })),
+    };
+    const { container } = mount(
+      <FlaggedLens index={buildFlaggedIndex(review)} onJumpToAnchor={vi.fn()} />,
+    );
+    expect(container.querySelectorAll(".flag")).toHaveLength(3);
+    for (const verdict of ["supported", "contradicted", "insufficient"]) {
+      expect(container.querySelector(`[data-finding-id="row-${verdict}"]`)).toBeTruthy();
+    }
+  });
+});

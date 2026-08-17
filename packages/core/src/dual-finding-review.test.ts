@@ -131,6 +131,30 @@ describe("runDualFindingReview — dual-model Flagged orchestration (#41)", () =
     expect(seatRuns).toHaveLength(2);
   });
 
+  it("fresh-session independence (#41): neither seat's prompt carries the other seat's findings", async () => {
+    // The contested rows adjudication settles must come from INDEPENDENT generation:
+    // no seat sees the other's output before reconciliation. Each seat's turn is its own
+    // fresh spawn — there is no fork/resume path — so a seat's prompt must never contain
+    // the OTHER seat's distinctive finding text. A regression that piped one seat's
+    // findings into the other's prompt would redden here.
+    let promptA = "";
+    let promptB = "";
+    const claude = vi.fn((p: string, a: number) => {
+      promptA = p;
+      return emits([finding("CLAUDEONLYMARKER off-by-one", "high")])(p, a);
+    });
+    const codex = vi.fn((p: string, a: number) => {
+      promptB = p;
+      return emits([finding("CODEXONLYMARKER null deref", "high")])(p, a);
+    });
+    const seats = [seat("claude-code", "Claude", claude), seat("codex", "Codex", codex)];
+    const { review } = await runDualFindingReview(baseInput(seats, true));
+    if (review.status !== "ok") throw new Error("expected ok");
+    // Each seat ran its own fresh session; neither prompt saw the other's finding.
+    expect(promptA).not.toContain("CODEXONLYMARKER");
+    expect(promptB).not.toContain("CLAUDEONLYMARKER");
+  });
+
   it("DEEP review with a clean second seat surfaces the raiser as a SOLO disagree", async () => {
     const claude = vi.fn(emits([finding("claude alone flags this", "medium")]));
     const codex = vi.fn(emits([])); // ran clean, flagged nothing

@@ -1187,7 +1187,47 @@ export interface FindingModelAnswer {
  */
 export type FindingAgreement =
   | { kind: "concur"; agree: number; total: number }
-  | { kind: "disagree"; answers: FindingModelAnswer[] };
+  | {
+      kind: "disagree";
+      answers: FindingModelAnswer[];
+      /**
+       * The cross-harness adjudication verdict (issue #41), when the adjudication
+       * pass ran on this contested row. ADDITIVE and OPTIONAL: a disagree row without
+       * it validates and renders exactly as before — both seats' verbatim answers,
+       * no third opinion. When present it is an informational third opinion beside
+       * those answers ("code supports Claude", "code contradicts this flag", or an
+       * honest "could not adjudicate"). It NEVER drops, hides, or reorders the row,
+       * and no render or publish path waits on it (Rule Zero).
+       */
+      adjudication?: FindingAdjudication;
+    };
+
+/**
+ * The cross-harness adjudication verdict (issue #41). When two harness seats
+ * disagree, an explicit adjudication turn on the Model Council's `adjudication`
+ * seat asks the real code who is right: `supported` (the code evidences the flagged
+ * claim), `contradicted` (the code refutes it), or `insufficient` (neither could be
+ * established — a genuine unknown, a failed/guarded turn, the per-review cap, or an
+ * exhausted budget, each with its honest reason). Deliberately NOT reusing
+ * `FindingVerdict`: reproduced/refuted carries a DROP semantic, and a contested row
+ * must NEVER drop on any verdict — a distinct vocabulary keeps the no-drop rule
+ * structural rather than a convention someone can forget.
+ */
+export type FindingAdjudicationVerdict = "supported" | "contradicted" | "insufficient";
+
+/**
+ * The adjudication chip on a `disagree` agreement (issue #41). `verdict` is the
+ * three-way judgement; `evidence` is the one-line reason (the code that supports or
+ * contradicts, or WHY it was insufficient); `adjudicatedBy` is the resolved seat's
+ * honest label (the model/harness the council routed the adjudication job to), so
+ * provenance cannot lie. Additive-optional on the disagree arm — an old `finding`
+ * doc without it validates unchanged and an old renderer ignores it.
+ */
+export interface FindingAdjudication {
+  verdict: FindingAdjudicationVerdict;
+  evidence: string;
+  adjudicatedBy: string;
+}
 
 /**
  * The verdict of a per-finding reproduce-or-refute verification (issue #179). A

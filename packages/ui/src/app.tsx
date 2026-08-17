@@ -1011,10 +1011,38 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // (#158): the product's core output should be there when the review opens, ceilinged
   // by `createInvocationBudget`, not withheld behind an on-lens ritual. Its own
   // try/catch means a flagged fetch failure never disturbs the canvas load.
-  // biome-ignore lint/correctness/useExhaustiveDependencies: keyed on the active patchset (#160/P0-2), not the churning review object.
   useEffect(() => {
     if (!reviewId) return;
     let cancelled = false;
+    let adjudicationPoll: ReturnType<typeof setTimeout> | undefined;
+    const pollAdjudication = (): void => {
+      if (cancelled || !activePatchsetId) return;
+      void bridge
+        .invoke("flagged.adjudication", {
+          reviewId,
+          patchsetId: activePatchsetId,
+          deepReview: deepReviewOn,
+        })
+        .then((result) => {
+          if (cancelled) return;
+          if (result.status === "pending") {
+            adjudicationPoll = setTimeout(pollAdjudication, 100);
+            return;
+          }
+          if (result.status !== "complete") return;
+          const enriched = result.review;
+          if (
+            (enriched.status === "ok" || enriched.status === "failed") &&
+            enriched.patchsetId === activePatchsetId
+          ) {
+            setFlaggedReview(enriched);
+          }
+        })
+        .catch(() => {
+          // The initial verified rows are already rendered. A missing/failed late
+          // read leaves them untouched; adjudication informs and never gates.
+        });
+    };
     // Clear any prior flagged result the instant this effect re-fires (P0-2). It re-fires
     // on a REGENERATE too — a new active patchset under the SAME reviewId — and the old
     // hypothesis/findings/cross-check are about the OLD diff. Without this clear (and the
@@ -1043,6 +1071,17 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         const review = result as Partial<FlaggedReview> | undefined;
         if (review?.status === "ok" || review?.status === "failed") {
           setFlaggedReview(review as FlaggedReview);
+          if (
+            review.status === "ok" &&
+            deepReviewOn &&
+            review.findings?.some(
+              (finding) =>
+                finding.agreement.kind === "disagree" &&
+                finding.agreement.adjudication === undefined,
+            )
+          ) {
+            pollAdjudication();
+          }
         } else {
           setFlaggedReview({
             status: "failed",
@@ -1061,6 +1100,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       });
     return () => {
       cancelled = true;
+      if (adjudicationPoll) clearTimeout(adjudicationPoll);
     };
   }, [reviewId, activePatchsetId, bridge, deepReviewOn]);
 

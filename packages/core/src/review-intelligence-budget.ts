@@ -16,6 +16,10 @@ export interface ReviewIntelligenceBudget {
     readonly maxVerifications: number;
     readonly batchSize: number;
   };
+  readonly adjudication: {
+    /** Max contested (disagree) rows adjudicated per review; the rest surface capped. */
+    readonly maxAdjudications: number;
+  };
 }
 
 export const DEFAULT_REVIEW_INTELLIGENCE_BUDGET: ReviewIntelligenceBudget = Object.freeze({
@@ -24,6 +28,7 @@ export const DEFAULT_REVIEW_INTELLIGENCE_BUDGET: ReviewIntelligenceBudget = Obje
   hypothesis: Object.freeze({ maxTurns: 1 }),
   dualModel: Object.freeze({ enabled: true, lenses: Object.freeze(["flagged"] as const) }),
   verification: Object.freeze({ maxVerifications: 6, batchSize: 3 }),
+  adjudication: Object.freeze({ maxAdjudications: 4 }),
 });
 
 export function reviewInvocationCeiling(
