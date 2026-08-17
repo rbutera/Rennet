@@ -49,6 +49,7 @@ export * from "./gitlink-novelty";
 export * from "./handoff-compose";
 export * from "./handoff-loop";
 export * from "./harness";
+export * from "./harness-conformance";
 export * from "./harness-run-turn";
 export * from "./hypothesis-generation";
 export * from "./invocation-budget";

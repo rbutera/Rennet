@@ -21,6 +21,7 @@ import {
 } from "@rennet/core";
 import type { RspTokenUsage } from "@rennet/types";
 import { compareVersions } from "./harness-discovery";
+import { readTestedRange } from "./harness-tested-range";
 
 /**
  * The Claude Code adapter (slice 1).
@@ -57,8 +58,15 @@ const SESSION_ALLOWED_TOOLS: readonly string[] = [
   "Bash",
 ];
 
-/** Version floor and ceiling the adapter has actually been exercised against. */
-export const CLAUDE_TESTED_RANGE = { min: "2.0.0", maxTested: "2.1.220" } as const;
+/**
+ * Version floor and ceiling the adapter has actually been exercised against,
+ * DERIVED from the committed conformance artifact (bead 63) — never hand-edited.
+ * A real conformance run is the only writer of `harness-tested-range.json`; this
+ * reads it. The `?? ` guard is a last-resort default if the artifact ever lacks a
+ * claude entry, so construction never throws.
+ */
+export const CLAUDE_TESTED_RANGE: { readonly min: string; readonly maxTested: string } =
+  readTestedRange(HARNESS_ID) ?? { min: "2.0.0", maxTested: "2.1.220" };
 
 /**
  * The subset of `@anthropic-ai/claude-agent-sdk` options the adapter sets. This

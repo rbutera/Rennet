@@ -9,6 +9,12 @@ export {
   type WatchFn,
 } from "./baseline-advance-watcher";
 export {
+  type AttachedCodexOrchestratorSession,
+  attachCodexOrchestratorSession,
+  type CanvasOpsExternalServer,
+  startCanvasOpsExternalServer,
+} from "./canvas-ops-external";
+export {
   buildCanvasOpsTools,
   CANVAS_OPS_INSTRUCTIONS,
   CANVAS_OPS_SERVER_NAME,
@@ -43,6 +49,18 @@ export {
 } from "./claude-query";
 export { type CleanupWorktreeDeps, cleanupWorktree } from "./cleanup-worktree";
 export {
+  buildCodexTurnArgs,
+  CodexAdapter,
+  type CodexAdapterConfig,
+  type CodexTurnArgs,
+  type CodexTurnResultFrame,
+  type CodexTurnSpec,
+  type CodexTurnTransport,
+  classifyCodexItemKind,
+  extractCodexUsage,
+  mapCodexError,
+} from "./codex-adapter";
+export {
   buildCodexExecArgs,
   CODEX_EXEC_BIN,
   CODEX_USAGE_WINDOW_MARGIN_MS,
@@ -75,6 +93,15 @@ export {
   readCodexSessionUsage,
   ZERO_CODEX_USAGE,
 } from "./codex-session-usage";
+export {
+  type CodexHarnessDeps,
+  type CodexHarnessResult,
+  type CodexTransportEffects,
+  createCodexHarness,
+  createCodexTurnTransport,
+  defaultCodexTransportEffects,
+  deriveCodexImplementedEvidence,
+} from "./codex-turn-transport";
 export {
   type ContextAskBackendDeps,
   type ContextAskBackendPart,
@@ -284,11 +311,13 @@ export {
   attachOrchestratorSession,
 } from "./orchestrator-session-server";
 export {
+  type CodexOrchestratorTurnDeps,
   deriveOrchestratorPrimerState,
   type LoadSdkQuery,
   type OrchestratorToolCall,
   type OrchestratorTurnDeps,
   type OrchestratorTurnResult,
+  runCodexOrchestratorTurn,
   runOrchestratorTurn,
 } from "./orchestrator-turn";
 export {

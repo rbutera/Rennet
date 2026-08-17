@@ -1,9 +1,11 @@
 import {
+  type CodexOrchestratorTurnDeps,
   deriveOrchestratorPrimerState,
   type LiveBackendDeps,
   type LoadCanvasOpsSdk,
   type LoadSdkQuery,
   type OrchestratorTurnResult,
+  runCodexOrchestratorTurn,
   runOrchestratorTurn,
 } from "@rennet/adapters";
 import type { CanvasOpsEffect, ReviewPipelineResult, UserAct } from "@rennet/core";
@@ -35,12 +37,8 @@ export interface OrchestratorRunnerDeps {
    * issue #188); a test injects a temp dir so it never touches the real home store.
    */
   readonly baseDir?: string;
-  /**
-   * Resolve the user's discovered `claude` binary path, or `null` when none is
-   * installed. Bound to the app's memoized discovery; a turn refuses cleanly (never
-   * crashes) when it returns `null`.
-   */
-  resolveClaudePath(): Promise<string | null>;
+  /** Resolve the council-selected harness for this orchestrator turn. */
+  resolveHarness(): Promise<OrchestratorHarnessSelection | null>;
   /** Base env the spawned `claude` inherits (defaults to `process.env`). */
   readonly env?: Readonly<Record<string, string | undefined>>;
   /** Extra live-backend deps (git, size ceiling, core state). */
@@ -51,6 +49,18 @@ export interface OrchestratorRunnerDeps {
   readonly loadSdk?: LoadCanvasOpsSdk;
   readonly onContextFeedError?: (error: unknown) => void;
 }
+
+export type OrchestratorHarnessSelection =
+  | {
+      readonly harness: "claude-code";
+      readonly claudePath: string;
+      readonly model?: string;
+    }
+  | {
+      readonly harness: "codex";
+      readonly model?: string;
+      readonly resolvePort: CodexOrchestratorTurnDeps["resolvePort"];
+    };
 
 /** A turn is unavailable when no `claude` binary was discovered (fail-closed, honest). */
 export interface OrchestratorTurnUnavailable {
@@ -94,11 +104,11 @@ export type OrchestratorTurnRunner = (
  */
 export function createOrchestratorTurnRunner(deps: OrchestratorRunnerDeps): OrchestratorTurnRunner {
   return async (review, pipeline, question, onDelta, abortController, pointing) => {
-    const claudePath = await deps.resolveClaudePath();
-    if (!claudePath) {
+    const selection = await deps.resolveHarness();
+    if (!selection) {
       return {
         available: false,
-        reason: "no claude binary is available to orchestrate the review",
+        reason: "no model harness is available to orchestrate the review",
       };
     }
 
@@ -123,25 +133,32 @@ export function createOrchestratorTurnRunner(deps: OrchestratorRunnerDeps): Orch
     });
 
     try {
-      const result = await runOrchestratorTurn(backend, primer, question, {
-        claudePath,
+      const shared = {
         // KNOWN §7.2 DEVIATION (inherited, unchanged): the harness cwd is the live
-        // mutable checkout, not an immutable materialisation of the patchset (#30,
-        // deferred). Named so it is not silently widened.
+        // mutable checkout, not an immutable materialisation of the patchset (#30).
         cwd: review.repositoryRoot,
-        ...(deps.env ? { env: deps.env } : {}),
-        ...(deps.loadQuery ? { loadQuery: deps.loadQuery } : {}),
-        ...(deps.loadSdk ? { loadSdk: deps.loadSdk } : {}),
+        ...(selection.model === undefined ? {} : { model: selection.model }),
         ...(onDelta ? { onDelta } : {}),
         ...(contextFeed.assembledContext === undefined
           ? {}
           : { assembledContext: contextFeed.assembledContext }),
         onSend: contextFeed.onSend,
         ...(pointing?.userActs ? { userActs: pointing.userActs } : {}),
-        // #251 criterion 4: hand the SDK the AbortController so `before-quit` can cancel
-        // the live claude turn. Absent → an uncancellable turn (fully back-compat).
         ...(abortController ? { abortController } : {}),
-      });
+      };
+      const result =
+        selection.harness === "codex"
+          ? await runCodexOrchestratorTurn(backend, primer, question, {
+              ...shared,
+              resolvePort: selection.resolvePort,
+            })
+          : await runOrchestratorTurn(backend, primer, question, {
+              ...shared,
+              claudePath: selection.claudePath,
+              ...(deps.env ? { env: deps.env } : {}),
+              ...(deps.loadQuery ? { loadQuery: deps.loadQuery } : {}),
+              ...(deps.loadSdk ? { loadSdk: deps.loadSdk } : {}),
+            });
       return { available: true, result };
     } finally {
       contextFeed.complete();

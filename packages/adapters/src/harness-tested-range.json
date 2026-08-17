@@ -1,0 +1,3 @@
+{
+  "claude-code": { "min": "2.0.0", "maxTested": "2.1.220" }
+}
