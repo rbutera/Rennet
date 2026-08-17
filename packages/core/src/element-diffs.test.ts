@@ -4,6 +4,7 @@ import type {
   CanvasAngle,
   Decomposition,
   Hunk,
+  InvocationBudget,
   PatchFile,
   Patchset,
 } from "@rennet/types";
@@ -12,7 +13,18 @@ import { describe, expect, it } from "vitest";
 import { type AdmittedDocument, buildCanvas } from "./canvas";
 import { decompose } from "./decomposition";
 import { buildElementDiffs } from "./element-diffs";
-import { buildReviewCanvases } from "./pipeline";
+import { createInvocationBudget } from "./invocation-budget";
+import {
+  buildReviewCanvases as buildReviewCanvasesCore,
+  type ReviewPipelineInput,
+} from "./pipeline";
+
+type TestPipelineInput = Omit<ReviewPipelineInput, "budget"> & { budget?: InvocationBudget };
+
+function buildReviewCanvases(input: TestPipelineInput) {
+  const { budget = createInvocationBudget(12), ...rest } = input;
+  return buildReviewCanvasesCore({ ...rest, budget });
+}
 
 const repository = {
   id: "repo",

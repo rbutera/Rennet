@@ -237,6 +237,20 @@ describe("CodeView — L3 marks render AT their anchors, never in a strip", () =
 });
 
 describe("CodeView — syntax highlighting rides UNDER the diff colouring (issue #68)", () => {
+  it("tokenizes column-zero shell diff comments after removing the +/- marker", () => {
+    const html = renderToStaticMarkup(
+      <CodeView
+        path="script.sh"
+        diff={["+# added", "-# removed", "+echo foo#bar"].join("\n")}
+        viewportHeight={480}
+      />,
+    );
+    expect(html).toContain('rtok-comment"># added</span>');
+    expect(html).toContain('rtok-comment"># removed</span>');
+    expect(html.match(/rtok-comment/g) ?? []).toHaveLength(2);
+    expect(html).toContain("foo#bar");
+  });
+
   it("wraps code in token spans for a known language, on both context and diff rows", () => {
     const html = renderToStaticMarkup(
       <CodeView path="src/x.ts" diff={ONE_HUNK} hunkOccurrences={OCC_H} viewportHeight={480} />,
@@ -296,8 +310,9 @@ describe("CodeView — syntax highlighting rides UNDER the diff colouring (issue
     // Highlighting is genuinely active on this render (token spans present)…
     expect(windowed).toContain("rtok-keyword");
     // …and the windowed node count is still inside the Pierre envelope — the added
-    // token spans did not break windowing. A regression that tokenized the whole
-    // file (not just the window) would blow this.
+    // token spans did not break windowing. Tokenizing off-screen rows creates no DOM
+    // nodes; a regression that RENDERED the whole file (not just the window) would
+    // blow this.
     expect(nodeCount(windowed)).toBeLessThanOrEqual(MAX_RENDERED_NODES);
   });
 

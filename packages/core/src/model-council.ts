@@ -504,7 +504,6 @@ export function resolveAssignment(
   // default in the degraded path.
   let model: CouncilModel;
   let effort: CouncilEffort;
-  let harness: CouncilHarnessId;
   let source: ResolutionSource;
 
   const harnessDefault = ctx.harnessDefault ?? DEFAULT_HARNESS_DEFAULT;
@@ -512,7 +511,6 @@ export function resolveAssignment(
   if (scenario === null) {
     model = harnessDefault.model;
     effort = harnessDefault.effort;
-    harness = harnessDefault.harness;
     source = "degraded";
   } else {
     const tablePick = ASSIGNMENT_TABLES[scenario][jobId];
@@ -521,46 +519,36 @@ export function resolveAssignment(
       // harness default rather than a fabricated pick.
       model = harnessDefault.model;
       effort = harnessDefault.effort;
-      harness = harnessDefault.harness;
       source = "harness-default";
     } else {
       model = tablePick.model;
       effort = tablePick.effort;
-      harness = providerHarness(model);
       source = "council-table";
     }
   }
 
   // Layer the tier override, then the task override (task wins). Each overwrites
-  // only the fields it sets; harness follows the resolved model unless pinned.
+  // only the fields it sets; harness always follows the resolved model — an override
+  // sets model/effort only, it can never pin an incoherent harness (#89).
   const tierOverride = ctx.overrides?.tier?.[job.tier];
-  if (
-    tierOverride !== undefined &&
-    (tierOverride.model || tierOverride.effort || tierOverride.harness)
-  ) {
+  if (tierOverride !== undefined && (tierOverride.model || tierOverride.effort)) {
     if (tierOverride.model !== undefined) {
       model = tierOverride.model;
-      harness = providerHarness(model);
     }
     if (tierOverride.effort !== undefined) effort = tierOverride.effort;
-    if (tierOverride.harness !== undefined) harness = tierOverride.harness;
     source = "tier-override";
   }
 
   const taskOverride = ctx.overrides?.task?.[jobId];
-  if (
-    taskOverride !== undefined &&
-    (taskOverride.model || taskOverride.effort || taskOverride.harness)
-  ) {
+  if (taskOverride !== undefined && (taskOverride.model || taskOverride.effort)) {
     if (taskOverride.model !== undefined) {
       model = taskOverride.model;
-      harness = providerHarness(model);
     }
     if (taskOverride.effort !== undefined) effort = taskOverride.effort;
-    if (taskOverride.harness !== undefined) harness = taskOverride.harness;
     source = "task-override";
   }
 
+  const harness = providerHarness(model);
   const crossHarness =
     job.tier === "light" && scenario !== null && harness !== reviewHarnessFor(scenario);
 

@@ -10,7 +10,11 @@ import {
   type LoadCanvasOpsSdk,
   type LoadSdkQuery,
 } from "@rennet/adapters";
-import { buildReviewCanvases, type ReviewPipelineResult } from "@rennet/core";
+import {
+  buildReviewCanvases,
+  createInvocationBudget,
+  type ReviewPipelineResult,
+} from "@rennet/core";
 import { sha256Hex } from "@rennet/protocol";
 import type { PatchFile, Patchset, Review } from "@rennet/types";
 import { afterEach, describe, expect, it } from "vitest";
@@ -91,7 +95,12 @@ async function liveReview(): Promise<{ review: Review; pipeline: ReviewPipelineR
     dispositions: [],
     status: "current",
   };
-  const pipeline = await buildReviewCanvases({ reviewId: review.id, patchset, dispositions: [] });
+  const pipeline = await buildReviewCanvases({
+    reviewId: review.id,
+    patchset,
+    dispositions: [],
+    budget: createInvocationBudget(12),
+  });
   return { review, pipeline };
 }
 

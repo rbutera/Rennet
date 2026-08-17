@@ -20,7 +20,7 @@ import {
   spanAnchorForRows,
 } from "../canvas/registrar";
 import { splitIdentifierRuns, tokenTextMayContainSymbol } from "../canvas/symbol";
-import { detectLanguage, type LanguageId, tokenizeLine } from "../syntax/highlight";
+import { detectLanguage, type LanguageId, tokenizeDiffLine } from "../syntax/highlight";
 import { DiscussControl } from "./conversation-cluster";
 import { DispositionCluster } from "./disposition-cluster";
 
@@ -198,7 +198,7 @@ function renderCode(
   if (row.kind !== "content") return row.text;
   const nodes: ReactNode[] = [];
   let column = 0; // the token's start column — a stable, data-derived key (not an array index).
-  for (const tok of tokenizeLine(row.text, language)) {
+  for (const tok of tokenizeDiffLine(row.text, language)) {
     // When the host wants symbol lookups, split a symbol-bearing token into its
     // identifier RUNS and make each one clickable (Rai, wireframes #8). This does not
     // key off the highlight class — an ordinary `plain` identifier, or several inside

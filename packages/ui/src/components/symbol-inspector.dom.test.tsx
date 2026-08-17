@@ -88,6 +88,10 @@ describe("SymbolInspector — tier chip (#11)", () => {
       <SymbolInspector name="gone" inspection={empty} onClose={vi.fn()} />,
     );
     expect(container.querySelector(".symbol-tier")).toBeNull();
+    // A miss names the COMMITTED review range (#223): a symbol that exists only in
+    // uncommitted local edits is outside the lookup, not proof it "does not exist".
+    const miss = container.querySelector('[data-section="definition"] .symbol-empty');
+    expect(miss?.textContent).toMatch(/review(ed)? range|committed/i);
   });
 });
 

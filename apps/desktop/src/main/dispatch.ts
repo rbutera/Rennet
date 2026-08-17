@@ -65,6 +65,10 @@ import type {
 } from "@rennet/types";
 import type { OrchestratorTurnRunner } from "./orchestrator";
 import { type PublishConsentAuthority, publishConsentKey } from "./publish-consent-authority";
+import {
+  createReviewIntelligenceSessions,
+  type ReviewIntelligenceSession,
+} from "./review-intelligence-session";
 import type { SettingsComposition } from "./settings";
 
 /**
@@ -117,7 +121,11 @@ export interface DispatchDeps {
    * Build the live five-angle canvas set for a review (harness-backed pipeline),
    * plus the per-element real diff map (#60) delivered with it.
    */
-  buildCanvases(review: Review): Promise<{
+  buildCanvases(
+    review: Review,
+    deepReview: boolean,
+    session: ReviewIntelligenceSession,
+  ): Promise<{
     canvases: Record<CanvasAngle, Canvas>;
     elementDiffs: ElementDiffs;
     /** The roll-up narration placed onto the canvases (issue #70), when produced. */
@@ -238,7 +246,11 @@ export interface DispatchDeps {
    * agreement/disagreement) — the DEFAULT (Rai's mandate, 2026-08-11). Explicit
    * `false` is the opt-DOWN to the single-Claude quick review.
    */
-  flaggedReview(review: Review, deepReview: boolean): Promise<FlaggedReview>;
+  flaggedReview(
+    review: Review,
+    deepReview: boolean,
+    session: ReviewIntelligenceSession,
+  ): Promise<FlaggedReview>;
   /**
    * The Noise lens's input (issue #34): the low-signal churn grouped away for a
    * review, each group tagged rule vs noise job. The LIVE noise-classification runner
@@ -463,6 +475,7 @@ export function createDispatch(
   deps: DispatchDeps,
 ): (name: CommandName, rawInput: unknown, ctx?: DispatchContext) => Promise<unknown> {
   const { service, allowedRoots } = deps;
+  const intelligenceSessions = createReviewIntelligenceSessions();
 
   // In-flight REAL posts, keyed by the deterministic idempotency marker (issue #21
   // double-sign race). Two concurrent real posts of the same (review, target, payload)
@@ -820,11 +833,13 @@ export function createDispatch(
         const input = parseCommandInput(name, rawInput);
         const review = requireReviewById(input.reviewId);
         assertReviewRepository(review, input.repoPath);
+        const deepReview = input.deepReview ?? true;
+        const intelligenceSession = intelligenceSessions.enter(review, deepReview, "canvases");
         // Running the review harness (the model spend) is Rennet's entire job — it
         // just runs. No permission mode, no consent token: opening Canvases composes
         // the model turn directly.
         const { canvases, elementDiffs, narration, engine, decisionsRun, contextManifest } =
-          await deps.buildCanvases(review);
+          await deps.buildCanvases(review, deepReview, intelligenceSession);
         return parseCommandOutput(name, {
           canvases,
           elementDiffs,
@@ -942,7 +957,9 @@ export function createDispatch(
         const review = requireReviewById(input.reviewId);
         // Dual-model is the DEFAULT (Rai's mandate, 2026-08-11): an omitted flag runs
         // BOTH provider seats. Only an explicit `false` opts down to single-Claude.
-        const flagged = await deps.flaggedReview(review, input.deepReview ?? true);
+        const deepReview = input.deepReview ?? true;
+        const intelligenceSession = intelligenceSessions.enter(review, deepReview, "flagged");
+        const flagged = await deps.flaggedReview(review, deepReview, intelligenceSession);
         // Stamp the patchset this result was computed against (#160/P0-2) so the renderer
         // can bind it to the canvases beside it and discard a regenerate-stale result.
         return parseCommandOutput(name, { ...flagged, patchsetId: review.activePatchsetId });

@@ -6,6 +6,7 @@ import type { Query, Options as SdkOptions } from "@anthropic-ai/claude-agent-sd
 import {
   buildOrchestratorRequest,
   buildReviewCanvases,
+  createInvocationBudget,
   renderOpenAssembledPrompt,
 } from "@rennet/core";
 import { sha256Hex } from "@rennet/protocol";
@@ -108,7 +109,12 @@ async function liveReview(maxSnapshotFiles?: number) {
     dispositions: [],
     status: "current",
   };
-  const pipeline = await buildReviewCanvases({ reviewId: review.id, patchset, dispositions: [] });
+  const pipeline = await buildReviewCanvases({
+    reviewId: review.id,
+    patchset,
+    dispositions: [],
+    budget: createInvocationBudget(12),
+  });
   const storeDir = mkdtempSync(join(tmpdir(), "rennet-orch-store-"));
   scratch.push(storeDir);
   const composed = await createLiveCanvasOpsBackend(review, pipeline, {

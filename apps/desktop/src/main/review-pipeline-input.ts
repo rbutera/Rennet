@@ -35,6 +35,7 @@ export interface ReviewPipelineInputParts {
   /** The honestly-probed installed harness set (Claude / Codex). */
   readonly installed: readonly CouncilHarnessId[];
   readonly decisionDocs: ReviewPipelineInput["decisionDocs"];
+  readonly budget: ReviewPipelineInput["budget"];
   readonly codexPort?: ReviewPipelineInput["codexPort"];
   readonly runDecompositionTurn?: ReviewPipelineInput["runDecompositionTurn"];
   readonly runOrderingTurn?: ReviewPipelineInput["runOrderingTurn"];
@@ -57,6 +58,7 @@ export function buildReviewCanvasesInput(parts: ReviewPipelineInputParts): Revie
     ...(parts.fanIn ? { fanIn: parts.fanIn } : {}),
     council: { availability: { installed: [...parts.installed] } },
     decisionDocs: parts.decisionDocs,
+    budget: parts.budget,
     ...(parts.codexPort ? { codexPort: parts.codexPort } : {}),
     ...(parts.runDecompositionTurn ? { runDecompositionTurn: parts.runDecompositionTurn } : {}),
     ...(parts.runOrderingTurn ? { runOrderingTurn: parts.runOrderingTurn } : {}),

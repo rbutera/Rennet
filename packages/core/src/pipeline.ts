@@ -84,8 +84,8 @@ import {
   type RunHypothesisResult,
   runHypothesisPass,
 } from "./hypothesis-generation";
-import { createInvocationBudget, normalizeMaxInvocations } from "./invocation-budget";
-import { providerHarness, resolveAssignment } from "./model-council";
+import { normalizeMaxInvocations } from "./invocation-budget";
+import { resolveAssignment } from "./model-council";
 import {
   buildChunkManifest,
   type OrderingTurnResult,
@@ -96,7 +96,6 @@ import {
 import {
   DEFAULT_REVIEW_INTELLIGENCE_BUDGET,
   type ReviewIntelligenceBudget,
-  reviewInvocationCeiling,
 } from "./review-intelligence-budget";
 import { crossCheckRisks } from "./risk-crosscheck";
 import {
@@ -196,6 +195,8 @@ export interface ReviewPipelineInput {
   readonly canvasEvents?: CanvasEvent[];
   readonly decomposeOptions?: DecomposeOptions;
   readonly routePlanOptions?: RoutePlanOptions;
+  /** The one review-turn budget supplied by the composition; no pipeline-local default. */
+  readonly budget: InvocationBudget;
   readonly reviewIntelligenceBudget?: ReviewIntelligenceBudget;
   readonly hypothesisConfig?: ReviewHypothesisConfig;
   readonly dualModelConfig?: ReviewDualModelConfig;
@@ -328,40 +329,22 @@ export async function buildReviewCanvases(
   const decomposition = decompose(input.patchset, input.decomposeOptions ?? {});
   const intelligenceBudget = input.reviewIntelligenceBudget ?? DEFAULT_REVIEW_INTELLIGENCE_BUDGET;
   const deepReviewOn = input.dualModelConfig?.deepReviewOn ?? true;
-  const intelligenceEnabled =
-    input.reviewIntelligenceBudget !== undefined ||
-    input.hypothesisConfig !== undefined ||
-    input.runHypothesisTurn !== undefined ||
-    input.dualModelConfig !== undefined ||
-    input.verificationConfig !== undefined;
-  // Normalize the ceiling ONCE, at the point the raw config is read, and hand the
-  // SAME value to the pre-flight route plan AND the runtime budget below — so no
-  // consumer ever sees an un-normalized ceiling (#269). A malformed value
-  // (NaN/±Infinity/negative) is a caller defect → the default; a literal 0 is
-  // preserved. Before this, `buildRoutePlan` read the RAW `maxHarnessInvocations`
-  // one hop before the budget's fallback applied, so a negative/`-Infinity` ceiling
-  // refused pre-flight and rendered a COMPLETED review with zero model turns — the
-  // exact fake review the circuit exists to prevent. Once review intelligence is
-  // enabled, its ceiling is canonical; the legacy route-plan knob may tighten it
-  // but can never silently raise it.
-  const intelligenceCeiling = reviewInvocationCeiling(intelligenceBudget, deepReviewOn);
+  // The composition-created session budget is canonical. The legacy route-plan
+  // knob may tighten its ceiling but can never raise it.
   const legacyCeiling = input.routePlanOptions?.maxHarnessInvocations;
   const maxInvocations =
-    intelligenceEnabled && legacyCeiling !== undefined
-      ? Math.min(intelligenceCeiling, normalizeMaxInvocations(legacyCeiling))
-      : normalizeMaxInvocations(legacyCeiling ?? intelligenceCeiling);
+    legacyCeiling === undefined
+      ? input.budget.max
+      : Math.min(input.budget.max, normalizeMaxInvocations(legacyCeiling));
   const routePlan = buildRoutePlan(decomposition, {
     ...(input.routePlanOptions ?? {}),
     maxHarnessInvocations: maxInvocations,
   });
   const seed = input.provenance ?? DEFAULT_PROVENANCE_SEED;
 
-  // ONE shared live invocation budget for the whole model phase (issue #69, bead
-  // p0wwp). Seeded from the SAME normalized ceiling the pre-flight route plan uses,
-  // threaded through BOTH runners, consumed once per actual turn — so the proposal's
-  // retries and every intelligence stage draw from a single ceiling and a turn over it
-  // is refused at runtime, not merely counted once in a static pre-flight plan.
-  const budget = createInvocationBudget(maxInvocations);
+  // The exact session budget is threaded through every runner. It may already carry
+  // hypothesis/decision spend from the desktop composition.
+  const budget = input.budget;
   const manifest = buildOfferedManifest(decomposition);
 
   type RunTurn = (prompt: string, attempt: number) => Promise<HarnessTurnResult>;
@@ -392,15 +375,9 @@ export async function buildReviewCanvases(
     if (input.council === undefined) return { seed, runTurn: claudeTurn };
     const resolution = resolveAssignment(jobId, input.council);
     if (resolution.kind !== "model") return { seed, runTurn: claudeTurn };
-    // The EXECUTING harness follows the resolved MODEL, structurally: a council
-    // model maps to exactly one provider → harness, so model and harness cannot
-    // diverge at execution or in provenance. This double-switches the honesty
-    // circuit (Rule 75): even if an incoherent override pinned `harness=claude`
-    // onto a Codex model (`resolution.harness` can be overridden independently of
-    // the model in the resolver), the pipeline still runs that model on ITS harness
-    // and stamps THAT harness — never a Codex model on the Claude turn, never a
-    // `model=codex`/`harness=claude` provenance lie.
-    const execHarness = providerHarness(resolution.model);
+    // The resolver derives the harness after all model/effort resolution, so the
+    // executing seat and its provenance consume one coherent pair.
+    const execHarness = resolution.harness;
     const seatSeed: PipelineProvenanceSeed = {
       ...seed,
       harness: execHarness,

@@ -251,6 +251,7 @@ describe("rennet review pipeline — cost baseline (gated real turns)", () => {
         reviewId: `cost-baseline-${patchset.id.slice(0, 8)}`,
         patchset,
         dispositions: [],
+        budget: createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS),
         provenance: SEED,
         runDecompositionTurn: createInstrumentedRunTurn(
           adapter,

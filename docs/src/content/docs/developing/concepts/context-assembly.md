@@ -53,8 +53,8 @@ the session provenance. It contains six small sections:
 | Section | Contents |
 |---|---|
 | Identity | Workspace or repo, review, patchset, lineage position, and mode |
-| Freshness | One verdict per repo snapshot |
-| Canvas summary | Counts, cohorts, disposition coverage, and residue — no bodies |
+| Freshness | One verdict per repo snapshot, up to a fixed cap, then a rollup tail (`… +N more repos — X current / Y not current`) so updating and failed snapshots are never mislabeled stale and large multi-repo reviews stay under the 4,096-byte ceiling |
+| Canvas summary | Counts, cohorts, disposition coverage, and residue — no bodies — one line per canvas up to a fixed cap, then a rollup tail with the aggregate counts of the rest |
 | Protocol card | How the session works and when to retrieve |
 | Tool index | Names and one-line “use this when” descriptions from the live registry |
 | Run headline | Tasks run, documents admitted/rejected, and budget summary |

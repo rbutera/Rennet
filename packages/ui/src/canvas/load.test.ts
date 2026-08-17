@@ -56,12 +56,13 @@ describe("loadCanvases", () => {
         hunkOccurrences: [],
       },
     };
-    const bridge = bridgeReturning((name) => {
+    const bridge = bridgeReturning((name, input) => {
       expect(name).toBe("review.canvases");
+      expect(input).toMatchObject({ reviewId: review.id, deepReview: true });
       return Promise.resolve({ canvases, elementDiffs } as never);
     });
 
-    const result = await loadCanvases(bridge, review);
+    const result = await loadCanvases(bridge, review, true);
 
     expect(result).not.toBeNull();
     expect(result?.canvases.sequence.layers.analysis.elements[0]?.title).toBe("LIVE");
@@ -72,7 +73,7 @@ describe("loadCanvases", () => {
   it("returns null when the pipeline errors, so the caller keeps the demo", async () => {
     const bridge = bridgeReturning(() => Promise.reject(new Error("harness exploded")));
 
-    const result = await loadCanvases(bridge, review);
+    const result = await loadCanvases(bridge, review, false);
 
     expect(result).toBeNull();
   });

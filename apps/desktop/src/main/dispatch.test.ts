@@ -208,7 +208,7 @@ function harness(
   const allowedRoots = new Set<string>();
   const startWatching = vi.fn<(root: string) => void>();
   let dirty = false;
-  const buildCanvases = vi.fn(() =>
+  const buildCanvases = vi.fn<DispatchDeps["buildCanvases"]>(() =>
     Promise.resolve({
       canvases: canvasSet(),
       elementDiffs: {
@@ -246,12 +246,10 @@ function harness(
   // #251 persistence spies, so a test can assert the streaming ask writes a `streaming`
   // placeholder BEFORE the turn and the durable answer AFTER (the crash-recovery seam).
   const threadPersistence = { upsertThread: vi.fn(), putMessage: vi.fn() };
-  const flaggedReviewSpy = vi.fn<(review: Review, deepReview: boolean) => Promise<FlaggedReview>>(
-    async () => ({
-      status: "ok",
-      findings: [],
-    }),
-  );
+  const flaggedReviewSpy = vi.fn<DispatchDeps["flaggedReview"]>(async () => ({
+    status: "ok",
+    findings: [],
+  }));
   // The comment-refinement producer (issue #19) as a recording spy, so a test can
   // assert the LIVE command path invokes it with the RESOLVED review + exact input —
   // the boundary the "all-unavailable still-green" catch (P1-7) proved untested.
@@ -558,6 +556,48 @@ describe("createDispatch — canvas.* routing (issue #54)", () => {
     expect(Object.keys(result.canvases).sort()).toEqual([...CANVAS_ANGLES].sort());
     // The per-element real diff map (#60) is delivered with the canvas set.
     expect(result.elementDiffs.e1?.diff).toContain("+x");
+  });
+
+  it("composes review.canvases and flagged.review onto one exact turn budget", async () => {
+    const { dispatch, buildCanvases, flaggedReviewSpy } = harness();
+    const review = await capturedReview(dispatch);
+
+    const canvasResult = {
+      canvases: canvasSet(),
+      elementDiffs: {
+        e1: {
+          path: "src/a.ts",
+          paths: ["src/a.ts"],
+          diff: "@@ -1,1 +1,2 @@\n+x",
+          hunkOccurrences: [],
+        },
+      },
+      engine: { aiReview: true, claudeAvailable: true, codexAvailable: true },
+    };
+    buildCanvases.mockImplementationOnce(async (_review, _deepReview, session) => {
+      session.budget.tryConsume("canvas-pipeline");
+      return canvasResult;
+    });
+
+    await dispatch("review.canvases", {
+      commandId: randomUUID(),
+      reviewId: review.id,
+      repoPath: REPO,
+      deepReview: false,
+    });
+    const canvasSession = buildCanvases.mock.calls[0]?.[2];
+    expect(canvasSession?.budget.max).toBe(6);
+
+    flaggedReviewSpy.mockImplementationOnce(async (_review, _deepReview, session) => {
+      session.budget.tryConsume("flagged-pipeline");
+      return { status: "ok", findings: [] };
+    });
+    await dispatch("flagged.review", { reviewId: review.id, deepReview: false });
+    const flaggedSession = flaggedReviewSpy.mock.calls[0]?.[2];
+
+    expect(flaggedSession).toBe(canvasSession);
+    expect(flaggedSession?.budget).toBe(canvasSession?.budget);
+    expect(flaggedSession?.budget.consumed).toBe(2);
   });
 
   it("carries the REAL contextManifest through the review.canvases command boundary (#30)", async () => {

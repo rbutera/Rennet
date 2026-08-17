@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   buildReviewCanvases,
+  createInvocationBudget,
   type HarnessDescriptor,
   type HarnessEvent,
   type HarnessHealth,
@@ -129,7 +130,12 @@ async function reviewAt(root: string, commonDir: string, baseOid: string) {
     dispositions: [],
     status: "current",
   };
-  const pipeline = await buildReviewCanvases({ reviewId: review.id, patchset, dispositions: [] });
+  const pipeline = await buildReviewCanvases({
+    reviewId: review.id,
+    patchset,
+    dispositions: [],
+    budget: createInvocationBudget(12),
+  });
   return { review, pipeline };
 }
 
@@ -260,6 +266,7 @@ describe("createLiveCanvasOpsBackend — the live end-to-end review backend", ()
       reviewId: review.id,
       patchset,
       dispositions: [],
+      budget: createInvocationBudget(0),
       routePlanOptions: { maxHarnessInvocations: 0 },
     });
     const { backend } = await createLiveCanvasOpsBackend(review, pipeline, {

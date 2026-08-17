@@ -1,6 +1,17 @@
-import type { Patchset } from "@rennet/types";
+import type { InvocationBudget, Patchset } from "@rennet/types";
 import { describe, expect, it } from "vitest";
-import { buildReviewCanvases } from "./pipeline";
+import { createInvocationBudget } from "./invocation-budget";
+import {
+  buildReviewCanvases as buildReviewCanvasesCore,
+  type ReviewPipelineInput,
+} from "./pipeline";
+
+type TestPipelineInput = Omit<ReviewPipelineInput, "budget"> & { budget?: InvocationBudget };
+
+function buildReviewCanvases(input: TestPipelineInput) {
+  const { budget = createInvocationBudget(12), ...rest } = input;
+  return buildReviewCanvasesCore({ ...rest, budget });
+}
 
 const PATCHSET: Patchset = {
   id: "ps_pipe",

@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildReviewCanvases } from "@rennet/core";
+import { buildReviewCanvases, createInvocationBudget } from "@rennet/core";
 import type { PatchFile, Patchset, Review } from "@rennet/types";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -86,7 +86,12 @@ describe("createDesktopReviewBackend — the desktop composition root", () => {
       dispositions: [],
       status: "current",
     };
-    const pipeline = await buildReviewCanvases({ reviewId: review.id, patchset, dispositions: [] });
+    const pipeline = await buildReviewCanvases({
+      reviewId: review.id,
+      patchset,
+      dispositions: [],
+      budget: createInvocationBudget(12),
+    });
 
     const { backend, snapshot } = await createDesktopReviewBackend(review, pipeline, {
       baseDir,
@@ -151,7 +156,12 @@ describe("createDesktopReviewBackend — the desktop composition root", () => {
       dispositions: [],
       status: "current",
     };
-    const pipeline = await buildReviewCanvases({ reviewId: review.id, patchset, dispositions: [] });
+    const pipeline = await buildReviewCanvases({
+      reviewId: review.id,
+      patchset,
+      dispositions: [],
+      budget: createInvocationBudget(12),
+    });
     const opened = await createDesktopReviewBackend(review, pipeline, { baseDir });
     expect(opened.contextManifest).toBeDefined();
 

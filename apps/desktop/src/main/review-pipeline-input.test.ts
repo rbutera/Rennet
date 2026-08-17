@@ -1,3 +1,4 @@
+import { createInvocationBudget } from "@rennet/core";
 import type { Patchset } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { buildReviewCanvasesInput } from "./review-pipeline-input";
@@ -38,6 +39,7 @@ describe("buildReviewCanvasesInput — the composition hands ownership to the pi
       ownership,
       installed: [],
       decisionDocs: [],
+      budget: createInvocationBudget(12),
     });
     // Red-proof: remove `ownership: parts.ownership` from the builder and this reddens
     // — CODEOWNERS would be dead in the real app again with no other test failing.
@@ -55,6 +57,7 @@ describe("buildReviewCanvasesInput — the composition hands ownership to the pi
       ownership: [],
       installed: ["claude-code"],
       decisionDocs: [],
+      budget: createInvocationBudget(12),
     });
     expect(input.ownership).toEqual([]);
   });
@@ -72,6 +75,7 @@ describe("buildReviewCanvasesInput — the composition hands ownership to the pi
       fanIn,
       installed: [],
       decisionDocs: [],
+      budget: createInvocationBudget(12),
     });
     expect(input.fanIn).toBe(fanIn);
   });
@@ -84,6 +88,7 @@ describe("buildReviewCanvasesInput — the composition hands ownership to the pi
       ownership: [],
       installed: [],
       decisionDocs: [],
+      budget: createInvocationBudget(12),
     });
     expect("fanIn" in input).toBe(false);
   });
@@ -96,6 +101,7 @@ describe("buildReviewCanvasesInput — the composition hands ownership to the pi
       ownership: [],
       installed: [],
       decisionDocs: [],
+      budget: createInvocationBudget(12),
     });
     expect("codexPort" in without).toBe(false);
   });
@@ -109,11 +115,26 @@ describe("buildReviewCanvasesInput — the composition hands ownership to the pi
       ownership: [],
       installed: [],
       decisionDocs: [],
+      budget: createInvocationBudget(12),
       assembledContext: "captured context",
       onSend,
     });
 
     expect(input.assembledContext).toBe("captured context");
     expect(input.onSend).toBe(onSend);
+  });
+
+  it("threads the exact review-turn budget into the pipeline", () => {
+    const budget = createInvocationBudget(6);
+    const input = buildReviewCanvasesInput({
+      reviewId: "rv",
+      patchset: patchset(),
+      dispositions: [],
+      ownership: [],
+      installed: [],
+      decisionDocs: [],
+      budget,
+    });
+    expect(input.budget).toBe(budget);
   });
 });

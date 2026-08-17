@@ -2,6 +2,7 @@ import { sha256Hex } from "@rennet/protocol";
 import type {
   ContextSendRecord,
   CouncilModel,
+  InvocationBudget,
   OrderingBody,
   PatchFile,
   Patchset,
@@ -21,8 +22,19 @@ import type {
 } from "./codex-utility-port";
 import { decompose } from "./decomposition";
 import type { HarnessTurnResult } from "./harness-run-turn";
+import { createInvocationBudget } from "./invocation-budget";
 import type { OrderingTurnResult } from "./ordering-pass";
-import { buildReviewCanvases } from "./pipeline";
+import {
+  buildReviewCanvases as buildReviewCanvasesCore,
+  type ReviewPipelineInput,
+} from "./pipeline";
+
+type TestPipelineInput = Omit<ReviewPipelineInput, "budget"> & { budget?: InvocationBudget };
+
+function buildReviewCanvases(input: TestPipelineInput) {
+  const { budget = createInvocationBudget(12), ...rest } = input;
+  return buildReviewCanvasesCore({ ...rest, budget });
+}
 
 // ── Fake Codex port helpers (model calls are mocked in CI) ────────────────────
 
@@ -509,6 +521,7 @@ describe("buildReviewCanvases — one shared budget across the model phase (acce
       dispositions: [],
       runDecompositionTurn: rejectDecomposition,
       runOrderingTurn: rejectOrdering,
+      budget: createInvocationBudget(5),
       routePlanOptions: { maxHarnessInvocations: 5 },
     });
 
@@ -765,13 +778,13 @@ describe("buildReviewCanvases — provenance is honest across harnesses (accepta
     expect(harnessesSeen).toEqual(new Set(["claude-code", "codex"]));
   });
 
-  it("an incoherent harness override never runs a Codex model on the Claude turn", async () => {
-    // A user (task) override pins a Codex model but the CLAUDE harness onto the
-    // ordering seat — a self-contradictory pin the resolver permits. The pipeline
-    // MUST derive the executing harness from the MODEL (Codex), so the seat runs on
-    // the Codex port and stamps a Codex harness, never a Codex-model/Claude-turn
-    // mispair. Red against a pipeline that trusts `resolution.harness`: that path
-    // would call the Claude ordering turn and stamp harness=claude-code.
+  it("a Codex-model override runs on the Codex turn — harness follows the model (#89)", async () => {
+    // A user (task) override pins a Codex model onto the ordering seat. Harness is no
+    // longer overridable (#89): it derives from the MODEL (Codex), so the seat runs on
+    // the Codex port and stamps a Codex harness — the resolver cannot produce a
+    // Codex-model/Claude-turn mispair in the first place. Red against a pipeline that
+    // trusted an override-pinned `resolution.harness`: that path would have called the
+    // Claude ordering turn and stamped harness=claude-code.
     const decomposition = decompose(edgedPatchset);
     const proposal = deterministicProposalBody(decomposition);
     const orderingBody: OrderingBody = {
@@ -797,7 +810,7 @@ describe("buildReviewCanvases — provenance is honest across harnesses (accepta
         availability: { installed: ["claude-code", "codex"] },
         overrides: {
           task: {
-            "comprehension-ordering": { model: "gpt-5.6-terra", harness: "claude-code" },
+            "comprehension-ordering": { model: "gpt-5.6-terra" },
           },
         },
       },
@@ -843,6 +856,7 @@ describe("buildReviewCanvases — one shared budget across a Claude seat and a C
       runOrderingTurn: rejectOrderingClaude,
       codexPort,
       council: { availability: { installed: ["claude-code", "codex"] } },
+      budget: createInvocationBudget(5),
       routePlanOptions: { maxHarnessInvocations: 5 },
     });
 
@@ -949,6 +963,7 @@ describe("buildReviewCanvases — roll-up narration threads through (issue #70)"
       dispositions: [],
       runDecompositionTurn,
       runNarrationTurn,
+      budget: createInvocationBudget(3),
       routePlanOptions: { maxHarnessInvocations: 3 },
     });
 
