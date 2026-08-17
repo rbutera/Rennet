@@ -150,9 +150,10 @@ and spatially stable across the review chrome:
 - **22px** title — the largest in-app screen title.
 
 Fractional px sizes are not used: each one was a split-the-difference nudge between two steps. The
-ramp is enforced for `packages/ui` by the design detector, whose machine-readable source is
-[`packages/ui/DESIGN.md`](packages/ui/DESIGN.md) (it sits inside the package because the detector
-resolves a design system by walking up from the scanned file and stops at the package boundary).
+design detector checks `font-size` longhand against this ramp for `packages/ui`; the package's
+owned design-ramp test also checks `font:` shorthand. Both read the machine-readable source in
+[`packages/ui/DESIGN.md`](packages/ui/DESIGN.md), which sits inside the package because the detector
+resolves a design system by walking up from the scanned file and stops at the package boundary.
 
 ## Layout
 
@@ -197,10 +198,11 @@ exponential ease-out rather than bounce or perpetual ambient animation.
 
 ## Shapes
 
-Controls use 10px corners and review or proof surfaces use 10–14px corners. Borders are one pixel
-and structural. A paper may carry one deeper corner when it reinforces the document metaphor, but
-the logo remains identity rather than recurring layout geometry. Avoid pills for containers and
-avoid ornamental clipping that competes with the evidence.
+Marketing controls use 10px corners, and marketing review or proof surfaces use 10–14px corners.
+Desktop controls and surfaces use the on-ramp values in the desktop scale below. Borders are one
+pixel and structural. A paper may carry one deeper corner when it reinforces the document
+metaphor, but the logo remains identity rather than recurring layout geometry. Avoid pills for
+containers and avoid ornamental clipping that competes with the evidence.
 
 ### Desktop radius scale
 
@@ -214,25 +216,30 @@ containers) and `50%` (circles).
 - **12px** surface — review surfaces, cards, and body panels.
 - **16px** window — the window shell and the handoff paper's deeper corner.
 
-This scale is enforced for `packages/ui` by the design detector; its source is
+The design detector checks `border-radius` against this scale for `packages/ui`; the package's
+owned design-ramp test additionally covers radius-bearing tokens. Their source is
 [`packages/ui/DESIGN.md`](packages/ui/DESIGN.md).
 
 ## Components
 
 ### Buttons
 
-- 56px minimum height, 10px radius, 24px horizontal padding.
+- Marketing primary buttons use a 56px minimum height, 10px radius, and 24px horizontal padding.
+- Desktop buttons use the 8px control radius; their height and padding follow the denser desktop
+  surface they inhabit.
 - Primary controls invert against their field; secondary actions are text links.
 - Hover lift is two pixels with a real downward shadow. Focus uses a three-pixel review-blue ring.
 - Touch targets are at least 44 by 44 pixels.
 
 ### Review and proof surfaces
 
-- 10–14px radius for cohorts, findings, conversations, provider results, and product frames.
+- Marketing review and proof surfaces use 10–14px corners. Desktop cohorts, findings,
+  conversations, provider results, and product frames use the 12px surface radius.
 - Use either a structural border or a broad ambient shadow; avoid a shadowed border around every
   object.
 - Code is always on an opaque surface. Product chrome may be translucent only in the desktop app.
-- The final paper may carry one deeper corner, but it remains a document rather than decoration.
+- The desktop handoff paper may use the 16px window radius, but it remains a document rather than
+  decoration.
 
 ### Provider marks
 

@@ -27,6 +27,7 @@ rounded:
   surface: "12px"
   window: "16px"
   pill: "999px"
+  circle: "50%"
 ---
 
 # Rennet desktop scale
@@ -42,8 +43,9 @@ root `DESIGN.md` documents the same ramp in prose for humans.
 The full design system — colour, semantics, elevation, components, do's and
 don'ts — is the root [`DESIGN.md`](../../DESIGN.md). This file records only the two
 things the desktop material scales differently from marketing: the **type ramp**
-and the **radius scale**. Both are enforced: the detector reddens on any
-`font-size` or `border-radius` literal off these ramps.
+and the **radius scale**. The design detector checks `font-size` longhand and
+`border-radius`; the UI package's design-ramp test also checks `font:` shorthand
+sizes and the radius-bearing tokens in `tokens.css`.
 
 ## Type ramp
 

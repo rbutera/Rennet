@@ -4,8 +4,9 @@
 
 ### The finding, honestly stated
 
-The impeccable design-lint reports every `font-size`/`border-radius` px literal in
-`packages/ui/src` that is off the DESIGN.md ramp. But the DESIGN.md ramp is the
+The impeccable design detector reports off-ramp `font-size` longhand and
+`border-radius` px literals in `packages/ui/src`; it does not inspect `font:`
+shorthand. But the root DESIGN.md ramp is the
 **marketing** scale (body 16px, label 13px, control radius 10px, surface 12px) —
 DESIGN.md itself says "the desktop keeps a smaller, more spatially stable scale" and
 never enumerates it. The canonical wireframes (`wireframes/src/kit.mjs`, the declared
@@ -18,7 +19,7 @@ lint findings decompose into two honestly different classes:
    many agents nudging between undocumented steps.
 
 **Decision: both directions, split per value class.** DESIGN.md gains an explicit
-desktop scale (the lint learns it via the regenerated `.impeccable/design.json`), and
+desktop scale (recorded machine-readably in `packages/ui/DESIGN.md` beside the CSS), and
 every literal that is genuine drift migrates onto its ramp neighbour. No blanket
 suppression, and no pretending 12.5px was ever a decision.
 
@@ -90,11 +91,12 @@ the enforcement; variables would be ceremony.)
 
 DESIGN.md gains a "Desktop scale" subsection under Typography and Shapes enumerating
 both ramps and the two geometry exemptions, with one sentence each on when a step is
-used. `.impeccable/design.json` (schemaVersion 2, generated from DESIGN.md) is
-regenerated so the design-lint's ramp is the documented one. Acceptance is measurable
-and gate-free: **the design-lint reports zero design-system-radius and
-design-system-font-size findings over `packages/ui/src`**, and a grep for fractional px
-font sizes returns nothing.
+used. `packages/ui/DESIGN.md` frontmatter is the source the package-local detector and
+owned UI test read; `.impeccable/design.json` remains consistent as the generated root
+artifact. Acceptance is measurable and gate-free: **the detector reports zero
+design-system-radius and longhand design-system-font-size findings over
+`packages/ui/src`**, the UI Vitest also covers `font:` shorthand and radius-bearing
+tokens, and a grep for fractional px font sizes returns nothing.
 
 ## 2. Per-surface intent
 
@@ -116,14 +118,17 @@ that distinction legible, e.g. plain rules vs. the authored heading). Run outcom
 states style honestly: refusal/failure in plain words on the sheet, never disguised;
 the Run action is one button, no ceremony.
 
-**In-rail conversation alignment (#36 deferred → spec delta).** The rail keeps its
-sibling-column structure (the no-reflow guarantee is structural and stays). Panels
-already carry `data-anchor-key`; the positioning pass reads the rendered anchor row's
-offset from the windowed CodeView and applies a transform/offset to the panel when the
-row is rendered, falling back to stacked order when it is not. Scroll/virtualization
-churn is absorbed by only ever *offsetting within the rail*, never repositioning the
-rail or the diff. DOM-testable: aligned panel carries a data attribute / style offset
-derived from the row; off-screen anchor yields the stacked default.
+**In-rail conversation alignment (#36 deferred → dormant component contract).** The
+rail keeps its sibling-column structure (the no-reflow guarantee is structural and
+stays). Panels already carry `data-anchor-key`; when `ConversationMargin` receives a
+diff ref, its positioning pass reads each rendered anchor row and applies
+`rowTop - panelNaturalTop` to that panel. It falls back to stacked order when the row
+or diff ref is absent. The shipped review heart does not thread the ref from CodeView
+through `ConversationPanel`/`ConversationHost`, so this change deliberately remains
+dormant behind that honest stacked fallback. Issue #356 owns the app-level
+rail-architecture adoption decision. The component contract is DOM-tested with non-zero
+multi-panel geometry; scroll/virtualization churn only offsets within the rail and
+never writes to the diff.
 
 **Wordmark (#43 deferred).** `RennetMark` in `icons.tsx` swaps the placeholder mono
 "R" for the split-disc glyph paths from `site/brand/rennet-glyph.svg`, rendered
@@ -159,8 +164,8 @@ it was explicitly parked for this pass.
 - The dense desktop scale (this is what the ramp decision ratifies).
 - The chrome-verdict chip language for verification/adjudication strips (frames 09/10).
 - The paper material for the handoff/collation surfaces (frames 12/13).
-- In-rail thread alignment against the line (frame 06), with the honest off-screen
-  fallback.
+- The dormant in-rail alignment component contract from frame 06, with the shipped
+  app continuing to use the honest stacked fallback until the rail adopts a diff ref.
 - The real wordmark in chrome (frame 00's brand row).
 - Terse chrome, legend-covered icons, vertical scroll (R41/R42/R44 — already ratified
   doctrine; the pass is the conformance sweep).

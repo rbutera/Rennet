@@ -10,7 +10,7 @@
 //     column (the margin is a sibling; the diff DOM is unchanged).
 
 import { useRef } from "react";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ConversationAnchor } from "../canvas/conversation";
 import {
   answerInThread,
@@ -241,8 +241,8 @@ describe("ConversationMargin — the right-margin column", () => {
 // whose anchor row is rendered in the windowed diff is offset so its panel top
 // meets that row; a thread whose row is off-window falls back to stacked order
 // with no synthetic offset. Alignment is applied within the rail only and never
-// reflows the diff column. happy-dom reports zero-size rects, so a rendered row
-// yields offset 0 (present, derived) and an off-window row yields no offset.
+// reflows the diff column. happy-dom reports zero-size rects, so the alignment
+// proof supplies non-zero multi-panel geometry rather than accepting a vacuous 0.
 // ─────────────────────────────────────────────────────────────────────────────
 describe("ConversationMargin — in-rail anchor alignment (#36 → #85)", () => {
   const VISIBLE: ConversationAnchor = {
@@ -255,6 +255,42 @@ describe("ConversationMargin — in-rail anchor alignment (#36 → #85)", () => 
     label: "src/rate/keys.ts:18",
     key: "keys#L18",
   };
+  const SECOND_VISIBLE: ConversationAnchor = {
+    kind: "line",
+    label: "src/rate/keys.ts:31",
+    key: "keys#L31",
+  };
+
+  afterEach(() => vi.restoreAllMocks());
+
+  function rect(top: number): DOMRect {
+    return {
+      bottom: top + 20,
+      height: 20,
+      left: 0,
+      right: 100,
+      top,
+      width: 100,
+      x: 0,
+      y: top,
+      toJSON: () => ({}),
+    };
+  }
+
+  function mockGeometry(
+    rowTops: Readonly<Record<string, number>>,
+    panelTops: Readonly<Record<string, number>>,
+  ): void {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const key = this.getAttribute("data-anchor-key");
+      if (this.classList.contains("conversation-margin")) return rect(100);
+      if (key && this.classList.contains("code-view-row")) return rect(rowTops[key] ?? 0);
+      if (key && this.classList.contains("conversation-cluster")) return rect(panelTops[key] ?? 0);
+      return rect(0);
+    });
+  }
 
   function AlignHost({
     threads,
@@ -283,15 +319,22 @@ describe("ConversationMargin — in-rail anchor alignment (#36 → #85)", () => 
     return diff ? diff.querySelectorAll("*").length : -1;
   }
 
-  it("a visible anchor row aligns its thread (offset derived from the row)", () => {
-    const thread = openThread("t1", VISIBLE);
-    const { container } = mount(<AlignHost threads={[thread]} renderedKeys={[VISIBLE.key]} />);
-    const panel = container.querySelector(
-      `.conversation-cluster[data-anchor-key="${VISIBLE.key}"]`,
+  it("aligns each visible thread from its own natural panel position", () => {
+    mockGeometry(
+      { [VISIBLE.key]: 160, [SECOND_VISIBLE.key]: 310 },
+      { [VISIBLE.key]: 100, [SECOND_VISIBLE.key]: 220 },
     );
-    expect(panel).not.toBeNull();
-    expect(panel?.getAttribute("data-align-offset")).not.toBeNull();
-    expect(panel?.getAttribute("style") ?? "").toContain("translateY");
+    const { container } = mount(
+      <AlignHost
+        threads={[openThread("t1", VISIBLE), openThread("t2", SECOND_VISIBLE)]}
+        renderedKeys={[VISIBLE.key, SECOND_VISIBLE.key]}
+      />,
+    );
+    const panels = container.querySelectorAll(".conversation-cluster");
+    expect(panels[0]?.getAttribute("data-align-offset")).toBe("60");
+    expect(panels[1]?.getAttribute("data-align-offset")).toBe("90");
+    expect(panels[1]?.getAttribute("data-align-offset")).not.toBe("210");
+    expect(panels[1]?.getAttribute("style") ?? "").toContain("translateY(90px)");
   });
 
   it("an off-window anchor falls back to stacked order (no synthetic offset)", () => {

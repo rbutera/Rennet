@@ -425,7 +425,7 @@ export function ConversationMargin({
           onAsk={onAsk ? (body, mode) => onAsk(thread.id, body, mode) : undefined}
           pending={pendingThreadIds?.has(thread.id) ?? false}
           error={errorByThread?.[thread.id]}
-          alignOffset={alignments[thread.anchor.key]}
+          alignOffset={alignments[thread.id]}
         />
       ))}
     </section>
@@ -435,11 +435,12 @@ export function ConversationMargin({
 /**
  * Measure each thread's in-rail alignment offset from the rendered diff window
  * (#36 → #85). For every thread whose anchor row (`[data-anchor-key]`) is painted in
- * the windowed diff, the offset is that row's top relative to the rail's top; a
- * thread whose row is off-window is omitted, so its panel stacks. Recomputed on diff
- * scroll and on resize, since the windowed renderer swaps which rows exist. Returns
- * `{}` (all stacked) when no diff is measured — the honest default. The offset is
- * read-only against the diff DOM, never a write, so alignment cannot reflow the diff.
+ * the windowed diff, the offset is the row top minus that panel's natural top in the
+ * rail. A thread whose row is off-window is omitted, so its panel stacks. Recomputed
+ * on diff scroll and on resize, since the windowed renderer swaps which rows exist.
+ * Returns `{}` (all stacked) when no diff is measured — the honest default. The
+ * offset is read-only against the diff DOM, never a write, so alignment cannot reflow
+ * the diff.
  */
 function useRailAlignments(
   railRef: RefObject<HTMLElement | null>,
@@ -447,9 +448,6 @@ function useRailAlignments(
   threads: readonly ConversationThread[],
 ): Readonly<Record<string, number>> {
   const [alignments, setAlignments] = useState<Readonly<Record<string, number>>>({});
-  // A stable key of the anchors in play, so the effect re-measures when the set of
-  // threads (or their anchors) changes without depending on the fresh array identity.
-  const anchorKeys = threads.map((thread) => thread.anchor.key).join(" ");
   useLayoutEffect(() => {
     const diff = diffRef?.current;
     const rail = railRef.current;
@@ -458,18 +456,20 @@ function useRailAlignments(
       return;
     }
     const measure = (): void => {
-      const railTop = rail.getBoundingClientRect().top;
       const rows = new Map<string, Element>();
       for (const el of diff.querySelectorAll("[data-anchor-key]")) {
         const key = el.getAttribute("data-anchor-key");
         if (key && !rows.has(key)) rows.set(key, el); // the topmost row for a key wins
       }
+      const panels = rail.querySelectorAll<HTMLElement>(".conversation-cluster");
       const next: Record<string, number> = {};
-      for (const key of anchorKeys.split(" ")) {
-        if (key === "") continue;
-        const row = rows.get(key);
-        if (!row) continue; // off-window ⇒ stacked fallback, never a synthetic offset
-        next[key] = Math.max(0, Math.round(row.getBoundingClientRect().top - railTop));
+      for (const [index, thread] of threads.entries()) {
+        const row = rows.get(thread.anchor.key);
+        const panel = panels[index];
+        if (!row || !panel) continue; // off-window ⇒ stacked fallback, never a synthetic offset
+        const appliedOffset = Number(panel.dataset.alignOffset ?? 0);
+        const panelNaturalTop = panel.getBoundingClientRect().top - appliedOffset;
+        next[thread.id] = Math.round(row.getBoundingClientRect().top - panelNaturalTop);
       }
       setAlignments((prev) => (sameOffsets(prev, next) ? prev : next));
     };
@@ -487,7 +487,7 @@ function useRailAlignments(
       window.removeEventListener("resize", measure);
       observer?.disconnect();
     };
-  }, [railRef, diffRef, anchorKeys]);
+  }, [railRef, diffRef, threads]);
   return alignments;
 }
 
