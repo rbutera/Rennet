@@ -64,7 +64,7 @@ describe("SqliteReviewStore", () => {
     const reopened = new SqliteReviewStore(path);
     expect(reopened.latestReview()).toEqual(review);
     reopened.close();
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it("forward-migrates a real schema_version 1 database file (adds, backfills, and indexes repository_root)", () => {
@@ -112,7 +112,7 @@ describe("SqliteReviewStore", () => {
     // global lookup).
     expect(store.latestReview("/repo")).toEqual(review);
     store.close();
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   });
 
   it("returns an idempotent receipt and rejects command ID reuse", () => {

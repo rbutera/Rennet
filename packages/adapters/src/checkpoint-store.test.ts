@@ -3,8 +3,13 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { filesTouchedByDiff } from "@rennet/core";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { GitCheckpointStore, repoHasSubmodules } from "./checkpoint-store";
+
+// win32 git operations on a cold disk exceed vitest's 5s default (measured 6-11s on
+// lancelot); give this git-heavy suite room. Not a hang — the same tests pass fast on
+// macOS/Linux and complete well under this ceiling on Windows.
+vi.setConfig({ testTimeout: 30_000, hookTimeout: 30_000 });
 
 const directories: string[] = [];
 
@@ -26,7 +31,7 @@ function repository(): string {
 
 afterEach(() => {
   for (const directory of directories.splice(0))
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 describe("GitCheckpointStore", () => {
@@ -118,22 +123,28 @@ describe("GitCheckpointStore", () => {
 });
 
 describe("GitCheckpointStore.changedPaths + F5/F6/F7", () => {
-  it("changedPaths returns a path with a TAB intact where the display diff quotes it (F7)", async () => {
-    const root = repository();
-    const store = new GitCheckpointStore(root);
-    // A tab in the filename is exactly what git C-quotes in the `diff --git` header.
-    const tabbedName = "weird\tname.ts";
-    const before = await store.capture();
-    writeFileSync(join(root, tabbedName), "x\n");
-    const after = await store.capture();
+  // A TAB (0x09) in a filename is legal on POSIX but forbidden by the Windows
+  // filesystem, so the file cannot even be created there — the git-quoting behavior under
+  // test is unreachable on win32. Scope to POSIX rather than weaken the assertion.
+  it.skipIf(process.platform === "win32")(
+    "changedPaths returns a path with a TAB intact where the display diff quotes it (F7)",
+    async () => {
+      const root = repository();
+      const store = new GitCheckpointStore(root);
+      // A tab in the filename is exactly what git C-quotes in the `diff --git` header.
+      const tabbedName = "weird\tname.ts";
+      const before = await store.capture();
+      writeFileSync(join(root, tabbedName), "x\n");
+      const after = await store.capture();
 
-    // The display diff C-quotes the path (`diff --git "a/…" "b/…"`), so parsing the
-    // header drops the file — the exact F7 defect.
-    const diff = await store.diff(before, after);
-    expect(filesTouchedByDiff(diff)).not.toContain(tabbedName);
-    // The structural changedPaths (`--name-only -z`) returns it intact.
-    expect(await store.changedPaths(before, after)).toContain(tabbedName);
-  });
+      // The display diff C-quotes the path (`diff --git "a/…" "b/…"`), so parsing the
+      // header drops the file — the exact F7 defect.
+      const diff = await store.diff(before, after);
+      expect(filesTouchedByDiff(diff)).not.toContain(tabbedName);
+      // The structural changedPaths (`--name-only -z`) returns it intact.
+      expect(await store.changedPaths(before, after)).toContain(tabbedName);
+    },
+  );
 
   it("does NOT write a reflog for the checkpoint ref even when core.logAllRefUpdates=always (F5)", async () => {
     const root = repository();

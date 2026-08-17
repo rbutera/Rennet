@@ -1,3 +1,4 @@
+import { resolve } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import {
   createEditorLaunchEffects,
@@ -81,7 +82,7 @@ describe("createEditorLaunchEffects", () => {
         line: 42,
       }),
     ).toEqual({ ok: true });
-    expect(spawn).toHaveBeenCalledWith(cursor, ["-g", "/repo/src/x.ts:42"]);
+    expect(spawn).toHaveBeenCalledWith(cursor, ["-g", `${resolve("/repo", "src/x.ts")}:42`]);
     expect(spawned.every(([command]) => command.startsWith("/"))).toBe(true);
     expect(openPath).not.toHaveBeenCalled();
 
@@ -107,14 +108,14 @@ describe("editorLaunchSpec", () => {
 
 describe("resolveWithinRoot", () => {
   it("resolves a repo-relative path under the root", () => {
-    expect(resolveWithinRoot("/repo", "src/x.ts")).toBe("/repo/src/x.ts");
+    expect(resolveWithinRoot("/repo", "src/x.ts")).toBe(resolve("/repo", "src/x.ts"));
   });
   it("refuses a path that escapes the root", () => {
     expect(resolveWithinRoot("/repo", "../secret.ts")).toBeNull();
     expect(resolveWithinRoot("/repo", "/etc/passwd")).toBeNull();
   });
   it("allows the root itself", () => {
-    expect(resolveWithinRoot("/repo", ".")).toBe("/repo");
+    expect(resolveWithinRoot("/repo", ".")).toBe(resolve("/repo"));
   });
 });
 
@@ -208,7 +209,7 @@ describe("performOpenInEditor", () => {
       path: "src/x.ts",
       line: 42,
     });
-    expect(e.launchAtLine).toHaveBeenCalledWith("/repo/src/x.ts", 42, undefined);
+    expect(e.launchAtLine).toHaveBeenCalledWith(resolve("/repo", "src/x.ts"), 42, undefined);
     expect(e.openPath).not.toHaveBeenCalled();
     expect(out.ok).toBe(true);
   });
@@ -221,7 +222,7 @@ describe("performOpenInEditor", () => {
       line: 7,
     });
     expect(e.launchAtLine).toHaveBeenCalled();
-    expect(e.openPath).toHaveBeenCalledWith("/repo/src/x.ts");
+    expect(e.openPath).toHaveBeenCalledWith(resolve("/repo", "src/x.ts"));
     expect(out.ok).toBe(true);
   });
 
@@ -229,7 +230,7 @@ describe("performOpenInEditor", () => {
     const e = effects();
     const out = await performOpenInEditor(e, { repositoryRoot: "/repo", path: "src/x.ts" });
     expect(e.launchAtLine).not.toHaveBeenCalled();
-    expect(e.openPath).toHaveBeenCalledWith("/repo/src/x.ts");
+    expect(e.openPath).toHaveBeenCalledWith(resolve("/repo", "src/x.ts"));
     expect(out.ok).toBe(true);
   });
 

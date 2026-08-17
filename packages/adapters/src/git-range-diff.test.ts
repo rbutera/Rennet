@@ -39,7 +39,7 @@ function repositoryWithRange(): { root: string; baseOid: string; headOid: string
 
 afterEach(() => {
   for (const directory of directories.splice(0))
-    rmSync(directory, { recursive: true, force: true });
+    rmSync(directory, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 describe("parseUnifiedDiffFiles (degraded REST parser) binary detection", () => {

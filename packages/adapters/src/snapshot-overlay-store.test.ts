@@ -10,7 +10,8 @@ import { SnapshotOverlayStore } from "./snapshot-overlay-store";
 
 const scratch: string[] = [];
 afterEach(() => {
-  for (const dir of scratch.splice(0)) rmSync(dir, { recursive: true, force: true });
+  for (const dir of scratch.splice(0))
+    rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 function stores(): { base: ProjectSnapshotStore; overlays: SnapshotOverlayStore; repoKey: string } {

@@ -1,3 +1,4 @@
+import { join, sep } from "node:path";
 import { describe, expect, it } from "vitest";
 import {
   type CodexSessionReadDeps,
@@ -131,15 +132,17 @@ function fakeDeps(tree: {
   };
 }
 
-const ROOT = "/sessions";
-const DAY = "/sessions/2026/08/10";
+const ROOT = join(sep, "sessions");
+const Y = join(ROOT, "2026");
+const M = join(Y, "08");
+const DAY = join(M, "10");
 
 function dayTree(files: Record<string, FakeFile>, realpaths?: Record<string, string>) {
   return {
     dirs: {
       [ROOT]: [{ name: "2026", isDirectory: true, isFile: false }],
-      "/sessions/2026": [{ name: "08", isDirectory: true, isFile: false }],
-      "/sessions/2026/08": [{ name: "10", isDirectory: true, isFile: false }],
+      [Y]: [{ name: "08", isDirectory: true, isFile: false }],
+      [M]: [{ name: "10", isDirectory: true, isFile: false }],
       [DAY]: Object.keys(files).map((p) => ({
         name: p.slice(DAY.length + 1),
         isDirectory: false,
@@ -155,14 +158,14 @@ describe("readCodexSessionUsage", () => {
   it("correlates the ONE in-window session sharing the scratch cwd (measured)", async () => {
     const scratch = "/private/var/T/rennet-codex-MATCH";
     const files: Record<string, FakeFile> = {
-      [`${DAY}/a.jsonl`]: {
+      [join(DAY, "a.jsonl")]: {
         mtimeMs: 2_000,
         content: [
           turnContext(scratch),
           tokenCount({ input: 17690, cached: 8960, output: 5, reasoning: 0 }),
         ].join("\n"),
       },
-      [`${DAY}/other.jsonl`]: {
+      [join(DAY, "other.jsonl")]: {
         mtimeMs: 2_000,
         content: [
           turnContext("/private/var/T/rennet-codex-OTHER"),
@@ -177,7 +180,7 @@ describe("readCodexSessionUsage", () => {
       deps: fakeDeps(dayTree(files)),
     });
     expect(result.status).toBe("measured");
-    expect(result.sessionFile).toBe(`${DAY}/a.jsonl`);
+    expect(result.sessionFile).toBe(join(DAY, "a.jsonl"));
     expect(result.usage?.total).toBe(17690 + 5);
     expect(result.usage?.cacheRead).toBe(8960);
     expect(result.matched).toBe(1);
@@ -187,7 +190,7 @@ describe("readCodexSessionUsage", () => {
     const recorded = "/private/var/T/rennet-codex-SYM"; // what codex wrote
     const queried = "/var/T/rennet-codex-SYM"; // what mkdtemp returned
     const files: Record<string, FakeFile> = {
-      [`${DAY}/a.jsonl`]: {
+      [join(DAY, "a.jsonl")]: {
         mtimeMs: 5,
         content: [
           turnContext(recorded),
@@ -208,7 +211,7 @@ describe("readCodexSessionUsage", () => {
   it("excludes sessions modified before the window floor", async () => {
     const scratch = "/private/var/T/rennet-codex-OLD";
     const files: Record<string, FakeFile> = {
-      [`${DAY}/old.jsonl`]: {
+      [join(DAY, "old.jsonl")]: {
         mtimeMs: 500, // before the floor
         content: [
           turnContext(scratch),
@@ -229,7 +232,7 @@ describe("readCodexSessionUsage", () => {
 
   it("is honest-unmeasured (never a guessed zero) when nothing correlates", async () => {
     const files: Record<string, FakeFile> = {
-      [`${DAY}/a.jsonl`]: {
+      [join(DAY, "a.jsonl")]: {
         mtimeMs: 2_000,
         content: [
           turnContext("/private/var/T/rennet-codex-SOMEONE-ELSE"),
@@ -252,14 +255,14 @@ describe("readCodexSessionUsage", () => {
   it("flags ambiguity (never guesses) when two logs share the scratch cwd", async () => {
     const scratch = "/private/var/T/rennet-codex-DUP";
     const files: Record<string, FakeFile> = {
-      [`${DAY}/a.jsonl`]: {
+      [join(DAY, "a.jsonl")]: {
         mtimeMs: 2_000,
         content: [
           turnContext(scratch),
           tokenCount({ input: 10, cached: 0, output: 2, reasoning: 0 }),
         ].join("\n"),
       },
-      [`${DAY}/b.jsonl`]: {
+      [join(DAY, "b.jsonl")]: {
         mtimeMs: 2_100,
         content: [
           turnContext(scratch),
@@ -293,11 +296,11 @@ describe("readCodexSessionUsage", () => {
 describe("codexSessionsRoot", () => {
   it("prefers $CODEX_HOME/sessions when set", () => {
     expect(codexSessionsRoot({ CODEX_HOME: "/custom/codex" } as NodeJS.ProcessEnv)).toBe(
-      "/custom/codex/sessions",
+      join("/custom/codex", "sessions"),
     );
   });
   it("falls back to ~/.codex/sessions", () => {
     const root = codexSessionsRoot({} as NodeJS.ProcessEnv);
-    expect(root.endsWith("/.codex/sessions")).toBe(true);
+    expect(root.endsWith(join(".codex", "sessions"))).toBe(true);
   });
 });

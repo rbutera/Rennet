@@ -13,7 +13,7 @@ beforeEach(() => {
   path = join(dir, "nested", "projects.json");
 });
 afterEach(() => {
-  rmSync(dir, { recursive: true, force: true });
+  rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 function draft(overrides: Partial<ProjectDraft> = {}): ProjectDraft {

@@ -2,6 +2,9 @@ import { execFileSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { pathToFileURL } from "node:url";
 
+// On Windows the pnpm launcher is `pnpm.cmd`; a bare "pnpm" ENOENTs under execFileSync.
+const PNPM = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+
 // SPDX licence identifiers we ship without further review. `Unlicense` is a
 // public-domain-equivalent dedication (transitive via fast-sha256, pulled by the
 // Claude Agent SDK) and belongs in the allowlist next to MIT/ISC — unlike the
@@ -94,7 +97,7 @@ function main() {
   assertGateCanFail(POLICY);
 
   const report = JSON.parse(
-    execFileSync("pnpm", ["licenses", "list", "--json", "--prod"], { encoding: "utf8" }),
+    execFileSync(PNPM, ["licenses", "list", "--json", "--prod"], { encoding: "utf8" }),
   );
   const blocked = computeBlocked(report, POLICY);
 

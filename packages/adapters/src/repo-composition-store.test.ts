@@ -8,7 +8,8 @@ import { RepoCompositionStore } from "./repo-composition-store";
 
 const scratch: string[] = [];
 afterEach(() => {
-  for (const path of scratch.splice(0)) rmSync(path, { recursive: true, force: true });
+  for (const path of scratch.splice(0))
+    rmSync(path, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 describe("RepoCompositionStore", () => {
