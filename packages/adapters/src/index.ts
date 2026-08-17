@@ -63,6 +63,27 @@ export {
   stripNullDeep,
 } from "./codex-exec";
 export {
+  buildCodexTurnArgs,
+  CodexAdapter,
+  type CodexAdapterConfig,
+  type CodexTurnArgs,
+  type CodexTurnResultFrame,
+  type CodexTurnSpec,
+  type CodexTurnTransport,
+  classifyCodexItemKind,
+  extractCodexUsage,
+  mapCodexError,
+} from "./codex-adapter";
+export {
+  type CodexHarnessDeps,
+  type CodexHarnessResult,
+  type CodexTransportEffects,
+  createCodexHarness,
+  createCodexTurnTransport,
+  defaultCodexTransportEffects,
+  deriveCodexImplementedEvidence,
+} from "./codex-turn-transport";
+export {
   type CodexSessionReadDeps,
   type CodexSessionReadResult,
   type CodexSessionUsageReader,

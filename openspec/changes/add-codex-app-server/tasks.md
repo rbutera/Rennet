@@ -11,10 +11,10 @@ Red-first throughout: each group starts with failing tests against fake transpor
 
 ## 2. Codex adapter (adapters)
 
-- [ ] 2.1 RED: `packages/adapters/src/codex-adapter.test.ts` against fake `CodexTurnTransport` frames — completed turn with structured output + usage and strictly increasing `seq`; unmodelled frame → `passthrough` with raw native; exec/MCP/write items classified by `ToolKind`; nonzero exit → `failed` outcome with class+origin; abort → subprocess kill + `cancelled`; transport not invoked before a turn.
-- [ ] 2.2 GREEN: `packages/adapters/src/codex-adapter.ts` — `CodexAdapter implements HarnessPort`, injected `CodexTurnTransport`, tolerant decoders, `mapCodexError`, evidence-derived descriptor (no evidence → all false).
-- [ ] 2.3 Composition-root transport: pure `buildCodexTurnArgs` (asserted without spawning: `--json`, `--ignore-user-config`, `-C <cwd>` with NO `--skip-git-repo-check`, full-access flag, no approval/gating/read-only flag, `--output-schema`/`-o` when schema present, `-c mcp_servers.*.url` rendering) + the real spawn via `discoverCodex` path, `stdin: "ignore"`, host locus only (`// #334 seam` noted at the spawn site). Reuse `codex-exec.ts` helpers where they fit; do not fork the schema-nullability logic.
-- [ ] 2.4 Credential tripwire: test proving no read of `~/.codex/auth.json` (or any credential path) across construction + a fake turn, with the check itself proven able to fire (claude-harness-adapter precedent).
+- [x] 2.1 RED: `packages/adapters/src/codex-adapter.test.ts` against fake `CodexTurnTransport` frames — completed turn with structured output + usage and strictly increasing `seq`; unmodelled frame → `passthrough` with raw native; exec/MCP/write items classified by `ToolKind`; nonzero exit → `failed` outcome with class+origin; abort → subprocess kill + `cancelled`; transport not invoked before a turn.
+- [x] 2.2 GREEN: `packages/adapters/src/codex-adapter.ts` — `CodexAdapter implements HarnessPort`, injected `CodexTurnTransport`, tolerant decoders, `mapCodexError`, evidence-derived descriptor (no evidence → all false).
+- [x] 2.3 Composition-root transport: pure `buildCodexTurnArgs` (asserted without spawning: `--json`, `--ignore-user-config`, `-C <cwd>` with NO `--skip-git-repo-check`, full-access flag, no approval/gating/read-only flag, `--output-schema`/`-o` when schema present, `-c mcp_servers.*.url` rendering) + the real spawn via `discoverCodex` path, `stdin: "ignore"`, host locus only (`// #334 seam` noted at the spawn site). Reuse `codex-exec.ts` helpers where they fit; do not fork the schema-nullability logic.
+- [x] 2.4 Credential tripwire: test proving no read of `~/.codex/auth.json` (or any credential path) across construction + a fake turn, with the check itself proven able to fire (claude-harness-adapter precedent).
 
 ## 3. canvasOps@2 external transport
 
