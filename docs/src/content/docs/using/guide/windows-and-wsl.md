@@ -129,8 +129,9 @@ unreachable surface — Rennet never silently runs a host Codex against a WSL re
 - Token usage for a distro Codex turn arrives **in-protocol** over the app-server
   JSON-RPC stream (`thread/tokenUsage/updated`), which crosses the WSL boundary
   over stdio just like a host turn — so a distro Codex turn is measured like a
-  host one, with no session-log file to correlate across the boundary. The live
-  WSL run recorded that in-protocol usage.
+  host one, with no session-log file to correlate across the boundary. In-protocol
+  usage is proven live on the macOS app-server leg; the live WSL run asserts turn
+  completion and spawn composition, not usage.
 - Networking varies per Windows configuration, so the mirrored-vs-gateway choice is
   made by an empirical probe per session rather than by sniffing config; a
   misconfigured host surfaces as a plain failed turn, not a wrong guess.

@@ -142,12 +142,14 @@ events, `thread/tokenUsage/updated` becomes in-protocol usage, and the
 structured output when `outputSchema` was set). `turn/completed` is the terminal
 event: status `completed`, `failed` (with `TurnError.message` preserved verbatim,
 so auth expiry reaches the outcome), or `interrupted` (the interrupt ack).
-Interrupt, close, and abort send `turn/interrupt`, then terminate the whole
-process tree and await transport completion. Codex reports no per-turn cost, so
+An abort during a live turn sends `turn/interrupt` and waits (bounded) for the
+interrupted completion; a pre-turn abort kills directly, and a close after
+completion sends no interrupt. Every path then terminates the whole process tree
+and awaits transport completion. Codex reports no per-turn cost, so
 `costUsd` stays honestly false. `ThreadTokenUsage` does expose a
-`modelContextWindow`, but Rennet does not yet map or surface it, so
-`reportsContextWindow` stays false too — a real value the adapter has simply not
-wired through, not an absent one.
+`modelContextWindow` field (nullable in the schema), but Rennet does not map or
+surface it, so `reportsContextWindow` stays false too — the wiring, not the
+protocol, is what is missing.
 
 The full method surface, frame-mapping table, discovery candidates, and schema
 provenance live in the [Codex app-server integration

@@ -52,13 +52,13 @@ sequenceDiagram
   Server-->>Adapter: thread started (threadId)
   Adapter->>Server: turn/start (input, cwd, model, sandboxPolicy, outputSchema)
   Server-->>Adapter: turn/started
+  Server->>Provider: run the model
   loop streamed items
     Server-->>Adapter: item/started
     Server-->>Adapter: item/agentMessage/delta
     Server-->>Adapter: thread/tokenUsage/updated
     Server-->>Adapter: item/completed (agentMessage carries final text)
   end
-  Server->>Provider: run the model
   alt normal flow
     Server-->>Adapter: turn/completed (status completed)
     Note over Adapter,Server: close after completion sends no interrupt
