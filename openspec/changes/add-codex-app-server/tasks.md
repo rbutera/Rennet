@@ -4,10 +4,10 @@ Red-first throughout: each group starts with failing tests against fake transpor
 
 ## 1. Conformance suite (core)
 
-- [ ] 1.1 RED: `packages/core/src/harness-conformance.test.ts` — suite over a fake `HarnessPort` maps each check to exactly one `CapabilityName`; a skipped check leaves the flag false; output feeds `buildCapabilities` and the descriptor's true flags equal the passing set exactly.
-- [ ] 1.2 RED: positive control — the `structuredOutput` check against a deliberately-broken fake transport fails, and a suite run that cannot demonstrate the control failing refuses to certify.
-- [ ] 1.3 GREEN: implement `packages/core/src/harness-conformance.ts` — pure over `HarnessPort`, no Node at module scope; checks for `structuredOutput`, `interrupt`, `textDeltas`, `reportsContextWindow`, `costUsd`; layer attribution (fake runs cap at `implementedByAdapter`); export from core index.
-- [ ] 1.4 testedRange artifact: `packages/adapters/src/harness-tested-range.json` seeded with claude `{min: 2.0.0, maxTested: 2.1.220}`; descriptor reader; delete `CLAUDE_TESTED_RANGE` and migrate `ClaudeAdapter` + its tests onto the artifact. Test: descriptor range equals artifact, no other source.
+- [x] 1.1 RED: `packages/core/src/harness-conformance.test.ts` — suite over a fake `HarnessPort` maps each check to exactly one `CapabilityName`; a skipped check leaves the flag false; output feeds `buildCapabilities` and the descriptor's true flags equal the passing set exactly.
+- [x] 1.2 RED: positive control — the `structuredOutput` check against a deliberately-broken fake transport fails, and a suite run that cannot demonstrate the control failing refuses to certify.
+- [x] 1.3 GREEN: implement `packages/core/src/harness-conformance.ts` — pure over `HarnessPort`, no Node at module scope; checks for `structuredOutput`, `interrupt`, `textDeltas`, `reportsContextWindow`, `costUsd`; layer attribution (fake runs cap at `implementedByAdapter`); export from core index.
+- [x] 1.4 testedRange artifact: `packages/adapters/src/harness-tested-range.json` seeded with claude `{min: 2.0.0, maxTested: 2.1.220}`; descriptor reader; delete `CLAUDE_TESTED_RANGE` and migrate `ClaudeAdapter` + its tests onto the artifact. Test: descriptor range equals artifact, no other source.
 
 ## 2. Codex adapter (adapters)
 
