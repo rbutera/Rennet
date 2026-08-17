@@ -1110,6 +1110,8 @@ export const flaggedReviewSchema: z.ZodType<FlaggedReview> = z.union([
     ciSignal: ciSignalSchema.optional(),
     patchsetId: z.string().min(1).optional(),
     blockingStates: z.array(flaggedBlockingStateSchema).optional(),
+    uiVerification: uiVerificationSchema.optional(),
+    lateEnrichmentScheduled: z.literal(true).optional(),
   }),
 ]);
 

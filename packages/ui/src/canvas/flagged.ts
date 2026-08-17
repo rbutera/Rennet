@@ -75,6 +75,8 @@ export type FlaggedIndex =
       ciSignal?: CiSignal;
       /** Deterministic incomplete-ingestion blockers survive a failed model run. */
       blockingStates?: readonly DecompositionBlockingState[];
+      /** Verify-ui remains independently reportable when the base review fails. */
+      uiVerification?: UiVerification;
     }
   | {
       state: "ok";
@@ -215,6 +217,7 @@ export function buildFlaggedIndex(review: FlaggedReview): FlaggedIndex {
       state: "failed",
       reason: review.reason,
       ...(review.ciSignal ? { ciSignal: review.ciSignal } : {}),
+      ...(isUiVerification(review.uiVerification) ? { uiVerification: review.uiVerification } : {}),
       ...(blockingStates.length > 0 ? { blockingStates } : {}),
     };
   }

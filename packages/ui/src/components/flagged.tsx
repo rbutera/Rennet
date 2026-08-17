@@ -453,6 +453,7 @@ export function FlaggedLens({
         </div>
         <BlockedIngestionDisclosure states={index.blockingStates ?? []} />
         <CiSignalPanel signal={index.ciSignal} />
+        <UiVerificationStrip status={index.uiVerification} loadUiEvidence={loadUiEvidence} />
       </div>
     );
   }
