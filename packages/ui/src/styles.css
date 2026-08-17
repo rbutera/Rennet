@@ -188,7 +188,7 @@ button {
 .nav-rail-history {
   grid-template-columns: 1fr 1fr;
 }
-.nav-rail-button-paired {
+.nav-rail-button.nav-rail-button-paired {
   min-height: 34px;
   padding: 6px 0;
 }
