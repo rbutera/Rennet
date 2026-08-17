@@ -106,7 +106,9 @@ progress-by-`commandId` and ask-stream-by-`reviewId` (the `RennetBridge`
 methods, serialized). Adopt the versioning discipline in writing: append-only
 wire schemas, tolerant decoders, features gated once on `serverInfo.features`,
 one protocol version integer with a min-compat window. Ships protocol
-additions plus a protocol-compatibility docs page; no behavior change.
+additions plus a protocol-compatibility docs page; no behavior change. The
+discipline this phase establishes is written up in full at
+[protocol compatibility](/developing/reference/protocol-compatibility/).
 
 ### Phase 1 — Extract the server package (2-4 days)
 

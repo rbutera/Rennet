@@ -131,6 +131,10 @@ export default defineConfig({
                     link: "/developing/reference/app-server-plan/",
                   },
                   {
+                    label: "Protocol compatibility",
+                    link: "/developing/reference/protocol-compatibility/",
+                  },
+                  {
                     label: "App server research digest",
                     link: "/developing/reference/app-server-research/",
                   },
