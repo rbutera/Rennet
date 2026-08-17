@@ -38,9 +38,11 @@ terminal, and a shell command may resolve to a function instead of a file. Renne
 collects candidate directories, finds executables itself, and proves each
 candidate by running its version command.
 
-The front door checks `gh --version`, not the active login. Rennet asks for
-`gh auth token` only when project detail or publication first needs GitHub, so
-opening the app does not imply the account has already been validated.
+The front door checks whether `gh` is present, not the active login. Rennet asks
+for a token (via `gh auth token`) only when project detail or publication first
+needs GitHub, so opening the app does not imply the account has already been
+validated. If `gh` is absent or logged out, pasting a personal access token is
+the supported alternative to `gh auth login`.
 
 ## Add a project or workspace
 

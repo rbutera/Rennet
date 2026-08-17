@@ -74,6 +74,10 @@ This is especially useful for high-volume work such as narration, comment
 refinement, requirement extraction, and drafting. It also gives a genuinely
 different provider a seat in dual review when both are available.
 
+The routing tables deliberately cover only Claude and Codex. The ratified third
+adapter, omp, is not a council route: it serves orchestrator-chat only when it is
+the sole installed harness.
+
 ## Jobs can share a seat
 
 Not every catalogue row costs another session. Some jobs are **session riders**:
@@ -114,9 +118,13 @@ flowchart TD
 
 ## Traces and calibration
 
-Every model-facing resolution produces a one-line explanation such as “light
-tier, both providers, council row 14, no override.” The trace travels with RSP
-provenance and gives the UI enough information to answer why a model ran.
+Every model-facing resolution produces a one-line explanation of the shape
+`<job> ran on <model>-<effort> (<harness>) because: tier=<tier> · <scenario> ·
+council row <n> · <source>` — for example `finding-generation ran on
+sonnet-5-medium (claude) because: tier=heavy · both providers · council row 21 ·
+no override`. The
+trace travels with RSP provenance and gives the UI enough information to answer
+why a model ran.
 
 The intended calibration loop is deliberately human-readable: aggregate rejected
 documents by model and document type, inspect the table, then edit the versioned
@@ -127,8 +135,8 @@ defaults. There is no adaptive policy silently rewriting the route table.
 The catalogue, three assignment tables, pure resolver, cross-harness execution,
 resolution provenance, RoutePlan, and shared runtime invocation budget are live.
 The review pipeline resolves real decomposition, ordering, narration, finding,
-comment-refinement, PR-drafting, delta-summary, and CI-failure-classification
-seats through council-owned job IDs. CI classification is a batched light job
+comment-refinement, PR-drafting, delta-summary, CI-failure-classification,
+adjudication, and self-consistency seats through council-owned job IDs. CI classification is a batched light job
 that sees only deterministically unclassified failures and shares the review's
 invocation budget. It can promote an uncertain failure only to change-caused;
 environmental attribution remains deterministic-only. Refusal, timeout, or

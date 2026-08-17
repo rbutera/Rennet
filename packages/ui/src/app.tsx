@@ -1483,7 +1483,8 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // renderer never recomposes, edits, or substitutes it (the spec's "the run receives
   // the previewed bundle"). The discriminated outcome is stored verbatim: a refusal
   // renders as a refusal, a failure as an error, and no non-success is dressed as
-  // success. Consuming the new patchset into a delta re-review is #73, out of scope.
+  // success. The successor patchset IS consumed downstream: the run capture threads
+  // the ask trace into the hunk-grain delta account (#73, shipped).
   async function runHandoff(): Promise<void> {
     const openReview = reviewRef.current;
     const composed = handoffComposed;

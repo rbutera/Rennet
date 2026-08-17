@@ -119,7 +119,7 @@ may breathe when brevity would make them cryptic.
 
 ## Show mode without asking permission
 
-Every in-project screen shows the current execution mode in the title bar.
+Every in-project screen should surface the current execution mode rather than bury it; the execution locus is a visible setting on the settings screen.
 Auto is the normal mode. A read-only mode can describe a retrospective review,
 but there is no “ask before each model turn” mode: running review models is the
 job of the product.

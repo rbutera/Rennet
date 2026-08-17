@@ -14,6 +14,9 @@ The root manifest is the source of truth:
 - Node `24.18.0`
 - pnpm `10.32.1`
 
+The repo's `.nvmrc` pins the Node version, so a version manager can select it for
+you: run `nvm use` (or `fnm use`, or `asdf install`) from the checkout root.
+
 After selecting the pinned Node version, install exactly what the lockfile
 describes:
 

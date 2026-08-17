@@ -5,7 +5,7 @@ description: Run Rennet natively on Windows, or drive a project that lives insid
 
 Rennet runs on Windows two ways. A project on a Windows drive uses the host. A
 project that lives inside a [WSL](https://learn.microsoft.com/windows/wsl/)
-distro can route the supported git and Claude handoff operations into that
+distro can route the supported git, review, and harness operations into that
 distro while the Windows app keeps its filesystem view through UNC. Which one a
 project uses is its **execution locus**, and Rennet picks it automatically from
 the project's path.

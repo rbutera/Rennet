@@ -9,28 +9,54 @@ dated plan cannot quietly overrule the product.
 
 ## Authority order
 
+Authority is **scoped, not one long ladder**. Rule Zero sits above everything;
+below it, product intent, the current delivery sequence, and the engineering
+registers are sibling branches, each owning its own question. This mirrors the
+authority map on [Contracts and rulings](/developing/reference/contracts-and-rulings/),
+which is the senior statement of this model — if this page and that one ever
+diverge, that page wins and this diagram is the bug.
+
 ```mermaid
-flowchart TD
-  rule0["Rule Zero in AGENTS.md"] --> delivery[Delivery order]
-  delivery --> vision[Product and vision]
-  vision --> rulings[Contracts and rulings]
-  rulings --> architecture[Architecture contracts]
-  architecture --> dependencies[Dependency standard]
-  dependencies --> concepts[Focused concept pages]
-  concepts --> history[Git history and retired plans]
+flowchart TB
+  rule0["Rule Zero in AGENTS.md"]
+  vision["Product and vision<br/>what Rennet is for"]
+  delivery["Delivery order<br/>what to build next"]
+  rulings["Contracts and rulings<br/>general conflict decisions"]
+  architecture["Architecture contracts<br/>context · patchsets · persistence · publication"]
+  dependencies["Dependency standard<br/>packages · versions · tool ownership"]
+  concepts["Focused concept pages and accepted OpenSpec changes"]
+  history["Current main + tests, then Git history and retired plans"]
+
+  rule0 --> vision
+  rule0 --> delivery
+  rule0 --> rulings
+  rulings --> architecture
+  rulings --> dependencies
+  vision --> concepts
+  delivery --> concepts
+  architecture --> concepts
+  dependencies --> concepts
+  concepts --> history
 ```
 
-The arrows mean “wins over.” Two focused registers also own their exact scope:
+Read authority by question, not by rank:
 
-- [Architecture contracts](/developing/concepts/architecture-contracts/) win on
-  project context, immutable patchsets, invalidation, persistence, and
-  publication mechanics.
-- [Dependency standard](/developing/reference/dependency-standard/) wins on
-  package choice, versions, licences, toolchain ownership, and dependency
-  overlap.
+- For **what Rennet is trying to become**, [Product and vision](/using/concepts/product-and-vision/)
+  wins.
+- For **what should land next**, [Delivery order](/developing/reference/delivery-order/)
+  wins — but verify it against current `main`, because shipped work moves fast.
+- For **general conflicts between plans and implementations**,
+  [Contracts and rulings](/developing/reference/contracts-and-rulings/) wins, and
+  it owns two narrower registers beneath it:
+  - [Architecture contracts](/developing/concepts/architecture-contracts/) win on
+    project context, immutable patchsets, invalidation, persistence, and
+    publication mechanics.
+  - [Dependency standard](/developing/reference/dependency-standard/) wins on
+    package choice, versions, licences, toolchain ownership, and dependency
+    overlap.
 
-If either disagrees with the product's intent, that is a documentation bug to
-reconcile rather than a reason to pick whichever sentence is convenient.
+If any register disagrees with the product's intent, that is a documentation bug
+to reconcile rather than a reason to pick whichever sentence is convenient.
 
 ## What each page is for
 

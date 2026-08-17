@@ -103,7 +103,7 @@ the old conflict no longer controls current work; the row records the replacemen
 | **R8** | Occurrence IDs plus an explicit lineage graph replace content hash as identity. Similarity is evidence only; ambiguous, split, merged, or changed content reopens. |
 | **R9** | Decomposition is hybrid: deterministic code guarantees total coverage and an offline floor; a harness proposes the human-friendly graph; deterministic validation rejects omissions, duplicates, invalid anchors, and oversize units. |
 | **R10** | Use local code for non-semantic work and batched model jobs for semantic work. Under 15 seconds to first useful structure and fewer than five initial decomposition invocations are performance targets, never a reason to deny all analysis or pretend the deterministic floor was a model review. |
-| **R12** | `append` is the fourth settings merge strategy and is limited to guidance prose, with layer-labelled concatenation. |
+| **R12** | `append` is the fourth settings merge strategy and is limited to guidance prose, with layer-labelled concatenation. (Not yet live — the shipped resolver merges every registered key by `replace`; `union`/`deepMerge`/`append` are deferred to their first real producer per add-settings-v1.) |
 | **R13** | Adapter capabilities include per-call model selection and advertised models. Capabilities begin false and are demonstrated by conformance. |
 | **R17** | Commands produce durable receipts and events; projections rebuild from them. Publication has explicit `outcome-unknown` and query-before-retry recovery. Private events cannot change outbound bytes. |
 | **R18** | Diff ingestion stays byte-safe. Binaries, submodules, mode-only changes, oversize splits, and incomplete ingestion are first-class. Truncated, binary, or submodule capture leaves an explicit decomposition blocking state, so a done or publish gate cannot report completeness. |
@@ -124,7 +124,7 @@ the old conflict no longer controls current work; the row records the replacemen
 
 | ID | Current ruling |
 |---|---|
-| **R16** | Pierre `CodeView` owns the diff surface. Generic virtualization stays on rails and queues, not around the diff. |
+| **R16** | Pierre `CodeView` owns the diff surface. Generic virtualization stays on rails and queues, not around the diff. (Pierre is the intended, measured candidate; `@pierre/diffs` is installed nowhere on current `main`. Today the diff surface is Rennet's own hand-rolled `packages/ui/src/components/code-view.tsx`, which Pierre replaces when adopted — consistent with the dependency standard's hedged framing.) |
 | **R22** | Before outside code contributions are accepted, the repository carries the chosen contributor policy and explicit grant; there are never AI co-author or attribution trailers. |
 | **R25** | The diff-rendering direction is measured, not hypothetical. A replacement version must rerun DOM, frame, annotation-recycling, and accessibility checks. |
 | **R34** | pnpm owns packages, Nx owns the project graph and local cache, Vite owns renderer builds, and Electron Forge owns package/make/release. Exact pins follow the dependency standard. |

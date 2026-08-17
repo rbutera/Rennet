@@ -69,7 +69,8 @@ agent edit and test, captures a successor patchset, and shows the delta. Handing
 off is live: an own-branch review composes, previews, and runs the bundle from the
 renderer, and the acting command executes that exact model-composed bundle,
 threaded and bound by its digest. Seeing the successor patchset as a delta
-re-review is the part still to come.
+re-review is live too: the successor is captured with the ask trace and rendered
+as a deterministic hunk-grain delta account on the successor review.
 
 When you sign the finished paper, Rennet pushes the named branch and opens the
 previewed pull request. The richer fuzzy sub-file lineage work is separate: the

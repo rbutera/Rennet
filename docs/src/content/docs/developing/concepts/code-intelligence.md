@@ -39,7 +39,7 @@ than the extractor has.
 | Section | Label | What it really means |
 |---|---|---|
 | One unambiguous exported declaration | Exact, structural | Rennet found one matching declaration in its structural index |
-| Several matching declarations | Ambiguous, structural | The name alone does not identify one definition |
+| Several matching declarations | Guess, structural (with candidates) | The name alone does not identify one definition |
 | Identifier occurrences | Guess, textual | A name-based search found these sites; it is not type-aware |
 | Missing or unreadable shard | Unavailable | The index could not answer honestly |
 
@@ -51,7 +51,7 @@ another scope and can miss uses that do not preserve the identifier text.
 flowchart TD
   query["Clicked identifier"] --> defs{"Exported definition matches"}
   defs -->|one| exact["Exact · structural"]
-  defs -->|several| ambiguous["Ambiguous · structural"]
+  defs -->|several| guessStructural["Guess · structural · candidates"]
   defs -->|none| empty["No definition found"]
   query --> names["Textual occurrence lookup"]
   names --> guess["Guess · textual"]

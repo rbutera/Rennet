@@ -269,8 +269,8 @@ state.
 
 The old research ledger selected React Aria Components, TanStack Router, TanStack
 Query, Tinykeys, TanStack Virtual for non-diff lists, Pierre for the diff surface,
-and a sanitised React Markdown pipeline. They are **not all installed on current
-`main`**. Treat them as the first candidates when their capability lands, recheck
+and a sanitised React Markdown pipeline. **None of these are installed on current
+`main`.** Treat them as the first candidates when their capability lands, recheck
 current versions and peer ranges, and update this page and manifests together.
 
 Avoid parallel dialog/menu/toast primitive families. Avoid wrapping the diff

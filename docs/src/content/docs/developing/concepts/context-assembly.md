@@ -74,7 +74,7 @@ The current registry groups naturally by what it reads or changes:
 | Changed code | `diff.read`, `diff.search`, `diff.structure` |
 | Run evidence | `run.ledger`, `run.provenance` |
 | Repo Map | `context.map`, `context.file`, `context.overview`, `context.symbol`, `context.references` |
-| Derived context | `context.novelty`, `context.knowledge` |
+| Derived context | `context.novelty`, `context.knowledge`, `context.ask` |
 
 Each reply uses one envelope:
 
@@ -127,20 +127,20 @@ state. Malformed and orphaned anchors are honest no-ops. Continuous renderer vie
 sync and the `{ viewing }` batcher remain deferred; `canvas.view` therefore still
 reports the backend's static view rather than a live stream of every navigation.
 
-## The `context.ask` seam
+## The `context.ask` tool
 
-The design includes a synthesis tool named `context.ask`: one stable request and
-answer shape, with any retrieval sub-agent hidden behind it. That keeps the
-orchestrator contract independent of how Rennet later implements deeper answers.
+`context.ask` is a synthesis tool: one stable request and answer shape, with the
+retrieval sub-agent hidden behind it. That keeps the orchestrator contract
+independent of how Rennet implements deeper answers.
 
-It is **not registered on the current live `canvasOps@2` surface**. The primer's
-protocol-card text still mentions it, while the live tool index does not. Treat
-that as an implementation seam, not a callable capability. Today the
-orchestrator uses deterministic retrieval. The `context.knowledge` tool shape
-exists, but the persistent model-derived knowledge layer is not composed into
-desktop main; a background answer agent and its `answer` document are deferred.
-
-The live tracking item is [#15 — context.ask](https://github.com/rbutera/rennet/issues/15).
+It is **live and registered on the `canvasOps@2` surface**: the last entry in
+`CANVAS_OPS_TOOLS`, its handler calls the backend's model-backed `ask()`, the
+orchestrator primer lists it in the tool index, and the council seats it at
+`context-ask-fetch` and `context-ask-thorough` tiers. The persistent
+model-derived knowledge layer behind it is composed into desktop main through the
+live review backend. So the orchestrator has model-backed retrieval, not only
+deterministic lookup. Tracking item [#15](https://github.com/rbutera/rennet/issues/15)
+is shipped.
 
 ## Empirical validation still open
 

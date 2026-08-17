@@ -29,5 +29,7 @@ flowchart LR
 
 Team work can become a signed GitHub review. Your own branch can become a signed
 push-plus-PR submission. The coding-agent and successor-delta route shown above
-is the intended loop; its backend machinery exists, but the current renderer
-does not invoke it yet.
+is live end to end: compose, preview, a digest-bound run, then a deterministic
+hunk-grain delta account of the successor patchset. The one open seam is fuzzy
+lineage carry — exact-identity review state carries automatically, while the
+fuzzy lineage matcher is not yet called in production.

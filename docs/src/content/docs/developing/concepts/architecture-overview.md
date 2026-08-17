@@ -171,8 +171,8 @@ The handoff bundle, capable harness turn, checkpoints, successor capture,
 exact-evidence carry, and model composer are wired end to end. The acting command
 runs the composer's exact output bound by its digest, refusing a tampered or stale
 bundle, and the renderer composes, previews, and invokes it from the own-branch
-destination, surfacing the run outcome truthfully. Consuming the successor
-patchset into a delta re-review is the next seam.
+destination, surfacing the run outcome truthfully. The deterministic delta account over the
+successor patchset is live; the remaining seam is fuzzy lineage carry.
 
 The architecture still contains deliberate future seams: additional harnesses,
 remote/mobile clients, and public release machinery are not all live merely

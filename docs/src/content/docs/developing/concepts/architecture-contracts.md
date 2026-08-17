@@ -25,7 +25,7 @@ consent screens, capability denial, read-only coding sessions, or safety theatre
 | Occurrence lineage | Exact carry is live; fuzzy matching is present but not connected to carry | Similarity never impersonates identity |
 | Someone else's PR | Live end to end | Preview the exact outbound review, then submit once |
 | Own-branch PR submission | Live | Sign pushes the named branch and opens the previewed PR |
-| Coding-agent handoff | Backend commands live; renderer and composed-bundle joins missing | Coding agent may write and test; capture its complete delta as a successor |
+| Coding-agent handoff | Compose, prepare, and run live; the run executes the composer's digest-bound bundle; the renderer composes, previews, and invokes it; the deterministic delta account is live | Coding agent may write and test; capture its complete delta as a successor |
 | Remote/mobile client | Protocol seam only; client deferred | Host paths and raw events never cross the portable boundary |
 
 ## The ten invariants

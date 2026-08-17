@@ -129,10 +129,12 @@ capture, successor patchset, deterministic carry, and model composer behind
 main-process commands; an acting command that executes the exact composed bundle
 (bound by its digest, refusing a tampered or stale one); and the renderer trigger
 that composes, previews, and invokes it, surfacing the run outcome truthfully.
-Consuming the run's successor patchset into a delta re-review is the next seam.
-Richer sub-file lineage, project-processing narration, and parts of the
-code-intelligence experience are also intended destinations rather than finished
-surfaces.
+Consuming the run's successor patchset into a delta re-review is now live too:
+the successor is captured with the ask trace and rendered as a deterministic
+hunk-grain delta account on the successor review. The remaining seam is fuzzy
+sub-file lineage carry. Project-processing narration and parts of the
+code-intelligence experience are still intended destinations rather than
+finished surfaces.
 
 These docs mark those seams explicitly. A designed flow is useful context, but
 it is not reported as shipped merely because a schema or mockup exists.
