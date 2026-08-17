@@ -35,10 +35,10 @@ const CHUNK_KEY = chunkAnchorKey(PATH); // the whole-file anchor on the top spac
 // keeps them flowing beneath each other.
 const SAME_KEY_STEP = 200;
 
-function rect(top: number): DOMRect {
+function band(top: number, bottom: number): DOMRect {
   return {
-    bottom: top + 18,
-    height: 18,
+    bottom,
+    height: bottom - top,
     left: 0,
     right: 100,
     top,
@@ -49,21 +49,44 @@ function rect(top: number): DOMRect {
   };
 }
 
+function rect(top: number): DOMRect {
+  return band(top, top + 18);
+}
+
 /**
  * happy-dom rects are all zero; feed the rail real geometry keyed by anchor key. A keyed
- * row OR the chunk spacer resolves by `rowTops`; a thread panel resolves by `panelTops`,
- * offset by its position AMONG same-key siblings so two threads on one anchor get distinct
- * natural tops (the input the overlap fix must separate).
+ * diff row resolves by `rowTops`; a thread panel resolves by `panelTops`, offset by its
+ * position AMONG same-key siblings so two threads on one anchor get distinct natural tops
+ * (the input the overlap fix must separate).
+ *
+ * `opts` shapes the diff VIEWPORT the engine tests rows against. It defaults to a huge band,
+ * so the line-anchored tests stay gated by row PRESENCE alone (the real windowing decision).
+ * The chunk tests pass a realistic `[diffTop, diffBottom]` plus a `chunkBase`: the top spacer
+ * is always keyed and mounted now, so its rect is DYNAMIC — `chunkBase - scrollTop` — exactly
+ * as a content-top element scrolls up out of the viewport. That is what lets a 144px scroll
+ * (range.start still 0) push the spacer off-window, which only the engine viewport test catches.
  */
 function mockGeometry(
   rowTops: Readonly<Record<string, number>>,
   panelTops: Readonly<Record<string, number>>,
+  opts: { diffTop?: number; diffBottom?: number; chunkBase?: number } = {},
 ): void {
+  const diffTop = opts.diffTop ?? -1e6;
+  const diffBottom = opts.diffBottom ?? 1e6;
+  const chunkBase = opts.chunkBase ?? 0;
   vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
     this: HTMLElement,
   ) {
-    const key = this.getAttribute("data-anchor-key");
+    if (this.classList.contains("code-view-scroll")) return band(diffTop, diffBottom);
     if (this.classList.contains("conversation-margin")) return rect(100);
+    const key = this.getAttribute("data-anchor-key");
+    // The top chunk spacer: its viewport top tracks the live scroll (content top minus
+    // scrollTop), so overscan keeping it MOUNTED does not keep it ON-WINDOW.
+    if (key && this.classList.contains("code-view-spacer")) {
+      const scroll = this.closest(".code-view-scroll");
+      const scrollTop = scroll instanceof HTMLElement ? scroll.scrollTop : 0;
+      return rect(chunkBase - scrollTop);
+    }
     if (key && this.classList.contains("conversation-cluster")) {
       const siblings = [
         ...(this.parentElement?.querySelectorAll(
@@ -73,7 +96,7 @@ function mockGeometry(
       const idx = Math.max(0, siblings.indexOf(this));
       return rect((panelTops[key] ?? 0) + idx * SAME_KEY_STEP);
     }
-    if (key) return rect(rowTops[key] ?? 0); // a diff row OR the chunk spacer
+    if (key) return rect(rowTops[key] ?? 0); // a diff line row
     return rect(0);
   });
 }
@@ -203,10 +226,12 @@ describe("Review heart — the aligned margin over a real CodeView (#356)", () =
     });
   });
 
-  it("stacks a chunk-anchored panel once its top scrolls off, never hides it offscreen", async () => {
-    // The chunk key rides the top spacer; scrolled past, keeping it there would translate the
-    // panel by a large negative offset (hidden). At the top it aligns; scrolled, it must STACK.
-    mockGeometry({ [CHUNK_KEY]: 120 }, { [CHUNK_KEY]: 100 });
+  it("stacks a chunk panel once its top scrolls off within the overscan band (range.start still 0)", async () => {
+    // Codex #3's boundary: the 8-row overscan holds range.start at 0 through a 144px scroll, so
+    // the top spacer stays keyed AND mounted — a `range.start === 0` key-gate would keep aligning
+    // it. Only the engine's viewport-rect test stacks it: at 8*18 the spacer top sits above the
+    // diff viewport top. The chunk viewport is [0, 480] and the spacer top is chunkBase - scrollTop.
+    mockGeometry({}, { [CHUNK_KEY]: 100 }, { diffTop: 0, diffBottom: 480, chunkBase: 120 });
     const { container } = mount(
       <ReviewHeart
         threads={[openThread("t-chunk", { kind: "chunk", label: PATH, key: CHUNK_KEY })]}
@@ -214,7 +239,32 @@ describe("Review heart — the aligned margin over a real CodeView (#356)", () =
     );
     const chunk = () =>
       container.querySelector<HTMLElement>(`.conversation-cluster[data-anchor-key="${CHUNK_KEY}"]`);
-    // At the top: the spacer carries the chunk key, so the panel aligns (120 - 100).
+    // At the top the spacer top (120) is inside the [0, 480] viewport, so it aligns (120 - 100).
+    expect(chunk()?.getAttribute("data-align-offset")).toBe("20");
+
+    const scrollEl = container.querySelector<HTMLElement>(".code-view-scroll");
+    if (!scrollEl) throw new Error("scroll container did not mount");
+    act(() => {
+      fireEvent.scroll(scrollEl, { target: { scrollTop: 8 * 18 } });
+    });
+    // 144px up: range.start is still 0 (overscan), the spacer is still keyed and mounted, but its
+    // top (120 - 144 = -24) is now above the viewport — so the engine STACKS the chunk thread
+    // (no transform), never shoving it offscreen by a large negative translate.
+    await waitFor(() => {
+      expect(chunk()?.getAttribute("data-align-offset")).toBeNull();
+      expect(chunk()?.getAttribute("style") ?? "").not.toContain("translateY");
+    });
+  });
+
+  it("keeps a chunk-anchored panel stacked when the diff is scrolled deep past the chunk top", async () => {
+    mockGeometry({}, { [CHUNK_KEY]: 100 }, { diffTop: 0, diffBottom: 480, chunkBase: 120 });
+    const { container } = mount(
+      <ReviewHeart
+        threads={[openThread("t-chunk", { kind: "chunk", label: PATH, key: CHUNK_KEY })]}
+      />,
+    );
+    const chunk = () =>
+      container.querySelector<HTMLElement>(`.conversation-cluster[data-anchor-key="${CHUNK_KEY}"]`);
     expect(chunk()?.getAttribute("data-align-offset")).toBe("20");
 
     const scrollEl = container.querySelector<HTMLElement>(".code-view-scroll");
@@ -222,8 +272,8 @@ describe("Review heart — the aligned margin over a real CodeView (#356)", () =
     act(() => {
       fireEvent.scroll(scrollEl, { target: { scrollTop: 300 * 18 } });
     });
-    // Past the top the spacer drops the key, so the chunk panel STACKS (no transform) —
-    // it stays visible in document order, never shoved offscreen by a negative translate.
+    // Deep past the chunk top the spacer top is far above the viewport, so the chunk panel
+    // STACKS (no transform) — visible in document order, never translated offscreen.
     await waitFor(() => {
       expect(chunk()?.getAttribute("data-align-offset")).toBeNull();
       expect(chunk()?.getAttribute("style") ?? "").not.toContain("translateY");

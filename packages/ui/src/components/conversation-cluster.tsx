@@ -502,8 +502,10 @@ export function ConversationMargin({
 /**
  * Measure each thread's in-rail alignment offset from the rendered diff window
  * (#36 → #85). For every thread whose anchor row (`[data-anchor-key]`) is painted in
- * the windowed diff, the offset is the row top minus that panel's natural top in the
- * rail. A thread whose row is off-window is omitted, so its panel stacks. Recomputed
+ * the windowed diff AND sits within the diff viewport, the offset is the row top minus
+ * that panel's natural top in the rail. A thread whose row is off-window — absent from
+ * the DOM, or scrolled outside the viewport box while overscan keeps it mounted — is
+ * omitted, so its panel stacks (the honest fallback, never hidden). Recomputed
  * on diff scroll and on resize, since the windowed renderer swaps which rows exist.
  * Returns `{}` (all stacked) when no diff is measured — the honest default. The
  * offset is read-only against the diff DOM, never a write, so alignment cannot reflow
@@ -528,6 +530,12 @@ function useRailAlignments(
         const key = el.getAttribute("data-anchor-key");
         if (key && !rows.has(key)) rows.set(key, el); // the topmost row for a key wins
       }
+      // The diff VIEWPORT box. A windowed row can linger in the DOM inside the overscan
+      // band after it scrolls out of view, so a DOM hit is not proof of visibility — the
+      // rect must sit within this box (Codex #3). This single test kills the whole
+      // off-viewport class: line rows that overscan keeps mounted, AND the top chunk spacer
+      // (always keyed, always mounted) whose top climbs above the viewport once scrolled.
+      const diffRect = diff.getBoundingClientRect();
       const panels = rail.querySelectorAll<HTMLElement>(".conversation-cluster");
       const next: Record<string, number> = {};
       // Threads that SHARE an anchor key ride ONE offset: the first (topmost in document
@@ -539,12 +547,17 @@ function useRailAlignments(
         const key = thread.anchor.key;
         const row = rows.get(key);
         const panel = panels[index];
-        if (!row || !panel) continue; // off-window ⇒ stacked fallback, never a synthetic offset
+        if (!row || !panel) continue; // no row in the DOM ⇒ stacked fallback
+        const rowTop = row.getBoundingClientRect().top;
+        // Off-viewport (scrolled above the top or below the bottom) ⇒ treat the anchor as
+        // absent so the panel stacks — the honest "aligned on-window, stacked otherwise"
+        // rule, applied to real visibility instead of mere DOM presence.
+        if (rowTop < diffRect.top || rowTop > diffRect.bottom) continue;
         let offset = offsetByKey.get(key);
         if (offset === undefined) {
           const appliedOffset = Number(panel.dataset.alignOffset ?? 0);
           const panelNaturalTop = panel.getBoundingClientRect().top - appliedOffset;
-          offset = Math.round(row.getBoundingClientRect().top - panelNaturalTop);
+          offset = Math.round(rowTop - panelNaturalTop);
           offsetByKey.set(key, offset);
         }
         next[thread.id] = offset;

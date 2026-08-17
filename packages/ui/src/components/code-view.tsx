@@ -466,17 +466,18 @@ export function CodeView({
         data-rendered-rows={visible.length}
         data-window-start={range.start}
       >
-        {/* A spacer preserves scroll height for the rows above the window. It carries the
-            CHUNK anchor key (issue #356) ONLY while the chunk top is on-window — i.e. when
-            the window starts at row 0 and the spacer sits at the content top. Scrolled past
-            that (range.start > 0), the spacer's top climbs far above the viewport, and
-            keeping the key there would translate a chunk-anchored panel by that large
-            negative offset — effectively hiding it (Opus BUG-2 / Codex #3). Omitting the key
-            then makes a chunk thread STACK (the honest off-window fallback), never vanish.
-            Line keys (distinct grammar) never collide with it. */}
+        {/* A spacer preserves scroll height for the rows above the window, and carries the
+            CHUNK anchor key (issue #356) so the rail can align a whole-file thread to the top
+            of the chunk. It stays keyed at every scroll depth: whether the chunk top is
+            on-window is the alignment engine's call, made by a viewport-rect test, NOT a
+            `range.start === 0` key-gate. That gate was the wrong proxy — the default 8-row
+            overscan holds `range.start` at 0 while the spacer top is already ~144px above the
+            viewport (Codex #3). Scrolled off, the engine finds the spacer outside the diff
+            viewport and STACKS the chunk thread (the honest fallback), never translating it
+            offscreen. Line keys (distinct grammar) never collide with the chunk key. */}
         <div
           className="code-view-spacer"
-          data-anchor-key={range.start === 0 ? chunkAnchorKey(path) : undefined}
+          data-anchor-key={chunkAnchorKey(path)}
           style={{ height: `${range.start * rowHeight}px` }}
         />
         {visible.map((row) => {
