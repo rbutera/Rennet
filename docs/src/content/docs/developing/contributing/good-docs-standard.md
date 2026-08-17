@@ -51,3 +51,18 @@ done, not a separate chore.
 If a change touches something with no doc yet, the smallest honest fix is a stub
 page in the right area that says what the thing is and links the code — an empty
 page with a real name beats a correct fact nobody can find.
+
+## Periodic drift sweeps
+
+The same-change obligation still leaks: a wave can touch a page and miss a stale
+claim two paragraphs down. Two repo skills exist to catch that:
+
+- **`docs-audit`** (`.claude/skills/docs-audit/`) — fan-out verification of every
+  page against the openspec specs, the source, and the git log. Read-only; emits
+  an evidence-cited findings list.
+- **`docs-refresh`** (`.claude/skills/docs-refresh/`) — consumes an audit, fixes
+  only what the audit proved, runs the gate, and opens a PR.
+
+Run a sweep after each merged feature wave, or whenever the
+[delivery order](/developing/reference/delivery-order/) "Last checked" stamp
+falls behind the newest `feat` commits.

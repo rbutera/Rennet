@@ -6,8 +6,9 @@ description: The intended path from adding a project to signing a review, with h
 This is the road through Rennet: add a project, enter through your branch or a
 team pull request, understand the change, shape the outbound artifact, and sign
 it. A team change can become a GitHub review, while your branch can be pushed and
-opened as a pull request. The coding-agent loop in the journey is still missing
-its renderer join.
+opened as a pull request. The coding-agent loop in the journey is live end to
+end, from the renderer handoff through the successor's deterministic hunk-grain
+delta account; only fuzzy sub-file lineage carry is still to come.
 
 ## The journey at a glance
 
@@ -142,7 +143,7 @@ editable and yours.
 
 The paper is a read-only preview of exactly what will leave Rennet. For a team
 PR it contains the batched GitHub review and its verdict. For your own branch it
-will contain the handoff or PR submission.
+contains the handoff or PR submission.
 
 If the preview is wrong, go back to the draft. Signing publishes the exact
 paper, idempotently, in the reviewer's name.

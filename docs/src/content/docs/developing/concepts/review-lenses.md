@@ -145,8 +145,8 @@ findings concur. The agreement label is still location-and-severity agreement, n
 a settled verdict—it does not recognise differently worded claims as the same claim.
 But when the seats **disagree** (a solo, or a severity conflict), Rennet now asks the
 code who is right ([issue #41](https://github.com/rbutera/rennet/issues/41), delivered):
-one fresh turn on the Model Council's `adjudication` seat—by design a different model
-family than either reviewer—reads both labelled answers with explicit polarity plus
+one fresh turn on the Model Council's `adjudication` seat—in its own fresh,
+independent session—reads both labelled answers with explicit polarity plus
 the real code window and returns **supported**, **contradicted**, or **insufficient**.
 Divergence is the only trigger (a concurring row spends nothing), the pass draws from
 the one shared review budget and is capped, and the verdict informs the disagree flare

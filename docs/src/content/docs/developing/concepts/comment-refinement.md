@@ -31,7 +31,8 @@ sequenceDiagram
   D->>P: Effective body
 ```
 
-The live model output is intentionally small:
+The live model output is intentionally small (illustrative shape; in source it
+is the `emitted` arm of `RefinePortResult` in `packages/core/src/refine-comment.ts`):
 
 ```ts
 type RefineOutput =

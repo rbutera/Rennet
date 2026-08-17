@@ -21,9 +21,11 @@ read `hosts.yml`, and it does not copy the token into project files. The current
 forge adapter targets github.com and uses the account token returned by `gh`;
 GitHub Enterprise hosts are not wired yet.
 
-You also need a supported coding harness installed. Claude Code is the main live
-adapter today; Rennet discovers it automatically rather than asking you for an
-API key.
+You also need a supported coding harness installed. Claude Code is the primary
+adapter, and Rennet discovers it automatically rather than asking you for an API
+key. When Codex is also installed it runs as a co-equal second review seat, and
+divergent findings can get a third-opinion adjudication — an additive pass that
+never blocks a row.
 
 ## The review flow
 

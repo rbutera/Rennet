@@ -55,7 +55,7 @@ The Contracts and Rulings document (formerly titled the Master Plan; ruling numb
 
 ## Intended package boundaries
 
-`packages/types` imports nothing in-repo. `protocol` may import `types`; `core` may import `protocol`; `adapters` may import `core` and Node; `ui` may import only `types`, `protocol`, and browser-safe dependencies; `apps/desktop` is the only Electron package. Spikes are deliberately excluded from the pnpm workspace.
+`packages/types` imports nothing in-repo. `protocol` may import `types`; `instructions` may import `types`; `core` may import `protocol` and `instructions`; `adapters` may import `core`, `instructions`, and Node; `ui` may import only `types`, `protocol`, and browser-safe dependencies; `apps/desktop` is the only Electron package. Spikes are deliberately excluded from the pnpm workspace.
 
 ## Documentation (the docsite stays alive by construction)
 

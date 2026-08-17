@@ -46,8 +46,10 @@ flowchart TD
 
 A team PR can become a signed GitHub review. Your branch can be pushed and
 opened as the previewed pull request when you sign. The write-enabled agent
-handoff and successor-delta loop is the intended extra pass; its backend command
-path exists, but it is not called by the current renderer.
+handoff and successor-delta loop runs from the renderer: it composes the bundle,
+previews it, runs the digest-bound turn, and captures the successor as a
+deterministic hunk-grain delta account. Only fuzzy lineage carry is still to
+come — exact-identity review state carries automatically today.
 
 ## Move quickly with the keyboard
 
