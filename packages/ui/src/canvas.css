@@ -1619,6 +1619,80 @@
   color: var(--text-faint);
   font-size: 11px;
 }
+/* Verify-ui evidence strip (#183/#352): the mount-and-screenshot pass, in the
+   chrome-verdict chip language. `ran` carries the observation count and the
+   captured screenshots on the opaque code surface. Unavailability is honest, not
+   alarm — no amber, because a check that couldn't run is not a disagreement. */
+.ui-verification {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 9px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+}
+.ui-verification-pending,
+.ui-verification-unavailable {
+  background: var(--surface-sunken, transparent);
+}
+.ui-verification-ran {
+  background: var(--green-fill);
+  border-color: var(--green-line);
+}
+.ui-verification-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 9px;
+}
+.ui-verification-label {
+  flex: none;
+  font: 700 10px / 1.2 var(--sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-soft);
+}
+.ui-verification-ran .ui-verification-label {
+  color: var(--green);
+}
+.ui-verification-count {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 11px;
+}
+.ui-verification-reason {
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.ui-verification-shots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.ui-evidence-shot {
+  margin: 0;
+  border: 1px solid var(--hairline);
+  border-radius: var(--chip-radius);
+  overflow: hidden;
+  background: var(--code-bg);
+}
+.ui-evidence-shot img {
+  display: block;
+  max-width: 180px;
+  height: auto;
+}
+.ui-evidence-shot figcaption {
+  padding: 4px 6px;
+  color: var(--text-soft);
+  font-size: 11px;
+}
+.ui-evidence-loading,
+.ui-evidence-missing {
+  color: var(--text-faint);
+  font-size: 11px;
+}
 .flagged-empty {
   color: var(--text-faint);
   font-style: italic;
