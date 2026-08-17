@@ -15,7 +15,7 @@ flowchart LR
   pipeline["Core review pipeline"] --> port["HarnessPort"]
   port --> claude["Claude adapter"]
   port --> codex["Codex adapter"]
-  port --> omp["Future omp adapter"]
+  port --> omp["omp adapter"]
   claude --> cli["User's installed claude"]
   codex --> codexcli["User's installed codex"]
   omp --> ompcli["User's installed omp"]
@@ -29,9 +29,11 @@ Electron APIs. The real process integration lives in `packages/adapters`, and
 the desktop app composes the two.
 
 The port currently covers descriptor and health data, session creation, one
-event stream per session, turn start, interrupt, and close. Two real adapters
-implement it — Claude Code and Codex — and one cross-adapter conformance suite
-runs against both. Resume, fork, and the omp adapter remain later slices.
+event stream per session, turn start, interrupt, and close. Three real adapters
+implement it — Claude Code, Codex, and omp — and one cross-adapter conformance
+suite runs against all three. Resume and fork remain later slices. The omp
+adapter's hermetic suite proves only its interrupt and text-delta mappings, at
+`implementedByAdapter`; every outer layer stays false until a gated real run.
 
 ## One normalized event stream
 
@@ -143,6 +145,66 @@ both real adapters. A Claude-selected turn receives canvasOps in process; a
 Codex-selected turn reaches an injected `CodexTurnTransport` with the same backend
 served at its loopback MCP URL. The session event stream is subscribe-once.
 
+## omp is the third adapter
+
+The omp adapter drives the user's own installed `omp`
+(`@oh-my-pi/pi-coding-agent`, bin `omp` — never the abandoned npm namesake
+`oh-my-pi`), the harness R23 ratified as the third slot. It is the same shape as
+Codex: pure over an injected `OmpTurnTransport`, with the composition root
+spawning the discovered binary. The transport is `omp --mode rpc` — line-delimited
+JSON over stdin/stdout — not `omp acp`. ACP's distinguishing feature is a
+`session/request_permission` write-gating protocol, which is approval apparatus
+Rennet does not build (Rule Zero); RPC is also the surface `pi` shares, so the wire
+mapping stays inside that compatible subset and a future `pi` binary could ride the
+same normalization.
+
+```
+<proven bun> <resolved omp> --mode rpc   # exact runtime + pi-compatible transport
+    --auto-approve                       # full capability, no prompts
+    --no-session                         # ephemeral, fresh per turn
+    --cwd <review worktree>
+    [--model <model>] [--extension <turn scratch dir>]
+# <turn scratch dir>/mcp.json contains:
+# {"mcpServers":{"canvasops":{"type":"http","url":"<loopback>"}}}
+# the prompt is a { "type": "prompt" } command on stdin, never a positional arg
+```
+
+`--config` is not used for MCP: omp treats it as a settings overlay. Rennet writes
+the supported `mcp.json` shape into a scratch extension root, tells omp to load that
+root, and removes it after the turn. The exact placement, filename, schema, URL, and
+invocation are covered hermetically. Because no live omp turn has run, actual MCP
+discovery and connection remain unearned outer-layer claims.
+
+The RPC decoder bounds each stdout frame at 1 MiB and captured stderr at 64 KiB.
+Malformed, oversized, and unterminated frames become native protocol evidence and
+force a failed terminal outcome even when the process exits zero. Rejected RPC
+responses likewise fail the turn. Construction and iteration failures settle the
+same single terminal outcome, and a captured event stream is single-use.
+
+One honesty constraint shapes the whole adapter: **no turn has ever been executed
+against `omp`.** Every wire shape comes from the installed `.d.ts` files, not an
+observed byte stream. So the decoders are tolerant and passthrough-by-default (a
+wrong guess surfaces as `passthrough`, never a dropped or misclaimed frame), the
+hermetic fakes model only documented shapes, and the descriptor is evidence-derived:
+every capability flag starts false and is set only from a passing conformance check.
+The hermetic run proves `interrupt` and `textDeltas` only, caps them at
+`implementedByAdapter`, and spends nothing; the outer layers
+(`advertisedByHarness`, `availableInSession`) and the recorded tested range are
+earned only by the gated real run (`RENNET_LIVE_OMP=1`), which runs the suite against
+the installed binary and, on a full expected-matrix match, records the version into
+`harness-tested-range.json`. Until then there is **no omp entry** in that artifact,
+the descriptor omits `testedRange`, health says `untested`, and no capability claims
+above `implementedByAdapter`. `structuredOutput` remains expected-fail because omp's
+RPC prompt accepts no output schema; JSON text alone is not schema enforcement.
+Usage and cost are also absent because the real transport does not yet request stats.
+
+The desktop composition serves the `orchestrator-chat` seat with omp through the same
+external loopback MCP transport the Codex path uses — identical canvasOps@2 descriptors,
+same contract, no harness conditional in the canvasOps layer. The selection policy is
+deliberately minimal: omp serves the seat **only when neither Claude nor Codex is
+installed** (where the seat was previously unavailable entirely); whenever either is
+present, the Model Council's Claude/Codex assignment is unchanged.
+
 ## Discovery without shell tricks
 
 A desktop app launched from Finder does not inherit the same environment as an
@@ -161,6 +223,17 @@ Rennet therefore:
 Codex discovery also skips broken shims by probing with closed stdin and a hard
 timeout. Discovery proves that a binary runs; the adapter never opens Claude or
 Codex credential files.
+
+omp is a **runtime-dependent** harness: its bin is a TypeScript entry point executed
+by Bun (`engines.bun >= 1.3.14`). So omp discovery proves both the `omp` binary and a
+runnable `bun >= 1.3.14`, checking `~/.bun/bin` first. Bun is resolved before omp is
+executed; Rennet probes and launches the omp script through that exact proven runtime.
+The omp ranking demotes an asdf shim when a real install is available, and native
+Windows discovery consumes the candidate locus's actual `PATHEXT`. When `omp` is present but Bun is not,
+health degrades honestly — the reason **names the missing Bun runtime** and the
+resolved omp path is still reported, so the app can say "found omp but not Bun" rather
+than crashing at first spawn or claiming no omp is installed. This is a general
+discovery property for any future runtime-hosted harness, not omp-private logic.
 
 ## Capabilities are evidence, not a promise
 
@@ -198,7 +271,8 @@ Each adapter's `testedRange` (the version floor and ceiling it has actually been
 exercised against) is derived, never hand-edited. A real conformance run may record
 the binary version into the committed artifact only when its complete expected
 pass/fail matrix matches. Claude retains the explicitly permitted migration seed;
-Codex has no seed until its first genuine full-match real run writes one.
+Codex and omp have no seed until each one's first genuine full-match real run writes
+one; an absent entry renders as an absent descriptor range, never `0.0.0`.
 
 ## Authentication and cost honesty
 
@@ -215,7 +289,7 @@ Usage is equally literal. When a harness reports token or cost data, Rennet
 records it. Missing usage remains missing rather than being replaced with zero,
 and a derived estimate is never presented as a provider-reported charge.
 
-The canvasOps@2 surface a codex session reaches is served over an external MCP
+The canvasOps@2 surface a codex or omp session reaches is served over an external MCP
 transport, but that transport is a `127.0.0.1` listener on an ephemeral port
 inside the desktop process, handed only to the local codex session. It shares the
 same live in-memory backend as the in-process Claude path — one contract, two
@@ -245,7 +319,7 @@ frame remains available for diagnostics.
 | Cross-adapter conformance suite (hermetic + gated real) | Live |
 | Derived `testedRange` from a recorded artifact | Live |
 | canvasOps@2 external loopback transport for non-Claude slots | Live |
-| omp/Pi adapter | Deferred |
+| omp adapter (`@oh-my-pi/pi-coding-agent`) | Live; hermetic evidence only, no real-run range |
 | Resume and fork in the normalized port | Deferred |
 | Codex `app-server` JSON-RPC transport (behind the same seam) | Deferred until steering/resume is consumed |
 | Multi-harness self-consistency and disagreement sampling | Deferred |

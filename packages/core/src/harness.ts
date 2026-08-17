@@ -114,8 +114,8 @@ export interface HarnessDescriptor {
   readonly version: string;
   readonly binaryPath: string;
   readonly capabilities: HarnessCapabilities;
-  /** Version floor and ceiling we have actually tested against. */
-  readonly testedRange: { readonly min: string; readonly maxTested: string };
+  /** Version floor and ceiling we have actually tested against; absent until a real run earns it. */
+  readonly testedRange?: { readonly min: string; readonly maxTested: string };
 }
 
 export type HarnessHealth =
@@ -123,7 +123,7 @@ export type HarnessHealth =
   | {
       readonly state: "degraded";
       readonly version: string;
-      readonly reason: "below-floor" | "above-tested" | "unauthenticated";
+      readonly reason: "below-floor" | "above-tested" | "unauthenticated" | "untested";
     }
   | {
       readonly state: "unavailable";

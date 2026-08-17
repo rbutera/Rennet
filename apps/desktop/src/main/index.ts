@@ -23,6 +23,7 @@ import {
   createCodexUtilityAdapter,
   createCoverageTurn,
   createGitHubProjectPrSource,
+  createOmpTurnTransport,
   createRefPinner,
   createUiVerificationTurn,
   createVerificationFileReaderForPatchset,
@@ -31,12 +32,15 @@ import {
   defaultCodexExecEffects,
   defaultDiscoveryDeps,
   defaultGlobalConfigPath,
+  defaultOmpDiscoveryDeps,
   defaultProjectDetailSourceDeps,
   defaultProjectDiscoveryDeps,
   deriveCodexImplementedEvidence,
+  deriveOmpImplementedEvidence,
   deriveProjectDraft,
   discoverClaude,
   discoverCodex,
+  discoverOmp,
   discoverProject,
   discoverWorktreeIdentities,
   enrichKnowledgeForRepo,
@@ -59,6 +63,7 @@ import {
   loadConventionCatalogue,
   loadProjectDetail,
   NoveltyLifecycleRegistry,
+  OmpAdapter,
   ProjectContextReader,
   type ProjectPrSource,
   ProjectSnapshotGenerator,
@@ -166,7 +171,7 @@ import {
   performOpenInEditor,
   resolveEditorExecutables,
 } from "./open-in-editor";
-import { createOrchestratorTurnRunner } from "./orchestrator";
+import { createOrchestratorTurnRunner, resolveOrchestratorHarnessSelection } from "./orchestrator";
 import {
   createProactiveRehydration,
   PROACTIVE_REHYDRATION_COMMAND_ID,
@@ -378,6 +383,52 @@ function getCodexResolution(): Promise<CodexResolution> {
 
 function getCodexAvailability(): Promise<CodexAvailability> {
   return getCodexResolution().then((resolution) => resolution.availability);
+}
+
+// ── The omp resolution (#26) ───────────────────────────────────────────────────
+// omp is the THIRD harness slot (R23). It serves the orchestrator seat ONLY when
+// neither Claude nor Codex is installed (see `resolveHarness`) — the deliberately
+// minimal selection policy. Resolution mirrors the Codex one exactly: discover an
+// `omp` binary AND a runnable Bun (a missing Bun is honest DEGRADED health that names
+// the runtime, never a crash), derive the hermetic conformance evidence once, and
+// expose an `agenticPort(mcpServers)` factory that builds an `OmpAdapter` wired to the
+// REAL `omp --mode rpc` transport with the loopback canvasOps@2 URL — the same
+// external-MCP contract Codex uses, no harness conditional in the canvasOps layer.
+// Composed LAZILY and memoized so the login-shell + probe work runs on first use.
+interface OmpResolution {
+  readonly agenticPort:
+    | ((mcpServers: Readonly<Record<string, { readonly url: string }>>) => HarnessPort)
+    | null;
+  readonly version: string | null;
+}
+let ompResolution: Promise<OmpResolution> | null = null;
+function getOmpResolution(): Promise<OmpResolution> {
+  ompResolution ??= (async (): Promise<OmpResolution> => {
+    const explicitBin = process.env.RENNET_OMP_BIN;
+    const result = await discoverOmp(defaultOmpDiscoveryDeps(), {
+      ...(explicitBin && explicitBin.length > 0 ? { explicitBin } : {}),
+    });
+    const chosen = result.chosen;
+    if (!chosen?.runtimePath) {
+      // omp missing, or omp present but Bun absent — the Bun-aware health already
+      // carries the reason. No orchestrator seat against the slot.
+      return { agenticPort: null, version: null };
+    }
+    const transport = createOmpTurnTransport(chosen.path, chosen.runtimePath);
+    const capabilityEvidence = await deriveOmpImplementedEvidence(chosen.path);
+    return {
+      agenticPort: (mcpServers) =>
+        new OmpAdapter({
+          binaryPath: chosen.path,
+          transport,
+          version: chosen.version,
+          ...(capabilityEvidence === undefined ? {} : { capabilityEvidence }),
+          mcpServers,
+        }),
+      version: chosen.version,
+    };
+  })();
+  return ompResolution;
 }
 
 // The ambient first-run detection line (issue #29): which harnesses are on the
@@ -1734,23 +1785,50 @@ app.whenReady().then(async () => {
     resolveHarness: async () => {
       const claude = await getClaudeHarness();
       const codex = await getCodexResolution();
-      const installed: CouncilHarnessId[] = [];
-      if (claude.adapter) installed.push("claude-code");
-      if (codex.agenticPort) installed.push("codex");
-      const assignment = resolveAssignment("orchestrator-chat", { availability: { installed } });
-      if (assignment.kind !== "model") return null;
-      const agenticPort = codex.agenticPort;
-      if (assignment.harness === "codex" && agenticPort) {
-        return {
-          harness: "codex",
-          model: assignment.model,
-          resolvePort: (mcpServers) => Promise.resolve(agenticPort(mcpServers)),
-        };
-      }
-      const claudePath = claude.discovery.chosen?.path;
-      return assignment.harness === "claude-code" && claudePath
-        ? { harness: "claude-code", claudePath, model: assignment.model }
-        : null;
+      const claudePresent = claude.adapter !== null;
+      const codexPresent = codex.agenticPort !== null;
+      // omp fallback (#26): the deliberately minimal selection policy lives in the pure
+      // `resolveOrchestratorHarnessSelection` — omp serves the seat ONLY when neither
+      // Claude nor Codex is installed (where today the seat was null); otherwise the
+      // council decision below is returned UNCHANGED. The omp resolution is memoized like
+      // the others and only awaited on the sole-installed path (never a probe when the
+      // council already has a seat).
+      const ompResolvePort =
+        claudePresent || codexPresent
+          ? null
+          : await (async () => {
+              const ompPort = (await getOmpResolution()).agenticPort;
+              return ompPort
+                ? (mcpServers: Readonly<Record<string, { readonly url: string }>>) =>
+                    Promise.resolve(ompPort(mcpServers))
+                : null;
+            })();
+      return resolveOrchestratorHarnessSelection({
+        claudePresent,
+        codexPresent,
+        ompResolvePort,
+        council: () => {
+          const installed: CouncilHarnessId[] = [];
+          if (claudePresent) installed.push("claude-code");
+          if (codexPresent) installed.push("codex");
+          const assignment = resolveAssignment("orchestrator-chat", {
+            availability: { installed },
+          });
+          if (assignment.kind !== "model") return null;
+          const agenticPort = codex.agenticPort;
+          if (assignment.harness === "codex" && agenticPort) {
+            return {
+              harness: "codex",
+              model: assignment.model,
+              resolvePort: (mcpServers) => Promise.resolve(agenticPort(mcpServers)),
+            };
+          }
+          const claudePath = claude.discovery.chosen?.path;
+          return assignment.harness === "claude-code" && claudePath
+            ? { harness: "claude-code", claudePath, model: assignment.model }
+            : null;
+        },
+      });
     },
     env: process.env,
     backend: {
