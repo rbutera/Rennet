@@ -5,6 +5,8 @@
 // `PanelSurface` stream. These proofs drive the margin — opening a thread from a discuss
 // control, asking in that thread's own composer, and the honest states (orphaned,
 // interrupted, pending, per-thread error, the "both" two-card result) the cluster owns.
+// They also cover the anchorless GENERAL ASK restored as a stacked rail entry (#356):
+// answered with no thread, both-model routing, and the draft KEPT on a failed turn.
 
 import type { CommandInput, RennetBridge } from "@rennet/protocol";
 import type { AskReviewResult } from "@rennet/types";
@@ -400,6 +402,107 @@ describe("ConversationPanel (margin path)", () => {
     });
     expect(cluster.getAttribute("data-anchor-key")).toBe(CHUNK_ANCHOR.key);
     expect(cluster.querySelector(".conversation-composer-input")).not.toBeNull();
+  });
+
+  it("pins an anchorless general-ask panel at the rail's end and answers it with no thread", async () => {
+    const h = fakeBridge({ ask: answer("The change tightens the retry budget.") });
+    const { container } = mount(
+      <ConversationPanel bridge={h.bridge} reviewId="review-gen" anchors={[LINE_ANCHOR]} />,
+    );
+
+    // The general panel is a stacked rail citizen — present without opening any thread,
+    // and it is NOT a `.conversation-cluster`, so the alignment engine never offsets it.
+    const general = container.querySelector<HTMLElement>(".conversation-general");
+    if (!general) throw new Error("the general-ask panel is missing from the rail");
+    expect(general.classList.contains("conversation-cluster")).toBe(false);
+
+    // Open a thread and confirm the general panel stays pinned LAST, after the cluster.
+    await openThread(container);
+    const margin = container.querySelector<HTMLElement>(".conversation-margin");
+    expect(margin?.lastElementChild?.classList.contains("conversation-general")).toBe(true);
+
+    const input = general.querySelector<HTMLTextAreaElement>(".conversation-composer-input");
+    const send = general.querySelector<HTMLButtonElement>(".conversation-composer-send");
+    if (!input || !send) throw new Error("the general composer is missing");
+    fireEvent.change(input, { target: { value: "What is the shape of this change?" } });
+    fireEvent.click(send);
+
+    // Pending is honest, then a durable harness card lands in the general panel.
+    await waitFor(() =>
+      expect(general.textContent?.includes("The change tightens the retry budget.")).toBe(true),
+    );
+    expect(general.querySelector('.thread-message[data-author="harness"]')).not.toBeNull();
+
+    // The general turn carries NO anchor and NO threadId — it is scoped to the review.
+    const generalCall = h.calls
+      .filter((call) => call.name === "review.ask")
+      .map((call) => call.input as CommandInput<"review.ask">)
+      .find((cmd) => cmd.question === "What is the shape of this change?");
+    if (!generalCall) throw new Error("the general ask never reached review.ask");
+    expect(generalCall.mode).toBe("orchestrator");
+    expect(Object.keys(generalCall)).not.toContain("anchor");
+    expect(Object.keys(generalCall)).not.toContain("threadId");
+  });
+
+  it("keeps the typed question in the general composer when the ask fails", async () => {
+    const h = fakeBridge({ askRejects: "the models are unavailable" });
+    const { container } = mount(
+      <ConversationPanel bridge={h.bridge} reviewId="review-gen-error" anchors={[LINE_ANCHOR]} />,
+    );
+    const general = container.querySelector<HTMLElement>(".conversation-general");
+    if (!general) throw new Error("the general-ask panel is missing from the rail");
+    const input = general.querySelector<HTMLTextAreaElement>(".conversation-composer-input");
+    const send = general.querySelector<HTMLButtonElement>(".conversation-composer-send");
+    if (!input || !send) throw new Error("the general composer is missing");
+    fireEvent.change(input, { target: { value: "Does the budget change break callers?" } });
+    fireEvent.click(send);
+
+    const alert = await waitFor(() => {
+      const current = general.querySelector<HTMLElement>(".conversation-error");
+      if (!current) throw new Error("the general ask error has not appeared");
+      return current;
+    });
+    expect(alert.textContent).toBe("the models are unavailable");
+    // The reviewer's typed question is PRESERVED — never silently lost to a failed turn —
+    // and the composer is usable again for a retry.
+    const after = general.querySelector<HTMLTextAreaElement>(".conversation-composer-input");
+    expect(after?.value).toBe("Does the budget change break callers?");
+    expect(after?.disabled).toBe(false);
+  });
+
+  it("routes a general ask to both models as two unsynthesised cards", async () => {
+    const h = fakeBridge({ ask: bothAnswers });
+    const { container } = mount(
+      <ConversationPanel bridge={h.bridge} reviewId="review-gen-both" anchors={[LINE_ANCHOR]} />,
+    );
+    const general = container.querySelector<HTMLElement>(".conversation-general");
+    if (!general) throw new Error("the general-ask panel is missing from the rail");
+
+    const options = general.querySelector<HTMLButtonElement>('[aria-label="ask options"]');
+    if (!options) throw new Error("the general composer's ask routing is missing");
+    fireEvent.click(options);
+    const both = general.querySelector<HTMLButtonElement>(
+      '.conversation-route-item[data-mode="both"]',
+    );
+    if (!both) throw new Error("both-model routing is missing from the general composer");
+    fireEvent.click(both);
+
+    const input = general.querySelector<HTMLTextAreaElement>(".conversation-composer-input");
+    const send = general.querySelector<HTMLButtonElement>(".conversation-composer-send");
+    if (!input || !send) throw new Error("the general composer is missing");
+    fireEvent.change(input, { target: { value: "Do the models agree on the risk?" } });
+    fireEvent.click(send);
+
+    await waitFor(() =>
+      expect(general.textContent?.includes("The Codex second opinion.")).toBe(true),
+    );
+    const askCalls = h.calls.filter((call) => call.name === "review.ask");
+    expect(askCalls[0]?.input).toMatchObject({ reviewId: "review-gen-both", mode: "both" });
+    const harness = general.querySelectorAll('.thread-message[data-author="harness"]');
+    expect(harness).toHaveLength(2);
+    expect(
+      [...harness].map((card) => card.querySelector(".thread-message-model span")?.textContent),
+    ).toEqual(["Orchestrator · Claude", "Codex"]);
   });
 
   it("re-attaches an interrupted turn and renders it honestly in its cluster", async () => {

@@ -1,4 +1,4 @@
-import { type RefObject, useLayoutEffect, useRef, useState } from "react";
+import { type ReactNode, type RefObject, useLayoutEffect, useRef, useState } from "react";
 import { ASK_OPTIONS, type AskMode, DEFAULT_ASK_MODE } from "../canvas/ask";
 import type {
   ConversationAnchor,
@@ -95,7 +95,7 @@ export function ThreadChip({
 }
 
 /** One message card: "you" plain, a harness card labelled + carrying promote verbs. */
-function MessageCard({
+export function MessageCard({
   message,
   onPromote,
   onSubThread,
@@ -178,6 +178,129 @@ function MessageCard({
   );
 }
 
+/**
+ * The shared ask composer (#356): a textarea + the per-turn routing caret ("ask the
+ * orchestrator" / "ask both models") + send. Both the per-anchor {@link ConversationCluster}
+ * and the anchorless general-ask panel render it, so the routing UI and its wiring are
+ * defined once. Draft-clearing is the CALLER's decision, expressed through `onSend`'s
+ * result: return (or resolve to) `false` to KEEP the draft. The general ask uses this to
+ * preserve a typed question when a turn fails — losing the reviewer's words on error is a
+ * UI lie by omission, so it never happens. A void/`true`/absent result clears the draft
+ * (the cluster's fire-and-forget send, where the host owns the async turn). One ask at a
+ * time: `pending` disables the composer, so a second turn can't queue over an in-flight one.
+ */
+export function AskComposer({
+  placeholder,
+  inputLabel,
+  sendLabel,
+  initialMode = DEFAULT_ASK_MODE,
+  pending = false,
+  clearOnSend = true,
+  onSend,
+}: {
+  placeholder: string;
+  inputLabel: string;
+  sendLabel(mode: AskMode): string;
+  initialMode?: AskMode;
+  pending?: boolean;
+  /**
+   * When `true` (the default, the cluster's fire-and-forget send where the host owns the
+   * async turn), the draft clears the moment it is sent. When `false` (the general ask),
+   * the draft stays VISIBLE through the in-flight turn and clears only if `onSend` resolves
+   * to something other than `false` — so a failed turn KEEPS the reviewer's typed question
+   * rather than silently losing it.
+   */
+  clearOnSend?: boolean;
+  /**
+   * Run the turn. Its RESULT drives draft-clearing when `clearOnSend` is false: resolve
+   * to `false` to KEEP the draft (a failed turn), anything else clears it. Typed
+   * `unknown` so a fire-and-forget void send and a `Promise<boolean>` send both fit.
+   */
+  onSend(body: string, mode: AskMode): unknown;
+}) {
+  const [draft, setDraft] = useState("");
+  const [mode, setMode] = useState<AskMode>(initialMode);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const canSend = draft.trim().length > 0 && !pending;
+
+  async function send(): Promise<void> {
+    if (!canSend) return;
+    const body = draft.trim();
+    if (clearOnSend) {
+      // Fire-and-forget: send and clear synchronously (the host owns the turn's outcome).
+      void onSend(body, mode);
+      setDraft("");
+      return;
+    }
+    // Keep the draft through the turn; clear only on success, keep it on failure (a
+    // `false` result). Losing a typed question to a transient error is a UI lie by omission.
+    const outcome = await onSend(body, mode);
+    if (outcome !== false) setDraft("");
+  }
+
+  function pickMode(next: AskMode): void {
+    setMode(next);
+    setMenuOpen(false);
+  }
+
+  return (
+    <div className="conversation-composer" data-ask-mode={mode}>
+      <textarea
+        className="conversation-composer-input"
+        placeholder={placeholder}
+        aria-label={inputLabel}
+        value={draft}
+        disabled={pending}
+        onChange={(event) => setDraft(event.target.value)}
+      />
+      {/* The per-turn routing caret (#139): "Ask the orchestrator" is the default,
+          "Ask both models" the opt-in. Picking a routing changes only THIS turn's
+          mode; there is no synthesis — "both" yields two labelled answers. */}
+      <div className="conversation-composer-route">
+        <button
+          type="button"
+          className="conversation-composer-caret"
+          aria-label="ask options"
+          aria-haspopup="menu"
+          aria-expanded={menuOpen}
+          disabled={pending}
+          onClick={() => setMenuOpen((open) => !open)}
+        >
+          <span aria-hidden="true">⌄</span>
+        </button>
+        {menuOpen ? (
+          <div className="conversation-route-menu" role="menu">
+            {ASK_OPTIONS.map((option) => (
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={option.mode === mode}
+                className="conversation-route-item"
+                data-mode={option.mode}
+                key={option.mode}
+                onClick={() => pickMode(option.mode)}
+              >
+                <span className="conversation-route-label">{option.label}</span>
+                <span className="conversation-route-hint">{option.hint}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+      </div>
+      <button
+        type="button"
+        className="conversation-composer-send"
+        data-ask-mode={mode}
+        aria-label={sendLabel(mode)}
+        disabled={!canSend}
+        onClick={() => void send()}
+      >
+        <CommentIcon size={13} />
+      </button>
+    </div>
+  );
+}
+
 export interface ConversationClusterProps {
   /** The private thread this panel renders (its anchor, route, and messages). */
   thread: ConversationThread;
@@ -230,27 +353,7 @@ export function ConversationCluster({
   error,
   alignOffset,
 }: ConversationClusterProps) {
-  const [draft, setDraft] = useState("");
-  // The per-turn routing (#139): a thread starts at its own route (orchestrator by
-  // default) and the caret opts THIS turn into "both". Held here, not globally, so a
-  // choice never leaks past the thread it was made in.
-  const [mode, setMode] = useState<AskMode>(thread.route ?? DEFAULT_ASK_MODE);
-  const [menuOpen, setMenuOpen] = useState(false);
-  // A pending turn holds the composer: one live ask at a time per thread, so the
-  // reviewer cannot queue a second question over an in-flight orchestrator turn.
-  const canSend = draft.trim().length > 0 && !pending;
   const pill = anchorPill ?? thread.anchor.label;
-
-  function send(): void {
-    if (!canSend || !onAsk) return;
-    onAsk(draft.trim(), mode);
-    setDraft("");
-  }
-
-  function pickMode(next: AskMode): void {
-    setMode(next);
-    setMenuOpen(false);
-  }
 
   // #251 slice 3: an ORPHANED thread — the code it was anchored to has left the diff.
   // Surfaced honestly (a banner + `data-orphaned`), its content preserved, and it is NOT
@@ -309,64 +412,18 @@ export function ConversationCluster({
       </div>
 
       {onAsk ? (
-        <div className="conversation-composer" data-ask-mode={mode}>
-          <textarea
-            className="conversation-composer-input"
-            placeholder="Ask about these lines"
-            aria-label={`Ask about ${thread.anchor.label}`}
-            value={draft}
-            disabled={pending}
-            onChange={(event) => setDraft(event.target.value)}
-          />
-          {/* The per-turn routing caret (#139): "Ask the orchestrator" is the default,
-              "Ask both models" the opt-in. Picking a routing changes only THIS turn's
-              mode; there is no synthesis — "both" yields two labelled answers. */}
-          <div className="conversation-composer-route">
-            <button
-              type="button"
-              className="conversation-composer-caret"
-              aria-label="ask options"
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              disabled={pending}
-              onClick={() => setMenuOpen((open) => !open)}
-            >
-              <span aria-hidden="true">⌄</span>
-            </button>
-            {menuOpen ? (
-              <div className="conversation-route-menu" role="menu">
-                {ASK_OPTIONS.map((option) => (
-                  <button
-                    type="button"
-                    role="menuitemradio"
-                    aria-checked={option.mode === mode}
-                    className="conversation-route-item"
-                    data-mode={option.mode}
-                    key={option.mode}
-                    onClick={() => pickMode(option.mode)}
-                  >
-                    <span className="conversation-route-label">{option.label}</span>
-                    <span className="conversation-route-hint">{option.hint}</span>
-                  </button>
-                ))}
-              </div>
-            ) : null}
-          </div>
-          <button
-            type="button"
-            className="conversation-composer-send"
-            data-ask-mode={mode}
-            aria-label={
-              mode === "both"
-                ? "Ask both models about these lines"
-                : "Ask the orchestrator about these lines"
-            }
-            disabled={!canSend}
-            onClick={send}
-          >
-            <CommentIcon size={13} />
-          </button>
-        </div>
+        <AskComposer
+          placeholder="Ask about these lines"
+          inputLabel={`Ask about ${thread.anchor.label}`}
+          sendLabel={(mode) =>
+            mode === "both"
+              ? "Ask both models about these lines"
+              : "Ask the orchestrator about these lines"
+          }
+          initialMode={thread.route ?? DEFAULT_ASK_MODE}
+          pending={pending}
+          onSend={(body, mode) => onAsk(body, mode)}
+        />
       ) : null}
     </aside>
   );
@@ -392,6 +449,14 @@ export interface ConversationMarginProps {
    * column is never touched, so it cannot reflow.
    */
   diffRef?: RefObject<HTMLElement | null>;
+  /**
+   * A trailing rail citizen pinned at the END of the column, after every anchored
+   * thread (#356): the anchorless "ask the orchestrator" panel. It is NOT a
+   * `.conversation-cluster`, so `useRailAlignments` never measures or offsets it — it
+   * simply stacks last in document order, which is the honest place for a thread with
+   * no diff row to align to. Absent ⇒ no trailing panel (the rail is threads only).
+   */
+  railFooter?: ReactNode;
 }
 
 /**
@@ -409,6 +474,7 @@ export function ConversationMargin({
   pendingThreadIds,
   errorByThread,
   diffRef,
+  railFooter,
 }: ConversationMarginProps) {
   const railRef = useRef<HTMLElement>(null);
   const alignments = useRailAlignments(railRef, diffRef, threads);
@@ -428,6 +494,7 @@ export function ConversationMargin({
           alignOffset={alignments[thread.id]}
         />
       ))}
+      {railFooter}
     </section>
   );
 }

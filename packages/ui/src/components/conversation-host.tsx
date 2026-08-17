@@ -19,8 +19,15 @@ import {
   promoteMessage,
   pushDelta,
   THREAD_LANE,
+  type ThreadMessage,
 } from "../canvas/conversation";
-import { ConversationMargin, DiscussControl } from "./conversation-cluster";
+import {
+  AskComposer,
+  ConversationMargin,
+  DiscussControl,
+  MessageCard,
+} from "./conversation-cluster";
+import { LockIcon } from "./icons";
 
 /**
  * Reconstruct a live {@link ConversationThread} from a persisted one on re-attach (#251).
@@ -500,7 +507,138 @@ export function ConversationHost({
         pendingThreadIds={pending}
         errorByThread={errors}
         diffRef={diffRef}
+        railFooter={
+          <GeneralAskPanel
+            bridge={bridge}
+            reviewId={reviewId}
+            timeoutMs={timeoutMs}
+            selection={selection}
+          />
+        }
       />
     </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The anchorless GENERAL ASK (#356). Not every question hangs off a diff line: the
+// reviewer must be able to ask the orchestrator about the change as a whole. This is
+// the affordance the retired flat `PanelSurface` carried and #356's margin adoption
+// must NOT drop — restored here as a STACKED panel pinned at the rail's end (never
+// aligned, since it has no diff row), the remedy the design's risk section names
+// ("keep it in the margin rail as a stacked panel rather than resurrecting the flat
+// stream"). It fires the SAME `review.ask` boundary as a thread turn — orchestrator by
+// default, "both" the per-turn opt-in that appends Codex as a second labelled card,
+// never a synthesis. It carries NO anchor and NO threadId: a general ask is scoped to
+// the review, not to a line, so the question travels verbatim (no `buildConversation
+// Question` anchor scope). A failed turn is surfaced honestly AND KEEPS the reviewer's
+// typed draft — losing a question to a transient error is a UI lie by omission.
+// ─────────────────────────────────────────────────────────────────────────────
+
+function GeneralAskPanel({
+  bridge,
+  reviewId,
+  timeoutMs,
+  selection,
+}: {
+  bridge: RennetBridge;
+  reviewId: string;
+  timeoutMs: number;
+  selection?: NonNullable<CommandInput<"review.ask">["selection"]>;
+}) {
+  const [messages, setMessages] = useState<readonly ThreadMessage[]>([]);
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | undefined>(undefined);
+
+  /** Run one general turn. Resolves `false` on failure so the composer KEEPS the draft. */
+  async function ask(body: string, mode: AskMode): Promise<boolean> {
+    setMessages((current) => [...current, { id: crypto.randomUUID(), author: "you", body }]);
+    setPending(true);
+    setError(undefined);
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const invocation = bridge.invoke("review.ask", {
+        commandId: crypto.randomUUID(),
+        reviewId,
+        mode,
+        question: body,
+        ...(selection === undefined ? {} : { selection }),
+      });
+      const timeout = new Promise<never>((_resolve, reject) => {
+        timer = setTimeout(
+          () => reject(new Error("The orchestrator did not answer in time. Try asking again.")),
+          timeoutMs,
+        );
+      });
+      const result = await Promise.race([invocation, timeout]);
+      // The real answer(s): the orchestrator's `primary` always, plus Codex's
+      // `secondOpinion` when the reviewer asked both — each a durable labelled card, no
+      // synthesis (the same two-card contract the anchored clusters render).
+      setMessages((current) => {
+        const grown: ThreadMessage[] = [
+          ...current,
+          {
+            id: crypto.randomUUID(),
+            author: "harness",
+            model: result.primary.model,
+            body: result.primary.answer,
+          },
+        ];
+        if (result.secondOpinion) {
+          grown.push({
+            id: crypto.randomUUID(),
+            author: "harness",
+            model: result.secondOpinion.model,
+            body: result.secondOpinion.answer,
+          });
+        }
+        return grown;
+      });
+      return true;
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+      return false;
+    } finally {
+      if (timer !== undefined) clearTimeout(timer);
+      setPending(false);
+    }
+  }
+
+  return (
+    <aside
+      className="conversation-general is-private"
+      data-lane="blue"
+      aria-label="Ask the orchestrator"
+    >
+      <header className="conversation-head">
+        <span className="conversation-head-lock" aria-hidden="true">
+          <LockIcon size={12} />
+        </span>
+        <span className="conversation-head-title">Ask the orchestrator</span>
+      </header>
+      <div className="conversation-messages">
+        {messages.map((message) => (
+          <MessageCard key={message.id} message={message} />
+        ))}
+        {pending ? (
+          <p className="conversation-pending" role="status" aria-live="polite">
+            Asking the orchestrator…
+          </p>
+        ) : null}
+        {error ? (
+          <p className="conversation-error" role="alert">
+            {error}
+          </p>
+        ) : null}
+      </div>
+      <AskComposer
+        placeholder="Ask the orchestrator about this review"
+        inputLabel="Ask the orchestrator"
+        sendLabel={(mode) => (mode === "both" ? "Ask both models" : "Ask the orchestrator")}
+        pending={pending}
+        clearOnSend={false}
+        onSend={ask}
+      />
+    </aside>
   );
 }

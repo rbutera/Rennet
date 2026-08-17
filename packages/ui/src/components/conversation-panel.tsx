@@ -12,7 +12,9 @@ import { ConversationHost, DEFAULT_CONVERSATION_TIMEOUT_MS } from "./conversatio
 // otherwise. The flat `PanelSurface` chat stream it used to render is retired — the
 // aligned rail shipped in #85 is now the live architecture (#356). Every per-thread
 // affordance (ask, promote, sub-thread, pending, per-thread error, the "both" route)
-// lives on `ConversationCluster`; the host owns opening/re-attach/orphan resolution.
+// lives on `ConversationCluster`; the anchorless "ask the orchestrator" affordance
+// lives on the `GeneralAskPanel` stacked at the rail's end (both-model routing, draft
+// preserved on a failed turn); the host owns opening/re-attach/orphan resolution.
 //
 // The wrapper keeps the `.conversation-panel-shell` element so the review-heart split's
 // sibling-column contract holds: the shell is the diff column's fixed flex sibling, and
