@@ -1,7 +1,7 @@
 import { constants } from "node:fs";
 import { access, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
-import { posix as posixPath, resolve, win32 as win32Path } from "node:path";
+import { posix as posixPath, win32 as win32Path } from "node:path";
 import {
   type HarnessHealth,
   HOST_LOCUS,
@@ -18,6 +18,14 @@ import { execa } from "execa";
  */
 function joinFor(platform: NodeJS.Platform | undefined): (...parts: string[]) => string {
   return platform === "win32" ? win32Path.join : posixPath.join;
+}
+
+/** `path.resolve` for a platform, NOT the host's: mirrors joinFor so a host-locus
+ * candidate is normalized with the LOCUS platform's resolver. Native `resolve` would
+ * corrupt a POSIX path on a win32 host (and vice versa); in production the host deps
+ * carry `platform: process.platform`, so this is byte-identical to native `resolve`. */
+function resolveFor(platform: NodeJS.Platform | undefined): (...parts: string[]) => string {
+  return platform === "win32" ? win32Path.resolve : posixPath.resolve;
 }
 
 /**
@@ -556,7 +564,7 @@ export async function discoverCodex(
     // Normalize to ABSOLUTE: codex-exec spawns from a fresh scratch cwd, so a
     // relative override (e.g. "codex") must be anchored against the app's cwd
     // HERE, at resolution time, not left to resolve against the wrong dir later.
-    const path = resolve(options.explicitBin);
+    const path = resolveFor(deps.platform)(options.explicitBin);
     if (await deps.isExecutable(path)) {
       const version = await deps.probeVersion(path);
       if (version !== null) {
@@ -602,7 +610,7 @@ export async function discoverCodex(
     // relative `chosen.path` that codex-exec would resolve against its scratch cwd.
     // WSL: keep the distro-native POSIX path (resolve would corrupt it on a Windows host).
     const joined = join(directory, filename);
-    const path = locus.kind === "host" ? resolve(joined) : joined;
+    const path = locus.kind === "host" ? resolveFor(deps.platform)(joined) : joined;
     if (resolved.has(path)) continue;
     if (!(await deps.isExecutable(path))) continue;
     resolved.add(path);
@@ -733,7 +741,7 @@ async function resolveCandidates(
     const filename = resolveBinaryFilename(entries, binary, deps.platform, deps.pathExt);
     if (filename === null) continue;
     const joined = join(directory, filename);
-    const path = locus.kind === "host" ? resolve(joined) : joined;
+    const path = locus.kind === "host" ? resolveFor(deps.platform)(joined) : joined;
     if (resolved.has(path)) continue;
     if (!(await deps.isExecutable(path))) continue;
     resolved.add(path);
@@ -792,7 +800,8 @@ export async function discoverOmp(
   let explicitOmp: DiscoveredCandidate | null = null;
   if (options.explicitBin !== undefined && options.explicitBin.length > 0) {
     const locus = deps.locus ?? HOST_LOCUS;
-    const path = locus.kind === "host" ? resolve(options.explicitBin) : options.explicitBin;
+    const path =
+      locus.kind === "host" ? resolveFor(deps.platform)(options.explicitBin) : options.explicitBin;
     if (await deps.isExecutable(path)) {
       explicitOmp = { path, version: null, fromKnownLocation: true, locus };
     }
