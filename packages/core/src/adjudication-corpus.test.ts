@@ -38,9 +38,7 @@ describe("ADJUDICATION_CORPUS shape (#41)", () => {
   it("has at least one clean control for every claim class present", () => {
     const classes = new Set(ADJUDICATION_CORPUS.map((i) => i.claimClass));
     for (const cls of classes) {
-      const hasClean = ADJUDICATION_CORPUS.some(
-        (i) => i.claimClass === cls && i.truth === "clean",
-      );
+      const hasClean = ADJUDICATION_CORPUS.some((i) => i.claimClass === cls && i.truth === "clean");
       expect(hasClean, `class ${cls} needs a clean control`).toBe(true);
     }
   });

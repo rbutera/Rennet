@@ -14,7 +14,7 @@
  * branches on it.
  */
 
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import committed from "./adjudication-calibration.json";
 

@@ -47,7 +47,9 @@ function hunk(
   context: readonly string[] = [],
 ): OfferedManifest {
   return {
-    occurrences: [{ id, kind: "hunk", sides: { additions: [...additions], context: [...context] } }],
+    occurrences: [
+      { id, kind: "hunk", sides: { additions: [...additions], context: [...context] } },
+    ],
     lineage: [],
   };
 }
@@ -62,7 +64,10 @@ export const ADJUDICATION_CORPUS: readonly AdjudicationCorpusItem[] = Object.fre
     id: "off-by-one-planted",
     claimClass: "behavioural-off-by-one",
     truth: "planted-bug",
-    manifest: hunk("h", ["for (let i = 0; i <= items.length; i++) {", "  total += items[i].price;"]),
+    manifest: hunk("h", [
+      "for (let i = 0; i <= items.length; i++) {",
+      "  total += items[i].price;",
+    ]),
     plantedSummary: "loop condition `i <= items.length` overruns the array by one",
     plantedAnchor: "rennet:hunk/h",
   },
@@ -139,7 +144,10 @@ export const ADJUDICATION_CORPUS: readonly AdjudicationCorpusItem[] = Object.fre
     id: "clean-control-comment",
     claimClass: "clean-control",
     truth: "clean",
-    manifest: hunk("h", ["+// Clarify why the cache is keyed by repository root, not branch.", "return cacheKey(root);"]),
+    manifest: hunk("h", [
+      "+// Clarify why the cache is keyed by repository root, not branch.",
+      "return cacheKey(root);",
+    ]),
   },
 ]);
 
@@ -202,7 +210,10 @@ export function scoreAdjudicationCalibration(
   outcomes: readonly AdjudicationOutcome[],
 ): ClassCalibration[] {
   const byId = new Map(outcomes.map((o) => [o.id, o]));
-  const byClass = new Map<AdjudicationClaimClass, { items: number; overlap: number; adj: number }>();
+  const byClass = new Map<
+    AdjudicationClaimClass,
+    { items: number; overlap: number; adj: number }
+  >();
 
   for (const item of items) {
     const outcome = byId.get(item.id) ?? { id: item.id, overlapFlagged: false };

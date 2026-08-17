@@ -189,8 +189,7 @@ export async function runFindingAdjudication(
       continue;
     }
 
-    const answers =
-      finding.agreement.kind === "disagree" ? finding.agreement.answers : [];
+    const answers = finding.agreement.kind === "disagree" ? finding.agreement.answers : [];
     const prompt = renderFindingAdjudicationPrompt(contract, {
       file: window,
       row: {
@@ -217,8 +216,7 @@ export async function runFindingAdjudication(
       stamp(finding.findingId, "insufficient", NO_VERDICT_CAVEAT);
       continue;
     }
-    const evidence =
-      parsed.evidence.trim().length > 0 ? parsed.evidence.trim() : NO_VERDICT_CAVEAT;
+    const evidence = parsed.evidence.trim().length > 0 ? parsed.evidence.trim() : NO_VERDICT_CAVEAT;
     stamp(finding.findingId, parsed.verdict, evidence);
   }
 

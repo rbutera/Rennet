@@ -32,7 +32,7 @@ Red-first throughout: each numbered group starts with the failing test that prov
 
 - [x] 5.1 Add `packages/adapters/src/adjudication-calibration.real.test.ts` (env-gated like `harness-conformance.real.test.ts`): drive both installed adapters' finding seats over the corpus, reconcile, adjudicate contested rows on the resolved seat, score, and record `packages/adapters/src/adjudication-calibration.json` (per class: overlap accuracy, adjudication accuracy, counts, binary versions, date).
 - [x] 5.2 RED then green: loader/recorder test — the committed artifact parses, only the recorder writes it, and nothing consumes it as a gate; until a real run lands it holds the honest empty recorded shape (no invented numbers).
-- [ ] 5.3 Run the real calibration once locally (both harnesses installed) and commit the recorded table. If a harness is unavailable at implementation time, commit the empty shape and say so in the PR — the table lands from the first genuine run, never by hand.
+- [x] 5.3 Run the real calibration once locally (both harnesses installed) and commit the recorded table. If a harness is unavailable at implementation time, commit the empty shape and say so in the PR — the table lands from the first genuine run, never by hand.
 
 ## 6. Flagged lens chip
 
@@ -43,5 +43,5 @@ Red-first throughout: each numbered group starts with the failing test that prov
 
 - [x] 7.1 Update the dual-review/flagged docs pages (Using: what the adjudication chip means, the third-opinion framing; Developing: the pass, the corpus, the calibration artifact and its real-run-only provenance).
 - [x] 7.2 Update `docs/src/content/docs/developing/reference/delivery-order.md`: mark the #41 entry in wave 10 delivered with the honest one-paragraph account (what shipped, what was deliberately cut and why — N=3, the struck ship gate).
-- [ ] 7.3 Full gate `sh -c 'pnpm check'` green with a positive control; verify zero spend in the gate; stage `openspec/` with `git add -f`.
+- [x] 7.3 Full gate `sh -c 'pnpm check'` green with a positive control; verify zero spend in the gate; stage `openspec/` with `git add -f`.
 - [ ] 7.4 PR closes #41; the closing note records the committed calibration table location and the deliberate cuts.

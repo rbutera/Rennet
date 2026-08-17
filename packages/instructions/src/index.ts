@@ -652,9 +652,7 @@ export function renderFindingAdjudicationPrompt(
     .split("\n")
     .map((line, index) => `${batch.file.startLine + index}\t${line}`)
     .join("\n");
-  const answers = batch.row.answers
-    .map((a) => `- ${a.model} answers: ${a.answer}`)
-    .join("\n");
+  const answers = batch.row.answers.map((a) => `- ${a.model} answers: ${a.answer}`).join("\n");
   return [
     `# Rennet cross-harness adjudication@${contract.version}`,
     "",

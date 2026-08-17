@@ -1,9 +1,9 @@
 import type { FindingElement, OfferedManifest, RspTokenUsage } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
 import {
-  adjudicateFlaggedReview,
   type AdjudicationTurn,
   type AdjudicationTurnResult,
+  adjudicateFlaggedReview,
   DEFAULT_MAX_ADJUDICATIONS,
   runFindingAdjudication,
 } from "./finding-adjudication";
@@ -37,10 +37,7 @@ const readAll: VerificationFileReader = async (anchor) => WINDOWS[anchor];
 const LABELS = { a: "Claude", b: "Codex" };
 
 /** A disagree (solo) row: seat A flagged, seat B silent. */
-function solo(
-  findingId: string,
-  overrides: Partial<FindingElement> = {},
-): FindingElement {
+function solo(findingId: string, overrides: Partial<FindingElement> = {}): FindingElement {
   const anchor = overrides.anchor ?? "rennet:hunk/h1";
   const summary = overrides.summary ?? "load() can return null and is dereferenced unguarded";
   return {
@@ -219,9 +216,9 @@ describe("runFindingAdjudication — honest insufficient, never a drop (#41)", (
     expect(s?.agreement.kind === "disagree" && s.agreement.adjudication?.verdict).toBe(
       "insufficient",
     );
-    expect(
-      s?.agreement.kind === "disagree" && s.agreement.adjudication?.evidence,
-    ).toMatch(/session spawn failed/);
+    expect(s?.agreement.kind === "disagree" && s.agreement.adjudication?.evidence).toMatch(
+      /session spawn failed/,
+    );
   });
 
   it("a failed turn stamps insufficient, never drops", async () => {
@@ -261,7 +258,9 @@ describe("runFindingAdjudication — honest insufficient, never a drop (#41)", (
       findings: [solo("S1")],
       manifest: MANIFEST,
       readFileWindow: readAll,
-      runTurn: turnByRef({ a1: { verdict: "contradicted", evidence: "the guard at line 2 handles it" } }),
+      runTurn: turnByRef({
+        a1: { verdict: "contradicted", evidence: "the guard at line 2 handles it" },
+      }),
       adjudicatedBy: BY,
       budget: budget(),
     });

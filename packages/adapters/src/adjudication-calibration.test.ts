@@ -37,9 +37,7 @@ describe("recordAdjudicationCalibration (#41)", () => {
   it("records measured numbers with a timestamp and the measured binaries", async () => {
     const written = await recordAdjudicationCalibration({
       binaries: { "claude-code": "2.1.220", codex: "0.9.0" },
-      classes: [
-        { claimClass: "null-deref", items: 2, overlapCorrect: 1, adjudicationCorrect: 2 },
-      ],
+      classes: [{ claimClass: "null-deref", items: 2, overlapCorrect: 1, adjudicationCorrect: 2 }],
       now: new Date("2026-08-17T00:00:00.000Z"),
       path: scratch,
     });

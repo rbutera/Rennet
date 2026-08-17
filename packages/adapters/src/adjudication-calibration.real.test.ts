@@ -1,9 +1,9 @@
 import {
   ADJUDICATION_CORPUS,
   type AdjudicationOutcome,
-  type FindingProvenanceSeed,
   createHarnessRunTurn,
   createInvocationBudget,
+  type FindingProvenanceSeed,
   resolveAssignment,
   resolveDualSeat,
   runDualFindingReview,
@@ -12,10 +12,7 @@ import {
 } from "@rennet/core";
 import type { CouncilResolveContext, FindingAdjudicationVerdict } from "@rennet/types";
 import { describe, expect, it } from "vitest";
-import {
-  createClaudeAdjudicationTurn,
-  createCodexAdjudicationTurn,
-} from "./adjudication-backend";
+import { createClaudeAdjudicationTurn, createCodexAdjudicationTurn } from "./adjudication-backend";
 import { recordAdjudicationCalibration } from "./adjudication-calibration";
 import { createClaudeHarness } from "./claude-query";
 import { createCodexExecutor, createCodexUtilityAdapter } from "./codex-exec";
