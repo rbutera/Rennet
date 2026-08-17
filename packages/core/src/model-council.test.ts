@@ -292,6 +292,25 @@ describe("resolveAssignment — deterministic tier + degraded", () => {
     });
   });
 
+  it("derives the harness after a contradictory degraded default resolves its model", () => {
+    const resolved = resolveAssignment(
+      "chunk-titles",
+      ctx(
+        { installed: [] },
+        {
+          harnessDefault: { harness: "claude-code", model: "gpt-5.6-luna", effort: "low" },
+        },
+      ),
+    );
+    expect(resolved).toMatchObject({
+      kind: "model",
+      harness: "codex",
+      model: "gpt-5.6-luna",
+      effort: "low",
+    });
+    expect(resolved.trace.summary).toContain("(codex)");
+  });
+
   it("throws on an unknown jobId (a programming error)", () => {
     expect(() => resolveAssignment("no-such-job", ctx(BOTH))).toThrow(/unknown jobId/);
   });

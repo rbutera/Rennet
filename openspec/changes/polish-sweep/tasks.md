@@ -5,7 +5,7 @@ Red-first: every code change lands its failing control before the fix. Close-wit
 ## 1. #65 — bound primer B2/B3
 
 - [x] 1.1 RED: add a test in `packages/core/src/orchestrator-primer.test.ts` assembling a primer for 10 repos / 20 canvases; assert it returns (no throw) with `bytes ≤ PRIMER_MAX_BYTES` and that B2/B3 end in rollup tail lines. Confirm it fails against current `assemblePrimer` (throws or overruns).
-- [x] 1.2 Implement the caps + rollup tails in `packages/core/src/orchestrator-primer.ts` per design (named K constant; `… +N more repos — X fresh / Y stale`; `… +N more canvases — aggregate counts`). Keep ordering and the ceiling throw.
+- [x] 1.2 Implement the caps + rollup tails in `packages/core/src/orchestrator-primer.ts` per design (named K constant; `… +N more repos — X current / Y not current`; `… +N more canvases — aggregate counts`). Keep ordering and the ceiling throw.
 - [x] 1.3 Extend the determinism test to cover the rollup path (same large inputs → identical bytes/digest); confirm small reviews' primer bytes are unchanged (existing tests stay green untouched).
 - [x] 1.4 Docs: update any docsite page stating "one line per repo" for B2 (grep `docs/src/content/docs` for primer section descriptions) to the bounded-with-rollup truth.
 
@@ -27,7 +27,7 @@ Red-first: every code change lands its failing control before the fix. Close-wit
 ## 4. #316 — one per-review turn ceiling
 
 - [x] 4.1 RED: add a main-process test beside `apps/desktop/src/main/index.ts` driving BOTH flows (canvases, then flagged) for one review with a recording fake adapter; assert the hypothesis turn ran ONCE and total invocations debit one shared ceiling. Confirm it fails (two hypothesis turns today).
-- [x] 4.2 Implement the per-review intelligence session per design: `Map` keyed `(reviewId, activePatchsetId)` holding `{ budget, hypothesis: Promise }`; both flows draw budget and hypothesis from it; ceiling created once via `reviewInvocationCeiling`.
+- [x] 4.2 Implement the turn-aware review intelligence session per design: pair one canvas/flagged dispatch on `{ budget, hypothesis: Promise }`, start fresh on same-flow re-entry, and release the coordinator entry after both flows join; ceiling created once via `reviewInvocationCeiling`.
 - [x] 4.3 Test: a reattach (new active patchset) re-derives the hypothesis and resets the ceiling; concurrent flow entry awaits the in-flight hypothesis promise (no double spend).
 - [ ] 4.4 Close #316 with the shipped single-ceiling summary.
 
@@ -45,3 +45,12 @@ Red-first: every code change lands its failing control before the fix. Close-wit
 
 - [x] 7.1 Update `docs/src/content/docs/developing/reference/delivery-order.md`: mark wave 11's sweep delivered with the per-issue outcomes (four fixes, two evidence closes), leaving #85 as the open closing milestone.
 - [x] 7.2 `pnpm check` green before push (includes a positive control: the red-first tests above each failed before their fix).
+
+## 8. Consolidated review corrections
+
+- [x] 8.1 RED: add dispatch-composition and session regressions proving one exact budget across real canvas/flagged routes, fresh quick→dual and canvas-retry same-key turns, concurrent hypothesis sharing, and failed-hypothesis recomputation.
+- [x] 8.2 Pair the canvas/flagged dispatches into one turn, pass mode to canvases, and thread the session through the desktop producers. Require the session budget in `ReviewPipelineInputParts`, `buildReviewCanvases`, and `runDecisionsForReview`; remove all private defaults.
+- [x] 8.3 RED + fix: pin the 10-repo/20-canvas fixture to 4,096 bytes and exact order-independent tails; use current/not-current freshness and compact B3 rows.
+- [x] 8.4 RED + fix: derive council harness once after every model/effort path, including contradictory degraded defaults; delete the stale pipeline override comment.
+- [x] 8.5 RED + fix: require numeric separators strictly between digits and tokenize diff source separately from its marker; cover all five malformed probes plus added/deleted column-zero shell/YAML comments.
+- [x] 8.6 Run targeted affected tests, then `NX_DAEMON=false pnpm check`; commit the verified correction without pushing.

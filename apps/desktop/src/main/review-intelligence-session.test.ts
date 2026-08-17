@@ -1,81 +1,110 @@
 import type { InvocationBudget, Review, ReviewHypothesis } from "@rennet/types";
-import { beforeEach, describe, expect, it } from "vitest";
-import {
-  __resetReviewIntelligenceSessions,
-  reviewIntelligenceSession,
-} from "./review-intelligence-session";
+import { describe, expect, it } from "vitest";
+import { createReviewIntelligenceSessions } from "./review-intelligence-session";
 
-// The session reads only `id` and `activePatchsetId`; a partial cast keeps the unit
-// honest without constructing an entire Review fixture.
 function fakeReview(id: string, activePatchsetId: string): Review {
   return { id, activePatchsetId } as unknown as Review;
 }
 
-describe("reviewIntelligenceSession (#316)", () => {
-  beforeEach(() => {
-    __resetReviewIntelligenceSessions();
-  });
-
-  it("computes the hypothesis ONCE and shares ONE budget across both flows", async () => {
+describe("review intelligence turn lifecycle (#316)", () => {
+  it("shares one provisional canvas session with the first same-mode flagged turn", () => {
+    const sessions = createReviewIntelligenceSessions();
     const review = fakeReview("rv_1", "ps_1");
-    let computeCalls = 0;
-    const compute = (budget: InvocationBudget): Promise<ReviewHypothesis | undefined> => {
-      computeCalls += 1;
-      budget.tryConsume("hypothesis"); // the one hypothesis turn debits the shared ceiling
-      return Promise.resolve(undefined);
-    };
-
-    // The canvas flow enters first, the flagged flow second — the SAME review turn.
-    // Before #316 each flow computed the hypothesis on its own ceiling (two spends);
-    // the shared session collapses that to one turn on one budget.
-    const canvas = reviewIntelligenceSession(review, true, compute);
-    const flagged = reviewIntelligenceSession(review, true, compute);
-    await Promise.all([canvas.hypothesis, flagged.hypothesis]);
-
-    expect(computeCalls).toBe(1); // one hypothesis turn, not two (the #316 double-spend)
-    expect(flagged.budget).toBe(canvas.budget); // one shared ceiling INSTANCE
-    expect(canvas.budget.consumed).toBe(1); // a single debit on the shared budget
+    const canvas = sessions.enter(review, true, "canvases");
+    const flagged = sessions.enter(review, true, "flagged");
+    expect(flagged).toBe(canvas);
+    expect(flagged.budget).toBe(canvas.budget);
+    expect(flagged.budget.max).toBe(12);
   });
 
-  it("memoizes the in-flight promise so a concurrent flow awaits the first spend", async () => {
+  it("memoizes one in-flight hypothesis promise across concurrent flows", async () => {
+    const sessions = createReviewIntelligenceSessions();
     const review = fakeReview("rv_conc", "ps_1");
+    const canvas = sessions.enter(review, true, "canvases");
+    const flagged = sessions.enter(review, true, "flagged");
     let resolve: ((value: ReviewHypothesis | undefined) => void) | undefined;
     let computeCalls = 0;
     const compute = (): Promise<ReviewHypothesis | undefined> => {
       computeCalls += 1;
-      return new Promise((r) => {
-        resolve = r;
+      return new Promise((settle) => {
+        resolve = settle;
       });
     };
-    const a = reviewIntelligenceSession(review, true, compute);
-    const b = reviewIntelligenceSession(review, true, compute); // enters while a is in flight
-    expect(b.hypothesis).toBe(a.hypothesis); // same in-flight promise
+    const a = canvas.hypothesis(compute);
+    const b = flagged.hypothesis(compute);
+    expect(b).toBe(a);
+    expect(computeCalls).toBe(0);
+    await Promise.resolve();
     expect(computeCalls).toBe(1);
-    resolve?.(undefined);
-    await Promise.all([a.hypothesis, b.hypothesis]);
+    resolve?.({
+      domain: "session",
+      scope: { inScope: [], outOfScope: [] },
+      designExpectation: "one shared turn",
+      risks: [],
+      repoContextPresent: false,
+    });
+    await Promise.all([a, b]);
   });
 
-  it("a reattach (new active patchset) re-derives the hypothesis and resets the ceiling", () => {
-    let computeCalls = 0;
-    const compute = (): Promise<ReviewHypothesis | undefined> => {
-      computeCalls += 1;
+  it("same-key quick to dual re-entry starts a fresh budget with the correct ceiling", () => {
+    const sessions = createReviewIntelligenceSessions();
+    const review = fakeReview("rv_toggle", "ps_1");
+    const quick = sessions.enter(review, false, "flagged");
+    quick.budget.tryConsume("quick");
+    const dual = sessions.enter(review, true, "flagged");
+    expect(dual).not.toBe(quick);
+    expect(dual.budget).not.toBe(quick.budget);
+    expect(quick.budget.max).toBe(6);
+    expect(quick.budget.consumed).toBe(1);
+    expect(dual.budget.max).toBe(12);
+    expect(dual.budget.consumed).toBe(0);
+  });
+
+  it("same-key canvas retry starts a fresh budget instead of reusing the failed turn", () => {
+    const sessions = createReviewIntelligenceSessions();
+    const review = fakeReview("rv_retry_canvas", "ps_1");
+    const failed = sessions.enter(review, false, "canvases");
+    failed.budget.tryConsume("failed-canvas");
+    const retry = sessions.enter(review, false, "canvases");
+    expect(retry).not.toBe(failed);
+    expect(retry.budget).not.toBe(failed.budget);
+    expect(retry.budget.max).toBe(6);
+    expect(retry.budget.consumed).toBe(0);
+  });
+
+  it("a new patchset starts a fresh turn", () => {
+    const sessions = createReviewIntelligenceSessions();
+    const first = sessions.enter(fakeReview("rv_1", "ps_1"), true, "flagged");
+    const reattached = sessions.enter(fakeReview("rv_1", "ps_2"), true, "flagged");
+    expect(reattached).not.toBe(first);
+    expect(reattached.budget).not.toBe(first.budget);
+  });
+
+  it("clears a failed hypothesis memo so a retry recomputes", async () => {
+    const sessions = createReviewIntelligenceSessions();
+    const session = sessions.enter(fakeReview("rv_retry", "ps_1"), true, "flagged");
+    let calls = 0;
+    const failed = (budget: InvocationBudget): Promise<ReviewHypothesis | undefined> => {
+      calls += 1;
+      budget.tryConsume("hypothesis");
       return Promise.resolve(undefined);
     };
-    const first = reviewIntelligenceSession(fakeReview("rv_1", "ps_1"), true, compute);
-    const reattached = reviewIntelligenceSession(fakeReview("rv_1", "ps_2"), true, compute);
-    expect(reattached).not.toBe(first);
-    expect(reattached.budget).not.toBe(first.budget); // the ceiling resets for the new turn
-    expect(computeCalls).toBe(2); // a new patchset re-derives, never reuses
-  });
-
-  it("the ceiling reflects the deep/quick mode at first entry", () => {
-    const deep = reviewIntelligenceSession(fakeReview("rv_deep", "ps"), true, () =>
-      Promise.resolve(undefined),
-    );
-    const quick = reviewIntelligenceSession(fakeReview("rv_quick", "ps"), false, () =>
-      Promise.resolve(undefined),
-    );
-    expect(deep.budget.max).toBe(12); // DEFAULT_REVIEW_INTELLIGENCE_BUDGET.totalInvocations
-    expect(quick.budget.max).toBe(6); // .quickReviewInvocations
+    await session.hypothesis(failed);
+    const recovered: ReviewHypothesis = {
+      domain: "session",
+      scope: { inScope: [], outOfScope: [] },
+      designExpectation: "retry succeeded",
+      risks: [],
+      repoContextPresent: false,
+    };
+    await expect(
+      session.hypothesis(async (budget) => {
+        calls += 1;
+        budget.tryConsume("hypothesis");
+        return recovered;
+      }),
+    ).resolves.toBe(recovered);
+    expect(calls).toBe(2);
+    expect(session.budget.consumed).toBe(2);
   });
 });

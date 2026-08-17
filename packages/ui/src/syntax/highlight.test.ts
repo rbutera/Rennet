@@ -156,6 +156,13 @@ describe("tokenizeLine — comment word boundary (#92 item 1)", () => {
 });
 
 describe("tokenizeLine — radix-specific number scanning (#92 item 2)", () => {
+  it.each(["0x_", "0X_FF", "0o_7", "0b10_", "1e10_"])(
+    "fails a malformed separator candidate closed to one plain token: %s",
+    (candidate) => {
+      expect(tokenizeLine(candidate, "typescript")).toEqual([{ text: candidate, type: "plain" }]);
+    },
+  );
+
   it("binary rejects an out-of-range digit and fails closed to plain", () => {
     const tokens = tokenizeLine("0b102", "typescript");
     expect(typesOf(tokens).has("number")).toBe(false);

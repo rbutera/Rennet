@@ -65,6 +65,35 @@ function isHexDigit(c: string): boolean {
   return isDigit(c) || (c >= "a" && c <= "f") || (c >= "A" && c <= "F");
 }
 
+function readDigitRun(
+  code: string,
+  start: number,
+  isValidDigit: (char: string) => boolean,
+): { end: number; valid: boolean } {
+  let j = start;
+  let sawDigit = false;
+  let previousWasDigit = false;
+  while (j < code.length) {
+    const char = code.charAt(j);
+    if (isValidDigit(char)) {
+      sawDigit = true;
+      previousWasDigit = true;
+      j += 1;
+      continue;
+    }
+    if (char === "_") {
+      if (!previousWasDigit || !isValidDigit(code.charAt(j + 1))) {
+        return { end: j + 1, valid: false };
+      }
+      previousWasDigit = false;
+      j += 1;
+      continue;
+    }
+    break;
+  }
+  return { end: j, valid: sawDigit && previousWasDigit };
+}
+
 function isIdentStart(c: string): boolean {
   return (c >= "a" && c <= "z") || (c >= "A" && c <= "Z") || c === "_" || c === "$";
 }
@@ -99,28 +128,35 @@ function readNumber(code: string, i: number): number {
     if (prefix === "x" || prefix === "b" || prefix === "o") {
       const isRadixDigit = prefix === "x" ? isHexDigit : prefix === "b" ? isBinDigit : isOctDigit;
       j += 2;
-      const digitsStart = j;
-      while (j < n && (isRadixDigit(code.charAt(j)) || code.charAt(j) === "_")) j += 1;
+      const digits = readDigitRun(code, j, isRadixDigit);
+      if (!digits.valid) return i;
+      j = digits.end;
       // Fail closed: no digits (`0x`), or a digit/identifier char out of range for
       // this radix immediately follows (`0b102`, `0o18`, `0xffg`) → not a number.
-      if (j === digitsStart) return i;
       if (j < n && (isDigit(code.charAt(j)) || isIdentPart(code.charAt(j)))) return i;
       return j;
     }
   }
-  while (j < n && (isDigit(code.charAt(j)) || code.charAt(j) === "_")) j += 1;
+  if (code.charAt(j) !== ".") {
+    const integer = readDigitRun(code, j, isDigit);
+    if (!integer.valid) return i;
+    j = integer.end;
+  }
   if (j < n && code.charAt(j) === ".") {
     j += 1;
-    while (j < n && (isDigit(code.charAt(j)) || code.charAt(j) === "_")) j += 1;
+    if (j < n && code.charAt(j) === "_") return i;
+    if (j < n && isDigit(code.charAt(j))) {
+      const fraction = readDigitRun(code, j, isDigit);
+      if (!fraction.valid) return i;
+      j = fraction.end;
+    }
   }
   if (j < n && (code.charAt(j) === "e" || code.charAt(j) === "E")) {
     let k = j + 1;
     if (k < n && (code.charAt(k) === "+" || code.charAt(k) === "-")) k += 1;
-    if (k < n && isDigit(code.charAt(k))) {
-      // The exponent carries the `_` separator the mantissa does — consistently.
-      j = k + 1;
-      while (j < n && (isDigit(code.charAt(j)) || code.charAt(j) === "_")) j += 1;
-    }
+    const exponent = readDigitRun(code, k, isDigit);
+    if (!exponent.valid) return i;
+    j = exponent.end;
   }
   return j;
 }
@@ -256,6 +292,11 @@ function scan(code: string, grammar: Grammar): Token[] {
         i = end;
         continue;
       }
+      let malformedEnd = i + 1;
+      while (malformedEnd < n && isIdentPart(code.charAt(malformedEnd))) malformedEnd += 1;
+      sink.push("plain", code.slice(i, malformedEnd));
+      i = malformedEnd;
+      continue;
     }
 
     // Identifier / keyword / type / function / property.
@@ -307,4 +348,16 @@ export function tokenizeLine(code: string, languageId: LanguageId | null): Token
   // useful token structure — degrade it to plain rather than blow the R16 envelope.
   if (tokens.length > MAX_HIGHLIGHT_LINE_TOKENS) return [{ text: code, type: "plain" }];
   return tokens;
+}
+
+/** Tokenize diff source with its one-character marker outside the language grammar. */
+export function tokenizeDiffLine(code: string, languageId: LanguageId | null): Token[] {
+  if (languageId === null || !["+", "-", " "].includes(code.charAt(0))) {
+    return tokenizeLine(code, languageId);
+  }
+  const source = tokenizeLine(code.slice(1), languageId);
+  if (source.length === 1 && source[0]?.type === "plain") {
+    return [{ text: code, type: "plain" }];
+  }
+  return [{ text: code.charAt(0), type: "plain" }, ...source];
 }

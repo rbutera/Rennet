@@ -4,12 +4,12 @@ Only the real decisions. Everything routine lives in tasks.
 
 ## #316 — where the shared per-review budget lives
 
-**Decision:** a lazily created per-review intelligence session in MAIN — a `Map` keyed by `(reviewId, activePatchsetId)` holding `{ budget: InvocationBudget, hypothesis: Promise<ReviewHypothesis | undefined> }`. Both `buildCanvasesForReviewWithContextFeed` and `runFlaggedReviewWithContextFeed` draw from it.
+**Decision:** a turn-aware per-review intelligence session owned by the MAIN dispatch composition. The current session for `(reviewId, activePatchsetId)` holds one `InvocationBudget` plus the in-flight hypothesis promise. Both `buildCanvasesForReviewWithContextFeed` and `runFlaggedReviewWithContextFeed` receive that session from dispatch rather than looking it up independently.
 
-- **Key:** `(reviewId, activePatchsetId)` — a reattach produces a new patchset, so the hypothesis re-derives and the ceiling resets for the new review turn. Not `headOid`: the patchset id already changes when the reviewed range changes.
-- **Memoize the promise, not the value:** the canvas and flagged flows can start concurrently; storing the in-flight promise means the second flow awaits the first spend instead of double-spending.
-- **One ceiling:** the session's budget is created once with `reviewInvocationCeiling(DEFAULT_REVIEW_INTELLIGENCE_BUDGET, deepReview)` at first entry. The advertised "one per-review turn ceiling" becomes literally that — one `InvocationBudget` instance across both flows, hypothesis + dual seats + verification all debiting the same counter.
-- **No persistence, no eviction ceremony:** the map is process-local; entries are droppable on review close. `ponytail:` unbounded map per process lifetime — add eviction only if long sessions with many reviews measurably matter.
+- **Turn lifecycle:** the first `flagged.review` and `review.canvases` dispatches for a review turn may arrive in either order and share one same-mode session. Re-entering either flow for the same review and patchset starts a fresh turn, so Quick↔Dual toggles and canvas retries get a fresh budget and hypothesis attempt. After both flows have joined, the coordinator drops its entry; the running pipelines retain the shared object without an immortal session-map value.
+- **Mode authority:** the renderer sends the same explicit `deepReview` choice to both commands. The flagged flow determines the normal open/toggle ceiling, while a standalone canvas retry provisions the same explicit mode; there is no hardcoded deep-review ceiling and arrival order cannot change the maximum.
+- **Memoize only an in-flight or successful hypothesis:** concurrent callers await one promise. An undefined or rejected result clears the memo so a later retry recomputes instead of preserving a failed hypothesis forever.
+- **One ceiling:** the session's budget is created once with `reviewInvocationCeiling(DEFAULT_REVIEW_INTELLIGENCE_BUDGET, deepReview)`. That exact object is required by the canvas pipeline and Decisions runner as well as hypothesis, flagged seats, verification, CI refinement, and narration. No downstream stage creates a default budget.
 
 ## #89 — which amendment option
 
@@ -17,7 +17,13 @@ Only the real decisions. Everything routine lives in tasks.
 
 ## #65 — rollup shape
 
-**Decision:** keep the existing deterministic ordering (freshness by repoId, canvas state by canvas-angle order), emit the first K lines verbatim, then ONE tail line per section aggregating the rest: B2 `… +N more repos — X fresh / Y stale`; B3 `… +N more canvases — <aggregate counts in the existing count vocabulary>`. K is a named constant chosen so the 10-repo / 20-canvas acceptance fixture lands with real headroom (target ≤ ~3.5 KB), verified by the red-first test rather than arithmetic in prose. The throw stays as the backstop. No configuration knob — the cap is a product constant like `PRIMER_MAX_BYTES`.
+**Decision:** keep the existing deterministic ordering (freshness by repoId, canvas state by canvas-angle order), emit the first K lines verbatim, then ONE tail line per section aggregating the rest. B2 uses `… +N more repos — X current / Y not current`; `failed` and `updating` are not renamed stale. B3 uses `… +N more canvases — <aggregate counts in the existing count vocabulary>`. K and the compact per-canvas line shape are product constants chosen so the exact 10-repo / 20-canvas acceptance fixture lands at or below 4,096 bytes. The throw stays as the backstop. No configuration knob.
+
+## Wave-11 review corrections
+
+The consolidated review found that the first implementation proved isolated helpers but not the shipped composition. The correction therefore adds one dispatch-level test that runs the real `review.canvases` and `flagged.review` routes and observes the exact session budget passed to both producers. Separate guards prove the same object reaches `buildReviewCanvases` and the Decisions runner, so either private-budget regression reddens the suite.
+
+Numeric separators are valid only between digits in every decimal, exponent, and radix run. Any leading or trailing separator makes the whole candidate plain. CodeView removes the diff marker before grammar tokenization and renders the marker separately, so a column-zero source comment remains a comment without weakening the shell/YAML embedded-`#` boundary.
 
 ## #92 — what is deliberately not built
 

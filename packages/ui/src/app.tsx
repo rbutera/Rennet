@@ -1190,7 +1190,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     setLoadFailed(false);
     setContextManifest(undefined);
     let cancelled = false;
-    void loadCanvases(bridge, current).then((live) => {
+    void loadCanvases(bridge, current, deepReviewOn).then((live) => {
       if (cancelled) return;
       if (!live) {
         // Nothing real came back — surface it honestly rather than standing on a demo.
@@ -1219,7 +1219,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     return () => {
       cancelled = true;
     };
-  }, [view, canvasFetchKey, bridge, reloadNonce, repositoryPresent]);
+  }, [view, canvasFetchKey, bridge, reloadNonce, repositoryPresent, deepReviewOn]);
 
   // Retry the live load for the current review (the honest-failure and mechanical-
   // fallback surfaces both offer this). Clearing the load-once guard + bumping the

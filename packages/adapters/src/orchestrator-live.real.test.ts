@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   buildReviewCanvases,
   type CanvasOpsBackend,
+  createInvocationBudget,
   type NoveltyResult,
   type ProjectMapResult,
 } from "@rennet/core";
@@ -152,6 +153,7 @@ describe("orchestrator turn — real harness against the live backend (gated)", 
         reviewId: review.id,
         patchset,
         dispositions: [],
+        budget: createInvocationBudget(12),
       });
       const storeDir = mkdtempSync(join(tmpdir(), "rennet-orch-live-store-"));
       scratch.push(storeDir);

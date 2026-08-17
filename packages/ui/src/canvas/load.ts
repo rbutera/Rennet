@@ -54,6 +54,7 @@ export interface LoadedCanvases {
 export async function loadCanvases(
   bridge: RennetBridge,
   review: Review,
+  deepReview: boolean,
 ): Promise<LoadedCanvases | null> {
   try {
     // Running the harness is Rennet's whole job — it just runs. No consent token,
@@ -63,6 +64,7 @@ export async function loadCanvases(
         commandId: crypto.randomUUID(),
         reviewId: review.id,
         repoPath: review.repositoryRoot,
+        deepReview,
       });
     return {
       canvases,

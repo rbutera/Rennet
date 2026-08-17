@@ -38,14 +38,11 @@ export const PROTOCOL_CARD_VERSION = "protocol-card@1";
 
 /**
  * The hard byte ceiling for the assembled primer (Orchestrator Context Access
- * §1.1). Raised from 4096 to 4352 (4.25 KiB) when the symbolic ops `context.overview`
- * and `context.symbol` (repo-map-symbolic-surface) joined the surface, then to 4608
- * (4.5 KiB) when `context.references` (#200) completed the trio: advertising the
- * "navigate before dumping" ops in the boot primer is what makes an agent reach for
- * them. Still a hard boundary — an oversized state throws rather than assembling a
- * fat primer.
+ * §1.1). The surface stays inside the original 4 KiB contract by bounding B2/B3
+ * and keeping repeated canvas rows count-dense. An oversized state throws rather
+ * than assembling a fat primer.
  */
-export const PRIMER_MAX_BYTES = 4608;
+export const PRIMER_MAX_BYTES = 4096;
 
 /**
  * B2/B3 row caps (#65). The primer is a MAP, not a container: a large multi-repo
@@ -286,27 +283,24 @@ function freshnessLine(row: RepoFreshness): string {
 
 function canvasStateLine(row: CanvasStateSummary): string {
   const c = row.coverage;
-  return (
-    `- ${row.angle} (${row.canvasId}): ${row.elements} elements, ${row.cohorts} cohorts, ` +
-    `${row.residue} residue; coverage ${c.dispositioned}/${c.paths} dispositioned, ` +
-    `${c.unread} unread, ${c.approved} approved, ${c.requestChanged} request-change`
-  );
+  return `- ${row.angle} (${row.canvasId}): ${row.elements} elements; ${c.dispositioned}/${c.paths} dispositioned, ${c.unread} unread`;
 }
 
 /**
  * B2 section body (#65): the first `PRIMER_MAX_FRESHNESS_ROWS` rows verbatim, then a
- * single rollup tail aggregating the remainder as fresh (`current`) / stale (the rest).
+ * single rollup tail aggregating the remainder as current / not current. The latter
+ * intentionally includes stale, updating, and failed without renaming those states.
  * Rolled-up repos stay reachable via the tool surface.
  */
 function freshnessSection(rows: readonly RepoFreshness[]): string[] {
   if (rows.length <= PRIMER_MAX_FRESHNESS_ROWS) return rows.map(freshnessLine);
   const shown = rows.slice(0, PRIMER_MAX_FRESHNESS_ROWS);
   const rest = rows.slice(PRIMER_MAX_FRESHNESS_ROWS);
-  const fresh = rest.filter((r) => r.verdict === "current").length;
-  const stale = rest.length - fresh;
+  const current = rest.filter((r) => r.verdict === "current").length;
+  const notCurrent = rest.length - current;
   return [
     ...shown.map(freshnessLine),
-    `- … +${rest.length} more repos — ${fresh} fresh / ${stale} stale`,
+    `- … +${rest.length} more repos — ${current} current / ${notCurrent} not current`,
   ];
 }
 

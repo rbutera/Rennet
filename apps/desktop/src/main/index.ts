@@ -99,7 +99,6 @@ import {
   resolveAssignment,
   resolveDualSeat,
   resolveLocus,
-  reviewInvocationCeiling,
   runCoverageMapping,
   runDecisionAngle,
   runDualFindingReview,
@@ -127,6 +126,7 @@ import type {
   ElementDiffs,
   FlaggedReview,
   HypothesisStructure,
+  InvocationBudget,
   NoiseReview,
   OpenSpecCoverage,
   OwnershipRule,
@@ -164,7 +164,7 @@ import { createPublishConsentAuthority } from "./publish-consent-authority";
 import { createLiveRefinePort } from "./refine-comment-live";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
 import { type ReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
-import { reviewIntelligenceSession } from "./review-intelligence-session";
+import type { ReviewIntelligenceSession } from "./review-intelligence-session";
 import { loadReviewOwnership } from "./review-ownership";
 import { buildReviewCanvasesInput } from "./review-pipeline-input";
 import { createSettingsComposition } from "./settings";
@@ -565,6 +565,7 @@ async function openPullRequest(
 async function buildCanvasesForReviewWithContextFeed(
   review: Review,
   contextFeed: ReviewContextFeed,
+  session: ReviewIntelligenceSession,
 ): Promise<{
   canvases: Record<CanvasAngle, Canvas>;
   elementDiffs: ElementDiffs;
@@ -628,11 +629,11 @@ async function buildCanvasesForReviewWithContextFeed(
   // human's reading frame. Absent an adapter (or on a failed pass) it is undefined
   // and every lens runs exactly as before. It is drawn from the per-review
   // intelligence session (#316): the canvas and flagged flows share ONE hypothesis
-  // and ONE ceiling per (reviewId, activePatchsetId), so a review turn spends the
-  // hypothesis once, not once per flow.
-  const hypothesis = await reviewIntelligenceSession(review, true, (budget) =>
+  // and ONE ceiling for the current review turn, so the turn spends the hypothesis
+  // once, not once per flow. Re-entry starts a fresh session even at the same key.
+  const hypothesis = await session.hypothesis((budget) =>
     computeReviewHypothesis(review, patchset, adapter, contextFeed, budget),
-  ).hypothesis;
+  );
 
   // The per-project convention checklist (#180), sourced once and fed to the
   // Decisions runner as a labelled layer. Absent (no catalogue file), the runner
@@ -644,6 +645,7 @@ async function buildCanvasesForReviewWithContextFeed(
     patchset,
     adapter,
     contextFeed,
+    session.budget,
     hypothesis,
     conventions,
   );
@@ -670,6 +672,7 @@ async function buildCanvasesForReviewWithContextFeed(
       ...(fanIn ? { fanIn } : {}),
       installed,
       decisionDocs: decisions.docs,
+      budget: session.budget,
       ...(codexPort ? { codexPort } : {}),
       ...(runDecompositionTurn ? { runDecompositionTurn } : {}),
       ...(runOrderingTurn ? { runOrderingTurn } : {}),
@@ -701,12 +704,14 @@ async function buildCanvasesForReviewWithContextFeed(
 
 async function buildCanvasesForReview(
   review: Review,
+  _deepReview: boolean,
+  session: ReviewIntelligenceSession,
 ): ReturnType<typeof buildCanvasesForReviewWithContextFeed> {
   const contextFeed = await createDesktopReviewContextFeed(review, {
     onError: reportContextFeedError,
   });
   const completed = await runWithReviewContextFeed(contextFeed, () =>
-    buildCanvasesForReviewWithContextFeed(review, contextFeed),
+    buildCanvasesForReviewWithContextFeed(review, contextFeed, session),
   );
   return {
     ...completed.result,
@@ -841,9 +846,7 @@ async function computeReviewHypothesis(
   patchset: Patchset,
   adapter: Awaited<ReturnType<typeof getClaudeHarness>>["adapter"],
   contextFeed: ReviewContextFeed,
-  budget = createInvocationBudget(
-    reviewInvocationCeiling(DEFAULT_REVIEW_INTELLIGENCE_BUDGET, true),
-  ),
+  budget: InvocationBudget,
 ): Promise<ReviewHypothesis | undefined> {
   if (!adapter) return undefined;
   const decomposition = decompose(patchset);
@@ -916,10 +919,9 @@ const DECISION_PROVENANCE_SEED = {
 /**
  * The live Decisions lens producer (issue #137), replacing `decisionsRecordFixture`.
  * Decomposes the review's active patchset into the offered hunk manifest and runs
- * the decision angle on the user's `claude` (subscription OAuth), budget-gated. It
- * is its OWN live-budget-gated action, distinct from `review.canvases`'s model
- * phase, so the ceiling stops decision spend without stopping the review (R10,
- * fail-closed). On `ok` its emitted `decision.record` document is returned as the
+ * the decision angle on the user's `claude` (subscription OAuth), budget-gated by
+ * the same review-turn budget as the hypothesis and canvas model phase. On `ok`
+ * its emitted `decision.record` document is returned as the
  * `decisionDocs` the projector groups; on a runner failure/budget refusal the doc
  * set is empty and the status is the LOUD `failed` state — "ran, nothing discerned"
  * (an ok run with an empty set) is never faked from "did not run".
@@ -934,6 +936,7 @@ async function runDecisionsForReview(
   patchset: Patchset,
   adapter: Awaited<ReturnType<typeof getClaudeHarness>>["adapter"],
   contextFeed: ReviewContextFeed,
+  budget: InvocationBudget,
   hypothesis?: ReviewHypothesis,
   conventions?: ConventionCatalogue,
 ): Promise<{ docs: AdmittedDocument[]; status: DecisionsRunStatus }> {
@@ -953,7 +956,6 @@ async function runDecisionsForReview(
     docType: "decision.record",
     cwd: review.repositoryRoot,
   });
-  const budget = createInvocationBudget(DEFAULT_MAX_HARNESS_INVOCATIONS);
   // The change's stated intent (#136), projected from the frozen capture on the
   // patchset (PR title/body + the spec set). Absent, the runner reasons over the
   // diff alone — the honest degrade. `DecisionIntent` is structurally identical to
@@ -1045,15 +1047,10 @@ async function runFlaggedReviewWithContextFeed(
   review: Review,
   deepReview: boolean,
   contextFeed: ReviewContextFeed,
+  session: ReviewIntelligenceSession,
 ): Promise<FlaggedReview> {
   const patchset = activePatchset(review);
   const { adapter } = await getClaudeHarness();
-  // The per-review intelligence session (#316): ONE ceiling and ONE hypothesis
-  // shared with the canvas flow, keyed by (reviewId, activePatchsetId). The
-  // hypothesis, both finding seats, and verification all debit `sharedBudget`.
-  const session = reviewIntelligenceSession(review, deepReview, (budget) =>
-    computeReviewHypothesis(review, patchset, adapter, contextFeed, budget),
-  );
   const sharedBudget = session.budget;
   const codexResolution = await getCodexResolution();
   const codex = codexResolution.availability;
@@ -1124,7 +1121,9 @@ async function runFlaggedReviewWithContextFeed(
   // is projected from the frozen capture on the patchset; absent a captured surface
   // it is undefined. With BOTH undefined the finding assembly is byte-identical to
   // before this change (no regression).
-  const hypothesis = await session.hypothesis;
+  const hypothesis = await session.hypothesis((budget) =>
+    computeReviewHypothesis(review, patchset, adapter, contextFeed, budget),
+  );
   const intent = patchsetIntentToReviewIntent(patchset.intent);
 
   const { review: flagged } = await runDualFindingReview({
@@ -1214,12 +1213,16 @@ async function runFlaggedReviewWithContextFeed(
   return stampBlockingStates(withCiSignal, decomposition);
 }
 
-async function runFlaggedReview(review: Review, deepReview = true): Promise<FlaggedReview> {
+async function runFlaggedReview(
+  review: Review,
+  deepReview: boolean,
+  session: ReviewIntelligenceSession,
+): Promise<FlaggedReview> {
   const contextFeed = await createDesktopReviewContextFeed(review, {
     onError: reportContextFeedError,
   });
   const completed = await runWithReviewContextFeed(contextFeed, () =>
-    runFlaggedReviewWithContextFeed(review, deepReview, contextFeed),
+    runFlaggedReviewWithContextFeed(review, deepReview, contextFeed, session),
   );
   return completed.result;
 }
@@ -1807,6 +1810,7 @@ app.whenReady().then(async () => {
           reviewId: headReview.id,
           patchset: activePatchset(headReview),
           dispositions: headReview.dispositions,
+          budget: createInvocationBudget(0),
         });
         const live = await createDesktopReviewBackend(headReview, pipeline, {
           resolveKnowledgePort: async () => (await getClaudeHarness()).adapter,
@@ -1836,6 +1840,7 @@ app.whenReady().then(async () => {
           reviewId: review.id,
           patchset: activePatchset(review),
           dispositions: review.dispositions,
+          budget: createInvocationBudget(0),
         }),
       orchestratorTurn,
       askCodex: async ({ review, question, abortController }) => {

@@ -1,8 +1,20 @@
-import type { PatchFile, Patchset, Review, RspProvenance } from "@rennet/types";
+import type { InvocationBudget, PatchFile, Patchset, Review, RspProvenance } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
 import type { CanvasOpsEffect, RunLedgerEntry } from "./canvas-ops";
-import { buildReviewCanvases, type ReviewPipelineResult } from "./pipeline";
+import { createInvocationBudget } from "./invocation-budget";
+import {
+  buildReviewCanvases as buildReviewCanvasesCore,
+  type ReviewPipelineInput,
+  type ReviewPipelineResult,
+} from "./pipeline";
 import { reviewBackendCore } from "./review-backend";
+
+type TestPipelineInput = Omit<ReviewPipelineInput, "budget"> & { budget?: InvocationBudget };
+
+function buildReviewCanvases(input: TestPipelineInput) {
+  const { budget = createInvocationBudget(12), ...rest } = input;
+  return buildReviewCanvasesCore({ ...rest, budget });
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The pure production-backend core over a REAL fixture review: a real patchset →

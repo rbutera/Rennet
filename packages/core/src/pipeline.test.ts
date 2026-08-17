@@ -2,6 +2,7 @@ import { sha256Hex } from "@rennet/protocol";
 import type {
   ContextSendRecord,
   CouncilModel,
+  InvocationBudget,
   OrderingBody,
   PatchFile,
   Patchset,
@@ -21,8 +22,19 @@ import type {
 } from "./codex-utility-port";
 import { decompose } from "./decomposition";
 import type { HarnessTurnResult } from "./harness-run-turn";
+import { createInvocationBudget } from "./invocation-budget";
 import type { OrderingTurnResult } from "./ordering-pass";
-import { buildReviewCanvases } from "./pipeline";
+import {
+  buildReviewCanvases as buildReviewCanvasesCore,
+  type ReviewPipelineInput,
+} from "./pipeline";
+
+type TestPipelineInput = Omit<ReviewPipelineInput, "budget"> & { budget?: InvocationBudget };
+
+function buildReviewCanvases(input: TestPipelineInput) {
+  const { budget = createInvocationBudget(12), ...rest } = input;
+  return buildReviewCanvasesCore({ ...rest, budget });
+}
 
 // ── Fake Codex port helpers (model calls are mocked in CI) ────────────────────
 
@@ -509,6 +521,7 @@ describe("buildReviewCanvases — one shared budget across the model phase (acce
       dispositions: [],
       runDecompositionTurn: rejectDecomposition,
       runOrderingTurn: rejectOrdering,
+      budget: createInvocationBudget(5),
       routePlanOptions: { maxHarnessInvocations: 5 },
     });
 
@@ -843,6 +856,7 @@ describe("buildReviewCanvases — one shared budget across a Claude seat and a C
       runOrderingTurn: rejectOrderingClaude,
       codexPort,
       council: { availability: { installed: ["claude-code", "codex"] } },
+      budget: createInvocationBudget(5),
       routePlanOptions: { maxHarnessInvocations: 5 },
     });
 
@@ -949,6 +963,7 @@ describe("buildReviewCanvases — roll-up narration threads through (issue #70)"
       dispositions: [],
       runDecompositionTurn,
       runNarrationTurn,
+      budget: createInvocationBudget(3),
       routePlanOptions: { maxHarnessInvocations: 3 },
     });
 

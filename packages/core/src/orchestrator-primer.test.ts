@@ -162,15 +162,42 @@ describe("assemblePrimer", () => {
       runLedger: { fleetTasks: 9, admitted: 41, rejected: 3 },
     };
     const manifest = assemblePrimer(large);
+    expect(PRIMER_MAX_BYTES).toBe(4096);
     expect(manifest.bytes).toBeLessThanOrEqual(PRIMER_MAX_BYTES);
-    // B2 ends in a repo rollup naming how many were aggregated + fresh/stale split.
-    expect(manifest.text).toMatch(/…\s*\+\d+ more repos — \d+ fresh \/ \d+ stale/);
-    // B3 ends in a canvas rollup naming how many were aggregated + aggregate counts.
-    expect(manifest.text).toMatch(/…\s*\+\d+ more canvases — /);
-    // Deterministic: same inputs → identical bytes + digest through the rollup path.
-    const again = assemblePrimer(large);
-    expect(again.bytes).toBe(manifest.bytes);
-    expect(again.digest).toBe(manifest.digest);
+    const repoTail = "- … +4 more repos — 2 current / 2 not current";
+    const canvasTail = "- … +15 more canvases — 180 elements, 75/120 dispositioned, 45 unread";
+    expect(manifest.text).toContain(repoTail);
+    expect(manifest.text).toContain(canvasTail);
+
+    const shuffled = assemblePrimer({
+      ...large,
+      freshness: [...large.freshness].reverse(),
+      canvasState: [...large.canvasState].reverse(),
+    });
+    expect(shuffled.text).toContain(repoTail);
+    expect(shuffled.text).toContain(canvasTail);
+    expect(shuffled.text).toBe(manifest.text);
+    expect(shuffled.bytes).toBe(manifest.bytes);
+    expect(shuffled.digest).toBe(manifest.digest);
+  });
+
+  it("rolls failed/updating freshness up as not current, never stale", () => {
+    const base = fullReviewInputs();
+    const manifest = assemblePrimer({
+      ...base,
+      freshness: [
+        { repoId: "a", snapshotId: "a", verdict: "current" },
+        { repoId: "b", snapshotId: "b", verdict: "current" },
+        { repoId: "c", snapshotId: "c", verdict: "current" },
+        { repoId: "d", snapshotId: "d", verdict: "current" },
+        { repoId: "e", snapshotId: "e", verdict: "current" },
+        { repoId: "f", snapshotId: "f", verdict: "current" },
+        { repoId: "g", snapshotId: "g", verdict: "failed" },
+        { repoId: "h", snapshotId: "h", verdict: "updating" },
+      ],
+    });
+    expect(manifest.text).toContain("- … +2 more repos — 0 current / 2 not current");
+    expect(manifest.text).not.toContain("2 stale");
   });
 
   it("ENFORCES the ≤4 KB ceiling as a backstop: a pathologically long single row still throws", () => {
@@ -183,7 +210,7 @@ describe("assemblePrimer", () => {
       toolIndex: toolIndexFromSurface(),
       runLedger: { fleetTasks: 9, admitted: 41, rejected: 3 },
     };
-    expect(() => assemblePrimer(oversized)).toThrow(/ceiling|4608/);
+    expect(() => assemblePrimer(oversized)).toThrow(/ceiling|4096/);
   });
 
   it("renders B1 workspace/repo when the identity carries them", () => {
@@ -225,7 +252,7 @@ describe("assemblePrimer", () => {
     expect(decisionsLine).toBeDefined();
     // A body/title inlined into B3 would break this counts-only line shape.
     expect(decisionsLine).toMatch(
-      /^- decisions \(cv_decisions\): \d+ elements, \d+ cohorts, \d+ residue; coverage \d+\/\d+ dispositioned, \d+ unread, \d+ approved, \d+ request-change$/,
+      /^- decisions \(cv_decisions\): \d+ elements; \d+\/\d+ dispositioned, \d+ unread$/,
     );
   });
 });

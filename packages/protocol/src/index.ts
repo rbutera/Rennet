@@ -1902,6 +1902,7 @@ export const commandDefinitions = {
       commandId: commandIdSchema,
       reviewId: z.string().min(1),
       repoPath: z.string().min(1),
+      deepReview: z.boolean().optional(),
     }),
     // `elementDiffs` (issue #60): the real per-element diff map delivered with the
     // canvas set so zooming into an element shows real code, not the fixture.

@@ -1,14 +1,25 @@
-import type { Patchset, RspCapabilitySnapshot } from "@rennet/types";
+import type { InvocationBudget, Patchset, RspCapabilitySnapshot } from "@rennet/types";
 import { describe, expect, it } from "vitest";
 import { buildOfferedManifest } from "./angle-generation";
 import type { CodexUtilityPort } from "./codex-utility-port";
 import { decompose } from "./decomposition";
 import { VERIFIER_UNAVAILABLE_CAVEAT } from "./finding-verification";
-import { buildReviewCanvases } from "./pipeline";
+import { createInvocationBudget } from "./invocation-budget";
+import {
+  buildReviewCanvases as buildReviewCanvasesCore,
+  type ReviewPipelineInput,
+} from "./pipeline";
 import {
   DEFAULT_REVIEW_INTELLIGENCE_BUDGET,
   reviewInvocationCeiling,
 } from "./review-intelligence-budget";
+
+type TestPipelineInput = Omit<ReviewPipelineInput, "budget"> & { budget?: InvocationBudget };
+
+function buildReviewCanvases(input: TestPipelineInput) {
+  const { budget = createInvocationBudget(12), ...rest } = input;
+  return buildReviewCanvasesCore({ ...rest, budget });
+}
 
 const PATCHSET: Patchset = {
   id: "ps_intelligence",
@@ -159,10 +170,12 @@ describe("ReviewIntelligenceBudget defaults", () => {
 describe("buildReviewCanvases review-intelligence sequence", () => {
   it("runs the deep sequence in order and meters every stage on one counter", async () => {
     const calls: string[] = [];
+    const sessionBudget = createInvocationBudget(12);
     const result = await buildReviewCanvases({
       reviewId: "review-deep",
       patchset: PATCHSET,
       dispositions: [],
+      budget: sessionBudget,
       provenance: PROVENANCE,
       council: { availability: { installed: ["claude-code", "codex"] } },
       hypothesisConfig: {
@@ -207,6 +220,7 @@ describe("buildReviewCanvases review-intelligence sequence", () => {
 
     expect(calls).toEqual(["hypothesis", "claude", "codex", "verification"]);
     expect(result.invocationBudget.max).toBe(12);
+    expect(result.invocationBudget).toBe(sessionBudget);
     expect(result.invocationBudget.consumed).toBe(4);
     expect(result.hypothesis).toBeDefined();
     expect(result.crossCheckRisks?.some((risk) => risk.status === "confirmed")).toBe(true);
@@ -228,6 +242,7 @@ describe("buildReviewCanvases review-intelligence sequence", () => {
       reviewId: "review-quick",
       patchset: PATCHSET,
       dispositions: [],
+      budget: createInvocationBudget(6),
       provenance: PROVENANCE,
       council: { availability: { installed: ["claude-code", "codex"] } },
       hypothesisConfig: {
@@ -272,6 +287,7 @@ describe("buildReviewCanvases review-intelligence sequence", () => {
       provenance: PROVENANCE,
       council: { availability: { installed: ["claude-code", "codex"] } },
       reviewIntelligenceBudget: budget,
+      budget: createInvocationBudget(3),
       hypothesisConfig: {
         runTurn: async () => ({ status: "emitted", body: hypothesisBody() }),
       },
@@ -342,6 +358,7 @@ describe("buildReviewCanvases review-intelligence sequence", () => {
         ...DEFAULT_REVIEW_INTELLIGENCE_BUDGET,
         totalInvocations: 3,
       },
+      budget: createInvocationBudget(3),
       routePlanOptions: { maxHarnessInvocations: 12 },
     });
 
