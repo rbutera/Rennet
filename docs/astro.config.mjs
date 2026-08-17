@@ -127,6 +127,14 @@ export default defineConfig({
                   },
                   { label: "Delivery order", link: "/developing/reference/delivery-order/" },
                   {
+                    label: "App server plan",
+                    link: "/developing/reference/app-server-plan/",
+                  },
+                  {
+                    label: "App server research digest",
+                    link: "/developing/reference/app-server-research/",
+                  },
+                  {
                     label: "Codex app-server integration",
                     link: "/developing/reference/codex-app-server/",
                   },
