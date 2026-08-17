@@ -2685,7 +2685,7 @@
 .conversation-orphaned {
   margin: 4px 8px;
   padding: 4px 8px;
-  border-left: 2px solid var(--warning, currentColor);
+  border-left: 2px solid var(--amber);
   color: var(--text-muted, var(--text));
   font-size: 12px;
   font-style: italic;

@@ -3295,8 +3295,8 @@ button {
 /* A chord claimed by more than one live command (#44): disclosed, never blocked. The
  * warm outline marks the collision; the row's `title` names the other command. */
 .command-palette-key.is-conflict {
-  border-color: var(--warning, #d08a2a);
-  color: var(--warning, #d08a2a);
+  border-color: var(--amber);
+  color: var(--amber);
 }
 
 /* ── Settings: the config ladder (wireframe #15) ───────────────────────────── */
@@ -3716,7 +3716,7 @@ button {
 .settings-key-recorder {
   width: 128px;
   padding: 3px 8px;
-  border: 1px solid var(--focus, #4a90d9);
+  border: 1px solid var(--accent);
   border-radius: 6px;
   background: var(--surface-2);
   color: var(--text);
@@ -3729,12 +3729,12 @@ button {
   font-style: italic;
 }
 .settings-key-conflict {
-  color: var(--warning, #d08a2a);
+  color: var(--amber);
   font-size: 11px;
 }
 .settings-key-recording-note,
 .settings-key-invalid {
-  color: var(--warning, #d08a2a);
+  color: var(--amber);
   font-size: 11px;
 }
 
