@@ -161,6 +161,7 @@ describe("ReviewIntelligenceBudget defaults", () => {
       hypothesis: { maxTurns: 1 },
       dualModel: { enabled: true, lenses: ["flagged"] },
       verification: { maxVerifications: 6, batchSize: 3 },
+      adjudication: { maxAdjudications: 4 },
     });
     expect(reviewInvocationCeiling(DEFAULT_REVIEW_INTELLIGENCE_BUDGET, true)).toBe(12);
     expect(reviewInvocationCeiling(DEFAULT_REVIEW_INTELLIGENCE_BUDGET, false)).toBe(6);
@@ -364,5 +365,169 @@ describe("buildReviewCanvases review-intelligence sequence", () => {
 
     expect(result.routePlan.maxHarnessInvocations).toBe(3);
     expect(result.invocationBudget.max).toBe(3);
+  });
+});
+
+// ── Cross-harness adjudication wiring (#41) ───────────────────────────────────
+//
+// When the two seats DISAGREE, the pipeline runs the adjudication pass AFTER
+// verification on the surviving rows, on the seat the council resolves for the
+// `adjudication` job. The verdict rides the disagree arm — informational, never a
+// drop. A refuted-then-dropped row is gone before adjudication (ordering). With no
+// adjudication config the rows surface unadjudicated and the review still completes.
+
+function findingDoc(result: Awaited<ReturnType<typeof buildReviewCanvasesCore>>) {
+  const doc = result.admittedDocs.find((d) => d.docType === "finding");
+  if (!doc) throw new Error("expected an admitted finding document");
+  return (doc.body as { findings: Array<Record<string, unknown>> }).findings;
+}
+
+describe("buildReviewCanvases adjudication wiring (#41)", () => {
+  it("adjudicates a disagree row on the resolved council seat, verdict rides the disagree arm", async () => {
+    const calls: string[] = [];
+    const result = await buildReviewCanvases({
+      reviewId: "review-adjudicate",
+      patchset: PATCHSET,
+      dispositions: [],
+      budget: createInvocationBudget(12),
+      provenance: PROVENANCE,
+      council: { availability: { installed: ["claude-code", "codex"] } },
+      dualModelConfig: {
+        deepReviewOn: true,
+        // Codex raises NO concern → a solo → a disagree row.
+        codexPort: codexPort(() => ({ findings: [] }), calls),
+        runFindingTurn: async () => {
+          calls.push("claude");
+          return { status: "emitted", body: findingBody(FINDING_ANCHOR) };
+        },
+      },
+      verificationConfig: {
+        readFileWindow: async () => ({
+          path: "src/store.ts",
+          startLine: 1,
+          endLine: 2,
+          text: "export const store = new Map();\nexport const key = branch;",
+        }),
+        runTurn: async () => {
+          calls.push("verification");
+          return {
+            status: "emitted",
+            body: { verifications: [{ ref: "f1", verdict: "reproduced", evidence: "kept" }] },
+          };
+        },
+      },
+      adjudicationConfig: {
+        readFileWindow: async () => ({
+          path: "src/store.ts",
+          startLine: 1,
+          endLine: 2,
+          text: "export const store = new Map();\nexport const key = branch;",
+        }),
+        runTurn: async () => {
+          calls.push("adjudication");
+          return {
+            status: "emitted",
+            body: {
+              adjudications: [
+                { ref: "a1", verdict: "contradicted", evidence: "the key is scoped" },
+              ],
+            },
+          };
+        },
+      },
+    });
+
+    // The adjudication turn ran after verification, on the surviving row.
+    expect(calls).toEqual(["claude", "codex", "verification", "adjudication"]);
+    const findings = findingDoc(result);
+    expect(findings).toHaveLength(1);
+    const agreement = findings[0]?.agreement as Record<string, unknown>;
+    expect(agreement.kind).toBe("disagree");
+    // Both verbatim answers still present.
+    expect((agreement.answers as unknown[]).length).toBe(2);
+    const adjudication = agreement.adjudication as Record<string, unknown>;
+    expect(adjudication.verdict).toBe("contradicted");
+    // Provenance: the resolved adjudication seat under `both` is opus-4.8 on claude-code.
+    expect(String(adjudication.adjudicatedBy)).toContain("claude-code");
+  });
+
+  it("with no adjudication config the disagree row surfaces unadjudicated and the review completes", async () => {
+    const result = await buildReviewCanvases({
+      reviewId: "review-no-adjudicator",
+      patchset: PATCHSET,
+      dispositions: [],
+      budget: createInvocationBudget(12),
+      provenance: PROVENANCE,
+      council: { availability: { installed: ["claude-code", "codex"] } },
+      dualModelConfig: {
+        deepReviewOn: true,
+        codexPort: codexPort(() => ({ findings: [] }), []),
+        runFindingTurn: async () => ({ status: "emitted", body: findingBody(FINDING_ANCHOR) }),
+      },
+      verificationConfig: {
+        readFileWindow: async () => ({
+          path: "src/store.ts",
+          startLine: 1,
+          endLine: 2,
+          text: "export const key = branch;",
+        }),
+        runTurn: async () => ({
+          status: "emitted",
+          body: { verifications: [{ ref: "f1", verdict: "reproduced", evidence: "kept" }] },
+        }),
+      },
+    });
+    const findings = findingDoc(result);
+    expect(findings).toHaveLength(1);
+    const agreement = findings[0]?.agreement as Record<string, unknown>;
+    expect(agreement.kind).toBe("disagree");
+    expect(agreement.adjudication).toBeUndefined();
+  });
+
+  it("never adjudicates a row verification refuted (dropped): adjudication runs after verification", async () => {
+    const calls: string[] = [];
+    const result = await buildReviewCanvases({
+      reviewId: "review-refuted-not-adjudicated",
+      patchset: PATCHSET,
+      dispositions: [],
+      budget: createInvocationBudget(12),
+      provenance: PROVENANCE,
+      council: { availability: { installed: ["claude-code", "codex"] } },
+      dualModelConfig: {
+        deepReviewOn: true,
+        codexPort: codexPort(() => ({ findings: [] }), calls),
+        runFindingTurn: async () => {
+          calls.push("claude");
+          return { status: "emitted", body: findingBody(FINDING_ANCHOR) };
+        },
+      },
+      verificationConfig: {
+        readFileWindow: async () => ({
+          path: "src/store.ts",
+          startLine: 1,
+          endLine: 2,
+          text: "export const key = branch;",
+        }),
+        runTurn: async () => {
+          calls.push("verification");
+          return {
+            status: "emitted",
+            body: { verifications: [{ ref: "f1", verdict: "refuted", evidence: "not real" }] },
+          };
+        },
+      },
+      adjudicationConfig: {
+        readFileWindow: async () => {
+          throw new Error("a refuted-and-dropped row must never reach adjudication");
+        },
+        runTurn: async () => {
+          calls.push("adjudication");
+          return { status: "emitted", body: { adjudications: [] } };
+        },
+      },
+    });
+    // The refuted row was dropped by verification; adjudication saw no disagree rows.
+    expect(calls).toEqual(["claude", "codex", "verification"]);
+    expect(findingDoc(result)).toHaveLength(0);
   });
 });

@@ -16,10 +16,10 @@ Red-first throughout: each numbered group starts with the failing test that prov
 
 ## 3. Pipeline and seat wiring
 
-- [ ] 3.1 RED: pipeline test — with two fake seats disagreeing, the flagged result's disagree rows carry adjudication verdicts produced on the seat resolved for the council `adjudication` job (provenance label matches the resolved model's harness); with the adjudication seat unavailable, rows surface unadjudicated and the review still completes.
-- [ ] 3.2 RED: ordering — a row refuted (dropped) by verification is never adjudicated; adjudication runs after verification on the surviving set.
-- [ ] 3.3 Wire the pass into `packages/core/src/pipeline.ts` after verification, resolving the turn via `resolveAssignment("adjudication", ...)` through the existing seat-execution plumbing. Green on 3.1–3.2.
-- [ ] 3.4 RED then green: fresh-session independence asserted — dual-review test fails if either seat's prompt contains the other seat's findings; adjudication test asserts the adjudicator turn is a fresh injected turn, not either generating seat's `runTurn`.
+- [x] 3.1 RED: pipeline test — with two fake seats disagreeing, the flagged result's disagree rows carry adjudication verdicts produced on the seat resolved for the council `adjudication` job (provenance label matches the resolved model's harness); with the adjudication seat unavailable, rows surface unadjudicated and the review still completes.
+- [x] 3.2 RED: ordering — a row refuted (dropped) by verification is never adjudicated; adjudication runs after verification on the surviving set.
+- [x] 3.3 Wire the pass into `packages/core/src/pipeline.ts` after verification, resolving the turn via `resolveAssignment("adjudication", ...)` through the existing seat-execution plumbing. Green on 3.1–3.2.
+- [x] 3.4 RED then green: fresh-session independence asserted — dual-review test fails if either seat's prompt contains the other seat's findings; adjudication test asserts the adjudicator turn is a fresh injected turn, not either generating seat's `runTurn`.
 
 ## 4. Seeded corpus and pure scorer
 
