@@ -67,18 +67,19 @@ describe("CodexAdapter", () => {
     const t = fakeTransport([
       { type: "thread.started", thread_id: "th_1" },
       { type: "turn.started" },
-      { type: "item.updated", item: { item_type: "agent_message", text: "wor" } },
+      { type: "item.updated", item: { id: "item_1", type: "agent_message", text: "wor" } },
       {
         type: "item.completed",
-        item: { item_type: "agent_message", text: JSON.stringify(structured) },
+        item: { id: "item_1", type: "agent_message", text: JSON.stringify(structured) },
       },
       {
         type: "turn.completed",
         usage: {
-          input_tokens: 10,
-          cached_input_tokens: 2,
-          output_tokens: 5,
-          reasoning_output_tokens: 1,
+          input_tokens: 31_751,
+          cached_input_tokens: 14_720,
+          cache_write_input_tokens: 0,
+          output_tokens: 2_367,
+          reasoning_output_tokens: 701,
         },
       },
       RESULT_OK(JSON.stringify(structured)),
@@ -97,12 +98,12 @@ describe("CodexAdapter", () => {
     if (outcome?.status === "completed") {
       expect(outcome.structuredOutput).toEqual(structured);
       expect(outcome.usage).toEqual({
-        input: 10,
-        output: 5,
-        cacheRead: 2,
+        input: 17_031,
+        output: 2_367,
+        cacheRead: 14_720,
         cacheWrite: 0,
-        reasoning: 1,
-        total: 17,
+        reasoning: 701,
+        total: 34_118,
       });
     }
     // Every event carries a strictly increasing seq and its raw native frame.
@@ -123,15 +124,66 @@ describe("CodexAdapter", () => {
     expect(pass?.native).toEqual(weird);
   });
 
-  it("classifies exec / mcp / write tool items by ToolKind", async () => {
+  it("maps official started/completed command, MCP, and file-change shapes to honest lifecycles", async () => {
     const t = fakeTransport([
       { type: "thread.started", thread_id: "th" },
-      { type: "item.completed", item: { item_type: "command_execution", command: "ls" } },
+      {
+        type: "item.started",
+        item: {
+          id: "item_1",
+          type: "command_execution",
+          command: "ls",
+          aggregated_output: "",
+          exit_code: null,
+          status: "in_progress",
+        },
+      },
       {
         type: "item.completed",
-        item: { item_type: "mcp_tool_call", server: "canvasops", tool: "canvas.read" },
+        item: {
+          id: "item_1",
+          type: "command_execution",
+          command: "ls",
+          aggregated_output: "a.ts\n",
+          exit_code: 0,
+          status: "completed",
+        },
       },
-      { type: "item.completed", item: { item_type: "file_change", changes: [] } },
+      {
+        type: "item.started",
+        item: {
+          id: "item_2",
+          type: "mcp_tool_call",
+          server: "canvasops",
+          tool: "canvas.read",
+          arguments: { ref: "r1" },
+          result: null,
+          error: null,
+          status: "in_progress",
+        },
+      },
+      {
+        type: "item.completed",
+        item: {
+          id: "item_2",
+          type: "mcp_tool_call",
+          server: "canvasops",
+          tool: "canvas.read",
+          arguments: { ref: "r1" },
+          result: { content: [{ type: "text", text: "ok" }], structured_content: { ok: true } },
+          error: null,
+          status: "completed",
+        },
+      },
+      {
+        type: "item.completed",
+        item: {
+          id: "item_3",
+          type: "file_change",
+          changes: [{ path: "a.ts", kind: "update" }],
+          status: "completed",
+        },
+      },
       RESULT_OK(null),
     ]);
     const session = await adapter(t.fn).createSession({ cwd: "/repo" });
@@ -143,6 +195,31 @@ describe("CodexAdapter", () => {
       )
       .map((e) => e.call.kind);
     expect(kinds).toEqual(["exec", "mcp", "write"]);
+    const outputs = events.filter(
+      (e): e is Extract<HarnessEvent, { kind: "tool.output" }> => e.kind === "tool.output",
+    );
+    expect(outputs.map((event) => [event.callId, event.ok])).toEqual([
+      ["item_1", true],
+      ["item_2", true],
+      ["item_3", true],
+    ]);
+    expect(outputs[0]?.text).toBe("a.ts\n");
+    expect(outputs[1]?.output).toEqual({
+      content: [{ type: "text", text: "ok" }],
+      structured_content: { ok: true },
+    });
+  });
+
+  it("retains item_type as a compatibility fallback", async () => {
+    const t = fakeTransport([
+      { type: "thread.started", thread_id: "th" },
+      { type: "item.completed", item: { id: "legacy", item_type: "agent_message", text: "ok" } },
+      RESULT_OK("ok"),
+    ]);
+    const session = await adapter(t.fn).createSession({ cwd: "/repo" });
+    await session.send({ prompt: "go" });
+    const { events } = await drain(session);
+    expect(events.some((event) => event.kind === "text.message")).toBe(true);
   });
 
   it("maps a nonzero exit to a failed outcome with class and origin", async () => {
@@ -185,6 +262,49 @@ describe("CodexAdapter", () => {
     expect(t.invoked()).toBe(false);
   });
 
+  it("awaits transport termination from interrupt and close", async () => {
+    let terminated = false;
+    const transport: CodexTurnTransport = (spec) => ({
+      async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
+        yield { type: "thread.started", thread_id: "th" };
+        if (!spec.signal?.aborted) {
+          await new Promise<void>((resolve) =>
+            spec.signal?.addEventListener(
+              "abort",
+              () =>
+                setTimeout(() => {
+                  terminated = true;
+                  resolve();
+                }, 20),
+              { once: true },
+            ),
+          );
+        } else {
+          await new Promise((resolve) => setTimeout(resolve, 20));
+          terminated = true;
+        }
+        yield { rennet: "turn-result", exitCode: 0, lastMessage: null, aborted: true };
+      },
+    });
+    const session = await adapter(transport).createSession({ cwd: "/repo" });
+    await session.send({ prompt: "go" });
+    const draining = drain(session);
+    await Promise.resolve();
+    await session.interrupt();
+    expect(terminated).toBe(true);
+    await expect(draining).resolves.toMatchObject({ outcome: { status: "cancelled" } });
+    await session.close();
+  });
+
+  it("throws a plain error on a second events subscription", async () => {
+    const session = await adapter(fakeTransport([RESULT_OK(null)]).fn).createSession({
+      cwd: "/repo",
+    });
+    const first = session.events;
+    expect(first).toBeDefined();
+    expect(() => session.events).toThrow("Codex session events may only be subscribed to once");
+  });
+
   it("builds an evidence-derived descriptor: no evidence → every layer false", () => {
     const a = adapter(fakeTransport([]).fn);
     for (const cap of Object.values(a.descriptor.capabilities)) {
@@ -202,7 +322,6 @@ describe("buildCodexTurnArgs", () => {
       cwd: "/repo",
       prompt: "review this",
       model: "gpt-5.6-sol",
-      effort: "high",
       schemaPath: "/tmp/s.json",
       outPath: "/tmp/o.txt",
       mcpServers: { canvasops: { url: "http://127.0.0.1:5000/mcp" } },
@@ -242,5 +361,28 @@ describe("buildCodexTurnArgs", () => {
     expect(args).not.toContain("-o");
     expect(args).not.toContain("-m");
     expect(args[args.length - 1]).toBe("go");
+  });
+
+  it("accounts cache writes as a distinct token bucket", async () => {
+    const t = fakeTransport([
+      {
+        type: "turn.completed",
+        usage: {
+          input_tokens: 100,
+          cached_input_tokens: 60,
+          cache_write_input_tokens: 7,
+          output_tokens: 5,
+          reasoning_output_tokens: 2,
+        },
+      },
+      RESULT_OK(null),
+    ]);
+    const session = await adapter(t.fn).createSession({ cwd: "/repo" });
+    await session.send({ prompt: "go" });
+    const { outcome } = await drain(session);
+    expect(outcome).toMatchObject({
+      status: "completed",
+      usage: { input: 40, cacheRead: 60, cacheWrite: 7, output: 5, total: 112 },
+    });
   });
 });

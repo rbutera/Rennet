@@ -1,8 +1,19 @@
+import { createServer } from "node:http";
+import type { AddressInfo } from "node:net";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
-import { CANVAS_OPS_TOOLS, type ElementDetail, type OpsEnvelope } from "@rennet/core";
+import {
+  CANVAS_OPS_TOOLS,
+  type ElementDetail,
+  type OpsEnvelope,
+  type OrchestratorPrimerState,
+} from "@rennet/core";
 import { afterEach, describe, expect, it } from "vitest";
-import { type CanvasOpsExternalServer, startCanvasOpsExternalServer } from "./canvas-ops-external";
+import {
+  attachCodexOrchestratorSession,
+  type CanvasOpsExternalServer,
+  startCanvasOpsExternalServer,
+} from "./canvas-ops-external";
 import { makeCanvasOpsTestBackend } from "./canvas-ops-test-backend";
 
 let server: CanvasOpsExternalServer | null = null;
@@ -27,6 +38,13 @@ function envelopeOf(result: unknown): OpsEnvelope {
   const text = content?.find((c) => c.type === "text")?.text ?? "{}";
   return JSON.parse(text) as OpsEnvelope;
 }
+
+const primer: OrchestratorPrimerState = {
+  identity: { reviewId: "rev_1", patchsetId: "ps_1", mode: "own-branch-handoff" },
+  freshness: [],
+  canvasState: [],
+  runLedger: { fleetTasks: 0, admitted: 0, rejected: 0 },
+};
 
 describe("canvasOps@2 external streamable-HTTP transport", () => {
   it("serves a loopback URL and lists the identical tool catalogue", async () => {
@@ -79,5 +97,38 @@ describe("canvasOps@2 external streamable-HTTP transport", () => {
     const detail = element.data as ElementDetail;
     expect(detail.ref).toBe(firstKey);
     expect(detail.element?.elementKey).toBe(firstKey);
+  });
+
+  it("owns listener and MCP teardown behind one idempotent session close", async () => {
+    const { backend } = makeCanvasOpsTestBackend();
+    const attached = await attachCodexOrchestratorSession(backend, {
+      primer,
+      harness: "codex",
+      fresh: true,
+    });
+    const client = await connect(attached.url);
+    await expect(client.listTools()).resolves.toBeDefined();
+
+    await attached.close();
+    await attached.close();
+
+    const afterClose = new Client({ name: "after-close", version: "0.0.0" });
+    await expect(
+      afterClose.connect(new StreamableHTTPClientTransport(new URL(attached.url))),
+    ).rejects.toThrow();
+  });
+
+  it("rejects and cleans up when the listener errors before listening", async () => {
+    const occupied = createServer();
+    await new Promise<void>((resolve) => occupied.listen(0, "127.0.0.1", resolve));
+    const port = (occupied.address() as AddressInfo).port;
+    try {
+      const { backend } = makeCanvasOpsTestBackend();
+      await expect(startCanvasOpsExternalServer(backend, { port })).rejects.toMatchObject({
+        code: "EADDRINUSE",
+      });
+    } finally {
+      await new Promise<void>((resolve) => occupied.close(() => resolve()));
+    }
   });
 });

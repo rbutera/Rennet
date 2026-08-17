@@ -18,14 +18,28 @@ The conformance suite SHALL be a single check catalogue over the `HarnessPort` i
 - **WHEN** a check is not run for an adapter
 - **THEN** the corresponding capability layer is `false`, indistinguishable from a failed check — absence of evidence is absence of capability
 
-### Requirement: The suite is proven able to fail
+### Requirement: Every check is proven able to fail
 
-Every suite run SHALL include a positive control: a deliberately broken transport (for example, one that completes without structured output) SHALL yield a failing check and a `false` flag. A clean run that cannot demonstrate the control failing SHALL NOT be reported as passing.
+Every suite run SHALL run a refuting control for every check. Each control SHALL use a deliberately broken port for that check and require the check to fail. A clean run where any control passes SHALL refuse certification rather than report capability evidence.
 
-#### Scenario: The broken transport fails its check
+#### Scenario: One broken variant fails to refute its check
 
-- **WHEN** the suite runs its `structuredOutput` check against a transport that omits structured output
-- **THEN** the check fails, the resulting evidence omits `structuredOutput`, and the built descriptor carries it `false`
+- **WHEN** the suite runs a check's deliberately broken variant and that variant nevertheless passes
+- **THEN** the suite throws, reports no certification, and cannot record a tested range
+
+### Requirement: Interrupt and context-window checks certify only direct evidence
+
+The interrupt check SHALL begin draining, wait until the session is in flight, call only `session.interrupt()`, and require both a `cancelled` outcome and transport termination. The `reportsContextWindow` check SHALL pass only when the normalized protocol carries an actual positive context-window capacity; token usage alone SHALL NOT satisfy it.
+
+#### Scenario: A no-op interrupt cannot pass
+
+- **WHEN** an in-flight fake session implements `interrupt()` as a no-op
+- **THEN** the interrupt check fails rather than being cancelled by an external signal
+
+#### Scenario: Usage without capacity cannot pass
+
+- **WHEN** a completed outcome carries token usage but no context-window capacity
+- **THEN** `reportsContextWindow` remains false
 
 ### Requirement: Hermetic by default, real by gate
 
@@ -43,12 +57,17 @@ The default gate SHALL run the suite only against fake in-process transports —
 
 ### Requirement: testedRange is recorded from real runs, never hand-edited
 
-A real conformance run SHALL record the binary version it ran against into a committed per-harness artifact, and each adapter's `testedRange` SHALL be derived from that artifact (min and max recorded passing version). No hand-written tested-range constant SHALL remain: the Claude adapter's existing hand-edited range migrates onto the same mechanism, seeded from its current values.
+A real conformance run SHALL record the binary version it ran against into a committed per-harness artifact only when every expected capability has the expected pass/fail result. Each adapter's `testedRange` SHALL be derived from that artifact (min and max recorded passing version). No hand-written tested-range constant SHALL remain: the Claude adapter's existing hand-edited range migrates onto the same mechanism, seeded from its current values as explicitly permitted. Codex SHALL have no committed seed until its first genuine real run fully matches the expected matrix.
 
 #### Scenario: A real run extends the recorded ceiling
 
-- **WHEN** a real conformance run passes against a binary version above the artifact's recorded maximum
+- **WHEN** a real conformance run's complete result matches the expected capability matrix against a binary version above the artifact's recorded maximum
 - **THEN** the artifact's recorded maximum becomes that version, and the descriptor's `testedRange.maxTested` follows the artifact
+
+#### Scenario: A partially failing run does not extend the range
+
+- **WHEN** a real run produces structured output but any other capability differs from the expected matrix
+- **THEN** no tested-range entry is created or extended
 
 #### Scenario: The descriptor never invents a range
 

@@ -311,11 +311,13 @@ export {
   attachOrchestratorSession,
 } from "./orchestrator-session-server";
 export {
+  type CodexOrchestratorTurnDeps,
   deriveOrchestratorPrimerState,
   type LoadSdkQuery,
   type OrchestratorToolCall,
   type OrchestratorTurnDeps,
   type OrchestratorTurnResult,
+  runCodexOrchestratorTurn,
   runOrchestratorTurn,
 } from "./orchestrator-turn";
 export {

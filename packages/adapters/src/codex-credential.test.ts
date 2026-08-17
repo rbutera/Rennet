@@ -39,7 +39,10 @@ function recordingEffects(): { effects: CodexTransportEffects; accessed: string[
       async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
         accessed.push(`spawn:${outPath}`);
         yield { type: "thread.started", thread_id: "cred" };
-        yield { type: "item.completed", item: { item_type: "agent_message", text: '{"ok":true}' } };
+        yield {
+          type: "item.completed",
+          item: { id: "item_1", type: "agent_message", text: '{"ok":true}' },
+        };
         yield { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } };
         yield { rennet: "turn-result", exitCode: 0, lastMessage: '{"ok":true}' };
       },

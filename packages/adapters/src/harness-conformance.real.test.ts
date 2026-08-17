@@ -1,7 +1,7 @@
 import { buildCapabilities, runConformance } from "@rennet/core";
 import { describe, expect, it } from "vitest";
 import { createCodexHarness } from "./codex-turn-transport";
-import { readTestedRange, recordTestedRange } from "./harness-tested-range";
+import { matchesConformanceMatrix, recordTestedRange } from "./harness-tested-range";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Gated MANUAL real conformance run (#25, task 4.1).
@@ -20,6 +20,10 @@ import { readTestedRange, recordTestedRange } from "./harness-tested-range";
 // ─────────────────────────────────────────────────────────────────────────────
 
 const LIVE = process.env.RENNET_LIVE_CODEX === "1";
+const EXPECTED_CODEX_MATRIX = {
+  passed: ["interrupt", "structuredOutput"],
+  failed: ["costUsd", "reportsContextWindow", "textDeltas"],
+} as const;
 
 describe("harness conformance — real codex (gated)", () => {
   it.skipIf(!LIVE)(
@@ -36,7 +40,7 @@ describe("harness conformance — real codex (gated)", () => {
       // outer layers; the positive control still fires against the internal broken port.
       const report = await runConformance(adapter, { real: true, cwd: process.cwd() });
       expect(report.controlDemonstrated).toBe(true);
-      expect(report.passed.length).toBeGreaterThan(0);
+      expect(matchesConformanceMatrix(report, EXPECTED_CODEX_MATRIX)).toBe(true);
 
       const caps = buildCapabilities(report.evidence);
       // structuredOutput is the load-bearing capability the council depends on.
@@ -44,10 +48,11 @@ describe("harness conformance — real codex (gated)", () => {
       expect(caps.structuredOutput.availableInSession).toBe(true);
 
       // Record/extend the codex tested range from this real run.
-      const version = discovery.chosen?.version ?? "0.146.0";
+      const version = discovery.chosen?.version;
+      expect(version).toBeTruthy();
+      if (!version) return;
       const recorded = await recordTestedRange("codex", version);
       expect(recorded.maxTested).toBeTruthy();
-      expect(readTestedRange("codex")).not.toBeNull();
     },
     120_000,
   );

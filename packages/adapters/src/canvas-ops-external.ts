@@ -44,6 +44,11 @@ export interface CanvasOpsExternalServer {
   close(): Promise<void>;
 }
 
+export interface CanvasOpsExternalServerOptions {
+  /** Test seam; production always binds an ephemeral port. */
+  readonly port?: number;
+}
+
 /** Build the canvasOps@2 `McpServer` bound to `backend` from the neutral catalogue. */
 function buildExternalMcpServer(backend: CanvasOpsBackend): McpServer {
   const mcp = new McpServer(
@@ -75,6 +80,7 @@ const MCP_PATH = "/mcp";
  */
 export async function startCanvasOpsExternalServer(
   backend: CanvasOpsBackend,
+  options: CanvasOpsExternalServerOptions = {},
 ): Promise<CanvasOpsExternalServer> {
   const mcp = buildExternalMcpServer(backend);
   const transport = new StreamableHTTPServerTransport({
@@ -92,17 +98,48 @@ export async function startCanvasOpsExternalServer(
     });
   });
 
-  await new Promise<void>((resolve) => http.listen(0, "127.0.0.1", resolve));
+  let closed = false;
+  const close = async (): Promise<void> => {
+    if (closed) return;
+    closed = true;
+    const errors: unknown[] = [];
+    await transport.close().catch((error) => errors.push(error));
+    await mcp.close().catch((error) => errors.push(error));
+    if (http.listening) {
+      await new Promise<void>((resolve) =>
+        http.close((error) => {
+          if (error) errors.push(error);
+          resolve();
+        }),
+      );
+    }
+    if (errors.length > 0) throw new AggregateError(errors, "failed to close canvasOps server");
+  };
+
+  try {
+    await new Promise<void>((resolve, reject) => {
+      const onListening = (): void => {
+        http.off("error", onError);
+        resolve();
+      };
+      const onError = (error: Error): void => {
+        http.off("listening", onListening);
+        reject(error);
+      };
+      http.once("listening", onListening);
+      http.once("error", onError);
+      http.listen(options.port ?? 0, "127.0.0.1");
+    });
+  } catch (error) {
+    await close().catch(() => undefined);
+    throw error;
+  }
   const address = http.address() as AddressInfo;
   const url = `http://127.0.0.1:${address.port}${MCP_PATH}`;
 
   return {
     url,
-    async close(): Promise<void> {
-      await transport.close();
-      await mcp.close();
-      await new Promise<void>((resolve) => http.close(() => resolve()));
-    },
+    close,
   };
 }
 
@@ -111,8 +148,10 @@ export async function startCanvasOpsExternalServer(
 /** The booted session plus the loopback canvasOps@2 URL to hand to a codex session. */
 export interface AttachedCodexOrchestratorSession {
   session: OrchestratorSession;
-  /** Loopback canvasOps@2 server; its URL feeds `-c mcp_servers.canvasops.url=<url>`. */
-  external: CanvasOpsExternalServer;
+  /** Loopback canvasOps@2 URL; feeds `-c mcp_servers.canvasops.url=<url>`. */
+  readonly url: string;
+  /** The single lifecycle owner for the session's listener and MCP transport. */
+  close(): Promise<void>;
 }
 
 /**
@@ -127,5 +166,5 @@ export async function attachCodexOrchestratorSession(
 ): Promise<AttachedCodexOrchestratorSession> {
   const session = bootOrchestratorSession(config);
   const external = await startCanvasOpsExternalServer(backend);
-  return { session, external };
+  return { session, url: external.url, close: external.close };
 }

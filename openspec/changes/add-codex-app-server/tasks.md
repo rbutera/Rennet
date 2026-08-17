@@ -5,7 +5,7 @@ Red-first throughout: each group starts with failing tests against fake transpor
 ## 1. Conformance suite (core)
 
 - [x] 1.1 RED: `packages/core/src/harness-conformance.test.ts` — suite over a fake `HarnessPort` maps each check to exactly one `CapabilityName`; a skipped check leaves the flag false; output feeds `buildCapabilities` and the descriptor's true flags equal the passing set exactly.
-- [x] 1.2 RED: positive control — the `structuredOutput` check against a deliberately-broken fake transport fails, and a suite run that cannot demonstrate the control failing refuses to certify.
+- [x] 1.2 RED: refuting controls — every check runs against its own deliberately broken fake port and a suite run where any broken variant passes refuses to certify.
 - [x] 1.3 GREEN: implement `packages/core/src/harness-conformance.ts` — pure over `HarnessPort`, no Node at module scope; checks for `structuredOutput`, `interrupt`, `textDeltas`, `reportsContextWindow`, `costUsd`; layer attribution (fake runs cap at `implementedByAdapter`); export from core index.
 - [x] 1.4 testedRange artifact: `packages/adapters/src/harness-tested-range.json` seeded with claude `{min: 2.0.0, maxTested: 2.1.220}`; descriptor reader; delete `CLAUDE_TESTED_RANGE` and migrate `ClaudeAdapter` + its tests onto the artifact. Test: descriptor range equals artifact, no other source.
 
@@ -24,11 +24,21 @@ Red-first throughout: each group starts with failing tests against fake transpor
 
 ## 4. Gated real runs (not in `pnpm check`)
 
-- [x] 4.1 `harness-conformance.real.test.ts` (env-var gated, `codex-utility-port.real.test.ts` pattern): suite vs the installed `codex`; passing checks earn `advertisedByHarness`/`availableInSession`; run records/extends the codex entry in `harness-tested-range.json` (seeded from this first run).
+- [x] 4.1 `harness-conformance.real.test.ts` (env-var gated, `codex-utility-port.real.test.ts` pattern): suite vs the installed `codex`; passing checks earn `advertisedByHarness`/`availableInSession`; run records/extends the codex entry only when the complete expected capability matrix matches (no committed Codex seed).
 - [x] 4.2 Gated real orchestrator round-trip: codex picked, session configured with the loopback canvasOps URL, describe→read round-trips against the live backend.
 
 ## 5. Docs + gate (same change, definition of done)
 
 - [x] 5.1 `docs/src/content/docs/developing/reference/delivery-order.md` — wave-10 entry: #25 scope as built (exec transport, app-server seam named and deferred, struck approval scope honored), #41 next.
 - [x] 5.2 Developing-Rennet harness page: two-adapter architecture, `CodexTurnTransport` seam, derived capabilities + conformance, testedRange mechanism, honest egress line (user's own codex binary/subscription; canvasOps listener loopback-only, no Rennet backend).
-- [x] 5.3 Full gate: `sh -c 'pnpm check'` green, including the conformance positive control and the licence-gate control.
+- [x] 5.3 Full gate: `sh -c 'pnpm check'` green, including the conformance refuting controls and the licence-gate control.
+
+## 6. Consolidated review fixes
+
+- [x] 6.1 Decode official `item.type` shapes with compatibility fallback; map start/completion tool lifecycle faithfully; use disjoint input/cache-read/cache-write/output accounting; make session events subscribe-once; remove unreachable effort.
+- [x] 6.2 Wire Codex-selected desktop orchestrator turns through the injected agentic adapter and prove the composition hermetically.
+- [x] 6.3 Await transport completion on interrupt/close and terminate launcher descendants, with a real process-tree regression.
+- [x] 6.4 Make interrupt conformance truly in-flight, require cancellation/termination, and require actual context-window capacity.
+- [x] 6.5 Refute every conformance check independently and record testedRange only on a full expected matrix; remove the Codex seed.
+- [x] 6.6 Tie the external canvasOps listener and MCP transport to one idempotent owner; reject and clean up on pre-listen errors.
+- [x] 6.7 Run `NX_DAEMON=false pnpm check` green and commit without pushing.

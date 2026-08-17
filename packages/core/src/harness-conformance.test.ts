@@ -26,6 +26,8 @@ interface FakeShape {
   readonly textDeltas?: boolean;
   /** Attach token usage to the completed outcome. */
   readonly usage?: RspTokenUsage;
+  /** Attach actual context-window capacity to the normalized outcome. */
+  readonly contextWindowTokens?: number;
   /** Put a cost number on the terminal frame's native. */
   readonly costUsd?: number;
   /** Honour signal abort with a cancelled outcome. */
@@ -61,22 +63,21 @@ function fakePort(shape: FakeShape): HarnessPort {
     },
     createSession(spec: SessionSpec): Promise<HarnessSession> {
       const events: HarnessEvent[] = [];
+      let prompt = "";
+      let resolveInterrupted!: () => void;
+      const interrupted = new Promise<void>((resolve) => {
+        resolveInterrupted = resolve;
+      });
       if (shape.textDeltas) {
         events.push({ ...base(), kind: "text.delta", text: "hi" } as HarnessEvent);
       }
       const buildTerminal = (): HarnessEvent => {
-        if (spec.signal?.aborted && shape.interruptible) {
-          return {
-            ...base(),
-            kind: "session.ended",
-            outcome: { status: "cancelled", partial: true },
-          } as HarnessEvent;
-        }
         const outcome: SessionOutcome = {
           status: "completed",
           finalText: "done",
           ...(shape.structuredOutput ? { structuredOutput: { ok: true } } : {}),
           ...(shape.usage ? { usage: shape.usage } : {}),
+          ...(shape.contextWindowTokens ? { contextWindowTokens: shape.contextWindowTokens } : {}),
         };
         const native = shape.costUsd === undefined ? {} : { total_cost_usd: shape.costUsd };
         return { ...base(), native, kind: "session.ended", outcome } as HarnessEvent;
@@ -86,16 +87,37 @@ function fakePort(shape: FakeShape): HarnessPort {
         harness: "codex",
         events: {
           async *[Symbol.asyncIterator](): AsyncIterator<HarnessEvent> {
+            yield {
+              ...base(),
+              kind: "session.started",
+              model: "fake",
+              cwd: spec.cwd,
+              tools: [],
+              apiKeySource: null,
+            } as HarnessEvent;
             for (const event of events) yield event;
-            // The terminal is produced lazily, so a signal aborted after send()
-            // but before draining is observed here (the check aborts then drains).
+            if (prompt.includes("remain active until interrupted")) {
+              if (!shape.interruptible) {
+                yield buildTerminal();
+                return;
+              }
+              await interrupted;
+              yield {
+                ...base(),
+                kind: "session.ended",
+                outcome: { status: "cancelled", partial: true },
+              } as HarnessEvent;
+              return;
+            }
             yield buildTerminal();
           },
         },
-        send(): Promise<string> {
+        send(input): Promise<string> {
+          prompt = input.prompt;
           return Promise.resolve("t1");
         },
         interrupt(): Promise<void> {
+          if (shape.interruptible) resolveInterrupted();
           return Promise.resolve();
         },
         close(): Promise<void> {
@@ -114,9 +136,10 @@ const CLAUDE_SHAPE: FakeShape = {
   usage: USAGE,
   costUsd: 0.0123,
   interruptible: true,
+  contextWindowTokens: 200_000,
 };
 
-/** A codex-shaped fake: everything the checks probe EXCEPT cost USD. */
+/** A codex-shaped fake: no cost or context-window report. */
 const CODEX_SHAPE: FakeShape = {
   structuredOutput: true,
   textDeltas: true,
@@ -153,6 +176,7 @@ describe("harness conformance suite", () => {
     // costUsd is the one honest divergence.
     expect(passingNames(claude).has("costUsd")).toBe(true);
     expect(passingNames(codex).has("costUsd")).toBe(false);
+    expect(passingNames(codex).has("reportsContextWindow")).toBe(false);
 
     // Fed to buildCapabilities, the descriptor's true flags are EXACTLY the
     // passing set, and every unexercised capability stays false in every layer.
@@ -192,19 +216,40 @@ describe("harness conformance suite", () => {
     expect(caps.structuredOutput.implementedByAdapter).toBe(false);
   });
 
+  it("does not certify reportsContextWindow from token usage alone", async () => {
+    const report = await runConformance(fakePort({ usage: USAGE, interruptible: true }));
+    expect(report.failed).toContain("reportsContextWindow");
+    expect(buildCapabilities(report.evidence).reportsContextWindow.implementedByAdapter).toBe(
+      false,
+    );
+  });
+
+  it("fails interrupt when session.interrupt is a no-op", async () => {
+    const check = CONFORMANCE_CHECKS.find((candidate) => candidate.capability === "interrupt");
+    expect(check).toBeDefined();
+    await expect(check?.run(fakePort({ interruptible: false }), "/repo")).resolves.toBe(false);
+  });
+
   describe("positive control — the suite is proven able to fail", () => {
-    it("the default broken control transport fails its structuredOutput check", async () => {
+    it("the default broken control variants refute every check", async () => {
       const report = await runConformance(fakePort(CODEX_SHAPE));
       expect(report.controlDemonstrated).toBe(true);
     });
 
-    it("refuses to certify when the control cannot be shown to fail", async () => {
-      // A control port that DOES produce structured output means the machinery
-      // cannot demonstrate a failing check — the run must refuse to certify.
-      const goodControl = fakePort(CODEX_SHAPE);
-      await expect(
-        runConformance(fakePort(CODEX_SHAPE), { controlPort: goodControl }),
-      ).rejects.toThrow(/control/i);
+    it("refuses to certify when any check's refuting control passes", async () => {
+      const fullyCapable = fakePort({
+        ...CLAUDE_SHAPE,
+        structuredOutput: true,
+        textDeltas: true,
+        contextWindowTokens: 200_000,
+      });
+      for (const check of CONFORMANCE_CHECKS) {
+        await expect(
+          runConformance(fakePort(CODEX_SHAPE), {
+            controlPorts: { [check.capability]: fullyCapable },
+          }),
+        ).rejects.toThrow(check.capability);
+      }
     });
   });
 });

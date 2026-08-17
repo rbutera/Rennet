@@ -68,7 +68,7 @@ tool start/output/denial, normalized errors, and the metered-key warning. Tool
 outputs keep both the structured value and readable text; callers do not have to
 scrape prose when the harness supplied real data.
 
-## Claude Code is the live adapter
+## Claude Code adapter
 
 The Claude adapter uses `@anthropic-ai/claude-agent-sdk`, but points it at the
 user's installed `claude` through `pathToClaudeCodeExecutable`. The SDK's bundled
@@ -130,9 +130,18 @@ The transport yields codex's raw JSONL frames, then one synthetic terminal frame
 carrying the exit code and the captured last message — the process facts only the
 spawn can know. The adapter normalizes codex's `thread.started`, `item.*`,
 `turn.completed`, and `turn.failed` frames into the same `HarnessEvent` kinds,
-passing anything unmodelled straight through. Interrupt kills the subprocess and
-ends the session cancelled. Codex reports no per-turn cost, so the `costUsd`
-capability stays honestly false. Host locus only; WSL codex is a later seam.
+passing anything unmodelled straight through. Items are decoded from the native
+`item.type` discriminator (`item.item_type` remains a compatibility fallback):
+starts become `tool.started`, while completed command and MCP items become
+`tool.output` with their native result and status. Interrupt and close terminate
+the whole process tree and await transport completion. Codex reports no per-turn
+cost or context-window capacity, so `costUsd` and `reportsContextWindow` stay
+honestly false. Host locus only; WSL codex is a later seam.
+
+The desktop composition resolves the `orchestrator-chat` council assignment across
+both real adapters. A Claude-selected turn receives canvasOps in process; a
+Codex-selected turn reaches an injected `CodexTurnTransport` with the same backend
+served at its loopback MCP URL. The session event stream is subscribe-once.
 
 ## Discovery without shell tricks
 
@@ -171,8 +180,9 @@ The evidence comes from the **conformance suite** (`packages/core/src/harness-co
 one catalogue of named checks that runs identically against any `HarnessPort`.
 Each check maps to exactly one capability and drives a session, watching the
 normalized stream for the evidence that capability would leave — a structured
-output completing, an abort cancelling, a text delta arriving, usage on the
-terminal frame, a cost number. A run's output is exactly the passing set, fed to
+output completing, an in-flight interrupt cancelling and terminating its transport,
+a text delta arriving, an actual context-window capacity, or a cost number. Token
+usage alone never certifies a context window. A run's output is exactly the passing set, fed to
 `buildCapabilities`; a skipped or failed check is indistinguishable from a missing
 capability, because absence of evidence is absence of capability.
 
@@ -180,15 +190,15 @@ The suite is hermetic by default: `pnpm check` runs it against in-process fake
 transports — zero process spawns, zero token spend — which can only earn the
 `implementedByAdapter` layer. A gated `.real` test runs the same suite against the
 installed binary, and only that real run produces `advertisedByHarness` and
-`availableInSession`. Every run first fires a positive control — a deliberately
-broken transport that must fail its check — so a suite that cannot demonstrate a
-failure refuses to certify.
+`availableInSession`. Every check first runs its own refuting control variant. If
+even one broken port passes the check it is meant to refute, the suite refuses to
+certify.
 
 Each adapter's `testedRange` (the version floor and ceiling it has actually been
-exercised against) is derived, never hand-edited: a real conformance run records
-the binary version it passed against into a committed per-harness artifact
-(`packages/adapters/src/harness-tested-range.json`), and descriptors read the
-range from there.
+exercised against) is derived, never hand-edited. A real conformance run may record
+the binary version into the committed artifact only when its complete expected
+pass/fail matrix matches. Claude retains the explicitly permitted migration seed;
+Codex has no seed until its first genuine full-match real run writes one.
 
 ## Authentication and cost honesty
 
@@ -231,6 +241,7 @@ frame remains available for diagnostics.
 | Fully capable Claude handoff turn | Live behind a main-process command; renderer caller missing |
 | Codex binary discovery and utility execution | Live |
 | Full Codex `HarnessPort` session adapter (`codex exec --json` seam) | Live |
+| Council-selected Codex orchestrator composition | Live |
 | Cross-adapter conformance suite (hermetic + gated real) | Live |
 | Derived `testedRange` from a recorded artifact | Live |
 | canvasOps@2 external loopback transport for non-Claude slots | Live |

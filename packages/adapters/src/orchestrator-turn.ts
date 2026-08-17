@@ -6,6 +6,7 @@ import {
   createSeqCounter,
   type EnvelopeContext,
   type HarnessError,
+  type HarnessPort,
   type OrchestratorPrimerState,
   type OrchestratorSession,
   type RepoFreshness,
@@ -17,6 +18,7 @@ import {
 } from "@rennet/core";
 import { renderLayer } from "@rennet/instructions";
 import type { Canvas, ContextSendRecord } from "@rennet/types";
+import { attachCodexOrchestratorSession } from "./canvas-ops-external";
 import { CANVAS_OPS_SERVER_NAME, type LoadCanvasOpsSdk } from "./canvas-ops-server";
 import { normalizeClaudeFrame } from "./claude-adapter";
 import type { LiveSnapshotOutcome } from "./live-review-backend";
@@ -234,6 +236,20 @@ export interface OrchestratorTurnResult {
   readonly error?: HarnessError;
 }
 
+export interface CodexOrchestratorTurnDeps {
+  readonly cwd: string;
+  readonly model?: string;
+  readonly abortController?: AbortController;
+  readonly onDelta?: (text: string) => void;
+  readonly assembledContext?: string;
+  readonly onSend?: (record: ContextSendRecord) => void;
+  readonly userActs?: readonly UserAct[];
+  /** Resolve the selected Codex adapter after the loopback MCP URL exists. */
+  readonly resolvePort: (
+    mcpServers: Readonly<Record<string, { readonly url: string }>>,
+  ) => Promise<HarnessPort>;
+}
+
 /**
  * Drive ONE live orchestrator turn against `backend`. Boots the session + the
  * in-process canvasOps@2 MCP server, then runs the user's `claude` with that
@@ -394,4 +410,90 @@ export async function runOrchestratorTurn(
     outcome,
     ...(error ? { error } : {}),
   };
+}
+
+/** Drive the same orchestrator session through the Codex HarnessPort. */
+export async function runCodexOrchestratorTurn(
+  backend: CanvasOpsBackend,
+  primer: OrchestratorPrimerState,
+  question: string,
+  deps: CodexOrchestratorTurnDeps,
+): Promise<OrchestratorTurnResult> {
+  const attached = await attachCodexOrchestratorSession(backend, {
+    primer,
+    harness: "codex",
+    fresh: true,
+  });
+  let harnessSession: Awaited<ReturnType<HarnessPort["createSession"]>> | null = null;
+  try {
+    for (const act of deps.userActs ?? []) attached.session.stream.push(act);
+    const request = attached.session.buildRequest(question, backend.view());
+    const deixisContext = renderOpenAssembledPrompt(
+      JSON.stringify(request.viewContext),
+      request.contextEvents,
+    );
+    const prompt = [
+      attached.session.primer.text,
+      ...(deps.assembledContext === undefined
+        ? []
+        : [renderLayer("context", deps.assembledContext)]),
+      deixisContext,
+      question,
+    ].join("\n\n");
+
+    if (deps.onSend) {
+      const record = buildContextSendRecord(
+        prompt,
+        { seat: "orchestrator", harness: "codex", channel: "prompt", attempt: 0 },
+        deps.assembledContext,
+      );
+      try {
+        deps.onSend(record);
+      } catch {
+        // Transcript observation must never block or alter the turn.
+      }
+    }
+
+    const port = await deps.resolvePort({ canvasops: { url: attached.url } });
+    harnessSession = await port.createSession({
+      cwd: deps.cwd,
+      ...(deps.model === undefined ? {} : { model: deps.model }),
+      ...(deps.abortController === undefined ? {} : { signal: deps.abortController.signal }),
+    });
+    await harnessSession.send({ prompt });
+
+    const toolCalls: OrchestratorToolCall[] = [];
+    let finalText = "";
+    let outcome: "completed" | "failed" = "failed";
+    let error: HarnessError | undefined;
+    for await (const event of harnessSession.events) {
+      if (event.kind === "tool.started" && event.call.kind === "mcp") {
+        toolCalls.push({ name: event.call.name, op: event.call.name, input: event.call.input });
+      } else if (event.kind === "text.delta" && event.text) {
+        deps.onDelta?.(event.text);
+      } else if (event.kind === "text.message" && event.text) {
+        finalText = event.text;
+      } else if (event.kind === "session.ended") {
+        if (event.outcome.status === "completed") {
+          outcome = "completed";
+          if (event.outcome.finalText) finalText = event.outcome.finalText;
+        } else if (event.outcome.status === "failed") {
+          error = event.outcome.error;
+        }
+      } else if (event.kind === "error") {
+        error = event.error;
+      }
+    }
+
+    return {
+      session: attached.session,
+      toolCalls,
+      finalText,
+      outcome,
+      ...(error ? { error } : {}),
+    };
+  } finally {
+    await harnessSession?.close();
+    await attached.close();
+  }
 }

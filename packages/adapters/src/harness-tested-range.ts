@@ -15,7 +15,7 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import type { HarnessId } from "@rennet/core";
+import type { CapabilityName, ConformanceReport, HarnessId } from "@rennet/core";
 import { compareVersions } from "./harness-discovery";
 import testedRanges from "./harness-tested-range.json";
 
@@ -30,6 +30,22 @@ export const TESTED_RANGE_ARTIFACT_PATH = fileURLToPath(
 );
 
 type RecordedRanges = Partial<Record<HarnessId, TestedRange>>;
+
+export interface ExpectedConformanceMatrix {
+  readonly passed: readonly CapabilityName[];
+  readonly failed: readonly CapabilityName[];
+}
+
+/** A tested range is recordable only when every capability matches its expected verdict. */
+export function matchesConformanceMatrix(
+  report: Pick<ConformanceReport, "passed" | "failed">,
+  expected: ExpectedConformanceMatrix,
+): boolean {
+  const same = (left: readonly CapabilityName[], right: readonly CapabilityName[]): boolean =>
+    left.length === right.length &&
+    [...left].sort().every((capability, index) => capability === [...right].sort()[index]);
+  return same(report.passed, expected.passed) && same(report.failed, expected.failed);
+}
 
 /**
  * Read a harness's recorded tested range from the committed artifact. Absent

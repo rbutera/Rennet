@@ -38,12 +38,17 @@ The adapter SHALL normalize the transport's streamed JSONL frames into the exist
 
 #### Scenario: A tool-use frame is classified
 
-- **WHEN** the transport yields a command-execution or MCP tool item
-- **THEN** the adapter emits a tool event whose `kind` reflects the tool class (`exec`, `mcp`, …) and retains the native frame
+- **WHEN** the transport yields an `item.started` or `item.completed` frame whose official `item.type` is command execution, MCP tool call, or file change
+- **THEN** the adapter classifies its `kind` (`exec`, `mcp`, or `write`) from `item.type` (`item.item_type` is accepted only as a compatibility fallback), uses the stable item id, emits `tool.started` for the start, and emits `tool.output` with the native result and success status for a completed command or MCP item
+
+#### Scenario: Token accounting keeps disjoint fields
+
+- **WHEN** a completed turn reports input tokens, cached input tokens, cache-write input tokens, and output tokens
+- **THEN** normalized input excludes cached input, cache read and cache write remain separate, and total is the sum of the disjoint normalized fields
 
 ### Requirement: Failures map into the error taxonomy and interrupt kills the subprocess
 
-A transport failure (nonzero exit, unparseable terminal state, spawn failure) SHALL surface as a normalized `HarnessError` carrying a closed `class`, an `origin` (`harness`, `provider`, or `transport`), and the retryability source, terminating the session with a `failed` outcome. `interrupt()` or an aborted `signal` SHALL kill the subprocess and terminate the session with a `cancelled` outcome.
+A transport failure (nonzero exit, unparseable terminal state, spawn failure) SHALL surface as a normalized `HarnessError` carrying a closed `class`, an `origin` (`harness`, `provider`, or `transport`), and the retryability source, terminating the session with a `failed` outcome. `interrupt()`, `close()`, or an aborted `signal` SHALL terminate the whole spawned process tree. `interrupt()` and `close()` SHALL await transport completion before resolving.
 
 #### Scenario: A nonzero exit becomes a failed outcome
 
@@ -53,7 +58,21 @@ A transport failure (nonzero exit, unparseable terminal state, spawn failure) SH
 #### Scenario: An aborted signal cancels the turn
 
 - **WHEN** the session's `signal` aborts while a turn is in flight
-- **THEN** the subprocess is killed and the session ends with a `cancelled` outcome
+- **THEN** the subprocess and its descendants terminate and the session ends with a `cancelled` outcome before interrupt or close resolves
+
+#### Scenario: Events are subscribe-once
+
+- **WHEN** a caller accesses one session's `events` stream a second time
+- **THEN** access throws a plain descriptive error and no second transport process is spawned
+
+### Requirement: Desktop composition selects the Codex adapter for Codex-selected orchestrator turns
+
+The desktop composition root SHALL resolve the existing `orchestrator-chat` consumer through the selected harness. When that seat selects Codex, it SHALL construct the agentic `CodexAdapter` over the injected `CodexTurnTransport`, attach the same live canvasOps backend through its loopback MCP URL, and run the orchestrator turn through that port. This change SHALL NOT introduce additional Codex consumers beyond the paths named by this change.
+
+#### Scenario: A Codex-selected orchestrator reaches the injected transport
+
+- **WHEN** desktop composition resolves `orchestrator-chat` to Codex and runs a turn against an injected hermetic transport
+- **THEN** the injected transport receives the turn, including the loopback canvasOps URL, and its normalized result is returned by the orchestrator path
 
 ### Requirement: The adapter never opens a credential path
 

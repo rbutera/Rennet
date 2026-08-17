@@ -3,7 +3,13 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Query } from "@anthropic-ai/claude-agent-sdk";
-import type { LoadCanvasOpsSdk, LoadSdkQuery } from "@rennet/adapters";
+import {
+  CodexAdapter,
+  type CodexTurnSpec,
+  type CodexTurnTransport,
+  type LoadCanvasOpsSdk,
+  type LoadSdkQuery,
+} from "@rennet/adapters";
 import { buildReviewCanvases, type ReviewPipelineResult } from "@rennet/core";
 import { sha256Hex } from "@rennet/protocol";
 import type { PatchFile, Patchset, Review } from "@rennet/types";
@@ -140,7 +146,8 @@ describe("createOrchestratorTurnRunner — the desktop composition", () => {
     const focused: string[] = [];
     const run = createOrchestratorTurnRunner({
       baseDir: tempBaseDir(),
-      resolveClaudePath: () => Promise.resolve("/fake/claude"),
+      resolveHarness: () =>
+        Promise.resolve({ harness: "claude-code" as const, claudePath: "/fake/claude" }),
       loadQuery,
       loadSdk,
     });
@@ -157,12 +164,12 @@ describe("createOrchestratorTurnRunner — the desktop composition", () => {
     const fake = fakeQuery([]);
     const run = createOrchestratorTurnRunner({
       baseDir: tempBaseDir(),
-      resolveClaudePath: () => Promise.resolve(null),
+      resolveHarness: () => Promise.resolve(null),
       loadQuery: fake.loadQuery,
     });
     const outcome = await run(review, pipeline, "Map the base.");
     expect(outcome.available).toBe(false);
-    if (!outcome.available) expect(outcome.reason).toMatch(/no claude/i);
+    if (!outcome.available) expect(outcome.reason).toMatch(/no model harness/i);
     // No claude → the runner returns before any turn: nothing spawned.
     expect(fake.calls()).toBe(0);
   });
@@ -179,7 +186,8 @@ describe("createOrchestratorTurnRunner — the desktop composition", () => {
     ]);
     const run = createOrchestratorTurnRunner({
       baseDir: tempBaseDir(),
-      resolveClaudePath: () => Promise.resolve("/fake/claude"),
+      resolveHarness: () =>
+        Promise.resolve({ harness: "claude-code" as const, claudePath: "/fake/claude" }),
       loadQuery: fake.loadQuery,
     });
     const outcome = await run(review, pipeline, "Map the base branch.");
@@ -204,7 +212,8 @@ describe("createOrchestratorTurnRunner — the desktop composition", () => {
       })) as unknown as LoadSdkQuery;
     const run = createOrchestratorTurnRunner({
       baseDir,
-      resolveClaudePath: () => Promise.resolve("/fake/claude"),
+      resolveHarness: () =>
+        Promise.resolve({ harness: "claude-code" as const, claudePath: "/fake/claude" }),
       loadQuery,
     });
 
@@ -241,12 +250,90 @@ describe("createOrchestratorTurnRunner — the desktop composition", () => {
       })) as unknown as LoadSdkQuery;
     const run = createOrchestratorTurnRunner({
       baseDir: tempBaseDir(),
-      resolveClaudePath: () => Promise.resolve("/fake/claude"),
+      resolveHarness: () =>
+        Promise.resolve({ harness: "claude-code" as const, claudePath: "/fake/claude" }),
       loadQuery,
     });
     await run(review, pipeline, "Map the base.", undefined, controller);
     // The VERY controller passed reaches the SDK — not a copy, not absent. Drop the
     // threading in `createOrchestratorTurnRunner` and this reddens (undefined !== it).
     expect(capturedOptions?.abortController).toBe(controller);
+  });
+
+  it("routes a Codex-selected orchestrator through an injected CodexTurnTransport", async () => {
+    const { review, pipeline } = await liveReview();
+    let captured: CodexTurnSpec | null = null;
+    const transport: CodexTurnTransport = (spec) => {
+      captured = spec;
+      return {
+        async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
+          yield { type: "thread.started", thread_id: "th_codex" };
+          yield {
+            type: "item.started",
+            item: {
+              id: "item_1",
+              type: "mcp_tool_call",
+              server: "canvasops",
+              tool: "canvas.describe",
+              arguments: { depth: "counts" },
+              result: null,
+              error: null,
+              status: "in_progress",
+            },
+          };
+          yield {
+            type: "item.completed",
+            item: {
+              id: "item_1",
+              type: "mcp_tool_call",
+              server: "canvasops",
+              tool: "canvas.describe",
+              arguments: { depth: "counts" },
+              result: { content: [{ type: "text", text: "{}" }] },
+              error: null,
+              status: "completed",
+            },
+          };
+          yield {
+            type: "item.completed",
+            item: { id: "item_2", type: "agent_message", text: "codex answer" },
+          };
+          yield { type: "turn.completed", usage: { input_tokens: 2, output_tokens: 1 } };
+          yield { rennet: "turn-result", exitCode: 0, lastMessage: "codex answer" };
+        },
+      };
+    };
+    const run = createOrchestratorTurnRunner({
+      baseDir: tempBaseDir(),
+      resolveHarness: () =>
+        Promise.resolve({
+          harness: "codex" as const,
+          model: "gpt-5.6-terra",
+          resolvePort: (mcpServers: Readonly<Record<string, { readonly url: string }>>) =>
+            Promise.resolve(
+              new CodexAdapter({
+                binaryPath: "/fake/codex",
+                transport,
+                version: "0.146.0",
+                mcpServers,
+              }),
+            ),
+        }),
+    });
+
+    const outcome = await run(review, pipeline, "Map the base branch.");
+
+    expect(outcome.available).toBe(true);
+    if (!outcome.available) return;
+    expect(outcome.result.outcome).toBe("completed");
+    expect(outcome.result.finalText).toBe("codex answer");
+    expect(outcome.result.toolCalls).toEqual([
+      { name: "canvas.describe", op: "canvas.describe", input: { depth: "counts" } },
+    ]);
+    const seen = captured as CodexTurnSpec | null;
+    if (seen === null) throw new Error("CodexTurnTransport was not reached");
+    expect(seen.model).toBe("gpt-5.6-terra");
+    expect(seen.mcpServers?.canvasops?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+    expect(seen.prompt).toContain("Map the base branch.");
   });
 });

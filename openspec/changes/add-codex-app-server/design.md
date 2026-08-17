@@ -36,7 +36,7 @@ codex exec --json
   --ignore-user-config
   -C <spec.cwd>                       # a real repo; NO --skip-git-repo-check
   --dangerously-bypass-approvals-and-sandbox
-  [-m <model>] [-c model_reasoning_effort=<effort>]
+  [-m <model>]
   [--output-schema <tmp/schema.json>] [-o <tmp/last-message>]
   [-c mcp_servers.<name>.url=<url>]…  # canvasOps@2 loopback (§5)
   <prompt>                            # stdin: "ignore"
@@ -54,17 +54,19 @@ codex exec --json
 | native frame (shape-matched) | event |
 | --- | --- |
 | `thread.started` / first frame | `session.started` (session ids minted by adapter regardless) |
-| agent message / text item | `text.message` |
-| command execution item | tool event, `kind: "exec"` |
-| MCP tool call item | tool event, `kind: "mcp"` |
-| file change item | tool event, `kind: "write"` |
-| `turn.completed` + captured `-o` last message | `session.ended` `completed`, `structuredOutput` parsed from the last-message capture, `usage` from the frame's token counts (`codex-session-usage.ts` reader as fallback), `costUsd` absent — codex reports none, the flag stays honestly false |
+| `item.started` with official `item.type` command/MCP/file change | `tool.started`, stable item id, classified as `exec`/`mcp`/`write` (`item.item_type` accepted only as compatibility fallback) |
+| completed agent message item | `text.message` |
+| completed command or MCP item | `tool.output`, stable item id, native result and status-derived success |
+| completed file change item | paired `tool.started` + `tool.output` because Codex emits no start frame for it |
+| `turn.completed` + captured `-o` last message | `session.ended` `completed`, `structuredOutput` parsed from the last-message capture, disjoint `usage` fields (`input = input_tokens - cached_input_tokens`, cache read, cache write, output), `costUsd` absent — codex reports none, the flag stays honestly false |
 | `turn.failed` / error frame | `session.ended` `failed` with mapped `HarnessError` |
 | anything else | `passthrough`, raw frame verbatim |
 
 Every event carries the adapter's monotonic `seq` and the raw `native` frame (harness-adapter-protocol requirements — already promoted, not re-specced here).
 
 Error mapping mirror of `mapClaudeError`: nonzero exit → class from stderr shape, `origin: "harness"`; spawn/ENOENT → `origin: "transport"`; provider throttle strings → `origin: "provider"`, `retryableSource: "inferred"` unless the frame says so.
+
+The event stream is subscribe-once: a second `events` access throws before it can spawn another turn. Interrupt and close abort the turn, terminate the spawned process tree (including launcher descendants), and wait for the transport drain to finish.
 
 ## 5. canvasOps@2 external transport: loopback streamable HTTP, not a stdio shim
 
@@ -80,19 +82,24 @@ The live backend (`CanvasOpsBackend`) holds in-memory session state inside the d
 Pure over `HarnessPort` — a catalogue of named checks, each bound to exactly one `CapabilityName`:
 
 - `structuredOutput`: turn with `outputSchema` completes with parseable structured output.
-- `interrupt`: abort mid-turn yields `cancelled` and the session closes cleanly.
-- `textDeltas`, `reportsContextWindow`, `costUsd`: presence checks on the streamed/terminal frames.
+- `interrupt`: start drain, wait for an in-flight readiness event, call only `session.interrupt()`, then require `cancelled` and transport termination.
+- `textDeltas`, `costUsd`: presence checks on the streamed/terminal frames.
+- `reportsContextWindow`: actual normalized context-window capacity; token usage is not capacity and cannot pass the check.
 - `resume`, `fork`, `toolGating`: no checks in this change → structurally false everywhere (absence of evidence is absence of capability). Not stubbed as passing.
 
-Runner output is `CapabilityEvidence` for `buildCapabilities` (`harness.ts:95`). Layer attribution: fake-transport runs produce only `implementedByAdapter`; the gated real run produces `advertisedByHarness`/`availableInSession`. **Positive control:** every suite invocation first runs the `structuredOutput` check against a deliberately-broken transport and asserts it fails — a suite that can't fail can't certify (same doctrine as the licence gate's fabricated-package control).
+Runner output is `CapabilityEvidence` for `buildCapabilities` (`harness.ts:95`). Layer attribution: fake-transport runs produce only `implementedByAdapter`; the gated real run produces `advertisedByHarness`/`availableInSession`. **Refuting controls:** every suite invocation runs every check against its own deliberately broken port and requires failure — if any broken variant passes, the suite refuses to certify.
 
-**testedRange artifact:** `packages/adapters/src/harness-tested-range.json` — `{ "claude-code": { min, maxTested }, "codex": { min, maxTested } }`. The gated real run updates it (extends `maxTested` on a passing higher version); descriptors read it; `CLAUDE_TESTED_RANGE` is deleted in favour of it, seeded with its current values (`min 2.0.0, maxTested 2.1.220`; codex seeded from the first real run on 0.146.0). CI derivation (bead 63) is satisfied: the committed values only ever come from recorded runs.
+**testedRange artifact:** `packages/adapters/src/harness-tested-range.json` — per-harness `{ min, maxTested }` entries. The gated real run updates it only when the complete result matches the harness's expected pass/fail matrix; partial success records nothing. Descriptors read the artifact; `CLAUDE_TESTED_RANGE` is deleted in favour of the explicitly permitted Claude migration seed (`min 2.0.0, maxTested 2.1.220`). Codex has no seed until its first genuine full-match real run writes one.
 
-## 7. Test strategy (red-first, no codex spend in the gate)
+## 7. Desktop composition
+
+The existing `orchestrator-chat` consumer resolves its assigned harness in `apps/desktop/src/main/index.ts`. Claude keeps the in-process SDK path. A Codex-selected assignment constructs `CodexAdapter` over the discovered-binary transport, attaches the same live canvasOps backend as an external loopback MCP server, and executes through `runCodexOrchestratorTurn`. A hermetic composition test injects the transport and proves this selection reaches it. The other structured-completion seats remain on `CodexUtilityPort`; this change adds no consumers beyond the spec.
+
+## 8. Test strategy (red-first, no codex spend in the gate)
 
 Every behavior lands test-first against **fake transports** (async-iterable frame arrays), in the existing hermetic pattern (`claude-adapter.test.ts` is the template):
 
-1. Red: conformance suite against a broken fake — flags false, control fires.
+1. Red: conformance suite against one broken fake per check — every control fires.
 2. Red: `CodexAdapter` normalization/outcome/interrupt/error tests against fakes.
 3. Red: external canvasOps server round-trip with an in-test MCP client (HTTP to loopback) — no codex involved.
 4. Green: implement adapter, suite, transport.
@@ -100,7 +107,7 @@ Every behavior lands test-first against **fake transports** (async-iterable fram
 
 Positive controls throughout: the credential-read tripwire proven able to fire (claude-harness-adapter precedent), the conformance control, and the argv assertions on the pure builder (no spawn needed).
 
-## 8. Docs (same change)
+## 9. Docs (same change)
 
 - `delivery-order.md`: wave-10 entry — #25 rescoped per this design (exec transport, app-server seam named), #41 unblocked next.
 - New `docs/src/content/docs/developing/concepts/` page (or extend the harness section): the two-adapter architecture, the seam, derived capabilities, the conformance suite, and the honest egress line (codex is the user's binary on the user's subscription; canvasOps listener is loopback-only).

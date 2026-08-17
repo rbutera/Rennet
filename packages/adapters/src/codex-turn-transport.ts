@@ -71,6 +71,8 @@ async function* realSpawn(
     stdin: "ignore", // closed stdin (codex-exec gotcha 2): else it waits on stdin
     reject: false,
     buffer: false,
+    killDescendants: true,
+    forceKillAfterDelay: 1_000,
     ...(signal === undefined ? {} : { cancelSignal: signal }),
   });
   let stderr = "";
@@ -144,7 +146,6 @@ export function createCodexTurnTransport(
           cwd: spec.cwd,
           prompt: spec.prompt,
           ...(spec.model === undefined ? {} : { model: spec.model }),
-          ...(spec.effort === undefined ? {} : { effort: spec.effort }),
           ...(schemaPath === undefined ? {} : { schemaPath }),
           outPath,
           ...(spec.mcpServers === undefined ? {} : { mcpServers: spec.mcpServers }),
@@ -170,9 +171,25 @@ export function createCodexTurnTransport(
 const SELF_CONFORMANCE_TRANSPORT: CodexTurnTransport = (spec: CodexTurnSpec) => ({
   async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
     yield { type: "thread.started", thread_id: "self-conformance" };
+    if (spec.prompt.includes("remain active until interrupted")) {
+      if (!spec.signal?.aborted) {
+        await new Promise<void>((resolve) =>
+          spec.signal?.addEventListener("abort", () => resolve(), { once: true }),
+        );
+      }
+      yield {
+        rennet: "turn-result",
+        exitCode: 0,
+        lastMessage: null,
+        aborted: true,
+      } satisfies CodexTurnResultFrame;
+      return;
+    }
     yield { type: "turn.started" };
-    yield { type: "item.updated", item: { item_type: "agent_message", text: "{" } };
-    yield { type: "item.completed", item: { item_type: "agent_message", text: '{"ok":true}' } };
+    yield {
+      type: "item.completed",
+      item: { id: "item_1", type: "agent_message", text: '{"ok":true}' },
+    };
     yield {
       type: "turn.completed",
       usage: {

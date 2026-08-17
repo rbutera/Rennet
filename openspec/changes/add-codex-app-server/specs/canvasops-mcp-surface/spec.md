@@ -22,3 +22,13 @@ The system SHALL expose `canvasOps@2` as a single versioned tool surface contain
 #### Scenario: A codex-slot session round-trips describe→read
 - **WHEN** the orchestrator slot runs with codex picked, its session configured with the loopback canvasOps URL
 - **THEN** the session's `canvas.describe` → `canvas.read` calls round-trip through the external transport against the live backend (proven hermetically with an MCP client in the gate, and live in the gated real test)
+
+#### Scenario: The external lifecycle closes once
+
+- **WHEN** the owner closes an attached Codex orchestrator session more than once
+- **THEN** one idempotent lifecycle closes the harness session, listener, and MCP transport without leaving an independently owned handle
+
+#### Scenario: The listener fails before listening
+
+- **WHEN** the HTTP listener emits an error before its listening event
+- **THEN** creation rejects and cleans up the listener and MCP transport rather than leaving the promise unsettled

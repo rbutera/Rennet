@@ -50,7 +50,6 @@ export interface CodexTurnSpec {
   readonly prompt: string;
   /** Codex's own default when absent; the council passes e.g. "gpt-5.6-sol". */
   readonly model?: string;
-  readonly effort?: string;
   readonly outputSchema?: unknown;
   /** Loopback canvasOps@2 (and future) MCP servers, rendered as `-c` URL overrides. */
   readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
@@ -82,7 +81,6 @@ export interface CodexTurnArgs {
   readonly cwd: string;
   readonly prompt: string;
   readonly model?: string;
-  readonly effort?: string;
   readonly schemaPath?: string;
   readonly outPath?: string;
   readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
@@ -108,7 +106,6 @@ export function buildCodexTurnArgs(spec: CodexTurnArgs): string[] {
     spec.cwd,
   ];
   if (spec.model !== undefined) args.push("-m", spec.model);
-  if (spec.effort !== undefined) args.push("-c", `model_reasoning_effort=${spec.effort}`);
   if (spec.schemaPath !== undefined) args.push("--output-schema", spec.schemaPath);
   if (spec.outPath !== undefined) args.push("-o", spec.outPath);
   for (const [name, server] of Object.entries(spec.mcpServers ?? {})) {
@@ -134,7 +131,7 @@ function numField(record: Record<string, unknown>, key: string): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
-/** Classify a codex `item_type` into the normalized `ToolKind`. */
+/** Classify a codex item `type` into the normalized `ToolKind`. */
 export function classifyCodexItemKind(itemType: string): ToolKind {
   switch (itemType) {
     case "command_execution":
@@ -154,21 +151,79 @@ export function classifyCodexItemKind(itemType: string): ToolKind {
 /**
  * Extract token usage off a codex `turn.completed` frame's `usage` block into the
  * RSP shape. Codex reports `input_tokens`, `cached_input_tokens`, `output_tokens`,
- * `reasoning_output_tokens` (verified on the 0.146.0 binary). `cacheWrite` is 0
- * (codex has no cache-creation notion); `reasoning` is the informational subset of
- * output; `total` follows Rennet's convention (input + output + cacheRead +
- * cacheWrite) so it reconciles with codex's own `total_tokens`. Absent usage → undefined.
+ * `cache_write_input_tokens`, and `reasoning_output_tokens`. `input_tokens`
+ * includes cached input, so the normalized `input` field removes `cacheRead` and
+ * all four billed buckets remain disjoint. Absent usage → undefined.
  */
 export function extractCodexUsage(frame: Record<string, unknown>): RspTokenUsage | undefined {
   const usage = asRecord(frame.usage);
   if (!usage) return undefined;
-  const input = numField(usage, "input_tokens");
+  const inputTokens = numField(usage, "input_tokens");
   const output = numField(usage, "output_tokens");
   const cacheRead = numField(usage, "cached_input_tokens");
+  const cacheWrite = numField(usage, "cache_write_input_tokens");
+  const input = Math.max(inputTokens - cacheRead, 0);
   const reasoningRaw = usage.reasoning_output_tokens;
   const reasoning =
     typeof reasoningRaw === "number" && Number.isFinite(reasoningRaw) ? reasoningRaw : null;
-  return { input, output, cacheRead, cacheWrite: 0, reasoning, total: input + output + cacheRead };
+  return {
+    input,
+    output,
+    cacheRead,
+    cacheWrite,
+    reasoning,
+    total: input + output + cacheRead + cacheWrite,
+  };
+}
+
+function codexItemType(item: Record<string, unknown>): string | null {
+  return stringField(item, "type") ?? stringField(item, "item_type");
+}
+
+function toolName(item: Record<string, unknown>, itemType: string): string {
+  return (
+    stringField(item, "tool") ??
+    stringField(item, "command") ??
+    stringField(item, "name") ??
+    itemType
+  );
+}
+
+function toolInput(item: Record<string, unknown>): Record<string, unknown> {
+  const args = asRecord(item.arguments);
+  return args ?? item;
+}
+
+function toolOutput(
+  context: EnvelopeContext,
+  frame: unknown,
+  item: Record<string, unknown>,
+  itemType: string,
+): HarnessEvent {
+  const status = stringField(item, "status");
+  const error = asRecord(item.error);
+  let output: unknown;
+  let text: string;
+  if (itemType === "command_execution") {
+    output = stringField(item, "aggregated_output") ?? "";
+    text = String(output);
+  } else if (itemType === "mcp_tool_call") {
+    output = item.result ?? item.error ?? null;
+    text = error
+      ? (stringField(error, "message") ?? JSON.stringify(output))
+      : JSON.stringify(output);
+  } else {
+    output = item.changes ?? item;
+    text = JSON.stringify(output);
+  }
+  return {
+    ...envelope(context, frame),
+    kind: "tool.output",
+    callId: stringField(item, "id") ?? `${itemType}:unknown`,
+    ok: status === "completed" && error === null,
+    output,
+    text,
+  };
 }
 
 /**
@@ -317,7 +372,7 @@ function createCodexNormalizer(
       case "item.updated":
       case "item.completed": {
         const item = asRecord(record.item);
-        const itemType = item ? stringField(item, "item_type") : null;
+        const itemType = item ? codexItemType(item) : null;
         if (!item || itemType === null) return passthrough(frame, type);
         if (itemType === "agent_message" || itemType === "assistant_message") {
           const text = stringField(item, "text") ?? stringField(item, "content") ?? "";
@@ -331,26 +386,28 @@ function createCodexNormalizer(
           return [{ ...envelope(context, frame), kind: "text.delta", text }];
         }
         if (itemType === "reasoning") return passthrough(frame, `item:${itemType}`);
-        if (type !== "item.completed") return passthrough(frame, `item:${itemType}`);
-        // A completed tool item → one tool.started carrying its ToolKind.
-        const name =
-          stringField(item, "tool") ??
-          stringField(item, "command") ??
-          stringField(item, "name") ??
-          itemType;
-        return [
-          {
-            ...envelope(context, frame),
-            kind: "tool.started",
-            call: {
-              id: stringField(item, "id") ?? randomUUID(),
-              name,
-              input: item,
-              parentToolCallId: null,
-              kind: classifyCodexItemKind(itemType),
-            },
+        const normalizedKind = classifyCodexItemKind(itemType);
+        if (normalizedKind === "other") return passthrough(frame, `item:${itemType}`);
+        const started: HarnessEvent = {
+          ...envelope(context, frame),
+          kind: "tool.started",
+          call: {
+            id: stringField(item, "id") ?? randomUUID(),
+            name: toolName(item, itemType),
+            input: toolInput(item),
+            parentToolCallId: null,
+            kind: normalizedKind,
           },
-        ];
+        };
+        if (type === "item.started") return [started];
+        if (type === "item.updated") return passthrough(frame, `item:${itemType}`);
+        const completed = toolOutput(context, frame, item, itemType);
+        // Codex emits file changes only as completed items, so synthesize the
+        // matching start immediately before their output. Command and MCP items
+        // have a real item.started frame and completed maps only to output.
+        return itemType === "file_change" || itemType === "patch_apply"
+          ? [started, completed]
+          : [completed];
       }
       case "turn.completed":
         lastUsage = extractCodexUsage(record);
@@ -405,6 +462,10 @@ class CodexSession implements HarnessSession {
   readonly #started: Promise<AsyncIterable<unknown>>;
   #resolveStarted!: (iterable: AsyncIterable<unknown>) => void;
   #sent = false;
+  #eventsTaken = false;
+  #draining = false;
+  #completion: Promise<void> = Promise.resolve();
+  #resolveCompletion: (() => void) | null = null;
 
   constructor(
     id: string,
@@ -427,15 +488,35 @@ class CodexSession implements HarnessSession {
   }
 
   get events(): AsyncIterable<HarnessEvent> {
+    if (this.#eventsTaken) {
+      throw new Error("Codex session events may only be subscribed to once");
+    }
+    this.#eventsTaken = true;
     const started = this.#started;
     const { normalize, finalize } = createCodexNormalizer(this.#context, this.#turnSpec());
+    this.#completion = new Promise((resolve) => {
+      this.#resolveCompletion = resolve;
+    });
+    const beginDrain = (): void => {
+      this.#draining = true;
+    };
+    const finishDrain = (): void => {
+      this.#draining = false;
+      this.#resolveCompletion?.();
+      this.#resolveCompletion = null;
+    };
     return {
       async *[Symbol.asyncIterator](): AsyncIterator<HarnessEvent> {
-        const iterable = await started;
-        for await (const frame of iterable) {
-          for (const event of normalize(frame)) yield event;
+        beginDrain();
+        try {
+          const iterable = await started;
+          for await (const frame of iterable) {
+            for (const event of normalize(frame)) yield event;
+          }
+          for (const event of finalize()) yield event;
+        } finally {
+          finishDrain();
         }
-        for (const event of finalize()) yield event;
       },
     };
   }
@@ -459,14 +540,14 @@ class CodexSession implements HarnessSession {
     return Promise.resolve(this.#context.turnId ?? this.id);
   }
 
-  interrupt(): Promise<void> {
+  async interrupt(): Promise<void> {
     this.#abort.abort();
-    return Promise.resolve();
+    if (this.#draining) await this.#completion;
   }
 
-  close(): Promise<void> {
+  async close(): Promise<void> {
     this.#abort.abort();
-    return Promise.resolve();
+    if (this.#draining) await this.#completion;
   }
 }
 

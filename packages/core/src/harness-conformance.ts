@@ -60,7 +60,7 @@ export interface ConformanceOptions {
    * fail against it. Injectable so a test can prove the refuse-to-certify path
    * (a control that cannot be shown to fail is a suite that cannot certify).
    */
-  readonly controlPort?: HarnessPort;
+  readonly controlPorts?: Readonly<Partial<Record<CapabilityName, HarnessPort>>>;
   /**
    * The cwd every check's session runs in. Defaults to a placeholder; a REAL run
    * against the installed binary MUST pass a real git repo (codex `-C` into it
@@ -71,6 +71,7 @@ export interface ConformanceOptions {
 
 const PROBE_CWD = "/rennet-conformance";
 const PROBE_PROMPT = "Conformance probe: return a minimal structured result.";
+const INTERRUPT_PROBE_PROMPT = "Conformance probe: remain active until interrupted.";
 const PROBE_SCHEMA = {
   type: "object",
   properties: { ok: { type: "boolean" } },
@@ -83,10 +84,11 @@ interface Drained {
   readonly events: readonly HarnessEvent[];
 }
 
-async function drain(session: HarnessSession): Promise<Drained> {
+async function drain(session: HarnessSession, onFirstEvent?: () => void): Promise<Drained> {
   const events: HarnessEvent[] = [];
   let outcome: SessionOutcome | null = null;
   for await (const event of session.events) {
+    if (events.length === 0) onFirstEvent?.();
     events.push(event);
     if (event.kind === "session.ended") outcome = event.outcome;
   }
@@ -122,12 +124,16 @@ export const CONFORMANCE_CHECKS: readonly ConformanceCheck[] = [
   {
     capability: "interrupt",
     run: async (port, cwd) => {
-      const abort = new AbortController();
-      const session = await port.createSession({ cwd, signal: abort.signal });
-      await session.send({ prompt: PROBE_PROMPT });
-      abort.abort();
+      const session = await port.createSession({ cwd });
+      let markReady!: () => void;
+      const ready = new Promise<void>((resolve) => {
+        markReady = resolve;
+      });
+      const draining = drain(session, markReady);
+      await session.send({ prompt: INTERRUPT_PROBE_PROMPT });
+      await ready;
       await session.interrupt();
-      const { outcome } = await drain(session);
+      const { outcome } = await draining;
       return outcome?.status === "cancelled";
     },
   },
@@ -146,7 +152,12 @@ export const CONFORMANCE_CHECKS: readonly ConformanceCheck[] = [
       const session = await port.createSession({ cwd });
       await session.send({ prompt: PROBE_PROMPT });
       const { outcome } = await drain(session);
-      return outcome?.status === "completed" && outcome.usage !== undefined;
+      return (
+        outcome?.status === "completed" &&
+        typeof outcome.contextWindowTokens === "number" &&
+        Number.isFinite(outcome.contextWindowTokens) &&
+        outcome.contextWindowTokens > 0
+      );
     },
   },
   {
@@ -166,10 +177,10 @@ export const CONFORMANCE_CHECKS: readonly ConformanceCheck[] = [
  * output. The `structuredOutput` check MUST fail against it — the suite's proof
  * that a check can distinguish pass from fail.
  */
-function makeBrokenControlPort(): HarnessPort {
+function makeBrokenControlPort(capability: CapabilityName): HarnessPort {
   const descriptor = {
     id: "codex",
-    displayName: "broken-control",
+    displayName: `broken-${capability}-control`,
     version: "0",
     binaryPath: "",
     capabilities: buildCapabilities(),
@@ -193,8 +204,32 @@ function makeBrokenControlPort(): HarnessPort {
           async *[Symbol.asyncIterator](): AsyncIterator<HarnessEvent> {
             yield {
               ...envelope(context, {}),
+              kind: "session.started",
+              model: "control",
+              cwd: PROBE_CWD,
+              tools: [],
+              apiKeySource: null,
+            };
+            if (capability !== "textDeltas") {
+              yield { ...envelope(context, {}), kind: "text.delta", text: "{" };
+            }
+            const structuredOutput =
+              capability === "structuredOutput" ? {} : { structuredOutput: { ok: true } };
+            const contextWindowTokens =
+              capability === "reportsContextWindow" ? {} : { contextWindowTokens: 1 };
+            const native = capability === "costUsd" ? {} : { total_cost_usd: 0 };
+            yield {
+              ...envelope(context, native),
               kind: "session.ended",
-              outcome: { status: "completed", finalText: "" },
+              outcome:
+                capability === "interrupt"
+                  ? { status: "completed", finalText: "" }
+                  : {
+                      status: "completed",
+                      finalText: "",
+                      ...structuredOutput,
+                      ...contextWindowTokens,
+                    },
             };
           },
         },
@@ -207,33 +242,26 @@ function makeBrokenControlPort(): HarnessPort {
   };
 }
 
-const STRUCTURED_OUTPUT_CHECK = CONFORMANCE_CHECKS.find(
-  (check) => check.capability === "structuredOutput",
-);
-
 /**
- * Run the whole suite against `port`. Always runs the positive control first: if
- * the control's `structuredOutput` check does NOT fail, the machinery cannot
- * demonstrate a failing check and the run REFUSES to certify (throws). Otherwise
- * it runs every check and returns the passing set as `CapabilityEvidence` in the
- * layer the run earns.
+ * Run the whole suite against `port`. Every check first runs against its own
+ * refuting control port. If any check cannot reject its deliberately broken
+ * variant, the suite refuses to certify.
  */
 export async function runConformance(
   port: HarnessPort,
   options: ConformanceOptions = {},
 ): Promise<ConformanceReport> {
-  if (!STRUCTURED_OUTPUT_CHECK) {
-    throw new Error("conformance suite is missing its structuredOutput control check");
-  }
-  const controlPort = options.controlPort ?? makeBrokenControlPort();
   const cwd = options.cwd ?? PROBE_CWD;
-  const controlPassed = await STRUCTURED_OUTPUT_CHECK.run(controlPort, cwd);
-  const controlDemonstrated = !controlPassed;
-  if (!controlDemonstrated) {
-    throw new Error(
-      "conformance positive control did not fail: the suite cannot demonstrate a failing check, so it refuses to certify",
-    );
+  for (const check of CONFORMANCE_CHECKS) {
+    const controlPort =
+      options.controlPorts?.[check.capability] ?? makeBrokenControlPort(check.capability);
+    if (await check.run(controlPort, cwd)) {
+      throw new Error(
+        `conformance positive control did not fail for ${check.capability}: the suite refuses to certify`,
+      );
+    }
   }
+  const controlDemonstrated = true;
 
   const passed: CapabilityName[] = [];
   const failed: CapabilityName[] = [];
