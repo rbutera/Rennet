@@ -15,18 +15,22 @@ Each project SHALL carry an execution locus: the host OS, or a named WSL distro.
 - **THEN** the locus is the host and all execution behaves per the windows-native-runtime capability
 
 ### Requirement: Shipped WSL operations execute inside the locus
-Git capture, checkpoint, submodule probes, PR-open git, project discovery/detail/worktree cleanup, snapshot generation, settings/visibility git, submit-push, and the Claude handoff write turn SHALL execute inside the project's locus. For a WSL locus, git and Claude execute inside the named distro with distro-native working paths. Windows-side file reads use the matching UNC view. Codex-in-WSL and the remaining review-pipeline locus joins are deferred in this change and SHALL NOT be described as shipped.
+Git capture, checkpoint, submodule probes, PR-open git, project discovery/detail/worktree cleanup, snapshot generation, settings/visibility git, submit-push, the Claude handoff write turn, and every review-pipeline model turn (canvas lens producers, flagged and noise lenses, spec-delta mapping, knowledge enrichment — proactive and orchestrator-resolved — symbol lookup, comment refinement, PR-body drafting, delta digest, and handoff composition) SHALL execute inside the project's locus. For a WSL locus, git and the harnesses execute inside the named distro with distro-native working paths. Windows-side file reads use the matching UNC view.
 
 #### Scenario: Git capture in WSL mode
 - **WHEN** a review captures a patchset for a WSL-locus project
 - **THEN** git runs inside the distro against the distro-native repo path, and the captured diff is byte-identical to what git inside the distro reports
 
-#### Scenario: Deferred Codex utility turn is not claimed
-- **WHEN** a WSL-locus review would otherwise assign a job to Codex
-- **THEN** this slice degrades without a WSL Codex seat and states that Codex execution plus distro session-usage reads are deferred
+#### Scenario: Knowledge enrichment runs in the distro
+- **WHEN** knowledge enrichment (proactive warm or orchestrator-resolved) runs for a WSL-locus project
+- **THEN** the harness turn executes inside the distro with a distro-native working path, and the enriched context is not thinner than the same review on a host-locus project
+
+#### Scenario: A Codex-selected job runs in the distro
+- **WHEN** a WSL-locus review assigns a job to an installed distro codex
+- **THEN** the codex turn executes inside the distro through the locus command wrapper, and the review is dual-harness rather than degraded to a single Claude seat
 
 ### Requirement: The Claude handoff harness runs inside the WSL locus
-For a WSL-locus project's handoff write turn, the Claude harness SHALL execute the user's distro-resident `claude` installation inside the distro, authenticated by the distro user's own subscription credentials, with capability identical to the native handoff mode: it SHALL be able to write to the repo, run tests, and push. No credential is ever read by Rennet in either locus. Other review-pipeline Claude sites are outside this slice's shipped ceiling.
+For a WSL-locus project's handoff write turn, the Claude harness SHALL execute the user's distro-resident `claude` installation inside the distro, authenticated by the distro user's own subscription credentials, with capability identical to the native handoff mode: it SHALL be able to write to the repo, run tests, and push. No credential is ever read by Rennet in either locus.
 
 #### Scenario: Handoff write turn against a WSL project
 - **WHEN** a handoff runs for a WSL-locus project whose `claude` lives in the distro
