@@ -48,9 +48,9 @@ sequenceDiagram
   Adapter->>Server: initialize (clientInfo)
   Server-->>Adapter: initialize result (userAgent, codexHome, platform)
   Adapter->>Server: initialized (notification)
-  Adapter->>Server: thread/start (approvalPolicy, sandboxPolicy)
+  Adapter->>Server: thread/start (approvalPolicy, sandbox string)
   Server-->>Adapter: thread started (threadId)
-  Adapter->>Server: turn/start (input, cwd, model, effort, outputSchema)
+  Adapter->>Server: turn/start (input, cwd, model, sandboxPolicy, outputSchema)
   Server-->>Adapter: turn/started
   loop streamed items
     Server-->>Adapter: item/started
@@ -59,22 +59,32 @@ sequenceDiagram
     Server-->>Adapter: item/completed (agentMessage carries final text)
   end
   Server->>Provider: run the model
-  Server-->>Adapter: turn/completed (status completed | interrupted | failed)
-  Adapter->>Server: turn/interrupt (only on interrupt / abort / close)
+  alt normal flow
+    Server-->>Adapter: turn/completed (status completed)
+    Note over Adapter,Server: close after completion sends no interrupt
+  else abort during the turn
+    Adapter->>Server: turn/interrupt
+    Server-->>Adapter: turn/completed (status interrupted)
+  end
   Adapter-->>Server: kill the child process tree
 ```
+
+A pre-turn abort (before `turn/start` even lands) skips the interrupt and kills
+the child directly; a `close()` after the turn already completed sends no
+interrupt at all.
 
 The wire is newline-delimited JSON-RPC 2.0 — one JSON object per line, **the
 `jsonrpc` member omitted on the wire** — not LSP `Content-Length` framing. The
 line protocol is a readline over stdout, `JSON.parse` per line, and an
 id-correlation map for responses; there is **no new dependency**.
 
-Two details matter for correctness. The **final agent message arrives on the
-`item/completed` notification** that carries the `agentMessage` ThreadItem (its
-text streamed incrementally via `item/agentMessage/delta`) — **not** on
-`turn/completed`. And `turn/completed` is the terminal event carrying the turn
-status; an interrupt is acknowledged by `turn/completed` with status
-`interrupted`, never by an RPC response to `turn/interrupt`.
+Two details matter for correctness. The **final agent message is primarily
+captured from the `item/completed` notification** that carries the `agentMessage`
+ThreadItem (its text streamed incrementally via `item/agentMessage/delta`); the
+runner uses the `agentMessage` item in `turn/completed`'s `turn.items` only as a
+backstop when the streamed capture is empty. And `turn/completed` is the terminal
+event carrying the turn status; an interrupt is acknowledged by `turn/completed`
+with status `interrupted`, never by an RPC response to `turn/interrupt`.
 
 ## The method surface Rennet uses
 
@@ -86,13 +96,13 @@ on:
 | request | `initialize` | Handshake; the result reports `userAgent`, `codexHome`, and platform. |
 | notification | `initialized` | Required post-handshake notification before any thread work. |
 | request | `thread/start` | Open a thread carrying the approval and sandbox policies. |
-| request | `turn/start` | Run one turn: `input`, `cwd`, `model`, `effort`, `sandboxPolicy`, `approvalPolicy`, and `outputSchema` when the session spec carries one. |
+| request | `turn/start` | Run one turn: `input`, `cwd`, `model`, `sandboxPolicy`, `approvalPolicy`, and `outputSchema` when the session spec carries one. `effort` is sent only by the utility one-shot executor, not the agentic `HarnessSession` path (whose turn spec carries no `effort` field). |
 | request | `turn/interrupt` | Cancel an in-flight turn (`threadId`, `turnId`). |
 | notification | `turn/started`, `item/started`, `item/completed` | Turn and item lifecycle. |
 | notification | `item/agentMessage/delta` | Streamed assistant text. |
 | notification | `item/commandExecution/outputDelta`, `item/reasoning/*` | Command output and reasoning, normalized or passed through. |
 | notification | `thread/tokenUsage/updated` | In-protocol token usage (`ThreadTokenUsage`). |
-| notification | `turn/completed` | Terminal outcome: `status` `completed \| interrupted \| failed`, with `TurnError { message, codexErrorInfo }` on failure. |
+| notification | `turn/completed` | Terminal outcome. The expected `status` values are `completed`, `interrupted`, and `failed` (`TurnStatus` also defines `inProgress`); the runner treats any non-`failed`, non-`interrupted` status as completed, with `TurnError { message, codexErrorInfo }` on failure. |
 | server → client request | approval requests | Answered per-method with a schema-valid affirmative shape (see capability posture). |
 
 `turn/start` carries `outputSchema` as a **first-class structured-output
@@ -108,7 +118,7 @@ event.
 
 | app-server (v2) | Rennet event |
 | --- | --- |
-| `thread/start` response + `turn/started` | `session.started` |
+| `turn/started` | `session.started` (the `thread/start` response is consumed internally by the transport) |
 | `item/agentMessage/delta` | streamed assistant text |
 | `item/commandExecution/*`, `item/reasoning/*`, `item/started` / `item/completed` | normalized item events or passthrough (never dropped) |
 | `thread/tokenUsage/updated` | usage (in-protocol; no session-log file read on this path) |
@@ -175,8 +185,8 @@ out-of-package execution** ("Access is denied") and the AppxManifest exposes no
 `ExecutionAlias` — it is not spawnable by another process (verified). So Windows
 adds **no Store-bundle candidate**. Windows rides an installed codex CLI, which
 ships the same `app-server` subcommand; the health detail for an absent Windows
-codex names the CLI install (`npm i -g @openai/codex`) as the remedy, not the
-un-spawnable Store binary.
+codex names installing the codex CLI as the remedy, not the un-spawnable Store
+binary.
 
 ### The app-server capability probe
 
@@ -227,7 +237,13 @@ token spend. The empirical facts on this page (the ChatGPT-bundled handshake, th
 `codexHome`) were verified by direct probes against the real binaries during the
 change's research.
 
-Full live end-to-end verification — a real app-server turn through the
-ChatGPT-bundled binary on macOS, the WSL live codex run on real hardware, and the
-throttled win32 gate — is **pending** and tracked in the change's live-verification
-tasks; this page is reconciled against the recorded live-run matrix once it lands.
+The full live matrix is now green:
+
+- A real app-server turn ran through the ChatGPT-bundled binary
+  (`/Applications/ChatGPT.app/Contents/Resources/codex`) on macOS — discovery
+  listed the bundle candidate, structured output round-tripped, and in-protocol
+  usage was recorded (gated `codex-appserver-live.real.test.ts`).
+- A real WSL-locus codex turn ran on lancelot over the app-server transport
+  (gated `codex-wsl-live.real.test.ts`).
+- The full throttled native win32 gate passed (all targets, all projects), and
+  the macOS full gate is green.

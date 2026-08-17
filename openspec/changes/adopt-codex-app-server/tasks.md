@@ -26,8 +26,8 @@
 
 ## 5. Live verification
 
-- [ ] 5.1 Gated real test (`RENNET_LIVE_*`): one real app-server turn through the mac ChatGPT-bundled binary — discovery chooses it with the CLI absent from candidates, structured output round-trips, usage recorded.
-- [ ] 5.2 Re-run the gated WSL live codex test on lancelot (now over app-server); re-run the win32 gate throttled.
+- [x] 5.1 Gated real test (`RENNET_LIVE_*`): one real app-server turn through the mac ChatGPT-bundled binary — discovery chooses it with the CLI absent from candidates, structured output round-trips, usage recorded. [Green: `codex-appserver-live.real.test.ts` (commit f82a23b) drove a real turn through `/Applications/ChatGPT.app/Contents/Resources/codex`, listed the bundle candidate, round-tripped structured output, recorded in-protocol usage.]
+- [x] 5.2 Re-run the gated WSL live codex test on lancelot (now over app-server); re-run the win32 gate throttled. [Green: `codex-wsl-live.real.test.ts` ran a real WSL-locus codex turn on lancelot over the app-server transport; full throttled native win32 gate green at 805778d (all 7 targets, 10 projects); mac full gate green.]
 
 ## 6. Gate
 

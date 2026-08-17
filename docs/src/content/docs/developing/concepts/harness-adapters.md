@@ -113,10 +113,11 @@ the composition root spawns the user's discovered `codex` binary as
 One turn-scoped child runs one turn: `initialize` → `initialized` →
 `thread/start` → `turn/start`, consuming streamed `item/*` notifications until
 `turn/completed`, then the child is terminated. `turn/start` carries the prompt
-input, `cwd`, model and effort, the full-access sandbox policy, never-ask
-approvals, and — when the session spec carries one — the protocol's first-class
-`outputSchema` parameter, so structured output round-trips in-protocol with **no
-scratch files on the turn path**. The line protocol (readline over stdout,
+input, `cwd`, the model, the full-access sandbox policy, never-ask approvals, and
+— when the session spec carries one — the protocol's first-class `outputSchema`
+parameter, so structured output round-trips in-protocol with **no scratch files
+on the turn path**. (Reasoning `effort` is forwarded only by the utility one-shot
+executor; the agentic `HarnessSession` turn spec carries no `effort` field.) The line protocol (readline over stdout,
 `JSON.parse` per line, an id-correlation map) is a few lines, not a dependency.
 
 ```
@@ -142,9 +143,11 @@ structured output when `outputSchema` was set). `turn/completed` is the terminal
 event: status `completed`, `failed` (with `TurnError.message` preserved verbatim,
 so auth expiry reaches the outcome), or `interrupted` (the interrupt ack).
 Interrupt, close, and abort send `turn/interrupt`, then terminate the whole
-process tree and await transport completion. Codex reports no per-turn cost or
-context-window capacity, so `costUsd` and `reportsContextWindow` stay honestly
-false.
+process tree and await transport completion. Codex reports no per-turn cost, so
+`costUsd` stays honestly false. `ThreadTokenUsage` does expose a
+`modelContextWindow`, but Rennet does not yet map or surface it, so
+`reportsContextWindow` stays false too — a real value the adapter has simply not
+wired through, not an absent one.
 
 The full method surface, frame-mapping table, discovery candidates, and schema
 provenance live in the [Codex app-server integration
@@ -349,13 +352,13 @@ frame remains available for diagnostics.
 | Claude discovery, health, sessions, streaming, tools, errors, usage | Live |
 | Fully capable Claude handoff turn | Live behind a main-process command; renderer caller missing |
 | Codex binary discovery and utility execution | Live |
-| Full Codex `HarnessPort` session adapter (`codex app-server` JSON-RPC seam) | Live; hermetic gate, live end-to-end run pending |
+| Full Codex `HarnessPort` session adapter (`codex app-server` JSON-RPC seam) | Live; hermetic gate plus green live matrix (mac ChatGPT-bundle turn, WSL codex on lancelot, win32 gate) |
 | Council-selected Codex orchestrator composition | Live |
 | Cross-adapter conformance suite (hermetic + gated real) | Live |
 | Derived `testedRange` from a recorded artifact | Live |
 | canvasOps@2 external loopback transport for non-Claude slots | Live |
 | omp adapter (`@oh-my-pi/pi-coding-agent`) | Live; hermetic evidence only, no real-run range |
-| Codex discovery of the ChatGPT-desktop bundled binary (macOS) | Live; hermetic gate, live run pending |
+| Codex discovery of the ChatGPT-desktop bundled binary (macOS) | Live; verified by the gated live run choosing the bundle |
 | Resume and fork in the normalized port | Deferred |
 | Multi-harness self-consistency and disagreement sampling | Deferred |
 

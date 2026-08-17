@@ -18,8 +18,11 @@ claude --version
 ```
 
 You do not paste a Claude API key into Rennet. The Claude adapter starts the
-installed CLI, which owns its login. Rennet can also discover Codex for the live
-utility seats that use it.
+installed CLI, which owns its login. Rennet also discovers Codex and composes a
+full Codex `HarnessPort` adapter from it — a co-equal review seat, not a
+utility-only helper. On macOS a codex bundled inside ChatGPT desktop counts as a
+candidate (a user-installed CLI outranks it); a chosen candidate is then probed
+for app-server capability before it is trusted.
 
 ```mermaid
 flowchart TD
@@ -27,9 +30,10 @@ flowchart TD
   start --> path["Harvest login-shell PATH"]
   path --> claude["Find and execute claude --version"]
   path --> codex["Find and execute codex --version"]
+  codex --> probe["Probe app-server: initialize handshake"]
   github --> ready["Front door"]
   claude --> ready
-  codex --> ready
+  probe --> ready
   ready --> choose["Choose a project or workspace"]
 ```
 
