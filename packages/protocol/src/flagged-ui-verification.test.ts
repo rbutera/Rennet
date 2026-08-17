@@ -95,24 +95,6 @@ describe("flagged.review — verify-ui status delivery across the boundary (#183
     expect(output.lateEnrichmentScheduled).toBe(true);
   });
 
-  it("carries verify-ui status on the failed base-review branch", () => {
-    const output = parseCommandOutput("flagged.review", {
-      status: "failed",
-      reason: "finding seats failed",
-      uiVerification: {
-        status: "unavailable",
-        classifierVersion: 1,
-        reason: "verifier unavailable",
-      },
-    });
-    if (output.status !== "failed") throw new Error("expected failed");
-    expect(output.uiVerification).toEqual({
-      status: "unavailable",
-      classifierVersion: 1,
-      reason: "verifier unavailable",
-    });
-  });
-
   it("round-trips an ok review WITHOUT the field unchanged (pre-#183 shape preserved)", () => {
     const output = parseCommandOutput("flagged.review", {
       status: "ok",

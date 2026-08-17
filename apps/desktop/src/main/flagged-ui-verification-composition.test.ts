@@ -52,6 +52,7 @@ describe("desktop verify-ui late composition (#183)", () => {
       uiVerification: { status: "ran", screenshots: [{ path: "patch/run/app.png" }] },
     });
     const enriched = await composed.enrichment;
+    if (enriched?.status !== "ok") throw new Error("expected ok");
     expect(enriched?.lateEnrichmentScheduled).toBeUndefined();
   });
 });

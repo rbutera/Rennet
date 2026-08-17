@@ -1072,14 +1072,14 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         if (review?.status === "ok" || review?.status === "failed") {
           setFlaggedReview(review as FlaggedReview);
           if (
-            review.lateEnrichmentScheduled === true ||
-            (review.status === "ok" &&
-              deepReviewOn &&
-              review.findings?.some(
-                (finding) =>
-                  finding.agreement.kind === "disagree" &&
-                  finding.agreement.adjudication === undefined,
-              ))
+            review.status === "ok" &&
+            (review.lateEnrichmentScheduled === true ||
+              (deepReviewOn &&
+                review.findings?.some(
+                  (finding) =>
+                    finding.agreement.kind === "disagree" &&
+                    finding.agreement.adjudication === undefined,
+                )))
           ) {
             pollAdjudication();
           }

@@ -48,7 +48,7 @@ export function applyUiVerification(
   review: FlaggedReview,
   result: RunUiVerificationResult,
 ): FlaggedReview {
-  if (review.status !== "ok") return { ...review, uiVerification: result.status };
+  if (review.status !== "ok") return review;
   return {
     ...review,
     findings: [...review.findings, ...result.observations],

@@ -1283,7 +1283,7 @@ export const MAX_UI_SCREENSHOTS_PER_RUN = 12;
 export const MAX_UI_EVIDENCE_DATA_URL_LENGTH = Math.ceil(MAX_UI_EVIDENCE_BYTES / 3) * 4 + 64;
 
 /**
- * The additive verify-ui status (issue #183) that rides either FlaggedReview branch. It
+ * The additive verify-ui status (issue #183) that rides an `ok` FlaggedReview. It
  * is INFORMATIONAL and never a gate (Rule Zero): sign and publish behave exactly
  * as they would without it. The four states are kept DISTINCT on purpose, and the
  * asymmetry is load-bearing (Rule 75/81ak, could-not-check beats a false clear):
@@ -1474,10 +1474,6 @@ export type FlaggedReview =
       patchsetId?: string;
       /** Incomplete-ingestion blockers (R18, issue #309). See the `ok` variant; stamped even on a failed run because blocked ingestion is deterministic, not a model result. */
       blockingStates?: readonly DecompositionBlockingState[];
-      /** Verify-ui is independent of whether the base finding review completed. */
-      uiVerification?: UiVerification;
-      /** See the `ok` variant. Transient and informational only. */
-      lateEnrichmentScheduled?: true;
     };
 
 // ─── review.ask: ask the AI a question, one model or both (issue #139) ────────

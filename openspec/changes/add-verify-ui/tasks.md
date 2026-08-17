@@ -22,13 +22,13 @@ pass). A control that cannot fail is the bug class delivery-order names.
 
 - [x] 3.1 `createUiVerificationTurn` in `packages/adapters/src/ui-verification-backend.ts`, mirroring `createVerificationTurn` exactly (fresh capable session, output schema, exec observation with the paired/ambiguous rules); prompt carries the changed UI files + hunks, the `patchsetIntentToReviewIntent` projection as design intent, the afford-what-exists mounting ladder (project tests → storybook → dev server + installed automation → labelled static review), and the absolute evidence directory to write PNGs into
 - [x] 3.2 Create isolated review/patchset/run evidence namespaces under app user data; expose only the completed run namespace and prune superseded/old runs with bounded retention
-- [x] 3.3 Backend tests: schema round-trip, exec observation threading, canonical confinement (final and intermediate symlink escapes), regular-file and 8 MiB byte bounds, namespacing, stale completion, and retention
+- [x] 3.3 Backend tests: schema round-trip, exec observation threading, one canonical-realpath symlink-escape control, regular-file and 8 MiB byte bounds, namespacing, stale completion, and retention
 
 ## 4. Pipeline + desktop wiring
 
 - [x] 4.1 Behavioral guard-deletion control: drive the injectable late-enrichment composer with a deferred verify-ui result, proving immediate all-concur delivery followed by completed observations/status
 - [x] 4.2 Wire `runUiVerification` into desktop MAIN's live `runFlaggedReviewWithContextFeed`; stamp pending immediately, compose with `applyUiVerification`, and signal/poll late enrichment independently of adjudication; quick tier leaves the field absent
-- [x] 4.3 Keep `FlaggedReview` transient like CI signal and `blockingStates`; record the declined persistence decision and bound evidence growth with patchset/run retention
+- [x] 4.3 Keep `FlaggedReview` transient like CI signal and `blockingStates`; on reopen recompute status/current references while screenshot files persist per run until bounded patchset/run retention prunes them; record the declined persistence decision
 - [x] 4.4 Implement `review.uiEvidence` as a realpath-confined, regular-file, stat-before-read, byte-bounded command; missing/escaping/symlinked-out → not-found, oversized → oversized
 
 ## 5. Renderer: the Flagged-lens strip
@@ -45,5 +45,5 @@ pass). A control that cannot fail is the bug class delivery-order names.
 
 ## 7. Verify-ui pass #183 follow-up
 
-- [x] 7.1 Fix late-enrichment delivery, pending/unavailable honesty, failed-branch transport, required budgets, method/exec/file certification, reported-line anchoring, evidence confinement/limits/namespacing/retention, behavioral composition coverage, and the real Rule Zero sign/publish controls
+- [x] 7.1 Fix late-enrichment delivery, pending/unavailable honesty on the `ok` result surface, required budgets, method/exec/file certification, reported-line anchoring, evidence confinement/limits/namespacing/retention, behavioral composition coverage, and the real Rule Zero sign/publish controls
 - [x] 7.2 `NX_DAEMON=false pnpm check` green; commit the follow-up with no push

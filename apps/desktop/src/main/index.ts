@@ -1341,7 +1341,7 @@ async function runFlaggedReviewWithContextFeed(
     verifierAvailable: Boolean(adapter),
   });
   const uiVerification =
-    deepReview && adapter && uiClassification.touchesUi
+    immediate.status === "ok" && deepReview && adapter && uiClassification.touchesUi
       ? (async () => {
           const evidenceRun = await beginUiEvidenceRun(
             join(app.getPath("userData"), "ui-evidence"),

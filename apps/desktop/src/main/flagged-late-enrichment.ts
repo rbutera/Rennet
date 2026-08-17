@@ -21,6 +21,9 @@ export interface ComposedFlaggedLateEnrichment {
 export function composeFlaggedLateEnrichment(
   input: ComposeFlaggedLateEnrichmentInput,
 ): ComposedFlaggedLateEnrichment {
+  if (input.immediate.status !== "ok") {
+    return { review: input.immediate, enrichment: null };
+  }
   const scheduled = Boolean(input.adjudication || input.uiVerification);
   if (!scheduled) return { review: input.immediate, enrichment: null };
 
@@ -34,7 +37,9 @@ export function composeFlaggedLateEnrichment(
           status: {
             status: "unavailable",
             classifierVersion:
-              input.immediate.uiVerification?.classifierVersion ?? UI_SURFACE_CLASSIFIER_VERSION,
+              (input.immediate.status === "ok"
+                ? input.immediate.uiVerification?.classifierVersion
+                : undefined) ?? UI_SURFACE_CLASSIFIER_VERSION,
             reason: reason instanceof Error ? reason.message : String(reason),
           },
         }),
@@ -51,6 +56,7 @@ export function composeFlaggedLateEnrichment(
 }
 
 function clearScheduled(review: FlaggedReview): FlaggedReview {
+  if (review.status !== "ok") return review;
   const completed: FlaggedReview = { ...review };
   delete completed.lateEnrichmentScheduled;
   return completed;

@@ -93,23 +93,6 @@ describe("FlaggedLens — verify-ui strip (#183)", () => {
     expect(container.textContent).not.toContain("ran clean");
   });
 
-  it("shows verify-ui status even when the base finding review failed", () => {
-    const review: FlaggedReview = {
-      status: "failed",
-      reason: "finding seats failed",
-      uiVerification: {
-        status: "unavailable",
-        classifierVersion: 1,
-        reason: "verifier unavailable",
-      },
-    };
-    const { container } = mount(
-      <FlaggedLens index={buildFlaggedIndex(review)} onJumpToAnchor={vi.fn()} />,
-    );
-    expect(container.textContent).toContain("finding seats failed");
-    expect(container.textContent).toContain("verifier unavailable");
-  });
-
   it("loads and renders screenshot thumbnails from the injected loader", async () => {
     const review: FlaggedReview = {
       ...BASE,
