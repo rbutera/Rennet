@@ -41,4 +41,4 @@ pass). A control that cannot fail is the bug class delivery-order names.
 
 - [x] 6.1 `docs/src/content/docs/developing/reference/delivery-order.md`: mark the wave-10 #183 entry delivered with the shipped shape (classifier, one budgeted turn, findings + honest status, evidence strip)
 - [x] 6.2 `docs/src/content/docs/using/guide/user-journey.md`: the review-intelligence walkthrough gains the verify-ui step (what it does, what "could not mount" means, where screenshots appear)
-- [ ] 6.3 `pnpm check` green; push and verify the remote ref matches local HEAD; close #183 in the merge
+- [x] 6.3 `pnpm check` green; push and verify the remote ref matches local HEAD; close #183 in the merge
