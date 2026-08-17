@@ -120,6 +120,10 @@ export default defineConfig({
                   },
                   { label: "Delivery order", link: "/developing/reference/delivery-order/" },
                   {
+                    label: "Codex app-server integration",
+                    link: "/developing/reference/codex-app-server/",
+                  },
+                  {
                     label: "Why not RxJS?",
                     link: "/developing/reference/reactive-streams/",
                   },

@@ -54,7 +54,10 @@ flowchart LR
   usual way. Rennet finds `.cmd`/`.exe` shims on your `PATH` and in the common
   per-user install locations (`%APPDATA%\npm`, `%LOCALAPPDATA%\Programs`, scoop,
   bun, volta), so it works even when the GUI-inherited `PATH` is missing an entry.
-  No POSIX shell (zsh/bash) is required.
+  No POSIX shell (zsh/bash) is required. On Windows, Codex must be the codex CLI
+  (`npm i -g @openai/codex`): the `codex.exe` bundled inside the ChatGPT desktop
+  Store package is ACL-locked against out-of-package execution and cannot be
+  driven, so having ChatGPT desktop is not enough here (unlike on macOS).
 - An editor for line-targeted open — VS Code, Cursor, VSCodium, or Sublime — is
   found at its per-user or system install location as well as on `PATH`.
 
@@ -121,9 +124,11 @@ unreachable surface — Rennet never silently runs a host Codex against a WSL re
   a full WSL dual-harness review with write/push from the distro account) is still
   pending; the behaviour above is implemented and covered by hermetic tests, but
   this page will be reconciled against the recorded live-run matrix once it runs.
-- Token usage for a distro Codex turn reads as **unmeasured** rather than a
-  fabricated zero: the Codex session log lives in the distro's own `~/.codex`,
-  which the Windows-side reader does not correlate. The turn itself is unaffected.
+- Token usage for a distro Codex turn now arrives **in-protocol** over the
+  app-server JSON-RPC stream (`thread/tokenUsage/updated`), which crosses the WSL
+  boundary over stdio just like a host turn — so a distro Codex turn is measured
+  like a host one, with no session-log file to correlate across the boundary.
+  (Pending the live WSL run below; the transport is covered by hermetic tests.)
 - Networking varies per Windows configuration, so the mirrored-vs-gateway choice is
   made by an empirical probe per session rather than by sniffing config; a
   misconfigured host surfaces as a plain failed turn, not a wrong guess.

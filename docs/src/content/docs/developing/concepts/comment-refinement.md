@@ -82,9 +82,9 @@ selects its own hunk before truncation, so a note near the end of a large file d
 not accidentally receive unrelated code from the start.
 
 The [Model Council](/developing/concepts/model-council/) resolves the
-`comment-refinement` job. Codex uses one constrained `codex exec`; Claude uses one
-structured-output harness session. If neither seat exists or the turn fails, the
-draft continues to use the original note.
+`comment-refinement` job. Codex uses one constrained `codex app-server` turn;
+Claude uses one structured-output harness session. If neither seat exists or the
+turn fails, the draft continues to use the original note.
 
 ## Refinement is content work
 

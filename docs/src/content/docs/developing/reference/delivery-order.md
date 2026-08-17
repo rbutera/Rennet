@@ -92,6 +92,19 @@ for their current tasks rather than treating any wave as still open:
 - `add-narrated-progress`
 - `fix-rest-parser-hunk-metadata`
 - `rennet-docsite`
+- `adopt-codex-app-server` — swaps the Codex adapter's transport from
+  `codex exec --json` to the `codex app-server` JSON-RPC protocol behind the same
+  injected seam, **superseding the exec-transport verdict recorded in the #25
+  entry above** (that verdict deferred app-server until steering/resume was
+  consumed; this change adopts it now for its own reasons — structured output as
+  a first-class `turn/start` parameter with no scratch files, in-protocol token
+  usage, and a Mac with ChatGPT desktop becoming a working Codex seat with no
+  extra install via the bundled binary and shared `~/.codex` auth). Windows still
+  rides the codex CLI: the Store-packaged desktop binary is ACL-locked against
+  out-of-package execution. Shipped covered by the wave-1 hermetic gate; the live
+  end-to-end runs (mac ChatGPT-bundled turn, WSL codex on lancelot, throttled
+  win32) are the change's remaining tasks. See the [Codex app-server integration
+  reference](/developing/reference/codex-app-server/).
 
 The one carried-over sub-item from the wave list is wave 7's live win32
 verification matrix on lancelot (hermetic tests pass; the on-hardware run is

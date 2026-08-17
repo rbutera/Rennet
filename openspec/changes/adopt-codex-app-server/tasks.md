@@ -21,8 +21,8 @@
 
 ## 4. Docs (same change, definition of done)
 
-- [ ] 4.1 New `developing/reference/codex-app-server.md`: framing, exact method surface, frame-mapping table, discovery candidates + Windows Store ACL ceiling, shared `~/.codex` auth, schema-dump provenance (`codex app-server generate-json-schema`). Mermaid sequence diagram of the turn lifecycle.
-- [ ] 4.2 Rewrite the codex section of `developing/concepts/harness-adapters.md`; update Using-side setup guidance (macOS: ChatGPT desktop alone suffices; Windows: codex CLI install) and `windows-and-wsl.md` where it names codex invocation; delivery-order entry.
+- [x] 4.1 New `developing/reference/codex-app-server.md`: framing, exact method surface, frame-mapping table, discovery candidates + Windows Store ACL ceiling, shared `~/.codex` auth, schema-dump provenance (`codex app-server generate-json-schema`). Mermaid sequence diagram of the turn lifecycle.
+- [x] 4.2 Rewrite the codex section of `developing/concepts/harness-adapters.md`; update Using-side setup guidance (macOS: ChatGPT desktop alone suffices; Windows: codex CLI install) and `windows-and-wsl.md` where it names codex invocation; delivery-order entry.
 
 ## 5. Live verification
 
