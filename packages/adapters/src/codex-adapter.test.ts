@@ -306,6 +306,51 @@ describe("CodexAdapter", () => {
     await session.close();
   });
 
+  it("interrupt() called from INSIDE the for-await body resolves (no consumer-drainage deadlock)", async () => {
+    // The transport stays open until aborted, then finishes. The consumer awaits
+    // interrupt() from inside its own loop body — parking the iterator at a yield.
+    // With the independent pump, completion tracks the transport finishing, not
+    // consumer drainage, so this must NOT deadlock.
+    const transport: CodexTurnTransport = (spec) => ({
+      async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
+        yield STARTED;
+        if (!spec.signal?.aborted) {
+          await new Promise<void>((resolve) =>
+            spec.signal?.addEventListener("abort", () => resolve(), { once: true }),
+          );
+        }
+        yield completed("cancelled");
+      },
+    });
+    const session = await adapter(transport).createSession({ cwd: "/repo" });
+    await session.send({ prompt: "go" });
+
+    const withinTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
+      Promise.race([
+        p,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("deadlock: interrupt() never resolved")), ms),
+        ),
+      ]);
+
+    let interruptResolved = false;
+    const events: HarnessEvent[] = [];
+    await withinTimeout(
+      (async () => {
+        for await (const event of session.events) {
+          events.push(event);
+          if (event.kind === "session.started") {
+            await session.interrupt(); // from inside the loop — must not deadlock
+            interruptResolved = true;
+          }
+        }
+      })(),
+      1_000,
+    );
+    expect(interruptResolved).toBe(true);
+    expect(events.some((e) => e.kind === "session.ended")).toBe(true);
+  });
+
   it("throws a plain error on a second events subscription", async () => {
     const session = await adapter(fakeTransport([completed("completed")]).fn).createSession({
       cwd: "/repo",

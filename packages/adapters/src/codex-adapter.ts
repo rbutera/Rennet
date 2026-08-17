@@ -335,6 +335,12 @@ function createCodexNormalizer(
       return terminal(record as unknown as CodexTurnResultFrame);
     }
 
+    // A foreign-thread/turn notification the runner has already judged NOT ours:
+    // surface it (never dropped) but never let it touch our text/usage or outcome.
+    if (record.rennet === "foreign") {
+      return passthrough(record.native, "foreign");
+    }
+
     const method = stringField(record, "method");
     if (method === null) return passthrough(frame, "unknown");
     const params = asRecord(record.params) ?? {};
@@ -437,6 +443,49 @@ function createCodexNormalizer(
 
 // ── The session + adapter ────────────────────────────────────────────────────
 
+/** A minimal unbounded async queue: the pump pushes, the consumer's async iterator
+ *  reads. Unbounded is correct here — one codex turn is a FINITE frame stream, so the
+ *  buffer cannot grow without end; a bounded ring would risk dropping frames (the
+ *  never-dropped contract). ponytail: unbounded queue, revisit only if a turn ever
+ *  streams unboundedly (it does not). */
+function createEventQueue(): {
+  push: (event: HarnessEvent) => void;
+  close: () => void;
+  iterable: AsyncIterable<HarnessEvent>;
+} {
+  const buffer: HarnessEvent[] = [];
+  let done = false;
+  let wake: (() => void) | null = null;
+  const ping = (): void => {
+    wake?.();
+    wake = null;
+  };
+  return {
+    push: (event) => {
+      buffer.push(event);
+      ping();
+    },
+    close: () => {
+      done = true;
+      ping();
+    },
+    iterable: {
+      async *[Symbol.asyncIterator](): AsyncIterator<HarnessEvent> {
+        while (true) {
+          if (buffer.length > 0) {
+            yield buffer.shift() as HarnessEvent;
+            continue;
+          }
+          if (done) return;
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+        }
+      },
+    },
+  };
+}
+
 class CodexSession implements HarnessSession {
   readonly id: string;
   readonly harness = HARNESS_ID;
@@ -446,12 +495,13 @@ class CodexSession implements HarnessSession {
   readonly #context: EnvelopeContext;
   readonly #abort: AbortController;
   readonly #started: Promise<AsyncIterable<unknown>>;
+  readonly #queue = createEventQueue();
+  readonly #completion: Promise<void>;
+  #resolveCompletion!: () => void;
   #resolveStarted!: (iterable: AsyncIterable<unknown>) => void;
   #sent = false;
   #eventsTaken = false;
-  #draining = false;
-  #completion: Promise<void> = Promise.resolve();
-  #resolveCompletion: (() => void) | null = null;
+  #pumpStarted = false;
 
   constructor(
     id: string,
@@ -471,6 +521,9 @@ class CodexSession implements HarnessSession {
     this.#started = new Promise((resolve) => {
       this.#resolveStarted = resolve;
     });
+    this.#completion = new Promise((resolve) => {
+      this.#resolveCompletion = resolve;
+    });
   }
 
   get events(): AsyncIterable<HarnessEvent> {
@@ -478,33 +531,54 @@ class CodexSession implements HarnessSession {
       throw new Error("Codex session events may only be subscribed to once");
     }
     this.#eventsTaken = true;
-    const started = this.#started;
+    this.#startPump();
+    return this.#queue.iterable;
+  }
+
+  /**
+   * Drive the transport with an INDEPENDENT pump: eagerly consume every transport
+   * frame into the queue, so run completion tracks the transport/process finishing —
+   * NOT consumer drainage. This is what lets a caller await `interrupt()`/`close()`
+   * from INSIDE its own `for await` body without deadlocking (the consumer parked at
+   * a yield no longer gates completion). Started once, when events is subscribed.
+   */
+  #startPump(): void {
+    if (this.#pumpStarted) return;
+    this.#pumpStarted = true;
     const { normalize, finalize } = createCodexNormalizer(this.#context, this.#turnSpec());
-    this.#completion = new Promise((resolve) => {
-      this.#resolveCompletion = resolve;
-    });
-    const beginDrain = (): void => {
-      this.#draining = true;
-    };
-    const finishDrain = (): void => {
-      this.#draining = false;
-      this.#resolveCompletion?.();
-      this.#resolveCompletion = null;
-    };
-    return {
-      async *[Symbol.asyncIterator](): AsyncIterator<HarnessEvent> {
-        beginDrain();
-        try {
-          const iterable = await started;
-          for await (const frame of iterable) {
-            for (const event of normalize(frame)) yield event;
-          }
-          for (const event of finalize()) yield event;
-        } finally {
-          finishDrain();
+    const queue = this.#queue;
+    const context = this.#context;
+    void (async () => {
+      try {
+        const iterable = await this.#started;
+        for await (const frame of iterable) {
+          for (const event of normalize(frame)) queue.push(event);
         }
-      },
-    };
+        for (const event of finalize()) queue.push(event);
+      } catch (error) {
+        // The transport threw before a terminal frame (e.g. an untranslatable WSL
+        // repo path). Surface it as an honest failed outcome rather than an unhandled
+        // rejection or a hung session.
+        const message = error instanceof Error ? error.message : String(error);
+        const harnessError: HarnessError = {
+          class: "protocol",
+          origin: "harness",
+          message,
+          retryable: false,
+          retryableSource: "inferred",
+          nativeCode: null,
+        };
+        queue.push({ ...envelope(context, {}), kind: "error", error: harnessError });
+        queue.push({
+          ...envelope(context, {}),
+          kind: "session.ended",
+          outcome: { status: "failed", error: harnessError },
+        });
+      } finally {
+        queue.close();
+        this.#resolveCompletion();
+      }
+    })();
   }
 
   #turnSpec(): CodexTurnSpec {
@@ -528,12 +602,15 @@ class CodexSession implements HarnessSession {
 
   async interrupt(): Promise<void> {
     this.#abort.abort();
-    if (this.#draining) await this.#completion;
+    // Await the independent pump (transport/process completion), NOT consumer
+    // drainage — so this resolves even when called from inside the caller's own
+    // `for await` body. If no turn is running (no pump), aborting is all there is.
+    if (this.#pumpStarted) await this.#completion;
   }
 
   async close(): Promise<void> {
     this.#abort.abort();
-    if (this.#draining) await this.#completion;
+    if (this.#pumpStarted) await this.#completion;
   }
 }
 

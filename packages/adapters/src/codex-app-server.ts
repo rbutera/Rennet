@@ -207,26 +207,47 @@ function turnStartParams(threadId: string, params: AppServerTurnParams): Record<
 }
 
 /**
- * The schema-valid affirmative response body for a server-initiated approval
- * request, keyed by method. Unreachable under never-ask (defensive only), but each
- * one must match the request's response schema (`.appserver-schema/`):
+ * The response to a server-initiated request, dispatched EXHAUSTIVELY by method so
+ * every reply matches that request's response schema (`.appserver-schema/`). Most
+ * approvals are unreachable under never-ask + full-access, but `item/tool/
+ * requestUserInput` and `mcpServer/elicitation/request` are NOT approval-gated and
+ * can arrive in a real turn — a wrong shape would stall it. Returns either a
+ * `result` body or a JSON-RPC `error` (for requests we cannot satisfy validly).
+ *
  *   - v2 `item/{commandExecution,fileChange}/requestApproval` → `{ decision: "accept" }`
+ *   - v2 `item/permissions/requestApproval` → `{ permissions: {} }` (empty granted profile;
+ *     full-access already covers it — the fields are all nullable)
  *   - legacy `execCommandApproval`/`applyPatchApproval` (ReviewDecision) → `{ decision: "approved" }`
- *   - elicitation / user-input requests → `{ action: "accept" }`
+ *   - `item/tool/requestUserInput` → `{ answers: {} }` (schema-valid empty answers)
+ *   - `mcpServer/elicitation/request` → `{ action: "decline" }` (no form data to accept; a
+ *     valid, non-stalling response)
+ *   - `account/chatgptAuthTokens/refresh` / `attestation/generate` → we cannot mint a valid
+ *     token, so a JSON-RPC error (never a bogus result shape that the server rejects/hangs on)
+ *   - unknown → method-not-found error (`-32601`)
  */
-export function affirmativeApprovalResult(method: string): Record<string, unknown> {
+export function serverRequestResponse(
+  method: string,
+): { result: Record<string, unknown> } | { error: { code: number; message: string } } {
   switch (method) {
     case "item/commandExecution/requestApproval":
     case "item/fileChange/requestApproval":
-      return { decision: "accept" };
+      return { result: { decision: "accept" } };
+    case "item/permissions/requestApproval":
+      return { result: { permissions: {} } };
     case "execCommandApproval":
     case "applyPatchApproval":
-      return { decision: "approved" };
-    case "mcpServer/elicitation/request":
+      return { result: { decision: "approved" } };
     case "item/tool/requestUserInput":
-      return { action: "accept" };
+      return { result: { answers: {} } };
+    case "mcpServer/elicitation/request":
+      return { result: { action: "decline" } };
+    case "account/chatgptAuthTokens/refresh":
+    case "attestation/generate":
+      return {
+        error: { code: -32601, message: `Rennet cannot satisfy ${method}` },
+      };
     default:
-      return { decision: "accept" };
+      return { error: { code: -32601, message: `Method not found: ${method}` } };
   }
 }
 
@@ -416,31 +437,36 @@ export async function* runCodexTurn(
         continue;
       }
 
-      // A server → client request (method AND id): answer affirmatively (D4) with
-      // the method's schema-valid decision, and surface as evidence.
+      // A server → client request (method AND id): answer with the method's
+      // schema-valid response (D4), and surface the request as evidence.
       if (method !== null && hasId) {
-        conn.send({ id, result: affirmativeApprovalResult(method) });
+        conn.send({ id, ...serverRequestResponse(method) });
         yield msg;
         continue;
       }
 
-      // A notification (method, no id).
+      // A notification (method, no id). Ownership is decided HERE (the runner is
+      // authoritative) and marked on what we emit: an owned notification flows
+      // through with its method for the adapter to normalize; a FOREIGN one is
+      // wrapped as a passthrough envelope so the adapter surfaces it (never dropped)
+      // but never mutates our final text/usage or terminates our turn.
       if (method !== null) {
         const p = asRecord(msg.params);
-        const mine = belongs(p);
-        if (mine) {
-          if (method === "turn/started") {
-            ownTurnId = ownTurnId ?? str(asRecord(p?.turn), "id");
-          } else if (method === "item/completed") {
-            const item = asRecord(p?.item);
-            if (item?.type === "agentMessage") finalMessage = str(item, "text") ?? finalMessage;
-          } else if (method === "thread/tokenUsage/updated") {
-            const tu = asRecord(p?.tokenUsage);
-            usage = mapTokenUsageBreakdown(asRecord(tu?.total) ?? asRecord(tu?.last)) ?? usage;
-          }
+        if (!belongs(p)) {
+          yield { rennet: "foreign", native: msg };
+          continue;
         }
-        yield msg; // always surfaced, foreign or not
-        if (method === "turn/completed" && mine) {
+        if (method === "turn/started") {
+          ownTurnId = ownTurnId ?? str(asRecord(p?.turn), "id");
+        } else if (method === "item/completed") {
+          const item = asRecord(p?.item);
+          if (item?.type === "agentMessage") finalMessage = str(item, "text") ?? finalMessage;
+        } else if (method === "thread/tokenUsage/updated") {
+          const tu = asRecord(p?.tokenUsage);
+          usage = mapTokenUsageBreakdown(asRecord(tu?.total) ?? asRecord(tu?.last)) ?? usage;
+        }
+        yield msg;
+        if (method === "turn/completed") {
           yield terminalFromTurn(asRecord(p?.turn));
           return;
         }

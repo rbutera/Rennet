@@ -2,7 +2,9 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
-import { describe, expect, it } from "vitest";
+import type { HarnessEvent, SessionOutcome } from "@rennet/core";
+import { describe, expect, it, vi } from "vitest";
+import { CodexAdapter } from "./codex-adapter";
 import {
   type AppServerConnection,
   type AppServerExit,
@@ -10,10 +12,12 @@ import {
   buildAppServerArgs,
   type CodexTurnResultFrame,
   defaultSpawnAppServer,
+  INTERRUPT_GRACE_MS,
   mapTokenUsageBreakdown,
   probeAppServerHandshake,
   readAppServerMessages,
   runCodexTurn,
+  serverRequestResponse,
 } from "./codex-app-server";
 
 // ── An async queue and a scripted connection (no process) ──────────────────────
@@ -354,10 +358,13 @@ describe("runCodexTurn", () => {
     };
     const { conn } = scriptedConnection(handler);
     const { frames, terminal } = await drive(conn, PARAMS);
-    // The foreign notifications were surfaced (never dropped)…
+    // The foreign notifications were surfaced (never dropped) — WRAPPED so the
+    // adapter cannot mistake them for owned frames.
+    const foreign = frames.filter((f) => (f as { rennet?: string }).rennet === "foreign");
+    expect(foreign).toHaveLength(2);
     expect(
-      frames.filter((f) => (f as { params?: { threadId?: string } }).params?.threadId === "other"),
-    ).toHaveLength(2);
+      (foreign[0] as { native?: { params?: { threadId?: string } } }).native?.params?.threadId,
+    ).toBe("other");
     // …but did not steal our final text or terminate us as failed.
     expect(terminal.status).toBe("completed");
     expect(terminal.finalMessage).toBe("mine");
@@ -462,6 +469,186 @@ describe("runCodexTurn", () => {
     s.resolveExit({ exitCode: 0, stderr: "", aborted: false });
     const { terminal } = await running;
     expect(terminal.status).toBe("cancelled");
+  });
+
+  it("force-kills at INTERRUPT_GRACE_MS when turn/completed(interrupted) never arrives", async () => {
+    // Fake ONLY the grace timer; leave microtasks/setImmediate real so the handshake runs.
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+    try {
+      const abort = new AbortController();
+      // A server that starts the turn but NEVER answers the interrupt / completes it.
+      const handler: Handler = (msg, reply) => {
+        const { method, id } = msg;
+        if (method === "initialize") reply({ id, result: {} });
+        else if (method === "thread/start") reply({ id, result: { thread: { id: "t" } } });
+        else if (method === "turn/start")
+          reply({ method: "turn/started", params: { threadId: "t", turn: { id: "tn" } } });
+      };
+      const s = scriptedConnection(handler, { deferExit: true });
+      let settled = false;
+      const running = drive(s.conn, { ...PARAMS, signal: abort.signal }).then((r) => {
+        settled = true;
+        return r;
+      });
+      await tick(); // run the handshake through turn/started (ownTurnId now known)
+      abort.abort();
+      await tick(); // turn/interrupt is sent; the grace timer is armed
+      expect(s.sent.some((m) => m.method === "turn/interrupt")).toBe(true);
+      expect(s.killed()).toBe(false); // NOT killed before the deadline
+
+      vi.advanceTimersByTime(INTERRUPT_GRACE_MS - 1);
+      await tick();
+      expect(s.killed()).toBe(false); // still not, one tick short
+
+      vi.advanceTimersByTime(1); // cross the deadline → force kill
+      await tick();
+      expect(s.killed()).toBe(true);
+      // The run still awaits the process exit before resolving.
+      expect(settled).toBe(false);
+      s.resolveExit({ exitCode: null, stderr: "", aborted: true });
+      const { terminal } = await running;
+      expect(terminal.status).toBe("cancelled");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("clears the grace timer on a normal interrupted completion (no late kill)", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout"] });
+    const tick = (): Promise<void> => new Promise((resolve) => setImmediate(resolve));
+    try {
+      const abort = new AbortController();
+      const handler: Handler = (msg, reply) => {
+        const { method, id } = msg;
+        if (method === "initialize") reply({ id, result: {} });
+        else if (method === "thread/start") reply({ id, result: { thread: { id: "t" } } });
+        else if (method === "turn/start")
+          reply({ method: "turn/started", params: { threadId: "t", turn: { id: "tn" } } });
+        else if (method === "turn/interrupt")
+          reply({
+            method: "turn/completed",
+            params: { threadId: "t", turn: { id: "tn", status: "interrupted" } },
+          });
+      };
+      const s = scriptedConnection(handler);
+      const running = drive(s.conn, { ...PARAMS, signal: abort.signal });
+      await tick();
+      abort.abort();
+      const { terminal } = await running; // interrupted completion resolves the run
+      expect(terminal.status).toBe("cancelled");
+      const killsAtCompletion = s.order.filter((o) => o === "kill").length;
+      // Advancing well past the grace window must NOT fire a late kill — the timer was cleared.
+      vi.advanceTimersByTime(INTERRUPT_GRACE_MS * 2);
+      await tick();
+      expect(s.order.filter((o) => o === "kill").length).toBe(killsAtCompletion);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});
+
+describe("serverRequestResponse (exhaustive, schema-valid dispatch)", () => {
+  it.each([
+    ["item/commandExecution/requestApproval", { result: { decision: "accept" } }],
+    ["item/fileChange/requestApproval", { result: { decision: "accept" } }],
+    ["item/permissions/requestApproval", { result: { permissions: {} } }],
+    ["execCommandApproval", { result: { decision: "approved" } }],
+    ["applyPatchApproval", { result: { decision: "approved" } }],
+    ["item/tool/requestUserInput", { result: { answers: {} } }],
+    ["mcpServer/elicitation/request", { result: { action: "decline" } }],
+  ])("answers %s with its schema-valid result", (method, expected) => {
+    expect(serverRequestResponse(method)).toEqual(expected);
+  });
+
+  it.each(["account/chatgptAuthTokens/refresh", "attestation/generate", "some/unknown/method"])(
+    "answers %s with a JSON-RPC error (never a bogus result shape that could stall the turn)",
+    (method) => {
+      const response = serverRequestResponse(method);
+      expect("error" in response).toBe(true);
+      if ("error" in response) expect(response.error.code).toBe(-32601);
+    },
+  );
+});
+
+// ── End-to-end ownership: runner → adapter, foreign frames cannot contaminate ──
+
+describe("ownership end to end (transport → adapter)", () => {
+  async function drainAdapter(
+    conn: AppServerConnection,
+    params: AppServerTurnParams,
+  ): Promise<SessionOutcome | null> {
+    const adapter = new CodexAdapter({
+      binaryPath: "/x/codex",
+      transport: () => runCodexTurn(conn, params),
+      version: "0.146.0",
+    });
+    const session = await adapter.createSession({
+      cwd: params.cwd,
+      outputSchema: { type: "object" },
+    });
+    await session.send({ prompt: params.prompt });
+    let outcome: SessionOutcome | null = null;
+    for await (const event of session.events as AsyncIterable<HarnessEvent>) {
+      if (event.kind === "session.ended") outcome = event.outcome;
+    }
+    return outcome;
+  }
+
+  it("a foreign message + foreign usage do NOT become our final output or tokens", async () => {
+    // Our owned turn completes with NO agent message and NO usage; a concurrent
+    // foreign thread streams both. The adapter must NOT publish the foreign values.
+    const handler: Handler = (msg, reply) => {
+      const { method, id } = msg;
+      if (method === "initialize") reply({ id, result: {} });
+      else if (method === "thread/start") reply({ id, result: { thread: { id: "mine" } } });
+      else if (method === "turn/start") {
+        reply({ method: "turn/started", params: { threadId: "mine", turn: { id: "tn" } } });
+        reply({
+          method: "item/completed",
+          params: {
+            threadId: "other",
+            turnId: "x",
+            item: { id: "j", type: "agentMessage", text: '{"stolen":true}' },
+          },
+        });
+        reply({
+          method: "thread/tokenUsage/updated",
+          params: {
+            threadId: "other",
+            turnId: "x",
+            tokenUsage: {
+              total: {
+                inputTokens: 999,
+                cachedInputTokens: 0,
+                outputTokens: 999,
+                reasoningOutputTokens: 0,
+                totalTokens: 1998,
+              },
+            },
+          },
+        });
+        // Our turn completes empty.
+        reply({
+          method: "turn/completed",
+          params: { threadId: "mine", turn: { id: "tn", status: "completed", items: [] } },
+        });
+      }
+    };
+    const { conn } = scriptedConnection(handler);
+    const outcome = await drainAdapter(conn, {
+      cwd: "/repo",
+      prompt: "go",
+      outputSchema: { type: "object" },
+    });
+    expect(outcome?.status).toBe("completed");
+    if (outcome?.status === "completed") {
+      // No structured output (the foreign message was NOT parsed as ours)…
+      expect(outcome.structuredOutput).toBeUndefined();
+      expect(outcome.finalText).toBe("");
+      // …and no usage (the foreign tokens were NOT adopted).
+      expect(outcome.usage).toBeUndefined();
+    }
   });
 });
 
