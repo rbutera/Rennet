@@ -24,8 +24,8 @@ Red-first throughout: each group starts with failing tests against fake transpor
 
 ## 4. Gated real runs (not in `pnpm check`)
 
-- [ ] 4.1 `harness-conformance.real.test.ts` (env-var gated, `codex-utility-port.real.test.ts` pattern): suite vs the installed `codex`; passing checks earn `advertisedByHarness`/`availableInSession`; run records/extends the codex entry in `harness-tested-range.json` (seeded from this first run).
-- [ ] 4.2 Gated real orchestrator round-trip: codex picked, session configured with the loopback canvasOps URL, describe→read round-trips against the live backend.
+- [x] 4.1 `harness-conformance.real.test.ts` (env-var gated, `codex-utility-port.real.test.ts` pattern): suite vs the installed `codex`; passing checks earn `advertisedByHarness`/`availableInSession`; run records/extends the codex entry in `harness-tested-range.json` (seeded from this first run).
+- [x] 4.2 Gated real orchestrator round-trip: codex picked, session configured with the loopback canvasOps URL, describe→read round-trips against the live backend.
 
 ## 5. Docs + gate (same change, definition of done)
 

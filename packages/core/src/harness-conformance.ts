@@ -34,8 +34,8 @@ import {
 /** A single conformance check, bound to exactly one capability. */
 export interface ConformanceCheck {
   readonly capability: CapabilityName;
-  /** Drive one session through the port; resolve true iff the capability shows. */
-  run(port: HarnessPort): Promise<boolean>;
+  /** Drive one session through the port in `cwd`; resolve true iff the capability shows. */
+  run(port: HarnessPort, cwd: string): Promise<boolean>;
 }
 
 /** The result of a suite run. `evidence` is ready for `buildCapabilities`. */
@@ -61,6 +61,12 @@ export interface ConformanceOptions {
    * (a control that cannot be shown to fail is a suite that cannot certify).
    */
   readonly controlPort?: HarnessPort;
+  /**
+   * The cwd every check's session runs in. Defaults to a placeholder; a REAL run
+   * against the installed binary MUST pass a real git repo (codex `-C` into it
+   * with no repo-check skip). Fake transports ignore it.
+   */
+  readonly cwd?: string;
 }
 
 const PROBE_CWD = "/rennet-conformance";
@@ -106,8 +112,8 @@ function extractCostUsd(native: unknown): number | null {
 export const CONFORMANCE_CHECKS: readonly ConformanceCheck[] = [
   {
     capability: "structuredOutput",
-    run: async (port) => {
-      const session = await port.createSession({ cwd: PROBE_CWD, outputSchema: PROBE_SCHEMA });
+    run: async (port, cwd) => {
+      const session = await port.createSession({ cwd, outputSchema: PROBE_SCHEMA });
       await session.send({ prompt: PROBE_PROMPT });
       const { outcome } = await drain(session);
       return outcome?.status === "completed" && outcome.structuredOutput !== undefined;
@@ -115,9 +121,9 @@ export const CONFORMANCE_CHECKS: readonly ConformanceCheck[] = [
   },
   {
     capability: "interrupt",
-    run: async (port) => {
+    run: async (port, cwd) => {
       const abort = new AbortController();
-      const session = await port.createSession({ cwd: PROBE_CWD, signal: abort.signal });
+      const session = await port.createSession({ cwd, signal: abort.signal });
       await session.send({ prompt: PROBE_PROMPT });
       abort.abort();
       await session.interrupt();
@@ -127,8 +133,8 @@ export const CONFORMANCE_CHECKS: readonly ConformanceCheck[] = [
   },
   {
     capability: "textDeltas",
-    run: async (port) => {
-      const session = await port.createSession({ cwd: PROBE_CWD });
+    run: async (port, cwd) => {
+      const session = await port.createSession({ cwd });
       await session.send({ prompt: PROBE_PROMPT });
       const { events } = await drain(session);
       return events.some((event) => event.kind === "text.delta");
@@ -136,8 +142,8 @@ export const CONFORMANCE_CHECKS: readonly ConformanceCheck[] = [
   },
   {
     capability: "reportsContextWindow",
-    run: async (port) => {
-      const session = await port.createSession({ cwd: PROBE_CWD });
+    run: async (port, cwd) => {
+      const session = await port.createSession({ cwd });
       await session.send({ prompt: PROBE_PROMPT });
       const { outcome } = await drain(session);
       return outcome?.status === "completed" && outcome.usage !== undefined;
@@ -145,8 +151,8 @@ export const CONFORMANCE_CHECKS: readonly ConformanceCheck[] = [
   },
   {
     capability: "costUsd",
-    run: async (port) => {
-      const session = await port.createSession({ cwd: PROBE_CWD });
+    run: async (port, cwd) => {
+      const session = await port.createSession({ cwd });
       await session.send({ prompt: PROBE_PROMPT });
       const { events } = await drain(session);
       const ended = events.find((event) => event.kind === "session.ended");
@@ -220,7 +226,8 @@ export async function runConformance(
     throw new Error("conformance suite is missing its structuredOutput control check");
   }
   const controlPort = options.controlPort ?? makeBrokenControlPort();
-  const controlPassed = await STRUCTURED_OUTPUT_CHECK.run(controlPort);
+  const cwd = options.cwd ?? PROBE_CWD;
+  const controlPassed = await STRUCTURED_OUTPUT_CHECK.run(controlPort, cwd);
   const controlDemonstrated = !controlPassed;
   if (!controlDemonstrated) {
     throw new Error(
@@ -231,7 +238,7 @@ export async function runConformance(
   const passed: CapabilityName[] = [];
   const failed: CapabilityName[] = [];
   for (const check of CONFORMANCE_CHECKS) {
-    const ok = await check.run(port);
+    const ok = await check.run(port, cwd);
     (ok ? passed : failed).push(check.capability);
   }
 
