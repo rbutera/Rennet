@@ -172,7 +172,7 @@ describe("createSettingsComposition — locus through the ladder (#28)", () => {
     expect((await createSettingsComposition(deps).get()).projects[0]?.locus).toEqual(expected);
 
     const executionSource = readFileSync(
-      fileURLToPath(new URL("./index.ts", import.meta.url)),
+      fileURLToPath(new URL("./create-server.ts", import.meta.url)),
       "utf8",
     );
     expect(executionSource).toMatch(

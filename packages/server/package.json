@@ -1,0 +1,16 @@
+{
+  "name": "@rennet/server",
+  "version": "0.1.5",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@rennet/adapters": "workspace:*",
+    "@rennet/core": "workspace:*",
+    "@rennet/protocol": "workspace:*",
+    "@rennet/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.3.223"
+  }
+}

@@ -36,7 +36,10 @@ describe("desktop repo-facing git composition", () => {
   });
 
   it("keeps every converted index.ts seam on the path-aware factory", () => {
-    const source = readFileSync(fileURLToPath(new URL("./index.ts", import.meta.url)), "utf8");
+    const source = readFileSync(
+      fileURLToPath(new URL("./create-server.ts", import.meta.url)),
+      "utf8",
+    );
     expect(source).toContain("const gitInLocus = gitForRepo(repoPath);");
     expect(source).toContain("new ProjectSnapshotGenerator({ store: snapshotStore, gitForRepo })");
     expect(source).toContain("defaultProjectDiscoveryDeps(gitForRepo(path))");

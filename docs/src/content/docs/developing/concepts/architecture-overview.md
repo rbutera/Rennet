@@ -11,16 +11,20 @@ signed GitHub result and shows where the coding-agent handoff is meant to join.
 
 Rennet is an Electron app in a pnpm + Nx monorepo. The renderer is deliberately
 thin: it asks the desktop main process to do work through a typed inter-process
-communication (IPC) bridge, while
-`@rennet/core` owns review behaviour and `@rennet/adapters` talks to Git, GitHub,
-SQLite, the filesystem, and installed coding harnesses.
+communication (IPC) bridge. As of the app-server wave the composition root —
+every store, adapter, and the 49-command dispatch router — lives in
+`@rennet/server`, built by `createRennetServer(options)`; the Electron main
+process is a shell that instantiates the server in-process and forwards IPC to
+it. `@rennet/core` owns review behaviour and `@rennet/adapters` talks to Git,
+GitHub, SQLite, the filesystem, and installed coding harnesses.
 
 ```mermaid
 flowchart LR
   user[Reviewer]
   ui["Renderer<br/>@rennet/ui"]
   preload["Preload<br/>typed bridge"]
-  main["Electron main<br/>composition root"]
+  main["Electron main<br/>shell"]
+  server["@rennet/server<br/>composition root"]
   core["Review engine<br/>@rennet/core"]
   adapters["Host integrations<br/>@rennet/adapters"]
   local["Local machine<br/>Git · SQLite · Repo Map"]
@@ -29,16 +33,20 @@ flowchart LR
 
   user <--> ui
   ui <--> preload <--> main
-  main <--> core
-  main <--> adapters
+  main <--> server
+  server <--> core
+  server <--> adapters
   adapters <--> local
   adapters <--> harness
   adapters <--> github
 ```
 
-The main process is the authority boundary. The renderer cannot import core or
-reach Node APIs directly, and adapters never leak host-specific behaviour back
-into the portable protocol.
+The main process is the authority boundary: it owns the trusted-renderer IPC
+check, windows, menu, protocol, and auto-update, and hands the Electron-owned
+effects (data directory, repository-chooser dialog, progress broadcast,
+`shell.openPath`, and `net.fetch`) to the server as options. The renderer cannot
+import core or reach Node APIs directly, and adapters never leak host-specific
+behaviour back into the portable protocol.
 
 ## Package graph
 
@@ -53,8 +61,9 @@ flowchart BT
   instructions["@rennet/instructions<br/>versioned prompt contracts"]
   core["@rennet/core<br/>portable review engine"]
   adapters["@rennet/adapters<br/>Node and service integrations"]
+  server["@rennet/server<br/>composition root + command router"]
   ui["@rennet/ui<br/>React review surfaces"]
-  desktop["apps/desktop<br/>Electron composition root"]
+  desktop["apps/desktop<br/>Electron shell"]
 
   protocol --> types
   instructions --> types
@@ -65,12 +74,15 @@ flowchart BT
   adapters --> protocol
   adapters --> instructions
   adapters --> core
+  server --> types
+  server --> protocol
+  server --> instructions
+  server --> core
+  server --> adapters
   ui --> types
   ui --> protocol
-  desktop --> types
   desktop --> protocol
-  desktop --> core
-  desktop --> adapters
+  desktop --> server
   desktop --> ui
 ```
 
@@ -81,8 +93,9 @@ flowchart BT
 | `@rennet/instructions` | Versioned base instructions and prompt assembly | Public protocol or host access |
 | `@rennet/core` | Capture-independent review logic, event folds, canvases, routing, lineage, publication decisions | Electron, GitHub clients, filesystem calls, or renderer state |
 | `@rennet/adapters` | Git, GitHub, SQLite, local files, harness SDKs, and other host integrations | UI or product policy |
+| `@rennet/server` | The `createRennetServer` composition root: stores, adapter wiring, harness memoisers, and the 49-command dispatch router | Electron imports (its effects are injected as options) or renderer state |
 | `@rennet/ui` | React surfaces and ephemeral view state | Core imports, Node APIs, or durable review truth |
-| `apps/desktop` | Electron main/preload/renderer assembly and live dependency wiring | Reusable domain logic that belongs in a package |
+| `apps/desktop` | Electron shell: windows, menu, protocol, auto-update, and the trusted-renderer IPC bridge forwarding to the server | The composition itself, or reusable domain logic that belongs in a package |
 
 ## A review from input to outcome
 

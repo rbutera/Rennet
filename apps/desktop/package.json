@@ -15,6 +15,7 @@
     "@rennet/protocol": "workspace:*",
     "@rennet/types": "workspace:*",
     "@rennet/ui": "workspace:*",
+    "@rennet/server": "workspace:*",
     "@electron-forge/cli": "7.11.2",
     "@electron-forge/maker-dmg": "7.11.2",
     "@electron-forge/maker-squirrel": "7.11.2",

@@ -43,6 +43,17 @@ export default [
               ],
             },
             {
+              sourceTag: "layer:server",
+              onlyDependOnLibsWithTags: [
+                "layer:types",
+                "layer:protocol",
+                "layer:instructions",
+                "layer:core",
+                "layer:adapter",
+                "layer:server",
+              ],
+            },
+            {
               sourceTag: "layer:ui",
               onlyDependOnLibsWithTags: ["layer:types", "layer:protocol", "layer:ui"],
             },
@@ -54,9 +65,26 @@ export default [
                 "layer:instructions",
                 "layer:core",
                 "layer:adapter",
+                "layer:server",
                 "layer:ui",
                 "layer:app",
               ],
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
+    files: ["packages/server/**/*.ts", "packages/server/**/*.tsx"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "electron",
+              message: "packages/server is Electron-free; inject effects via RennetServerOptions.",
             },
           ],
         },

@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 
 describe("desktop Repo Map composition", () => {
   it("binds capture pins and background knowledge into the live root", () => {
-    const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+    const source = readFileSync(new URL("./create-server.ts", import.meta.url), "utf8");
     expect(source).toContain(
       "ensureProjectSnapshotPin(liveSnapshotStore, repoRoot, baseOid, gitForRepo(repoRoot))",
     );
