@@ -1,7 +1,7 @@
 import type { Hunk, InvocationBudget, PatchFile } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
 import { createInvocationBudget } from "./invocation-budget";
-import type { VerificationTurn } from "./finding-verification";
+import type { VerificationTurn, VerificationTurnResult } from "./finding-verification";
 import {
   classifyUiSurface,
   isUiSurfacePath,
@@ -109,7 +109,7 @@ describe("runUiVerification (#183) — the ladder", () => {
   });
 
   it("could-not-mount: a turn that mounted nothing yields the inconclusive disclosure carrying what it attempted", async () => {
-    const runTurn: VerificationTurn = vi.fn(async () => ({
+    const runTurn: VerificationTurn = vi.fn(async (): Promise<VerificationTurnResult> => ({
       status: "emitted",
       body: {
         mounted: false,
@@ -133,7 +133,7 @@ describe("runUiVerification (#183) — the ladder", () => {
   });
 
   it("a failed turn maps to unavailable with the turn reason (never a fabricated clear)", async () => {
-    const runTurn: VerificationTurn = vi.fn(async () => ({
+    const runTurn: VerificationTurn = vi.fn(async (): Promise<VerificationTurnResult> => ({
       status: "failed",
       message: "the harness crashed",
     }));
@@ -149,7 +149,7 @@ describe("runUiVerification (#183) — the ladder", () => {
   });
 
   it("ran + execution-backed: a mounted run yields reproduced findings and a ran status with screenshots", async () => {
-    const runTurn: VerificationTurn = vi.fn(async () => ({
+    const runTurn: VerificationTurn = vi.fn(async (): Promise<VerificationTurnResult> => ({
       status: "emitted",
       body: {
         mounted: true,
@@ -189,7 +189,7 @@ describe("runUiVerification (#183) — the ladder", () => {
   });
 
   it("ran but static (no observed exec): findings are inconclusive, mounted is false", async () => {
-    const runTurn: VerificationTurn = vi.fn(async () => ({
+    const runTurn: VerificationTurn = vi.fn(async (): Promise<VerificationTurnResult> => ({
       status: "emitted",
       body: {
         mounted: true,

@@ -24,6 +24,7 @@ import {
   createCoverageTurn,
   createGitHubProjectPrSource,
   createRefPinner,
+  createUiVerificationTurn,
   createVerificationFileReaderForPatchset,
   createVerificationTurn,
   defaultCodexDiscoveryDeps,
@@ -65,9 +66,11 @@ import {
   projectHypothesisRepoContext,
   RepoWatcher,
   readOpenSpecChange,
+  readUiEvidence,
   repoHasSubmodules,
   repoRecordOf,
   resolveBaseRef,
+  resolveUiEvidenceDir,
   resolveForgeRemote,
   resolveGitHubAuth,
   runKnowledgeDeltaForRepo,
@@ -80,6 +83,7 @@ import {
   attachRiskCrossCheck,
   buildOfferedManifest,
   buildReviewCanvases,
+  classifyUiSurface,
   type CodexExecutor,
   type CodexUtilityPort,
   createHarnessRunTurn,
@@ -112,6 +116,7 @@ import {
   runHandoffTurn as runHandoffTurnCore,
   runHypothesisPass,
   runNoiseAngle,
+  runUiVerification,
   toDistroPath,
   toWindowsView,
   verifyFlaggedReview,
@@ -150,6 +155,7 @@ import { createDispatch, type FlaggedReviewRun } from "./dispatch";
 import { createLiveDraftPrBodyPort } from "./draft-pr-body-live";
 import { stampBlockingStates } from "./flagged-blocking-states";
 import { projectUnavailableDeepVerification } from "./flagged-review-verification";
+import { applyUiVerification } from "./flagged-ui-verification";
 import { createLiveComposeBundle } from "./handoff-compose-live";
 import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
 import { LiveTurnRegistry } from "./live-turn-registry";
@@ -1263,13 +1269,52 @@ async function runFlaggedReviewWithContextFeed(
   // deterministic, not a model result, so it survives a failed model run). The
   // Flagged lens + PublishSheet disclose it as render-only honest copy; it NEVER
   // gates the sign (Rule Zero). Mirrors the #160 patchsetId stamp.
-  const immediate = stampBlockingStates(withCiSignal, decomposition);
-  const adjudication =
+  const stamped = stampBlockingStates(withCiSignal, decomposition);
+  // ── verify-ui (#183): mount the changed UI surface, screenshot, a11y, intent ──
+  // The classifier is deterministic and $0. A backend-only changeset records the
+  // distinct `not-ui` status SYNCHRONOUSLY (no turn, no enrichment cycle) — "not
+  // applicable", never an all-clear. A UI-touching deep review with a Claude adapter
+  // gets ONE budget-bounded turn, but that turn is SLOW (install/build/mount), so it
+  // rides the SAME non-blocking late-enrichment channel as adjudication (#349 lesson):
+  // it NEVER delays the immediate row/canvas delivery, and its observations (ordinary
+  // findings) + status replace the rows via `flagged.adjudication` when it lands.
+  const uiClassification = classifyUiSurface(patchset.files);
+  const immediate =
+    !uiClassification.touchesUi && stamped.status === "ok"
+      ? applyUiVerification(stamped, { observations: [], status: { status: "not-ui" } })
+      : stamped;
+  const uiVerificationRunner =
+    deepReview && adapter && uiClassification.touchesUi
+      ? async (flaggedReview: FlaggedReview): Promise<FlaggedReview> => {
+          if (flaggedReview.status !== "ok") return flaggedReview;
+          const evidenceDir = await resolveUiEvidenceDir(
+            join(app.getPath("userData"), "ui-evidence"),
+            review.id,
+          );
+          const uiResult = await runUiVerification({
+            files: patchset.files,
+            hunks: decomposition.hunks,
+            ...(intent ? { intent } : {}),
+            evidenceDir,
+            runTurn: createUiVerificationTurn(adapter, { cwd: review.repositoryRoot }),
+            budget: sharedBudget,
+            maxTurns: DEFAULT_REVIEW_INTELLIGENCE_BUDGET.uiVerification.maxTurns,
+          });
+          return applyUiVerification(flaggedReview, uiResult);
+        }
+      : undefined;
+  const adjudicated =
     adjudicationOptions &&
     immediate.status === "ok" &&
     immediate.findings.some((finding) => finding.agreement.kind === "disagree")
       ? adjudicateFlaggedReview(immediate, adjudicationOptions).then(({ review }) => review)
       : null;
+  // verify-ui joins the SAME late channel, AFTER any adjudication (a refuted row is
+  // already gone, so it verifies the surviving surface). Neither is awaited before the
+  // return — the immediate review delivers now (Rule Zero / non-blocking).
+  const adjudication = uiVerificationRunner
+    ? (adjudicated ?? Promise.resolve(immediate)).then(uiVerificationRunner)
+    : adjudicated;
   return { review: immediate, adjudication };
 }
 
@@ -1841,6 +1886,12 @@ app.whenReady().then(async () => {
     // DEFAULT now (Rai's mandate, 2026-08-11); an explicit opt-down gives single-Claude
     // quick. The boundary is unchanged.
     flaggedReview: runFlaggedReview,
+    // The verify-ui screenshot read (#183): confined to the review's own evidence
+    // directory under the app's user-data dir — the SAME `<userData>/ui-evidence/
+    // <reviewId>/` the verify-ui turn wrote its PNGs into. Fail-closed (escape/missing
+    // → null), no spend, no egress.
+    readUiEvidence: (reviewId, path) =>
+      readUiEvidence(join(app.getPath("userData"), "ui-evidence"), reviewId, path),
     // The Noise lens (issue #34): the low-signal churn grouped away, each group tagged
     // rule vs noise job. This is the LIVE noise-classification runner — a real model
     // turn over the review's diff, replacing the fixture, behind the unchanged

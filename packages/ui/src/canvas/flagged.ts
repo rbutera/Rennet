@@ -9,6 +9,8 @@ import type {
   FindingSeverity,
   FindingVerification,
   FlaggedReview,
+  UiScreenshot,
+  UiVerification,
 } from "@rennet/types";
 
 /**
@@ -98,6 +100,15 @@ export type FlaggedIndex =
        * gates any action (Rule Zero). Absent/empty ⇒ the pre-#309 honest all-clear.
        */
       blockingStates?: readonly DecompositionBlockingState[];
+      /**
+       * The verify-ui status (issue #183). Present only when the pass ran on a
+       * UI-touching changeset. The lens reads it to show the evidence strip — the
+       * captured screenshots when it `ran`, the one honest reason when `unavailable`,
+       * and nothing for `not-ui` (or when absent). It NEVER gates any action (Rule
+       * Zero). A malformed status is dropped by the guard, so a bad field renders
+       * exactly as the pre-#183 shape.
+       */
+      uiVerification?: UiVerification;
     };
 
 const SEVERITY_RANK: Record<FindingSeverity, number> = { high: 0, medium: 1, low: 2 };
@@ -231,6 +242,10 @@ export function buildFlaggedIndex(review: FlaggedReview): FlaggedIndex {
     total: rows.length,
     ...(isDualNote(review.dual) ? { dual: review.dual } : {}),
     ...(review.ciSignal ? { ciSignal: review.ciSignal } : {}),
+    // Carry the verify-ui status through, additively (#183). Only a well-formed status
+    // survives the guard; an absent or malformed one carries nothing, so a review
+    // without it is byte-identical to its pre-#183 index.
+    ...(isUiVerification(review.uiVerification) ? { uiVerification: review.uiVerification } : {}),
     // Carry the incomplete-ingestion blockers through, additively (#309). Only
     // well-formed states survive the guard; an absent or empty set carries nothing,
     // so a fully-ingested review is byte-identical to its pre-#309 index.
@@ -259,6 +274,29 @@ function sanitiseBlockingStates(value: unknown): readonly DecompositionBlockingS
       typeof state.detail === "string"
     );
   });
+}
+
+/** A defensive guard for the optional verify-ui status (#183) — a malformed status is ignored. */
+function isUiVerification(value: unknown): value is UiVerification {
+  if (typeof value !== "object" || value === null) return false;
+  const status = value as Record<string, unknown>;
+  if (status.status === "not-ui") return true;
+  if (status.status === "unavailable") return typeof status.reason === "string";
+  if (status.status === "ran") {
+    return (
+      typeof status.mounted === "boolean" &&
+      typeof status.observationCount === "number" &&
+      Array.isArray(status.screenshots) &&
+      status.screenshots.every(isUiScreenshot)
+    );
+  }
+  return false;
+}
+
+function isUiScreenshot(value: unknown): value is UiScreenshot {
+  if (typeof value !== "object" || value === null) return false;
+  const shot = value as Record<string, unknown>;
+  return typeof shot.path === "string" && typeof shot.label === "string";
 }
 
 /** A defensive guard for the optional dual-review note (a malformed note is ignored). */
