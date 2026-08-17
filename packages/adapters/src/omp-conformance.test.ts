@@ -40,8 +40,10 @@ describe("omp conformance — hermetic (documented shapes, zero spend)", () => {
     const adapter = new OmpAdapter({
       binaryPath: "/x/omp",
       transport: () => ({
-        // Never invoked — the descriptor is read, not a turn run.
-        async *[Symbol.asyncIterator](): AsyncIterator<unknown> {},
+        [Symbol.asyncIterator](): AsyncIterator<unknown> {
+          // Never invoked — the descriptor is read, not a turn run.
+          throw new Error("descriptor-only adapter: transport must not be invoked");
+        },
       }),
       ...(evidence === undefined ? {} : { capabilityEvidence: evidence }),
     });
