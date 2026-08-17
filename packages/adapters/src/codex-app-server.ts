@@ -221,6 +221,8 @@ function turnStartParams(threadId: string, params: AppServerTurnParams): Record<
  *   - `item/tool/requestUserInput` → `{ answers: {} }` (schema-valid empty answers)
  *   - `mcpServer/elicitation/request` → `{ action: "decline" }` (no form data to accept; a
  *     valid, non-stalling response)
+ *   - `item/tool/call` → `-32601` (dynamic tools; unreachable — we never opt into
+ *     experimentalApi/dynamicTools — but named so union growth cannot slip through)
  *   - `account/chatgptAuthTokens/refresh` / `attestation/generate` → we cannot mint a valid
  *     token, so a JSON-RPC error (never a bogus result shape that the server rejects/hangs on)
  *   - unknown → method-not-found error (`-32601`)

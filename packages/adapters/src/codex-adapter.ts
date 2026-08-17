@@ -474,11 +474,17 @@ function createEventQueue(
   maxEvents: number,
   maxBytes: number,
 ): {
-  push: (event: HarnessEvent) => void;
+  /** Accept the event within the ceiling; returns false (and flags overflow) if the PROJECTED size would cross it. */
+  push: (event: HarnessEvent) => boolean;
+  /** Ceiling-exempt push for the exactly-once settlement path (a terminal or teardown evidence must always land). */
+  forcePush: (event: HarnessEvent) => void;
   readonly overflowed: boolean;
   close: () => void;
   iterable: AsyncIterable<HarnessEvent>;
 } {
+  // Compact the drained prefix once it reaches this many slots, so a long-lived
+  // stream with a keeping-up consumer cannot grow the backing array forever.
+  const COMPACT_AT = 1024;
   const buffer: ({ event: HarnessEvent; size: number } | undefined)[] = [];
   let head = 0;
   let bufferedBytes = 0;
@@ -489,13 +495,26 @@ function createEventQueue(
     wake?.();
     wake = null;
   };
+  const accept = (event: HarnessEvent, size: number): void => {
+    buffer.push({ event, size });
+    bufferedBytes += size;
+    ping();
+  };
   return {
     push: (event) => {
       const size = eventSize(event);
-      buffer.push({ event, size });
-      bufferedBytes += size;
-      if (buffer.length - head > maxEvents || bufferedBytes > maxBytes) overflowed = true;
-      ping();
+      // Check the PROJECTED occupancy BEFORE accepting, so even a legitimate
+      // terminal cannot slip past the ceiling (the pump replaces a rejected
+      // terminal with the single failed-at-ceiling terminal).
+      if (buffer.length - head + 1 > maxEvents || bufferedBytes + size > maxBytes) {
+        overflowed = true;
+        return false;
+      }
+      accept(event, size);
+      return true;
+    },
+    forcePush: (event) => {
+      accept(event, eventSize(event));
     },
     get overflowed() {
       return overflowed;
@@ -512,6 +531,10 @@ function createEventQueue(
             buffer[head] = undefined; // release the reference for GC
             head += 1;
             bufferedBytes -= entry.size;
+            if (head >= COMPACT_AT) {
+              buffer.splice(0, head); // drop the drained prefix's backing slots
+              head = 0;
+            }
             yield entry.event;
             continue;
           }
@@ -539,6 +562,7 @@ class CodexSession implements HarnessSession {
   readonly #completion: Promise<void>;
   #resolveCompletion!: () => void;
   #sent = false;
+  #closed = false;
   #eventsTaken = false;
 
   constructor(
@@ -608,26 +632,35 @@ class CodexSession implements HarnessSession {
     const { normalize, finalize } = createCodexNormalizer(this.#context, this.#turnSpec());
     const queue = this.#queue;
     let ended = false;
+    let overflowTerminated = false;
+    const settleFailed = (error: HarnessError): void => {
+      if (ended) return;
+      ended = true;
+      // forcePush: the exactly-once settlement must land even at the ceiling.
+      for (const event of this.#failedTerminal(error)) queue.forcePush(event);
+    };
     const enqueue = (event: HarnessEvent): void => {
-      if (event.kind === "session.ended") ended = true;
-      queue.push(event);
+      if (queue.push(event)) {
+        if (event.kind === "session.ended") ended = true;
+        return;
+      }
+      // Rejected at the PROJECTED ceiling — even a legitimate terminal is replaced
+      // by the single failed-at-ceiling terminal (never a silent drop, never two).
+      overflowTerminated = true;
+      settleFailed({
+        class: "protocol",
+        origin: "transport",
+        message: `codex streamed past the session buffer ceiling (${this.#maxEvents} events / ${this.#maxBytes} bytes) without completing; failing the turn to avoid unbounded memory`,
+        retryable: false,
+        retryableSource: "inferred",
+        nativeCode: null,
+      });
     };
     void (async () => {
       try {
         for await (const frame of iterable) {
           for (const event of normalize(frame)) enqueue(event);
-          if (!ended && queue.overflowed) {
-            const error: HarnessError = {
-              class: "protocol",
-              origin: "transport",
-              message: `codex streamed past the session buffer ceiling (${this.#maxEvents} events / ${this.#maxBytes} bytes) without completing; failing the turn to avoid unbounded memory`,
-              retryable: false,
-              retryableSource: "inferred",
-              nativeCode: null,
-            };
-            for (const event of this.#failedTerminal(error)) enqueue(event);
-            break; // stop consuming; the transport's finally kills the child
-          }
+          if (overflowTerminated) break; // stop consuming; the transport's finally kills the child
         }
         if (!ended) for (const event of finalize()) enqueue(event);
       } catch (error) {
@@ -635,7 +668,8 @@ class CodexSession implements HarnessSession {
         if (ended) {
           // A terminal already went out (e.g. the transport threw during teardown
           // AFTER yielding its terminal): surface the throw as evidence only.
-          enqueue({
+          // forcePush — evidence must land even if the ceiling was reached.
+          queue.forcePush({
             ...envelope(this.#context, { message }),
             kind: "passthrough",
             nativeKind: "transport-teardown-error",
@@ -643,16 +677,14 @@ class CodexSession implements HarnessSession {
         } else {
           // The transport threw BEFORE a terminal (e.g. an untranslatable WSL repo
           // path): one honest failed outcome, never a hang or unhandled rejection.
-          for (const event of this.#failedTerminal({
+          settleFailed({
             class: "protocol",
             origin: "harness",
             message,
             retryable: false,
             retryableSource: "inferred",
             nativeCode: null,
-          })) {
-            enqueue(event);
-          }
+          });
         }
       } finally {
         queue.close();
@@ -662,6 +694,8 @@ class CodexSession implements HarnessSession {
   }
 
   send(input: TurnInput): Promise<string> {
+    if (this.#closed)
+      throw new Error("This session is closed (close() or interrupt() already settled it)");
     if (this.#sent) throw new Error("This session has already run a turn (slice 1 is single-turn)");
     this.#sent = true;
     this.#startPump(this.#transport({ ...this.#turnSpec(), prompt: input.prompt }));
@@ -669,6 +703,7 @@ class CodexSession implements HarnessSession {
   }
 
   #shutdown(): Promise<void> {
+    this.#closed = true; // a settled session rejects any later send()
     this.#abort.abort();
     if (this.#sent) {
       // A turn is running: abort makes the transport finish; await the pump (process

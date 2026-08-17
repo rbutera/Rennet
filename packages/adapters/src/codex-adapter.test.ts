@@ -415,9 +415,34 @@ describe("CodexAdapter", () => {
     const { events, outcome } = await drain(session);
     expect(outcome?.status).toBe("failed");
     if (outcome?.status === "failed") expect(outcome.error.message).toMatch(/buffer ceiling/);
-    // Ordering preserved below the ceiling: real passthrough events precede the terminal.
-    const firstEnded = events.findIndex((e) => e.kind === "session.ended");
-    expect(events.slice(0, firstEnded).some((e) => e.kind === "passthrough")).toBe(true);
+    // EXACT retained sequence: the 5 accepted passthroughs (n 0..4, in order, no
+    // duplicates), then exactly one terminal — the 6th frame was replaced by it.
+    const ns = events
+      .filter((e) => e.kind === "passthrough")
+      .map((e) => (e as { native?: { params?: { n?: number } } }).native?.params?.n ?? -1);
+    expect(ns).toEqual([0, 1, 2, 3, 4]);
+    const endeds = events.filter((e) => e.kind === "session.ended");
+    expect(endeds).toHaveLength(1);
+    expect(events[events.length - 1]?.kind).toBe("session.ended");
+  });
+
+  it("rejects send() after a pre-send close() settles the session", async () => {
+    const transport = fakeTransport([completed("completed")]); // never runs — closed pre-send
+    const session = await adapter(transport.fn).createSession({ cwd: "/repo" });
+    const consumed = (async () => {
+      const seen: unknown[] = [];
+      for await (const event of session.events) seen.push(event);
+      return seen;
+    })();
+    await session.close();
+    await expect(
+      Promise.race([
+        consumed,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 1000)),
+      ]),
+    ).resolves.toEqual([]);
+    await expect(async () => session.send({ prompt: "too late" })).rejects.toThrow(/closed/);
+    expect(transport.invoked()).toBe(false);
   });
 
   it("throws a plain error on a second events subscription", async () => {
