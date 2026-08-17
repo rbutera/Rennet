@@ -32,6 +32,10 @@ import {
   type CodexUtilityPort,
   type CodexUtilitySeed,
   createCodexUtilityPort,
+  HOST_LOCUS,
+  type Locus,
+  locusCommand,
+  toWindowsView,
 } from "@rennet/core";
 import { execa } from "execa";
 import {
@@ -179,7 +183,8 @@ export function buildCodexExecArgs(
 export interface CodexRunSpec {
   readonly bin: string;
   readonly args: readonly string[];
-  readonly cwd: string;
+  /** Undefined for a WSL spawn (the distro scratch cwd rides `wsl.exe --cd`). */
+  readonly cwd: string | undefined;
   readonly stdin: "ignore";
   readonly signal?: AbortSignal;
 }
@@ -195,6 +200,12 @@ export type CodexRun = (spec: CodexRunSpec) => Promise<CodexRunResult>;
  *  wiring is unit-testable without a real `codex` on PATH. */
 export interface CodexExecEffects {
   readonly mkdtemp: (prefix: string) => Promise<string>;
+  /**
+   * Mint a scratch dir INSIDE the named distro and return its distro-native path.
+   * Used only for a WSL locus; injectable so the WSL argv/path composition is
+   * asserted without a real `wsl.exe`.
+   */
+  readonly mintDistroScratch?: (distro: string) => Promise<string>;
   readonly writeFile: (path: string, data: string) => Promise<void>;
   readonly readFile: (path: string) => Promise<string>;
   readonly rm: (path: string) => Promise<void>;
@@ -212,13 +223,18 @@ export interface CodexExecEffects {
 /** The real effects: node fs + one `execa` spawn with closed stdin. */
 export const defaultCodexExecEffects: CodexExecEffects = {
   mkdtemp: (prefix) => mkdtemp(prefix),
+  mintDistroScratch: async (distro) => {
+    const { file, args } = locusCommand({ kind: "wsl", distro }, "mktemp", ["-d"]);
+    const { stdout } = await execa(file, [...args], { stdin: "ignore" });
+    return stdout.trim();
+  },
   writeFile: (path, data) => writeFile(path, data, "utf8"),
   readFile: (path) => readFile(path, "utf8"),
   rm: (path) => rm(path, { recursive: true, force: true }),
   readSessionUsage: defaultCodexSessionUsageReader,
   run: async (spec) => {
     const result = await execa(spec.bin, [...spec.args], {
-      cwd: spec.cwd,
+      ...(spec.cwd === undefined ? {} : { cwd: spec.cwd }),
       stdin: spec.stdin, // "ignore" == `< /dev/null` (gotcha 2)
       reject: false,
       ...(spec.signal === undefined ? {} : { cancelSignal: spec.signal }),
@@ -242,6 +258,12 @@ export interface CreateCodexExecutorOptions {
   readonly onUsageMeasurement?: (measurement: CodexSessionReadResult) => void;
   /** Wall clock, injectable for a deterministic window in tests. Defaults to `Date.now`. */
   readonly now?: () => number;
+  /**
+   * The project's execution locus (#334). For a WSL locus the scratch dir is minted
+   * inside the distro, every argv path is distro-native, and the spawn routes through
+   * `locusCommand`; host composition is byte-identical. Defaults to the host.
+   */
+  readonly locus?: Locus;
 }
 
 /**
@@ -264,6 +286,13 @@ export function createCodexExecutor(
 ): CodexExecutor {
   const bin = options.bin ?? CODEX_EXEC_BIN;
   const now = options.now ?? Date.now;
+  const locus = options.locus ?? HOST_LOCUS;
+  // Distro-native argv paths use posix separators; the Windows-side IO on the same
+  // dir uses the UNC (backslash) view. For a host locus both collapse to `join`.
+  const argvJoin = (dir: string, name: string): string =>
+    locus.kind === "wsl" ? `${dir}/${name}` : join(dir, name);
+  const ioJoin = (dir: string, name: string): string =>
+    locus.kind === "wsl" ? `${dir}\\${name}` : join(dir, name);
   return async (req: CodexExecRequest): Promise<CodexExecResult> => {
     // Fire a LEGIBLE failure measurement so a Codex seat that never produced a
     // document shows up as an explicit "unmeasured (reason)" entry rather than an
@@ -282,31 +311,49 @@ export function createCodexExecutor(
         matched: 0,
       });
     };
-    const dir = await effects.mkdtemp(join(tmpdir(), "rennet-codex-"));
-    const outPath = join(dir, "out.json");
+    // For a WSL locus the scratch (schema, output, cwd) lives inside the distro, so
+    // the in-distro codex can read/write it; the Windows side does its IO through the
+    // UNC view of the same dir. Host: argvDir === ioDir === a host mkdtemp dir.
+    let argvDir: string;
+    let ioDir: string;
+    if (locus.kind === "wsl") {
+      if (effects.mintDistroScratch === undefined) {
+        throw new Error("WSL codex executor requires a mintDistroScratch effect");
+      }
+      argvDir = await effects.mintDistroScratch(locus.distro);
+      ioDir = toWindowsView(argvDir, locus.distro);
+    } else {
+      argvDir = await effects.mkdtemp(join(tmpdir(), "rennet-codex-"));
+      ioDir = argvDir;
+    }
+    const outArgv = argvJoin(argvDir, "out.json");
+    const outIo = ioJoin(ioDir, "out.json");
     // Bound the session-log search to files written from just before this spawn.
     // Captured BEFORE the run so codex's rollout (created at process start) is
-    // always in-window; the unique scratch `dir` is the real correlation key.
+    // always in-window; the unique scratch `argvDir` is the real correlation key.
+    // (For WSL the session log lives in the distro's ~/.codex, unreadable by the
+    // host reader — the run records an honest "unmeasured" rather than a false zero.)
     const windowStart = now() - CODEX_USAGE_WINDOW_MARGIN_MS;
     try {
-      let schemaPath: string | undefined;
+      let schemaArgv: string | undefined;
       if (req.outputSchema !== undefined) {
-        schemaPath = join(dir, "schema.json");
+        schemaArgv = argvJoin(argvDir, "schema.json");
         // OpenAI structured outputs (behind --output-schema) reject the loose
         // `additionalProperties: {}` the Zod projection emits; sanitize per-Codex.
         await effects.writeFile(
-          schemaPath,
+          ioJoin(ioDir, "schema.json"),
           JSON.stringify(sanitizeSchemaForCodex(req.outputSchema)),
         );
       }
       const args = buildCodexExecArgs(
         { model: req.model, effort: req.effort, prompt: req.prompt },
-        { ...(schemaPath === undefined ? {} : { schemaPath }), outPath },
+        { ...(schemaArgv === undefined ? {} : { schemaPath: schemaArgv }), outPath: outArgv },
       );
+      const cmd = locusCommand(locus, bin, args, argvDir);
       const result = await effects.run({
-        bin,
-        args,
-        cwd: dir,
+        bin: cmd.file,
+        args: cmd.args,
+        cwd: cmd.cwd,
         stdin: "ignore",
         ...(req.signal === undefined ? {} : { signal: req.signal }),
       });
@@ -317,7 +364,7 @@ export function createCodexExecutor(
       }
       let raw: string;
       try {
-        raw = await effects.readFile(outPath);
+        raw = await effects.readFile(outIo);
       } catch (error) {
         // No `-o` file: codex accepted the request but emitted no final message
         // (the exact shape the empty-Codex-seat dogfood saw). Make it legible.
@@ -348,7 +395,7 @@ export function createCodexExecutor(
       if (effects.readSessionUsage !== undefined) {
         try {
           const measurement = await effects.readSessionUsage({
-            correlationCwd: dir,
+            correlationCwd: argvDir,
             modifiedSince: windowStart,
           });
           options.onUsageMeasurement?.(measurement);
@@ -376,7 +423,7 @@ export function createCodexExecutor(
         ...(options.harnessVersion === undefined ? {} : { harnessVersion: options.harnessVersion }),
       };
     } finally {
-      await effects.rm(dir);
+      await effects.rm(ioDir);
     }
   };
 }

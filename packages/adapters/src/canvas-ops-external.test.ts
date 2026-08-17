@@ -12,6 +12,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   attachCodexOrchestratorSession,
   type CanvasOpsExternalServer,
+  type CanvasOpsReachability,
   startCanvasOpsExternalServer,
 } from "./canvas-ops-external";
 import { makeCanvasOpsTestBackend } from "./canvas-ops-test-backend";
@@ -106,7 +107,10 @@ describe("canvasOps@2 external streamable-HTTP transport", () => {
       harness: "codex",
       fresh: true,
     });
-    const client = await connect(attached.url);
+    // Host locus always resolves a reachable 127.0.0.1 URL.
+    expect(attached.url).not.toBeNull();
+    const url = attached.url as string;
+    const client = await connect(url);
     await expect(client.listTools()).resolves.toBeDefined();
 
     await attached.close();
@@ -114,8 +118,59 @@ describe("canvasOps@2 external streamable-HTTP transport", () => {
 
     const afterClose = new Client({ name: "after-close", version: "0.0.0" });
     await expect(
-      afterClose.connect(new StreamableHTTPClientTransport(new URL(attached.url))),
+      afterClose.connect(new StreamableHTTPClientTransport(new URL(url))),
     ).rejects.toThrow();
+  });
+
+  // ── WSL distro-reachability (#334), hermetic (faked probe outcomes) ──────────
+
+  it("wsl mirrored networking keeps the 127.0.0.1 loopback when the distro reaches it", async () => {
+    const { backend } = makeCanvasOpsTestBackend();
+    const reachability: CanvasOpsReachability = {
+      probeReachable: async (address) => address === "127.0.0.1",
+      discoverGateway: async () => null,
+    };
+    server = await startCanvasOpsExternalServer(backend, {
+      locus: { kind: "wsl", distro: "Ubuntu" },
+      reachability,
+    });
+    expect(server.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+    // The kept listener is genuinely serving on that URL.
+    const client = await connect(server.url);
+    await expect(client.listTools()).resolves.toBeDefined();
+  });
+
+  it("wsl with no distro-to-host route fails plainly (no 0.0.0.0, no silent host)", async () => {
+    const { backend } = makeCanvasOpsTestBackend();
+    const reachability: CanvasOpsReachability = {
+      probeReachable: async () => false,
+      discoverGateway: async () => "172.20.16.1",
+    };
+    await expect(
+      startCanvasOpsExternalServer(backend, {
+        locus: { kind: "wsl", distro: "Ubuntu" },
+        reachability,
+      }),
+    ).rejects.toThrow(/unreachable from the "Ubuntu" WSL distro/);
+  });
+
+  it("attach settles an unreachable WSL turn as a null-url session with a reason", async () => {
+    const { backend } = makeCanvasOpsTestBackend();
+    const reachability: CanvasOpsReachability = {
+      probeReachable: async () => false,
+      discoverGateway: async () => null,
+    };
+    const attached = await attachCodexOrchestratorSession(
+      backend,
+      { primer, harness: "codex", fresh: true },
+      { locus: { kind: "wsl", distro: "Ubuntu" }, reachability },
+    );
+    try {
+      expect(attached.url).toBeNull();
+      expect(attached.unreachableReason).toMatch(/unreachable from the "Ubuntu" WSL distro/);
+    } finally {
+      await attached.close();
+    }
   });
 
   it("rejects and cleans up when the listener errors before listening", async () => {
