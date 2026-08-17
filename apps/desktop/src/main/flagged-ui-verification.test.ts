@@ -24,7 +24,12 @@ const OBSERVATION: FindingElement = {
 
 const RAN_RESULT: RunUiVerificationResult = {
   observations: [OBSERVATION],
-  status: { status: "ran", screenshots: [{ path: "a.png", label: "A" }], observationCount: 1, mounted: true },
+  status: {
+    status: "ran",
+    screenshots: [{ path: "a.png", label: "A" }],
+    observationCount: 1,
+    mounted: true,
+  },
 };
 
 describe("applyUiVerification (#183)", () => {

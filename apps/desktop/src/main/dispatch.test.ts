@@ -376,29 +376,46 @@ async function capturedReview(dispatch: ReturnType<typeof createDispatch>): Prom
 
 describe("createDispatch — review.uiEvidence (#183)", () => {
   it("returns the confined screenshot as an ok data URL for the addressed review", async () => {
-    const { dispatch } = harness(fakePublishPort(), {}, {
-      readUiEvidence: (reviewId, path) =>
-        Promise.resolve({ dataUrl: `data:image/png;base64,${reviewId}:${path}` }),
-    });
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        readUiEvidence: (reviewId, path) =>
+          Promise.resolve({ dataUrl: `data:image/png;base64,${reviewId}:${path}` }),
+      },
+    );
     const review = await capturedReview(dispatch);
     const result = await dispatch("review.uiEvidence", { reviewId: review.id, path: "a.png" });
     expect(result).toEqual({ status: "ok", dataUrl: `data:image/png;base64,${review.id}:a.png` });
   });
 
   it("returns not-found when the evidence read yields null (missing/escaping — honest, not a crash)", async () => {
-    const { dispatch } = harness(fakePublishPort(), {}, {
-      readUiEvidence: () => Promise.resolve(null),
-    });
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        readUiEvidence: () => Promise.resolve(null),
+      },
+    );
     const review = await capturedReview(dispatch);
-    const result = await dispatch("review.uiEvidence", { reviewId: review.id, path: "../escape.png" });
+    const result = await dispatch("review.uiEvidence", {
+      reviewId: review.id,
+      path: "../escape.png",
+    });
     expect(result).toEqual({ status: "not-found" });
   });
 
   it("refuses an unknown review id (the store gate, not a verify-ui concern)", async () => {
-    const { dispatch } = harness(fakePublishPort(), {}, {
-      readUiEvidence: () => Promise.resolve({ dataUrl: "data:image/png;base64,AAAA" }),
-    });
-    await expect(dispatch("review.uiEvidence", { reviewId: "nope", path: "a.png" })).rejects.toThrow();
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        readUiEvidence: () => Promise.resolve({ dataUrl: "data:image/png;base64,AAAA" }),
+      },
+    );
+    await expect(
+      dispatch("review.uiEvidence", { reviewId: "nope", path: "a.png" }),
+    ).rejects.toThrow();
   });
 });
 

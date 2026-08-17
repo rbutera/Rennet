@@ -1,7 +1,7 @@
 import type { Hunk, InvocationBudget, PatchFile } from "@rennet/types";
 import { describe, expect, it, vi } from "vitest";
-import { createInvocationBudget } from "./invocation-budget";
 import type { VerificationTurn, VerificationTurnResult } from "./finding-verification";
+import { createInvocationBudget } from "./invocation-budget";
 import {
   classifyUiSurface,
   isUiSurfacePath,
@@ -109,16 +109,18 @@ describe("runUiVerification (#183) — the ladder", () => {
   });
 
   it("could-not-mount: a turn that mounted nothing yields the inconclusive disclosure carrying what it attempted", async () => {
-    const runTurn: VerificationTurn = vi.fn(async (): Promise<VerificationTurnResult> => ({
-      status: "emitted",
-      body: {
-        mounted: false,
-        method: "none",
-        attempted: "no test harness, no storybook, no dev server",
-        screenshots: [],
-        observations: [],
-      },
-    }));
+    const runTurn: VerificationTurn = vi.fn(
+      async (): Promise<VerificationTurnResult> => ({
+        status: "emitted",
+        body: {
+          mounted: false,
+          method: "none",
+          attempted: "no test harness, no storybook, no dev server",
+          screenshots: [],
+          observations: [],
+        },
+      }),
+    );
     const result = await runUiVerification({
       files: UI_FILES,
       hunks: HUNKS,
@@ -133,10 +135,12 @@ describe("runUiVerification (#183) — the ladder", () => {
   });
 
   it("a failed turn maps to unavailable with the turn reason (never a fabricated clear)", async () => {
-    const runTurn: VerificationTurn = vi.fn(async (): Promise<VerificationTurnResult> => ({
-      status: "failed",
-      message: "the harness crashed",
-    }));
+    const runTurn: VerificationTurn = vi.fn(
+      async (): Promise<VerificationTurnResult> => ({
+        status: "failed",
+        message: "the harness crashed",
+      }),
+    );
     const result = await runUiVerification({
       files: UI_FILES,
       hunks: HUNKS,
@@ -149,25 +153,27 @@ describe("runUiVerification (#183) — the ladder", () => {
   });
 
   it("ran + execution-backed: a mounted run yields reproduced findings and a ran status with screenshots", async () => {
-    const runTurn: VerificationTurn = vi.fn(async (): Promise<VerificationTurnResult> => ({
-      status: "emitted",
-      body: {
-        mounted: true,
-        method: "storybook",
-        attempted: "storybook",
-        screenshots: [{ path: "app.png", label: "App, default" }],
-        observations: [
-          {
-            file: "src/App.tsx",
-            line: 12,
-            impact: "high",
-            summary: "the submit button has no accessible name",
-            evidence: "axe: button-name violation on <button>",
-          },
-        ],
-      },
-      execution: { commands: [{ command: "pnpm storybook", ok: true, outputTail: "ready" }] },
-    }));
+    const runTurn: VerificationTurn = vi.fn(
+      async (): Promise<VerificationTurnResult> => ({
+        status: "emitted",
+        body: {
+          mounted: true,
+          method: "storybook",
+          attempted: "storybook",
+          screenshots: [{ path: "app.png", label: "App, default" }],
+          observations: [
+            {
+              file: "src/App.tsx",
+              line: 12,
+              impact: "high",
+              summary: "the submit button has no accessible name",
+              evidence: "axe: button-name violation on <button>",
+            },
+          ],
+        },
+        execution: { commands: [{ command: "pnpm storybook", ok: true, outputTail: "ready" }] },
+      }),
+    );
     const result = await runUiVerification({
       files: UI_FILES,
       hunks: HUNKS,
@@ -189,23 +195,25 @@ describe("runUiVerification (#183) — the ladder", () => {
   });
 
   it("ran but static (no observed exec): findings are inconclusive, mounted is false", async () => {
-    const runTurn: VerificationTurn = vi.fn(async (): Promise<VerificationTurnResult> => ({
-      status: "emitted",
-      body: {
-        mounted: true,
-        method: "static",
-        attempted: "static markup review",
-        screenshots: [],
-        observations: [
-          {
-            file: "src/App.tsx",
-            impact: "medium",
-            summary: "the heading order skips h2",
-            evidence: "",
-          },
-        ],
-      },
-    }));
+    const runTurn: VerificationTurn = vi.fn(
+      async (): Promise<VerificationTurnResult> => ({
+        status: "emitted",
+        body: {
+          mounted: true,
+          method: "static",
+          attempted: "static markup review",
+          screenshots: [],
+          observations: [
+            {
+              file: "src/App.tsx",
+              impact: "medium",
+              summary: "the heading order skips h2",
+              evidence: "",
+            },
+          ],
+        },
+      }),
+    );
     const result = await runUiVerification({
       files: UI_FILES,
       hunks: HUNKS,

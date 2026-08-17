@@ -139,6 +139,11 @@ export {
   failedDecisionsRunStatus,
   okDecisionsRunStatus,
 } from "./decisions-fixture";
+export {
+  createExecObservingTurn,
+  EXEC_OUTPUT_TAIL,
+  type ExecObservingTurnOptions,
+} from "./exec-observing-turn";
 export { executeExternalCommand } from "./external-command";
 export {
   defaultGlobalConfigPath,
@@ -169,17 +174,6 @@ export {
   type VerificationFileReaderOptions,
   type VerificationTurnOptions,
 } from "./finding-verification-backend";
-export {
-  createExecObservingTurn,
-  EXEC_OUTPUT_TAIL,
-  type ExecObservingTurnOptions,
-} from "./exec-observing-turn";
-export {
-  createUiVerificationTurn,
-  readUiEvidence,
-  resolveUiEvidenceDir,
-  type UiVerificationTurnOptions,
-} from "./ui-verification-backend";
 export {
   emptyFlaggedReviewFixture,
   failedFlaggedReviewFixture,
@@ -446,6 +440,12 @@ export {
   type MetricsCollector,
   type TurnMetric,
 } from "./turn-metrics";
+export {
+  createUiVerificationTurn,
+  readUiEvidence,
+  resolveUiEvidenceDir,
+  type UiVerificationTurnOptions,
+} from "./ui-verification-backend";
 export {
   discoverWorktreeIdentities,
   type LocalWorktree,

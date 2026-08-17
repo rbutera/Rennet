@@ -30,10 +30,10 @@
  */
 
 import {
-  type UiVerificationContract,
-  UI_VERIFICATION_CONTRACT,
-  type UiVerificationPromptFile,
   renderUiVerificationPrompt,
+  UI_VERIFICATION_CONTRACT,
+  type UiVerificationContract,
+  type UiVerificationPromptFile,
 } from "@rennet/instructions";
 import type {
   BudgetGrant,
@@ -46,8 +46,8 @@ import type {
   UiScreenshot,
   UiVerification,
 } from "@rennet/types";
-import { absentBudgetGrant } from "./invocation-budget";
 import type { VerificationTurn } from "./finding-verification";
+import { absentBudgetGrant } from "./invocation-budget";
 
 // ── ① The deterministic UI-surface classifier ────────────────────────────────
 
@@ -201,7 +201,8 @@ export async function runUiVerification(
   }
 
   // 3. The one budget-gated turn. A refusal is disclosed, never silently skipped.
-  const grant: BudgetGrant = input.budget?.tryConsume("ui-verification") ?? absentBudgetGrant("ui-verification");
+  const grant: BudgetGrant =
+    input.budget?.tryConsume("ui-verification") ?? absentBudgetGrant("ui-verification");
   if (!grant.granted) {
     return unavailable(BUDGET_REASON);
   }
@@ -228,7 +229,9 @@ export async function runUiVerification(
   // reported as "no UI problems found".
   const hasContent = parsed.observations.length > 0 || parsed.screenshots.length > 0;
   if (!parsed.mounted && !hasContent) {
-    return unavailable(couldNotMount(parsed.attempted.trim().length > 0 ? parsed.attempted : NO_RESULT_REASON));
+    return unavailable(
+      couldNotMount(parsed.attempted.trim().length > 0 ? parsed.attempted : NO_RESULT_REASON),
+    );
   }
 
   // The turn EXECUTED something to mount (issue #259 exec observation): a mounted,
@@ -318,7 +321,8 @@ function designIntentText(intent: ReviewIntent | undefined): string {
   if (intent === undefined) return "";
   const parts: string[] = [];
   if (intent.prTitle && intent.prTitle.trim().length > 0) parts.push(`Title: ${intent.prTitle}`);
-  if (intent.prBody && intent.prBody.trim().length > 0) parts.push(`Description:\n${intent.prBody}`);
+  if (intent.prBody && intent.prBody.trim().length > 0)
+    parts.push(`Description:\n${intent.prBody}`);
   if (intent.spec && intent.spec.trim().length > 0) parts.push(`Spec:\n${intent.spec}`);
   return parts.join("\n\n");
 }
@@ -367,7 +371,10 @@ function parseScreenshots(value: unknown): UiScreenshot[] {
     if (typeof item !== "object" || item === null) continue;
     const record = item as Record<string, unknown>;
     if (typeof record.path !== "string" || record.path.length === 0) continue;
-    screenshots.push({ path: record.path, label: typeof record.label === "string" ? record.label : "" });
+    screenshots.push({
+      path: record.path,
+      label: typeof record.label === "string" ? record.label : "",
+    });
   }
   return screenshots;
 }

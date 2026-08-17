@@ -236,7 +236,13 @@ function Verification({ verification }: { verification: FlaggedRow["verification
  * that no longer resolves) degrades to a plain missing-evidence note — never a broken
  * image, never a crash (the spec's honest-degradation requirement).
  */
-function UiEvidenceThumb({ screenshot, load }: { screenshot: UiScreenshot; load: UiEvidenceLoader }) {
+function UiEvidenceThumb({
+  screenshot,
+  load,
+}: {
+  screenshot: UiScreenshot;
+  load: UiEvidenceLoader;
+}) {
   const [dataUrl, setDataUrl] = useState<string | null | "loading">("loading");
   useEffect(() => {
     let alive = true;
@@ -289,7 +295,11 @@ function UiVerificationStrip({
   if (!status || status.status === "not-ui") return null;
   if (status.status === "unavailable") {
     return (
-      <div className="ui-verification ui-verification-unavailable" role="note" data-status="unavailable">
+      <div
+        className="ui-verification ui-verification-unavailable"
+        role="note"
+        data-status="unavailable"
+      >
         <span className="ui-verification-label">verify-ui</span>
         <span className="ui-verification-reason">
           Couldn't check the rendered UI, so this is not an all-clear: {status.reason}
@@ -298,7 +308,11 @@ function UiVerificationStrip({
     );
   }
   return (
-    <div className="ui-verification ui-verification-ran" data-status="ran" data-mounted={status.mounted}>
+    <div
+      className="ui-verification ui-verification-ran"
+      data-status="ran"
+      data-mounted={status.mounted}
+    >
       <div className="ui-verification-head">
         <span className="ui-verification-label">
           {status.mounted ? "verify-ui · mounted" : "verify-ui · static review"}

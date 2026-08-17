@@ -8,7 +8,9 @@ describe("renderUiVerificationPrompt (#183)", () => {
       designIntent: "Title: Add a sign-in button",
       evidenceDir: "/store/ui-evidence/review-1",
     });
-    expect(prompt).toContain(`verify-ui: mount, screenshot, a11y@${UI_VERIFICATION_CONTRACT.version}`);
+    expect(prompt).toContain(
+      `verify-ui: mount, screenshot, a11y@${UI_VERIFICATION_CONTRACT.version}`,
+    );
     expect(prompt).toContain(UI_VERIFICATION_CONTRACT.role);
     expect(prompt).toContain(UI_VERIFICATION_CONTRACT.failureValve);
     expect(prompt).toContain("Title: Add a sign-in button");

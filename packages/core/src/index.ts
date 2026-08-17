@@ -79,12 +79,12 @@ export * from "./repo-composition";
 export * from "./review-ask";
 export * from "./review-backend";
 export * from "./review-intelligence-budget";
-export * from "./ui-verification";
 export * from "./risk-crosscheck";
 export * from "./rollup-narration";
 export * from "./route-plan";
 export * from "./settings-resolver";
 export * from "./snapshot-overlay";
+export * from "./ui-verification";
 
 export type ReviewEvent =
   | {
