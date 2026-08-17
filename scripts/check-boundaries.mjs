@@ -1,11 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { assertPnpmCommandShape, pnpmCommand } from "./pnpm-launcher.mjs";
 
 const workspaceRoot = resolve(import.meta.dirname, "..");
-// On Windows the pnpm launcher is `pnpm.cmd`; `spawnSync`/`execFileSync` resolve a bare
-// "pnpm" to nothing (ENOENT). Name the platform-correct executable, keep argv an array.
-const PNPM = process.platform === "win32" ? "pnpm.cmd" : "pnpm";
+assertPnpmCommandShape();
 const allowed = new Map([
   ["@rennet/types", new Set()],
   ["@rennet/protocol", new Set(["@rennet/types"])],
@@ -37,7 +36,8 @@ for (const [packageName, permitted] of allowed) {
 const positiveControl = resolve(workspaceRoot, "packages/ui/src/.boundary-positive-control.ts");
 try {
   writeFileSync(positiveControl, 'import "@rennet/core";\n');
-  const result = spawnSync(PNPM, ["exec", "eslint", positiveControl], {
+  const { command, args } = pnpmCommand(["exec", "eslint", positiveControl]);
+  const result = spawnSync(command, args, {
     cwd: workspaceRoot,
     encoding: "utf8",
   });

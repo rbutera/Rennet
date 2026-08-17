@@ -27,6 +27,7 @@
           "{workspaceRoot}/docs/src/**/*",
           "{workspaceRoot}/eslint.config.mjs",
           "{workspaceRoot}/scripts/check-boundaries.mjs",
+          "{workspaceRoot}/scripts/pnpm-launcher.mjs",
           "sharedGlobals"
         ]
       },
@@ -66,6 +67,7 @@
           "{workspaceRoot}/docs/package.json",
           "{workspaceRoot}/pnpm-lock.yaml",
           "{workspaceRoot}/scripts/check-licenses.mjs",
+          "{workspaceRoot}/scripts/pnpm-launcher.mjs",
           "sharedGlobals"
         ]
       }
