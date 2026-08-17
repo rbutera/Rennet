@@ -18,6 +18,11 @@ import {
   type TurnInput,
 } from "@rennet/core";
 import type { RspTokenUsage } from "@rennet/types";
+import {
+  type CodexTurnError,
+  type CodexTurnResultFrame,
+  mapTokenUsageBreakdown,
+} from "./codex-app-server";
 import { stripNullDeep } from "./codex-exec";
 import { compareVersions } from "./harness-discovery";
 import { readTestedRange } from "./harness-tested-range";
@@ -25,17 +30,19 @@ import { readTestedRange } from "./harness-tested-range";
 /**
  * The Codex adapter (#25): the second harness slot, peer of `ClaudeAdapter`.
  *
- * Transport verdict (design §1): the adapter speaks `codex exec --json` behind an
- * injected `CodexTurnTransport` seam — the mirror of `ClaudeQueryFn`. The
- * app-server JSON-RPC protocol is deferred until steering or thread-resume is
- * actually consumed; this seam is where it would land. The consumers are all
- * single-turn (create → send one prompt → drain → close), which `codex exec`
- * serves exactly, at the capable-by-default posture Rule Zero mandates.
+ * Transport verdict (adopt-codex-app-server): the adapter speaks the `codex
+ * app-server` JSON-RPC protocol behind an injected `CodexTurnTransport` seam — the
+ * mirror of `ClaudeQueryFn`. The transport yields the app-server notification
+ * stream (`item/agentMessage/delta`, `item/started`, `item/completed`,
+ * `thread/tokenUsage/updated`, `turn/completed`, …) followed by ONE synthetic
+ * `turn-result` terminal frame. This file is pure over that stream and fully
+ * testable without a process; the composition root (`codex-turn-transport.ts`)
+ * supplies the real spawn. It never reads a credential — `codex` authenticates
+ * itself on the user's own subscription.
  *
- * The composition root (`createCodexTurnTransport`, `codex-turn-transport.ts`)
- * spawns the discovered `codex` binary; this file is pure over the injected
- * transport and fully testable without a process. It never reads a credential:
- * `codex` authenticates itself on the user's own subscription.
+ * The consumers are all single-turn (create → send one prompt → drain → close),
+ * which one app-server turn serves exactly, at the capable-by-default posture Rule
+ * Zero mandates (full-access sandbox + never-ask approvals composed on the turn).
  */
 
 const HARNESS_ID = "codex" as const;
@@ -43,82 +50,35 @@ const DISPLAY_NAME = "Codex";
 
 // ── The injected transport seam (mirror of ClaudeQueryFn) ────────────────────
 
-/** One agentic turn's spec. `cwd` is a REAL repo (the review worktree), unlike
- *  the utility port's scratch dir. */
+/** One agentic turn's spec. `cwd` is a REAL repo (the review worktree). */
 export interface CodexTurnSpec {
   readonly cwd: string;
   readonly prompt: string;
   /** Codex's own default when absent; the council passes e.g. "gpt-5.6-sol". */
   readonly model?: string;
   readonly outputSchema?: unknown;
-  /** Loopback canvasOps@2 (and future) MCP servers, rendered as `-c` URL overrides. */
+  /** Loopback canvasOps@2 (and future) MCP servers; ride spawn-time `-c` overrides. */
   readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
   readonly signal?: AbortSignal;
 }
 
 /**
- * The transport yields the raw codex `--json` JSONL frames, then EXACTLY ONE
- * synthetic terminal frame `{ rennet: "turn-result", exitCode, lastMessage,
- * aborted?, stderr? }`. The adapter owns normalization, seq, and the terminal
- * outcome — the exit code and `-o` capture only the transport (the process
- * boundary) can know, so they ride the terminal frame.
+ * The transport yields the raw `codex app-server` notification objects
+ * (`{ method, params }`), then EXACTLY ONE synthetic terminal frame
+ * `{ rennet: "turn-result", status, finalMessage, usage?, model?, error? }`. The
+ * adapter owns normalization, seq, and the terminal outcome; the terminal frame is
+ * the only carrier of the final status the session boundary determined.
  */
 export type CodexTurnTransport = (spec: CodexTurnSpec) => AsyncIterable<unknown>;
 
-/** The synthetic terminal frame the transport appends. Owned by the seam, not codex. */
-export interface CodexTurnResultFrame {
-  readonly rennet: "turn-result";
-  readonly exitCode: number;
-  /** The `-o` captured last agent message (raw text), or null if none. */
-  readonly lastMessage: string | null;
-  readonly aborted?: boolean;
-  readonly stderr?: string;
-}
-
-// ── Pure argv assembly (composition-root transport uses this; asserted alone) ──
-
-export interface CodexTurnArgs {
-  readonly cwd: string;
-  readonly prompt: string;
-  readonly model?: string;
-  readonly schemaPath?: string;
-  readonly outPath?: string;
-  readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
-}
-
-/**
- * Assemble the agentic `codex exec` argv. Reuses `codex-exec.ts`'s proven flags
- * (`--json`, `--ignore-user-config`, the full-access posture, `-o` capture) with
- * the agentic deltas: `-C <cwd>` into a REAL repo (so NO `--skip-git-repo-check`,
- * unlike the utility port's scratch cwd), and `-c mcp_servers.<name>.url` for the
- * loopback canvasOps@2 surface. NO approval / sandbox-mode / read-only flag — the
- * `--dangerously-bypass-approvals-and-sandbox` posture IS the Rule Zero acting
- * path (capable by default; Bash carries git, so push works). Pure, so flags are
- * asserted without spawning. The prompt is positional and LAST.
- */
-export function buildCodexTurnArgs(spec: CodexTurnArgs): string[] {
-  const args = [
-    "exec",
-    "--json",
-    "--dangerously-bypass-approvals-and-sandbox",
-    "--ignore-user-config",
-    "-C",
-    spec.cwd,
-  ];
-  if (spec.model !== undefined) args.push("-m", spec.model);
-  if (spec.schemaPath !== undefined) args.push("--output-schema", spec.schemaPath);
-  if (spec.outPath !== undefined) args.push("-o", spec.outPath);
-  for (const [name, server] of Object.entries(spec.mcpServers ?? {})) {
-    args.push("-c", `mcp_servers.${name}.url=${server.url}`);
-  }
-  args.push(spec.prompt);
-  return args;
-}
+export type { CodexTurnResultFrame };
 
 // ── Frame normalization ──────────────────────────────────────────────────────
 
 function asRecord(value: unknown): Record<string, unknown> | null {
-  return value !== null && typeof value === "object" ? (value as Record<string, unknown>) : null;
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 function stringField(record: Record<string, unknown>, key: string): string | null {
@@ -126,67 +86,25 @@ function stringField(record: Record<string, unknown>, key: string): string | nul
   return typeof value === "string" ? value : null;
 }
 
-function numField(record: Record<string, unknown>, key: string): number {
-  const value = record[key];
-  return typeof value === "number" && Number.isFinite(value) ? value : 0;
-}
-
-/** Classify a codex item `type` into the normalized `ToolKind`. */
+/** Classify an app-server ThreadItem `type` into the normalized `ToolKind`. */
 export function classifyCodexItemKind(itemType: string): ToolKind {
   switch (itemType) {
-    case "command_execution":
+    case "commandExecution":
       return "exec";
-    case "mcp_tool_call":
+    case "mcpToolCall":
+    case "dynamicToolCall":
       return "mcp";
-    case "file_change":
-    case "patch_apply":
+    case "fileChange":
       return "write";
-    case "web_search":
+    case "webSearch":
       return "search";
     default:
       return "other";
   }
 }
 
-/**
- * Extract token usage off a codex `turn.completed` frame's `usage` block into the
- * RSP shape. Codex reports `input_tokens`, `cached_input_tokens`, `output_tokens`,
- * `cache_write_input_tokens`, and `reasoning_output_tokens`. `input_tokens`
- * includes cached input, so the normalized `input` field removes `cacheRead` and
- * all four billed buckets remain disjoint. Absent usage → undefined.
- */
-export function extractCodexUsage(frame: Record<string, unknown>): RspTokenUsage | undefined {
-  const usage = asRecord(frame.usage);
-  if (!usage) return undefined;
-  const inputTokens = numField(usage, "input_tokens");
-  const output = numField(usage, "output_tokens");
-  const cacheRead = numField(usage, "cached_input_tokens");
-  const cacheWrite = numField(usage, "cache_write_input_tokens");
-  const input = Math.max(inputTokens - cacheRead, 0);
-  const reasoningRaw = usage.reasoning_output_tokens;
-  const reasoning =
-    typeof reasoningRaw === "number" && Number.isFinite(reasoningRaw) ? reasoningRaw : null;
-  return {
-    input,
-    output,
-    cacheRead,
-    cacheWrite,
-    reasoning,
-    total: input + output + cacheRead + cacheWrite,
-  };
-}
-
-function codexItemType(item: Record<string, unknown>): string | null {
-  return stringField(item, "type") ?? stringField(item, "item_type");
-}
-
 function toolName(item: Record<string, unknown>, itemType: string): string {
-  return (
-    stringField(item, "tool") ??
-    stringField(item, "command") ??
-    stringField(item, "name") ??
-    itemType
-  );
+  return stringField(item, "tool") ?? stringField(item, "command") ?? itemType;
 }
 
 function toolInput(item: Record<string, unknown>): Record<string, unknown> {
@@ -204,10 +122,10 @@ function toolOutput(
   const error = asRecord(item.error);
   let output: unknown;
   let text: string;
-  if (itemType === "command_execution") {
-    output = stringField(item, "aggregated_output") ?? "";
+  if (itemType === "commandExecution") {
+    output = stringField(item, "aggregatedOutput") ?? "";
     text = String(output);
-  } else if (itemType === "mcp_tool_call") {
+  } else if (itemType === "mcpToolCall" || itemType === "dynamicToolCall") {
     output = item.result ?? item.error ?? null;
     text = error
       ? (stringField(error, "message") ?? JSON.stringify(output))
@@ -220,62 +138,126 @@ function toolOutput(
     ...envelope(context, frame),
     kind: "tool.output",
     callId: stringField(item, "id") ?? `${itemType}:unknown`,
-    ok: status === "completed" && error === null,
+    ok: (status === "completed" || status === null) && error === null,
     output,
     text,
   };
 }
 
 /**
- * Map a codex failure into the normalized taxonomy. Codex error frames carry a
- * free-text `message`; there is no closed native code, so the class is inferred
- * from the message shape and the origin defaults to `harness`, with connection /
- * stream failures attributed to `transport` and provider throttle strings to
- * `provider`.
+ * Precise classification from a `TurnError.codexErrorInfo` (a string enum or a
+ * connection-failure object), the authoritative native signal. Returns null when
+ * the info is absent/unrecognized so the caller falls back to message inference.
  */
-export function mapCodexError(message: string, exitCode: number | null): HarnessError {
-  const lower = message.toLowerCase();
-  let cls: ErrorClass = "unknown";
-  let origin: ErrorOrigin = "harness";
-  let retryable = false;
-  if (/rate.?limit|429|too many requests/.test(lower)) {
-    cls = "rate-limit";
-    origin = "provider";
-    retryable = true;
-  } else if (/quota|insufficient|billing|budget/.test(lower)) {
-    cls = "quota-exhausted";
-    origin = "provider";
-  } else if (/unauthor|forbidden|401|403|auth/.test(lower)) {
-    cls = "auth";
-    origin = "provider";
-  } else if (/context length|too long|maximum context/.test(lower)) {
-    cls = "context-overflow";
-    origin = "provider";
-  } else if (/overloaded|503|unavailable/.test(lower)) {
-    cls = "overloaded";
-    origin = "provider";
-    retryable = true;
-  } else if (/stream disconnected|connection|econn|network|sending request|timeout/.test(lower)) {
-    cls = "upstream";
-    origin = "transport";
-    retryable = true;
+function classifyCodexErrorInfo(
+  info: unknown,
+): { class: ErrorClass; origin: ErrorOrigin; retryable: boolean } | null {
+  if (typeof info === "string") {
+    switch (info) {
+      case "contextWindowExceeded":
+        return { class: "context-overflow", origin: "provider", retryable: false };
+      case "sessionBudgetExceeded":
+      case "usageLimitExceeded":
+        return { class: "quota-exhausted", origin: "provider", retryable: false };
+      case "serverOverloaded":
+        return { class: "overloaded", origin: "provider", retryable: true };
+      case "internalServerError":
+        return { class: "upstream", origin: "provider", retryable: true };
+      case "unauthorized":
+        return { class: "auth", origin: "provider", retryable: false };
+      case "badRequest":
+        return { class: "invalid-request", origin: "provider", retryable: false };
+      case "cyberPolicy":
+        return { class: "policy", origin: "provider", retryable: false };
+      case "sandboxError":
+        return { class: "sandbox", origin: "harness", retryable: false };
+      default:
+        return null;
+    }
   }
+  // Object variants are all connection/stream failures → retryable transport.
+  if (asRecord(info) !== null) {
+    return { class: "upstream", origin: "transport", retryable: true };
+  }
+  return null;
+}
+
+/** Message-shape inference, the fallback when there is no `codexErrorInfo`. */
+function inferFromMessage(message: string): {
+  class: ErrorClass;
+  origin: ErrorOrigin;
+  retryable: boolean;
+} {
+  const lower = message.toLowerCase();
+  if (/rate.?limit|429|too many requests/.test(lower)) {
+    return { class: "rate-limit", origin: "provider", retryable: true };
+  }
+  if (/quota|insufficient|billing|budget/.test(lower)) {
+    return { class: "quota-exhausted", origin: "provider", retryable: false };
+  }
+  if (/unauthor|forbidden|401|403|auth|expired/.test(lower)) {
+    return { class: "auth", origin: "provider", retryable: false };
+  }
+  if (/context length|too long|maximum context/.test(lower)) {
+    return { class: "context-overflow", origin: "provider", retryable: false };
+  }
+  if (/overloaded|503|unavailable/.test(lower)) {
+    return { class: "overloaded", origin: "provider", retryable: true };
+  }
+  if (/stream disconnected|connection|econn|network|sending request|timeout/.test(lower)) {
+    return { class: "upstream", origin: "transport", retryable: true };
+  }
+  return { class: "unknown", origin: "harness", retryable: false };
+}
+
+/**
+ * Map a Codex turn/transport failure into the normalized taxonomy. Precedence:
+ * the native `codexErrorInfo` (authoritative), then the JSON-RPC error code, then
+ * the failure `source`, then message-shape inference. The native `message` is
+ * preserved verbatim (auth expiry included) — never summarized away.
+ */
+export function mapCodexError(err: CodexTurnError): HarnessError {
+  const message = err.message;
+  let classified = classifyCodexErrorInfo(err.codexErrorInfo);
+  if (classified === null && err.source === "jsonrpc" && err.code !== undefined) {
+    // -32001 = "Server overloaded; retry later"; -32601 = method not found.
+    classified =
+      err.code === -32001
+        ? { class: "overloaded", origin: "transport", retryable: true }
+        : { class: "protocol", origin: "transport", retryable: false };
+  }
+  if (
+    classified === null &&
+    (err.source === "exit" || err.source === "spawn" || err.source === "parse")
+  ) {
+    classified =
+      err.source === "spawn"
+        ? { class: "harness-unavailable", origin: "harness", retryable: false }
+        : { class: "protocol", origin: "transport", retryable: false };
+  }
+  const resolved = classified ?? inferFromMessage(message);
   return {
-    class: cls,
-    origin,
+    class: resolved.class,
+    origin: resolved.origin,
     message,
-    retryable,
+    retryable: resolved.retryable,
     retryableSource: "inferred",
-    nativeCode: exitCode === null ? null : String(exitCode),
+    nativeCode:
+      err.code !== undefined
+        ? String(err.code)
+        : err.exitCode != null
+          ? String(err.exitCode)
+          : null,
   };
 }
 
 /**
- * A stateful per-turn normalizer. Codex streaming needs cross-frame state (the
- * last agent message for structured-output parsing, the terminal usage, a seen
- * error), so unlike Claude's pure per-frame map this closes over that state. The
- * terminal outcome is driven by the synthetic `turn-result` frame — the only
- * carrier of exit code and the `-o` capture — enriched by what the stream showed.
+ * A stateful per-turn normalizer over the app-server notification stream. Codex
+ * streaming needs cross-frame state (the last agent message for structured-output
+ * parsing, the terminal usage, a seen error), so unlike Claude's pure per-frame
+ * map this closes over it. The terminal outcome is driven by the synthetic
+ * `turn-result` frame — the authoritative carrier of the final status, message,
+ * and usage — with the streamed state as a fallback.
  */
 function createCodexNormalizer(
   context: EnvelopeContext,
@@ -284,7 +266,8 @@ function createCodexNormalizer(
   const schemaRequested = spec.outputSchema !== undefined;
   let lastMessageText: string | null = null;
   let lastUsage: RspTokenUsage | undefined;
-  let seenError: HarnessError | null = null;
+  let seenError: CodexTurnError | null = null;
+  let sessionStarted = false;
   let terminated = false;
 
   const passthrough = (frame: unknown, nativeKind: string): HarnessEvent[] => [
@@ -294,10 +277,9 @@ function createCodexNormalizer(
   function parseStructured(raw: string | null): unknown {
     if (!schemaRequested || raw === null) return undefined;
     try {
-      // Reuse the utility port's null-stripping (design: do not fork the
-      // schema-nullability logic): a `--output-schema` sanitized to force
-      // optionals into required-nullable makes the model emit nulls; stripping
-      // them restores the field's absent semantics.
+      // Reuse the utility port's null-stripping: a sanitized outputSchema forces
+      // optionals to required-nullable, so the model emits nulls; stripping them
+      // restores the field's absent semantics for the on-disk validator.
       return stripNullDeep(JSON.parse(raw));
     } catch {
       return undefined;
@@ -306,22 +288,20 @@ function createCodexNormalizer(
 
   function terminal(frame: CodexTurnResultFrame): HarnessEvent[] {
     terminated = true;
-    if (frame.aborted) {
+    const finalRaw = frame.finalMessage ?? lastMessageText;
+    if (frame.status === "cancelled") {
       return [
         {
           ...envelope(context, frame),
           kind: "session.ended",
-          outcome: { status: "cancelled", partial: lastMessageText !== null },
+          outcome: { status: "cancelled", partial: finalRaw !== null },
         },
       ];
     }
-    if (frame.exitCode !== 0 || seenError) {
-      const error =
-        seenError ??
-        mapCodexError(
-          frame.stderr?.trim() || `codex exec exited ${frame.exitCode}`,
-          frame.exitCode,
-        );
+    if (frame.status === "failed") {
+      const error = mapCodexError(
+        frame.error ?? seenError ?? { source: "exit", message: "codex turn failed" },
+      );
       return [
         { ...envelope(context, frame), kind: "error", error },
         {
@@ -331,17 +311,17 @@ function createCodexNormalizer(
         },
       ];
     }
-    const raw = frame.lastMessage ?? lastMessageText;
-    const structuredOutput = parseStructured(raw);
-    const finalText = raw ?? "";
+    const usage = frame.usage ?? lastUsage;
+    const structuredOutput = parseStructured(finalRaw);
+    const finalText = finalRaw ?? "";
     const outcome =
       structuredOutput === undefined
-        ? { status: "completed" as const, finalText, ...(lastUsage ? { usage: lastUsage } : {}) }
+        ? { status: "completed" as const, finalText, ...(usage ? { usage } : {}) }
         : {
             status: "completed" as const,
             finalText,
             structuredOutput,
-            ...(lastUsage ? { usage: lastUsage } : {}),
+            ...(usage ? { usage } : {}),
           };
     return [{ ...envelope(context, frame), kind: "session.ended", outcome }];
   }
@@ -350,14 +330,25 @@ function createCodexNormalizer(
     const record = asRecord(frame);
     if (!record) return passthrough(frame, "non-object");
 
-    // The seam's synthetic terminal frame (owned here, not a codex frame).
+    // The seam's synthetic terminal frame (owned here, not a codex notification).
     if (record.rennet === "turn-result") {
       return terminal(record as unknown as CodexTurnResultFrame);
     }
 
-    const type = stringField(record, "type");
-    switch (type) {
-      case "thread.started":
+    // A foreign-thread/turn notification the runner has already judged NOT ours:
+    // surface it (never dropped) but never let it touch our text/usage or outcome.
+    if (record.rennet === "foreign") {
+      return passthrough(record.native, "foreign");
+    }
+
+    const method = stringField(record, "method");
+    if (method === null) return passthrough(frame, "unknown");
+    const params = asRecord(record.params) ?? {};
+
+    switch (method) {
+      case "turn/started": {
+        if (sessionStarted) return passthrough(frame, method);
+        sessionStarted = true;
         return [
           {
             ...envelope(context, frame),
@@ -368,24 +359,26 @@ function createCodexNormalizer(
             apiKeySource: null,
           },
         ];
-      case "item.started":
-      case "item.updated":
-      case "item.completed": {
-        const item = asRecord(record.item);
-        const itemType = item ? codexItemType(item) : null;
-        if (!item || itemType === null) return passthrough(frame, type);
-        if (itemType === "agent_message" || itemType === "assistant_message") {
-          const text = stringField(item, "text") ?? stringField(item, "content") ?? "";
-          if (type === "item.completed") {
+      }
+      case "item/agentMessage/delta": {
+        const delta = stringField(params, "delta") ?? "";
+        return [{ ...envelope(context, frame), kind: "text.delta", text: delta }];
+      }
+      case "item/started":
+      case "item/completed": {
+        const item = asRecord(params.item);
+        const itemType = item ? stringField(item, "type") : null;
+        if (!item || itemType === null) return passthrough(frame, method);
+        if (itemType === "agentMessage") {
+          const text = stringField(item, "text") ?? "";
+          if (method === "item/completed") {
             lastMessageText = text;
             return [
               { ...envelope(context, frame), kind: "text.message", text, parentToolCallId: null },
             ];
           }
-          // Streaming update → a text delta (the textDeltas capability).
-          return [{ ...envelope(context, frame), kind: "text.delta", text }];
+          return passthrough(frame, `item:${itemType}`);
         }
-        if (itemType === "reasoning") return passthrough(frame, `item:${itemType}`);
         const normalizedKind = classifyCodexItemKind(itemType);
         if (normalizedKind === "other") return passthrough(frame, `item:${itemType}`);
         const started: HarnessEvent = {
@@ -399,32 +392,31 @@ function createCodexNormalizer(
             kind: normalizedKind,
           },
         };
-        if (type === "item.started") return [started];
-        if (type === "item.updated") return passthrough(frame, `item:${itemType}`);
+        if (method === "item/started") return [started];
         const completed = toolOutput(context, frame, item, itemType);
         // Codex emits file changes only as completed items, so synthesize the
-        // matching start immediately before their output. Command and MCP items
-        // have a real item.started frame and completed maps only to output.
-        return itemType === "file_change" || itemType === "patch_apply"
-          ? [started, completed]
-          : [completed];
+        // matching start immediately before their output. Command/MCP items have a
+        // real `item/started` frame, so their completed maps only to output.
+        return itemType === "fileChange" ? [started, completed] : [completed];
       }
-      case "turn.completed":
-        lastUsage = extractCodexUsage(record);
-        return passthrough(frame, "turn.completed");
-      case "turn.failed": {
-        const err = asRecord(record.error);
-        const message = (err && stringField(err, "message")) ?? "codex turn failed";
-        seenError = mapCodexError(message, null);
-        return passthrough(frame, "turn.failed");
+      case "thread/tokenUsage/updated": {
+        const tu = asRecord(params.tokenUsage);
+        lastUsage = mapTokenUsageBreakdown(asRecord(tu?.total) ?? asRecord(tu?.last)) ?? lastUsage;
+        return passthrough(frame, method);
       }
       case "error": {
-        const message = stringField(record, "message") ?? "codex error";
-        seenError = mapCodexError(message, null);
-        return passthrough(frame, "error");
+        // An ErrorNotification (mid-turn provider error). The authoritative failure
+        // still arrives on the terminal frame; capture this as a fallback.
+        const err = asRecord(params.error);
+        seenError = {
+          source: "turn",
+          message: (err && stringField(err, "message")) ?? "codex error",
+          ...(err?.codexErrorInfo === undefined ? {} : { codexErrorInfo: err.codexErrorInfo }),
+        };
+        return passthrough(frame, method);
       }
       default:
-        return passthrough(frame, type ?? "unknown");
+        return passthrough(frame, method);
     }
   }
 
@@ -451,6 +443,111 @@ function createCodexNormalizer(
 
 // ── The session + adapter ────────────────────────────────────────────────────
 
+/**
+ * Generous default ceiling on the events buffered-but-not-yet-consumed by a slow
+ * consumer. A finite turn drains near-instantly, so this is never hit in normal
+ * use; it exists so a HUNG command streaming forever fails LOUDLY (an honest failed
+ * outcome naming the ceiling) instead of growing the buffer until the app OOMs. Not
+ * a gate — a real turn never approaches it. Overridable via `CodexAdapterConfig`.
+ */
+const DEFAULT_MAX_BUFFERED_EVENTS = 200_000;
+const DEFAULT_MAX_BUFFERED_BYTES = 128 * 1024 * 1024; // 128 MiB of retained content
+
+/** Approximate the retained size of one event (chars ≈ bytes for the JSON content). */
+function eventSize(event: HarnessEvent): number {
+  try {
+    return JSON.stringify(event).length;
+  } catch {
+    return 0; // codex frames are plain JSON, so this is defensive only
+  }
+}
+
+/**
+ * A bounded async queue: the pump pushes, the consumer's async iterator reads. An
+ * INDEX CURSOR (not `Array.shift`) drains in O(1) — no quadratic cost on a large
+ * backlog. It tracks the currently-buffered (unread) event count and byte total and
+ * raises `overflowed` when either exceeds the ceiling; the pump reads that flag and
+ * fails the turn (the queue itself never drops an event below the ceiling — the
+ * never-dropped contract holds).
+ */
+function createEventQueue(
+  maxEvents: number,
+  maxBytes: number,
+): {
+  /** Accept the event within the ceiling; returns false (and flags overflow) if the PROJECTED size would cross it. */
+  push: (event: HarnessEvent) => boolean;
+  /** Ceiling-exempt push for the exactly-once settlement path (a terminal or teardown evidence must always land). */
+  forcePush: (event: HarnessEvent) => void;
+  readonly overflowed: boolean;
+  close: () => void;
+  iterable: AsyncIterable<HarnessEvent>;
+} {
+  // Compact the drained prefix once it reaches this many slots, so a long-lived
+  // stream with a keeping-up consumer cannot grow the backing array forever.
+  const COMPACT_AT = 1024;
+  const buffer: ({ event: HarnessEvent; size: number } | undefined)[] = [];
+  let head = 0;
+  let bufferedBytes = 0;
+  let done = false;
+  let overflowed = false;
+  let wake: (() => void) | null = null;
+  const ping = (): void => {
+    wake?.();
+    wake = null;
+  };
+  const accept = (event: HarnessEvent, size: number): void => {
+    buffer.push({ event, size });
+    bufferedBytes += size;
+    ping();
+  };
+  return {
+    push: (event) => {
+      const size = eventSize(event);
+      // Check the PROJECTED occupancy BEFORE accepting, so even a legitimate
+      // terminal cannot slip past the ceiling (the pump replaces a rejected
+      // terminal with the single failed-at-ceiling terminal).
+      if (buffer.length - head + 1 > maxEvents || bufferedBytes + size > maxBytes) {
+        overflowed = true;
+        return false;
+      }
+      accept(event, size);
+      return true;
+    },
+    forcePush: (event) => {
+      accept(event, eventSize(event));
+    },
+    get overflowed() {
+      return overflowed;
+    },
+    close: () => {
+      done = true;
+      ping();
+    },
+    iterable: {
+      async *[Symbol.asyncIterator](): AsyncIterator<HarnessEvent> {
+        while (true) {
+          if (head < buffer.length) {
+            const entry = buffer[head] as { event: HarnessEvent; size: number };
+            buffer[head] = undefined; // release the reference for GC
+            head += 1;
+            bufferedBytes -= entry.size;
+            if (head >= COMPACT_AT) {
+              buffer.splice(0, head); // drop the drained prefix's backing slots
+              head = 0;
+            }
+            yield entry.event;
+            continue;
+          }
+          if (done) return;
+          await new Promise<void>((resolve) => {
+            wake = resolve;
+          });
+        }
+      },
+    },
+  };
+}
+
 class CodexSession implements HarnessSession {
   readonly id: string;
   readonly harness = HARNESS_ID;
@@ -459,13 +556,14 @@ class CodexSession implements HarnessSession {
   readonly #config: CodexAdapterConfig;
   readonly #context: EnvelopeContext;
   readonly #abort: AbortController;
-  readonly #started: Promise<AsyncIterable<unknown>>;
-  #resolveStarted!: (iterable: AsyncIterable<unknown>) => void;
+  readonly #maxEvents: number;
+  readonly #maxBytes: number;
+  readonly #queue: ReturnType<typeof createEventQueue>;
+  readonly #completion: Promise<void>;
+  #resolveCompletion!: () => void;
   #sent = false;
+  #closed = false;
   #eventsTaken = false;
-  #draining = false;
-  #completion: Promise<void> = Promise.resolve();
-  #resolveCompletion: (() => void) | null = null;
 
   constructor(
     id: string,
@@ -482,8 +580,11 @@ class CodexSession implements HarnessSession {
     this.#config = config;
     this.#abort = abort;
     this.#context = { harness: HARNESS_ID, sessionId: id, turnId, seq: createSeqCounter(), now };
-    this.#started = new Promise((resolve) => {
-      this.#resolveStarted = resolve;
+    this.#maxEvents = config.bufferCeiling?.maxEvents ?? DEFAULT_MAX_BUFFERED_EVENTS;
+    this.#maxBytes = config.bufferCeiling?.maxBytes ?? DEFAULT_MAX_BUFFERED_BYTES;
+    this.#queue = createEventQueue(this.#maxEvents, this.#maxBytes);
+    this.#completion = new Promise((resolve) => {
+      this.#resolveCompletion = resolve;
     });
   }
 
@@ -492,33 +593,7 @@ class CodexSession implements HarnessSession {
       throw new Error("Codex session events may only be subscribed to once");
     }
     this.#eventsTaken = true;
-    const started = this.#started;
-    const { normalize, finalize } = createCodexNormalizer(this.#context, this.#turnSpec());
-    this.#completion = new Promise((resolve) => {
-      this.#resolveCompletion = resolve;
-    });
-    const beginDrain = (): void => {
-      this.#draining = true;
-    };
-    const finishDrain = (): void => {
-      this.#draining = false;
-      this.#resolveCompletion?.();
-      this.#resolveCompletion = null;
-    };
-    return {
-      async *[Symbol.asyncIterator](): AsyncIterator<HarnessEvent> {
-        beginDrain();
-        try {
-          const iterable = await started;
-          for await (const frame of iterable) {
-            for (const event of normalize(frame)) yield event;
-          }
-          for (const event of finalize()) yield event;
-        } finally {
-          finishDrain();
-        }
-      },
-    };
+    return this.#queue.iterable;
   }
 
   #turnSpec(): CodexTurnSpec {
@@ -532,22 +607,128 @@ class CodexSession implements HarnessSession {
     };
   }
 
+  #failedTerminal(error: HarnessError): HarnessEvent[] {
+    return [
+      { ...envelope(this.#context, {}), kind: "error", error },
+      {
+        ...envelope(this.#context, {}),
+        kind: "session.ended",
+        outcome: { status: "failed", error },
+      },
+    ];
+  }
+
+  /**
+   * Drive the transport with an INDEPENDENT pump: eagerly consume every transport
+   * frame into the queue, so run completion tracks the transport/process finishing —
+   * NOT consumer drainage. This is what lets a caller await `interrupt()`/`close()`
+   * from INSIDE its own `for await` body without deadlocking. Started once, from
+   * `send()`. A single settlement guard (`ended`) guarantees EXACTLY ONE terminal
+   * outcome: a pre-terminal throw or a buffer overflow produces one failed
+   * `session.ended`; a post-terminal teardown throw is surfaced as non-terminal
+   * evidence, never a second `session.ended`.
+   */
+  #startPump(iterable: AsyncIterable<unknown>): void {
+    const { normalize, finalize } = createCodexNormalizer(this.#context, this.#turnSpec());
+    const queue = this.#queue;
+    let ended = false;
+    let overflowTerminated = false;
+    const settleFailed = (error: HarnessError): void => {
+      if (ended) return;
+      ended = true;
+      // forcePush: the exactly-once settlement must land even at the ceiling.
+      for (const event of this.#failedTerminal(error)) queue.forcePush(event);
+    };
+    const enqueue = (event: HarnessEvent): void => {
+      // Once settled, the terminal is the LAST event — drop any remaining events
+      // of the same doomed normalized batch instead of enqueuing them after it.
+      if (ended) return;
+      if (queue.push(event)) {
+        if (event.kind === "session.ended") ended = true;
+        return;
+      }
+      // Rejected at the PROJECTED ceiling — even a legitimate terminal is replaced
+      // by the single failed-at-ceiling terminal (never a silent drop, never two).
+      overflowTerminated = true;
+      settleFailed({
+        class: "protocol",
+        origin: "transport",
+        message: `codex streamed past the session buffer ceiling (${this.#maxEvents} events / ${this.#maxBytes} bytes) without completing; failing the turn to avoid unbounded memory`,
+        retryable: false,
+        retryableSource: "inferred",
+        nativeCode: null,
+      });
+    };
+    void (async () => {
+      try {
+        for await (const frame of iterable) {
+          for (const event of normalize(frame)) {
+            enqueue(event);
+            if (overflowTerminated) break; // settlement replaced the rest of this batch
+          }
+          if (overflowTerminated) break; // stop consuming; the transport's finally kills the child
+        }
+        if (!ended) for (const event of finalize()) enqueue(event);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (ended) {
+          // A terminal already went out (e.g. the transport threw during teardown
+          // AFTER yielding its terminal): surface the throw as evidence only.
+          // forcePush — evidence must land even if the ceiling was reached.
+          queue.forcePush({
+            ...envelope(this.#context, { message }),
+            kind: "passthrough",
+            nativeKind: "transport-teardown-error",
+          });
+        } else {
+          // The transport threw BEFORE a terminal (e.g. an untranslatable WSL repo
+          // path): one honest failed outcome, never a hang or unhandled rejection.
+          settleFailed({
+            class: "protocol",
+            origin: "harness",
+            message,
+            retryable: false,
+            retryableSource: "inferred",
+            nativeCode: null,
+          });
+        }
+      } finally {
+        queue.close();
+        this.#resolveCompletion();
+      }
+    })();
+  }
+
   send(input: TurnInput): Promise<string> {
+    if (this.#closed)
+      throw new Error("This session is closed (close() or interrupt() already settled it)");
     if (this.#sent) throw new Error("This session has already run a turn (slice 1 is single-turn)");
     this.#sent = true;
-    const iterable = this.#transport({ ...this.#turnSpec(), prompt: input.prompt });
-    this.#resolveStarted(iterable);
+    this.#startPump(this.#transport({ ...this.#turnSpec(), prompt: input.prompt }));
     return Promise.resolve(this.#context.turnId ?? this.id);
   }
 
-  async interrupt(): Promise<void> {
+  #shutdown(): Promise<void> {
+    this.#closed = true; // a settled session rejects any later send()
     this.#abort.abort();
-    if (this.#draining) await this.#completion;
+    if (this.#sent) {
+      // A turn is running: abort makes the transport finish; await the pump (process
+      // completion), NOT consumer drainage — safe to call from inside a for-await body.
+      return this.#completion;
+    }
+    // No turn was ever sent: settle directly so close()/interrupt() is ALWAYS
+    // available (port contract) and any subscribed-but-idle consumer unblocks.
+    this.#queue.close();
+    this.#resolveCompletion();
+    return Promise.resolve();
   }
 
-  async close(): Promise<void> {
-    this.#abort.abort();
-    if (this.#draining) await this.#completion;
+  interrupt(): Promise<void> {
+    return this.#shutdown();
+  }
+
+  close(): Promise<void> {
+    return this.#shutdown();
   }
 }
 
@@ -560,13 +741,16 @@ export interface CodexAdapterConfig {
   readonly now?: () => number;
   /**
    * The descriptor's capability flags, DERIVED from passing conformance checks
-   * (never declared). Default empty → every layer false (a fresh adapter with no
-   * evidence advertises nothing). The composition root feeds a hermetic
-   * self-conformance run's `implementedByAdapter` evidence.
+   * (never declared). Default empty → every layer false. The composition root
+   * feeds a hermetic self-conformance run's `implementedByAdapter` evidence.
    */
   readonly capabilityEvidence?: CapabilityEvidence;
   /** Loopback MCP servers (canvasOps@2) applied to every session's turn spec. */
   readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
+  /** Override the per-session events-buffer ceiling (defaults are generous; a real
+   *  turn never approaches them). Exists so a hung, forever-streaming command fails
+   *  loudly instead of OOMing — and so tests can exercise the overflow path. */
+  readonly bufferCeiling?: { readonly maxEvents: number; readonly maxBytes: number };
 }
 
 export class CodexAdapter implements HarnessPort {

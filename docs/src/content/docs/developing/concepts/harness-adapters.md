@@ -108,43 +108,56 @@ access on the acting path.
 ## Codex is the second adapter
 
 The Codex adapter is the peer of the Claude adapter and the proof the boundary is
-harness-agnostic. It speaks `codex exec --json` behind an injected
-`CodexTurnTransport` — the mirror of the Claude adapter's injected query function.
-The adapter is pure over that seam (fully testable without a process); the
-composition root spawns the user's discovered `codex` binary.
+harness-agnostic. It speaks the `codex app-server` JSON-RPC protocol behind an
+injected `CodexTurnTransport` — the mirror of the Claude adapter's injected query
+function. The adapter is pure over that seam (fully testable without a process);
+the composition root spawns the user's discovered `codex` binary as
+`codex app-server` and speaks newline-delimited JSON-RPC 2.0 over its stdio.
+
+One turn-scoped child runs one turn: `initialize` → `initialized` →
+`thread/start` → `turn/start`, consuming streamed `item/*` notifications until
+`turn/completed`, then the child is terminated. `turn/start` carries the prompt
+input, `cwd`, the model, the full-access sandbox policy, never-ask approvals, and
+— when the session spec carries one — the protocol's first-class `outputSchema`
+parameter, so structured output round-trips in-protocol with **no scratch files
+on the turn path**. (Reasoning `effort` is forwarded only by the utility one-shot
+executor; the agentic `HarnessSession` turn spec carries no `effort` field.) The line protocol (readline over stdout,
+`JSON.parse` per line, an id-correlation map) is a few lines, not a dependency.
 
 ```
-codex exec --json
-  --dangerously-bypass-approvals-and-sandbox   # the Rule Zero acting path
-  --ignore-user-config                         # deterministic session; auth untouched
-  -C <review worktree>                         # a real repo — no --skip-git-repo-check
-  [--output-schema <schema>] [-o <last-message>]
-  [-c mcp_servers.canvasops.url=<loopback>]    # canvasOps@2 external transport
-  <prompt>
+codex app-server
+  -c mcp_servers=<inline TOML>   # full-table replace: ONLY Rennet's canvasOps MCP
+# then over stdio, per turn:
+#   initialize → initialized → thread/start → turn/start → … → turn/completed
+#   thread/start + turn/start compose dangerFullAccess sandbox + never-ask approvals
 ```
 
-The transport yields codex's raw JSONL frames, then one synthetic terminal frame
-carrying the exit code and the captured last message — the process facts only the
-spawn can know. The adapter normalizes codex's `thread.started`, `item.*`,
-`turn.completed`, and `turn.failed` frames into the same `HarnessEvent` kinds,
-passing anything unmodelled straight through. Items are decoded from the native
-`item.type` discriminator (`item.item_type` remains a compatibility fallback):
-starts become `tool.started`, while completed command and MCP items become
-`tool.output` with their native result and status. Interrupt and close terminate
-the whole process tree and await transport completion. Codex reports no per-turn
-cost or context-window capacity, so `costUsd` and `reportsContextWindow` stay
-honestly false.
+`codex app-server` **rejects `--ignore-user-config`** (verified against the real
+binary), so determinism is pinned differently: the `-c mcp_servers=…` override
+replaces the entire `mcp_servers` table, leaving the child with only Rennet's
+canvasOps MCP regardless of the user's `~/.codex`; other config loads as it does
+for any app-server client.
 
-### Why codex exec, not app-server
+The adapter normalizes the app-server notifications into the same `HarnessEvent`
+kinds, passing anything unmodelled straight through: `item/agentMessage/delta`
+becomes streamed assistant text, `item/*` starts and completions become tool
+events, `thread/tokenUsage/updated` becomes in-protocol usage, and the
+`agentMessage` item on `item/completed` carries the final message text (the
+structured output when `outputSchema` was set). `turn/completed` is the terminal
+event: status `completed`, `failed` (with `TurnError.message` preserved verbatim,
+so auth expiry reaches the outcome), or `interrupted` (the interrupt ack).
+An abort during a live turn sends `turn/interrupt` and waits (bounded) for the
+interrupted completion; a pre-turn abort kills directly, and a close after
+completion sends no interrupt. Every path then terminates the whole process tree
+and awaits transport completion. Codex reports no per-turn cost, so
+`costUsd` stays honestly false. `ThreadTokenUsage` does expose a
+`modelContextWindow` field (nullable in the schema), but Rennet does not map or
+surface it, so `reportsContextWindow` stays false too — the wiring, not the
+protocol, is what is missing.
 
-The transport is `codex exec`, not the `codex app-server` JSON-RPC protocol. That
-is the one deliberate divergence from the issue's letter, and it is evidence-led:
-every live `HarnessPort` consumer runs a single turn (create → send → drain →
-close), the installed `codex` labels `app-server` experimental and its shape has
-already drifted, and the approval apparatus that was app-server's main structural
-requirement was struck by the Rule Zero amendment. `codex exec` is non-interactive
-and already the capable-by-default posture. The app-server transport would slot in
-behind the same seam the day steering or thread-resume is actually consumed.
+The full method surface, frame-mapping table, discovery candidates, and schema
+provenance live in the [Codex app-server integration
+reference](/developing/reference/codex-app-server/).
 
 ### Codex in WSL
 
@@ -155,10 +168,10 @@ project's `Locus` and route every spawn through `locusCommand` (verbatim argv, n
 shell); the desktop resolves and memoizes a Codex seat per locus, exactly as it does
 the Claude harness.
 
-For a WSL locus the turn scratch dir is minted inside the distro (`mktemp -d`), codex
-receives distro-native `-C`/`-o`/`--output-schema` paths, and the Windows side reads
-the captured results back through the UNC view. A host locus is byte-identical to the
-shipped path. A Codex-selected `orchestrator-chat` turn reaches its `CodexTurnTransport`
+Both sites share the one app-server turn runner: JSON-RPC over stdio crosses the
+locus boundary unchanged, so a WSL locus needs no scratch translation — codex is
+spawned inside the distro and `turn/start` receives a distro-native `cwd`. A host
+locus is byte-identical apart from the transport swap. A Codex-selected `orchestrator-chat` turn reaches its `CodexTurnTransport`
 with canvasOps served at a loopback MCP URL; for WSL that URL must be reachable from
 inside the distro, so the composition probes shared-localhost first, else binds the
 loopback to the WSL-facing host address the distro routes to (never `0.0.0.0`), and
@@ -245,8 +258,19 @@ Rennet therefore:
    unavailable.
 
 Codex discovery also skips broken shims by probing with closed stdin and a hard
-timeout. Discovery proves that a binary runs; the adapter never opens Claude or
-Codex credential files.
+timeout, then probes the chosen candidate for app-server capability (the
+`app-server` subcommand answering an `initialize` handshake); a binary that
+cannot complete the handshake is `unavailable` with the probe detail, never
+driven through another invocation mode. On macOS the candidates include the codex
+binary **bundled inside ChatGPT desktop**
+(`/Applications/ChatGPT.app/Contents/Resources/codex`), ranked after any
+user-installed CLI and sharing `~/.codex` auth — so a Mac with ChatGPT desktop
+runs the Codex seat with no extra install. On Windows the Store package's bundled
+`codex.exe` is ACL-locked against out-of-package execution, so it is not offered
+as a candidate; Windows rides an installed codex CLI. Discovery proves that a
+binary runs; the adapter never opens Claude or Codex credential files. The full
+candidate list and probe live in the [Codex app-server integration
+reference](/developing/reference/codex-app-server/).
 
 omp is a **runtime-dependent** harness: its bin is a TypeScript entry point executed
 by Bun (`engines.bun >= 1.3.14`). So omp discovery proves both the `omp` binary and a
@@ -338,14 +362,14 @@ frame remains available for diagnostics.
 | Claude discovery, health, sessions, streaming, tools, errors, usage | Live |
 | Fully capable Claude handoff turn | Live behind a main-process command; renderer caller missing |
 | Codex binary discovery and utility execution | Live |
-| Full Codex `HarnessPort` session adapter (`codex exec --json` seam) | Live |
+| Full Codex `HarnessPort` session adapter (`codex app-server` JSON-RPC seam) | Live; hermetic gate plus green live matrix (mac ChatGPT-bundle turn, WSL codex on lancelot, win32 gate) |
 | Council-selected Codex orchestrator composition | Live |
 | Cross-adapter conformance suite (hermetic + gated real) | Live |
 | Derived `testedRange` from a recorded artifact | Live |
 | canvasOps@2 external loopback transport for non-Claude slots | Live |
 | omp adapter (`@oh-my-pi/pi-coding-agent`) | Live; hermetic evidence only, no real-run range |
+| Codex discovery of the ChatGPT-desktop bundled binary (macOS) | Live; verified by the gated live run choosing the bundle |
 | Resume and fork in the normalized port | Deferred |
-| Codex `app-server` JSON-RPC transport (behind the same seam) | Deferred until steering/resume is consumed |
 | Multi-harness self-consistency and disagreement sampling | Deferred |
 
 The main follow-up is [#41 for multi-harness disagreement work](https://github.com/rbutera/rennet/issues/41),

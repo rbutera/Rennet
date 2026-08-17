@@ -283,39 +283,48 @@ describe("createOrchestratorTurnRunner — the desktop composition", () => {
       captured = spec;
       return {
         async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
-          yield { type: "thread.started", thread_id: "th_codex" };
           yield {
-            type: "item.started",
-            item: {
-              id: "item_1",
-              type: "mcp_tool_call",
-              server: "canvasops",
-              tool: "canvas.describe",
-              arguments: { depth: "counts" },
-              result: null,
-              error: null,
-              status: "in_progress",
+            method: "turn/started",
+            params: { threadId: "th_codex", turn: { id: "turn_1" } },
+          };
+          yield {
+            method: "item/started",
+            params: {
+              item: {
+                id: "item_1",
+                type: "mcpToolCall",
+                server: "canvasops",
+                tool: "canvas.describe",
+                arguments: { depth: "counts" },
+                status: "inProgress",
+              },
             },
           };
           yield {
-            type: "item.completed",
-            item: {
-              id: "item_1",
-              type: "mcp_tool_call",
-              server: "canvasops",
-              tool: "canvas.describe",
-              arguments: { depth: "counts" },
-              result: { content: [{ type: "text", text: "{}" }] },
-              error: null,
-              status: "completed",
+            method: "item/completed",
+            params: {
+              item: {
+                id: "item_1",
+                type: "mcpToolCall",
+                server: "canvasops",
+                tool: "canvas.describe",
+                arguments: { depth: "counts" },
+                result: { content: [{ type: "text", text: "{}" }] },
+                error: null,
+                status: "completed",
+              },
             },
           };
           yield {
-            type: "item.completed",
-            item: { id: "item_2", type: "agent_message", text: "codex answer" },
+            method: "item/completed",
+            params: { item: { id: "item_2", type: "agentMessage", text: "codex answer" } },
           };
-          yield { type: "turn.completed", usage: { input_tokens: 2, output_tokens: 1 } };
-          yield { rennet: "turn-result", exitCode: 0, lastMessage: "codex answer" };
+          yield {
+            rennet: "turn-result",
+            status: "completed",
+            finalMessage: "codex answer",
+            usage: { input: 2, output: 1, cacheRead: 0, cacheWrite: 0, reasoning: 0, total: 3 },
+          };
         },
       };
     };

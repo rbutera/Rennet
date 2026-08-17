@@ -54,7 +54,10 @@ flowchart LR
   usual way. Rennet finds `.cmd`/`.exe` shims on your `PATH` and in the common
   per-user install locations (`%APPDATA%\npm`, `%LOCALAPPDATA%\Programs`, scoop,
   bun, volta), so it works even when the GUI-inherited `PATH` is missing an entry.
-  No POSIX shell (zsh/bash) is required.
+  No POSIX shell (zsh/bash) is required. On Windows, Codex must be the codex CLI
+  (`npm i -g @openai/codex`): the `codex.exe` bundled inside the ChatGPT desktop
+  Store package is ACL-locked against out-of-package execution and cannot be
+  driven, so having ChatGPT desktop is not enough here (unlike on macOS).
 - An editor for line-targeted open — VS Code, Cursor, VSCodium, or Sublime — is
   found at its per-user or system install location as well as on `PATH`.
 
@@ -96,9 +99,10 @@ Rennet routes these operations through the configured WSL distro:
   digest, and handoff composition — so a WSL review has the same context as a
   host one, not a thinner one;
 - **the Codex seat**, when the distro has its own `codex` installed. The distro's
-  codex runs the real turn with distro-side scratch and distro-native paths, so a
-  WSL review is dual-harness (distro Claude + distro Codex) rather than degraded to
-  a single Claude seat.
+  codex runs the real turn over its app-server JSON-RPC stream with a distro-native
+  working directory — stdio crosses the WSL boundary unchanged, so there is no
+  turn-path scratch translation — making a WSL review dual-harness (distro Claude
+  + distro Codex) rather than degraded to a single Claude seat.
 
 Open-in-editor uses the editor's WSL remote so `path:line` lands on the distro
 file. Rennet watches the repo by polling on WSL because inotify events do not
@@ -117,13 +121,17 @@ unreachable surface — Rennet never silently runs a host Codex against a WSL re
 
 ### Current ceiling
 
-- Live end-to-end verification on real Windows hardware (a packaged win32 boot and
-  a full WSL dual-harness review with write/push from the distro account) is still
-  pending; the behaviour above is implemented and covered by hermetic tests, but
-  this page will be reconciled against the recorded live-run matrix once it runs.
-- Token usage for a distro Codex turn reads as **unmeasured** rather than a
-  fabricated zero: the Codex session log lives in the distro's own `~/.codex`,
-  which the Windows-side reader does not correlate. The turn itself is unaffected.
+- A real WSL-locus Codex turn has run on real Windows hardware (lancelot) over the
+  app-server transport, and the full native win32 gate is green. What remains
+  pending is the packaged-app win32 boot and a full WSL dual-harness review with
+  write/push from the distro account; this page is reconciled against that
+  remaining live-run matrix once it runs.
+- Token usage for a distro Codex turn arrives **in-protocol** over the app-server
+  JSON-RPC stream (`thread/tokenUsage/updated`), which crosses the WSL boundary
+  over stdio just like a host turn — so a distro Codex turn is measured like a
+  host one, with no session-log file to correlate across the boundary. In-protocol
+  usage is proven live on the macOS app-server leg; the live WSL run asserts turn
+  completion and spawn composition, not usage.
 - Networking varies per Windows configuration, so the mirrored-vs-gateway choice is
   made by an empirical probe per session rather than by sniffing config; a
   misconfigured host surfaces as a plain failed turn, not a wrong guess.

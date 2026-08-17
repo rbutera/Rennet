@@ -1,42 +1,31 @@
 import type { HarnessEvent, SessionOutcome } from "@rennet/core";
 import { describe, expect, it } from "vitest";
-import {
-  buildCodexTurnArgs,
-  CodexAdapter,
-  type CodexTurnSpec,
-  type CodexTurnTransport,
-} from "./codex-adapter";
+import { CodexAdapter, type CodexTurnSpec, type CodexTurnTransport } from "./codex-adapter";
+import type { CodexTurnResultFrame } from "./codex-app-server";
 
-// ── A fake CodexTurnTransport over canned JSONL frame arrays (no process) ────
+// ── A fake CodexTurnTransport over canned app-server frames (no process) ──────
 //
-// The transport contract: yield the raw codex `--json` frames, then exactly ONE
-// synthetic `{ rennet: "turn-result", ... }` terminal frame carrying exitCode and
-// the `-o` last-message capture. The adapter owns normalization, seq, and the
-// terminal outcome; these tests inject frames and assert the normalized stream.
+// The transport contract: yield the raw `codex app-server` notification objects
+// (`{ method, params }`), then exactly ONE synthetic `{ rennet: "turn-result", … }`
+// terminal frame carrying the final status/message/usage. The adapter owns
+// normalization, seq, and the terminal outcome.
 
 type Frame = unknown | ((spec: CodexTurnSpec) => unknown);
 
 function fakeTransport(frames: readonly Frame[]): {
   fn: CodexTurnTransport;
   invoked: () => boolean;
-  spec: () => CodexTurnSpec | null;
 } {
   let invoked = false;
-  let captured: CodexTurnSpec | null = null;
-  const fn: CodexTurnTransport = (spec) => {
-    captured = spec;
-    return {
-      async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
-        invoked = true;
-        for (const frame of frames) {
-          yield typeof frame === "function"
-            ? (frame as (s: CodexTurnSpec) => unknown)(spec)
-            : frame;
-        }
-      },
-    };
-  };
-  return { fn, invoked: () => invoked, spec: () => captured };
+  const fn: CodexTurnTransport = (spec) => ({
+    async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
+      invoked = true;
+      for (const frame of frames) {
+        yield typeof frame === "function" ? (frame as (s: CodexTurnSpec) => unknown)(spec) : frame;
+      }
+    },
+  });
+  return { fn, invoked: () => invoked };
 }
 
 function adapter(fn: CodexTurnTransport): CodexAdapter {
@@ -55,34 +44,38 @@ async function drain(session: {
   return { events, outcome };
 }
 
-const RESULT_OK = (lastMessage: string | null) => ({
+const STARTED = { method: "turn/started", params: { threadId: "th", turn: { id: "turn_1" } } };
+const completed = (
+  status: CodexTurnResultFrame["status"],
+  extra: Partial<CodexTurnResultFrame> = {},
+): CodexTurnResultFrame => ({
   rennet: "turn-result",
-  exitCode: 0,
-  lastMessage,
+  status,
+  finalMessage: null,
+  ...extra,
 });
 
 describe("CodexAdapter", () => {
   it("normalizes a completed turn with structured output, usage, and increasing seq", async () => {
     const structured = { ok: true };
+    const usage = {
+      total: {
+        inputTokens: 31_751,
+        cachedInputTokens: 14_720,
+        outputTokens: 2_367,
+        reasoningOutputTokens: 701,
+        totalTokens: 34_118,
+      },
+    };
     const t = fakeTransport([
-      { type: "thread.started", thread_id: "th_1" },
-      { type: "turn.started" },
-      { type: "item.updated", item: { id: "item_1", type: "agent_message", text: "wor" } },
+      STARTED,
+      { method: "item/agentMessage/delta", params: { delta: '{"ok":' } },
       {
-        type: "item.completed",
-        item: { id: "item_1", type: "agent_message", text: JSON.stringify(structured) },
+        method: "item/completed",
+        params: { item: { id: "item_1", type: "agentMessage", text: JSON.stringify(structured) } },
       },
-      {
-        type: "turn.completed",
-        usage: {
-          input_tokens: 31_751,
-          cached_input_tokens: 14_720,
-          cache_write_input_tokens: 0,
-          output_tokens: 2_367,
-          reasoning_output_tokens: 701,
-        },
-      },
-      RESULT_OK(JSON.stringify(structured)),
+      { method: "thread/tokenUsage/updated", params: { tokenUsage: usage } },
+      completed("completed", { finalMessage: JSON.stringify(structured) }),
     ]);
     const session = await adapter(t.fn).createSession({
       cwd: "/repo",
@@ -106,16 +99,15 @@ describe("CodexAdapter", () => {
         total: 34_118,
       });
     }
-    // Every event carries a strictly increasing seq and its raw native frame.
     const seqs = events.map((e) => e.seq);
     expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
     expect(new Set(seqs).size).toBe(seqs.length);
-    expect(events[0]?.native).toEqual({ type: "thread.started", thread_id: "th_1" });
+    expect(events[0]?.native).toEqual(STARTED);
   });
 
   it("surfaces an unmodelled frame as passthrough with the raw native", async () => {
-    const weird = { type: "mystery.frame", payload: 42 };
-    const t = fakeTransport([{ type: "thread.started", thread_id: "th" }, weird, RESULT_OK(null)]);
+    const weird = { method: "model/rerouted", params: { to: "gpt-x" } };
+    const t = fakeTransport([STARTED, weird, completed("completed")]);
     const session = await adapter(t.fn).createSession({ cwd: "/repo" });
     await session.send({ prompt: "go" });
     const { events } = await drain(session);
@@ -124,67 +116,74 @@ describe("CodexAdapter", () => {
     expect(pass?.native).toEqual(weird);
   });
 
-  it("maps official started/completed command, MCP, and file-change shapes to honest lifecycles", async () => {
+  it("maps app-server started/completed command, MCP, and file-change items to lifecycles", async () => {
     const t = fakeTransport([
-      { type: "thread.started", thread_id: "th" },
+      STARTED,
       {
-        type: "item.started",
-        item: {
-          id: "item_1",
-          type: "command_execution",
-          command: "ls",
-          aggregated_output: "",
-          exit_code: null,
-          status: "in_progress",
+        method: "item/started",
+        params: {
+          item: {
+            id: "item_1",
+            type: "commandExecution",
+            command: "ls",
+            aggregatedOutput: "",
+            status: "inProgress",
+          },
         },
       },
       {
-        type: "item.completed",
-        item: {
-          id: "item_1",
-          type: "command_execution",
-          command: "ls",
-          aggregated_output: "a.ts\n",
-          exit_code: 0,
-          status: "completed",
+        method: "item/completed",
+        params: {
+          item: {
+            id: "item_1",
+            type: "commandExecution",
+            command: "ls",
+            aggregatedOutput: "a.ts\n",
+            exitCode: 0,
+            status: "completed",
+          },
         },
       },
       {
-        type: "item.started",
-        item: {
-          id: "item_2",
-          type: "mcp_tool_call",
-          server: "canvasops",
-          tool: "canvas.read",
-          arguments: { ref: "r1" },
-          result: null,
-          error: null,
-          status: "in_progress",
+        method: "item/started",
+        params: {
+          item: {
+            id: "item_2",
+            type: "mcpToolCall",
+            server: "canvasops",
+            tool: "canvas.read",
+            arguments: { ref: "r1" },
+            status: "inProgress",
+          },
         },
       },
       {
-        type: "item.completed",
-        item: {
-          id: "item_2",
-          type: "mcp_tool_call",
-          server: "canvasops",
-          tool: "canvas.read",
-          arguments: { ref: "r1" },
-          result: { content: [{ type: "text", text: "ok" }], structured_content: { ok: true } },
-          error: null,
-          status: "completed",
+        method: "item/completed",
+        params: {
+          item: {
+            id: "item_2",
+            type: "mcpToolCall",
+            server: "canvasops",
+            tool: "canvas.read",
+            arguments: { ref: "r1" },
+            result: { content: [{ type: "text", text: "ok" }], structuredContent: { ok: true } },
+            error: null,
+            status: "completed",
+          },
         },
       },
       {
-        type: "item.completed",
-        item: {
-          id: "item_3",
-          type: "file_change",
-          changes: [{ path: "a.ts", kind: "update" }],
-          status: "completed",
+        method: "item/completed",
+        params: {
+          item: {
+            id: "item_3",
+            type: "fileChange",
+            changes: [{ path: "a.ts", kind: "update" }],
+            status: "completed",
+          },
         },
       },
-      RESULT_OK(null),
+      completed("completed"),
     ]);
     const session = await adapter(t.fn).createSession({ cwd: "/repo" });
     await session.send({ prompt: "go" });
@@ -206,47 +205,49 @@ describe("CodexAdapter", () => {
     expect(outputs[0]?.text).toBe("a.ts\n");
     expect(outputs[1]?.output).toEqual({
       content: [{ type: "text", text: "ok" }],
-      structured_content: { ok: true },
+      structuredContent: { ok: true },
     });
   });
 
-  it("retains item_type as a compatibility fallback", async () => {
+  it("maps a turn failure to a failed outcome with class and origin, message verbatim", async () => {
+    const message = "stream disconnected before completion";
     const t = fakeTransport([
-      { type: "thread.started", thread_id: "th" },
-      { type: "item.completed", item: { id: "legacy", item_type: "agent_message", text: "ok" } },
-      RESULT_OK("ok"),
-    ]);
-    const session = await adapter(t.fn).createSession({ cwd: "/repo" });
-    await session.send({ prompt: "go" });
-    const { events } = await drain(session);
-    expect(events.some((event) => event.kind === "text.message")).toBe(true);
-  });
-
-  it("maps a nonzero exit to a failed outcome with class and origin", async () => {
-    const t = fakeTransport([
-      { type: "thread.started", thread_id: "th" },
-      { type: "turn.failed", error: { message: "stream disconnected before completion" } },
-      { rennet: "turn-result", exitCode: 1, lastMessage: null, stderr: "stream disconnected" },
+      STARTED,
+      completed("failed", {
+        error: { source: "turn", message, codexErrorInfo: "serverOverloaded" },
+      }),
     ]);
     const session = await adapter(t.fn).createSession({ cwd: "/repo" });
     await session.send({ prompt: "go" });
     const { outcome } = await drain(session);
     expect(outcome?.status).toBe("failed");
     if (outcome?.status === "failed") {
-      expect(outcome.error.class).toBeTruthy();
-      expect(["harness", "provider", "transport", "adapter"]).toContain(outcome.error.origin);
+      expect(outcome.error.message).toBe(message);
+      expect(outcome.error.class).toBe("overloaded");
+      expect(outcome.error.origin).toBe("provider");
     }
   });
 
-  it("cancels the turn when the signal aborts (subprocess killed)", async () => {
+  it("preserves an auth-expiry turn error message verbatim to the outcome", async () => {
+    const message = "Your ChatGPT auth token has expired. Run codex login.";
     const t = fakeTransport([
-      { type: "thread.started", thread_id: "th" },
-      (spec: CodexTurnSpec) => ({
-        rennet: "turn-result",
-        exitCode: 0,
-        lastMessage: null,
-        aborted: spec.signal?.aborted ?? false,
-      }),
+      STARTED,
+      completed("failed", { error: { source: "turn", message, codexErrorInfo: "unauthorized" } }),
+    ]);
+    const session = await adapter(t.fn).createSession({ cwd: "/repo" });
+    await session.send({ prompt: "go" });
+    const { outcome } = await drain(session);
+    expect(outcome?.status).toBe("failed");
+    if (outcome?.status !== "failed") throw new Error("expected a failed outcome");
+    expect(outcome.error.message).toBe(message);
+    expect(outcome.error.class).toBe("auth");
+  });
+
+  it("cancels the turn when the signal aborts", async () => {
+    const t = fakeTransport([
+      STARTED,
+      (spec: CodexTurnSpec) =>
+        completed(spec.signal?.aborted ? "cancelled" : "completed", { finalMessage: null }),
     ]);
     const abort = new AbortController();
     const session = await adapter(t.fn).createSession({ cwd: "/repo", signal: abort.signal });
@@ -256,8 +257,17 @@ describe("CodexAdapter", () => {
     expect(outcome?.status).toBe("cancelled");
   });
 
+  it("closes with a protocol failure when the stream ends without a terminal frame", async () => {
+    const t = fakeTransport([STARTED]);
+    const session = await adapter(t.fn).createSession({ cwd: "/repo" });
+    await session.send({ prompt: "go" });
+    const { outcome } = await drain(session);
+    expect(outcome?.status).toBe("failed");
+    if (outcome?.status === "failed") expect(outcome.error.class).toBe("protocol");
+  });
+
   it("does not invoke the transport before a turn is sent", async () => {
-    const t = fakeTransport([RESULT_OK(null)]);
+    const t = fakeTransport([completed("completed")]);
     await adapter(t.fn).createSession({ cwd: "/repo" });
     expect(t.invoked()).toBe(false);
   });
@@ -266,7 +276,7 @@ describe("CodexAdapter", () => {
     let terminated = false;
     const transport: CodexTurnTransport = (spec) => ({
       async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
-        yield { type: "thread.started", thread_id: "th" };
+        yield STARTED;
         if (!spec.signal?.aborted) {
           await new Promise<void>((resolve) =>
             spec.signal?.addEventListener(
@@ -283,7 +293,7 @@ describe("CodexAdapter", () => {
           await new Promise((resolve) => setTimeout(resolve, 20));
           terminated = true;
         }
-        yield { rennet: "turn-result", exitCode: 0, lastMessage: null, aborted: true };
+        yield completed("cancelled");
       },
     });
     const session = await adapter(transport).createSession({ cwd: "/repo" });
@@ -296,8 +306,181 @@ describe("CodexAdapter", () => {
     await session.close();
   });
 
+  it("interrupt() called from INSIDE the for-await body resolves (no consumer-drainage deadlock)", async () => {
+    // The transport stays open until aborted, then finishes. The consumer awaits
+    // interrupt() from inside its own loop body — parking the iterator at a yield.
+    // With the independent pump, completion tracks the transport finishing, not
+    // consumer drainage, so this must NOT deadlock.
+    const transport: CodexTurnTransport = (spec) => ({
+      async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
+        yield STARTED;
+        if (!spec.signal?.aborted) {
+          await new Promise<void>((resolve) =>
+            spec.signal?.addEventListener("abort", () => resolve(), { once: true }),
+          );
+        }
+        yield completed("cancelled");
+      },
+    });
+    const session = await adapter(transport).createSession({ cwd: "/repo" });
+    await session.send({ prompt: "go" });
+
+    const withinTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
+      Promise.race([
+        p,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("deadlock: interrupt() never resolved")), ms),
+        ),
+      ]);
+
+    let interruptResolved = false;
+    const events: HarnessEvent[] = [];
+    await withinTimeout(
+      (async () => {
+        for await (const event of session.events) {
+          events.push(event);
+          if (event.kind === "session.started") {
+            await session.interrupt(); // from inside the loop — must not deadlock
+            interruptResolved = true;
+          }
+        }
+      })(),
+      1_000,
+    );
+    expect(interruptResolved).toBe(true);
+    expect(events.some((e) => e.kind === "session.ended")).toBe(true);
+  });
+
+  it("close() without a send resolves (no pre-send deadlock) and ends the events stream", async () => {
+    // Subscribe to events but never send a turn, then close(). The port contract says
+    // close() is always available; the pre-send state must settle, not hang.
+    const session = await adapter(fakeTransport([]).fn).createSession({ cwd: "/repo" });
+    const stream = session.events;
+    const withinTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
+      Promise.race([
+        p,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("deadlock: close() never resolved")), ms),
+        ),
+      ]);
+    await withinTimeout(session.close(), 1_000);
+    const events: HarnessEvent[] = [];
+    await withinTimeout(
+      (async () => {
+        for await (const event of stream) events.push(event);
+      })(),
+      1_000,
+    );
+    // No turn ran, so there is no outcome to emit — the stream just ends cleanly.
+    expect(events).toEqual([]);
+  });
+
+  it("emits EXACTLY ONE session.ended even if the transport throws during teardown after its terminal", async () => {
+    const transport: CodexTurnTransport = () => ({
+      async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
+        yield STARTED;
+        yield completed("completed", { finalMessage: "ok" });
+        throw new Error("teardown boom"); // thrown AFTER the terminal frame
+      },
+    });
+    const session = await adapter(transport).createSession({ cwd: "/repo" });
+    await session.send({ prompt: "go" });
+    const { events, outcome } = await drain(session);
+    expect(events.filter((e) => e.kind === "session.ended")).toHaveLength(1);
+    expect(outcome?.status).toBe("completed");
+    // The post-terminal teardown throw is surfaced as non-terminal evidence.
+    expect(
+      events.some((e) => e.kind === "passthrough" && e.nativeKind === "transport-teardown-error"),
+    ).toBe(true);
+  });
+
+  it("fails the turn (naming the ceiling) when the stream floods past the buffer ceiling", async () => {
+    const flood = 50;
+    const transport: CodexTurnTransport = () => ({
+      async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
+        for (let i = 0; i < flood; i += 1) yield { method: "model/verification", params: { n: i } };
+        // NEVER a terminal — a hung, forever-streaming command.
+      },
+    });
+    const codex = new CodexAdapter({
+      binaryPath: "/x/codex",
+      transport,
+      version: "0.146.0",
+      bufferCeiling: { maxEvents: 5, maxBytes: 64 * 1024 * 1024 },
+    });
+    const session = await codex.createSession({ cwd: "/repo" });
+    await session.send({ prompt: "go" });
+    // Let the pump flood past the ceiling BEFORE the consumer drains.
+    await new Promise((resolve) => setImmediate(resolve));
+    const { events, outcome } = await drain(session);
+    expect(outcome?.status).toBe("failed");
+    if (outcome?.status === "failed") expect(outcome.error.message).toMatch(/buffer ceiling/);
+    // EXACT retained sequence: the 5 accepted passthroughs (n 0..4, in order, no
+    // duplicates), then exactly one terminal — the 6th frame was replaced by it.
+    const ns = events
+      .filter((e) => e.kind === "passthrough")
+      .map((e) => (e as { native?: { params?: { n?: number } } }).native?.params?.n ?? -1);
+    expect(ns).toEqual([0, 1, 2, 3, 4]);
+    const endeds = events.filter((e) => e.kind === "session.ended");
+    expect(endeds).toHaveLength(1);
+    expect(events[events.length - 1]?.kind).toBe("session.ended");
+  });
+
+  it("keeps the failed-at-ceiling terminal LAST when a multi-event frame straddles the ceiling", async () => {
+    const transport: CodexTurnTransport = () => ({
+      async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
+        yield { method: "model/verification", params: { n: 0 } };
+        yield { method: "model/verification", params: { n: 1 } };
+        // A fileChange item/completed normalizes to TWO events (tool.started +
+        // tool.output). The first crosses the ceiling and triggers settlement;
+        // the second must NOT land after the terminal.
+        yield {
+          method: "item/completed",
+          params: {
+            item: { id: "fc_1", type: "fileChange", status: "completed", changes: [] },
+          },
+        };
+      },
+    });
+    const codex = new CodexAdapter({
+      binaryPath: "/x/codex",
+      transport,
+      version: "0.146.0",
+      bufferCeiling: { maxEvents: 2, maxBytes: 64 * 1024 * 1024 },
+    });
+    const session = await codex.createSession({ cwd: "/repo" });
+    await session.send({ prompt: "go" });
+    await new Promise((resolve) => setImmediate(resolve));
+    const { events, outcome } = await drain(session);
+    expect(outcome?.status).toBe("failed");
+    const endeds = events.filter((e) => e.kind === "session.ended");
+    expect(endeds).toHaveLength(1);
+    expect(events[events.length - 1]?.kind).toBe("session.ended");
+    // The straddling batch's trailing event never lands after settlement.
+    expect(events.some((e) => e.kind === "tool.output")).toBe(false);
+  });
+
+  it("rejects send() after a pre-send close() settles the session", async () => {
+    const transport = fakeTransport([completed("completed")]); // never runs — closed pre-send
+    const session = await adapter(transport.fn).createSession({ cwd: "/repo" });
+    const consumed = (async () => {
+      const seen: unknown[] = [];
+      for await (const event of session.events) seen.push(event);
+      return seen;
+    })();
+    await session.close();
+    await expect(
+      Promise.race([
+        consumed,
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 1000)),
+      ]),
+    ).resolves.toEqual([]);
+    await expect(async () => session.send({ prompt: "too late" })).rejects.toThrow(/closed/);
+    expect(transport.invoked()).toBe(false);
+  });
+
   it("throws a plain error on a second events subscription", async () => {
-    const session = await adapter(fakeTransport([RESULT_OK(null)]).fn).createSession({
+    const session = await adapter(fakeTransport([completed("completed")]).fn).createSession({
       cwd: "/repo",
     });
     const first = session.events;
@@ -313,76 +496,5 @@ describe("CodexAdapter", () => {
       expect(cap.availableInSession).toBe(false);
     }
     expect(a.descriptor.id).toBe("codex");
-  });
-});
-
-describe("buildCodexTurnArgs", () => {
-  it("assembles the capable-by-default agentic argv with no gating flag", () => {
-    const args = buildCodexTurnArgs({
-      cwd: "/repo",
-      prompt: "review this",
-      model: "gpt-5.6-sol",
-      schemaPath: "/tmp/s.json",
-      outPath: "/tmp/o.txt",
-      mcpServers: { canvasops: { url: "http://127.0.0.1:5000/mcp" } },
-    });
-    // JSONL streaming + the Rule Zero full-access posture.
-    expect(args).toContain("--json");
-    expect(args).toContain("--dangerously-bypass-approvals-and-sandbox");
-    expect(args).toContain("--ignore-user-config");
-    // Real repo cwd — NEVER the utility port's git-repo-check skip.
-    expect(args).toContain("-C");
-    expect(args[args.indexOf("-C") + 1]).toBe("/repo");
-    expect(args).not.toContain("--skip-git-repo-check");
-    // No sandbox-mode / read-only / approval-REQUESTING flag anywhere. The only
-    // "approval" token is the bypass posture itself (Rule Zero acting path).
-    expect(args).not.toContain("--sandbox");
-    expect(args).not.toContain("-s");
-    expect(args).not.toContain("--ask-for-approval");
-    expect(args).not.toContain("-a");
-    expect(args).not.toContain("--full-auto");
-    expect(args.filter((a) => /approval/i.test(a))).toEqual([
-      "--dangerously-bypass-approvals-and-sandbox",
-    ]);
-    // Structured output + last-message capture.
-    expect(args).toContain("--output-schema");
-    expect(args).toContain("/tmp/s.json");
-    expect(args).toContain("-o");
-    expect(args).toContain("/tmp/o.txt");
-    // MCP server URL override for canvasOps@2.
-    expect(args).toContain("mcp_servers.canvasops.url=http://127.0.0.1:5000/mcp");
-    // The prompt is positional and LAST.
-    expect(args[args.length - 1]).toBe("review this");
-  });
-
-  it("omits schema/out/model flags when absent", () => {
-    const args = buildCodexTurnArgs({ cwd: "/repo", prompt: "go" });
-    expect(args).not.toContain("--output-schema");
-    expect(args).not.toContain("-o");
-    expect(args).not.toContain("-m");
-    expect(args[args.length - 1]).toBe("go");
-  });
-
-  it("accounts cache writes as a distinct token bucket", async () => {
-    const t = fakeTransport([
-      {
-        type: "turn.completed",
-        usage: {
-          input_tokens: 100,
-          cached_input_tokens: 60,
-          cache_write_input_tokens: 7,
-          output_tokens: 5,
-          reasoning_output_tokens: 2,
-        },
-      },
-      RESULT_OK(null),
-    ]);
-    const session = await adapter(t.fn).createSession({ cwd: "/repo" });
-    await session.send({ prompt: "go" });
-    const { outcome } = await drain(session);
-    expect(outcome).toMatchObject({
-      status: "completed",
-      usage: { input: 40, cacheRead: 60, cacheWrite: 7, output: 5, total: 112 },
-    });
   });
 });

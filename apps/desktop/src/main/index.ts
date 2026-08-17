@@ -406,9 +406,15 @@ function getCodexResolution(locus: Locus): Promise<CodexResolution> {
       const executor = createCodexExecutor(defaultCodexExecEffects, {
         bin: chosen.path,
         harnessVersion: chosen.version,
+        ...(chosen.runtimePath === undefined ? {} : { runtimePath: chosen.runtimePath }),
         ...(locus.kind === "wsl" ? { locus } : {}),
       });
-      const transport = createCodexTurnTransport(chosen.path, defaultCodexTransportEffects, locus);
+      const transport = createCodexTurnTransport(
+        chosen.path,
+        defaultCodexTransportEffects,
+        locus,
+        chosen.runtimePath,
+      );
       const capabilityEvidence = await deriveCodexImplementedEvidence(chosen.path);
       return {
         availability: { available: true, version: chosen.version },

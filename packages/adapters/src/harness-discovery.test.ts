@@ -22,11 +22,21 @@ interface Fixture {
   runtimeVersions?: Record<string, string>;
   pathExt?: string;
   platform?: NodeJS.Platform;
+  /** When set, the app-server handshake seam is provided; paths not in the set fail. */
+  appServerOk?: ReadonlySet<string>;
 }
 
 function recordingDeps(fixture: Fixture): { deps: DiscoveryDeps; accessed: string[] } {
   const accessed: string[] = [];
   const deps: DiscoveryDeps = {
+    ...(fixture.appServerOk === undefined
+      ? {}
+      : {
+          appServerHandshake: (candidate: { readonly path: string }) => {
+            accessed.push(`handshake ${candidate.path}`);
+            return Promise.resolve(fixture.appServerOk?.has(candidate.path) ?? false);
+          },
+        }),
     loginShellPath: () => Promise.resolve(fixture.loginShellPath ?? "/usr/bin:/bin"),
     envPath: fixture.envPath ?? "/usr/bin:/bin",
     home: fixture.home ?? "/home/rai",
@@ -309,6 +319,107 @@ describe("discoverCodex (bead workspace-6qp15)", () => {
     // same way; the closed stdin is what turns a would-be hang into this exit.)
     const deps = defaultCodexDiscoveryDeps();
     await expect(deps.probeVersion("/no/such/path/codex")).resolves.toBeNull();
+  });
+
+  // ── ChatGPT desktop bundle + app-server handshake (adopt-codex-app-server) ────
+
+  const BUNDLE = "/Applications/ChatGPT.app/Contents/Resources/codex";
+  const BUNDLE_DIR = "/Applications/ChatGPT.app/Contents/Resources";
+
+  it("discovers the ChatGPT-desktop bundled codex on macOS when no CLI is present", async () => {
+    const { deps } = recordingDeps({
+      platform: "darwin",
+      loginShellPath: "/usr/bin",
+      envPath: "/usr/bin",
+      home: HOME,
+      dirContents: { [BUNDLE_DIR]: ["codex"] },
+      executables: new Set([BUNDLE]),
+      versions: { [BUNDLE]: "0.144.2" },
+    });
+    const result = await discoverCodex(deps);
+    expect(result.chosen?.path).toBe(BUNDLE);
+    expect(result.health).toEqual({ state: "ready", version: "0.144.2" });
+    expect(result.candidates.find((c) => c.path === BUNDLE)?.provenance).toBe(
+      "chatgpt-desktop-bundle",
+    );
+  });
+
+  it("prefers a user-installed codex CLI over the ChatGPT bundle, keeping the bundle a candidate", async () => {
+    const cli = "/opt/homebrew/bin/codex";
+    const { deps } = recordingDeps({
+      platform: "darwin",
+      loginShellPath: "/opt/homebrew/bin",
+      envPath: "/opt/homebrew/bin",
+      home: HOME,
+      dirContents: { "/opt/homebrew/bin": ["codex"], [BUNDLE_DIR]: ["codex"] },
+      executables: new Set([cli, BUNDLE]),
+      versions: { [cli]: "0.146.0", [BUNDLE]: "0.144.2" },
+    });
+    const result = await discoverCodex(deps);
+    expect(result.chosen?.path).toBe(cli);
+    // The bundle is still listed as a candidate with its evidence.
+    const bundle = result.candidates.find((c) => c.path === BUNDLE);
+    expect(bundle?.version).toBe("0.144.2");
+    expect(bundle?.provenance).toBe("chatgpt-desktop-bundle");
+  });
+
+  it("does NOT offer a ChatGPT Store bundle on Windows and names the CLI remedy", async () => {
+    const { deps } = recordingDeps({
+      platform: "win32",
+      pathExt: ".EXE;.CMD",
+      loginShellPath: null,
+      envPath: "C\\\\Windows",
+      home: "C:\\\\Users\\\\rai",
+      dirContents: {},
+      executables: new Set(),
+    });
+    const result = await discoverCodex(deps);
+    expect(result.chosen).toBeNull();
+    expect(result.health.state).toBe("unavailable");
+    if (result.health.state === "unavailable") {
+      expect(result.health.detail).toMatch(/codex CLI/i);
+      expect(result.health.detail).toMatch(/ACL-locked|cannot be spawned/i);
+    }
+    // No candidate at all — the Store binary is never listed as spawnable.
+    expect(result.candidates).toHaveLength(0);
+  });
+
+  it("marks codex unavailable when the chosen binary fails the app-server handshake", async () => {
+    const cli = "/opt/homebrew/bin/codex";
+    const { deps } = recordingDeps({
+      platform: "darwin",
+      loginShellPath: "/opt/homebrew/bin",
+      envPath: "/opt/homebrew/bin",
+      home: HOME,
+      dirContents: { "/opt/homebrew/bin": ["codex"] },
+      executables: new Set([cli]),
+      versions: { [cli]: "0.100.0" },
+      appServerOk: new Set(), // the handshake never succeeds
+    });
+    const result = await discoverCodex(deps);
+    expect(result.chosen).toBeNull();
+    expect(result.health.state).toBe("unavailable");
+    if (result.health.state === "unavailable") {
+      expect(result.health.reason).toBe("handshake-failed");
+      expect(result.health.detail).toMatch(/app-server initialize handshake/);
+    }
+  });
+
+  it("chooses a candidate that DOES answer the app-server handshake", async () => {
+    const cli = "/opt/homebrew/bin/codex";
+    const { deps } = recordingDeps({
+      platform: "darwin",
+      loginShellPath: "/opt/homebrew/bin",
+      envPath: "/opt/homebrew/bin",
+      home: HOME,
+      dirContents: { "/opt/homebrew/bin": ["codex"] },
+      executables: new Set([cli]),
+      versions: { [cli]: "0.146.0" },
+      appServerOk: new Set([cli]),
+    });
+    const result = await discoverCodex(deps);
+    expect(result.chosen?.path).toBe(cli);
+    expect(result.health.state).toBe("ready");
   });
 });
 

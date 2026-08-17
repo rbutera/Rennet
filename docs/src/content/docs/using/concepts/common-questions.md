@@ -61,6 +61,13 @@ your machine. For example, the Claude adapter launches your installed `claude`
 binary through Anthropic's agent SDK rather than asking Rennet to store a Claude
 credential.
 
+For Codex the same holds, with one convenience on macOS: if you already have
+**ChatGPT desktop installed, no separate Codex install is needed** — the app
+bundles a codex binary and shares its `~/.codex` login, so Rennet drives it as-is
+(a codex CLI you install yourself is preferred when both are present). On Windows
+the Store-packaged desktop binary is locked against outside execution, so Codex
+there needs the codex CLI (`npm i -g @openai/codex`).
+
 ## What happens on my own branch?
 
 You can shape and sign the pull-request title and body, then Rennet pushes the
