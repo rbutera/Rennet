@@ -163,6 +163,7 @@ import { createProcessProject } from "./process-project";
 import { createPublishConsentAuthority } from "./publish-consent-authority";
 import { createLiveRefinePort } from "./refine-comment-live";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
+import { reviewIntelligenceSession } from "./review-intelligence-session";
 import { type ReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
 import { loadReviewOwnership } from "./review-ownership";
 import { buildReviewCanvasesInput } from "./review-pipeline-input";
@@ -625,8 +626,13 @@ async function buildCanvasesForReviewWithContextFeed(
   // runner reasons over the diff alone until #136. Its committed hypothesis feeds
   // the Decisions runner as disconfirmation criteria and rides the result as the
   // human's reading frame. Absent an adapter (or on a failed pass) it is undefined
-  // and every lens runs exactly as before.
-  const hypothesis = await computeReviewHypothesis(review, patchset, adapter, contextFeed);
+  // and every lens runs exactly as before. It is drawn from the per-review
+  // intelligence session (#316): the canvas and flagged flows share ONE hypothesis
+  // and ONE ceiling per (reviewId, activePatchsetId), so a review turn spends the
+  // hypothesis once, not once per flow.
+  const hypothesis = await reviewIntelligenceSession(review, true, (budget) =>
+    computeReviewHypothesis(review, patchset, adapter, contextFeed, budget),
+  ).hypothesis;
 
   // The per-project convention checklist (#180), sourced once and fed to the
   // Decisions runner as a labelled layer. Absent (no catalogue file), the runner
@@ -1041,10 +1047,14 @@ async function runFlaggedReviewWithContextFeed(
   contextFeed: ReviewContextFeed,
 ): Promise<FlaggedReview> {
   const patchset = activePatchset(review);
-  const sharedBudget = createInvocationBudget(
-    reviewInvocationCeiling(DEFAULT_REVIEW_INTELLIGENCE_BUDGET, deepReview),
-  );
   const { adapter } = await getClaudeHarness();
+  // The per-review intelligence session (#316): ONE ceiling and ONE hypothesis
+  // shared with the canvas flow, keyed by (reviewId, activePatchsetId). The
+  // hypothesis, both finding seats, and verification all debit `sharedBudget`.
+  const session = reviewIntelligenceSession(review, deepReview, (budget) =>
+    computeReviewHypothesis(review, patchset, adapter, contextFeed, budget),
+  );
+  const sharedBudget = session.budget;
   const codexResolution = await getCodexResolution();
   const codex = codexResolution.availability;
   const codexPort = codexResolution.port;
@@ -1107,19 +1117,14 @@ async function runFlaggedReviewWithContextFeed(
   // BOTH finding seats so the Flagged lens reasons over the same disconfirmation
   // prior + PR intent the Decisions runner already gets (issue #210) — the whole
   // point of hypothesis-first is that it shapes EVERY finding, not just decisions.
-  // The hypothesis is produced ONCE here for the flagged path (from the change's
-  // structure + intent + repo context, never the hunk bodies, so the prior stays
-  // genuine); absent an adapter or on a failed pass it is
-  // undefined. The intent is projected from the frozen capture on the patchset;
-  // absent a captured surface it is undefined. With BOTH undefined the finding
-  // assembly is byte-identical to before this change (no regression).
-  const hypothesis = await computeReviewHypothesis(
-    review,
-    patchset,
-    adapter,
-    contextFeed,
-    sharedBudget,
-  );
+  // The hypothesis is produced ONCE per review turn by the intelligence session
+  // (#316) and shared with the canvas flow — never recomputed here (from the
+  // change's structure + intent + repo context, never the hunk bodies, so the prior
+  // stays genuine); absent an adapter or on a failed pass it is undefined. The intent
+  // is projected from the frozen capture on the patchset; absent a captured surface
+  // it is undefined. With BOTH undefined the finding assembly is byte-identical to
+  // before this change (no regression).
+  const hypothesis = await session.hypothesis;
   const intent = patchsetIntentToReviewIntent(patchset.intent);
 
   const { review: flagged } = await runDualFindingReview({

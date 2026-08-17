@@ -26,9 +26,9 @@ Red-first: every code change lands its failing control before the fix. Close-wit
 
 ## 4. #316 — one per-review turn ceiling
 
-- [ ] 4.1 RED: add a main-process test beside `apps/desktop/src/main/index.ts` driving BOTH flows (canvases, then flagged) for one review with a recording fake adapter; assert the hypothesis turn ran ONCE and total invocations debit one shared ceiling. Confirm it fails (two hypothesis turns today).
-- [ ] 4.2 Implement the per-review intelligence session per design: `Map` keyed `(reviewId, activePatchsetId)` holding `{ budget, hypothesis: Promise }`; both flows draw budget and hypothesis from it; ceiling created once via `reviewInvocationCeiling`.
-- [ ] 4.3 Test: a reattach (new active patchset) re-derives the hypothesis and resets the ceiling; concurrent flow entry awaits the in-flight hypothesis promise (no double spend).
+- [x] 4.1 RED: add a main-process test beside `apps/desktop/src/main/index.ts` driving BOTH flows (canvases, then flagged) for one review with a recording fake adapter; assert the hypothesis turn ran ONCE and total invocations debit one shared ceiling. Confirm it fails (two hypothesis turns today).
+- [x] 4.2 Implement the per-review intelligence session per design: `Map` keyed `(reviewId, activePatchsetId)` holding `{ budget, hypothesis: Promise }`; both flows draw budget and hypothesis from it; ceiling created once via `reviewInvocationCeiling`.
+- [x] 4.3 Test: a reattach (new active patchset) re-derives the hypothesis and resets the ceiling; concurrent flow entry awaits the in-flight hypothesis promise (no double spend).
 - [ ] 4.4 Close #316 with the shipped single-ceiling summary.
 
 ## 5. #223 — scope-honest miss copy, then close
