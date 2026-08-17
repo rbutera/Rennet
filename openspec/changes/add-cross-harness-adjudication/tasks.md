@@ -9,10 +9,10 @@ Red-first throughout: each numbered group starts with the failing test that prov
 
 ## 2. The adjudication pass (core, pure, injected I/O)
 
-- [ ] 2.1 RED: `finding-adjudication.test.ts` — selection: only `disagree` rows are eligible; all-`concur` input runs zero turns; rows are taken in severity order up to `DEFAULT_MAX_ADJUDICATIONS`.
-- [ ] 2.2 RED: prompt content — the assembled adjudication prompt carries both labelled answers with explicit polarity (flagging seat's summary at its anchor; other seat's answer, including `NO_CONCERN_ANSWER` for a solo) and the real file window from the injected reader, not only the hunk.
-- [ ] 2.3 RED: honesty asymmetry — a thrown/guarded turn, the per-review cap, and an exhausted budget each stamp `insufficient` with the honest reason; no code path drops or omits a contested row; a `contradicted` verdict leaves the row present with both verbatim answers intact.
-- [ ] 2.4 Add the adjudication prompt contract to `@rennet/instructions` (sibling of `FINDING_VERIFICATION_CONTRACT`) and implement `runFindingAdjudication` in `packages/core/src/finding-adjudication.ts` (injected `AdjudicationTurn` + `VerificationFileReader`, `guardSeatTurn`, shared `InvocationBudget`, `DEFAULT_MAX_ADJUDICATIONS = 4`). Green on 2.1–2.3.
+- [x] 2.1 RED: `finding-adjudication.test.ts` — selection: only `disagree` rows are eligible; all-`concur` input runs zero turns; rows are taken in severity order up to `DEFAULT_MAX_ADJUDICATIONS`.
+- [x] 2.2 RED: prompt content — the assembled adjudication prompt carries both labelled answers with explicit polarity (flagging seat's summary at its anchor; other seat's answer, including `NO_CONCERN_ANSWER` for a solo) and the real file window from the injected reader, not only the hunk.
+- [x] 2.3 RED: honesty asymmetry — a thrown/guarded turn, the per-review cap, and an exhausted budget each stamp `insufficient` with the honest reason; no code path drops or omits a contested row; a `contradicted` verdict leaves the row present with both verbatim answers intact.
+- [x] 2.4 Add the adjudication prompt contract to `@rennet/instructions` (sibling of `FINDING_VERIFICATION_CONTRACT`) and implement `runFindingAdjudication` in `packages/core/src/finding-adjudication.ts` (injected `AdjudicationTurn` + `VerificationFileReader`, `guardSeatTurn`, shared `InvocationBudget`, `DEFAULT_MAX_ADJUDICATIONS = 4`). Green on 2.1–2.3.
 
 ## 3. Pipeline and seat wiring
 

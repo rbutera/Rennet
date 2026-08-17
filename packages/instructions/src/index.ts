@@ -581,6 +581,110 @@ export function renderFindingVerificationPrompt(
   ].join("\n");
 }
 
+// ── The cross-harness adjudication contract (issue #41) ──────────────────────
+
+/**
+ * The adjudication contract (issue #41). NOT a `PromptContract` (it elicits no RSP
+ * `docType` and surfaces no lens): it is the small dedicated instruction that drives
+ * a FRESH session to settle a CONTESTED row — one where two independent harness seats
+ * DISAGREED — against the REAL code. Unlike verification (which checks ONE claim), it
+ * is handed BOTH seats' labelled answers with explicit polarity and asked who the code
+ * supports. Its vocabulary is DISTINCT from verification on purpose: `supported`,
+ * `contradicted`, `insufficient` — never reproduced/refuted — because a contested row
+ * is NEVER dropped on any verdict; it is informed, beside both verbatim answers. The
+ * failure valve returns `insufficient` (surfaced with an honest caveat) rather than
+ * guess, because a wrong `supported`/`contradicted` reads as authority the row does not
+ * have.
+ */
+export interface AdjudicationContract {
+  /** Bumped when the SLOT SET or its wording changes (A/B-able against verdict quality). */
+  readonly version: number;
+  readonly role: string;
+  readonly task: string;
+  readonly discipline: string;
+  readonly failureValve: string;
+}
+
+export const FINDING_ADJUDICATION_CONTRACT: AdjudicationContract = {
+  version: 1,
+  role: "You adjudicate a code-review disagreement against the REAL code. You are working INSIDE the repository, with a shell, and you MAY run the code to settle the question. Two independent review seats looked at the same location and DISAGREED — one flagged a concern the other did not, or they flagged it with materially different severity. Your job is to ask the code who is right, so a genuine bug flagged by only one seat is not lost, and a false alarm is not left to worry the reviewer, while BOTH seats' own words still stand.",
+  task: "You are given ONE contested row — its reference key and the two seats' labelled answers with explicit polarity (which seat flagged what at the anchor, and the other seat's answer, which may be 'no concern raised here'). Decide, from the real code, whether the flagged concern is SUPPORTED (the code evidences it), CONTRADICTED (the code refutes it), or, if you can honestly establish neither, INSUFFICIENT. PREFER EXECUTED EVIDENCE when you can run the code to settle it. Emit exactly one adjudication, echoing the reference key unchanged. The exact JSON shape is enforced separately as a structured-output constraint; do not restate it.",
+  discipline:
+    "Ground the verdict in evidence you actually have: what a command printed, or the specific code you read. You are shown a file window to start from but are NOT confined to it — read more of the repository, and run it, when that is what it takes to know. The evidence is ONE line naming the concrete code (or command result) that supports or contradicts the flagged concern. You are a THIRD opinion, not the final word: your verdict rides BESIDE both seats' verbatim answers, it never replaces them and never hides the row.",
+  failureValve:
+    "If the code establishes neither support nor contradiction — running it is impractical here, the claim reaches beyond what you can check, you are genuinely unsure — return insufficient with the honest reason. Insufficient is surfaced to the human beside both answers as 'could not adjudicate', so it is a safe and honest answer. Never upgrade a hunch into supported or contradicted to look decisive; a wrong confident verdict is worse than an honest unknown.",
+};
+
+/** One contested row handed to an adjudication turn: its ref, the two labelled answers, its hunk. */
+export interface AdjudicationPromptAnswer {
+  /** The seat label (e.g. "Claude", "Codex"). */
+  readonly model: string;
+  /** That seat's verbatim answer — a concern, or "no concern raised here" for a solo. */
+  readonly answer: string;
+}
+
+export interface AdjudicationPromptRow {
+  /** The reference key the runner minted (e.g. "a1"); the model echoes it back. */
+  readonly ref: string;
+  readonly severity: string;
+  readonly anchor: string;
+  /** BOTH seats' answers, in order, with explicit polarity carried in the text. */
+  readonly answers: readonly AdjudicationPromptAnswer[];
+  /** The offered hunk lines the concern was raised over (may be empty when unavailable). */
+  readonly hunk: string;
+}
+
+/**
+ * Render one adjudication prompt (issue #41): the contract's four slots, the REAL
+ * file window (line-numbered so the model can cite exact lines), and the contested
+ * row with both seats' labelled answers stated with explicit polarity at the anchor.
+ * Pure and deterministic — the same inputs render byte-for-byte identically. A turn
+ * covers ONE row, so a command it runs is unambiguously that row's.
+ */
+export function renderFindingAdjudicationPrompt(
+  contract: AdjudicationContract,
+  batch: {
+    readonly file: VerificationPromptFile;
+    readonly row: AdjudicationPromptRow;
+  },
+): string {
+  const numbered = batch.file.text
+    .split("\n")
+    .map((line, index) => `${batch.file.startLine + index}\t${line}`)
+    .join("\n");
+  const answers = batch.row.answers
+    .map((a) => `- ${a.model} answers: ${a.answer}`)
+    .join("\n");
+  return [
+    `# Rennet cross-harness adjudication@${contract.version}`,
+    "",
+    "## Role",
+    contract.role,
+    "",
+    "## Task",
+    contract.task,
+    "",
+    "## Discipline",
+    contract.discipline,
+    "",
+    "## Failure valve",
+    contract.failureValve,
+    "",
+    `## File under adjudication: ${batch.file.path} (lines ${batch.file.startLine}-${batch.file.endLine})`,
+    "The real file content around the contested location, beyond the offered hunk. Cite exact line numbers.",
+    "",
+    numbered,
+    "",
+    `## Contested row ${batch.row.ref} — severity: ${batch.row.severity}, at ${batch.row.anchor}`,
+    "The two seats disagreed here. Their labelled answers, with polarity:",
+    answers,
+    batch.row.hunk.trim().length > 0
+      ? `Offered hunk:\n${batch.row.hunk}`
+      : "Offered hunk: (unavailable)",
+    "",
+  ].join("\n");
+}
+
 // ── Prompt assembly (§6.3) ────────────────────────────────────────────────────
 
 /** The fixed layer order. Earlier is higher priority; later layers drop first. */
