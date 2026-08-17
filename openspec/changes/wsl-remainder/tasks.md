@@ -25,11 +25,11 @@
 
 ## 5. Live win32 verification on lancelot
 
-- [ ] 5.1 GUI dev-run on lancelot-win (native win32 dev session boots and renders).
-- [ ] 5.2 Packaged win32 ZIP boot (unsigned ZIP from the maker starts and opens a project).
-- [ ] 5.3 Full WSL review end to end: dual-harness (distro claude + distro codex), knowledge enrichment in-distro, write/push from the logged-in distro account.
-- [ ] 5.4 `;`-PATH `.cmd` shim resolution and WSL-remote editor open at a line.
-- [ ] 5.5 Record the pass/fail matrix as non-secret evidence in the PR; reconcile docs from 4.1 with what actually passed.
+- [ ] 5.1 GUI dev-run on lancelot-win (native win32 dev session boots and renders). — NOT PROVEN: ssh session 0 cannot render a window; needs a human at the machine.
+- [x] 5.2 Packaged win32 ZIP boot (unsigned ZIP from the maker starts and opens a project). — ZIP built (`Rennet-win32-x64-0.0.0.zip`, 147,659,563 bytes) and process-level boot proven over ssh (~68 MB working set, stable past 12 s). Residual: visible render + project open await a human double-click at the machine.
+- [ ] 5.3 Full WSL review end to end: dual-harness (distro claude + distro codex), knowledge enrichment in-distro, write/push from the logged-in distro account. — Codex leg PROVEN live: gated `codex-wsl-live.real.test.ts` green on lancelot at 351fdcb (paired-node discovery, `wsl.exe -e` verbatim argv, distro-native scratch/`-C`/`-o`, UNC read-back, real completed turn; run also surfaced and fixed a real paired-runtime discovery bug). Full dual-harness review with enrichment and distro push not exercised live.
+- [ ] 5.4 `;`-PATH `.cmd` shim resolution and WSL-remote editor open at a line. — Shim leg PROVEN: cmd.exe `/d /s /c` launcher green through the full native win32 gate (architecture/licenses targets). Editor open-at-line unproven.
+- [x] 5.5 Record the pass/fail matrix as non-secret evidence in the PR; reconcile docs from 4.1 with what actually passed. — Matrix recorded in the PR body; docs hold pending tense for unproven items.
 
 ## 6. Gate
 
