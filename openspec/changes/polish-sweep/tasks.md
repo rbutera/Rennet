@@ -44,4 +44,4 @@ Red-first: every code change lands its failing control before the fix. Close-wit
 ## 7. Docs + gate
 
 - [x] 7.1 Update `docs/src/content/docs/developing/reference/delivery-order.md`: mark wave 11's sweep delivered with the per-issue outcomes (four fixes, two evidence closes), leaving #85 as the open closing milestone.
-- [ ] 7.2 `pnpm check` green before push (includes a positive control: the red-first tests above each failed before their fix).
+- [x] 7.2 `pnpm check` green before push (includes a positive control: the red-first tests above each failed before their fix).
