@@ -178,6 +178,7 @@ function harness(
     submitPullRequest?: DispatchDeps["submitPullRequest"];
     draftDeltaDigest?: DispatchDeps["draftDeltaDigest"];
     flaggedReview?: DispatchDeps["flaggedReview"];
+    readUiEvidence?: DispatchDeps["readUiEvidence"];
     repositoryExists?: DispatchDeps["repositoryExists"];
   } = {},
 ): {
@@ -328,6 +329,7 @@ function harness(
     // A test may override the runner (e.g. to stamp #309 blockingStates like the live
     // runner does) via `extra.flaggedReview`.
     flaggedReview: extra.flaggedReview ?? flaggedReviewSpy,
+    readUiEvidence: extra.readUiEvidence ?? (() => Promise.resolve(null)),
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
     reviewAsk,
     threadPersistence,
@@ -371,6 +373,67 @@ async function capturedReview(dispatch: ReturnType<typeof createDispatch>): Prom
   })) as { review: Review };
   return result.review;
 }
+
+describe("createDispatch — review.uiEvidence (#183)", () => {
+  it("returns the confined screenshot as an ok data URL for the addressed review", async () => {
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        readUiEvidence: (reviewId, path) =>
+          Promise.resolve({
+            status: "ok",
+            dataUrl: `data:image/png;base64,${reviewId}:${path}`,
+          }),
+      },
+    );
+    const review = await capturedReview(dispatch);
+    const result = await dispatch("review.uiEvidence", { reviewId: review.id, path: "a.png" });
+    expect(result).toEqual({ status: "ok", dataUrl: `data:image/png;base64,${review.id}:a.png` });
+  });
+
+  it("preserves an oversized evidence status without reading bytes into IPC", async () => {
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      { readUiEvidence: () => Promise.resolve({ status: "oversized" }) },
+    );
+    const review = await capturedReview(dispatch);
+    await expect(
+      dispatch("review.uiEvidence", { reviewId: review.id, path: "huge.png" }),
+    ).resolves.toEqual({ status: "oversized" });
+  });
+
+  it("returns not-found when the evidence read yields null (missing/escaping — honest, not a crash)", async () => {
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        readUiEvidence: () => Promise.resolve(null),
+      },
+    );
+    const review = await capturedReview(dispatch);
+    const result = await dispatch("review.uiEvidence", {
+      reviewId: review.id,
+      path: "../escape.png",
+    });
+    expect(result).toEqual({ status: "not-found" });
+  });
+
+  it("refuses an unknown review id (the store gate, not a verify-ui concern)", async () => {
+    const { dispatch } = harness(
+      fakePublishPort(),
+      {},
+      {
+        readUiEvidence: () =>
+          Promise.resolve({ status: "ok", dataUrl: "data:image/png;base64,AAAA" }),
+      },
+    );
+    await expect(
+      dispatch("review.uiEvidence", { reviewId: "nope", path: "a.png" }),
+    ).rejects.toThrow();
+  });
+});
 
 describe("createDispatch — review.deltaDigest (#73 / M25)", () => {
   // A capture port that yields a DISTINCT successor on regenerate, so the fold stamps a
@@ -816,6 +879,7 @@ describe("createDispatch — flagged.review routing (the live finding runner, is
     expect(immediate.status).toBe("ok");
     if (immediate.status !== "ok") throw new Error("expected ok");
     expect(immediate.findings).toHaveLength(1);
+    expect(immediate.lateEnrichmentScheduled).toBe(true);
     expect(immediate.findings[0]?.agreement.kind).toBe("disagree");
     expect(
       immediate.findings[0]?.agreement.kind === "disagree"
@@ -2221,6 +2285,7 @@ function frontDoorHarness(seed: {
     cleanupWorktree: () => Promise.resolve({ ok: true }),
     flaggedReview: () =>
       Promise.resolve({ review: { status: "ok", findings: [] }, adjudication: null }),
+    readUiEvidence: () => Promise.resolve(null),
     noiseReview: () => Promise.resolve({ status: "ok", groups: [] }),
     reviewAsk: {
       askOrchestrator: () =>

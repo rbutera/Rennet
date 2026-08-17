@@ -34,15 +34,13 @@ import { readFileSync } from "node:fs";
 import { isAbsolute, join, normalize, relative, sep } from "node:path";
 import type {
   HarnessPort,
-  ToolCall,
-  ToolCallId,
-  VerificationCommand,
   VerificationFileReader,
   VerificationFileWindow,
   VerificationTurnResult,
 } from "@rennet/core";
 import { findingVerificationJsonSchema } from "@rennet/protocol";
 import type { Hunk, Patchset } from "@rennet/types";
+import { createExecObservingTurn, EXEC_OUTPUT_TAIL } from "./exec-observing-turn";
 import type { GitExec } from "./git-range-diff";
 
 /** Extra file lines to read on EACH side of a finding's hunk (the "more than the hunk" window). */
@@ -253,144 +251,28 @@ export interface VerificationTurnOptions {
 }
 
 /** Max chars of a command's output kept as executed evidence (issue #259). */
-export const VERIFICATION_OUTPUT_TAIL = 800;
-
-/** The command line an exec tool call ran; the Bash `command`, falling back to the tool name. */
-function execCommandLine(call: ToolCall): string {
-  const command = call.input.command;
-  if (typeof command === "string" && command.trim().length > 0) return command;
-  return call.name;
-}
-
-/** Keep the last {@link VERIFICATION_OUTPUT_TAIL} chars — the tail is where a test/build verdict prints. */
-function outputTail(text: string): string {
-  return text.length <= VERIFICATION_OUTPUT_TAIL ? text : text.slice(-VERIFICATION_OUTPUT_TAIL);
-}
+export const VERIFICATION_OUTPUT_TAIL = EXEC_OUTPUT_TAIL;
 
 /**
- * Build the fresh-session verification turn core injects. Each call opens a NEW
- * CAPABLE session (no contamination from the generating model's context, but the full
- * default toolset — it may read, and it may RUN the code to reproduce, issue #259),
- * output-constrained to the verification schema, sends the prompt, drains to the
- * terminal frame, and maps it: a completed turn with `structuredOutput` is an
- * emitted body (threading the real token usage when the frame carried it); anything
- * else is a turn failure — which core turns into an honest inconclusive, never a
- * drop. The session is always closed.
- *
- * While draining, it OBSERVES the exec tool calls the turn actually made — every
- * `tool.started` of kind `exec` paired with its `tool.output` — and threads them back
- * as the turn's `execution`. This is the independent proof that reproduction RAN,
- * separate from whatever the model wrote as its evidence: a reproduced verdict backed
- * by an executed command is proof-by-running, and core counts it apart from a verdict
- * reasoned off read code. A turn that ran nothing carries no `execution` at all.
+ * Build the fresh-session verification turn core injects. A thin wrapper over the
+ * shared {@link createExecObservingTurn} (the intricate exec-attribution rules live
+ * in ONE place, shared with verify-ui #183), differing only in the structured-output
+ * schema it constrains the session to: `findingVerificationJsonSchema`. Each call
+ * opens a NEW CAPABLE session (no contamination from the generating model's context,
+ * but the full toolset — it may read, and it may RUN the code to reproduce, issue
+ * #259), observes the exec calls it made as independent proof-of-run (#259/#268), and
+ * maps the terminal frame; anything but a completed structured emission is a turn
+ * failure core turns into an honest inconclusive, never a drop.
  */
 export function createVerificationTurn(
   port: HarnessPort,
   options: VerificationTurnOptions,
 ): (prompt: string) => Promise<VerificationTurnResult> {
-  const outputSchema = findingVerificationJsonSchema();
-  return async function runVerificationTurn(prompt: string): Promise<VerificationTurnResult> {
-    const session = await port.createSession({
-      cwd: options.cwd,
-      outputSchema,
-      ...(options.model === undefined ? {} : { model: options.model }),
-      ...(options.signal === undefined ? {} : { signal: options.signal }),
-    });
-    // The exec calls this turn made, keyed by call id in the order they started. A
-    // call is only proof of a RUN once its `tool.output` arrives (issue #268 F1): the
-    // `paired` flag flips then, its real ok/output are filled in, and only paired calls
-    // become `execution.commands`. A call that started but was denied or interrupted
-    // before any output stays `paired: false` with `ok: false` — kept separate, never
-    // reported as a clean run. Default `ok: false` so an un-paired call never reads as fine.
-    //
-    // A SECOND `tool.started` bearing an id already seen (#268 fix round, Gap A) marks the
-    // record `ambiguous`: the same id now covers two different commands, so its
-    // `tool.output` cannot be attributed to either. An ambiguous record is excluded from
-    // BOTH `commands` and `incomplete` — we know something ran, we cannot say what, so it
-    // is never surfaced as proof (fail closed). Overwriting the command text (or trusting
-    // the first) would print one command with another's output.
-    const execByCall = new Map<
-      ToolCallId,
-      { command: string; ok: boolean; outputTail: string; paired: boolean; ambiguous: boolean }
-    >();
-    const execOrder: ToolCallId[] = [];
-    try {
-      await session.send({ prompt });
-      for await (const event of session.events) {
-        if (event.kind === "tool.started" && event.call.kind === "exec") {
-          const existing = execByCall.get(event.call.id);
-          if (existing) {
-            existing.ambiguous = true;
-          } else {
-            execByCall.set(event.call.id, {
-              command: execCommandLine(event.call),
-              ok: false,
-              outputTail: "",
-              paired: false,
-              ambiguous: false,
-            });
-            execOrder.push(event.call.id);
-          }
-          continue;
-        }
-        if (event.kind === "tool.output") {
-          const record = execByCall.get(event.callId);
-          if (record) {
-            record.ok = event.ok;
-            record.outputTail = outputTail(event.text);
-            record.paired = true;
-          }
-          continue;
-        }
-        if (event.kind === "error") {
-          return { status: "failed", message: event.error.message };
-        }
-        if (event.kind === "session.ended") {
-          const outcome = event.outcome;
-          if (outcome.status === "completed") {
-            if (outcome.structuredOutput === undefined) {
-              return {
-                status: "failed",
-                message: "the harness completed the verification turn without structured output",
-              };
-            }
-            // Only PAIRED calls (started AND output-observed) are proof of a run; the
-            // rest started but were denied/interrupted and are kept separate (#268 F1).
-            const commands: VerificationCommand[] = [];
-            const incomplete: VerificationCommand[] = [];
-            for (const id of execOrder) {
-              const record = execByCall.get(id);
-              if (!record || record.ambiguous) continue; // ambiguous: something ran, unattributable
-              const command: VerificationCommand = {
-                command: record.command,
-                ok: record.ok,
-                outputTail: record.outputTail,
-              };
-              (record.paired ? commands : incomplete).push(command);
-            }
-            const execution =
-              commands.length > 0 || incomplete.length > 0
-                ? { commands, ...(incomplete.length > 0 ? { incomplete } : {}) }
-                : undefined;
-            return {
-              status: "emitted",
-              body: outcome.structuredOutput,
-              ...(outcome.usage === undefined ? {} : { tokens: outcome.usage }),
-              ...(execution ? { execution } : {}),
-            };
-          }
-          if (outcome.status === "failed") {
-            return { status: "failed", message: outcome.error.message };
-          }
-          return { status: "failed", message: "the verification turn was cancelled" };
-        }
-      }
-      return {
-        status: "failed",
-        message: "the verification stream ended without a terminal frame",
-      };
-    } finally {
-      await session.close();
-    }
-  };
+  return createExecObservingTurn(port, {
+    cwd: options.cwd,
+    ...(options.model === undefined ? {} : { model: options.model }),
+    ...(options.signal === undefined ? {} : { signal: options.signal }),
+    outputSchema: findingVerificationJsonSchema(),
+    label: "verification",
+  });
 }

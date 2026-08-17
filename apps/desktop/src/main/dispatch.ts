@@ -252,6 +252,17 @@ export interface DispatchDeps {
     session: ReviewIntelligenceSession,
   ): Promise<FlaggedReviewRun>;
   /**
+   * The verify-ui evidence read (issue #183): return one screenshot the verify-ui pass
+   * captured for a review, base64 data-URL encoded, so the Flagged lens strip renders
+   * it as a thumbnail without the bytes riding the review snapshot. Fail-closed: an
+   * escaping path or a missing file returns `null` (the strip shows a missing-evidence
+   * note). A pure read confined to the review's evidence directory — no spend, no egress.
+   */
+  readUiEvidence(
+    reviewId: string,
+    path: string,
+  ): Promise<{ status: "ok"; dataUrl: string } | { status: "oversized" } | null>;
+  /**
    * The Noise lens's input (issue #34): the low-signal churn grouped away for a
    * review, each group tagged rule vs noise job. The LIVE noise-classification runner
    * (#34) is wired behind this — it decomposes the review's active patchset and runs a
@@ -474,7 +485,7 @@ interface LiveProjectRun {
 export interface FlaggedReviewRun {
   /** Verified rows ready for immediate delivery. */
   readonly review: FlaggedReview;
-  /** Optional post-hoc adjudication over those rows. Never awaited by `flagged.review`. */
+  /** Optional post-hoc adjudication and/or verify-ui enrichment. Never awaited by `flagged.review`. */
   readonly adjudication: Promise<FlaggedReview> | null;
 }
 
@@ -1011,6 +1022,7 @@ export function createDispatch(
         return parseCommandOutput(name, {
           ...run.review,
           patchsetId: review.activePatchsetId,
+          ...(run.adjudication ? { lateEnrichmentScheduled: true as const } : {}),
         });
       }
       case "flagged.adjudication": {
@@ -1020,6 +1032,17 @@ export function createDispatch(
         if (result.status === "pending") return parseCommandOutput(name, result);
         if (result.status === "failed") return parseCommandOutput(name, result);
         return parseCommandOutput(name, { status: "complete", review: result.review });
+      }
+      case "review.uiEvidence": {
+        // The verify-ui screenshot read (#183). A PURE READ confined to the review's
+        // own evidence directory: an escaping path or a missing file is `not-found`
+        // (the strip shows a plain missing-evidence note), never a crash, never a read
+        // outside the review's directory, no spend. We resolve the review to reuse the
+        // repository-access gate the store already enforces before touching disk.
+        const input = parseCommandInput(name, rawInput);
+        requireReviewById(input.reviewId);
+        const evidence = await deps.readUiEvidence(input.reviewId, input.path);
+        return parseCommandOutput(name, evidence ?? { status: "not-found" });
       }
       // ── Ask the AI a question about the review (issue #139) ────────────────────
       case "review.ask": {

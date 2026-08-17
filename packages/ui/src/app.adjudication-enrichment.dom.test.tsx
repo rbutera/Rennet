@@ -142,4 +142,76 @@ describe("RennetApp — late adjudication enrichment (#41)", () => {
     expect(handle.container.querySelector('[data-adjudication="supported"]')).not.toBeNull();
     expect(handle.container.textContent).toContain("line 4 reads items[items.length]");
   });
+
+  it("polls scheduled verify-ui enrichment for an all-concur empty review", async () => {
+    const immediate: FlaggedReview = {
+      status: "ok",
+      findings: [],
+      patchsetId: review.activePatchsetId,
+      uiVerification: { status: "pending", classifierVersion: 1 },
+      lateEnrichmentScheduled: true,
+    };
+    let resolveRead: ((value: { status: "complete"; review: FlaggedReview }) => void) | undefined;
+    const lateRead = new Promise<{ status: "complete"; review: FlaggedReview }>((resolve) => {
+      resolveRead = resolve;
+    });
+    let lateReads = 0;
+    const invoke = async (name: string): Promise<unknown> => {
+      switch (name) {
+        case "app.bootstrap":
+          return { review: structuredClone(review), repositoryPresent: true };
+        case "review.checkFreshness":
+          return { review: structuredClone(review) };
+        case "review.canvases":
+          return { canvases: demoCanvases(), elementDiffs: {} };
+        case "flagged.review":
+          return immediate;
+        case "flagged.adjudication":
+          lateReads += 1;
+          return lateRead;
+        case "noise.review":
+          return { status: "ok", groups: [] };
+        default:
+          return {};
+      }
+    };
+    const bridge: RennetBridge = { invoke: invoke as unknown as RennetBridge["invoke"] };
+
+    let handle!: ReturnType<typeof mount>;
+    await act(async () => {
+      handle = mount(<RennetApp bridge={bridge} />);
+      await flush();
+    });
+    await act(async () => {
+      fireEvent.click(handle.getByRole("tab", { name: "Flagged" }));
+      await flush();
+    });
+
+    expect(handle.container.textContent).toContain("UI check still running");
+    expect(handle.container.textContent).not.toContain("ran clean");
+    expect(resolveRead).toBeDefined();
+    expect(lateReads).toBe(1);
+
+    await act(async () => {
+      resolveRead?.({
+        status: "complete",
+        review: {
+          status: "ok",
+          findings: [],
+          patchsetId: review.activePatchsetId,
+          uiVerification: {
+            status: "ran",
+            classifierVersion: 1,
+            mounted: false,
+            observationCount: 0,
+            screenshots: [],
+          },
+        },
+      });
+      await flush();
+    });
+
+    expect(handle.container.querySelector(".ui-verification-ran")).not.toBeNull();
+    expect(handle.container.textContent).not.toContain("UI check still running");
+  });
 });

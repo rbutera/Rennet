@@ -7,12 +7,15 @@ import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
   applyVisibilitySwitch,
+  beginUiEvidenceRun,
+  bindUiEvidenceRun,
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
   CodexAdapter,
   type CodexAvailability,
   claudeHandoffRunPort,
   cleanupWorktree,
+  completeUiEvidenceRun,
   createClaudeAdjudicationTurn,
   createClaudeCiRefinementTurn,
   createClaudeHarness,
@@ -25,6 +28,7 @@ import {
   createGitHubProjectPrSource,
   createOmpTurnTransport,
   createRefPinner,
+  createUiVerificationTurn,
   createVerificationFileReaderForPatchset,
   createVerificationTurn,
   defaultCodexDiscoveryDeps,
@@ -58,6 +62,7 @@ import {
   GitHubPublishAdapter,
   gitForRepoFactory,
   type HttpFetch,
+  inspectUiEvidence,
   KnowledgeStore,
   loadConventionCatalogue,
   loadProjectDetail,
@@ -70,6 +75,7 @@ import {
   projectHypothesisRepoContext,
   RepoWatcher,
   readOpenSpecChange,
+  readUiEvidence,
   repoHasSubmodules,
   repoRecordOf,
   resolveBaseRef,
@@ -87,6 +93,7 @@ import {
   buildReviewCanvases,
   type CodexExecutor,
   type CodexUtilityPort,
+  classifyUiSurface,
   createHarnessRunTurn,
   createInvocationBudget,
   DEFAULT_MAX_HARNESS_INVOCATIONS,
@@ -117,6 +124,7 @@ import {
   runHandoffTurn as runHandoffTurnCore,
   runHypothesisPass,
   runNoiseAngle,
+  runUiVerification,
   toDistroPath,
   toWindowsView,
   verifyFlaggedReview,
@@ -154,7 +162,9 @@ import { createLiveDeltaDigestPort } from "./delta-digest-live";
 import { createDispatch, type FlaggedReviewRun } from "./dispatch";
 import { createLiveDraftPrBodyPort } from "./draft-pr-body-live";
 import { stampBlockingStates } from "./flagged-blocking-states";
+import { composeFlaggedLateEnrichment } from "./flagged-late-enrichment";
 import { projectUnavailableDeepVerification } from "./flagged-review-verification";
+import { applyImmediateUiVerification } from "./flagged-ui-verification";
 import { createLiveComposeBundle } from "./handoff-compose-live";
 import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
 import { LiveTurnRegistry } from "./live-turn-registry";
@@ -1314,14 +1324,68 @@ async function runFlaggedReviewWithContextFeed(
   // deterministic, not a model result, so it survives a failed model run). The
   // Flagged lens + PublishSheet disclose it as render-only honest copy; it NEVER
   // gates the sign (Rule Zero). Mirrors the #160 patchsetId stamp.
-  const immediate = stampBlockingStates(withCiSignal, decomposition);
-  const adjudication =
+  const stamped = stampBlockingStates(withCiSignal, decomposition);
+  // ── verify-ui (#183): mount the changed UI surface, screenshot, a11y, intent ──
+  // The classifier is deterministic and $0. A backend-only changeset records the
+  // distinct `not-ui` status SYNCHRONOUSLY (no turn, no enrichment cycle) — "not
+  // applicable", never an all-clear. A UI-touching deep review with a Claude adapter
+  // gets ONE budget-bounded turn, but that turn is SLOW (install/build/mount), so it
+  // rides the SAME non-blocking late-enrichment channel as adjudication (#349 lesson):
+  // it NEVER delays the immediate row/canvas delivery, and its observations (ordinary
+  // findings) + status replace the rows via `flagged.adjudication` when it lands.
+  const uiClassification = classifyUiSurface(patchset.files);
+  const immediate = applyImmediateUiVerification(stamped, {
+    touchesUi: uiClassification.touchesUi,
+    classifierVersion: uiClassification.version,
+    deepReview,
+    verifierAvailable: Boolean(adapter),
+  });
+  const uiVerification =
+    deepReview && adapter && uiClassification.touchesUi
+      ? (async () => {
+          const evidenceRun = await beginUiEvidenceRun(
+            join(app.getPath("userData"), "ui-evidence"),
+            review.id,
+            patchset.id,
+          );
+          try {
+            const uiResult = await runUiVerification({
+              files: patchset.files,
+              hunks: decomposition.hunks,
+              ...(intent ? { intent } : {}),
+              evidenceDir: evidenceRun.directory,
+              runTurn: createUiVerificationTurn(adapter, { cwd: review.repositoryRoot }),
+              budget: sharedBudget,
+              inspectEvidence: (path) => inspectUiEvidence(evidenceRun.directory, path),
+              maxTurns: DEFAULT_REVIEW_INTELLIGENCE_BUDGET.uiVerification.maxTurns,
+            });
+            const bound = bindUiEvidenceRun(uiResult, evidenceRun);
+            await completeUiEvidenceRun(
+              evidenceRun,
+              bound.status.status === "ran" && bound.status.screenshots.length > 0,
+            );
+            return bound;
+          } catch (error) {
+            await completeUiEvidenceRun(evidenceRun, false);
+            throw error;
+          }
+        })()
+      : null;
+  const adjudicated =
     adjudicationOptions &&
     immediate.status === "ok" &&
     immediate.findings.some((finding) => finding.agreement.kind === "disagree")
       ? adjudicateFlaggedReview(immediate, adjudicationOptions).then(({ review }) => review)
       : null;
-  return { review: immediate, adjudication };
+  // The two late passes start independently and compose only when their results are
+  // ready. The immediate response says late enrichment was scheduled, so an all-concur
+  // or zero-row renderer polls too; neither turn delays row delivery (Rule Zero).
+  const composed = composeFlaggedLateEnrichment({
+    immediate,
+    adjudication: adjudicated,
+    uiVerification,
+  });
+  return { review: composed.review, adjudication: composed.enrichment };
 }
 
 async function runFlaggedReview(
@@ -1919,6 +1983,12 @@ app.whenReady().then(async () => {
     // DEFAULT now (Rai's mandate, 2026-08-11); an explicit opt-down gives single-Claude
     // quick. The boundary is unchanged.
     flaggedReview: runFlaggedReview,
+    // The verify-ui screenshot read (#183): confined to the review's own evidence
+    // directory under the app's user-data dir — the SAME `<userData>/ui-evidence/
+    // <reviewId>/` the verify-ui turn wrote its PNGs into. Fail-closed (escape/missing
+    // → null), no spend, no egress.
+    readUiEvidence: (reviewId, path) =>
+      readUiEvidence(join(app.getPath("userData"), "ui-evidence"), reviewId, path),
     // The Noise lens (issue #34): the low-signal churn grouped away, each group tagged
     // rule vs noise job. This is the LIVE noise-classification runner — a real model
     // turn over the review's diff, replacing the fixture, behind the unchanged

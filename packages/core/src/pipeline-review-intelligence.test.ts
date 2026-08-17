@@ -162,6 +162,7 @@ describe("ReviewIntelligenceBudget defaults", () => {
       dualModel: { enabled: true, lenses: ["flagged"] },
       verification: { maxVerifications: 6, batchSize: 3 },
       adjudication: { maxAdjudications: 4 },
+      uiVerification: { maxTurns: 1 },
     });
     expect(reviewInvocationCeiling(DEFAULT_REVIEW_INTELLIGENCE_BUDGET, true)).toBe(12);
     expect(reviewInvocationCeiling(DEFAULT_REVIEW_INTELLIGENCE_BUDGET, false)).toBe(6);

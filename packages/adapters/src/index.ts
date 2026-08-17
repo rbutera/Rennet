@@ -139,6 +139,11 @@ export {
   failedDecisionsRunStatus,
   okDecisionsRunStatus,
 } from "./decisions-fixture";
+export {
+  createExecObservingTurn,
+  EXEC_OUTPUT_TAIL,
+  type ExecObservingTurnOptions,
+} from "./exec-observing-turn";
 export { executeExternalCommand } from "./external-command";
 export {
   defaultGlobalConfigPath,
@@ -462,6 +467,17 @@ export {
   type MetricsCollector,
   type TurnMetric,
 } from "./turn-metrics";
+export {
+  beginUiEvidenceRun,
+  bindUiEvidenceRun,
+  completeUiEvidenceRun,
+  createUiVerificationTurn,
+  inspectUiEvidence,
+  MAX_RETAINED_UI_EVIDENCE_PATCHSETS,
+  readUiEvidence,
+  type UiEvidenceRun,
+  type UiVerificationTurnOptions,
+} from "./ui-verification-backend";
 export {
   discoverWorktreeIdentities,
   type LocalWorktree,

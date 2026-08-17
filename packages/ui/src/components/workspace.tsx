@@ -61,7 +61,7 @@ import { BatchView } from "./batch-view";
 import { CodeView } from "./code-view";
 import { CoverageMosaicView } from "./coverage";
 import { DecisionsCanvas } from "./decisions";
-import { type DeepReviewControl, FlaggedLens } from "./flagged";
+import { type DeepReviewControl, FlaggedLens, type UiEvidenceLoader } from "./flagged";
 import { FlatCanvas } from "./flat";
 import { GranularityAuthor, type GranularityContext } from "./granularity-author";
 import { HypothesisReadingFrame } from "./hypothesis";
@@ -154,6 +154,14 @@ export interface CanvasWorkspaceProps {
    * is unchanged when it is omitted.
    */
   deepReview?: DeepReviewControl;
+
+  /**
+   * The verify-ui screenshot loader (issue #183). Present ⇒ the Flagged lens's
+   * verify-ui strip loads each captured screenshot on demand via the host's
+   * `review.uiEvidence` command. Absent ⇒ no thumbnails (a host with no bridge, a
+   * demo, or a test) — the strip still shows its status and observation count.
+   */
+  loadUiEvidence?: UiEvidenceLoader;
 
   /**
    * The Noise lens's input (issue #34), behind the typed boundary. When the noise
@@ -1134,6 +1142,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
             index={buildFlaggedIndex(props.flaggedReview ?? { status: "ok", findings: [] })}
             onJumpToAnchor={jumpToAnchor}
             deepReview={props.deepReview}
+            loadUiEvidence={props.loadUiEvidence}
           />
         ) : angle === "noise" ? (
           <NoiseLens

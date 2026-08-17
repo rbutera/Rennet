@@ -5,9 +5,20 @@ import type {
   DecompositionBlockingState,
   DualReviewNote,
   FindingAdjudication,
+  UiScreenshot,
+  UiVerification,
 } from "@rennet/types";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import type { FlaggedIndex, FlaggedRow } from "../canvas/flagged";
+
+/**
+ * Load one verify-ui screenshot's data URL (issue #183). The Flagged lens strip calls
+ * this per screenshot; the desktop host wires it to the `review.uiEvidence` command,
+ * which reads the PNG from the review's evidence directory. `null` ⇒ the file no
+ * longer resolves (moved store, escaping path) — the strip shows a plain
+ * missing-evidence note, never a broken image or a crash.
+ */
+export type UiEvidenceLoader = (path: string) => Promise<string | null>;
 
 /**
  * The dual-model affordance (issue #191). Dual-model review is the DEFAULT (Rai's
@@ -218,6 +229,120 @@ function Verification({ verification }: { verification: FlaggedRow["verification
   );
 }
 
+/**
+ * One verify-ui screenshot thumbnail (issue #183). The bytes are read ON DEMAND via
+ * the injected loader (the `review.uiEvidence` command), never inlined into the review
+ * snapshot. While loading, the label stands in; a `null` load (a moved store, a file
+ * that no longer resolves) degrades to a plain missing-evidence note — never a broken
+ * image, never a crash (the spec's honest-degradation requirement).
+ */
+function UiEvidenceThumb({
+  screenshot,
+  load,
+}: {
+  screenshot: UiScreenshot;
+  load: UiEvidenceLoader;
+}) {
+  const [dataUrl, setDataUrl] = useState<string | null | "loading">("loading");
+  useEffect(() => {
+    let alive = true;
+    load(screenshot.path).then(
+      (url) => {
+        if (alive) setDataUrl(url);
+      },
+      () => {
+        if (alive) setDataUrl(null);
+      },
+    );
+    return () => {
+      alive = false;
+    };
+  }, [load, screenshot.path]);
+  if (dataUrl === "loading") {
+    return <span className="ui-evidence-loading">{screenshot.label}</span>;
+  }
+  if (dataUrl === null) {
+    return (
+      <span className="ui-evidence-missing" role="note">
+        {screenshot.label}: screenshot unavailable
+      </span>
+    );
+  }
+  return (
+    <figure className="ui-evidence-shot">
+      <img src={dataUrl} alt={screenshot.label} />
+      <figcaption>{screenshot.label}</figcaption>
+    </figure>
+  );
+}
+
+/**
+ * The verify-ui strip (issue #183): the evidence the mount-and-screenshot pass
+ * produced. When it `ran`, the strip shows how it mounted (mounted vs. a labelled
+ * static review), the observation count (the observations themselves are ordinary
+ * findings in the list above), and the captured screenshots inline. When it was
+ * `unavailable`, the strip shows the ONE honest reason — could-not-check, NEVER an
+ * all-clear. For `not-ui` (or an absent field) it renders nothing. It never gates any
+ * action (Rule Zero); it is render-only honest copy.
+ */
+function UiVerificationStrip({
+  status,
+  loadUiEvidence,
+}: {
+  status: UiVerification | undefined;
+  loadUiEvidence?: UiEvidenceLoader;
+}) {
+  if (!status || status.status === "not-ui") return null;
+  if (status.status === "pending") {
+    return (
+      <div className="ui-verification ui-verification-pending" role="note" data-status="pending">
+        <span className="ui-verification-label">verify-ui</span>
+        <span className="ui-verification-reason">
+          UI check still running — the current findings are available, but this is not a full
+          all-clear.
+        </span>
+      </div>
+    );
+  }
+  if (status.status === "unavailable") {
+    return (
+      <div
+        className="ui-verification ui-verification-unavailable"
+        role="note"
+        data-status="unavailable"
+      >
+        <span className="ui-verification-label">verify-ui</span>
+        <span className="ui-verification-reason">
+          Couldn't check the rendered UI, so this is not an all-clear: {status.reason}
+        </span>
+      </div>
+    );
+  }
+  return (
+    <div
+      className="ui-verification ui-verification-ran"
+      data-status="ran"
+      data-mounted={status.mounted}
+    >
+      <div className="ui-verification-head">
+        <span className="ui-verification-label">
+          {status.mounted ? "verify-ui · mounted" : "verify-ui · static review"}
+        </span>
+        <span className="ui-verification-count">
+          {status.observationCount} {status.observationCount === 1 ? "observation" : "observations"}
+        </span>
+      </div>
+      {status.screenshots.length > 0 && loadUiEvidence ? (
+        <div className="ui-verification-shots">
+          {status.screenshots.map((screenshot) => (
+            <UiEvidenceThumb key={screenshot.path} screenshot={screenshot} load={loadUiEvidence} />
+          ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function FlagRow({
   row,
   onJumpToAnchor,
@@ -296,6 +421,7 @@ export function FlaggedLens({
   index,
   onJumpToAnchor,
   deepReview,
+  loadUiEvidence,
 }: {
   index: FlaggedIndex;
   onJumpToAnchor(anchor: string): void;
@@ -306,6 +432,13 @@ export function FlaggedLens({
    * back). Dual is the default; this is the opt-down, not an opt-in.
    */
   deepReview?: DeepReviewControl;
+  /**
+   * The verify-ui screenshot loader (issue #183). Absent ⇒ the strip renders its
+   * status and observation count but no thumbnails (a host with no bridge, or a
+   * fixture). Present ⇒ each captured screenshot loads on demand via the
+   * `review.uiEvidence` command the host wires here.
+   */
+  loadUiEvidence?: UiEvidenceLoader;
 }) {
   // A runner that did not complete — kept LOUDLY distinct from "nothing flagged".
   if (index.state === "failed") {
@@ -320,6 +453,7 @@ export function FlaggedLens({
         </div>
         <BlockedIngestionDisclosure states={index.blockingStates ?? []} />
         <CiSignalPanel signal={index.ciSignal} />
+        <UiVerificationStrip status={index.uiVerification} loadUiEvidence={loadUiEvidence} />
       </div>
     );
   }
@@ -355,8 +489,18 @@ export function FlaggedLens({
         ) : null}
       </div>
       <CiSignalPanel signal={index.ciSignal} />
+      <UiVerificationStrip status={index.uiVerification} loadUiEvidence={loadUiEvidence} />
       {index.total === 0 ? (
-        blockingStates.length > 0 ? (
+        index.uiVerification?.status === "pending" ? (
+          <p className="flagged-empty flagged-empty-qualified">
+            Nothing has been flagged yet — the UI check is still running, so this is not a full
+            all-clear.
+          </p>
+        ) : index.uiVerification?.status === "unavailable" ? (
+          <p className="flagged-empty flagged-empty-qualified">
+            Nothing was flagged, but Rennet couldn't check the UI — this is not a full all-clear.
+          </p>
+        ) : blockingStates.length > 0 ? (
           // Blocked ingestion makes the unconditional "ran clean" copy a lie: nothing
           // was flagged only IN WHAT COULD BE READ. Qualified copy + the disclosure
           // replace it (R18/#309). This is honest copy, not a gate.

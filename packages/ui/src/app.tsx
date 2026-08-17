@@ -1072,13 +1072,14 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         if (review?.status === "ok" || review?.status === "failed") {
           setFlaggedReview(review as FlaggedReview);
           if (
-            review.status === "ok" &&
-            deepReviewOn &&
-            review.findings?.some(
-              (finding) =>
-                finding.agreement.kind === "disagree" &&
-                finding.agreement.adjudication === undefined,
-            )
+            review.lateEnrichmentScheduled === true ||
+            (review.status === "ok" &&
+              deepReviewOn &&
+              review.findings?.some(
+                (finding) =>
+                  finding.agreement.kind === "disagree" &&
+                  finding.agreement.adjudication === undefined,
+              ))
           ) {
             pollAdjudication();
           }
@@ -2622,6 +2623,23 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                     },
                   }}
                   noiseReview={noiseReview}
+                  // The verify-ui screenshot loader (issue #183): each captured
+                  // screenshot loads on demand over the `review.uiEvidence` command, so
+                  // the bytes never ride the flagged payload. A not-found (moved store,
+                  // escaping path) maps to null → the strip shows a missing-evidence
+                  // note. Live once a review has loaded; absent → the strip shows no
+                  // thumbnails.
+                  loadUiEvidence={
+                    review
+                      ? async (path) => {
+                          const result = await bridge.invoke("review.uiEvidence", {
+                            reviewId: review.id,
+                            path,
+                          });
+                          return result.status === "ok" ? result.dataUrl : null;
+                        }
+                      : undefined
+                  }
                   // The Decisions runner's status (issue #137/#160): when the runner
                   // FAILED, the Decisions lens paints the failed banner instead of
                   // conflating a crashed pass with "no decisions". Absent ⇒ `ok`.
