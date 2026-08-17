@@ -1,0 +1,491 @@
+/*
+ * Rennet documentation theme — Starlight override.
+ *
+ * PROVENANCE. Every colour, radius, and type role below is taken from — or
+ * derived by stated interpolation from — the product's design system, so the
+ * docs track the app and the marketing site:
+ *   - packages/ui/src/tokens.css  — canonical palette (dark "bioluminescent
+ *     twilight" default + light "bright room"); the main site copies it verbatim.
+ *   - DESIGN.md (repo root)       — type roles, semantic hues, radii, do's/don'ts.
+ * When tokens.css changes, update the hex values here in the same change.
+ *
+ * DOCTRINE (kept, not reinvented):
+ *   - Monochrome carries the identity. Three semantic hues only:
+ *       review blue (--accent / --private), decision amber, evidence green.
+ *   - Editorial restraint: flat by default, 1px structural hairlines, opaque
+ *     code surfaces, no gradients-as-identity, no neon, no decorative glass.
+ *   - System font stacks only. No webfont fetch, no third-party anything.
+ *
+ * Starlight applies dark values on :root and light values on
+ * :root[data-theme='light']. This file is unlayered, so it wins over
+ * Starlight's @layer styles without specificity hacks.
+ */
+
+/* ============================================================ *
+ *  DARK — "bioluminescent twilight" (default)                  *
+ * ============================================================ */
+:root {
+  /* Neutral ramp. Starlight semantics: --sl-color-white = highest-contrast
+     (headings/strong), gray-2 = body text, gray-3 = muted, gray-5 = borders,
+     gray-6 = sidebar/nav surface, black = page canvas. */
+  --sl-color-white: #f0f2f5;
+  --sl-color-gray-1: #dce0e6;
+  --sl-color-gray-2: #c6cbd3; /* body text */
+  --sl-color-gray-3: #8b929c; /* muted / secondary */
+  --sl-color-gray-4: #565c66;
+  --sl-color-gray-5: #2d333b; /* borders (DESIGN dark-line) */
+  --sl-color-gray-6: #171a21; /* sidebar / nav surface (tokens --surface) */
+  --sl-color-gray-7: #12151b;
+  --sl-color-black: #0e1116; /* canvas (DESIGN dark-canvas) */
+
+  /* Review blue — the one link/selection/structure hue. */
+  --sl-color-accent-low: #172532; /* subtle fill (tokens --accent-surface) */
+  --sl-color-accent: #3f7fb5; /* mid: indicators, borders */
+  --sl-color-accent-high: #8cc0e8; /* bright: link text (tokens --accent) */
+
+  /* Semantic aside hues, mapped onto Starlight's blue/orange/red + a green for
+     tip. tokens.css *-fill / *-line translucent pairs. */
+  --sl-color-blue: rgba(111, 178, 201, 0.35); /* note border (--private-line) */
+  --sl-color-blue-high: #a9d0ee;
+  --sl-color-blue-low: rgba(111, 178, 201, 0.13); /* note fill */
+  --sl-color-orange: rgba(214, 167, 91, 0.38); /* caution border (--amber-line) */
+  --sl-color-orange-high: #e2b266;
+  --sl-color-orange-low: rgba(214, 167, 91, 0.12);
+  --sl-color-red: rgba(219, 122, 106, 0.4); /* danger border (--danger) */
+  --sl-color-red-high: #e59684;
+  --sl-color-red-low: rgba(219, 122, 106, 0.13);
+  --sl-color-green: rgba(102, 169, 124, 0.38); /* tip border (--green-line) */
+  --sl-color-green-high: #8cc79e;
+  --sl-color-green-low: rgba(102, 169, 124, 0.14);
+
+  --sl-color-text: var(--sl-color-gray-2);
+  --sl-color-text-accent: var(--sl-color-accent-high);
+  --sl-color-text-invert: var(--sl-color-black);
+
+  --sl-color-bg: var(--sl-color-black);
+  --sl-color-bg-nav: #0e1116; /* opaque chrome */
+  --sl-color-bg-sidebar: var(--sl-color-gray-6);
+  --sl-color-bg-inline-code: #1c2029; /* solid chip, not translucent */
+  --sl-color-bg-accent: var(--sl-color-accent-high);
+
+  --sl-color-hairline: var(--sl-color-gray-5);
+  --sl-color-hairline-light: rgba(255, 255, 255, 0.06);
+  --sl-color-hairline-shade: rgba(0, 0, 0, 0.4);
+
+  /* Flat by default: a single soft ambient shadow with a real downward offset,
+     used only where the design earns lift (hero button, splash cards on hover). */
+  --sl-shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --sl-shadow-md: 0 2px 10px rgba(0, 0, 0, 0.35);
+  --sl-shadow-lg: 0 14px 40px rgba(0, 0, 0, 0.5);
+
+  /* Type roles (system stacks only). */
+  --sl-font: "Avenir Next", "Source Sans 3 Variable", system-ui, sans-serif;
+  --sl-font-mono: ui-monospace, "SF Mono", Menlo, monospace;
+  --rennet-display: "Helvetica Neue", "Instrument Sans Variable", Arial, sans-serif;
+
+  /* Button ink (design-system primary: inverted against the field). */
+  --rennet-btn-bg: #edeff2;
+  --rennet-btn-text: #101318;
+  --rennet-btn-border: rgba(255, 255, 255, 0.5);
+
+  /* Wordmark ink (tokens --mark-ink): monochrome identity, never link blue. */
+  --rennet-mark-ink: #f7f4ee;
+
+  /* Selection: tinted from the private backlight blue. */
+  --rennet-selection: rgba(111, 178, 201, 0.26);
+
+  /* Code frame surface (expressive-code): opaque, 1px hairline, 12px radius. */
+  --ec-codeBg: #14161b; /* tokens --code-bg */
+  --ec-frm-edBg: #14161b;
+  --ec-frm-trmBg: #14161b;
+  --ec-frm-edTabBarBg: #12141a;
+  --ec-frm-edActTabBg: #14161b;
+  --ec-frm-trmTtbBg: #12141a;
+  --ec-brdCol: var(--sl-color-gray-5);
+  --ec-frm-edTabBarBrdBtmCol: var(--sl-color-gray-5);
+  --ec-frm-trmTtbBrdBtmCol: var(--sl-color-gray-5);
+  --ec-frm-edActTabBrdCol: var(--sl-color-gray-5);
+  --ec-brdWd: 1px;
+  --ec-brdRad: 12px;
+  --ec-frm-frameBoxShdCssVal: none;
+  --ec-codeFontFml: var(--sl-font-mono);
+  --ec-gtrBrdCol: var(--sl-color-gray-5);
+
+  /* Pagefind search modal picks up the accent. */
+  --pagefind-ui-primary: var(--sl-color-accent-high);
+  --pagefind-ui-background: var(--sl-color-gray-6);
+  --pagefind-ui-border: var(--sl-color-gray-5);
+  --pagefind-ui-text: var(--sl-color-text);
+  --pagefind-ui-tag: var(--sl-color-gray-6);
+}
+
+/* ============================================================ *
+ *  LIGHT — "bright room"                                        *
+ * ============================================================ */
+:root[data-theme="light"] {
+  --sl-color-white: #12151a; /* darkest text/headings (DESIGN light-ink) */
+  --sl-color-gray-1: #1e2126; /* tokens light --text */
+  --sl-color-gray-2: #363b43; /* body text */
+  --sl-color-gray-3: #59616b; /* muted (DESIGN light-muted) */
+  --sl-color-gray-4: #8a919b;
+  --sl-color-gray-5: #d5dae1; /* borders */
+  --sl-color-gray-6: #eef1f5; /* sidebar / nav surface */
+  --sl-color-gray-7: #e7ebf0;
+  --sl-color-black: #f3f5f8; /* canvas (tokens light --surface) */
+
+  --sl-color-accent-low: #e8f0f7; /* tokens light --accent-surface */
+  --sl-color-accent: #3f82bb;
+  --sl-color-accent-high: #2a6fae; /* links (tokens light --accent) */
+
+  --sl-color-blue: rgba(60, 140, 168, 0.32); /* note border */
+  --sl-color-blue-high: #24657f;
+  --sl-color-blue-low: rgba(60, 140, 168, 0.1);
+  --sl-color-orange: rgba(178, 110, 31, 0.32); /* caution */
+  --sl-color-orange-high: #96590f;
+  --sl-color-orange-low: rgba(178, 110, 31, 0.1);
+  --sl-color-red: rgba(178, 59, 43, 0.34); /* danger */
+  --sl-color-red-high: #b23b2b;
+  --sl-color-red-low: rgba(178, 59, 43, 0.09);
+  --sl-color-green: rgba(62, 122, 78, 0.3); /* tip */
+  --sl-color-green-high: #2e6b45;
+  --sl-color-green-low: rgba(62, 122, 78, 0.11);
+
+  --sl-color-bg-nav: #f3f5f8; /* opaque chrome */
+  --sl-color-bg-inline-code: #e6eaf0;
+
+  --sl-color-hairline-light: rgba(30, 40, 52, 0.06);
+  --sl-color-hairline-shade: rgba(46, 58, 72, 0.14);
+
+  --sl-shadow-sm: 0 1px 2px rgba(46, 58, 72, 0.12);
+  --sl-shadow-md: 0 2px 10px rgba(46, 58, 72, 0.12);
+  --sl-shadow-lg: 0 14px 40px rgba(46, 58, 72, 0.18);
+
+  --rennet-btn-bg: #1e2126; /* dark ink button on a light field */
+  --rennet-btn-text: #ffffff;
+  --rennet-btn-border: #0f1115;
+
+  --rennet-mark-ink: #0b0d10;
+
+  --rennet-selection: rgba(42, 111, 174, 0.18);
+
+  --ec-codeBg: #ffffff; /* tokens light --code-bg */
+  --ec-frm-edBg: #ffffff;
+  --ec-frm-trmBg: #ffffff;
+  --ec-frm-edTabBarBg: #eef1f5;
+  --ec-frm-edActTabBg: #ffffff;
+  --ec-frm-trmTtbBg: #eef1f5;
+
+  --pagefind-ui-background: #ffffff;
+}
+
+/* ============================================================ *
+ *  Type — display voice on headings, comfortable body rhythm   *
+ * ============================================================ */
+
+/* Site title matches the main site's wordmark exactly (site/styles.css
+   .wordmark): body sans at 650, +0.005em, mark-ink. */
+.site-title,
+a.site-title {
+  font-family: var(--sl-font);
+  font-weight: 650;
+  letter-spacing: 0.005em;
+  color: var(--rennet-mark-ink);
+}
+
+/* Prose measure: Starlight's layout reads this from the root, so it must be
+   set there, not on .sl-markdown-content (where it would be a no-op). */
+:root {
+  --sl-content-width: 40rem; /* 640px: keeps body measure near 75ch */
+}
+
+.sl-markdown-content :is(h1, h2, h3, h4) {
+  font-family: var(--rennet-display);
+  color: var(--sl-color-white);
+}
+.sl-markdown-content :is(h1, h2, h3) {
+  font-weight: 560;
+  letter-spacing: -0.025em;
+}
+.sl-markdown-content :is(h4, h5, h6) {
+  font-weight: 600;
+  letter-spacing: -0.012em;
+}
+/* Space above > below (Starlight ships uniform margins). */
+.sl-markdown-content :is(h2, h3, h4):not(:where(.not-content *)):not(:first-child) {
+  margin-top: 2.5em;
+  margin-bottom: 0.6em;
+}
+.sl-markdown-content :is(h2):not(:where(.not-content *)) {
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--sl-color-hairline);
+}
+
+/* Page title (hero of a content page). */
+.content-panel h1,
+.sl-markdown-content h1 {
+  font-family: var(--rennet-display);
+  letter-spacing: -0.03em;
+}
+
+/* Links: review blue with a themed, offset underline. */
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--sl-color-text-accent);
+  text-decoration-color: color-mix(in srgb, var(--sl-color-text-accent) 40%, transparent);
+  text-underline-offset: 0.16em;
+  text-decoration-thickness: 1px;
+  transition:
+    text-decoration-color 150ms ease-out,
+    color 150ms ease-out;
+}
+.sl-markdown-content a:not(:where(.not-content *)):hover {
+  text-decoration-color: var(--sl-color-text-accent);
+}
+
+/* ============================================================ *
+ *  Inline code — a quiet chip, real monospace                  *
+ * ============================================================ */
+.sl-markdown-content code:not(:where(.not-content *)) {
+  font-family: var(--sl-font-mono);
+  background-color: var(--sl-color-bg-inline-code);
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: 4px;
+  padding: 0.15em 0.38em;
+  font-size: 0.875em;
+}
+.sl-markdown-content :is(h1, h2, h3, h4) code:not(:where(.not-content *)) {
+  font-size: 0.9em;
+}
+/* Headings/links that contain code shouldn't double the border. */
+.sl-markdown-content a code:not(:where(.not-content *)) {
+  color: var(--sl-color-text-accent);
+}
+
+/* ============================================================ *
+ *  Asides — 1px full border + tinted fill (no thick side bar)  *
+ * ============================================================ */
+.starlight-aside {
+  border-inline-start: none;
+  border: 1px solid var(--sl-color-asides-border);
+  border-radius: 12px;
+  background-color: var(--sl-color-asides-bg, transparent);
+  color: var(--sl-color-white);
+}
+.starlight-aside--note {
+  --sl-color-asides-bg: var(--sl-color-blue-low);
+}
+.starlight-aside--tip {
+  /* Remap Starlight's purple tip to evidence green. */
+  --sl-color-asides-text-accent: var(--sl-color-green-high);
+  --sl-color-asides-border: var(--sl-color-green);
+  --sl-color-asides-bg: var(--sl-color-green-low);
+}
+.starlight-aside--caution {
+  --sl-color-asides-bg: var(--sl-color-orange-low);
+}
+.starlight-aside--danger {
+  --sl-color-asides-bg: var(--sl-color-red-low);
+}
+
+/* ============================================================ *
+ *  Sidebar & nav — quiet second-neutral layer, restrained mark *
+ * ============================================================ */
+.sidebar-pane {
+  border-inline-end: 1px solid var(--sl-color-hairline);
+}
+/* Opaque chrome: DESIGN.md reserves translucent glass for the desktop shell. */
+header.header {
+  border-bottom: 1px solid var(--sl-color-hairline);
+  background-color: var(--sl-color-bg-nav);
+}
+
+/* Sidebar current page: restrained accent, no heavy saturated fill. */
+.sidebar-content a[aria-current="page"],
+.sidebar-content a[aria-current="page"]:hover,
+.sidebar-content a[aria-current="page"]:focus {
+  color: var(--sl-color-text-accent);
+  background-color: var(--sl-color-accent-low);
+  font-weight: 600;
+}
+
+/* Right-hand TOC current item in accent. */
+starlight-toc a[aria-current="true"] {
+  color: var(--sl-color-text-accent);
+  font-weight: 600;
+}
+
+/* ============================================================ *
+ *  Splash / hero — display headline + design-system buttons    *
+ * ============================================================ */
+.hero h1 {
+  font-family: var(--rennet-display);
+  font-weight: 560;
+  letter-spacing: -0.035em;
+  line-height: 1.02;
+}
+.hero .tagline {
+  color: var(--sl-color-gray-2);
+}
+
+/* Primary action: inverted ink button, 8px corner, hover lift + soft shadow. */
+.hero .sl-link-button.primary {
+  background: var(--rennet-btn-bg);
+  border: 1px solid var(--rennet-btn-border);
+  color: var(--rennet-btn-text);
+  border-radius: 8px;
+  font-weight: 600;
+  transition:
+    transform 180ms ease-out,
+    box-shadow 180ms ease-out;
+}
+.hero .sl-link-button.primary:hover {
+  color: var(--rennet-btn-text);
+  transform: translateY(-2px);
+  box-shadow: var(--sl-shadow-md);
+}
+/* Secondary action: quiet, hairline, accent on hover. */
+.hero .sl-link-button.secondary {
+  border: 1px solid var(--sl-color-hairline);
+  color: var(--sl-color-white);
+  border-radius: 8px;
+  transition:
+    border-color 150ms ease-out,
+    color 150ms ease-out;
+}
+.hero .sl-link-button.secondary:hover {
+  border-color: var(--sl-color-accent);
+  color: var(--sl-color-text-accent);
+}
+
+/* Splash cards → Rennet "raised" surfaces: solid fill, 1px border, 12px radius,
+   no shadow+border pairing. Kill any default accent bleed. */
+.card {
+  background: var(--sl-color-gray-6);
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: 12px;
+  box-shadow: none;
+  transition:
+    border-color 180ms ease-out,
+    transform 180ms ease-out;
+}
+.card:hover {
+  border-color: var(--sl-color-accent);
+  transform: translateY(-2px);
+}
+.card .icon {
+  color: var(--sl-color-text-accent);
+  background: transparent;
+  border: none;
+}
+
+/* ============================================================ *
+ *  Tables, quotes, rules, kbd, details                         *
+ * ============================================================ */
+.sl-markdown-content table:not(:where(.not-content *)) {
+  font-variant-numeric: tabular-nums;
+}
+.sl-markdown-content th:not(:where(.not-content *)) {
+  color: var(--sl-color-white);
+  font-family: var(--rennet-display);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  border-bottom: 1px solid var(--sl-color-hairline);
+}
+.sl-markdown-content td:not(:where(.not-content *)),
+.sl-markdown-content th:not(:where(.not-content *)) {
+  border-color: var(--sl-color-hairline);
+}
+
+.sl-markdown-content blockquote:not(:where(.not-content *)) {
+  border-inline-start: 1px solid var(--sl-color-hairline);
+  color: var(--sl-color-gray-2);
+  font-style: normal;
+}
+
+.sl-markdown-content hr:not(:where(.not-content *)) {
+  border-top: 1px solid var(--sl-color-hairline);
+}
+
+.sl-markdown-content kbd:not(:where(.not-content *)) {
+  background: var(--sl-color-gray-6);
+  border: 1px solid var(--sl-color-hairline);
+  border-bottom-width: 2px;
+  border-radius: 6px;
+  color: var(--sl-color-white);
+  font-family: var(--sl-font-mono);
+  font-size: 0.8em;
+}
+
+.sl-markdown-content details:not(:where(.not-content *)) {
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: 12px;
+  background: var(--sl-color-gray-6);
+}
+.sl-markdown-content summary:not(:where(.not-content *)) {
+  color: var(--sl-color-white);
+  font-weight: 600;
+}
+
+/* Badges + pagination */
+.sl-badge {
+  border-radius: 999px;
+}
+a.pagination-links__link,
+.pagination-links a {
+  border: 1px solid var(--sl-color-hairline);
+  border-radius: 12px;
+  transition:
+    border-color 150ms ease-out,
+    background-color 150ms ease-out;
+}
+a.pagination-links__link:hover,
+.pagination-links a:hover {
+  border-color: var(--sl-color-accent);
+  background: var(--sl-color-accent-low);
+}
+
+/* ============================================================ *
+ *  Browser surfaces — selection, focus, scrollbars             *
+ * ============================================================ */
+::selection {
+  background: var(--rennet-selection);
+  color: var(--sl-color-white);
+}
+
+:focus-visible {
+  outline: 2px solid var(--sl-color-accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+* {
+  scrollbar-color: var(--sl-color-gray-5) transparent;
+}
+::-webkit-scrollbar {
+  width: 11px;
+  height: 11px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--sl-color-gray-5);
+  border-radius: 999px;
+  border: 3px solid var(--sl-color-bg);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--sl-color-gray-4);
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* Motion: honor reduced-motion for the small transitions above. */
+@media (prefers-reduced-motion: reduce) {
+  .hero .sl-link-button,
+  .card,
+  a.pagination-links__link,
+  .pagination-links a {
+    transition: none;
+  }
+  .hero .sl-link-button.primary:hover,
+  .card:hover {
+    transform: none;
+  }
+}

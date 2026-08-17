@@ -19,7 +19,14 @@ export default defineConfig({
     starlight({
       title: "Rennet",
       description: "A local-first code review harness — using it, and building it.",
-      customCss: ["./src/styles/mermaid.css"],
+      // Committed brand mark beside the wordmark. light = black mark on the
+      // bright-room canvas, dark = white mark on the twilight canvas. Assets
+      // are the committed exports, used as-is (never redrawn).
+      logo: {
+        light: "./src/assets/mark-black.svg",
+        dark: "./src/assets/mark-white.svg",
+      },
+      customCss: ["./src/styles/theme.css", "./src/styles/mermaid.css"],
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/rbutera/rennet" }],
       plugins: [
         starlightSidebarTopics([
