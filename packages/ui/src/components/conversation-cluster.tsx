@@ -491,7 +491,10 @@ function useRailAlignments(
   return alignments;
 }
 
-function sameOffsets(a: Readonly<Record<string, number>>, b: Readonly<Record<string, number>>): boolean {
+function sameOffsets(
+  a: Readonly<Record<string, number>>,
+  b: Readonly<Record<string, number>>,
+): boolean {
   const aKeys = Object.keys(a);
   if (aKeys.length !== Object.keys(b).length) return false;
   return aKeys.every((key) => a[key] === b[key]);
