@@ -92,7 +92,11 @@ describe("session frames", () => {
 
   it("rejects malformed push-event payloads", () => {
     expect(() =>
-      parseSessionFrame({ type: "progressEvent", commandId: "c", event: { kind: "not-a-real-kind" } }),
+      parseSessionFrame({
+        type: "progressEvent",
+        commandId: "c",
+        event: { kind: "not-a-real-kind" },
+      }),
     ).toThrow();
     expect(() =>
       parseSessionFrame({
