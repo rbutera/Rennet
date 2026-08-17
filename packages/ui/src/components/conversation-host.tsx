@@ -1,5 +1,5 @@
 import type { CommandInput, PersistedThreadWire, RennetBridge } from "@rennet/protocol";
-import { type ReactNode, type RefObject, useEffect, useRef, useState } from "react";
+import { type RefObject, useEffect, useRef, useState } from "react";
 import { type AskMode, DEFAULT_ASK_MODE } from "../canvas/ask";
 import {
   addMessage,
@@ -129,22 +129,9 @@ export interface ConversationHostProps {
    * The diff column the margin rail aligns against (issue #356). Forwarded straight to
    * `ConversationMargin`: each thread whose anchor row is rendered in the windowed diff is
    * offset to meet that row; an off-window or unmatched anchor stacks. Absent ⇒ every panel
-   * stacks (the honest default). Ignored when `render` is set (the alternate surface owns
-   * its own layout).
+   * stacks (the honest default).
    */
   diffRef?: RefObject<HTMLElement | null>;
-  /** Alternate presentation over the same live conversation engine. */
-  render?(state: ConversationHostRenderState): ReactNode;
-}
-
-export interface ConversationHostRenderState {
-  readonly threads: readonly ConversationThread[];
-  readonly pendingThreadIds: ReadonlySet<string>;
-  readonly errorByThread: Readonly<Record<string, string>>;
-  openConversation(anchor: ConversationAnchor): void;
-  ask(threadId: string, body: string, mode: AskMode): void;
-  promote(threadId: string, messageId: string, kind: PromotionKind): void;
-  openSubThread(threadId: string, messageId: string): void;
 }
 
 /**
@@ -163,7 +150,6 @@ export function ConversationHost({
   timeoutMs = DEFAULT_CONVERSATION_TIMEOUT_MS,
   onPromote,
   diffRef,
-  render,
 }: ConversationHostProps) {
   const [threads, setThreads] = useState<readonly ConversationThread[]>([]);
   // Thread ids with a live turn in flight, and the last failure per thread — the
@@ -478,18 +464,6 @@ export function ConversationHost({
 
   const discussable = anchors.filter((anchor) => !openAnchorKeys.has(anchor.key));
 
-  if (render) {
-    return render({
-      threads,
-      pendingThreadIds: pending,
-      errorByThread: errors,
-      openConversation,
-      ask: (threadId, body, mode) => void ask(threadId, body, mode),
-      promote,
-      openSubThread,
-    });
-  }
-
   return (
     <div className="conversation-host">
       {discussable.length > 0 ? (
@@ -552,7 +526,15 @@ function GeneralAskPanel({
 
   /** Run one general turn. Resolves `false` on failure so the composer KEEPS the draft. */
   async function ask(body: string, mode: AskMode): Promise<boolean> {
-    setMessages((current) => [...current, { id: crypto.randomUUID(), author: "you", body }]);
+    setMessages((current) => {
+      const youCard: ThreadMessage = { id: crypto.randomUUID(), author: "you", body };
+      // A failed turn keeps its draft and leaves its "you" card trailing (a turn is never
+      // pending here, so a trailing "you" means the last turn failed). Resending REPLACES that
+      // dangling card instead of stacking a duplicate optimistic copy of the same question.
+      const last = current[current.length - 1];
+      if (last && last.author === "you") return [...current.slice(0, -1), youCard];
+      return [...current, youCard];
+    });
     setPending(true);
     setError(undefined);
     let timer: ReturnType<typeof setTimeout> | undefined;

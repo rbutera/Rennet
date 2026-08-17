@@ -530,30 +530,63 @@ function useRailAlignments(
       }
       const panels = rail.querySelectorAll<HTMLElement>(".conversation-cluster");
       const next: Record<string, number> = {};
+      // Threads that SHARE an anchor key ride ONE offset: the first (topmost in document
+      // order) panel of a key defines the group's alignment, and every sibling on that key
+      // reuses it, so the group flows BENEATH the aligned row. Giving each its own row-minus-
+      // natural offset collapses them onto the same coordinate — an exact overlap (Codex #2).
+      const offsetByKey = new Map<string, number>();
       for (const [index, thread] of threads.entries()) {
-        const row = rows.get(thread.anchor.key);
+        const key = thread.anchor.key;
+        const row = rows.get(key);
         const panel = panels[index];
         if (!row || !panel) continue; // off-window ⇒ stacked fallback, never a synthetic offset
-        const appliedOffset = Number(panel.dataset.alignOffset ?? 0);
-        const panelNaturalTop = panel.getBoundingClientRect().top - appliedOffset;
-        next[thread.id] = Math.round(row.getBoundingClientRect().top - panelNaturalTop);
+        let offset = offsetByKey.get(key);
+        if (offset === undefined) {
+          const appliedOffset = Number(panel.dataset.alignOffset ?? 0);
+          const panelNaturalTop = panel.getBoundingClientRect().top - appliedOffset;
+          offset = Math.round(row.getBoundingClientRect().top - panelNaturalTop);
+          offsetByKey.set(key, offset);
+        }
+        next[thread.id] = offset;
       }
       setAlignments((prev) => (sameOffsets(prev, next) ? prev : next));
     };
-    measure();
-    diff.addEventListener("scroll", measure, { passive: true });
-    window.addEventListener("resize", measure);
+    // A diff scroll re-lays-out the windowed rows on the NEXT commit — measuring inside the
+    // scroll event reads the rows the scroll REPLACED, aligning panels to stale geometry
+    // (Opus BUG-1 / Codex #1). Defer the re-measure to a frame so it reads the committed
+    // window. `schedule` coalesces a burst of scroll ticks into one measure per frame.
+    let frame = 0;
+    const canRaf = typeof requestAnimationFrame !== "undefined";
+    const schedule = (): void => {
+      if (!canRaf) {
+        measure();
+        return;
+      }
+      if (frame) return;
+      frame = requestAnimationFrame(() => {
+        frame = 0;
+        measure();
+      });
+    };
+    measure(); // initial, synchronous — the mount already committed its rows
+    diff.addEventListener("scroll", schedule, { passive: true });
+    window.addEventListener("resize", schedule);
     // The windowed diff re-lays-out as rows enter/leave; a ResizeObserver catches the
     // height churn a scroll listener alone would miss. Guarded — not every host DOM
     // (older happy-dom) defines it, and its absence just means fewer re-measures.
     const observer =
-      typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => measure()) : undefined;
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(() => schedule()) : undefined;
     observer?.observe(diff);
     return () => {
-      diff.removeEventListener("scroll", measure);
-      window.removeEventListener("resize", measure);
+      if (frame) cancelAnimationFrame(frame);
+      diff.removeEventListener("scroll", schedule);
+      window.removeEventListener("resize", schedule);
       observer?.disconnect();
     };
+    // `diffRef` is a fresh RefObject identity each time the diff element swaps (the app and
+    // the review-heart harness wrap the element in state via a callback ref), so a CodeView
+    // unmount/remount RE-RUNS this effect: it re-subscribes to the live element and drops
+    // the stale offsets — instead of listening to a detached node forever (Opus BUG-1).
   }, [railRef, diffRef, threads]);
   return alignments;
 }

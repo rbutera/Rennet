@@ -16,7 +16,7 @@
 
 - [x] 3.1 In `app.tsx`, own one diff ref at the review-heart split, pass it into `CanvasWorkspace`/`CodeView` and into `ConversationPanel`, preserving the sibling-column structure.
 - [x] 3.2 DOM test at review-heart shape: CodeView + conversation column with two threads — the on-window line-anchored panel aligns (`translateY`, `data-align-offset` from its own natural top), the off-window one stacks, and the diff column's node positions are unchanged by thread growth (no-reflow).
-- [x] 3.3 Confirm windowed-scroll re-measure: scrolling the diff so an anchor row leaves the window drops the panel back to stacked in the same test surface.
+- [x] 3.3 Confirm windowed-scroll re-measure: scrolling the diff so an anchor row leaves the window drops the panel back to stacked in the same test surface. **Review-round hardening:** the rail now re-measures on a `requestAnimationFrame` AFTER the windowed rows commit (a same-tick scroll read the rows the scroll replaced), the diff element flows to the rail through React state via a callback ref so a CodeView unmount/remount re-subscribes against the live element (not a detached node), the chunk key rides the top spacer only while `range.start === 0` so a scrolled-off chunk thread stacks instead of being translated offscreen, and same-anchor threads share one group offset so they flow beneath the aligned row instead of collapsing onto one coordinate. Covered by six DOM tests in `app-review-heart-align.dom.test.tsx` (aligned/off-window, scroll-only re-measure, remount re-subscribe, chunk-stacks-on-scroll, same-anchor group offset, no-reflow row positions).
 
 ## 4. Gate and docs
 

@@ -12,7 +12,7 @@ import type {
   Proposal,
   ReviewNarration,
 } from "@rennet/types";
-import { type ReactNode, type RefObject, useEffect, useMemo, useRef, useState } from "react";
+import { type ReactNode, type Ref, useEffect, useMemo, useRef, useState } from "react";
 import {
   type AuthoringAct,
   authorDisposition,
@@ -260,7 +260,7 @@ export interface CanvasWorkspaceProps {
    * to `CodeView`'s `scrollContainerRef`, so the review heart can hand the same element to
    * the conversation rail for anchor-key alignment. Absent ⇒ nothing exposed (additive).
    */
-  diffScrollRef?: RefObject<HTMLElement | null>;
+  diffScrollRef?: Ref<HTMLElement | null>;
 }
 
 /** One inspected name in the navigation history: loading, errored, or resolved. */

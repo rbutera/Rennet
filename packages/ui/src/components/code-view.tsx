@@ -1,6 +1,6 @@
 import { parseAnchor } from "@rennet/protocol";
 import type { AnchorSide, DispositionType, RenderedHunkOccurrence } from "@rennet/types";
-import { type ReactNode, type RefObject, useCallback, useEffect, useRef, useState } from "react";
+import { type ReactNode, type Ref, useCallback, useEffect, useRef, useState } from "react";
 import {
   type ConversationAnchor,
   chunkAnchorKey,
@@ -133,8 +133,13 @@ export interface CodeViewProps {
    * and align a thread panel to the code it discusses. Populated on mount via a merge
    * ref alongside the internal scroll ref. Absent ⇒ nothing is exposed and CodeView
    * behaves exactly as before (additive; the rail then stacks its panels honestly).
+   *
+   * Accepts EITHER a `RefObject` or a callback ref. A callback ref lets the owner route the
+   * element identity through React state, so a sibling rail RE-MEASURES when this CodeView
+   * unmounts/remounts (a zoom-out then into another file) instead of aligning against the
+   * detached node it first saw (Opus BUG-1). Called with the element on mount, `null` on unmount.
    */
-  scrollContainerRef?: RefObject<HTMLElement | null>;
+  scrollContainerRef?: Ref<HTMLElement | null>;
 }
 
 /**
@@ -338,7 +343,10 @@ export function CodeView({
   const attachScroll = useCallback(
     (element: HTMLDivElement | null) => {
       scrollRef.current = element;
-      if (scrollContainerRef) scrollContainerRef.current = element;
+      // Support both ref shapes: a callback ref (the owner routes identity through state) and
+      // a plain RefObject (the existing `.current` contract the anchor tests rely on).
+      if (typeof scrollContainerRef === "function") scrollContainerRef(element);
+      else if (scrollContainerRef) scrollContainerRef.current = element;
     },
     [scrollContainerRef],
   );
@@ -458,13 +466,17 @@ export function CodeView({
         data-rendered-rows={visible.length}
         data-window-start={range.start}
       >
-        {/* A spacer preserves scroll height for the rows above the window. It also carries
-            the CHUNK anchor key (issue #356): the whole file/chunk's alignment target, at
-            the top of the scrollable content, so a chunk-anchored thread aligns to the
-            chunk. Line keys (distinct grammar) never collide with it. */}
+        {/* A spacer preserves scroll height for the rows above the window. It carries the
+            CHUNK anchor key (issue #356) ONLY while the chunk top is on-window — i.e. when
+            the window starts at row 0 and the spacer sits at the content top. Scrolled past
+            that (range.start > 0), the spacer's top climbs far above the viewport, and
+            keeping the key there would translate a chunk-anchored panel by that large
+            negative offset — effectively hiding it (Opus BUG-2 / Codex #3). Omitting the key
+            then makes a chunk thread STACK (the honest off-window fallback), never vanish.
+            Line keys (distinct grammar) never collide with it. */}
         <div
           className="code-view-spacer"
-          data-anchor-key={chunkAnchorKey(path)}
+          data-anchor-key={range.start === 0 ? chunkAnchorKey(path) : undefined}
           style={{ height: `${range.start * rowHeight}px` }}
         />
         {visible.map((row) => {

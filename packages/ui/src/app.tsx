@@ -427,11 +427,15 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const [selectedPath, setSelectedPath] = useState<string>();
   const [diffFocus, setDiffFocus] = useState<DiffFocus>();
   const diffFocusNonce = useRef(0);
-  // The review heart's ONE diff scroll container (issue #356): CodeView populates it via
-  // `scrollContainerRef`, and the conversation column reads it to align each thread panel
-  // to the code row it discusses. Null when no diff surface is mounted (another canvas
-  // angle) ⇒ the rail stacks honestly. Held here so both sibling columns share the element.
-  const diffScrollRef = useRef<HTMLElement | null>(null);
+  // The review heart's ONE diff scroll container (issue #356): CodeView reports it via the
+  // `scrollContainerRef` callback, and the conversation column reads it to align each thread
+  // panel to the code row it discusses. Held in STATE (not a plain ref) so the element's
+  // IDENTITY reaches the sibling rail: when CodeView unmounts/remounts — a zoom-out then into
+  // another file — `setDiffScrollEl` re-fires and the memoised RefObject gets a fresh identity,
+  // re-running the rail's alignment effect against the live element instead of a detached node
+  // (Opus BUG-1). Null when no diff surface is mounted (another canvas angle) ⇒ rail stacks.
+  const [diffScrollEl, setDiffScrollEl] = useState<HTMLElement | null>(null);
+  const diffScrollRef = useMemo(() => ({ current: diffScrollEl }), [diffScrollEl]);
   const [error, setError] = useState<string>();
   const [busy, setBusy] = useState(false);
   // Read the persisted navigation blob ONCE at mount (#324/#297).
@@ -2713,8 +2717,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                   onAgentFocusConsumed={consumeAgentFocus}
                   onSpanSelect={(selection) => setSpanSelection(selection ?? undefined)}
                   // Expose the diff scroll container (issue #356) so the conversation
-                  // column's rail aligns each thread panel to the row it discusses.
-                  diffScrollRef={diffScrollRef}
+                  // column's rail aligns each thread panel to the row it discusses. The
+                  // callback routes the element identity through state (see `diffScrollEl`).
+                  diffScrollRef={setDiffScrollEl}
                 />
               </div>
               {/* Frame 06's unified conversation: anchored line/range/chunk threads and
