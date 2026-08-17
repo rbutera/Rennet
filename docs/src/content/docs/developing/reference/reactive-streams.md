@@ -53,7 +53,7 @@ review state inside operator closures.
 ## The progress-narration seam
 
 The `rennet:progress` push (main to renderer, keyed by `commandId`, typed as
-`ProjectProcessEvent`) is one such live seam, and it obeys the four-point
+`ProjectProcessEvent`) is one such live seam. It obeys the four-point
 discipline above: dispatch owns the terminal event so the stream and the
 command's resolved value always agree, and the renderer folds the stream into UI
 state that a re-read of durable truth can always reconstruct.

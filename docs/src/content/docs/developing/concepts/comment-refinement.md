@@ -40,7 +40,8 @@ type RefineOutput =
   | { verdict: 'no-change' }
 ```
 
-There is no separate `refinement@1` RSP document on the live path. The desktop
+There is no separate `refinement@1`
+[RSP document](/developing/concepts/surfacing-and-routing/) on the live path. The desktop
 uses the same structured-output mechanism as review jobs, then maps the result
 through the core refinement function.
 
@@ -103,8 +104,8 @@ effective body that the draft currently holds.
 
 The older design goes further: automatic background refinement on every
 body-bearing disposition, a `needs-clarification` result, and a per-disposition
-inline thread that can re-run refinement after each answer. `canvas.thread`
-already provides a retrieval shape for that conversation, but the live refiner
+inline thread that can re-run refinement after each answer. `canvas.thread` (the
+comment-thread tool) already provides a retrieval shape for that conversation, but the live refiner
 only returns `refined` or `no-change` and runs when the reviewer asks it to.
 
 That distinction matters when reading the old plan: the current product delivers

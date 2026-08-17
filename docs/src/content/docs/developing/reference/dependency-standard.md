@@ -172,8 +172,9 @@ packages arrive with the public-release work rather than ahead of it.
 
 ## Data, persistence, and process plumbing
 
-The public RSP wire format and the private application protocol have different
-owners:
+The public RSP wire format (the Rennet Surfacing Protocol — see [surfacing and
+routing](/developing/concepts/surfacing-and-routing/)) and the private
+application protocol have different owners:
 
 ```mermaid
 flowchart LR

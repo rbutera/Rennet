@@ -107,57 +107,45 @@ finding is removed by the deterministic review result. A failed runner is shown
 as a failure, not “nothing flagged.” The row jumps to the mark at its code
 anchor—the index is not a second home for the finding.
 
-When two providers **disagree** about a row, a third chip can appear beside their
-two verbatim answers: the cross-harness adjudication verdict (issue #41). It reads
-**code supports the flag**, **code contradicts this flag**, or an honest **could not
-adjudicate** with its reason. It is a third opinion, not the final word—it rides
-beside both answers, never replacing them, and no verdict value ever hides or drops
-the row. A row with no adjudication renders exactly as before. The desktop returns the
-verified rows first, starts the capped adjudication turns concurrently against the
-remaining shared review budget, and exposes their result through a patchset-and-mode
-keyed follow-up read. The renderer updates that exact row set later; it never waits for
+A dual review runs two provider seats over the same finding. The agreement label
+is location-and-severity agreement — nearby anchors with comparable severity — not
+a settled verdict; it does not recognise differently worded claims as the same claim.
+When the seats **disagree** (a solo finding, or a severity conflict), Rennet asks the
+code who is right ([issue #41](https://github.com/rbutera/rennet/issues/41), delivered):
+one fresh adjudication turn, in its own independent session, reads both labelled answers
+plus the real code window and returns **supported**, **contradicted**, or **insufficient**.
+That verdict rides beside both answers, never replacing them, and no verdict value ever
+hides, drops, or reorders the row; a row with no adjudication renders exactly as before.
+
+Only divergence triggers the pass (a concurring row spends nothing), it draws from the
+one shared review budget and is capped, and the desktop returns the verified rows first
+and folds each adjudication result into its exact row later — it never waits for
 adjudication on the initial delivery path.
 
-An empty result is only an all-clear when the whole change was ingested. When the
-decomposition floor could not ingest some content (R18: a truncated tail, a binary
-blob, or a submodule pointer), Flagged carries that as its `blockingStates` and
-discloses it: the empty state no longer says “ran clean, not skipped” but instead
-states that nothing was flagged **in what could be read**, followed by one line per
-blocker naming its reason and detail. The disclosure renders even beside findings,
-and it remains visible beside “Couldn't check” when the model review fails,
-because model outcome does not change which bytes deterministic ingestion missed.
-It is honest copy only—it never adds a confirmation, acknowledgement, or gate.
+Flagged only calls an empty result all-clear when the whole change was actually read.
+When the decomposition floor could not ingest some content (R18: a truncated tail, a
+binary blob, or a submodule pointer), Flagged carries that as its `blockingStates` and
+discloses it: the empty state no longer says “ran clean, not skipped” but states that
+nothing was flagged **in what could be read**, followed by one line per blocker naming
+its reason and detail. The disclosure renders even beside findings, and stays visible
+beside “Couldn't check” when the model review fails, because model outcome does not
+change which bytes deterministic ingestion missed. It is honest copy only — it never
+adds a confirmation, acknowledgement, or gate.
 
-For GitHub pull requests, Flagged also carries a collapsible CI signal for the
-pinned head. Deterministic path overlap turns attributable failures into
-pre-reproduced high-severity findings; a failure without an offered-hunk anchor
-stays visible in the panel rather than acquiring an invented location. Path
-overlap wins before the narrow, context-bearing machinery signatures labelled
-**environmental (infra)**. Model refinement may promote an unclassified failure
-to change-caused but can never assign the environmental label; every unresolved
-case says **Rennet could not attribute this — check it yourself**. Passing,
-no-checks, incomplete, and unavailable are distinct states, and both the forge
-read and optional refinement have independent deadlines. This signal is
-information only: no review, sign, or publish handler consults it.
+For GitHub pull requests, Flagged shows the commit's CI checks; the panel informs, it
+never gates. It hangs a collapsible CI signal off the pinned head, and no review, sign,
+or publish handler consults it. How a failure gets attributed:
 
-A dual review matches nearby anchors and compares severity to decide whether two
-findings concur. The agreement label is still location-and-severity agreement, not
-a settled verdict—it does not recognise differently worded claims as the same claim.
-But when the seats **disagree** (a solo, or a severity conflict), Rennet now asks the
-code who is right ([issue #41](https://github.com/rbutera/rennet/issues/41), delivered):
-one fresh turn on the Model Council's `adjudication` seat—in its own fresh,
-independent session—reads both labelled answers with explicit polarity plus
-the real code window and returns **supported**, **contradicted**, or **insufficient**.
-Divergence is the only trigger (a concurring row spends nothing), the pass draws from
-the one shared review budget and is capped, and the verdict informs the disagree flare
-without ever gating, dropping, or reordering it. Whether that explicit adjudication
-measurably beats raw overlap is measured on a seeded synthetic ground-truth corpus and
-recorded, from real runs only, into a committed calibration table—informational, never
-a gate. Each real fixture is materialised into its own temporary repository and scored
-only against its seeded claim and anchor; failed, partial, duplicate, unknown, or
-ambiguous runs are refused before the table is atomically replaced. Deliberately not
-built: N=3 same-model self-consistency (no single-provider
-divergence source exists) and any ship gate keyed on the verdict.
+- Deterministic path overlap turns attributable failures into pre-reproduced
+  high-severity findings; a failure without an offered-hunk anchor stays visible in the
+  panel rather than acquiring an invented location.
+- Path overlap wins before the narrow, context-bearing machinery signatures labelled
+  **environmental (infra)**.
+- Model refinement may promote an unclassified failure to change-caused but can never
+  assign the environmental label; every unresolved case says **Rennet could not
+  attribute this — check it yourself**.
+- Passing, no-checks, incomplete, and unavailable are distinct states, and both the
+  forge read and optional refinement have independent deadlines.
 
 ## Noise is the visible remainder
 

@@ -223,7 +223,9 @@ flowchart TB
 ```
 
 The engine owns capture, invalidation, carry, and order. Fleet jobs emit RSP
-documents. The orchestrator describes, retrieves, focuses, annotates, proposes,
+documents (the Rennet Surfacing Protocol wire format — see [surfacing and
+routing](/developing/concepts/surfacing-and-routing/)). The orchestrator
+describes, retrieves, focuses, annotates, proposes,
 and recomputes through `canvasOps@2`. The user disposes and signs.
 
 The orchestrator receives a small primer that maps the available context, then
