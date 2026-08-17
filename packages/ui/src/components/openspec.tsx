@@ -16,6 +16,7 @@ import {
 } from "../canvas/openspec";
 import { AskAnswers, AskControl } from "./ask";
 import { DispositionCluster } from "./disposition-cluster";
+import { CheckboxCheckedIcon, CheckboxIcon } from "./icons";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The Spec angle: a STRUCTURED viewer for an OpenSpec change (Rai, wireframes #9).
@@ -632,8 +633,12 @@ export function OpenSpecView({
                       // biome-ignore lint/suspicious/noArrayIndexKey: task items are positional
                       key={index}
                     >
-                      <span className="ospec-task-check" aria-hidden="true">
-                        {item.status === "done" ? "☑" : "☐"}
+                      <span className="ospec-task-check">
+                        {item.status === "done" ? (
+                          <CheckboxCheckedIcon size={14} />
+                        ) : (
+                          <CheckboxIcon size={14} />
+                        )}
                       </span>
                       <span className="ospec-task-text">{item.text}</span>
                       {/* Per-item review cluster (issue #3), anchored to the item's line. */}

@@ -7,6 +7,7 @@ import type {
   RennetBridge,
 } from "@rennet/protocol";
 import { type ReactNode, useEffect, useState } from "react";
+import { RennetBrandMark } from "./brand-mark";
 import {
   ArrowRightIcon,
   ChevronIcon,
@@ -14,7 +15,6 @@ import {
   GitBranchIcon,
   MonitorIcon,
   PlusIcon,
-  RennetMark,
   SlidersIcon,
   SparkleIcon,
 } from "./icons";
@@ -82,7 +82,7 @@ export function FrontDoor({
           ) : flow ? (
             <PlusIcon size={16} />
           ) : (
-            <RennetMark size={22} />
+            <RennetBrandMark size={16} />
           )}
         </span>
         <h1>

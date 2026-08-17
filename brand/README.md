@@ -30,7 +30,7 @@ Keep clear space around a lockup equal to at least the height of the lowercase `
 
 Use `mark-small` at 16–47 px. Use the full mark from 48 px upward. Do not use the horizontal lockup below 140 px wide.
 
-Use black artwork on light backgrounds and white artwork on dark backgrounds. The colour app icon uses the white mark and is the default packaged application icon; the two monochrome icons are first-class alternates.
+Use black artwork on light backgrounds and white artwork on dark backgrounds. The white-on-black monochrome app icon is the default packaged application icon (asserted by `apps/desktop/src/main/forge-config.test.ts`); the colour icon (white mark on the gradient) and the black-on-white icon are first-class alternates.
 
 ## Regeneration
 

@@ -13,6 +13,8 @@ import {
   ArrowLeftIcon,
   ArrowRightIcon,
   CheckIcon,
+  CloseIcon,
+  EllipsisIcon,
   GitBranchIcon,
   LockIcon,
   SparkleIcon,
@@ -340,7 +342,12 @@ function LocalTrajectory({ row }: { row: SmartRow }) {
 
 function CiGlyph({ ci }: { ci: NonNullable<SmartRow["pr"]>["ci"] }) {
   if (ci === "none") return null;
-  return <span className={`smart-row-ci is-${ci}`}>{ciLabel(ci)}</span>;
+  const Glyph = ci === "passing" ? CheckIcon : ci === "failing" ? CloseIcon : EllipsisIcon;
+  return (
+    <span className={`smart-row-ci is-${ci}`}>
+      CI <Glyph size={11} />
+    </span>
+  );
 }
 
 function StateLabel({ row }: { row: SmartRow }) {
@@ -359,10 +366,6 @@ function rowActionLabel(row: SmartRow): string {
   if (row.kind === "local") return row.local?.stage === "reviewed" ? "Make PR" : "Review";
   if (row.readOnly) return "View";
   return row.mine ? "Open" : "Review";
-}
-
-function ciLabel(ci: "passing" | "failing" | "pending"): string {
-  return ci === "passing" ? "CI ✓" : ci === "failing" ? "CI ✕" : "CI …";
 }
 
 function messageFrom(reason: unknown): string {

@@ -1,4 +1,5 @@
 import type { CrumbSegment } from "../nav/history";
+import { HomeIcon } from "./icons";
 
 export function Breadcrumb({
   crumb,
@@ -26,8 +27,8 @@ export function Breadcrumb({
               onClick={current ? undefined : () => onAscend(segment.index)}
             >
               {position === 0 ? (
-                <span className="nav-breadcrumb-home" aria-hidden="true">
-                  ⌂
+                <span className="nav-breadcrumb-home">
+                  <HomeIcon size={13} />
                 </span>
               ) : null}
               <span>{segment.label}</span>

@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "packages/ui/src/canvas.css"
+        ],
+        "createdAt": "2026-08-17T18:23:31.015Z",
+        "reason": "Private backlight provenance system: 3px inset --private bar marking locally-private threads is intentional, documented in-file"
+      }
+    ]
+  }
+}

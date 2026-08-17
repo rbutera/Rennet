@@ -129,8 +129,8 @@
 
   --radius: 12px;
   --chip-radius: 8px;
-  --mark-ink: #edeff2;
-  --mark-accent: #e2b266;
+  --mark-ink: #f7f4ee;
+  --danger: #db7a6a;
   --btn-bg: #edeff2;
   --btn-border: rgba(255, 255, 255, 0.5);
   --btn-text: #101318;
@@ -212,7 +212,8 @@
   --prop-color: #2f5f88;
   --var-color: #8a5a1e;
 
-  --mark-ink: #1e2126;
+  --mark-ink: #0b0d10;
+  --danger: #b23b2b;
   --btn-bg: #1e2126;
   --btn-border: #0f1115;
   --btn-text: #ffffff;

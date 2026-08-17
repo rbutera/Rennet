@@ -183,34 +183,49 @@ export const SparkleIcon = (p: IconProps) => (
   </Icon>
 );
 
-/** Small-size trace of the selected Rennet cheese-wheel mark. */
-// The production wordmark glyph (issue #43): the split-disc from
-// `site/brand/rennet-glyph.svg` — a disc cut down its vertical axis. The left half
-// is the SOLID curd (`--mark-ink`), the opaque thing that leaves the machine; the
-// right half is the OPEN ARC (`--private`), the whey that stays on the Mac. A
-// hairline of ground between them reads the split as a cut, not a progress meter.
-// Token-driven (fill/stroke are `--mark-ink` / `--private`) so both schemes and the
-// legend's brand vocabulary hold by construction, not by luck.
-export const RennetMark = ({ size = 30, ...rest }: IconProps) => (
-  <svg
-    width={size}
-    height={size}
-    viewBox="0 0 64 64"
-    fill="none"
-    aria-hidden="true"
-    focusable="false"
-    {...rest}
-  >
-    <path d="M 31 8 A 24 24 0 0 0 31 56 Z" fill="var(--mark-ink)" />
-    <path
-      d="M 33 8 A 24 24 0 0 1 33 56"
-      fill="none"
-      stroke="var(--private)"
-      strokeWidth="3.6"
-      strokeLinecap="round"
-    />
-  </svg>
+/** Home — the front-door / top-of-history destination. */
+export const HomeIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <path d="M2.5 7.5 8 2.5l5.5 5" />
+    <path d="M3.75 7v6.25h8.5V7" />
+  </Icon>
 );
+
+/** Columns / panels — the Projects destination (the workspace of repos). */
+export const ColumnsIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="2.25" y="3.25" width="11.5" height="9.5" rx="1.4" />
+    <path d="M6.5 3.25v9.5" />
+  </Icon>
+);
+
+/** Ellipsis — pending / in-flight (CI running). */
+export const EllipsisIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <circle cx="3.5" cy="8" r="0.5" fill="currentColor" stroke="none" />
+    <circle cx="8" cy="8" r="0.5" fill="currentColor" stroke="none" />
+    <circle cx="12.5" cy="8" r="0.5" fill="currentColor" stroke="none" />
+  </Icon>
+);
+
+/** Empty checkbox — a task still to do. */
+export const CheckboxIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="2.75" y="2.75" width="10.5" height="10.5" rx="2" />
+  </Icon>
+);
+
+/** Checked checkbox — a task done. */
+export const CheckboxCheckedIcon = (p: IconProps) => (
+  <Icon {...p}>
+    <rect x="2.75" y="2.75" width="10.5" height="10.5" rx="2" />
+    <path d="M5.25 8 7.25 10l3.5-4" />
+  </Icon>
+);
+
+// The Rennet brand mark lives in `./brand-mark` (the committed export geometry,
+// issue #43), not here — this module is the line-icon vocabulary. It is therefore
+// not part of the legend enumeration below.
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The legend contract (issue #62, prototype frame `00-legend`). The legend is the
@@ -257,6 +272,9 @@ export const ICON_LEGEND: Record<string, LegendEntry> = {
   CloseIcon: { entry: "Dismiss", group: "structural" },
   PlusIcon: { entry: "Add a project", group: "structural" },
   SlidersIcon: { entry: "Settings", group: "structural" },
-  // Brand
-  RennetMark: { entry: "Rennet", group: "brand" },
+  HomeIcon: { entry: "Home", group: "structural" },
+  ColumnsIcon: { entry: "Projects", group: "structural" },
+  EllipsisIcon: { entry: "Pending / in progress", group: "structural" },
+  CheckboxIcon: { entry: "Task to do", group: "structural" },
+  CheckboxCheckedIcon: { entry: "Task done", group: "structural" },
 };

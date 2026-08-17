@@ -1,3 +1,5 @@
+import { ArrowLeftIcon, ArrowRightIcon, ColumnsIcon, HomeIcon } from "./icons";
+
 export function NavRail({
   canBack,
   canForward,
@@ -27,8 +29,8 @@ export function NavRail({
           disabled={!canBack}
           onClick={onBack}
         >
-          <span className="nav-rail-glyph" aria-hidden="true">
-            ←
+          <span className="nav-rail-glyph">
+            <ArrowLeftIcon size={16} />
           </span>
         </button>
         <button
@@ -39,22 +41,22 @@ export function NavRail({
           disabled={!canForward}
           onClick={onForward}
         >
-          <span className="nav-rail-glyph" aria-hidden="true">
-            →
+          <span className="nav-rail-glyph">
+            <ArrowRightIcon size={16} />
           </span>
         </button>
       </div>
 
       <div className="nav-rail-destinations">
         <button type="button" className="nav-rail-button" onClick={onHome}>
-          <span className="nav-rail-glyph" aria-hidden="true">
-            ⌂
+          <span className="nav-rail-glyph">
+            <HomeIcon size={16} />
           </span>
           <span>Home</span>
         </button>
         <button type="button" className="nav-rail-button" onClick={onProjects}>
-          <span className="nav-rail-glyph" aria-hidden="true">
-            ◫
+          <span className="nav-rail-glyph">
+            <ColumnsIcon size={16} />
           </span>
           <span>Projects</span>
         </button>
