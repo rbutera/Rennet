@@ -139,6 +139,44 @@ import {
   type ProjectProcessEvent,
   type ReviewAskStreamEvent,
 } from "@rennet/protocol";
+import {
+  applyImmediateUiVerification,
+  attachCiSignal,
+  buildReviewCanvasesInput,
+  CODEX_ASK_LABEL,
+  composeFlaggedLateEnrichment,
+  createDesktopReviewBackend,
+  createDesktopReviewContextFeed,
+  createDispatch,
+  createEditorLaunchEffects,
+  createLiveCodexAsk,
+  createLiveComposeBundle,
+  createLiveDeltaDigestPort,
+  createLiveDraftPrBodyPort,
+  createLiveRefinePort,
+  createLiveReviewAskPorts,
+  createLiveSymbolLookup,
+  createOrchestratorTurnRunner,
+  createProactiveRehydration,
+  createProcessProject,
+  createPublishConsentAuthority,
+  createSettingsComposition,
+  editorLaunchSpec,
+  type FlaggedReviewRun,
+  LiveTurnRegistry,
+  loadReviewOwnership,
+  PROACTIVE_REHYDRATION_COMMAND_ID,
+  type ProactiveRehydration,
+  performOpenInEditor,
+  projectUnavailableDeepVerification,
+  type ReviewContextFeed,
+  type ReviewIntelligenceSession,
+  resolveEditorExecutables,
+  resolveOrchestratorHarnessSelection,
+  reviewPinnedToHead,
+  runWithReviewContextFeed,
+  stampBlockingStates,
+} from "@rennet/server";
 import type {
   Canvas,
   CanvasAngle,
@@ -162,40 +200,7 @@ import type {
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shell } from "electron";
 import squirrelStartup from "electron-squirrel-startup";
 import { startAutoUpdate } from "./auto-update";
-import { attachCiSignal } from "./ci-signal";
-import { createLiveDeltaDigestPort } from "./delta-digest-live";
-import { createDispatch, type FlaggedReviewRun } from "./dispatch";
-import { createLiveDraftPrBodyPort } from "./draft-pr-body-live";
-import { stampBlockingStates } from "./flagged-blocking-states";
-import { composeFlaggedLateEnrichment } from "./flagged-late-enrichment";
-import { projectUnavailableDeepVerification } from "./flagged-review-verification";
-import { applyImmediateUiVerification } from "./flagged-ui-verification";
-import { createLiveComposeBundle } from "./handoff-compose-live";
-import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
-import { LiveTurnRegistry } from "./live-turn-registry";
 import { applyMenuUpdate } from "./menu";
-import {
-  createEditorLaunchEffects,
-  editorLaunchSpec,
-  performOpenInEditor,
-  resolveEditorExecutables,
-} from "./open-in-editor";
-import { createOrchestratorTurnRunner, resolveOrchestratorHarnessSelection } from "./orchestrator";
-import {
-  createProactiveRehydration,
-  PROACTIVE_REHYDRATION_COMMAND_ID,
-  type ProactiveRehydration,
-} from "./proactive-rehydration";
-import { createProcessProject } from "./process-project";
-import { createPublishConsentAuthority } from "./publish-consent-authority";
-import { createLiveRefinePort } from "./refine-comment-live";
-import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
-import { type ReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
-import type { ReviewIntelligenceSession } from "./review-intelligence-session";
-import { loadReviewOwnership } from "./review-ownership";
-import { buildReviewCanvasesInput } from "./review-pipeline-input";
-import { createSettingsComposition } from "./settings";
-import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
 import { brandWindowIcon, resolveAppUserModelId } from "./window-identity";
 
 // Squirrel (the win32 installer) launches the freshly-installed exe with a

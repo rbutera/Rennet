@@ -132,6 +132,9 @@ importers:
       '@rennet/protocol':
         specifier: workspace:*
         version: link:../../packages/protocol
+      '@rennet/server':
+        specifier: workspace:*
+        version: link:../../packages/server
       '@rennet/types':
         specifier: workspace:*
         version: link:../../packages/types
@@ -255,6 +258,25 @@ importers:
       zod:
         specifier: 4.4.3
         version: 4.4.3
+
+  packages/server:
+    dependencies:
+      '@rennet/adapters':
+        specifier: workspace:*
+        version: link:../adapters
+      '@rennet/core':
+        specifier: workspace:*
+        version: link:../core
+      '@rennet/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@rennet/types':
+        specifier: workspace:*
+        version: link:../types
+    devDependencies:
+      '@anthropic-ai/claude-agent-sdk':
+        specifier: 0.3.223
+        version: 0.3.223(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(zod@4.4.3)
 
   packages/types: {}
 

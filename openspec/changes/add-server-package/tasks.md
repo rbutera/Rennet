@@ -2,14 +2,14 @@
 
 ## 1. Scaffold + gate edges
 
-- [ ] 1.1 Scaffold `packages/server` matching `packages/adapters` conventions: package.json (`@rennet/server`, `"exports": "./src/index.ts"`, deps `@rennet/{types,protocol,instructions,core,adapters} workspace:*` + whatever the moved modules need), project.json (tags `["scope:rennet","layer:server"]`, targets build/lint/typecheck/test like adapters), tsconfig extending base.
-- [ ] 1.2 Architecture edges in BOTH enforcers: `scripts/check-boundaries.mjs` allowed-map entry for `@rennet/server`; `eslint.config.mjs` depConstraints `layer:server → [types, protocol, instructions, core, adapter, server]` and add `layer:server` to `layer:app`'s allow list.
+- [x] 1.1 Scaffold `packages/server` matching `packages/adapters` conventions: package.json (`@rennet/server`, `"exports": "./src/index.ts"`, deps `@rennet/{types,protocol,instructions,core,adapters} workspace:*` + whatever the moved modules need), project.json (tags `["scope:rennet","layer:server"]`, targets build/lint/typecheck/test like adapters), tsconfig extending base.
+- [x] 1.2 Architecture edges in BOTH enforcers: `scripts/check-boundaries.mjs` allowed-map entry for `@rennet/server`; `eslint.config.mjs` depConstraints `layer:server → [types, protocol, instructions, core, adapter, server]` and add `layer:server` to `layer:app`'s allow list.
 
 ## 2. Verbatim moves (commit 1 — reviewable as renames)
 
-- [ ] 2.1 Move from `apps/desktop/src/main/` to `packages/server/src/`, bodies unchanged, imports updated: `dispatch.ts` (+ dispatch.test.ts), `live-turn-registry.ts`, `orchestrator.ts`, `publish-consent-authority.ts`, `review-intelligence-session.ts`, `settings.ts`, `live-review-backend.ts`, `review-ask-live.ts`, `refine-comment-live.ts`, `draft-pr-body-live.ts`, `handoff-compose-live.ts`, `delta-digest-live.ts`, `symbol-lookup-live.ts`, `process-project.ts`, `review-pipeline-input.ts`, `review-context-feed.ts`, `ci-signal.ts`, `flagged-late-enrichment.ts`, `flagged-ui-verification.ts`, `flagged-review-verification.ts`, `flagged-blocking-states.ts`, `review-ownership.ts`, `proactive-rehydration.ts` — each with its sibling `.test.ts`.
-- [ ] 2.2 `apps/desktop` keeps: `menu.ts`, `window-identity.ts`, `auto-update.ts`, `open-in-editor.ts` (see note), preload, renderer, forge/vite configs. Note: `open-in-editor.ts` recon says Electron-free and invoked from dispatch deps — if moving it drags no Electron import, move it; otherwise leave and inject. State the call made.
-- [ ] 2.3 Moved tests pass in the new package: `pnpm nx test rennet-server`.
+- [x] 2.1 Move from `apps/desktop/src/main/` to `packages/server/src/`, bodies unchanged, imports updated: `dispatch.ts` (+ dispatch.test.ts), `live-turn-registry.ts`, `orchestrator.ts`, `publish-consent-authority.ts`, `review-intelligence-session.ts`, `settings.ts`, `live-review-backend.ts`, `review-ask-live.ts`, `refine-comment-live.ts`, `draft-pr-body-live.ts`, `handoff-compose-live.ts`, `delta-digest-live.ts`, `symbol-lookup-live.ts`, `process-project.ts`, `review-pipeline-input.ts`, `review-context-feed.ts`, `ci-signal.ts`, `flagged-late-enrichment.ts`, `flagged-ui-verification.ts`, `flagged-review-verification.ts`, `flagged-blocking-states.ts`, `review-ownership.ts`, `proactive-rehydration.ts` — each with its sibling `.test.ts`.
+- [x] 2.2 `apps/desktop` keeps: `menu.ts`, `window-identity.ts`, `auto-update.ts`, `open-in-editor.ts` (see note), preload, renderer, forge/vite configs. Note: `open-in-editor.ts` recon says Electron-free and invoked from dispatch deps — if moving it drags no Electron import, move it; otherwise leave and inject. State the call made.
+- [x] 2.3 Moved tests pass in the new package: `pnpm nx test rennet-server`.
 
 ## 3. Composition extraction (commit 2)
 

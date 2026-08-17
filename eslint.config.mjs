@@ -43,6 +43,17 @@ export default [
               ],
             },
             {
+              sourceTag: "layer:server",
+              onlyDependOnLibsWithTags: [
+                "layer:types",
+                "layer:protocol",
+                "layer:instructions",
+                "layer:core",
+                "layer:adapter",
+                "layer:server",
+              ],
+            },
+            {
               sourceTag: "layer:ui",
               onlyDependOnLibsWithTags: ["layer:types", "layer:protocol", "layer:ui"],
             },
@@ -54,6 +65,7 @@ export default [
                 "layer:instructions",
                 "layer:core",
                 "layer:adapter",
+                "layer:server",
                 "layer:ui",
                 "layer:app",
               ],

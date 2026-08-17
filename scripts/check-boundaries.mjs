@@ -14,6 +14,16 @@ const allowed = new Map([
     "@rennet/adapters",
     new Set(["@rennet/types", "@rennet/protocol", "@rennet/instructions", "@rennet/core"]),
   ],
+  [
+    "@rennet/server",
+    new Set([
+      "@rennet/types",
+      "@rennet/protocol",
+      "@rennet/instructions",
+      "@rennet/core",
+      "@rennet/adapters",
+    ]),
+  ],
   ["@rennet/ui", new Set(["@rennet/types", "@rennet/protocol"])],
 ]);
 
