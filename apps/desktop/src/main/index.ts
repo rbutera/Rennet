@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { constants as fsConstants, realpathSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, normalize, resolve } from "node:path";
+import { join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import {
@@ -1689,7 +1689,7 @@ function registerAppProtocol(): void {
     const url = new URL(request.url);
     const requestedPath = decodeURIComponent(url.pathname === "/" ? "/index.html" : url.pathname);
     const target = resolve(rendererRoot, `.${normalize(requestedPath)}`);
-    if (target !== rendererRoot && !target.startsWith(`${rendererRoot}/`)) {
+    if (target !== rendererRoot && !target.startsWith(rendererRoot + sep)) {
       return new Response("Not found", { status: 404 });
     }
     return net.fetch(pathToFileURL(target).toString());

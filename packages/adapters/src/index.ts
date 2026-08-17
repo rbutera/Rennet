@@ -4,8 +4,8 @@ export {
   createCodexAdjudicationTurn,
 } from "./adjudication-backend";
 export {
-  ADJUDICATION_CALIBRATION_ARTIFACT_PATH,
   type AdjudicationCalibration,
+  adjudicationCalibrationArtifactPath,
   type ClassCalibrationRecord,
   isEmptyAdjudicationCalibration,
   readAdjudicationCalibration,

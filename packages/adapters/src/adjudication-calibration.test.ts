@@ -3,8 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
-  ADJUDICATION_CALIBRATION_ARTIFACT_PATH,
   type AdjudicationCalibration,
+  adjudicationCalibrationArtifactPath,
   isEmptyAdjudicationCalibration,
   readAdjudicationCalibration,
   recordAdjudicationCalibration,
@@ -25,7 +25,7 @@ describe("adjudication calibration artifact (#41)", () => {
   });
 
   it("points at a real committed file path", () => {
-    expect(ADJUDICATION_CALIBRATION_ARTIFACT_PATH).toContain("adjudication-calibration.json");
+    expect(adjudicationCalibrationArtifactPath()).toContain("adjudication-calibration.json");
   });
 
   it("does not export the recorder from the public adapter barrel", async () => {
@@ -65,7 +65,7 @@ describe("recordAdjudicationCalibration (#41)", () => {
       recordAdjudicationCalibration({
         binaries: {},
         classes: [],
-        path: ADJUDICATION_CALIBRATION_ARTIFACT_PATH,
+        path: adjudicationCalibrationArtifactPath(),
       }),
     ).rejects.toThrow(/scratch calibration writer/);
   });

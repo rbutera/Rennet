@@ -36,10 +36,14 @@ export interface AdjudicationCalibration {
   readonly classes: readonly ClassCalibrationRecord[];
 }
 
-/** The committed artifact path — the one file a real run records into. */
-export const ADJUDICATION_CALIBRATION_ARTIFACT_PATH = fileURLToPath(
-  new URL("./adjudication-calibration.json", import.meta.url),
-);
+/**
+ * The committed artifact path — the one file a real run records into. Lazy for the
+ * same reason as `testedRangeArtifactPath`: the bundled asset URL is a `data:` URI
+ * and an eager `fileURLToPath` on it crashes the packaged main at import time.
+ */
+export function adjudicationCalibrationArtifactPath(): string {
+  return fileURLToPath(new URL("./adjudication-calibration.json", import.meta.url));
+}
 
 /** Read the committed calibration table. Statically imported so it inlines under the bundler. */
 export function readAdjudicationCalibration(): AdjudicationCalibration {
@@ -61,7 +65,7 @@ interface CalibrationRecordInput {
 export async function recordAdjudicationCalibration(
   input: CalibrationRecordInput & { readonly path: string },
 ): Promise<AdjudicationCalibration> {
-  if (input.path === ADJUDICATION_CALIBRATION_ARTIFACT_PATH) {
+  if (input.path === adjudicationCalibrationArtifactPath()) {
     throw new Error("The scratch calibration writer cannot write the committed artifact");
   }
   return record(input, input.path);
@@ -74,7 +78,7 @@ export async function recordCommittedAdjudicationCalibration(
   if (process.env.RENNET_LIVE_ADJUDICATION !== "1") {
     throw new Error("Committed adjudication calibration writes require the gated real recorder");
   }
-  return record(input, ADJUDICATION_CALIBRATION_ARTIFACT_PATH);
+  return record(input, adjudicationCalibrationArtifactPath());
 }
 
 async function record(
