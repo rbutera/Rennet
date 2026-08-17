@@ -131,37 +131,59 @@ describe("assemblePrimer", () => {
     expect(ask?.whenToUse).toContain("unanswered");
   });
 
-  it("ENFORCES the ≤4 KB ceiling: an oversized state throws rather than assembling a fat primer", () => {
-    // Enough canvases + repos that the map overruns 4 KB (counts-only or not, the
-    // ceiling is a hard boundary). Before enforcement this assembled a ~13 KB
-    // "lean" primer silently.
-    const oversized: PrimerInputs = {
+  it("bounds B2/B3 so a large multi-repo review assembles under the ceiling with rollup tails (#65)", () => {
+    // 10 repos + 20 canvases. Before bounding this overran the 4 KB ceiling and
+    // threw; now B2/B3 cap the per-row lines and emit a single rollup tail each,
+    // so assembly succeeds ≤ PRIMER_MAX_BYTES.
+    const large: PrimerInputs = {
       identity: { reviewId: "rv_big", patchsetId: "ps_big" },
-      freshness: Array.from({ length: 40 }, (_, i) => ({
-        repoId: `repo_with_a_fairly_long_identifier_${i}`,
-        snapshotId: `snapshot_${i}`,
-        verdict: "current" as const,
+      freshness: Array.from({ length: 10 }, (_, i) => ({
+        repoId: `repo_${String(i).padStart(2, "0")}`,
+        snapshotId: `snap_${i}`,
+        verdict: (i % 3 === 0 ? "current" : "stale") as const,
       })),
-      canvasState: Array.from({ length: 16 }, (_, r) => r).flatMap((r) =>
+      canvasState: Array.from({ length: 4 }, (_, r) => r).flatMap((r) =>
         CANVAS_ANGLES.map((angle, i) => ({
           angle,
-          canvasId: `cv_long_canvas_identifier_number_${r}_${i}`,
-          elements: 999,
-          cohorts: 88,
-          residue: 7,
+          canvasId: `cv_${angle}_${r}_${i}`,
+          elements: 12,
+          cohorts: 2,
+          residue: 1,
           coverage: {
-            paths: 400,
-            dispositioned: 250,
-            unread: 150,
-            approved: 200,
-            requestChanged: 50,
+            paths: 8,
+            dispositioned: 5,
+            unread: 3,
+            approved: 4,
+            requestChanged: 1,
           },
         })),
       ),
       toolIndex: toolIndexFromSurface(),
       runLedger: { fleetTasks: 9, admitted: 41, rejected: 3 },
     };
-    expect(() => assemblePrimer(oversized)).toThrow(/ceiling|4096/);
+    const manifest = assemblePrimer(large);
+    expect(manifest.bytes).toBeLessThanOrEqual(PRIMER_MAX_BYTES);
+    // B2 ends in a repo rollup naming how many were aggregated + fresh/stale split.
+    expect(manifest.text).toMatch(/…\s*\+\d+ more repos — \d+ fresh \/ \d+ stale/);
+    // B3 ends in a canvas rollup naming how many were aggregated + aggregate counts.
+    expect(manifest.text).toMatch(/…\s*\+\d+ more canvases — /);
+    // Deterministic: same inputs → identical bytes + digest through the rollup path.
+    const again = assemblePrimer(large);
+    expect(again.bytes).toBe(manifest.bytes);
+    expect(again.digest).toBe(manifest.digest);
+  });
+
+  it("ENFORCES the ≤4 KB ceiling as a backstop: a pathologically long single row still throws", () => {
+    // The rollup bounds the NUMBER of rows, not the length of any one row. A single
+    // multi-kilobyte identifier still overruns — the fail-closed throw remains.
+    const oversized: PrimerInputs = {
+      identity: { reviewId: "rv_big", patchsetId: "ps_big" },
+      freshness: [{ repoId: "x".repeat(6000), snapshotId: "snap", verdict: "current" }],
+      canvasState: [],
+      toolIndex: toolIndexFromSurface(),
+      runLedger: { fleetTasks: 9, admitted: 41, rejected: 3 },
+    };
+    expect(() => assemblePrimer(oversized)).toThrow(/ceiling|4608/);
   });
 
   it("renders B1 workspace/repo when the identity carries them", () => {

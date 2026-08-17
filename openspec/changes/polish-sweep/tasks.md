@@ -4,10 +4,10 @@ Red-first: every code change lands its failing control before the fix. Close-wit
 
 ## 1. #65 — bound primer B2/B3
 
-- [ ] 1.1 RED: add a test in `packages/core/src/orchestrator-primer.test.ts` assembling a primer for 10 repos / 20 canvases; assert it returns (no throw) with `bytes ≤ PRIMER_MAX_BYTES` and that B2/B3 end in rollup tail lines. Confirm it fails against current `assemblePrimer` (throws or overruns).
-- [ ] 1.2 Implement the caps + rollup tails in `packages/core/src/orchestrator-primer.ts` per design (named K constant; `… +N more repos — X fresh / Y stale`; `… +N more canvases — aggregate counts`). Keep ordering and the ceiling throw.
-- [ ] 1.3 Extend the determinism test to cover the rollup path (same large inputs → identical bytes/digest); confirm small reviews' primer bytes are unchanged (existing tests stay green untouched).
-- [ ] 1.4 Docs: update any docsite page stating "one line per repo" for B2 (grep `docs/src/content/docs` for primer section descriptions) to the bounded-with-rollup truth.
+- [x] 1.1 RED: add a test in `packages/core/src/orchestrator-primer.test.ts` assembling a primer for 10 repos / 20 canvases; assert it returns (no throw) with `bytes ≤ PRIMER_MAX_BYTES` and that B2/B3 end in rollup tail lines. Confirm it fails against current `assemblePrimer` (throws or overruns).
+- [x] 1.2 Implement the caps + rollup tails in `packages/core/src/orchestrator-primer.ts` per design (named K constant; `… +N more repos — X fresh / Y stale`; `… +N more canvases — aggregate counts`). Keep ordering and the ceiling throw.
+- [x] 1.3 Extend the determinism test to cover the rollup path (same large inputs → identical bytes/digest); confirm small reviews' primer bytes are unchanged (existing tests stay green untouched).
+- [x] 1.4 Docs: update any docsite page stating "one line per repo" for B2 (grep `docs/src/content/docs` for primer section descriptions) to the bounded-with-rollup truth.
 
 ## 2. #89 — harness follows the model
 

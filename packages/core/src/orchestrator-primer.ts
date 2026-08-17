@@ -48,6 +48,21 @@ export const PROTOCOL_CARD_VERSION = "protocol-card@1";
 export const PRIMER_MAX_BYTES = 4608;
 
 /**
+ * B2/B3 row caps (#65). The primer is a MAP, not a container: a large multi-repo
+ * review must still fit the ≤ 4 KB ceiling, so B2 emits at most `PRIMER_MAX_FRESHNESS_ROWS`
+ * per-repo lines and B3 at most `PRIMER_MAX_CANVAS_ROWS` per-canvas lines, then a
+ * single rollup tail line carrying the count and aggregate of the remainder. The
+ * rolled-up repos/canvases stay reachable via the tool surface. Caps chosen so the
+ * existing full-review fixture (2 repos, 5 canvases) stays byte-identical (no tail)
+ * and a 10-repo / 20-canvas review lands under the ceiling with headroom.
+ *
+ * The caps bound the NUMBER of rows, not the length of any one row — a pathological
+ * multi-kilobyte identifier still trips the fail-closed ceiling throw (the backstop).
+ */
+export const PRIMER_MAX_FRESHNESS_ROWS = 6;
+export const PRIMER_MAX_CANVAS_ROWS = 5;
+
+/**
  * B4 — the protocol card. A versioned base instruction teaching the four-actor
  * contract, the two product principles, the never-do list, and the ask protocol.
  * It teaches the canvasOps@2 CONTRACT (constitution); the live menu of attached
@@ -278,6 +293,44 @@ function canvasStateLine(row: CanvasStateSummary): string {
   );
 }
 
+/**
+ * B2 section body (#65): the first `PRIMER_MAX_FRESHNESS_ROWS` rows verbatim, then a
+ * single rollup tail aggregating the remainder as fresh (`current`) / stale (the rest).
+ * Rolled-up repos stay reachable via the tool surface.
+ */
+function freshnessSection(rows: readonly RepoFreshness[]): string[] {
+  if (rows.length <= PRIMER_MAX_FRESHNESS_ROWS) return rows.map(freshnessLine);
+  const shown = rows.slice(0, PRIMER_MAX_FRESHNESS_ROWS);
+  const rest = rows.slice(PRIMER_MAX_FRESHNESS_ROWS);
+  const fresh = rest.filter((r) => r.verdict === "current").length;
+  const stale = rest.length - fresh;
+  return [
+    ...shown.map(freshnessLine),
+    `- … +${rest.length} more repos — ${fresh} fresh / ${stale} stale`,
+  ];
+}
+
+/**
+ * B3 section body (#65): the first `PRIMER_MAX_CANVAS_ROWS` rows verbatim, then a single
+ * rollup tail aggregating the remainder in the same count vocabulary (elements,
+ * dispositioned/paths, unread) — the counts that answer "where are we / what have I not
+ * looked at". Rolled-up canvases stay reachable via the tool surface.
+ */
+function canvasStateSection(rows: readonly CanvasStateSummary[]): string[] {
+  if (rows.length <= PRIMER_MAX_CANVAS_ROWS) return rows.map(canvasStateLine);
+  const shown = rows.slice(0, PRIMER_MAX_CANVAS_ROWS);
+  const rest = rows.slice(PRIMER_MAX_CANVAS_ROWS);
+  const sum = (pick: (r: CanvasStateSummary) => number) => rest.reduce((acc, r) => acc + pick(r), 0);
+  const elements = sum((r) => r.elements);
+  const dispositioned = sum((r) => r.coverage.dispositioned);
+  const paths = sum((r) => r.coverage.paths);
+  const unread = sum((r) => r.coverage.unread);
+  return [
+    ...shown.map(canvasStateLine),
+    `- … +${rest.length} more canvases — ${elements} elements, ${dispositioned}/${paths} dispositioned, ${unread} unread`,
+  ];
+}
+
 function toolIndexLine(entry: PrimerToolEntry): string {
   return `- ${entry.name} — ${entry.whenToUse}`;
 }
@@ -308,10 +361,10 @@ export function assemblePrimer(inputs: PrimerInputs): PrimerManifest {
     identityLine(inputs.identity),
     "",
     "## B2 freshness",
-    ...freshness.map(freshnessLine),
+    ...freshnessSection(freshness),
     "",
     "## B3 canvas state (counts only)",
-    ...canvasState.map(canvasStateLine),
+    ...canvasStateSection(canvasState),
     "",
     `## B4 protocol card (${PROTOCOL_CARD_VERSION})`,
     PROTOCOL_CARD,
