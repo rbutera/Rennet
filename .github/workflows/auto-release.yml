@@ -1,0 +1,232 @@
+# Auto-release workflow — the live, UNSIGNED release path.
+#
+# Every merge to `main` that touches app source (apps/desktop, packages, or the
+# lockfile) auto-bumps the patch version across all 10 workspace package.json
+# files, tags the bump commit `vX.Y.Z`, builds installers on macOS + Windows, and
+# publishes a GitHub Release with those assets. update.electronjs.org serves
+# auto-updates straight from the release assets, so a green run = shipped.
+#
+# This is deliberately the UNSIGNED path. Code signing + notarization is the
+# future SIGNED path in release.yml (issue #42, blocked on RAI-ONLY Apple
+# enrolment). This file owns tag creation now; release.yml no longer builds on a
+# `v*` tag push (it would double-build).
+#
+# Loop guard: the version job pushes a `chore(release):` commit that itself
+# touches package.json files under the trigger paths. Without a guard that push
+# would retrigger this workflow forever. The job-level `if` on the message prefix
+# is the belt; the fact that a bump commit only rewrites version fields is the
+# braces.
+name: Auto Release
+
+on:
+  push:
+    branches: [main]
+    # App source only — root package.json, docs/, and marketing are NOT triggers.
+    # apps/desktop/** covers desktop config (forge, vite) as well as src.
+    paths:
+      - "apps/desktop/**"
+      - "packages/**"
+      - "pnpm-lock.yaml"
+
+# One release at a time, end to end. Never cancel a release mid-flight.
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # 0. Loop guard + full gate. Skipping this cascades to every downstream job
+  #    (each `needs` it, transitively), so the bot's own bump commit runs nothing.
+  check:
+    if: ${{ !startsWith(github.event.head_commit.message, 'chore(release):') }}
+    uses: ./.github/workflows/ci.yml
+
+  # 1. Compute next patch, rewrite versions, commit + annotated tag, push.
+  version:
+    needs: check
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write # push the bump commit + tag
+    outputs:
+      version: ${{ steps.bump.outputs.version }}
+      tag: ${{ steps.bump.outputs.tag }}
+      sha: ${{ steps.bump.outputs.sha }}
+    steps:
+      # fetch-depth 0 so `git describe --tags` can see the latest release tag.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Bump version, tag, push
+        id: bump
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Retry once to survive a race where main moved between fetch and push.
+          for attempt in 1 2; do
+            git fetch --force --tags origin main
+            git reset --hard origin/main
+
+            latest=$(git describe --tags --match "v*" --abbrev=0)
+            IFS=. read -r maj min pat <<< "${latest#v}"
+            next="${maj}.${min}.$((pat + 1))"
+            tag="v${next}"
+            echo "latest=${latest} -> next=${tag} (attempt ${attempt})"
+
+            node scripts/set-version.mjs "${next}"
+            git add -A
+            git commit -m "chore(release): ${tag}"
+            git tag -a "${tag}" -m "${tag}"
+
+            # --atomic: main + tag land together or not at all.
+            if git push --atomic origin HEAD:main "refs/tags/${tag}"; then
+              {
+                echo "version=${next}"
+                echo "tag=${tag}"
+                echo "sha=$(git rev-parse HEAD)"
+              } >> "$GITHUB_OUTPUT"
+              echo "pushed ${tag}"
+              exit 0
+            fi
+
+            echo "push rejected (main moved); discarding tag and retrying"
+            git tag -d "${tag}" || true
+          done
+
+          echo "::error title=Release push failed::main kept moving under the release; giving up after retries"
+          exit 1
+
+  # 2. Build the macOS installers from the TAGGED commit (dmg + darwin zip) and
+  #    smoke the packaged app before it can ship.
+  build-macos:
+    needs: version
+    runs-on: macos-14 # arm64 — matches Rennet-darwin-arm64
+    timeout-minutes: 40
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Make installers (dmg + zip)
+        run: pnpm nx run rennet-desktop:make
+
+      - name: Smoke the packaged app
+        run: pnpm nx run rennet-desktop:package-smoke
+
+      - name: Upload macOS installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-macos
+          path: apps/desktop/out/make/**
+          if-no-files-found: error
+          retention-days: 7
+
+  # 3. Build the Windows installers from the TAGGED commit. MakerSquirrel only
+  #    runs on Windows, so this must be a native windows runner. Produces the
+  #    Squirrel feed (Setup.exe, *-full.nupkg, RELEASES) plus the win32 zip.
+  build-windows:
+    needs: version
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - name: Checkout tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.tag }}
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Make installers (squirrel + zip)
+        run: pnpm nx run rennet-desktop:make
+
+      - name: Upload Windows installers
+        uses: actions/upload-artifact@v4
+        with:
+          name: installers-windows
+          path: apps/desktop/out/make/**
+          if-no-files-found: error
+          retention-days: 7
+
+  # 4. Publish the GitHub Release with every installer attached. RELEASES and the
+  #    *-full.nupkg keep their exact filenames — the Squirrel.Windows auto-update
+  #    feed resolves them by name.
+  publish:
+    needs: [version, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # create the release
+    steps:
+      - name: Download macOS installers
+        uses: actions/download-artifact@v4
+        with:
+          name: installers-macos
+          path: dist/macos
+
+      - name: Download Windows installers
+        uses: actions/download-artifact@v4
+        with:
+          name: installers-windows
+          path: dist/windows
+
+      - name: Write release notes
+        run: |
+          cat > notes.md <<'EOF'
+          > **Unsigned builds.** These installers are not yet code-signed or notarized.
+          >
+          > - **macOS:** right-click **Rennet.app** and choose **Open** the first time to get past Gatekeeper.
+          > - **Windows:** SmartScreen may warn on first launch — choose **More info → Run anyway**.
+          >
+          > Auto-updates are served from these release assets via update.electronjs.org.
+          EOF
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.version.outputs.tag }}
+        run: |
+          set -euo pipefail
+          # NUL-delimited read keeps filenames with spaces (e.g. "Rennet-x Setup.exe") intact.
+          assets=()
+          while IFS= read -r -d '' f; do assets+=("$f"); done \
+            < <(find dist -type f -print0 | sort -z)
+          if [ "${#assets[@]}" -eq 0 ]; then
+            echo "::error::no installer assets found to publish"; exit 1
+          fi
+          printf 'attaching: %s\n' "${assets[@]}"
+          # --notes (not --notes-file): gh documents only --notes as combinable
+          # with --generate-notes (prepended to the generated notes).
+          gh release create "$TAG" \
+            --title "$TAG" \
+            --notes "$(cat notes.md)" \
+            --generate-notes \
+            "${assets[@]}"

@@ -1,4 +1,4 @@
-# Release workflow — SKELETON.
+# Release workflow — the future SIGNED release path, SKELETON.
 #
 # Status: the real installer story (code signing, notarization, .dmg/.zip makers,
 # electron-updater, THIRD-PARTY-NOTICES) is tracked in issue #42
@@ -8,6 +8,12 @@
 # `release.yml`, secrets only in the protected environment requiring Rai's approval,
 # `pull_request_target` banned, unsigned `--dir` package smoke) WITHOUT wiring any
 # external publish live.
+#
+# Tags are NOT created or built here anymore. `auto-release.yml` owns the live
+# UNSIGNED path: it creates the `vX.Y.Z` tag on each merge to main and publishes
+# the unsigned installers. This file stays manual-dispatch only so a `v*` tag push
+# never double-builds; when #42 lands it becomes the SIGNED release path (signing
+# + notarization in the protected `release` environment).
 #
 # What runs today (safe, no secrets):
 #   1. check  — the full gate, reused from ci.yml.
@@ -30,11 +36,6 @@ on:
           (blocked on #42). Leave false to only build + smoke the unsigned app.
         type: boolean
         default: false
-  # A `v*` tag runs check + build only. It deliberately does NOT publish — the
-  # publish job's `if` requires a manual dispatch with publish=true.
-  push:
-    tags:
-      - "v*"
 
 # Default to read-only. The publish job elevates to `contents: write` locally, and
 # only after passing the protected-environment approval gate.
@@ -97,7 +98,8 @@ jobs:
 
   # 3. Publish — EXTERNAL-FACING, STUBBED. Blocked on #42 + Rai's sign-off.
   #    Triple gate:
-  #      a) manual dispatch only (a `v*` tag alone will not reach this job),
+  #      a) manual dispatch only (this workflow no longer triggers on a `v*` tag —
+#         auto-release.yml owns tags — so nothing here can auto-reach this job),
   #      b) explicit `publish: true` input,
   #      c) the protected `release` environment (must be created in repo settings
   #         with Rai as a required reviewer; signing/notarization secrets live there).
