@@ -3,16 +3,21 @@ title: Agent handoff
 description: How review requests become one coding-agent work order, a new patchset, and a focused delta review.
 ---
 
-Agent handoff is the intended author-side loop: collect the changes you want,
-hand them to the coding harness, capture what it edits, then review only the
-resulting delta. As of
-[#72](https://github.com/rbutera/rennet/issues/72) this loop is reachable in the
-app: an own-branch review with an actionable disposition offers a "Hand off to
-agent" path alongside the PR-submission sign path. It opens a handoff paper that
-composes the bundle, previews it, and runs it — the renderer wiring that was the
-last missing join is now in place. Signing your own-branch paper still pushes the
-branch and opens the pull request; the handoff is the other action off the same
-own-branch destination.
+Agent handoff is the author-side loop: collect the changes you want, hand them to
+the coding harness, capture what it edits, then review only the resulting delta.
+The whole loop is reachable in the app as of
+[#72](https://github.com/rbutera/rennet/issues/72);
+[#73](https://github.com/rbutera/rennet/issues/73) added the hunk-grain delta
+account.
+
+Read [delta re-review and lineage](/developing/concepts/delta-rereview-and-lineage/)
+and [the canvas model](/developing/concepts/canvas-model/) first.
+
+An own-branch review with an actionable disposition offers a "Hand off to agent"
+path alongside the PR-submission sign path. It opens a handoff paper that composes
+the bundle, previews it, and runs it. Signing your own-branch paper still pushes
+the branch and opens the pull request; the handoff is the other action off the
+same own-branch destination.
 
 ## The loop
 
@@ -29,22 +34,21 @@ flowchart TD
   rereview --> paper["Sign the PR submission"]
 ```
 
-Most of the machinery is live behind typed main-process commands: the mechanical
-bundle, write-enabled runner, workspace checkpoints, successor capture, exact
-carry, delta account, optional digest, and PR submission. As of
-[#72](https://github.com/rbutera/rennet/issues/72), `review.handoff.run` accepts
-and executes the exact composed bundle `review.handoff.compose` produced, bound by
-its digest — it no longer rebuilds a mechanical bundle from the raw dispositions.
-A pure stage-6 preview view-model (`handoffPreview`) and paper component render
-that composed bundle before it runs, and the renderer now wires the whole loop:
-the own-branch destination composes on surface entry, previews via `HandoffPaper`,
-and runs the exact previewed bundle from one action. The composed-bundle→run
-integrity binding, the preview, and the in-app trigger are all in place.
+The machinery lives behind typed main-process commands: the mechanical bundle,
+write-enabled runner, workspace checkpoints, successor capture, exact carry, delta
+account, optional digest, and PR submission. `review.handoff.run` accepts and
+executes the exact composed bundle `review.handoff.compose` produced, bound by its
+digest; it does not rebuild a mechanical bundle from the raw dispositions. A pure
+stage-6 preview view-model (`handoffPreview`) and paper component render that
+composed bundle before it runs. The own-branch destination composes on surface
+entry, previews via `HandoffPaper`, and runs the exact previewed bundle from one
+action.
 
 ## From dispositions to a work order
 
 The source material is the draft the reviewer already shaped. `request-change`
-and actionable `comment` dispositions become tasks. Approvals mean “leave this
+and actionable `comment` [dispositions](/developing/concepts/canvas-model/) become
+tasks. Approvals mean “leave this
 alone,” while questions stay in the review conversation, so neither becomes an
 edit instruction. A `comment` with a blank effective body is not actionable
 either — a neutral mark-read carries no instruction, so it never becomes a task
@@ -63,7 +67,7 @@ The mechanical bundle contains:
 deterministic shape. The separate `review.handoff.compose` command merges related
 asks, chooses a useful order, and adds a short narrative without changing which
 asks are in the bundle. Its output IS the input to the acting turn: `review.handoff.run`
-now runs the composed bundle's ordered, verbatim prompt.
+runs the composed bundle's ordered, verbatim prompt.
 
 ```mermaid
 flowchart LR
@@ -80,13 +84,13 @@ order easier to follow, but it may not invent a task or lose one.
 
 ## The acting turn
 
-When invoked, `review.handoff.run` receives the composed bundle, verifies its
-integrity (its digest and prompt recompute from its tasks, and it was composed
-against the currently-active patchset — otherwise the run is refused rather than
-executing an order nobody composed), checkpoints the working tree, and starts one
-Claude Code session in the repository root running the composed prompt. The session has the harness's full default tool
-surface, including shell access. That lets the agent edit, inspect, format, and
-test the work it just changed.
+When invoked, `review.handoff.run` first checks the composed bundle's integrity.
+It refuses to run unless the bundle's digest and prompt recompute from its tasks
+and it was composed against the active patchset. Once that holds, it checkpoints
+the working tree and starts one Claude Code session in the repository root running
+the composed prompt. The session has the harness's full default tool surface,
+including shell access. That lets the agent edit, inspect, format, and test the
+work it just changed.
 
 Rennet's prompt asks the agent to stay on the listed work and leave commit and
 push to the later PR-submission step. This is instruction, not a reduced
@@ -241,18 +245,21 @@ file whose patch is truncated degrades honestly to path grain for that file, and
 a review persisted before hunk grain existed validates and renders as the
 path-grain account it is.
 
-### The traceMap is now consumed
+### The traceMap names which task ran
 
-The composed bundle's `traceMap` maps every ask id to the task it landed in. When
-`review.handoff.run` captures the successor, it hands the verified bundle's ask
-trace — the id-stamped anchors, the `traceMap`, and each task's preview title, a
-small projection with **no prompts or instruction bodies** — to the capture. The
-delta account matches each staged ask to its bundle ask by anchor identity and
-stamps the composed task's index and title, so the account can narrate "ran as
-task 2 — 'Tighten the parser'." The traceMap attributes _asks_, never hunks: the
-write turn is one opaque agent session with no per-task execution telemetry, so
-claiming "task 2 caused this hunk" would be a guess, and the account carries only
-verifiable facts. A plain regenerate carries no trace and computes identically.
+Because of the traceMap, the account can say "ran as task 2 — 'Tighten the
+parser'" instead of naming a bare anchor. The composed bundle's `traceMap` maps
+every ask id to the task it landed in. When `review.handoff.run` captures the
+successor, it hands the verified bundle's ask trace — the id-stamped anchors, the
+`traceMap`, and each task's preview title, a small projection with **no prompts or
+instruction bodies** — to the capture. The delta account matches each staged ask
+to its bundle ask by anchor identity and stamps the composed task's index and
+title.
+
+The traceMap attributes _asks_, never hunks. The write turn is one opaque agent
+session with no per-task execution telemetry, so claiming "task 2 caused this
+hunk" would be a guess, and the account carries only verifiable facts. A plain
+regenerate carries no trace and computes identically.
 
 ## The commands and owners
 
@@ -267,16 +274,16 @@ verifiable facts. A plain regenerate carries no trace and computes identically.
 | Delta facts | `packages/core/src/delta-account.ts` |
 | Draft, handoff paper, run action, and sign interaction | `packages/ui/src/app.tsx`, `packages/ui/src/components/handoff-paper.tsx` |
 
-The renderer never gets direct process authority. The in-app trigger is now
-wired: the own-branch destination composes the bundle on handoff-surface entry
-(`review.handoff.compose`), previews it on the stage-6 paper, and calls
-`review.handoff.run` with that exact bundle from one action. The desktop main
-process resolves the current review, verifies and runs the composed bundle,
-captures the result, and returns a validated output the paper renders truthfully.
+The renderer never gets direct process authority. The own-branch destination
+composes the bundle on handoff-surface entry (`review.handoff.compose`), previews
+it on the stage-6 paper, and calls `review.handoff.run` with that exact bundle
+from one action. The desktop main process resolves the current review, verifies
+and runs the composed bundle, captures the result, and returns a validated output
+the paper renders truthfully.
 
 ## Current edge
 
-With the in-app trigger wired, the main precision seam is sub-file lineage
-across a changed patchset. The fuzzy matcher can classify it, but handoff carry
+The main precision seam is sub-file lineage across a changed patchset. The fuzzy
+matcher can classify it, but handoff carry
 still stays on the deterministic floor. That means Rennet can reopen more work
 than strictly necessary; it does not silently carry uncertain review state.

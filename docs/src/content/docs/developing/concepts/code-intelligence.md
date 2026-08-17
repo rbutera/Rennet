@@ -5,7 +5,8 @@ description: What Rennet can resolve today, how confidence is shown, and where a
 
 Rennet needs enough code intelligence to answer two practical review questions:
 “where is this defined?” and “where else is this name used?” The current answer
-comes from Rennet's deterministic Repo Map, not from a language server.
+comes from Rennet's deterministic [Repo
+Map](/developing/concepts/context-assembly/), not from a language server.
 
 ## The live path
 
@@ -21,9 +22,9 @@ flowchart LR
 ```
 
 Project processing extracts top-level exported declarations and textual
-identifier occurrences into content-addressed shards. A review reads those
-shards at its pinned base OID through the same freshness checks as the rest of
-the Repo Map.
+identifier occurrences into content-addressed shards — small deduplicated content
+blobs. A review reads those shards at its pinned base OID (the Git object id of
+the reviewed tree) through the same freshness checks as the rest of the Repo Map.
 
 The desktop symbol inspector combines three answers:
 

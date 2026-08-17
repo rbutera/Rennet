@@ -6,9 +6,11 @@ description: The intended path from adding a project to signing a review, with h
 This is the road through Rennet: add a project, enter through your branch or a
 team pull request, understand the change, shape the outbound artifact, and sign
 it. A team change can become a GitHub review, while your branch can be pushed and
-opened as a pull request. The coding-agent loop in the journey is live end to
-end, from the renderer handoff through the successor's deterministic hunk-grain
-delta account; only fuzzy sub-file lineage carry is still to come.
+opened as a pull request. The coding-agent loop is live end to end: you compose
+the handoff, run it, and get a focused re-review of exactly what the agent
+changed. The one unfinished piece is in-place lineage: when the agent reworks
+existing code in place, Rennet cannot yet always recognise it as the same code, so
+it re-reviews it fresh rather than carrying over your earlier decisions.
 
 ## The journey at a glance
 
@@ -99,22 +101,26 @@ different jobs:
 - Flagged indexes automated findings by severity, agreement, verification, the
   cross-harness adjudication verdict on a contested row, and code anchor without
   pretending they are the reviewer's verdict.
-  - When your changeset touches UI (a component, a stylesheet, a renderer file),
-    a **verify-ui** pass renders the change with whatever your project affords —
-    its own tests, storybook, a dev server, any browser automation it has —
-    screenshots it, runs an accessibility check, and compares what rendered against
-    the change's stated intent. Its observations arrive as ordinary flags you
-    disposition like any other, and a strip on Flagged shows the captured
-    screenshots inline. While that slow late pass runs, Flagged says the UI check is
-    still running instead of showing an unqualified clean result. If it could not
-    mount the change with anything your project affords, it says so plainly — that
-    is "could not check," never an all-clear — and a backend-only changeset skips it
-    entirely. Evidence belongs to the current transient review run and is retained
-    in bounded patchset/run namespaces, so reopening eagerly checks again. Rennet
-    bundles no browser or accessibility tooling of its own, and verify-ui never
-    blocks signing or publishing.
+  - When your changeset touches UI, a **verify-ui** pass renders it and reports
+    what it saw as ordinary flags — see [the UI check](#the-ui-check).
 - Noise groups low-signal churn, names whether a rule or model judged it, and lets
   you pull anything back with **not noise?**
+
+### The UI check
+
+When your changeset touches UI (a component, a stylesheet, a renderer file),
+Rennet renders the change with whatever your project affords — its own tests,
+storybook, a dev server, any browser automation — screenshots it, and runs an
+accessibility check against the change's stated intent. Those observations arrive
+as ordinary flags you disposition like any other, and a strip on Flagged shows the
+screenshots inline. While that slow late pass runs, Flagged says the UI check is
+still running rather than showing an unqualified clean result.
+
+If it could not mount the change with anything your project affords, it says so
+plainly: that is "could not check," never dressed up as an all-clear. A
+backend-only changeset is skipped as not-applicable, and reopening a review checks
+again. Rennet bundles no browser or accessibility tooling of its own, and
+verify-ui never blocks signing or publishing.
 
 Blast radius paints those surfaces rather than changing their order. Read
 coverage is equally literal: an action marks material read, scrolling can only
@@ -150,19 +156,17 @@ paper, idempotently, in the reviewer's name.
 
 ## 11. Re-steer your own branch
 
-The intended own-branch loop sends requested changes to a capable coding
-harness, then captures a successor patchset, carries only exact unaffected
-review state, and focuses the next pass on what moved.
+On your own branch, you send requested changes to a coding agent, it edits and
+tests, and Rennet captures what changed and focuses the next pass on exactly that.
 
-The backend builds and runs the bundle, brackets the turn with Git checkpoints,
-and captures the successor, and a model-backed composer shapes the notes. The
-renderer now composes, previews, and runs the bundle from the own-branch
-destination, and the acting command executes the composer's exact output bound by
-its digest, so this loop is end to end in the shipped surface.
+The coding-agent route is live end to end: you compose the handoff, preview it,
+run it, and get a focused re-review of exactly what the agent changed — including
+anything it changed beyond what you asked for.
 
 Signing the finished own-branch paper pushes the named branch and opens the
-previewed pull request. The next precision work is narrower: richer sub-file
-lineage without carrying old decisions onto merely similar code.
+previewed pull request. The one unfinished piece: when the agent reworks existing
+code in place, Rennet cannot yet always recognise it as the same code moved or
+edited, so it re-reviews it fresh rather than carrying over your earlier decisions.
 
 ## Where to go next
 

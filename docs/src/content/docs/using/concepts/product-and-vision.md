@@ -105,10 +105,10 @@ machine **reviewed**, **approved**, or **found a bug** on the reviewer's behalf.
 Rennet has no Rennet backend and no Rennet telemetry service. Review state and
 project context live locally. Material sent through a selected harness may go to
 that harness's model provider. Rennet feeds its deterministic assembled context
-as a labelled layer and records the exact prompt or system-append bytes handed
-to each fleet seat. The inspector says **Context sent to the fleet** only when a
-send record's context digest matches the assembly digest; ambient harness reads
-remain separately disclosed.
+as a labelled layer. Rennet records the exact text it handed to each model, and
+only labels context **sent** when that record matches what it assembled — it never
+claims a model saw nothing extra. Ambient harness reads remain separately
+disclosed.
 
 The intended zero-config path uses harnesses already installed and authenticated
 on your computer. Rennet does not need to become a credential vault to drive
@@ -116,25 +116,20 @@ Claude Code or Codex.
 
 ## What is live and what is still closing
 
-The team-PR loop works end to end on `main`: ingest, decomposition, the review
-lenses, dual-model analysis, refinement, signing, and a real GitHub post.
+- **Live** — the team-PR loop, end to end on `main`: ingest, decomposition, the
+  review lenses, dual-model analysis, refinement, signing, and a real GitHub post.
+- **Live** — the own-branch submission path: Rennet drafts the pull request, you
+  sign, and it pushes the named branch and opens the previewed pull request.
+- **Live** — the coding-agent handoff with delta re-review: you compose the
+  handoff, preview it, run it, and get a focused re-review of exactly what the
+  agent changed, including anything it changed beyond what you asked for. The
+  mechanics are on [agent handoff](/developing/concepts/agent-handoff/).
+- **Pending** — in-place lineage: when the agent reworks existing code in place,
+  Rennet cannot yet always recognise it as the same code moved or edited, so it
+  re-reviews it fresh rather than carrying over your earlier decisions.
 
-The own-branch submission path is live: Rennet drafts the pull request, signs,
-pushes the named branch, and opens the previewed pull request. The coding-agent
-handoff is now live through the renderer too: an own-branch review with an
-actionable disposition offers a "Hand off to agent" path that composes the
-bundle, previews it on the stage-6 paper, and runs it from one action. The whole
-chain is threaded end to end — mechanical bundle, capable runner, checkpoint
-capture, successor patchset, deterministic carry, and model composer behind
-main-process commands; an acting command that executes the exact composed bundle
-(bound by its digest, refusing a tampered or stale one); and the renderer trigger
-that composes, previews, and invokes it, surfacing the run outcome truthfully.
-Consuming the run's successor patchset into a delta re-review is now live too:
-the successor is captured with the ask trace and rendered as a deterministic
-hunk-grain delta account on the successor review. The remaining seam is fuzzy
-sub-file lineage carry. Project-processing narration and parts of the
-code-intelligence experience are still intended destinations rather than
-finished surfaces.
+Project-processing narration and parts of the code-intelligence experience are
+still intended destinations rather than finished surfaces.
 
 These docs mark those seams explicitly. A designed flow is useful context, but
 it is not reported as shipped merely because a schema or mockup exists.

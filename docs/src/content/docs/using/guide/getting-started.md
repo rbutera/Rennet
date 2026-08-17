@@ -45,11 +45,14 @@ flowchart TD
 ```
 
 A team PR can become a signed GitHub review. Your branch can be pushed and
-opened as the previewed pull request when you sign. The write-enabled agent
-handoff and successor-delta loop runs from the renderer: it composes the bundle,
-previews it, runs the digest-bound turn, and captures the successor as a
-deterministic hunk-grain delta account. Only fuzzy lineage carry is still to
-come — exact-identity review state carries automatically today.
+opened as the previewed pull request when you sign. The coding-agent route is
+live end to end: you compose the handoff, preview it, run it, and get a focused
+re-review of exactly what the agent changed — including anything it changed beyond
+what you asked for.
+
+The one unfinished piece: when the agent reworks existing code in place, Rennet
+cannot yet always recognise it as the same code moved or edited, so it re-reviews
+it fresh rather than carrying over your earlier decisions.
 
 ## Move quickly with the keyboard
 
@@ -74,16 +77,20 @@ chord actually runs the command, the old one stops, and the palette and menu bot
 show the new shortcut. Overrides are stored on this machine only, in
 `~/.rennet/config.json`, and survive a restart.
 
-If two commands end up on the same chord, Rennet **shows** the collision on both
-rows (and on both palette entries) rather than blocking it: the shortcut is marked
-and names the other command, the write still lands, and you resolve it — or leave
-it — with more plain edits. When a chord is shared, the first registry match wins.
+**Edge cases:**
 
-The v1 recorder accepts bare keys or the platform-primary modifier with one key
-(`⌘` on macOS, `Ctrl` on Windows/Linux). Shift and Alt combinations are left
-unchanged with an inline note instead of being recorded inaccurately. If a config
-file contains an invalid chord, the row shows the raw value as invalid and Rennet
-uses that command's default until you replace, unbind, or reset it.
+- **Collisions** — if two commands end up on the same chord, Rennet **shows** the
+  collision on both rows (and on both palette entries) rather than blocking it: the
+  shortcut is marked and names the other command, the write still lands, and you
+  resolve it — or leave it — with more plain edits. When a chord is shared, the
+  first registry match wins.
+- **Recorder limits** — the v1 recorder accepts bare keys or the platform-primary
+  modifier with one key (`⌘` on macOS, `Ctrl` on Windows/Linux). Shift and Alt
+  combinations are left unchanged with an inline note instead of being recorded
+  inaccurately.
+- **Invalid chord recovery** — if a config file contains an invalid chord, the row
+  shows the raw value as invalid and Rennet uses that command's default until you
+  replace, unbind, or reset it.
 
 ### The menu bar mirrors the palette
 
@@ -119,13 +126,14 @@ visibility and its [execution locus](/using/guide/windows-and-wsl/#the-execution
 Every value shows **where it came from** (Explain): the built-in default, an
 auto-`detected` environment value, your global preference, or an explicit
 per-repo setting — the resolver's own answer, not a guess. Two controls sit on
-each repo row. **Reset** appears when a value is set explicitly for the repo: it
-clears that entry and the value falls back to whatever the rest of the ladder
-resolves (resetting map visibility also re-applies the git-ignore switch so the
-files match). **Pin** appears when a value is inherited or detected: it writes the
-current effective value as an explicit per-repo setting, so a later change
-elsewhere no longer moves it. The appearance scheme has the same reset back to the
-system default.
+each repo row:
+
+| Control | Appears when | What it does |
+|---|---|---|
+| **Reset** | a value is set for this repo | clears it and falls back to the inherited value (resetting map visibility also re-applies the git-ignore switch so the files match) |
+| **Pin** | a value is inherited or auto-detected | freezes the current value as an explicit repo setting, so a later change elsewhere no longer moves it |
+
+The appearance scheme has the same reset back to the system default.
 
 All of it is plain config writes with no confirmation step. If a project's config
 file cannot be parsed, that row shows the built-in defaults and disables editing so

@@ -30,14 +30,6 @@ Spec is a structured document; Decisions is a judgment queue; Flagged is an
 index; Noise is the visible remainder. [Review lenses](/developing/concepts/review-lenses/)
 explains their behavior, provenance, and shared read-coverage floor.
 
-> **Retired surface (#221):** the `claims` canvas is gone. `CanvasAngle`,
-> `ChunkAngle`, `CANVAS_ANGLES`, and the `claim` doc type no longer include it —
-> the Decisions lens owns that ground. A decomposition persisted before the
-> retirement may still carry a `claims` chunk angle; it is inert at the current
-> projection boundaries, while the validator rejects a newly declared `claims`
-> angle with V104. Claim and requirement links remain useful infrastructure for
-> Spec coverage, test links, and unclaimed-change detection.
-
 ## Four layers, one surface
 
 Every review canvas is a projection over four layers. The layers keep raw code,
@@ -119,11 +111,11 @@ The actors have different jobs, not different levels of importance:
 
 The orchestrator reaches the review through `canvasOps@2`. Its useful core is a
 zoom ladder: `canvas.describe` gives counts, cohorts, or element summaries;
-`canvas.read` opens one item; `diff.read` opens the code beneath it. The protocol
-also has `canvas.view`, but its live backend currently returns a static empty
-selection rather than renderer view state. The pushed-context design for phrases
-like “this decision” is described honestly in [context
-assembly](/developing/concepts/context-assembly/).
+`canvas.read` opens one item; `diff.read` opens the code beneath it. The
+pushed-context design for phrases like “this decision” is described honestly in
+[context assembly](/developing/concepts/context-assembly/). The protocol also exposes
+`canvas.view`, whose live backend currently returns a static empty selection rather
+than renderer view state.
 
 See [context assembly](/developing/concepts/context-assembly/) for the full tool
 surface and primer.
@@ -150,8 +142,15 @@ Decisions, Flagged, and Noise all have live product paths.
 
 One piece is still settling: some flat projections still expose less detail than
 their final surface calls for. That is a migration edge, not a second product
-model. (The `claims` canvas that used to sit here is gone — retired in #221, with
-normalize-on-read handling any decomposition persisted before the removal.)
+model.
+
+**Retired surface (#221):** the `claims` canvas is gone. `CanvasAngle`, `ChunkAngle`,
+`CANVAS_ANGLES`, and the `claim` doc type no longer include it — the Decisions lens
+owns that ground. A decomposition persisted before the retirement may still carry a
+`claims` chunk angle; normalize-on-read handles it and it is inert at the current
+projection boundaries, while the validator rejects a newly declared `claims` angle
+with V104. Claim and requirement links remain useful infrastructure for Spec
+coverage, test links, and unclaimed-change detection.
 
 ## Code map
 

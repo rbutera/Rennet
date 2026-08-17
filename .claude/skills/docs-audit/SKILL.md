@@ -20,9 +20,18 @@ Fan-out verification of `docs/src/content/docs/**` against what actually shipped
 
 1. Inventory: `find docs/src/content/docs -name '*.md' -o -name '*.mdx'` (~32 pages).
 2. Slice into ~5-page groups by section: using/, concepts (arch+UI), concepts (harness+council), concepts (pipeline), reference/, guides+contributing+indexes.
-3. One read-only subagent per slice (opus), in parallel. Each agent: read every assigned page fully, verify every concrete claim (commands, paths, package names, versions, feature liveness, UI descriptions), judge human readability.
-4. One slice also sweeps cross-cutting: every internal link resolves, every page has `title:` + `description:` frontmatter, every `docs/astro.config.mjs` sidebar entry maps to a file, no orphans.
-5. Orchestrator collects reports, resolves inter-agent conflicts itself (rule above), dedupes, ranks.
+3. One read-only subagent per slice (opus), in parallel. Each agent: read every assigned page fully, verify every concrete claim (commands, paths, package names, versions, feature liveness, UI descriptions).
+4. **Readability is its own pass, not a side note.** Staleness findings crowd out readability every time — run it as a separate fan-out (or a separate prompt section with its own findings quota). Rubric, per page, with line numbers:
+   - Jargon on first use: Rennet terms (patchset, lens, canvas, locus, seat, RSP, disposition...) used before the page defines or links them. using/ pages must not assume developing/ vocabulary.
+   - Orientation: what-and-why before mechanism; the page's payoff clear within three sentences.
+   - Density: paragraphs stacking 3+ claims, sentences with 3+ nested clauses, prose that should be a list or table.
+   - Scannability: headings + first sentences alone should tell the story.
+   - Show vs tell: dense flow prose that a small mermaid diagram or table would beat.
+   - Ledger pages (delivery-order, contracts-and-rulings) are records: propose structure around entries (TL;DR lines, status tables), never rewrites of them.
+   - Some doc blocks are GENERATED and test-pinned verbatim (e.g. the delta-rereview measurement tables, pinned by `lineage-matcher.measurement.test.ts` as one contiguous string). Grep `packages/*/src/**/*.test.ts` for the page's filename before restructuring; add prose around such a block, never inside or between its parts.
+   Readability fixes must be meaning-preserving and within the docs-style-guide voice.
+5. One slice also sweeps cross-cutting: every internal link resolves, every page has `title:` + `description:` frontmatter, every `docs/astro.config.mjs` sidebar entry maps to a file, no orphans.
+6. Orchestrator collects reports, resolves inter-agent conflicts itself (rule above), dedupes, ranks.
 
 ## Findings format (require it from every agent)
 
