@@ -150,7 +150,8 @@ function DefinitionSection({
       <div className="symbol-section" data-section="definition">
         <p className="symbol-section-head">Defined in</p>
         <p className="symbol-empty">
-          No exported definition found. Go-to-definition is over exported top-level symbols only.
+          No exported definition in the reviewed range. Go-to-definition covers exported top-level
+          symbols in the committed review range (base..head), not uncommitted local edits.
         </p>
       </div>
     );

@@ -33,8 +33,8 @@ Red-first: every code change lands its failing control before the fix. Close-wit
 
 ## 5. #223 — scope-honest miss copy, then close
 
-- [ ] 5.1 RED: adjust the expectation in `symbol-inspector.dom.test.tsx` for the no-definition copy to name the committed review range; confirm it fails.
-- [ ] 5.2 Update the copy at `packages/ui/src/components/symbol-inspector.tsx:153` to say the lookup covers the committed review range (uncommitted local edits are outside it).
+- [x] 5.1 RED: adjust the expectation in `symbol-inspector.dom.test.tsx` for the no-definition copy to name the committed review range; confirm it fails.
+- [x] 5.2 Update the copy at `packages/ui/src/components/symbol-inspector.tsx:153` to say the lookup covers the committed review range (uncommitted local edits are outside it).
 - [ ] 5.3 Close #223 with evidence: head-pin shipped (`symbol-lookup-live.ts:46`), working-tree overlay deliberately not built (committed range is the right review scope; no demand; reopen on real demand).
 
 ## 6. #75 — close with evidence
