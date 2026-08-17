@@ -23,10 +23,10 @@ Red-first throughout: each numbered group starts with the failing test that prov
 
 ## 4. Seeded corpus and pure scorer
 
-- [ ] 4.1 RED: corpus shape test — every item names `claimClass`, `truth`, and an offered-manifest-shaped synthetic diff; planted items carry the planted anchor/summary; at least one clean control exists per released class set.
-- [ ] 4.2 Author `packages/core/src/adjudication-corpus.ts`: ~10 Rennet-authored synthetic items across the classes in design D4. Module docstring restates the fixed boundary: synthetic only, never client data. Green.
-- [ ] 4.3 RED: scorer tests — `scoreAdjudicationCalibration` is pure; per-class accuracy for raw overlap vs adjudication against known truth on synthetic outcomes, including the case where adjudication corrects a wrong solo (beats overlap) and the case where it doesn't.
-- [ ] 4.4 Implement the scorer in core. Green. Confirm the whole of groups 2–4 spawns no process and spends no token in the default gate (positive control: the `.real` env flag off).
+- [x] 4.1 RED: corpus shape test — every item names `claimClass`, `truth`, and an offered-manifest-shaped synthetic diff; planted items carry the planted anchor/summary; at least one clean control exists per released class set.
+- [x] 4.2 Author `packages/core/src/adjudication-corpus.ts`: ~10 Rennet-authored synthetic items across the classes in design D4. Module docstring restates the fixed boundary: synthetic only, never client data. Green.
+- [x] 4.3 RED: scorer tests — `scoreAdjudicationCalibration` is pure; per-class accuracy for raw overlap vs adjudication against known truth on synthetic outcomes, including the case where adjudication corrects a wrong solo (beats overlap) and the case where it doesn't.
+- [x] 4.4 Implement the scorer in core. Green. Confirm the whole of groups 2–4 spawns no process and spends no token in the default gate (positive control: the `.real` env flag off).
 
 ## 5. Gated real calibration run and the committed table
 

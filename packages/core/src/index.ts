@@ -42,6 +42,7 @@ export * from "./dual-seat";
 export * from "./element-diffs";
 export * from "./escape-path";
 export * from "./finding-generation";
+export * from "./adjudication-corpus";
 export * from "./finding-adjudication";
 export * from "./finding-reconcile";
 export * from "./finding-verification";
