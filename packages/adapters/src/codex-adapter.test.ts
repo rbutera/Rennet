@@ -351,6 +351,75 @@ describe("CodexAdapter", () => {
     expect(events.some((e) => e.kind === "session.ended")).toBe(true);
   });
 
+  it("close() without a send resolves (no pre-send deadlock) and ends the events stream", async () => {
+    // Subscribe to events but never send a turn, then close(). The port contract says
+    // close() is always available; the pre-send state must settle, not hang.
+    const session = await adapter(fakeTransport([]).fn).createSession({ cwd: "/repo" });
+    const stream = session.events;
+    const withinTimeout = <T>(p: Promise<T>, ms: number): Promise<T> =>
+      Promise.race([
+        p,
+        new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error("deadlock: close() never resolved")), ms),
+        ),
+      ]);
+    await withinTimeout(session.close(), 1_000);
+    const events: HarnessEvent[] = [];
+    await withinTimeout(
+      (async () => {
+        for await (const event of stream) events.push(event);
+      })(),
+      1_000,
+    );
+    // No turn ran, so there is no outcome to emit — the stream just ends cleanly.
+    expect(events).toEqual([]);
+  });
+
+  it("emits EXACTLY ONE session.ended even if the transport throws during teardown after its terminal", async () => {
+    const transport: CodexTurnTransport = () => ({
+      async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
+        yield STARTED;
+        yield completed("completed", { finalMessage: "ok" });
+        throw new Error("teardown boom"); // thrown AFTER the terminal frame
+      },
+    });
+    const session = await adapter(transport).createSession({ cwd: "/repo" });
+    await session.send({ prompt: "go" });
+    const { events, outcome } = await drain(session);
+    expect(events.filter((e) => e.kind === "session.ended")).toHaveLength(1);
+    expect(outcome?.status).toBe("completed");
+    // The post-terminal teardown throw is surfaced as non-terminal evidence.
+    expect(
+      events.some((e) => e.kind === "passthrough" && e.nativeKind === "transport-teardown-error"),
+    ).toBe(true);
+  });
+
+  it("fails the turn (naming the ceiling) when the stream floods past the buffer ceiling", async () => {
+    const flood = 50;
+    const transport: CodexTurnTransport = () => ({
+      async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
+        for (let i = 0; i < flood; i += 1) yield { method: "model/verification", params: { n: i } };
+        // NEVER a terminal — a hung, forever-streaming command.
+      },
+    });
+    const codex = new CodexAdapter({
+      binaryPath: "/x/codex",
+      transport,
+      version: "0.146.0",
+      bufferCeiling: { maxEvents: 5, maxBytes: 64 * 1024 * 1024 },
+    });
+    const session = await codex.createSession({ cwd: "/repo" });
+    await session.send({ prompt: "go" });
+    // Let the pump flood past the ceiling BEFORE the consumer drains.
+    await new Promise((resolve) => setImmediate(resolve));
+    const { events, outcome } = await drain(session);
+    expect(outcome?.status).toBe("failed");
+    if (outcome?.status === "failed") expect(outcome.error.message).toMatch(/buffer ceiling/);
+    // Ordering preserved below the ceiling: real passthrough events precede the terminal.
+    const firstEnded = events.findIndex((e) => e.kind === "session.ended");
+    expect(events.slice(0, firstEnded).some((e) => e.kind === "passthrough")).toBe(true);
+  });
+
   it("throws a plain error on a second events subscription", async () => {
     const session = await adapter(fakeTransport([completed("completed")]).fn).createSession({
       cwd: "/repo",

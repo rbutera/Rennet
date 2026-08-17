@@ -561,7 +561,12 @@ describe("serverRequestResponse (exhaustive, schema-valid dispatch)", () => {
     expect(serverRequestResponse(method)).toEqual(expected);
   });
 
-  it.each(["account/chatgptAuthTokens/refresh", "attestation/generate", "some/unknown/method"])(
+  it.each([
+    "item/tool/call",
+    "account/chatgptAuthTokens/refresh",
+    "attestation/generate",
+    "some/unknown/method",
+  ])(
     "answers %s with a JSON-RPC error (never a bogus result shape that could stall the turn)",
     (method) => {
       const response = serverRequestResponse(method);

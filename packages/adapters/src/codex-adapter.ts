@@ -443,18 +443,47 @@ function createCodexNormalizer(
 
 // ── The session + adapter ────────────────────────────────────────────────────
 
-/** A minimal unbounded async queue: the pump pushes, the consumer's async iterator
- *  reads. Unbounded is correct here — one codex turn is a FINITE frame stream, so the
- *  buffer cannot grow without end; a bounded ring would risk dropping frames (the
- *  never-dropped contract). ponytail: unbounded queue, revisit only if a turn ever
- *  streams unboundedly (it does not). */
-function createEventQueue(): {
+/**
+ * Generous default ceiling on the events buffered-but-not-yet-consumed by a slow
+ * consumer. A finite turn drains near-instantly, so this is never hit in normal
+ * use; it exists so a HUNG command streaming forever fails LOUDLY (an honest failed
+ * outcome naming the ceiling) instead of growing the buffer until the app OOMs. Not
+ * a gate — a real turn never approaches it. Overridable via `CodexAdapterConfig`.
+ */
+const DEFAULT_MAX_BUFFERED_EVENTS = 200_000;
+const DEFAULT_MAX_BUFFERED_BYTES = 128 * 1024 * 1024; // 128 MiB of retained content
+
+/** Approximate the retained size of one event (chars ≈ bytes for the JSON content). */
+function eventSize(event: HarnessEvent): number {
+  try {
+    return JSON.stringify(event).length;
+  } catch {
+    return 0; // codex frames are plain JSON, so this is defensive only
+  }
+}
+
+/**
+ * A bounded async queue: the pump pushes, the consumer's async iterator reads. An
+ * INDEX CURSOR (not `Array.shift`) drains in O(1) — no quadratic cost on a large
+ * backlog. It tracks the currently-buffered (unread) event count and byte total and
+ * raises `overflowed` when either exceeds the ceiling; the pump reads that flag and
+ * fails the turn (the queue itself never drops an event below the ceiling — the
+ * never-dropped contract holds).
+ */
+function createEventQueue(
+  maxEvents: number,
+  maxBytes: number,
+): {
   push: (event: HarnessEvent) => void;
+  readonly overflowed: boolean;
   close: () => void;
   iterable: AsyncIterable<HarnessEvent>;
 } {
-  const buffer: HarnessEvent[] = [];
+  const buffer: ({ event: HarnessEvent; size: number } | undefined)[] = [];
+  let head = 0;
+  let bufferedBytes = 0;
   let done = false;
+  let overflowed = false;
   let wake: (() => void) | null = null;
   const ping = (): void => {
     wake?.();
@@ -462,8 +491,14 @@ function createEventQueue(): {
   };
   return {
     push: (event) => {
-      buffer.push(event);
+      const size = eventSize(event);
+      buffer.push({ event, size });
+      bufferedBytes += size;
+      if (buffer.length - head > maxEvents || bufferedBytes > maxBytes) overflowed = true;
       ping();
+    },
+    get overflowed() {
+      return overflowed;
     },
     close: () => {
       done = true;
@@ -472,8 +507,12 @@ function createEventQueue(): {
     iterable: {
       async *[Symbol.asyncIterator](): AsyncIterator<HarnessEvent> {
         while (true) {
-          if (buffer.length > 0) {
-            yield buffer.shift() as HarnessEvent;
+          if (head < buffer.length) {
+            const entry = buffer[head] as { event: HarnessEvent; size: number };
+            buffer[head] = undefined; // release the reference for GC
+            head += 1;
+            bufferedBytes -= entry.size;
+            yield entry.event;
             continue;
           }
           if (done) return;
@@ -494,14 +533,13 @@ class CodexSession implements HarnessSession {
   readonly #config: CodexAdapterConfig;
   readonly #context: EnvelopeContext;
   readonly #abort: AbortController;
-  readonly #started: Promise<AsyncIterable<unknown>>;
-  readonly #queue = createEventQueue();
+  readonly #maxEvents: number;
+  readonly #maxBytes: number;
+  readonly #queue: ReturnType<typeof createEventQueue>;
   readonly #completion: Promise<void>;
   #resolveCompletion!: () => void;
-  #resolveStarted!: (iterable: AsyncIterable<unknown>) => void;
   #sent = false;
   #eventsTaken = false;
-  #pumpStarted = false;
 
   constructor(
     id: string,
@@ -518,9 +556,9 @@ class CodexSession implements HarnessSession {
     this.#config = config;
     this.#abort = abort;
     this.#context = { harness: HARNESS_ID, sessionId: id, turnId, seq: createSeqCounter(), now };
-    this.#started = new Promise((resolve) => {
-      this.#resolveStarted = resolve;
-    });
+    this.#maxEvents = config.bufferCeiling?.maxEvents ?? DEFAULT_MAX_BUFFERED_EVENTS;
+    this.#maxBytes = config.bufferCeiling?.maxBytes ?? DEFAULT_MAX_BUFFERED_BYTES;
+    this.#queue = createEventQueue(this.#maxEvents, this.#maxBytes);
     this.#completion = new Promise((resolve) => {
       this.#resolveCompletion = resolve;
     });
@@ -531,54 +569,7 @@ class CodexSession implements HarnessSession {
       throw new Error("Codex session events may only be subscribed to once");
     }
     this.#eventsTaken = true;
-    this.#startPump();
     return this.#queue.iterable;
-  }
-
-  /**
-   * Drive the transport with an INDEPENDENT pump: eagerly consume every transport
-   * frame into the queue, so run completion tracks the transport/process finishing —
-   * NOT consumer drainage. This is what lets a caller await `interrupt()`/`close()`
-   * from INSIDE its own `for await` body without deadlocking (the consumer parked at
-   * a yield no longer gates completion). Started once, when events is subscribed.
-   */
-  #startPump(): void {
-    if (this.#pumpStarted) return;
-    this.#pumpStarted = true;
-    const { normalize, finalize } = createCodexNormalizer(this.#context, this.#turnSpec());
-    const queue = this.#queue;
-    const context = this.#context;
-    void (async () => {
-      try {
-        const iterable = await this.#started;
-        for await (const frame of iterable) {
-          for (const event of normalize(frame)) queue.push(event);
-        }
-        for (const event of finalize()) queue.push(event);
-      } catch (error) {
-        // The transport threw before a terminal frame (e.g. an untranslatable WSL
-        // repo path). Surface it as an honest failed outcome rather than an unhandled
-        // rejection or a hung session.
-        const message = error instanceof Error ? error.message : String(error);
-        const harnessError: HarnessError = {
-          class: "protocol",
-          origin: "harness",
-          message,
-          retryable: false,
-          retryableSource: "inferred",
-          nativeCode: null,
-        };
-        queue.push({ ...envelope(context, {}), kind: "error", error: harnessError });
-        queue.push({
-          ...envelope(context, {}),
-          kind: "session.ended",
-          outcome: { status: "failed", error: harnessError },
-        });
-      } finally {
-        queue.close();
-        this.#resolveCompletion();
-      }
-    })();
   }
 
   #turnSpec(): CodexTurnSpec {
@@ -592,25 +583,111 @@ class CodexSession implements HarnessSession {
     };
   }
 
+  #failedTerminal(error: HarnessError): HarnessEvent[] {
+    return [
+      { ...envelope(this.#context, {}), kind: "error", error },
+      {
+        ...envelope(this.#context, {}),
+        kind: "session.ended",
+        outcome: { status: "failed", error },
+      },
+    ];
+  }
+
+  /**
+   * Drive the transport with an INDEPENDENT pump: eagerly consume every transport
+   * frame into the queue, so run completion tracks the transport/process finishing —
+   * NOT consumer drainage. This is what lets a caller await `interrupt()`/`close()`
+   * from INSIDE its own `for await` body without deadlocking. Started once, from
+   * `send()`. A single settlement guard (`ended`) guarantees EXACTLY ONE terminal
+   * outcome: a pre-terminal throw or a buffer overflow produces one failed
+   * `session.ended`; a post-terminal teardown throw is surfaced as non-terminal
+   * evidence, never a second `session.ended`.
+   */
+  #startPump(iterable: AsyncIterable<unknown>): void {
+    const { normalize, finalize } = createCodexNormalizer(this.#context, this.#turnSpec());
+    const queue = this.#queue;
+    let ended = false;
+    const enqueue = (event: HarnessEvent): void => {
+      if (event.kind === "session.ended") ended = true;
+      queue.push(event);
+    };
+    void (async () => {
+      try {
+        for await (const frame of iterable) {
+          for (const event of normalize(frame)) enqueue(event);
+          if (!ended && queue.overflowed) {
+            const error: HarnessError = {
+              class: "protocol",
+              origin: "transport",
+              message: `codex streamed past the session buffer ceiling (${this.#maxEvents} events / ${this.#maxBytes} bytes) without completing; failing the turn to avoid unbounded memory`,
+              retryable: false,
+              retryableSource: "inferred",
+              nativeCode: null,
+            };
+            for (const event of this.#failedTerminal(error)) enqueue(event);
+            break; // stop consuming; the transport's finally kills the child
+          }
+        }
+        if (!ended) for (const event of finalize()) enqueue(event);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (ended) {
+          // A terminal already went out (e.g. the transport threw during teardown
+          // AFTER yielding its terminal): surface the throw as evidence only.
+          enqueue({
+            ...envelope(this.#context, { message }),
+            kind: "passthrough",
+            nativeKind: "transport-teardown-error",
+          });
+        } else {
+          // The transport threw BEFORE a terminal (e.g. an untranslatable WSL repo
+          // path): one honest failed outcome, never a hang or unhandled rejection.
+          for (const event of this.#failedTerminal({
+            class: "protocol",
+            origin: "harness",
+            message,
+            retryable: false,
+            retryableSource: "inferred",
+            nativeCode: null,
+          })) {
+            enqueue(event);
+          }
+        }
+      } finally {
+        queue.close();
+        this.#resolveCompletion();
+      }
+    })();
+  }
+
   send(input: TurnInput): Promise<string> {
     if (this.#sent) throw new Error("This session has already run a turn (slice 1 is single-turn)");
     this.#sent = true;
-    const iterable = this.#transport({ ...this.#turnSpec(), prompt: input.prompt });
-    this.#resolveStarted(iterable);
+    this.#startPump(this.#transport({ ...this.#turnSpec(), prompt: input.prompt }));
     return Promise.resolve(this.#context.turnId ?? this.id);
   }
 
-  async interrupt(): Promise<void> {
+  #shutdown(): Promise<void> {
     this.#abort.abort();
-    // Await the independent pump (transport/process completion), NOT consumer
-    // drainage — so this resolves even when called from inside the caller's own
-    // `for await` body. If no turn is running (no pump), aborting is all there is.
-    if (this.#pumpStarted) await this.#completion;
+    if (this.#sent) {
+      // A turn is running: abort makes the transport finish; await the pump (process
+      // completion), NOT consumer drainage — safe to call from inside a for-await body.
+      return this.#completion;
+    }
+    // No turn was ever sent: settle directly so close()/interrupt() is ALWAYS
+    // available (port contract) and any subscribed-but-idle consumer unblocks.
+    this.#queue.close();
+    this.#resolveCompletion();
+    return Promise.resolve();
   }
 
-  async close(): Promise<void> {
-    this.#abort.abort();
-    if (this.#pumpStarted) await this.#completion;
+  interrupt(): Promise<void> {
+    return this.#shutdown();
+  }
+
+  close(): Promise<void> {
+    return this.#shutdown();
   }
 }
 
@@ -629,6 +706,10 @@ export interface CodexAdapterConfig {
   readonly capabilityEvidence?: CapabilityEvidence;
   /** Loopback MCP servers (canvasOps@2) applied to every session's turn spec. */
   readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
+  /** Override the per-session events-buffer ceiling (defaults are generous; a real
+   *  turn never approaches them). Exists so a hung, forever-streaming command fails
+   *  loudly instead of OOMing — and so tests can exercise the overflow path. */
+  readonly bufferCeiling?: { readonly maxEvents: number; readonly maxBytes: number };
 }
 
 export class CodexAdapter implements HarnessPort {

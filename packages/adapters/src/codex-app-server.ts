@@ -241,6 +241,11 @@ export function serverRequestResponse(
       return { result: { answers: {} } };
     case "mcpServer/elicitation/request":
       return { result: { action: "decline" } };
+    case "item/tool/call":
+      // A dynamic tool call — unreachable today (we never opt into experimentalApi /
+      // dynamic tools). Named explicitly so a schema-union addition cannot silently
+      // slip through the exhaustive claim into the default branch.
+      return { error: { code: -32601, message: "Rennet does not support dynamic tool calls" } };
     case "account/chatgptAuthTokens/refresh":
     case "attestation/generate":
       return {
