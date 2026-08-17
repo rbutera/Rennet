@@ -4,8 +4,10 @@ import {
   type LiveBackendDeps,
   type LoadCanvasOpsSdk,
   type LoadSdkQuery,
+  type OmpOrchestratorTurnDeps,
   type OrchestratorTurnResult,
   runCodexOrchestratorTurn,
+  runOmpOrchestratorTurn,
   runOrchestratorTurn,
 } from "@rennet/adapters";
 import type { CanvasOpsEffect, ReviewPipelineResult, UserAct } from "@rennet/core";
@@ -60,7 +62,31 @@ export type OrchestratorHarnessSelection =
       readonly harness: "codex";
       readonly model?: string;
       readonly resolvePort: CodexOrchestratorTurnDeps["resolvePort"];
+    }
+  | {
+      readonly harness: "omp";
+      readonly model?: string;
+      readonly resolvePort: OmpOrchestratorTurnDeps["resolvePort"];
     };
+
+/**
+ * The minimal orchestrator selection policy (#26). omp serves the seat ONLY when neither
+ * Claude nor Codex is installed — where the seat was previously unavailable entirely.
+ * Whenever either is present, the council decision (`council()`) is returned UNCHANGED,
+ * so the Model Council's Claude/Codex assignment is byte-identical to today. Pure, so the
+ * policy is asserted without the electron composition around it.
+ */
+export function resolveOrchestratorHarnessSelection(args: {
+  readonly claudePresent: boolean;
+  readonly codexPresent: boolean;
+  readonly ompResolvePort: OmpOrchestratorTurnDeps["resolvePort"] | null;
+  readonly council: () => OrchestratorHarnessSelection | null;
+}): OrchestratorHarnessSelection | null {
+  if (!args.claudePresent && !args.codexPresent) {
+    return args.ompResolvePort ? { harness: "omp", resolvePort: args.ompResolvePort } : null;
+  }
+  return args.council();
+}
 
 /** A turn is unavailable when no `claude` binary was discovered (fail-closed, honest). */
 export interface OrchestratorTurnUnavailable {
@@ -152,13 +178,18 @@ export function createOrchestratorTurnRunner(deps: OrchestratorRunnerDeps): Orch
               ...shared,
               resolvePort: selection.resolvePort,
             })
-          : await runOrchestratorTurn(backend, primer, question, {
-              ...shared,
-              claudePath: selection.claudePath,
-              ...(deps.env ? { env: deps.env } : {}),
-              ...(deps.loadQuery ? { loadQuery: deps.loadQuery } : {}),
-              ...(deps.loadSdk ? { loadSdk: deps.loadSdk } : {}),
-            });
+          : selection.harness === "omp"
+            ? await runOmpOrchestratorTurn(backend, primer, question, {
+                ...shared,
+                resolvePort: selection.resolvePort,
+              })
+            : await runOrchestratorTurn(backend, primer, question, {
+                ...shared,
+                claudePath: selection.claudePath,
+                ...(deps.env ? { env: deps.env } : {}),
+                ...(deps.loadQuery ? { loadQuery: deps.loadQuery } : {}),
+                ...(deps.loadSdk ? { loadSdk: deps.loadSdk } : {}),
+              });
       return { available: true, result };
     } finally {
       contextFeed.complete();

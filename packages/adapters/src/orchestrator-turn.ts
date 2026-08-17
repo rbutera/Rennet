@@ -251,6 +251,13 @@ export interface CodexOrchestratorTurnDeps {
 }
 
 /**
+ * The omp orchestrator turn deps (#26). Structurally identical to
+ * {@link CodexOrchestratorTurnDeps} — the omp slot rides the same external-MCP contract —
+ * so it is an alias rather than a divergent shape.
+ */
+export type OmpOrchestratorTurnDeps = CodexOrchestratorTurnDeps;
+
+/**
  * Drive ONE live orchestrator turn against `backend`. Boots the session + the
  * in-process canvasOps@2 MCP server, then runs the user's `claude` with that
  * server in `mcpServers`, the canvasOps@2 tools auto-approved (read-only,
@@ -413,15 +420,46 @@ export async function runOrchestratorTurn(
 }
 
 /** Drive the same orchestrator session through the Codex HarnessPort. */
-export async function runCodexOrchestratorTurn(
+export function runCodexOrchestratorTurn(
   backend: CanvasOpsBackend,
   primer: OrchestratorPrimerState,
   question: string,
   deps: CodexOrchestratorTurnDeps,
 ): Promise<OrchestratorTurnResult> {
+  return runExternalMcpOrchestratorTurn(backend, primer, question, deps, "codex");
+}
+
+/**
+ * Drive the same orchestrator session through the omp HarnessPort (#26). The omp slot
+ * reaches canvasOps@2 through the identical external loopback MCP transport the Codex
+ * path uses — same descriptors, same contract, no `if (harness === X)` in the canvasOps
+ * layer. A faithful mirror of {@link runCodexOrchestratorTurn}: only the harness label
+ * differs.
+ */
+export function runOmpOrchestratorTurn(
+  backend: CanvasOpsBackend,
+  primer: OrchestratorPrimerState,
+  question: string,
+  deps: OmpOrchestratorTurnDeps,
+): Promise<OrchestratorTurnResult> {
+  return runExternalMcpOrchestratorTurn(backend, primer, question, deps, "omp");
+}
+
+/**
+ * The shared external-MCP orchestrator turn behind both the Codex and omp slots. The
+ * only harness-specific input is the session label; the canvasOps transport, the tool
+ * collection, and the normalized result are identical (the point of #25's generalisation).
+ */
+async function runExternalMcpOrchestratorTurn(
+  backend: CanvasOpsBackend,
+  primer: OrchestratorPrimerState,
+  question: string,
+  deps: CodexOrchestratorTurnDeps,
+  harness: "codex" | "omp",
+): Promise<OrchestratorTurnResult> {
   const attached = await attachCodexOrchestratorSession(backend, {
     primer,
-    harness: "codex",
+    harness,
     fresh: true,
   });
   let harnessSession: Awaited<ReturnType<HarnessPort["createSession"]>> | null = null;
@@ -444,7 +482,7 @@ export async function runCodexOrchestratorTurn(
     if (deps.onSend) {
       const record = buildContextSendRecord(
         prompt,
-        { seat: "orchestrator", harness: "codex", channel: "prompt", attempt: 0 },
+        { seat: "orchestrator", harness, channel: "prompt", attempt: 0 },
         deps.assembledContext,
       );
       try {
