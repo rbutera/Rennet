@@ -18,9 +18,9 @@ Red-first throughout: each group starts with failing tests against fake transpor
 
 ## 3. canvasOps@2 external transport
 
-- [ ] 3.1 Declare `@modelcontextprotocol/sdk` as a direct pinned dependency of `@rennet/adapters` (repairs the existing phantom import in `canvas-ops-server.ts`); licence gate stays green.
-- [ ] 3.2 RED: `canvas-ops-external.test.ts` — an in-test MCP client over loopback streamable HTTP lists the identical tool names/schemas as the in-process server and round-trips describe(counts)→describe(cohorts)→read against a fixture backend.
-- [ ] 3.3 GREEN: `packages/adapters/src/canvas-ops-external.ts` — same `CANVAS_OPS_TOOLS` compilation, `McpServer` + `StreamableHTTPServerTransport` on `127.0.0.1:<ephemeral>`, close semantics tied to the session; codex-slot sibling of `orchestrator-session-server.ts` returning the URL.
+- [x] 3.1 Declare `@modelcontextprotocol/sdk` as a direct pinned dependency of `@rennet/adapters` (repairs the existing phantom import in `canvas-ops-server.ts`); licence gate stays green.
+- [x] 3.2 RED: `canvas-ops-external.test.ts` — an in-test MCP client over loopback streamable HTTP lists the identical tool names/schemas as the in-process server and round-trips describe(counts)→describe(cohorts)→read against a fixture backend.
+- [x] 3.3 GREEN: `packages/adapters/src/canvas-ops-external.ts` — same `CANVAS_OPS_TOOLS` compilation, `McpServer` + `StreamableHTTPServerTransport` on `127.0.0.1:<ephemeral>`, close semantics tied to the session; codex-slot sibling of `orchestrator-session-server.ts` returning the URL.
 
 ## 4. Gated real runs (not in `pnpm check`)
 

@@ -63,6 +63,12 @@ export {
   stripNullDeep,
 } from "./codex-exec";
 export {
+  type AttachedCodexOrchestratorSession,
+  type CanvasOpsExternalServer,
+  attachCodexOrchestratorSession,
+  startCanvasOpsExternalServer,
+} from "./canvas-ops-external";
+export {
   buildCodexTurnArgs,
   CodexAdapter,
   type CodexAdapterConfig,
