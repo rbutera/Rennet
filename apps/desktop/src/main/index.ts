@@ -373,9 +373,7 @@ function getCodexResolution(locus: Locus = HOST_LOCUS): Promise<CodexResolution>
         locus.kind === "wsl" ? await wslDiscoveryDeps(locus.distro) : defaultCodexDiscoveryDeps();
       const result = await discoverCodex(discoveryDeps, {
         // The RENNET_CODEX_BIN override is a host path; it never applies to a distro.
-        ...(locus.kind === "host" && explicitBin && explicitBin.length > 0
-          ? { explicitBin }
-          : {}),
+        ...(locus.kind === "host" && explicitBin && explicitBin.length > 0 ? { explicitBin } : {}),
       });
       const chosen = result.chosen;
       if (!chosen) {

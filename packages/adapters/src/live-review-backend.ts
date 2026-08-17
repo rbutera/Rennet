@@ -392,8 +392,7 @@ export async function createLiveCanvasOpsBackend(
   const currentBase = deps.store.loadManifest(repoKey);
   if (!knowledgeStore.loadLocal(repoKey) && currentBase) {
     void (async () => {
-      const port =
-        deps.knowledgePort ?? (await deps.resolveKnowledgePort?.(review.repositoryRoot));
+      const port = deps.knowledgePort ?? (await deps.resolveKnowledgePort?.(review.repositoryRoot));
       if (!port) return;
       await enrichKnowledgeForRepo({
         reader: new ProjectContextReader(deps.store),

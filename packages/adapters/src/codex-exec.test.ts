@@ -548,7 +548,7 @@ describe("createCodexExecutor locus composition", () => {
     let spec: CodexRunSpec | undefined;
     const effects: CodexExecEffects = {
       mkdtemp: async (prefix) => `${prefix}HOST-should-not-be-used`,
-      mintDistroScratch: async (_distro) => "/tmp/distro-codex",
+      mintDistroScratch: async () => "/tmp/distro-codex",
       writeFile: async (path, data) => {
         writes.push({ path, data });
       },

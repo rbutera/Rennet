@@ -483,8 +483,7 @@ async function runExternalMcpOrchestratorTurn(
           class: "harness-unavailable",
           origin: "adapter",
           message:
-            attached.unreachableReason ??
-            "the canvasOps surface is not reachable from the distro",
+            attached.unreachableReason ?? "the canvasOps surface is not reachable from the distro",
           retryable: false,
           retryableSource: "inferred",
           nativeCode: null,

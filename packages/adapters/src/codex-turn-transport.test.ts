@@ -94,7 +94,7 @@ function fakeEffects(): {
   const rms: string[] = [];
   const effects: CodexTransportEffects = {
     mkdtemp: async (prefix) => `${prefix}host-scratch`,
-    mintDistroScratch: async (_distro) => "/tmp/distro-scratch",
+    mintDistroScratch: async () => "/tmp/distro-scratch",
     writeFile: async (path, data) => {
       writes.push({ path, data });
     },
@@ -117,8 +117,8 @@ function fakeEffects(): {
 }
 
 async function drive(transport: ReturnType<typeof createCodexTurnTransport>, spec: CodexTurnSpec) {
-  for await (const _frame of transport(spec)) {
-    // drain to the terminal frame
+  for await (const frame of transport(spec)) {
+    void frame; // drain to the terminal frame
   }
 }
 
@@ -135,7 +135,7 @@ describe("Codex transport locus composition", () => {
     await drive(createCodexTurnTransport("codex", effects), hostSpec);
 
     expect(spawns).toHaveLength(1);
-    const call = spawns[0]!;
+    const call = spawns[0] as SpawnCall;
     expect(call.bin).toBe("codex");
     expect(call.cwd).toBe("/home/rai/repo");
     // -C is the real repo; -o and --output-schema live in the host scratch dir.
@@ -146,8 +146,8 @@ describe("Codex transport locus composition", () => {
     expect(call.outPath).toContain("host-scratch");
     expect(call.outPath.endsWith("last-message.txt")).toBe(true);
     // The schema was written to the same host path codex reads it from.
-    expect(writes[0]!.path).toContain("host-scratch");
-    expect(call.args).toContain(writes[0]!.path);
+    expect(writes[0]?.path).toContain("host-scratch");
+    expect(call.args).toContain(writes[0]?.path);
   });
 
   it("wsl locus wraps the spawn in wsl.exe with distro-native argv and UNC io", async () => {
@@ -156,7 +156,7 @@ describe("Codex transport locus composition", () => {
     await drive(createCodexTurnTransport("codex", effects, locus), spec);
 
     expect(spawns).toHaveLength(1);
-    const call = spawns[0]!;
+    const call = spawns[0] as SpawnCall;
     // The spawn is wsl.exe -d Ubuntu --cd <distro repo> -e codex …; cwd rides --cd.
     expect(call.bin).toBe("wsl.exe");
     expect(call.cwd).toBeUndefined();
@@ -174,7 +174,7 @@ describe("Codex transport locus composition", () => {
     );
     // The Windows side does its IO through the UNC view of the same dir.
     expect(call.outPath).toBe("\\\\wsl.localhost\\Ubuntu\\tmp\\distro-scratch\\last-message.txt");
-    expect(writes[0]!.path).toBe("\\\\wsl.localhost\\Ubuntu\\tmp\\distro-scratch\\schema.json");
+    expect(writes[0]?.path).toBe("\\\\wsl.localhost\\Ubuntu\\tmp\\distro-scratch\\schema.json");
     expect(rms[0]).toBe("\\\\wsl.localhost\\Ubuntu\\tmp\\distro-scratch");
   });
 });

@@ -185,8 +185,7 @@ export function createOrchestratorTurnRunner(deps: OrchestratorRunnerDeps): Orch
       // The distro-reachability of canvasOps depends on the project locus (#334):
       // a WSL codex/omp turn binds the loopback to an address the distro can reach.
       const locus = deps.resolveLocus?.(review.repositoryRoot);
-      const externalShared =
-        locus && locus.kind === "wsl" ? { ...shared, locus } : shared;
+      const externalShared = locus && locus.kind === "wsl" ? { ...shared, locus } : shared;
       const result =
         selection.harness === "codex"
           ? await runCodexOrchestratorTurn(backend, primer, question, {
