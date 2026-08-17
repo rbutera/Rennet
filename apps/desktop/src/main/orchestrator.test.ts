@@ -9,6 +9,9 @@ import {
   type CodexTurnTransport,
   type LoadCanvasOpsSdk,
   type LoadSdkQuery,
+  OmpAdapter,
+  type OmpTurnSpec,
+  type OmpTurnTransport,
 } from "@rennet/adapters";
 import {
   buildReviewCanvases,
@@ -19,7 +22,11 @@ import { sha256Hex } from "@rennet/protocol";
 import type { PatchFile, Patchset, Review } from "@rennet/types";
 import { afterEach, describe, expect, it } from "vitest";
 import { loadDesktopReviewContextManifest } from "./live-review-backend";
-import { createOrchestratorTurnRunner } from "./orchestrator";
+import {
+  createOrchestratorTurnRunner,
+  type OrchestratorHarnessSelection,
+  resolveOrchestratorHarnessSelection,
+} from "./orchestrator";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The desktop orchestrator composition root (issue #13, wave 2). Driven with NO
@@ -344,5 +351,126 @@ describe("createOrchestratorTurnRunner — the desktop composition", () => {
     expect(seen.model).toBe("gpt-5.6-terra");
     expect(seen.mcpServers?.canvasops?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
     expect(seen.prompt).toContain("Map the base branch.");
+  });
+
+  it("routes an omp-selected orchestrator through an injected OmpTurnTransport with the loopback canvasOps URL (#26)", async () => {
+    const { review, pipeline } = await liveReview();
+    let captured: OmpTurnSpec | null = null;
+    const transport: OmpTurnTransport = (spec) => {
+      captured = spec;
+      return {
+        async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
+          yield { type: "ready", protocolVersion: 1 };
+          yield {
+            type: "tool_execution_start",
+            toolCallId: "c1",
+            toolName: "mcp__canvasops__canvas.describe",
+            args: { depth: "counts" },
+          };
+          yield {
+            type: "tool_execution_end",
+            toolCallId: "c1",
+            toolName: "mcp__canvasops__canvas.describe",
+            result: { ok: true },
+          };
+          yield {
+            type: "message_end",
+            message: { role: "assistant", content: [{ type: "text", text: "omp answer" }] },
+          };
+          yield {
+            rennet: "turn-result",
+            exitCode: 0,
+            finalText: "omp answer",
+            usage: null,
+            cost: null,
+          };
+        },
+      };
+    };
+    const run = createOrchestratorTurnRunner({
+      baseDir: tempBaseDir(),
+      resolveHarness: () =>
+        Promise.resolve({
+          harness: "omp" as const,
+          resolvePort: (mcpServers: Readonly<Record<string, { readonly url: string }>>) =>
+            Promise.resolve(
+              new OmpAdapter({
+                binaryPath: "/fake/omp",
+                transport,
+                version: "17.1.3",
+                mcpServers,
+              }),
+            ),
+        }),
+    });
+
+    const outcome = await run(review, pipeline, "Map the base branch.");
+
+    expect(outcome.available).toBe(true);
+    if (!outcome.available) return;
+    expect(outcome.result.outcome).toBe("completed");
+    expect(outcome.result.finalText).toBe("omp answer");
+    // The mcp tool call reached the collection (same external-MCP contract as codex).
+    expect(outcome.result.toolCalls.map((c) => c.op)).toEqual(["mcp__canvasops__canvas.describe"]);
+    // The injected transport received the turn INCLUDING the loopback canvasOps URL.
+    const seen = captured as OmpTurnSpec | null;
+    if (seen === null) throw new Error("OmpTurnTransport was not reached");
+    expect(seen.mcpServers?.canvasops?.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+\/mcp$/);
+    expect(seen.prompt).toContain("Map the base branch.");
+  });
+});
+
+describe("resolveOrchestratorHarnessSelection — the minimal omp policy (#26)", () => {
+  const ompPort = () => Promise.reject(new Error("unused"));
+  const councilPick = { harness: "claude-code" as const, claudePath: "/c/claude" };
+  const councilSpy = () => councilPick as OrchestratorHarnessSelection;
+
+  it("serves omp when neither Claude nor Codex is installed and a healthy omp slot is", () => {
+    const selection = resolveOrchestratorHarnessSelection({
+      claudePresent: false,
+      codexPresent: false,
+      ompResolvePort: ompPort,
+      council: () => {
+        throw new Error("council must not be consulted when neither claude nor codex is installed");
+      },
+    });
+    expect(selection).toEqual({ harness: "omp", resolvePort: ompPort });
+  });
+
+  it("returns null (never omp) when nothing is installed and omp is not runnable", () => {
+    const selection = resolveOrchestratorHarnessSelection({
+      claudePresent: false,
+      codexPresent: false,
+      ompResolvePort: null,
+      council: () => {
+        throw new Error("council must not be consulted");
+      },
+    });
+    expect(selection).toBeNull();
+  });
+
+  it("defers to the UNCHANGED council decision whenever Claude is present (byte-identical)", () => {
+    let consulted = 0;
+    const selection = resolveOrchestratorHarnessSelection({
+      claudePresent: true,
+      codexPresent: false,
+      ompResolvePort: ompPort,
+      council: () => {
+        consulted += 1;
+        return councilSpy();
+      },
+    });
+    expect(consulted).toBe(1);
+    expect(selection).toBe(councilPick);
+  });
+
+  it("defers to the council whenever Codex is present, never overriding with omp", () => {
+    const selection = resolveOrchestratorHarnessSelection({
+      claudePresent: false,
+      codexPresent: true,
+      ompResolvePort: ompPort,
+      council: () => null,
+    });
+    expect(selection).toBeNull();
   });
 });

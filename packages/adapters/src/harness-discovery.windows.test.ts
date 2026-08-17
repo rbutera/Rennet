@@ -11,6 +11,7 @@ function deps(over: Partial<DiscoveryDeps> & Pick<DiscoveryDeps, "platform">): D
     listDir: () => Promise.resolve([]),
     isExecutable: () => Promise.resolve(true),
     probeVersion: () => Promise.resolve(null),
+    pathExt: ".COM;.EXE;.BAT;.CMD",
     ...over,
   };
 }
@@ -76,6 +77,22 @@ describe("discoverClaude on Windows (windows-native-runtime)", () => {
     );
     expect(result.chosen).toBeNull();
     expect(result.candidates).toEqual([]);
+  });
+
+  it("consumes the locus PATHEXT instead of a hard-coded suffix list", async () => {
+    const dir = "C:\\tools";
+    const result = await discoverClaude(
+      deps({
+        platform: "win32",
+        pathExt: ".COM;.EXE",
+        envPath: dir,
+        listDir: (candidate) => Promise.resolve(candidate === dir ? ["claude.com"] : []),
+        isExecutable: (path) => Promise.resolve(path === `${dir}\\claude.com`),
+        probeVersion: () => Promise.resolve("2.1.100"),
+      }),
+      RANGE,
+    );
+    expect(result.chosen?.path).toBe(`${dir}\\claude.com`);
   });
 });
 
