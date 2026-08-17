@@ -165,6 +165,7 @@ export interface RunUiVerificationResult {
 
 interface ParsedTurnBody {
   readonly mounted: boolean;
+  readonly attempted: string;
   readonly screenshots: UiScreenshot[];
   readonly observations: ParsedObservation[];
 }
@@ -220,6 +221,14 @@ export async function runUiVerification(
   const parsed = parseTurnBody(turn.body);
   if (parsed === undefined) {
     return unavailable(NO_RESULT_REASON);
+  }
+
+  // Could-not-mount (§spec, Rule 75/81ak): the turn rendered nothing and found
+  // nothing — the honest inconclusive disclosure carrying what it attempted, NEVER
+  // reported as "no UI problems found".
+  const hasContent = parsed.observations.length > 0 || parsed.screenshots.length > 0;
+  if (!parsed.mounted && !hasContent) {
+    return unavailable(couldNotMount(parsed.attempted.trim().length > 0 ? parsed.attempted : NO_RESULT_REASON));
   }
 
   // The turn EXECUTED something to mount (issue #259 exec observation): a mounted,
@@ -340,12 +349,15 @@ function buildFileAnchors(hunks: readonly Hunk[]): (file: string) => string {
 function parseTurnBody(body: unknown): ParsedTurnBody | undefined {
   if (typeof body !== "object" || body === null) return undefined;
   const record = body as Record<string, unknown>;
-  const mounted = record.mounted === true;
-  const screenshots = parseScreenshots(record.screenshots);
-  const observations = parseObservations(record.observations);
-  // A body with neither a mount claim, a screenshot, nor an observation is not usable.
-  if (!mounted && screenshots.length === 0 && observations.length === 0) return undefined;
-  return { mounted, screenshots, observations };
+  // `mounted` is the required discriminator: a body without a boolean `mounted` is
+  // malformed (the pass falls to the honest NO_RESULT unavailable, never a clear).
+  if (typeof record.mounted !== "boolean") return undefined;
+  return {
+    mounted: record.mounted,
+    attempted: typeof record.attempted === "string" ? record.attempted : "",
+    screenshots: parseScreenshots(record.screenshots),
+    observations: parseObservations(record.observations),
+  };
 }
 
 function parseScreenshots(value: unknown): UiScreenshot[] {
