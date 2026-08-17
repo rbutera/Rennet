@@ -3,6 +3,7 @@ import {
   commandDefinitions,
   deltaAccountSchema,
   dispositionSchema,
+  globalConfigSchema,
   isCommandName,
   parseCommandInput,
   parseCommandOutput,
@@ -321,5 +322,29 @@ describe("settings v1 — registry ladder wire shapes (#28)", () => {
   it("setAppearance accepts a null scheme (reset to the builtin) additively", () => {
     expect(parseCommandInput("settings.setAppearance", { scheme: null }).scheme).toBeNull();
     expect(parseCommandInput("settings.setAppearance", { scheme: "light" }).scheme).toBe("light");
+  });
+
+  it("globalConfig parses keybindings additively — an old config without the field still parses (#44)", () => {
+    const withOverrides = globalConfigSchema.parse({
+      version: 1,
+      keybindings: { "nav.back": "mod+e", "zoom.in": null },
+    });
+    expect(withOverrides.keybindings).toEqual({ "nav.back": "mod+e", "zoom.in": null });
+    // Additive control: a config without the field parses unchanged.
+    const legacy = globalConfigSchema.parse({ version: 1 });
+    expect(legacy.keybindings).toBeUndefined();
+  });
+
+  it("setKeybinding: a string sets, null unbinds, omitted resets (#44)", () => {
+    expect(parseCommandInput("settings.setKeybinding", { id: "nav.back", keybinding: "mod+e" })).toEqual(
+      { id: "nav.back", keybinding: "mod+e" },
+    );
+    expect(
+      parseCommandInput("settings.setKeybinding", { id: "nav.back", keybinding: null }).keybinding,
+    ).toBeNull();
+    expect(parseCommandInput("settings.setKeybinding", { id: "nav.back" }).keybinding).toBeUndefined();
+    expect(
+      parseCommandOutput("settings.setKeybinding", { keybindings: { "nav.back": "mod+e" } }).keybindings,
+    ).toEqual({ "nav.back": "mod+e" });
   });
 });

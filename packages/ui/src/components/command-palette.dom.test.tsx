@@ -104,4 +104,37 @@ describe("CommandPalette", () => {
     expect(container.querySelectorAll(".command-palette-row").length).toBe(0);
     expect(container.querySelector(".command-palette-empty")?.textContent).toMatch(/No commands/i);
   });
+
+  it("discloses a chord collision on both colliding rows and leaves others clean (#44)", () => {
+    // Two live commands share ⌘E; a third is distinct. Both colliding rows must show
+    // the chord with a collision note naming the OTHER command — never a block.
+    const list: Command[] = [
+      { id: "nav.back", title: "Back", group: "Navigate", keybinding: "mod+e", run: vi.fn() },
+      { id: "nav.forward", title: "Forward", group: "Navigate", keybinding: "mod+e", run: vi.fn() },
+      { id: "zoom.in", title: "Zoom in", group: "Zoom", keybinding: "l", run: vi.fn() },
+    ];
+    const { container } = mount(<CommandPalette open={true} commands={list} onClose={vi.fn()} />);
+    const conflicting = [...container.querySelectorAll(".command-palette-key[data-conflict='true']")];
+    expect(conflicting.length).toBe(2);
+    // Each names its counterpart in the disclosure.
+    const titles = conflicting.map((node) => node.getAttribute("title"));
+    expect(titles).toContain("Also bound to Forward");
+    expect(titles).toContain("Also bound to Back");
+    // The distinct row carries no conflict marker.
+    const clean = [...container.querySelectorAll(".command-palette-key")].filter(
+      (node) => node.getAttribute("data-conflict") !== "true",
+    );
+    expect(clean.some((node) => node.textContent === "l")).toBe(true);
+  });
+
+  it("displays the EFFECTIVE (overridden) chord, not the default (#44)", () => {
+    const list: Command[] = [
+      { id: "nav.back", title: "Back", group: "Navigate", keybinding: "mod+[", run: vi.fn() },
+    ];
+    const { container } = mount(
+      <CommandPalette open={true} commands={list} overrides={{ "nav.back": "mod+e" }} onClose={vi.fn()} />,
+    );
+    const key = container.querySelector(".command-palette-key");
+    expect(key?.textContent).toMatch(/e$/);
+  });
 });

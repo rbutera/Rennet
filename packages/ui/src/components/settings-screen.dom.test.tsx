@@ -70,6 +70,8 @@ function fakeBridge(overrides: Partial<Record<string, unknown>> = {}): {
 } {
   const calls: { name: string; input: unknown }[] = [];
   const settingsView = (overrides["settings.get"] as SettingsView) ?? view;
+  // A mutable override store so `setKeybinding` writes reflect back into the map.
+  const keybindingState: Record<string, string | null> = { ...(settingsView.keybindings ?? {}) };
   const invoke = async (name: string, input: unknown): Promise<unknown> => {
     calls.push({ name, input });
     switch (name) {
@@ -177,6 +179,13 @@ function fakeBridge(overrides: Partial<Record<string, unknown>> = {}): {
             },
           },
         };
+      }
+      case "settings.setKeybinding": {
+        // A stateful fake: reflect the write so the surface re-renders the new map.
+        const payload = input as { id: string; keybinding?: string | null };
+        if (!("keybinding" in payload)) delete keybindingState[payload.id];
+        else keybindingState[payload.id] = payload.keybinding ?? null;
+        return { keybindings: { ...keybindingState } };
       }
       default:
         throw new Error(`unexpected command: ${name}`);
@@ -457,5 +466,92 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     const call = calls.find((c) => c.name === "settings.setAppearance");
     const input = call?.input as { scheme: unknown };
     expect(input.scheme).toBeNull();
+  });
+
+  it("Keyboard: set records a chord, unbind and reset send the right payloads (#44)", async () => {
+    const { bridge, calls } = fakeBridge();
+    const { container, getByRole, getByLabelText } = mount(
+      <SettingsScreen bridge={bridge} onBack={vi.fn()} />,
+    );
+    fireEvent.click(getByRole("tab", { name: "Keyboard" }));
+    await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
+
+    // Every catalogue row with a default binding is listed (nav.back among them).
+    const backRow = [...container.querySelectorAll(".settings-key-row")].find((row) =>
+      row.textContent?.includes("Back"),
+    );
+    expect(backRow).toBeTruthy();
+
+    // Set → the recorder captures the next chord (⌘E) and writes it.
+    fireEvent.click(backRow?.querySelector("button") as HTMLButtonElement);
+    const recorder = getByLabelText("Press the new chord for Back");
+    fireEvent.keyDown(recorder, { key: "e", metaKey: true });
+    await waitFor(() =>
+      expect(calls.some((c) => c.name === "settings.setKeybinding")).toBe(true),
+    );
+    const set = calls.find((c) => c.name === "settings.setKeybinding");
+    expect(set?.input).toEqual({ id: "nav.back", keybinding: "mod+e" });
+
+    // Unbind sends an explicit null.
+    const backRow2 = [...container.querySelectorAll(".settings-key-row")].find((row) =>
+      row.textContent?.includes("Back"),
+    );
+    fireEvent.click(
+      [...(backRow2?.querySelectorAll("button") ?? [])].find((b) => b.textContent === "Unbind") as HTMLButtonElement,
+    );
+    await waitFor(() =>
+      expect(
+        calls.filter((c) => c.name === "settings.setKeybinding").some((c) => {
+          const input = c.input as { keybinding?: unknown };
+          return input.keybinding === null;
+        }),
+      ).toBe(true),
+    );
+
+    // A now-overridden row shows Reset, which sends an id-only payload (delete entry).
+    const backRow3 = [...container.querySelectorAll(".settings-key-row")].find((row) =>
+      row.textContent?.includes("Back"),
+    );
+    const resetBtn = [...(backRow3?.querySelectorAll("button") ?? [])].find(
+      (b) => b.textContent === "Reset",
+    );
+    expect(resetBtn).toBeTruthy();
+    fireEvent.click(resetBtn as HTMLButtonElement);
+    await waitFor(() =>
+      expect(
+        calls.filter((c) => c.name === "settings.setKeybinding").some((c) => {
+          const input = c.input as Record<string, unknown>;
+          return input.id === "nav.back" && !("keybinding" in input);
+        }),
+      ).toBe(true),
+    );
+  });
+
+  it("Keyboard: a conflicting chord is disclosed on both rows AND the write still lands (Rule Zero) (#44)", async () => {
+    // Seed an override that collides nav.forward onto nav.back's default ⌘[.
+    const conflictView: SettingsView = { ...view, keybindings: { "nav.forward": "mod+[" } };
+    const { bridge, calls } = fakeBridge({ "settings.get": conflictView });
+    const { container, getByRole } = mount(<SettingsScreen bridge={bridge} onBack={vi.fn()} />);
+    fireEvent.click(getByRole("tab", { name: "Keyboard" }));
+    await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
+
+    // Both colliding rows disclose the collision — no confirmation element exists.
+    const disclosed = [...container.querySelectorAll(".settings-key-conflict")];
+    expect(disclosed.length).toBe(2);
+    expect(container.querySelector("[data-conflict='true']")).not.toBeNull();
+
+    // The Rule Zero control: assigning a chord already held is accepted and persisted —
+    // the bridge write fires unconditionally, with no are-you-sure gate in between.
+    const forwardRow = [...container.querySelectorAll(".settings-key-row")].find((row) =>
+      row.textContent?.includes("Forward"),
+    );
+    fireEvent.click(forwardRow?.querySelector("button") as HTMLButtonElement);
+    const recorder = container.querySelector(".settings-key-recorder") as HTMLInputElement;
+    fireEvent.keyDown(recorder, { key: "[", metaKey: true });
+    await waitFor(() =>
+      expect(calls.some((c) => c.name === "settings.setKeybinding")).toBe(true),
+    );
+    // No confirmation dialog/element is ever rendered.
+    expect(container.querySelector("[role='alertdialog']")).toBeNull();
   });
 });

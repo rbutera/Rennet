@@ -1544,6 +1544,19 @@ export function createDispatch(
           schemeProvenance: (await deps.settings.get()).schemeProvenance,
         });
       }
+      case "settings.setKeybinding": {
+        // Personal, app-side (#44): writes only `~/.rennet/config.json`, never a repo.
+        // The dep REFUSES (throws) on a malformed config; that error propagates rather
+        // than overwriting unparseable bytes. A conflicting chord is accepted and
+        // persisted — disclosure, not a gate (Rule Zero). Absent dep ⇒ an empty map.
+        const input = parseCommandInput(name, rawInput);
+        if (!deps.settings) {
+          return parseCommandOutput(name, { keybindings: {} });
+        }
+        return parseCommandOutput(name, {
+          keybindings: deps.settings.setKeybinding({ id: input.id, keybinding: input.keybinding }),
+        });
+      }
       case "settings.setRepoVisibility": {
         // Genuinely consumed: runs the real visibility switch (a repo `.gitignore`
         // write, exclusion state only) and records `visibility` in the repo's

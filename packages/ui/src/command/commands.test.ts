@@ -2,10 +2,18 @@ import { describe, expect, it, vi } from "vitest";
 import type { RecentSurface } from "../nav/history";
 import {
   buildCommands,
+  catalogueDef,
+  COMMAND_CATALOGUE,
   type CommandContext,
+  chordFromEvent,
+  effectiveKeybinding,
   filterCommands,
+  findConflicts,
   formatKeybinding,
   fuzzyScore,
+  matchKeybinding,
+  menuTemplate,
+  normalizeChord,
   type Screen,
 } from "./commands";
 
@@ -215,3 +223,142 @@ describe("formatKeybinding (add-windows-support)", () => {
     expect(formatKeybinding("l", false)).toBe("l");
   });
 });
+
+describe("command catalogue (single source)", () => {
+  it("carries palette.toggle + the bound commands with unique ids and default chords", () => {
+    const byId = new Map(COMMAND_CATALOGUE.map((def) => [def.id, def]));
+    expect(byId.get("palette.toggle")?.keybinding).toBe("mod+k");
+    expect(byId.get("nav.back")?.keybinding).toBe("mod+[");
+    expect(byId.get("nav.forward")?.keybinding).toBe("mod+]");
+    expect(byId.get("zoom.in")?.keybinding).toBe("l");
+    expect(byId.get("zoom.out")?.keybinding).toBe("h");
+    // Every id is unique.
+    expect(byId.size).toBe(COMMAND_CATALOGUE.length);
+  });
+
+  it("does not catalogue the dynamic recent/lens ids", () => {
+    const ids = COMMAND_CATALOGUE.map((def) => def.id);
+    expect(ids.some((id) => id.startsWith("recent."))).toBe(false);
+    expect(ids.some((id) => id.startsWith("lens."))).toBe(false);
+  });
+
+  it("catalogueDef resolves a known id and misses an unknown one", () => {
+    expect(catalogueDef("zoom.in")?.group).toBe("Zoom");
+    expect(catalogueDef("lens.spec")).toBeUndefined();
+  });
+});
+
+describe("normalizeChord + effectiveKeybinding", () => {
+  it("parses a mod chord, a bare key, and rejects garbage", () => {
+    expect(normalizeChord("mod+[")).toEqual({ mod: true, key: "[" });
+    expect(normalizeChord("mod+K")).toEqual({ mod: true, key: "k" });
+    expect(normalizeChord("l")).toEqual({ mod: false, key: "l" });
+    expect(normalizeChord("")).toBeNull();
+    expect(normalizeChord("mod+")).toBeNull();
+  });
+
+  it("overlays the override map: default, override, explicit unbind", () => {
+    const def = { id: "nav.back", keybinding: "mod+[" };
+    expect(effectiveKeybinding(def, {})).toBe("mod+[");
+    expect(effectiveKeybinding(def, { "nav.back": "mod+e" })).toBe("mod+e");
+    expect(effectiveKeybinding(def, { "nav.back": null })).toBeNull();
+    // A command with no default and no override fires from no chord.
+    expect(effectiveKeybinding({ id: "review.retry" }, {})).toBeNull();
+    // A garbage stored token stays reportable but the command falls back to default.
+    const garbage = effectiveKeybinding(def, { "nav.back": "%%%" });
+    expect(garbage).toBe("%%%");
+    expect(normalizeChord(garbage ?? "")).toEqual({ mod: false, key: "%%%" });
+  });
+});
+
+describe("matchKeybinding", () => {
+  const commands = [
+    { id: "palette.toggle", keybinding: "mod+k" },
+    { id: "nav.back", keybinding: "mod+[" },
+    { id: "zoom.in", keybinding: "l" },
+  ];
+
+  it("matches a mod chord and a bare key, and misses when nothing binds", () => {
+    expect(matchKeybinding(commands, chordFromEvent({ key: "k", metaKey: true, ctrlKey: false }))?.id).toBe(
+      "palette.toggle",
+    );
+    expect(matchKeybinding(commands, chordFromEvent({ key: "l", metaKey: false, ctrlKey: false }))?.id).toBe(
+      "zoom.in",
+    );
+    expect(
+      matchKeybinding(commands, chordFromEvent({ key: "z", metaKey: false, ctrlKey: false })),
+    ).toBeUndefined();
+  });
+
+  it("honours overrides: the new chord runs, the replaced chord does not", () => {
+    const overrides = { "nav.back": "mod+e" };
+    expect(
+      matchKeybinding(commands, chordFromEvent({ key: "e", metaKey: true, ctrlKey: false }), overrides)?.id,
+    ).toBe("nav.back");
+    expect(
+      matchKeybinding(commands, chordFromEvent({ key: "[", metaKey: true, ctrlKey: false }), overrides),
+    ).toBeUndefined();
+  });
+
+  it("an unbound command matches no chord", () => {
+    expect(
+      matchKeybinding(commands, chordFromEvent({ key: "l", metaKey: false, ctrlKey: false }), {
+        "zoom.in": null,
+      }),
+    ).toBeUndefined();
+  });
+});
+
+describe("findConflicts", () => {
+  it("reports two commands on one effective chord and stays silent otherwise", () => {
+    const distinct = findConflicts([
+      { id: "nav.back", keybinding: "mod+[" },
+      { id: "nav.forward", keybinding: "mod+]" },
+    ]);
+    expect(distinct.size).toBe(0);
+
+    const collide = findConflicts([
+      { id: "nav.back", keybinding: "mod+[" },
+      { id: "zoom.in", keybinding: "mod+[" },
+    ]);
+    expect(collide.get("mod+[")).toEqual(["nav.back", "zoom.in"]);
+  });
+
+  it("detects a collision an override CREATES", () => {
+    const conflicts = findConflicts(
+      [
+        { id: "nav.back", keybinding: "mod+[" },
+        { id: "zoom.in", keybinding: "l" },
+      ],
+      { "zoom.in": "mod+[" },
+    );
+    expect(conflicts.get("mod+[")).toEqual(["nav.back", "zoom.in"]);
+  });
+});
+
+describe("menuTemplate", () => {
+  it("labels/accelerators from the catalogue+overrides, disables out-of-context, excludes dynamic", () => {
+    const sections = menuTemplate(context({ screen: "frontDoor", surfaceKind: "projects" }), {
+      "nav.back": "mod+e",
+    });
+    const items = sections.flatMap((section) => section.items);
+    const byId = new Map(items.map((item) => [item.id, item]));
+
+    // No dynamic entries ever.
+    expect(items.some((item) => item.id.startsWith("recent."))).toBe(false);
+    expect(items.some((item) => item.id.startsWith("lens."))).toBe(false);
+
+    // The override rides the accelerator (mod+ token preserved for MAIN to translate).
+    expect(byId.get("nav.back")?.accelerator).toBe("mod+e");
+
+    // On the front door, zoom.in is not offered → disabled, not absent.
+    expect(byId.get("zoom.in")?.enabled).toBe(false);
+    expect(byId.has("zoom.in")).toBe(true);
+
+    // The palette toggle is always enabled.
+    expect(byId.get("palette.toggle")?.enabled).toBe(true);
+
+    // A command the front door DOES offer is enabled.
+    expect(byId.get("nav.settings")?.enabled).toBe(true);
+  });
+})

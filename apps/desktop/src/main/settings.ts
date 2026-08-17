@@ -91,6 +91,12 @@ export interface SettingsComposition {
   get(): Promise<SettingsView>;
   guidance(projectId: string, repoPath: string): Promise<SettingsGuidance>;
   setAppearance(scheme: SettingsView["scheme"] | null): SettingsView["scheme"];
+  /**
+   * Set (`keybinding` string), unbind (`null`), or reset (omitted) a command's
+   * keybinding override (#44). A plain global write — refused (throws) on a malformed
+   * config, exactly as `setAppearance`. Returns the whole stored map after the write.
+   */
+  setKeybinding(input: { id: string; keybinding?: string | null }): Record<string, string | null>;
   setRepoVisibility(input: {
     projectId: string;
     repoPath: string;
@@ -222,6 +228,10 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
         schemeProvenance: scheme.provenance,
         appearanceMalformed: schemeState.status === "malformed",
         projects,
+        // The stored override map, verbatim (#44). Additive: absent field ⇒ omitted.
+        ...(schemeState.config.keybindings
+          ? { keybindings: schemeState.config.keybindings }
+          : {}),
       };
     },
 
@@ -264,6 +274,22 @@ export function createSettingsComposition(deps: SettingsCompositionDeps): Settin
       // A set returns the value just written; a reset re-resolves the effective
       // value the cleared ladder now yields (the builtin).
       return scheme ?? resolveScheme(deps.readGlobalState().config).value;
+    },
+
+    setKeybinding: (input): Record<string, string | null> => {
+      // `updateGlobal` REFUSES (throws) when the config is malformed, so an edit can
+      // never overwrite unparseable bytes (Rule 75). A string SETS the override, an
+      // explicit `null` UNBINDS, and an omitted keybinding RESETS (drops the entry so
+      // the command falls back to its catalogue default). A plain write, first click,
+      // no confirmation — a conflicting chord is accepted and disclosed, never refused
+      // (Rule Zero).
+      const written = deps.updateGlobal((current) => {
+        const keybindings = { ...current.keybindings };
+        if (input.keybinding === undefined) delete keybindings[input.id];
+        else keybindings[input.id] = input.keybinding;
+        return { ...current, keybindings };
+      });
+      return written.keybindings ?? {};
     },
 
     setRepoVisibility: async (input: {

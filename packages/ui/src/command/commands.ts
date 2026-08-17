@@ -20,11 +20,12 @@ import {
 // exact set that surfaces is context-aware — review-only commands are simply absent
 // when no review is open — and the whole thing is unit-testable without a DOM.
 //
-// Keybindings live HERE, in the registry, not hardcoded at each call site. That is
-// the "remappable" structure the wireframe asks for: a later remap UI edits these
-// fields, and a later key-dispatch routes through them. Today ⌘K plus history's
-// ⌘[ / ⌘] are wired globally (in app.tsx); the diff-canvas keys (`l h`) still live
-// in the workspace's own keydown and are declared here as their canonical home.
+// Keybindings live HERE, in the registry (the `COMMAND_CATALOGUE` below), not
+// hardcoded at each call site. That is the "remappable" structure the wireframe asks
+// for: the Settings → Keyboard surface edits user overrides, and key dispatch matches
+// through the effective binding (default overlaid by override). ⌘K plus history's
+// ⌘[ / ⌘] are matched at the window listener (app.tsx); the diff-canvas keys (`l h`)
+// are matched at the workspace's own keydown — both route through this one catalogue.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** A named, runnable action. `run` invokes the SAME handler the UI's own control does. */
@@ -109,6 +110,87 @@ const ANGLE_LABELS: Partial<Record<CanvasAngle, string>> = {
   flagged: "Flagged",
 };
 
+// ─────────────────────────────────────────────────────────────────────────────
+// The catalogue — the SINGLE source of every stable command's title, group, and
+// default keybinding. `buildCommands` reads its emitted commands' presentation from
+// here (so there is no second table of titles or chords), key dispatch matches
+// against these defaults overlaid by user overrides, the settings Keyboard section
+// lists these, and the application menu projects from these. Dynamic entries
+// (`recent.*`, `lens.*`) are generated per context and deliberately NOT catalogued.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A catalogued command definition. `title` may depend on live context (toggles). */
+export interface CommandDef {
+  id: string;
+  group: string;
+  title: string | ((ctx: CommandContext) => string);
+  /** Default platform-neutral keybinding token (`mod+[`, `l`); absent = no default chord. */
+  keybinding?: string;
+}
+
+/** A user keybinding-override map: command id → chord token, or `null` for explicit unbound. */
+export type KeybindingOverrides = Record<string, string | null>;
+
+export const COMMAND_CATALOGUE: readonly CommandDef[] = [
+  { id: "palette.toggle", title: "Toggle command palette", group: "General", keybinding: "mod+k" },
+  { id: "nav.back", title: "Back", group: "Navigate", keybinding: "mod+[" },
+  { id: "nav.forward", title: "Forward", group: "Navigate", keybinding: "mod+]" },
+  { id: "nav.projects", title: "Back to projects", group: "Navigate" },
+  { id: "nav.project", title: "Go to project…", group: "Navigate" },
+  { id: "nav.draft", title: "Go to Draft", group: "Navigate" },
+  { id: "nav.paper", title: "Go to Paper", group: "Navigate" },
+  { id: "nav.settings", title: "Open Settings", group: "Navigate" },
+  { id: "nav.openReview", title: "Open review…", group: "Navigate" },
+  { id: "nav.reviewDirectly", title: "Review directly", group: "Navigate" },
+  { id: "nav.files", title: "Show Files view", group: "Navigate" },
+  { id: "nav.canvases", title: "Show Canvases view", group: "Navigate" },
+  { id: "review.retry", title: "Retry the AI review", group: "Review" },
+  { id: "review.regenerate", title: "Regenerate the review", group: "Review" },
+  {
+    id: "review.dual",
+    group: "Review",
+    title: (ctx) =>
+      ctx.deepReviewOn
+        ? "Dual-model review: switch to quick single-model"
+        : "Dual-model review: switch back on",
+  },
+  { id: "zoom.in", title: "Zoom in", group: "Zoom", keybinding: "l" },
+  { id: "zoom.out", title: "Zoom out", group: "Zoom", keybinding: "h" },
+  {
+    id: "view.overlay",
+    group: "Appearance",
+    title: (ctx) =>
+      ctx.overlayOn ? "Hide the blast-radius overlay" : "Paint the blast-radius overlay",
+  },
+  {
+    id: "view.scheme",
+    group: "Appearance",
+    title: (ctx) => (ctx.scheme === "dark" ? "Switch to the bright room" : "Switch to dark"),
+  },
+  { id: "door.choose", title: "Choose a repository", group: "Start" },
+];
+
+const catalogueById = new Map(COMMAND_CATALOGUE.map((def) => [def.id, def] as const));
+
+/** The catalogue definition for an id, or undefined for a dynamic/uncatalogued id. */
+export function catalogueDef(id: string): CommandDef | undefined {
+  return catalogueById.get(id);
+}
+
+/**
+ * Build a live `Command` for a catalogued id: title/group/keybinding come from the
+ * catalogue (the single source), `run` is the app's own handler. The keydown sites
+ * and the palette therefore agree on every chord and label by construction.
+ */
+function mk(id: string, ctx: CommandContext, run: () => void): Command {
+  const def = catalogueById.get(id);
+  if (!def) throw new Error(`command not in catalogue: ${id}`);
+  const title = typeof def.title === "function" ? def.title(ctx) : def.title;
+  return def.keybinding
+    ? { id, title, group: def.group, keybinding: def.keybinding, run }
+    : { id, title, group: def.group, run };
+}
+
 /**
  * Assemble the commands live for the given context. Only enabled commands are
  * returned — a command absent from the list is one that cannot act right now (no
@@ -133,123 +215,49 @@ export function buildCommands(ctx: CommandContext): Command[] {
   }
 
   if (ctx.canBack) {
-    commands.push({
-      id: "nav.back",
-      title: "Back",
-      group: "Navigate",
-      keybinding: "mod+[",
-      run: ctx.back,
-    });
+    commands.push(mk("nav.back", ctx, ctx.back));
   }
   if (ctx.canForward) {
-    commands.push({
-      id: "nav.forward",
-      title: "Forward",
-      group: "Navigate",
-      keybinding: "mod+]",
-      run: ctx.forward,
-    });
+    commands.push(mk("nav.forward", ctx, ctx.forward));
   }
   if (ctx.surfaceKind !== "projects") {
-    commands.push({
-      id: "nav.projects",
-      title: "Back to projects",
-      group: "Navigate",
-      run: ctx.goToProjects,
-    });
+    commands.push(mk("nav.projects", ctx, ctx.goToProjects));
   }
   if (ctx.canGoToProject && ctx.surfaceKind !== "project") {
-    commands.push({
-      id: "nav.project",
-      title: "Go to project…",
-      group: "Navigate",
-      run: ctx.goToProject,
-    });
+    commands.push(mk("nav.project", ctx, ctx.goToProject));
   }
   if (
     !ctx.retrospective &&
     (ctx.surfaceKind === "review" || ctx.surfaceKind === "draft" || ctx.surfaceKind === "paper")
   ) {
     if (ctx.surfaceKind !== "draft") {
-      commands.push({
-        id: "nav.draft",
-        title: "Go to Draft",
-        group: "Navigate",
-        run: ctx.goToDraft,
-      });
+      commands.push(mk("nav.draft", ctx, ctx.goToDraft));
     }
     if (ctx.surfaceKind !== "paper") {
-      commands.push({
-        id: "nav.paper",
-        title: "Go to Paper",
-        group: "Navigate",
-        run: ctx.goToPaper,
-      });
+      commands.push(mk("nav.paper", ctx, ctx.goToPaper));
     }
   }
-  commands.push({
-    id: "nav.settings",
-    title: "Open Settings",
-    group: "Navigate",
-    run: ctx.openSettings,
-  });
+  commands.push(mk("nav.settings", ctx, ctx.openSettings));
   if (ctx.screen === "projectDetail") {
-    commands.push({
-      id: "nav.openReview",
-      title: "Open review…",
-      group: "Navigate",
-      run: ctx.reviewDirectly,
-    });
+    commands.push(mk("nav.openReview", ctx, ctx.reviewDirectly));
   }
   if (ctx.screen === "frontDoor") {
-    commands.push({
-      id: "nav.reviewDirectly",
-      title: "Review directly",
-      group: "Navigate",
-      run: ctx.reviewDirectly,
-    });
+    commands.push(mk("nav.reviewDirectly", ctx, ctx.reviewDirectly));
   }
 
   if (ctx.screen === "workspace") {
     // A view command is offered only when it CHANGES the view — the destination that
     // is already shown would be inert, so it is omitted (never a dead entry).
     if (ctx.view !== "review") {
-      commands.push({
-        id: "nav.files",
-        title: "Show Files view",
-        group: "Navigate",
-        run: ctx.showFiles,
-      });
+      commands.push(mk("nav.files", ctx, ctx.showFiles));
     }
     if (ctx.view !== "canvases") {
-      commands.push({
-        id: "nav.canvases",
-        title: "Show Canvases view",
-        group: "Navigate",
-        run: ctx.showCanvases,
-      });
+      commands.push(mk("nav.canvases", ctx, ctx.showCanvases));
     }
     commands.push(
-      {
-        id: "review.retry",
-        title: "Retry the AI review",
-        group: "Review",
-        run: ctx.retryReview,
-      },
-      {
-        id: "review.regenerate",
-        title: "Regenerate the review",
-        group: "Review",
-        run: ctx.regenerate,
-      },
-      {
-        id: "review.dual",
-        title: ctx.deepReviewOn
-          ? "Dual-model review: switch to quick single-model"
-          : "Dual-model review: switch back on",
-        group: "Review",
-        run: ctx.toggleDeepReview,
-      },
+      mk("review.retry", ctx, ctx.retryReview),
+      mk("review.regenerate", ctx, ctx.regenerate),
+      mk("review.dual", ctx, ctx.toggleDeepReview),
     );
 
     // The diff-canvas commands act on the live view store; they are only meaningful
@@ -270,47 +278,20 @@ export function buildCommands(ctx: CommandContext): Command[] {
       // Zoom clamps at the ends (zoomReducer), so the clamped direction is omitted:
       // no "Zoom in" at the deepest (diff) altitude, no "Zoom out" at the roll-up.
       if (ctx.zoomLevel !== "diff") {
-        commands.push({
-          id: "zoom.in",
-          title: "Zoom in",
-          group: "Zoom",
-          keybinding: "l",
-          run: ctx.zoomIn,
-        });
+        commands.push(mk("zoom.in", ctx, ctx.zoomIn));
       }
       if (ctx.zoomLevel !== "rollup") {
-        commands.push({
-          id: "zoom.out",
-          title: "Zoom out",
-          group: "Zoom",
-          keybinding: "h",
-          run: ctx.zoomOut,
-        });
+        commands.push(mk("zoom.out", ctx, ctx.zoomOut));
       }
       commands.push(
-        {
-          id: "view.overlay",
-          title: ctx.overlayOn ? "Hide the blast-radius overlay" : "Paint the blast-radius overlay",
-          group: "Appearance",
-          run: ctx.toggleOverlay,
-        },
-        {
-          id: "view.scheme",
-          title: ctx.scheme === "dark" ? "Switch to the bright room" : "Switch to dark",
-          group: "Appearance",
-          run: ctx.toggleScheme,
-        },
+        mk("view.overlay", ctx, ctx.toggleOverlay),
+        mk("view.scheme", ctx, ctx.toggleScheme),
       );
     }
   }
 
   if (ctx.screen === "directEntry") {
-    commands.push({
-      id: "door.choose",
-      title: "Choose a repository",
-      group: "Start",
-      run: ctx.chooseRepository,
-    });
+    commands.push(mk("door.choose", ctx, ctx.chooseRepository));
   }
 
   return commands;
@@ -378,4 +359,152 @@ export function formatKeybinding(token: string, mac: boolean = isMacPlatform()):
   if (!token.startsWith("mod+")) return token;
   const key = token.slice("mod+".length);
   return mac ? `⌘${key}` : `Ctrl+${key}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Keyboard dispatch over the registry. A pressed key becomes a normalized chord;
+// the effective binding (default overlaid by the user's override) is what dispatch
+// matches, what the palette and menu display, and what conflict detection inspects.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/** A normalized chord: modifier (Cmd/Ctrl) state + the lowercased key. */
+export interface Chord {
+  mod: boolean;
+  key: string;
+}
+
+/**
+ * Parse a keybinding token into a normalized chord, or `null` when it is not a
+ * recognizable binding (empty, or `mod+` with no key — garbage in config.json). A
+ * command with an unparseable stored override falls back to its default; the stored
+ * value stays reportable so the settings row can show it honestly (never a throw).
+ */
+export function normalizeChord(token: string): Chord | null {
+  const trimmed = token.trim();
+  if (trimmed.length === 0) return null;
+  if (trimmed.startsWith("mod+")) {
+    const key = trimmed.slice("mod+".length).trim().toLowerCase();
+    return key.length === 0 ? null : { mod: true, key };
+  }
+  return { mod: false, key: trimmed.toLowerCase() };
+}
+
+/**
+ * The effective binding for a command: the user's override if the map carries the id
+ * (`null` = explicitly unbound), otherwise the catalogue default. `null` means the
+ * command fires from no chord.
+ */
+export function effectiveKeybinding(
+  def: { id: string; keybinding?: string },
+  overrides: KeybindingOverrides = {},
+): string | null {
+  const override = overrides[def.id];
+  if (override !== undefined) return override;
+  return def.keybinding ?? null;
+}
+
+/**
+ * The command in `commands` whose EFFECTIVE binding matches the pressed chord, or
+ * `undefined`. Overrides are overlaid per command; an unbound or unparseable binding
+ * never matches. First match wins — deterministic in catalogue/emit order, so a
+ * conflict resolves to the earlier command (documented tie-break).
+ */
+export function matchKeybinding<T extends { id: string; keybinding?: string }>(
+  commands: readonly T[],
+  pressed: Chord,
+  overrides: KeybindingOverrides = {},
+): T | undefined {
+  for (const command of commands) {
+    const token = effectiveKeybinding(command, overrides);
+    if (token === null) continue;
+    const chord = normalizeChord(token);
+    if (chord && chord.mod === pressed.mod && chord.key === pressed.key) return command;
+  }
+  return undefined;
+}
+
+/** A pressed keyboard event reduced to a normalized chord (mod = Cmd or Ctrl). */
+export function chordFromEvent(event: {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+}): Chord {
+  return { mod: event.metaKey || event.ctrlKey, key: event.key.toLowerCase() };
+}
+
+/**
+ * Every effective chord claimed by more than one command, keyed by a canonical chord
+ * string (`mod+e`, `l`). Conflict detection is disclosure only — a conflicting write
+ * is never refused; this simply reports who collides so both rows can name it.
+ */
+export function findConflicts(
+  entries: readonly { id: string; keybinding?: string }[],
+  overrides: KeybindingOverrides = {},
+): Map<string, string[]> {
+  const byChord = new Map<string, string[]>();
+  for (const entry of entries) {
+    const token = effectiveKeybinding(entry, overrides);
+    const chord = token ? normalizeChord(token) : null;
+    if (!chord) continue;
+    const key = `${chord.mod ? "mod+" : ""}${chord.key}`;
+    const ids = byChord.get(key) ?? [];
+    ids.push(entry.id);
+    byChord.set(key, ids);
+  }
+  for (const [key, ids] of byChord) {
+    if (ids.length < 2) byChord.delete(key);
+  }
+  return byChord;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The application menu is PROJECTED from the same catalogue: the renderer derives a
+// serializable template, MAIN builds the Electron menu from it. Labels come from the
+// catalogue titles, accelerators from the effective `mod+` token (MAIN translates),
+// enabled from whether the live context currently offers the command — an out-of-
+// context command is disabled, never missing.
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface MenuItemProjection {
+  id: string;
+  label: string;
+  /** The effective `mod+`-token binding, for MAIN to render as an accelerator. Absent = none. */
+  accelerator?: string;
+  enabled: boolean;
+}
+
+export interface MenuSection {
+  group: string;
+  items: MenuItemProjection[];
+}
+
+/**
+ * Project the catalogue + live context + overrides into serializable menu sections.
+ * Dynamic entries (`recent.*`, `lens.*`) are not catalogued, so they never appear.
+ * A catalogued command absent from `buildCommands(ctx)` projects `enabled: false`
+ * (disabled, not omitted); the palette-toggle is always enabled (it works anywhere).
+ */
+export function menuTemplate(
+  ctx: CommandContext,
+  overrides: KeybindingOverrides = {},
+): MenuSection[] {
+  const live = new Set(buildCommands(ctx).map((command) => command.id));
+  const sections: MenuSection[] = [];
+  for (const def of COMMAND_CATALOGUE) {
+    const label = typeof def.title === "function" ? def.title(ctx) : def.title;
+    const token = effectiveKeybinding(def, overrides);
+    const item: MenuItemProjection = {
+      id: def.id,
+      label,
+      enabled: def.id === "palette.toggle" ? true : live.has(def.id),
+      ...(token ? { accelerator: token } : {}),
+    };
+    let section = sections.find((entry) => entry.group === def.group);
+    if (!section) {
+      section = { group: def.group, items: [] };
+      sections.push(section);
+    }
+    section.items.push(item);
+  }
+  return sections;
 }

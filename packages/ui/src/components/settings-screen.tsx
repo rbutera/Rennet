@@ -10,6 +10,16 @@ import type {
   SettingsView,
 } from "@rennet/protocol";
 import { useEffect, useState } from "react";
+import {
+  chordFromEvent,
+  COMMAND_CATALOGUE,
+  type CommandDef,
+  effectiveKeybinding,
+  findConflicts,
+  formatKeybinding,
+  type KeybindingOverrides,
+  normalizeChord,
+} from "../command/commands";
 import { ArrowLeftIcon, RennetMark, SlidersIcon } from "./icons";
 
 /**
@@ -134,7 +144,7 @@ export function SettingsScreen({
 }) {
   const [view, setView] = useState<SettingsView | null>(null);
   const [error, setError] = useState<string>();
-  const [tab, setTab] = useState<"global" | "repo">("global");
+  const [tab, setTab] = useState<"global" | "repo" | "keyboard">("global");
   // A repo row is addressed by its canonical git top-level path — a workspace can
   // contribute several rows, so a bare projectId cannot key the selection.
   const [selectedRepoPath, setSelectedRepoPath] = useState<string | null>(null);
@@ -209,6 +219,15 @@ export function SettingsScreen({
             onClick={() => setTab("repo")}
           >
             Repo
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "keyboard"}
+            className={`settings-tab${tab === "keyboard" ? " on" : ""}`}
+            onClick={() => setTab("keyboard")}
+          >
+            Keyboard
           </button>
         </div>
 
@@ -322,8 +341,186 @@ export function SettingsScreen({
             />
           )
         ) : null}
+
+        {view !== null && tab === "keyboard" ? (
+          <KeyboardPanel
+            bridge={bridge}
+            overrides={view.keybindings ?? {}}
+            malformed={view.appearanceMalformed}
+            onOverridesChanged={(keybindings) =>
+              setView((current) => (current ? { ...current, keybindings } : current))
+            }
+          />
+        ) : null}
       </div>
     </div>
+  );
+}
+
+/** The static-title label for a catalogue row (context-independent surface). */
+function catalogueLabel(def: CommandDef): string {
+  return typeof def.title === "string" ? def.title : def.id;
+}
+
+/**
+ * The Keyboard section (#44) — every catalogued command that has a default chord or a
+ * stored override, each with its EFFECTIVE binding and plain set / unbind / reset
+ * controls that write straight through `settings.setKeybinding` (first click, no
+ * confirmation). A chord claimed by more than one command is disclosed inline on both
+ * rows; the conflicting write is still accepted and persisted — disclosure is the whole
+ * intervention (Rule Zero). Context-independent, so it renders outside the workspace.
+ */
+function KeyboardPanel({
+  bridge,
+  overrides,
+  malformed,
+  onOverridesChanged,
+}: {
+  bridge: RennetBridge;
+  overrides: KeybindingOverrides;
+  malformed: boolean;
+  onOverridesChanged(overrides: KeybindingOverrides): void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string>();
+  // The row currently capturing its next keydown as a new chord (the recorder).
+  const [recording, setRecording] = useState<string | null>(null);
+
+  const rows = COMMAND_CATALOGUE.filter(
+    (def) => def.keybinding !== undefined || overrides[def.id] !== undefined,
+  );
+  const conflicts = findConflicts(rows, overrides);
+  const labelById = new Map(rows.map((def) => [def.id, catalogueLabel(def)]));
+
+  async function write(id: string, keybinding: string | null | undefined): Promise<void> {
+    if (busy) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      // `keybinding` omitted (undefined) is RESET; the bridge input drops the key.
+      const next = await bridge.invoke(
+        "settings.setKeybinding",
+        keybinding === undefined ? { id } : { id, keybinding },
+      );
+      onOverridesChanged(next.keybindings);
+    } catch (reason) {
+      setError(messageFrom(reason));
+    } finally {
+      setBusy(false);
+      setRecording(null);
+    }
+  }
+
+  // The recorder: the next keydown becomes the new chord token (`mod+e`, `j`). Escape
+  // cancels without a write. A plain capture — no modal, no confirmation step.
+  function onRecordKey(id: string, event: React.KeyboardEvent): void {
+    event.preventDefault();
+    if (event.key === "Escape") {
+      setRecording(null);
+      return;
+    }
+    // Ignore a lone modifier press — wait for the real key.
+    if (["Meta", "Control", "Shift", "Alt"].includes(event.key)) return;
+    const chord = chordFromEvent(event);
+    const token = `${chord.mod ? "mod+" : ""}${chord.key}`;
+    void write(id, token);
+  }
+
+  return (
+    <section className="settings-panel settings-keyboard" aria-label="Keyboard settings">
+      {error ? <p className="settings-error">{error}</p> : null}
+      {malformed ? (
+        <p className="settings-malformed">
+          Your <code>~/.rennet/config.json</code> could not be parsed. Editing is disabled so it is
+          not overwritten — fix or remove the file, then reopen settings.
+        </p>
+      ) : (
+        <p className="settings-note">
+          Remap any command. Overrides are stored on this machine only and survive restart. Two
+          commands may share a chord — the collision is shown, never blocked; the later match wins.
+        </p>
+      )}
+      <ul className="settings-keys">
+        {rows.map((def) => {
+          const token = effectiveKeybinding(def, overrides);
+          const chord = token ? normalizeChord(token) : null;
+          const chordKey = chord ? `${chord.mod ? "mod+" : ""}${chord.key}` : null;
+          const colliding = chordKey ? conflicts.get(chordKey) : undefined;
+          const others = colliding?.filter((other) => other !== def.id) ?? [];
+          const overridden = overrides[def.id] !== undefined;
+          return (
+            <li key={def.id} className="settings-key-row">
+              <div className="settings-row-label">
+                <span className="settings-k">{catalogueLabel(def)}</span>
+                <span className="settings-d">{def.group}</span>
+              </div>
+              <div className="settings-row-value settings-key-value">
+                {recording === def.id ? (
+                  // biome-ignore lint/a11y/noStaticElementInteractions: a transient chord recorder — the focused capture field IS the control, dismissed by Escape or a captured key.
+                  <input
+                    type="text"
+                    readOnly
+                    autoFocus
+                    className="settings-key-recorder"
+                    aria-label={`Press the new chord for ${catalogueLabel(def)}`}
+                    placeholder="Press a chord…"
+                    onKeyDown={(event) => onRecordKey(def.id, event)}
+                    onBlur={() => setRecording(null)}
+                  />
+                ) : token ? (
+                  <kbd
+                    className={`command-palette-key${others.length > 0 ? " is-conflict" : ""}`}
+                    title={
+                      others.length > 0
+                        ? `Also bound to ${others.map((id) => labelById.get(id) ?? id).join(", ")}`
+                        : undefined
+                    }
+                    data-conflict={others.length > 0 ? "true" : undefined}
+                  >
+                    {formatKeybinding(token)}
+                  </kbd>
+                ) : (
+                  <span className="settings-key-unbound">unbound</span>
+                )}
+                {others.length > 0 ? (
+                  <span className="settings-key-conflict">
+                    conflicts with {others.map((id) => labelById.get(id) ?? id).join(", ")}
+                  </span>
+                ) : null}
+                <span className="settings-key-controls">
+                  <button
+                    type="button"
+                    className="settings-seg-btn"
+                    onClick={() => setRecording(def.id)}
+                    disabled={busy || malformed}
+                  >
+                    Set
+                  </button>
+                  <button
+                    type="button"
+                    className="settings-seg-btn"
+                    onClick={() => void write(def.id, null)}
+                    disabled={busy || malformed}
+                  >
+                    Unbind
+                  </button>
+                  {overridden ? (
+                    <button
+                      type="button"
+                      className="settings-seg-btn"
+                      onClick={() => void write(def.id, undefined)}
+                      disabled={busy || malformed}
+                    >
+                      Reset
+                    </button>
+                  ) : null}
+                </span>
+              </div>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 

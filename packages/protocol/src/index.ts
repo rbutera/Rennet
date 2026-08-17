@@ -1495,6 +1495,15 @@ export type Locus = z.infer<typeof locusSchema>;
 export const globalConfigSchema = z.object({
   version: z.number().int().nonnegative(),
   appearance: z.object({ scheme: appearanceSchemeSchema.optional() }).optional(),
+  /**
+   * User keybinding overrides for the command registry (#44), command id → chord
+   * token (`mod+e`, `j`) or `null` for an explicit unbind; an absent id keeps the
+   * command's catalogue default. Additive-optional: an untouched install stores
+   * nothing, an old config parses unchanged, and a set override survives restart.
+   * When the settings ladder lands it registers a `keybindings` global-layer key over
+   * this same field with no migration.
+   */
+  keybindings: z.record(z.string(), z.string().nullable()).optional(),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
@@ -1587,6 +1596,13 @@ export const settingsViewSchema = z.object({
    */
   appearanceMalformed: z.boolean(),
   projects: z.array(settingsProjectSchema),
+  /**
+   * The stored keybinding-override map (#44), verbatim from the global config —
+   * command id → chord token or `null` (explicit unbind). Additive: an untouched
+   * install omits it, old `settings.get` callers ignore it. The renderer overlays
+   * these on the catalogue defaults for dispatch, display, and conflict detection.
+   */
+  keybindings: z.record(z.string(), z.string().nullable()).optional(),
 });
 export type SettingsView = z.infer<typeof settingsViewSchema>;
 
@@ -2396,6 +2412,21 @@ export const commandDefinitions = {
       schemeProvenance: resolvedProvenanceSchema,
     }),
   },
+  // ── Settings: set (or reset) a command's keybinding override (#44) ─────────
+  // A personal, app-side preference — writes only `~/.rennet/config.json`, never a
+  // repo. Mirrors `setAppearance`: a plain write, first click, no confirmation, and
+  // REFUSED (throws) when the config is malformed so an edit never overwrites
+  // unparseable bytes. `keybinding`: a string SETS the override, `null` UNBINDS
+  // (explicit), omitted RESETS (deletes the entry, back to the catalogue default). A
+  // conflicting chord is accepted and persisted — the collision is disclosed in the
+  // UI, never blocked (Rule Zero). Output returns the whole stored map after the write.
+  "settings.setKeybinding": {
+    input: z.object({
+      id: z.string().min(1),
+      keybinding: z.string().min(1).nullable().optional(),
+    }),
+    output: z.object({ keybindings: z.record(z.string(), z.string().nullable()) }),
+  },
   // ── Settings: set a repo's repo-scope map visibility (wireframe #15) ───────
   // Genuinely consumed: runs the real visibility switch, which writes the repo's
   // Rennet-owned `.rennet/.gitignore` (exclusion state only — never stages,
@@ -2552,4 +2583,33 @@ export interface RennetBridge {
    * channel omits it, and a subscriber degrades to the command's final resolved value.
    */
   onAskStream?(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void;
+  /**
+   * Push the projected application-menu template to MAIN (#44). The renderer derives
+   * these serializable sections from the command registry + live context + overrides;
+   * MAIN builds `Menu.setApplicationMenu` from them and routes item clicks back through
+   * `onMenuRun`. One-way (no result). Optional: a bridge without a menu channel omits
+   * it (tests, non-Electron hosts) and the app simply has no registry-built menu.
+   */
+  updateMenu?(sections: MenuTemplateSection[]): void;
+  /**
+   * Subscribe to menu-item activations (#44): MAIN sends the clicked command's id, and
+   * the renderer runs the SAME handler the palette would. Returns an unsubscribe.
+   * Optional, mirroring `updateMenu`.
+   */
+  onMenuRun?(listener: (id: string) => void): () => void;
+}
+
+/** One projected application-menu item (#44): a registry command rendered in the menu. */
+export interface MenuTemplateItem {
+  id: string;
+  label: string;
+  /** The effective `mod+`-token binding, for MAIN to render as an accelerator. */
+  accelerator?: string;
+  enabled: boolean;
+}
+
+/** One projected menu section (#44), grouped by the command's registry group. */
+export interface MenuTemplateSection {
+  group: string;
+  items: MenuTemplateItem[];
 }

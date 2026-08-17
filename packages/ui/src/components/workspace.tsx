@@ -45,6 +45,12 @@ import {
   type OpenSpecCoverageIndex,
   type OpenSpecReviewAnchor,
 } from "../canvas/openspec";
+import {
+  catalogueDef,
+  chordFromEvent,
+  type KeybindingOverrides,
+  matchKeybinding,
+} from "../command/commands";
 import type { CoverageMosaic } from "../canvas/read-state";
 import { buildRowRegistry, type Mark, placeMarks, resolveAnchorToRows } from "../canvas/registrar";
 import { createViewStore, useViewStore, type ViewStore } from "../canvas/store";
@@ -77,6 +83,13 @@ import { SymbolInspector } from "./symbol-inspector";
 /** A per-element diff resolver (the real product wires the patchset; demo injects one). */
 export type DiffResolver = (elementKey: string) => ElementDiff | undefined;
 
+// The canvas zoom commands, sourced from the ONE catalogue (no duplicate chord
+// table) so a `zoom.in`/`zoom.out` remap is honoured here through `matchKeybinding`.
+const ZOOM_COMMANDS = [
+  { id: "zoom.in", keybinding: catalogueDef("zoom.in")?.keybinding },
+  { id: "zoom.out", keybinding: catalogueDef("zoom.out")?.keybinding },
+];
+
 export interface CanvasWorkspaceProps {
   canvases: Record<CanvasAngle, Canvas>;
   /**
@@ -90,6 +103,13 @@ export interface CanvasWorkspaceProps {
    */
   reviewId?: string;
   store?: ViewStore;
+  /**
+   * User keybinding overrides (#44) — the canvas zoom keys (`l`/`h`) are matched
+   * through the registry against these, so a remap of `zoom.in`/`zoom.out` takes
+   * effect here too. Absent ⇒ the catalogue defaults. Arrow/Escape synonyms and the
+   * `isEditableTarget` guard are affordances, not registry chords, and stay hardcoded.
+   */
+  keybindingOverrides?: KeybindingOverrides;
   /**
    * The resolved app appearance scheme (wireframe #15). The canvas FOLLOWS it —
    * seeded at creation and kept in sync as the app scheme changes (a delayed
@@ -896,11 +916,15 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     // proposal-edit textarea (or any field) is the user typing, not a command.
     if (isEditableTarget(event.target as HTMLElement)) return;
     if ((event.metaKey || event.ctrlKey) && (event.key === "[" || event.key === "]")) return;
+    // The zoom keys route through the registry (#44), so a remapped `zoom.in`/`zoom.out`
+    // takes effect. `[`/`]` lens rotation and the arrow/Escape synonyms are affordances,
+    // not registry chords, and stay matched literally.
+    const zoomMatch = matchKeybinding(ZOOM_COMMANDS, chordFromEvent(event), props.keybindingOverrides);
     if (event.key === "]") rotateAndRefocus(1);
     else if (event.key === "[") rotateAndRefocus(-1);
-    else if (event.key === "l" || event.key === "ArrowRight")
+    else if (zoomMatch?.id === "zoom.in" || event.key === "ArrowRight")
       store.getState().setZoom(zoomReducer(zoom, { type: "zoomIn" }));
-    else if (event.key === "h" || event.key === "ArrowLeft" || event.key === "Escape")
+    else if (zoomMatch?.id === "zoom.out" || event.key === "ArrowLeft" || event.key === "Escape")
       store.getState().setZoom(zoomReducer(zoom, { type: "zoomOut" }));
     else return;
     event.preventDefault();

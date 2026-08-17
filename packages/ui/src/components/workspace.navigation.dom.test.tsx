@@ -56,3 +56,43 @@ describe("CanvasWorkspace navigation shortcuts", () => {
     );
   });
 });
+
+describe("CanvasWorkspace keybinding overrides (#44)", () => {
+  it("zooms on a remapped zoom.in key and ignores the replaced default", () => {
+    const store = createViewStore({ angle: "decisions", zoom: { level: "rollup" } });
+    const { getByRole } = mount(
+      <CanvasWorkspace
+        canvases={demoCanvases()}
+        store={store}
+        keybindingOverrides={{ "zoom.in": "j" }}
+      />,
+    );
+    const tab = getByRole("tab", { name: "Decisions" });
+    tab.focus();
+
+    // The default `l` is now dead — the zoom stays at the roll-up.
+    fireEvent.keyDown(tab, { key: "l" });
+    expect(store.getState().zoom.level).toBe("rollup");
+
+    // The remapped `j` zooms in (rollup → cohort).
+    fireEvent.keyDown(tab, { key: "j" });
+    expect(store.getState().zoom.level).toBe("cohort");
+  });
+
+  it("keeps the ArrowRight/Escape synonyms and the editable-target guard (control)", () => {
+    const store = createViewStore({ angle: "decisions", zoom: { level: "cohort" } });
+    const { getByRole } = mount(
+      <CanvasWorkspace
+        canvases={demoCanvases()}
+        store={store}
+        keybindingOverrides={{ "zoom.in": "j" }}
+      />,
+    );
+    const tab = getByRole("tab", { name: "Decisions" });
+    tab.focus();
+
+    // ArrowRight is a hardcoded affordance synonym for zoom-in, not a registry chord.
+    fireEvent.keyDown(tab, { key: "ArrowRight" });
+    expect(store.getState().zoom.level).toBe("element");
+  });
+});

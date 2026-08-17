@@ -3,6 +3,8 @@ import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
 
 const PROGRESS_CHANNEL = "rennet:progress";
 const ASK_STREAM_CHANNEL = "rennet:ask-stream";
+const MENU_UPDATE_CHANNEL = "rennet:menu-update";
+const MENU_RUN_CHANNEL = "rennet:menu-run";
 
 const bridge: RennetBridge = {
   invoke: (name, input) => ipcRenderer.invoke("rennet:invoke", { name, input }),
@@ -31,6 +33,18 @@ const bridge: RennetBridge = {
     };
     ipcRenderer.on(ASK_STREAM_CHANNEL, handler);
     return () => ipcRenderer.removeListener(ASK_STREAM_CHANNEL, handler);
+  },
+  // Push the projected application-menu template to MAIN (#44). One-way; MAIN builds
+  // and sets the menu.
+  updateMenu: (sections) => ipcRenderer.send(MENU_UPDATE_CHANNEL, sections),
+  // Subscribe to menu-item activations (#44): MAIN sends the clicked command id; the
+  // renderer runs the same handler the palette would. Returns an unsubscribe.
+  onMenuRun: (listener) => {
+    const handler = (_event: IpcRendererEvent, payload: { id: string }): void => {
+      listener(payload.id);
+    };
+    ipcRenderer.on(MENU_RUN_CHANNEL, handler);
+    return () => ipcRenderer.removeListener(MENU_RUN_CHANNEL, handler);
   },
 };
 

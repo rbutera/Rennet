@@ -3292,6 +3292,13 @@ button {
   font-size: 11px;
 }
 
+/* A chord claimed by more than one live command (#44): disclosed, never blocked. The
+ * warm outline marks the collision; the row's `title` names the other command. */
+.command-palette-key.is-conflict {
+  border-color: var(--warning, #d08a2a);
+  color: var(--warning, #d08a2a);
+}
+
 /* ── Settings: the config ladder (wireframe #15) ───────────────────────────── */
 /* Glass chrome, one palette. The screen themes to the reviewer's chosen scheme via
  * `data-scheme` on `.settings` (light composes the bright-room tokens under it). */
@@ -3674,4 +3681,54 @@ button {
   margin: 12px 0 0;
   font-size: 12px;
   color: var(--text-faint);
+}
+
+/* ── Settings: the Keyboard section (#44) ──────────────────────────────────── */
+/* One row per catalogued command, its effective chord + plain set/unbind/reset. A
+ * conflict is disclosed inline on both rows — never a block (Rule Zero). */
+.settings-keys {
+  list-style: none;
+  margin: 4px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-key-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 4px;
+  border-bottom: 1px solid var(--hairline);
+}
+.settings-key-value {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.settings-key-controls {
+  display: inline-flex;
+  gap: 4px;
+}
+.settings-key-recorder {
+  width: 128px;
+  padding: 3px 8px;
+  border: 1px solid var(--focus, #4a90d9);
+  border-radius: 6px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 12px;
+}
+.settings-key-unbound {
+  color: var(--text-faint);
+  font-size: 12px;
+  font-style: italic;
+}
+.settings-key-conflict {
+  color: var(--warning, #d08a2a);
+  font-size: 11.5px;
 }

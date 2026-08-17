@@ -65,7 +65,16 @@ import {
 import { buildRowRegistry, type RegistryRow } from "./canvas/registrar";
 import { publishedItems } from "./canvas/staging";
 import { createViewStore, useViewStore } from "./canvas/store";
-import { buildCommands, type CommandContext, type Screen } from "./command/commands";
+import {
+  buildCommands,
+  chordFromEvent,
+  type Command,
+  type CommandContext,
+  type KeybindingOverrides,
+  matchKeybinding,
+  menuTemplate,
+  type Screen,
+} from "./command/commands";
 import { Breadcrumb } from "./components/breadcrumb";
 import {
   CollationDraftCanvas,
@@ -650,6 +659,18 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // methods, never a parallel copy. `paletteOpen` toggles the ⌘K overlay.
   const viewStore = useMemo(() => createViewStore(), []);
   const [paletteOpen, setPaletteOpen] = useState(false);
+  // User keybinding overrides (#44), fetched with settings and overlaid on the
+  // catalogue defaults at dispatch. A remap here is what key dispatch, the palette,
+  // the menu, and conflict detection all read — so a remapped chord actually runs the
+  // command (never a label that lies). Updated in state after each `setKeybinding`.
+  const [keybindingOverrides, setKeybindingOverrides] = useState<KeybindingOverrides>({});
+  // The live dispatch list + overrides, held in a ref so the window keydown listener
+  // stays stable (subscribed once) while always reading the current commands. Set from
+  // the built command list below, on every render.
+  const dispatchRef = useRef<{ commands: Command[]; overrides: KeybindingOverrides }>({
+    commands: [],
+    overrides: {},
+  });
   // Subscribed so the palette's toggle labels + current lens/zoom read live store state
   // (and so an inert command — the lens already active, a zoom at its clamp — is omitted).
   const canvasAngle = useViewStore(viewStore, (state) => state.angle);
@@ -657,34 +678,31 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const canvasOverlayOn = useViewStore(viewStore, (state) => state.overlayOn);
   const canvasZoomLevel = useViewStore(viewStore, (state) => state.zoom.level);
 
-  // App-wide command and history shortcuts share the same window listener. History
-  // keys stay out of text editing controls; ⌘K keeps its existing global behaviour.
+  // App-wide keyboard dispatch routes through the registry (#44): a pressed mod-chord
+  // is matched against the live commands' EFFECTIVE bindings (catalogue default overlaid
+  // by the user's overrides), so a remapped chord runs its command and the old chord
+  // stops. Only mod-chords are handled here (bare canvas keys belong to the workspace's
+  // own listener); the palette toggle fires even inside a text field, every other
+  // command stays out of editing controls. The list + overrides are read from a ref so
+  // the listener subscribes once.
   useEffect(() => {
     function onKey(event: KeyboardEvent): void {
       if (!event.metaKey && !event.ctrlKey) return;
-      if (event.key === "k" || event.key === "K") {
-        event.preventDefault();
-        setPaletteOpen((open) => !open);
-        return;
-      }
+      const { commands, overrides } = dispatchRef.current;
+      const match = matchKeybinding(commands, chordFromEvent(event), overrides);
+      if (!match) return;
       const target = event.target;
-      if (
+      const editing =
         target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement ||
-        (target instanceof HTMLElement && target.isContentEditable)
-      )
-        return;
-      if (event.key === "[") {
-        event.preventDefault();
-        goBack();
-      } else if (event.key === "]") {
-        event.preventDefault();
-        goForward();
-      }
+        (target instanceof HTMLElement && target.isContentEditable);
+      if (editing && match.id !== "palette.toggle") return;
+      event.preventDefault();
+      match.run();
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [goBack, goForward]);
+  }, []);
 
   useEffect(() => {
     bridge
@@ -765,7 +783,10 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   useEffect(() => {
     bridge
       .invoke("settings.get", {})
-      .then(({ scheme: loaded }) => setScheme(loaded))
+      .then(({ scheme: loaded, keybindings }) => {
+        setScheme(loaded);
+        if (keybindings) setKeybindingOverrides(keybindings);
+      })
       .catch(() => undefined);
   }, [bridge]);
 
@@ -2198,10 +2219,45 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         },
       }
     : null;
+  const builtCommands = commandContext ? buildCommands(commandContext) : [];
+  // The palette-toggle is a registry command whose `run` is supplied here (like every
+  // other handler). It is not emitted into the palette list itself, but it joins the
+  // dispatch + menu list so its ⌘K chord (remappable) routes through the same matcher.
+  const paletteCommand: Command = {
+    id: "palette.toggle",
+    title: "Toggle command palette",
+    group: "General",
+    keybinding: "mod+k",
+    run: () => setPaletteOpen((open) => !open),
+  };
+  const dispatchCommands = [paletteCommand, ...builtCommands];
+  // Publish the live dispatch list for the stable window keydown listener (above).
+  dispatchRef.current = { commands: dispatchCommands, overrides: keybindingOverrides };
+
+  // The application menu (#44): project the registry into a serializable template and
+  // post it to MAIN, but only when the serialized template actually changed — a context
+  // flicker or an override edit reposts, an identical render does not.
+  const menuJson = commandContext
+    ? JSON.stringify(menuTemplate(commandContext, keybindingOverrides))
+    : null;
+  useEffect(() => {
+    if (!menuJson) return;
+    bridge.updateMenu?.(JSON.parse(menuJson));
+  }, [menuJson, bridge]);
+  // A menu-item activation runs the SAME handler the palette would (single dispatcher).
+  // A `menu:run` for a command the live context no longer offers is dropped without a
+  // throw (the disabled state raced the click).
+  useEffect(() => {
+    return bridge.onMenuRun?.((id) => {
+      dispatchRef.current.commands.find((command) => command.id === id)?.run();
+    });
+  }, [bridge]);
+
   const palette = (
     <CommandPalette
       open={paletteOpen}
-      commands={commandContext ? buildCommands(commandContext) : []}
+      commands={builtCommands}
+      overrides={keybindingOverrides}
       onClose={() => setPaletteOpen(false)}
     />
   );
@@ -2505,6 +2561,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                 <CanvasWorkspace
                   store={viewStore}
                   canvases={canvases}
+                  // Keybinding overrides (#44) so a `zoom.in`/`zoom.out` remap takes
+                  // effect on the canvas keys too, not just in the palette label.
+                  keybindingOverrides={keybindingOverrides}
                   // The live review identity (issue #240): the workspace stays mounted
                   // across reviews, so its per-review hypothesis-frame collapse state is
                   // keyed by this id rather than leaking A's choice into B.
