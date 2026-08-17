@@ -1572,6 +1572,53 @@
   font-size: 13px;
   line-height: 1.4;
 }
+/* Cross-harness adjudication chip (#41): the third opinion beside both answers. */
+.flag-adjudication {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 9px;
+  margin-top: 9px;
+  border-radius: var(--radius);
+  border: 1px solid var(--hairline);
+  padding: 7px 10px;
+}
+.flag-adjudication-supported {
+  background: var(--green-fill);
+  border-color: var(--green-line);
+}
+.flag-adjudication-contradicted {
+  background: var(--amber-surface);
+  border-color: var(--amber-line);
+}
+.flag-adjudication-insufficient {
+  background: var(--surface-sunken, transparent);
+}
+.flag-adjudication-label {
+  flex: none;
+  font: 700 10px / 1.2 var(--sans);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.flag-adjudication-supported .flag-adjudication-label {
+  color: var(--green);
+}
+.flag-adjudication-contradicted .flag-adjudication-label {
+  color: var(--amber);
+}
+.flag-adjudication-insufficient .flag-adjudication-label {
+  color: var(--text-faint);
+}
+.flag-adjudication-evidence {
+  color: var(--text-soft);
+  font-size: 13px;
+  line-height: 1.4;
+}
+.flag-adjudication-seat {
+  flex: none;
+  color: var(--text-faint);
+  font-size: 11px;
+}
 .flagged-empty {
   color: var(--text-faint);
   font-style: italic;

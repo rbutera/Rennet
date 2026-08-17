@@ -36,8 +36,8 @@ Red-first throughout: each numbered group starts with the failing test that prov
 
 ## 6. Flagged lens chip
 
-- [ ] 6.1 RED: DOM tests — a disagree flare with a verdict shows the adjudication chip ("code supports <seat>" / "code contradicts this flag" / honest could-not-adjudicate reason) beside both verbatim answers; a row with no verdict renders exactly as today; NO verdict value hides or drops a row (structural no-gate assertion).
-- [ ] 6.2 Render the chip in `packages/ui` (`canvas/flagged.ts` + `components/flagged.tsx`). Green.
+- [x] 6.1 RED: DOM tests — a disagree flare with a verdict shows the adjudication chip ("code supports <seat>" / "code contradicts this flag" / honest could-not-adjudicate reason) beside both verbatim answers; a row with no verdict renders exactly as today; NO verdict value hides or drops a row (structural no-gate assertion).
+- [x] 6.2 Render the chip in `packages/ui` (`canvas/flagged.ts` + `components/flagged.tsx`). Green.
 
 ## 7. Docs and delivery (same change — definition of done)
 
