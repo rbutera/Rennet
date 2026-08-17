@@ -65,22 +65,14 @@ describe("codex WSL locus — real distro round-trip (gated)", () => {
       ).not.toBeNull();
       if (!discovery.chosen) return;
 
-      // Record the composed spawn argv and the minted distro scratch, so the
-      // locus/path composition is asserted against the REAL transport.
-      const spawns: { bin: string; args: readonly string[]; outPath: string }[] = [];
-      let mintedScratch: string | null = null;
+      // Record the composed spawn argv so the locus/path composition is asserted
+      // against the REAL app-server transport.
+      const spawns: { bin: string; args: readonly string[] }[] = [];
       const base = defaultCodexTransportEffects;
       const effects: CodexTransportEffects = {
-        ...base,
-        mintDistroScratch: async (d) => {
-          if (!base.mintDistroScratch) throw new Error("default effects lost mintDistroScratch");
-          const dir = await base.mintDistroScratch(d);
-          mintedScratch = dir;
-          return dir;
-        },
-        spawn: (bin, args, cwd, outPath, signal) => {
-          spawns.push({ bin, args, outPath });
-          return base.spawn(bin, args, cwd, outPath, signal);
+        spawn: (spawnSpec) => {
+          spawns.push({ bin: spawnSpec.bin, args: spawnSpec.args });
+          return base.spawn(spawnSpec);
         },
       };
 
@@ -111,9 +103,10 @@ describe("codex WSL locus — real distro round-trip (gated)", () => {
           expect(outcome.finalText.toLowerCase()).toContain("ok");
         }
 
-        // (2) The spawn went through `wsl.exe -e` with the distro cwd on `--cd`. When
-        // the distro codex is an asdf JS launcher, its sibling node rides INSIDE the
-        // `-e` argv ahead of the codex path (`… -e <node> <codex> exec …`).
+        // (2) The spawn went through `wsl.exe -e` with the distro cwd on `--cd`,
+        // launching `codex app-server`. When the distro codex is an asdf JS
+        // launcher, its sibling node rides INSIDE the `-e` argv ahead of the codex
+        // path (`… -e <node> <codex> app-server`).
         const argv = spawns[0];
         expect(argv?.bin).toBe(WSL_EXE);
         const a = argv?.args ?? [];
@@ -122,27 +115,16 @@ describe("codex WSL locus — real distro round-trip (gated)", () => {
         const runtime = discovery.chosen.runtimePath;
         if (runtime === undefined) {
           expect(a[5]).toBe(discovery.chosen.path);
-          expect(a[6]).toBe("exec");
+          expect(a[6]).toBe("app-server");
         } else {
           expect(a[5]).toBe(runtime); // the paired distro node
           expect(a[6]).toBe(discovery.chosen.path); // the codex JS launcher
-          expect(a[7]).toBe("exec");
+          expect(a[7]).toBe("app-server");
         }
-
-        // (3) `-C` and `-o` are distro-native (`/…`), never a Windows/UNC path.
-        const ci = a.indexOf("-C");
-        expect(ci).toBeGreaterThan(6);
-        expect(a[ci + 1]).toBe(repoDistro);
-        expect(a[ci + 1]?.startsWith("/")).toBe(true);
-        const oi = a.indexOf("-o");
-        expect(a[oi + 1]?.startsWith("/")).toBe(true);
-
-        // (4) Scratch minted in the distro; Windows read it back through the UNC view.
-        expect(mintedScratch, "mintDistroScratch never fired").not.toBeNull();
-        expect((mintedScratch ?? "").startsWith("/")).toBe(true);
-        expect(argv?.outPath).toBe(
-          `${toWindowsView(mintedScratch ?? "", DISTRO)}\\last-message.txt`,
-        );
+        // stdio is locus-transparent: the whole JSON-RPC turn crosses the wsl
+        // boundary unchanged, so there are NO `-C`/`-o` argv paths and no scratch.
+        expect(a).not.toContain("-C");
+        expect(a).not.toContain("-o");
       } finally {
         // Tolerant cleanup of the distro fixture — a leak must not fail the test.
         const rm = locusCommand(locus, "rm", ["-rf", repoDistro]);

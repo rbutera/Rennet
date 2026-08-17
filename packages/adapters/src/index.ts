@@ -61,26 +61,31 @@ export {
 } from "./claude-query";
 export { type CleanupWorktreeDeps, cleanupWorktree } from "./cleanup-worktree";
 export {
-  buildCodexTurnArgs,
   CodexAdapter,
   type CodexAdapterConfig,
-  type CodexTurnArgs,
-  type CodexTurnResultFrame,
   type CodexTurnSpec,
   type CodexTurnTransport,
   classifyCodexItemKind,
-  extractCodexUsage,
   mapCodexError,
 } from "./codex-adapter";
 export {
-  buildCodexExecArgs,
+  type AppServerConnection,
+  type AppServerTurnParams,
+  buildAppServerArgs,
+  CODEX_CLIENT_INFO,
+  type CodexTurnError,
+  type CodexTurnResultFrame,
+  defaultSpawnAppServer,
+  FULL_ACCESS_SANDBOX_POLICY,
+  mapTokenUsageBreakdown,
+  NEVER_ASK_APPROVAL_POLICY,
+  runCodexTurn,
+  type SpawnAppServer,
+} from "./codex-app-server";
+export {
   CODEX_EXEC_BIN,
-  CODEX_USAGE_WINDOW_MARGIN_MS,
   type CodexAvailability,
   type CodexExecEffects,
-  type CodexRun,
-  type CodexRunResult,
-  type CodexRunSpec,
   type CodexUtilityAdapterDeps,
   type CodexVersionProbe,
   type CreateCodexExecutorOptions,

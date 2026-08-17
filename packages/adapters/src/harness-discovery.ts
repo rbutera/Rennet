@@ -10,6 +10,42 @@ import {
   toWindowsView,
 } from "@rennet/core";
 import { execa } from "execa";
+import { CODEX_CLIENT_INFO, defaultSpawnAppServer } from "./codex-app-server";
+
+/** Bounded `codex app-server` handshake: spawn, send `initialize`, resolve true iff
+ *  the child answers a JSON-RPC line within the timeout, then kill. Never throws. */
+async function realAppServerHandshake(
+  candidate: { readonly path: string; readonly runtimePath?: string },
+  locus: Locus,
+  timeoutMs = 10_000,
+): Promise<boolean> {
+  const args = ["app-server"];
+  const program = candidate.runtimePath ?? candidate.path;
+  const programArgs = candidate.runtimePath === undefined ? args : [candidate.path, ...args];
+  const cmd = locusCommand(locus, program, programArgs);
+  const conn = defaultSpawnAppServer({ bin: cmd.file, args: cmd.args, cwd: undefined });
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    conn.send({ id: 1, method: "initialize", params: { clientInfo: CODEX_CLIENT_INFO } });
+    return await Promise.race([
+      (async () => {
+        for await (const message of conn.messages) {
+          void message; // any well-formed line means it answered as an app-server
+          return true;
+        }
+        return false;
+      })(),
+      new Promise<boolean>((resolve) => {
+        timer = setTimeout(() => resolve(false), timeoutMs);
+      }),
+    ]);
+  } catch {
+    return false;
+  } finally {
+    if (timer !== undefined) clearTimeout(timer);
+    conn.kill();
+  }
+}
 
 /**
  * Join path segments for a platform, NOT the host's (add-windows-support). A Windows
@@ -57,6 +93,16 @@ export interface DiscoveryDeps {
   /** Execute a script through an already-proven runtime and parse its version. */
   probeVersionWithRuntime?(runtimePath: string, scriptPath: string): Promise<string | null>;
   /**
+   * Probe a chosen codex candidate for app-server capability: spawn `app-server`,
+   * send `initialize`, and resolve true iff it answers within a bounded wait
+   * (adopt-codex-app-server). Optional so hermetic tests that don't exercise the
+   * handshake omit it; the real deps always supply it.
+   */
+  appServerHandshake?(candidate: {
+    readonly path: string;
+    readonly runtimePath?: string;
+  }): Promise<boolean>;
+  /**
    * The platform the binaries live on (add-windows-support). `win32` ⇒ `;`-delimited
    * PATH, PATHEXT shim matching (`claude.cmd`/`.exe`/…), Windows curated dirs. Absent
    * ⇒ POSIX (macOS/Linux, and the Linux INSIDE a WSL distro). This is the platform of
@@ -79,6 +125,11 @@ export interface DiscoveredCandidate {
   /** The runtime a runtime-hosted candidate was probed and must be launched through
    *  (a codex JS launcher under an asdf node install needs its sibling `node`). */
   readonly runtimePath?: string;
+  /** Where this candidate came from, when it is not an ordinary CLI on PATH or a
+   *  curated install dir. `chatgpt-desktop-bundle` is the codex bundled inside
+   *  ChatGPT.app on macOS (adopt-codex-app-server) — a real candidate, ranked below
+   *  a user-installed CLI. */
+  readonly provenance?: "chatgpt-desktop-bundle";
 }
 
 /** The PATH delimiter for a platform: `;` on Windows, `:` elsewhere. */
@@ -447,6 +498,7 @@ export async function wslDiscoveryDeps(distro: string): Promise<DiscoveryDeps> {
         return null;
       }
     },
+    appServerHandshake: (candidate) => realAppServerHandshake(candidate, locus),
   };
 }
 
@@ -494,6 +546,7 @@ export function defaultCodexDiscoveryDeps(): DiscoveryDeps {
         return null;
       }
     },
+    appServerHandshake: (candidate) => realAppServerHandshake(candidate, HOST_LOCUS),
   };
 }
 
@@ -507,16 +560,32 @@ async function codexKnownDirectories(
   home: string,
   listDir: (directory: string) => Promise<readonly string[]>,
   platform: NodeJS.Platform | undefined,
-): Promise<{ readonly dirs: readonly string[]; readonly shimsDir: string }> {
+): Promise<{
+  readonly dirs: readonly string[];
+  readonly shimsDir: string;
+  readonly bundleDirs: ReadonlySet<string>;
+}> {
   if (platform === "win32") {
     // Windows codex installs are npm/scoop shims, not asdf; no asdf-install scan.
-    return { dirs: windowsKnownDirectories(CODEX_BINARY), shimsDir: "" };
+    // The ChatGPT desktop Store package's bundled codex.exe is ACL-locked against
+    // out-of-package execution (verified), so it is NEVER offered as a candidate.
+    return { dirs: windowsKnownDirectories(CODEX_BINARY), shimsDir: "", bundleDirs: new Set() };
   }
   const join = posixPath.join;
   const asdfInstallsRoot = join(home, ".asdf", "installs", "nodejs");
   const versions = await listDir(asdfInstallsRoot);
   const asdfInstallBins = versions.map((version) => join(asdfInstallsRoot, version, "bin"));
   const shimsDir = join(home, ".asdf", "shims");
+  // On macOS, ChatGPT.app bundles a spawnable `codex` (shared `~/.codex` auth), so a
+  // user with ChatGPT desktop but no CLI still gets a Codex harness. Ranked BELOW
+  // the CLI (see the sort in discoverCodex). Not offered on Linux/WSL.
+  const bundleDirs =
+    platform === "darwin"
+      ? [
+          "/Applications/ChatGPT.app/Contents/Resources",
+          join(home, "Applications", "ChatGPT.app", "Contents", "Resources"),
+        ]
+      : [];
   return {
     dirs: [
       ...asdfInstallBins,
@@ -527,8 +596,10 @@ async function codexKnownDirectories(
       join(home, ".bun", "bin"),
       join(home, ".volta", "bin"),
       shimsDir,
+      ...bundleDirs,
     ],
     shimsDir,
+    bundleDirs: new Set(bundleDirs),
   };
 }
 
@@ -609,11 +680,18 @@ export async function discoverCodex(
       const { version, runtimePath } = await probeCodexCandidate(deps, path);
       if (version !== null) {
         const runtime = runtimePath === undefined ? {} : { runtimePath };
-        return {
-          candidates: [{ path, version, fromKnownLocation: true, locus: HOST_LOCUS, ...runtime }],
-          chosen: { path, version, ...runtime },
-          health: { state: "ready", version },
-        };
+        // A broken/old override that cannot answer the app-server handshake falls
+        // through to normal discovery rather than bricking the app.
+        const handshakeOk =
+          deps.appServerHandshake === undefined ||
+          (await deps.appServerHandshake({ path, ...runtime }));
+        if (handshakeOk) {
+          return {
+            candidates: [{ path, version, fromKnownLocation: true, locus: HOST_LOCUS, ...runtime }],
+            chosen: { path, version, ...runtime },
+            health: { state: "ready", version },
+          };
+        }
       }
     }
   }
@@ -621,11 +699,11 @@ export async function discoverCodex(
   const locus = deps.locus ?? HOST_LOCUS;
   const delimiter = delimiterFor(deps.platform);
   const join = joinFor(deps.platform);
-  const { dirs: known, shimsDir } = await codexKnownDirectories(
-    deps.home,
-    deps.listDir,
-    deps.platform,
-  );
+  const {
+    dirs: known,
+    shimsDir,
+    bundleDirs,
+  } = await codexKnownDirectories(deps.home, deps.listDir, deps.platform);
   const knownSet = new Set(known);
   const harvested = await deps.loginShellPath();
   const directories: string[] = [];
@@ -662,6 +740,7 @@ export async function discoverCodex(
       fromKnownLocation: knownSet.has(directory),
       locus,
       ...(runtimePath === undefined ? {} : { runtimePath }),
+      ...(bundleDirs.has(directory) ? { provenance: "chatgpt-desktop-bundle" as const } : {}),
     });
   }
 
@@ -670,6 +749,10 @@ export async function discoverCodex(
       candidate.version !== null,
   );
   const ranked = [...withVersion].sort((left, right) => {
+    // A user-installed CLI always beats the ChatGPT-desktop bundled binary.
+    const leftBundle = left.provenance === "chatgpt-desktop-bundle";
+    const rightBundle = right.provenance === "chatgpt-desktop-bundle";
+    if (leftBundle !== rightBundle) return leftBundle ? 1 : -1;
     // A real install beats the asdf shim, whatever their reported versions.
     const leftShim = isAsdfShim(left.path, shimsDir, CODEX_BINARY);
     const rightShim = isAsdfShim(right.path, shimsDir, CODEX_BINARY);
@@ -683,6 +766,11 @@ export async function discoverCodex(
 
   if (!best) {
     const where = locus.kind === "wsl" ? ` inside the ${locus.distro} distro` : "";
+    const notFoundDetail =
+      deps.platform === "win32"
+        ? "No codex CLI found. Install the codex CLI (it ships the same `app-server` subcommand); " +
+          "the ChatGPT desktop Store package's bundled codex.exe is ACL-locked and cannot be spawned."
+        : `No codex binary found on PATH or in any known location${where}.`;
     return {
       candidates,
       chosen: null,
@@ -692,9 +780,30 @@ export async function discoverCodex(
         detail:
           candidates.length > 0
             ? `A codex binary was found${where} but did not report a version.`
-            : `No codex binary found on PATH or in any known location${where}.`,
+            : notFoundDetail,
       },
     };
+  }
+
+  // Prove the chosen candidate answers the app-server handshake; a binary that
+  // cannot is `unavailable` with the probe detail — never silently driven another
+  // way (adopt-codex-app-server harness-discovery spec).
+  if (deps.appServerHandshake !== undefined) {
+    const ok = await deps.appServerHandshake({
+      path: best.path,
+      ...(best.runtimePath === undefined ? {} : { runtimePath: best.runtimePath }),
+    });
+    if (!ok) {
+      return {
+        candidates,
+        chosen: null,
+        health: {
+          state: "unavailable",
+          reason: "handshake-failed",
+          detail: `codex ${best.version} at ${best.path} did not answer the app-server initialize handshake.`,
+        },
+      };
+    }
   }
 
   return {
