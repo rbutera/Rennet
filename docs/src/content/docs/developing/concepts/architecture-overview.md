@@ -137,25 +137,29 @@ flowchart TB
 - The **Repo Map** is derived project context. Current `main` stores it by escaped
   repository path under `~/.rennet/projects/`; each checkout or worktree gets its
   own local entry. A deliberate promotion can mirror it into `.rennet/` for a team.
-- The **review event store** is durable app data. Events and idempotent command
-  receipts are persisted; canvas projections are rebuilt in product code. Any
-  persisted review is **loadable by id** — the `review.load` command folds it back
-  from its events as a pure read (no event appended), independent of which review is
-  most recent, and reports whether its recorded repository root still exists so the
-  renderer can show honest missing-context status. Every id-addressed command
-  resolves the review it names from the store rather than assuming the globally
-  latest one, so an older reopened review is fully addressable. Bootstrap reports
-  the same repository-presence fact for the latest review, and repository-dependent
-  commands bind their caller path to the addressed review's stored root.
+- The **review event store** is durable app data that outlives any single session:
+  events and idempotent command receipts are persisted, and canvas projections are
+  rebuilt in product code.
+  - Any persisted review is **loadable by id** — `review.load` folds it back from its
+    events as a pure read (no event appended), independent of which review is most
+    recent.
+  - A load reports whether its recorded repository root still exists, so the renderer
+    can show honest missing-context status; bootstrap reports the same presence fact
+    for the latest review.
+  - Every id-addressed command resolves the review it names rather than assuming the
+    globally latest one, so an older reopened review is fully addressable, and
+    repository-dependent commands bind their caller path to the addressed review's
+    stored root.
 - **Navigation state** (the back/forward surface stack plus recents) is
   renderer-local UI state, persisted to a versioned `localStorage` blob and restored
-  on the next launch, so the app reopens where the user left off. It is deliberately
-  separate from the durable event store: a landing rehydrator reloads each surface's
-  content as the user arrives on it, an unreadable or older blob degrades to
-  recents-only with no migration step, and an entry that can no longer load is
-  discarded from both Back and Forward in favour of the nearest surface that still
-  opens. The parser rejects unrooted or cross-review breadcrumb routes, and each
-  stack half is capped at 100 entries so the local blob stays bounded.
+  on the next launch so the app reopens where the user left off. It is deliberately
+  separate from the durable event store:
+  - A landing rehydrator reloads each surface's content as the user arrives on it.
+  - An unreadable or older blob degrades to recents-only with no migration step, and
+    an entry that can no longer load is discarded from both Back and Forward in favour
+    of the nearest surface that still opens.
+  - The parser rejects unrooted or cross-review breadcrumb routes, and each stack half
+    is capped at 100 entries so the local blob stays bounded.
 - Review harnesses currently run against the live checkout. The separate
   immutable materialisation and prompt-staging cache described by the long-term
   contract is not implemented yet.
@@ -168,11 +172,13 @@ deterministic Repo Map refresh, GitHub review publication, and own-branch
 push-plus-PR submission are wired on current `main`.
 
 The handoff bundle, capable harness turn, checkpoints, successor capture,
-exact-evidence carry, and model composer are wired end to end. The acting command
-runs the composer's exact output bound by its digest, refusing a tampered or stale
-bundle, and the renderer composes, previews, and invokes it from the own-branch
-destination, surfacing the run outcome truthfully. The deterministic delta account over the
-successor patchset is live; the remaining seam is fuzzy lineage carry.
+exact-evidence carry, and model composer are wired end to end, as is the
+deterministic delta account over the successor patchset; the remaining seam is fuzzy
+lineage carry.
+
+The acting command runs the composer's exact output bound by its digest, refusing a
+tampered or stale bundle, and the renderer composes, previews, and invokes it from
+the own-branch destination, surfacing the run outcome truthfully.
 
 The architecture still contains deliberate future seams: additional harnesses,
 remote/mobile clients, and public release machinery are not all live merely
@@ -214,11 +220,11 @@ manual recovery. On app quit, desktop main aborts every registered turn. Codex's
 child is killed through its executor; the Claude SDK exposes no child PID, so
 Rennet can request cancellation but cannot claim it observed the process exit.
 
-Persisted threads do reattach after reload. Main-alive in-flight enumeration is
-not wired yet—`review.reattach` returns an empty `inFlight` list—so a freshly
-loaded renderer cannot reconstruct deltas it missed before subscribing. The
-durable completion or honest interrupted placeholder remains the source of
-truth.
+Persisted threads reattach after reload; live in-flight deltas do not. Main-alive
+in-flight enumeration is not wired yet — `review.reattach` returns an empty
+`inFlight` list — so a freshly loaded renderer cannot reconstruct deltas it missed
+before subscribing. The durable completion or honest interrupted placeholder remains
+the source of truth.
 
 ## Where to go next
 

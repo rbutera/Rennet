@@ -1,0 +1,47 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "side-tab",
+        "value": "*",
+        "files": [
+          "packages/ui/src/canvas.css"
+        ],
+        "createdAt": "2026-08-17T18:23:31.015Z",
+        "reason": "Private backlight provenance system: 3px inset --private bar marking locally-private threads is intentional, documented in-file"
+      },
+      {
+        "rule": "design-system-radius",
+        "value": "4px",
+        "createdAt": "2026-08-17T18:55:29.089Z",
+        "reason": "DESIGN.md Desktop radius scale (4/6/8/12/16) + tokens.css; docs match product surface, not marketing rounded frontmatter. Pinned by restyle brief."
+      },
+      {
+        "rule": "design-system-radius",
+        "value": "6px",
+        "createdAt": "2026-08-17T18:55:36.669Z",
+        "reason": "DESIGN.md Desktop radius scale chip token; kbd. Pinned by restyle brief."
+      },
+      {
+        "rule": "design-system-radius",
+        "value": "8px",
+        "createdAt": "2026-08-17T18:55:36.712Z",
+        "reason": "DESIGN.md Desktop radius scale control token; buttons. Pinned by restyle brief."
+      },
+      {
+        "rule": "design-system-radius",
+        "value": "12px",
+        "createdAt": "2026-08-17T18:55:36.750Z",
+        "reason": "DESIGN.md Desktop radius scale surface token; cards/code/asides. Pinned by restyle brief."
+      },
+      {
+        "rule": "design-system-radius",
+        "value": "999px",
+        "createdAt": "2026-08-17T18:57:45.339Z",
+        "reason": "DESIGN.md pill exemption (999px for chips/counts/scrollbar thumbs, never containers). Badges + scrollbar thumb only."
+      }
+    ]
+  }
+}

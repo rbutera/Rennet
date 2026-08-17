@@ -20,7 +20,7 @@ flowchart LR
   stores["Durable review state<br/>Repo Map · patchset · canvases · run ledger"]
   primer["Lean primer<br/>identity · freshness · counts · protocol card"]
   session["Orchestrator session"]
-  tools["canvasOps@2<br/>retrieve at the needed altitude"]
+  tools["canvasOps@2 retrieval surface<br/>zoom to the needed altitude"]
   answer["Grounded answer<br/>with evidence and freshness"]
 
   stores --> primer --> session
@@ -97,9 +97,10 @@ base branch advances halfway through a long review.
 
 The session model accepts structured selection, disposition, proposal, and view
 events. The live ask path now carries the reviewer's selected diff span into the
-next turn: the renderer sends an occurrence-relative RSP anchor plus the selected
-text, desktop main turns it into a `selected` event, and the orchestrator appends
-the exact event JSON to its inspectable turn context. An ask with no selected span
+next turn: the renderer sends an occurrence-relative
+[RSP](/developing/concepts/surfacing-and-routing/) anchor plus the selected text.
+Desktop main turns it into a `selected` event, and the orchestrator appends the
+exact event JSON to its inspectable turn context. An ask with no selected span
 adds no `selected` event.
 
 ```mermaid
@@ -112,7 +113,7 @@ sequenceDiagram
 
   U->>C: Select a diff span and ask “why?”
   C->>S: selected span anchor + excerpt
-  S->>O: Question with structured deixis
+  S->>O: Question with the exact selected span (structured deixis)
   O->>T: canvas.read(element)
   O->>T: diff.read(anchor)
   O->>T: canvas.focus(span)

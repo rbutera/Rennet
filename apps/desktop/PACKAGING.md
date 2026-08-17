@@ -1,7 +1,8 @@
 # Packaging the Rennet desktop app
 
-Rennet's primary build is a macOS `.dmg`; it also builds an unsigned **Windows
-(win32) ZIP** (see the Windows section at the end). The macOS part below covers the
+Rennet's primary build is a macOS `.dmg`; on Windows CI it also builds a **Squirrel
+installer** (which drives auto-update) alongside a portable unsigned **win32 ZIP**
+(see the Windows and Auto-update sections at the end). The macOS part below covers the
 two builds: the **default unsigned build** (works with no Apple account) and the
 **signed + notarized build** (one step, Rai runs it when releasing). The signing,
 notarization, and DMG steps are macOS-only.
@@ -128,10 +129,12 @@ the comments at the top of that file. The hardened-runtime entitlements live in
 ## Windows (win32) — unsigned ZIP
 
 Rennet also runs on Windows, natively and driving a WSL distro (see the Windows +
-WSL install guide under `docs/` → Using Rennet → Getting started). Windows **release
-engineering — code signing, a Squirrel/WiX installer, and auto-update — is a
-separate slice** (the Windows counterpart of the macOS signing work); slice 1 ships
-only an unsigned ZIP.
+WSL install guide under `docs/` → Using Rennet → Getting started). Windows CI now
+builds **both** a Squirrel installer (`Setup.exe`, the `.nupkg`, and the `RELEASES`
+manifest — the feed auto-update reads) and the portable unsigned ZIP. **Windows code
+signing is still a separate slice** (the counterpart of the macOS Developer ID work);
+the Squirrel build is currently unsigned, which is enough for install and auto-update
+but shows the SmartScreen "unknown publisher" prompt on first run.
 
 Every step above from the "signed + notarized" build onward is **macOS-only**: the
 Apple env vars, `osxSign`/`osxNotarize`, `codesign`/`stapler`/`spctl`, the DMG
@@ -146,7 +149,11 @@ pnpm exec nx run rennet-desktop:start
 ```
 
 The `start` target builds with Vite and launches Electron — the same
-cross-platform targets used on macOS. There is **no POSIX login shell on Windows**:
+cross-platform targets used on macOS. The dev run has no exe-embedded icon, so the
+window loads the brand `.ico` from `brand/exports/app-icons/windows/` directly and
+sets a stable taskbar identity (`com.rennet.desktop`); if the brand file is missing
+it falls back to Electron's default icon rather than failing. There is **no POSIX
+login shell on Windows**:
 harness discovery uses the process environment plus curated Windows install
 locations (`%APPDATA%\npm`, `%LOCALAPPDATA%\Programs`, scoop/bun/volta), so no
 `zsh`/`bash` is needed. For a WSL-locus project, `git`/`gh`/`claude`/`codex` run
@@ -159,8 +166,42 @@ pnpm exec nx run rennet-desktop:package
 pnpm exec nx run rennet-desktop:make
 ```
 
-`forge.config.cjs` adds `new MakerZIP({}, ["win32"])` and selects the Windows
-`.ico` (`brand/exports/app-icons/windows/rennet-white-on-black.ico`) when packaging
-runs on Windows. The Electron fuses hook already flips `electron.exe`, and the
-harness-SDK vendored-executable exclusion strips a bundled `claude.exe` the same way
-it strips the macOS `cli`.
+`forge.config.cjs` adds `new MakerZIP({}, ["win32"])` **and** `new MakerSquirrel({…},
+["win32"])`, and selects the Windows `.ico`
+(`brand/exports/app-icons/windows/rennet-white-on-black.ico`) when packaging runs on
+Windows. `MakerSquirrel` only runs its build on Windows, so a local macOS `make` skips
+it and still produces the darwin ZIP/DMG. The Electron fuses hook already flips
+`electron.exe`, and the harness-SDK vendored-executable exclusion strips a bundled
+`claude.exe` the same way it strips the macOS `cli`.
+
+## Auto-update
+
+Rennet updates itself with the Electron-maintained
+[`update-electron-app`](https://github.com/electron/update-electron-app) client,
+pointed at the free public **update.electronjs.org** service. That service resolves
+this repo's public **GitHub Releases** and serves the newest build; there is **no
+Rennet backend** in the loop. The update client is wired in
+`apps/desktop/src/main/auto-update.ts` and started from `whenReady` **only when
+`app.isPackaged`** (a dev or test run has no release to pull).
+
+**Egress disclosure (honest copy, not a consent screen):** on a packaged build the
+app periodically pings `update.electronjs.org` with its **name, version, and
+platform** to ask whether a newer release exists. That is the only traffic the
+updater generates, and it fires on packaged builds automatically — there is no toggle
+and no dialog to clear. When a newer build is found it downloads in the background and
+`update-electron-app` shows its default "restart to apply" prompt; that prompt is the
+product telling you an update is ready, not a gate.
+
+**Per platform:**
+
+- **Windows** — works as soon as Squirrel artifacts (`Setup.exe`, `.nupkg`,
+  `RELEASES`) ship in a GitHub Release, which the `MakerSquirrel` maker now produces
+  on Windows CI. Squirrel handles install/update shortcut events; the app quits early
+  for those via `electron-squirrel-startup` and aligns its taskbar/toast AUMID to the
+  `com.squirrel.Rennet.Rennet` id Squirrel stamps on the shortcut.
+- **macOS** — Squirrel.Mac **requires a real code-signed app**. Until releases are
+  Developer-ID-signed (issue #42) the updater has nothing valid to apply, so it
+  **degrades to a silent no-op**: `auto-update.ts` wraps the call in try/catch and
+  attaches a quiet `autoUpdater` "error" listener, so an unsigned/ad-hoc build never
+  crashes or nags. Once signed macOS releases ship, updates activate with no code
+  change.

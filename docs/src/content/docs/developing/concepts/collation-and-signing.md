@@ -4,8 +4,9 @@ description: How dispositions from every lens become one editable draft and then
 ---
 
 The collation draft is the missing middle between reviewing code and sending a
-result. It gathers every disposition into one editable account; signing turns
-that account into the paper that is pushed or posted.
+result. It gathers every disposition (a lens's per-anchor judgment) into one
+editable account; signing turns that account into the paper that is pushed or
+posted.
 
 ## The three-part spine
 
@@ -33,7 +34,8 @@ with editing kept on the draft.
 ## Why the draft is its own canvas
 
 A review lens projects one angle over code. The collation draft projects the
-complete L2 disposition set across all angles. Here the dispositions themselves
+complete L2 disposition set (the disposition layer — see [the canvas
+model](/developing/concepts/canvas-model/)) across all angles. Here the dispositions themselves
 are the main object and code is one click away as supporting context.
 
 The draft is an ordered list, not a map keyed only by file path. That choice makes
@@ -78,8 +80,8 @@ changes.
 | Sign does | Push the branch and create or reuse the PR | Post one batched GitHub review |
 | Needs another coding pass | Intended: hand the same asks to a coding harness, then recapture | Not applicable |
 
-On your branch, the title and body can be drafted by a Model Council seat and
-then edited directly. On another person's PR, the paper derives one GitHub review
+On your branch, the title and body can be drafted by a [Model
+Council](/developing/concepts/model-council/) seat and then edited directly. On another person's PR, the paper derives one GitHub review
 event from the collated comments.
 
 ## The payload follows the preview
@@ -106,13 +108,11 @@ sends that artifact. Internal review state, orchestrator chatter, and refinement
 history are not part of the outbound shape unless the reviewer has turned them
 into a disposition on the draft.
 
-When the review ran over partially-ingested content (R18: a truncated tail, a
-binary blob, or a submodule pointer), the paper discloses those blockers before
+When the review ran over partially-ingested content — a truncated tail, a binary
+blob, or a submodule pointer (R18) — the paper discloses those blockers before
 the sign control, so a signer knows the review was not a full read before
-attesting to it. This disclosure is non-gating honest copy: it never blocks,
-delays, or adds an acknowledgement to the sign path—the reviewer finishes and
-publishes anyway if they choose, and the hold budget, keyboard sign, and
-degradation-ledger gate are unchanged by its presence.
+attesting to it. This disclosure is non-gating honest copy. It never blocks the
+sign path. The reviewer publishes anyway if they choose.
 
 ## What is live
 

@@ -136,7 +136,9 @@ The catalogue, three assignment tables, pure resolver, cross-harness execution,
 resolution provenance, RoutePlan, and shared runtime invocation budget are live.
 The review pipeline resolves real decomposition, ordering, narration, finding,
 comment-refinement, PR-drafting, delta-summary, CI-failure-classification,
-adjudication, and self-consistency seats through council-owned job IDs. CI classification is a batched light job
+adjudication, and self-consistency seats through council-owned job IDs.
+
+CI classification is a batched light job
 that sees only deterministically unclassified failures and shares the review's
 invocation budget. It can promote an uncertain failure only to change-caused;
 environmental attribution remains deterministic-only. Refusal, timeout, or

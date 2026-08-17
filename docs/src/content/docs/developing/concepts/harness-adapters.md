@@ -8,6 +8,10 @@ Code, Codex, and other coding harnesses have different processes and event
 formats. Rennet uses the tools already installed on the machine; it does not
 bundle its own harness binary or read a harness credential.
 
+This page walks the three real adapters — Claude Code, Codex, and omp — then the
+sections they share: discovery, capabilities, authentication, and error shape. Read
+the adapter you care about; the shared sections apply to all three.
+
 ## The boundary
 
 ```mermaid
@@ -155,24 +159,26 @@ The full method surface, frame-mapping table, discovery candidates, and schema
 provenance live in the [Codex app-server integration
 reference](/developing/reference/codex-app-server/).
 
-Both Codex spawn sites — the agentic `CodexTurnTransport` and the utility
-`CodexExecutor` — share this one app-server turn runner and are locus-aware. They
-take the project's `Locus` and route every spawn through `locusCommand` (verbatim
-argv, no shell). JSON-RPC over stdio crosses the locus boundary unchanged, so a
-WSL locus needs no scratch translation: codex is spawned inside the distro and
-`turn/start` receives a distro-native `cwd`. A host locus is byte-identical to
-the shipped path apart from the transport swap. The desktop resolves and memoizes
-a Codex seat per locus, exactly as it does the Claude harness, so a WSL project
-runs the distro's own `codex`.
+### Codex in WSL
 
-The desktop composition resolves the `orchestrator-chat` council assignment across
-both real adapters. A Claude-selected turn receives canvasOps in process; a
-Codex-selected turn reaches an injected `CodexTurnTransport` with the same backend
-served at its loopback MCP URL. For a WSL Codex turn that URL must be reachable from
-inside the distro: the composition probes shared-localhost first, else binds the
+Both Codex spawn sites route through the project's locus, so a WSL project runs the
+distro's own codex and reaches canvasOps over a WSL-routable loopback. The two sites
+— the agentic `CodexTurnTransport` and the utility `CodexExecutor` — take the
+project's `Locus` and route every spawn through `locusCommand` (verbatim argv, no
+shell); the desktop resolves and memoizes a Codex seat per locus, exactly as it does
+the Claude harness.
+
+Both sites share the one app-server turn runner: JSON-RPC over stdio crosses the
+locus boundary unchanged, so a WSL locus needs no scratch translation — codex is
+spawned inside the distro and `turn/start` receives a distro-native `cwd`. A host
+locus is byte-identical apart from the transport swap. A Codex-selected `orchestrator-chat` turn reaches its `CodexTurnTransport`
+with canvasOps served at a loopback MCP URL; for WSL that URL must be reachable from
+inside the distro, so the composition probes shared-localhost first, else binds the
 loopback to the WSL-facing host address the distro routes to (never `0.0.0.0`), and
-settles the turn as an honest failed turn when no route exists rather than running
-host-side. The session event stream is subscribe-once.
+settles an honest failed turn when no route exists rather than running host-side. The
+session event stream is subscribe-once.
+
+See [Windows and WSL](/using/guide/windows-and-wsl/) for the user-facing view.
 
 ## omp is the third adapter
 
@@ -210,22 +216,24 @@ force a failed terminal outcome even when the process exits zero. Rejected RPC
 responses likewise fail the turn. Construction and iteration failures settle the
 same single terminal outcome, and a captured event stream is single-use.
 
-One honesty constraint shapes the whole adapter: **no turn has ever been executed
-against `omp`.** Every wire shape comes from the installed `.d.ts` files, not an
-observed byte stream. So the decoders are tolerant and passthrough-by-default (a
-wrong guess surfaces as `passthrough`, never a dropped or misclaimed frame), the
-hermetic fakes model only documented shapes, and the descriptor is evidence-derived:
-every capability flag starts false and is set only from a passing conformance check.
-The hermetic run proves `interrupt` and `textDeltas` only, caps them at
-`implementedByAdapter`, and spends nothing; the outer layers
-(`advertisedByHarness`, `availableInSession`) and the recorded tested range are
-earned only by the gated real run (`RENNET_LIVE_OMP=1`), which runs the suite against
-the installed binary and, on a full expected-matrix match, records the version into
-`harness-tested-range.json`. Until then there is **no omp entry** in that artifact,
-the descriptor omits `testedRange`, health says `untested`, and no capability claims
-above `implementedByAdapter`. `structuredOutput` remains expected-fail because omp's
-RPC prompt accepts no output schema; JSON text alone is not schema enforcement.
-Usage and cost are also absent because the real transport does not yet request stats.
+No omp turn has ever run, so every claim the adapter makes is conservative by
+construction. Every wire shape comes from the installed `.d.ts` files, not an observed
+byte stream:
+
+- The decoders are tolerant and passthrough-by-default — a wrong guess surfaces as
+  `passthrough`, never a dropped or misclaimed frame — and the hermetic fakes model
+  only documented shapes.
+- Every capability flag starts false. The hermetic run proves `interrupt` and
+  `textDeltas` only, caps them at `implementedByAdapter`, and spends nothing; the outer
+  layers (`advertisedByHarness`, `availableInSession`) are earned only by the gated real
+  run (`RENNET_LIVE_OMP=1`) against the installed binary.
+- No tested range is recorded until a genuine full expected-matrix match writes the
+  version into `harness-tested-range.json`. Until then there is **no omp entry**, the
+  descriptor omits `testedRange`, health says `untested`, and nothing claims above
+  `implementedByAdapter`.
+- `structuredOutput` stays expected-fail because omp's RPC prompt accepts no output
+  schema (JSON text alone is not schema enforcement), and usage and cost stay absent
+  because the real transport does not yet request stats.
 
 The desktop composition serves the `orchestrator-chat` seat with omp through the same
 external loopback MCP transport the Codex path uses — identical canvasOps@2 descriptors,

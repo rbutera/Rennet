@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { constants as fsConstants, realpathSync } from "node:fs";
+import { existsSync, constants as fsConstants, realpathSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join, normalize, resolve, sep } from "node:path";
@@ -160,6 +160,8 @@ import type {
   ReviewNarration,
 } from "@rennet/types";
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shell } from "electron";
+import squirrelStartup from "electron-squirrel-startup";
+import { startAutoUpdate } from "./auto-update";
 import { attachCiSignal } from "./ci-signal";
 import { createLiveDeltaDigestPort } from "./delta-digest-live";
 import { createDispatch, type FlaggedReviewRun } from "./dispatch";
@@ -194,6 +196,16 @@ import { loadReviewOwnership } from "./review-ownership";
 import { buildReviewCanvasesInput } from "./review-pipeline-input";
 import { createSettingsComposition } from "./settings";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
+import { brandWindowIcon, resolveAppUserModelId } from "./window-identity";
+
+// Squirrel (the win32 installer) launches the freshly-installed exe with a
+// `--squirrel-install`/`--squirrel-updated`/`--squirrel-uninstall` argv while it
+// wires up shortcuts, then kills it. electron-squirrel-startup handles those events
+// (creating/removing the shortcuts) and returns true, in which case we must quit
+// immediately and boot nothing else. No-op on macOS/Linux and on normal launches.
+if (squirrelStartup) {
+  app.quit();
+}
 
 const execFileAsync = promisify(execFile);
 
@@ -1730,6 +1742,11 @@ async function createWindow(): Promise<void> {
         ? { backgroundMaterial: "acrylic" as const, backgroundColor: "#00000000" }
         : { transparent: true, backgroundColor: "#00000000" }),
     title: "Rennet",
+    // Dev runs (and Linux) have no exe-embedded icon, so without this they show the
+    // default Electron icon in the titlebar/taskbar. Resolved lazily and only when
+    // the brand file exists — the packaged win32 exe carries the `.ico` itself, so a
+    // missing file degrades to Electron's default rather than throwing.
+    icon: brandWindowIcon(__dirname, process.platform),
     webPreferences: {
       preload: join(__dirname, "../preload/index.cjs"),
       contextIsolation: true,
@@ -1749,6 +1766,18 @@ async function createWindow(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  // Stable Windows taskbar/toast identity — set before any window so grouping,
+  // pinning, and notifications attach to this AUMID instead of a per-exe default. On
+  // a Squirrel install we must match the id Squirrel stamped on the shortcut, or
+  // toasts go dark; the resolver picks that automatically from the install layout.
+  if (process.platform === "win32") {
+    app.setAppUserModelId(resolveAppUserModelId(process.platform, process.execPath, existsSync));
+  }
+  // Auto-update, packaged builds only — dev/test runs have no release to pull and no
+  // Squirrel/Squirrel.Mac feed. Best-effort and self-silencing (see auto-update.ts):
+  // on unsigned macOS it no-ops instead of crashing; on Windows it activates once
+  // Squirrel artifacts ship in a release.
+  if (app.isPackaged) startAutoUpdate();
   store = new SqliteReviewStore(join(app.getPath("userData"), "rennet.sqlite"));
   projectStore = new FileProjectStore(join(app.getPath("userData"), "projects.json"));
   service = new ReviewService(capture, store);

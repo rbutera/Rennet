@@ -71,6 +71,9 @@ found two wrong move carries that would have occurred if move were allowed.
 
 The committed synthetic corpus keeps the trade visible and executable:
 
+TP = correct carry, FP = wrong carry, FN = missed carry. The number that matters
+is FP, false carries: it is 0 for exact identity.
+
 | Class | Obs | Fixture pairs | TP | FP | FN | Fixture pass rate | Recall |
 |---|---|---|---|---|---|---|---|
 | `exact` | 21 | 7 | 21 | 0 | 0 | 100.0% | 100.0% |
@@ -84,6 +87,10 @@ The committed synthetic corpus keeps the trade visible and executable:
 **Auto-carry (exact only):** fixture pass rate 100.0% over 21 observations from 7 independent fixture pairs (95% Wilson lower bound 84.5%). **Wrong carries under the live policy: 0** (must be 0).
 
 **Why not `move`:** enabling `move` auto-carry would produce **2 wrong carries** on this corpus (delete-plus-copy read as relocation; a decoy that kept the old context stealing the lineage) against 4 correct moves — so it is excluded. `exact` carry safety does NOT rest on the pass rate above (a synthetic-corpus statistic): it rests on the STRUCTURAL argument that a byte-identical body at a UNIQUE (body, path) can only be mismatched by a SHA-256 collision, and a duplicated (body, path) fails closed to `ambiguous`.
+
+(The auto-carry and move paragraphs above are generated from the measurement
+run and kept verbatim by a test, so the doc's numbers cannot drift from the
+measured ones.)
 
 The corpus contains 19 synthetic patchset pairs and no client code. It measures
 the classifier and catches regressions; the uniqueness rule is what makes exact

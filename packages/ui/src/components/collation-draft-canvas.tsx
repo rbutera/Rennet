@@ -19,6 +19,7 @@ import {
   publishReviewType,
   stageItem,
 } from "../canvas/staging";
+import { ArrowLeftIcon, ArrowRightIcon } from "./icons";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The COLLATION DRAFT CANVAS (issue #101; ruling R40) — the forming destination.
@@ -201,7 +202,7 @@ export function CollationDraftCanvas({
               onClick={() => onBack?.()}
               aria-label="Back to the lenses"
             >
-              ← Lenses
+              <ArrowLeftIcon size={12} /> Lenses
             </button>
           </div>
         </header>
@@ -565,7 +566,7 @@ export function CollationDraftCanvas({
             disabled={empty || prDraftState?.status === "drafting"}
             onClick={() => onSign?.()}
           >
-            Sign the draft →
+            Sign the draft <ArrowRightIcon size={14} />
           </button>
         </footer>
       </section>

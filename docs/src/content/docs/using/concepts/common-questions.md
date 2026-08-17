@@ -33,8 +33,10 @@ opinion** beside them: an adjudication turn reads the real code around the
 contested spot and says whether it **supports the flag**, **contradicts** it, or
 **could not adjudicate**. That chip is a tiebreak hint, not a ruling—both original
 answers stay, the row never disappears because of it, and you still decide what is
-correct. The disputed row appears as soon as the review has verified it; adjudication
-runs afterward and adds the chip when it finishes. A slow or stuck adjudicator never
+correct.
+
+The disputed row appears as soon as the review has verified it; adjudication runs
+afterward and adds the chip when it finishes. A slow or stuck adjudicator never
 holds the row off screen.
 
 ## Why not just prompt a model?
@@ -68,20 +70,17 @@ there needs the codex CLI (`npm i -g @openai/codex`).
 
 ## What happens on my own branch?
 
-Today, the live renderer lets you shape and sign the pull-request title and body,
-then Rennet pushes the named branch and opens that pull request.
+You can shape and sign the pull-request title and body, then Rennet pushes the
+named branch and opens that pull request.
 
-The next loop turns your requested changes into a coding-agent bundle, lets the
-agent edit and test, captures a successor patchset, and shows the delta. Handing
-off is live: an own-branch review composes, previews, and runs the bundle from the
-renderer, and the acting command executes that exact model-composed bundle,
-threaded and bound by its digest. Seeing the successor patchset as a delta
-re-review is live too: the successor is captured with the ask trace and rendered
-as a deterministic hunk-grain delta account on the successor review.
+The coding-agent route is live end to end: you compose the handoff, preview it,
+run it, and get a focused re-review of exactly what the agent changed — including
+anything it changed beyond what you asked for. When you sign the finished paper,
+Rennet pushes the named branch and opens the previewed pull request.
 
-When you sign the finished paper, Rennet pushes the named branch and opens the
-previewed pull request. The richer fuzzy sub-file lineage work is separate: the
-current carry path only reuses state when unchanged identity is proven.
+The one unfinished piece: when the agent reworks existing code in place, Rennet
+cannot yet always recognise it as the same code moved or edited, so it re-reviews
+it fresh rather than carrying over your earlier decisions.
 
 ## Where to go next
 

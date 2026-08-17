@@ -81,15 +81,20 @@ flowchart LR
 
 The live deep-review path requires a matching local checkout. If none is
 available, Rennet reports that REST-only review is unavailable instead of
-pretending it captured the repository from GitHub. After reviewing a pinned PR
-head, Rennet also reads that exact commit's GitHub checks and shows an
-informational CI panel in Flagged. Failures attributable to changed code become
-high-severity findings when they have an offered-diff anchor; an attributable
-failure without a real anchor stays visible in the panel. Only contextual
-infrastructure signatures receive the infrastructure label, and model refinement
-can only attribute a failure to the change or leave it unclassified. Missing,
-truncated, timed-out, or otherwise unavailable CI never blocks review, signing,
-or publishing and is never reported as passing.
+pretending it captured the repository from GitHub.
+
+### CI checks
+
+After review, Rennet reads that commit's GitHub checks and shows them in Flagged;
+a failure it can tie to your changed code becomes a real finding.
+
+- An attributable failure without a real code anchor stays visible in the panel
+  rather than becoming a finding.
+- Only known infrastructure signatures get the infrastructure label.
+- Model refinement can only attribute a failure to the change or leave it
+  unclassified.
+- Missing, truncated, or timed-out CI never blocks review, signing, or publishing,
+  and is never reported as passing.
 
 ## What reaches GitHub
 
@@ -133,11 +138,10 @@ for the engineering model behind that behaviour.
 
 Rennet has no backend. Review state, reading progress, local discussion, and the
 full Rennet structure stay in local application storage. Material selected for a
-model turn can leave the machine through the harness and provider you use, and
-the context inspector lists the assembly and its per-seat send transcript. A
-“sent” label means the digest extracted from at least one actual send matches the
-recorded assembly; it does not claim that the harness made no additional ambient
-reads.
+model turn can leave the machine through the harness and provider you use. Rennet
+records the exact text it handed to each model, and only labels context **sent**
+when that record matches what it assembled — it never claims a model saw nothing
+extra.
 
 GitHub naturally receives the review only when you sign it. If GitHub is
 unavailable, local reading still works for material already on disk, but posting

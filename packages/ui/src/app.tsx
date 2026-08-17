@@ -76,6 +76,7 @@ import {
   menuTemplate,
   type Screen,
 } from "./command/commands";
+import { RennetBrandMark } from "./components/brand-mark";
 import { Breadcrumb } from "./components/breadcrumb";
 import {
   CollationDraftCanvas,
@@ -96,7 +97,6 @@ import {
   FileDiffIcon,
   FolderIcon,
   LayersIcon,
-  RennetMark,
   TriangleIcon,
 } from "./components/icons";
 import { NavRail } from "./components/nav-rail";
@@ -235,7 +235,7 @@ export function ReviewWorkspace({
       <header className="topbar">
         <div className="topbar-title">
           <span className="topbar-mark" aria-hidden="true">
-            <RennetMark size={28} />
+            <RennetBrandMark size={16} />
           </span>
           <div>
             <p className="eyebrow">LOCAL REVIEW</p>
@@ -2322,6 +2322,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     return (
       <div className="navigation-shell">
         <header className="navigation-titlebar">
+          <span className="navigation-titlebar-mark" aria-hidden="true">
+            <RennetBrandMark size={16} />
+          </span>
           <Breadcrumb
             crumb={deriveCrumb(navigation.stack, surfaceLabels)}
             onAscend={(index) => {
@@ -2357,6 +2360,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
     return (
       <div className="navigation-shell">
         <header className="navigation-titlebar">
+          <span className="navigation-titlebar-mark" aria-hidden="true">
+            <RennetBrandMark size={16} />
+          </span>
           <Breadcrumb crumb={deriveCrumb([{ kind: "projects" }])} onAscend={() => undefined} />
         </header>
         <div className="navigation-surface-content">
@@ -2393,7 +2399,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
             Back
           </button>
           <div className="mark" aria-hidden="true">
-            <RennetMark size={34} />
+            <RennetBrandMark size={26} />
           </div>
           <p className="eyebrow">RENNET</p>
           <h1>Start a review.</h1>

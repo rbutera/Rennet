@@ -1,4 +1,5 @@
 const { MakerDMG } = require("@electron-forge/maker-dmg");
+const { MakerSquirrel } = require("@electron-forge/maker-squirrel");
 const { MakerZIP } = require("@electron-forge/maker-zip");
 const path = require("node:path");
 const { flipFuses, FuseV1Options, FuseVersion } = require("@electron/fuses");
@@ -92,10 +93,31 @@ module.exports = {
     ...(osxNotarize ? { osxNotarize } : {}),
     prune: false,
   },
-  // win32 ships an UNSIGNED ZIP for slice 1 (add-windows-support). Squirrel/WiX
-  // installers, code signing, and auto-update are the separate Windows-release slice
-  // (mirrors #298 for macOS) — deliberately not added here.
-  makers: [new MakerZIP({}, ["darwin"]), new MakerDMG({}, ["darwin"]), new MakerZIP({}, ["win32"])],
+  // win32 ships BOTH a Squirrel installer (Setup.exe + .nupkg + RELEASES — the
+  // auto-update feed update.electronjs.org serves) and the plain ZIP (portable, no
+  // installer). MakerSquirrel only runs its build on Windows, so a local macOS `make`
+  // simply skips it and still produces the darwin ZIP/DMG; CI on windows produces the
+  // Squirrel artifacts. iconUrl points at the brand `.ico` in the public repo (Squirrel
+  // fetches it for the Add/Remove Programs entry); setupIcon is the local `.ico` baked
+  // into Setup.exe, resolved with the same lazy base as the app icon above.
+  makers: [
+    new MakerZIP({}, ["darwin"]),
+    new MakerDMG({}, ["darwin"]),
+    new MakerZIP({}, ["win32"]),
+    new MakerSquirrel(
+      {
+        name: "Rennet",
+        authors: "Rai Butera",
+        setupIcon: path.join(
+          __dirname,
+          "../../brand/exports/app-icons/windows/rennet-white-on-black.ico",
+        ),
+        iconUrl:
+          "https://raw.githubusercontent.com/rbutera/rennet/main/brand/exports/app-icons/windows/rennet-white-on-black.ico",
+      },
+      ["win32"],
+    ),
+  ],
   hooks: {
     packageAfterExtract: async (_forgeConfig, buildPath, _electronVersion, platform) => {
       const electronPath =

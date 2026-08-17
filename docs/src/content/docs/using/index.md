@@ -27,9 +27,10 @@ flowchart LR
   paper --> agent[Coding-agent handoff]
 ```
 
-Team work can become a signed GitHub review. Your own branch can become a signed
-push-plus-PR submission. The coding-agent and successor-delta route shown above
-is live end to end: compose, preview, a digest-bound run, then a deterministic
-hunk-grain delta account of the successor patchset. The one open seam is fuzzy
-lineage carry — exact-identity review state carries automatically, while the
-fuzzy lineage matcher is not yet called in production.
+Team work can become a signed GitHub review, and your own branch can become a
+signed push-plus-PR submission. The coding-agent route is live end to end: you
+compose the handoff, preview it, run it, and get a focused re-review of exactly
+what the agent changed — including anything it changed beyond what you asked for.
+The one unfinished piece: when the agent reworks existing code in place, Rennet
+cannot yet always recognise it as the same code moved or edited, so it re-reviews
+it fresh rather than carrying over your earlier decisions.

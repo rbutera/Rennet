@@ -4,10 +4,12 @@ description: The architecture tour, contracts, guides, and working rules for peo
 ---
 
 Start with the architecture tour, then follow the part of the review loop you
-are changing. These pages distinguish live code, configured contracts, and
-intended product direction so a polished diagram never outranks reality.
+are changing. These pages mark clearly which parts are live code, which are
+configured contracts, and which are only intended direction.
 
 ## Architecture tour
+
+The review loop, end to end:
 
 ```mermaid
 flowchart LR

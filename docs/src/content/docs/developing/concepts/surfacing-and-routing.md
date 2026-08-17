@@ -71,7 +71,8 @@ requirements.
 
 ## Anchors bind claims to review material
 
-Anchors use a narrow `rennet:` grammar rather than free-form `file:line` prose.
+Anchors exist so the engine can check a model's claim before rendering it. They
+use a narrow `rennet:` grammar rather than free-form `file:line` prose.
 
 ```text
 rennet:hunk/h_2MMD02
@@ -83,8 +84,8 @@ rennet:requirement/req_ba31c7d0
 
 The resolver returns one of four useful outcomes: resolved, unresolved,
 superseded through lineage, or orphaned. Quotes attached to evidence are compared
-with the resolved span after a small declared normalisation. That turns a model's
-“this code says X” into something the engine can check before rendering it.
+with the resolved span after a small declared normalisation, turning a model's
+“this code says X” into a claim the engine can verify.
 
 ## The validator checks structure and meaning
 

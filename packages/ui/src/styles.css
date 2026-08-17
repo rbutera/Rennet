@@ -86,12 +86,26 @@ button {
   height: 52px;
   display: flex;
   align-items: center;
-  gap: 18px;
-  padding: 0 18px 0 80px;
+  gap: 12px;
+  /* Default (win32/linux keep the NATIVE frame — controls live in the OS titlebar
+   * above the web content, so no inset is owed). The macOS traffic-light inset is
+   * gated below to `[data-platform="darwin"]` so it stops leaking onto Windows. */
+  padding: 0 18px;
   border-bottom: 1px solid var(--hairline);
   background: var(--side-bg);
   -webkit-backdrop-filter: var(--side-blur);
   backdrop-filter: var(--side-blur);
+}
+/* macOS overlays the traffic lights on the transparent window's top-left; reserve
+ * for them only there. */
+:root[data-platform="darwin"] .navigation-titlebar {
+  padding-left: 80px;
+}
+.navigation-titlebar-mark {
+  flex: none;
+  display: flex;
+  align-items: center;
+  opacity: 0.82;
 }
 .navigation-titlebar-context {
   margin-left: auto;
@@ -161,8 +175,9 @@ button {
   opacity: 1;
 }
 .nav-breadcrumb-home {
+  display: inline-flex;
+  align-items: center;
   color: var(--accent);
-  font-size: 14px;
 }
 .nav-rail {
   position: fixed;
@@ -217,7 +232,8 @@ button {
   opacity: 0.42;
 }
 .nav-rail-glyph {
-  font-size: 16px;
+  display: grid;
+  place-items: center;
   line-height: 1;
 }
 .topbar h1 {
@@ -229,13 +245,14 @@ button {
 }
 .topbar-mark {
   flex: none;
-  width: 30px;
+  /* Width follows the wide mark's intrinsic ratio; the chip hugs it as a quiet pill
+   * rather than the old fixed square (which the square stand-in mark filled). */
   height: 30px;
+  padding: 0 8px;
   display: grid;
   place-items: center;
   border: 1px solid var(--accent-soft-line);
   border-radius: 8px;
-  color: var(--accent);
   background: var(--accent-soft);
 }
 .eyebrow {
@@ -1176,6 +1193,9 @@ button {
   color: var(--sheet-text);
 }
 .publish-sheet-pr-branches {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   margin: 0;
   font-size: 12px;
   color: var(--sheet-soft);
@@ -2890,6 +2910,9 @@ button {
   padding-left: 8px;
 }
 .smart-row-ci {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
   font: 700 11px / 1 var(--mono);
 }
 .smart-row-ci.is-passing {

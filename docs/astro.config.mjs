@@ -19,7 +19,14 @@ export default defineConfig({
     starlight({
       title: "Rennet",
       description: "A local-first code review harness — using it, and building it.",
-      customCss: ["./src/styles/mermaid.css"],
+      // Same lockup the marketing site mastheads: the traced wordmark IS the
+      // identity (DESIGN.md: it is not a font), so it replaces the text title.
+      logo: {
+        light: "./src/assets/lockup-horizontal-black.svg",
+        dark: "./src/assets/lockup-horizontal-white.svg",
+        replacesTitle: true,
+      },
+      customCss: ["./src/styles/theme.css", "./src/styles/mermaid.css"],
       social: [{ icon: "github", label: "GitHub", href: "https://github.com/rbutera/rennet" }],
       plugins: [
         starlightSidebarTopics([
