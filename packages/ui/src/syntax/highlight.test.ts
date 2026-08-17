@@ -132,6 +132,55 @@ describe("tokenizeLine — JSON / CSS / Python / shell keys and comments", () =>
   });
 });
 
+describe("tokenizeLine — comment word boundary (#92 item 1)", () => {
+  it("shell: a `#` glued to a word is not a comment; a `#` after whitespace is", () => {
+    const glued = tokenizeLine("echo foo#bar", "shell");
+    expect(typesOf(glued).has("comment")).toBe(false);
+    expect(reassemble(glued)).toBe("echo foo#bar");
+
+    const spaced = tokenizeLine("echo foo #bar", "shell");
+    expect(hasToken(spaced, "comment", "#bar")).toBe(true);
+  });
+
+  it("yaml: a `#` inside a URL value is not a comment", () => {
+    const tokens = tokenizeLine("url: https://x.test/#frag", "yaml");
+    expect(typesOf(tokens).has("comment")).toBe(false);
+    expect(reassemble(tokens)).toBe("url: https://x.test/#frag");
+  });
+
+  it("python: a `#` starts a comment even with no preceding whitespace", () => {
+    // Python has no word-boundary rule on `#` — `x=1#c` is a comment.
+    const tokens = tokenizeLine("x=1#c", "python");
+    expect(hasToken(tokens, "comment", "#c")).toBe(true);
+  });
+});
+
+describe("tokenizeLine — radix-specific number scanning (#92 item 2)", () => {
+  it("binary rejects an out-of-range digit and fails closed to plain", () => {
+    const tokens = tokenizeLine("0b102", "typescript");
+    expect(typesOf(tokens).has("number")).toBe(false);
+    expect(reassemble(tokens)).toBe("0b102");
+  });
+
+  it("octal rejects an out-of-range digit and fails closed to plain", () => {
+    const tokens = tokenizeLine("0o18", "typescript");
+    expect(typesOf(tokens).has("number")).toBe(false);
+    expect(reassemble(tokens)).toBe("0o18");
+  });
+
+  it("valid radix literals still colour as numbers", () => {
+    expect(hasToken(tokenizeLine("0xFF", "typescript"), "number", "0xFF")).toBe(true);
+    expect(hasToken(tokenizeLine("0b1010", "typescript"), "number", "0b1010")).toBe(true);
+    expect(hasToken(tokenizeLine("0o17", "typescript"), "number", "0o17")).toBe(true);
+  });
+
+  it("carries the numeric separator through the exponent consistently", () => {
+    const tokens = tokenizeLine("1e10_000", "typescript");
+    expect(hasToken(tokens, "number", "1e10_000")).toBe(true);
+    expect(reassemble(tokens)).toBe("1e10_000");
+  });
+});
+
 describe("tokenizeLine — fail-closed and graceful degradation", () => {
   it("an unknown language yields exactly one plain token", () => {
     const tokens = tokenizeLine("const x = 1;", null);

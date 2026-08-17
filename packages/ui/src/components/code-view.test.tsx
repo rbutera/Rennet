@@ -296,8 +296,9 @@ describe("CodeView — syntax highlighting rides UNDER the diff colouring (issue
     // Highlighting is genuinely active on this render (token spans present)…
     expect(windowed).toContain("rtok-keyword");
     // …and the windowed node count is still inside the Pierre envelope — the added
-    // token spans did not break windowing. A regression that tokenized the whole
-    // file (not just the window) would blow this.
+    // token spans did not break windowing. Tokenizing off-screen rows creates no DOM
+    // nodes; a regression that RENDERED the whole file (not just the window) would
+    // blow this.
     expect(nodeCount(windowed)).toBeLessThanOrEqual(MAX_RENDERED_NODES);
   });
 

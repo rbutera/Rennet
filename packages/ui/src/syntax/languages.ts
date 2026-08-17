@@ -49,6 +49,13 @@ export interface StringDelim {
 export interface Grammar {
   /** Line-comment markers, e.g. ["//"], ["#"]. Longest-first for correct matching. */
   readonly lineComments: readonly string[];
+  /**
+   * When true, a line-comment marker only opens a comment at line start or after
+   * whitespace — so shell `echo foo#bar` and a YAML `#frag` inside a URL are NOT
+   * comments, while `echo foo #bar` is. Python leaves this false: `x=1#c` is a
+   * comment even glued to the preceding token.
+   */
+  readonly commentNeedsWordBoundary: boolean;
   /** Block-comment delimiters (line-local only), open+close pair, or null. */
   readonly blockComment: readonly [string, string] | null;
   readonly strings: readonly StringDelim[];
@@ -133,6 +140,7 @@ export type LanguageId =
 
 const TS_GRAMMAR: Grammar = {
   lineComments: ["//"],
+  commentNeedsWordBoundary: false,
   blockComment: ["/*", "*/"],
   strings: [DQUOTE, SQUOTE, BACKTICK],
   keywords: TS_KEYWORDS,
@@ -146,6 +154,7 @@ const TS_GRAMMAR: Grammar = {
 
 const JSON_GRAMMAR: Grammar = {
   lineComments: ["//"],
+  commentNeedsWordBoundary: false,
   blockComment: ["/*", "*/"],
   strings: [DQUOTE],
   keywords: JSON_KEYWORDS,
@@ -159,6 +168,7 @@ const JSON_GRAMMAR: Grammar = {
 
 const CSS_GRAMMAR: Grammar = {
   lineComments: [],
+  commentNeedsWordBoundary: false,
   blockComment: ["/*", "*/"],
   strings: [DQUOTE, SQUOTE],
   keywords: CSS_AT,
@@ -172,6 +182,7 @@ const CSS_GRAMMAR: Grammar = {
 
 const PYTHON_GRAMMAR: Grammar = {
   lineComments: ["#"],
+  commentNeedsWordBoundary: false,
   blockComment: null,
   strings: [DQUOTE, SQUOTE],
   keywords: PYTHON_KEYWORDS,
@@ -185,6 +196,7 @@ const PYTHON_GRAMMAR: Grammar = {
 
 const SHELL_GRAMMAR: Grammar = {
   lineComments: ["#"],
+  commentNeedsWordBoundary: true,
   blockComment: null,
   strings: [DQUOTE, SQUOTE],
   keywords: SHELL_KEYWORDS,
@@ -198,6 +210,7 @@ const SHELL_GRAMMAR: Grammar = {
 
 const YAML_GRAMMAR: Grammar = {
   lineComments: ["#"],
+  commentNeedsWordBoundary: true,
   blockComment: null,
   strings: [DQUOTE, SQUOTE],
   keywords: YAML_KEYWORDS,
@@ -211,6 +224,7 @@ const YAML_GRAMMAR: Grammar = {
 
 const MARKDOWN_GRAMMAR: Grammar = {
   lineComments: [],
+  commentNeedsWordBoundary: false,
   blockComment: null,
   strings: [BACKTICK],
   keywords: NONE,
@@ -224,6 +238,7 @@ const MARKDOWN_GRAMMAR: Grammar = {
 
 const HTML_GRAMMAR: Grammar = {
   lineComments: [],
+  commentNeedsWordBoundary: false,
   blockComment: ["<!--", "-->"],
   strings: [DQUOTE, SQUOTE],
   keywords: HTML_KEYWORDS,

@@ -18,10 +18,10 @@ Red-first: every code change lands its failing control before the fix. Close-wit
 
 ## 3. #92 — tokenizer items 1–2
 
-- [ ] 3.1 RED: add cases to `packages/ui/src/syntax/highlight.test.ts`: shell `echo foo#bar` (`#bar` NOT comment), shell `echo foo #bar` (comment), yaml `url: https://x.test/#frag` (NOT comment), python `x=1#c` (comment); `0b102` (binary rejects `2` — trailing digits fail closed to plain), `0o18`, `1e10_000` (separator handled consistently, malformed fails closed to plain). Confirm they fail.
-- [ ] 3.2 Add `commentNeedsWordBoundary` to `Grammar` (`languages.ts`: true for shell/yaml/toml-style `#` grammars, false for python) and gate the line-comment match in `scan()` on `i === 0 || isWhitespace(prev)`.
-- [ ] 3.3 Replace shared `isHexOrSep` with radix-specific digit predicates in `readNumber` and carry the separator rule through the exponent path; malformed candidates fail closed to plain. Reassembly invariant tests stay green (lossless).
-- [ ] 3.4 One-line tidy: fix the imprecise node-count comment in `code-view.test.tsx` ("tokenized the whole file" wording — off-screen tokenization creates no DOM nodes).
+- [x] 3.1 RED: add cases to `packages/ui/src/syntax/highlight.test.ts`: shell `echo foo#bar` (`#bar` NOT comment), shell `echo foo #bar` (comment), yaml `url: https://x.test/#frag` (NOT comment), python `x=1#c` (comment); `0b102` (binary rejects `2` — trailing digits fail closed to plain), `0o18`, `1e10_000` (separator handled consistently, malformed fails closed to plain). Confirm they fail.
+- [x] 3.2 Add `commentNeedsWordBoundary` to `Grammar` (`languages.ts`: true for shell/yaml/toml-style `#` grammars, false for python) and gate the line-comment match in `scan()` on `i === 0 || isWhitespace(prev)`.
+- [x] 3.3 Replace shared `isHexOrSep` with radix-specific digit predicates in `readNumber` and carry the separator rule through the exponent path; malformed candidates fail closed to plain. Reassembly invariant tests stay green (lossless).
+- [x] 3.4 One-line tidy: fix the imprecise node-count comment in `code-view.test.tsx` ("tokenized the whole file" wording — off-screen tokenization creates no DOM nodes).
 - [ ] 3.5 Close #92 recording: items 1–2 shipped, item 3 (regex literals) deliberately not built per the issue's own risk analysis, superseded wholesale by `@pierre/diffs` adoption.
 
 ## 4. #316 — one per-review turn ceiling

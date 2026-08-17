@@ -50,8 +50,19 @@ function isDigit(c: string): boolean {
   return c >= "0" && c <= "9";
 }
 
-function isHexOrSep(c: string): boolean {
-  return isDigit(c) || (c >= "a" && c <= "f") || (c >= "A" && c <= "F") || c === "_";
+// Radix-specific digit predicates (#92): each base accepts only its own digit
+// class (plus the `_` separator). A digit out of range makes the literal malformed,
+// which fails closed to plain rather than mis-colouring `0b102` or `0o18` as a number.
+function isBinDigit(c: string): boolean {
+  return c === "0" || c === "1";
+}
+
+function isOctDigit(c: string): boolean {
+  return c >= "0" && c <= "7";
+}
+
+function isHexDigit(c: string): boolean {
+  return isDigit(c) || (c >= "a" && c <= "f") || (c >= "A" && c <= "F");
 }
 
 function isIdentStart(c: string): boolean {
@@ -73,15 +84,28 @@ function peekNonSpace(code: string, from: number): string {
   return j < n ? code.charAt(j) : "";
 }
 
-/** End index (exclusive) of a number starting at `i`. Assumes a numeric start. */
+/**
+ * End index (exclusive) of a number starting at `i`, or `i` itself when the
+ * candidate is a MALFORMED numeric literal (out-of-range radix digit, or an
+ * identifier char glued to a radix literal). Returning `i` fails the number closed
+ * to plain — scan then lets the identifier/plain branches carry the text losslessly.
+ * Assumes a numeric start.
+ */
 function readNumber(code: string, i: number): number {
   const n = code.length;
   let j = i;
   if (code.charAt(j) === "0" && j + 1 < n) {
     const prefix = code.charAt(j + 1).toLowerCase();
     if (prefix === "x" || prefix === "b" || prefix === "o") {
+      const isRadixDigit =
+        prefix === "x" ? isHexDigit : prefix === "b" ? isBinDigit : isOctDigit;
       j += 2;
-      while (j < n && isHexOrSep(code.charAt(j))) j += 1;
+      const digitsStart = j;
+      while (j < n && (isRadixDigit(code.charAt(j)) || code.charAt(j) === "_")) j += 1;
+      // Fail closed: no digits (`0x`), or a digit/identifier char out of range for
+      // this radix immediately follows (`0b102`, `0o18`, `0xffg`) → not a number.
+      if (j === digitsStart) return i;
+      if (j < n && (isDigit(code.charAt(j)) || isIdentPart(code.charAt(j)))) return i;
       return j;
     }
   }
@@ -94,8 +118,9 @@ function readNumber(code: string, i: number): number {
     let k = j + 1;
     if (k < n && (code.charAt(k) === "+" || code.charAt(k) === "-")) k += 1;
     if (k < n && isDigit(code.charAt(k))) {
+      // The exponent carries the `_` separator the mantissa does — consistently.
       j = k + 1;
-      while (j < n && isDigit(code.charAt(j))) j += 1;
+      while (j < n && (isDigit(code.charAt(j)) || code.charAt(j) === "_")) j += 1;
     }
   }
   return j;
@@ -164,14 +189,20 @@ function scan(code: string, grammar: Grammar): Token[] {
       continue;
     }
 
-    // Line comment: consumes the rest of the line.
+    // Line comment: consumes the rest of the line. When the grammar requires a word
+    // boundary (shell, yaml), a marker only opens a comment at line start or after
+    // whitespace — so `echo foo#bar` and a `#frag` inside a URL stay code, while
+    // `echo foo #bar` is a comment. Python keeps the flag off (`x=1#c` is a comment).
+    const atWordBoundary = i === 0 || isWhitespace(code.charAt(i - 1));
     let matchedLineComment = false;
-    for (const marker of grammar.lineComments) {
-      if (marker.length > 0 && code.startsWith(marker, i)) {
-        sink.push("comment", code.slice(i));
-        i = n;
-        matchedLineComment = true;
-        break;
+    if (!grammar.commentNeedsWordBoundary || atWordBoundary) {
+      for (const marker of grammar.lineComments) {
+        if (marker.length > 0 && code.startsWith(marker, i)) {
+          sink.push("comment", code.slice(i));
+          i = n;
+          matchedLineComment = true;
+          break;
+        }
       }
     }
     if (matchedLineComment) continue;
