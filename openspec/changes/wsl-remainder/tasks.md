@@ -33,4 +33,4 @@
 
 ## 6. Gate
 
-- [ ] 6.1 Run `pnpm check` (full gate, positive control included); fix findings; verify clean; push and verify remote ref.
+- [x] 6.1 Run `pnpm check` (full gate, positive control included); fix findings; verify clean; push and verify remote ref.
