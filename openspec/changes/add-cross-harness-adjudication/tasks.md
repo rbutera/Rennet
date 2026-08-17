@@ -4,8 +4,8 @@ Red-first throughout: each numbered group starts with the failing test that prov
 
 ## 1. Types and protocol (additive verdict)
 
-- [ ] 1.1 RED: protocol test — a `finding` doc whose disagree agreement carries `adjudication: { verdict: "contradicted", evidence, adjudicatedBy }` validates; an old doc without the field still validates; a bad verdict string is rejected.
-- [ ] 1.2 Add `FindingAdjudication` (`verdict: "supported" | "contradicted" | "insufficient"`, `evidence`, `adjudicatedBy`) to `packages/types` and the optional `adjudication` field on the `disagree` arm of `FindingAgreement`; accept it additively in the `packages/protocol` finding schema. Green.
+- [x] 1.1 RED: protocol test — a `finding` doc whose disagree agreement carries `adjudication: { verdict: "contradicted", evidence, adjudicatedBy }` validates; an old doc without the field still validates; a bad verdict string is rejected.
+- [x] 1.2 Add `FindingAdjudication` (`verdict: "supported" | "contradicted" | "insufficient"`, `evidence`, `adjudicatedBy`) to `packages/types` and the optional `adjudication` field on the `disagree` arm of `FindingAgreement`; accept it additively in the `packages/protocol` finding schema. Green.
 
 ## 2. The adjudication pass (core, pure, injected I/O)
 
