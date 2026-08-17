@@ -21,6 +21,7 @@ interface Fixture {
   versions?: Record<string, string>;
   runtimeVersions?: Record<string, string>;
   pathExt?: string;
+  platform?: NodeJS.Platform;
 }
 
 function recordingDeps(fixture: Fixture): { deps: DiscoveryDeps; accessed: string[] } {
@@ -46,6 +47,7 @@ function recordingDeps(fixture: Fixture): { deps: DiscoveryDeps; accessed: strin
       return Promise.resolve(fixture.runtimeVersions?.[scriptPath] ?? null);
     },
     pathExt: fixture.pathExt,
+    platform: fixture.platform,
   };
   return { deps, accessed };
 }
@@ -252,6 +254,7 @@ describe("discoverCodex (bead workspace-6qp15)", () => {
     const abs = resolve("codex");
     const { deps } = recordingDeps({
       home: HOME,
+      platform: process.platform,
       executables: new Set([abs]),
       versions: { [abs]: "0.150.0" },
     });
@@ -268,6 +271,7 @@ describe("discoverCodex (bead workspace-6qp15)", () => {
       loginShellPath: ".",
       envPath: ".",
       home: HOME,
+      platform: process.platform,
       dirContents: { ".": ["codex"] },
       executables: new Set([abs]),
       versions: { [abs]: "0.144.1" },
