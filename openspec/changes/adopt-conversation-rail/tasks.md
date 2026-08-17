@@ -10,7 +10,7 @@
 
 - [x] 2.1 Add `diffRef?: RefObject<HTMLElement | null>` to `ConversationHostProps`; forward it to `ConversationMargin` in the host's margin branch.
 - [x] 2.2 Add `diffRef` to `ConversationPanelProps`; thread to `ConversationHost`.
-- [x] 2.3 Switch the review heart's `ConversationPanel` render path from the `PanelSurface` override to the host's margin branch, verifying affordance parity (ask, promote, sub-thread, pending, per-thread error) — anchorless content renders as stacked panels in document order.
+- [x] 2.3 Switch the review heart's `ConversationPanel` render path from the `PanelSurface` override to the host's margin branch, verifying affordance parity (ask, promote, sub-thread, pending, per-thread error) — anchorless content renders as stacked panels in document order. **Done:** the anchorless "ask the orchestrator" affordance is restored as `GeneralAskPanel`, a stacked rail citizen pinned at the end of `ConversationMargin` (via a `railFooter` slot; it is not a `.conversation-cluster`, so the alignment engine never offsets it). It fires the same `review.ask` boundary with both-model routing, and PRESERVES the reviewer's typed question on a failed turn (design Goals: "Preserve every conversational affordance PanelSurface offers today"; risk remedy: "keep it in the margin rail as a stacked panel rather than resurrecting the flat stream"). The both-model result renders as two labelled cards — the same unsynthesised two-card contract the anchored clusters use — so the retired inline comparison card is not needed. The cluster + general composers share one extracted `AskComposer`.
 
 ## 3. Review-heart wiring
 
