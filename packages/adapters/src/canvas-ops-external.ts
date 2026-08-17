@@ -62,29 +62,45 @@ export interface CanvasOpsExternalServerOptions {
   readonly locus?: Locus;
   /** Injectable distro-reachability probes; defaults to real in-distro commands. */
   readonly reachability?: CanvasOpsReachability;
+  /**
+   * Test seam: bind a candidate listener to `(port, address)`. Defaults to a real
+   * bind. Injected so the successful gateway-bind path is testable off-Windows,
+   * where a real non-loopback bind is not portable — the fake binds loopback while
+   * the resolved URL still reflects the gateway address the probe selected.
+   */
+  readonly listen?: (http: Server, port: number, address: string) => Promise<void>;
 }
 
 /** The empirical distro→host reachability probes (design §Decisions.3). */
 export interface CanvasOpsReachability {
-  /** True when the distro can open a TCP connection to `addr:port`. */
-  probeReachable(addr: string, port: number): Promise<boolean>;
+  /**
+   * GET `path` from `addr:port` inside the distro and return the response body, or
+   * null when unreachable. The caller matches the body against the listener's own
+   * probe token, so a bare TCP success on a port squatted by an UNRELATED distro
+   * service (wrong or absent token) does not certify the route — a plain TCP
+   * connect is not proof the connection reached OUR canvasOps listener.
+   */
+  probe(addr: string, port: number, path: string): Promise<string | null>;
   /** The distro's default-route gateway (the WSL-facing host address), or null. */
   discoverGateway(): Promise<string | null>;
 }
 
 /**
  * Real reachability probes, executed inside the distro through `locusCommand`
- * (verbatim argv, no shell interpretation of user data — the addresses/ports are
- * our own values). The TCP probe uses bash's `/dev/tcp` so no `curl`/`nc` need be
- * installed; a clean connect (exit 0) proves the listener is reachable.
+ * (verbatim argv, no shell interpretation of user data — the addresses/ports/paths
+ * are our own values). The probe opens bash's `/dev/tcp` (no `curl`/`nc` needed),
+ * sends a minimal HTTP/1.0 GET for the probe path, and returns the raw response so
+ * the caller can require its own token in the body — a bare connect is not enough.
  */
 export function defaultWslReachability(distro: string): CanvasOpsReachability {
   const locus: Locus = { kind: "wsl", distro };
   return {
-    async probeReachable(addr, port) {
+    async probe(addr, port, path) {
       const { file, args } = locusCommand(locus, "bash", [
         "-c",
-        `exec 3<>/dev/tcp/${addr}/${port}`,
+        `exec 3<>/dev/tcp/${addr}/${port} && ` +
+          `printf 'GET %s HTTP/1.0\\r\\nHost: %s\\r\\nConnection: close\\r\\n\\r\\n' '${path}' '${addr}' >&3 && ` +
+          `cat <&3`,
       ]);
       try {
         const result = await execa(file, [...args], {
@@ -92,9 +108,9 @@ export function defaultWslReachability(distro: string): CanvasOpsReachability {
           stdin: "ignore",
           timeout: 3_000,
         });
-        return result.exitCode === 0;
+        return result.exitCode === 0 ? result.stdout : null;
       } catch {
-        return false;
+        return null;
       }
     },
     async discoverGateway() {
@@ -136,6 +152,9 @@ function buildExternalMcpServer(backend: CanvasOpsBackend): McpServer {
 }
 
 const MCP_PATH = "/mcp";
+/** Where the listener echoes its per-server probe token, so a distro reachability
+ *  probe can prove it reached THIS listener and not a squatter on the same port. */
+const PROBE_PATH = "/canvasops-probe";
 
 /**
  * Start the loopback canvasOps@2 streamable-HTTP server bound to `backend`. Binds
@@ -153,8 +172,17 @@ export async function startCanvasOpsExternalServer(
   });
   await mcp.connect(transport);
 
+  // Unguessable per-server token echoed on PROBE_PATH. A distro reachability probe
+  // must read this exact token back before an address is selected, so a bare TCP
+  // connect to a port squatted by an unrelated distro service cannot certify.
+  const probeToken = randomUUID();
+
   const makeHttp = (): Server =>
     createServer((req, res) => {
+      if (req.url === PROBE_PATH) {
+        res.writeHead(200, { "content-type": "text/plain" }).end(probeToken);
+        return;
+      }
       if (!req.url?.startsWith(MCP_PATH)) {
         res.writeHead(404).end();
         return;
@@ -193,6 +221,7 @@ export async function startCanvasOpsExternalServer(
   // WSL: probe shared-localhost first, then the discovered gateway; bind the listener
   // to exactly the address that passed, never wider. No route ⇒ throw (turn fails).
   const locus = options.locus ?? HOST_LOCUS;
+  const doListen = options.listen ?? listenOn;
   let http: Server;
   let url: string;
   if (locus.kind === "wsl") {
@@ -206,14 +235,17 @@ export async function startCanvasOpsExternalServer(
       const candidate = makeHttp();
       let port: number;
       try {
-        await listenOn(candidate, 0, address);
+        await doListen(candidate, 0, address);
         port = (candidate.address() as AddressInfo).port;
       } catch {
         await closeHttp(candidate);
         tried.push(`${address} (bind failed)`);
         continue;
       }
-      if (await reach.probeReachable(address, port)) {
+      // Reachable ONLY if the probe read back this listener's own token (not a bare
+      // TCP success against a squatting service on the same port).
+      const body = await reach.probe(address, port, PROBE_PATH);
+      if (body?.includes(probeToken)) {
         chosen = { http: candidate, url: `http://${address}:${port}${MCP_PATH}` };
         break;
       }

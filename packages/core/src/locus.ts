@@ -52,6 +52,27 @@ export class LocusDistroMismatchError extends Error {
 }
 
 /**
+ * A WSL-locus project whose repo path cannot be expressed distro-natively (a `C:\`
+ * host path or a relative path pinned to a WSL locus). The turn must fail plainly
+ * naming both the path and the distro — never fall back to the untranslatable host
+ * path (which would run codex in the wrong place) and never silently run host-side.
+ */
+export class LocusPathUntranslatableError extends Error {
+  override readonly name = "LocusPathUntranslatableError";
+
+  constructor(
+    readonly path: string,
+    readonly distro: string,
+  ) {
+    super(
+      `Cannot run in WSL distro "${distro}": the path "${path}" is not translatable to a ` +
+        `distro-native path (it is a Windows or relative path, not a \\\\wsl.localhost\\${distro}\\… path). ` +
+        `Pin the project to the host, or open it from its \\\\wsl.localhost path.`,
+    );
+  }
+}
+
+/**
  * Detect a project's locus from its root path. A project living under a
  * `\\wsl$`/`\\wsl.localhost` UNC root is a WSL-locus project on the named distro;
  * everything else is the host. This is auto-detection only — the value is a plain

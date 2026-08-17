@@ -19,7 +19,11 @@ import {
 } from "@rennet/core";
 import { renderLayer } from "@rennet/instructions";
 import type { Canvas, ContextSendRecord } from "@rennet/types";
-import { attachCodexOrchestratorSession } from "./canvas-ops-external";
+import {
+  attachCodexOrchestratorSession,
+  type CanvasOpsExternalServerOptions,
+  type CanvasOpsReachability,
+} from "./canvas-ops-external";
 import { CANVAS_OPS_SERVER_NAME, type LoadCanvasOpsSdk } from "./canvas-ops-server";
 import { normalizeClaudeFrame } from "./claude-adapter";
 import type { LiveSnapshotOutcome } from "./live-review-backend";
@@ -251,6 +255,12 @@ export interface CodexOrchestratorTurnDeps {
    * settles failed rather than running host-side. Defaults to the host.
    */
   readonly locus?: Locus;
+  /**
+   * Test seam: inject the distro-reachability probes for a WSL locus. Production uses
+   * the real in-distro probes; a hermetic test drives the no-route boundary to prove
+   * no port is resolved and no session is created when the canvas surface is unreachable.
+   */
+  readonly reachability?: CanvasOpsReachability;
   /** Resolve the selected Codex adapter after the loopback MCP URL exists. */
   readonly resolvePort: (
     mcpServers: Readonly<Record<string, { readonly url: string }>>,
@@ -464,10 +474,14 @@ async function runExternalMcpOrchestratorTurn(
   deps: CodexOrchestratorTurnDeps,
   harness: "codex" | "omp",
 ): Promise<OrchestratorTurnResult> {
+  const serverOptions: CanvasOpsExternalServerOptions = {
+    ...(deps.locus ? { locus: deps.locus } : {}),
+    ...(deps.reachability ? { reachability: deps.reachability } : {}),
+  };
   const attached = await attachCodexOrchestratorSession(
     backend,
     { primer, harness, fresh: true },
-    deps.locus ? { locus: deps.locus } : {},
+    serverOptions,
   );
   let harnessSession: Awaited<ReturnType<HarnessPort["createSession"]>> | null = null;
   try {

@@ -113,6 +113,7 @@ import {
   HOST_LOCUS,
   type Locus,
   LocusDistroMismatchError,
+  LocusPathUntranslatableError,
   locusCommand,
   patchsetIntentToReviewIntent,
   ReviewService,
@@ -283,9 +284,13 @@ function locusForRepo(repoRoot: string): Locus {
  */
 function locusContextForRepo(repoRoot: string): { locus: Locus; distroCwd?: string } {
   const locus = locusForRepo(repoRoot);
-  const distroCwd =
-    locus.kind === "wsl" ? (toDistroPath(repoRoot, locus.distro) ?? undefined) : undefined;
-  return distroCwd === undefined ? { locus } : { locus, distroCwd };
+  if (locus.kind !== "wsl") return { locus };
+  // A WSL locus pinned onto an untranslatable repo path (e.g. a `C:\` repo) is a
+  // broken pin: reject it plainly here rather than collapsing null → undefined and
+  // letting a downstream harness run against the host path (Codex FAIL #1).
+  const distroCwd = toDistroPath(repoRoot, locus.distro);
+  if (distroCwd === null) throw new LocusPathUntranslatableError(repoRoot, locus.distro);
+  return { locus, distroCwd };
 }
 
 const gitForRepo = gitForRepoFactory(locusForRepo);

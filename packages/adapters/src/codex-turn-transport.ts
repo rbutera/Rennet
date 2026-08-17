@@ -28,6 +28,7 @@ import { createInterface } from "node:readline";
 import {
   HOST_LOCUS,
   type Locus,
+  LocusPathUntranslatableError,
   locusCommand,
   runConformance,
   type SessionSpec,
@@ -186,6 +187,16 @@ export function createCodexTurnTransport(
     locus.kind === "wsl" ? `${dir}\\${name}` : join(dir, name);
   return (spec: CodexTurnSpec) => ({
     async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
+      // Translate `-C` (codex's repo dir) FIRST, before any scratch mint or spawn.
+      // A WSL locus with an untranslatable repo path (a `C:\` repo pinned to wsl)
+      // fails plainly here — never the old `?? spec.cwd` host fallback (which ran
+      // codex against a path the distro cannot see), and never a silent host run.
+      let argvCwd = spec.cwd;
+      if (locus.kind === "wsl") {
+        const distroCwd = toDistroPath(spec.cwd, locus.distro);
+        if (distroCwd === null) throw new LocusPathUntranslatableError(spec.cwd, locus.distro);
+        argvCwd = distroCwd;
+      }
       const scratch = await mintTurnScratch(locus, effects);
       const outArgv = argvPath(scratch.argvDir, "last-message.txt");
       const outIo = ioPath(scratch.ioDir, "last-message.txt");
@@ -198,10 +209,6 @@ export function createCodexTurnTransport(
             JSON.stringify(sanitizeSchemaForCodex(spec.outputSchema)),
           );
         }
-        // `-C` (codex's repo dir) is distro-native for a WSL turn; `locusCommand`
-        // additionally sets `wsl.exe --cd` to the same dir. Host: both are spec.cwd.
-        const argvCwd =
-          locus.kind === "wsl" ? (toDistroPath(spec.cwd, locus.distro) ?? spec.cwd) : spec.cwd;
         const args = buildCodexTurnArgs({
           cwd: argvCwd,
           prompt: spec.prompt,

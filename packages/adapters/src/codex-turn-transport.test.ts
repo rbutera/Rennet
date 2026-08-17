@@ -88,13 +88,18 @@ function fakeEffects(): {
   spawns: SpawnCall[];
   writes: { path: string; data: string }[];
   rms: string[];
+  mints: string[];
 } {
   const spawns: SpawnCall[] = [];
   const writes: { path: string; data: string }[] = [];
   const rms: string[] = [];
+  const mints: string[] = [];
   const effects: CodexTransportEffects = {
     mkdtemp: async (prefix) => `${prefix}host-scratch`,
-    mintDistroScratch: async () => "/tmp/distro-scratch",
+    mintDistroScratch: async (distro) => {
+      mints.push(distro);
+      return "/tmp/distro-scratch";
+    },
     writeFile: async (path, data) => {
       writes.push({ path, data });
     },
@@ -113,7 +118,7 @@ function fakeEffects(): {
       },
     }),
   };
-  return { effects, spawns, writes, rms };
+  return { effects, spawns, writes, rms, mints };
 }
 
 async function drive(transport: ReturnType<typeof createCodexTurnTransport>, spec: CodexTurnSpec) {
@@ -176,5 +181,20 @@ describe("Codex transport locus composition", () => {
     expect(call.outPath).toBe("\\\\wsl.localhost\\Ubuntu\\tmp\\distro-scratch\\last-message.txt");
     expect(writes[0]?.path).toBe("\\\\wsl.localhost\\Ubuntu\\tmp\\distro-scratch\\schema.json");
     expect(rms[0]).toBe("\\\\wsl.localhost\\Ubuntu\\tmp\\distro-scratch");
+  });
+
+  it("wsl locus with an untranslatable repo path fails before any scratch mint or spawn", async () => {
+    // A `C:\` repo pinned to a WSL locus is untranslatable; the turn must fail plainly
+    // naming the path and distro — never mint distro scratch, never spawn, never fall
+    // back to the host path (Codex FAIL #1: the old `?? spec.cwd` host fallback).
+    const { effects, spawns, mints, rms } = fakeEffects();
+    const locus: Locus = { kind: "wsl", distro: "Ubuntu" };
+    const untranslatable: CodexTurnSpec = { ...spec, cwd: "C:\\Users\\rai\\repo" };
+    await expect(
+      drive(createCodexTurnTransport("codex", effects, locus), untranslatable),
+    ).rejects.toThrow(/not translatable.*Ubuntu|Ubuntu.*not translatable/s);
+    expect(spawns).toHaveLength(0);
+    expect(mints).toHaveLength(0);
+    expect(rms).toHaveLength(0);
   });
 });
