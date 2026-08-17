@@ -84,25 +84,49 @@ do. Rennet drives them there.
 
 ### What runs in the distro
 
-This slice routes these operations through the configured WSL distro:
+Rennet routes these operations through the configured WSL distro:
 
 - git capture, checkpoint, submodule probes, and submit-push;
 - local PR-open git, project discovery/detail, and worktree cleanup;
 - snapshot generation and settings/visibility git operations;
-- the write-enabled Claude handoff turn, including tests or pushes the harness runs.
+- the write-enabled Claude handoff turn, including tests or pushes the harness runs;
+- **every review-pipeline model turn** — canvas lenses, the flagged and noise
+  reviews, spec-delta mapping, knowledge enrichment (both proactive and the
+  orchestrator's), symbol lookup, comment refinement, PR-body drafting, the delta
+  digest, and handoff composition — so a WSL review has the same context as a
+  host one, not a thinner one;
+- **the Codex seat**, when the distro has its own `codex` installed. The distro's
+  codex runs the real turn with distro-side scratch and distro-native paths, so a
+  WSL review is dual-harness (distro Claude + distro Codex) rather than degraded to
+  a single Claude seat.
 
 Open-in-editor uses the editor's WSL remote so `path:line` lands on the distro
 file. Rennet watches the repo by polling on WSL because inotify events do not
 cross the WSL filesystem boundary reliably. Windows-side untracked/spec reads,
 snapshot identity, watching, and editor launch use the matching UNC path.
 
+### Codex and the canvas surface
+
+The agentic Codex turn talks to Rennet's live canvas over a loopback MCP server.
+For a WSL review, Rennet finds an address the distro can actually reach: it first
+checks whether the distro shares the host's `localhost` (mirrored networking), and
+otherwise binds the surface to the WSL-facing host address the distro routes to.
+The listener is never opened wider than that route. If no distro-to-host route can
+be established, the Codex turn settles as an honest failed turn naming the
+unreachable surface — Rennet never silently runs a host Codex against a WSL repo.
+
 ### Current ceiling
 
-Codex execution inside WSL is deferred: its executor still owns host-side scratch
-and session paths. A WSL workflow therefore degrades to the Claude seat where that
-seat is wired; it does not substitute a Windows Codex binary. The remaining
-review-pipeline Claude/locus joins are also deferred, so this slice does not claim
-that every read or model turn in a full review runs in the distro.
+- Live end-to-end verification on real Windows hardware (a packaged win32 boot and
+  a full WSL dual-harness review with write/push from the distro account) is still
+  pending; the behaviour above is implemented and covered by hermetic tests, but
+  this page will be reconciled against the recorded live-run matrix once it runs.
+- Token usage for a distro Codex turn reads as **unmeasured** rather than a
+  fabricated zero: the Codex session log lives in the distro's own `~/.codex`,
+  which the Windows-side reader does not correlate. The turn itself is unaffected.
+- Networking varies per Windows configuration, so the mirrored-vs-gateway choice is
+  made by an empirical probe per session rather than by sniffing config; a
+  misconfigured host surfaces as a plain failed turn, not a wrong guess.
 
 ## What Rennet never does
 
