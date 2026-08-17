@@ -49,6 +49,14 @@ import type { CoverageMosaic } from "../canvas/read-state";
 import { buildRowRegistry, type Mark, placeMarks, resolveAnchorToRows } from "../canvas/registrar";
 import { createViewStore, useViewStore, type ViewStore } from "../canvas/store";
 import type { SymbolInspection, SymbolLookupPort } from "../canvas/symbol";
+import {
+  COMMAND_CATALOGUE,
+  catalogueDef,
+  chordFromEvent,
+  effectiveKeybinding,
+  type KeybindingOverrides,
+  matchKeybinding,
+} from "../command/commands";
 import { BatchView } from "./batch-view";
 import { CodeView } from "./code-view";
 import { CoverageMosaicView } from "./coverage";
@@ -90,6 +98,13 @@ export interface CanvasWorkspaceProps {
    */
   reviewId?: string;
   store?: ViewStore;
+  /**
+   * User keybinding overrides (#44) — the canvas zoom keys (`l`/`h`) are matched
+   * through the registry against these, so a remap of `zoom.in`/`zoom.out` takes
+   * effect here too. Absent ⇒ the catalogue defaults. Arrow/Escape synonyms remain
+   * affordances, but yield to effective registry bindings and explicit zoom unbinds.
+   */
+  keybindingOverrides?: KeybindingOverrides;
   /**
    * The resolved app appearance scheme (wireframe #15). The canvas FOLLOWS it —
    * seeded at creation and kept in sync as the app scheme changes (a delayed
@@ -895,15 +910,35 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     // Canvas shortcuts must never hijack text editing: a keydown from the
     // proposal-edit textarea (or any field) is the user typing, not a command.
     if (isEditableTarget(event.target as HTMLElement)) return;
-    if ((event.metaKey || event.ctrlKey) && (event.key === "[" || event.key === "]")) return;
-    if (event.key === "]") rotateAndRefocus(1);
-    else if (event.key === "[") rotateAndRefocus(-1);
-    else if (event.key === "l" || event.key === "ArrowRight")
+    const pressed = chordFromEvent(event);
+    const zoomInDefinition = catalogueDef("zoom.in");
+    const zoomOutDefinition = catalogueDef("zoom.out");
+    // Registry bindings win before any canvas alias. A match owned by another command
+    // bubbles to the app dispatcher; a zoom match is handled here and propagation stops
+    // so the app never runs it a second time.
+    const registryMatch = matchKeybinding(COMMAND_CATALOGUE, pressed, props.keybindingOverrides);
+    if (registryMatch?.id === "zoom.in")
       store.getState().setZoom(zoomReducer(zoom, { type: "zoomIn" }));
-    else if (event.key === "h" || event.key === "ArrowLeft" || event.key === "Escape")
+    else if (registryMatch?.id === "zoom.out")
+      store.getState().setZoom(zoomReducer(zoom, { type: "zoomOut" }));
+    else if (registryMatch || pressed.mod || pressed.unsupported) return;
+    else if (event.key === "]") rotateAndRefocus(1);
+    else if (event.key === "[") rotateAndRefocus(-1);
+    else if (
+      event.key === "ArrowRight" &&
+      zoomInDefinition !== undefined &&
+      effectiveKeybinding(zoomInDefinition, props.keybindingOverrides) !== null
+    )
+      store.getState().setZoom(zoomReducer(zoom, { type: "zoomIn" }));
+    else if (
+      (event.key === "ArrowLeft" || event.key === "Escape") &&
+      zoomOutDefinition !== undefined &&
+      effectiveKeybinding(zoomOutDefinition, props.keybindingOverrides) !== null
+    )
       store.getState().setZoom(zoomReducer(zoom, { type: "zoomOut" }));
     else return;
     event.preventDefault();
+    event.stopPropagation();
   }
 
   // The code IS the reading surface (issue #63): a reviewer must be able to read the

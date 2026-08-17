@@ -21,6 +21,15 @@ import userEvent from "@testing-library/user-event";
 import type { ReactElement } from "react";
 import { afterEach } from "vitest";
 
+// The desktop renderer's primary production platform is macOS. happy-dom reports a
+// Linux-like platform by default, while the long-standing interaction fixtures press
+// Command chords. Pin the harness explicitly; platform-specific matcher unit tests pass
+// their platform directly and cover Windows/Linux separately.
+Object.defineProperty(globalThis.navigator, "platform", {
+  configurable: true,
+  value: "MacIntel",
+});
+
 // Unmount and reset browser-owned state between tests in this file.
 afterEach(() => {
   cleanup();

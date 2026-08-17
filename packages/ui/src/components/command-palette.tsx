@@ -1,5 +1,14 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { type Command, filterCommands, formatKeybinding } from "../command/commands";
+import {
+  COMMAND_CATALOGUE,
+  type Command,
+  effectiveKeybinding,
+  filterCommands,
+  findConflicts,
+  formatKeybinding,
+  type KeybindingOverrides,
+  normalizeChord,
+} from "../command/commands";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The ⌘K command palette (wireframes screen 16). A searchable, keyboard-driven
@@ -15,13 +24,46 @@ import { type Command, filterCommands, formatKeybinding } from "../command/comma
 export interface CommandPaletteProps {
   open: boolean;
   commands: Command[];
+  /** User keybinding overrides (#44) — the palette displays the EFFECTIVE chord. */
+  overrides?: KeybindingOverrides;
   onClose(): void;
 }
 
-export function CommandPalette({ open, commands, onClose }: CommandPaletteProps) {
+export function CommandPalette({ open, commands, overrides, onClose }: CommandPaletteProps) {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  // Conflict disclosure (#44): every chord claimed by more than one command that can
+  // fire in this context. Both colliding rows show the chord with a plain collision
+  // note naming the other command — never a block, never a refused write (Rule Zero).
+  const conflicts = useMemo(
+    () =>
+      findConflicts(
+        [
+          ...commands,
+          ...COMMAND_CATALOGUE.filter(
+            (definition) => !commands.some((command) => command.id === definition.id),
+          ),
+        ],
+        overrides,
+      ),
+    [commands, overrides],
+  );
+  const titleById = useMemo(
+    () =>
+      new Map([
+        ...COMMAND_CATALOGUE.map(
+          (definition) =>
+            [
+              definition.id,
+              typeof definition.title === "string" ? definition.title : definition.id,
+            ] as const,
+        ),
+        ...commands.map((command) => [command.id, command.title] as const),
+      ]),
+    [commands],
+  );
 
   // A fresh open always starts empty, at the top, with the caret ready — the
   // palette is a jump-anywhere prompt, never a surface that remembers a stale query.
@@ -124,11 +166,7 @@ export function CommandPalette({ open, commands, onClose }: CommandPaletteProps)
                 >
                   <span className="command-palette-group">{command.group}</span>
                   <span className="command-palette-title">{command.title}</span>
-                  {command.keybinding ? (
-                    <kbd className="command-palette-key">
-                      {formatKeybinding(command.keybinding)}
-                    </kbd>
-                  ) : null}
+                  {renderKey(command, overrides, conflicts, titleById)}
                 </button>
               </li>
             ))
@@ -136,5 +174,36 @@ export function CommandPalette({ open, commands, onClose }: CommandPaletteProps)
         </ul>
       </div>
     </div>
+  );
+}
+
+/**
+ * The row's keybinding cell: the EFFECTIVE chord (default overlaid by the user's
+ * override, #44), formatted per platform. When the chord collides with another live
+ * command, the cell carries a `is-conflict` style and a `title` naming the other
+ * command — plain disclosure, never a block (Rule Zero). No effective chord ⇒ nothing.
+ */
+function renderKey(
+  command: Command,
+  overrides: KeybindingOverrides | undefined,
+  conflicts: Map<string, string[]>,
+  titleById: Map<string, string>,
+): React.ReactNode {
+  const token = effectiveKeybinding(command, overrides);
+  if (!token) return null;
+  const chord = normalizeChord(token);
+  const chordKey = chord ? `${chord.mod ? "mod+" : ""}${chord.key}` : null;
+  const colliding = chordKey ? conflicts.get(chordKey) : undefined;
+  const others = colliding?.filter((id) => id !== command.id) ?? [];
+  const conflict = others.length > 0;
+  const otherTitles = others.map((id) => titleById.get(id) ?? id).join(", ");
+  return (
+    <kbd
+      className={`command-palette-key ${conflict ? "is-conflict" : ""}`}
+      title={conflict ? `Also bound to ${otherTitles}` : undefined}
+      data-conflict={conflict ? "true" : undefined}
+    >
+      {formatKeybinding(token)}
+    </kbd>
   );
 }

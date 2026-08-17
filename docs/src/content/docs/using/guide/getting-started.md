@@ -60,8 +60,35 @@ exist.
 `⌘[` and `⌘]` move backward and forward through Rennet's surface history without
 stealing those keys from a text field. On a loaded canvas, `l` zooms in and `h`
 zooms out. Commands at a zoom limit and the already-active lens are omitted
-instead of appearing as dead entries. Key remapping and native menu parity are
-not live yet.
+instead of appearing as dead entries.
+
+### Remap any shortcut
+
+Open **Settings → Keyboard** to change a command's chord. Each row shows its
+current shortcut with **Set**, **Unbind**, and **Reset**: Set records the next
+chord you press, Unbind removes the shortcut entirely, and Reset returns the
+command to its default. A remap takes effect immediately and everywhere — the new
+chord actually runs the command, the old one stops, and the palette and menu both
+show the new shortcut. Overrides are stored on this machine only, in
+`~/.rennet/config.json`, and survive a restart.
+
+If two commands end up on the same chord, Rennet **shows** the collision on both
+rows (and on both palette entries) rather than blocking it: the shortcut is marked
+and names the other command, the write still lands, and you resolve it — or leave
+it — with more plain edits. When a chord is shared, the first registry match wins.
+
+The v1 recorder accepts bare keys or the platform-primary modifier with one key
+(`⌘` on macOS, `Ctrl` on Windows/Linux). Shift and Alt combinations are left
+unchanged with an inline note instead of being recorded inaccurately. If a config
+file contains an invalid chord, the row shows the raw value as invalid and Rennet
+uses that command's default until you replace, unbind, or reset it.
+
+### The menu bar mirrors the palette
+
+Rennet's application menu is built from the same command registry as the palette,
+so every menu item carries the same label and the same (remappable) shortcut. A
+command that can't act on the current screen appears **disabled**, not missing,
+and choosing a menu item runs exactly what the palette would.
 
 ## Reopen old reviews, and pick up where you left off
 
