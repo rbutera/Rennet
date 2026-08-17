@@ -59,6 +59,25 @@ try {
   rmSync(positiveControl, { force: true });
 }
 
+const electronPositiveControl = resolve(
+  workspaceRoot,
+  "packages/server/src/.electron-boundary-positive-control.ts",
+);
+try {
+  writeFileSync(electronPositiveControl, 'import "electron";\n');
+  const { command, args } = pnpmCommand(["exec", "eslint", electronPositiveControl]);
+  const result = spawnSync(command, args, {
+    cwd: workspaceRoot,
+    encoding: "utf8",
+  });
+  const output = `${result.stdout}\n${result.stderr}`;
+  if (result.status === 0 || !output.includes("no-restricted-imports")) {
+    throw new Error(`Electron boundary positive control did not fail as expected:\n${output}`);
+  }
+} finally {
+  rmSync(electronPositiveControl, { force: true });
+}
+
 console.log(
-  "Package manifests obey the dependency arrows; the forbidden-import control failed as expected.",
+  "Package manifests obey the dependency arrows; the @rennet/core and Electron forbidden-import controls both failed as expected.",
 );

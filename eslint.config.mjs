@@ -76,6 +76,22 @@ export default [
     },
   },
   {
+    files: ["packages/server/**/*.ts", "packages/server/**/*.tsx"],
+    rules: {
+      "no-restricted-imports": [
+        "error",
+        {
+          paths: [
+            {
+              name: "electron",
+              message: "packages/server is Electron-free; inject effects via RennetServerOptions.",
+            },
+          ],
+        },
+      ],
+    },
+  },
+  {
     // No hardcoded hex colours in the UI package: every colour is a glass token
     // (var(--…)) defined in packages/ui/src/tokens.css, the ONLY place raw hex
     // lives (issue #11). Test files and fixtures are exempt — the hex-lint test
