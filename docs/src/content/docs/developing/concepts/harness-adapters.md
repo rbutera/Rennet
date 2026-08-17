@@ -14,7 +14,7 @@ bundle its own harness binary or read a harness credential.
 flowchart LR
   pipeline["Core review pipeline"] --> port["HarnessPort"]
   port --> claude["Claude adapter"]
-  port --> codex["Future full Codex adapter"]
+  port --> codex["Codex adapter"]
   port --> omp["Future omp adapter"]
   claude --> cli["User's installed claude"]
   codex --> codexcli["User's installed codex"]
@@ -29,9 +29,9 @@ Electron APIs. The real process integration lives in `packages/adapters`, and
 the desktop app composes the two.
 
 The port currently covers descriptor and health data, session creation, one
-event stream per session, turn start, interrupt, and close. Resume, fork, a full
-cross-adapter conformance runner, and the complete Codex/omp adapters remain
-later slices.
+event stream per session, turn start, interrupt, and close. Two real adapters
+implement it — Claude Code and Codex — and one cross-adapter conformance suite
+runs against both. Resume, fork, and the omp adapter remain later slices.
 
 ## One normalized event stream
 
@@ -99,6 +99,41 @@ Sessions are capable by default. A caller may select tools for a particular
 workload, but the adapter does not impose a read-only posture or deny shell
 access on the acting path.
 
+## Codex is the second adapter
+
+The Codex adapter is the peer of the Claude adapter and the proof the boundary is
+harness-agnostic. It speaks `codex exec --json` behind an injected
+`CodexTurnTransport` — the mirror of the Claude adapter's injected query function.
+The adapter is pure over that seam (fully testable without a process); the
+composition root spawns the user's discovered `codex` binary.
+
+The transport is `codex exec`, not the `codex app-server` JSON-RPC protocol. That
+is the one deliberate divergence from the issue's letter, and it is evidence-led:
+every live `HarnessPort` consumer runs a single turn (create → send → drain →
+close), the installed `codex` labels `app-server` experimental and its shape has
+already drifted, and the approval apparatus that was app-server's main structural
+requirement was struck by the Rule Zero amendment. `codex exec` is non-interactive
+and already the capable-by-default posture. The app-server transport would slot in
+behind the same seam the day steering or thread-resume is actually consumed.
+
+```
+codex exec --json
+  --dangerously-bypass-approvals-and-sandbox   # the Rule Zero acting path
+  --ignore-user-config                         # deterministic session; auth untouched
+  -C <review worktree>                         # a real repo — no --skip-git-repo-check
+  [--output-schema <schema>] [-o <last-message>]
+  [-c mcp_servers.canvasops.url=<loopback>]    # canvasOps@2 external transport
+  <prompt>
+```
+
+The transport yields codex's raw JSONL frames, then one synthetic terminal frame
+carrying the exit code and the captured last message — the process facts only the
+spawn can know. The adapter normalizes codex's `thread.started`, `item.*`,
+`turn.completed`, and `turn.failed` frames into the same `HarnessEvent` kinds,
+passing anything unmodelled straight through. Interrupt kills the subprocess and
+ends the session cancelled. Codex reports no per-turn cost, so the `costUsd`
+capability stays honestly false. Host locus only; WSL codex is a later seam.
+
 ## Discovery without shell tricks
 
 A desktop app launched from Finder does not inherit the same environment as an
@@ -132,6 +167,29 @@ All three start false. Passing checks add evidence; documentation alone does not
 turn a flag on. This stops a newer or older local CLI from inheriting a capability
 the current session cannot actually service.
 
+The evidence comes from the **conformance suite** (`packages/core/src/harness-conformance.ts`),
+one catalogue of named checks that runs identically against any `HarnessPort`.
+Each check maps to exactly one capability and drives a session, watching the
+normalized stream for the evidence that capability would leave — a structured
+output completing, an abort cancelling, a text delta arriving, usage on the
+terminal frame, a cost number. A run's output is exactly the passing set, fed to
+`buildCapabilities`; a skipped or failed check is indistinguishable from a missing
+capability, because absence of evidence is absence of capability.
+
+The suite is hermetic by default: `pnpm check` runs it against in-process fake
+transports — zero process spawns, zero token spend — which can only earn the
+`implementedByAdapter` layer. A gated `.real` test runs the same suite against the
+installed binary, and only that real run produces `advertisedByHarness` and
+`availableInSession`. Every run first fires a positive control — a deliberately
+broken transport that must fail its check — so a suite that cannot demonstrate a
+failure refuses to certify.
+
+Each adapter's `testedRange` (the version floor and ceiling it has actually been
+exercised against) is derived, never hand-edited: a real conformance run records
+the binary version it passed against into a committed per-harness artifact
+(`packages/adapters/src/harness-tested-range.json`), and descriptors read the
+range from there.
+
 ## Authentication and cost honesty
 
 The harness authenticates itself. Rennet never copies an OAuth token or API key
@@ -146,6 +204,13 @@ the turn.
 Usage is equally literal. When a harness reports token or cost data, Rennet
 records it. Missing usage remains missing rather than being replaced with zero,
 and a derived estimate is never presented as a provider-reported charge.
+
+The canvasOps@2 surface a codex session reaches is served over an external MCP
+transport, but that transport is a `127.0.0.1` listener on an ephemeral port
+inside the desktop process, handed only to the local codex session. It shares the
+same live in-memory backend as the in-process Claude path — one contract, two
+transports — and nothing is exposed off-host. There is still no Rennet backend;
+the only egress is the user's own harness talking to its own provider.
 
 ## Error shape
 
@@ -165,14 +230,17 @@ frame remains available for diagnostics.
 | Claude discovery, health, sessions, streaming, tools, errors, usage | Live |
 | Fully capable Claude handoff turn | Live behind a main-process command; renderer caller missing |
 | Codex binary discovery and utility execution | Live |
-| Full Codex `HarnessPort` session adapter | Deferred |
+| Full Codex `HarnessPort` session adapter (`codex exec --json` seam) | Live |
+| Cross-adapter conformance suite (hermetic + gated real) | Live |
+| Derived `testedRange` from a recorded artifact | Live |
+| canvasOps@2 external loopback transport for non-Claude slots | Live |
 | omp/Pi adapter | Deferred |
 | Resume and fork in the normalized port | Deferred |
-| Cross-adapter conformance suite | Deferred |
+| Codex `app-server` JSON-RPC transport (behind the same seam) | Deferred until steering/resume is consumed |
 | Multi-harness self-consistency and disagreement sampling | Deferred |
 
-The main follow-ups are [#25 for a full Codex adapter and shared conformance](https://github.com/rbutera/rennet/issues/25)
-and [#41 for multi-harness disagreement work](https://github.com/rbutera/rennet/issues/41).
+The main follow-up is [#41 for multi-harness disagreement work](https://github.com/rbutera/rennet/issues/41),
+which the second real adapter unblocks.
 
 See [agent handoff](/developing/concepts/agent-handoff/) for the main acting
 consumer of this boundary.

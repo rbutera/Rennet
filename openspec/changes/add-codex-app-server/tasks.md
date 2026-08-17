@@ -29,6 +29,6 @@ Red-first throughout: each group starts with failing tests against fake transpor
 
 ## 5. Docs + gate (same change, definition of done)
 
-- [ ] 5.1 `docs/src/content/docs/developing/reference/delivery-order.md` — wave-10 entry: #25 scope as built (exec transport, app-server seam named and deferred, struck approval scope honored), #41 next.
-- [ ] 5.2 Developing-Rennet harness page: two-adapter architecture, `CodexTurnTransport` seam, derived capabilities + conformance, testedRange mechanism, honest egress line (user's own codex binary/subscription; canvasOps listener loopback-only, no Rennet backend).
+- [x] 5.1 `docs/src/content/docs/developing/reference/delivery-order.md` — wave-10 entry: #25 scope as built (exec transport, app-server seam named and deferred, struck approval scope honored), #41 next.
+- [x] 5.2 Developing-Rennet harness page: two-adapter architecture, `CodexTurnTransport` seam, derived capabilities + conformance, testedRange mechanism, honest egress line (user's own codex binary/subscription; canvasOps listener loopback-only, no Rennet backend).
 - [ ] 5.3 Full gate: `sh -c 'pnpm check'` green, including the conformance positive control and the licence-gate control.
