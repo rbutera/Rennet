@@ -10,7 +10,7 @@ import { describe, expect, it } from "vitest";
 // `locus` variable — hardcoding `HOST_LOCUS` (or any non-repo locus) at any one site
 // reddens it. `typeof getClaudeHarness` and the function definitions are excluded.
 describe("locus threading in MAIN", () => {
-  const source = readFileSync(new URL("./index.ts", import.meta.url), "utf8");
+  const source = readFileSync(new URL("./create-server.ts", import.meta.url), "utf8");
 
   /** The first-line argument text of every CALL to `fn` (definition excluded). */
   function callArgs(fn: string): string[] {
@@ -46,9 +46,10 @@ describe("locus threading in MAIN", () => {
     expect(locusCalls).toHaveLength(5);
     // Bind that one HOST_LOCUS call to the boot probe specifically: it lives in
     // `getCodexAvailability`, not in any review turn. Hardcoding HOST_LOCUS at a review
-    // site would push this count past 1 AND fail this line-context check.
-    expect(source).toContain(
-      "function getCodexAvailability(): Promise<CodexAvailability> {\n  return getCodexResolution(HOST_LOCUS)",
+    // site would push this count past 1 AND fail this line-context check. (Indentation-
+    // agnostic since the composition now nests inside `createRennetServer` — #377.)
+    expect(source).toMatch(
+      /function getCodexAvailability\(\): Promise<CodexAvailability> \{\s+return getCodexResolution\(HOST_LOCUS\)/,
     );
   });
 

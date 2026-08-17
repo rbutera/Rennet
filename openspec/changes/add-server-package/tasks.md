@@ -13,19 +13,19 @@
 
 ## 3. Composition extraction (commit 2)
 
-- [ ] 3.1 `packages/server/src/create-server.ts`: `createRennetServer(options: RennetServerOptions): { dispatch, shutdown }` per design D1/D2. Move index.ts's module-level singletons (210–643) and the whenReady composition (1768–2345) plus the pure helpers they call (282–1637) into the server package, preserving construction order. All singletons become instance state (D4).
-- [ ] 3.2 The four Electron leaks route through options: `dataDir` (stores at index 1781–1782, ui-evidence at 2090; classify index:1413 and route or leave with stated reason), `chooseRepositoryFallback` (dialog at 629; `RENNET_TEST_REPO` short-circuit moves into the server reading `options.env`), `broadcastProgress` (rehydration narrate at 1798–1806), `env` (CODEX/OMP bin overrides, orchestrator env).
-- [ ] 3.3 `shutdown()` per D5 (today's before-quit order, idempotent).
-- [ ] 3.4 `apps/desktop/src/main/index.ts` shrinks to shell: `RENNET_USER_DATA`/`app.setPath` handling, `createRennetServer({dataDir: app.getPath("userData"), env: process.env, chooseRepositoryFallback: <dialog>, broadcastProgress: <getAllWindows broadcast>})`, `registerCommandHandler` forwarding to `server.dispatch` with the same emitProgress/emitAskStream closures, menu/protocol/window/auto-update registration, `before-quit` → `server.shutdown()`.
-- [ ] 3.5 Unit test in `packages/server`: two `createRennetServer` instances in one process do not share state (e.g. distinct allowedRoots/liveTurns) — pins D4. A `shutdown()` idempotence test.
+- [x] 3.1 `packages/server/src/create-server.ts`: `createRennetServer(options: RennetServerOptions): { dispatch, shutdown }` per design D1/D2. Move index.ts's module-level singletons (210–643) and the whenReady composition (1768–2345) plus the pure helpers they call (282–1637) into the server package, preserving construction order. All singletons become instance state (D4).
+- [x] 3.2 The four Electron leaks route through options: `dataDir` (stores at index 1781–1782, ui-evidence at 2090; classify index:1413 and route or leave with stated reason), `chooseRepositoryFallback` (dialog at 629; `RENNET_TEST_REPO` short-circuit moves into the server reading `options.env`), `broadcastProgress` (rehydration narrate at 1798–1806), `env` (CODEX/OMP bin overrides, orchestrator env).
+- [x] 3.3 `shutdown()` per D5 (today's before-quit order, idempotent).
+- [x] 3.4 `apps/desktop/src/main/index.ts` shrinks to shell: `RENNET_USER_DATA`/`app.setPath` handling, `createRennetServer({dataDir: app.getPath("userData"), env: process.env, chooseRepositoryFallback: <dialog>, broadcastProgress: <getAllWindows broadcast>})`, `registerCommandHandler` forwarding to `server.dispatch` with the same emitProgress/emitAskStream closures, menu/protocol/window/auto-update registration, `before-quit` → `server.shutdown()`.
+- [x] 3.5 Unit test in `packages/server`: two `createRennetServer` instances in one process do not share state (e.g. distinct allowedRoots/liveTurns) — pins D4. A `shutdown()` idempotence test.
 
 ## 4. Proof of behavior identity
 
-- [ ] 4.1 `NX_DAEMON=false pnpm check` green (exit 0 + "Successfully ran target").
-- [ ] 4.2 e2e untouched and green: `sh -c 'pnpm nx e2e rennet-desktop'` (or the repo's e2e target name — check `pnpm nx show project rennet-desktop`). If an e2e spec would need editing, STOP and report per design D8.
+- [x] 4.1 `NX_DAEMON=false pnpm check` green (exit 0 + "Successfully ran target").
+- [~] 4.2 e2e UNTOUCHED (zero e2e edits); NOT fully green — the same 3 specs (local-review, review-canvases ×2) fail identically at commit 1 (pure moves = base behavior) and commit 2, and 1 (add-project) passes both. Pre-existing on base b4c2c75, not a phase-1 regression; per D8 the e2e files were not edited. See finding. Original text: `sh -c 'pnpm nx e2e rennet-desktop'` (or the repo's e2e target name — check `pnpm nx show project rennet-desktop`). If an e2e spec would need editing, STOP and report per design D8.
 
 ## 5. Docs (same change)
 
-- [ ] 5.1 `developing/concepts/architecture-overview.md`: composition root now `packages/server`; desktop is a shell + client.
-- [ ] 5.2 `developing/concepts/harness-adapters.md`: update any "main process" homes that moved.
-- [ ] 5.3 `developing/reference/app-server-plan.md`: phase 1 marked delivered wording only if the page tracks status (follow its existing style).
+- [x] 5.1 `developing/concepts/architecture-overview.md`: composition root now `packages/server`; desktop is a shell + client.
+- [x] 5.2 `developing/concepts/harness-adapters.md`: update any "main process" homes that moved.
+- [x] 5.3 `developing/reference/app-server-plan.md`: phase 1 marked delivered wording only if the page tracks status (follow its existing style).
