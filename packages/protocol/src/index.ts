@@ -111,6 +111,7 @@ export function objectSchemaFor<T>() {
 
 export * from "./bodies";
 export * from "./rsp";
+export * from "./session";
 export * from "./sha256";
 
 const fileChangeStatusSchema = z.enum(["added", "modified", "deleted", "renamed"]);

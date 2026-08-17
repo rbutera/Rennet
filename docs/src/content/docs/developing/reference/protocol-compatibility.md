@@ -1,0 +1,128 @@
+---
+title: Protocol compatibility
+description: The versioning discipline every Rennet wire change obeys — append-only schemas, one protocol version with a min-compat window, feature flags, tolerant decoders, and dated COMPAT shims.
+---
+
+Once the daemon and a client can be built from different commits, the protocol
+stops being a compile-time contract and becomes a wire contract. This page is the
+law for evolving that wire without a flag day: how frames may change, how a client
+and daemon negotiate versions, and how a new capability ships without breaking an
+old peer. It governs everything in the [`protocol-session`](#the-frame-vocabulary)
+layer (`packages/protocol/src/session.ts`) and every wire schema added after it.
+
+## The one rule
+
+**Wire schemas evolve append-only.** A field may be *added* if it is optional. A
+field may never be removed, never narrowed (no new `min`, no tighter enum, no
+`string` → literal), and never promoted from optional to required. If a peer
+built last month must still parse a frame this peer sends today, and vice versa,
+the schema is correct. If it must not, the change is breaking and needs a new
+protocol version instead.
+
+This holds for the command payloads too. The envelope carries `command` inputs
+and outputs from [`commandDefinitions`](/developing/reference/contracts-and-rulings/)
+by reference — those schemas are the single authority for payload validation, and
+they obey the same append-only rule.
+
+## One protocol version, with a window
+
+There is one integer, `PROTOCOL_VERSION`, exported from `@rennet/protocol`. It
+starts at `1`. Bump it only for a change the append-only rule cannot express — a
+removed field, a changed meaning, a new required shape.
+
+Alongside it, `MIN_COMPATIBLE_PROTOCOL_VERSION` names the oldest version this
+build can still talk to. Two peers are compatible when each side's version is at
+or above the other side's minimum. Mixed versions are the normal state, not an
+error to design out — a phone on an old build and a freshly-updated daemon must
+coexist.
+
+```ts
+import { checkProtocolCompatibility, PROTOCOL_VERSION, MIN_COMPATIBLE_PROTOCOL_VERSION } from "@rennet/protocol";
+
+const result = checkProtocolCompatibility(
+  { version: PROTOCOL_VERSION, minCompatible: MIN_COMPATIBLE_PROTOCOL_VERSION },
+  { version: serverInfo.protocolVersion, minCompatible: serverInfo.minCompatibleProtocolVersion },
+);
+if (!result.compatible) {
+  // result.reason names which side is too old — surface it, don't guess.
+}
+```
+
+The helper returns `{ compatible: true }` or `{ compatible: false, reason }`, not
+a bare boolean, so the peer that refuses a connection can tell the user *why* and
+which side needs to update.
+
+```mermaid
+sequenceDiagram
+  participant C as Client
+  participant S as Server
+  C->>S: hello { clientId, clientType, protocolVersion }
+  S->>C: serverInfo { version, protocolVersion, minCompatibleProtocolVersion, features }
+  Note over C,S: each side runs checkProtocolCompatibility against the other
+  C->>S: request { requestId, command, input }
+  S-->>C: response { requestId, output }  ·or·  rpcError { requestId, code, message }
+```
+
+## New capabilities are gated on features, once
+
+Anything beyond what the version window already guarantees ships behind a flag in
+`serverInfo.features` — an open `Record<string, boolean>`, not an enum (an enum
+would make adding a feature a breaking schema change, which is the whole thing we
+are avoiding). A client checks `features.x` **once** at handshake and takes one
+path. There is no fallback path, no degraded mode, no re-probing mid-session. A
+feature the peer does not advertise is simply off. Document each key here as it is
+added.
+
+## Inbound decoders are tolerant
+
+Every session frame schema is a default (non-strict) Zod object: it **strips
+unknown fields** instead of rejecting them. That is what lets a newer peer add an
+optional field without breaking an older decoder — the older decoder never sees
+the field, and the frame still parses. This deliberately diverges from the
+`.strict()` habit used for intra-process shapes elsewhere in `packages/protocol`;
+`.strict()` stays right *there*, tolerance is the rule *on the wire*. A test in
+`session.test.ts` pins this by proving a `.strict()` clone of each frame would
+reject an unknown field the real schema accepts.
+
+## COMPAT shims carry a removal date
+
+When the window eventually moves and a shim is needed to keep an old peer working
+— translating an old field, defaulting a new one — tag it in code with a
+`COMPAT(name)` comment and a removal date:
+
+```ts
+// COMPAT(hello-no-clientType): clients before v2 omit clientType; default it.
+// Remove after 2026-12-01, once MIN_COMPATIBLE_PROTOCOL_VERSION >= 2.
+```
+
+The tag makes shims greppable and the date makes them expire on purpose instead
+of accreting forever.
+
+## The frame vocabulary
+
+A future transport serializes these frames and nothing else. Each is one arm of
+the `sessionFrame` discriminated union, keyed on `type`.
+
+| Frame | Direction | Carries |
+|---|---|---|
+| `hello` | client → server | `clientId`, `clientType`, `protocolVersion` |
+| `serverInfo` | server → client | `version`, `protocolVersion`, `minCompatibleProtocolVersion`, `features` |
+| `request` | client → server | `requestId`, `command` (validated against the registry), `input` |
+| `response` | server → client | `requestId`, `output` |
+| `rpcError` | server → client | `requestId`, `code`, `message`, optional `details` |
+| `progressEvent` | server → client | `commandId`, `event` (the existing `ProjectProcessEvent`) |
+| `askStreamEvent` | server → client | `reviewId`, `event` (the existing `ReviewAskStreamEvent`) |
+
+`rpcError.code` is a small known set (`invalid_input`, `command_failed`,
+`incompatible_protocol`, `unknown_command`) unioned with `string`, so the field
+stays append-only: new codes are added by documenting them, never by breaking the
+schema. The two push frames reuse their payload types by reference — they are
+never forked or copied.
+
+## Where this fits
+
+Phase 0 of the [app server plan](/developing/reference/app-server-plan/) writes
+this discipline down before any transport exists, so every later phase inherits
+it instead of retrofitting it. Nothing executes these frames yet; the WebSocket
+transport that will (phase 2) serializes them unchanged or amends them under the
+append-only rule above.
