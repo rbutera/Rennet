@@ -89,7 +89,12 @@ describe("codex WSL locus — real distro round-trip (gated)", () => {
       try {
         const adapter = new CodexAdapter({
           binaryPath: discovery.chosen.path,
-          transport: createCodexTurnTransport(discovery.chosen.path, effects, locus),
+          transport: createCodexTurnTransport(
+            discovery.chosen.path,
+            effects,
+            locus,
+            discovery.chosen.runtimePath,
+          ),
           version: discovery.chosen.version,
         });
 
@@ -106,13 +111,23 @@ describe("codex WSL locus — real distro round-trip (gated)", () => {
           expect(outcome.finalText.toLowerCase()).toContain("ok");
         }
 
-        // (2) The spawn went through `wsl.exe -e` with the distro cwd on `--cd`.
+        // (2) The spawn went through `wsl.exe -e` with the distro cwd on `--cd`. When
+        // the distro codex is an asdf JS launcher, its sibling node rides INSIDE the
+        // `-e` argv ahead of the codex path (`… -e <node> <codex> exec …`).
         const argv = spawns[0];
         expect(argv?.bin).toBe(WSL_EXE);
         const a = argv?.args ?? [];
-        expect(a.slice(0, 5)).toEqual(["-d", DISTRO, "--cd", repoDistro, "-e"]);
-        expect(a[5]).toBe(discovery.chosen.path); // the distro codex binary
-        expect(a[6]).toBe("exec");
+        expect(a.slice(0, 4)).toEqual(["-d", DISTRO, "--cd", repoDistro]);
+        expect(a[4]).toBe("-e");
+        const runtime = discovery.chosen.runtimePath;
+        if (runtime === undefined) {
+          expect(a[5]).toBe(discovery.chosen.path);
+          expect(a[6]).toBe("exec");
+        } else {
+          expect(a[5]).toBe(runtime); // the paired distro node
+          expect(a[6]).toBe(discovery.chosen.path); // the codex JS launcher
+          expect(a[7]).toBe("exec");
+        }
 
         // (3) `-C` and `-o` are distro-native (`/…`), never a Windows/UNC path.
         const ci = a.indexOf("-C");

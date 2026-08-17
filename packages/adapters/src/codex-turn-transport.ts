@@ -178,6 +178,7 @@ export function createCodexTurnTransport(
   bin: string,
   effects: CodexTransportEffects = defaultCodexTransportEffects,
   locus: Locus = HOST_LOCUS,
+  runtimePath?: string,
 ): CodexTurnTransport {
   // Distro-native argv paths use posix separators; the Windows-side IO on the same
   // dir uses the UNC (backslash) view. For a host locus both collapse to `join`.
@@ -217,7 +218,9 @@ export function createCodexTurnTransport(
           outPath: outArgv,
           ...(spec.mcpServers === undefined ? {} : { mcpServers: spec.mcpServers }),
         });
-        const cmd = locusCommand(locus, bin, args, spec.cwd);
+        const program = runtimePath ?? bin;
+        const programArgs = runtimePath === undefined ? args : [bin, ...args];
+        const cmd = locusCommand(locus, program, programArgs, spec.cwd);
         for await (const frame of effects.spawn(cmd.file, cmd.args, cmd.cwd, outIo, spec.signal)) {
           yield frame;
         }
@@ -327,7 +330,12 @@ export async function createCodexHarness(deps: CodexHarnessDeps = {}): Promise<C
   const capabilityEvidence = await deriveCodexImplementedEvidence(binaryPath);
   const adapter = new CodexAdapter({
     binaryPath,
-    transport: createCodexTurnTransport(binaryPath, defaultCodexTransportEffects, deps.locus),
+    transport: createCodexTurnTransport(
+      binaryPath,
+      defaultCodexTransportEffects,
+      deps.locus,
+      discovery.chosen.runtimePath,
+    ),
     version: discovery.chosen.version,
     ...(capabilityEvidence === undefined ? {} : { capabilityEvidence }),
     ...(deps.mcpServers === undefined ? {} : { mcpServers: deps.mcpServers }),

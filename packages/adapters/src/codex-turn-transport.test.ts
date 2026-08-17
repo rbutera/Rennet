@@ -197,4 +197,34 @@ describe("Codex transport locus composition", () => {
     expect(mints).toHaveLength(0);
     expect(rms).toHaveLength(0);
   });
+
+  it("wsl locus launches an asdf codex through its paired node inside the -e argv", async () => {
+    // A codex JS launcher under an asdf node install has no `node` on the distro's
+    // non-interactive PATH, so discovery pairs its sibling node; the transport must
+    // launch `… -e <node> <codex> exec …` (runtime + script both verbatim after -e).
+    const { effects, spawns } = fakeEffects();
+    const locus: Locus = { kind: "wsl", distro: "Ubuntu" };
+    const codex = "/home/rai/.asdf/installs/nodejs/24.16.0/bin/codex";
+    const node = "/home/rai/.asdf/installs/nodejs/24.16.0/bin/node";
+    await drive(createCodexTurnTransport(codex, effects, locus, node), spec);
+
+    expect(spawns).toHaveLength(1);
+    const call = spawns[0] as SpawnCall;
+    expect(call.bin).toBe("wsl.exe");
+    const e = call.args.indexOf("-e");
+    expect(call.args[e + 1]).toBe(node); // the paired runtime, verbatim
+    expect(call.args[e + 2]).toBe(codex); // the codex launcher, verbatim
+    expect(call.args[e + 3]).toBe("exec");
+    // Paths stay distro-native and the codex path is never invoked bare.
+    expect(call.args[call.args.indexOf("-C") + 1]).toBe("/home/rai/repo");
+  });
+
+  it("host locus without a paired runtime spawns codex directly (byte-identical)", async () => {
+    const { effects, spawns } = fakeEffects();
+    const hostSpec: CodexTurnSpec = { ...spec, cwd: "/home/rai/repo" };
+    await drive(createCodexTurnTransport("codex", effects), hostSpec);
+    const call = spawns[0] as SpawnCall;
+    expect(call.bin).toBe("codex");
+    expect(call.args[0]).toBe("exec");
+  });
 });

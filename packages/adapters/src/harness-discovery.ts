@@ -76,6 +76,9 @@ export interface DiscoveredCandidate {
   readonly fromKnownLocation: boolean;
   /** The locus this candidate lives on (add-windows-support). */
   readonly locus: Locus;
+  /** The runtime a runtime-hosted candidate was probed and must be launched through
+   *  (a codex JS launcher under an asdf node install needs its sibling `node`). */
+  readonly runtimePath?: string;
 }
 
 /** The PATH delimiter for a platform: `;` on Windows, `:` elsewhere. */
@@ -555,6 +558,43 @@ export interface DiscoverCodexOptions {
  * nothing resolvable is found, so the caller fails LOUD (no Codex seat) rather
  * than launching a bad `codex` that would silently degrade dual-model to single.
  */
+/**
+ * The sibling `node` a codex candidate must run through, or null. A codex installed
+ * under an asdf node install (`~/.asdf/installs/nodejs/<ver>/bin/codex`) is a JS
+ * launcher whose `#!/usr/bin/env node` finds no `node` on a non-interactive PATH
+ * (asdf's shim init lives in the user's interactive shell rc, not `.profile`). Its
+ * runnable node is the sibling in the SAME install bin dir. Mirrors the omp/Bun
+ * precedent — probe and launch a runtime-hosted harness through its exact runtime.
+ */
+function pairedNodeRuntime(
+  codexPath: string,
+  platform: NodeJS.Platform | undefined,
+): string | null {
+  const p = platform === "win32" ? win32Path : posixPath;
+  const dir = p.dirname(codexPath);
+  if (!/[\\/]\.asdf[\\/]installs[\\/]nodejs[\\/][^\\/]+[\\/]bin$/.test(dir)) return null;
+  return p.join(dir, "node");
+}
+
+/**
+ * Probe a codex path, PLAIN first so a normal install (node on PATH) is byte-identical;
+ * only on a null plain probe does it fall back to the paired sibling `node`. Returns the
+ * version and, when the paired runtime was needed, the runtime to launch through.
+ */
+async function probeCodexCandidate(
+  deps: DiscoveryDeps,
+  path: string,
+): Promise<{ readonly version: string | null; readonly runtimePath?: string }> {
+  const version = await deps.probeVersion(path);
+  if (version !== null) return { version };
+  const node = pairedNodeRuntime(path, deps.platform);
+  if (node !== null && (await deps.isExecutable(node))) {
+    const paired = await deps.probeVersionWithRuntime?.(node, path);
+    if (paired != null) return { version: paired, runtimePath: node };
+  }
+  return { version: null };
+}
+
 export async function discoverCodex(
   deps: DiscoveryDeps,
   options: DiscoverCodexOptions = {},
@@ -566,11 +606,12 @@ export async function discoverCodex(
     // HERE, at resolution time, not left to resolve against the wrong dir later.
     const path = resolveFor(deps.platform)(options.explicitBin);
     if (await deps.isExecutable(path)) {
-      const version = await deps.probeVersion(path);
+      const { version, runtimePath } = await probeCodexCandidate(deps, path);
       if (version !== null) {
+        const runtime = runtimePath === undefined ? {} : { runtimePath };
         return {
-          candidates: [{ path, version, fromKnownLocation: true, locus: HOST_LOCUS }],
-          chosen: { path, version },
+          candidates: [{ path, version, fromKnownLocation: true, locus: HOST_LOCUS, ...runtime }],
+          chosen: { path, version, ...runtime },
           health: { state: "ready", version },
         };
       }
@@ -614,12 +655,13 @@ export async function discoverCodex(
     if (resolved.has(path)) continue;
     if (!(await deps.isExecutable(path))) continue;
     resolved.add(path);
-    const version = await deps.probeVersion(path);
+    const { version, runtimePath } = await probeCodexCandidate(deps, path);
     candidates.push({
       path,
       version,
       fromKnownLocation: knownSet.has(directory),
       locus,
+      ...(runtimePath === undefined ? {} : { runtimePath }),
     });
   }
 
@@ -657,7 +699,11 @@ export async function discoverCodex(
 
   return {
     candidates,
-    chosen: { path: best.path, version: best.version },
+    chosen: {
+      path: best.path,
+      version: best.version,
+      ...(best.runtimePath === undefined ? {} : { runtimePath: best.runtimePath }),
+    },
     health: { state: "ready", version: best.version },
   };
 }
