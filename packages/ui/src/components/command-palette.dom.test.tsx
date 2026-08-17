@@ -144,4 +144,20 @@ describe("CommandPalette", () => {
     const key = container.querySelector(".command-palette-key");
     expect(key?.textContent).toMatch(/e$/);
   });
+
+  it("discloses a collision with catalogue-only palette.toggle", () => {
+    const list: Command[] = [
+      { id: "nav.back", title: "Back", group: "Navigate", keybinding: "mod+[", run: vi.fn() },
+    ];
+    const { container } = mount(
+      <CommandPalette
+        open={true}
+        commands={list}
+        overrides={{ "nav.back": "mod+k" }}
+        onClose={vi.fn()}
+      />,
+    );
+    const key = container.querySelector(".command-palette-key[data-conflict='true']");
+    expect(key?.getAttribute("title")).toBe("Also bound to Toggle command palette");
+  });
 });

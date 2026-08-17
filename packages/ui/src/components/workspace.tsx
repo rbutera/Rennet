@@ -50,8 +50,10 @@ import { buildRowRegistry, type Mark, placeMarks, resolveAnchorToRows } from "..
 import { createViewStore, useViewStore, type ViewStore } from "../canvas/store";
 import type { SymbolInspection, SymbolLookupPort } from "../canvas/symbol";
 import {
+  COMMAND_CATALOGUE,
   catalogueDef,
   chordFromEvent,
+  effectiveKeybinding,
   type KeybindingOverrides,
   matchKeybinding,
 } from "../command/commands";
@@ -83,13 +85,6 @@ import { SymbolInspector } from "./symbol-inspector";
 /** A per-element diff resolver (the real product wires the patchset; demo injects one). */
 export type DiffResolver = (elementKey: string) => ElementDiff | undefined;
 
-// The canvas zoom commands, sourced from the ONE catalogue (no duplicate chord
-// table) so a `zoom.in`/`zoom.out` remap is honoured here through `matchKeybinding`.
-const ZOOM_COMMANDS = [
-  { id: "zoom.in", keybinding: catalogueDef("zoom.in")?.keybinding },
-  { id: "zoom.out", keybinding: catalogueDef("zoom.out")?.keybinding },
-];
-
 export interface CanvasWorkspaceProps {
   canvases: Record<CanvasAngle, Canvas>;
   /**
@@ -106,8 +101,8 @@ export interface CanvasWorkspaceProps {
   /**
    * User keybinding overrides (#44) — the canvas zoom keys (`l`/`h`) are matched
    * through the registry against these, so a remap of `zoom.in`/`zoom.out` takes
-   * effect here too. Absent ⇒ the catalogue defaults. Arrow/Escape synonyms and the
-   * `isEditableTarget` guard are affordances, not registry chords, and stay hardcoded.
+   * effect here too. Absent ⇒ the catalogue defaults. Arrow/Escape synonyms remain
+   * affordances, but yield to effective registry bindings and explicit zoom unbinds.
    */
   keybindingOverrides?: KeybindingOverrides;
   /**
@@ -915,23 +910,35 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
     // Canvas shortcuts must never hijack text editing: a keydown from the
     // proposal-edit textarea (or any field) is the user typing, not a command.
     if (isEditableTarget(event.target as HTMLElement)) return;
-    if ((event.metaKey || event.ctrlKey) && (event.key === "[" || event.key === "]")) return;
-    // The zoom keys route through the registry (#44), so a remapped `zoom.in`/`zoom.out`
-    // takes effect. `[`/`]` lens rotation and the arrow/Escape synonyms are affordances,
-    // not registry chords, and stay matched literally.
-    const zoomMatch = matchKeybinding(
-      ZOOM_COMMANDS,
-      chordFromEvent(event),
-      props.keybindingOverrides,
-    );
-    if (event.key === "]") rotateAndRefocus(1);
-    else if (event.key === "[") rotateAndRefocus(-1);
-    else if (zoomMatch?.id === "zoom.in" || event.key === "ArrowRight")
+    const pressed = chordFromEvent(event);
+    const zoomInDefinition = catalogueDef("zoom.in");
+    const zoomOutDefinition = catalogueDef("zoom.out");
+    // Registry bindings win before any canvas alias. A match owned by another command
+    // bubbles to the app dispatcher; a zoom match is handled here and propagation stops
+    // so the app never runs it a second time.
+    const registryMatch = matchKeybinding(COMMAND_CATALOGUE, pressed, props.keybindingOverrides);
+    if (registryMatch?.id === "zoom.in")
       store.getState().setZoom(zoomReducer(zoom, { type: "zoomIn" }));
-    else if (zoomMatch?.id === "zoom.out" || event.key === "ArrowLeft" || event.key === "Escape")
+    else if (registryMatch?.id === "zoom.out")
+      store.getState().setZoom(zoomReducer(zoom, { type: "zoomOut" }));
+    else if (registryMatch || pressed.mod || pressed.unsupported) return;
+    else if (event.key === "]") rotateAndRefocus(1);
+    else if (event.key === "[") rotateAndRefocus(-1);
+    else if (
+      event.key === "ArrowRight" &&
+      zoomInDefinition !== undefined &&
+      effectiveKeybinding(zoomInDefinition, props.keybindingOverrides) !== null
+    )
+      store.getState().setZoom(zoomReducer(zoom, { type: "zoomIn" }));
+    else if (
+      (event.key === "ArrowLeft" || event.key === "Escape") &&
+      zoomOutDefinition !== undefined &&
+      effectiveKeybinding(zoomOutDefinition, props.keybindingOverrides) !== null
+    )
       store.getState().setZoom(zoomReducer(zoom, { type: "zoomOut" }));
     else return;
     event.preventDefault();
+    event.stopPropagation();
   }
 
   // The code IS the reading surface (issue #63): a reviewer must be able to read the

@@ -75,7 +75,13 @@ show the new shortcut. Overrides are stored on this machine only, in
 If two commands end up on the same chord, Rennet **shows** the collision on both
 rows (and on both palette entries) rather than blocking it: the shortcut is marked
 and names the other command, the write still lands, and you resolve it — or leave
-it — with more plain edits. When a chord is shared, the later match wins.
+it — with more plain edits. When a chord is shared, the first registry match wins.
+
+The v1 recorder accepts bare keys or the platform-primary modifier with one key
+(`⌘` on macOS, `Ctrl` on Windows/Linux). Shift and Alt combinations are left
+unchanged with an inline note instead of being recorded inaccurately. If a config
+file contains an invalid chord, the row shows the raw value as invalid and Rennet
+uses that command's default until you replace, unbind, or reset it.
 
 ### The menu bar mirrors the palette
 

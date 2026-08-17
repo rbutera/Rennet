@@ -113,6 +113,7 @@ import {
 import {
   type DetectedHarness,
   isCommandName,
+  menuRunPayloadSchema,
   type ProjectProcessEvent,
   type ReviewAskStreamEvent,
 } from "@rennet/protocol";
@@ -145,7 +146,7 @@ import { projectUnavailableDeepVerification } from "./flagged-review-verificatio
 import { createLiveComposeBundle } from "./handoff-compose-live";
 import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
 import { LiveTurnRegistry } from "./live-turn-registry";
-import { buildApplicationMenu, type MenuSectionPayload } from "./menu";
+import { applyMenuUpdate } from "./menu";
 import {
   createEditorLaunchEffects,
   editorLaunchSpec,
@@ -1437,15 +1438,15 @@ function registerMenuHandler(): void {
   // command accelerators are display-only, so a chord never double-fires.
   ipcMain.on(MENU_UPDATE_CHANNEL, (event, payload: unknown) => {
     if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url)) return;
-    if (!Array.isArray(payload)) return;
-    const sections = payload as MenuSectionPayload[];
-    const template = buildApplicationMenu(sections, {
+    applyMenuUpdate(payload, {
       isMac: process.platform === "darwin",
       onRun: (id) => {
-        if (!event.sender.isDestroyed()) event.sender.send(MENU_RUN_CHANNEL, { id });
+        const runPayload = menuRunPayloadSchema.parse({ id });
+        if (!event.sender.isDestroyed()) event.sender.send(MENU_RUN_CHANNEL, runPayload);
       },
+      buildFromTemplate: (template) => Menu.buildFromTemplate(template),
+      setApplicationMenu: (menu) => Menu.setApplicationMenu(menu),
     });
-    Menu.setApplicationMenu(Menu.buildFromTemplate(template));
   });
 }
 

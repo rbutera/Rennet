@@ -1,3 +1,4 @@
+import type { MenuTemplateSection } from "@rennet/protocol";
 import type { CanvasAngle } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 import type { ZoomLevel } from "../canvas/logic";
@@ -182,14 +183,23 @@ export function catalogueDef(id: string): CommandDef | undefined {
  * catalogue (the single source), `run` is the app's own handler. The keydown sites
  * and the palette therefore agree on every chord and label by construction.
  */
-function mk(id: string, ctx: CommandContext, run: () => void): Command {
+export function commandFromCatalogue(
+  id: string,
+  ctx: CommandContext | undefined,
+  run: () => void,
+): Command {
   const def = catalogueById.get(id);
   if (!def) throw new Error(`command not in catalogue: ${id}`);
-  const title = typeof def.title === "function" ? def.title(ctx) : def.title;
+  if (typeof def.title === "function" && !ctx) {
+    throw new Error(`command requires live context: ${id}`);
+  }
+  const title = typeof def.title === "function" ? def.title(ctx as CommandContext) : def.title;
   return def.keybinding
     ? { id, title, group: def.group, keybinding: def.keybinding, run }
     : { id, title, group: def.group, run };
 }
+
+const mk = commandFromCatalogue;
 
 /**
  * Assemble the commands live for the given context. Only enabled commands are
@@ -353,7 +363,7 @@ export function isMacPlatform(): boolean {
 /**
  * Render a keybinding token for display (add-windows-support). A `mod+X` chord shows
  * as `⌘X` on macOS and `Ctrl+X` on Windows/Linux; a bare key (`l`, `h`) renders
- * as-is. The handlers accept `metaKey || ctrlKey`, so only the LABEL is platform-aware.
+ * as-is. Matching requires the platform-primary modifier, so label and behavior agree.
  */
 export function formatKeybinding(token: string, mac: boolean = isMacPlatform()): string {
   if (!token.startsWith("mod+")) return token;
@@ -371,6 +381,34 @@ export function formatKeybinding(token: string, mac: boolean = isMacPlatform()):
 export interface Chord {
   mod: boolean;
   key: string;
+  /** True when the event carries a modifier the v1 grammar cannot represent. */
+  unsupported?: true;
+}
+
+const NAMED_KEYS = new Set([
+  "arrowdown",
+  "arrowleft",
+  "arrowright",
+  "arrowup",
+  "backspace",
+  "delete",
+  "end",
+  "enter",
+  "escape",
+  "home",
+  "pagedown",
+  "pageup",
+  "space",
+  "tab",
+]);
+
+function normalizeKeyToken(token: string): string | null {
+  const trimmed = token.trim();
+  if (trimmed.length === 0) return null;
+  const lower = trimmed.toLowerCase();
+  if (NAMED_KEYS.has(lower)) return lower;
+  if (Array.from(trimmed).length !== 1) return null;
+  return /^[a-z0-9]$/i.test(trimmed) || "`-=[]\\;',./".includes(trimmed) ? lower : null;
 }
 
 /**
@@ -383,10 +421,11 @@ export function normalizeChord(token: string): Chord | null {
   const trimmed = token.trim();
   if (trimmed.length === 0) return null;
   if (trimmed.startsWith("mod+")) {
-    const key = trimmed.slice("mod+".length).trim().toLowerCase();
-    return key.length === 0 ? null : { mod: true, key };
+    const key = normalizeKeyToken(trimmed.slice("mod+".length));
+    return key === null ? null : { mod: true, key };
   }
-  return { mod: false, key: trimmed.toLowerCase() };
+  const key = normalizeKeyToken(trimmed);
+  return key === null ? null : { mod: false, key };
 }
 
 /**
@@ -399,8 +438,9 @@ export function effectiveKeybinding(
   overrides: KeybindingOverrides = {},
 ): string | null {
   const override = overrides[def.id];
-  if (override !== undefined) return override;
-  return def.keybinding ?? null;
+  if (override === null) return null;
+  if (override !== undefined && normalizeChord(override)) return override;
+  return def.keybinding && normalizeChord(def.keybinding) ? def.keybinding : null;
 }
 
 /**
@@ -414,6 +454,7 @@ export function matchKeybinding<T extends { id: string; keybinding?: string }>(
   pressed: Chord,
   overrides: KeybindingOverrides = {},
 ): T | undefined {
+  if (pressed.unsupported) return undefined;
   for (const command of commands) {
     const token = effectiveKeybinding(command, overrides);
     if (token === null) continue;
@@ -424,8 +465,23 @@ export function matchKeybinding<T extends { id: string; keybinding?: string }>(
 }
 
 /** A pressed keyboard event reduced to a normalized chord (mod = Cmd or Ctrl). */
-export function chordFromEvent(event: { key: string; metaKey: boolean; ctrlKey: boolean }): Chord {
-  return { mod: event.metaKey || event.ctrlKey, key: event.key.toLowerCase() };
+export function chordFromEvent(
+  event: {
+    key: string;
+    metaKey: boolean;
+    ctrlKey: boolean;
+    shiftKey?: boolean;
+    altKey?: boolean;
+  },
+  mac: boolean = isMacPlatform(),
+): Chord {
+  const primary = mac ? event.metaKey : event.ctrlKey;
+  const nonPrimary = mac ? event.ctrlKey : event.metaKey;
+  return {
+    mod: primary,
+    key: event.key.toLowerCase(),
+    ...(event.shiftKey || event.altKey || nonPrimary ? { unsupported: true } : {}),
+  };
 }
 
 /**
@@ -461,19 +517,6 @@ export function findConflicts(
 // context command is disabled, never missing.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export interface MenuItemProjection {
-  id: string;
-  label: string;
-  /** The effective `mod+`-token binding, for MAIN to render as an accelerator. Absent = none. */
-  accelerator?: string;
-  enabled: boolean;
-}
-
-export interface MenuSection {
-  group: string;
-  items: MenuItemProjection[];
-}
-
 /**
  * Project the catalogue + live context + overrides into serializable menu sections.
  * Dynamic entries (`recent.*`, `lens.*`) are not catalogued, so they never appear.
@@ -483,13 +526,13 @@ export interface MenuSection {
 export function menuTemplate(
   ctx: CommandContext,
   overrides: KeybindingOverrides = {},
-): MenuSection[] {
+): MenuTemplateSection[] {
   const live = new Set(buildCommands(ctx).map((command) => command.id));
-  const sections: MenuSection[] = [];
+  const sections: MenuTemplateSection[] = [];
   for (const def of COMMAND_CATALOGUE) {
     const label = typeof def.title === "function" ? def.title(ctx) : def.title;
     const token = effectiveKeybinding(def, overrides);
-    const item: MenuItemProjection = {
+    const item = {
       id: def.id,
       label,
       enabled: def.id === "palette.toggle" ? true : live.has(def.id),

@@ -134,6 +134,7 @@ export function SettingsScreen({
   scheme,
   onBack,
   onSchemeChange,
+  onKeybindingsChange,
 }: {
   bridge: RennetBridge;
   /** The resolved appearance scheme this screen renders in (system already folded). */
@@ -141,6 +142,8 @@ export function SettingsScreen({
   onBack(): void;
   /** Lets the host consume the chosen scheme app-wide (as `data-scheme`). */
   onSchemeChange?(scheme: AppearanceScheme): void;
+  /** Publishes a successful Keyboard write to the app's live dispatcher/menu state. */
+  onKeybindingsChange?(overrides: KeybindingOverrides): void;
 }) {
   const [view, setView] = useState<SettingsView | null>(null);
   const [error, setError] = useState<string>();
@@ -347,9 +350,10 @@ export function SettingsScreen({
             bridge={bridge}
             overrides={view.keybindings ?? {}}
             malformed={view.appearanceMalformed}
-            onOverridesChanged={(keybindings) =>
-              setView((current) => (current ? { ...current, keybindings } : current))
-            }
+            onOverridesChanged={(keybindings) => {
+              setView((current) => (current ? { ...current, keybindings } : current));
+              onKeybindingsChange?.(keybindings);
+            }}
           />
         ) : null}
       </div>
@@ -363,8 +367,8 @@ function catalogueLabel(def: CommandDef): string {
 }
 
 /**
- * The Keyboard section (#44) — every catalogued command that has a default chord or a
- * stored override, each with its EFFECTIVE binding and plain set / unbind / reset
+ * The Keyboard section (#44) — every catalogued command, each with its EFFECTIVE
+ * binding and plain set / unbind / reset
  * controls that write straight through `settings.setKeybinding` (first click, no
  * confirmation). A chord claimed by more than one command is disclosed inline on both
  * rows; the conflicting write is still accepted and persisted — disclosure is the whole
@@ -385,10 +389,11 @@ function KeyboardPanel({
   const [error, setError] = useState<string>();
   // The row currently capturing its next keydown as a new chord (the recorder).
   const [recording, setRecording] = useState<string | null>(null);
+  const [recordingNote, setRecordingNote] = useState<string>();
 
-  const rows = COMMAND_CATALOGUE.filter(
-    (def) => def.keybinding !== undefined || overrides[def.id] !== undefined,
-  );
+  const rows = COMMAND_CATALOGUE;
+  const knownIds = new Set(rows.map((def) => def.id));
+  const unknownOverrides = Object.entries(overrides).filter(([id]) => !knownIds.has(id));
   const conflicts = findConflicts(rows, overrides);
   const labelById = new Map(rows.map((def) => [def.id, catalogueLabel(def)]));
 
@@ -408,6 +413,7 @@ function KeyboardPanel({
     } finally {
       setBusy(false);
       setRecording(null);
+      setRecordingNote(undefined);
     }
   }
 
@@ -415,14 +421,28 @@ function KeyboardPanel({
   // cancels without a write. A plain capture — no modal, no confirmation step.
   function onRecordKey(id: string, event: React.KeyboardEvent): void {
     event.preventDefault();
+    event.stopPropagation();
+    setRecordingNote(undefined);
     if (event.key === "Escape") {
       setRecording(null);
       return;
     }
     // Ignore a lone modifier press — wait for the real key.
     if (["Meta", "Control", "Shift", "Alt"].includes(event.key)) return;
+    if (event.shiftKey || event.altKey) {
+      setRecordingNote("Shift and Alt combinations are not supported.");
+      return;
+    }
     const chord = chordFromEvent(event);
+    if (chord.unsupported) {
+      setRecordingNote("Use the platform primary modifier for modified shortcuts.");
+      return;
+    }
     const token = `${chord.mod ? "mod+" : ""}${chord.key}`;
+    if (!normalizeChord(token)) {
+      setRecordingNote("That key is not supported by the v1 chord grammar.");
+      return;
+    }
     void write(id, token);
   }
 
@@ -437,11 +457,13 @@ function KeyboardPanel({
       ) : (
         <p className="settings-note">
           Remap any command. Overrides are stored on this machine only and survive restart. Two
-          commands may share a chord — the collision is shown, never blocked; the later match wins.
+          commands may share a chord — the collision is shown, never blocked; the first match wins.
         </p>
       )}
       <ul className="settings-keys">
         {rows.map((def) => {
+          const rawOverride = overrides[def.id];
+          const invalidOverride = typeof rawOverride === "string" && !normalizeChord(rawOverride);
           const token = effectiveKeybinding(def, overrides);
           const chord = token ? normalizeChord(token) : null;
           const chordKey = chord ? `${chord.mod ? "mod+" : ""}${chord.key}` : null;
@@ -465,7 +487,10 @@ function KeyboardPanel({
                     aria-label={`Press the new chord for ${catalogueLabel(def)}`}
                     placeholder="Press a chord…"
                     onKeyDown={(event) => onRecordKey(def.id, event)}
-                    onBlur={() => setRecording(null)}
+                    onBlur={() => {
+                      setRecording(null);
+                      setRecordingNote(undefined);
+                    }}
                   />
                 ) : token ? (
                   <kbd
@@ -482,6 +507,15 @@ function KeyboardPanel({
                 ) : (
                   <span className="settings-key-unbound">unbound</span>
                 )}
+                {recording === def.id && recordingNote ? (
+                  <span className="settings-key-recording-note">{recordingNote}</span>
+                ) : null}
+                {invalidOverride ? (
+                  <span className="settings-key-invalid">
+                    Invalid stored chord: <code>{rawOverride}</code>;{" "}
+                    {def.keybinding ? "using the default." : "no shortcut is active."}
+                  </span>
+                ) : null}
                 {others.length > 0 ? (
                   <span className="settings-key-conflict">
                     conflicts with {others.map((id) => labelById.get(id) ?? id).join(", ")}
@@ -491,7 +525,10 @@ function KeyboardPanel({
                   <button
                     type="button"
                     className="settings-seg-btn"
-                    onClick={() => setRecording(def.id)}
+                    onClick={() => {
+                      setRecordingNote(undefined);
+                      setRecording(def.id);
+                    }}
                     disabled={busy || malformed}
                   >
                     Set
@@ -519,6 +556,27 @@ function KeyboardPanel({
             </li>
           );
         })}
+        {unknownOverrides.map(([id, raw]) => (
+          <li key={id} className="settings-key-row settings-key-unknown">
+            <div className="settings-row-label">
+              <span className="settings-k">{id}</span>
+              <span className="settings-d">Unknown command</span>
+            </div>
+            <div className="settings-row-value settings-key-value">
+              <code>{raw === null ? "unbound" : raw}</code>
+              <span className="settings-key-controls">
+                <button
+                  type="button"
+                  className="settings-seg-btn"
+                  onClick={() => void write(id, undefined)}
+                  disabled={busy || malformed}
+                >
+                  Reset
+                </button>
+              </span>
+            </div>
+          </li>
+        ))}
       </ul>
     </section>
   );

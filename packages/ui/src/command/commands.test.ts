@@ -246,6 +246,66 @@ describe("command catalogue (single source)", () => {
     expect(catalogueDef("zoom.in")?.group).toBe("Zoom");
     expect(catalogueDef("lens.spec")).toBeUndefined();
   });
+
+  it("pins the full id/title/group/keybinding matrix across catalogue, palette, and menu contexts", () => {
+    const expected = [
+      ["palette.toggle", "Toggle command palette", "General", "mod+k"],
+      ["nav.back", "Back", "Navigate", "mod+["],
+      ["nav.forward", "Forward", "Navigate", "mod+]"],
+      ["nav.projects", "Back to projects", "Navigate", null],
+      ["nav.project", "Go to project…", "Navigate", null],
+      ["nav.draft", "Go to Draft", "Navigate", null],
+      ["nav.paper", "Go to Paper", "Navigate", null],
+      ["nav.settings", "Open Settings", "Navigate", null],
+      ["nav.openReview", "Open review…", "Navigate", null],
+      ["nav.reviewDirectly", "Review directly", "Navigate", null],
+      ["nav.files", "Show Files view", "Navigate", null],
+      ["nav.canvases", "Show Canvases view", "Navigate", null],
+      ["review.retry", "Retry the AI review", "Review", null],
+      ["review.regenerate", "Regenerate the review", "Review", null],
+      ["review.dual", "Dual-model review: switch to quick single-model", "Review", null],
+      ["zoom.in", "Zoom in", "Zoom", "l"],
+      ["zoom.out", "Zoom out", "Zoom", "h"],
+      ["view.overlay", "Paint the blast-radius overlay", "Appearance", null],
+      ["view.scheme", "Switch to the bright room", "Appearance", null],
+      ["door.choose", "Choose a repository", "Start", null],
+    ];
+    const workspace = context();
+    const matrix = menuTemplate(workspace).flatMap((section) =>
+      section.items.map((item) => [item.id, item.label, section.group, item.accelerator ?? null]),
+    );
+    expect(matrix).toEqual(expected);
+
+    const contexts = [
+      workspace,
+      context({ screen: "frontDoor", surfaceKind: "projects", canvasReady: false }),
+      context({
+        screen: "directEntry",
+        surfaceKind: "projects",
+        canvasReady: false,
+        deepReviewOn: false,
+        overlayOn: true,
+        scheme: "light",
+      }),
+    ];
+    for (const ctx of contexts) {
+      const menu = new Map(
+        menuTemplate(ctx)
+          .flatMap((section) => section.items.map((item) => ({ ...item, group: section.group })))
+          .map((item) => [item.id, item]),
+      );
+      for (const command of buildCommands(ctx)) {
+        const item = menu.get(command.id);
+        if (!item) continue;
+        expect([command.title, command.group, command.keybinding ?? null]).toEqual([
+          item.label,
+          item.group,
+          item.accelerator ?? null,
+        ]);
+      }
+      expect([...menu.keys()]).toEqual(COMMAND_CATALOGUE.map((definition) => definition.id));
+    }
+  });
 });
 
 describe("normalizeChord + effectiveKeybinding", () => {
@@ -255,6 +315,7 @@ describe("normalizeChord + effectiveKeybinding", () => {
     expect(normalizeChord("l")).toEqual({ mod: false, key: "l" });
     expect(normalizeChord("")).toBeNull();
     expect(normalizeChord("mod+")).toBeNull();
+    expect(normalizeChord("%%%")).toBeNull();
   });
 
   it("overlays the override map: default, override, explicit unbind", () => {
@@ -264,10 +325,9 @@ describe("normalizeChord + effectiveKeybinding", () => {
     expect(effectiveKeybinding(def, { "nav.back": null })).toBeNull();
     // A command with no default and no override fires from no chord.
     expect(effectiveKeybinding({ id: "review.retry" }, {})).toBeNull();
-    // A garbage stored token stays reportable but the command falls back to default.
-    const garbage = effectiveKeybinding(def, { "nav.back": "%%%" });
-    expect(garbage).toBe("%%%");
-    expect(normalizeChord(garbage ?? "")).toEqual({ mod: false, key: "%%%" });
+    // A garbage stored token stays in the override map for Settings to report, while
+    // the effective binding falls back to the catalogue default.
+    expect(effectiveKeybinding(def, { "nav.back": "mod+" })).toBe("mod+[");
   });
 });
 
@@ -280,7 +340,8 @@ describe("matchKeybinding", () => {
 
   it("matches a mod chord and a bare key, and misses when nothing binds", () => {
     expect(
-      matchKeybinding(commands, chordFromEvent({ key: "k", metaKey: true, ctrlKey: false }))?.id,
+      matchKeybinding(commands, chordFromEvent({ key: "k", metaKey: true, ctrlKey: false }, true))
+        ?.id,
     ).toBe("palette.toggle");
     expect(
       matchKeybinding(commands, chordFromEvent({ key: "l", metaKey: false, ctrlKey: false }))?.id,
@@ -295,14 +356,14 @@ describe("matchKeybinding", () => {
     expect(
       matchKeybinding(
         commands,
-        chordFromEvent({ key: "e", metaKey: true, ctrlKey: false }),
+        chordFromEvent({ key: "e", metaKey: true, ctrlKey: false }, true),
         overrides,
       )?.id,
     ).toBe("nav.back");
     expect(
       matchKeybinding(
         commands,
-        chordFromEvent({ key: "[", metaKey: true, ctrlKey: false }),
+        chordFromEvent({ key: "[", metaKey: true, ctrlKey: false }, true),
         overrides,
       ),
     ).toBeUndefined();
@@ -314,6 +375,48 @@ describe("matchKeybinding", () => {
         "zoom.in": null,
       }),
     ).toBeUndefined();
+  });
+
+  it("resolves a collision to the first command in registry order", () => {
+    const colliding = [
+      { id: "nav.back", keybinding: "mod+[" },
+      { id: "nav.forward", keybinding: "mod+[" },
+    ];
+    expect(
+      matchKeybinding(colliding, chordFromEvent({ key: "[", metaKey: true, ctrlKey: false }, true))
+        ?.id,
+    ).toBe("nav.back");
+  });
+
+  it("requires the platform-primary modifier and rejects Shift/Alt combinations", () => {
+    const toggle = [{ id: "palette.toggle", keybinding: "mod+k" }];
+    expect(
+      matchKeybinding(toggle, chordFromEvent({ key: "k", metaKey: false, ctrlKey: true }, true)),
+    ).toBeUndefined();
+    expect(
+      matchKeybinding(
+        toggle,
+        chordFromEvent(
+          { key: "K", metaKey: true, ctrlKey: false, shiftKey: true, altKey: false },
+          true,
+        ),
+      ),
+    ).toBeUndefined();
+  });
+
+  it("normalizes uppercase event keys and bracket symbols without losing them", () => {
+    expect(
+      matchKeybinding(
+        [{ id: "palette.toggle", keybinding: "mod+k" }],
+        chordFromEvent({ key: "K", metaKey: true, ctrlKey: false }, true),
+      )?.id,
+    ).toBe("palette.toggle");
+    expect(
+      matchKeybinding(
+        [{ id: "nav.back", keybinding: "mod+[" }],
+        chordFromEvent({ key: "[", metaKey: true, ctrlKey: false }, true),
+      )?.id,
+    ).toBe("nav.back");
   });
 });
 
@@ -368,5 +471,13 @@ describe("menuTemplate", () => {
 
     // A command the front door DOES offer is enabled.
     expect(byId.get("nav.settings")?.enabled).toBe(true);
+  });
+
+  it("falls back from an invalid stored chord and never projects the invalid token", () => {
+    const sections = menuTemplate(context(), { "nav.back": "mod+" });
+    const back = sections
+      .flatMap((section) => section.items)
+      .find((item) => item.id === "nav.back");
+    expect(back?.accelerator).toBe("mod+[");
   });
 });

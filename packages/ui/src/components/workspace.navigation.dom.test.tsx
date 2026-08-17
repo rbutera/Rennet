@@ -95,4 +95,43 @@ describe("CanvasWorkspace keybinding overrides (#44)", () => {
     fireEvent.keyDown(tab, { key: "ArrowRight" });
     expect(store.getState().zoom.level).toBe("element");
   });
+
+  it("an explicit zoom.in unbind also dead-keys the ArrowRight alias", () => {
+    const store = createViewStore({ angle: "decisions", zoom: { level: "rollup" } });
+    const { getByRole } = mount(
+      <CanvasWorkspace
+        canvases={demoCanvases()}
+        store={store}
+        keybindingOverrides={{ "zoom.in": null }}
+      />,
+    );
+    fireEvent.keyDown(getByRole("tab", { name: "Decisions" }), { key: "ArrowRight" });
+    expect(store.getState().zoom.level).toBe("rollup");
+  });
+
+  it("an explicit zoom.out unbind also dead-keys the Escape alias", () => {
+    const store = createViewStore({ angle: "decisions", zoom: { level: "cohort" } });
+    const { getByRole } = mount(
+      <CanvasWorkspace
+        canvases={demoCanvases()}
+        store={store}
+        keybindingOverrides={{ "zoom.out": null }}
+      />,
+    );
+    fireEvent.keyDown(getByRole("tab", { name: "Decisions" }), { key: "Escape" });
+    expect(store.getState().zoom.level).toBe("cohort");
+  });
+
+  it("a registry binding wins over the literal bracket rotation alias", () => {
+    const store = createViewStore({ angle: "decisions", zoom: { level: "rollup" } });
+    const { getByRole } = mount(
+      <CanvasWorkspace
+        canvases={demoCanvases()}
+        store={store}
+        keybindingOverrides={{ "nav.settings": "]" }}
+      />,
+    );
+    fireEvent.keyDown(getByRole("tab", { name: "Decisions" }), { key: "]" });
+    expect(store.getState().angle).toBe("decisions");
+  });
 });

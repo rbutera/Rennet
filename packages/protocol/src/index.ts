@@ -2606,17 +2606,26 @@ export interface RennetBridge {
   onMenuRun?(listener: (id: string) => void): () => void;
 }
 
-/** One projected application-menu item (#44): a registry command rendered in the menu. */
-export interface MenuTemplateItem {
-  id: string;
-  label: string;
-  /** The effective `mod+`-token binding, for MAIN to render as an accelerator. */
-  accelerator?: string;
-  enabled: boolean;
-}
+/** Runtime-owned application-menu wire shapes (#44), shared by preload and MAIN. */
+export const menuTemplateItemSchema = z
+  .object({
+    id: z.string().min(1),
+    label: z.string().min(1),
+    accelerator: z.string().min(1).optional(),
+    enabled: z.boolean(),
+  })
+  .strict();
 
-/** One projected menu section (#44), grouped by the command's registry group. */
-export interface MenuTemplateSection {
-  group: string;
-  items: MenuTemplateItem[];
-}
+export const menuTemplateSectionSchema = z
+  .object({
+    group: z.string().min(1),
+    items: z.array(menuTemplateItemSchema),
+  })
+  .strict();
+
+export const menuTemplateSectionsSchema = z.array(menuTemplateSectionSchema);
+export const menuRunPayloadSchema = z.object({ id: z.string().min(1) }).strict();
+
+export type MenuTemplateItem = z.infer<typeof menuTemplateItemSchema>;
+export type MenuTemplateSection = z.infer<typeof menuTemplateSectionSchema>;
+export type MenuRunPayload = z.infer<typeof menuRunPayloadSchema>;

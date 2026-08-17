@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  COMMAND_CATALOGUE,
   type Command,
   effectiveKeybinding,
   filterCommands,
@@ -36,9 +37,31 @@ export function CommandPalette({ open, commands, overrides, onClose }: CommandPa
   // Conflict disclosure (#44): every chord claimed by more than one command that can
   // fire in this context. Both colliding rows show the chord with a plain collision
   // note naming the other command — never a block, never a refused write (Rule Zero).
-  const conflicts = useMemo(() => findConflicts(commands, overrides), [commands, overrides]);
+  const conflicts = useMemo(
+    () =>
+      findConflicts(
+        [
+          ...commands,
+          ...COMMAND_CATALOGUE.filter(
+            (definition) => !commands.some((command) => command.id === definition.id),
+          ),
+        ],
+        overrides,
+      ),
+    [commands, overrides],
+  );
   const titleById = useMemo(
-    () => new Map(commands.map((command) => [command.id, command.title])),
+    () =>
+      new Map([
+        ...COMMAND_CATALOGUE.map(
+          (definition) =>
+            [
+              definition.id,
+              typeof definition.title === "string" ? definition.title : definition.id,
+            ] as const,
+        ),
+        ...commands.map((command) => [command.id, command.title] as const),
+      ]),
     [commands],
   );
 

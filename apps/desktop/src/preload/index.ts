@@ -1,4 +1,10 @@
-import type { ProjectProcessEvent, RennetBridge, ReviewAskStreamEvent } from "@rennet/protocol";
+import {
+  menuRunPayloadSchema,
+  menuTemplateSectionsSchema,
+  type ProjectProcessEvent,
+  type RennetBridge,
+  type ReviewAskStreamEvent,
+} from "@rennet/protocol";
 import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
 
 const PROGRESS_CHANNEL = "rennet:progress";
@@ -36,12 +42,14 @@ const bridge: RennetBridge = {
   },
   // Push the projected application-menu template to MAIN (#44). One-way; MAIN builds
   // and sets the menu.
-  updateMenu: (sections) => ipcRenderer.send(MENU_UPDATE_CHANNEL, sections),
+  updateMenu: (sections) =>
+    ipcRenderer.send(MENU_UPDATE_CHANNEL, menuTemplateSectionsSchema.parse(sections)),
   // Subscribe to menu-item activations (#44): MAIN sends the clicked command id; the
   // renderer runs the same handler the palette would. Returns an unsubscribe.
   onMenuRun: (listener) => {
-    const handler = (_event: IpcRendererEvent, payload: { id: string }): void => {
-      listener(payload.id);
+    const handler = (_event: IpcRendererEvent, payload: unknown): void => {
+      const parsed = menuRunPayloadSchema.safeParse(payload);
+      if (parsed.success) listener(parsed.data.id);
     };
     ipcRenderer.on(MENU_RUN_CHANNEL, handler);
     return () => ipcRenderer.removeListener(MENU_RUN_CHANNEL, handler);

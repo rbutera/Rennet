@@ -30,6 +30,26 @@ A user SHALL be able to set a different chord for any catalogued command, unbind
 - **WHEN** the user resets an overridden command
 - **THEN** the override entry is removed from the stored map and the default chord is effective again
 
+#### Scenario: A settings write updates the running app
+- **WHEN** Set, Unbind, or Reset succeeds in Settings
+- **THEN** dispatch, palette conflict disclosure, and the application menu re-derive from the returned map without a restart
+
+#### Scenario: A command without a default receives its first binding
+- **WHEN** the user assigns a chord to any catalogue command whose default is absent
+- **THEN** the Keyboard row accepts it and the app-wide dispatcher runs that command from the new chord
+
+#### Scenario: An invalid stored chord falls back honestly
+- **WHEN** a stored override does not match the v1 chord grammar, such as `mod+`
+- **THEN** the command uses its default, the invalid token is not projected to dispatch or the menu, and Settings displays the raw stored token as invalid
+
+#### Scenario: Unsupported modifiers are not captured lossily
+- **WHEN** the recorder receives Shift or Alt with another key
+- **THEN** it writes nothing and shows a plain inline unsupported-combination note
+
+#### Scenario: Modified chords use the platform-primary modifier
+- **WHEN** a `mod+` chord is matched
+- **THEN** Meta is required on macOS and Control is required on Windows/Linux, while the other modifier does not match
+
 ### Requirement: Chord conflicts are detected and disclosed, never blocked
 When two commands' effective bindings claim the same chord, the collision SHALL be detected and disclosed wherever the chord is shown — both palette rows and both settings rows name it — and the disclosure SHALL be the whole intervention: writing a conflicting override SHALL be accepted and persisted, both commands SHALL remain visible and individually editable, and there SHALL be no confirmation step, blocking wizard, or refused write on account of a conflict.
 
@@ -55,3 +75,22 @@ The desktop app SHALL set a real application menu whose command items are projec
 #### Scenario: A remap reaches the menu
 - **WHEN** the user overrides a command's chord
 - **THEN** the menu item's displayed accelerator updates to the new chord without an app restart
+
+#### Scenario: macOS has no native command accelerators
+- **WHEN** MAIN builds the menu on macOS
+- **THEN** registry command items carry inert shortcut text and no accelerator field, leaving the renderer as the sole chord dispatcher
+
+#### Scenario: A malformed menu update preserves the standing menu
+- **WHEN** MAIN receives a menu update that fails the protocol-owned runtime schema
+- **THEN** it rejects the payload without building or replacing the current application menu
+
+### Requirement: Registry chords have one dispatcher and aliases yield
+The app-wide dispatcher SHALL match all effective registry chords, including bare bindings, while bare chords SHALL remain inert in editable controls. When CanvasWorkspace handles a registry chord it SHALL stop propagation so the app dispatcher does not run it again. Hardcoded canvas aliases SHALL run only when no effective registry binding claims the pressed chord, and an explicit unbind of the aliased zoom command SHALL disable its aliases too.
+
+#### Scenario: A modified zoom chord fires once
+- **WHEN** CanvasWorkspace handles an effective modified zoom binding
+- **THEN** the zoom altitude advances exactly once
+
+#### Scenario: An alias yields to an effective binding or unbind
+- **WHEN** a bracket, arrow, or Escape alias contradicts an effective registry binding or explicit zoom unbind
+- **THEN** the alias does not rotate or zoom the canvas

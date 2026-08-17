@@ -556,4 +556,109 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
     // No confirmation dialog/element is ever rendered.
     expect(container.querySelector("[role='alertdialog']")).toBeNull();
   });
+
+  it("Keyboard: renders no-default commands and assigns their first chord", async () => {
+    const { bridge, calls } = fakeBridge();
+    const { container, getByRole, getByLabelText } = mount(
+      <SettingsScreen bridge={bridge} onBack={vi.fn()} />,
+    );
+    fireEvent.click(getByRole("tab", { name: "Keyboard" }));
+    await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
+
+    const settingsRow = [...container.querySelectorAll(".settings-key-row")].find((row) =>
+      row.textContent?.includes("Open Settings"),
+    );
+    expect(settingsRow?.textContent).toContain("unbound");
+    fireEvent.click(settingsRow?.querySelector("button") as HTMLButtonElement);
+    fireEvent.keyDown(getByLabelText("Press the new chord for Open Settings"), { key: "s" });
+
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) =>
+            call.name === "settings.setKeybinding" &&
+            (call.input as { id?: string; keybinding?: string }).id === "nav.settings" &&
+            (call.input as { keybinding?: string }).keybinding === "s",
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("Keyboard: refuses Shift/Alt capture inline without writing", async () => {
+    const { bridge, calls } = fakeBridge();
+    const { container, getByRole, getByLabelText } = mount(
+      <SettingsScreen bridge={bridge} onBack={vi.fn()} />,
+    );
+    fireEvent.click(getByRole("tab", { name: "Keyboard" }));
+    await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
+    const backRow = [...container.querySelectorAll(".settings-key-row")].find((row) =>
+      row.textContent?.includes("Back"),
+    );
+    fireEvent.click(backRow?.querySelector("button") as HTMLButtonElement);
+    fireEvent.keyDown(getByLabelText("Press the new chord for Back"), {
+      key: "J",
+      shiftKey: true,
+    });
+
+    expect(container.querySelector(".settings-key-recording-note")?.textContent).toMatch(
+      /Shift and Alt combinations are not supported/i,
+    );
+    expect(calls.some((call) => call.name === "settings.setKeybinding")).toBe(false);
+  });
+
+  it("Keyboard: reports invalid raw overrides and lets unknown ids be reset", async () => {
+    const staleView: SettingsView = {
+      ...view,
+      keybindings: { "palette.toggle": "mod+", "retired.command": "mod+e" },
+    };
+    const { bridge, calls } = fakeBridge({ "settings.get": staleView });
+    const { container, getByRole } = mount(<SettingsScreen bridge={bridge} onBack={vi.fn()} />);
+    fireEvent.click(getByRole("tab", { name: "Keyboard" }));
+    await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
+
+    expect(container.querySelector(".settings-key-invalid")?.textContent).toContain("mod+");
+    const staleRow = [...container.querySelectorAll(".settings-key-row")].find((row) =>
+      row.textContent?.includes("retired.command"),
+    );
+    expect(staleRow?.textContent).toContain("mod+e");
+    fireEvent.click(staleRow?.querySelector("button") as HTMLButtonElement);
+    await waitFor(() =>
+      expect(
+        calls.some(
+          (call) =>
+            call.name === "settings.setKeybinding" &&
+            (call.input as { id?: string }).id === "retired.command" &&
+            !("keybinding" in (call.input as object)),
+        ),
+      ).toBe(true),
+    );
+  });
+
+  it("Keyboard: recorder stops propagation and publishes one write outcome to the host", async () => {
+    const { bridge } = fakeBridge();
+    const bubbled = vi.fn();
+    const onKeybindingsChange = vi.fn();
+    const { container, getByRole, getByLabelText } = mount(
+      <div role="application" onKeyDown={bubbled}>
+        <SettingsScreen
+          bridge={bridge}
+          onBack={vi.fn()}
+          onKeybindingsChange={onKeybindingsChange}
+        />
+      </div>,
+    );
+    fireEvent.click(getByRole("tab", { name: "Keyboard" }));
+    await waitFor(() => expect(container.querySelector(".settings-keys")).not.toBeNull());
+    const backRow = [...container.querySelectorAll(".settings-key-row")].find((row) =>
+      row.textContent?.includes("Back"),
+    );
+    fireEvent.click(backRow?.querySelector("button") as HTMLButtonElement);
+    fireEvent.keyDown(getByLabelText("Press the new chord for Back"), {
+      key: "k",
+      metaKey: true,
+    });
+
+    await waitFor(() => expect(onKeybindingsChange).toHaveBeenCalledTimes(1));
+    expect(bubbled).not.toHaveBeenCalled();
+  });
 });

@@ -70,6 +70,7 @@ import {
   type Command,
   type CommandContext,
   chordFromEvent,
+  commandFromCatalogue,
   type KeybindingOverrides,
   matchKeybinding,
   menuTemplate,
@@ -678,25 +679,24 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   const canvasOverlayOn = useViewStore(viewStore, (state) => state.overlayOn);
   const canvasZoomLevel = useViewStore(viewStore, (state) => state.zoom.level);
 
-  // App-wide keyboard dispatch routes through the registry (#44): a pressed mod-chord
+  // App-wide keyboard dispatch routes through the registry (#44): every pressed chord
   // is matched against the live commands' EFFECTIVE bindings (catalogue default overlaid
   // by the user's overrides), so a remapped chord runs its command and the old chord
-  // stops. Only mod-chords are handled here (bare canvas keys belong to the workspace's
-  // own listener); the palette toggle fires even inside a text field, every other
-  // command stays out of editing controls. The list + overrides are read from a ref so
-  // the listener subscribes once.
+  // stops. Workspace stops propagation after handling one of its own registry commands;
+  // every other chord reaches this single app dispatcher. Bare chords never fire from an
+  // editing control; the modified palette toggle remains available there.
   useEffect(() => {
     function onKey(event: KeyboardEvent): void {
-      if (!event.metaKey && !event.ctrlKey) return;
       const { commands, overrides } = dispatchRef.current;
-      const match = matchKeybinding(commands, chordFromEvent(event), overrides);
+      const pressed = chordFromEvent(event);
+      const match = matchKeybinding(commands, pressed, overrides);
       if (!match) return;
       const target = event.target;
       const editing =
         target instanceof HTMLInputElement ||
         target instanceof HTMLTextAreaElement ||
         (target instanceof HTMLElement && target.isContentEditable);
-      if (editing && match.id !== "palette.toggle") return;
+      if (editing && (!pressed.mod || match.id !== "palette.toggle")) return;
       event.preventDefault();
       match.run();
     }
@@ -2225,13 +2225,11 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // The palette-toggle is a registry command whose `run` is supplied here (like every
   // other handler). It is not emitted into the palette list itself, but it joins the
   // dispatch + menu list so its ⌘K chord (remappable) routes through the same matcher.
-  const paletteCommand: Command = {
-    id: "palette.toggle",
-    title: "Toggle command palette",
-    group: "General",
-    keybinding: "mod+k",
-    run: () => setPaletteOpen((open) => !open),
-  };
+  const paletteCommand: Command = commandFromCatalogue(
+    "palette.toggle",
+    commandContext ?? undefined,
+    () => setPaletteOpen((open) => !open),
+  );
   const dispatchCommands = [paletteCommand, ...builtCommands];
   // Publish the live dispatch list for the stable window keydown listener (above).
   dispatchRef.current = { commands: dispatchCommands, overrides: keybindingOverrides };
@@ -2328,6 +2326,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           scheme={effectiveScheme}
           onBack={() => setSettingsOpen(false)}
           onSchemeChange={setScheme}
+          onKeybindingsChange={setKeybindingOverrides}
         />
       </>
     );

@@ -40,3 +40,15 @@ Red-first throughout: each behaviour lands as a failing test before its implemen
 ## 7. Gate
 
 - [x] 7.1 `pnpm check` green (includes the positive controls from 1.1); push only after.
+
+## 8. Consolidated review follow-up
+
+- [x] 8.1 Red/green: lift Settings write outcomes into `RennetApp`; dispatch every catalogue chord (including bare first bindings); pin first-match conflict semantics; derive `palette.toggle` from the catalogue; include catalogue-only commands in palette conflicts; strengthen the full presentation matrix golden.
+- [x] 8.2 Red/green: omit native accelerator fields on macOS while retaining inert shortcut text; keep `registerAccelerator: false` on Windows/Linux; replace triplicated menu wire types with protocol-owned runtime schemas; reject malformed updates without replacing the standing menu.
+- [x] 8.3 Red/green: stop propagation after Workspace handles a registry chord; resolve the effective registry before bracket/arrow/Escape aliases; explicit zoom unbinds dead-key their aliases; full-mount modified zoom advances once.
+- [x] 8.4 Red/green: recorder stops propagation and refuses Shift/Alt combinations inline; invalid stored tokens fall back to defaults and remain visibly raw; all catalogue rows render; unknown-id overrides remain resettable; platform-primary modifier, uppercase, and bracket matching are pinned.
+- [x] 8.5 Correct user/developer/OpenSpec copy to first-match wins and document the effective v1 grammar, fallback, menu, alias, and live-update behavior.
+
+## 9. Follow-up gate
+
+- [x] 9.1 `NX_DAEMON=false pnpm check` green; commit locally; do not push.

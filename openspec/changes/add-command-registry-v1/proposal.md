@@ -21,7 +21,7 @@ Issue #44's palette shipped long ago: `buildCommands` in `packages/ui/src/comman
 
 ### Modified Capabilities
 
-<!-- none: windows-native-runtime's "Shortcut labels are platform-aware" requirement stays true and untouched — the palette label path is unchanged and menu accelerators are rendered per-platform by Electron itself. -->
+- `windows-native-runtime`: shortcut matching now requires the platform-primary modifier instead of treating Meta and Control as interchangeable on every platform.
 
 ## Impact
 
