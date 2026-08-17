@@ -12,7 +12,7 @@ import {
 //
 // The transport contract: yield the raw `omp --mode rpc` frames, then exactly ONE
 // synthetic `{ rennet: "turn-result", ... }` terminal frame carrying exitCode, the
-// captured final text, usage, and the observed cost. The adapter owns normalization,
+// captured final text. The adapter owns normalization,
 // seq, and the terminal outcome; these tests inject frames and assert the normalized
 // stream. Every shape here is a DOCUMENTED omp `.d.ts` shape — no turn has been run.
 
@@ -40,7 +40,11 @@ function fakeTransport(frames: readonly Frame[]): {
 }
 
 function adapter(fn: OmpTurnTransport): OmpAdapter {
-  return new OmpAdapter({ binaryPath: "/x/omp", transport: fn, version: "17.1.3" });
+  return new OmpAdapter({
+    binaryPath: "/x/omp",
+    transport: fn,
+    version: "17.1.3",
+  });
 }
 
 async function drain(session: {
@@ -56,32 +60,26 @@ async function drain(session: {
 }
 
 const READY = { type: "ready", protocolVersion: 1 };
-const RESULT_OK = (finalText: string | null, usage: unknown = null) => ({
+const RESULT_OK = (finalText: string | null) => ({
   rennet: "turn-result",
   exitCode: 0,
   finalText,
-  usage,
-  cost: null,
 });
 
 describe("OmpAdapter", () => {
-  it("normalizes a completed turn with structured output, usage, deltas, and increasing seq", async () => {
+  it("normalizes a completed turn with final text, deltas, and increasing seq", async () => {
     const structured = { ok: true };
-    const usage = {
-      input: 100,
-      output: 20,
-      cacheRead: 60,
-      cacheWrite: 5,
-      reasoning: 3,
-      total: 188,
-    };
     const t = fakeTransport([
       READY,
       { type: "agent_start" },
       { type: "turn_start" },
       {
         type: "message_update",
-        assistantMessageEvent: { type: "text_delta", delta: "wor", contentIndex: 0 },
+        assistantMessageEvent: {
+          type: "text_delta",
+          delta: "wor",
+          contentIndex: 0,
+        },
       },
       {
         type: "message_end",
@@ -90,13 +88,7 @@ describe("OmpAdapter", () => {
           content: [{ type: "text", text: JSON.stringify(structured) }],
         },
       },
-      {
-        type: "response",
-        command: "get_session_stats",
-        success: true,
-        data: { sessionId: "s1", cost: 0.01, tokens: usage },
-      },
-      RESULT_OK(JSON.stringify(structured), usage),
+      RESULT_OK(JSON.stringify(structured)),
     ]);
     const session = await adapter(t.fn).createSession({
       cwd: "/repo",
@@ -110,13 +102,32 @@ describe("OmpAdapter", () => {
     expect(events.some((e) => e.kind === "text.message")).toBe(true);
     expect(outcome?.status).toBe("completed");
     if (outcome?.status === "completed") {
-      expect(outcome.structuredOutput).toEqual(structured);
-      expect(outcome.usage).toEqual(usage);
+      expect(outcome.finalText).toBe(JSON.stringify(structured));
+      expect(outcome.structuredOutput).toBeUndefined();
+      expect(outcome.usage).toBeUndefined();
     }
     const seqs = events.map((e) => e.seq);
     expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
     expect(new Set(seqs).size).toBe(seqs.length);
     expect(events[0]?.native).toEqual(READY);
+  });
+
+  it("does not claim structured output for invalid-but-JSON text that omp never schema-validated", async () => {
+    const raw = '{"ok":"wrong type"}';
+    const t = fakeTransport([READY, RESULT_OK(raw)]);
+    const session = await adapter(t.fn).createSession({
+      cwd: "/repo",
+      outputSchema: {
+        type: "object",
+        properties: { ok: { type: "boolean" } },
+        required: ["ok"],
+        additionalProperties: false,
+      },
+    });
+    await session.send({ prompt: "go" });
+    const { outcome } = await drain(session);
+    expect(outcome).toMatchObject({ status: "completed", finalText: raw });
+    if (outcome?.status === "completed") expect(outcome.structuredOutput).toBeUndefined();
   });
 
   it("emits session.started only once when both ready and agent_start arrive", async () => {
@@ -145,8 +156,18 @@ describe("OmpAdapter", () => {
   it("maps tool execution frames to a started/output lifecycle with ToolKind", async () => {
     const t = fakeTransport([
       READY,
-      { type: "tool_execution_start", toolCallId: "c1", toolName: "bash", args: { command: "ls" } },
-      { type: "tool_execution_end", toolCallId: "c1", toolName: "bash", result: "a.ts\n" },
+      {
+        type: "tool_execution_start",
+        toolCallId: "c1",
+        toolName: "bash",
+        args: { command: "ls" },
+      },
+      {
+        type: "tool_execution_end",
+        toolCallId: "c1",
+        toolName: "bash",
+        result: "a.ts\n",
+      },
       {
         type: "tool_execution_start",
         toolCallId: "c2",
@@ -189,8 +210,6 @@ describe("OmpAdapter", () => {
         rennet: "turn-result",
         exitCode: 1,
         finalText: null,
-        usage: null,
-        cost: null,
         stderr: "boom",
       },
     ]);
@@ -202,6 +221,23 @@ describe("OmpAdapter", () => {
       expect(outcome.error.class).toBeTruthy();
       expect(["harness", "provider", "transport", "adapter"]).toContain(outcome.error.origin);
     }
+  });
+
+  it("maps any rejected RPC response to a failed outcome and preserves the response as native evidence", async () => {
+    const rejected = {
+      id: "prompt-1",
+      type: "response",
+      command: "prompt",
+      success: false,
+      error: "prompt rejected",
+      code: "INVALID_PROMPT",
+    };
+    const t = fakeTransport([READY, rejected, RESULT_OK(null)]);
+    const session = await adapter(t.fn).createSession({ cwd: "/repo" });
+    await session.send({ prompt: "go" });
+    const { events, outcome } = await drain(session);
+    expect(outcome?.status).toBe("failed");
+    expect(events.some((event) => event.kind === "error" && event.native === rejected)).toBe(true);
   });
 
   it("closes with a protocol failure when the stream ends without a terminal frame", async () => {
@@ -220,13 +256,14 @@ describe("OmpAdapter", () => {
         rennet: "turn-result",
         exitCode: 0,
         finalText: null,
-        usage: null,
-        cost: null,
         aborted: spec.signal?.aborted ?? false,
       }),
     ]);
     const abort = new AbortController();
-    const session = await adapter(t.fn).createSession({ cwd: "/repo", signal: abort.signal });
+    const session = await adapter(t.fn).createSession({
+      cwd: "/repo",
+      signal: abort.signal,
+    });
     await session.send({ prompt: "go" });
     abort.abort();
     const { outcome } = await drain(session);
@@ -264,8 +301,6 @@ describe("OmpAdapter", () => {
           rennet: "turn-result",
           exitCode: 0,
           finalText: null,
-          usage: null,
-          cost: null,
           aborted: true,
         };
       },
@@ -276,17 +311,51 @@ describe("OmpAdapter", () => {
     await Promise.resolve();
     await session.interrupt();
     expect(terminated).toBe(true);
-    await expect(draining).resolves.toMatchObject({ outcome: { status: "cancelled" } });
+    await expect(draining).resolves.toMatchObject({
+      outcome: { status: "cancelled" },
+    });
     await session.close();
   });
 
-  it("throws a plain error on a second events subscription", async () => {
+  it("settles a failed outcome and close when the injected transport throws synchronously", async () => {
+    const transport: OmpTurnTransport = () => {
+      throw new Error("sync construction failed");
+    };
+    const session = await adapter(transport).createSession({ cwd: "/repo" });
+    const draining = drain(session);
+    await expect(session.send({ prompt: "go" })).rejects.toThrow("sync construction failed");
+    await expect(draining).resolves.toMatchObject({
+      outcome: { status: "failed" },
+    });
+    await expect(session.close()).resolves.toBeUndefined();
+  });
+
+  it("settles a failed outcome and close when the injected transport fails asynchronously", async () => {
+    const transport: OmpTurnTransport = () => ({
+      async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
+        yield READY;
+        throw new Error("async spawn failed");
+      },
+    });
+    const session = await adapter(transport).createSession({ cwd: "/repo" });
+    await session.send({ prompt: "go" });
+    const draining = drain(session);
+    await expect(draining).resolves.toMatchObject({
+      outcome: { status: "failed" },
+    });
+    await expect(session.close()).resolves.toBeUndefined();
+  });
+
+  it("makes the same captured events handle single-use", async () => {
     const session = await adapter(fakeTransport([RESULT_OK(null)]).fn).createSession({
       cwd: "/repo",
     });
-    const first = session.events;
-    expect(first).toBeDefined();
-    expect(() => session.events).toThrow("omp session events may only be subscribed to once");
+    const captured = session.events;
+    await session.send({ prompt: "go" });
+    for await (const _event of captured) void _event;
+    await expect(async () => {
+      for await (const _event of captured) void _event;
+    }).rejects.toThrow("omp session events may only be subscribed to once");
   });
 
   it("builds an evidence-derived descriptor: no evidence → every layer false, range honest-absent", () => {
@@ -297,8 +366,16 @@ describe("OmpAdapter", () => {
       expect(cap.availableInSession).toBe(false);
     }
     expect(a.descriptor.id).toBe("omp");
-    // No omp entry in harness-tested-range.json yet → the honest-absent default range.
-    expect(a.descriptor.testedRange).toEqual({ min: "0.0.0", maxTested: "0.0.0" });
+    // No omp entry in harness-tested-range.json yet → no fabricated tested range.
+    expect(a.descriptor.testedRange).toBeUndefined();
+  });
+
+  it("reports an explicit untested health state while no real-run range exists", async () => {
+    await expect(adapter(fakeTransport([]).fn).health()).resolves.toEqual({
+      state: "degraded",
+      version: "17.1.3",
+      reason: "untested",
+    });
   });
 
   it("constructing the adapter and reading the descriptor invokes no transport", () => {
@@ -311,7 +388,11 @@ describe("OmpAdapter", () => {
 
 describe("buildOmpTurnArgs", () => {
   it("assembles the capable-by-default RPC argv with no approval-requesting or read-only flag", () => {
-    const args = buildOmpTurnArgs({ cwd: "/repo", model: "opus", configPath: "/tmp/omp.yml" });
+    const args = buildOmpTurnArgs({
+      cwd: "/repo",
+      model: "opus",
+      extensionPath: "/tmp/rennet-omp-turn",
+    });
     // The RPC transport (the pi-compatible surface; NOT acp).
     expect(args).toContain("--mode");
     expect(args[args.indexOf("--mode") + 1]).toBe("rpc");
@@ -322,11 +403,12 @@ describe("buildOmpTurnArgs", () => {
     // Real repo cwd.
     expect(args).toContain("--cwd");
     expect(args[args.indexOf("--cwd") + 1]).toBe("/repo");
-    // Model + MCP config overlay.
+    // Model + scratch extension containing omp's supported mcp.json source.
     expect(args).toContain("--model");
     expect(args).toContain("opus");
-    expect(args).toContain("--config");
-    expect(args).toContain("/tmp/omp.yml");
+    expect(args).toContain("--extension");
+    expect(args).toContain("/tmp/rennet-omp-turn");
+    expect(args).not.toContain("--config");
     // Denylist: no approval-requesting / write-gating / read-only / session-resume / acp.
     for (const banned of [
       "--approval-mode",
@@ -346,10 +428,10 @@ describe("buildOmpTurnArgs", () => {
     expect(args.filter((a) => /approv/i.test(a))).toEqual(["--auto-approve"]);
   });
 
-  it("omits model/config flags when absent", () => {
+  it("omits model/extension flags when absent", () => {
     const args = buildOmpTurnArgs({ cwd: "/repo" });
     expect(args).not.toContain("--model");
-    expect(args).not.toContain("--config");
+    expect(args).not.toContain("--extension");
     expect(args).toEqual(["--mode", "rpc", "--auto-approve", "--no-session", "--cwd", "/repo"]);
   });
 

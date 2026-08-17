@@ -19,6 +19,8 @@ interface Fixture {
   dirContents?: Record<string, readonly string[]>;
   executables?: ReadonlySet<string>;
   versions?: Record<string, string>;
+  runtimeVersions?: Record<string, string>;
+  pathExt?: string;
 }
 
 function recordingDeps(fixture: Fixture): { deps: DiscoveryDeps; accessed: string[] } {
@@ -39,6 +41,11 @@ function recordingDeps(fixture: Fixture): { deps: DiscoveryDeps; accessed: strin
       accessed.push(path);
       return Promise.resolve(fixture.versions?.[path] ?? null);
     },
+    probeVersionWithRuntime: (runtimePath, scriptPath) => {
+      accessed.push(`${runtimePath} ${scriptPath}`);
+      return Promise.resolve(fixture.runtimeVersions?.[scriptPath] ?? null);
+    },
+    pathExt: fixture.pathExt,
   };
   return { deps, accessed };
 }
@@ -305,10 +312,15 @@ describe("discoverOmp (#26 — Bun-aware health)", () => {
       home: HOME,
       dirContents: { [BUN_BIN]: ["omp", "bun"], "/usr/bin": ["ls"] },
       executables: new Set([omp, bun]),
-      versions: { [omp]: "17.1.3", [bun]: "1.3.14" },
+      versions: { [bun]: "1.3.14" },
+      runtimeVersions: { [omp]: "17.1.3" },
     });
     const result = await discoverOmp(deps);
-    expect(result.chosen).toEqual({ path: omp, version: "17.1.3" });
+    expect(result.chosen).toEqual({
+      path: omp,
+      version: "17.1.3",
+      runtimePath: bun,
+    });
     expect(result.health).toEqual({ state: "ready", version: "17.1.3" });
   });
 
@@ -319,7 +331,7 @@ describe("discoverOmp (#26 — Bun-aware health)", () => {
       home: HOME,
       dirContents: { [BUN_BIN]: ["omp"] }, // no bun
       executables: new Set([omp]),
-      versions: { [omp]: "17.1.3" },
+      runtimeVersions: { [omp]: "17.1.3" },
     });
     const result = await discoverOmp(deps);
     // No session against the slot…
@@ -353,10 +365,15 @@ describe("discoverOmp (#26 — Bun-aware health)", () => {
       home: HOME,
       dirContents: { [BUN_BIN]: ["bun"] },
       executables: new Set([override, bun]),
-      versions: { [override]: "17.2.0", [bun]: "1.3.14" },
+      versions: { [bun]: "1.3.14" },
+      runtimeVersions: { [override]: "17.2.0" },
     });
     const result = await discoverOmp(deps, { explicitBin: override });
-    expect(result.chosen).toEqual({ path: override, version: "17.2.0" });
+    expect(result.chosen).toEqual({
+      path: override,
+      version: "17.2.0",
+      runtimePath: bun,
+    });
     expect(result.health).toEqual({ state: "ready", version: "17.2.0" });
   });
 
@@ -368,10 +385,15 @@ describe("discoverOmp (#26 — Bun-aware health)", () => {
       home: HOME,
       dirContents: { [BUN_BIN]: ["omp", "bun"] },
       executables: new Set([omp, bun]), // stale is NOT executable
-      versions: { [omp]: "17.1.3", [bun]: "1.3.14" },
+      versions: { [bun]: "1.3.14" },
+      runtimeVersions: { [omp]: "17.1.3" },
     });
     const result = await discoverOmp(deps, { explicitBin: stale });
-    expect(result.chosen).toEqual({ path: omp, version: "17.1.3" });
+    expect(result.chosen).toEqual({
+      path: omp,
+      version: "17.1.3",
+      runtimePath: bun,
+    });
   });
 
   it("never requests a credential path while discovering omp + bun", async () => {
@@ -379,10 +401,69 @@ describe("discoverOmp (#26 — Bun-aware health)", () => {
       home: HOME,
       dirContents: { [BUN_BIN]: ["omp", "bun"] },
       executables: new Set([omp, bun]),
-      versions: { [omp]: "17.1.3", [bun]: "1.3.14" },
+      versions: { [bun]: "1.3.14" },
+      runtimeVersions: { [omp]: "17.1.3" },
     });
     await discoverOmp(deps);
     expect(accessed.length).toBeGreaterThan(0);
     expect(accessed.filter(isCredentialPath)).toEqual([]);
+  });
+
+  it("resolves Bun first, enforces its floor, and probes omp through that exact runtime", async () => {
+    const calls: string[] = [];
+    const { deps } = recordingDeps({
+      home: HOME,
+      dirContents: { [BUN_BIN]: ["omp", "bun"] },
+      executables: new Set([omp, bun]),
+      versions: { [bun]: "1.3.14" },
+      runtimeVersions: { [omp]: "17.1.3" },
+    });
+    const wrapped: DiscoveryDeps = {
+      ...deps,
+      probeVersion: async (path) => {
+        calls.push(`direct:${path}`);
+        return deps.probeVersion(path);
+      },
+      probeVersionWithRuntime: async (runtimePath, scriptPath) => {
+        calls.push(`runtime:${runtimePath}:${scriptPath}`);
+        return deps.probeVersionWithRuntime?.(runtimePath, scriptPath) ?? null;
+      },
+    };
+    const result = await discoverOmp(wrapped);
+    expect(result.chosen?.runtimePath).toBe(bun);
+    expect(calls.indexOf(`direct:${bun}`)).toBeLessThan(calls.indexOf(`runtime:${bun}:${omp}`));
+    expect(calls).not.toContain(`direct:${omp}`);
+
+    const belowFloor = recordingDeps({
+      home: HOME,
+      dirContents: { [BUN_BIN]: ["omp", "bun"] },
+      executables: new Set([omp, bun]),
+      versions: { [bun]: "1.3.13" },
+      runtimeVersions: { [omp]: "17.1.3" },
+    });
+    const rejected = await discoverOmp(belowFloor.deps);
+    expect(rejected.chosen).toBeNull();
+    expect(rejected.health).toEqual(
+      expect.objectContaining({
+        state: "unavailable",
+        detail: expect.stringMatching(/1\.3\.14/),
+      }),
+    );
+  });
+
+  it("prefers a real omp install over an equally versioned asdf shim", async () => {
+    const shims = `${HOME}/.asdf/shims`;
+    const shim = `${shims}/omp`;
+    const { deps } = recordingDeps({
+      loginShellPath: shims,
+      envPath: shims,
+      home: HOME,
+      dirContents: { [shims]: ["omp"], [BUN_BIN]: ["omp", "bun"] },
+      executables: new Set([shim, omp, bun]),
+      versions: { [bun]: "1.3.14" },
+      runtimeVersions: { [shim]: "17.1.3", [omp]: "17.1.3" },
+    });
+    const result = await discoverOmp(deps);
+    expect(result.chosen?.path).toBe(omp);
   });
 });

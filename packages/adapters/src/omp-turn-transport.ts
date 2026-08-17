@@ -19,7 +19,6 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import { runConformance } from "@rennet/core";
 import { execa } from "execa";
 import {
@@ -39,19 +38,18 @@ import {
 } from "./omp-adapter";
 
 /**
- * Render the loopback MCP overlay omp loads via `--config`. omp configures MCP through a
- * config overlay (not per-key CLI flags), so the canvasOps@2 URL lands here rather than
- * in the wire mapping. YAML is `config.yml`-style; kept minimal and correctable on the
- * first real run.
+ * Render the loopback MCP declaration in omp's supported `mcp.json` shape. The file is
+ * placed at the root of a scratch extension and that directory is passed via
+ * `--extension`; `--config` is only a settings overlay and is not an MCP source.
  */
 export function renderOmpMcpConfig(
   mcpServers: Readonly<Record<string, { readonly url: string }>>,
 ): string {
-  const lines = ["mcpServers:"];
-  for (const [name, server] of Object.entries(mcpServers)) {
-    lines.push(`  ${name}:`, `    transport: http`, `    url: ${server.url}`);
-  }
-  return `${lines.join("\n")}\n`;
+  const entries = Object.entries(mcpServers).map(([name, server]) => [
+    name,
+    { type: "http", url: server.url },
+  ]);
+  return `${JSON.stringify({ mcpServers: Object.fromEntries(entries) }, null, 2)}\n`;
 }
 
 /** The process effects the transport needs, injected so the wiring is testable. */
@@ -59,7 +57,7 @@ export interface OmpTransportEffects {
   readonly mkdtemp: (prefix: string) => Promise<string>;
   readonly writeFile: (path: string, data: string) => Promise<void>;
   readonly rm: (path: string) => Promise<void>;
-  /** Spawn `omp --mode rpc`, write the prompt command to stdin, yield raw JSONL frames. */
+  /** Spawn the proven Bun runtime with the omp script and args, then yield raw frames. */
   readonly spawn: (
     bin: string,
     args: readonly string[],
@@ -69,22 +67,89 @@ export interface OmpTransportEffects {
   ) => AsyncIterable<unknown>;
 }
 
-/** Tolerantly scan a frame for a session-stats USD cost (omp `SessionStats.cost`). */
-function frameCost(frame: unknown): number | null {
-  if (frame === null || typeof frame !== "object") return null;
-  const record = frame as Record<string, unknown>;
-  const data = record.data;
-  const cost =
-    data && typeof data === "object" ? (data as Record<string, unknown>).cost : undefined;
-  return typeof cost === "number" && Number.isFinite(cost) ? cost : null;
+const MAX_FRAME_BYTES = 1_048_576;
+const MAX_STDERR_BYTES = 65_536;
+
+interface OmpProtocolFailureFrame {
+  readonly rennet: "protocol-failure";
+  readonly reason: "malformed-frame" | "oversized-frame" | "unterminated-frame";
+  readonly message: string;
+  readonly raw?: string;
+  readonly byteLength?: number;
+}
+
+function protocolFailure(
+  reason: OmpProtocolFailureFrame["reason"],
+  message: string,
+  evidence: Pick<OmpProtocolFailureFrame, "raw" | "byteLength"> = {},
+): OmpProtocolFailureFrame {
+  return { rennet: "protocol-failure", reason, message, ...evidence };
+}
+
+async function* decodeOmpNdjson(
+  chunks: AsyncIterable<Uint8Array | string>,
+): AsyncIterable<unknown> {
+  let pending = Buffer.alloc(0);
+  let discardingOversized = false;
+
+  const decodeLine = (line: Buffer): unknown | null => {
+    const raw = line.toString("utf8").trim();
+    if (raw.length === 0) return null;
+    try {
+      return JSON.parse(raw);
+    } catch {
+      return protocolFailure("malformed-frame", "omp emitted a malformed JSON RPC frame", { raw });
+    }
+  };
+
+  for await (const rawChunk of chunks) {
+    const chunk = typeof rawChunk === "string" ? Buffer.from(rawChunk) : Buffer.from(rawChunk);
+    let offset = 0;
+    while (offset < chunk.length) {
+      const newline = chunk.indexOf(0x0a, offset);
+      const end = newline === -1 ? chunk.length : newline;
+      const segment = chunk.subarray(offset, end);
+      if (!discardingOversized) {
+        const nextLength = pending.length + segment.length;
+        if (nextLength > MAX_FRAME_BYTES) {
+          yield protocolFailure(
+            "oversized-frame",
+            `omp RPC frame exceeded ${MAX_FRAME_BYTES} bytes`,
+            { byteLength: nextLength },
+          );
+          pending = Buffer.alloc(0);
+          discardingOversized = true;
+        } else if (segment.length > 0) {
+          pending = pending.length === 0 ? Buffer.from(segment) : Buffer.concat([pending, segment]);
+        }
+      }
+      if (newline === -1) break;
+      if (discardingOversized) {
+        discardingOversized = false;
+      } else {
+        const frame = decodeLine(pending);
+        if (frame !== null) yield frame;
+      }
+      pending = Buffer.alloc(0);
+      offset = newline + 1;
+    }
+  }
+
+  if (!discardingOversized && pending.length > 0) {
+    yield protocolFailure(
+      "unterminated-frame",
+      "omp stdout ended with an unterminated JSON RPC frame",
+      { raw: pending.toString("utf8"), byteLength: pending.length },
+    );
+  }
 }
 
 /**
  * Write the prompt as one `{ type: "prompt" }` RPC command on stdin, then read stdout
- * lines and yield each JSON frame, then the synthetic terminal frame. Stdin is ended
- * after the prompt so the `--no-session` single-turn `omp` winds down when the turn is
- * done. The observed cost rides the terminal frame (top-level) so the conformance
- * `costUsd` check can find it; finalText/usage the adapter also tracks from the stream.
+ * lines through byte-bounded decoding, then the synthetic terminal frame. Stdin is
+ * ended after the prompt so the `--no-session` single-turn `omp` winds down when the
+ * turn is done. Usage/cost are intentionally absent until a real stats request is
+ * implemented; a fake-only surface would overstate the real transport.
  */
 async function* realSpawn(
   bin: string,
@@ -104,35 +169,35 @@ async function* realSpawn(
   });
   child.stdin?.write(encodeOmpPromptFrame(prompt));
   child.stdin?.end();
-  let stderr = "";
+  const stderrChunks: Buffer[] = [];
+  let stderrBytes = 0;
+  let stderrTruncated = false;
   child.stderr?.on("data", (chunk: unknown) => {
-    stderr += String(chunk);
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk));
+    const remaining = MAX_STDERR_BYTES - stderrBytes;
+    if (remaining > 0) {
+      const kept = bytes.subarray(0, remaining);
+      stderrChunks.push(kept);
+      stderrBytes += kept.length;
+    }
+    if (bytes.length > remaining) stderrTruncated = true;
   });
-  let cost: number | null = null;
   const stdout = child.stdout;
   if (stdout) {
-    const lines = createInterface({ input: stdout });
-    for await (const line of lines) {
-      const trimmed = line.trim();
-      if (trimmed.length === 0) continue;
-      try {
-        const frame = JSON.parse(trimmed);
-        const seen = frameCost(frame);
-        if (seen !== null) cost = seen;
-        yield frame;
-      } catch {
-        // A non-JSON line (a stray log line) — skip; nothing modelled is a partial line.
-      }
-    }
+    for await (const frame of decodeOmpNdjson(
+      stdout as unknown as AsyncIterable<Uint8Array | string>,
+    ))
+      yield frame;
   }
   const result = await child;
   const aborted = result.isCanceled === true || signal?.aborted === true;
+  const stderr = `${Buffer.concat(stderrChunks).toString("utf8")}${
+    stderrTruncated ? `\n[stderr truncated at ${MAX_STDERR_BYTES} bytes]` : ""
+  }`;
   const terminal: OmpTurnResultFrame = {
     rennet: "turn-result",
     exitCode: result.exitCode ?? 1,
     finalText: null,
-    usage: null,
-    cost,
     aborted,
     stderr,
   };
@@ -153,28 +218,72 @@ export const defaultOmpTransportEffects: OmpTransportEffects = {
  * clean up.
  */
 export function createOmpTurnTransport(
-  bin: string,
+  ompBin: string,
+  bunBin: string,
   effects: OmpTransportEffects = defaultOmpTransportEffects,
 ): OmpTurnTransport {
   return (spec: OmpTurnSpec) => ({
     async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
-      const dir = await effects.mkdtemp(join(tmpdir(), "rennet-omp-turn-"));
+      let dir: string | undefined;
+      let terminal: unknown;
+      let failure: unknown;
       try {
-        let configPath: string | undefined;
+        dir = await effects.mkdtemp(join(tmpdir(), "rennet-omp-turn-"));
+        let extensionPath: string | undefined;
         if (spec.mcpServers !== undefined && Object.keys(spec.mcpServers).length > 0) {
-          configPath = join(dir, "omp-mcp.yml");
-          await effects.writeFile(configPath, renderOmpMcpConfig(spec.mcpServers));
+          extensionPath = dir;
+          await effects.writeFile(join(dir, "mcp.json"), renderOmpMcpConfig(spec.mcpServers));
         }
         const args = buildOmpTurnArgs({
           cwd: spec.cwd,
           ...(spec.model === undefined ? {} : { model: spec.model }),
-          ...(configPath === undefined ? {} : { configPath }),
+          ...(extensionPath === undefined ? {} : { extensionPath }),
         });
-        for await (const frame of effects.spawn(bin, args, spec.cwd, spec.prompt, spec.signal)) {
-          yield frame;
+        for await (const frame of effects.spawn(
+          bunBin,
+          [ompBin, ...args],
+          spec.cwd,
+          spec.prompt,
+          spec.signal,
+        )) {
+          const record =
+            frame !== null && typeof frame === "object" ? (frame as Record<string, unknown>) : null;
+          if (record?.rennet === "turn-result") {
+            if (terminal !== undefined)
+              throw new Error("omp transport emitted multiple terminal frames");
+            terminal = frame;
+          } else {
+            yield frame;
+          }
         }
+      } catch (error) {
+        failure = error;
       } finally {
-        await effects.rm(dir);
+        if (dir !== undefined) {
+          try {
+            await effects.rm(dir);
+          } catch (error) {
+            failure ??= error;
+          }
+        }
+      }
+      if (failure !== undefined) {
+        yield {
+          rennet: "turn-result",
+          exitCode: 1,
+          finalText: null,
+          stderr: failure instanceof Error ? failure.message : String(failure),
+          failure,
+        } satisfies OmpTurnResultFrame;
+      } else if (terminal !== undefined) {
+        yield terminal;
+      } else {
+        yield {
+          rennet: "turn-result",
+          exitCode: 1,
+          finalText: null,
+          stderr: "omp spawn ended without a terminal frame",
+        } satisfies OmpTurnResultFrame;
       }
     },
   });
@@ -185,9 +294,9 @@ export function createOmpTurnTransport(
 // To earn the `implementedByAdapter` layer honestly, the composition runs the hermetic
 // conformance suite against an OmpAdapter wired to a CANNED fake transport that exercises
 // exactly the DOCUMENTED frames the real adapter maps. The passing checks ARE the
-// implemented capabilities: structuredOutput, textDeltas, and interrupt pass; `costUsd`
-// stays false (the terminal frame carries no cost until a real run confirms omp's unit)
-// and `reportsContextWindow` stays false (omp reports usage, not the window capacity).
+// implemented capabilities: textDeltas and interrupt pass. `structuredOutput` stays
+// false because omp's RPC prompt accepts no schema, and cost/context reporting stays
+// absent until the real transport implements and exercises a stats request.
 
 const SELF_CONFORMANCE_TRANSPORT: OmpTurnTransport = (spec: OmpTurnSpec) => ({
   async *[Symbol.asyncIterator](): AsyncIterator<unknown> {
@@ -195,15 +304,15 @@ const SELF_CONFORMANCE_TRANSPORT: OmpTurnTransport = (spec: OmpTurnSpec) => ({
     if (spec.prompt.includes("remain active until interrupted")) {
       if (!spec.signal?.aborted) {
         await new Promise<void>((resolve) =>
-          spec.signal?.addEventListener("abort", () => resolve(), { once: true }),
+          spec.signal?.addEventListener("abort", () => resolve(), {
+            once: true,
+          }),
         );
       }
       yield {
         rennet: "turn-result",
         exitCode: 0,
         finalText: null,
-        usage: null,
-        cost: null,
         aborted: true,
       } satisfies OmpTurnResultFrame;
       return;
@@ -211,28 +320,23 @@ const SELF_CONFORMANCE_TRANSPORT: OmpTurnTransport = (spec: OmpTurnSpec) => ({
     yield { type: "agent_start" };
     yield {
       type: "message_update",
-      assistantMessageEvent: { type: "text_delta", delta: '{"ok', contentIndex: 0 },
+      assistantMessageEvent: {
+        type: "text_delta",
+        delta: '{"ok',
+        contentIndex: 0,
+      },
     };
     yield {
       type: "message_end",
-      message: { role: "assistant", content: [{ type: "text", text: '{"ok":true}' }] },
-    };
-    yield {
-      type: "response",
-      command: "get_session_stats",
-      success: true,
-      data: {
-        sessionId: "self-conformance",
-        tokens: { input: 1, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 2 },
+      message: {
+        role: "assistant",
+        content: [{ type: "text", text: '{"ok":true}' }],
       },
     };
     yield {
       rennet: "turn-result",
       exitCode: 0,
       finalText: '{"ok":true}',
-      usage: { input: 1, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, total: 2 },
-      // No cost: costUsd stays false until a real run confirms omp's cost unit.
-      cost: null,
       aborted: spec.signal?.aborted ?? false,
     } satisfies OmpTurnResultFrame;
   },
@@ -246,7 +350,10 @@ const SELF_CONFORMANCE_TRANSPORT: OmpTurnTransport = (spec: OmpTurnSpec) => ({
 export async function deriveOmpImplementedEvidence(
   binaryPath: string,
 ): Promise<OmpAdapterConfig["capabilityEvidence"]> {
-  const selfAdapter = new OmpAdapter({ binaryPath, transport: SELF_CONFORMANCE_TRANSPORT });
+  const selfAdapter = new OmpAdapter({
+    binaryPath,
+    transport: SELF_CONFORMANCE_TRANSPORT,
+  });
   const report = await runConformance(selfAdapter);
   return report.evidence;
 }
@@ -283,10 +390,14 @@ export async function createOmpHarness(deps: OmpHarnessDeps = {}): Promise<OmpHa
     return { adapter: null, discovery };
   }
   const binaryPath = discovery.chosen.path;
+  const runtimePath = discovery.chosen.runtimePath;
+  if (runtimePath === undefined) {
+    return { adapter: null, discovery };
+  }
   const capabilityEvidence = await deriveOmpImplementedEvidence(binaryPath);
   const adapter = new OmpAdapter({
     binaryPath,
-    transport: createOmpTurnTransport(binaryPath),
+    transport: createOmpTurnTransport(binaryPath, runtimePath),
     version: discovery.chosen.version,
     ...(capabilityEvidence === undefined ? {} : { capabilityEvidence }),
     ...(deps.mcpServers === undefined ? {} : { mcpServers: deps.mcpServers }),

@@ -9,16 +9,12 @@ import { deriveOmpImplementedEvidence } from "./omp-turn-transport";
 // evidence caps at `implementedByAdapter`; the derived descriptor's `true` flags are
 // exactly the passing set; `runConformance` refuses to certify unless every refuting
 // control fails (it throws otherwise), so a successful derive IS the positive-control
-// proof. No `costUsd` pass until a real run confirms omp's cost unit.
+// proof. Stats are not requested, so cost/context reporting remain absent.
 // ─────────────────────────────────────────────────────────────────────────────
 
 // What the documented-shape fake proves at introduction. The gated real run either
 // matches this (records the range) or reveals divergence (fix the fake and decoders).
-const EXPECTED_HERMETIC_PASSES: readonly CapabilityName[] = [
-  "interrupt",
-  "structuredOutput",
-  "textDeltas",
-];
+const EXPECTED_HERMETIC_PASSES: readonly CapabilityName[] = ["interrupt", "textDeltas"];
 
 describe("omp conformance — hermetic (documented shapes, zero spend)", () => {
   it("derives implementedByAdapter evidence for exactly the documented-passing set", async () => {
@@ -60,6 +56,7 @@ describe("omp conformance — hermetic (documented shapes, zero spend)", () => {
     for (const name of [
       "costUsd",
       "reportsContextWindow",
+      "structuredOutput",
       "resume",
       "fork",
       "toolGating",

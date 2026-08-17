@@ -46,6 +46,8 @@ export interface DiscoveryDeps {
   isExecutable(path: string): Promise<boolean>;
   /** Execute `<path> --version` and return the parsed version, or `null`. */
   probeVersion(path: string): Promise<string | null>;
+  /** Execute a script through an already-proven runtime and parse its version. */
+  probeVersionWithRuntime?(runtimePath: string, scriptPath: string): Promise<string | null>;
   /**
    * The platform the binaries live on (add-windows-support). `win32` ⇒ `;`-delimited
    * PATH, PATHEXT shim matching (`claude.cmd`/`.exe`/…), Windows curated dirs. Absent
@@ -53,6 +55,8 @@ export interface DiscoveryDeps {
    * the LOCUS, not necessarily of the host running Rennet.
    */
   readonly platform?: NodeJS.Platform;
+  /** PATHEXT for the candidate locus, not necessarily the host process. */
+  readonly pathExt?: string;
   /** The locus these candidates belong to (add-windows-support). Absent ⇒ host. */
   readonly locus?: Locus;
 }
@@ -71,34 +75,36 @@ function delimiterFor(platform: NodeJS.Platform | undefined): string {
   return platform === "win32" ? ";" : ":";
 }
 
-// The executable shim extensions discovery recognises on Windows (PATHEXT subset,
-// plus the bare name for a wrapperless install). `.cmd` first: npm global installs
-// `claude.cmd`/`codex.cmd`, the common case.
-const WINDOWS_BINARY_EXTENSIONS = [".cmd", ".exe", ".bat", ""] as const;
-
 /**
  * Resolve which filename in a directory listing IS the binary, honouring Windows
- * shims (add-windows-support). POSIX: the bare name if present. Windows: the first
- * of `name.cmd`/`.exe`/`.bat`/`name` that the directory actually contains.
+ * PATHEXT from the candidate locus. POSIX resolves only the bare name.
  */
 function resolveBinaryFilename(
   entries: readonly string[],
   base: string,
   platform: NodeJS.Platform | undefined,
+  pathExt: string | undefined,
 ): string | null {
   if (platform === "win32") {
-    for (const extension of WINDOWS_BINARY_EXTENSIONS) {
-      const candidate = `${base}${extension}`;
-      if (entries.includes(candidate)) return candidate;
+    const byLowerCase = new Map(entries.map((entry) => [entry.toLowerCase(), entry]));
+    for (const extension of (pathExt ?? "").split(";").filter(Boolean)) {
+      const candidate = `${base}${extension}`.toLowerCase();
+      const actual = byLowerCase.get(candidate);
+      if (actual !== undefined) return actual;
     }
-    return null;
+    return byLowerCase.get(base.toLowerCase()) ?? null;
   }
   return entries.includes(base) ? base : null;
 }
 
 export interface DiscoveryResult {
   readonly candidates: readonly DiscoveredCandidate[];
-  readonly chosen: { readonly path: string; readonly version: string } | null;
+  readonly chosen: {
+    readonly path: string;
+    readonly version: string;
+    /** Exact runtime used to probe and execute a runtime-hosted harness. */
+    readonly runtimePath?: string;
+  } | null;
   readonly health: HarnessHealth;
 }
 
@@ -208,14 +214,19 @@ export async function discoverClaude(
   const resolved = new Set<string>();
   for (const directory of directories) {
     const entries = await deps.listDir(directory);
-    const filename = resolveBinaryFilename(entries, CLAUDE_BINARY, deps.platform);
+    const filename = resolveBinaryFilename(entries, CLAUDE_BINARY, deps.platform, deps.pathExt);
     if (filename === null) continue;
     const path = join(directory, filename);
     if (resolved.has(path)) continue;
     if (!(await deps.isExecutable(path))) continue;
     resolved.add(path);
     const version = await deps.probeVersion(path);
-    candidates.push({ path, version, fromKnownLocation: knownSet.has(directory), locus });
+    candidates.push({
+      path,
+      version,
+      fromKnownLocation: knownSet.has(directory),
+      locus,
+    });
   }
 
   // Rank: a known-location hit with a version first, then highest version, then
@@ -268,6 +279,7 @@ export function defaultDiscoveryDeps(): DiscoveryDeps {
   const platform = process.platform;
   return {
     platform,
+    pathExt: process.env.PATHEXT ?? "",
     locus: HOST_LOCUS,
     async loginShellPath(): Promise<string | null> {
       if (platform === "win32") return null; // no POSIX shell on Windows
@@ -303,7 +315,25 @@ export function defaultDiscoveryDeps(): DiscoveryDeps {
     },
     async probeVersion(path: string): Promise<string | null> {
       try {
-        const result = await execa(path, ["--version"], { reject: false, shell: false });
+        const result = await execa(path, ["--version"], {
+          reject: false,
+          shell: false,
+        });
+        if (result.exitCode !== 0) return null;
+        const match = result.stdout.match(/\d+\.\d+\.\d+/);
+        return match ? match[0] : null;
+      } catch {
+        return null;
+      }
+    },
+    async probeVersionWithRuntime(runtimePath: string, scriptPath: string): Promise<string | null> {
+      try {
+        const result = await execa(runtimePath, [scriptPath, "--version"], {
+          reject: false,
+          shell: false,
+          stdin: "ignore",
+          timeout: 10_000,
+        });
         if (result.exitCode !== 0) return null;
         const match = result.stdout.match(/\d+\.\d+\.\d+/);
         return match ? match[0] : null;
@@ -382,6 +412,22 @@ export async function wslDiscoveryDeps(distro: string): Promise<DiscoveryDeps> {
           reject: false,
           shell: false,
           stdin: "ignore",
+        });
+        if (result.exitCode !== 0) return null;
+        const match = result.stdout.match(/\d+\.\d+\.\d+/);
+        return match ? match[0] : null;
+      } catch {
+        return null;
+      }
+    },
+    async probeVersionWithRuntime(runtimePath: string, scriptPath: string): Promise<string | null> {
+      const command = locusCommand(locus, runtimePath, [scriptPath, "--version"]);
+      try {
+        const result = await execa(command.file, [...command.args], {
+          reject: false,
+          shell: false,
+          stdin: "ignore",
+          timeout: 10_000,
         });
         if (result.exitCode !== 0) return null;
         const match = result.stdout.match(/\d+\.\d+\.\d+/);
@@ -477,8 +523,8 @@ async function codexKnownDirectories(
 
 /** True when `binaryPath` is the codex under the asdf shims directory — the
  *  unreliable indirection we prefer to skip whenever a real install is present. */
-function isAsdfShim(binaryPath: string, shimsDir: string): boolean {
-  return shimsDir.length > 0 && binaryPath === posixPath.join(shimsDir, CODEX_BINARY);
+function isAsdfShim(binaryPath: string, shimsDir: string, binary: string): boolean {
+  return shimsDir.length > 0 && binaryPath === posixPath.join(shimsDir, binary);
 }
 
 /** Options for {@link discoverCodex}. */
@@ -550,7 +596,7 @@ export async function discoverCodex(
   const resolved = new Set<string>();
   for (const directory of directories) {
     const entries = await deps.listDir(directory);
-    const filename = resolveBinaryFilename(entries, CODEX_BINARY, deps.platform);
+    const filename = resolveBinaryFilename(entries, CODEX_BINARY, deps.platform, deps.pathExt);
     if (filename === null) continue;
     // Host: normalize to ABSOLUTE so a relative PATH entry (e.g. ".") never yields a
     // relative `chosen.path` that codex-exec would resolve against its scratch cwd.
@@ -561,7 +607,12 @@ export async function discoverCodex(
     if (!(await deps.isExecutable(path))) continue;
     resolved.add(path);
     const version = await deps.probeVersion(path);
-    candidates.push({ path, version, fromKnownLocation: knownSet.has(directory), locus });
+    candidates.push({
+      path,
+      version,
+      fromKnownLocation: knownSet.has(directory),
+      locus,
+    });
   }
 
   const withVersion = candidates.filter(
@@ -570,8 +621,8 @@ export async function discoverCodex(
   );
   const ranked = [...withVersion].sort((left, right) => {
     // A real install beats the asdf shim, whatever their reported versions.
-    const leftShim = isAsdfShim(left.path, shimsDir);
-    const rightShim = isAsdfShim(right.path, shimsDir);
+    const leftShim = isAsdfShim(left.path, shimsDir, CODEX_BINARY);
+    const rightShim = isAsdfShim(right.path, shimsDir, CODEX_BINARY);
     if (leftShim !== rightShim) return leftShim ? 1 : -1;
     // Then a curated known location beats a bare PATH hit.
     if (left.fromKnownLocation !== right.fromKnownLocation) return left.fromKnownLocation ? -1 : 1;
@@ -623,20 +674,24 @@ const BUN_BINARY = "bun";
 function ompKnownDirectories(
   home: string,
   platform: NodeJS.Platform | undefined,
-): readonly string[] {
+): { readonly dirs: readonly string[]; readonly shimsDir: string } {
   if (platform === "win32") {
-    return windowsKnownDirectories(OMP_BINARY);
+    return { dirs: windowsKnownDirectories(OMP_BINARY), shimsDir: "" };
   }
   const join = posixPath.join;
-  return [
-    join(home, ".bun", "bin"),
-    join(home, ".local", "bin"),
-    "/opt/homebrew/bin",
-    "/home/linuxbrew/.linuxbrew/bin",
-    "/usr/local/bin",
-    join(home, ".asdf", "shims"),
-    join(home, ".volta", "bin"),
-  ];
+  const shimsDir = join(home, ".asdf", "shims");
+  return {
+    dirs: [
+      join(home, ".bun", "bin"),
+      join(home, ".local", "bin"),
+      "/opt/homebrew/bin",
+      "/home/linuxbrew/.linuxbrew/bin",
+      "/usr/local/bin",
+      shimsDir,
+      join(home, ".volta", "bin"),
+    ],
+    shimsDir,
+  };
 }
 
 /** The harvested directory union (login-shell PATH ∪ env PATH ∪ curated), deduped. */
@@ -661,12 +716,13 @@ async function harvestedDirectories(
   return directories;
 }
 
-/** Resolve every candidate for `binary` across `directories`, proving each by execution. */
+/** Resolve every candidate for `binary` across `directories`, using the supplied probe. */
 async function resolveCandidates(
   deps: DiscoveryDeps,
   binary: string,
   directories: readonly string[],
   known: ReadonlySet<string>,
+  probe: (path: string) => Promise<string | null> = (path) => deps.probeVersion(path),
 ): Promise<DiscoveredCandidate[]> {
   const locus = deps.locus ?? HOST_LOCUS;
   const join = joinFor(deps.platform);
@@ -674,15 +730,20 @@ async function resolveCandidates(
   const resolved = new Set<string>();
   for (const directory of directories) {
     const entries = await deps.listDir(directory);
-    const filename = resolveBinaryFilename(entries, binary, deps.platform);
+    const filename = resolveBinaryFilename(entries, binary, deps.platform, deps.pathExt);
     if (filename === null) continue;
     const joined = join(directory, filename);
     const path = locus.kind === "host" ? resolve(joined) : joined;
     if (resolved.has(path)) continue;
     if (!(await deps.isExecutable(path))) continue;
     resolved.add(path);
-    const version = await deps.probeVersion(path);
-    candidates.push({ path, version, fromKnownLocation: known.has(directory), locus });
+    const version = await probe(path);
+    candidates.push({
+      path,
+      version,
+      fromKnownLocation: known.has(directory),
+      locus,
+    });
   }
   return candidates;
 }
@@ -707,7 +768,8 @@ export function defaultOmpDiscoveryDeps(): DiscoveryDeps {
  * Resolve an `omp` binary AND prove a runnable `bun` runtime. Resolution order for omp:
  * (1) an explicit `RENNET_OMP_BIN` override that probes to a version, else (2) the union
  * of login-shell PATH + env PATH + curated omp locations (`~/.bun/bin` first), each
- * X_OK-checked and PROVEN by executing `omp --version`. Bun is resolved the same way.
+ * X_OK-checked. Bun is resolved and floor-checked first; only then is each omp script
+ * proven by executing `<exact bun path> <omp path> --version`.
  *
  * Health mapping (the acceptance criterion):
  * - omp probes, bun probes → `ready` (version from omp).
@@ -720,30 +782,103 @@ export async function discoverOmp(
   deps: DiscoveryDeps,
   options: DiscoverOmpOptions = {},
 ): Promise<DiscoveryResult> {
-  const known = ompKnownDirectories(deps.home, deps.platform);
+  const { dirs: known, shimsDir } = ompKnownDirectories(deps.home, deps.platform);
   const knownSet = new Set(known);
   const directories = await harvestedDirectories(deps, known);
 
-  // (1) Explicit override wins, but only if it truly runs.
-  let ompCandidates: DiscoveredCandidate[];
+  const discoveredOmp = await resolveCandidates(deps, OMP_BINARY, directories, knownSet, () =>
+    Promise.resolve(null),
+  );
+  let explicitOmp: DiscoveredCandidate | null = null;
   if (options.explicitBin !== undefined && options.explicitBin.length > 0) {
-    const path = resolve(options.explicitBin);
-    const version = (await deps.isExecutable(path)) ? await deps.probeVersion(path) : null;
-    ompCandidates =
-      version !== null
-        ? [{ path, version, fromKnownLocation: true, locus: deps.locus ?? HOST_LOCUS }]
-        : await resolveCandidates(deps, OMP_BINARY, directories, knownSet);
-  } else {
-    ompCandidates = await resolveCandidates(deps, OMP_BINARY, directories, knownSet);
+    const locus = deps.locus ?? HOST_LOCUS;
+    const path = locus.kind === "host" ? resolve(options.explicitBin) : options.explicitBin;
+    if (await deps.isExecutable(path)) {
+      explicitOmp = { path, version: null, fromKnownLocation: true, locus };
+    }
+  }
+  const ompPaths = [
+    ...(explicitOmp === null ? [] : [explicitOmp]),
+    ...discoveredOmp.filter((candidate) => candidate.path !== explicitOmp?.path),
+  ];
+  if (ompPaths.length === 0) {
+    return {
+      candidates: [],
+      chosen: null,
+      health: {
+        state: "unavailable",
+        reason: "not-found",
+        detail: "No omp binary found on PATH or in any known location.",
+      },
+    };
   }
 
-  const ompWithVersion = ompCandidates.filter(
-    (c): c is DiscoveredCandidate & { version: string } => c.version !== null,
+  // Prove Bun FIRST. An omp script cannot be version-probed honestly before its runtime.
+  const bunCandidates = await resolveCandidates(deps, BUN_BINARY, directories, knownSet);
+  const runnableBun = bunCandidates
+    .filter(
+      (candidate): candidate is DiscoveredCandidate & { version: string } =>
+        candidate.version !== null && compareVersions(candidate.version, "1.3.14") >= 0,
+    )
+    .sort((left, right) => {
+      const leftShim = isAsdfShim(left.path, shimsDir, BUN_BINARY);
+      const rightShim = isAsdfShim(right.path, shimsDir, BUN_BINARY);
+      if (leftShim !== rightShim) return leftShim ? 1 : -1;
+      if (left.fromKnownLocation !== right.fromKnownLocation) {
+        return left.fromKnownLocation ? -1 : 1;
+      }
+      return compareVersions(right.version, left.version);
+    })[0];
+  if (!runnableBun) {
+    const foundVersions = bunCandidates
+      .map((candidate) => candidate.version)
+      .filter((version): version is string => version !== null);
+    const runtimeDetail =
+      foundVersions.length > 0
+        ? `found Bun ${foundVersions.join(", ")}, below the required 1.3.14 floor`
+        : "no runnable Bun runtime";
+    return {
+      candidates: ompPaths,
+      chosen: null,
+      health: {
+        state: "unavailable",
+        reason: "handshake-failed",
+        detail: `Found omp at ${ompPaths[0]?.path ?? "unknown"} but ${runtimeDetail}; omp needs Bun >= 1.3.14 to execute.`,
+      },
+    };
+  }
+
+  const probeWithBun = (path: string): Promise<string | null> =>
+    deps.probeVersionWithRuntime?.(runnableBun.path, path) ?? Promise.resolve(null);
+  const ompCandidates = await Promise.all(
+    ompPaths.map(async (candidate) => ({
+      ...candidate,
+      version: await probeWithBun(candidate.path),
+    })),
   );
-  const bestOmp = [...ompWithVersion].sort((left, right) => {
-    if (left.fromKnownLocation !== right.fromKnownLocation) return left.fromKnownLocation ? -1 : 1;
-    return compareVersions(right.version, left.version);
-  })[0];
+  const validExplicit =
+    explicitOmp === null
+      ? undefined
+      : ompCandidates.find(
+          (candidate): candidate is DiscoveredCandidate & { version: string } =>
+            candidate.path === explicitOmp.path && candidate.version !== null,
+        );
+  const bestOmp =
+    validExplicit ??
+    ompCandidates
+      .filter(
+        (candidate): candidate is DiscoveredCandidate & { version: string } =>
+          candidate.version !== null,
+      )
+      .sort((left, right) => {
+        const leftShim = isAsdfShim(left.path, shimsDir, OMP_BINARY);
+        const rightShim = isAsdfShim(right.path, shimsDir, OMP_BINARY);
+        if (leftShim !== rightShim) return leftShim ? 1 : -1;
+        if (left.fromKnownLocation !== right.fromKnownLocation) {
+          return left.fromKnownLocation ? -1 : 1;
+        }
+        return compareVersions(right.version, left.version);
+      })[0];
 
   if (!bestOmp) {
     return {
@@ -751,34 +886,19 @@ export async function discoverOmp(
       chosen: null,
       health: {
         state: "unavailable",
-        reason: ompCandidates.length > 0 ? "spawn-failed" : "not-found",
-        detail:
-          ompCandidates.length > 0
-            ? "An omp binary was found but did not report a version."
-            : "No omp binary found on PATH or in any known location.",
-      },
-    };
-  }
-
-  // Prove a runnable Bun runtime — omp's bin is a Bun-executed TypeScript entry point.
-  const bunCandidates = await resolveCandidates(deps, BUN_BINARY, directories, knownSet);
-  const bunProven = bunCandidates.some((c) => c.version !== null);
-  if (!bunProven) {
-    return {
-      candidates: ompCandidates,
-      chosen: null,
-      health: {
-        state: "unavailable",
-        reason: "handshake-failed",
-        // NAME Bun so the app says "found omp but not Bun", never "no omp found".
-        detail: `Found omp at ${bestOmp.path} but no runnable Bun runtime; omp needs Bun (>= 1.3.14) to execute. Install Bun (https://bun.sh) to enable the omp slot.`,
+        reason: "spawn-failed",
+        detail: `Found omp at ${ompPaths[0]?.path ?? "unknown"}, but it did not report a version when executed through ${runnableBun.path}.`,
       },
     };
   }
 
   return {
     candidates: ompCandidates,
-    chosen: { path: bestOmp.path, version: bestOmp.version },
+    chosen: {
+      path: bestOmp.path,
+      version: bestOmp.version,
+      runtimePath: runnableBun.path,
+    },
     health: { state: "ready", version: bestOmp.version },
   };
 }

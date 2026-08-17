@@ -400,12 +400,12 @@ function getOmpResolution(): Promise<OmpResolution> {
       ...(explicitBin && explicitBin.length > 0 ? { explicitBin } : {}),
     });
     const chosen = result.chosen;
-    if (!chosen) {
+    if (!chosen?.runtimePath) {
       // omp missing, or omp present but Bun absent — the Bun-aware health already
       // carries the reason. No orchestrator seat against the slot.
       return { agenticPort: null, version: null };
     }
-    const transport = createOmpTurnTransport(chosen.path);
+    const transport = createOmpTurnTransport(chosen.path, chosen.runtimePath);
     const capabilityEvidence = await deriveOmpImplementedEvidence(chosen.path);
     return {
       agenticPort: (mcpServers) =>

@@ -17,9 +17,8 @@ import {
   type ToolKind,
   type TurnInput,
 } from "@rennet/core";
-import type { RspTokenUsage } from "@rennet/types";
 import { compareVersions } from "./harness-discovery";
-import { readTestedRange } from "./harness-tested-range";
+import { readTestedRange, type TestedRange } from "./harness-tested-range";
 
 /**
  * The omp adapter (#26): the THIRD harness slot (R23), peer of `ClaudeAdapter`
@@ -56,7 +55,7 @@ export interface OmpTurnSpec {
   /** omp's own default when absent; the composition passes e.g. "opus" / "gpt-5.2". */
   readonly model?: string;
   readonly outputSchema?: unknown;
-  /** Loopback canvasOps@2 (and future) MCP servers, rendered as an omp config overlay. */
+  /** Loopback canvasOps@2 (and future) MCP servers, rendered into scratch `mcp.json`. */
   readonly mcpServers?: Readonly<Record<string, { readonly url: string }>>;
   readonly signal?: AbortSignal;
 }
@@ -64,9 +63,8 @@ export interface OmpTurnSpec {
 /**
  * The transport yields the raw `omp --mode rpc` JSONL frames, then EXACTLY ONE
  * synthetic terminal frame `{ rennet: "turn-result", ... }`. The adapter owns
- * normalization, seq, and the terminal outcome — the exit code, the final captured
- * text, and the observed cost (only the transport, at the process boundary, can know
- * these) ride the terminal frame.
+ * normalization, seq, and the terminal outcome — the exit code and final captured
+ * text ride the terminal frame.
  */
 export type OmpTurnTransport = (spec: OmpTurnSpec) => AsyncIterable<unknown>;
 
@@ -76,17 +74,10 @@ export interface OmpTurnResultFrame {
   readonly exitCode: number;
   /** The final assistant text the transport observed, or null when it saw none. */
   readonly finalText: string | null;
-  /** Normalized token usage the transport captured from the session stats, or null. */
-  readonly usage: RspTokenUsage | null;
-  /**
-   * The session's reported USD cost (omp's `SessionStats.cost`), or null. Top-level
-   * on the terminal frame so the conformance `costUsd` check can find it on the
-   * `session.ended` native. The hermetic fake leaves it null (costUsd stays false
-   * until a real run confirms omp's cost unit); the real transport populates it.
-   */
-  readonly cost: number | null;
   readonly aborted?: boolean;
   readonly stderr?: string;
+  /** Original construction/iteration failure retained as native terminal evidence. */
+  readonly failure?: unknown;
 }
 
 // ── Pure argv assembly (composition-root transport uses this; asserted alone) ──
@@ -94,8 +85,8 @@ export interface OmpTurnResultFrame {
 export interface OmpTurnArgs {
   readonly cwd: string;
   readonly model?: string;
-  /** A written config-overlay path carrying the loopback MCP server(s). */
-  readonly configPath?: string;
+  /** Scratch extension root carrying omp's supported `mcp.json` discovery source. */
+  readonly extensionPath?: string;
 }
 
 /**
@@ -111,8 +102,8 @@ export interface OmpTurnArgs {
  *   dirs (the single-turn contract every live `HarnessPort` consumer holds).
  * - `--cwd <cwd>` — the session's REAL repo.
  * - `--model <model>` — only when the council named one.
- * - `--config <path>` — the loopback canvasOps@2 MCP overlay, only when the spec carries
- *   servers (omp configures MCP through a config overlay, not per-key CLI flags).
+ * - `--extension <path>` — a scratch extension root containing `mcp.json`, only when
+ *   the spec carries servers. `--config` is a settings overlay and is not an MCP source.
  *
  * The prompt is NOT positional: in RPC mode it is sent as a `{ type: "prompt" }` command
  * on stdin (the transport's job). Pure, so flags are asserted without spawning.
@@ -120,7 +111,7 @@ export interface OmpTurnArgs {
 export function buildOmpTurnArgs(spec: OmpTurnArgs): string[] {
   const args = ["--mode", "rpc", "--auto-approve", "--no-session", "--cwd", spec.cwd];
   if (spec.model !== undefined) args.push("--model", spec.model);
-  if (spec.configPath !== undefined) args.push("--config", spec.configPath);
+  if (spec.extensionPath !== undefined) args.push("--extension", spec.extensionPath);
   return args;
 }
 
@@ -140,10 +131,6 @@ function stringField(record: Record<string, unknown>, key: string): string | nul
   return typeof value === "string" ? value : null;
 }
 
-function numOrNull(value: unknown): number | null {
-  return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
 /** Classify an omp tool name into the normalized `ToolKind`. Heuristic over the name
  *  (omp reports a tool name, not a typed item kind); tolerant, corrected on a real run. */
 export function classifyOmpToolKind(name: string): ToolKind {
@@ -155,25 +142,6 @@ export function classifyOmpToolKind(name: string): ToolKind {
   if (/(^|[_.])(grep|search|web|find|glob|ls)/.test(n)) return "search";
   if (/(^|[_.])(task|agent|subagent)/.test(n)) return "subagent";
   return "other";
-}
-
-/**
- * Extract token usage off an omp `SessionStats.tokens` block into the RSP shape.
- * omp reports `{ input, output, reasoning, cacheRead, cacheWrite, total }`, which maps
- * one-to-one (unlike codex, where input included cache). Absent/malformed → undefined.
- */
-export function extractOmpUsage(stats: unknown): RspTokenUsage | undefined {
-  const record = asRecord(stats);
-  if (!record) return undefined;
-  const tokens = asRecord(record.tokens);
-  if (!tokens) return undefined;
-  const input = numOrNull(tokens.input) ?? 0;
-  const output = numOrNull(tokens.output) ?? 0;
-  const cacheRead = numOrNull(tokens.cacheRead) ?? 0;
-  const cacheWrite = numOrNull(tokens.cacheWrite) ?? 0;
-  const reasoning = numOrNull(tokens.reasoning);
-  const total = numOrNull(tokens.total) ?? input + output + cacheRead + cacheWrite;
-  return { input, output, cacheRead, cacheWrite, reasoning, total };
 }
 
 /**
@@ -236,32 +204,42 @@ function assistantText(message: unknown): string | null {
 
 /**
  * A stateful per-turn normalizer. Like codex, omp streaming needs cross-frame state
- * (the last assistant text, the session usage, a seen error); the terminal outcome is
- * driven by the synthetic `turn-result` frame — the only carrier of exit code, the
- * captured text, and the observed cost — enriched by what the stream showed.
+ * (the last assistant text and a seen error); the terminal outcome is
+ * driven by the synthetic `turn-result` frame — the only carrier of exit code and
+ * captured text — enriched by what the stream showed.
  */
 function createOmpNormalizer(
   context: EnvelopeContext,
   spec: OmpTurnSpec,
-): { normalize: (frame: unknown) => HarnessEvent[]; finalize: () => HarnessEvent[] } {
-  const schemaRequested = spec.outputSchema !== undefined;
+): {
+  normalize: (frame: unknown) => HarnessEvent[];
+  fail: (error: unknown) => HarnessEvent[];
+  finalize: () => HarnessEvent[];
+} {
   let started = false;
   let lastText: string | null = null;
-  let lastUsage: RspTokenUsage | undefined;
   let seenError: HarnessError | null = null;
+  let seenErrorEmitted = false;
   let terminated = false;
 
   const passthrough = (frame: unknown, nativeKind: string): HarnessEvent[] => [
     { ...envelope(context, frame), kind: "passthrough", nativeKind },
   ];
 
-  function parseStructured(raw: string | null): unknown {
-    if (!schemaRequested || raw === null) return undefined;
+  function errorMessage(value: unknown, fallback: string): string {
+    if (value instanceof Error) return value.message;
+    if (typeof value === "string") return value;
     try {
-      return JSON.parse(raw);
+      return JSON.stringify(value);
     } catch {
-      return undefined;
+      return fallback;
     }
+  }
+
+  function recordError(frame: unknown, error: HarnessError): HarnessEvent[] {
+    if (seenError === null) seenError = error;
+    seenErrorEmitted = true;
+    return [{ ...envelope(context, frame), kind: "error", error }];
   }
 
   function sessionStarted(frame: unknown): HarnessEvent[] {
@@ -279,6 +257,7 @@ function createOmpNormalizer(
   }
 
   function terminal(frame: OmpTurnResultFrame): HarnessEvent[] {
+    if (terminated) return [];
     terminated = true;
     if (frame.aborted) {
       return [
@@ -294,7 +273,9 @@ function createOmpNormalizer(
         seenError ??
         mapOmpError(frame.stderr?.trim() || `omp exited ${frame.exitCode}`, frame.exitCode);
       return [
-        { ...envelope(context, frame), kind: "error", error },
+        ...(seenErrorEmitted
+          ? []
+          : [{ ...envelope(context, frame), kind: "error" as const, error }]),
         {
           ...envelope(context, frame),
           kind: "session.ended",
@@ -303,19 +284,14 @@ function createOmpNormalizer(
       ];
     }
     const raw = frame.finalText ?? lastText;
-    const usage = frame.usage ?? lastUsage;
-    const structuredOutput = parseStructured(raw);
     const finalText = raw ?? "";
-    const outcome =
-      structuredOutput === undefined
-        ? { status: "completed" as const, finalText, ...(usage ? { usage } : {}) }
-        : {
-            status: "completed" as const,
-            finalText,
-            structuredOutput,
-            ...(usage ? { usage } : {}),
-          };
-    return [{ ...envelope(context, frame), kind: "session.ended", outcome }];
+    return [
+      {
+        ...envelope(context, frame),
+        kind: "session.ended",
+        outcome: { status: "completed", finalText },
+      },
+    ];
   }
 
   function normalize(frame: unknown): HarnessEvent[] {
@@ -326,6 +302,17 @@ function createOmpNormalizer(
     if (record.rennet === "turn-result") {
       return terminal(record as unknown as OmpTurnResultFrame);
     }
+    if (record.rennet === "protocol-failure") {
+      const message = stringField(record, "message") ?? "omp emitted an invalid RPC frame";
+      return recordError(frame, {
+        class: "protocol",
+        origin: "transport",
+        message,
+        retryable: false,
+        retryableSource: "inferred",
+        nativeCode: stringField(record, "reason"),
+      });
+    }
 
     const type = stringField(record, "type");
     switch (type) {
@@ -335,7 +322,13 @@ function createOmpNormalizer(
       case "message_update": {
         const event = asRecord(record.assistantMessageEvent);
         if (event && event.type === "text_delta" && typeof event.delta === "string") {
-          return [{ ...envelope(context, frame), kind: "text.delta", text: event.delta }];
+          return [
+            {
+              ...envelope(context, frame),
+              kind: "text.delta",
+              text: event.delta,
+            },
+          ];
         }
         return passthrough(frame, "message_update");
       }
@@ -345,7 +338,12 @@ function createOmpNormalizer(
         if (text !== null) {
           lastText = text;
           return [
-            { ...envelope(context, frame), kind: "text.message", text, parentToolCallId: null },
+            {
+              ...envelope(context, frame),
+              kind: "text.message",
+              text,
+              parentToolCallId: null,
+            },
           ];
         }
         return passthrough(frame, type);
@@ -372,7 +370,13 @@ function createOmpNormalizer(
           {
             ...envelope(context, frame),
             kind: "tool.started",
-            call: { id, name, input, parentToolCallId: null, kind: classifyOmpToolKind(name) },
+            call: {
+              id,
+              name,
+              input,
+              parentToolCallId: null,
+              kind: classifyOmpToolKind(name),
+            },
           },
         ];
       }
@@ -392,23 +396,32 @@ function createOmpNormalizer(
         ];
       }
       case "response": {
-        // A `get_session_stats` response carries usage (and cost, which rides the
-        // terminal frame, not here). Capture usage; surface as passthrough.
-        if (record.command === "get_session_stats") {
-          const usage = extractOmpUsage(record.data);
-          if (usage) lastUsage = usage;
+        if (record.success === false) {
+          const message = errorMessage(record.error, "omp RPC command failed");
+          return recordError(frame, mapOmpError(message, null));
         }
         return passthrough(frame, `response:${stringField(record, "command") ?? "unknown"}`);
       }
       case "error": {
         const message =
           stringField(record, "message") ?? stringField(record, "error") ?? "omp error";
-        seenError = mapOmpError(message, null);
-        return passthrough(frame, "error");
+        return recordError(frame, mapOmpError(message, null));
       }
       default:
         return passthrough(frame, type ?? "unknown");
     }
+  }
+
+  function fail(value: unknown): HarnessEvent[] {
+    if (terminated) return [];
+    const message = errorMessage(value, "omp transport failed");
+    return terminal({
+      rennet: "turn-result",
+      exitCode: 1,
+      finalText: null,
+      stderr: message,
+      failure: value,
+    });
   }
 
   /** If the stream ended without a terminal frame, close with a protocol failure
@@ -425,11 +438,15 @@ function createOmpNormalizer(
     };
     return [
       { ...envelope(context, {}), kind: "error", error },
-      { ...envelope(context, {}), kind: "session.ended", outcome: { status: "failed", error } },
+      {
+        ...envelope(context, {}),
+        kind: "session.ended",
+        outcome: { status: "failed", error },
+      },
     ];
   }
 
-  return { normalize, finalize };
+  return { normalize, fail, finalize };
 }
 
 // ── The session + adapter (mirror of CodexSession/CodexAdapter) ──────────────
@@ -444,6 +461,7 @@ class OmpSession implements HarnessSession {
   readonly #abort: AbortController;
   readonly #started: Promise<AsyncIterable<unknown>>;
   #resolveStarted!: (iterable: AsyncIterable<unknown>) => void;
+  #rejectStarted!: (error: unknown) => void;
   #sent = false;
   #eventsTaken = false;
   #draining = false;
@@ -464,44 +482,52 @@ class OmpSession implements HarnessSession {
     this.#spec = spec;
     this.#config = config;
     this.#abort = abort;
-    this.#context = { harness: HARNESS_ID, sessionId: id, turnId, seq: createSeqCounter(), now };
-    this.#started = new Promise((resolve) => {
+    this.#context = {
+      harness: HARNESS_ID,
+      sessionId: id,
+      turnId,
+      seq: createSeqCounter(),
+      now,
+    };
+    this.#started = new Promise((resolve, reject) => {
       this.#resolveStarted = resolve;
+      this.#rejectStarted = reject;
     });
+    void this.#started.catch(() => undefined);
   }
 
   get events(): AsyncIterable<HarnessEvent> {
-    if (this.#eventsTaken) {
-      throw new Error("omp session events may only be subscribed to once");
-    }
-    this.#eventsTaken = true;
+    return {
+      [Symbol.asyncIterator]: (): AsyncIterator<HarnessEvent> => {
+        if (this.#eventsTaken) {
+          throw new Error("omp session events may only be subscribed to once");
+        }
+        this.#eventsTaken = true;
+        return this.#drainEvents();
+      },
+    };
+  }
+
+  async *#drainEvents(): AsyncIterator<HarnessEvent> {
     const started = this.#started;
-    const { normalize, finalize } = createOmpNormalizer(this.#context, this.#turnSpec());
+    const { normalize, fail, finalize } = createOmpNormalizer(this.#context, this.#turnSpec());
     this.#completion = new Promise((resolve) => {
       this.#resolveCompletion = resolve;
     });
-    const beginDrain = (): void => {
-      this.#draining = true;
-    };
-    const finishDrain = (): void => {
+    this.#draining = true;
+    try {
+      const iterable = await started;
+      for await (const frame of iterable) {
+        for (const event of normalize(frame)) yield event;
+      }
+      for (const event of finalize()) yield event;
+    } catch (error) {
+      for (const event of fail(error)) yield event;
+    } finally {
       this.#draining = false;
       this.#resolveCompletion?.();
       this.#resolveCompletion = null;
-    };
-    return {
-      async *[Symbol.asyncIterator](): AsyncIterator<HarnessEvent> {
-        beginDrain();
-        try {
-          const iterable = await started;
-          for await (const frame of iterable) {
-            for (const event of normalize(frame)) yield event;
-          }
-          for (const event of finalize()) yield event;
-        } finally {
-          finishDrain();
-        }
-      },
-    };
+    }
   }
 
   #turnSpec(): OmpTurnSpec {
@@ -518,9 +544,17 @@ class OmpSession implements HarnessSession {
   send(input: TurnInput): Promise<string> {
     if (this.#sent) throw new Error("This session has already run a turn (slice 1 is single-turn)");
     this.#sent = true;
-    const iterable = this.#transport({ ...this.#turnSpec(), prompt: input.prompt });
-    this.#resolveStarted(iterable);
-    return Promise.resolve(this.#context.turnId ?? this.id);
+    try {
+      const iterable = this.#transport({
+        ...this.#turnSpec(),
+        prompt: input.prompt,
+      });
+      this.#resolveStarted(iterable);
+      return Promise.resolve(this.#context.turnId ?? this.id);
+    } catch (error) {
+      this.#rejectStarted(error);
+      return Promise.reject(error);
+    }
   }
 
   async interrupt(): Promise<void> {
@@ -555,21 +589,21 @@ export class OmpAdapter implements HarnessPort {
   readonly descriptor: HarnessDescriptor;
   readonly #config: OmpAdapterConfig;
   readonly #now: () => number;
-  readonly #range: { readonly min: string; readonly maxTested: string };
+  readonly #range: TestedRange | null;
 
   constructor(config: OmpAdapterConfig) {
     this.#config = config;
     this.#now = config.now ?? Date.now;
     // No omp entry in the committed tested-range artifact until the first genuine
     // full-match real run (the Codex precedent) — so this is honest-absent by default.
-    this.#range = readTestedRange(HARNESS_ID) ?? { min: "0.0.0", maxTested: "0.0.0" };
+    this.#range = readTestedRange(HARNESS_ID);
     this.descriptor = {
       id: HARNESS_ID,
       displayName: DISPLAY_NAME,
       version: config.version ?? "unknown",
       binaryPath: config.binaryPath,
       capabilities: buildCapabilities(config.capabilityEvidence ?? {}),
-      testedRange: this.#range,
+      ...(this.#range === null ? {} : { testedRange: this.#range }),
     };
   }
 
@@ -579,7 +613,11 @@ export class OmpAdapter implements HarnessPort {
       const version = this.#config.version;
       return version
         ? healthForRange(version, this.#range)
-        : { state: "unavailable", reason: "spawn-failed", detail: "No version probe configured." };
+        : {
+            state: "unavailable",
+            reason: "spawn-failed",
+            detail: "No version probe configured.",
+          };
     }
     const version = await probe(this.#config.binaryPath);
     if (version === null) {
@@ -596,7 +634,10 @@ export class OmpAdapter implements HarnessPort {
     const abort = new AbortController();
     if (spec.signal) {
       if (spec.signal.aborted) abort.abort();
-      else spec.signal.addEventListener("abort", () => abort.abort(), { once: true });
+      else
+        spec.signal.addEventListener("abort", () => abort.abort(), {
+          once: true,
+        });
     }
     const sessionId = randomUUID();
     return Promise.resolve(
@@ -613,10 +654,8 @@ export class OmpAdapter implements HarnessPort {
   }
 }
 
-function healthForRange(
-  version: string,
-  range: { readonly min: string; readonly maxTested: string },
-): HarnessHealth {
+function healthForRange(version: string, range: TestedRange | null): HarnessHealth {
+  if (range === null) return { state: "degraded", version, reason: "untested" };
   if (compareVersions(version, range.min) < 0) {
     return { state: "degraded", version, reason: "below-floor" };
   }

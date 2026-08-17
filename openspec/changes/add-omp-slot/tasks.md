@@ -10,14 +10,14 @@ Red-first throughout: each group starts with the failing test, then the code tha
 ## 2. The adapter over the injected transport (pure, hermetic)
 
 - [x] 2.1 RED: `omp-adapter.test.ts` — descriptor: with no evidence every layer of every capability is `false`, `testedRange` is honest-absent (no omp entry in `harness-tested-range.json`); constructing the adapter and reading the descriptor invokes no transport.
-- [x] 2.2 RED: turn round-trip — an injected transport yielding documented-shape frames (session start, streamed text, tool frames, terminal with usage) produces `session.started` → events → `session.ended` completed with final text and normalized usage, strictly increasing `seq`; an unmodelled frame surfaces as `passthrough` with the verbatim native frame; tool frames classify `ToolKind`.
+- [x] 2.2 RED: turn round-trip — an injected transport yielding documented-shape frames produces `session.started` → events → `session.ended` completed with final text and strictly increasing `seq`; an unmodelled frame surfaces as `passthrough` with the verbatim native frame; tool frames classify `ToolKind`. Usage stays absent until the real transport requests stats.
 - [x] 2.3 RED: failure and cancellation — nonzero exit / unparseable terminal → `failed` outcome with a closed error `class` and `origin`, raw output preserved; an aborted `signal` → `cancelled`, and `interrupt()`/`close()` resolve only after transport completion; `events` is subscribe-once.
 - [x] 2.4 Implement `OmpAdapter implements HarnessPort` in `packages/adapters/src/omp-adapter.ts` against `OmpTurnSpec`/`OmpTurnTransport` (the `CodexTurnTransport` mirror: raw frames then one synthetic `{ rennet: "turn-result", exitCode, ... }` terminal frame), tolerant structural decoders over the RPC subset shared with `pi`. Green on 2.1–2.3.
 
 ## 3. The composition-root transport (spawn discipline)
 
-- [x] 3.1 RED: `omp-turn-transport.test.ts` — pure invocation assembly selects `--mode rpc`, the non-interactive full-capability mode, the ephemeral no-session flag, the session `cwd`, and the model when given; it contains no approval, sandbox, or read-only flag (assert against a denylist); MCP loopback config (canvasOps@2 URL) is rendered when the spec carries it. Pin exact flags against the installed binary's `--help` here, not from memory.
-- [x] 3.2 Implement `createOmpTurnTransport` in `packages/adapters/src/omp-turn-transport.ts` with injected effects (the `CodexTransportEffects` pattern): spawn the discovered `omp`, stream LF-delimited JSON frames, append the synthetic terminal frame, kill the process tree on abort. Never read a credential path (mirror the codex safety check and prove it can fire). Green.
+- [x] 3.1 RED: `omp-turn-transport.test.ts` — pure invocation assembly selects `--mode rpc`, the non-interactive full-capability mode, the ephemeral no-session flag, the session `cwd`, and the model when given; it contains no approval, sandbox, or read-only flag. The supported scratch-extension `mcp.json` source carries the exact canvasOps URL with `type: "http"`.
+- [x] 3.2 Implement `createOmpTurnTransport` with injected effects: spawn the omp script through the exact proven Bun runtime, stream byte-bounded LF-delimited JSON frames, append one synthetic terminal frame, kill the process tree on abort, and never read a credential path. Green.
 
 ## 4. Conformance: hermetic default, gated real, recorded range
 
@@ -35,4 +35,17 @@ Red-first throughout: each group starts with the failing test, then the code tha
 - [x] 6.1 Update `docs/src/content/docs/developing/concepts/harness-adapters.md`: the omp slot (R23 target and the namesake trap, the RPC transport verdict, Bun-aware health, evidence-derived flags, the pi-subset discipline).
 - [x] 6.2 Update `docs/src/content/docs/developing/reference/delivery-order.md`: mark the #26 wave-10 entry delivered with the honest account (what shipped; deliberate cuts — no pi slot, no council-table extension, no ACP, no picker UI; flags false until the first real run).
 - [x] 6.3 Full gate `sh -c 'pnpm check'` green with a positive control; confirm zero spend and zero omp spawns in the default gate; stage `openspec/` with `git add -f`.
-- [x] 6.4 PR closes #26; the closing note states the flag posture honestly (descriptor exists, all capability layers `false` pending the first gated real run) and where `RENNET_LIVE_OMP=1` earns them.
+- [x] 6.4 PR closes #26; the closing note states the flag posture honestly (`interrupt` and `textDeltas` at `implementedByAdapter` only; every outer layer false, no tested range) and where `RENNET_LIVE_OMP=1` can earn more.
+
+## 7. Consolidated correctness follow-up
+
+- [x] 7.1 RED/GREEN: write a supported scratch-extension `mcp.json` with `type: "http"`; prove exact file placement, parsed shape, URL, and `--extension` argv. Remove the false `--config` MCP path.
+- [x] 7.2 RED/GREEN: any `success: false` RPC response is native error evidence and forces a failed terminal outcome.
+- [x] 7.3 RED/GREEN: make the start latch rejectable and funnel synchronous construction plus asynchronous spawn/iteration failures into one failed terminal outcome while settling `close()`.
+- [x] 7.4 RED/GREEN: guard inside `[Symbol.asyncIterator]` so one captured event handle cannot be drained twice.
+- [x] 7.5 RED/GREEN: keep `structuredOutput` expected-fail because omp RPC accepts no schema; prove invalid-but-JSON text cannot pass.
+- [x] 7.6 RED/GREEN: resolve Bun first, enforce `>=1.3.14`, carry the exact runtime to spawn, demote omp asdf shims, and consume locus `PATHEXT`.
+- [x] 7.7 RED/GREEN: byte-bound NDJSON lines and stderr; corrupt, oversized, and unterminated output becomes protocol evidence and cannot complete cleanly.
+- [x] 7.8 Delete fake-only stats/usage/cost normalization until the real transport owns the stats-request lifecycle.
+- [x] 7.9 Omit absent `testedRange` and report explicit `untested` health; never fabricate `0.0.0`.
+- [x] 7.10 Run `NX_DAEMON=false pnpm check` green, then commit without pushing.

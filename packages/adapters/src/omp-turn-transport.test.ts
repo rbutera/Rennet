@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { HarnessEvent } from "@rennet/core";
+import type { HarnessEvent, SessionOutcome } from "@rennet/core";
 import { describe, expect, it } from "vitest";
 import { OmpAdapter } from "./omp-adapter";
 import {
@@ -16,12 +16,22 @@ import {
 function recordingEffects(): {
   effects: OmpTransportEffects;
   accessed: string[];
-  captured: { bin?: string; args?: readonly string[]; cwd?: string; prompt?: string };
+  captured: {
+    bin?: string;
+    args?: readonly string[];
+    cwd?: string;
+    prompt?: string;
+  };
   writes: Map<string, string>;
 } {
   const accessed: string[] = [];
   const writes = new Map<string, string>();
-  const captured: { bin?: string; args?: readonly string[]; cwd?: string; prompt?: string } = {};
+  const captured: {
+    bin?: string;
+    args?: readonly string[];
+    cwd?: string;
+    prompt?: string;
+  } = {};
   const effects: OmpTransportEffects = {
     mkdtemp: (prefix) => {
       accessed.push(prefix);
@@ -47,9 +57,12 @@ function recordingEffects(): {
           yield { type: "ready", protocolVersion: 1 };
           yield {
             type: "message_end",
-            message: { role: "assistant", content: [{ type: "text", text: "ok" }] },
+            message: {
+              role: "assistant",
+              content: [{ type: "text", text: "ok" }],
+            },
           };
-          yield { rennet: "turn-result", exitCode: 0, finalText: "ok", usage: null, cost: null };
+          yield { rennet: "turn-result", exitCode: 0, finalText: "ok" };
         },
       };
     },
@@ -78,10 +91,10 @@ async function runTurn(
 }
 
 describe("createOmpTurnTransport — invocation assembly", () => {
-  it("selects --mode rpc + the capable posture and renders the loopback MCP config", async () => {
+  it("places an exact mcp.json in the scratch extension omp is told to load", async () => {
     const { effects, captured, writes } = recordingEffects();
     // Drive the transport directly with a spec carrying MCP servers.
-    const transport = createOmpTurnTransport("/x/omp", effects);
+    const transport = createOmpTurnTransport("/x/omp", "/x/bun", effects);
     const iterable = transport({
       cwd: "/repo",
       prompt: "review this",
@@ -91,6 +104,8 @@ describe("createOmpTurnTransport — invocation assembly", () => {
     for await (const _frame of iterable) void _frame;
 
     const args = captured.args ?? [];
+    expect(captured.bin).toBe("/x/bun");
+    expect(args[0]).toBe("/x/omp");
     expect(args).toContain("--mode");
     expect(args[args.indexOf("--mode") + 1]).toBe("rpc");
     expect(args).toContain("--auto-approve");
@@ -99,10 +114,16 @@ describe("createOmpTurnTransport — invocation assembly", () => {
     expect(args[args.indexOf("--cwd") + 1]).toBe("/repo");
     expect(args).toContain("--model");
     expect(args).toContain("opus");
-    // MCP config overlay is written and referenced.
-    expect(args).toContain("--config");
-    const configPath = args[args.indexOf("--config") + 1] ?? "";
-    expect(writes.get(configPath)).toContain("http://127.0.0.1:5000/mcp");
+    expect(args).toContain("--extension");
+    const extensionPath = args[args.indexOf("--extension") + 1] ?? "";
+    const mcpPath = join(extensionPath, "mcp.json");
+    expect(writes.has(mcpPath)).toBe(true);
+    expect(JSON.parse(writes.get(mcpPath) ?? "null")).toEqual({
+      mcpServers: {
+        canvasops: { type: "http", url: "http://127.0.0.1:5000/mcp" },
+      },
+    });
+    expect(args).not.toContain("--config");
     // Denylist: no approval-requesting / write-gating / read-only / resume / acp flag.
     for (const banned of ["--approval-mode", "always-ask", "--plan-yolo", "--no-tools", "acp"]) {
       expect(args).not.toContain(banned);
@@ -112,22 +133,27 @@ describe("createOmpTurnTransport — invocation assembly", () => {
     expect(args).not.toContain("review this");
   });
 
-  it("renders no --config flag when the spec carries no MCP servers", async () => {
+  it("renders no --extension flag when the spec carries no MCP servers", async () => {
     const { effects, captured } = recordingEffects();
-    const transport = createOmpTurnTransport("/x/omp", effects);
+    const transport = createOmpTurnTransport("/x/omp", "/x/bun", effects);
     for await (const _frame of transport({ cwd: "/repo", prompt: "go" })) void _frame;
-    expect(captured.args).not.toContain("--config");
+    expect(captured.args).not.toContain("--extension");
   });
 
-  it("renders the MCP overlay with the server url", () => {
-    const yaml = renderOmpMcpConfig({ canvasops: { url: "http://127.0.0.1:7000/mcp" } });
-    expect(yaml).toContain("canvasops");
-    expect(yaml).toContain("url: http://127.0.0.1:7000/mcp");
+  it("renders omp's supported mcp.json schema", () => {
+    const json = renderOmpMcpConfig({
+      canvasops: { url: "http://127.0.0.1:7000/mcp" },
+    });
+    expect(JSON.parse(json)).toEqual({
+      mcpServers: {
+        canvasops: { type: "http", url: "http://127.0.0.1:7000/mcp" },
+      },
+    });
   });
 
   it("reads no credential path across construction and a full turn (tripwire)", async () => {
     const { effects, accessed } = recordingEffects();
-    await runTurn(createOmpTurnTransport("/x/omp", effects), {
+    await runTurn(createOmpTurnTransport("/x/omp", "/x/bun", effects), {
       cwd: "/repo",
       prompt: "review",
     });
@@ -168,6 +194,104 @@ async function waitForExit(pid: number): Promise<void> {
 }
 
 describe("omp process transport", () => {
+  it("surfaces corrupt NDJSON as protocol evidence before a failed terminal", async () => {
+    const frames: unknown[] = [];
+    for await (const frame of defaultOmpTransportEffects.spawn(
+      process.execPath,
+      ["-e", 'process.stdout.write("not-json\\n")'],
+      process.cwd(),
+      "prompt",
+    )) {
+      frames.push(frame);
+    }
+    expect(frames).toContainEqual(
+      expect.objectContaining({
+        rennet: "protocol-failure",
+        reason: "malformed-frame",
+      }),
+    );
+    expect(frames.at(-1)).toEqual(expect.objectContaining({ rennet: "turn-result" }));
+
+    const transport = () =>
+      defaultOmpTransportEffects.spawn(
+        process.execPath,
+        ["-e", 'process.stdout.write("not-json\\n")'],
+        process.cwd(),
+        "prompt",
+      );
+    const session = await new OmpAdapter({
+      binaryPath: process.execPath,
+      transport,
+    }).createSession({
+      cwd: process.cwd(),
+    });
+    await session.send({ prompt: "go" });
+    let outcome: SessionOutcome | null = null;
+    for await (const event of session.events) {
+      if (event.kind === "session.ended") outcome = event.outcome;
+    }
+    expect(outcome?.status).toBe("failed");
+  });
+
+  it("caps stderr bytes and discloses truncation", async () => {
+    const frames: unknown[] = [];
+    for await (const frame of defaultOmpTransportEffects.spawn(
+      process.execPath,
+      ["-e", 'process.stderr.write("e".repeat(100_000))'],
+      process.cwd(),
+      "prompt",
+    )) {
+      frames.push(frame);
+    }
+    const terminal = frames.at(-1) as { stderr?: string } | undefined;
+    expect(terminal?.stderr).toContain("[stderr truncated at 65536 bytes]");
+    expect(Buffer.byteLength(terminal?.stderr ?? "")).toBeLessThan(65_600);
+  });
+
+  it("bounds a giant unterminated frame and fails it as oversized", async () => {
+    const frames: unknown[] = [];
+    for await (const frame of defaultOmpTransportEffects.spawn(
+      process.execPath,
+      ["-e", 'process.stdout.write("x".repeat(1_100_000))'],
+      process.cwd(),
+      "prompt",
+    )) {
+      frames.push(frame);
+    }
+    expect(frames).toContainEqual(
+      expect.objectContaining({
+        rennet: "protocol-failure",
+        reason: "oversized-frame",
+      }),
+    );
+  });
+
+  it("turns an asynchronous spawn failure into exactly one failed terminal frame", async () => {
+    const { effects } = recordingEffects();
+    const failing: OmpTransportEffects = {
+      ...effects,
+      spawn: () => ({
+        [Symbol.asyncIterator](): AsyncIterator<unknown> {
+          return {
+            next: () => Promise.reject(new Error("spawn rejected")),
+          };
+        },
+      }),
+    };
+    const frames: unknown[] = [];
+    for await (const frame of createOmpTurnTransport(
+      "/x/omp",
+      "/x/bun",
+      failing,
+    )({
+      cwd: "/repo",
+      prompt: "go",
+    })) {
+      frames.push(frame);
+    }
+    expect(frames).toEqual([expect.objectContaining({ rennet: "turn-result", exitCode: 1 })]);
+  });
+
   it.skipIf(process.platform === "win32")(
     "kills a Node launcher and its long-lived descendant on abort",
     async () => {

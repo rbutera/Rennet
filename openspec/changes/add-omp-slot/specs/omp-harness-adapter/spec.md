@@ -12,8 +12,8 @@ The omp adapter SHALL be written against an injected turn transport (the peer of
 
 #### Scenario: A turn round-trips to a completed outcome through the transport
 
-- **WHEN** the injected transport yields a session-start frame, streamed frames, and a terminal frame carrying final text and token usage
-- **THEN** the adapter emits `session.started`, the intermediate events, and a `session.ended` completed outcome carrying the final text and the real usage, with strictly increasing `seq`
+- **WHEN** the injected transport yields a session-start frame, streamed frames, and a terminal frame carrying final text
+- **THEN** the adapter emits `session.started`, the intermediate events, and a `session.ended` completed outcome carrying the final text, with strictly increasing `seq`; usage remains absent until the real transport requests stats
 
 #### Scenario: The transport is not spawned until a turn runs
 
@@ -31,7 +31,7 @@ An omp session SHALL run with full capability on the acting path: the composed i
 
 ### Requirement: Every native frame is normalized or passed through, never dropped
 
-The adapter SHALL normalize the transport's streamed frames into the existing `HarnessEvent` protocol with tolerant structural decoders: known frames map to their event kinds (session start, text, tool calls with `ToolKind` classification, terminal outcome), and any unmodelled frame SHALL surface as a `passthrough` event whose `native` field holds the original frame verbatim. Events SHALL carry the adapter-assigned monotonic `seq`, never a harness clock. A transport failure (nonzero exit, spawn failure, unparseable terminal state) SHALL surface as a normalized `HarnessError` with a closed `class` and an `origin`, ending the session with a `failed` outcome; `interrupt()`, `close()`, or an aborted `signal` SHALL terminate the spawned process tree and resolve only after transport completion.
+The adapter SHALL normalize the transport's streamed frames into the existing `HarnessEvent` protocol with tolerant structural decoders: known frames map to their event kinds (session start, text, tool calls with `ToolKind` classification, terminal outcome), and any unmodelled frame SHALL surface as a `passthrough` event whose `native` field holds the original frame verbatim. Events SHALL carry the adapter-assigned monotonic `seq`, never a harness clock. Any RPC response with `success: false`, nonzero exit, spawn/construction/iteration failure, malformed frame, oversized frame, or unparseable terminal state SHALL surface as a normalized `HarnessError` with a closed `class` and an `origin`, ending the session with exactly one `failed` outcome; `interrupt()`, `close()`, or an aborted `signal` SHALL terminate the spawned process tree and resolve only after transport completion. Stdout frame and stderr accumulation SHALL be byte-bounded. The `events` iterable SHALL be single-use even when one captured handle is iterated twice.
 
 #### Scenario: An unmodelled frame arrives mid-stream
 
@@ -42,6 +42,16 @@ The adapter SHALL normalize the transport's streamed frames into the existing `H
 
 - **WHEN** the composed process cannot start or exits nonzero before a terminal frame
 - **THEN** the session ends with a `failed` outcome whose error names a class and origin, and the raw output is not silently discarded
+
+#### Scenario: A rejected RPC command cannot complete cleanly
+
+- **WHEN** omp emits any `{ type: "response", success: false, error }` frame and then exits zero
+- **THEN** the response is preserved as native error evidence and the terminal outcome is `failed`, never `completed`
+
+#### Scenario: Corrupt or oversized stdout is bounded and visible
+
+- **WHEN** omp emits malformed JSON, an oversized line, or an unterminated line and exits zero
+- **THEN** the bounded protocol evidence is emitted and the turn ends `failed`; no corrupt frame is silently dropped
 
 ### Requirement: The descriptor is evidence-derived and claims nothing unproven
 
@@ -62,9 +72,14 @@ The omp descriptor's capability flags SHALL be built only from `buildCapabilitie
 - **WHEN** the opt-in real conformance run executes against the installed `omp` binary and every capability matches the expected matrix
 - **THEN** passing checks produce `advertisedByHarness`/`availableInSession` evidence and the run records the binary version into the committed tested-range artifact
 
+#### Scenario: JSON text is not structured-output evidence
+
+- **WHEN** omp returns JSON text for a session that requested an output schema
+- **THEN** `structuredOutput` remains absent because the RPC prompt neither receives nor enforces that schema, and the capability remains expected-fail
+
 ### Requirement: Discovery health degrades honestly when the Bun runtime is absent
 
-omp requires the Bun runtime to execute. Discovery of the omp slot SHALL prove both the `omp` binary and a runnable `bun`, and when `omp` is present but Bun is not, SHALL report health as unavailable (or degraded, when omp itself still answers) with a reason that names the missing Bun runtime — never a crash at first spawn, and never a claim that no omp is installed.
+omp requires the Bun runtime to execute. Discovery SHALL resolve Bun before probing omp, enforce Bun `>=1.3.14`, and carry the exact proven runtime into process composition so the omp script is both probed and launched through it. When `omp` is present but Bun is missing or below floor, health SHALL be unavailable with a reason that names Bun and the resolved omp path — never a generic no-version branch or a first-spawn crash. Omp ranking SHALL demote an asdf shim behind a real install, and Windows filename matching SHALL consume the candidate locus's `PATHEXT`.
 
 #### Scenario: omp present, Bun absent
 
@@ -73,8 +88,17 @@ omp requires the Bun runtime to execute. Discovery of the omp slot SHALL prove b
 
 #### Scenario: Both present
 
-- **WHEN** discovery resolves `omp` and a runnable `bun`, and `omp` answers its version probe
-- **THEN** the slot reports `ready` with the proven version
+- **WHEN** discovery resolves `omp` and Bun `>=1.3.14`, and omp answers when executed through that exact Bun path
+- **THEN** the slot reports `ready` with the proven version and composition carries the same runtime path
+
+### Requirement: canvasOps uses a supported ephemeral MCP source
+
+When a turn carries loopback MCP servers, composition SHALL write `mcp.json` at the root of the turn scratch extension and pass that directory through omp's supported `--extension` source. The JSON SHALL use `mcpServers.<name>.type: "http"` and the exact loopback URL. It SHALL NOT pass MCP declarations through `--config`, which omp treats as a settings overlay. Hermetic tests SHALL prove the exact filename, placement, parsed shape, URL, and invocation. Until a real turn runs, the ledger SHALL claim no live MCP connection evidence above `implementedByAdapter`.
+
+#### Scenario: A canvasOps server is attached hermetically
+
+- **WHEN** composition receives the canvasOps loopback URL
+- **THEN** `<turn scratch>/mcp.json` contains `{ "mcpServers": { "canvasops": { "type": "http", "url": "<exact URL>" } } }` and omp receives `--extension <turn scratch>`
 
 ### Requirement: The orchestrator seat works with omp selected
 

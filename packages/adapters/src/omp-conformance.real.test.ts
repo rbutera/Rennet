@@ -11,7 +11,8 @@ import { createOmpHarness } from "./omp-turn-transport";
 // on the user's own omp configuration and spends the user's quota, so it is SKIPPED
 // unless RENNET_LIVE_OMP=1 and NEVER runs in the normal gate:
 //
-//   RENNET_LIVE_OMP=1 pnpm exec vitest run packages/adapters/src/omp-conformance.real.test.ts
+//   RENNET_LIVE_OMP=1 NX_DAEMON=false pnpm nx test rennet-adapters -- \
+//     --run packages/adapters/src/omp-conformance.real.test.ts
 //
 // The committed expectation below is what the DOCUMENTED-shape hermetic fake proves.
 // Because no turn has ever been executed against omp, the FIRST real run is the moment
@@ -23,8 +24,8 @@ import { createOmpHarness } from "./omp-turn-transport";
 
 const LIVE = process.env.RENNET_LIVE_OMP === "1";
 const EXPECTED_OMP_MATRIX = {
-  passed: ["interrupt", "structuredOutput", "textDeltas"],
-  failed: ["costUsd", "reportsContextWindow"],
+  passed: ["interrupt", "textDeltas"],
+  failed: ["costUsd", "reportsContextWindow", "structuredOutput"],
 } as const;
 
 describe("omp conformance — real omp (gated)", () => {

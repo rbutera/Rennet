@@ -312,7 +312,6 @@ export {
   buildOmpTurnArgs,
   classifyOmpToolKind,
   encodeOmpPromptFrame,
-  extractOmpUsage,
   mapOmpError,
   OmpAdapter,
   type OmpAdapterConfig,
