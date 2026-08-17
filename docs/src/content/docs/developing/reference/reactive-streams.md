@@ -19,9 +19,9 @@ flowchart LR
   adapter --> command[Command handler]
   command -->|one transaction| store[(Event store)]
   store -. future .-> feed[Change feed]
-  feed -. future .-> ipc[Renderer IPC]
+  feed -. future .-> ws[Renderer over WS]
   feed -. future .-> tools[Orchestrator tools]
-  ipc --> query[TanStack Query cache]
+  ws --> query[TanStack Query cache]
 ```
 
 When implemented, the change feed is only an invalidation hint. The event store
@@ -52,18 +52,19 @@ review state inside operator closures.
 
 ## The progress-narration seam
 
-The `rennet:progress` push (main to renderer, keyed by `commandId`, typed as
-`ProjectProcessEvent`) is one such live seam. It obeys the four-point
-discipline above: dispatch owns the terminal event so the stream and the
-command's resolved value always agree, and the renderer folds the stream into UI
-state that a re-read of durable truth can always reconstruct.
+The progress push — now a WS `progressEvent` frame (the server to every subscribed
+client, keyed by `commandId`, carrying a `ProjectProcessEvent`) — is one such live
+seam. It obeys the four-point discipline above: dispatch owns the terminal event so
+the stream and the command's resolved value always agree, and the renderer folds the
+stream into UI state that a re-read of durable truth can always reconstruct.
 
 The processing slot renders through the shared narration organ (`ProgressFeed`
 plus the processing-specific `deriveProgressView` fold in `packages/ui`). The
-renderer keeps one command UUID per project for the session, and main deduplicates
-a live `project.process` run by that UUID while retaining a bounded replay suffix,
-so remounting the processing consumer reattaches instead of starting a second
-concurrent snapshot build. A successful repo line carries the processed project
+renderer keeps one command UUID per project for the session, and the server
+deduplicates a live `project.process` run by that UUID while retaining a bounded
+replay suffix (keyed by the connecting socket's identity), so remounting the
+processing consumer — or reloading the renderer onto a fresh WS connection —
+reattaches instead of starting a second concurrent snapshot build. A successful repo line carries the processed project
 artifact through the real consumer and opens that project; the fold also derives
 that anchor from a successful resolved summary when the push channel degrades.
 

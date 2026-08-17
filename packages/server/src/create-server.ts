@@ -191,6 +191,7 @@ import { loadReviewOwnership } from "./review-ownership";
 import { buildReviewCanvasesInput } from "./review-pipeline-input";
 import { createSettingsComposition } from "./settings";
 import { createLiveSymbolLookup, reviewPinnedToHead } from "./symbol-lookup-live";
+import { startWsListener, type WsListener } from "./ws-listener";
 
 export interface RennetServerOptions {
   /** The per-user data directory (Electron passes app.getPath("userData")); every store resolves under it. */
@@ -205,16 +206,20 @@ export interface RennetServerOptions {
   readonly openPath?: (absPath: string) => Promise<boolean>;
   /** The outbound HTTP transport for GitHub egress (Electron's net.fetch). */
   readonly httpFetch?: HttpFetch;
+  /** The server application's own version, surfaced in the WS `serverInfo` handshake. Defaults to a dev sentinel. */
+  readonly serverVersion?: string;
 }
 
 export interface RennetServer {
   /** The command router — the exact function createDispatch returns; the DispatchContext push seam is unchanged. */
   readonly dispatch: ReturnType<typeof createDispatch>;
-  /** Quiesce live turns, close the watcher, close rehydration, close the store — in that order. Idempotent. */
+  /** The ephemeral loopback port the WS listener bound (#378); the desktop injects it into the renderer. */
+  readonly wsPort: number;
+  /** Quiesce live turns, close the watcher, close rehydration, close the store, close the WS listener. Idempotent. */
   readonly shutdown: () => void;
 }
 
-export function createRennetServer(options: RennetServerOptions): RennetServer {
+export async function createRennetServer(options: RennetServerOptions): Promise<RennetServer> {
   const env = options.env ?? process.env;
   const dataDir = options.dataDir;
   const execFileAsync = promisify(execFile);
@@ -583,6 +588,10 @@ export function createRennetServer(options: RennetServerOptions): RennetServer {
   // snapshot and model-backed knowledge warm as its reference branch advances.
   // Assigned in `whenReady`, torn down on quit.
   let rehydration: ProactiveRehydration | null = null;
+  // The loopback WS listener (#378), assigned once dispatch exists (below). The
+  // rehydration broadcast and shutdown reference it through this binding; both run
+  // after construction, by which time it is set.
+  let wsListener: WsListener | null = null;
   // The in-flight conversation turns (#251, criterion 4). One registry for the app
   // lifetime: dispatch registers each `review.ask` turn's AbortController and settles
   // it when the turn finishes; `before-quit` aborts whatever is still in flight so a
@@ -1612,15 +1621,20 @@ export function createRennetServer(options: RennetServerOptions): RennetServer {
   const snapshotStore = liveSnapshotStore;
   const snapshotGenerator = new ProjectSnapshotGenerator({ store: snapshotStore, gitForRepo });
   // Proactive rehydration (#143/#243): keep each already-built project's structural
-  // snapshot and knowledge warm as its reference branch advances. The background pass narrates on the SAME
-  // `rennet:progress` push the processing screen uses, under a stable command id, so
-  // the mechanism is visible-capable with no new protocol surface. It only warms repos
-  // that already have a snapshot — it never cold-builds in the background.
+  // snapshot and knowledge warm as its reference branch advances. The background pass
+  // narrates on the SAME progress push the processing screen uses (now WS `progressEvent`
+  // frames fanned to every client, #378), under a stable command id, so the mechanism is
+  // visible-capable with no new protocol surface. It only warms repos that already have a
+  // snapshot — it never cold-builds in the background.
   rehydration = createProactiveRehydration({
     store: snapshotStore,
     generator: snapshotGenerator,
     narrate: (event) => {
+      // Fan background rehydration out to every connected client. The optional
+      // caller hook stays for non-WS embedders; the WS listener reaches the sockets
+      // that replaced the per-window `webContents.send` broadcast (#378).
       options.broadcastProgress?.(PROACTIVE_REHYDRATION_COMMAND_ID, event);
+      wsListener?.broadcastProgress(PROACTIVE_REHYDRATION_COMMAND_ID, event);
     },
     runNoveltyPass: (repoKey) => liveNoveltyLifecycle.advanceRepo(repoKey),
     runKnowledgePass: async ({ repoKey, repoRoot, fromOid, toOid }) => {
@@ -2152,16 +2166,26 @@ export function createRennetServer(options: RennetServerOptions): RennetServer {
     }),
   });
 
+  // The loopback WS transport (#378). Started here — after dispatch exists — and
+  // awaited so `createRennetServer` resolves only once the socket is `listening`,
+  // giving the desktop shell a real `wsPort` before it loads the window.
+  wsListener = await startWsListener({
+    dispatch,
+    serverVersion: options.serverVersion ?? "0.0.0-dev",
+  });
+
   let didShutdown = false;
   const shutdown = (): void => {
     // The old before-quit order (#251 criterion 4): signal in-flight turns, close the
     // watcher, close rehydration, close the store. Idempotent — Electron can fire quit twice.
+    // The WS listener closes last, dropping every client socket.
     if (didShutdown) return;
     didShutdown = true;
     liveTurns.abortAll();
     void watcher.close();
     rehydration?.closeAll();
     store?.close();
+    void wsListener?.close();
   };
-  return { dispatch, shutdown };
+  return { dispatch, shutdown, wsPort: wsListener.port };
 }

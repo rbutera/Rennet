@@ -126,6 +126,9 @@ importers:
       '@rennet/adapters':
         specifier: workspace:*
         version: link:../../packages/adapters
+      '@rennet/client':
+        specifier: workspace:*
+        version: link:../../packages/client
       '@rennet/core':
         specifier: workspace:*
         version: link:../../packages/core
@@ -229,6 +232,22 @@ importers:
         specifier: 4.4.3
         version: 4.4.3
 
+  packages/client:
+    dependencies:
+      '@rennet/protocol':
+        specifier: workspace:*
+        version: link:../protocol
+      '@rennet/types':
+        specifier: workspace:*
+        version: link:../types
+    devDependencies:
+      '@types/ws':
+        specifier: 8.18.1
+        version: 8.18.1
+      ws:
+        specifier: 8.21.1
+        version: 8.21.1
+
   packages/core:
     dependencies:
       '@rennet/instructions':
@@ -273,10 +292,16 @@ importers:
       '@rennet/types':
         specifier: workspace:*
         version: link:../types
+      ws:
+        specifier: 8.21.1
+        version: 8.21.1
     devDependencies:
       '@anthropic-ai/claude-agent-sdk':
         specifier: 0.3.223
         version: 0.3.223(@anthropic-ai/sdk@0.115.0(zod@4.4.3))(@modelcontextprotocol/sdk@1.30.0(zod@4.4.3))(zod@4.4.3)
+      '@types/ws':
+        specifier: 8.18.1
+        version: 8.18.1
 
   packages/types: {}
 

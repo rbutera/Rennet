@@ -25,6 +25,7 @@ const allowed = new Map([
     ]),
   ],
   ["@rennet/ui", new Set(["@rennet/types", "@rennet/protocol"])],
+  ["@rennet/client", new Set(["@rennet/types", "@rennet/protocol"])],
 ]);
 
 for (const [packageName, permitted] of allowed) {

@@ -10,21 +10,23 @@ signed GitHub result and shows where the coding-agent handoff is meant to join.
 ## The short version
 
 Rennet is an Electron app in a pnpm + Nx monorepo. The renderer is deliberately
-thin: it asks the desktop main process to do work through a typed inter-process
-communication (IPC) bridge. As of the app-server wave the composition root —
-every store, adapter, and the 49-command dispatch router — lives in
-`@rennet/server`, built by `createRennetServer(options)`; the Electron main
-process is a shell that instantiates the server in-process and forwards IPC to
-it. `@rennet/core` owns review behaviour and `@rennet/adapters` talks to Git,
-GitHub, SQLite, the filesystem, and installed coding harnesses.
+thin: it asks the server to do work by speaking a typed session protocol over a
+loopback WebSocket. As of the app-server wave the composition root — every store,
+adapter, and the 49-command dispatch router — lives in `@rennet/server`, built by
+`createRennetServer(options)`, which also starts a WebSocket listener on an
+ephemeral `127.0.0.1` port. The Electron main process is a shell that instantiates
+the server in-process; the renderer connects to that listener as client #1 through
+`@rennet/client`'s `WsRennetBridge`. `@rennet/core` owns review behaviour and
+`@rennet/adapters` talks to Git, GitHub, SQLite, the filesystem, and installed
+coding harnesses.
 
 ```mermaid
 flowchart LR
   user[Reviewer]
-  ui["Renderer<br/>@rennet/ui"]
-  preload["Preload<br/>typed bridge"]
+  ui["Renderer<br/>@rennet/ui + @rennet/client"]
+  preload["Preload<br/>platform · menu · WS port"]
   main["Electron main<br/>shell"]
-  server["@rennet/server<br/>composition root"]
+  server["@rennet/server<br/>composition root + WS listener"]
   core["Review engine<br/>@rennet/core"]
   adapters["Host integrations<br/>@rennet/adapters"]
   local["Local machine<br/>Git · SQLite · Repo Map"]
@@ -32,8 +34,10 @@ flowchart LR
   github[GitHub]
 
   user <--> ui
-  ui <--> preload <--> main
-  main <--> server
+  ui <-->|"loopback WS session"| server
+  ui <--> preload
+  preload <--> main
+  main --> server
   server <--> core
   server <--> adapters
   adapters <--> local
@@ -41,12 +45,14 @@ flowchart LR
   adapters <--> github
 ```
 
-The main process is the authority boundary: it owns the trusted-renderer IPC
-check, windows, menu, protocol, and auto-update, and hands the Electron-owned
-effects (data directory, repository-chooser dialog, progress broadcast,
-`shell.openPath`, and `net.fetch`) to the server as options. The renderer cannot
-import core or reach Node APIs directly, and adapters never leak host-specific
-behaviour back into the portable protocol.
+The main process owns windows, menu, the `app://` protocol, and auto-update, and
+hands the Electron-owned effects (data directory, repository-chooser dialog,
+`shell.openPath`, and `net.fetch`) to the server as options. Command invocation
+and the progress / ask-stream push streams travel the server's loopback
+WebSocket, which the renderer reaches through `WsRennetBridge` — the same wire
+every future client (browser, CLI, mobile) will use, so a transport bug shows up
+as a desktop bug. The renderer cannot import core or reach Node APIs directly, and
+adapters never leak host-specific behaviour back into the portable protocol.
 
 ## Package graph
 
@@ -57,12 +63,13 @@ target includes a deliberately forbidden import so the check proves it can fail.
 ```mermaid
 flowchart BT
   types["@rennet/types<br/>shared data shapes"]
-  protocol["@rennet/protocol<br/>typed IPC + review-document validation"]
+  protocol["@rennet/protocol<br/>session protocol + review-document validation"]
   instructions["@rennet/instructions<br/>versioned prompt contracts"]
   core["@rennet/core<br/>portable review engine"]
   adapters["@rennet/adapters<br/>Node and service integrations"]
   server["@rennet/server<br/>composition root + command router"]
   ui["@rennet/ui<br/>React review surfaces"]
+  client["@rennet/client<br/>browser-safe transport clients"]
   desktop["apps/desktop<br/>Electron shell"]
 
   protocol --> types
@@ -81,21 +88,25 @@ flowchart BT
   server --> adapters
   ui --> types
   ui --> protocol
+  client --> types
+  client --> protocol
   desktop --> protocol
   desktop --> server
   desktop --> ui
+  desktop --> client
 ```
 
 | Project | Owns | Must not own |
 |---|---|---|
 | `@rennet/types` | Shared, transport-safe TypeScript shapes | Runtime behaviour or in-repo dependencies |
-| `@rennet/protocol` | IPC commands, Rennet Surfacing Protocol (RSP) schemas, wire validation | Electron, filesystem, or product orchestration |
+| `@rennet/protocol` | Session envelope, command definitions, Rennet Surfacing Protocol (RSP) schemas, wire validation | Electron, filesystem, or product orchestration |
 | `@rennet/instructions` | Versioned base instructions and prompt assembly | Public protocol or host access |
 | `@rennet/core` | Capture-independent review logic, event folds, canvases, routing, lineage, publication decisions | Electron, GitHub clients, filesystem calls, or renderer state |
 | `@rennet/adapters` | Git, GitHub, SQLite, local files, harness SDKs, and other host integrations | UI or product policy |
 | `@rennet/server` | The `createRennetServer` composition root: stores, adapter wiring, harness memoisers, and the 49-command dispatch router | Electron imports (its effects are injected as options) or renderer state |
 | `@rennet/ui` | React surfaces and ephemeral view state | Core imports, Node APIs, or durable review truth |
-| `apps/desktop` | Electron shell: windows, menu, protocol, auto-update, and the trusted-renderer IPC bridge forwarding to the server | The composition itself, or reusable domain logic that belongs in a package |
+| `@rennet/client` | Browser-safe transport clients — the `WsRennetBridge` the renderer (and future browser, CLI, and mobile clients) use to speak the session protocol | Electron, Node APIs, filesystem, or review logic |
+| `apps/desktop` | Electron shell: windows, menu, `app://` protocol, auto-update, injecting the WS port, and composing the `WsRennetBridge` with the preload residue | The composition itself, or reusable domain logic that belongs in a package |
 
 ## A review from input to outcome
 

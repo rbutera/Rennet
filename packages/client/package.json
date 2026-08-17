@@ -1,0 +1,15 @@
+{
+  "name": "@rennet/client",
+  "version": "0.1.6",
+  "private": true,
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@rennet/protocol": "workspace:*",
+    "@rennet/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/ws": "8.18.1",
+    "ws": "8.21.1"
+  }
+}

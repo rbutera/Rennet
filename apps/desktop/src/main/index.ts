@@ -1,12 +1,7 @@
 import { existsSync } from "node:fs";
 import { join, normalize, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
-import {
-  isCommandName,
-  menuRunPayloadSchema,
-  type ProjectProcessEvent,
-  type ReviewAskStreamEvent,
-} from "@rennet/protocol";
+import { menuRunPayloadSchema } from "@rennet/protocol";
 import { createRennetServer, type RennetServer } from "@rennet/server";
 import { app, BrowserWindow, dialog, ipcMain, Menu, net, protocol, session, shell } from "electron";
 import squirrelStartup from "electron-squirrel-startup";
@@ -23,21 +18,18 @@ if (squirrelStartup) {
   app.quit();
 }
 
-const IPC_CHANNEL = "rennet:invoke";
-// The push channel a long-running command streams live progress on (today
-// `project.process`'s snapshot-build narration). The renderer's `onProgress`
-// bridge filters by the `commandId` it passed to `invoke`.
-const PROGRESS_CHANNEL = "rennet:progress";
-// The push channel a review's conversation streams its token deltas on (#251). Keyed
-// by `reviewId` (NOT commandId) so the renderer's `onAskStream` re-attaches after a
-// reload while the turn keeps running in main. Each event carries its own turnId.
-const ASK_STREAM_CHANNEL = "rennet:ask-stream";
 // The application menu channels (#44): the renderer PROJECTS the registry into menu
 // sections and pushes them on `menu-update`; MAIN builds `Menu.setApplicationMenu` and
-// routes an item click back on `menu-run` as a command id the renderer runs.
+// routes an item click back on `menu-run` as a command id the renderer runs. These are
+// the ONLY remaining IPC channels — command invocation and the progress/ask-stream push
+// streams moved to the loopback WS transport (#378), where the renderer is client #1.
 const MENU_UPDATE_CHANNEL = "rennet:menu-update";
 const MENU_RUN_CHANNEL = "rennet:menu-run";
 const APP_ORIGIN = "app://rennet";
+// The flag the preload reads to build its WsRennetBridge URL; appended to the renderer
+// process argv via `webPreferences.additionalArguments` (the boot-time-constant pattern
+// under contextIsolation + sandbox).
+const WS_PORT_ARG = "--rennet-ws-port=";
 
 protocol.registerSchemesAsPrivileged([
   {
@@ -62,52 +54,6 @@ function isTrustedAppUrl(value: string): boolean {
     url.username === "" &&
     url.password === ""
   );
-}
-
-function registerCommandHandler(): void {
-  ipcMain.handle(IPC_CHANNEL, async (event, request: unknown) => {
-    if (!event.senderFrame || !isTrustedAppUrl(event.senderFrame.url))
-      throw new Error("Untrusted renderer origin");
-    if (!request || typeof request !== "object") throw new Error("Invalid command envelope");
-    const { name, input } = request as { name?: unknown; input?: unknown };
-    if (typeof name !== "string" || !isCommandName(name)) throw new Error("Unknown command");
-    if (!server) throw new Error("The command router is not ready");
-    // A command that carries a `commandId` may stream live progress; push each
-    // event on the progress channel keyed by that id so the renderer can filter to
-    // its own invocation. `sender.isDestroyed()` guards a window closed mid-build.
-    const commandId =
-      input &&
-      typeof input === "object" &&
-      typeof (input as { commandId?: unknown }).commandId === "string"
-        ? (input as { commandId: string }).commandId
-        : undefined;
-    const emitProgress = commandId
-      ? (progress: ProjectProcessEvent): void => {
-          if (!event.sender.isDestroyed())
-            event.sender.send(PROGRESS_CHANNEL, { commandId, event: progress });
-        }
-      : undefined;
-    // #251: a review.ask carrying a reviewId may stream its answer's tokens; push each
-    // event on the ask-stream channel keyed by that reviewId so the renderer filters to
-    // its own review (and can re-attach by reviewId after a reload).
-    const reviewId =
-      input &&
-      typeof input === "object" &&
-      typeof (input as { reviewId?: unknown }).reviewId === "string"
-        ? (input as { reviewId: string }).reviewId
-        : undefined;
-    const emitAskStream = reviewId
-      ? (streamEvent: ReviewAskStreamEvent): void => {
-          if (!event.sender.isDestroyed())
-            event.sender.send(ASK_STREAM_CHANNEL, { reviewId, event: streamEvent });
-        }
-      : undefined;
-    return server.dispatch(name, input, {
-      emitProgress,
-      progressRecipientId: event.sender.id,
-      emitAskStream,
-    });
-  });
 }
 
 function registerMenuHandler(): void {
@@ -142,7 +88,7 @@ function registerAppProtocol(): void {
   });
 }
 
-async function createWindow(): Promise<void> {
+async function createWindow(wsPort: number): Promise<void> {
   const window = new BrowserWindow({
     width: 1420,
     height: 900,
@@ -181,6 +127,9 @@ async function createWindow(): Promise<void> {
       nodeIntegration: false,
       sandbox: true,
       webSecurity: true,
+      // The loopback WS port the renderer's WsRennetBridge connects to (#378). Appended
+      // to the renderer process argv; the sandboxed preload reads it and exposes it.
+      additionalArguments: [`${WS_PORT_ARG}${wsPort}`],
     },
   });
   window.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
@@ -208,12 +157,15 @@ app.whenReady().then(async () => {
   if (app.isPackaged) startAutoUpdate();
   // The composition root now lives in @rennet/server (#377). The shell supplies the
   // Electron-owned effects — the resolved user-data dir, the process env, the repo
-  // chooser dialog, the progress broadcast, shell.openPath, and net.fetch — and
-  // forwards `rennet:invoke` to `server.dispatch`. Persistence is byte-for-byte: the
-  // server opens the same rennet.sqlite / projects.json / threads under `dataDir`.
-  server = createRennetServer({
+  // chooser dialog, shell.openPath, and net.fetch. Command invocation and the
+  // progress/ask-stream streams travel the server's loopback WS listener (#378), which
+  // the renderer dials as client #1 — no `rennet:invoke` IPC path exists anymore.
+  // Persistence is byte-for-byte: the server opens the same rennet.sqlite /
+  // projects.json / threads under `dataDir`.
+  server = await createRennetServer({
     dataDir: app.getPath("userData"),
     env: process.env,
+    serverVersion: app.getVersion(),
     chooseRepositoryFallback: async () => {
       const result = await dialog.showOpenDialog({
         title: "Choose a repository to review",
@@ -221,12 +173,8 @@ app.whenReady().then(async () => {
       });
       return result.canceled ? null : (result.filePaths[0] ?? null);
     },
-    broadcastProgress: (commandId, event) => {
-      for (const win of BrowserWindow.getAllWindows()) {
-        if (win.isDestroyed()) continue;
-        win.webContents.send(PROGRESS_CHANNEL, { commandId, event });
-      }
-    },
+    // Background rehydration progress now fans out to every WS client inside the
+    // server's listener (#378); the old per-window `webContents.send` broadcast is gone.
     openPath: async (absPath) => (await shell.openPath(absPath)) === "",
     httpFetch: async (url, init) => {
       const res = await net.fetch(url, init);
@@ -237,9 +185,8 @@ app.whenReady().then(async () => {
     callback(false);
   });
   registerAppProtocol();
-  registerCommandHandler();
   registerMenuHandler();
-  await createWindow();
+  await createWindow(server.wsPort);
 });
 
 app.on("window-all-closed", () => app.quit());

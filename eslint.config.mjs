@@ -58,6 +58,10 @@ export default [
               onlyDependOnLibsWithTags: ["layer:types", "layer:protocol", "layer:ui"],
             },
             {
+              sourceTag: "layer:client",
+              onlyDependOnLibsWithTags: ["layer:types", "layer:protocol", "layer:client"],
+            },
+            {
               sourceTag: "layer:app",
               onlyDependOnLibsWithTags: [
                 "layer:types",
@@ -67,6 +71,7 @@ export default [
                 "layer:adapter",
                 "layer:server",
                 "layer:ui",
+                "layer:client",
                 "layer:app",
               ],
             },
