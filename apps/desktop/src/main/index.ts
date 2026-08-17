@@ -9,6 +9,7 @@ import {
   applyVisibilitySwitch,
   CLAUDE_TESTED_RANGE,
   type ClaudeHarnessResult,
+  CodexAdapter,
   type CodexAvailability,
   claudeHandoffRunPort,
   cleanupWorktree,
@@ -16,6 +17,7 @@ import {
   createClaudeHarness,
   createCodexCiRefinementTurn,
   createCodexExecutor,
+  createCodexTurnTransport,
   createCodexUtilityAdapter,
   createCoverageTurn,
   createGitHubProjectPrSource,
@@ -28,6 +30,7 @@ import {
   defaultGlobalConfigPath,
   defaultProjectDetailSourceDeps,
   defaultProjectDiscoveryDeps,
+  deriveCodexImplementedEvidence,
   deriveProjectDraft,
   discoverClaude,
   discoverCodex,
@@ -88,6 +91,7 @@ import {
   type ForgePrSubmissionOutcome,
   fanInIndexFromSnapshot,
   guardSeatTurn,
+  type HarnessPort,
   type HarnessTurnResult,
   HOST_LOCUS,
   type Locus,
@@ -312,6 +316,9 @@ interface CodexResolution {
   readonly availability: CodexAvailability;
   readonly port: CodexUtilityPort | null;
   readonly executor: CodexExecutor | null;
+  readonly agenticPort:
+    | ((mcpServers: Readonly<Record<string, { readonly url: string }>>) => HarnessPort)
+    | null;
   /** The resolved absolute `codex` path (for the ask-AI executor), or null. */
   readonly binPath: string | null;
   /** The resolved codex version, stamped as harness provenance, or null. */
@@ -330,6 +337,7 @@ function getCodexResolution(): Promise<CodexResolution> {
         availability: { available: false, version: null },
         port: null,
         executor: null,
+        agenticPort: null,
         binPath: null,
         version: null,
       };
@@ -338,10 +346,20 @@ function getCodexResolution(): Promise<CodexResolution> {
       bin: chosen.path,
       harnessVersion: chosen.version,
     });
+    const transport = createCodexTurnTransport(chosen.path);
+    const capabilityEvidence = await deriveCodexImplementedEvidence(chosen.path);
     return {
       availability: { available: true, version: chosen.version },
       port: createCodexUtilityAdapter({ executor }),
       executor,
+      agenticPort: (mcpServers) =>
+        new CodexAdapter({
+          binaryPath: chosen.path,
+          transport,
+          version: chosen.version,
+          ...(capabilityEvidence === undefined ? {} : { capabilityEvidence }),
+          mcpServers,
+        }),
       binPath: chosen.path,
       version: chosen.version,
     };
@@ -1617,16 +1635,36 @@ app.whenReady().then(async () => {
     });
   };
   const publishConsent = createPublishConsentAuthority();
-  // The live orchestrator turn runner (issue #13, wave 2): composes the wave-1 live
-  // backend + the lean primer + a real `claude` turn over the in-process canvasOps@2
-  // MCP server. It reuses the SAME memoized `claude` discovery the review pipeline
-  // uses (R2 subscription OAuth) and the app-owned LOCAL-FIRST snapshot store under
+  // The live orchestrator turn runner resolves the `orchestrator-chat` council seat
+  // across both real HarnessPort adapters. Claude receives the in-process canvasOps
+  // server; a Codex-selected path receives the same backend through the external
+  // loopback transport. It reuses the memoized discoveries and the app-owned store under
   // `~/.rennet/projects/` (issue #188 — `baseDir` omitted, so it inherits
   // `defaultProjectsBaseDir()`). It is wired into the command-router composition
   // here; the conversational command that would drive a turn per user question is
   // the DEFERRED UI loop.
   const orchestratorTurn = createOrchestratorTurnRunner({
-    resolveClaudePath: async () => (await getClaudeHarness()).discovery.chosen?.path ?? null,
+    resolveHarness: async () => {
+      const claude = await getClaudeHarness();
+      const codex = await getCodexResolution();
+      const installed: CouncilHarnessId[] = [];
+      if (claude.adapter) installed.push("claude-code");
+      if (codex.agenticPort) installed.push("codex");
+      const assignment = resolveAssignment("orchestrator-chat", { availability: { installed } });
+      if (assignment.kind !== "model") return null;
+      const agenticPort = codex.agenticPort;
+      if (assignment.harness === "codex" && agenticPort) {
+        return {
+          harness: "codex",
+          model: assignment.model,
+          resolvePort: (mcpServers) => Promise.resolve(agenticPort(mcpServers)),
+        };
+      }
+      const claudePath = claude.discovery.chosen?.path;
+      return assignment.harness === "claude-code" && claudePath
+        ? { harness: "claude-code", claudePath, model: assignment.model }
+        : null;
+    },
     env: process.env,
     backend: {
       resolveKnowledgePort: async () => (await getClaudeHarness()).adapter,

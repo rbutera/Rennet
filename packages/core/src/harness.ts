@@ -180,6 +180,8 @@ export type SessionOutcome =
       readonly status: "completed";
       readonly finalText: string;
       readonly structuredOutput?: unknown;
+      /** Actual model context-window capacity, when the normalized adapter reports it. */
+      readonly contextWindowTokens?: number;
       /**
        * The turn's token accounting, when the harness reported it on its terminal
        * frame (issue #186). Threaded through so the runner that mints the RSP

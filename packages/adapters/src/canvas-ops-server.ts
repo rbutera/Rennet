@@ -92,14 +92,14 @@ function paramToZod(param: ToolParam): ZodTypeAny {
 }
 
 /** Compile a descriptor's param list into a Zod raw shape for the SDK. */
-function toZodShape(params: readonly ToolParam[]): ZodRawShape {
+export function toZodShape(params: readonly ToolParam[]): ZodRawShape {
   const shape: Record<string, ZodTypeAny> = {};
   for (const param of params) shape[param.name] = paramToZod(param);
   return shape;
 }
 
 /** Wrap a pure core handler into an SDK `CallToolResult` handler over `backend`. */
-function toSdkHandler(descriptor: CanvasOpsTool, backend: CanvasOpsBackend) {
+export function toSdkHandler(descriptor: CanvasOpsTool, backend: CanvasOpsBackend) {
   return async (args: Record<string, unknown>): Promise<CallToolResult> => {
     // Almost every handler is synchronous; `context.ask` returns a Promise. Await
     // covers both — a plain value passes through unchanged.
