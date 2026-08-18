@@ -7,7 +7,6 @@ import type {
   RennetBridge,
 } from "@rennet/protocol";
 import { type ReactNode, useEffect, useState } from "react";
-import { RennetBrandMark } from "./brand-mark";
 import {
   ArrowRightIcon,
   ChevronIcon,
@@ -19,6 +18,7 @@ import {
   SparkleIcon,
 } from "./icons";
 import { ProjectProcessing } from "./project-processing";
+import { ChromeMark } from "./update-ready";
 
 /**
  * The front door (issue #29). The empty projects list IS first run; the
@@ -76,15 +76,13 @@ export function FrontDoor({
   return (
     <div className="rennet-glass front-door" data-scheme={scheme ?? "dark"}>
       <header className="front-door-bar">
-        <span className="front-door-mark" aria-hidden="true">
-          {flow?.step === "processing" ? (
-            <SparkleIcon size={18} />
-          ) : flow ? (
-            <PlusIcon size={16} />
-          ) : (
-            <RennetBrandMark size={16} />
-          )}
-        </span>
+        {flow ? (
+          <span className="front-door-mark" aria-hidden="true">
+            {flow.step === "processing" ? <SparkleIcon size={18} /> : <PlusIcon size={16} />}
+          </span>
+        ) : (
+          <ChromeMark size={16} className="front-door-mark" />
+        )}
         <h1>
           {flow?.step === "processing" ? flow.project.name : flow ? "Add a project" : "Rennet"}
         </h1>

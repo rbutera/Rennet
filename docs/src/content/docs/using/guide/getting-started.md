@@ -151,6 +151,15 @@ Reviewing from another device does not change that. When you
 your machine directly over your own private network (Tailscale) — still no Rennet
 server in the middle.
 
+## Updates arrive as a badge, not a dialog
+
+Rennet checks for a new release every five minutes while it runs. The check
+talks only to update.electronjs.org, which resolves the project's public GitHub
+Releases — there is no Rennet backend. When a newer version has downloaded, the
+Rennet mark in the window chrome grows a small dot on its corner. Click it to
+restart into the new version, or dismiss the prompt and keep working; the badge
+stays until you choose to apply, and nothing ever restarts on its own.
+
 ## Next steps
 
 - [Windows and WSL](/using/guide/windows-and-wsl/) covers running on Windows, natively or driving a WSL distro.

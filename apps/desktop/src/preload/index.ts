@@ -12,7 +12,22 @@ import { contextBridge, type IpcRendererEvent, ipcRenderer } from "electron";
 const MENU_UPDATE_CHANNEL = "rennet:menu-update";
 const MENU_RUN_CHANNEL = "rennet:menu-run";
 const CHOOSE_DIRECTORY_CHANNEL = "rennet:choose-directory";
+const UPDATE_READY_CHANNEL = "rennet:update-ready";
+const UPDATE_APPLY_CHANNEL = "rennet:update-apply";
 const WS_PORT_ARG = "--rennet-ws-port=";
+
+/** A downloaded-and-ready update, as pushed (or replayed) by MAIN. */
+export interface UpdateReadyInfo {
+  version?: string;
+}
+
+/** Boundary parse for the readiness payload — the channel idiom's zod-lite. */
+function parseUpdateReady(payload: unknown): UpdateReadyInfo | null {
+  if (typeof payload !== "object" || payload === null) return null;
+  const version = (payload as { version?: unknown }).version;
+  if (version === undefined) return {};
+  return typeof version === "string" ? { version } : null;
+}
 
 /** The Electron-native surface the preload injects as `window.rennet`. */
 export interface RennetPreload {
@@ -30,6 +45,14 @@ export interface RennetPreload {
    * and forwards it to `repository.choose`. Honors RENNET_TEST_REPO on the main side.
    */
   chooseDirectory(): Promise<string | null>;
+  /**
+   * Subscribe to update-readiness (badge on the Rennet logo). The cached MAIN-side
+   * state is replayed immediately so a renderer that loads after the download still
+   * badges; returns an unsubscribe.
+   */
+  onUpdateReady(listener: (info: UpdateReadyInfo) => void): () => void;
+  /** The user confirmed the restart-into-update prompt; MAIN quits and installs. */
+  applyUpdate(): void;
 }
 
 // The WS port is a boot-time constant injected via webPreferences.additionalArguments;
@@ -51,6 +74,20 @@ const preload: RennetPreload = {
     return () => ipcRenderer.removeListener(MENU_RUN_CHANNEL, handler);
   },
   chooseDirectory: () => ipcRenderer.invoke(CHOOSE_DIRECTORY_CHANNEL) as Promise<string | null>,
+  onUpdateReady: (listener) => {
+    const handler = (_event: IpcRendererEvent, payload: unknown): void => {
+      const parsed = parseUpdateReady(payload);
+      if (parsed) listener(parsed);
+    };
+    ipcRenderer.on(UPDATE_READY_CHANNEL, handler);
+    // Replay: MAIN caches readiness, so a late subscriber still learns of it.
+    void ipcRenderer.invoke(UPDATE_READY_CHANNEL).then((payload) => {
+      const parsed = parseUpdateReady(payload);
+      if (parsed) listener(parsed);
+    });
+    return () => ipcRenderer.removeListener(UPDATE_READY_CHANNEL, handler);
+  },
+  applyUpdate: () => ipcRenderer.send(UPDATE_APPLY_CHANNEL),
 };
 
 contextBridge.exposeInMainWorld("rennet", preload);

@@ -57,6 +57,10 @@ function composeBridge(
     platform: preload.platform,
     updateMenu: preload.updateMenu,
     onMenuRun: preload.onMenuRun,
+    // App-binary update readiness rides every target like the menu residue — the
+    // update is about THIS installed app, not whichever daemon the window watches.
+    onUpdateReady: preload.onUpdateReady,
+    applyUpdate: preload.applyUpdate,
     close: () => supervisor.close(),
   };
 }
