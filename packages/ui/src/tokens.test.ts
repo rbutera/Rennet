@@ -184,13 +184,18 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
     }
   });
 
-  // ── Invariant guard: no small amber TEXT sits on an amber background ─────────
-  // Wave-2's ratified light --amber (#a86125) is 4.07:1 on --amber-surface and 3.85:1 on
-  // --amber-fill — both below AA. Every small amber-on-amber TEXT site is ink-ified; only
-  // non-text graphics (icons, the failed-orb spinner, the file-status square) keep amber on
-  // an amber ground, at the WCAG 1.4.11 graphics floor (3:1). This replaces the old 4-card
-  // whitelist: it discovers EVERY amber-text rule in canvas.css + styles.css, so a new
-  // amber-on-amber rule (or a reverted ink-ification) reddens the coverage assertion.
+  // ── Invariant guard: every amber TEXT clears AA on its RENDERED ground ───────
+  // Wave-2's ratified light --amber (#a86125) clears AA (4.5:1) ONLY on --surface (4.61)
+  // and --raised (4.77); it fails on the canvas anchor (4.26), --surface-2 (3.7-4.3),
+  // --amber-fill and --amber-surface (~4.07). So every amber-TEXT site must be proven
+  // against the background it ACTUALLY renders on — not the one it happens to self-set.
+  //
+  // The old guard only checked same-block backgrounds. Codex mutation-proved the hole:
+  // adding `.collation-rollup { background: var(--amber-surface) }` to a PARENT left the
+  // amber-text child green, because the child sets no background of its own. This guard
+  // closes it: each amber-text selector declares the CONTAINER whose background is its
+  // rendered ground, the ground token is READ FROM THE CSS (not trusted), and the contrast
+  // is computed against it — so a container background flipped to amber reddens here.
   const readCss = (name: string): string =>
     readFileSync(fileURLToPath(new URL(`./${name}`, import.meta.url)), "utf8");
   type Rule = { selector: string; body: string };
@@ -208,39 +213,36 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
     }
     return out;
   };
-  const amberText = (r: Rule): boolean => /color:\s*var\(--amber\)/.test(r.body);
-  const amberBg = (r: Rule): boolean =>
-    /background[^;:]*:\s*var\(--amber-(?:surface|fill)\)/.test(r.body);
+  // `color: var(--amber)` as a real TEXT colour — the negative lookbehind rejects
+  // `border-color: var(--amber)` (a kept amber affordance is a border, not text ink).
+  const amberText = (r: Rule): boolean => /(?<![\w-])color:\s*var\(--amber\)/.test(r.body);
   const allRules = [...rules(readCss("canvas.css")), ...rules(readCss("styles.css"))];
 
-  // Every amber-TEXT rule, classified by its resolved rendered background. 'plain' = a
-  // non-amber surface where amber clears AA (--surface 4.61, or --surface-2); 'graphic' = a
-  // non-text mark permitted on an amber ground at the 3:1 graphics floor. Reverting any
-  // ink-ification, or adding a new amber-text rule, makes the discovered set diverge from
-  // these keys and reddens the coverage test below.
-  const CLASSIFIED: Record<string, "plain" | "graphic"> = {
-    // amber on a plain (non-amber) surface — legible, so the hue stays:
-    ".overlay-legend": "plain",
-    ".blast-not-assessed-label": "plain",
-    ".flag-answer-model": "plain",
-    ".ci-signal-failure-label": "plain",
-    ".ci-signal-body .ci-signal-incomplete": "plain",
-    ".hypothesis-panel-open": "plain",
-    ".hypothesis-degraded": "plain",
-    ".hypothesis-count-open": "plain",
-    '.collation-rollup-verdict[data-verdict="request-changes"]': "plain",
-    '.delta-account-status[data-status="partially-addressed"]': "plain",
-    '.delta-account-hunk-item[data-bucket="unasked-file"] .delta-account-hunk-bucket': "plain",
-    '.context-manifest-state[data-state="truncated"]': "plain",
-    ".smart-row-dirty": "plain",
-    ".command-palette-key.is-conflict": "plain",
-    ".settings-key-conflict": "plain",
-    ".settings-key-recording-note, .settings-key-invalid": "plain",
-    // non-text graphics on an amber ground (icons / spinner / file-status square), 3:1:
-    ".status-modified": "graphic",
-    ".engine-fallback-icon": "graphic",
-    ".processing-orb.is-failed": "graphic",
-    '.processing-repo[data-state="error"] .processing-repo-icon': "graphic",
+  // Every amber-TEXT selector that SURVIVES ink-ification, mapped to the container whose
+  // background is its rendered ground and its kind. `text` must clear AA 4.5:1 on that
+  // ground; `graphic` (a non-text mark — icon, spinner, error glyph) only the WCAG 1.4.11
+  // graphics floor of 3:1. The container's background token is parsed from the CSS below,
+  // so a ground that drifts to amber is caught. The discovered-set equality check keeps
+  // coverage: ink-ifying reduces the set, and any NEW amber-text rule fails until mapped.
+  const GROUND: Record<string, { container: string; kind: "text" | "graphic" }> = {
+    // amber TEXT that clears AA on the --raised (#fff, 4.77:1) panels it renders on:
+    ".ci-signal-failure-label": { container: ".ci-signal-panel", kind: "text" },
+    ".ci-signal-body .ci-signal-incomplete": { container: ".ci-signal-panel", kind: "text" },
+    ".hypothesis-panel-open": { container: ".hypothesis-panel", kind: "text" },
+    ".hypothesis-degraded": { container: ".hypothesis-panel", kind: "text" },
+    ".hypothesis-count-open": { container: ".hypothesis-panel", kind: "text" },
+    ".settings-key-conflict": { container: ".settings-panel", kind: "text" },
+    ".settings-key-recording-note, .settings-key-invalid": {
+      container: ".settings-panel",
+      kind: "text",
+    },
+    // non-text amber GRAPHICS on an amber ground (icon / spinner / error glyph), 3:1 floor:
+    ".engine-fallback-icon": { container: ".engine-fallback", kind: "graphic" },
+    ".processing-orb.is-failed": { container: ".processing-orb.is-failed", kind: "graphic" },
+    '.processing-repo[data-state="error"] .processing-repo-icon': {
+      container: '.processing-repo[data-state="error"]',
+      kind: "graphic",
+    },
   };
 
   const rgba = (scope: string, name: string): [number, number, number, number] => {
@@ -256,34 +258,51 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
     return `#${out.map((x) => x.toString(16).padStart(2, "0")).join("")}`;
   };
 
-  it("every amber-TEXT rule is classified — no amber-on-amber small text slips in", () => {
+  // Read the container's `background: var(--token)` from the CSS and resolve it to a light-
+  // scheme hex (light --amber is the worst case). Solid tokens resolve directly; an rgba
+  // ground composites over --surface. THIS is what makes a container background override bite.
+  const bodyOf = (selector: string): string => {
+    const r = allRules.find((x) => x.selector === selector);
+    if (!r) throw new Error(`container rule not found: ${selector}`);
+    return r.body;
+  };
+  const groundHex = (container: string): string => {
+    const m = bodyOf(container).match(/background:\s*var\(--([a-z0-9-]+)\)/i);
+    if (!m || m[1] === undefined) throw new Error(`no background token on ${container}`);
+    const token = `--${m[1]}`;
+    // Solid hex token → use it; rgba token → composite over --surface.
+    if (new RegExp(`${token}:\\s*#`).test(block(LIGHT))) return hex(LIGHT, token);
+    return composite(rgba(LIGHT, token), hex(LIGHT, "--surface"));
+  };
+
+  it("every amber-TEXT rule is mapped to a rendered ground — coverage stays exhaustive", () => {
     const discovered = [...new Set(allRules.filter(amberText).map((r) => r.selector))].sort();
-    // Control: the discovery is not vacuous — there ARE amber-text rules to classify.
-    expect(discovered.length).toBeGreaterThan(10);
-    expect(discovered).toEqual(Object.keys(CLASSIFIED).sort());
+    // Control: the discovery is not vacuous — amber-text rules still exist to classify.
+    expect(discovered.length).toBeGreaterThan(5);
+    // A new (or reverted-to-)amber-text rule not in GROUND reddens here.
+    expect(discovered).toEqual(Object.keys(GROUND).sort());
   });
 
-  it("amber TEXT never shares a block with an amber background, save documented graphics", () => {
-    const graphics = new Set(
-      Object.entries(CLASSIFIED)
-        .filter(([, k]) => k === "graphic")
-        .map(([s]) => s),
-    );
-    for (const r of allRules) {
-      if (amberText(r) && amberBg(r)) {
-        expect(graphics.has(r.selector), `${r.selector}: amber text on a self-set amber bg`).toBe(
-          true,
-        );
-      }
+  it("each amber-TEXT selector clears its RENDERED-ground contrast floor (light, worst case)", () => {
+    const amber = hex(LIGHT, "--amber");
+    for (const [sel, { container, kind }] of Object.entries(GROUND)) {
+      const ground = groundHex(container);
+      const floor = kind === "graphic" ? 3 : 4.5;
+      expect(
+        contrast(amber, ground),
+        `${sel}: amber on ${container} ground ${ground}`,
+      ).toBeGreaterThanOrEqual(floor);
     }
   });
 
-  it("'plain'-classified amber-text rules never self-set an amber background", () => {
-    for (const r of allRules) {
-      if (amberText(r) && CLASSIFIED[r.selector] === "plain") {
-        expect(amberBg(r), `${r.selector} is 'plain' yet self-sets an amber bg`).toBe(false);
-      }
-    }
+  it("the container grounds resolve to the expected tokens (the map is honest about the CSS)", () => {
+    // Pins what each container renders, so a background flipped to amber (the Codex mutation
+    // class) changes the resolved ground and the contrast test above goes red.
+    expect(groundHex(".ci-signal-panel")).toBe(hex(LIGHT, "--raised"));
+    expect(groundHex(".hypothesis-panel")).toBe(hex(LIGHT, "--raised"));
+    expect(groundHex(".settings-panel")).toBe(hex(LIGHT, "--raised"));
+    expect(groundHex(".engine-fallback")).toBe(hex(LIGHT, "--amber-surface"));
+    expect(groundHex('.processing-repo[data-state="error"]')).toBe(hex(LIGHT, "--amber-surface"));
   });
 
   it("amber marks left on an amber ground are non-text graphics (3:1 floor, below AA text)", () => {
