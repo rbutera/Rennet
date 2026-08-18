@@ -12,7 +12,8 @@
       "{workspaceRoot}/.tool-versions",
       "{workspaceRoot}/biome.json",
       "{workspaceRoot}/eslint.config.mjs",
-      "{workspaceRoot}/tsconfig.base.json"
+      "{workspaceRoot}/tsconfig.base.json",
+      "{workspaceRoot}/vitest.config.ts"
     ],
     "default": ["{projectRoot}/**/*", "sharedGlobals"],
     "production": [

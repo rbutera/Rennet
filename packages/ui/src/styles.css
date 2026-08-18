@@ -4043,3 +4043,86 @@ button {
   font-size: 11px;
   line-height: 1.45;
 }
+
+/* Host-app update readiness (spec: desktop-update-notification): the chrome mark
+ * becomes a badged button when a new release is downloaded. The dot is a redundant
+ * non-text cue over an accent ground; the button aria-label carries the meaning. */
+.chrome-mark-update {
+  position: relative;
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.chrome-mark-badge {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  /* A 1px surface ring separates the dot from the mark on any chrome ground. */
+  box-shadow: 0 0 0 1px var(--surface);
+}
+
+/* The restart-into-update confirm, on the palette backdrop idiom: opaque raised
+ * card, ink text, one inverted primary. */
+.update-prompt-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: default;
+}
+.update-prompt {
+  position: relative;
+  z-index: 1;
+  width: min(400px, 100%);
+  margin-top: 18vh;
+  background: var(--raised);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 20px 22px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+.update-prompt h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--text);
+}
+.update-prompt p {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-soft);
+}
+.update-prompt-actions {
+  display: flex;
+  gap: 8px;
+}
+.update-prompt-apply,
+.update-prompt-later {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.update-prompt-apply {
+  border: 1px solid var(--text);
+  background: var(--text);
+  color: var(--raised);
+}
+.update-prompt-later {
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  color: var(--text);
+}
