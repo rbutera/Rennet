@@ -1,0 +1,37 @@
+{
+  "type": "object",
+  "properties": {
+    "path": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "repoKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "displayName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "relativePath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "repoKey",
+            "displayName"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "path"
+  ],
+  "additionalProperties": false
+}

@@ -141,10 +141,15 @@ the unreadable file is never overwritten.
 
 ## Local-first does not mean offline-only
 
-There is no Rennet backend and no Rennet telemetry service. A selected harness
-may send assembled context to its model provider. Rennet records what it sent so
-you can inspect the boundary instead of relying on a vague “nothing leaves your
-machine” promise.
+There is no hosted Rennet backend and no Rennet telemetry service — no server of
+ours sits between you and your work. A selected harness may send assembled
+context to its model provider. Rennet records what it sent so you can inspect the
+boundary instead of relying on a vague “nothing leaves your machine” promise.
+
+Reviewing from another device does not change that. When you
+[pair a phone or laptop](/using/guide/remote-access/), it reaches the daemon on
+your machine directly over your own private network (Tailscale) — still no Rennet
+server in the middle.
 
 ## Next steps
 

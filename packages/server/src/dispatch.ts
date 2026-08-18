@@ -25,6 +25,7 @@ import {
   type ConversationAnchorWire,
   type DetectedHarness,
   type DiscoveryResult,
+  type PairedDevice,
   type PersistedThreadMessageWire,
   type ProcessedRepoSummary,
   type Project,
@@ -78,8 +79,18 @@ import type { SettingsComposition } from "./settings";
  * and the harness-backed canvas builder. `index.ts` composes these; this module
  * is pure command routing over `ReviewService` + `@rennet/protocol`.
  */
+/** The pairing surface the router calls for the four `pairing.*` commands (issue #380). */
+export interface PairingCommands {
+  mint(): { code: string; expiresAt: string };
+  exchange(code: string, deviceName: string): { deviceToken: string; deviceId: string };
+  listDevices(): PairedDevice[];
+  revokeDevice(deviceId: string): PairedDevice[];
+}
+
 export interface DispatchDeps {
   readonly service: ReviewService;
+  /** Device pairing (mint code / exchange for token / list / revoke). Server-side secret store. */
+  readonly pairing: PairingCommands;
   /**
    * The live orchestrator turn runner (issue #13, wave 2): composes the wave-1 live
    * backend + the lean primer + a real `claude` turn over the in-process
@@ -1730,6 +1741,22 @@ export function createDispatch(
             key: input.key,
           }),
         );
+      }
+      case "pairing.mint": {
+        parseCommandInput(name, rawInput);
+        return parseCommandOutput(name, deps.pairing.mint());
+      }
+      case "pairing.exchange": {
+        const input = parseCommandInput(name, rawInput);
+        return parseCommandOutput(name, deps.pairing.exchange(input.code, input.deviceName));
+      }
+      case "pairing.listDevices": {
+        parseCommandInput(name, rawInput);
+        return parseCommandOutput(name, { devices: deps.pairing.listDevices() });
+      }
+      case "pairing.revokeDevice": {
+        const input = parseCommandInput(name, rawInput);
+        return parseCommandOutput(name, { devices: deps.pairing.revokeDevice(input.deviceId) });
       }
       default: {
         // Exhaustiveness guard: every CommandName is routed above, so `name` is

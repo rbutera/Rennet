@@ -280,3 +280,124 @@ async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
 }
+
+describe("WsRennetBridge remote surface (#380)", () => {
+  const openBridges: WsRennetBridge[] = [];
+  const servers: WebSocketServer[] = [];
+  afterEach(async () => {
+    for (const bridge of openBridges.splice(0)) bridge.close();
+    for (const server of servers.splice(0)) await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  /** A bespoke server that completes the handshake and hands the test the live socket + captured hello. */
+  function startServer(handlers: {
+    onHello?: (frame: Record<string, unknown>) => void;
+    onSocket?: (socket: NodeWebSocket) => void;
+  }): Promise<{ url: string }> {
+    return new Promise((resolve) => {
+      const server = new WebSocketServer({ host: "127.0.0.1", port: 0 }, () => {
+        resolve({ url: `ws://127.0.0.1:${(server.address() as AddressInfo).port}` });
+      });
+      servers.push(server);
+      server.on("connection", (socket) => {
+        handlers.onSocket?.(socket);
+        socket.on("message", (data) => {
+          const frame = JSON.parse(data.toString());
+          if (frame.type === "hello") {
+            handlers.onHello?.(frame);
+            socket.send(
+              JSON.stringify({
+                type: "serverInfo",
+                version: "stub",
+                protocolVersion: 1,
+                minCompatibleProtocolVersion: 1,
+                features: { serverRequests: true },
+              }),
+            );
+          }
+        });
+      });
+    });
+  }
+
+  const waitFor = async (predicate: () => boolean): Promise<void> => {
+    for (let i = 0; i < 200; i++) {
+      if (predicate()) return;
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    throw new Error("waitFor timed out");
+  };
+
+  it("sends the device token in hello and exposes captured serverInfo", async () => {
+    let helloFrame: Record<string, unknown> | undefined;
+    const { url } = await startServer({
+      onHello: (frame) => {
+        helloFrame = frame;
+      },
+    });
+    const bridge = new WsRennetBridge({ url, deviceToken: "dev-token-123" });
+    openBridges.push(bridge);
+    await waitFor(() => bridge.serverInfo !== null);
+    expect(helloFrame?.deviceToken).toBe("dev-token-123");
+    expect(bridge.serverInfo).toEqual({ version: "stub", features: { serverRequests: true } });
+  });
+
+  it("answers a serverRequest with a serverResponse", async () => {
+    let liveSocket: NodeWebSocket | undefined;
+    const answers: unknown[] = [];
+    const { url } = await startServer({
+      onSocket: (socket) => {
+        liveSocket = socket;
+        socket.on("message", (data) => {
+          const frame = JSON.parse(data.toString());
+          if (frame.type === "serverResponse") answers.push(frame.payload);
+        });
+      },
+    });
+    const bridge = new WsRennetBridge({ url });
+    openBridges.push(bridge);
+    bridge.onServerRequest((kind, payload) => ({ echoedKind: kind, echoedPayload: payload }));
+    // Wait for the handshake, then ask.
+    await waitFor(() => bridge.serverInfo !== null);
+    liveSocket?.send(
+      JSON.stringify({
+        type: "serverRequest",
+        serverRequestId: "sr1",
+        kind: "confirm",
+        payload: { q: 1 },
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 30));
+    expect(answers).toEqual([{ echoedKind: "confirm", echoedPayload: { q: 1 } }]);
+  });
+
+  it("does not answer once a serverRequestResolved cancels the pending request", async () => {
+    let liveSocket: NodeWebSocket | undefined;
+    const answers: unknown[] = [];
+    const { url } = await startServer({
+      onSocket: (socket) => {
+        liveSocket = socket;
+        socket.on("message", (data) => {
+          const frame = JSON.parse(data.toString());
+          if (frame.type === "serverResponse") answers.push(frame.payload);
+        });
+      },
+    });
+    const bridge = new WsRennetBridge({ url });
+    openBridges.push(bridge);
+    // A slow handler so the resolved frame lands first.
+    bridge.onServerRequest(() => new Promise((r) => setTimeout(() => r("late"), 50)));
+    await waitFor(() => bridge.serverInfo !== null);
+    liveSocket?.send(
+      JSON.stringify({
+        type: "serverRequest",
+        serverRequestId: "sr2",
+        kind: "confirm",
+        payload: {},
+      }),
+    );
+    liveSocket?.send(JSON.stringify({ type: "serverRequestResolved", serverRequestId: "sr2" }));
+    await new Promise((r) => setTimeout(r, 80));
+    expect(answers).toEqual([]); // the late answer was dropped
+  });
+});

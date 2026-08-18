@@ -187,6 +187,17 @@ function fakeBridge(overrides: Partial<Record<string, unknown>> = {}): {
         else keybindingState[payload.id] = payload.keybinding ?? null;
         return { keybindings: { ...keybindingState } };
       }
+      case "pairing.listDevices":
+        return (overrides["pairing.listDevices"] as { devices: unknown[] }) ?? { devices: [] };
+      case "pairing.mint":
+        return (
+          (overrides["pairing.mint"] as { code: string; expiresAt: string }) ?? {
+            code: "PAIR2345",
+            expiresAt: "2026-01-01T00:05:00.000Z",
+          }
+        );
+      case "pairing.revokeDevice":
+        return (overrides["pairing.revokeDevice"] as { devices: unknown[] }) ?? { devices: [] };
       default:
         throw new Error(`unexpected command: ${name}`);
     }
@@ -660,5 +671,39 @@ describe("SettingsScreen — Explain / Reset / Pin (#28)", () => {
 
     await waitFor(() => expect(onKeybindingsChange).toHaveBeenCalledTimes(1));
     expect(bubbled).not.toHaveBeenCalled();
+  });
+});
+
+describe("SettingsScreen pairing panel (#380)", () => {
+  it("mints a code and revokes a paired device through the bridge", async () => {
+    const { bridge, calls } = fakeBridge({
+      "pairing.listDevices": {
+        devices: [
+          {
+            deviceId: "d1",
+            name: "Phone",
+            createdAt: "2026-01-01T00:00:00.000Z",
+            lastSeenAt: "2026-01-02T00:00:00.000Z",
+            expiresAt: "2026-02-01T00:00:00.000Z",
+          },
+        ],
+      },
+      "pairing.revokeDevice": { devices: [] },
+    });
+    const screen = mount(<SettingsScreen bridge={bridge} onBack={() => undefined} />);
+    await waitFor(() => screen.getByRole("tab", { name: "Pairing" }));
+    fireEvent.click(screen.getByRole("tab", { name: "Pairing" }));
+    // The paired device appears (from pairing.listDevices).
+    await waitFor(() => screen.getByText("Phone"));
+
+    // Mint a code and assert the typed code renders.
+    fireEvent.click(screen.getByRole("button", { name: "Create pairing code" }));
+    await waitFor(() => screen.getByText("PAIR2345"));
+    expect(calls.some((call) => call.name === "pairing.mint")).toBe(true);
+
+    // Revoke the device; the list empties.
+    fireEvent.click(screen.getByRole("button", { name: "Revoke Phone" }));
+    await waitFor(() => screen.getByText("No devices paired yet."));
+    expect(calls.some((call) => call.name === "pairing.revokeDevice")).toBe(true);
   });
 });

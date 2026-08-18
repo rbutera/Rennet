@@ -107,7 +107,7 @@ the old conflict no longer controls current work; the row records the replacemen
 | **R13** | Adapter capabilities include per-call model selection and advertised models. Capabilities begin false and are demonstrated by conformance. |
 | **R17** | Commands produce durable receipts and events; projections rebuild from them. Publication has explicit `outcome-unknown` and query-before-retry recovery. Private events cannot change outbound bytes. |
 | **R18** | Diff ingestion stays byte-safe. Binaries, submodules, mode-only changes, oversize splits, and incomplete ingestion are first-class. Truncated, binary, or submodule capture leaves an explicit decomposition blocking state, so a done or publish gate cannot report completeness. |
-| **R19** | Public protocol is transport-neutral and JSON-Schema-first; private commands and events are Zod-first. Remote clients receive recipient-specific projections, never raw host paths or event envelopes. |
+| **R19** | Public protocol is transport-neutral and JSON-Schema-first; private commands and events are Zod-first. Remote clients receive recipient-specific projections, never raw host paths or event envelopes. (Implemented by add-remote-surface: projected connections get the path projection in both directions, the public projection is a checked-in, drift-tested JSON-Schema fixture, and pairing gates non-loopback access. Model-authored prose is the one stated exception — structural fields and known-root substitution are the contract, prose sanitization is not promised. See [remote access](/using/guide/remote-access/).) |
 | **R20** | `@rennet/ui` imports only `types`, `protocol`, and browser-safe dependencies; it never imports `core`. |
 | **R21** | The live package spine is `types`, `protocol`, `instructions`, `core`, `adapters`, and `ui`, composed by `apps/desktop`; boundary arrows are checked in CI. |
 | **R24** | Forge behaviour sits behind capability-based `ForgePort`, not GitHub checks scattered through core. |
@@ -258,7 +258,6 @@ found” is different from “search failed.”
 
 - The crisp boundary and possible overlap between Flagged and Noise.
 - Which harnesses can ever truthfully report an exhaustive context manifest.
-- The product shape and transport work for a future remote/mobile client.
 
 Track current work in GitHub issues and the
 [delivery order](/developing/reference/delivery-order/). Do not resurrect an old

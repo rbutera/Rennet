@@ -26,7 +26,7 @@ consent screens, capability denial, read-only coding sessions, or safety theatre
 | Someone else's PR | Live end to end | Preview the exact outbound review, then submit once |
 | Own-branch PR submission | Live | Sign pushes the named branch and opens the previewed PR |
 | Coding-agent handoff | Compose, prepare, and run live; the run executes the composer's digest-bound bundle; the renderer composes, previews, and invokes it; the deterministic delta account is live | Coding agent may write and test; capture its complete delta as a successor |
-| Remote/mobile client | Protocol seam only; client deferred | Host paths and raw events never cross the portable boundary |
+| Remote/mobile client | Projection, pairing, and non-loopback bind live over Tailscale; a dedicated mobile client app is still deferred | Host paths and raw events never cross the portable boundary — implemented in both directions for projected connections, with model-authored prose the one stated exception |
 
 ## The ten invariants
 

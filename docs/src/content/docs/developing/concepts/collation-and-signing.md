@@ -108,6 +108,12 @@ sends that artifact. Internal review state, orchestrator chatter, and refinement
 history are not part of the outbound shape unless the reviewer has turned them
 into a disposition on the draft.
 
+There is no hosted Rennet backend on either side of that act. The signed artifact
+goes to GitHub; a review's context reaches the harness's model provider. A remote
+reviewer reaches the daemon on the host machine directly over the user's own
+private network — never through a Rennet server, because none exists. The honest
+claim is "no hosted backend", not "nothing leaves the machine".
+
 When the review ran over partially-ingested content — a truncated tail, a binary
 blob, or a submodule pointer (R18) — the paper discloses those blockers before
 the sign control, so a signer knows the review was not a full read before

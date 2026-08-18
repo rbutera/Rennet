@@ -1,0 +1,65 @@
+{
+  "type": "object",
+  "properties": {
+    "repo": {
+      "type": "string",
+      "minLength": 1
+    },
+    "path": {
+      "type": "object",
+      "properties": {
+        "repoKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "relativePath": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repoKey",
+        "displayName"
+      ],
+      "additionalProperties": false
+    },
+    "ok": {
+      "type": "boolean"
+    },
+    "files": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "symbols": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "references": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "reusedSymbols": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "baseRef": {
+      "type": "string"
+    },
+    "error": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "repo",
+    "path",
+    "ok"
+  ],
+  "additionalProperties": false
+}

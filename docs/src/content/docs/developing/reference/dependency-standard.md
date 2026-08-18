@@ -287,7 +287,11 @@ needs them, not as decorative percentages or dashboards.
 
 Rennet owns log field policy, path and content redaction, bounded local retention,
 diagnostic export, and purge. Hosted telemetry and crash upload are not part of
-the default architecture.
+the default architecture, and neither is a hosted backend of any kind: there is no
+Rennet server. The daemon runs on the user's own machine, and a remote client
+reaches it directly over the user's private network (Tailscale) — no relay, no
+Rennet-operated infrastructure. Egress is to the harness's model provider and to
+GitHub only, and it is disclosed rather than denied.
 
 ## Product code Rennet intentionally owns
 

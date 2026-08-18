@@ -1,0 +1,244 @@
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+    },
+    "repository": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "root": {
+          "type": "object",
+          "properties": {
+            "repoKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "displayName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "relativePath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "repoKey",
+            "displayName"
+          ],
+          "additionalProperties": false
+        },
+        "commonDir": {
+          "type": "object",
+          "properties": {
+            "repoKey": {
+              "type": "string",
+              "minLength": 1
+            },
+            "displayName": {
+              "type": "string",
+              "minLength": 1
+            },
+            "relativePath": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "repoKey",
+            "displayName"
+          ],
+          "additionalProperties": false
+        },
+        "baseRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "baseOid": {
+          "type": "string",
+          "minLength": 1
+        },
+        "headOid": {
+          "type": "string",
+          "minLength": 1
+        },
+        "headRef": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "id",
+        "root",
+        "commonDir",
+        "baseRef",
+        "baseOid",
+        "headOid"
+      ],
+      "additionalProperties": false
+    },
+    "files": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "previousPath": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "added",
+              "modified",
+              "deleted",
+              "renamed"
+            ]
+          },
+          "additions": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "deletions": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0,
+                "maximum": 9007199254740991
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "binary": {
+            "type": "boolean"
+          },
+          "patch": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "path",
+          "status",
+          "additions",
+          "deletions",
+          "binary",
+          "patch"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "rawDiff": {
+      "type": "string"
+    },
+    "byteLength": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "truncated": {
+      "type": "boolean"
+    },
+    "source": {
+      "type": "string",
+      "enum": [
+        "local",
+        "github-local",
+        "github-rest"
+      ]
+    },
+    "degraded": {
+      "type": "boolean"
+    },
+    "degradationReason": {
+      "type": "string"
+    },
+    "projectSnapshotId": {
+      "type": "string"
+    },
+    "intent": {
+      "type": "object",
+      "properties": {
+        "surface": {
+          "type": "string",
+          "enum": [
+            "github-pr",
+            "github-rest",
+            "working-tree"
+          ]
+        },
+        "prTitle": {
+          "type": "string"
+        },
+        "prBody": {
+          "type": "string"
+        },
+        "prBodyAbsent": {
+          "type": "boolean"
+        },
+        "specSnapshots": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "digest": {
+                "type": "string"
+              },
+              "content": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "digest"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "commitSubjects": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "surface"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "id",
+    "createdAt",
+    "repository",
+    "files",
+    "rawDiff",
+    "byteLength",
+    "truncated"
+  ],
+  "additionalProperties": false
+}

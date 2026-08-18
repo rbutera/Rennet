@@ -13,8 +13,10 @@ import { z } from "zod";
 export const daemonInfoSchema = z.object({
   /** The daemon process id, so a launcher can signal it (`rennet stop`) and check liveness. */
   pid: z.number().int().positive(),
-  /** The loopback port the WS listener bound; a client dials `ws://127.0.0.1:<wsPort>`. */
+  /** The loopback port the WS listener bound; a client dials `ws://<host>:<wsPort>`. */
   wsPort: z.number().int().positive(),
+  /** The host the WS listener bound (#380). Optional/append-only: absent ⇒ loopback `127.0.0.1`. */
+  host: z.string().optional(),
   /** The wire protocol version, cross-checked against the launcher's compatibility window. */
   protocolVersion: z.number().int().nonnegative(),
   /** The server/app version string, for display (`rennet status`). Not a compatibility input. */

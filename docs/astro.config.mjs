@@ -44,6 +44,7 @@ export default defineConfig({
                     label: "Reviewing a GitHub PR",
                     link: "/using/guide/reviewing-a-github-pr/",
                   },
+                  { label: "Remote access", link: "/using/guide/remote-access/" },
                   { label: "User journey", link: "/using/guide/user-journey/" },
                 ],
               },

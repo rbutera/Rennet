@@ -271,6 +271,12 @@ function harness(
   const deps: DispatchDeps = {
     service,
     allowedRoots,
+    pairing: {
+      mint: () => ({ code: "PAIRCODE", expiresAt: new Date().toISOString() }),
+      exchange: () => ({ deviceToken: "device-token", deviceId: "device-1" }),
+      listDevices: () => [],
+      revokeDevice: () => [],
+    },
     chooseRepository: () => Promise.resolve(REPO),
     openPullRequest: (commandId, _ref, _repoPath, retrospective) =>
       service.createReviewFromPatchset(commandId, prPatchset(), {
@@ -2236,6 +2242,12 @@ function frontDoorHarness(seed: {
   const deps: DispatchDeps = {
     service,
     allowedRoots,
+    pairing: {
+      mint: () => ({ code: "PAIRCODE", expiresAt: new Date().toISOString() }),
+      exchange: () => ({ deviceToken: "device-token", deviceId: "device-1" }),
+      listDevices: () => [],
+      revokeDevice: () => [],
+    },
     chooseRepository: () => Promise.resolve(REPO),
     openPullRequest: (commandId) => service.createReviewFromPatchset(commandId, patchset()),
     startWatching: () => undefined,
