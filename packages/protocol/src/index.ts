@@ -919,9 +919,7 @@ export const projectDetailSchema = z.object({
    * were fetched. Present when the PR source was not wired — a missing token renders
    * as an honest hint, never as "zero PRs".
    */
-  authUnavailable: z
-    .enum(["gh-absent", "gh-not-logged-in", "insufficient-scope"])
-    .optional(),
+  authUnavailable: z.enum(["gh-absent", "gh-not-logged-in", "insufficient-scope"]).optional(),
 });
 export type ProjectDetail = z.infer<typeof projectDetailSchema>;
 
