@@ -18,26 +18,114 @@ describe("glass tokens — both schemes render, faithfully ported", () => {
     // `.canvas-app, .rennet-glass` per issue #101, so both mount points share one
     // palette); the base custom-property block is the same.
     const dark = block(".rennet-glass {");
-    // Backlight blue is the system's ONLY inner glow, private-to-reviewer.
-    expect(dark).toContain("--private: #85c4dc");
+    // Private/local-only folds into the review-blue family (no fourth hue): --private is
+    // a derived tint of --accent, and the "backlight" read is carried by the inner glow.
+    expect(dark).toContain("--private: var(--accent)");
     // Code stays fully opaque (never rides on the wallpaper).
     expect(dark).toContain("--code-bg: #14161b");
-    // The single inner glow exists on the private token.
+    // The single inner glow exists on the private token (kept as a state marker).
     expect(dark).toContain("--private-glow: inset");
   });
 
   it("composes the bright-room (light) scheme rather than inverting it", () => {
     const light = block('.rennet-glass[data-scheme="light"] {');
-    // Bright-room deepens backlight blue for contrast (#24657f), opaque white code.
-    expect(light).toContain("--private: #24657f");
+    // Bright-room private also folds into review blue (--private = var(--accent)), opaque white code.
+    expect(light).toContain("--private: var(--accent)");
     expect(light).toContain("--code-bg: #ffffff");
   });
 
-  it("has no fourth hue: only backlight-private and amber carry semantic marks", () => {
+  it("has no fourth hue: private folds into review blue; only blue/amber/green carry marks", () => {
     // Control: a fabricated token name must be absent (the read is not vacuous).
     expect(tokens).not.toContain("--decorative-hue");
     expect(tokens).toContain("--amber:");
+    expect(tokens).toContain("--green:");
     expect(tokens).toContain("--private:");
+    // The old standalone "backlight blue" hue (#85c4dc / #24657f) is gone: privacy is now
+    // a derived tint of review blue, so no decorative fourth hue exists (DESIGN.md §Semantic).
+    expect(tokens).not.toContain("#85c4dc");
+    expect(tokens).not.toContain("#24657f");
+    expect(tokens).toMatch(/--private:\s*var\(--accent\)/);
+  });
+});
+
+// Task D — reversion-red: computed WCAG contrast + ratified-hex reconciliation. The
+// relative-luminance math is inlined so a token edit that drops --text-faint below AA, or
+// drifts a semantic hue away from the root DESIGN.md, reddens here rather than shipping.
+describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () => {
+  // WCAG 2.x relative luminance + contrast ratio (sRGB), ~15 lines, no dependency.
+  const channel = (h: string, i: number): number => {
+    const s = h.replace("#", "");
+    const n = s.length === 3 ? [...s].map((c) => c + c).join("") : s;
+    return Number.parseInt(n.slice(i * 2, i * 2 + 2), 16);
+  };
+  const lin = (v: number): number => {
+    const c = v / 255;
+    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
+  };
+  const luminance = (h: string): number =>
+    0.2126 * lin(channel(h, 0)) + 0.7152 * lin(channel(h, 1)) + 0.0722 * lin(channel(h, 2));
+  const contrast = (a: string, b: string): number => {
+    const [l1, l2] = [luminance(a), luminance(b)];
+    return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+  };
+  // Pull a 3/6-digit hex token value out of a scheme block.
+  const hex = (scope: string, name: string): string => {
+    const m = block(scope).match(new RegExp(`${name}:\\s*(#[0-9a-fA-F]{3,6})`));
+    if (!m || m[1] === undefined) throw new Error(`${name} not found in ${scope}`);
+    return m[1];
+  };
+
+  const DARK = ".rennet-glass {";
+  const LIGHT = '.rennet-glass[data-scheme="light"] {';
+  // Neutral-ramp canvas anchor per scheme (root DESIGN.md §Colors: dark-canvas / light-canvas).
+  // Not a solid token here — the desktop expresses canvas as the translucent --chrome-bg glass —
+  // so its opaque base is asserted as a literal against DESIGN.md.
+  const CANVAS = { [DARK]: "#0e1116", [LIGHT]: "#f4f2ed" } as const;
+
+  for (const scope of [DARK, LIGHT] as const) {
+    const label = scope === DARK ? "dark" : "light";
+    it(`--text-faint clears AA 4.5:1 on --surface, --raised, and canvas (${label})`, () => {
+      const faint = hex(scope, "--text-faint");
+      for (const [bgName, bg] of [
+        ["--surface", hex(scope, "--surface")],
+        ["--raised", hex(scope, "--raised")],
+        ["canvas", CANVAS[scope]],
+      ] as const) {
+        expect(contrast(faint, bg), `${label} --text-faint on ${bgName}`).toBeGreaterThanOrEqual(
+          4.5,
+        );
+      }
+    });
+
+    it(`ink hierarchy holds: --text-faint is fainter than --text-soft than --text (${label})`, () => {
+      const surface = hex(scope, "--surface");
+      const [ink, muted, faint] = [
+        contrast(hex(scope, "--text"), surface),
+        contrast(hex(scope, "--text-soft"), surface),
+        contrast(hex(scope, "--text-faint"), surface),
+      ];
+      // Faint reads quieter than muted, muted quieter than ink (ink > muted > faint contrast).
+      expect(faint).toBeLessThan(muted);
+      expect(muted).toBeLessThan(ink);
+    });
+  }
+
+  it("semantic hexes match the root DESIGN.md ratified values", () => {
+    // Literals read straight from root DESIGN.md §Colors / §Semantic roles. If a token
+    // drifts from these (the P2 this fixes), the mismatch reddens here.
+    expect(hex(DARK, "--accent")).toBe("#8bbddd"); // review blue, dark
+    expect(hex(DARK, "--amber")).toBe("#dda664"); // decision amber, dark
+    expect(hex(DARK, "--green")).toBe("#88bc9b"); // evidence green, dark
+    expect(hex(LIGHT, "--accent")).toBe("#396f96"); // review blue, light
+    expect(hex(LIGHT, "--amber")).toBe("#a86125"); // decision amber, light
+    expect(hex(LIGHT, "--green")).toBe("#41745b"); // evidence green, light
+    // Canvas/surface/ink/muted anchors match DESIGN.md §Colors too.
+    expect(hex(DARK, "--surface")).toBe("#15191f");
+    expect(hex(DARK, "--text")).toBe("#f1f0eb");
+    expect(hex(DARK, "--text-soft")).toBe("#a8b0ba");
+    expect(hex(LIGHT, "--surface")).toBe("#fcfbf8");
+    expect(hex(LIGHT, "--text")).toBe("#111419");
+    expect(hex(LIGHT, "--text-soft")).toBe("#59616b");
   });
 });
 
