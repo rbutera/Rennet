@@ -13,19 +13,9 @@ import { fireEvent, mount } from "../test/dom";
 import { LensSwitcher } from "./lens";
 
 // CANVAS_ANGLES order: spec, sequence, decisions, noise, flagged.
-const noop = () => undefined;
 function Harness({ initial = "spec" as CanvasAngle }: { initial?: CanvasAngle }) {
   const [angle, setAngle] = useState<CanvasAngle>(initial);
-  return (
-    <LensSwitcher
-      angle={angle}
-      overlayOn={false}
-      scheme="dark"
-      onSelectAngle={setAngle}
-      onToggleOverlay={noop}
-      onToggleScheme={noop}
-    />
-  );
+  return <LensSwitcher angle={angle} onSelectAngle={setAngle} />;
 }
 
 const tabs = (container: HTMLElement) => [

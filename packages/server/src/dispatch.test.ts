@@ -333,6 +333,19 @@ function harness(
     discoverProject: ({ path, kind }) =>
       Promise.resolve({ path, kind, repos: [], primaryBranch: "main" }),
     detectHarnesses: () => Promise.resolve([]),
+    github: {
+      status: () => Promise.resolve({ state: "not-connected" as const, copy: "not connected" }),
+      connectStart: () =>
+        Promise.resolve({
+          userCode: "ABCD-1234",
+          verificationUri: "https://github.com/login/device",
+        }),
+      connectPoll: () => Promise.resolve({ phase: "idle" as const }),
+      connectCancel: () => Promise.resolve(),
+      setToken: () =>
+        Promise.resolve({ state: "connected" as const, login: "rai", scopes: ["repo"] }),
+      disconnect: () => Promise.resolve(),
+    },
     // Project detail (issue #37): a trivial substrate stub; the dedicated smart-list
     // tests exercise the derivation. The shared harness only needs the shape.
     projectDetail: () =>
@@ -2323,6 +2336,19 @@ function frontDoorHarness(seed: {
       return Promise.resolve({ ...discovery, path: input.path, kind: input.kind });
     },
     detectHarnesses: () => Promise.resolve(seed.detected ?? []),
+    github: {
+      status: () => Promise.resolve({ state: "not-connected" as const, copy: "not connected" }),
+      connectStart: () =>
+        Promise.resolve({
+          userCode: "ABCD-1234",
+          verificationUri: "https://github.com/login/device",
+        }),
+      connectPoll: () => Promise.resolve({ phase: "idle" as const }),
+      connectCancel: () => Promise.resolve(),
+      setToken: () =>
+        Promise.resolve({ state: "connected" as const, login: "rai", scopes: ["repo"] }),
+      disconnect: () => Promise.resolve(),
+    },
     projectDetail: () =>
       Promise.resolve({ viewer: { login: "rai" }, locals: [], prs: [], truncated: false }),
     cleanupWorktree: () => Promise.resolve({ ok: true }),
@@ -2419,11 +2445,11 @@ describe("createDispatch — front door (issue #29)", () => {
     const { dispatch } = frontDoorHarness({
       detected: [
         { id: "claude", version: "2.1.0" },
-        { id: "gh", version: "2.55.0" },
+        { id: "codex", version: "0.55.0" },
       ],
     });
     const out = (await dispatch("harness.detect", {})) as { detected: DetectedHarness[] };
-    expect(out.detected.map((harness) => harness.id)).toEqual(["claude", "gh"]);
+    expect(out.detected.map((harness) => harness.id)).toEqual(["claude", "codex"]);
   });
 
   it("project.process streams the host's narration, then emits a terminal done, and returns the summary", async () => {

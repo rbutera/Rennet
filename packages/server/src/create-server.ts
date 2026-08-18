@@ -4,12 +4,11 @@
 // handle the shell drives in-process today and a transport serialises in phase 2.
 // Electron-owned effects (data dir, dialog, progress broadcast, shell.openPath,
 // net.fetch, process env) arrive as options; nothing here imports electron.
-import { execFile } from "node:child_process";
 import { constants as fsConstants, realpathSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { promisify } from "node:util";
+import type { Octokit } from "@octokit/core";
 import {
   applyVisibilitySwitch,
   beginUiEvidenceRun,
@@ -30,6 +29,7 @@ import {
   createCodexTurnTransport,
   createCodexUtilityAdapter,
   createCoverageTurn,
+  createGitHubOctokit,
   createGitHubProjectPrSource,
   createOmpTurnTransport,
   createRefPinner,
@@ -59,7 +59,6 @@ import {
   FileConfigStore,
   FileProjectStore,
   FileThreadStore,
-  type GhRunner,
   GitCaptureAdapter,
   GitCheckpointStore,
   GitHubChangesetSource,
@@ -67,7 +66,6 @@ import {
   GitHubPrSubmissionAdapter,
   GitHubPublishAdapter,
   gitForRepoFactory,
-  type HttpFetch,
   inspectUiEvidence,
   KnowledgeStore,
   loadConventionCatalogue,
@@ -87,9 +85,11 @@ import {
   resolveBaseRef,
   resolveForgeRemote,
   resolveGitHubAuth,
+  runGitHubDeviceFlow,
   runKnowledgeDeltaForRepo,
   SqliteReviewStore,
   snapshotStoreFor,
+  validateGitHubToken,
   wslDiscoveryDeps,
 } from "@rennet/adapters";
 import {
@@ -119,7 +119,6 @@ import {
   type Locus,
   LocusDistroMismatchError,
   LocusPathUntranslatableError,
-  locusCommand,
   patchsetIntentToReviewIntent,
   ReviewService,
   recordSeatSend,
@@ -137,7 +136,12 @@ import {
   toWindowsView,
   verifyFlaggedReview,
 } from "@rennet/core";
-import type { DetectedHarness, ProjectProcessEvent } from "@rennet/protocol";
+import type {
+  DetectedHarness,
+  GitHubAuthStatus,
+  GitHubConnectPoll,
+  ProjectProcessEvent,
+} from "@rennet/protocol";
 import type {
   Canvas,
   CanvasAngle,
@@ -166,6 +170,7 @@ import { stampBlockingStates } from "./flagged-blocking-states";
 import { composeFlaggedLateEnrichment } from "./flagged-late-enrichment";
 import { projectUnavailableDeepVerification } from "./flagged-review-verification";
 import { applyImmediateUiVerification } from "./flagged-ui-verification";
+import { createGitHubTokenStore } from "./github-token-store";
 import { createLiveComposeBundle } from "./handoff-compose-live";
 import { InFlightReviews } from "./in-flight-reviews";
 import { createDesktopReviewBackend, createDesktopReviewContextFeed } from "./live-review-backend";
@@ -208,8 +213,8 @@ export interface RennetServerOptions {
   readonly broadcastProgress?: (commandId: string, event: ProjectProcessEvent) => void;
   /** Open a path in the OS (Electron's shell.openPath), the editor-launch fallback; resolves whether it opened. */
   readonly openPath?: (absPath: string) => Promise<boolean>;
-  /** The outbound HTTP transport for GitHub egress (Electron's net.fetch). */
-  readonly httpFetch?: HttpFetch;
+  /** The outbound HTTP transport for GitHub egress (the daemon's global fetch). */
+  readonly httpFetch?: typeof globalThis.fetch;
   /** The server application's own version, surfaced in the WS `serverInfo` handshake. Defaults to a dev sentinel. */
   readonly serverVersion?: string;
   /**
@@ -233,7 +238,6 @@ export interface RennetServer {
 export async function createRennetServer(options: RennetServerOptions): Promise<RennetServer> {
   const env = options.env ?? process.env;
   const dataDir = options.dataDir;
-  const execFileAsync = promisify(execFile);
 
   let editorExecutables: Promise<string[]> | null = null;
   function getEditorExecutables(): Promise<string[]> {
@@ -508,96 +512,204 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // probe that finds nothing simply drops that harness; the line degrades to
   // whatever was found (or nothing), never an error.
   let harnessDetection: Promise<DetectedHarness[]> | null = null;
-  // The gh probe is locus-aware (add-windows-support): host = `gh --version`, WSL =
-  // `wsl.exe -d <distro> -e gh --version`. The ambient first-run line is a MACHINE
-  // probe, so it uses the host; a per-project WSL gh probe passes the project's locus.
-  async function probeGhVersion(locus: Locus = HOST_LOCUS): Promise<string | null> {
-    try {
-      const { file, args } = locusCommand(locus, "gh", ["--version"]);
-      const { stdout } = await execFileAsync(file, args, { env });
-      return stdout.match(/\d+\.\d+\.\d+/)?.[0] ?? null;
-    } catch {
-      return null;
-    }
-  }
+  // gh is GONE from the detection line (v4.2): GitHub is an account (the device
+  // sign-in), not a CLI to detect. The line covers harnesses only.
   function detectHarnesses(): Promise<DetectedHarness[]> {
     harnessDetection ??= (async (): Promise<DetectedHarness[]> => {
-      const [claude, codex, gh] = await Promise.all([
+      const [claude, codex] = await Promise.all([
         discoverClaude(defaultDiscoveryDeps(), CLAUDE_TESTED_RANGE).catch(() => null),
         getCodexAvailability().catch(() => null),
-        probeGhVersion(),
       ]);
       const detected: DetectedHarness[] = [];
       if (claude?.chosen) detected.push({ id: "claude", version: claude.chosen.version });
       if (codex?.available) detected.push({ id: "codex", version: codex.version ?? null });
-      if (gh !== null) detected.push({ id: "gh", version: gh });
       return detected;
     })();
     return harnessDetection;
   }
 
-  // ── The GitHub egress composition (issue #21) ────────────────────────────────
-  // The outbound HTTP is injected by the shell (the app owns the transport), so no code here holds a raw
-  // socket; the bearer token is resolved LAZILY via the auth ladder (`gh auth token`,
-  // rung 0) on the FIRST real publish, never at launch and never for a dry-run (which
-  // constructs the request without a credential). The token is never persisted.
-  const publishHttp: HttpFetch =
+  // ── The GitHub egress composition (issue #21, v4.2 device flow) ──────────────
+  // The outbound HTTP is injected by the shell (the app owns the transport), so no
+  // code here holds a raw socket. The bearer is the STORED token — minted by the
+  // OAuth device flow or pasted as a PAT, kept in the daemon's 0600 token file —
+  // resolved LAZILY on the FIRST real egress, never at launch and never for a
+  // dry-run (which constructs the request without a credential).
+  const publishHttp: typeof globalThis.fetch =
     options.httpFetch ??
     (() => Promise.reject(new Error("Rennet server: options.httpFetch was not provided")));
 
-  // `gh auth token` resolves the REST bearer on the host. For a WSL-locus project the
-  // git push already runs in the distro (see `submitPullRequest`); binding this token
-  // read to the distro's own `gh` is the remaining WSL publish-auth item tracked in the
-  // add-windows-support change (the host token still authenticates the REST create).
-  const runGhAuthToken: GhRunner = async () => {
-    try {
-      const { stdout, stderr } = await execFileAsync("gh", ["auth", "token"], { env });
-      return { stdout, stderr, exitCode: 0 };
-    } catch (error) {
-      // A non-zero exit (logged out) resolves with its code; a spawn failure (`gh`
-      // absent, no `code`) rejects, which the auth ladder reads as gh-absent.
-      const err = error as { stdout?: string; stderr?: string; code?: unknown };
-      if (typeof err.code !== "number") throw error;
-      return { stdout: err.stdout ?? "", stderr: err.stderr ?? "", exitCode: err.code };
-    }
-  };
+  const gitHubSecretStore = createGitHubTokenStore(dataDir);
+  /** An UNAUTHENTICATED client for validation; candidate tokens ride as headers. */
+  const bareOctokit = createGitHubOctokit({ fetch: publishHttp });
+  const resolveAuth = () =>
+    resolveGitHubAuth({ octokit: bareOctokit, secretStore: gitHubSecretStore });
 
   /** Resolve the GitHub bearer for a real egress; throws (never posts) when unavailable. */
   async function resolveGitHubToken(): Promise<string> {
-    const auth = await resolveGitHubAuth({
-      gh: runGhAuthToken,
-      http: publishHttp,
-      // No pasted-PAT store is wired yet; rung 0 (`gh auth token`) is the credential.
-      secretStore: { getGitHubToken: async () => null },
-    });
+    const auth = await resolveAuth();
     if (!auth.ok) throw new Error(`GitHub authentication is unavailable (${auth.reason})`);
     return auth.token;
   }
 
-  // The live project-detail PR source (issue #37, B2). Resolved from the SAME auth
-  // ladder as egress, memoized so `project.detail` never re-runs `gh auth token`. When
+  // A token-bound Octokit for a real egress, memoized so a multi-page publish does
+  // not re-validate (`/rate_limit` + `/user`) per request. Invalidated whenever the
+  // account changes; a failed resolution is never cached.
+  let octokitMemo: Promise<Octokit> | null = null;
+  async function resolveGitHubOctokit(): Promise<Octokit> {
+    octokitMemo ??= resolveGitHubToken().then((token) =>
+      createGitHubOctokit({ fetch: publishHttp, token }),
+    );
+    const memo = octokitMemo;
+    try {
+      return await memo;
+    } catch (error) {
+      if (octokitMemo === memo) octokitMemo = null;
+      throw error;
+    }
+  }
+
+  // Account mutations (device-flow store, paste, disconnect) are SERIALIZED so a
+  // flow completing mid-disconnect cannot interleave with the token file write and
+  // resurrect a token the user just forgot.
+  let accountLock: Promise<unknown> = Promise.resolve();
+  function withAccountLock<T>(mutate: () => Promise<T>): Promise<T> {
+    const next = accountLock.then(mutate, mutate);
+    accountLock = next.catch(() => undefined);
+    return next;
+  }
+
+  // The live project-detail PR source (issue #37, B2). Resolved from the SAME stored
+  // token as egress, memoized so `project.detail` never re-validates per call. When
   // auth is unavailable it stays `null` and `project.detail` degrades to the local-only
   // list (B1) — a missing token is a local-only surface, never a failed fetch rendered
-  // as "zero PRs". Resolution is lazy (first `project.detail`), never at launch.
+  // as "zero PRs". Resolution is lazy (first `project.detail`), never at launch —
+  // INVALIDATED on connect/paste/disconnect so the surface follows the account, and
+  // a distinct auth-unavailable REASON rides along so the detail screen can say
+  // WHICH problem stands between the user and the PR half.
   let projectPrResolution: Promise<{
     source: ProjectPrSource | null;
-    authUnavailable?: "gh-absent" | "gh-not-logged-in" | "insufficient-scope";
+    authUnavailable?: "not-connected" | "token-invalid" | "insufficient-scope";
   }> | null = null;
-  function resolveProjectPrSource(): Promise<{
+  async function resolveProjectPrSource(): Promise<{
     source: ProjectPrSource | null;
-    authUnavailable?: "gh-absent" | "gh-not-logged-in" | "insufficient-scope";
+    authUnavailable?: "not-connected" | "token-invalid" | "insufficient-scope";
   }> {
     projectPrResolution ??= (async () => {
-      const auth = await resolveGitHubAuth({
-        gh: runGhAuthToken,
-        http: publishHttp,
-        secretStore: { getGitHubToken: async () => null },
-      });
+      const auth = await resolveAuth();
       if (!auth.ok) return { source: null, authUnavailable: auth.reason };
-      return { source: createGitHubProjectPrSource({ http: publishHttp, token: auth.token }) };
+      return {
+        source: createGitHubProjectPrSource({
+          octokit: createGitHubOctokit({ fetch: publishHttp, token: auth.token }),
+        }),
+      };
     })();
-    return projectPrResolution;
+    // A transient validation failure must not poison the memo (mirrors octokitMemo):
+    // the next project.detail retries instead of failing forever.
+    const memo = projectPrResolution;
+    try {
+      return await memo;
+    } catch (error) {
+      if (projectPrResolution === memo) projectPrResolution = null;
+      throw error;
+    }
   }
+
+  /** Drop every memoized auth-derived surface (the account changed). */
+  function invalidateGitHubMemos(): void {
+    projectPrResolution = null;
+    octokitMemo = null;
+  }
+
+  /** The renderer-safe projection of the host auth state (the token never leaves). */
+  function projectAuthStatus(auth: Awaited<ReturnType<typeof resolveAuth>>): GitHubAuthStatus {
+    if (auth.ok) return { state: "connected", login: auth.login, scopes: auth.scopes };
+    if (auth.reason === "insufficient-scope") {
+      return { state: "insufficient-scope", copy: auth.copy, scopes: auth.scopes };
+    }
+    return { state: auth.reason, copy: auth.copy };
+  }
+
+  // ── The one-time device-flow connect (v4.2) ──────────────────────────────────
+  // One in-flight flow at a time: `connectStart` mints the device code (replacing
+  // any previous flow), the background poll stores the token on authorize, and the
+  // renderer polls `connectPoll` until connected/failed. Cancel aborts the poll.
+  let deviceFlow: {
+    controller: AbortController;
+    outcome: GitHubConnectPoll;
+  } | null = null;
+  const githubAccount = {
+    async status(): Promise<GitHubAuthStatus> {
+      return projectAuthStatus(await resolveAuth());
+    },
+    async connectStart() {
+      deviceFlow?.controller.abort();
+      const controller = new AbortController();
+      const flow: NonNullable<typeof deviceFlow> = {
+        controller,
+        outcome: { phase: "pending" },
+      };
+      deviceFlow = flow;
+      const verification = await new Promise<{
+        user_code: string;
+        verification_uri: string;
+      }>((resolveVerification, rejectVerification) => {
+        runGitHubDeviceFlow({
+          fetch: publishHttp,
+          signal: controller.signal,
+          onVerification: resolveVerification,
+        })
+          .then(async ({ token }) => {
+            // Generation guard: a flow that was cancelled, replaced, or raced by a
+            // disconnect must NOT store its token — the user has moved on.
+            const stored = await withAccountLock(async () => {
+              if (deviceFlow !== flow) return false;
+              await gitHubSecretStore.setGitHubToken(token);
+              invalidateGitHubMemos();
+              return true;
+            });
+            if (!stored) return;
+            flow.outcome = { phase: "connected", status: projectAuthStatus(await resolveAuth()) };
+          })
+          .catch((error: unknown) => {
+            flow.outcome = { phase: "failed", message: String((error as Error)?.message ?? error) };
+            rejectVerification(error);
+          });
+      });
+      return {
+        userCode: verification.user_code,
+        verificationUri: verification.verification_uri,
+      };
+    },
+    async connectPoll(): Promise<GitHubConnectPoll> {
+      return deviceFlow?.outcome ?? { phase: "idle" };
+    },
+    async connectCancel(): Promise<void> {
+      deviceFlow?.controller.abort();
+      deviceFlow = null;
+    },
+    async setToken(token: string): Promise<GitHubAuthStatus> {
+      // The side door: validate BEFORE storing — a bad paste persists nothing.
+      const state = await validateGitHubToken(token, {
+        octokit: bareOctokit,
+        secretStore: gitHubSecretStore,
+      });
+      if (state.ok) {
+        await withAccountLock(async () => {
+          await gitHubSecretStore.setGitHubToken(token);
+          invalidateGitHubMemos();
+        });
+      }
+      return projectAuthStatus(state);
+    },
+    async disconnect(): Promise<void> {
+      deviceFlow?.controller.abort();
+      deviceFlow = null;
+      await withAccountLock(async () => {
+        await gitHubSecretStore.setGitHubToken(null);
+        invalidateGitHubMemos();
+      });
+    },
+  };
 
   let repositoryDirty = false;
   const allowedRoots = new Set<string>();
@@ -652,8 +764,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     if (!prRef) {
       throw new Error(`"${ref}" is not a pull request. Use owner/repo#123 or a GitHub PR URL.`);
     }
-    const token = await resolveGitHubToken();
-    const forge = new GitHubForgeAdapter({ http: publishHttp, token });
+    const forge = new GitHubForgeAdapter({ octokit: await resolveGitHubOctokit() });
     const gitInLocus = gitForRepo(repoPath);
     const source = new GitHubChangesetSource({
       forge,
@@ -1365,14 +1476,12 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       ...(review.postTarget === undefined ? {} : { postTarget: review.postTarget }),
       patchset,
       manifest,
-      fetchCiStatus: async (ref, headOid, signal) => {
-        const token = await resolveGitHubToken();
-        return new GitHubForgeAdapter({ http: publishHttp, token }).fetchCiStatus(
+      fetchCiStatus: async (ref, headOid, signal) =>
+        new GitHubForgeAdapter({ octokit: await resolveGitHubOctokit() }).fetchCiStatus(
           ref,
           headOid,
           signal,
-        );
-      },
+        ),
       ...(ciRefinementTurn === undefined ? {} : { refineTurn: ciRefinementTurn }),
       budget: sharedBudget,
     });
@@ -1700,17 +1809,13 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const inFlightReviews = new InFlightReviews();
   // The publish egress port + its consent authority (issue #21). The port constructs
   // requests purely (dry-run) and posts only via the gated `publish.review` command.
-  const publishPort = new GitHubPublishAdapter({
-    http: publishHttp,
-    resolveToken: resolveGitHubToken,
-  });
+  const publishPort = new GitHubPublishAdapter({ resolveOctokit: resolveGitHubOctokit });
   // The own-branch PR submission (issue #257 / #107): push the review's own branch,
   // then open a real PR. Pushing your own branch is not publishing (AGENTS.md) — the
   // agent loop pushes freely — so this is a plain git push + a REST create, with the
   // repo's GitHub identity resolved from its own remotes (never a path-name guess).
   const prSubmissionAdapter = new GitHubPrSubmissionAdapter({
-    http: publishHttp,
-    resolveToken: resolveGitHubToken,
+    resolveOctokit: resolveGitHubOctokit,
   });
   const submitPullRequest = async (input: {
     repoRoot: string;
@@ -1931,6 +2036,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     discoverProject: ({ path, kind }) =>
       discoverProject(defaultProjectDiscoveryDeps(gitForRepo(path)), path, kind),
     detectHarnesses,
+    github: githubAccount,
     // Project detail (issue #37): the unified smart list's substrate. The LOCAL half
     // is real worktrees/branches with dirty/ahead/behind from git; B2 wires the live
     // GitHub OPEN-PR set behind the same boundary via the auth-ladder PR source (null
@@ -2266,6 +2372,9 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
 
   let didShutdown = false;
   const shutdown = (): void => {
+    // An in-flight device-flow poll must not outlive the server.
+    deviceFlow?.controller.abort();
+    deviceFlow = null;
     // The old before-quit order (#251 criterion 4): signal in-flight turns, close the
     // watcher, close rehydration, close the store. Idempotent — Electron can fire quit twice.
     // The WS listener closes last, dropping every client socket.

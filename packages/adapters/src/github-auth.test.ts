@@ -1,120 +1,197 @@
 import { describe, expect, it, vi } from "vitest";
-import { type GhRunner, type HttpFetch, resolveGitHubAuth, type SecretStore } from "./github-auth";
+import { resolveGitHubAuth, type SecretStore, validateGitHubToken } from "./github-auth";
+import { createGitHubOctokit } from "./github-octokit";
 
-function response(status: number, headers: Record<string, string>, body = "{}") {
-  const lower = new Map(Object.entries(headers).map(([k, v]) => [k.toLowerCase(), v]));
-  return {
-    status,
-    headers: { get: (name: string) => lower.get(name.toLowerCase()) ?? null },
-    text: () => Promise.resolve(body),
+/** A fake GitHub: routes by path, returns real `Response`s (octokit's transport). */
+function fakeGitHub(routes: Record<string, () => Response>): typeof globalThis.fetch {
+  return (input) => {
+    const url = String(input);
+    const path = new URL(url).pathname;
+    const route = routes[path];
+    if (!route) return Promise.resolve(json(404, {}, { message: "not found" }));
+    return Promise.resolve(route());
   };
 }
 
-const emptySecretStore: SecretStore = { getGitHubToken: () => Promise.resolve(null) };
+function json(status: number, headers: Record<string, string>, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json", ...headers },
+  });
+}
 
-const rateLimitOk: HttpFetch = () =>
-  Promise.resolve(
-    response(200, {
-      "X-OAuth-Scopes": "repo, read:org, gist",
+const rateLimitOk = () =>
+  json(
+    200,
+    {
+      "X-OAuth-Scopes": "repo, workflow, read:org",
       "Github-Authentication-Token-Expiration": "2026-12-31 00:00:00 +0000",
       "X-RateLimit-Limit": "5000",
-    }),
+    },
+    { resources: {} },
   );
 
-describe("resolveGitHubAuth — the three distinct failure states", () => {
-  it("gh-absent: gh is not installed and there is no pasted token", async () => {
-    const gh: GhRunner = () =>
-      Promise.reject(Object.assign(new Error("spawn gh ENOENT"), { code: "ENOENT" }));
-    const state = await resolveGitHubAuth({ gh, http: rateLimitOk, secretStore: emptySecretStore });
+const userOk = () => json(200, {}, { login: "rbutera" });
+
+function octokitFor(routes: Record<string, () => Response>) {
+  return createGitHubOctokit({ fetch: fakeGitHub(routes) });
+}
+
+const emptyStore = { getGitHubToken: () => Promise.resolve(null) };
+const storeWith = (token: string) => ({ getGitHubToken: () => Promise.resolve(token) });
+
+describe("resolveGitHubAuth — the distinct failure states", () => {
+  it("not-connected: no stored token, and the network is never touched", async () => {
+    const fetch = vi.fn();
+    const octokit = createGitHubOctokit({ fetch: fetch as unknown as typeof globalThis.fetch });
+    const state = await resolveGitHubAuth({ octokit, secretStore: emptyStore });
     expect(state.ok).toBe(false);
     if (state.ok) throw new Error("unreachable");
-    expect(state.reason).toBe("gh-absent");
+    expect(state.reason).toBe("not-connected");
+    expect(state.copy.length).toBeGreaterThan(0);
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("token-invalid: a stored token that /rate_limit rejects with 401", async () => {
+    const octokit = octokitFor({
+      "/rate_limit": () => json(401, {}, { message: "Bad credentials" }),
+    });
+    const state = await resolveGitHubAuth({ octokit, secretStore: storeWith("gho_revoked") });
+    expect(state.ok).toBe(false);
+    if (state.ok) throw new Error("unreachable");
+    expect(state.reason).toBe("token-invalid");
     expect(state.copy.length).toBeGreaterThan(0);
   });
 
-  it("gh-not-logged-in: gh is present but `gh auth token` exits non-zero", async () => {
-    const gh: GhRunner = () =>
-      Promise.resolve({ stdout: "", stderr: "not logged in", exitCode: 1 });
-    const state = await resolveGitHubAuth({ gh, http: rateLimitOk, secretStore: emptySecretStore });
-    expect(state.ok).toBe(false);
-    if (state.ok) throw new Error("unreachable");
-    expect(state.reason).toBe("gh-not-logged-in");
-    expect(state.copy.length).toBeGreaterThan(0);
-  });
-
-  it("insufficient-scope: a token is obtained but /rate_limit shows no `repo` scope", async () => {
-    const gh: GhRunner = () => Promise.resolve({ stdout: "gho_token\n", stderr: "", exitCode: 0 });
-    const http: HttpFetch = () =>
-      Promise.resolve(
-        response(200, { "X-OAuth-Scopes": "gist, read:user", "X-RateLimit-Limit": "5000" }),
-      );
-    const state = await resolveGitHubAuth({ gh, http, secretStore: emptySecretStore });
+  it("insufficient-scope: a valid token whose scopes lack `repo`", async () => {
+    const octokit = octokitFor({
+      "/rate_limit": () => json(200, { "X-OAuth-Scopes": "gist, read:user" }, { resources: {} }),
+    });
+    const state = await resolveGitHubAuth({ octokit, secretStore: storeWith("gho_narrow") });
     expect(state.ok).toBe(false);
     if (state.ok || state.reason !== "insufficient-scope") throw new Error("unreachable");
-    expect(state.reason).toBe("insufficient-scope");
     expect(state.scopes).toEqual(["gist", "read:user"]);
     expect(state.copy.length).toBeGreaterThan(0);
   });
 
   it("the three failure states are pairwise DISTINCT in both reason and copy", async () => {
-    const absent = await resolveGitHubAuth({
-      gh: () => Promise.reject(Object.assign(new Error("ENOENT"), { code: "ENOENT" })),
-      http: rateLimitOk,
-      secretStore: emptySecretStore,
+    const notConnected = await resolveGitHubAuth({
+      octokit: octokitFor({}),
+      secretStore: emptyStore,
     });
-    const loggedOut = await resolveGitHubAuth({
-      gh: () => Promise.resolve({ stdout: "", stderr: "", exitCode: 1 }),
-      http: rateLimitOk,
-      secretStore: emptySecretStore,
+    const invalid = await resolveGitHubAuth({
+      octokit: octokitFor({ "/rate_limit": () => json(401, {}, {}) }),
+      secretStore: storeWith("t"),
     });
     const noScope = await resolveGitHubAuth({
-      gh: () => Promise.resolve({ stdout: "t\n", stderr: "", exitCode: 0 }),
-      http: () => Promise.resolve(response(200, { "X-OAuth-Scopes": "gist" })),
-      secretStore: emptySecretStore,
+      octokit: octokitFor({
+        "/rate_limit": () => json(200, { "X-OAuth-Scopes": "gist" }, { resources: {} }),
+      }),
+      secretStore: storeWith("t"),
     });
-    const reasons = [absent, loggedOut, noScope].map((s) => (s.ok ? "ok" : s.reason));
-    const copies = [absent, loggedOut, noScope].map((s) => (s.ok ? "" : s.copy));
+    const states = [notConnected, invalid, noScope];
+    const reasons = states.map((s) => (s.ok ? "ok" : s.reason));
+    const copies = states.map((s) => (s.ok ? "" : s.copy));
     expect(new Set(reasons).size).toBe(3);
     expect(new Set(copies).size).toBe(3);
   });
 });
 
-describe("resolveGitHubAuth — success and rungs", () => {
-  it("rung 0 (gh): valid token with repo scope succeeds and reads expiry + rate limit", async () => {
-    const gh: GhRunner = () => Promise.resolve({ stdout: "gho_valid\n", stderr: "", exitCode: 0 });
-    const state = await resolveGitHubAuth({ gh, http: rateLimitOk, secretStore: emptySecretStore });
+describe("resolveGitHubAuth — success", () => {
+  it("a stored token with repo scope succeeds: scopes, expiry, rate limit, login", async () => {
+    const octokit = octokitFor({ "/rate_limit": rateLimitOk, "/user": userOk });
+    const state = await resolveGitHubAuth({ octokit, secretStore: storeWith("gho_valid") });
     expect(state.ok).toBe(true);
     if (!state.ok) throw new Error("unreachable");
-    expect(state.rung).toBe("gh");
     expect(state.token).toBe("gho_valid");
+    expect(state.login).toBe("rbutera");
     expect(state.scopes).toContain("repo");
+    expect(state.scopes).toContain("workflow");
     expect(state.expiresAt).toBe("2026-12-31 00:00:00 +0000");
     expect(state.rateLimit).toBe(5000);
   });
 
-  it("the rung-0 token is NEVER persisted (no secret-store write on the gh path)", async () => {
-    const setToken = vi.fn();
-    // A secret store that also exposes a write; resolveGitHubAuth must never call it.
-    const secretStore = { getGitHubToken: () => Promise.resolve(null), setGitHubToken: setToken };
-    const gh: GhRunner = () => Promise.resolve({ stdout: "gho_valid\n", stderr: "", exitCode: 0 });
-    await resolveGitHubAuth({ gh, http: rateLimitOk, secretStore });
-    expect(setToken).not.toHaveBeenCalled();
+  it("the candidate token rides as the Authorization header on validation", async () => {
+    let seenAuth: string | null = null;
+    const fetch: typeof globalThis.fetch = (input, init) => {
+      const headers = new Headers(init?.headers);
+      if (new URL(String(input)).pathname === "/rate_limit") {
+        seenAuth = headers.get("authorization");
+        return Promise.resolve(rateLimitOk());
+      }
+      return Promise.resolve(userOk());
+    };
+    const octokit = createGitHubOctokit({ fetch });
+    await resolveGitHubAuth({ octokit, secretStore: storeWith("ghp_pasted") });
+    expect(seenAuth).toBe("Bearer ghp_pasted");
   });
 
-  it("rung 2 (pat): falls back to a pasted token when gh is absent", async () => {
-    const gh: GhRunner = () =>
-      Promise.reject(Object.assign(new Error("ENOENT"), { code: "ENOENT" }));
-    const secretStore: SecretStore = { getGitHubToken: () => Promise.resolve("ghp_pasted") };
-    let seenAuth: string | undefined;
-    const http: HttpFetch = (_url, init) => {
-      seenAuth = init?.headers?.Authorization;
-      return rateLimitOk(_url, init);
-    };
-    const state = await resolveGitHubAuth({ gh, http, secretStore });
+  it("a /user failure never fails auth — login degrades to null", async () => {
+    const octokit = octokitFor({
+      "/rate_limit": rateLimitOk,
+      "/user": () => json(500, {}, { message: "boom" }),
+    });
+    const state = await resolveGitHubAuth({ octokit, secretStore: storeWith("gho_valid") });
     expect(state.ok).toBe(true);
     if (!state.ok) throw new Error("unreachable");
-    expect(state.rung).toBe("pat");
-    expect(state.token).toBe("ghp_pasted");
-    expect(seenAuth).toBe("Bearer ghp_pasted");
+    expect(state.login).toBeNull();
+  });
+
+  it("resolution never WRITES the secret store", async () => {
+    const setToken = vi.fn();
+    const store: SecretStore = {
+      getGitHubToken: () => Promise.resolve("gho_valid"),
+      setGitHubToken: setToken,
+    };
+    const octokit = octokitFor({ "/rate_limit": rateLimitOk, "/user": userOk });
+    await resolveGitHubAuth({ octokit, secretStore: store });
+    expect(setToken).not.toHaveBeenCalled();
+  });
+});
+
+describe("resolveGitHubAuth — fine-grained tokens", () => {
+  it("accepts a token with NO X-OAuth-Scopes header (fine-grained PAT / App token)", async () => {
+    // FG-PATs and GitHub App tokens send no scopes header at all. Absent header =
+    // scopes unknowable, never "no scopes" — the side door must accept them.
+    const octokit = octokitFor({
+      "/rate_limit": () => json(200, { "X-RateLimit-Limit": "5000" }, { resources: {} }),
+      "/user": userOk,
+    });
+    const state = await resolveGitHubAuth({ octokit, secretStore: storeWith("github_pat_fg") });
+    expect(state.ok).toBe(true);
+    if (!state.ok) throw new Error("unreachable");
+    expect(state.scopes).toEqual([]);
+    expect(state.login).toBe("rbutera");
+  });
+
+  it("still rejects a PRESENT scopes header that lacks repo", async () => {
+    const octokit = octokitFor({
+      "/rate_limit": () => json(200, { "X-OAuth-Scopes": "gist" }, { resources: {} }),
+    });
+    const state = await resolveGitHubAuth({ octokit, secretStore: storeWith("gho_narrow") });
+    expect(state.ok).toBe(false);
+    if (state.ok) throw new Error("unreachable");
+    expect(state.reason).toBe("insufficient-scope");
+  });
+});
+
+describe("validateGitHubToken — the pre-store paste check", () => {
+  it("rejects a bad paste as token-invalid WITHOUT any store involvement", async () => {
+    const octokit = octokitFor({ "/rate_limit": () => json(401, {}, {}) });
+    const state = await validateGitHubToken("ghp_typo", {
+      octokit,
+      secretStore: emptyStore,
+    });
+    expect(state.ok).toBe(false);
+    if (state.ok) throw new Error("unreachable");
+    expect(state.reason).toBe("token-invalid");
+  });
+
+  it("accepts a good paste, carrying its login for the settings row", async () => {
+    const octokit = octokitFor({ "/rate_limit": rateLimitOk, "/user": userOk });
+    const state = await validateGitHubToken("ghp_good", { octokit, secretStore: emptyStore });
+    expect(state.ok).toBe(true);
+    if (!state.ok) throw new Error("unreachable");
+    expect(state.login).toBe("rbutera");
   });
 });

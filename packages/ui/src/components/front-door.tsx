@@ -7,7 +7,8 @@ import type {
   RennetBridge,
 } from "@rennet/protocol";
 import { type ReactNode, useEffect, useState } from "react";
-import { RennetBrandMark } from "./brand-mark";
+import { messageFrom } from "../lib/message-from";
+import { GitHubConnectCard } from "./github-connect";
 import {
   ArrowRightIcon,
   ChevronIcon,
@@ -19,6 +20,7 @@ import {
   SparkleIcon,
 } from "./icons";
 import { ProjectProcessing } from "./project-processing";
+import { ChromeMark } from "./update-ready";
 
 /**
  * The front door (issue #29). The empty projects list IS first run; the
@@ -76,15 +78,13 @@ export function FrontDoor({
   return (
     <div className="rennet-glass front-door" data-scheme={scheme ?? "dark"}>
       <header className="front-door-bar">
-        <span className="front-door-mark" aria-hidden="true">
-          {flow?.step === "processing" ? (
-            <SparkleIcon size={18} />
-          ) : flow ? (
-            <PlusIcon size={16} />
-          ) : (
-            <RennetBrandMark size={16} />
-          )}
-        </span>
+        {flow ? (
+          <span className="front-door-mark" aria-hidden="true">
+            {flow.step === "processing" ? <SparkleIcon size={18} /> : <PlusIcon size={16} />}
+          </span>
+        ) : (
+          <ChromeMark size={16} className="front-door-mark" />
+        )}
         <h1>
           {flow?.step === "processing" ? flow.project.name : flow ? "Add a project" : "Rennet"}
         </h1>
@@ -121,6 +121,7 @@ export function FrontDoor({
         <ProjectsList
           projects={projects}
           detected={detected}
+          bridge={bridge}
           onAdd={() => setFlow({ step: "type-path", kind: "workspace", busy: false })}
           onOpen={onOpenProject}
         />
@@ -134,11 +135,13 @@ export function FrontDoor({
 function ProjectsList({
   projects,
   detected,
+  bridge,
   onAdd,
   onOpen,
 }: {
   projects: Project[] | null;
   detected: DetectedHarness[] | null;
+  bridge: RennetBridge;
   onAdd(): void;
   onOpen(project: Project): void;
 }) {
@@ -198,6 +201,7 @@ function ProjectsList({
       )}
 
       <HarnessLine detected={detected} />
+      <GitHubConnectCard bridge={bridge} />
     </div>
   );
 }
@@ -593,10 +597,6 @@ function Toggle({ on, label, onToggle }: { on: boolean; label: string; onToggle(
 }
 
 /* ── helpers ───────────────────────────────────────────────────────────────── */
-
-function messageFrom(reason: unknown): string {
-  return reason instanceof Error ? reason.message : String(reason);
-}
 
 function harnessLabel(id: string): string {
   return id === "claude" ? "Claude" : id;

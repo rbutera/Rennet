@@ -102,6 +102,8 @@ snapshot.
 | Package and make | Electron Forge | `7.11.2` | Live |
 | Electron fuses | `@electron/fuses` | `2.1.3` | Live |
 | Claude integration | `@anthropic-ai/claude-agent-sdk` | `0.3.223` | Live; invokes the user's installed `claude` |
+| GitHub client | `@octokit/core` | `7.0.7` | Live; plugin-free, adapters own retry semantics |
+| GitHub sign-in | `@octokit/auth-oauth-device` | `8.0.4` | Live; device flow, no client secret |
 | Runtime schemas | `zod` | `4.4.3` | Live in protocol and adapters |
 | Child processes | `execa` | `10.0.0` | Live in adapters |
 | Change hints | `chokidar` | `5.0.0` | Live; Git remains truth |
@@ -246,15 +248,19 @@ read here, not edited in an embedded IDE or terminal.
 
 ## GitHub and harness integrations
 
-For GitHub, a minimal Octokit transport may carry REST and GraphQL calls, while
-Rennet owns authentication precedence, anchoring, degradation, idempotency,
-read-back markers, and `outcome-unknown` reconciliation. Aggregate Octokit bundles,
-global mutation retry plugins, Apps, OAuth, and webhook machinery are not part of
-the current product shape.
+For GitHub, the plugin-free `@octokit/core` client carries REST and GraphQL
+calls, while Rennet owns authentication precedence, anchoring, degradation,
+idempotency, read-back markers, and `outcome-unknown` reconciliation. The
+aggregate `octokit` bundle and its global retry/throttle plugins are deliberately
+NOT used — the publish path owns its rate-limit semantics (`ForgeRateLimited`,
+backoff on GitHub's schedule, never a hidden retry storm). Webhook machinery and
+GitHub Apps remain out of the product shape.
 
-Initial GitHub authentication comes from the user's installed `gh`. Rennet does
-not parse another tool's auth files or persist the token it obtains for a live
-client.
+GitHub authentication is Rennet's own OAuth device flow
+(`@octokit/auth-oauth-device` against Rennet's public OAuth App client id — no
+client secret, no Rennet backend): the minted token, or a pasted personal access
+token, is kept in an owner-only file under the daemon's data directory. Rennet
+does not parse any other tool's auth files.
 
 The Claude adapter uses the official Agent SDK but passes
 `pathToClaudeCodeExecutable` for the user's installed binary. Packaging strips the

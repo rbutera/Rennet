@@ -19,6 +19,12 @@ export const css01 = `
   border-radius:9px; padding:10px 13px; }
 .ambient .hh{ font-family:var(--mono); font-size:12.5px; color:var(--blue-ink); }
 .ambient .hh b{ color:var(--text); font-weight:600; }
+.ghcard{ max-width:560px; margin:14px auto 0; display:flex; align-items:center; gap:12px;
+  border:1px solid var(--line2); border-radius:11px; padding:13px 15px; background:#fff; }
+.ghcard .gtxt h4{ margin:0 0 2px; font-size:13.5px; font-weight:650; }
+.ghcard .gtxt p{ margin:0; font-size:12.5px; color:var(--muted); }
+.ghcard .acts{ margin-left:auto; display:flex; align-items:center; gap:12px; }
+.ghcard .skip{ font-size:12.5px; color:var(--faint); white-space:nowrap; }
 .coach{ max-width:560px; margin:14px auto 0; text-align:center; font-size:12.5px; color:var(--faint); }
 `;
 export function frame01() {
@@ -33,20 +39,27 @@ export function frame01() {
     <div class="ambient rel">
       <span class="anno" style="left:-30px;top:8px">${dot(2)}</span>
       <span style="color:var(--blue)">${ic.harness}</span>
-      <span class="hh"><b>Claude · codex · gh</b> detected</span>
+      <span class="hh"><b>Claude · codex</b> detected</span>
     </div>
-    <div class="coach rel"><span class="anno" style="left:-30px;top:-2px">${dot(3)}</span>A few one-time coach marks teach the rest, in place.</div>
+    <div class="ghcard rel">
+      <span class="anno" style="left:-30px;top:10px">${dot(3)}</span>
+      <span class="gly">${ic.github}</span>
+      <div class="gtxt"><h4>Connect GitHub</h4><p>One-time device sign-in. Only needed when a review touches GitHub.</p></div>
+      <div class="acts"><span class="skip">Skip for now</span><button class="btn">Connect</button></div>
+    </div>
+    <div class="coach rel"><span class="anno" style="left:-30px;top:-2px">${dot(4)}</span>A few one-time coach marks teach the rest, in place.</div>
   </div>`;
   return {
-    title: 'Rennet v4.0 · 01 First run',
+    title: 'Rennet v4.2 · 01 First run',
     head: { badge: '01', title: 'First run: the empty projects list', pill: 'Onboarding' },
     ref: 'no wizard, no ceremony\nadd-a-project IS the onboarding',
-    sub: 'First run is a <b>state</b> of the projects list, not a separate flow. It is one large add-a-project affordance and an ambient line saying which harnesses were found. Nothing here is once-only, so nothing can rot in a surface you never revisit.',
+    sub: 'First run is a <b>state</b> of the projects list, not a separate flow. It is one large add-a-project affordance, an ambient line saying which harnesses were found, and a <b>skippable</b> Connect-GitHub card (one-time device sign-in — v4.2 drops the gh CLI). Nothing here is once-only, so nothing can rot in a surface you never revisit.',
     css: css01,
     win: win({ name: `<span class="gly sm plain" style="width:20px;height:20px;color:#4a5059">${ic.repo}</span>Rennet`, meta: paletteMeta, body }),
     notes: [
       { h: 'Add-a-project is the onboarding.', b: 'No connect / find-tools / point-at-code wizard. The one persistent action does the whole job, and it exists forever, not once.' },
-      { h: 'Detection is ambient.', b: 'Harness discovery is one backlight line, not a screen. Zero-config means it is felt, not ceremonial.' },
+      { h: 'Detection is ambient.', b: 'Harness discovery is one backlight line, not a screen. Zero-config means it is felt, not ceremonial. gh is gone from the line: GitHub is an account, not a CLI to detect.' },
+      { h: 'GitHub is a card, not a wall.', b: 'One-time OAuth device sign-in (code shown here, entered at github.com/login/device). Fully skippable — working-tree review needs no GitHub at all — and if skipped, Rennet asks again at the point of need. Its permanent home is Settings, alongside the paste-a-token side door.' },
       { h: 'First run is a state.', b: 'The empty projects list IS first run. The only explicit teaching is a handful of coach marks that fire at their anchor and dismiss forever.' },
     ],
   };

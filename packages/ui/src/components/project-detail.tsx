@@ -1,5 +1,6 @@
 import type { Project, ProjectDetail as ProjectDetailData, RennetBridge } from "@rennet/protocol";
 import { useEffect, useMemo, useState } from "react";
+import { messageFrom } from "../lib/message-from";
 import {
   buildSmartRows,
   filterSmartRows,
@@ -159,11 +160,11 @@ export function ProjectDetail({
 
           {detail.authUnavailable ? (
             <p className="project-detail-auth-hint" role="note">
-              {detail.authUnavailable === "gh-absent"
-                ? "Pull requests unavailable — gh CLI not found. Install gh and run gh auth login."
-                : detail.authUnavailable === "gh-not-logged-in"
-                  ? "Pull requests unavailable — gh CLI not logged in. Run gh auth login."
-                  : "Pull requests unavailable — gh token has insufficient scope."}
+              {detail.authUnavailable === "not-connected"
+                ? "Pull requests unavailable — GitHub is not connected. Connect in Settings."
+                : detail.authUnavailable === "token-invalid"
+                  ? "Pull requests unavailable — the GitHub token was revoked or expired. Reconnect in Settings."
+                  : "Pull requests unavailable — the GitHub token is missing the repo scope."}
             </p>
           ) : null}
 
@@ -376,8 +377,4 @@ function rowActionLabel(row: SmartRow): string {
   if (row.kind === "local") return row.local?.stage === "reviewed" ? "Make PR" : "Review";
   if (row.readOnly) return "View";
   return row.mine ? "Open" : "Review";
-}
-
-function messageFrom(reason: unknown): string {
-  return reason instanceof Error ? reason.message : String(reason);
 }

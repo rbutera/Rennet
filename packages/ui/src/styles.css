@@ -41,14 +41,12 @@ button {
   max-width: 40%;
 }
 
-/* The destination rail (issue #64) is persistent chrome fixed to the right. The
- * two working views reserve a gutter for it so nothing ever overlaps it. The
- * front door / empty state carries no destination, so it takes no gutter. */
+/* The review surface. The destination frame was removed from this surface per
+ * wireframe #06 (it lives in the titlebar as a CTA, not a floating panel). */
 .app-shell {
   min-height: 100vh;
   display: flex;
   flex-direction: column;
-  padding-right: var(--destination-gutter, 300px);
   /* Frosted-chrome backdrop over the real desktop. Content panels (file/diff/angle)
    * paint solid backgrounds on top of this, so their text never rides the wallpaper. */
   background: var(--chrome-bg);
@@ -112,6 +110,32 @@ button {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.navigation-draft-cta {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 14px;
+  border: 0;
+  border-radius: var(--chip-radius);
+  background: var(--btn-bg);
+  color: var(--btn-text);
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.navigation-draft-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-size: 10px;
+  font-weight: 800;
 }
 .navigation-mode-pill,
 .navigation-patchset-chip {
@@ -716,6 +740,35 @@ button {
 .loading {
   color: var(--text-faint);
 }
+/* Compact AI-loading bar: shown above the diff while canvases load, so the
+ * reviewer sees the code immediately (wireframe #06: diff is the substrate). */
+.ai-loading-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 28px;
+  padding: 0 20px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--accent-soft);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.ai-loading-bar-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 35%;
+  height: 100%;
+  background: var(--accent);
+  opacity: 0.08;
+  animation: busy 1s ease-in-out infinite alternate;
+}
+.ai-loading-bar-label {
+  position: relative;
+}
 .error,
 .error-toast {
   color: var(--del-glyph);
@@ -790,6 +843,10 @@ button {
 
 /* ── The DESTINATION (issue #64): the persistent north the review stages toward ──
  * Glass chrome rail, fixed to the right; the working views reserve a gutter for it. */
+/* The destination frame is hidden on the review surface per wireframe #06 — the
+ * titlebar CTA replaces it. It remains in the DOM for data queries but does not
+ * float over the conversation sidebar. Visible only on draft/paper/handoff
+ * surfaces (gated by [data-destination-visible] on the wrapper). */
 .destination-frame {
   position: fixed;
   z-index: 11;
@@ -797,7 +854,7 @@ button {
   right: 16px;
   width: 268px;
   max-height: calc(100vh - 76px);
-  display: flex;
+  display: none;
   flex-direction: column;
   gap: 10px;
   padding: 14px;
@@ -807,6 +864,9 @@ button {
   -webkit-backdrop-filter: var(--side-blur);
   backdrop-filter: var(--side-blur);
   box-shadow: var(--win-shadow);
+}
+[data-destination-visible] .destination-frame {
+  display: flex;
 }
 .destination-eyebrow {
   margin: 0;
@@ -2133,6 +2193,136 @@ button {
 .harness-line-tail {
   color: var(--text-faint);
   font-weight: 500;
+}
+
+/* ── The GitHub connect surfaces (v4.2, wireframes 01 + 15) ─────────────────────
+ * The first-run card is a CARD, not a wall: quiet chrome, a skip that is a plain
+ * word, and the whole thing gone once connected or dismissed. The device code is
+ * the loudest thing on it while a flow is live — it is the one fact to carry to
+ * github.com/login/device. */
+.github-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  align-self: center;
+  width: min(560px, 100%);
+  margin-top: 14px;
+  padding: 13px 15px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: var(--surface-2);
+  font-size: 13px;
+}
+.github-card-icon {
+  display: inline-flex;
+  color: var(--text);
+}
+.github-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.github-card-title {
+  font-weight: 650;
+  color: var(--text);
+}
+.github-card-sub {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.github-skip {
+  margin-left: auto;
+  border: none;
+  background: none;
+  padding: 4px 6px;
+  font-size: 12px;
+  color: var(--text-faint);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.github-skip:hover {
+  color: var(--text);
+}
+.github-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.github-btn:hover:not(:disabled) {
+  border-color: var(--text-faint);
+}
+.github-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.github-flow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+.github-code {
+  font: 700 16px / 1 var(--mono);
+  letter-spacing: 0.12em;
+  padding: 6px 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: var(--surface-2);
+  color: var(--text);
+  white-space: nowrap;
+}
+.github-flow-hint {
+  font-size: 12px;
+  color: var(--text-faint);
+  min-width: 0;
+}
+.github-flow-hint a {
+  color: inherit;
+  text-decoration: underline;
+}
+.github-error {
+  font-size: 12px;
+  color: var(--text);
+  margin: 8px 0 0;
+}
+.github-connected {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font: 600 12px / 1 var(--mono);
+  color: var(--text);
+  white-space: nowrap;
+}
+.github-problem {
+  font-size: 12px;
+  color: var(--text);
+  max-width: 340px;
+}
+.github-problem.faint {
+  color: var(--text-faint);
+}
+.github-row-value {
+  gap: 10px;
+}
+.github-token-input {
+  width: 220px;
+  padding: 6px 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font: 12px / 1.2 var(--mono);
+}
+.github-token-input::placeholder {
+  color: var(--text-faint);
 }
 
 /* ── The add-a-project flow ─────────────────────────────────────────────────── */
@@ -4042,4 +4232,87 @@ button {
   color: var(--text-faint);
   font-size: 11px;
   line-height: 1.45;
+}
+
+/* Host-app update readiness (spec: desktop-update-notification): the chrome mark
+ * becomes a badged button when a new release is downloaded. The dot is a redundant
+ * non-text cue over an accent ground; the button aria-label carries the meaning. */
+.chrome-mark-update {
+  position: relative;
+  border: 0;
+  background: none;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+}
+.chrome-mark-badge {
+  position: absolute;
+  top: -2px;
+  right: -4px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--accent);
+  /* A 1px surface ring separates the dot from the mark on any chrome ground. */
+  box-shadow: 0 0 0 1px var(--surface);
+}
+
+/* The restart-into-update confirm, on the palette backdrop idiom: opaque raised
+ * card, ink text, one inverted primary. */
+.update-prompt-scrim {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  cursor: default;
+}
+.update-prompt {
+  position: relative;
+  z-index: 1;
+  width: min(400px, 100%);
+  margin-top: 18vh;
+  background: var(--raised);
+  border: 1px solid var(--hairline);
+  border-radius: 12px;
+  padding: 20px 22px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.5);
+}
+.update-prompt h2 {
+  margin: 0 0 6px;
+  font-size: 16px;
+  font-weight: 650;
+  color: var(--text);
+}
+.update-prompt p {
+  margin: 0 0 16px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text-soft);
+}
+.update-prompt-actions {
+  display: flex;
+  gap: 8px;
+}
+.update-prompt-apply,
+.update-prompt-later {
+  font: inherit;
+  font-size: 12px;
+  font-weight: 650;
+  border-radius: 8px;
+  padding: 8px 14px;
+  cursor: pointer;
+}
+.update-prompt-apply {
+  border: 1px solid var(--text);
+  background: var(--text);
+  color: var(--raised);
+}
+.update-prompt-later {
+  border: 1px solid var(--hairline);
+  background: var(--surface);
+  color: var(--text);
 }

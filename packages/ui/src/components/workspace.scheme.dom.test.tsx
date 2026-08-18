@@ -8,7 +8,7 @@
 import type { Canvas, CanvasAngle } from "@rennet/types";
 import { CANVAS_ANGLES } from "@rennet/types";
 import { afterEach, describe, expect, it } from "vitest";
-import { cleanup, fireEvent, mount, waitFor } from "../test/dom";
+import { cleanup, mount, waitFor } from "../test/dom";
 import { CanvasWorkspace } from "./workspace";
 
 function canvasSet(): Record<CanvasAngle, Canvas> {
@@ -46,25 +46,7 @@ describe("CanvasWorkspace — the canvas follows the app scheme", () => {
     await waitFor(() => expect(app()?.getAttribute("data-scheme")).toBe("light"));
   });
 
-  it("HOLDS the reviewer's in-review override against later app-scheme changes", async () => {
-    const { container, rerender } = mount(<CanvasWorkspace canvases={canvasSet()} scheme="dark" />);
-    const app = () => container.querySelector(".canvas-app");
-    await waitFor(() => expect(app()?.getAttribute("data-scheme")).toBe("dark"));
-
-    // The reviewer explicitly toggles the in-review scheme (dark → bright room).
-    const toggle = container.querySelector(".lens-scheme") as HTMLButtonElement;
-    fireEvent.click(toggle);
-    await waitFor(() => expect(app()?.getAttribute("data-scheme")).toBe("light"));
-
-    // The app scheme now REALLY changes — dark → light → dark — so the sync effect
-    // genuinely reruns (its dep is `props.scheme`). The override must HOLD across
-    // both transitions: the canvas stays LIGHT even as the app scheme lands on dark.
-    // (Red-proof: remove the `!schemeOverriddenRef.current` condition and the final
-    // dark prop drives the canvas to dark, failing this assertion.)
-    rerender(<CanvasWorkspace canvases={canvasSet()} scheme="light" />);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    rerender(<CanvasWorkspace canvases={canvasSet()} scheme="dark" />);
-    await new Promise((resolve) => setTimeout(resolve, 0));
-    expect(app()?.getAttribute("data-scheme")).toBe("light");
-  });
+  // The in-review scheme override (via the former lens-bar toggle) was removed per
+  // wireframe #06/#08 — the theme toggle lives in the title bar, not the lens bar.
+  // The scheme-follows-app behaviour above is the remaining contract.
 });

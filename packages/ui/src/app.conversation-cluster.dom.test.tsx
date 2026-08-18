@@ -156,11 +156,11 @@ describe("RennetApp — the aligned conversation margin ships (issue #356, no re
     await waitFor(() => expect(container.querySelector(".review-heart-split")).not.toBeNull());
     const split = container.querySelector<HTMLElement>(".review-heart-split");
     if (!split) throw new Error("the shipped app did not render the split");
-    // Both are DIRECT children of the split — siblings, not stacked. The conversation
-    // column is the fixed-width shell holding the aligned margin rail.
     const diff = split.querySelector<HTMLElement>(":scope > .diff-column");
-    const panelShell = split.querySelector<HTMLElement>(":scope > .conversation-panel-shell");
     expect(diff).not.toBeNull();
+    // The conversation panel is a persistent sidebar rendered alongside the view
+    // content (wireframe #06), not inside the review-heart-split.
+    const panelShell = container.querySelector<HTMLElement>(".conversation-panel-shell");
     expect(panelShell).not.toBeNull();
     expect(panelShell?.querySelector(".conversation-margin")).not.toBeNull();
     expect(container.querySelector(".ask-panel")).toBeNull();
@@ -197,9 +197,7 @@ describe("RennetApp — the aligned conversation margin ships (issue #356, no re
     expect(diffAfter).toBe(diffBefore);
     expect(diffAfter?.querySelectorAll("*").length).toBe(beforeNodes);
     expect(diffAfter?.className).toBe("diff-column");
-    const panelShellAfter = container.querySelector<HTMLElement>(
-      ".review-heart-split > .conversation-panel-shell",
-    );
+    const panelShellAfter = container.querySelector<HTMLElement>(".conversation-panel-shell");
     expect(panelShellAfter?.className).toBe("conversation-panel-shell");
   });
 

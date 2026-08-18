@@ -1052,18 +1052,7 @@ export function CanvasWorkspace(props: CanvasWorkspaceProps) {
         />
       ) : null}
 
-      <LensSwitcher
-        angle={angle}
-        overlayOn={overlayOn}
-        scheme={scheme}
-        onSelectAngle={(next) => goToAngle(next)}
-        onToggleOverlay={() => store.getState().toggleOverlay()}
-        onToggleScheme={() => {
-          // The reviewer took explicit control — stop following the app scheme.
-          schemeOverriddenRef.current = true;
-          store.getState().setScheme(scheme === "dark" ? "light" : "dark");
-        }}
-      />
+      <LensSwitcher angle={angle} onSelectAngle={(next) => goToAngle(next)} />
 
       {/* Blast radius NOT-ASSESSED chips (issue #35): shown alongside the amber
           marks whenever the overlay is on, so an unmeasured signal is visible as

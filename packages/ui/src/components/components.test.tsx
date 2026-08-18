@@ -14,25 +14,11 @@ function countOccurrences(html: string, needle: string): number {
   return html.split(needle).length - 1;
 }
 
-describe("LensSwitcher — five canvases, blast-radius is overlay only, no Claims (#221)", () => {
-  it("renders exactly five selectable canvas tabs, no Claims, and a separate overlay toggle", () => {
-    const html = renderToStaticMarkup(
-      <LensSwitcher
-        angle="decisions"
-        overlayOn={false}
-        scheme="dark"
-        onSelectAngle={noop}
-        onToggleOverlay={noop}
-        onToggleScheme={noop}
-      />,
-    );
+describe("LensSwitcher — five canvases, no Claims (#221)", () => {
+  it("renders exactly five selectable canvas tabs and no Claims", () => {
+    const html = renderToStaticMarkup(<LensSwitcher angle="decisions" onSelectAngle={noop} />);
     expect(countOccurrences(html, 'role="tab"')).toBe(5);
-    // The Claims lens is retired — Decisions owns that ground (#221).
     expect(html).not.toContain(">Claims<");
-    // Blast radius is a toggle (aria-pressed), never a tab.
-    expect(html).toContain("Blast radius");
-    expect(html).toContain('aria-pressed="false"');
-    expect(html).not.toContain('role="tab" aria-selected="false">Blast');
   });
 });
 

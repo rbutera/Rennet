@@ -242,6 +242,8 @@ export function frame14() {
     <div class="setrow"><div><div class="sk">Worktree location</div><div class="sd">where new checkouts are created</div></div><div class="sv"><span>~/orbital/.worktrees</span><span class="inherit set">set here</span></div></div>
     <div class="setrow"><div><div class="sk">Review harness</div><div class="sd">the session you converse with</div></div><div class="sv"><span>Claude Code</span><span class="inherit">from global</span></div></div>
     <div class="setrow"><div><div class="sk">Light-tier harness</div><div class="sd">cheap thinking, off the reviewer</div></div><div class="sv"><span>codex</span><span class="inherit set">set here</span></div></div>
+    <div class="setrow rel"><span class="anno" style="left:-30px;top:16px">${dot(4)}</span><div><div class="sk">GitHub</div><div class="sd">device sign-in · scopes repo, workflow</div></div><div class="sv"><span style="display:inline-flex;align-items:center;gap:7px">${ic.github}connected · @rbutera</span><button class="btn">Disconnect</button><span class="inherit">global</span></div></div>
+    <div class="setrow"><div><div class="sk">Access token</div><div class="sd">the side door: paste a token instead of signing in</div></div><div class="sv"><span style="color:var(--faint)">Paste token…</span><span class="inherit">global</span></div></div>
   </div>`;
 
   const right = `<div class="rel"><span class="anno" style="left:-2px;top:-2px">${dot(3)}</span>
@@ -251,7 +253,7 @@ export function frame14() {
   const body = `<div class="setgrid">${left}${right}</div>`;
 
   return {
-    title: 'Rennet v4.0 · 14 Settings',
+    title: 'Rennet v4.2 · 14 Settings',
     head: { badge: '14', title: 'Settings and instructions', pill: 'Cross-cutting' },
     ref: 'orbital · reachable from anywhere\nreturns to exactly where you were',
     sub: 'Terse. Config layers: global, then workspace, then repo, each overriding the last, with every row showing where its value comes from. Settings is <b>orbital</b> — reachable from every screen (the palette + the title-bar glyph) and it <b>returns to exactly where you were</b>: the crumb keeps the review you came from (… › feat/rate-limiting › Settings) so closing drops you back with lens and scroll intact, never a detour through the front door.',
@@ -266,6 +268,7 @@ export function frame14() {
       { h: 'Orbital, not a dead end.', b: 'Reachable from every screen via the palette (Open Settings) and the title-bar glyph; it becomes the last history entry and returns to origin — the open review, lens intact, scroll preserved. No leaving your place to change a setting.' },
       { h: 'The ladder.', b: 'Global to workspace to repo, each overriding the last. A project you only spectate can sit in read-only without dragging your own repos with it.' },
       { h: 'Per-repo guidance.', b: 'The house rules the harness reads before every review, plus where new worktrees get created. The mode default lives here and in the title bar.' },
+      { h: 'GitHub is an account, not a CLI.', b: 'v4.2: the gh dependency is gone. One OAuth device sign-in, global on the ladder; the row states the facts — who is connected and with which scopes (repo, workflow). Disconnect forgets the token. The side door is a pasted token feeding the same store; both live in the OS keychain via safeStorage.' },
     ],
   };
 }

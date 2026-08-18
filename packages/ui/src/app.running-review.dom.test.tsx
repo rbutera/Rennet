@@ -97,18 +97,17 @@ describe("RennetApp — the live running-review organ during the canvas load (it
       await flush();
     });
 
-    // In flight: the RunningReview organ is mounted — its elapsed clock (a marker the
-    // old static card never had) proves it is THIS organ, not merely the shared text.
-    expect(handle.container.querySelector('[data-testid="running-review-elapsed"]')).not.toBeNull();
-    expect(handle.container.querySelector('[data-testid="running-review-track"]')).not.toBeNull();
+    // In flight: the compact AI-loading bar is visible alongside the diff (wireframe
+    // #06: the diff substrate is always visible; the AI loads progressively).
+    expect(handle.container.querySelector(".ai-loading-bar")).not.toBeNull();
     expect(handle.container.querySelector(".canvas-app")).toBeNull();
 
-    // The enrichment lands: the organ is gone and the workspace renders.
+    // The enrichment lands: the loading bar is gone and the workspace renders.
     await act(async () => {
       canvases.resolve(enriched);
       await flush();
     });
-    expect(handle.container.querySelector('[data-testid="running-review-elapsed"]')).toBeNull();
+    expect(handle.container.querySelector(".ai-loading-bar")).toBeNull();
     expect(handle.container.querySelector(".canvas-app")).not.toBeNull();
   });
 });

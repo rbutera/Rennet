@@ -128,7 +128,7 @@ describe("RennetApp — the live-canvas render race (#59)", () => {
     // the enriched workspace is not, and exactly one fetch has started.
     expect(canvasCalls).toBe(1);
     expect(handle.container.querySelector(".canvas-app")).toBeNull();
-    expect(handle.container.textContent).toContain("Running the review");
+    expect(handle.container.querySelector(".ai-loading-bar")).not.toBeNull();
 
     // Fire the 1500ms freshness poll WHILE the enrichment is still pending. It
     // deserializes a fresh Review (the reference churn). Pre-fix: this cancels the
@@ -151,7 +151,7 @@ describe("RennetApp — the live-canvas render race (#59)", () => {
     // WITHOUT THE FIX (red-proof): the poll churn cancelled the fetch and blocked the
     // retry, so this resolve is dropped and `.canvas-app` never appears.
     expect(handle.container.querySelector(".canvas-app")).not.toBeNull();
-    expect(handle.container.textContent).not.toContain("Running the review");
+    expect(handle.container.querySelector(".ai-loading-bar")).toBeNull();
     expect(canvasCalls).toBe(1);
   });
 

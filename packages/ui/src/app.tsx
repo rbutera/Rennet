@@ -104,8 +104,8 @@ import { ANGLE_LABELS } from "./components/lens";
 import { NavRail } from "./components/nav-rail";
 import { ProjectDetail } from "./components/project-detail";
 import { type PublishOutcome, PublishSheet } from "./components/publish-sheet";
-import { RunningReview } from "./components/running-review";
 import { SettingsScreen } from "./components/settings-screen";
+import { ChromeMark, UpdateReadyPrompt, useUpdateReady } from "./components/update-ready";
 import { CanvasWorkspace } from "./components/workspace";
 import { runBatched } from "./concurrency";
 import {
@@ -331,9 +331,7 @@ export function ReviewWorkspace({
     <div className="app-shell">
       <header className="topbar">
         <div className="topbar-title">
-          <span className="topbar-mark" aria-hidden="true">
-            <RennetBrandMark size={16} />
-          </span>
+          <ChromeMark size={16} className="topbar-mark" />
           <div>
             <p className="eyebrow">LOCAL REVIEW</p>
             <h1>{patchset.repository.root.split("/").at(-1)}</h1>
@@ -611,10 +609,6 @@ export function RennetApp({
   // Retrospective open (read-only): review an already-merged PR to READ the code,
   // with posting structurally off. Drives `review.openPr`'s `retrospective` flag.
   const [prRetrospective, setPrRetrospective] = useState(false);
-  // The Canvases view IS the AI review, and it is the default landing surface: a
-  // review opens straight onto the real AI review (running it, or the one-tap
-  // consent gate under `manual`), never onto canned demo data a first-time user
-  // could mistake for real output. The `Files` view (the raw diff) is one tab away.
   const [view, setView] = useState<"review" | "canvases">("canvases");
   // The live AI-produced canvas set. `null` until a real set loads — the UI shows
   // the honest running / consent / failed states in the meantime, NEVER fixture
@@ -1964,7 +1958,15 @@ export function RennetApp({
       </section>
     </div>
   ) : (
-    <div className="rennet-glass" data-scheme={effectiveScheme}>
+    <div
+      className="rennet-glass"
+      data-scheme={effectiveScheme}
+      {...(currentSurface.kind === "draft" ||
+      currentSurface.kind === "paper" ||
+      currentSurface.kind === "handoff"
+        ? { "data-destination-visible": "" }
+        : {})}
+    >
       <DestinationFrame
         draft={draft}
         mode={destinationMode}
@@ -2461,6 +2463,14 @@ export function RennetApp({
       dispatchRef.current.commands.find((command) => command.id === id)?.run();
     });
   }, [bridge]);
+  // Host-app update readiness → badge on the chrome marks. Hosts without an
+  // updater omit the member and this is a no-op (spec: desktop-update-notification).
+  useEffect(() => {
+    return bridge.onUpdateReady?.((info) => {
+      useUpdateReady.getState().markReady(info);
+    });
+  }, [bridge]);
+  const updatePrompt = <UpdateReadyPrompt onApply={() => bridge.applyUpdate?.()} />;
 
   const palette = (
     <CommandPalette
@@ -2480,9 +2490,7 @@ export function RennetApp({
     return (
       <div className="navigation-shell">
         <header className="navigation-titlebar">
-          <span className="navigation-titlebar-mark" aria-hidden="true">
-            <RennetBrandMark size={16} />
-          </span>
+          <ChromeMark size={16} className="navigation-titlebar-mark" />
           <Breadcrumb
             crumb={deriveCrumb(navigation.stack, surfaceLabels)}
             onAscend={(index) => {
@@ -2499,6 +2507,19 @@ export function RennetApp({
                 {patchset.id.slice(0, 12)}
               </code>
             </div>
+          ) : null}
+          {inReview && review && !review.retrospective ? (
+            <button
+              type="button"
+              className="navigation-draft-cta"
+              onClick={() => navigate(pushSurface({ kind: "draft", reviewId: review.id }))}
+            >
+              {draft.length > 0 ? (
+                <span className="navigation-draft-count">{draft.length}</span>
+              ) : null}
+              Preview
+              <ArrowRightIcon size={12} />
+            </button>
           ) : null}
           {connectionSlot}
         </header>
@@ -2519,9 +2540,7 @@ export function RennetApp({
     return (
       <div className="navigation-shell">
         <header className="navigation-titlebar">
-          <span className="navigation-titlebar-mark" aria-hidden="true">
-            <RennetBrandMark size={16} />
-          </span>
+          <ChromeMark size={16} className="navigation-titlebar-mark" />
           <Breadcrumb crumb={deriveCrumb([{ kind: "projects" }])} onAscend={() => undefined} />
           {connectionSlot}
         </header>
@@ -2553,6 +2572,7 @@ export function RennetApp({
     return (
       <>
         {palette}
+        {updatePrompt}
         <main className="empty-state">
           <button type="button" className="entry-back" onClick={() => setDirectEntryOpen(false)}>
             <ArrowLeftIcon size={13} />
@@ -2658,6 +2678,7 @@ export function RennetApp({
           onBack={() => navigate(navigateBack())}
         />
         {palette}
+        {updatePrompt}
       </>,
     );
   }
@@ -2680,6 +2701,7 @@ export function RennetApp({
           scheme={effectiveScheme}
         />
         {palette}
+        {updatePrompt}
       </>,
     );
   }
@@ -2889,36 +2911,6 @@ export function RennetApp({
                   diffScrollRef={setDiffScrollEl}
                 />
               </div>
-              {/* Frame 06's unified conversation: anchored line/range/chunk threads and
-                  general orchestrator asks share one stream and one composer. It remains
-                  the diff column's FLEX SIBLING, so growing or expanding it never changes
-                  the diff's allocation. Keyed by review id so conversations never cross. */}
-              {review && patchset ? (
-                <ConversationPanel
-                  key={review.id}
-                  bridge={bridge}
-                  reviewId={review.id}
-                  anchors={patchset.files.map(
-                    (file): ConversationAnchor => ({
-                      kind: "chunk",
-                      label: file.path,
-                      key: chunkAnchorKey(file.path),
-                      // #251 slice 3: the file this anchor hangs on, so a re-attached
-                      // thread whose file left the diff can be resolved as orphaned.
-                      path: file.path,
-                    }),
-                  )}
-                  // The diff-opened requests (issue #36): a line / range / chunk the
-                  // reviewer clicked a discuss glyph on. The panel opens a private thread
-                  // per new request in the stream — the code column never reflows.
-                  autoOpenRequests={discussRequests}
-                  selection={spanSelection}
-                  // The same diff scroll container CodeView populates (issue #356): the
-                  // margin rail aligns each thread panel to its on-window anchor row, and
-                  // stacks honestly when the row is off-window or the diff is unmounted.
-                  diffRef={diffScrollRef}
-                />
-              ) : null}
             </div>
           </>
         ) : !repositoryPresent ? (
@@ -2944,10 +2936,35 @@ export function RennetApp({
             </button>
           </section>
         ) : (
-          // Live running state (critique P1-A): indeterminate motion + a real elapsed
-          // clock, so "working" is visibly distinct from "hung". No stages/cancel — the
-          // engine emits neither (see RunningReview).
-          <RunningReview />
+          <>
+            <div className="ai-loading-bar" role="status">
+              <span className="ai-loading-bar-fill" />
+              <span className="ai-loading-bar-label">AI review loading…</span>
+            </div>
+            <ReviewWorkspace
+              review={review}
+              selectedPath={selectedPath}
+              focus={diffFocus}
+              angleRail={angleRailRows({
+                repositoryPresent,
+                loadFailed: false,
+                canvases: null,
+                decisionsRun: undefined,
+                flagged: undefined,
+                noise: undefined,
+              })}
+              outlineFallback={false}
+              onOpenAngle={(angle) => {
+                viewStore.getState().setAngle(angle);
+              }}
+              onSelectPath={(path) => {
+                setSelectedPath(path);
+                setDiffFocus(undefined);
+              }}
+              onSetRead={(path, read) => void setFileRead(path, read)}
+              onRegenerate={() => void regenerate()}
+            />
+          </>
         )
       ) : (
         <ReviewWorkspace
@@ -2984,10 +3001,30 @@ export function RennetApp({
           onRegenerate={() => void regenerate()}
         />
       )}
-      {/* The destination is always-present chrome: the north is visible in both the
-          Files and Canvases views, present from review-open even when empty. */}
+      {/* Frame 06's unified conversation (wireframe #06): always alongside the diff,
+          regardless of which view (Files or Canvases) is active. The conversation
+          column is a persistent right sidebar — not gated on the canvases loading. */}
+      {review && patchset ? (
+        <ConversationPanel
+          key={review.id}
+          bridge={bridge}
+          reviewId={review.id}
+          anchors={patchset.files.map(
+            (file): ConversationAnchor => ({
+              kind: "chunk",
+              label: file.path,
+              key: chunkAnchorKey(file.path),
+              path: file.path,
+            }),
+          )}
+          autoOpenRequests={discussRequests}
+          selection={spanSelection}
+          diffRef={diffScrollRef}
+        />
+      ) : null}
       {destinationChrome}
       {palette}
+      {updatePrompt}
     </>,
   );
 }

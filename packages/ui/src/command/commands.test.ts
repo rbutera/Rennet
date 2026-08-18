@@ -180,8 +180,8 @@ describe("buildCommands — context-aware registry", () => {
     expect(on?.title).toMatch(/quick single-model/i);
     const off = buildCommands(context({ deepReviewOn: false })).find((c) => c.id === "review.dual");
     expect(off?.title).toMatch(/switch back on/i);
-    const bright = buildCommands(context({ scheme: "dark" })).find((c) => c.id === "view.scheme");
-    expect(bright?.title).toMatch(/bright room/i);
+    const light = buildCommands(context({ scheme: "dark" })).find((c) => c.id === "view.scheme");
+    expect(light?.title).toMatch(/switch to light/i);
   });
 });
 
@@ -266,8 +266,7 @@ describe("command catalogue (single source)", () => {
       ["review.dual", "Dual-model review: switch to quick single-model", "Review", null],
       ["zoom.in", "Zoom in", "Zoom", "l"],
       ["zoom.out", "Zoom out", "Zoom", "h"],
-      ["view.overlay", "Paint the blast-radius overlay", "Appearance", null],
-      ["view.scheme", "Switch to the bright room", "Appearance", null],
+      ["view.scheme", "Switch to light", "Appearance", null],
       ["door.choose", "Choose a repository", "Start", null],
     ];
     const workspace = context();
