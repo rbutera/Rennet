@@ -1,6 +1,6 @@
 # Rennet
 
-Rennet is a local-first code review harness. It turns local changes and GitHub pull requests into an ordered, evidence-backed review while keeping the human responsible for the result that goes out.
+Rennet is a **local-first** code *Review Harness*. It turns local changes and GitHub pull requests into an ordered, evidence-backed review while keeping the human responsible for the result that goes out.
 
 The desktop app captures immutable patchsets, builds deterministic project context, runs review work through installed coding harnesses, preserves review state across successor changes, and produces one editable signed artifact. Team work can become a GitHub review; your own branch can become a coding-agent handoff followed by a pushed branch and pull request.
 
