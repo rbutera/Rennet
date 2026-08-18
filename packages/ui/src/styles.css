@@ -3059,7 +3059,10 @@ button {
   color: var(--text);
 }
 .smart-row-ci.is-failing {
-  color: var(--del-glyph);
+  /* Ink, not danger red: merged rows dim to 0.82 (data-read-only), dropping
+     --del-glyph to ~4.2:1 (AA fail) — the same dim that inked is-passing above.
+     The ✕ glyph (CloseIcon vs CheckIcon/Ellipsis) carries the failing state. */
+  color: var(--text);
 }
 .smart-row-ci.is-pending {
   color: var(--text-faint);

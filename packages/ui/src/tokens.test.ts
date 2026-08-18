@@ -710,6 +710,24 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
       contrast(dimmed(hex(LIGHT, "--text"), 0.82, surface), dimmed(surface, 0.82, surface)),
     ).toBeGreaterThanOrEqual(4.5);
   });
+
+  // The DANGER hue pairing (wave-4 rider): the hue-discovery sweeps above cover
+  // amber/green/private only, so this pins the one danger-hue text site the
+  // read-only dim reached. `.smart-row-ci.is-failing` sat at --del-glyph, which
+  // the 0.82 merged-row dim sinks below AA — the same class of failure that inked
+  // its is-passing sibling — so it is ink now, with the ✕ glyph carrying the
+  // failing state. Rule pin + the dim math, so a revert to the hue reddens here.
+  it(".smart-row-ci.is-failing is ink — the read-only 0.82 dim sinks --del-glyph below AA", () => {
+    const surface = hex(LIGHT, "--surface");
+    const rule = allRules.find((r) => r.selector === ".smart-row-ci.is-failing");
+    expect(rule, "the failing-CI rule exists").toBeDefined();
+    expect(rule?.body).toMatch(/(?<![\w-])color:\s*var\(--text\)/);
+    // WHY: the danger hue under the dim fails AA (…) while ink passes (asserted
+    // for the same 0.82 dim in the test above).
+    expect(
+      contrast(dimmed(hex(LIGHT, "--del-glyph"), 0.82, surface), dimmed(surface, 0.82, surface)),
+    ).toBeLessThan(4.5);
+  });
 });
 
 describe("real desktop glass + solid content (issue #61, the #115 correction)", () => {
