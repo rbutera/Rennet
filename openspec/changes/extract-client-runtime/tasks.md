@@ -10,7 +10,7 @@
 
 - [x] 2.1 Add the subscription registry: `onAskStream`/`onProgress` registrations survive the socket and replay onto every fresh socket; unregister on unsubscribe.
 - [x] 2.2 Unit test: mid-turn reconnect re-delivers subsequent events to the same listener, at most once, without consumer re-subscribe.
-- [ ] 2.3 Extend e2e with the positive control: kill the daemon socket mid-turn, assert the live ask stream resumes on reconnect (this is the #389 fix proof; must fail on today's main).
+- [x] 2.3 Extend e2e with the positive control: kill the daemon socket mid-turn, assert the live ask stream resumes on reconnect (this is the #389 fix proof; must fail on today's main).
 
 ## 3. Stores
 
@@ -27,7 +27,7 @@
 - [x] 5.1 Widen `ConnectionHost`'s seam to accept the supervisor (`createConnection`), keeping a `createBridge` adapter so existing call sites/tests compile unchanged.
 - [x] 5.2 Desktop renderer (`apps/desktop/src/renderer/index.tsx`) constructs its loopback + saved-remote connections through the supervisor.
 - [x] 5.3 Browser shell (`apps/desktop/src/browser/entry.tsx`) likewise, including the serving-origin default target.
-- [ ] 5.4 Run existing desktop + browser e2e suites unchanged — green is the behavior-neutrality proof.
+- [x] 5.4 Run existing desktop + browser e2e suites unchanged — green is the behavior-neutrality proof.
 
 ## 6. Boundaries, docs, close-out
 
