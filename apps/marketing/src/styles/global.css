@@ -244,7 +244,7 @@ h2 {
 
 .hero {
   display: grid;
-  gap: clamp(48px, 6vw, 88px);
+  gap: clamp(44px, 4.5vw, 64px);
   padding-block: clamp(64px, 7vw, 108px);
 }
 
@@ -324,9 +324,30 @@ h2 {
   text-decoration: none;
 }
 
+/* Consistent offsite marker on every external text link (nav, footer, hero, closing). */
+a[href^="http"]:not(.button)::after {
+  margin-left: 0.25em;
+  font-size: 0.9em;
+  content: "↗";
+}
+
 .availability {
   margin: 20px 0 0;
   color: var(--ink-soft);
+  font-size: 13px;
+}
+
+.reassurance {
+  max-width: 46ch;
+  margin: 10px 0 0;
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.platform-note {
+  margin: 20px 0 0;
+  color: var(--inverse-soft);
   font-size: 13px;
 }
 
@@ -1379,7 +1400,9 @@ h2 {
 
 @media (max-width: 560px) {
   :root {
-    --shell: calc(100vw - 32px);
+    /* 100% (not 100vw) so the scrollbar isn't counted: keeps a true 16px gutter
+       and lets the -16px full-bleed proof land exactly at the content edge. */
+    --shell: calc(100% - 32px);
     --section: 88px;
   }
 
@@ -1600,17 +1623,13 @@ h2 {
   }
 
   .product-frame {
-    height: 500px;
-    overflow: hidden;
-    border: 1px solid var(--line-strong);
-    background: #eceff2;
-    box-shadow: var(--shadow);
+    aspect-ratio: 16 / 11;
   }
 
   .product-frame img {
-    width: 1100px;
-    max-width: none;
-    transform: translate(-455px, -120px);
+    height: 100%;
+    object-fit: cover;
+    object-position: 50% 24%;
   }
 
   .product-frame figcaption {
