@@ -3711,3 +3711,31 @@ button.ospec-covchip:focus-visible {
 .symbol-inspector--pinned {
   margin-top: 0;
 }
+
+/* ── Systemic focus ring (critique P1-B) ─────────────────────────────────────
+ * DESIGN.md: "Focus uses a three-pixel review-blue ring." Before this, ~11 scattered
+ * focus rules left most keyboard-reachable controls — lens tabs, nav-rail buttons, the
+ * disposition cluster, view toggles, the sign button, palette rows — AND the
+ * `.canvas-app` region itself (role=application, owns the [ ]/l/h keys) with NO visible
+ * focus, since `.canvas-app` sets `outline: none` (above) with no replacement. This is
+ * the ONE shared rule that covers them all.
+ *
+ * `:focus-visible` only (keyboard focus, never a mouse click), so the ring never fires
+ * on pointer use. `outline` (not box-shadow) so it can't clobber an element's resting
+ * shadow and is never clipped by an `overflow: hidden` ancestor; modern Chromium follows
+ * the element's border-radius. canvas.css loads LAST (index.ts), so this wins equal-
+ * specificity ties against earlier `outline: none` resets (e.g. the command-palette
+ * input). Text inputs keep their own softer box-shadow ring — their `:focus` rules
+ * outrank this on specificity — and the bespoke focus-visible rules above (the coverage
+ * chip's green ring, the discuss controls) likewise outrank it and keep their look. */
+:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+/* The keyboard-driven canvas region: an INSET ring hugs the viewport edge, since an
+ * outset ring on a full-screen element would sit off-screen. `.canvas-app:focus-visible`
+ * (0,2,0) outranks the bare `.canvas-app { outline: none }` (0,1,0), so the ring wins
+ * when the region holds keyboard focus. */
+.canvas-app:focus-visible {
+  outline-offset: -3px;
+}
