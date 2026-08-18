@@ -278,8 +278,9 @@ describe("GitHubForgeAdapter.fetchCiStatus", () => {
     expect(request.query).toContain("... on CheckRun");
     expect(request.query).toContain("... on StatusContext");
     expect(request.query).toContain("pageInfo { hasNextPage }");
-    // The abort seam must reach the transport: an aborted signal cancels the poll.
-    expect(sent[0]?.signal).toBeDefined();
+    // The abort seam must reach the transport UNCHANGED: the caller's signal is
+    // what cancels a slow CI poll, so identity matters, not mere presence.
+    expect(sent[0]?.signal).toBe(controller.signal);
     expect(request.variables).toEqual({ owner: "acme", name: "widget", headOid: "deadbeef" });
     expect(result.checks).toEqual([
       {

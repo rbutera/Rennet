@@ -1,5 +1,5 @@
 import { createOAuthDeviceAuth } from "@octokit/auth-oauth-device";
-import { Octokit } from "@octokit/core";
+import { createGitHubOctokit } from "./github-octokit";
 
 /** The device-code verification payload GitHub mints (auth-oauth-device's shape). */
 export interface Verification {
@@ -60,8 +60,8 @@ export async function runGitHubDeviceFlow(options: DeviceFlowOptions): Promise<{
     if (signal?.aborted) return Promise.reject(new Error("GitHub connect was cancelled"));
     return options.fetch(url, { ...init, ...(signal === undefined ? {} : { signal }) });
   };
-  const octokit = new Octokit({
-    request: { fetch: fetchWithSignal },
+  const octokit = createGitHubOctokit({
+    fetch: fetchWithSignal,
     ...(options.baseUrl === undefined ? {} : { baseUrl: options.baseUrl }),
   });
   const auth = createOAuthDeviceAuth({

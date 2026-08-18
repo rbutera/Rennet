@@ -330,8 +330,6 @@ function harness(
         Promise.resolve({
           userCode: "ABCD-1234",
           verificationUri: "https://github.com/login/device",
-          expiresIn: 900,
-          interval: 5,
         }),
       connectPoll: () => Promise.resolve({ phase: "idle" as const }),
       connectCancel: () => Promise.resolve(),
@@ -2313,8 +2311,6 @@ function frontDoorHarness(seed: {
         Promise.resolve({
           userCode: "ABCD-1234",
           verificationUri: "https://github.com/login/device",
-          expiresIn: 900,
-          interval: 5,
         }),
       connectPoll: () => Promise.resolve({ phase: "idle" as const }),
       connectCancel: () => Promise.resolve(),

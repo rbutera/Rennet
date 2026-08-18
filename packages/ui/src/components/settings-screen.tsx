@@ -20,6 +20,7 @@ import {
   type KeybindingOverrides,
   normalizeChord,
 } from "../command/commands";
+import { messageFrom } from "../lib/message-from";
 import { RennetBrandMark } from "./brand-mark";
 import { GitHubAccountRows } from "./github-connect";
 import { ArrowLeftIcon, SlidersIcon } from "./icons";
@@ -51,10 +52,6 @@ const VISIBILITIES: readonly { id: ProjectVisibility; label: string; hint: strin
   { id: "local", label: "Local", hint: "the derived map stays out of git" },
   { id: "git-visible", label: "Git-visible", hint: "the promoted map is stageable" },
 ];
-
-function messageFrom(reason: unknown): string {
-  return reason instanceof Error ? reason.message : String(reason);
-}
 
 /** Human label for an execution locus: "the host" or "WSL · <distro>". */
 function describeLocus(locus: Locus): string {

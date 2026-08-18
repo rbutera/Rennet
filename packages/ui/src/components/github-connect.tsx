@@ -1,5 +1,6 @@
 import type { GitHubAuthStatus, RennetBridge } from "@rennet/protocol";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { messageFrom } from "../lib/message-from";
 import { GitHubIcon } from "./icons";
 
 /**
@@ -76,6 +77,9 @@ export function useGitHubAccount(bridge: RennetBridge) {
             setFlow(null);
             if (poll.phase === "connected") setStatus(poll.status);
             else if (poll.phase === "failed") setError(poll.message);
+            // "idle" mid-flow means the daemon lost the flow (restart): the code
+            // the user is holding is dead — say so, never just vanish the prompt.
+            else setError("The sign-in was interrupted. Start again.");
           })
           .catch(() => {
             /* a dropped poll retries on the next tick */
@@ -292,8 +296,4 @@ function writeDismissed(): void {
   } catch {
     /* storage unavailable — the card simply reappears next launch */
   }
-}
-
-function messageFrom(reason: unknown): string {
-  return reason instanceof Error ? reason.message : String(reason);
 }

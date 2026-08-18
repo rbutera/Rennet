@@ -1,5 +1,6 @@
 import type { Project, ProjectDetail as ProjectDetailData, RennetBridge } from "@rennet/protocol";
 import { useEffect, useMemo, useState } from "react";
+import { messageFrom } from "../lib/message-from";
 import {
   buildSmartRows,
   filterSmartRows,
@@ -366,8 +367,4 @@ function rowActionLabel(row: SmartRow): string {
   if (row.kind === "local") return row.local?.stage === "reviewed" ? "Make PR" : "Review";
   if (row.readOnly) return "View";
   return row.mine ? "Open" : "Review";
-}
-
-function messageFrom(reason: unknown): string {
-  return reason instanceof Error ? reason.message : String(reason);
 }

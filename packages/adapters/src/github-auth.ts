@@ -89,9 +89,14 @@ export async function validateGitHubToken(
     }
     throw error;
   }
-  const scopes = parseScopes(headerGet(res.headers, "X-OAuth-Scopes"));
+  const scopesHeader = headerGet(res.headers, "X-OAuth-Scopes");
+  const scopes = parseScopes(scopesHeader);
   const sso = parseGitHubSso(headerGet(res.headers, "X-GitHub-SSO"));
-  if (!scopes.includes(requiredScope)) {
+  // Fine-grained PATs and GitHub App tokens send NO X-OAuth-Scopes header at all.
+  // An ABSENT header is "scopes unknowable", not "no scopes" — the token already
+  // proved itself on /rate_limit, so only a PRESENT header missing the required
+  // classic scope is an honest insufficient-scope rejection.
+  if (scopesHeader !== null && !scopes.includes(requiredScope)) {
     return { ok: false, reason: "insufficient-scope", copy: COPY.insufficientScope, scopes };
   }
   // The signed-in login, for the settings row ("connected · @user"). Best-effort:

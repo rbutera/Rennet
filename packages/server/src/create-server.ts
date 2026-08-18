@@ -8,6 +8,7 @@ import { constants as fsConstants, realpathSync } from "node:fs";
 import { access } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { Octokit } from "@octokit/core";
 import {
   applyVisibilitySwitch,
   beginUiEvidenceRun,
@@ -91,7 +92,6 @@ import {
   validateGitHubToken,
   wslDiscoveryDeps,
 } from "@rennet/adapters";
-import type { Octokit } from "@octokit/core";
 import {
   type AdmittedDocument,
   adjudicateFlaggedReview,
@@ -583,7 +583,7 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // as "zero PRs". Resolution is lazy (first `project.detail`), never at launch —
   // and INVALIDATED on connect/paste/disconnect so the surface follows the account.
   let projectPrSource: Promise<ProjectPrSource | null> | null = null;
-  function resolveProjectPrSource(): Promise<ProjectPrSource | null> {
+  async function resolveProjectPrSource(): Promise<ProjectPrSource | null> {
     projectPrSource ??= (async (): Promise<ProjectPrSource | null> => {
       const auth = await resolveAuth();
       if (!auth.ok) return null;
@@ -591,7 +591,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
         octokit: createGitHubOctokit({ fetch: publishHttp, token: auth.token }),
       });
     })();
-    return projectPrSource;
+    // A transient validation failure must not poison the memo (mirrors octokitMemo):
+    // the next project.detail retries instead of failing forever.
+    const memo = projectPrSource;
+    try {
+      return await memo;
+    } catch (error) {
+      if (projectPrSource === memo) projectPrSource = null;
+      throw error;
+    }
   }
 
   /** Drop every memoized auth-derived surface (the account changed). */
@@ -632,8 +640,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       const verification = await new Promise<{
         user_code: string;
         verification_uri: string;
-        expires_in: number;
-        interval: number;
       }>((resolveVerification, rejectVerification) => {
         runGitHubDeviceFlow({
           fetch: publishHttp,
@@ -660,8 +666,6 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       return {
         userCode: verification.user_code,
         verificationUri: verification.verification_uri,
-        expiresIn: verification.expires_in,
-        interval: verification.interval,
       };
     },
     async connectPoll(): Promise<GitHubConnectPoll> {

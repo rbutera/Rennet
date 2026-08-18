@@ -2263,8 +2263,6 @@ export const commandDefinitions = {
     output: z.object({
       userCode: z.string().min(1),
       verificationUri: z.string().min(1),
-      expiresIn: z.number(),
-      interval: z.number(),
     }),
   },
   "github.connectPoll": {

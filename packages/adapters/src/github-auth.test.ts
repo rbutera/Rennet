@@ -149,6 +149,32 @@ describe("resolveGitHubAuth — success", () => {
   });
 });
 
+describe("resolveGitHubAuth — fine-grained tokens", () => {
+  it("accepts a token with NO X-OAuth-Scopes header (fine-grained PAT / App token)", async () => {
+    // FG-PATs and GitHub App tokens send no scopes header at all. Absent header =
+    // scopes unknowable, never "no scopes" — the side door must accept them.
+    const octokit = octokitFor({
+      "/rate_limit": () => json(200, { "X-RateLimit-Limit": "5000" }, { resources: {} }),
+      "/user": userOk,
+    });
+    const state = await resolveGitHubAuth({ octokit, secretStore: storeWith("github_pat_fg") });
+    expect(state.ok).toBe(true);
+    if (!state.ok) throw new Error("unreachable");
+    expect(state.scopes).toEqual([]);
+    expect(state.login).toBe("rbutera");
+  });
+
+  it("still rejects a PRESENT scopes header that lacks repo", async () => {
+    const octokit = octokitFor({
+      "/rate_limit": () => json(200, { "X-OAuth-Scopes": "gist" }, { resources: {} }),
+    });
+    const state = await resolveGitHubAuth({ octokit, secretStore: storeWith("gho_narrow") });
+    expect(state.ok).toBe(false);
+    if (state.ok) throw new Error("unreachable");
+    expect(state.reason).toBe("insufficient-scope");
+  });
+});
+
 describe("validateGitHubToken — the pre-store paste check", () => {
   it("rejects a bad paste as token-invalid WITHOUT any store involvement", async () => {
     const octokit = octokitFor({ "/rate_limit": () => json(401, {}, {}) });

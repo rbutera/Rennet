@@ -246,12 +246,7 @@ export interface DispatchDeps {
    */
   github: {
     status(): Promise<GitHubAuthStatus>;
-    connectStart(): Promise<{
-      userCode: string;
-      verificationUri: string;
-      expiresIn: number;
-      interval: number;
-    }>;
+    connectStart(): Promise<{ userCode: string; verificationUri: string }>;
     connectPoll(): Promise<GitHubConnectPoll>;
     connectCancel(): Promise<void>;
     setToken(token: string): Promise<GitHubAuthStatus>;

@@ -7,6 +7,7 @@ import type {
   RennetBridge,
 } from "@rennet/protocol";
 import { type ReactNode, useEffect, useState } from "react";
+import { messageFrom } from "../lib/message-from";
 import { RennetBrandMark } from "./brand-mark";
 import { GitHubConnectCard } from "./github-connect";
 import {
@@ -598,10 +599,6 @@ function Toggle({ on, label, onToggle }: { on: boolean; label: string; onToggle(
 }
 
 /* ── helpers ───────────────────────────────────────────────────────────────── */
-
-function messageFrom(reason: unknown): string {
-  return reason instanceof Error ? reason.message : String(reason);
-}
 
 function harnessLabel(id: string): string {
   return id === "claude" ? "Claude" : id;
