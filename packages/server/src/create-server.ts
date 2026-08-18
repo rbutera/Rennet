@@ -1827,7 +1827,11 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
       listDevices: () => pairingStore.listDevices(),
       revokeDevice: (deviceId) => {
         pushTokenStore.delete(deviceId);
-        return pairingStore.revokeDevice(deviceId);
+        const revoked = pairingStore.revokeDevice(deviceId);
+        // Sever any live socket authorized as this device (#383 batch): a projected connection
+        // cannot outlive the pairing it was authorized by — revoke means gone now, not next time.
+        wsListener?.disconnectDevice(deviceId);
+        return revoked;
       },
     },
     // `device.registerPush` set/delete, keyed by the connection's authenticated device id.

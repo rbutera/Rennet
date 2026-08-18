@@ -234,6 +234,12 @@ export interface WsListener {
   acknowledgeAttention(selector: { reviewId?: string; attentionId?: string }): number;
   /** The attention items still active (a fresh client hydrates its needs-you set from these). */
   activeAttention(): AttentionItem[];
+  /**
+   * Drop every live connection authenticated as this device (#383 batch): revoking a device's
+   * pairing must sever its in-flight sockets, not just future handshakes — a live projected
+   * socket cannot outlive the pairing it was authorized by. Returns how many were closed.
+   */
+  disconnectDevice(deviceId: string): number;
   /** Close every socket and the HTTP listener. Resolves once the listener is fully down. */
   close(): Promise<void>;
 }
@@ -812,6 +818,17 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
 
   const activeAttention = (): AttentionItem[] => attentionRegistry.active();
 
+  const disconnectDevice = (deviceId: string): number => {
+    let closed = 0;
+    for (const connection of connections) {
+      if (connection.deviceId === deviceId) {
+        connection.socket.close();
+        closed += 1;
+      }
+    }
+    return closed;
+  };
+
   const askConnection = (
     connectionId: string,
     kind: string,
@@ -851,6 +868,7 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     raiseAttention,
     acknowledgeAttention,
     activeAttention,
+    disconnectDevice,
     close,
   };
 }
