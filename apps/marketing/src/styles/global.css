@@ -340,6 +340,13 @@ h2 {
   list-style: none;
 }
 
+.beat-caption {
+  margin: 10px 0 0;
+  color: var(--ink-soft);
+  font-size: 11px;
+  text-align: right;
+}
+
 .beat {
   position: relative;
   display: grid;
