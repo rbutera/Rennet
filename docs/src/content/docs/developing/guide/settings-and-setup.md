@@ -9,13 +9,15 @@ small and backed by real consumed configuration rather than placeholder rows.
 
 ## First run
 
-Rennet expects GitHub CLI and at least one supported coding harness to be set up
-in their own native tools:
+Rennet expects at least one supported coding harness to be installed as its own
+native tool:
 
 ```sh
-gh auth login
 claude --version
 ```
+
+GitHub needs no CLI: first run offers a skippable one-time device sign-in, and
+Settings holds the account rows afterwards.
 
 You do not paste a Claude API key into Rennet. The Claude adapter starts the
 installed CLI, which owns its login. Rennet also discovers Codex and composes a
@@ -26,7 +28,7 @@ for app-server capability before it is trusted.
 
 ```mermaid
 flowchart TD
-  start["Open Rennet"] --> github["Confirm gh is installed"]
+  start["Open Rennet"] --> github["Offer the skippable GitHub device sign-in"]
   start --> path["Harvest login-shell PATH"]
   path --> claude["Find and execute claude --version"]
   path --> codex["Find and execute codex --version"]
@@ -42,11 +44,15 @@ terminal, and a shell command may resolve to a function instead of a file. Renne
 collects candidate directories, finds executables itself, and proves each
 candidate by running its version command.
 
-The front door checks whether `gh` is present, not the active login. Rennet asks
-for a token (via `gh auth token`) only when project detail or publication first
-needs GitHub, so opening the app does not imply the account has already been
-validated. If `gh` is absent or logged out, pasting a personal access token is
-the supported alternative to `gh auth login`.
+GitHub is an account, not a CLI to detect. First run shows a skippable
+**Connect GitHub** card (an OAuth device sign-in: a one-time code entered at
+github.com/login/device, scopes `repo` and `workflow`); Settings carries the
+permanent rows — connected-as, Disconnect, and the paste-a-token side door. The
+stored token lives in an owner-only file under the daemon's data directory and
+is validated lazily when project detail or publication first needs GitHub, so
+opening the app does not imply the account has already been validated. A pasted
+personal access token is validated before it is stored — a bad paste keeps
+nothing.
 
 ## Add a project or workspace
 
@@ -214,8 +220,8 @@ does (minus the packaging fuses).
 
 ## When setup looks wrong
 
-- Run `gh auth status` to see which GitHub account is active.
-- Run `gh auth login` if GitHub CLI is installed but logged out.
+- Open Settings → Global to see which GitHub account is connected; reconnect or
+  paste a token there if the row reports a problem.
 - Run `claude --version` in a terminal. Rennet also checks known install
   directories when a Finder-launched app cannot see your terminal `PATH`.
 - Fix a malformed `~/.rennet/config.json` by hand, or move it aside and reopen

@@ -64,22 +64,6 @@ export function resolveDaemonConfig(
   };
 }
 
-/** The GitHub egress transport for a daemon: Node's global `fetch` (no Electron `net`). */
-function nodeHttpFetch(
-  url: string,
-  init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal },
-): Promise<{
-  status: number;
-  headers: { get(name: string): string | null };
-  text(): Promise<string>;
-}> {
-  return fetch(url, init).then((res) => ({
-    status: res.status,
-    headers: res.headers,
-    text: () => res.text(),
-  }));
-}
-
 export interface RunningDaemon {
   readonly info: DaemonInfo;
   /** Shut the server down and remove the claim. Idempotent. */
@@ -101,7 +85,8 @@ export async function runDaemon(
     dataDir: config.dataDir,
     env: config.env,
     serverVersion: config.serverVersion,
-    httpFetch: nodeHttpFetch,
+    // The GitHub egress transport for a daemon: Node's global `fetch` (no Electron `net`).
+    httpFetch: fetch,
     uiDist: config.uiDist,
   });
 

@@ -1,3 +1,4 @@
+import type { Octokit } from "@octokit/core";
 import type {
   ForgeCapabilities,
   ForgePublishOutcome,
@@ -8,7 +9,7 @@ import type {
   ForgeReviewTarget,
 } from "@rennet/core";
 import { extractMarker, ForgeRateLimited } from "@rennet/core";
-import type { HttpFetch } from "./github-auth";
+import { headerGet, requestErrorHeaders, requestErrorStatus } from "./github-octokit";
 
 /**
  * The GitHub implementation of `ForgePublishPort` (issue #21) — the first real
@@ -27,7 +28,7 @@ import type { HttpFetch } from "./github-auth";
  *   • The review `event` is the resolved verdict from the signed review (derived from
  *     the dispositions, or an explicit override) — a review tool posts the real
  *     verdict; the safety model is the human sign + the consent/forgeRef binding.
- *   • The token is resolved LAZILY (`resolveToken`), so constructing the adapter and
+ *   • The token is resolved LAZILY (`resolveOctokit`), so constructing the adapter and
  *     building a dry-run request need no live credential; only `findExistingReview`
  *     and `publishReview` spend one.
  *   • `publishReview` queries for the idempotency marker BEFORE posting and returns
@@ -37,13 +38,12 @@ import type { HttpFetch } from "./github-auth";
  */
 
 export interface GitHubPublishConfig {
-  http: HttpFetch;
   /**
-   * The bearer token resolver from the auth ladder. Called only on a real send
-   * (`findExistingReview` / `publishReview`), never for `buildReviewRequest`, so a
-   * dry-run needs no credential. Held in memory only, never persisted here.
+   * The token-bound client resolver from the auth ladder. Called only on a real
+   * send (`findExistingReview` / `publishReview`), never for `buildReviewRequest`,
+   * so a dry-run needs no credential. The token never leaves the client.
    */
-  resolveToken: () => Promise<string>;
+  resolveOctokit: () => Promise<Octokit>;
   graphqlUrl?: string;
 }
 
@@ -149,9 +149,12 @@ interface AddReviewResult {
  * (#21 / backlog bead 96). Recognises a 403/429 carrying `Retry-After`, an
  * `X-RateLimit-Remaining: 0` with a reset, or a secondary-limit message body.
  */
-function throwIfRateLimited(status: number, headers: { get(name: string): string | null }): void {
+function throwIfRateLimited(
+  status: number,
+  headers: Record<string, string | number | undefined>,
+): void {
   if (status !== 403 && status !== 429) return;
-  const retryAfter = headers.get("Retry-After");
+  const retryAfter = headerGet(headers, "Retry-After");
   if (retryAfter !== null) {
     const seconds = Number(retryAfter);
     throw new ForgeRateLimited(
@@ -159,8 +162,8 @@ function throwIfRateLimited(status: number, headers: { get(name: string): string
       `HTTP ${status} with Retry-After`,
     );
   }
-  const remaining = headers.get("X-RateLimit-Remaining");
-  const reset = headers.get("X-RateLimit-Reset");
+  const remaining = headerGet(headers, "X-RateLimit-Remaining");
+  const reset = headerGet(headers, "X-RateLimit-Reset");
   if (remaining === "0" && reset !== null) {
     const resetMs = Number(reset) * 1000;
     const waitMs = Number.isNaN(resetMs) ? null : Math.max(0, resetMs - Date.now());
@@ -189,19 +192,20 @@ export class GitHubPublishAdapter implements ForgePublishPort {
     query: string,
     variables: Record<string, unknown>,
   ): Promise<{ data: T; errors?: unknown }> {
-    const token = await this.config.resolveToken();
-    const url = this.config.graphqlUrl ?? GRAPHQL_URL;
-    const res = await this.config.http(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        Accept: "application/vnd.github+json",
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ query, variables }),
-    });
-    throwIfRateLimited(res.status, res.headers);
-    const parsed = JSON.parse(await res.text()) as { data?: T; errors?: unknown };
+    const octokit = await this.config.resolveOctokit();
+    let res: Awaited<ReturnType<Octokit["request"]>>;
+    try {
+      // `octokit.request` (not `octokit.graphql`) so response headers stay visible
+      // and the GraphQL error envelope is ours to interpret.
+      res = await octokit.request("POST /graphql", { query, variables });
+    } catch (error) {
+      // Octokit throws on 4xx; a 403/429 is GitHub's secondary rate limit —
+      // surface it as a backoff signal, never a bare failure or a retry.
+      const status = requestErrorStatus(error);
+      if (status !== null) throwIfRateLimited(status, requestErrorHeaders(error));
+      throw error;
+    }
+    const parsed = res.data as { data?: T; errors?: unknown };
     // A GraphQL secondary rate limit can also arrive as a 200 with a RATE_LIMITED
     // error type — surface it as a backoff, not a bare failure.
     if (parsed.errors && isRateLimitedError(parsed.errors)) {

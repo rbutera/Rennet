@@ -25,6 +25,8 @@ import {
   type ConversationAnchorWire,
   type DetectedHarness,
   type DiscoveryResult,
+  type GitHubAuthStatus,
+  type GitHubConnectPoll,
   type PairedDevice,
   type PersistedThreadMessageWire,
   type ProcessedRepoSummary,
@@ -236,6 +238,25 @@ export interface DispatchDeps {
   discoverProject(input: { path: string; kind: ProjectKind }): Promise<DiscoveryResult>;
   /** The harnesses found on the machine, for the ambient first-run detection line. */
   detectHarnesses(): Promise<DetectedHarness[]>;
+  /**
+   * The GitHub account port (v4.2: OAuth device flow, no gh CLI). Status for the
+   * settings rows and the first-run card; the one-time device-flow connect
+   * (start/poll/cancel); the pasted-token side door; disconnect. The token itself
+   * never crosses this boundary outward.
+   */
+  github: {
+    status(): Promise<GitHubAuthStatus>;
+    connectStart(): Promise<{
+      userCode: string;
+      verificationUri: string;
+      expiresIn: number;
+      interval: number;
+    }>;
+    connectPoll(): Promise<GitHubConnectPoll>;
+    connectCancel(): Promise<void>;
+    setToken(token: string): Promise<GitHubAuthStatus>;
+    disconnect(): Promise<void>;
+  };
   /**
    * The project-detail substrate (issue #37): the raw local work + pull requests +
    * viewer the unified smart list folds into rows. Read-only. A fixture stands behind
@@ -903,6 +924,33 @@ export function createDispatch(
         // The ambient detection line. Read-only, no repository, no index touch.
         parseCommandInput(name, rawInput);
         return parseCommandOutput(name, { detected: await deps.detectHarnesses() });
+      }
+      // ── The GitHub account (v4.2: device flow, no gh CLI) ────────────────────
+      case "github.status": {
+        parseCommandInput(name, rawInput);
+        return parseCommandOutput(name, { status: await deps.github.status() });
+      }
+      case "github.connectStart": {
+        parseCommandInput(name, rawInput);
+        return parseCommandOutput(name, await deps.github.connectStart());
+      }
+      case "github.connectPoll": {
+        parseCommandInput(name, rawInput);
+        return parseCommandOutput(name, { poll: await deps.github.connectPoll() });
+      }
+      case "github.connectCancel": {
+        parseCommandInput(name, rawInput);
+        await deps.github.connectCancel();
+        return parseCommandOutput(name, {});
+      }
+      case "github.setToken": {
+        const input = parseCommandInput(name, rawInput);
+        return parseCommandOutput(name, { status: await deps.github.setToken(input.token) });
+      }
+      case "github.disconnect": {
+        parseCommandInput(name, rawInput);
+        await deps.github.disconnect();
+        return parseCommandOutput(name, {});
       }
       case "projects.list": {
         parseCommandInput(name, rawInput);

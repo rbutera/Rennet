@@ -21,6 +21,7 @@ import {
   normalizeChord,
 } from "../command/commands";
 import { RennetBrandMark } from "./brand-mark";
+import { GitHubAccountRows } from "./github-connect";
 import { ArrowLeftIcon, SlidersIcon } from "./icons";
 
 /**
@@ -295,6 +296,7 @@ export function SettingsScreen({
                 touches a repository.
               </p>
             )}
+            <GitHubAccountRows bridge={bridge} />
           </section>
         ) : null}
 

@@ -202,14 +202,11 @@ export {
   visible,
 } from "./git-range-diff";
 export {
-  type AuthRung,
-  type GhRunner,
   type GitHubAuthState,
-  type HttpFetch,
-  type HttpResponse,
   type ResolveAuthDeps,
   resolveGitHubAuth,
   type SecretStore,
+  validateGitHubToken,
 } from "./github-auth";
 export {
   createRefPinner,
@@ -221,7 +218,21 @@ export {
   ReviewedOidUnavailableError,
   type WorktreeProvider,
 } from "./github-changeset-source";
+export {
+  type DeviceFlowOptions,
+  type DeviceVerification,
+  RENNET_GITHUB_CLIENT_ID,
+  RENNET_GITHUB_SCOPES,
+  runGitHubDeviceFlow,
+  type Verification,
+} from "./github-device-flow";
 export { GitHubForgeAdapter, type GitHubForgeConfig } from "./github-forge";
+export {
+  createGitHubOctokit,
+  type GitHubOctokitOptions,
+  headerGet,
+  requestErrorStatus,
+} from "./github-octokit";
 export { parseGitHubPrRef } from "./github-pr-ref";
 export {
   GitHubPrSubmissionAdapter,

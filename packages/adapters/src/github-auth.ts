@@ -1,87 +1,63 @@
+import type { Octokit } from "@octokit/core";
 import type { SsoState } from "@rennet/core";
+import { headerGet, requestErrorStatus } from "./github-octokit";
 import { parseGitHubSso } from "./github-sso";
 
 /**
- * The GitHub auth ladder, rungs 0 and 2 (GitHub Integration Plan §1).
+ * GitHub auth resolution over the STORED token (the gh-CLI rung is gone — v4.2).
  *
- * Rung 0 shells out to `gh auth token` — NEVER parsing `hosts.yml`, because a
- * machine can have an env-selected credential and a stored credential at once
- * with different scopes, and `gh` may use the system keyring instead of the file.
- * Rung 2 is a pasted PAT read from the host secret store. Either token is then
- * validated with `GET /rate_limit`, reading `X-OAuth-Scopes` (scope check),
+ * One token, one store: the daemon's `SecretStore` holds a single GitHub token,
+ * minted either by the OAuth device flow (`github-device-flow.ts`) or pasted as
+ * a personal access token — the side door. Resolution reads the stored token and
+ * validates it with `GET /rate_limit`, reading `X-OAuth-Scopes` (scope check),
  * `Github-Authentication-Token-Expiration` (expiry), and `X-RateLimit-Limit`
- * (poll budget). Three DISTINCT failure states, each with its own copy, so the
- * future UI renders them as three different problems, not one "GitHub
- * unavailable". The rung-0 token is never persisted — this module holds no write
- * path to the secret store, so it structurally cannot store it.
+ * (poll budget). Four DISTINCT failure states, each with its own copy, so the
+ * UI renders them as different problems, not one "GitHub unavailable".
  */
 
-/** A minimal HTTP response (the injected `fetch` returns this shape). */
-export interface HttpResponse {
-  status: number;
-  headers: { get(name: string): string | null };
-  text(): Promise<string>;
-}
-
-export type HttpFetch = (
-  url: string,
-  init?: {
-    method?: string;
-    headers?: Record<string, string>;
-    body?: string;
-    signal?: AbortSignal;
-  },
-) => Promise<HttpResponse>;
-
-/** Runs `gh auth token`. Rejects (ENOENT) when `gh` is absent; exit≠0 when logged out. */
-export type GhRunner = () => Promise<{ stdout: string; stderr: string; exitCode: number }>;
-
-/** The host token vault (Electron `safeStorage` in production). Read-only here. */
+/**
+ * The host token vault. One GitHub token, whether minted by the device flow or
+ * pasted; `null` clears it (disconnect). The token never reaches the renderer.
+ */
 export interface SecretStore {
   getGitHubToken(): Promise<string | null>;
+  setGitHubToken(token: string | null): Promise<void>;
 }
-
-/** The rung a token came from. */
-export type AuthRung = "gh" | "pat";
 
 /**
  * The auth outcome. The success variant carries the token for the adapter's
  * in-memory use ONLY — it is host-side and never projected to the renderer. The
- * three failure variants are renderer-safe and each carry their own copy.
+ * failure variants are renderer-safe and each carry their own copy.
  */
 export type GitHubAuthState =
   | {
       ok: true;
-      rung: AuthRung;
       token: string;
+      login: string | null;
       scopes: string[];
       expiresAt: string | null;
       rateLimit: number | null;
       sso: SsoState;
     }
-  | { ok: false; reason: "gh-absent"; copy: string }
-  | { ok: false; reason: "gh-not-logged-in"; copy: string }
+  | { ok: false; reason: "not-connected"; copy: string }
+  | { ok: false; reason: "token-invalid"; copy: string }
   | { ok: false; reason: "insufficient-scope"; copy: string; scopes: string[] };
 
 export interface ResolveAuthDeps {
-  gh: GhRunner;
-  http: HttpFetch;
-  secretStore: SecretStore;
+  /** An UNAUTHENTICATED client; the candidate token rides as an explicit header. */
+  octokit: Octokit;
+  secretStore: Pick<SecretStore, "getGitHubToken">;
   /** The scope the selected operation needs. Defaults to classic `repo`. */
   requiredScope?: string;
-  /** The rate-limit endpoint. Defaults to public github.com. */
-  rateLimitUrl?: string;
 }
 
-const RATE_LIMIT_URL = "https://api.github.com/rate_limit";
-
 const COPY = {
-  ghAbsent:
-    "GitHub CLI (`gh`) was not found. Install it and run `gh auth login`, or paste a personal access token below.",
-  ghNotLoggedIn:
-    "`gh` is installed but not logged in. Run `gh auth login`, or paste a personal access token below.",
+  notConnected:
+    "GitHub is not connected. Connect with a one-time device sign-in, or paste a personal access token.",
+  tokenInvalid:
+    "The stored GitHub token was revoked or has expired. Reconnect, or paste a fresh personal access token.",
   insufficientScope:
-    "This token is missing the `repo` scope needed to read pull requests. Re-authorize with `repo`, or paste a token that has it.",
+    "This token is missing the `repo` scope needed to read pull requests. Reconnect to re-authorize, or paste a token that has it.",
 } as const;
 
 function parseScopes(header: string | null): string[] {
@@ -92,65 +68,63 @@ function parseScopes(header: string | null): string[] {
     .filter((scope) => scope.length > 0);
 }
 
-/** Validate a token against `/rate_limit`; returns the ok state or an insufficient-scope failure. */
-async function validate(
+/**
+ * Validate a candidate token against `/rate_limit` (and resolve its login via
+ * `/user`); returns the ok state or a distinct failure. Exported so the pasted-PAT
+ * command can validate BEFORE storing — a bad paste is rejected, never persisted.
+ */
+export async function validateGitHubToken(
   token: string,
-  rung: AuthRung,
   deps: ResolveAuthDeps,
 ): Promise<GitHubAuthState> {
   const requiredScope = deps.requiredScope ?? "repo";
-  const url = deps.rateLimitUrl ?? RATE_LIMIT_URL;
-  const res = await deps.http(url, {
-    method: "GET",
-    headers: { Authorization: `Bearer ${token}`, Accept: "application/vnd.github+json" },
-  });
-  const scopes = parseScopes(res.headers.get("X-OAuth-Scopes"));
-  const sso = parseGitHubSso(res.headers.get("X-GitHub-SSO"));
+  const authHeader = { authorization: `Bearer ${token}` };
+  let res: Awaited<ReturnType<Octokit["request"]>>;
+  try {
+    res = await deps.octokit.request("GET /rate_limit", { headers: authHeader });
+  } catch (error) {
+    // A revoked or expired token is a 401 — its own problem, never "missing scope".
+    if (requestErrorStatus(error) === 401) {
+      return { ok: false, reason: "token-invalid", copy: COPY.tokenInvalid };
+    }
+    throw error;
+  }
+  const scopes = parseScopes(headerGet(res.headers, "X-OAuth-Scopes"));
+  const sso = parseGitHubSso(headerGet(res.headers, "X-GitHub-SSO"));
   if (!scopes.includes(requiredScope)) {
     return { ok: false, reason: "insufficient-scope", copy: COPY.insufficientScope, scopes };
   }
-  const rateLimitHeader = res.headers.get("X-RateLimit-Limit");
+  // The signed-in login, for the settings row ("connected · @user"). Best-effort:
+  // a failure here never fails auth — the token already validated.
+  let login: string | null;
+  try {
+    const user = await deps.octokit.request("GET /user", { headers: authHeader });
+    login = (user.data as { login?: string }).login ?? null;
+  } catch {
+    login = null;
+  }
+  const rateLimitHeader = headerGet(res.headers, "X-RateLimit-Limit");
   const rateLimit = rateLimitHeader ? Number(rateLimitHeader) : null;
   return {
     ok: true,
-    rung,
     token,
+    login,
     scopes,
-    expiresAt: res.headers.get("Github-Authentication-Token-Expiration"),
+    expiresAt: headerGet(res.headers, "Github-Authentication-Token-Expiration"),
     rateLimit: Number.isNaN(rateLimit) ? null : rateLimit,
     sso,
   };
 }
 
 /**
- * Resolve GitHub auth: try rung 0 (`gh auth token`); on gh-absent or logged-out,
- * fall back to a pasted PAT (rung 2) if one is stored; otherwise return the
- * distinct gh failure state. A token, once obtained by either rung, is validated
- * via `/rate_limit`.
+ * Resolve GitHub auth from the stored token (device-flow-minted or pasted PAT —
+ * same store, same treatment). No stored token is the honest `not-connected`
+ * state; a stored token is validated via `/rate_limit` on every resolution.
  */
 export async function resolveGitHubAuth(deps: ResolveAuthDeps): Promise<GitHubAuthState> {
-  let ghToken: string | null = null;
-  let ghFailure: "gh-absent" | "gh-not-logged-in" | null = null;
-  try {
-    const result = await deps.gh();
-    const token = result.stdout.trim();
-    if (result.exitCode === 0 && token.length > 0) {
-      ghToken = token;
-    } else {
-      ghFailure = "gh-not-logged-in";
-    }
-  } catch {
-    // A spawn failure (ENOENT and friends) means `gh` is not installed.
-    ghFailure = "gh-absent";
+  const stored = await deps.secretStore.getGitHubToken();
+  if (!stored || stored.length === 0) {
+    return { ok: false, reason: "not-connected", copy: COPY.notConnected };
   }
-
-  if (ghToken) return validate(ghToken, "gh", deps);
-
-  // Rung 2: a pasted PAT is the escape hatch when `gh` cannot answer.
-  const pasted = await deps.secretStore.getGitHubToken();
-  if (pasted && pasted.length > 0) return validate(pasted, "pat", deps);
-
-  return ghFailure === "gh-absent"
-    ? { ok: false, reason: "gh-absent", copy: COPY.ghAbsent }
-    : { ok: false, reason: "gh-not-logged-in", copy: COPY.ghNotLoggedIn };
+  return validateGitHubToken(stored, deps);
 }

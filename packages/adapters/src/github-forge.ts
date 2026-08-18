@@ -1,3 +1,4 @@
+import type { Octokit } from "@octokit/core";
 import type {
   ForgeCapabilities,
   ForgeCheckRun,
@@ -10,7 +11,7 @@ import type {
   ForgePullRequestSummary,
   SsoState,
 } from "@rennet/core";
-import type { HttpFetch } from "./github-auth";
+import { headerGet } from "./github-octokit";
 import { parseGitHubSso } from "./github-sso";
 
 /**
@@ -20,20 +21,15 @@ import { parseGitHubSso } from "./github-sso";
  * REST diff media type, the clone-URL shapes. It parses `X-GitHub-SSO` on EVERY
  * response and lifts a partial-results directive into a first-class `SsoState`, so
  * a truncated surface is never rendered as complete. All HTTP goes through the
- * injected `http`, so no test touches the network and the token never leaves this
- * process. GitHub is authoritative for identity here; git owns the diff content.
+ * injected `octokit` (a fake `fetch` in tests), so no test touches the network and
+ * the token never leaves this process. GitHub is authoritative for identity here; git owns the diff content.
  */
 
 export interface GitHubForgeConfig {
-  http: HttpFetch;
-  /** The bearer token from the auth ladder. Held in memory only, never persisted. */
-  token: string;
-  graphqlUrl?: string;
-  apiBaseUrl?: string;
+  /** A token-bound client from `createGitHubOctokit`. The token never leaves it. */
+  octokit: Octokit;
 }
 
-const GRAPHQL_URL = "https://api.github.com/graphql";
-const API_BASE = "https://api.github.com";
 /** GitHub's hard ceiling: a search returns at most 1000 nodes; past that it silently empties. */
 const SEARCH_CEILING = 1000;
 
@@ -170,27 +166,20 @@ export class GitHubForgeAdapter implements ForgePort {
 
   constructor(private readonly config: GitHubForgeConfig) {}
 
-  private authHeaders(accept: string): Record<string, string> {
-    return { Authorization: `Bearer ${this.config.token}`, Accept: accept };
-  }
-
   private async graphql<T>(
     query: string,
     variables: Record<string, unknown>,
     signal?: AbortSignal,
   ): Promise<{ data: T; sso: SsoState; incomplete: boolean }> {
-    const url = this.config.graphqlUrl ?? GRAPHQL_URL;
-    const res = await this.config.http(url, {
-      method: "POST",
-      headers: {
-        ...this.authHeaders("application/vnd.github+json"),
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ query, variables }),
-      ...(signal === undefined ? {} : { signal }),
+    // `octokit.request` (not `octokit.graphql`) so the response HEADERS stay
+    // visible — `X-GitHub-SSO` must be parsed on every response.
+    const res = await this.config.octokit.request("POST /graphql", {
+      query,
+      variables,
+      ...(signal === undefined ? {} : { request: { signal } }),
     });
-    const sso = parseGitHubSso(res.headers.get("X-GitHub-SSO"));
-    const parsed = JSON.parse(await res.text()) as { data?: T; errors?: unknown };
+    const sso = parseGitHubSso(headerGet(res.headers, "X-GitHub-SSO"));
+    const parsed = res.data as { data?: T; errors?: unknown };
     if (!parsed.data) {
       throw new Error(`GraphQL returned no data: ${JSON.stringify(parsed.errors ?? {})}`);
     }
@@ -255,14 +244,14 @@ export class GitHubForgeAdapter implements ForgePort {
   }
 
   async fetchDiff(ref: ForgePullRequestRef): Promise<ForgeDiff> {
-    const base = this.config.apiBaseUrl ?? API_BASE;
-    const url = `${base}/repos/${ref.repo.owner}/${ref.repo.name}/pulls/${ref.number}`;
-    const res = await this.config.http(url, {
-      method: "GET",
-      headers: this.authHeaders("application/vnd.github.diff"),
+    const res = await this.config.octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
+      owner: ref.repo.owner,
+      repo: ref.repo.name,
+      pull_number: ref.number,
+      mediaType: { format: "diff" },
     });
-    const sso = parseGitHubSso(res.headers.get("X-GitHub-SSO"));
-    return { diff: await res.text(), sso };
+    const sso = parseGitHubSso(headerGet(res.headers, "X-GitHub-SSO"));
+    return { diff: res.data as unknown as string, sso };
   }
 
   async fetchCiStatus(

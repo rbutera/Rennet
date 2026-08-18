@@ -41,7 +41,7 @@ fall back to a host binary for a WSL project.
 
 ```mermaid
 flowchart LR
-  app[Rennet on Windows] --> git[git / gh on the host]
+  app[Rennet on Windows] --> git[git on the host]
   app --> claude[claude / codex on the host]
   app --> repo[C:\\dev\\repo]
 ```
@@ -49,7 +49,8 @@ flowchart LR
 **Requirements**
 
 - Windows 10/11 (x64).
-- `git` on the host, and `gh` if you review or submit GitHub pull requests.
+- `git` on the host. GitHub access is Rennet's own one-time device sign-in — no
+  GitHub CLI needed.
 - A coding harness on the host — `claude` (and optionally `codex`) — installed any
   usual way. Rennet finds `.cmd`/`.exe` shims on your `PATH` and in the common
   per-user install locations (`%APPDATA%\npm`, `%LOCALAPPDATA%\Programs`, scoop,

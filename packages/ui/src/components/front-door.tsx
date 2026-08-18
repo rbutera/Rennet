@@ -8,6 +8,7 @@ import type {
 } from "@rennet/protocol";
 import { type ReactNode, useEffect, useState } from "react";
 import { RennetBrandMark } from "./brand-mark";
+import { GitHubConnectCard } from "./github-connect";
 import {
   ArrowRightIcon,
   ChevronIcon,
@@ -121,6 +122,7 @@ export function FrontDoor({
         <ProjectsList
           projects={projects}
           detected={detected}
+          bridge={bridge}
           onAdd={() => setFlow({ step: "type-path", kind: "workspace", busy: false })}
           onOpen={onOpenProject}
         />
@@ -134,11 +136,13 @@ export function FrontDoor({
 function ProjectsList({
   projects,
   detected,
+  bridge,
   onAdd,
   onOpen,
 }: {
   projects: Project[] | null;
   detected: DetectedHarness[] | null;
+  bridge: RennetBridge;
   onAdd(): void;
   onOpen(project: Project): void;
 }) {
@@ -198,6 +202,7 @@ function ProjectsList({
       )}
 
       <HarnessLine detected={detected} />
+      <GitHubConnectCard bridge={bridge} />
     </div>
   );
 }

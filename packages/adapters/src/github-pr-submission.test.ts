@@ -1,6 +1,6 @@
 import type { ForgePrSubmission, ForgePrSubmissionTarget } from "@rennet/core";
 import { describe, expect, it } from "vitest";
-import type { HttpFetch, HttpResponse } from "./github-auth";
+import { createGitHubOctokit } from "./github-octokit";
 import { GitHubPrSubmissionAdapter } from "./github-pr-submission";
 
 const TARGET: ForgePrSubmissionTarget = {
@@ -15,12 +15,11 @@ const SUBMISSION: ForgePrSubmission = {
   draft: true,
 };
 
-function response(status: number, body: unknown): HttpResponse {
-  return {
+function json(status: number, body: unknown): Response {
+  return new Response(JSON.stringify(body), {
     status,
-    headers: { get: () => null },
-    text: () => Promise.resolve(JSON.stringify(body)),
-  };
+    headers: { "content-type": "application/json" },
+  });
 }
 
 interface RecordedCall {
@@ -29,31 +28,24 @@ interface RecordedCall {
   body?: unknown;
 }
 
-/** A recording HttpFetch that answers each call from a scripted queue of responses. */
-function scriptedHttp(responses: HttpResponse[]): {
-  http: HttpFetch;
-  calls: RecordedCall[];
-} {
+/** A recording adapter that answers each request from a scripted queue of responses. */
+function adapter(responses: Response[]) {
   const calls: RecordedCall[] = [];
   let index = 0;
-  const http: HttpFetch = async (url, init) => {
+  const fetch: typeof globalThis.fetch = async (input, init) => {
     calls.push({
-      url,
+      url: String(input),
       method: init?.method ?? "GET",
-      body: init?.body ? JSON.parse(init.body) : undefined,
+      body: typeof init?.body === "string" ? JSON.parse(init.body) : undefined,
     });
     const next = responses[index];
     index += 1;
     if (!next) throw new Error(`no scripted response for call ${index}`);
     return next;
   };
-  return { http, calls };
-}
-
-function adapter(responses: HttpResponse[]) {
-  const { http, calls } = scriptedHttp(responses);
+  const octokit = createGitHubOctokit({ fetch, token: "tok" });
   return {
-    port: new GitHubPrSubmissionAdapter({ http, resolveToken: async () => "tok" }),
+    port: new GitHubPrSubmissionAdapter({ resolveOctokit: () => Promise.resolve(octokit) }),
     calls,
   };
 }
@@ -61,8 +53,8 @@ function adapter(responses: HttpResponse[]) {
 describe("GitHubPrSubmissionAdapter (issue #257 / #107)", () => {
   it("creates the PR when none is open, and carries a BRANCH ref as head (not a SHA)", async () => {
     const { port, calls } = adapter([
-      response(200, []), // no open PR from this head
-      response(201, { html_url: "https://github.com/acme/widget/pull/12", number: 12 }),
+      json(200, []), // no open PR from this head
+      json(201, { html_url: "https://github.com/acme/widget/pull/12", number: 12 }),
     ]);
     const outcome = await port.submitPullRequest({ target: TARGET, submission: SUBMISSION });
     expect(outcome).toEqual({
@@ -88,7 +80,7 @@ describe("GitHubPrSubmissionAdapter (issue #257 / #107)", () => {
 
   it("reuses an already-open PR from the same head (idempotent — never a second create)", async () => {
     const { port, calls } = adapter([
-      response(200, [{ html_url: "https://github.com/acme/widget/pull/9", number: 9 }]),
+      json(200, [{ html_url: "https://github.com/acme/widget/pull/9", number: 9 }]),
     ]);
     const outcome = await port.submitPullRequest({ target: TARGET, submission: SUBMISSION });
     expect(outcome).toEqual({
@@ -103,9 +95,9 @@ describe("GitHubPrSubmissionAdapter (issue #257 / #107)", () => {
 
   it("resolves a 422 race (a PR appeared between lookup and create) to the existing PR", async () => {
     const { port } = adapter([
-      response(200, []), // lookup: none yet
-      response(422, { message: "A pull request already exists for acme:feat/reviewed." }),
-      response(200, [{ html_url: "https://github.com/acme/widget/pull/15", number: 15 }]), // re-lookup
+      json(200, []), // lookup: none yet
+      json(422, { message: "A pull request already exists for acme:feat/reviewed." }),
+      json(200, [{ html_url: "https://github.com/acme/widget/pull/15", number: 15 }]), // re-lookup
     ]);
     const outcome = await port.submitPullRequest({ target: TARGET, submission: SUBMISSION });
     expect(outcome).toEqual({
@@ -116,12 +108,9 @@ describe("GitHubPrSubmissionAdapter (issue #257 / #107)", () => {
   });
 
   it("surfaces a create failure honestly (never a fabricated success)", async () => {
-    const { port } = adapter([
-      response(200, []),
-      response(403, { message: "Resource not accessible" }),
-    ]);
+    const { port } = adapter([json(200, []), json(403, { message: "Resource not accessible" })]);
     await expect(
       port.submitPullRequest({ target: TARGET, submission: SUBMISSION }),
-    ).rejects.toThrow(/HTTP 403/);
+    ).rejects.toThrow(/Resource not accessible|403/);
   });
 });

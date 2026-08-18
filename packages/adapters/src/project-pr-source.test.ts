@@ -1,17 +1,17 @@
 import { pullRequestSchema } from "@rennet/protocol";
-import { describe, expect, it, vi } from "vitest";
-import type { HttpFetch, HttpResponse } from "./github-auth";
+import { describe, expect, it } from "vitest";
+import { createGitHubOctokit } from "./github-octokit";
 import { createGitHubProjectPrSource, parseForgeRepository } from "./project-pr-source";
 
-/** A canned HTTP response with optional headers (defaults to a clean 200). */
-function response(body: unknown, init?: { status?: number; sso?: string }): HttpResponse {
-  const headers = new Map<string, string>();
-  if (init?.sso) headers.set("X-GitHub-SSO", init.sso);
-  return {
+/** A canned JSON response with optional headers (defaults to a clean 200). */
+function response(body: unknown, init?: { status?: number; sso?: string }): Response {
+  return new Response(JSON.stringify(body), {
     status: init?.status ?? 200,
-    headers: { get: (name) => headers.get(name) ?? null },
-    text: async () => JSON.stringify(body),
-  };
+    headers: {
+      "content-type": "application/json",
+      ...(init?.sso ? { "X-GitHub-SSO": init.sso } : {}),
+    },
+  });
 }
 
 /** A GraphQL PR node with sensible defaults; override per case. */
@@ -33,8 +33,8 @@ function node(overrides: Record<string, unknown> = {}): Record<string, unknown> 
   };
 }
 
-/** Build an http that answers the viewer query and a scripted sequence of PR pages. */
-function makeHttp(config: {
+/** Build a fetch that answers the viewer query and a scripted sequence of PR pages. */
+function makeFetch(config: {
   viewer?: string | null;
   pages?: {
     nodes: Record<string, unknown>[];
@@ -45,12 +45,12 @@ function makeHttp(config: {
   repositoryNull?: boolean;
   status?: number;
   errors?: unknown;
-}): { http: HttpFetch; calls: () => number } {
+}): { fetch: typeof globalThis.fetch; calls: () => number } {
   let pageIndex = 0;
   let calls = 0;
-  const http: HttpFetch = async (_url, init) => {
+  const fetch: typeof globalThis.fetch = async (_input, init) => {
     calls += 1;
-    const body = JSON.parse(init?.body ?? "{}") as { query: string };
+    const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as { query: string };
     if (config.status && config.status !== 200) return response({}, { status: config.status });
     if (config.errors) return response({ errors: config.errors });
     // Match the PR query FIRST: OPEN_PRS_QUERY contains "requestedReviewer", so a bare
@@ -75,7 +75,15 @@ function makeHttp(config: {
       },
     });
   };
-  return { http, calls: () => calls };
+  return { fetch, calls: () => calls };
+}
+
+function sourceFor(fetch: typeof globalThis.fetch, maxPages?: number) {
+  const octokit = createGitHubOctokit({ fetch, token: "t" });
+  return createGitHubProjectPrSource({
+    octokit,
+    ...(maxPages === undefined ? {} : { maxPages }),
+  });
 }
 
 describe("parseForgeRepository", () => {
@@ -97,23 +105,23 @@ describe("parseForgeRepository", () => {
 
 describe("createGitHubProjectPrSource — resolveViewer", () => {
   it("returns the login and memoizes (one network call for repeated reads)", async () => {
-    const { http, calls } = makeHttp({ viewer: "octocat" });
-    const source = createGitHubProjectPrSource({ http, token: "t" });
+    const { fetch, calls } = makeFetch({ viewer: "octocat" });
+    const source = sourceFor(fetch);
     expect(await source.resolveViewer()).toBe("octocat");
     expect(await source.resolveViewer()).toBe("octocat");
     expect(calls()).toBe(1);
   });
   it("returns null when GitHub has no viewer (token without a user)", async () => {
-    const { http } = makeHttp({ viewer: null });
-    const source = createGitHubProjectPrSource({ http, token: "t" });
+    const { fetch } = makeFetch({ viewer: null });
+    const source = sourceFor(fetch);
     expect(await source.resolveViewer()).toBeNull();
   });
 });
 
 describe("createGitHubProjectPrSource — listOpenPullRequests", () => {
   it("maps a node to the protocol PullRequest with byte-exact repository identity", async () => {
-    const { http } = makeHttp({ viewer: "octocat", pages: [{ nodes: [node()] }] });
-    const source = createGitHubProjectPrSource({ http, token: "t" });
+    const { fetch } = makeFetch({ viewer: "octocat", pages: [{ nodes: [node()] }] });
+    const source = sourceFor(fetch);
     const { prs, truncated } = await source.listOpenPullRequests("acme/widget");
     expect(truncated).toBe(false);
     expect(prs).toHaveLength(1);
@@ -144,7 +152,7 @@ describe("createGitHubProjectPrSource — listOpenPullRequests", () => {
       ["EXPECTED", "pending"],
     ];
     for (const [rollup, expected] of cases) {
-      const { http } = makeHttp({
+      const { fetch } = makeFetch({
         viewer: "octocat",
         pages: [
           {
@@ -154,17 +162,15 @@ describe("createGitHubProjectPrSource — listOpenPullRequests", () => {
           },
         ],
       });
-      const source = createGitHubProjectPrSource({ http, token: "t" });
-      const { prs } = await source.listOpenPullRequests("acme/widget");
+      const { prs } = await sourceFor(fetch).listOpenPullRequests("acme/widget");
       expect(prs[0]?.ci).toBe(expected);
     }
     // No checks configured → a null rollup → "none" (honestly unknown, not passing).
-    const { http } = makeHttp({
+    const { fetch } = makeFetch({
       viewer: "octocat",
       pages: [{ nodes: [node({ commits: { nodes: [{ commit: { statusCheckRollup: null } }] } })] }],
     });
-    const source = createGitHubProjectPrSource({ http, token: "t" });
-    const { prs } = await source.listOpenPullRequests("acme/widget");
+    const { prs } = await sourceFor(fetch).listOpenPullRequests("acme/widget");
     expect(prs[0]?.ci).toBe("none");
   });
 
@@ -178,68 +184,63 @@ describe("createGitHubProjectPrSource — listOpenPullRequests", () => {
         nodes: [{ requestedReviewer: { __typename: "User", login: "someone-else" } }],
       },
     });
-    const { http } = makeHttp({
+    const { fetch } = makeFetch({
       viewer: "octocat",
       pages: [{ nodes: [withViewer, withoutViewer] }],
     });
-    const source = createGitHubProjectPrSource({ http, token: "t" });
-    const { prs } = await source.listOpenPullRequests("acme/widget");
+    const { prs } = await sourceFor(fetch).listOpenPullRequests("acme/widget");
     expect(prs.find((p) => p.id === "PR_1")?.reviewRequestedFromViewer).toBe(true);
     expect(prs.find((p) => p.id === "PR_2")?.reviewRequestedFromViewer).toBe(false);
   });
 
   it("falls back to 'ghost' for a deleted author and to #number for an empty title", async () => {
-    const { http } = makeHttp({
+    const { fetch } = makeFetch({
       viewer: "octocat",
       pages: [{ nodes: [node({ author: null, title: "" })] }],
     });
-    const source = createGitHubProjectPrSource({ http, token: "t" });
-    const { prs } = await source.listOpenPullRequests("acme/widget");
+    const { prs } = await sourceFor(fetch).listOpenPullRequests("acme/widget");
     expect(prs[0]?.author).toBe("ghost");
     expect(prs[0]?.title).toBe("#12");
   });
 
   it("returns an empty, complete result for a non-forge identity — no network call", async () => {
-    const { http, calls } = makeHttp({ viewer: "octocat" });
-    const source = createGitHubProjectPrSource({ http, token: "t" });
-    const result = await source.listOpenPullRequests("/Users/x/repo/.git");
+    const { fetch, calls } = makeFetch({ viewer: "octocat" });
+    const result = await sourceFor(fetch).listOpenPullRequests("/Users/x/repo/.git");
     expect(result).toEqual({ prs: [], truncated: false });
     expect(calls()).toBe(0); // never even resolves the viewer for a local-only repo
   });
 
   it("paginates through pages and reports truncated when more remain past the cap", async () => {
-    const { http } = makeHttp({
+    const { fetch } = makeFetch({
       viewer: "octocat",
       pages: [
         { nodes: [node({ id: "PR_A" })], hasNextPage: true, endCursor: "c1" },
         { nodes: [node({ id: "PR_B" })], hasNextPage: true, endCursor: "c2" }, // still more, but cap = 2
       ],
     });
-    const source = createGitHubProjectPrSource({ http, token: "t", maxPages: 2 });
-    const { prs, truncated } = await source.listOpenPullRequests("acme/widget");
+    const { prs, truncated } = await sourceFor(fetch, 2).listOpenPullRequests("acme/widget");
     expect(prs.map((p) => p.id)).toEqual(["PR_A", "PR_B"]);
     expect(truncated).toBe(true); // hasNextPage was still true at the cap
   });
 
   it("is complete when the last page has no next page", async () => {
-    const { http } = makeHttp({
+    const { fetch } = makeFetch({
       viewer: "octocat",
       pages: [
         { nodes: [node({ id: "PR_A" })], hasNextPage: true, endCursor: "c1" },
         { nodes: [node({ id: "PR_B" })], hasNextPage: false, endCursor: null },
       ],
     });
-    const source = createGitHubProjectPrSource({ http, token: "t", maxPages: 5 });
-    const { prs, truncated } = await source.listOpenPullRequests("acme/widget");
+    const { prs, truncated } = await sourceFor(fetch, 5).listOpenPullRequests("acme/widget");
     expect(prs.map((p) => p.id)).toEqual(["PR_A", "PR_B"]);
     expect(truncated).toBe(false);
   });
 
   it("marks truncated when SSO returns partial-results even on a single page", async () => {
-    const { http } = makeHttp({ viewer: "octocat" });
-    // Override: the PR page carries an SSO partial-results header.
-    const partialHttp: HttpFetch = async (_url, init) => {
-      const body = JSON.parse(init?.body ?? "{}") as { query: string };
+    const partialFetch: typeof globalThis.fetch = async (_input, init) => {
+      const body = JSON.parse(typeof init?.body === "string" ? init.body : "{}") as {
+        query: string;
+      };
       if (!body.query.includes("pullRequests"))
         return response({ data: { viewer: { login: "octocat" } } });
       return response(
@@ -257,45 +258,40 @@ describe("createGitHubProjectPrSource — listOpenPullRequests", () => {
         { sso: "partial-results; organizations=acme; url=https://github.com/orgs/acme/sso" },
       );
     };
-    void http;
-    const source = createGitHubProjectPrSource({ http: partialHttp, token: "t" });
-    const { truncated } = await source.listOpenPullRequests("acme/widget");
+    const { truncated } = await sourceFor(partialFetch).listOpenPullRequests("acme/widget");
     expect(truncated).toBe(true);
   });
 
   it("returns empty (not a false-complete crash) when the repo is not found / no access", async () => {
-    const { http } = makeHttp({ viewer: "octocat", repositoryNull: true });
-    const source = createGitHubProjectPrSource({ http, token: "t" });
-    const { prs, truncated } = await source.listOpenPullRequests("acme/widget");
+    const { fetch } = makeFetch({ viewer: "octocat", repositoryNull: true });
+    const { prs, truncated } = await sourceFor(fetch).listOpenPullRequests("acme/widget");
     expect(prs).toEqual([]);
     expect(truncated).toBe(false);
   });
 
   it("THROWS on a non-2xx response (never renders a failed fetch as zero PRs)", async () => {
-    const { http } = makeHttp({ viewer: "octocat", status: 500 });
-    const source = createGitHubProjectPrSource({ http, token: "t" });
-    await expect(source.listOpenPullRequests("acme/widget")).rejects.toThrow(/500/);
+    const { fetch } = makeFetch({ viewer: "octocat", status: 500 });
+    const error = await sourceFor(fetch)
+      .listOpenPullRequests("acme/widget")
+      .catch((caught: unknown) => caught);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as { status?: number }).status).toBe(500);
   });
 
   it("THROWS on a GraphQL error payload with no data", async () => {
-    const { http } = makeHttp({ errors: [{ message: "Bad credentials" }] });
-    const source = createGitHubProjectPrSource({ http, token: "t" });
-    await expect(source.resolveViewer()).rejects.toThrow(/no data/);
+    const { fetch } = makeFetch({ errors: [{ message: "Bad credentials" }] });
+    await expect(sourceFor(fetch).resolveViewer()).rejects.toThrow(/no data/);
   });
 
-  it("sends the bearer token and targets the GraphQL endpoint", async () => {
-    const http = vi.fn<HttpFetch>(async () => response({ data: { viewer: { login: "octocat" } } }));
-    const source = createGitHubProjectPrSource({
-      http,
-      token: "secret-token",
-      graphqlUrl: "https://gh.test/graphql",
-    });
-    await source.resolveViewer();
-    expect(http).toHaveBeenCalledWith(
-      "https://gh.test/graphql",
-      expect.objectContaining({
-        headers: expect.objectContaining({ Authorization: "Bearer secret-token" }),
-      }),
-    );
+  it("sends the token credential and targets the GraphQL endpoint", async () => {
+    let seen: { url?: string; auth?: string | null } = {};
+    const fetch: typeof globalThis.fetch = async (input, init) => {
+      seen = { url: String(input), auth: new Headers(init?.headers).get("authorization") };
+      return response({ data: { viewer: { login: "octocat" } } });
+    };
+    const octokit = createGitHubOctokit({ fetch, token: "secret-token" });
+    await createGitHubProjectPrSource({ octokit }).resolveViewer();
+    expect(seen.url).toContain("/graphql");
+    expect(seen.auth).toBe("token secret-token");
   });
 });

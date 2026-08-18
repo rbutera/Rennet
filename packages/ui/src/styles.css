@@ -2136,6 +2136,136 @@ button {
   font-weight: 500;
 }
 
+/* ── The GitHub connect surfaces (v4.2, wireframes 01 + 15) ─────────────────────
+ * The first-run card is a CARD, not a wall: quiet chrome, a skip that is a plain
+ * word, and the whole thing gone once connected or dismissed. The device code is
+ * the loudest thing on it while a flow is live — it is the one fact to carry to
+ * github.com/login/device. */
+.github-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  align-self: center;
+  width: min(560px, 100%);
+  margin-top: 14px;
+  padding: 13px 15px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: var(--surface-2);
+  font-size: 13px;
+}
+.github-card-icon {
+  display: inline-flex;
+  color: var(--text);
+}
+.github-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.github-card-title {
+  font-weight: 650;
+  color: var(--text);
+}
+.github-card-sub {
+  font-size: 12px;
+  color: var(--text-faint);
+}
+.github-skip {
+  margin-left: auto;
+  border: none;
+  background: none;
+  padding: 4px 6px;
+  font-size: 12px;
+  color: var(--text-faint);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.github-skip:hover {
+  color: var(--text);
+}
+.github-btn {
+  padding: 6px 12px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.github-btn:hover:not(:disabled) {
+  border-color: var(--text-faint);
+}
+.github-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.github-flow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+.github-code {
+  font: 700 16px / 1 var(--mono);
+  letter-spacing: 0.12em;
+  padding: 6px 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: var(--surface-2);
+  color: var(--text);
+  white-space: nowrap;
+}
+.github-flow-hint {
+  font-size: 12px;
+  color: var(--text-faint);
+  min-width: 0;
+}
+.github-flow-hint a {
+  color: inherit;
+  text-decoration: underline;
+}
+.github-error {
+  font-size: 12px;
+  color: var(--text);
+  margin: 8px 0 0;
+}
+.github-connected {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font: 600 12px / 1 var(--mono);
+  color: var(--text);
+  white-space: nowrap;
+}
+.github-problem {
+  font-size: 12px;
+  color: var(--text);
+  max-width: 340px;
+}
+.github-problem.faint {
+  color: var(--text-faint);
+}
+.github-row-value {
+  gap: 10px;
+}
+.github-token-input {
+  width: 220px;
+  padding: 6px 10px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font: 12px / 1.2 var(--mono);
+}
+.github-token-input::placeholder {
+  color: var(--text-faint);
+}
+
 /* ── The add-a-project flow ─────────────────────────────────────────────────── */
 .add-flow .eyebrow {
   margin: 18px 0 10px;
