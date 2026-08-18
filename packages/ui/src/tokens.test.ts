@@ -292,12 +292,15 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
   // grounds), and within a rule the LAST background/background-color declaration
   // (duplicate declarations: last wins). FAIL-CLOSED: last-wins is only true for
   // normal declarations of the same property — `!important` beats a later normal
-  // declaration, and a `background` shorthand paints layers a later
-  // `background-color` longhand does not reset. Either form makes "the last value"
-  // a lie, so both THROW instead of resolving. Returns the raw value otherwise;
-  // the caller decides whether it is resolvable.
+  // declaration, and a `background` shorthand paints layers a `background-color`
+  // longhand does not reset, whether they meet in one rule body or across separate
+  // matching rules (declarations carry across the whole cascade for the selector).
+  // Either form makes "the last value" a lie, so both THROW instead of resolving.
+  // Returns the raw value otherwise; the caller decides whether it is resolvable.
   const winningBackground = (ruleList: Rule[], selector: string): string | undefined => {
     let value: string | undefined;
+    let sawShorthand = false;
+    let sawLonghand = false;
     for (const r of ruleList) {
       if (r.selector !== selector) continue;
       const decls = [...r.body.matchAll(/(?<![\w-])background(?:-color)?:\s*([^;]+)/gi)];
@@ -305,13 +308,15 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
         throw new Error(
           `!important background on ${selector} — priority beats order, last-wins cannot resolve it; classify explicitly`,
         );
-      if (/(?<![\w-])background:/i.test(r.body) && /(?<![\w-])background-color:/i.test(r.body))
-        throw new Error(
-          `background shorthand and background-color both declared on ${selector} — the shorthand's layers paint over the longhand; classify explicitly`,
-        );
+      sawShorthand ||= /(?<![\w-])background:/i.test(r.body);
+      sawLonghand ||= /(?<![\w-])background-color:/i.test(r.body);
       const last = decls[decls.length - 1];
       if (last?.[1] !== undefined) value = last[1].trim();
     }
+    if (sawShorthand && sawLonghand)
+      throw new Error(
+        `background shorthand and background-color both declared across ${selector}'s rules — the shorthand's layers paint over the longhand; classify explicitly`,
+      );
     return value;
   };
   // OPAQUE-GROUND POLICY: a hue mark is only provable on a solid coat. The app window
@@ -366,13 +371,26 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
     '|\\[(?:data|aria)-[a-zA-Z0-9-]+(?:="[^"\\\\\\]]*")?\\]' +
     "|::?[a-zA-Z-]+(?:\\([^()\\\\\\[\\]*]*\\))?)*";
   const MODELED_SELECTOR = new RegExp(`^${SIMPLE_COMPOUND}(?:\\s*[> ]\\s*${SIMPLE_COMPOUND})*$`);
+  // Beyond raw syntax, the mention-scan only ever DISCOVERS literal `.class` tokens,
+  // so a background selector reaching an element purely by attribute or element name
+  // is invisible to it: `[aria-label="Keyboard settings"] { background: ... }` would
+  // silently repaint .settings-panel's ground. Therefore an attribute-bearing PAINTED
+  // (last) compound must also spell a literal .class, and a selector with no .class
+  // anywhere fails. Sole allowlist: `:root` and `body`, the document base coats — the
+  // real sheets paint them, and neither can ever BE a mapped container.
   const unmodeledBackgroundSelectors = (ruleList: Rule[]): string[] =>
     [
       ...new Set(
         ruleList
           .filter((r) => /(?<![\w-])background(?:-color)?:/i.test(r.body))
           .map((r) => r.selector)
-          .filter((s) => !MODELED_SELECTOR.test(s)),
+          .filter((s) => {
+            if (!MODELED_SELECTOR.test(s)) return true;
+            if (s === ":root" || s === "body") return false;
+            const painted = s.split(/\s*[> ]\s*/).pop() ?? s;
+            if (painted.includes("[") && !/\.[a-zA-Z0-9_-]/.test(painted)) return true;
+            return !/\./.test(s);
+          }),
       ),
     ].sort();
 
@@ -506,6 +524,41 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
     expect(
       unmodeledBackgroundSelectors(allRules),
       "unmodeled selector syntax in background rule — extend the guard or simplify the CSS",
+    ).toEqual([]);
+  });
+
+  it("wave-close tightenings: cross-rule property mixing and attribute-only aliases are loud", () => {
+    // 1. Codex's split-rule mutation: gradient shorthand in one rule, background-color
+    //    longhand in a SECOND rule for the same selector. Per-rule inspection resolved
+    //    silently to the longhand while the gradient kept painting — the property-form
+    //    mix is now tracked across ALL matching rules and throws.
+    expect(() =>
+      winningBackground(
+        rules(
+          ".p { background: linear-gradient(#fff, #000); } .p { background-color: var(--raised); }",
+        ),
+        ".p",
+      ),
+    ).toThrow(/shorthand/);
+    // 2. Codex's attribute-alias mutation: [aria-label="Keyboard settings"] (the real
+    //    settings-panel anchor) styles the panel without spelling any class, so the
+    //    mention-scan cannot discover it — the sweep flags attribute-only painted
+    //    compounds and classless selectors.
+    expect(
+      unmodeledBackgroundSelectors(
+        rules('[aria-label="Keyboard settings"] { background: var(--amber-surface); }'),
+      ),
+    ).toEqual(['[aria-label="Keyboard settings"]']);
+    expect(unmodeledBackgroundSelectors(rules("button { background: var(--raised); }"))).toEqual([
+      "button",
+    ]);
+    // Controls: the allowlisted document base coats and class+attribute compounds pass.
+    expect(
+      unmodeledBackgroundSelectors(
+        rules(
+          'body { background: var(--surface); } :root { background: var(--surface); } .ask-menu-item[aria-checked="true"] { background: var(--raised); }',
+        ),
+      ),
     ).toEqual([]);
   });
 
