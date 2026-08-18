@@ -147,6 +147,19 @@ push token) and `attention.acknowledge` (clear on view, propagated to all client
 ordinary additive `commandDefinitions` entries reachable only on a token-bearing connection
 while `attention` is advertised.
 
+The projected review carries an additive optional `attention` summary —
+`{ needsYou, running }` — alongside the attention frames (issue #383 M1). It is
+sourced from the daemon's attention system, not the review pipeline: `needsYou`
+is true when an active high-priority attention (pending ask / review finished /
+turn failed) targets the review, and `running` is true while a turn is producing
+a successor patchset. The daemon attaches it only when it advertises `attention`;
+a pre-attention daemon omits it, and the field is non-required in the
+`projected-review` public-schema fixture, so an older client ignores it and a
+newer client falls back to deriving needs-you from its flagged queue plus live
+events. It exists so a cold-open review list is truthful about needs-you before
+any push arrives — the sanctioned "grow the projection" path, never a side
+channel.
+
 `hello.deviceToken` is the append-only field a remote client presents to prove it
 was paired; a loopback client omits it. It carries the raw device token, which the
 daemon checks against its hashed device store. See
