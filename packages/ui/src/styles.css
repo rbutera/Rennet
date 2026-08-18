@@ -3756,3 +3756,126 @@ button {
   line-height: 1.45;
   color: var(--sheet-soft);
 }
+
+/* The connections surface (#381): the shared daemon-attachment chrome both shells mount.
+   A compact indicator that opens a switcher; the saved-daemon list, add-daemon pairing
+   form, and the R19 honesty note. Colours + radii ride the tokens; sizes ride the ramp. */
+.connection-host {
+  display: contents;
+}
+.connection-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+.connection-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--chip-radius);
+  background: var(--surface-2);
+  color: var(--text-soft);
+  font-size: 12px;
+  cursor: pointer;
+}
+.connection-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green, var(--accent));
+}
+.connection-name {
+  font-size: 12px;
+  color: var(--text);
+}
+.connection-switcher {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  z-index: 40;
+  margin-top: 6px;
+  min-width: 280px;
+  padding: 8px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: var(--raised-shadow);
+}
+.connection-list {
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+}
+.connection-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.connection-choose {
+  flex: 1;
+  text-align: left;
+  padding: 6px 8px;
+  border: none;
+  border-radius: var(--chip-radius);
+  background: transparent;
+  color: var(--text);
+  font-size: 13px;
+  cursor: pointer;
+}
+.connection-choose[aria-current="true"] {
+  background: var(--accent-soft);
+}
+.connection-remove {
+  border: none;
+  background: transparent;
+  color: var(--text-faint);
+  font-size: 14px;
+  cursor: pointer;
+}
+.connection-add {
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px dashed var(--hairline-strong);
+  border-radius: var(--chip-radius);
+  background: transparent;
+  color: var(--text-soft);
+  font-size: 12px;
+  cursor: pointer;
+}
+.connection-add-form {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.connection-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--text-faint);
+}
+.connection-field input {
+  padding: 6px 8px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--chip-radius);
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 13px;
+}
+.connection-error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 11px;
+}
+.connection-add-actions {
+  display: flex;
+  gap: 6px;
+}
+.connection-note {
+  margin: 8px 0 0;
+  color: var(--text-faint);
+  font-size: 11px;
+  line-height: 1.45;
+}
