@@ -258,18 +258,26 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
     return `#${out.map((x) => x.toString(16).padStart(2, "0")).join("")}`;
   };
 
-  // Read the container's `background: var(--token)` from the CSS and resolve it to a light-
-  // scheme hex (light --amber is the worst case). Solid tokens resolve directly; an rgba
-  // ground composites over --surface. THIS is what makes a container background override bite.
-  const bodyOf = (selector: string): string => {
-    const r = allRules.find((x) => x.selector === selector);
-    if (!r) throw new Error(`container rule not found: ${selector}`);
-    return r.body;
+  // Resolve the container's WINNING `background: var(--token)` — the last matching
+  // rule that sets a background, matching the CSS cascade for equal-specificity
+  // repeats. Codex proved the hole: `.find()` took the FIRST rule, so appending a
+  // later `.ci-signal-panel { background: var(--amber-surface) }` left the stale
+  // first ground (--raised) green. Scanning to the last declaration bites instead.
+  const lastBackgroundToken = (ruleList: Rule[], selector: string): string | undefined => {
+    let token: string | undefined;
+    for (const r of ruleList) {
+      if (r.selector !== selector) continue;
+      const m = r.body.match(/background:\s*var\(--([a-z0-9-]+)\)/i);
+      if (m?.[1] !== undefined) token = `--${m[1]}`;
+    }
+    return token;
   };
+  // Read the container's winning background token and resolve it to a light-scheme hex
+  // (light --amber/--green are the worst case). Solid tokens resolve directly; an rgba
+  // ground composites over --surface.
   const groundHex = (container: string): string => {
-    const m = bodyOf(container).match(/background:\s*var\(--([a-z0-9-]+)\)/i);
-    if (!m || m[1] === undefined) throw new Error(`no background token on ${container}`);
-    const token = `--${m[1]}`;
+    const token = lastBackgroundToken(allRules, container);
+    if (token === undefined) throw new Error(`no background token on ${container}`);
     // Solid hex token → use it; rgba token → composite over --surface.
     if (new RegExp(`${token}:\\s*#`).test(block(LIGHT))) return hex(LIGHT, token);
     return composite(rgba(LIGHT, token), hex(LIGHT, "--surface"));
@@ -305,6 +313,23 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
     expect(groundHex('.processing-repo[data-state="error"]')).toBe(hex(LIGHT, "--amber-surface"));
   });
 
+  it("the ground resolver honours the CSS cascade: a LATER background override wins", () => {
+    // Codex's mutation class: append a second rule for the same selector that flips the
+    // background to an amber ground AFTER the real --raised rule. The old `.find()` (first
+    // match) stayed on --raised and missed it; last-wins resolves to the override and the
+    // contrast test above then reddens. This asserts the resolver itself on a synthetic sheet.
+    const overridden = rules(
+      ".ci-signal-panel { background: var(--raised); }" +
+        ".ci-signal-panel { background: var(--amber-surface); }",
+    );
+    expect(lastBackgroundToken(overridden, ".ci-signal-panel")).toBe("--amber-surface");
+    // The ordinary single-declaration case still resolves to that one declaration.
+    const single = rules(".ci-signal-panel { background: var(--raised); }");
+    expect(lastBackgroundToken(single, ".ci-signal-panel")).toBe("--raised");
+    // A selector with no background at all resolves to undefined (the caller throws).
+    expect(lastBackgroundToken(rules(".x { color: red; }"), ".x")).toBeUndefined();
+  });
+
   it("amber marks left on an amber ground are non-text graphics (3:1 floor, below AA text)", () => {
     const amber = hex(LIGHT, "--amber");
     const amberSurface = hex(LIGHT, "--amber-surface");
@@ -325,6 +350,115 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
     expect(contrast(hex(LIGHT, "--text"), amberFillOnSurface)).toBeGreaterThanOrEqual(4.5);
     // The publish-sheet ledger keeps the sheet (paper) palette: its amber text ink-ifies to --sheet-text.
     expect(contrast(hex(LIGHT, "--sheet-text"), amberFillOnSheet)).toBeGreaterThanOrEqual(4.5);
+  });
+
+  // ── The same invariant for the OTHER two hues (wave-3 sweep): every GREEN and
+  // PRIVATE text site clears AA on its RENDERED ground. Light is the worst case for
+  // both (dark green #88bc9b / dark private #8bbddd sit on near-black grounds well
+  // above 7:1). Two additions over the amber guard: one map covers both hue tokens
+  // (an entry’s hue is read back from its rule), and an entry may carry the ANCESTOR
+  // OPACITY that dims it (.conversation-cluster.is-orphaned’s 0.85, the read-only
+  // smart row’s 0.82): a CSS opacity group composites over its backdrop, so the text
+  // AND its ground are both blended toward --surface before the ratio is taken.
+  const greenText = (r: Rule): boolean => /(?<![\w-])color:\s*var\(--green\)/.test(r.body);
+  const privateText = (r: Rule): boolean => /(?<![\w-])color:\s*var\(--private\)/.test(r.body);
+  const dimmed = (fgHex: string, opacity: number, backdropHex: string): string =>
+    composite([channel(fgHex, 0), channel(fgHex, 1), channel(fgHex, 2), opacity], backdropHex);
+
+  const HUE_GROUND: Record<
+    string,
+    { container: string; kind: "text" | "graphic"; opacity?: number }
+  > = {
+    // green/private TEXT that clears AA 4.5:1 on the ground it renders on:
+    ".canvas-coverage": { container: ".canvas-app", kind: "text" }, // chrome frost: 4.97
+    ".l3-orphan-header": { container: ".l3-orphan-tray", kind: "text" }, // private-surface: 4.61
+    ".collation-pr-draft-btn": { container: ".collation-pr-draft-btn", kind: "text" }, // 4.61
+    ".collation-refine-nochange": { container: ".collation-item", kind: "text" }, // raised: 5.42
+    ".flag-deep-review:hover:not(:disabled)": { container: ".flag-deep-review", kind: "text" }, // surface-2: 4.76
+    '.collation-lane-count[data-lane="blue"]': { container: ".collation-canvas", kind: "text" }, // win-bg: 5.11
+    '.context-manifest-send[data-digest-match="true"] span:nth-last-of-type(2)': {
+      container: ".context-manifest", // surface-2: 4.77; digest-match implies included, so never under the 0.72 dropped-row dim
+      kind: "text",
+    },
+    // private-surface: 4.61. Local rows are never read-only (smart-list.ts builds
+    // readOnly: false for kind "local"), so the 0.82 read-only dim cannot apply here.
+    ".trajectory-step.is-done": { container: '.smart-row[data-kind="local"]', kind: "text" },
+    ".settings-prov-item.on": { container: ".settings-panel", kind: "text" }, // raised: 5.40
+    ".settings-applied": { container: ".settings-panel", kind: "text" }, // raised: 5.40
+    // non-text green/private GRAPHICS (glyph marks — ◇ hand, lock, check), 3:1 floor:
+    ".cv-gutter": { container: ".code-view-scroll", kind: "graphic" },
+    ".cv-discuss": { container: ".code-view-scroll", kind: "graphic" },
+    ".collation-ask-glyph": { container: ".collation-ask", kind: "graphic" },
+    // The lock glyph survives the orphaned-cluster dim at 3.49 ≥ 3 (its TEXT siblings
+    // .conversation-head-title/.conversation-head-pill did not, and are inked).
+    ".conversation-head-lock": {
+      container: ".conversation-cluster, .conversation-general",
+      kind: "graphic",
+      opacity: 0.85,
+    },
+    ".ospec-task-check": { container: ".canvas-app", kind: "graphic" },
+    '.smart-row[data-kind="local"] .smart-row-lead': {
+      container: '.smart-row[data-kind="local"]',
+      kind: "graphic",
+    },
+  };
+
+  it("every green/private-TEXT rule is mapped to a rendered ground — coverage stays exhaustive", () => {
+    const discovered = [
+      ...new Set(allRules.filter((r) => greenText(r) || privateText(r)).map((r) => r.selector)),
+    ].sort();
+    // Control: the discovery is not vacuous — green/private text rules still exist.
+    expect(discovered.length).toBeGreaterThan(5);
+    // A new (or reverted-to-)green/private-text rule not in HUE_GROUND reddens here.
+    expect(discovered).toEqual(Object.keys(HUE_GROUND).sort());
+  });
+
+  it("each green/private selector clears its RENDERED-ground floor, dimmed where an ancestor opacity applies (light)", () => {
+    for (const [sel, { container, kind, opacity }] of Object.entries(HUE_GROUND)) {
+      const isGreen = allRules.some((r) => r.selector === sel && greenText(r));
+      // --private aliases --accent (no fourth hue), so the private hex is --accent’s.
+      let fg = hex(LIGHT, isGreen ? "--green" : "--accent");
+      let ground = groundHex(container);
+      if (opacity !== undefined) {
+        const backdrop = hex(LIGHT, "--surface");
+        fg = dimmed(fg, opacity, backdrop);
+        ground = dimmed(ground, opacity, backdrop);
+      }
+      const floor = kind === "graphic" ? 3 : 4.5;
+      expect(
+        contrast(fg, ground),
+        `${sel}: ${isGreen ? "green" : "private"} on ${container} ground ${ground}`,
+      ).toBeGreaterThanOrEqual(floor);
+    }
+  });
+
+  it("the green/private container grounds resolve to the expected tokens", () => {
+    expect(groundHex('.smart-row[data-kind="local"]')).toBe(hex(LIGHT, "--private-surface"));
+    expect(groundHex(".collation-item")).toBe(hex(LIGHT, "--raised"));
+    expect(groundHex(".code-view-scroll")).toBe(hex(LIGHT, "--code-bg"));
+    expect(groundHex(".l3-orphan-tray")).toBe(hex(LIGHT, "--private-surface"));
+    expect(groundHex(".collation-ask")).toBe(hex(LIGHT, "--private-surface"));
+  });
+
+  it("the ancestor dims are WHY the dimmed sites ink-ified: hue fails under them, ink does not", () => {
+    const surface = hex(LIGHT, "--surface");
+    const psurf = hex(LIGHT, "--private-surface");
+    // Orphaned conversation cluster (0.85): private text would land ~3.5:1 — below AA…
+    expect(
+      contrast(dimmed(hex(LIGHT, "--accent"), 0.85, surface), dimmed(psurf, 0.85, surface)),
+    ).toBeLessThan(4.5);
+    // …and the read-only smart row (0.82) drops green to ~3.65:1 — below AA…
+    expect(
+      contrast(dimmed(hex(LIGHT, "--green"), 0.82, surface), dimmed(surface, 0.82, surface)),
+    ).toBeLessThan(4.5);
+    // …while ink stays comfortably AA under both dims (the .conversation-head-title /
+    // .conversation-head-pill / .smart-row-ci.is-passing ink-ifications).
+    expect(
+      contrast(dimmed(hex(LIGHT, "--text"), 0.85, surface), dimmed(psurf, 0.85, surface)),
+    ).toBeGreaterThanOrEqual(4.5);
+    expect(
+      contrast(dimmed(hex(LIGHT, "--text"), 0.82, surface), dimmed(surface, 0.82, surface)),
+    ).toBeGreaterThanOrEqual(4.5);
   });
 });
 

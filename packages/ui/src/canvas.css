@@ -488,7 +488,9 @@
   font-size: 11px;
 }
 .disposition-btn.d-approve:hover {
-  color: var(--green);
+  color: var(
+    --text
+  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
   border-color: var(--green-line);
   background: var(--green-fill);
 }
@@ -499,7 +501,9 @@
 }
 .disposition-btn.d-comment:hover,
 .disposition-btn.d-question:hover {
-  color: var(--private);
+  color: var(
+    --text
+  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
   border-color: var(--private-line);
   background: var(--private-fill);
 }
@@ -603,7 +607,9 @@
   cursor: pointer;
 }
 .l3-btn.l3-accept:hover {
-  color: var(--green);
+  color: var(
+    --text
+  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
   border-color: var(--green-line);
   background: var(--green-fill);
 }
@@ -1217,7 +1223,9 @@
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--green);
+  color: var(
+    --text
+  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
 }
 .collation-refined-body {
   margin-top: 4px;
@@ -1402,7 +1410,9 @@
   margin-top: 9px;
 }
 .flag-concur {
-  color: var(--green);
+  color: var(
+    --text
+  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
   background: var(--green-fill);
   border: 1px solid var(--green-line);
   border-radius: var(--chip-radius);
@@ -1501,7 +1511,9 @@
   font: 600 11px / 1.2 var(--sans);
 }
 .flag-dual-full {
-  color: var(--green);
+  color: var(
+    --text
+  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
   background: var(--green-fill);
   border: 1px solid var(--green-line);
 }
@@ -1597,7 +1609,9 @@
   text-transform: uppercase;
 }
 .flag-verification-reproduced .flag-verification-label {
-  color: var(--green);
+  color: var(
+    --text
+  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
 }
 .flag-verification-inconclusive .flag-verification-label {
   color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
@@ -1636,7 +1650,9 @@
   text-transform: uppercase;
 }
 .flag-adjudication-supported .flag-adjudication-label {
-  color: var(--green);
+  color: var(
+    --text
+  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
 }
 .flag-adjudication-contradicted .flag-adjudication-label {
   color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
@@ -1689,7 +1705,9 @@
   color: var(--text-soft);
 }
 .ui-verification-ran .ui-verification-label {
-  color: var(--green);
+  color: var(
+    --text
+  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
 }
 .ui-verification-count {
   flex: none;
@@ -2044,7 +2062,9 @@
   font: 500 11px / 1.2 var(--mono);
 }
 .noise-judge-rule {
-  color: var(--green);
+  color: var(
+    --text
+  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
   background: var(--green-fill);
   border: 1px solid var(--green-line);
 }
@@ -2229,7 +2249,9 @@
   border-color: var(--private-line);
 }
 .disposition-cluster-btn.d-approve:hover {
-  color: var(--green);
+  color: var(
+    --text
+  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
   border-color: var(--green-line);
   background: var(--green-fill);
 }
@@ -2240,7 +2262,9 @@
 }
 .disposition-cluster-btn.d-comment:hover,
 .disposition-cluster-btn.d-question:hover {
-  color: var(--private);
+  color: var(
+    --text
+  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
   border-color: var(--private-line);
   background: var(--private-fill);
 }
@@ -2282,7 +2306,9 @@
   background: var(--surface-2);
 }
 .collation-item-lane[data-lane="blue"] {
-  color: var(--private);
+  color: var(
+    --text
+  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
   border-color: var(--private-line);
   background: var(--private-fill);
 }
@@ -2364,7 +2390,9 @@
   border-radius: var(--chip-radius);
   border: 1px solid var(--private-line);
   background: var(--private-fill);
-  color: var(--private);
+  color: var(
+    --text
+  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
   font: 700 10px / 1.4 var(--sans);
   letter-spacing: 0.03em;
 }
@@ -2568,7 +2596,9 @@
   border: 1px solid var(--private-line);
   border-radius: var(--chip-radius);
   background: var(--private-fill);
-  color: var(--private);
+  color: var(
+    --text
+  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
   font: 600 12px / 1 var(--sans);
   padding: 5px 9px;
   cursor: pointer;
@@ -2591,7 +2621,9 @@
   border: 1px solid var(--private-line);
   border-radius: var(--chip-radius);
   background: var(--private-fill);
-  color: var(--private);
+  color: var(
+    --text
+  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
   font: 600 11px / 1 var(--sans);
   padding: 3px 8px;
   cursor: pointer;
@@ -2630,7 +2662,10 @@
   color: var(--private);
 }
 .conversation-head-title {
-  color: var(--private);
+  /* Ink, not private: .conversation-cluster.is-orphaned dims the cluster to 0.85,
+     dropping private on --private-surface to ~3.5:1 (AA fail). The private border
+     + left bar + surface carry the private read; ink stays AA even dimmed. */
+  color: var(--text);
   font: 700 10px / 1.2 var(--sans);
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -2648,7 +2683,8 @@
   padding: 1px 8px;
   border-radius: var(--chip-radius);
   border: 1px solid var(--private-line);
-  color: var(--private);
+  /* Ink, not private: dimmed to ~3.5:1 under .is-orphaned 0.85 (AA fail). */
+  color: var(--text);
   font: 600 11px / 1.4 var(--sans);
   letter-spacing: 0.02em;
 }
@@ -2685,7 +2721,9 @@
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  color: var(--private);
+  /* Ink, not private: the thread message ground is --surface-2 over --private-surface,
+     ~4.21:1 (AA fail). The seat is still told apart from "you" by the glyph. */
+  color: var(--text);
   font: 700 11px / 1.2 var(--sans);
   letter-spacing: 0.02em;
 }
@@ -2758,7 +2796,9 @@
   background: var(--private-fill);
 }
 .thread-promote-btn.is-subthread {
-  color: var(--private);
+  /* Ink, not private: renders on --surface-2 over --private-surface, ~4.21:1 (AA
+     fail); the --private-line border carries the sub-thread affordance. */
+  color: var(--text);
   border-color: var(--private-line);
 }
 
@@ -2816,7 +2856,9 @@
   border: 1px solid var(--private-line);
   border-radius: var(--radius);
   background: var(--surface-2);
-  color: var(--private);
+  /* Ink, not private: --surface-2 over a tinted parent drops private to ~4.2-4.4:1
+     (AA fail); the --private-line border carries the private affordance. */
+  color: var(--text);
   font-size: 13px;
   cursor: pointer;
 }
@@ -2872,7 +2914,9 @@
 }
 .conversation-pending {
   margin: 0;
-  color: var(--private);
+  /* Ink, not private: the 0.85 opacity drops private to ~3.87:1 (AA fail). Ink stays
+     >9:1 even dimmed, so the intentional pending de-emphasis is kept without failing AA. */
+  color: var(--text);
   font: 600 12px / 1.4 var(--sans);
   opacity: 0.85;
 }
@@ -3058,7 +3102,9 @@
   border: 1px solid var(--hairline);
 }
 .ospec-cap-new {
-  color: var(--green);
+  color: var(
+    --text
+  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
   background: var(--green-fill);
   border-color: var(--green-line);
 }
@@ -3144,7 +3190,9 @@
   color: var(--text-faint);
 }
 .ospec-op-added {
-  color: var(--green);
+  color: var(
+    --text
+  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
   background: var(--green-fill);
   border-color: var(--green-line);
 }
@@ -3250,7 +3298,9 @@
   font: 500 12px / 1.2 var(--sans);
   padding: 4px 8px;
   border-radius: 6px;
-  color: var(--green);
+  color: var(
+    --text
+  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
   background: var(--green-fill);
   border: 1px solid var(--green-line);
 }

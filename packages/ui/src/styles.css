@@ -1531,7 +1531,9 @@ button {
   min-inline-size: 116px;
 }
 .delta-account-status[data-status="addressed"] {
-  color: var(--green);
+  /* Ink, not green: renders on --surface-2 (~4.2-4.4:1, AA fail), same ground as the
+     inked partially-addressed sibling. The status WORD carries the addressed state. */
+  color: var(--text);
 }
 .delta-account-status[data-status="partially-addressed"] {
   /* Ink, not amber: this status label renders on --surface-2 (~3.7-4.3:1, AA fail). */
@@ -1695,7 +1697,9 @@ button {
   font-weight: 650;
 }
 .context-manifest-state[data-state="included"] {
-  color: var(--green);
+  /* Ink, not green: renders on --surface-2 (~4.2-4.4:1, AA fail), same ground as the
+     inked truncated sibling. The state WORD carries the included state. */
+  color: var(--text);
 }
 .context-manifest-state[data-state="truncated"] {
   /* Ink, not amber: this state label renders on --surface-2 (~3.7-4.3:1, AA fail). */
@@ -2101,7 +2105,9 @@ button {
   border-radius: var(--chip-radius);
   background: var(--private-fill);
   box-shadow: var(--private-glow);
-  color: var(--private);
+  color: var(
+    --text
+  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
   font-size: 13px;
   font-weight: 600;
 }
@@ -2257,7 +2263,9 @@ button {
   border: 1px solid var(--private-line);
   border-radius: var(--chip-radius);
   background: var(--private-fill);
-  color: var(--private);
+  color: var(
+    --text
+  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
   font-size: 12px;
 }
 
@@ -2982,7 +2990,9 @@ button {
   border: 1px solid var(--private-line);
   border-radius: 999px;
   background: var(--private-fill);
-  color: var(--private);
+  color: var(
+    --text
+  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
   font-size: 11px;
 }
 .smart-row-trajectory {
@@ -3022,7 +3032,9 @@ button {
   font: 700 11px / 1 var(--mono);
 }
 .smart-row-ci.is-passing {
-  color: var(--green);
+  /* Ink, not green: merged rows dim to 0.82 (data-read-only), dropping green to
+     ~3.65:1 (AA fail). The check glyph carries the passing state; ink stays AA dimmed. */
+  color: var(--text);
 }
 .smart-row-ci.is-failing {
   color: var(--del-glyph);
@@ -3047,7 +3059,9 @@ button {
 .smart-row-badge.is-read-only {
   border: 1px solid var(--green-line);
   background: var(--green-fill);
-  color: var(--green);
+  color: var(
+    --text
+  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
 }
 .smart-row-statelabel {
   font: 700 10px / 1.2 var(--sans);
@@ -3430,7 +3444,9 @@ button {
   padding: 2px 7px;
 }
 .settings-prov-set {
-  color: var(--private);
+  color: var(
+    --text
+  ) /* ink: private on --private-fill is <=4.45:1 (AA fail); state stays on fill+border+word */;
   background: var(--private-fill);
   border-color: var(--private-line);
 }
@@ -3608,7 +3624,9 @@ button {
   border-color: var(--accent-soft-line);
 }
 .settings-sev-low {
-  color: var(--green);
+  color: var(
+    --text
+  ) /* ink: green on --green-fill is <=4.49:1 (AA fail); state stays on fill+border+word */;
   background: var(--green-fill);
   border-color: var(--green-line);
 }
