@@ -21,7 +21,15 @@ name: Auto Release
 on:
   # Manual escape hatch: cut a release from current main without an app-source
   # push (e.g. after a build-infra fix that sits outside the trigger paths).
+  # `bump` selects the version step (patch default; minor/major for milestone
+  # releases like the app-server wave).
   workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump"
+        type: choice
+        default: patch
+        options: [patch, minor, major]
   push:
     branches: [main]
     # App source only — root package.json, docs/, and marketing are NOT triggers.
@@ -78,7 +86,11 @@ jobs:
 
             latest=$(git describe --tags --match "v*" --abbrev=0)
             IFS=. read -r maj min pat <<< "${latest#v}"
-            next="${maj}.${min}.$((pat + 1))"
+            case "${{ github.event.inputs.bump || 'patch' }}" in
+              major) next="$((maj + 1)).0.0" ;;
+              minor) next="${maj}.$((min + 1)).0" ;;
+              *)     next="${maj}.${min}.$((pat + 1))" ;;
+            esac
             tag="v${next}"
             echo "latest=${latest} -> next=${tag} (attempt ${attempt})"
 
