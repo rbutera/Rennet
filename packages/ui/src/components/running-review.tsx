@@ -21,6 +21,12 @@ export function formatElapsed(seconds: number): string {
  * The elapsed clock is marked `aria-hidden` so its per-second tick doesn't spam the
  * `role="status"` live region — the "Running the review…" heading is the announced content.
  */
+
+/** Past this many seconds the run gets one quiet, honest reassurance line. Purely
+ * elapsed-based — no stage claim, no heartbeat: a long run stays a long run, this only
+ * says large changesets can take a while so the wait doesn't read as a hang. */
+const STALLED_AFTER_SECONDS = 120;
+
 export function RunningReview() {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
@@ -29,7 +35,10 @@ export function RunningReview() {
     return () => clearInterval(id);
   }, []);
   return (
-    <section className="canvas-primer" role="status" aria-live="polite">
+    // `role="status"` already implies an `aria-live="polite"` region (no separate
+    // aria-live needed). The heading announces once; the elapsed clock is aria-hidden so
+    // its tick doesn't re-announce, and the stalled line below announces once when it appears.
+    <section className="canvas-primer" role="status">
       <p className="eyebrow">AI REVIEW</p>
       <h2>Running the review…</h2>
       <p>Reading the diff and drafting review angles.</p>
@@ -39,6 +48,11 @@ export function RunningReview() {
       <p className="canvas-primer-elapsed" data-testid="running-review-elapsed" aria-hidden="true">
         {formatElapsed(elapsed)} elapsed
       </p>
+      {elapsed >= STALLED_AFTER_SECONDS ? (
+        <p className="canvas-primer-stalled" data-testid="running-review-stalled">
+          Still working — large changesets can take several minutes.
+        </p>
+      ) : null}
     </section>
   );
 }
