@@ -34,6 +34,18 @@ describe("projection contract — the app consumes only the projected fixtures (
     expect(repoKeys).toEqual(["displayName", "relativePath", "repoKey"]);
   });
 
+  it("the projected review carries an additive OPTIONAL attention summary (#383)", () => {
+    const schema = fixture("projected-review");
+    const props = schema.properties as Record<string, { type?: string; properties?: object }>;
+    const attention = props.attention as
+      | { type?: string; properties?: Record<string, { type?: string }> }
+      | undefined;
+    expect(attention?.type).toBe("object");
+    expect(Object.keys(attention?.properties ?? {}).sort()).toEqual(["needsYou", "running"]);
+    // Additive ⇒ absent means "daemon predates attention": it must NOT be a required property.
+    expect((schema.required as string[]) ?? []).not.toContain("attention");
+  });
+
   const sample: ProjectedReviewLike = {
     id: "rev-1",
     repositoryRoot: { repoKey: "k", displayName: "acme", relativePath: "packages/api" },
@@ -75,5 +87,30 @@ describe("projection contract — the app consumes only the projected fixtures (
     // Unreachable ⇒ stale (paints from the replica).
     expect(needsYou.stale).toBe(true);
     expect(needsYou.reachable).toBe(false);
+  });
+
+  it("the daemon's attention summary is authoritative on a cold open (#383)", () => {
+    // Attention-capable daemon reports a mid-turn ask that no push has delivered and the
+    // flagged queue does not yet know: the projected `attention.needsYou` must pin the row.
+    const coldOpen = toReviewSummary(
+      { ...sample, attention: { needsYou: true, running: false } },
+      { daemonId: "d1", reachable: true, attentionReviewIds: new Set() },
+    );
+    expect(coldOpen.needsYou).toBe(true);
+
+    // `running` from the summary holds even without a pendingPatchsetId on the row.
+    const runningFromSummary = toReviewSummary(
+      { ...sample, attention: { needsYou: false, running: true } },
+      { daemonId: "d1", reachable: true, attentionReviewIds: new Set() },
+    );
+    expect(runningFromSummary.running).toBe(true);
+
+    // Absent summary (pre-attention daemon) ⇒ fall back to the flagged-queue derivation.
+    const legacy = toReviewSummary(sample, {
+      daemonId: "d1",
+      reachable: true,
+      attentionReviewIds: new Set(["rev-1"]),
+    });
+    expect(legacy.needsYou).toBe(true);
   });
 });

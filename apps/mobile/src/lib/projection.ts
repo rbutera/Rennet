@@ -21,6 +21,12 @@ export interface ProjectedReviewLike {
   readonly activePatchsetId: string;
   readonly pendingPatchsetId?: string;
   readonly status: "current" | "invalid";
+  /**
+   * COMPAT (#383): the daemon's attention summary, present when the daemon advertises the
+   * attention capability. Authoritative on a cold open (a mid-turn ask is in `needsYou` before
+   * any push arrives). Absent ⇒ a pre-attention daemon; the app derives from the flagged queue.
+   */
+  readonly attention?: { readonly needsYou: boolean; readonly running: boolean };
 }
 
 /**
@@ -61,19 +67,23 @@ export interface SummaryContext {
 }
 
 /**
- * Build a home-list row from a projected review. `running` is a re-review in flight
- * (`pendingPatchsetId`); `needsYou` is an active attention item on this review; `stale` is an
- * unreachable daemon or an invalidated review. This is the documented app-side derivation for
- * the fields the projection does not (yet) carry — see `review-list.ts`.
+ * Build a home-list row from a projected review. When the daemon carries an attention summary
+ * (#383), that is authoritative — a mid-turn ask lands in `needsYou` on a cold open, before any
+ * push. Absent (a pre-attention daemon), the app derives: `running` from a re-review in flight
+ * (`pendingPatchsetId`), `needsYou` from the flagged queue + live-event set. `stale` is always an
+ * unreachable daemon or an invalidated review.
  */
 export function toReviewSummary(review: ProjectedReviewLike, ctx: SummaryContext): ReviewSummary {
+  const derivedNeedsYou = ctx.attentionReviewIds.has(review.id);
   return {
     daemonId: ctx.daemonId,
     reviewId: review.id,
     repoDisplayName: review.repositoryRoot.displayName,
     updatedAt: latestPatchsetTime(review),
-    running: review.pendingPatchsetId !== undefined,
-    needsYou: ctx.attentionReviewIds.has(review.id),
+    // Attention summary wins when present; the flagged queue can still add needs-you the
+    // daemon hasn't raised (belt and suspenders), so OR them rather than replace.
+    running: review.attention?.running ?? review.pendingPatchsetId !== undefined,
+    needsYou: (review.attention?.needsYou ?? false) || derivedNeedsYou,
     reachable: ctx.reachable,
     stale: !ctx.reachable || review.status === "invalid",
   };
