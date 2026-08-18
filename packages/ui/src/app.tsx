@@ -217,8 +217,17 @@ function angleRailRows(input: {
   noise: NoiseReview | undefined;
 }): AngleRailRow[] {
   const { repositoryPresent, loadFailed, canvases, decisionsRun, flagged, noise } = input;
+  // A gone repository (#324/D6) makes the WHOLE live review unavailable — all five
+  // rows, not just the canvas-fed three: none of the fetches fire against a path
+  // that isn't there, so "Running" would be a lie for flagged/noise too.
+  if (!repositoryPresent) {
+    return CANVAS_ANGLES.map((angle) => ({
+      angle,
+      label: ANGLE_LABELS[angle],
+      state: "unavailable" as const,
+    }));
+  }
   const fromCanvas = (angle: CanvasAngle): Pick<AngleRailRow, "state" | "detail"> => {
-    if (!repositoryPresent) return { state: "unavailable" };
     // The Decisions runner can fail while the rest of the set lands (#137/#160):
     // say so, never an element count that dresses a crashed pass as a run.
     if (angle === "decisions" && decisionsRun?.status === "failed") return { state: "failed" };
@@ -663,11 +672,22 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // command boundary as the flagged input (a fixture stands behind it until the
   // noise-classification runner lands); undefined until it loads, so the lens shows
   // the honest empty state meanwhile.
-  const [noiseReview, setNoiseReview] = useState<NoiseReview | undefined>(undefined);
+  // Stamped with the active patchset the fetch ran FOR (the flagged row's P0-2
+  // binding pattern, applied UI-side because NoiseReview carries no boundary stamp):
+  // a regenerate activates a new patchset under the same reviewId, and the old
+  // groups are about the OLD diff. `boundNoiseReview` (below) drops a mismatched
+  // result so a superseded noise grouping never renders beside the new diff.
+  const [noiseReview, setNoiseReview] = useState<
+    { readonly patchsetId: string; readonly result: NoiseReview } | undefined
+  >(undefined);
   // The live load returned null (no harness / pipeline error) for THIS review, so
   // there is nothing real to show — the UI offers an honest error + retry rather
   // than silently standing on a demo.
-  const [loadFailed, setLoadFailed] = useState(false);
+  // Stamped with the canvasFetchKey the failed load was FOR (not a bare boolean):
+  // a regenerate changes the key without re-running the view-gated load effect, and
+  // the Angles rail must not paint the old attempt's "Failed" over a patchset that
+  // was never attempted. Truthy checks elsewhere are unchanged (a key is truthy).
+  const [loadFailed, setLoadFailed] = useState<string | false>(false);
   // Bumped by the retry affordance to re-run the live load for the same review
   // (e.g. after the user installs their Claude CLI and asks for the real review).
   const [reloadNonce, setReloadNonce] = useState(0);
@@ -969,6 +989,14 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // is a new set to enrich; a no-op freshness poll keeps the same string, so it does
   // NOT re-run the canvas effect. Null until a review is open.
   const canvasFetchKey = review ? `${review.id}::${review.activePatchsetId}` : null;
+  // The loaded set ↔ current identity binding (the rail's staleness guard):
+  // `fetchedCanvasKey` records the id+patchset the held canvases were enriched for
+  // (written only on success, before the state that triggers this render). A
+  // regenerate or a review switch changes `canvasFetchKey` in the SAME render,
+  // while the view-gated load effect may not re-fire on the Files view — so a
+  // mismatch means `canvases`/`decisionsRun`/`engine` describe a superseded diff
+  // and the Angles rail must render the honest pending state, never stale counts.
+  const canvasSetCurrent = fetchedCanvasKey.current === canvasFetchKey;
   const shownContextManifest =
     contextManifest?.fetchKey === canvasFetchKey ? contextManifest.manifest : undefined;
   // The delta re-review digest (issue #73 / M25): when a successor review carries a
@@ -1123,7 +1151,9 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // by `createInvocationBudget`, not withheld behind an on-lens ritual. Its own
   // try/catch means a flagged fetch failure never disturbs the canvas load.
   useEffect(() => {
-    if (!reviewId) return;
+    // A gone repository (#324/D6): the pipeline cannot run against a path that
+    // isn't there, so no doomed fetch fires — the rail says "Unavailable" instead.
+    if (!reviewId || !repositoryPresent) return;
     let cancelled = false;
     let adjudicationPoll: ReturnType<typeof setTimeout> | undefined;
     const pollAdjudication = (): void => {
@@ -1214,7 +1244,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
       cancelled = true;
       if (adjudicationPoll) clearTimeout(adjudicationPoll);
     };
-  }, [reviewId, activePatchsetId, bridge, deepReviewOn]);
+  }, [reviewId, activePatchsetId, repositoryPresent, bridge, deepReviewOn]);
 
   // The Spec angle (wireframes #9): parse-on-open of the change the reviewed patchset
   // selected, over the real command boundary. Deterministic — NO model spend. A missing
@@ -1278,10 +1308,17 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
   // The Noise lens (issue #34): fetch the low-signal churn grouped away for the open
   // review over the real command boundary. It spends a budgeted model invocation like
   // flagged; its own try/catch means a noise fetch failure never disturbs the
-  // canvas load or the flagged fetch.
+  // canvas load or the flagged fetch. Keyed on the active patchset like the flagged
+  // effect (P0-2): a regenerate clears and refetches, and the result is stamped with
+  // the patchset it ran for so a stale landing never binds to the new diff. A gone
+  // repository (#324/D6) fires no doomed fetch, exactly like the canvas load.
   useEffect(() => {
-    if (!reviewId) return;
+    if (!reviewId || !activePatchsetId || !repositoryPresent) return;
     let cancelled = false;
+    // Clear the prior result the instant this re-fires — the old groups are about
+    // the old patchset; the rail/lens show the honest in-flight state meanwhile.
+    setNoiseReview(undefined);
+    const fetchedFor = activePatchsetId;
     void bridge
       .invoke("noise.review", { reviewId })
       .then((result) => {
@@ -1294,11 +1331,14 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         if (cancelled) return;
         const review = result as Partial<NoiseReview> | undefined;
         if (review?.status === "ok" || review?.status === "failed") {
-          setNoiseReview(review as NoiseReview);
+          setNoiseReview({ patchsetId: fetchedFor, result: review as NoiseReview });
         } else {
           setNoiseReview({
-            status: "failed",
-            reason: "The noise review returned a response Rennet could not read.",
+            patchsetId: fetchedFor,
+            result: {
+              status: "failed",
+              reason: "The noise review returned a response Rennet could not read.",
+            },
           });
         }
       })
@@ -1307,14 +1347,24 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         // failure to CHECK, not a clean result — surface it honestly as `failed`.
         if (cancelled) return;
         setNoiseReview({
-          status: "failed",
-          reason: reason instanceof Error ? reason.message : String(reason),
+          patchsetId: fetchedFor,
+          result: {
+            status: "failed",
+            reason: reason instanceof Error ? reason.message : String(reason),
+          },
         });
       });
     return () => {
       cancelled = true;
     };
-  }, [reviewId, bridge]);
+  }, [reviewId, activePatchsetId, repositoryPresent, bridge]);
+  // The patchset-bound noise result (the flagged row's `flaggedForPatchset`
+  // pattern): a result stamped with a superseded patchset reads as undefined —
+  // the honest in-flight state — never as the new diff's grouping.
+  const boundNoiseReview =
+    noiseReview !== undefined && noiseReview.patchsetId === activePatchsetId
+      ? noiseReview.result
+      : undefined;
 
   // Live canvases (issue #54): when a real review is open and the Canvases view is
   // shown, fetch the engine-produced canvas set once and render the REAL AI review.
@@ -1348,7 +1398,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
         // Nothing real came back — surface it honestly rather than standing on a demo.
         // The key is NOT recorded, so the retry affordance (which bumps `reloadNonce`)
         // re-runs this and fetches again — a failed load never poisons the identity.
-        setLoadFailed(true);
+        setLoadFailed(canvasFetchKey);
         setContextManifest(undefined);
         return;
       }
@@ -2740,7 +2790,7 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
                       if (reviewId) setDeepReviewChoice({ reviewId, on: !deepReviewOn });
                     },
                   }}
-                  noiseReview={noiseReview}
+                  noiseReview={boundNoiseReview}
                   // The verify-ui screenshot loader (issue #183): each captured
                   // screenshot loads on demand over the `review.uiEvidence` command, so
                   // the bytes never ride the flagged payload. A not-found (moved store,
@@ -2899,15 +2949,21 @@ export function RennetApp({ bridge }: { bridge: RennetBridge }) {
           // The Angles rail reads the SAME state the Canvases view renders from
           // (critique P2): the loaded canvas set, the decisions-run status, and the
           // flagged/noise fetch results — so what it shows is what actually ran.
+          // Every canvas-derived input is bound to the CURRENT review identity
+          // (`canvasSetCurrent`, and the key-stamped `loadFailed`): a regenerate or
+          // review switch on the Files view renders the honest pending state, never
+          // the superseded set's counts/fallback/failure. The flagged/noise rows
+          // are patchset-bound by their own machinery (`boundFlaggedReview` /
+          // `boundNoiseReview`).
           angleRail={angleRailRows({
             repositoryPresent,
-            loadFailed,
-            canvases: liveLoaded ? canvases : null,
-            decisionsRun,
+            loadFailed: loadFailed !== false && loadFailed === canvasFetchKey,
+            canvases: canvasSetCurrent && liveLoaded ? canvases : null,
+            decisionsRun: canvasSetCurrent ? decisionsRun : undefined,
             flagged: boundFlaggedReview,
-            noise: noiseReview,
+            noise: boundNoiseReview,
           })}
-          outlineFallback={liveLoaded && engine?.aiReview === false}
+          outlineFallback={canvasSetCurrent && liveLoaded && engine?.aiReview === false}
           onOpenAngle={(angle) => {
             viewStore.getState().setAngle(angle);
             setView("canvases");
