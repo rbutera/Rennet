@@ -38,8 +38,8 @@
 
 ## 7. Docs (same change)
 
-- [ ] 7.1 New `using/guide/remote-access.md`: pairing walkthrough, Tailscale setup, what a remote client sees, revocation. Registered in the sidebar (Starlight fails on unregistered pages).
-- [ ] 7.2 `contracts-and-rulings.md`: R19 marked implemented; "still open" remote item closed. `architecture-contracts.md` remote row updated.
-- [ ] 7.3 "No *hosted* backend" copy sweep: `using/guide/getting-started.md`, `using/guide/reviewing-a-github-pr.md`, `developing/concepts/collation-and-signing.md`, `developing/reference/dependency-standard.md`.
-- [ ] 7.4 `protocol-compatibility.md`: new frames + `features.serverRequests` + `hello.deviceToken` documented.
-- [ ] 7.5 QR dependency (if added) recorded in the Dependency Standard.
+- [x] 7.1 New `using/guide/remote-access.md`: pairing walkthrough, Tailscale setup, what a remote client sees, revocation. Registered in the sidebar (Starlight fails on unregistered pages).
+- [x] 7.2 `contracts-and-rulings.md`: R19 marked implemented; "still open" remote item closed. `architecture-contracts.md` remote row updated.
+- [x] 7.3 "No *hosted* backend" copy sweep: `using/guide/getting-started.md`, `using/guide/reviewing-a-github-pr.md`, `developing/concepts/collation-and-signing.md`, `developing/reference/dependency-standard.md`.
+- [x] 7.4 `protocol-compatibility.md`: new frames + `features.serverRequests` + `hello.deviceToken` documented.
+- [x] 7.5 QR dependency (if added) recorded in the Dependency Standard.
