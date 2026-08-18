@@ -1,4 +1,5 @@
 import type { CanvasAngle } from "@rennet/types";
+import { type KeyboardEvent, useRef } from "react";
 import { CANVAS_LENSES } from "../canvas/logic";
 import type { Scheme } from "../canvas/store";
 
@@ -31,16 +32,55 @@ export function LensSwitcher({
   onToggleOverlay(): void;
   onToggleScheme(): void;
 }) {
+  // Roving tabindex + arrow-key movement (WAI-ARIA tabs pattern). The role=tablist /
+  // role=tab markup announces a tab widget, so the keyboard must operate it as one:
+  // exactly one tab is in the tab order (the active one), and Arrow/Home/End move
+  // between tabs with focus following selection. Click and the app-level [ ] cycle
+  // are unchanged — this only adds the movement the tab semantics already promise.
+  const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const moveTo = (index: number) => {
+    const count = CANVAS_LENSES.length;
+    const wrapped = ((index % count) + count) % count;
+    const lens = CANVAS_LENSES[wrapped];
+    if (lens === undefined) return;
+    onSelectAngle(lens);
+    tabRefs.current[wrapped]?.focus();
+  };
+  const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    switch (event.key) {
+      case "ArrowRight":
+        event.preventDefault();
+        moveTo(index + 1);
+        break;
+      case "ArrowLeft":
+        event.preventDefault();
+        moveTo(index - 1);
+        break;
+      case "Home":
+        event.preventDefault();
+        moveTo(0);
+        break;
+      case "End":
+        event.preventDefault();
+        moveTo(CANVAS_LENSES.length - 1);
+        break;
+    }
+  };
   return (
     <nav className="lens-switcher" aria-label="Review lenses">
       <div className="lens-tabs" role="tablist" aria-label="Canvases">
-        {CANVAS_LENSES.map((candidate) => (
+        {CANVAS_LENSES.map((candidate, index) => (
           <button
             type="button"
             role="tab"
             key={candidate}
+            ref={(node) => {
+              tabRefs.current[index] = node;
+            }}
+            tabIndex={candidate === angle ? 0 : -1}
             aria-selected={candidate === angle}
             className={`lens-tab ${candidate === angle ? "is-active" : ""}`}
+            onKeyDown={(event) => onTabKeyDown(event, index)}
             onClick={() => onSelectAngle(candidate)}
           >
             {ANGLE_LABELS[candidate]}
