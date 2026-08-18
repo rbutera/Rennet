@@ -131,6 +131,22 @@ describe("session frames", () => {
   });
 
   // 2.5
+  it("rejects an attentionEvent whose payload does not match its event (#383 batch)", () => {
+    // `raised` must carry its item…
+    expect(() => parseSessionFrame({ type: "attentionEvent", event: "raised" })).toThrow();
+    // …and must NOT smuggle clearedIds.
+    expect(() =>
+      parseSessionFrame({ ...attentionEvent, clearedIds: ["x"] }),
+    ).toThrow();
+    // `cleared` needs a non-empty id list and no item.
+    expect(() =>
+      parseSessionFrame({ type: "attentionEvent", event: "cleared", clearedIds: [] }),
+    ).toThrow();
+    expect(
+      parseSessionFrame({ type: "attentionEvent", event: "cleared", clearedIds: ["a", "b"] }),
+    ).toMatchObject({ event: "cleared", clearedIds: ["a", "b"] });
+  });
+
   it("accepts both a known rpcError code and a novel string code", () => {
     expect(parseSessionFrame({ ...rpcError, code: "incompatible_protocol" })).toMatchObject({
       code: "incompatible_protocol",

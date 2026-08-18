@@ -197,13 +197,23 @@ export const attentionItemSchema = z.object({
 export type AttentionItem = z.infer<typeof attentionItemSchema>;
 
 /** Server → client: an attention item was raised, or one/more were cleared. */
-export const attentionEventFrameSchema = z.object({
-  type: z.literal("attentionEvent"),
-  /** `raised` carries `item`; `cleared` carries the ids that are no longer demanding attention. */
-  event: z.enum(["raised", "cleared"]),
-  item: attentionItemSchema.optional(),
-  clearedIds: z.array(z.string().min(1)).optional(),
-});
+export const attentionEventFrameSchema = z
+  .object({
+    type: z.literal("attentionEvent"),
+    /** `raised` carries `item`; `cleared` carries the ids that are no longer demanding attention. */
+    event: z.enum(["raised", "cleared"]),
+    item: attentionItemSchema.optional(),
+    clearedIds: z.array(z.string().min(1)).optional(),
+  })
+  // A `raised` frame MUST carry its item and a `cleared` frame MUST carry a non-empty id list —
+  // the payload each arm reads. Guards a malformed peer from a half-formed attention update.
+  .refine(
+    (f) =>
+      f.event === "raised"
+        ? f.item !== undefined && f.clearedIds === undefined
+        : f.clearedIds !== undefined && f.clearedIds.length > 0 && f.item === undefined,
+    { message: "attentionEvent: `raised` requires `item`; `cleared` requires non-empty `clearedIds`" },
+  );
 
 // ── The union + parser ───────────────────────────────────────────────────────
 

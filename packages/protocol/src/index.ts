@@ -2724,14 +2724,20 @@ export const commandDefinitions = {
   // token is set/replaced for THIS connection's authenticated device. Revoking a device's
   // pairing deletes its push token too, so a revoked device is silently un-pushable.
   "device.registerPush": {
-    input: z.object({
-      /** The Expo/native push token, or omitted with `remove: true` to clear it. */
-      pushToken: z.string().min(1).optional(),
-      /** The device platform, for the push service's routing. */
-      platform: z.enum(["ios", "android"]),
-      /** Clear the registered token instead of setting one (permission revoked on the phone). */
-      remove: z.boolean().optional(),
-    }),
+    input: z
+      .object({
+        /** The Expo/native push token, or omitted with `remove: true` to clear it. */
+        pushToken: z.string().min(1).optional(),
+        /** The device platform, for the push service's routing. */
+        platform: z.enum(["ios", "android"]),
+        /** Clear the registered token instead of setting one (permission revoked on the phone). */
+        remove: z.boolean().optional(),
+      })
+      // Token XOR remove: a set carries a token and no `remove`; a clear sets `remove` and no token.
+      // Neither (a no-op) and both (contradictory) are rejected at the boundary.
+      .refine((i) => (i.remove === true) !== (i.pushToken !== undefined), {
+        message: "device.registerPush: provide a pushToken to set, or remove:true to clear — not both",
+      }),
     output: z.object({ registered: z.boolean() }),
   },
   // ── Attention acknowledgment (issue #383 M1) — clear on view ────────────────
@@ -2742,10 +2748,16 @@ export const commandDefinitions = {
   // everywhere"). Additive and COMPAT-gated on the `attention` feature. Clearing by
   // `reviewId` clears every item on that review; `attentionId` clears exactly one.
   "attention.acknowledge": {
-    input: z.object({
-      reviewId: z.string().min(1).optional(),
-      attentionId: z.string().min(1).optional(),
-    }),
+    input: z
+      .object({
+        reviewId: z.string().min(1).optional(),
+        attentionId: z.string().min(1).optional(),
+      })
+      // A selector is required — an empty acknowledge would clear nothing (or, worse, invite a
+      // "clear all" reading). At least one of reviewId / attentionId must be present.
+      .refine((i) => i.reviewId !== undefined || i.attentionId !== undefined, {
+        message: "attention.acknowledge: provide a reviewId or an attentionId to clear",
+      }),
     output: z.object({ cleared: z.number().int().nonnegative() }),
   },
 } as const;
