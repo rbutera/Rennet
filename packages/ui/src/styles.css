@@ -1093,9 +1093,55 @@ button {
   color: var(--sheet-bg);
   background: var(--sheet-text);
   cursor: pointer;
+  /* Anchor + clip the hold-progress fill (critique P1-C) to the rounded button. */
+  position: relative;
+  overflow: hidden;
 }
 .publish-sheet-sign.is-arming {
   opacity: 0.72;
+}
+.publish-sheet-sign-label {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+/* The hold-progress fill (critique P1-C): an ink bar along the button's bottom edge that
+ * inks in 0→100% over exactly `holdToSignMs` (duration set inline on the element). It uses
+ * `currentColor` — the paper button's espresso ink — so it is high-contrast on the
+ * off-white face and reads on-theme: the signature inking in as the hold completes. */
+.publish-sheet-sign-fill {
+  position: absolute;
+  left: 0;
+  bottom: 0;
+  height: 3px;
+  width: 0;
+  background: currentColor;
+  animation-name: sign-hold-fill;
+  animation-timing-function: linear;
+  animation-fill-mode: forwards;
+  pointer-events: none;
+}
+@keyframes sign-hold-fill {
+  from {
+    width: 0;
+  }
+  to {
+    width: 100%;
+  }
+}
+/* Reduced motion: a discrete STEP fill (five jumps over the same budget), not a
+ * continuous slide — progress stays legible without continuous motion. */
+@media (prefers-reduced-motion: reduce) {
+  .publish-sheet-sign-fill {
+    animation-timing-function: steps(5, end);
+  }
+}
+.publish-sheet-sign-early {
+  margin: 0;
+  font-size: 12px;
+  color: var(--sheet-soft);
 }
 .publish-sheet-sign:disabled {
   color: var(--sheet-soft);
