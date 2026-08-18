@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const harness = vi.hoisted(() => {
   const { EventEmitter: Emitter } = require("node:events") as typeof import("node:events");
@@ -21,6 +21,7 @@ const { autoUpdaterMock, ipcHandlers, ipcListeners, windowSends } = harness;
 const updateElectronApp = harness.updateElectronApp;
 
 vi.mock("electron", () => ({
+  app: { getVersion: () => "0.0.0-test", quit: () => undefined },
   autoUpdater: harness.autoUpdaterMock,
   ipcMain: {
     handle: (channel: string, handler: (event: unknown) => unknown) =>
@@ -133,5 +134,65 @@ describe("startAutoUpdate wiring", () => {
     expect(() => startAutoUpdate(isTrusted, quietLogger)).not.toThrow();
     autoUpdaterMock.emit("error", new Error("still quiet"));
     expect(windowSends).toEqual([]);
+  });
+});
+
+describe("stagedNewerVersion", () => {
+  const { mkdtempSync, mkdirSync, rmSync } = require("node:fs") as typeof import("node:fs");
+  const { tmpdir } = require("node:os") as typeof import("node:os");
+  const { join } = require("node:path") as typeof import("node:path");
+  const roots: string[] = [];
+  function squirrelRoot(dirs: string[]): string {
+    const root = mkdtempSync(join(tmpdir(), "rennet-squirrel-"));
+    roots.push(root);
+    for (const dir of dirs) mkdirSync(join(root, dir));
+    return root;
+  }
+  afterEach(() => {
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  });
+
+  it("finds the newest staged sibling strictly above the running version", async () => {
+    const { stagedNewerVersion } = await import("./auto-update");
+    const root = squirrelRoot(["app-0.2.5", "app-0.2.6", "app-0.2.4", "packages"]);
+    expect(stagedNewerVersion(join(root, "app-0.2.5", "Rennet.exe"), "0.2.5", "win32")).toBe(
+      "0.2.6",
+    );
+  });
+
+  it("returns null with nothing newer, on non-Squirrel layouts, and off win32", async () => {
+    const { stagedNewerVersion } = await import("./auto-update");
+    const root = squirrelRoot(["app-0.2.5", "app-0.2.4"]);
+    const exe = join(root, "app-0.2.5", "Rennet.exe");
+    expect(stagedNewerVersion(exe, "0.2.5", "win32")).toBeNull();
+    expect(stagedNewerVersion(join(root, "dev-build", "Rennet.exe"), "0.2.5", "win32")).toBeNull();
+    expect(stagedNewerVersion(exe, "0.2.5", "darwin")).toBeNull();
+    expect(
+      stagedNewerVersion(join(root, "gone", "app-0.2.5", "x.exe"), "0.2.5", "win32"),
+    ).toBeNull();
+  });
+
+  it("compares numerically, not lexically", async () => {
+    const { stagedNewerVersion } = await import("./auto-update");
+    const root = squirrelRoot(["app-0.9.0", "app-0.10.0"]);
+    expect(stagedNewerVersion(join(root, "app-0.9.0", "Rennet.exe"), "0.9.0", "win32")).toBe(
+      "0.10.0",
+    );
+  });
+});
+
+describe("staged-at-boot seeding", () => {
+  it("seeds readiness from a detected staged update so the replay badges late renderers", () => {
+    startAutoUpdate(isTrusted, quietLogger, () => "0.2.6");
+    const replay = ipcHandlers.get(UPDATE_READY_CHANNEL);
+    if (!replay) throw new Error("replay handler not registered");
+    expect(replay(trusted)).toEqual({ version: "0.2.6" });
+  });
+
+  it("stays unseeded when nothing is staged", () => {
+    startAutoUpdate(isTrusted, quietLogger, () => null);
+    const replay = ipcHandlers.get(UPDATE_READY_CHANNEL);
+    if (!replay) throw new Error("replay handler not registered");
+    expect(replay(trusted)).toBeNull();
   });
 });
