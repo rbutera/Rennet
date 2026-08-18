@@ -208,6 +208,8 @@ export type {
   Connection,
   ConnectionFactory,
   ConnectionHostProps,
+  ConnectionState,
+  ConnectionStatus,
   ConnectionTarget,
 } from "./components/connection-host";
 export { ConnectionHost } from "./components/connection-host";

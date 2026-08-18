@@ -62,7 +62,11 @@ function createConnection(target: ConnectionTarget): Connection {
     onAskStream: supervisor.onAskStream.bind(supervisor),
     close: () => supervisor.close(),
   };
-  return { bridge, close: () => supervisor.close() };
+  return {
+    bridge,
+    subscribe: (listener) => supervisor.subscribe(listener),
+    close: () => supervisor.close(),
+  };
 }
 
 createRoot(root).render(

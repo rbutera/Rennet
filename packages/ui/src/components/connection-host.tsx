@@ -27,6 +27,18 @@ export interface ConnectionTarget {
 export type BridgeFactory = (target: ConnectionTarget) => RennetBridge & { close?(): void };
 
 /**
+ * Reachability the host renders truthfully (issue #383 M0). Structurally a subset of the
+ * client runtime's `ConnectionStatus` — declared here because `ui` may not import
+ * `@rennet/client`; the shell passes the supervisor's status straight through.
+ */
+export type ConnectionState = "idle" | "connecting" | "online" | "offline" | "error";
+export interface ConnectionStatus {
+  readonly state: ConnectionState;
+  /** The cause, present only when `state === "error"`. */
+  readonly error?: string;
+}
+
+/**
  * A live connection to a daemon (issue #383 M0): the `RennetBridge` the app drives plus a
  * `close`. Shells build this over a `ConnectionSupervisor` — the bridge is the supervisor's
  * own `invoke`/`onProgress`/`onAskStream` surface, so the resubscribe registry and the
@@ -34,6 +46,12 @@ export type BridgeFactory = (target: ConnectionTarget) => RennetBridge & { close
  */
 export interface Connection {
   readonly bridge: RennetBridge & { close?(): void };
+  /**
+   * Subscribe to reachability transitions (the supervisor's `subscribe`); fires immediately
+   * with the current status. Optional — the legacy `createBridge` path has no status, and
+   * the indicator then shows the plain connected label it always did.
+   */
+  subscribe?(listener: (status: ConnectionStatus) => void): () => void;
   close(): void;
 }
 
@@ -158,6 +176,34 @@ function parseHostPort(raw: string): { host: string; port?: number } | null {
   return endpoint;
 }
 
+/**
+ * The connection indicator's truthful announcement + dot state. A null status (legacy
+ * `createBridge` path, no reachability) reads as connected — the label it always had, so
+ * existing call sites are unchanged. Every string keeps "Switch daemon." (the switcher's
+ * accessible handle) and names the daemon; only `error` also carries its cause.
+ */
+function describeConnection(
+  label: string,
+  status: ConnectionStatus | null,
+): { announce: string; dotState: ConnectionState } {
+  const state: ConnectionState = status?.state ?? "online";
+  const suffix = "Switch daemon.";
+  switch (state) {
+    case "connecting":
+    case "idle":
+      return { announce: `Connecting to ${label}. ${suffix}`, dotState: "connecting" };
+    case "offline":
+      return { announce: `Offline from ${label}, reconnecting. ${suffix}`, dotState: "offline" };
+    case "error":
+      return {
+        announce: `Connection to ${label} failed: ${status?.error ?? "unknown error"}. ${suffix}`,
+        dotState: "error",
+      };
+    default:
+      return { announce: `Connected to ${label}. ${suffix}`, dotState: "online" };
+  }
+}
+
 export function ConnectionHost({
   createConnection,
   createBridge,
@@ -204,10 +250,18 @@ export function ConnectionHost({
     readonly target: ConnectionTarget;
     readonly bridge: Connection["bridge"];
   } | null>(null);
+  // null ⇒ the connection reports no status (legacy `createBridge` path): the indicator keeps
+  // its plain connected label. A supervisor-backed connection drives it through every state.
+  const [status, setStatus] = useState<ConnectionStatus | null>(null);
   useEffect(() => {
     const connection = makeConnection(activeTarget);
     setActiveBridge({ target: activeTarget, bridge: connection.bridge });
-    return () => connection.close();
+    setStatus(null);
+    const unsubscribe = connection.subscribe?.((next) => setStatus(next));
+    return () => {
+      unsubscribe?.();
+      connection.close();
+    };
   }, [activeTarget, makeConnection]);
   const bridge = activeBridge?.target === activeTarget ? activeBridge.bridge : null;
 
@@ -288,16 +342,22 @@ export function ConnectionHost({
   return (
     <div className="connection-host">
       <div className="connection-bar">
-        <button
-          type="button"
-          className="connection-indicator"
-          onClick={() => setSwitcherOpen((open) => !open)}
-          aria-expanded={switcherOpen}
-          aria-label={`Connected to ${activeTarget.label}. Switch daemon.`}
-        >
-          <span className="connection-dot" aria-hidden="true" />
-          <span className="connection-name">{activeTarget.label}</span>
-        </button>
+        {(() => {
+          const { announce, dotState } = describeConnection(activeTarget.label, status);
+          return (
+            <button
+              type="button"
+              className="connection-indicator"
+              data-state={dotState}
+              onClick={() => setSwitcherOpen((open) => !open)}
+              aria-expanded={switcherOpen}
+              aria-label={announce}
+            >
+              <span className="connection-dot" data-state={dotState} aria-hidden="true" />
+              <span className="connection-name">{activeTarget.label}</span>
+            </button>
+          );
+        })()}
         {switcherOpen ? (
           <div className="connection-switcher" role="menu">
             <ul className="connection-list">

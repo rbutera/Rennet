@@ -8,8 +8,13 @@
 import type { CommandName, RennetBridge } from "@rennet/protocol";
 import { StrictMode } from "react";
 import { describe, expect, it, type Mock, vi } from "vitest";
-import { mount, waitFor } from "../test/dom";
-import { ConnectionHost, type ConnectionTarget } from "./connection-host";
+import { act, mount, waitFor } from "../test/dom";
+import {
+  type Connection,
+  ConnectionHost,
+  type ConnectionStatus,
+  type ConnectionTarget,
+} from "./connection-host";
 
 const LOCAL: ConnectionTarget = { id: "local", label: "This machine", host: "127.0.0.1" };
 
@@ -164,6 +169,30 @@ describe("ConnectionHost (#381)", () => {
       ]);
     });
     expect(pairing.close).toHaveBeenCalled();
+  });
+
+  it("announces the connection state truthfully — offline, not 'Connected' (#383)", async () => {
+    let emit: ((status: ConnectionStatus) => void) | undefined;
+    const createConnection = (): Connection => ({
+      bridge: stubBridge(),
+      subscribe: (listener) => {
+        emit = listener;
+        listener({ state: "online" }); // starts connected
+        return () => undefined;
+      },
+      close: () => undefined,
+    });
+    const { getByLabelText, queryByLabelText } = mount(
+      <ConnectionHost createConnection={createConnection} defaultTarget={LOCAL} />,
+    );
+    // Online: the plain connected label (unchanged from the legacy path).
+    await waitFor(() => expect(getByLabelText(/Connected to This machine/)).toBeTruthy());
+    // Socket drops → the indicator says offline/reconnecting, never a false "Connected".
+    act(() => emit?.({ state: "offline" }));
+    await waitFor(() =>
+      expect(getByLabelText(/Offline from This machine, reconnecting/)).toBeTruthy(),
+    );
+    expect(queryByLabelText(/Connected to This machine/)).toBeNull();
   });
 
   it("degrades to the default when localStorage throws", () => {

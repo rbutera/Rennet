@@ -95,7 +95,11 @@ function createConnection(target: ConnectionTarget): Connection {
         onLifecycle: hooks.onLifecycle,
       }),
   });
-  return { bridge: composeBridge(supervisor, chooseDirectory), close: () => supervisor.close() };
+  return {
+    bridge: composeBridge(supervisor, chooseDirectory),
+    subscribe: (listener) => supervisor.subscribe(listener),
+    close: () => supervisor.close(),
+  };
 }
 
 createRoot(root).render(
