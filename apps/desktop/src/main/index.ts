@@ -175,7 +175,7 @@ app.whenReady().then(async () => {
   // Squirrel/Squirrel.Mac feed. Best-effort and self-silencing (see auto-update.ts):
   // on unsigned macOS it no-ops instead of crashing; on Windows it activates once
   // Squirrel artifacts ship in a release.
-  if (app.isPackaged) startAutoUpdate();
+  if (app.isPackaged) startAutoUpdate(isTrustedAppUrl);
   // The shell is a supervisor + client now (#379): the composition root runs in a DETACHED
   // daemon, not in-process. Find a healthy daemon for this data dir or spawn one, then dial
   // it exactly as phase 2 dialed the in-process listener. The daemon owns the Electron-free
