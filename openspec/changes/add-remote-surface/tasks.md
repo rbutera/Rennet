@@ -17,10 +17,10 @@
 ## 3. Server: pairing + connection classes + bind
 
 - [x] 3.1 Pairing store per design D5 (`~/.rennet/devices.json`, hashed tokens, sliding 30-day, atomic writes); mint codes in-memory (5-min TTL, single-use).
-- [ ] 3.2 Listener: classify connections at hello (loopback→private, else token→projected, else pairing-only); the projected class routes all frames through the projection codec; `features` gains `serverRequests: true`.
-- [ ] 3.3 Bind from `daemon.listen` config (default unchanged); host-header allowlist (403 pre-upgrade on mismatch) for non-loopback binds; `daemon.json` + `rennet status` reflect host+port.
-- [ ] 3.4 `askConnection()` + resolved-cleanup per D7, with disconnect rejection; tests.
-- [ ] 3.5 CLI: `rennet pair` (mint, print code + QR-as-ASCII or text), `rennet devices [--revoke <id>]`.
+- [x] 3.2 Listener: classify connections at hello (loopback→private, else token→projected, else pairing-only); the projected class routes all frames through the projection codec; `features` gains `serverRequests: true`.
+- [x] 3.3 Bind from `daemon.listen` config (default unchanged); host-header allowlist (403 pre-upgrade on mismatch) for non-loopback binds; `daemon.json` + `rennet status` reflect host+port.
+- [x] 3.4 `askConnection()` + resolved-cleanup per D7, with disconnect rejection; tests.
+- [x] 3.5 CLI: `rennet pair` (mint, print code + QR-as-ASCII or text), `rennet devices [--revoke <id>]`.
 
 ## 4. Client bridge
 

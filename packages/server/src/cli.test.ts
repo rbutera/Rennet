@@ -108,7 +108,7 @@ describe("rennet CLI ↔ real daemon lifecycle (#379)", () => {
     const running = await runBundledCli(["status", "--data-dir", dataDir]);
     expect(running.code).toBe(0);
     expect(running.stdout).toContain("running");
-    expect(running.stdout).toContain(`port ${claim.wsPort}`);
+    expect(running.stdout).toContain(`127.0.0.1:${claim.wsPort}`);
 
     // A command travels the same WS wire the desktop renderer uses.
     const bootstrap = await invokeOverWire(claim.wsPort, "app.bootstrap", {});

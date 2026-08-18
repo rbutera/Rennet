@@ -1,16 +1,22 @@
-// The loopback WebSocket transport (issue #378, app server wave phase 2). The
+// The WebSocket transport (issue #378, extended for the remote surface #380). The
 // server speaks the phase-0 session envelope (protocol/session.ts) as JSON text
-// frames over `127.0.0.1` on an ephemeral port. The layer is deliberately dumb:
-// parse a frame → route a `request` to the SAME in-process `dispatch` → serialize
-// the result. All behaviour lives in the server; the transport adds only requestId
-// correlation, the hello/serverInfo handshake, and progress/ask-stream fan-out.
+// frames. Loopback connections keep the PRIVATE contract byte-for-byte — parse a
+// frame → route a `request` to the SAME in-process `dispatch` → serialize the result.
 //
-// This replaces the bespoke `ipcMain.handle("rennet:invoke")` path: from this phase
-// the Electron renderer is client #1 of the real wire (see WsRennetBridge in
-// @rennet/client), so a transport bug is a desktop bug, caught immediately.
+// #380 adds three things, all confined to NON-loopback connections so the existing
+// desktop app is untouched:
+//   • Connection classes, decided once at `hello` (design D1): `private` (loopback,
+//     no token), `projected` (non-loopback + a valid device token — every frame runs
+//     through the R19 projection codec), or `pairing-only` (non-loopback, no/invalid
+//     token — may invoke ONLY `pairing.exchange`).
+//   • Opt-in bind beyond loopback (`daemon.listen`) with a Host-header allowlist
+//     (DNS-rebinding guard) that refuses a foreign Host before the WS upgrade.
+//   • Server-initiated request frames (wire support only): `askConnection()` asks one
+//     connection and cleans up on resolution or disconnect. No product flow uses it yet.
 
 import { randomUUID } from "node:crypto";
-import { createServer, type Server as HttpServer } from "node:http";
+import { createServer, type Server as HttpServer, type IncomingMessage } from "node:http";
+import { homedir } from "node:os";
 import type {
   CommandName,
   ProjectProcessEvent,
@@ -24,6 +30,14 @@ import {
 } from "@rennet/protocol";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
+import {
+  buildProjectionContext,
+  type ProjectionContext,
+  ProjectionResolveError,
+  projectCommandOutput,
+  projectProgressEvent,
+  resolveCommandInput,
+} from "./projection";
 
 /** The dispatch surface the transport routes to — the exact shape createDispatch returns. */
 type Dispatch = (
@@ -41,12 +55,28 @@ export interface WsListenerDeps {
   readonly dispatch: Dispatch;
   /** The server application's own version, surfaced in the `serverInfo` handshake frame. */
   readonly serverVersion: string;
+  /**
+   * Verify a presented device token → truthy for a paired device, null otherwise
+   * (issue #380). Absent ⇒ no device is ever paired, so every non-loopback
+   * connection is `pairing-only`. Loopback ignores it entirely.
+   */
+  readonly verifyDeviceToken?: (rawToken: string) => unknown;
+  /**
+   * Build the current R19 projection context (repo roots + home dir). Called per
+   * request/broadcast so a newly-added project is referenceable immediately. Absent
+   * ⇒ an empty context (only meaningful when nothing binds beyond loopback).
+   */
+  readonly projectionContext?: () => ProjectionContext;
+  /** Opt-in bind beyond loopback (design D6). Default: `127.0.0.1` on an ephemeral port. */
+  readonly listen?: { readonly host: string; readonly port?: number };
 }
 
 /** The daemon identity `GET /healthz` returns and a launcher probes before connecting (#379). */
 export const daemonIdentitySchema = z.object({
   pid: z.number().int().positive(),
   wsPort: z.number().int().positive(),
+  /** The bound host (#380). Optional/append-only: absent ⇒ loopback `127.0.0.1`. */
+  host: z.string().optional(),
   version: z.string(),
   protocolVersion: z.number().int().nonnegative(),
   minCompatibleProtocolVersion: z.number().int().nonnegative(),
@@ -55,10 +85,18 @@ export const daemonIdentitySchema = z.object({
 export type DaemonIdentity = z.infer<typeof daemonIdentitySchema>;
 
 export interface WsListener {
-  /** The ephemeral loopback port the listener bound; the desktop injects it into the renderer. */
+  /** The port the listener bound; the desktop injects it into the renderer. */
   readonly port: number;
-  /** Fan a rehydration/background progress event out to every connected socket (today's all-windows broadcast). */
+  /** The host the listener bound (`127.0.0.1` by default, or the configured `daemon.listen.host`). */
+  readonly host: string;
+  /** Fan a rehydration/background progress event out to every connected socket (projected per connection class). */
   broadcastProgress(commandId: string, event: ProjectProcessEvent): void;
+  /**
+   * Ask ONE connection a question and resolve with its answer (issue #380, wire only).
+   * Rejects if the connection is unknown or drops before answering. A `serverRequestResolved`
+   * frame is sent to the connection on resolution or rejection so it never shows a stale prompt.
+   */
+  askConnection(connectionId: string, kind: string, payload: unknown): Promise<unknown>;
   /** Close every socket and the HTTP listener. Resolves once the listener is fully down. */
   close(): Promise<void>;
 }
@@ -81,20 +119,67 @@ function salvageRequestId(raw: unknown): string {
   return "unknown";
 }
 
-/** Start the loopback WS listener bound to `127.0.0.1:0`; resolves once it is `listening`. */
+const LOOPBACK_ADDRESSES = new Set(["127.0.0.1", "::1", "::ffff:127.0.0.1"]);
+
+/** Is a socket's remote address the loopback interface? Loopback connections stay on the private contract. */
+function isLoopbackAddress(address: string | undefined): boolean {
+  if (!address) return false;
+  return LOOPBACK_ADDRESSES.has(address) || address.startsWith("127.");
+}
+
+/** The Host-header allowlist for a non-loopback bind: the configured host, its literals, and localhost. */
+function isHostAllowed(hostHeader: string | undefined, listenHost: string): boolean {
+  if (!hostHeader) return false;
+  // Strip the port; IPv6 literals arrive bracketed as `[::1]:port`.
+  const host = hostHeader.startsWith("[")
+    ? hostHeader.slice(1, hostHeader.indexOf("]"))
+    : (hostHeader.split(":")[0] ?? "");
+  const allowed = new Set([listenHost, "localhost", "127.0.0.1", "::1"]);
+  return allowed.has(host);
+}
+
+type ConnectionClass = "private" | "projected" | "pairing-only";
+
+interface ServerRequestPending {
+  readonly resolve: (payload: unknown) => void;
+  readonly reject: (error: Error) => void;
+}
+
+interface Connection {
+  readonly socket: WebSocket;
+  readonly connectionId: string;
+  helloReceived: boolean;
+  connectionClass: ConnectionClass;
+  /** Pending server→client asks on THIS connection, keyed by `serverRequestId`. */
+  readonly serverRequests: Map<string, ServerRequestPending>;
+}
+
+/** Start the WS listener. Binds `127.0.0.1:0` by default, or `deps.listen` when set; resolves once listening. */
 export async function startWsListener(deps: WsListenerDeps): Promise<WsListener> {
   const { dispatch, serverVersion } = deps;
-  const sockets = new Set<WebSocket>();
-  // `boundPort` is filled after `listen`; the healthz handler only runs once requests
-  // arrive (post-listen), so the closure always reads the real port.
+  const listenHost = deps.listen?.host ?? "127.0.0.1";
+  const listenPort = deps.listen?.port ?? 0;
+  const nonLoopbackBind = !isLoopbackAddress(listenHost) && listenHost !== "localhost";
+  const home = homedir();
+  const contextOf = (): ProjectionContext =>
+    deps.projectionContext?.() ?? buildProjectionContext([], home);
+
+  const connections = new Set<Connection>();
+  const byId = new Map<string, Connection>();
   let boundPort = 0;
-  // `GET /healthz` answers the launcher's liveness + protocol probe (#379). Non-upgrade
-  // HTTP requests land here; WS upgrades go to the WebSocketServer instead.
+
   const httpServer: HttpServer = createServer((req, res) => {
+    // For a non-loopback bind, refuse a foreign Host before doing anything (DNS-rebinding guard).
+    if (nonLoopbackBind && !isHostAllowed(req.headers.host, listenHost)) {
+      res.writeHead(403, { "content-type": "text/plain" });
+      res.end("forbidden host");
+      return;
+    }
     if (req.method === "GET" && (req.url === "/healthz" || req.url?.startsWith("/healthz?"))) {
       const identity: DaemonIdentity = {
         pid: process.pid,
         wsPort: boundPort,
+        host: listenHost,
         version: serverVersion,
         protocolVersion: PROTOCOL_VERSION,
         minCompatibleProtocolVersion: MIN_COMPATIBLE_PROTOCOL_VERSION,
@@ -106,45 +191,78 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     res.writeHead(404, { "content-type": "text/plain" });
     res.end("not found");
   });
-  const wss = new WebSocketServer({ server: httpServer });
+  const wss = new WebSocketServer({
+    server: httpServer,
+    // Refuse a foreign Host at the WS upgrade too (only enforced for a non-loopback bind).
+    verifyClient: nonLoopbackBind
+      ? (info: { req: IncomingMessage }) => isHostAllowed(info.req.headers.host, listenHost)
+      : undefined,
+  });
 
   const send = (socket: WebSocket, frame: SessionFrame): void => {
     if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(frame));
   };
 
-  wss.on("connection", (socket: WebSocket) => {
-    // Stable per-connection identity: the progress-replay dedup in createDispatch keys
-    // sinks on this id, so a socket that re-invokes replaces its own sink rather than
-    // stacking a second sender for the same live run.
+  wss.on("connection", (socket: WebSocket, req: IncomingMessage) => {
     const connectionId = randomUUID();
-    let helloReceived = false;
-    sockets.add(socket);
+    const loopback = isLoopbackAddress(req.socket.remoteAddress ?? undefined);
+    const connection: Connection = {
+      socket,
+      connectionId,
+      helloReceived: false,
+      connectionClass: "private",
+      serverRequests: new Map(),
+    };
+    connections.add(connection);
+    byId.set(connectionId, connection);
 
     const runRequest = async (
       requestId: string,
       command: CommandName,
       input: unknown,
     ): Promise<void> => {
-      // A command carrying a `commandId` streams live progress to THIS socket; a
-      // `reviewId` streams its conversation tokens. Same extraction the deleted IPC
-      // handler did — the transport binds the sinks, dispatch owns the behaviour.
-      const commandId = inputString(input, "commandId");
-      const reviewId = inputString(input, "reviewId");
+      const projected = connection.connectionClass === "projected";
+      const ctx = projected ? contextOf() : null;
+      let effectiveInput = input;
+      if (ctx) {
+        try {
+          effectiveInput = resolveCommandInput(command, input, ctx);
+        } catch (error) {
+          send(socket, {
+            type: "rpcError",
+            requestId,
+            code: "invalid_input",
+            message: error instanceof ProjectionResolveError ? error.message : String(error),
+          });
+          return;
+        }
+      }
+      const commandId = inputString(effectiveInput, "commandId");
+      const reviewId = inputString(effectiveInput, "reviewId");
       const emitProgress = commandId
         ? (event: ProjectProcessEvent): void =>
-            send(socket, { type: "progressEvent", commandId, event })
+            send(socket, {
+              type: "progressEvent",
+              commandId,
+              event: ctx ? projectProgressEvent(event, ctx) : event,
+            })
         : undefined;
+      // Ask-stream deltas are model-authored prose — NOT projected (R31/R32 honesty).
       const emitAskStream = reviewId
         ? (event: ReviewAskStreamEvent): void =>
             send(socket, { type: "askStreamEvent", reviewId, event })
         : undefined;
       try {
-        const output = await dispatch(command, input, {
+        const output = await dispatch(command, effectiveInput, {
           emitProgress,
           progressRecipientId: connectionId,
           emitAskStream,
         });
-        send(socket, { type: "response", requestId, output });
+        send(socket, {
+          type: "response",
+          requestId,
+          output: ctx ? projectCommandOutput(command, output, ctx) : output,
+        });
       } catch (error) {
         send(socket, {
           type: "rpcError",
@@ -167,18 +285,28 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
             });
             return;
           }
-          helloReceived = true;
+          // Classify ONCE (design D1): loopback → private; else a valid token → projected;
+          // else pairing-only (may invoke only `pairing.exchange`, so a revoked/absent
+          // token can still re-pair — pairing stays available).
+          if (loopback) {
+            connection.connectionClass = "private";
+          } else if (frame.deviceToken && deps.verifyDeviceToken?.(frame.deviceToken)) {
+            connection.connectionClass = "projected";
+          } else {
+            connection.connectionClass = "pairing-only";
+          }
+          connection.helloReceived = true;
           send(socket, {
             type: "serverInfo",
             version: serverVersion,
             protocolVersion: PROTOCOL_VERSION,
             minCompatibleProtocolVersion: MIN_COMPATIBLE_PROTOCOL_VERSION,
-            features: {},
+            features: { serverRequests: true },
           });
           return;
         }
         case "request": {
-          if (!helloReceived) {
+          if (!connection.helloReceived) {
             send(socket, {
               type: "rpcError",
               requestId: frame.requestId,
@@ -187,13 +315,36 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
             });
             return;
           }
-          // `command` passed the isCommandName refine in parseSessionFrame; the cast
-          // only narrows the branded type dispatch expects.
+          // A pairing-only connection may invoke exactly one command: the pairing exchange.
+          if (
+            connection.connectionClass === "pairing-only" &&
+            frame.command !== "pairing.exchange"
+          ) {
+            send(socket, {
+              type: "rpcError",
+              requestId: frame.requestId,
+              code: "invalid_input",
+              message: "this connection must pair first: only pairing.exchange is available",
+            });
+            return;
+          }
           void runRequest(frame.requestId, frame.command as CommandName, frame.input);
           return;
         }
-        // response/rpcError/progressEvent/askStreamEvent are server→client frames; a
-        // client sending one is protocol misuse — ignore, keep the connection open.
+        case "serverResponse": {
+          // The answer to a server→client ask (wire support only). Resolve + clean up.
+          const pending = connection.serverRequests.get(frame.serverRequestId);
+          if (pending) {
+            connection.serverRequests.delete(frame.serverRequestId);
+            send(socket, {
+              type: "serverRequestResolved",
+              serverRequestId: frame.serverRequestId,
+            });
+            pending.resolve(frame.payload);
+          }
+          return;
+        }
+        // response/rpcError/progress/askStream/serverRequest/resolved are server→client; ignore inbound.
         default:
           return;
       }
@@ -227,13 +378,22 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
       handleFrame(frame);
     });
 
-    socket.on("close", () => sockets.delete(socket));
-    socket.on("error", () => sockets.delete(socket));
+    const drop = (): void => {
+      connections.delete(connection);
+      byId.delete(connectionId);
+      // Reject any pending server→client asks — the connection is gone.
+      for (const [, pending] of connection.serverRequests) {
+        pending.reject(new Error("connection closed before answering"));
+      }
+      connection.serverRequests.clear();
+    };
+    socket.on("close", drop);
+    socket.on("error", drop);
   });
 
   await new Promise<void>((resolve, reject) => {
     httpServer.once("error", reject);
-    httpServer.listen(0, "127.0.0.1", () => {
+    httpServer.listen(listenPort, listenHost, () => {
       httpServer.removeListener("error", reject);
       resolve();
     });
@@ -243,25 +403,52 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
   if (!address || typeof address === "string") {
     throw new Error("WS listener bound without a numeric port");
   }
-  const port = address.port;
-  boundPort = port;
+  boundPort = address.port;
 
   const broadcastProgress = (commandId: string, event: ProjectProcessEvent): void => {
-    const payload = JSON.stringify({
+    // Serialize once per class: private sockets get the raw event, projected sockets the projection.
+    const rawPayload = JSON.stringify({
       type: "progressEvent",
       commandId,
       event,
     } satisfies SessionFrame);
-    for (const socket of sockets) {
-      if (socket.readyState === WebSocket.OPEN) socket.send(payload);
+    let projectedPayload: string | null = null;
+    for (const connection of connections) {
+      if (connection.socket.readyState !== WebSocket.OPEN) continue;
+      if (connection.connectionClass === "projected") {
+        if (projectedPayload === null) {
+          projectedPayload = JSON.stringify({
+            type: "progressEvent",
+            commandId,
+            event: projectProgressEvent(event, contextOf()),
+          } satisfies SessionFrame);
+        }
+        connection.socket.send(projectedPayload);
+      } else {
+        connection.socket.send(rawPayload);
+      }
     }
+  };
+
+  const askConnection = (
+    connectionId: string,
+    kind: string,
+    payload: unknown,
+  ): Promise<unknown> => {
+    const connection = byId.get(connectionId);
+    if (!connection) return Promise.reject(new Error(`no connection ${connectionId}`));
+    const serverRequestId = randomUUID();
+    return new Promise<unknown>((resolve, reject) => {
+      connection.serverRequests.set(serverRequestId, { resolve, reject });
+      send(connection.socket, { type: "serverRequest", serverRequestId, kind, payload });
+    });
   };
 
   const close = (): Promise<void> =>
     new Promise<void>((resolve) => {
-      for (const socket of sockets) socket.close();
+      for (const connection of connections) connection.socket.close();
       wss.close(() => httpServer.close(() => resolve()));
     });
 
-  return { port, broadcastProgress, close };
+  return { port: boundPort, host: listenHost, broadcastProgress, askConnection, close };
 }

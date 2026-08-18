@@ -9,6 +9,8 @@
 // protocol-compat or claim logic to drift.
 
 import { parseArgs } from "node:util";
+import { PROTOCOL_VERSION, parseSessionFrame } from "@rennet/protocol";
+import { WebSocket } from "ws";
 import { defaultDataDir, runDaemon } from "./daemon";
 import { readDaemonFile, removeDaemonFile } from "./daemon-file";
 import { findHealthyDaemon } from "./supervise";
@@ -42,6 +44,8 @@ const HELP = [
   "  rennet serve   [--data-dir <dir>]   run the daemon in the foreground",
   "  rennet status  [--data-dir <dir>]   report the daemon's health",
   "  rennet stop    [--data-dir <dir>]   stop the running daemon",
+  "  rennet pair    [--data-dir <dir>]   mint a device pairing code (5-minute TTL)",
+  "  rennet devices [--revoke <id>] [--data-dir <dir>]   list or revoke paired devices",
   "",
   "The data dir defaults to $RENNET_USER_DATA, then the platform user-data path.",
 ].join("\n");
@@ -57,7 +61,8 @@ export async function runCli(
   switch (subcommand) {
     case "serve":
     case "status":
-    case "stop": {
+    case "stop":
+    case "pair": {
       let dataDir: string;
       try {
         dataDir = parseDataDir(rest, env);
@@ -68,7 +73,26 @@ export async function runCli(
       }
       if (subcommand === "serve") return serve(dataDir, io, env, deps);
       if (subcommand === "status") return status(dataDir, io, deps);
+      if (subcommand === "pair") return pair(dataDir, io, deps);
       return stop(dataDir, io, deps);
+    }
+    case "devices": {
+      let parsed: { "data-dir"?: string; revoke?: string };
+      try {
+        parsed = parseArgs({
+          args: [...rest],
+          allowPositionals: false,
+          strict: true,
+          options: { "data-dir": { type: "string" }, revoke: { type: "string" } },
+        }).values;
+      } catch (error) {
+        io.err(`rennet devices: ${error instanceof Error ? error.message : String(error)}`);
+        io.err("Usage: rennet devices [--revoke <id>] [--data-dir <dir>]");
+        return 2;
+      }
+      const dataDir =
+        parsed["data-dir"] ?? env.RENNET_USER_DATA ?? defaultDataDir(process.platform, env);
+      return devices(dataDir, parsed.revoke, io, deps);
     }
     case "-h":
     case "--help":
@@ -113,7 +137,7 @@ async function serve(
   };
   const daemon = await runDaemon(config);
   io.out(
-    `rennet daemon listening on 127.0.0.1:${daemon.info.wsPort} (pid ${daemon.info.pid}, v${daemon.info.version})`,
+    `rennet daemon listening on ${daemon.info.host ?? "127.0.0.1"}:${daemon.info.wsPort} (pid ${daemon.info.pid}, v${daemon.info.version})`,
   );
   io.out(`data dir: ${config.dataDir}`);
   // Hold the process open: the WS listener + watchers keep the event loop alive, and the
@@ -128,7 +152,7 @@ async function status(dataDir: string, io: CliIo, deps: CliDeps): Promise<number
   switch (verdict.kind) {
     case "healthy":
       io.out(
-        `running (pid ${verdict.identity.pid}, port ${verdict.identity.wsPort}, v${verdict.identity.version}, protocol ${verdict.identity.protocolVersion})`,
+        `running (pid ${verdict.identity.pid}, ${verdict.identity.host ?? "127.0.0.1"}:${verdict.identity.wsPort}, v${verdict.identity.version}, protocol ${verdict.identity.protocolVersion})`,
       );
       return 0;
     case "incompatible":
@@ -189,4 +213,122 @@ async function stop(dataDir: string, io: CliIo, deps: CliDeps): Promise<number> 
   }
   io.err(`sent SIGTERM to pid ${claim.pid} but daemon.json is still present after 5s`);
   return 1;
+}
+
+/**
+ * Invoke ONE command on the running daemon over a short-lived loopback WS connection
+ * (issue #380). The CLI is a LOOPBACK client, so it is `private` — full contract, no
+ * token — even when the daemon also binds a remote interface. A daemon bound to a
+ * specific non-loopback host only (not `0.0.0.0`) is unreachable here; that is honest
+ * (local admin then happens over that interface). Resolves the command output, or
+ * throws on an rpcError / closed socket / timeout.
+ */
+async function cliInvoke(
+  dataDir: string,
+  deps: CliDeps,
+  command: string,
+  input: unknown,
+): Promise<unknown> {
+  const verdict = await deps.probe(dataDir);
+  if (verdict.kind !== "healthy") {
+    throw new Error(
+      verdict.kind === "absent"
+        ? "the daemon is not running (start it with `rennet serve`)"
+        : `daemon not usable: ${verdict.kind}`,
+    );
+  }
+  const url = `ws://127.0.0.1:${verdict.identity.wsPort}`;
+  return await new Promise<unknown>((resolve, reject) => {
+    const socket = new WebSocket(url);
+    const requestId = `cli-${Date.now()}`;
+    const timer = setTimeout(() => {
+      socket.close();
+      reject(new Error("timed out waiting for the daemon"));
+    }, 10_000);
+    const done = (fn: () => void): void => {
+      clearTimeout(timer);
+      socket.close();
+      fn();
+    };
+    socket.on("open", () => {
+      socket.send(
+        JSON.stringify({
+          type: "hello",
+          clientId: requestId,
+          clientType: "rennet-cli",
+          protocolVersion: PROTOCOL_VERSION,
+        }),
+      );
+    });
+    socket.on("message", (data) => {
+      let frame: ReturnType<typeof parseSessionFrame>;
+      try {
+        frame = parseSessionFrame(JSON.parse(data.toString()));
+      } catch {
+        return;
+      }
+      if (frame.type === "serverInfo") {
+        socket.send(JSON.stringify({ type: "request", requestId, command, input }));
+        return;
+      }
+      if (frame.type === "response" && frame.requestId === requestId) {
+        done(() => resolve(frame.output));
+        return;
+      }
+      if (frame.type === "rpcError" && frame.requestId === requestId) {
+        done(() => reject(new Error(frame.message)));
+      }
+    });
+    socket.on("error", (error) => done(() => reject(error)));
+    socket.on("close", () => {
+      clearTimeout(timer);
+    });
+  });
+}
+
+/** Mint a pairing code from the running daemon and print it. The code is single-use, 5-minute TTL. */
+async function pair(dataDir: string, io: CliIo, deps: CliDeps): Promise<number> {
+  try {
+    const output = (await cliInvoke(dataDir, deps, "pairing.mint", {})) as {
+      code: string;
+      expiresAt: string;
+    };
+    io.out(`pairing code: ${output.code}`);
+    io.out(`expires: ${output.expiresAt}`);
+    io.out("Enter this code on the device you are pairing. It works once, within 5 minutes.");
+    return 0;
+  } catch (error) {
+    io.err(`rennet pair: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
+}
+
+/** List paired devices, or revoke one by id. */
+async function devices(
+  dataDir: string,
+  revokeId: string | undefined,
+  io: CliIo,
+  deps: CliDeps,
+): Promise<number> {
+  try {
+    const command = revokeId ? "pairing.revokeDevice" : "pairing.listDevices";
+    const input = revokeId ? { deviceId: revokeId } : {};
+    const output = (await cliInvoke(dataDir, deps, command, input)) as {
+      devices: { deviceId: string; name: string; lastSeenAt: string; expiresAt: string }[];
+    };
+    if (revokeId) io.out(`revoked ${revokeId}`);
+    if (output.devices.length === 0) {
+      io.out("no paired devices");
+      return 0;
+    }
+    for (const device of output.devices) {
+      io.out(
+        `${device.deviceId}  ${device.name}  last seen ${device.lastSeenAt}  expires ${device.expiresAt}`,
+      );
+    }
+    return 0;
+  } catch (error) {
+    io.err(`rennet devices: ${error instanceof Error ? error.message : String(error)}`);
+    return 1;
+  }
 }

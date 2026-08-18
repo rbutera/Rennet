@@ -103,6 +103,7 @@ export async function runDaemon(
   const info: DaemonInfo = {
     pid: process.pid,
     wsPort: server.wsPort,
+    host: server.wsHost,
     protocolVersion: PROTOCOL_VERSION,
     version: config.serverVersion,
     startedAt: new Date().toISOString(),

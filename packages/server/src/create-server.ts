@@ -183,6 +183,7 @@ import {
   type ProactiveRehydration,
 } from "./proactive-rehydration";
 import { createProcessProject } from "./process-project";
+import { buildProjectionContext } from "./projection";
 import { createPublishConsentAuthority } from "./publish-consent-authority";
 import { createLiveRefinePort } from "./refine-comment-live";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
@@ -216,6 +217,8 @@ export interface RennetServer {
   readonly dispatch: ReturnType<typeof createDispatch>;
   /** The ephemeral loopback port the WS listener bound (#378); the desktop injects it into the renderer. */
   readonly wsPort: number;
+  /** The host the WS listener bound (`127.0.0.1` by default, or the configured `daemon.listen.host`, #380). */
+  readonly wsHost: string;
   /** Quiesce live turns, close the watcher, close rehydration, close the store, close the WS listener. Idempotent. */
   readonly shutdown: () => void;
 }
@@ -2178,6 +2181,22 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   wsListener = await startWsListener({
     dispatch,
     serverVersion: options.serverVersion ?? "0.0.0-dev",
+    // Non-loopback (remote) connections present a device token; verify it against the store.
+    verifyDeviceToken: (token) => pairingStore.verifyToken(token),
+    // The R19 projection context: every host root the server could name — the granted
+    // roots ∪ every stored project path — rebuilt per request so a new project is
+    // referenceable at once. Loopback connections never consult it.
+    projectionContext: () => {
+      const roots = new Set<string>(allowedRoots);
+      for (const project of projectStore.list()) {
+        roots.add(project.path);
+        roots.add(project.openPath);
+        for (const repoPath of project.includedRepoPaths ?? []) roots.add(repoPath);
+      }
+      return buildProjectionContext(roots, homedir());
+    },
+    // Opt-in bind beyond loopback (default stays 127.0.0.1:0).
+    listen: configStore.read().daemon?.listen,
   });
 
   let didShutdown = false;
@@ -2193,5 +2212,5 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     store?.close();
     void wsListener?.close();
   };
-  return { dispatch, shutdown, wsPort: wsListener.port };
+  return { dispatch, shutdown, wsPort: wsListener.port, wsHost: wsListener.host };
 }
