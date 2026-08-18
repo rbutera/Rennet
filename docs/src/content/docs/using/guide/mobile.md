@@ -8,8 +8,17 @@ desk. Your reviews still run on your machine — the phone is a remote control, 
 second place work happens. It pairs with any number of daemons, aggregates their
 reviews into one list, reads the whole review at phone width, and pushes you when
 something needs you. There is no Rennet backend: the phone reaches your daemon
-directly over your tailnet, and the only egress is the harness/provider egress your
-desktop already discloses.
+directly over your tailnet, and reading a review adds no egress beyond the
+harness/provider egress your desktop already discloses.
+
+One honest exception, if you turn notifications on: a push is not peer-to-peer.
+When your daemon has a review to notify you about, it posts the notification's
+content — its title and body (a repo name and a short line like "is ready to
+read") plus the deep-link — outbound to Expo's push service, which hands it to
+Apple's or Google's notification infrastructure to reach your phone. That is real
+third-party egress, and it carries the push's substance (never a host path or a
+token). Leave notification delivery off and none of that happens — the in-app
+event over your own tailnet is the only path.
 
 This is the phase 6 **M1** cut: pair, read, and be notified. Answering an ask,
 posting a review, and starting one from a shared PR link land in M2.

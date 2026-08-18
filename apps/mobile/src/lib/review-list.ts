@@ -3,10 +3,12 @@
 // list logic unit-tests without React Native. The screens build the `ReviewSummary` rows
 // from the R19 projection (see `projection.ts`) and hand them here for ordering.
 //
-// Note on `running`/`needsYou`: the projected review carries no such field yet (documented
-// gap, flagged to the team). `running` is derived app-side from a re-review in flight
-// (`pendingPatchsetId`), `needsYou` from active attention / the flagged queue — see
-// `projection.ts`. This module only orders whatever those predicates decided.
+// Note on `running`/`needsYou`: the projected review carries an additive `attention` summary
+// (`{ needsYou, running }`) sourced from the daemon's attention system (#383 ruling). When
+// present it is authoritative; against a pre-attention daemon the app falls back to deriving
+// `needsYou` from the flagged queue + live attention events (`running` defaults false — a
+// pre-attention daemon exposes no live-turn signal). See `projection.ts`. This module only
+// orders whatever those predicates decided.
 
 /** One review row across any daemon, ready to order. */
 export interface ReviewSummary {

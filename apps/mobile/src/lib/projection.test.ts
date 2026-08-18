@@ -70,13 +70,15 @@ describe("projection contract — the app consumes only the projected fixtures (
     expect(latestPatchsetTime(sample)).toBe(Date.parse("2026-08-17T00:00:00.000Z"));
   });
 
-  it("toReviewSummary derives running/needs-you/stale from projected + attention state", () => {
-    const running = toReviewSummary(
+  it("toReviewSummary derives needs-you/stale, and running is false without a summary", () => {
+    // A pre-attention daemon exposes no live-turn signal: pendingPatchsetId is staleness, so
+    // `running` is honestly false in the fallback (not derived from pendingPatchsetId).
+    const noSummary = toReviewSummary(
       { ...sample, pendingPatchsetId: "ps-3" },
       { daemonId: "d1", reachable: true, attentionReviewIds: new Set() },
     );
-    expect(running.running).toBe(true);
-    expect(running.needsYou).toBe(false);
+    expect(noSummary.running).toBe(false);
+    expect(noSummary.needsYou).toBe(false);
 
     const needsYou = toReviewSummary(sample, {
       daemonId: "d1",

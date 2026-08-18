@@ -69,9 +69,9 @@ export interface SummaryContext {
 /**
  * Build a home-list row from a projected review. When the daemon carries an attention summary
  * (#383), that is authoritative — a mid-turn ask lands in `needsYou` on a cold open, before any
- * push. Absent (a pre-attention daemon), the app derives: `running` from a re-review in flight
- * (`pendingPatchsetId`), `needsYou` from the flagged queue + live-event set. `stale` is always an
- * unreachable daemon or an invalidated review.
+ * push. Absent (a pre-attention daemon), the app derives `needsYou` from the flagged queue +
+ * live-event set, and `running` is honestly false (no live-turn signal is exposed). `stale` is
+ * always an unreachable daemon or an invalidated review.
  */
 export function toReviewSummary(review: ProjectedReviewLike, ctx: SummaryContext): ReviewSummary {
   // The daemon's attention summary is authoritative when present: it is the single source of
@@ -84,7 +84,10 @@ export function toReviewSummary(review: ProjectedReviewLike, ctx: SummaryContext
     reviewId: review.id,
     repoDisplayName: review.repositoryRoot.displayName,
     updatedAt: latestPatchsetTime(review),
-    running: attention ? attention.running : review.pendingPatchsetId !== undefined,
+    // `running` is a LIVE-TURN fact — only the daemon's attention summary carries it truthfully.
+    // A pre-attention daemon exposes no live-turn signal (`pendingPatchsetId` is staleness, not
+    // liveness), so the fallback is honestly false rather than a guess.
+    running: attention ? attention.running : false,
     needsYou: attention ? attention.needsYou : ctx.attentionReviewIds.has(review.id),
     reachable: ctx.reachable,
     stale: !ctx.reachable || review.status === "invalid",

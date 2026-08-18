@@ -85,7 +85,11 @@ paired daemon over Tailscale as a `projected` connection with a device token in 
 platform keychain, aggregates reviews across paired daemons, reads the whole review at
 phone width, and receives presence-aware attention pushes. It is a full peer within its
 locus (triage and read), not a reduced client; capabilities meaningless at the phone's
-seat (host filesystem, editor) are absent by *place*, never by permission.
+seat (host filesystem, editor) are absent by *place*, never by permission. Push
+delivery is the one path that leaves the tailnet: when enabled, the daemon posts a
+notification's content outbound to Expo's push service (then Apple/Google) — real
+third-party egress carrying the push's substance, disclosed in the mobile guide;
+reading over the tailnet adds none.
 
 ```mermaid
 flowchart LR
