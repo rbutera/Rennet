@@ -28,7 +28,7 @@ If you cannot tell which area a page belongs in, it is probably two pages.
   plainly and link the tracking issue or the openspec change.
 - Short sentences over long ones. Short paragraphs over walls.
 - Keep authorship honest. Models **surface**, **suggest**, **reconstruct**, or
-  **flag**. The reviewer **reviews**, **judges**, **approves**, and **signs**. Do
+  **flag**. The reviewer **reviews**, **judges**, **approves**, and **publishes**. Do
   not say Rennet “found a bug” or “approved” work on the user's behalf.
 - Prefer plain product language over AI clichés. Avoid “magic,” “slop,” and
   grand claims about intelligence; name the concrete input, output, or action.

@@ -8,6 +8,9 @@ import remarkMermaid from "./src/plugins/remark-mermaid.mjs";
 // via the local remark plugin (no headless browser).
 export default defineConfig({
   site: "https://docs.rennet.dev",
+  redirects: {
+    "/developing/concepts/collation-and-signing/": "/developing/concepts/collation-and-publishing/",
+  },
   markdown: {
     // The remark plugin replaces ```mermaid fences with inline SVG before Shiki
     // runs; excludeLangs is belt-and-suspenders so a stray fence is never sent
@@ -97,8 +100,8 @@ export default defineConfig({
                     link: "/developing/concepts/comment-refinement/",
                   },
                   {
-                    label: "Collation and signing",
-                    link: "/developing/concepts/collation-and-signing/",
+                    label: "Collation and publishing",
+                    link: "/developing/concepts/collation-and-publishing/",
                   },
                   { label: "Design doctrine", link: "/developing/concepts/design-doctrine/" },
                 ],

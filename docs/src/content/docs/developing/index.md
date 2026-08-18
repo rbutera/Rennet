@@ -35,7 +35,7 @@ flowchart LR
    which model runs each job.
 6. [Code intelligence](/developing/concepts/code-intelligence/) explains the
    live definition and textual-reference index without pretending it is an LSP.
-7. [Collation and signing](/developing/concepts/collation-and-signing/) follows
+7. [Collation and publishing](/developing/concepts/collation-and-publishing/) follows
    private review state into the exact outbound artifact.
 
 ## Follow a subsystem
@@ -45,7 +45,7 @@ flowchart LR
 | Harness invocation or normalized frames | [Harness adapters](/developing/concepts/harness-adapters/) and [surfacing and routing](/developing/concepts/surfacing-and-routing/) |
 | Definitions, references, or symbol inspection | [Code intelligence](/developing/concepts/code-intelligence/) |
 | Coding-agent work after a review | [Agent handoff](/developing/concepts/agent-handoff/) and [delta re-review](/developing/concepts/delta-rereview-and-lineage/) |
-| Comment or draft behavior | [Comment refinement](/developing/concepts/comment-refinement/) and [collation and signing](/developing/concepts/collation-and-signing/) |
+| Comment or draft behavior | [Comment refinement](/developing/concepts/comment-refinement/) and [collation and publishing](/developing/concepts/collation-and-publishing/) |
 | Project discovery or settings | [Repository bootstrap](/developing/guide/repository-bootstrap/) and [settings and setup](/developing/guide/settings-and-setup/) |
 | UI behavior | [Design doctrine](/developing/concepts/design-doctrine/), [canvas model](/developing/concepts/canvas-model/), and [review lenses](/developing/concepts/review-lenses/) |
 | Dependencies or build tools | [Dependency standard](/developing/reference/dependency-standard/) |

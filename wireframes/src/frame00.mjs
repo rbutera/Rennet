@@ -80,7 +80,7 @@ export function frame00() {
     ${li(ic.harness, 'Harness / LLM', 'an installed coding agent')}
     ${li(ic.makepr, 'Make PR', 'the local review becomes a PR')}
     ${li(ic.resteer, 'Re-steer', 'hand changes back to the harness')}
-    ${li(ic.sign, 'Sign', 'the deliberate hold-to-sign act')}
+    ${li(ic.sign, 'Post', 'the deliberate hold-to-post act')}
     ${li(ic.pr, 'Pull request', 'one changeset source, one publish target')}
     ${li(ic.branch, 'Branch / worktree', 'a local checkout, becoming a PR')}
     ${li(ic.palette, 'Command palette', 'every action, from the keyboard')}

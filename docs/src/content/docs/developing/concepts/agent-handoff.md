@@ -14,8 +14,8 @@ Read [delta re-review and lineage](/developing/concepts/delta-rereview-and-linea
 and [the canvas model](/developing/concepts/canvas-model/) first.
 
 An own-branch review with an actionable disposition offers a "Hand off to agent"
-path alongside the PR-submission sign path. It opens a handoff paper that composes
-the bundle, previews it, and runs it. Signing your own-branch paper still pushes
+path alongside the PR-submission publish path. It opens a handoff preview that composes
+the bundle, previews it, and runs it. Publishing your own-branch preview still pushes
 the branch and opens the pull request; the handoff is the other action off the
 same own-branch destination.
 
@@ -31,7 +31,7 @@ flowchart TD
   diff --> successor["Create a successor patchset"]
   successor --> account["Build the delta account"]
   account --> rereview["Re-review what changed"]
-  rereview --> paper["Sign the PR submission"]
+  rereview --> publish["Publish the PR submission"]
 ```
 
 The machinery lives behind typed main-process commands: the mechanical bundle,
@@ -39,7 +39,7 @@ write-enabled runner, workspace checkpoints, successor capture, exact carry, del
 account, optional digest, and PR submission. `review.handoff.run` accepts and
 executes the exact composed bundle `review.handoff.compose` produced, bound by its
 digest; it does not rebuild a mechanical bundle from the raw dispositions. A pure
-stage-6 preview view-model (`handoffPreview`) and paper component render that
+stage-6 preview view-model (`handoffPreview`) and preview component render that
 composed bundle before it runs. The own-branch destination composes on surface
 entry, previews via `HandoffPaper`, and runs the exact previewed bundle from one
 action.
@@ -167,14 +167,14 @@ The successor gets a deterministic account of:
 A light model turn may turn that account into a one-line digest, but the facts
 remain model-free. If the digest cannot run, the account still renders.
 
-## Signing opens the pull request
+## Publishing opens the pull request
 
-After the delta is reviewed, the own-branch paper previews a pull request rather
+After the delta is reviewed, the own-branch preview shows a pull request rather
 than review comments. Its title and body start from the drafted values and remain
-editable. Signing sends those exact edited values through `publish.submitPr`.
+editable. Publishing sends those exact edited values through `publish.submitPr`.
 
 Desktop main resolves the named branch from the captured patchset, verifies that
-it is the branch shown on the paper, and pushes `refs/heads/<branch>` to the
+it is the branch shown on the preview, and pushes `refs/heads/<branch>` to the
 resolved github.com remote. It prefers `origin` and otherwise uses the first
 matching GitHub remote. `GitHubPrSubmissionAdapter` then opens the pull request.
 A detached HEAD cannot be submitted because there is no branch to name.
@@ -182,28 +182,28 @@ A detached HEAD cannot be submitted because there is no branch to name.
 ```mermaid
 sequenceDiagram
   actor You
-  participant Paper
+  participant Preview
   participant Main as Desktop main
   participant Git
   participant GitHub
 
-  You->>Paper: Edit title and body, then sign
-  Paper->>Main: publish.submitPr
+  You->>Preview: Edit title and body, then publish
+  Preview->>Main: publish.submitPr
   Main->>Main: Re-resolve review and named head branch
   Main->>Git: Push branch to origin
   Main->>GitHub: Find open PR for head + base
   alt Open PR already exists
-    GitHub-->>Paper: Reuse its URL and number
+    GitHub-->>Preview: Reuse its URL and number
   else No open PR
     Main->>GitHub: Create draft or ready PR
-    GitHub-->>Paper: New URL and number
+    GitHub-->>Preview: New URL and number
   end
 ```
 
 The adapter checks for an open PR from the same head and base before creating
 one. It also resolves GitHub's duplicate-PR response back to the existing PR, so
-a retry or a double sign does not open a second one. The successful URL appears
-on the paper.
+a retry or a double publish does not open a second one. The successful URL appears
+on the preview.
 
 ## Carry is deliberately conservative
 
@@ -272,14 +272,14 @@ regenerate carries no trace and computes identically.
 | Checkpoint and turn diff | `packages/adapters/src/checkpoint-store.ts` |
 | Command routing and successor capture | `apps/desktop/src/main/dispatch.ts` |
 | Delta facts | `packages/core/src/delta-account.ts` |
-| Draft, handoff paper, run action, and sign interaction | `packages/ui/src/app.tsx`, `packages/ui/src/components/handoff-paper.tsx` |
+| Draft, handoff preview, run action, and publish interaction | `packages/ui/src/app.tsx`, `packages/ui/src/components/handoff-paper.tsx` |
 
 The renderer never gets direct process authority. The own-branch destination
 composes the bundle on handoff-surface entry (`review.handoff.compose`), previews
-it on the stage-6 paper, and calls `review.handoff.run` with that exact bundle
+it on the stage-6 preview, and calls `review.handoff.run` with that exact bundle
 from one action. The desktop main process resolves the current review, verifies
 and runs the composed bundle, captures the result, and returns a validated output
-the paper renders truthfully.
+the preview renders truthfully.
 
 ## Current edge
 

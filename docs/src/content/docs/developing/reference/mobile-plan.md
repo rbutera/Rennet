@@ -44,7 +44,7 @@ them; the last column is what each screen demands from the shared
 | Full canvas (21) | `SequenceCanvas` (virtualized cohorts/findings/hunks, judged-cohort collapse) | `review.canvases` full read; `canvas.setCohortExpansion`; lazy hunk mounting |
 | Live turn (22) | `TurnStream` (virtualized typed timeline), `ReturnToTail`, `StopControl`, `Composer` (interrupt/queue) | `onAskStream` subscribe + **rebind on reconnect (#389)**, `review.reattach`, send-mode semantics |
 | Ask (22) | `AskCard` (chips + free text), context attachment row | `review.ask` reply composition (decision + redirection in one) |
-| Publish (23) | `PaperPreview`, `PostedOutcome` | `publish.requestConsent` → `publish.review`/`publish.submitPr` on the one tap; idempotent retry handling |
+| Publish (23) | `ReviewPreview`, `PostedOutcome` | `publish.requestConsent` → `publish.review`/`publish.submitPr` on the one tap; idempotent retry handling |
 | Pushes (24) | notification handlers, deep-link router, notification actions | push-token registration with the daemon; attention-event → route map; clear-on-view |
 
 ## The client-runtime package (extraction scope)

@@ -116,14 +116,14 @@ export function frame18() {
     <div class="tier"><span class="tlab">Root</span><div class="nodes">${node(ic.home, 'Projects list', 'root', 'root', true)}${node(ic.plus, 'Add project', 'child', 'child')}${node(ic.palette, 'Settings', 'orbital', 'overlay')}</div></div>
     <div class="tier"><span class="tlab">Project</span><div class="nodes">${node(ic.repo, 'Project detail', 'child', 'child', true)}<span class="dnode arrowto" style="font-family:var(--mono);font-size:11px">the review’s real home</span></div></div>
     <div class="tier"><span class="tlab">Review · lenses</span><div class="nodes">${node('<span style="color:#5a6069">&lt;&gt;</span>', 'Files', 'peer', 'peer')}${node(ic.spec, 'Spec', 'peer', 'peer')}${node(ic.sequence, 'Sequence', 'peer', 'peer')}${node(ic.decisions, 'Decisions', 'peer', 'peer')}${node(ic.flag, 'Flagged', 'peer', 'peer')}${node(ic.noise, 'Noise', 'peer', 'peer')}</div></div>
-    <div class="tier"><span class="tlab">Off the review</span><div class="nodes">${node(ic.decisions, 'Draft', 'child', 'child')}${arw}${node(ic.paper, 'Paper', 'child', 'child')}${node(ic.resteer, 'Re-review', 'child', 'child')}</div></div>
+    <div class="tier"><span class="tlab">Off the review</span><div class="nodes">${node(ic.decisions, 'Draft', 'child', 'child')}${arw}${node(ic.paper, 'Preview', 'child', 'child')}${node(ic.resteer, 'Re-review', 'child', 'child')}</div></div>
     <div class="tier"><span class="tlab">Transient</span><div class="nodes">${node(ic.discuss, 'Conversation / Ask', 'overlay', 'overlay')}${node(ic.inspector, 'Symbol inspector', 'overlay', 'overlay')}${node(ic.palette, 'Command palette', 'overlay', 'overlay')}</div></div>
   </div>`;
 
   // ── D · the law ──
   const law = `<div class="law">
     <div class="lawcard"><div class="lh">Lens <span class="tag peer">peer · tab</span></div><div class="lb">Files · Spec · Sequence · Decisions · Flagged · Noise are <b>tabs on one lens bar</b>. Switching one <b>never moves the crumb</b> — you have not gone anywhere.</div></div>
-    <div class="lawcard"><div class="lh">Surface <span class="tag child">child · crumb</span></div><div class="lb">Project → review → Draft → Paper each <b>extend the crumb</b> by a segment. Esc or the crumb ascends one. These are the moves back/forward record.</div></div>
+    <div class="lawcard"><div class="lh">Surface <span class="tag child">child · crumb</span></div><div class="lb">Project → review → Draft → Preview each <b>extend the crumb</b> by a segment. Esc or the crumb ascends one. These are the moves back/forward record.</div></div>
     <div class="lawcard"><div class="lh">Overlay <span class="tag overlay">neither</span></div><div class="lb">Conversation, inspector, palette, Settings-return: they <b>touch neither crumb nor history</b>. They open over where you are and close back to it.</div></div>
   </div>`;
 

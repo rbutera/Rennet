@@ -5,7 +5,7 @@ description: How Rennet's packages, desktop processes, review engine, and local 
 
 This page is the quickest way to get your bearings in the Rennet codebase. It
 shows the boundaries that exist on `main`, then follows one review from Git to a
-signed GitHub result and shows where the coding-agent handoff is meant to join.
+posted GitHub result and shows where the coding-agent handoff is meant to join.
 
 ## The short version
 
@@ -163,15 +163,15 @@ flowchart LR
   validate["Rennet Surfacing Protocol validation<br/>grounded documents only"]
   canvases["Five canvases<br/>Spec · Sequence · Decisions · Flagged · Noise"]
   draft["Collation draft<br/>editable dispositions"]
-  paper["Signed paper<br/>frozen outbound bytes"]
+  preview["Preview<br/>frozen outbound bytes"]
   review["GitHub review"]
   handoff["Coding-agent handoff<br/>write · test · recapture"]
   pr["Push branch + open PR"]
 
-  source --> capture --> floor --> models --> validate --> canvases --> draft --> paper
-  paper -->|someone else's PR| review
-  paper -->|your branch needs changes| handoff --> capture
-  paper -->|your branch is ready| pr
+  source --> capture --> floor --> models --> validate --> canvases --> draft --> preview
+  preview -->|someone else's PR| review
+  preview -->|your branch needs changes| handoff --> capture
+  preview -->|your branch is ready| pr
 ```
 
 The deterministic pass is the floor, not the final reading order. It guarantees

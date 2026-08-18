@@ -9,7 +9,7 @@ adopt a new forge, replace your coding harness, or accept a model's verdict.
 ## Does Rennet take review out of GitHub?
 
 No. When you review somebody else's pull request, Rennet publishes one normal
-GitHub review with the comments and verdict you signed. Your teammates keep
+GitHub review with the comments and verdict you posted. Your teammates keep
 working in GitHub; Rennet is the place where you make sense of the change before
 you post.
 
@@ -17,15 +17,15 @@ you post.
 flowchart LR
   pr[GitHub pull request] --> rennet[Rennet reading and review]
   rennet --> draft[Your editable draft]
-  draft --> sign[You sign]
-  sign --> review[Normal GitHub review]
+  draft --> post[You post]
+  post --> review[Normal GitHub review]
 ```
 
 ## Is this AI reviewing AI?
 
 The models are instruments, not reviewers. They help group the change, suggest
 an order, find evidence, and show disagreement. You decide what is correct,
-which comments survive, and which verdict gets signed.
+which comments survive, and which verdict gets posted.
 
 When two models disagree, Rennet keeps both answers visible. It does not invent
 a confident synthesis to make the disagreement disappear. It can add a **third
@@ -71,12 +71,12 @@ there needs the codex CLI (`npm i -g @openai/codex`).
 
 ## What happens on my own branch?
 
-You can shape and sign the pull-request title and body, then Rennet pushes the
+You can shape and publish the pull-request title and body, then Rennet pushes the
 named branch and opens that pull request.
 
 The coding-agent route is live end to end: you compose the handoff, preview it,
 run it, and get a focused re-review of exactly what the agent changed — including
-anything it changed beyond what you asked for. When you sign the finished paper,
+anything it changed beyond what you asked for. When you publish the finished preview,
 Rennet pushes the named branch and opens the previewed pull request.
 
 The one unfinished piece: when the agent reworks existing code in place, Rennet

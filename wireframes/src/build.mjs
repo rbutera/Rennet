@@ -33,7 +33,7 @@ const FRAMES = {
   '10-noise-lens': frameNoise,
   '11-symbol-inspector': frame10,
   '12-collation-draft': frame11,
-  '13-paper-sign': frame12,
+  '13-publish-preview': frame12,
   '14-questions': frame13,
   '15-settings': frame14,
   '16-command-palette': frame15,

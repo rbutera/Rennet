@@ -107,7 +107,7 @@ The actors have different jobs, not different levels of importance:
 | Deterministic engine | Build projections, carry current state, order elements, and recompute affected slices |
 | Model fleet | Emit structured analysis documents |
 | Orchestrator | Describe, focus, annotate, propose, retrieve, and ask about the review |
-| Reviewer | Read, dispose, edit the draft, and sign the outbound result |
+| Reviewer | Read, dispose, edit the draft, and publish the outbound result |
 
 The orchestrator reaches the review through `canvasOps@2`. Its useful core is a
 zoom ladder: `canvas.describe` gives counts, cohorts, or element summaries;
@@ -127,11 +127,11 @@ patchset and a fresh set of projections. Review state that still refers to the
 same code can carry forward through lineage; changed or ambiguous material
 reopens for reading.
 
-The [collation draft](/developing/concepts/collation-and-signing/) is a related
+The [collation draft](/developing/concepts/collation-and-publishing/) is a related
 canvas with a different substrate. Instead of projecting one angle over code, it
 projects the complete ordered disposition set across every angle. That is where
 the reviewer rewords, retypes, reorders, merges, splits, and withdraws items
-before signing.
+before publishing.
 
 ## What is live
 
