@@ -164,10 +164,11 @@ resolves a design system by walking up from the scanned file and stops at the pa
 
 The marketing page follows this reading order:
 
-1. Accountability headline and agentic-engineer stance.
+1. Accountability headline and agentic-engineer stance, with the full digestion sequence as the
+   hero proof.
 2. AI-expanded pull requests and the pressure on the human context window.
 3. The two user stories: own work before submission, then someone else’s pull request.
-4. Digestion plus conversation with the diff.
+4. Conversation with the diff.
 5. Existing Claude Code and Codex, independent dual review, and why disagreement matters.
 6. Deterministic repository discovery reinforced by evidence-backed model knowledge.
 7. Product evidence, lenses, local-first truth, objections, and action.
@@ -183,7 +184,10 @@ meaningful separation.
 
 The signature sequence is always complete:
 
-**raw change → related cohorts → human decisions → one review paper**
+**raw change → related changes → human decisions → one PR review, ready to post**
+
+Marketing copy uses this plain vocabulary; "cohorts" and the paper metaphor remain internal and
+desktop-product terms respectively.
 
 Represent it as a semantic ordered sequence with visible stage names and honest or clearly
 illustrative counts. On wide screens it may read left to right. On phones it becomes a vertical
