@@ -36,7 +36,34 @@ export interface WsRennetBridgeOptions {
    * localStorage / mobile Keychain in later phases) — the bridge just forwards it.
    */
   readonly deviceToken?: string;
+  /**
+   * Whether the bridge schedules its own capped-backoff reconnect on a dropped socket
+   * (default `true` — the historical behaviour every direct caller relies on). A
+   * {@link ConnectionSupervisor} constructs the bridge with `false` and owns the retry
+   * loop itself (issue #383 M0): it discards the dead bridge and makes a fresh one, so
+   * the bridge only ever drives ONE connection and reports its lifecycle.
+   */
+  readonly autoReconnect?: boolean;
+  /**
+   * Observe the single connection's lifecycle (issue #383 M0). Fires `online` when the
+   * handshake completes, `offline` when the socket closes (retryable), and `error` with
+   * a reason when the handshake fails (terminal — an incompatible protocol today, a
+   * rejected token when the server grows one). The supervisor drives its reachability
+   * state machine off these. Optional: a direct caller omits it.
+   */
+  readonly onLifecycle?: (event: BridgeLifecycleEvent) => void;
 }
+
+/**
+ * A single connection's lifecycle signal (issue #383 M0). `online` means the transport
+ * is open AND the protocol handshake completed; `offline` means the socket closed and a
+ * retry is warranted; `error` means the handshake was rejected and retrying the same way
+ * is futile (the supervisor surfaces it as a terminal `error` state).
+ */
+export type BridgeLifecycleEvent =
+  | { readonly kind: "online" }
+  | { readonly kind: "offline" }
+  | { readonly kind: "error"; readonly reason: string };
 
 /** The server's identity, captured from the `serverInfo` handshake frame (#380). */
 export interface CapturedServerInfo {
@@ -71,6 +98,8 @@ export class WsRennetBridge implements RennetBridge {
   readonly #initialBackoff: number;
   readonly #maxBackoff: number;
   readonly #deviceToken: string | undefined;
+  readonly #autoReconnect: boolean;
+  readonly #onLifecycle: ((event: BridgeLifecycleEvent) => void) | undefined;
   #serverInfo: CapturedServerInfo | null = null;
   #serverRequestHandler: ServerRequestHandler | null = null;
   /** In-flight server→client requests; a `serverRequestResolved` deletes an id so a late answer is dropped. */
@@ -92,6 +121,8 @@ export class WsRennetBridge implements RennetBridge {
     this.#maxBackoff = options.maxBackoffMs ?? 8000;
     this.#backoff = this.#initialBackoff;
     this.#deviceToken = options.deviceToken;
+    this.#autoReconnect = options.autoReconnect ?? true;
+    this.#onLifecycle = options.onLifecycle;
     this.#connect();
   }
 
@@ -224,7 +255,13 @@ export class WsRennetBridge implements RennetBridge {
       const error = new Error("connection lost");
       this.#rejectReady(socket, error);
       this.#rejectPending(error);
-      if (this.#handshakeFailure?.socket !== socket) this.#scheduleReconnect();
+      // A handshake failure already emitted `error` and must not be retried; every
+      // other close is a retryable `offline`. The supervisor (autoReconnect:false) makes
+      // its own fresh bridge, so we only self-reconnect for direct callers.
+      if (!this.#closed && this.#handshakeFailure?.socket !== socket) {
+        this.#onLifecycle?.({ kind: "offline" });
+        if (this.#autoReconnect) this.#scheduleReconnect();
+      }
     });
     socket.addEventListener("error", () => {
       // 'error' always precedes 'close'; reconnect is driven by 'close'. Swallow it so
@@ -271,6 +308,9 @@ export class WsRennetBridge implements RennetBridge {
     if (this.#readySocket === socket) this.#readySocket = null;
     this.#rejectReady(socket, error);
     this.#rejectPending(error);
+    // Terminal: a rejected handshake will be rejected the same way on every retry, so the
+    // supervisor surfaces this as `error` and stops (never a silent reconnect loop).
+    this.#onLifecycle?.({ kind: "error", reason });
     socket.close();
   }
 
@@ -299,6 +339,7 @@ export class WsRennetBridge implements RennetBridge {
         }
         this.#serverInfo = { version: frame.version, features: frame.features };
         this.#resolveReady(socket);
+        this.#onLifecycle?.({ kind: "online" });
         return;
       }
       case "response": {
