@@ -139,16 +139,22 @@ The one carried-over sub-item from the wave list is wave 7's live win32
 verification matrix on lancelot (hermetic tests pass; the on-hardware run is
 pending). Release engineering still waits on the human-only checklist below.
 
-### The app server wave (approved 2026-08-17)
+### The app server wave (approved 2026-08-17; phases 0–5 shipped 2026-08-18, v0.2.0)
 
 Rai approved a second wave list: refactor Rennet around a local app server /
 daemon so the desktop app, a full-fat browser client, a CLI, and later a
 native mobile app are all clients of one protocol. The
 [app server plan](/developing/reference/app-server-plan/) is the authority for
 this wave; the [research digest](/developing/reference/app-server-research/)
-is its evidence base. Phases run strictly in order (0 → 5); the mobile design
-pass ([#382](https://github.com/rbutera/rennet/issues/382)) can run in
-parallel from any point and gates only phase 6.
+is its evidence base. **Phases 0–5 are delivered** (PRs #385, #387, #388,
+#390, #391, #392; minor release v0.2.0 marks the wave); each phase's OpenSpec
+change is archived. What remains is the mobile arc: the design pass
+([#382](https://github.com/rbutera/rennet/issues/382)) gates phase 6
+([#383](https://github.com/rbutera/rennet/issues/383)). Known follow-ups:
+[#386](https://github.com/rbutera/rennet/issues/386) (pre-existing e2e
+failures on main) and
+[#389](https://github.com/rbutera/rennet/issues/389) (live ask-stream rebind
+after a mid-turn reconnect).
 
 0. [#376 — protocol handshake, envelope, and versioning
    discipline](https://github.com/rbutera/rennet/issues/376)
