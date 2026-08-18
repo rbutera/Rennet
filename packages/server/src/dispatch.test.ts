@@ -3982,7 +3982,21 @@ describe("createDispatch — device.registerPush + attention.acknowledge (#383 M
       { deviceId: "dev-1" },
     );
     expect(output).toEqual({ registered: true });
-    expect(pushTokens.set).toHaveBeenCalledWith("dev-1", "ExponentPushToken[abc]", "ios");
+    expect(pushTokens.set).toHaveBeenCalledWith("dev-1", "ExponentPushToken[abc]", "ios", []);
+  });
+
+  it("passes the device's muted families through to the store (#383 batch)", async () => {
+    const pushTokens = pushTokensSpy();
+    const { dispatch } = harness(undefined, {}, { pushTokens });
+    await dispatch(
+      "device.registerPush",
+      { pushToken: "t", platform: "ios", disabledFamilies: ["handoff-completed", "publish-ready"] },
+      { deviceId: "dev-1" },
+    );
+    expect(pushTokens.set).toHaveBeenCalledWith("dev-1", "t", "ios", [
+      "handoff-completed",
+      "publish-ready",
+    ]);
   });
 
   it("clears the token on remove (permission lost on the phone)", async () => {

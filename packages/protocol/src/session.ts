@@ -176,17 +176,21 @@ export const presenceFrameSchema = z.object({
 // `attention`: a daemon that predates the feature never sends it, and an older client
 // strips it. The taxonomy families and deep-link paths are the planner's; the frame is
 // their wire form. Deltas/asks keep their own frames — this is the attention layer only.
+/** The closed six-family attention taxonomy (exported so command inputs reuse the exact enum). */
+export const attentionFamilySchema = z.enum([
+  "ask-pending",
+  "review-finished",
+  "turn-failed",
+  "handoff-completed",
+  "publish-ready",
+  "processing-finished",
+]);
+export type AttentionFamily = z.infer<typeof attentionFamilySchema>;
+
 /** One active attention item, as the client pins and later clears it. */
 export const attentionItemSchema = z.object({
   id: z.string().min(1),
-  family: z.enum([
-    "ask-pending",
-    "review-finished",
-    "turn-failed",
-    "handoff-completed",
-    "publish-ready",
-    "processing-finished",
-  ]),
+  family: attentionFamilySchema,
   reviewId: z.string().min(1).optional(),
   projectId: z.string().min(1).optional(),
   /** Daemon-relative `rennet://…` deep-link the client lands on. */

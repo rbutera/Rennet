@@ -110,6 +110,7 @@ export function objectSchemaFor<T>() {
 }
 
 import type { AttentionEventFrame } from "./session";
+import { attentionFamilySchema } from "./session";
 
 export * from "./bodies";
 export * from "./rsp";
@@ -2734,6 +2735,13 @@ export const commandDefinitions = {
         platform: z.enum(["ios", "android"]),
         /** Clear the registered token instead of setting one (permission revoked on the phone). */
         remove: z.boolean().optional(),
+        /**
+         * COMPAT (attention, additive, #383 batch): attention families this device has muted in
+         * its notification settings — the daemon suppresses PUSHES for them to this device. A
+         * high-priority family (ask/review-finished/turn-failed) always reaches every client per
+         * spec, so muting one affects only the normal families. Absent ⇒ nothing muted.
+         */
+        disabledFamilies: z.array(attentionFamilySchema).optional(),
       })
       // Token XOR remove: a set carries a token and no `remove`; a clear sets `remove` and no token.
       // Neither (a no-op) and both (contradictory) are rejected at the boundary.

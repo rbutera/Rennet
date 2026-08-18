@@ -42,6 +42,15 @@ describe("PushTokenStore (attention-notifications: push tokens register per devi
     expect(store().get("nope")).toBeNull();
   });
 
+  it("persists and returns a device's muted families, defaulting to none (#383 batch)", () => {
+    const s = store();
+    s.set("dev-1", "tok", "ios", ["handoff-completed", "publish-ready"]);
+    expect(s.get("dev-1")?.disabledFamilies).toEqual(["handoff-completed", "publish-ready"]);
+    // A set with no families given defaults to an empty muted list.
+    s.set("dev-2", "tok", "ios");
+    expect(s.get("dev-2")?.disabledFamilies).toEqual([]);
+  });
+
   it("creates its directory user-only and the db file user-only (#383 batch)", () => {
     const base = mkdtempSync(join(tmpdir(), "rennet-push-"));
     const dbDir = join(base, ".rennet");

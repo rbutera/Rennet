@@ -20,6 +20,8 @@ export interface PushRegistration {
   readonly platform: "ios" | "android";
   /** Epoch ms of the last set/replace — for staleness triage, never a delivery decision. */
   readonly updatedAt: number;
+  /** Attention families this device muted (#383 batch); the planner suppresses their pushes. */
+  readonly disabledFamilies: readonly string[];
 }
 
 interface Row {
@@ -27,6 +29,7 @@ interface Row {
   token: string;
   platform: string;
   updated_at: number;
+  disabled_families: string | null;
 }
 
 /** The default push-token store path: `~/.rennet/push-tokens.sqlite`, sibling to `devices.json`. */
@@ -53,9 +56,16 @@ export class PushTokenStore {
          device_id TEXT PRIMARY KEY,
          token     TEXT NOT NULL,
          platform  TEXT NOT NULL,
-         updated_at INTEGER NOT NULL
+         updated_at INTEGER NOT NULL,
+         disabled_families TEXT
        )`,
     );
+    // Additive column for a store created before #383 batch — ignore the error if it already exists.
+    try {
+      this.database.exec("ALTER TABLE push_tokens ADD COLUMN disabled_families TEXT");
+    } catch {
+      // Column already present (fresh CREATE above, or a prior migration) — nothing to do.
+    }
     if (path !== ":memory:")
       for (const p of [path, `${path}-wal`, `${path}-shm`]) {
         try {
@@ -71,16 +81,23 @@ export class PushTokenStore {
   }
 
   /** Set (or replace) a device's push token. One row per device — a re-register overwrites. */
-  set(deviceId: string, token: string, platform: "ios" | "android"): void {
+  set(
+    deviceId: string,
+    token: string,
+    platform: "ios" | "android",
+    disabledFamilies: readonly string[] = [],
+  ): void {
+    const disabled = JSON.stringify(disabledFamilies);
     this.database
       .prepare(
-        `INSERT INTO push_tokens (device_id, token, platform, updated_at)
-         VALUES (?, ?, ?, ?)
+        `INSERT INTO push_tokens (device_id, token, platform, updated_at, disabled_families)
+         VALUES (?, ?, ?, ?, ?)
          ON CONFLICT(device_id) DO UPDATE SET token = excluded.token,
                                               platform = excluded.platform,
-                                              updated_at = excluded.updated_at`,
+                                              updated_at = excluded.updated_at,
+                                              disabled_families = excluded.disabled_families`,
       )
-      .run(deviceId, token, platform, this.now());
+      .run(deviceId, token, platform, this.now(), disabled);
   }
 
   /** Forget a device's push token (permission revoked on the phone, or the device unpaired). */
@@ -91,7 +108,7 @@ export class PushTokenStore {
   /** The device's registration, or null if it never registered (or was cleared). */
   get(deviceId: string): PushRegistration | null {
     const row = this.database
-      .prepare("SELECT device_id, token, platform, updated_at FROM push_tokens WHERE device_id = ?")
+      .prepare("SELECT device_id, token, platform, updated_at, disabled_families FROM push_tokens WHERE device_id = ?")
       .get(deviceId) as Row | undefined;
     return row ? toRegistration(row) : null;
   }
@@ -100,7 +117,7 @@ export class PushTokenStore {
   list(): PushRegistration[] {
     const rows = this.database
       .prepare(
-        "SELECT device_id, token, platform, updated_at FROM push_tokens ORDER BY updated_at DESC",
+        "SELECT device_id, token, platform, updated_at, disabled_families FROM push_tokens ORDER BY updated_at DESC",
       )
       .all() as unknown as Row[];
     return rows.map(toRegistration);
@@ -113,5 +130,17 @@ function toRegistration(row: Row): PushRegistration {
     token: row.token,
     platform: row.platform === "ios" ? "ios" : "android",
     updatedAt: row.updated_at,
+    disabledFamilies: parseDisabled(row.disabled_families),
   };
+}
+
+/** Parse the stored `disabled_families` JSON array, tolerating null/garbage as "none disabled". */
+function parseDisabled(raw: string | null): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((f): f is string => typeof f === "string") : [];
+  } catch {
+    return [];
+  }
 }

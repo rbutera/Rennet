@@ -7,11 +7,15 @@ import {
 } from "./attention-planner";
 import type { PushRegistration } from "./push-token-store";
 
-const phone = (deviceId: string): PushRegistration => ({
+const phone = (
+  deviceId: string,
+  disabledFamilies: readonly string[] = [],
+): PushRegistration => ({
   deviceId,
   token: `ExponentPushToken[${deviceId}]`,
   platform: "ios",
   updatedAt: 0,
+  disabledFamilies,
 });
 
 const focusedOn = (connectionId: string, deviceId: string, reviewId: string): ConnectedClient => ({
@@ -52,6 +56,22 @@ describe("planDelivery — presence-aware delivery (attention-notifications spec
       expect(plan.priority).toBe("high");
       expect(plan.push.map((r) => r.deviceId)).toEqual(["dev-phone"]);
     }
+  });
+
+  it("a device that muted a NORMAL family is not pushed for it (#383 batch)", () => {
+    // handoff-completed is normal; the phone muted it ⇒ no push.
+    const muted = phone("dev-phone", ["handoff-completed"]);
+    const plan = planDelivery({ family: "handoff-completed", reviewId: "rev-1" }, [], [muted]);
+    expect(plan.push).toEqual([]);
+    // …but a DIFFERENT normal family it did not mute still pushes.
+    const other = planDelivery({ family: "publish-ready", reviewId: "rev-1" }, [], [muted]);
+    expect(other.push.map((r) => r.deviceId)).toEqual(["dev-phone"]);
+  });
+
+  it("muting a HIGH-priority family does NOT suppress it — high always reaches (#383 batch)", () => {
+    const muted = phone("dev-phone", ["review-finished"]);
+    const plan = planDelivery({ family: "review-finished", reviewId: "rev-1" }, [], [muted]);
+    expect(plan.push.map((r) => r.deviceId)).toEqual(["dev-phone"]);
   });
 
   it("a silent family (processing-finished) posts no push — in-app only", () => {

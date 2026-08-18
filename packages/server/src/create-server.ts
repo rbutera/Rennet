@@ -1836,7 +1836,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
     // `device.registerPush` set/delete, keyed by the connection's authenticated device id.
     pushTokens: {
-      set: (deviceId, token, platform) => pushTokenStore.set(deviceId, token, platform),
+      set: (deviceId, token, platform, disabledFamilies) =>
+        pushTokenStore.set(deviceId, token, platform, disabledFamilies),
       delete: (deviceId) => pushTokenStore.delete(deviceId),
     },
     // `attention.acknowledge` clears + broadcasts through the live listener (late-bound).

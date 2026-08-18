@@ -100,7 +100,12 @@ export interface DispatchDeps {
    * a compliant client never calls it) and the handler rejects it.
    */
   readonly pushTokens?: {
-    set(deviceId: string, token: string, platform: "ios" | "android"): void;
+    set(
+      deviceId: string,
+      token: string,
+      platform: "ios" | "android",
+      disabledFamilies?: readonly string[],
+    ): void;
     delete(deviceId: string): void;
   };
   /**
@@ -1897,7 +1902,7 @@ export function createDispatch(
           deps.pushTokens.delete(deviceId);
           return parseCommandOutput(name, { registered: false });
         }
-        deps.pushTokens.set(deviceId, input.pushToken, input.platform);
+        deps.pushTokens.set(deviceId, input.pushToken, input.platform, input.disabledFamilies ?? []);
         return parseCommandOutput(name, { registered: true });
       }
       case "attention.acknowledge": {

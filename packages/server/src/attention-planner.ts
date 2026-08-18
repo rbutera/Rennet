@@ -170,10 +170,16 @@ export function planDelivery(
       if (client.deviceId) liveCoveredDevices.add(client.deviceId);
     }
   }
-  // A silent family never buzzes a phone; the focused sockets still get the in-app event.
+  // A silent family never buzzes a phone; the focused sockets still get the in-app event. A device
+  // that muted this family in its notification settings is skipped too (#383 batch) — EXCEPT a
+  // high-priority family, which always reaches every client per spec, mute or not.
   const push =
     priority === "silent"
       ? []
-      : registrations.filter((registration) => !liveCoveredDevices.has(registration.deviceId));
+      : registrations.filter(
+          (registration) =>
+            !liveCoveredDevices.has(registration.deviceId) &&
+            (priority === "high" || !registration.disabledFamilies?.includes(event.family)),
+        );
   return { live, push, priority };
 }
