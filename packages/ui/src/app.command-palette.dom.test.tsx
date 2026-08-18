@@ -67,14 +67,12 @@ function bridge(): RennetBridge {
 
 describe("RennetApp — ⌘K command palette", () => {
   it("opens on ⌘K and runs a command that switches the app to the Files view", async () => {
-    const { user, container, getByLabelText, getByText, queryByText } = mount(
+    const { user, container, getByLabelText, getByText } = mount(
       <RennetApp bridge={bridge()} />,
     );
 
     // Land on the workspace (the view toggle appears once a review is open).
     await waitFor(() => expect(getByText("Canvases")).toBeTruthy());
-    // The Files surface is not shown yet (default view is Canvases).
-    expect(queryByText("Changes")).toBeNull();
 
     // ⌘K from anywhere opens the palette (window-level listener).
     fireEvent.keyDown(window, { key: "k", metaKey: true });

@@ -740,6 +740,35 @@ button {
 .loading {
   color: var(--text-faint);
 }
+/* Compact AI-loading bar: shown above the diff while canvases load, so the
+ * reviewer sees the code immediately (wireframe #06: diff is the substrate). */
+.ai-loading-bar {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 28px;
+  padding: 0 20px;
+  overflow: hidden;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--accent-soft);
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.ai-loading-bar-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 35%;
+  height: 100%;
+  background: var(--accent);
+  opacity: 0.08;
+  animation: busy 1s ease-in-out infinite alternate;
+}
+.ai-loading-bar-label {
+  position: relative;
+}
 .error,
 .error-toast {
   color: var(--del-glyph);
