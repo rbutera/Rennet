@@ -1,0 +1,97 @@
+{
+  "type": "object",
+  "properties": {
+    "path": {
+      "type": "object",
+      "properties": {
+        "repoKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "relativePath": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repoKey",
+        "displayName"
+      ],
+      "additionalProperties": false
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "workspace",
+        "repo"
+      ]
+    },
+    "repos": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "type": "object",
+            "properties": {
+              "repoKey": {
+                "type": "string",
+                "minLength": 1
+              },
+              "displayName": {
+                "type": "string",
+                "minLength": 1
+              },
+              "relativePath": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "repoKey",
+              "displayName"
+            ],
+            "additionalProperties": false
+          },
+          "branches": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "remote": {
+            "type": "string"
+          },
+          "note": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "name",
+          "path",
+          "branches"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "primaryBranch": {
+      "type": "string",
+      "minLength": 1
+    },
+    "reconciliation": {
+      "type": "string"
+    }
+  },
+  "required": [
+    "path",
+    "kind",
+    "repos",
+    "primaryBranch"
+  ],
+  "additionalProperties": false
+}

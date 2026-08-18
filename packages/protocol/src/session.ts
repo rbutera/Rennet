@@ -28,6 +28,13 @@ export const helloFrameSchema = z.object({
   clientId: z.string().min(1),
   clientType: z.string().min(1),
   protocolVersion: z.number().int().positive(),
+  /**
+   * A paired device's long-lived bearer token (issue #380). Optional and
+   * append-only: a loopback client omits it (loopback needs no token), and an
+   * older decoder that predates this field strips it harmlessly. A non-loopback
+   * connection presents it so the listener can classify the connection `projected`.
+   */
+  deviceToken: z.string().min(1).optional(),
 });
 
 /** Server → client: the server's identity, protocol window, and feature flags. */
@@ -102,6 +109,37 @@ export const askStreamEventFrameSchema = z.object({
   event: z.lazy(() => reviewAskStreamEventSchema),
 });
 
+// ── Server-initiated requests (wire support only, issue #380) ────────────────
+
+// Server→client request/response/cleanup frames, advertised via
+// `serverInfo.features.serverRequests`. NO product flow consumes them this phase
+// (proposal §4): they pin the wire contract a future client's turn-asks build
+// against, so the shapes are additive-append-only from day one. The listener owns
+// correlation by `serverRequestId`; the client bridge answers with `serverResponse`;
+// `serverRequestResolved` tells a client to drop a still-pending prompt (turn ended
+// or the asker disconnected) so no client shows a stale question.
+
+/** Server → client: ask this connection something, correlated by `serverRequestId`. */
+export const serverRequestFrameSchema = z.object({
+  type: z.literal("serverRequest"),
+  serverRequestId: z.string().min(1),
+  kind: z.string().min(1),
+  payload: z.unknown(),
+});
+
+/** Client → server: the answer to a `serverRequest`, correlated by `serverRequestId`. */
+export const serverResponseFrameSchema = z.object({
+  type: z.literal("serverResponse"),
+  serverRequestId: z.string().min(1),
+  payload: z.unknown(),
+});
+
+/** Server → client: drop a still-pending `serverRequest` (resolved or asker gone). */
+export const serverRequestResolvedFrameSchema = z.object({
+  type: z.literal("serverRequestResolved"),
+  serverRequestId: z.string().min(1),
+});
+
 // ── The union + parser ───────────────────────────────────────────────────────
 
 /** Every session frame, discriminated on `type`. */
@@ -113,6 +151,9 @@ export const sessionFrameSchema = z.discriminatedUnion("type", [
   rpcErrorFrameSchema,
   progressEventFrameSchema,
   askStreamEventFrameSchema,
+  serverRequestFrameSchema,
+  serverResponseFrameSchema,
+  serverRequestResolvedFrameSchema,
 ]);
 
 export type HelloFrame = z.infer<typeof helloFrameSchema>;
@@ -122,6 +163,9 @@ export type ResponseFrame = z.infer<typeof responseFrameSchema>;
 export type RpcErrorFrame = z.infer<typeof rpcErrorFrameSchema>;
 export type ProgressEventFrame = z.infer<typeof progressEventFrameSchema>;
 export type AskStreamEventFrame = z.infer<typeof askStreamEventFrameSchema>;
+export type ServerRequestFrame = z.infer<typeof serverRequestFrameSchema>;
+export type ServerResponseFrame = z.infer<typeof serverResponseFrameSchema>;
+export type ServerRequestResolvedFrame = z.infer<typeof serverRequestResolvedFrameSchema>;
 export type SessionFrame = z.infer<typeof sessionFrameSchema>;
 
 /** Parse an untrusted value into a `SessionFrame`, throwing on an invalid frame. */

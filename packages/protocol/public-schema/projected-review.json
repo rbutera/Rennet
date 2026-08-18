@@ -1,0 +1,656 @@
+{
+  "type": "object",
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "repositoryRoot": {
+      "type": "object",
+      "properties": {
+        "repoKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1
+        },
+        "relativePath": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "repoKey",
+        "displayName"
+      ],
+      "additionalProperties": false
+    },
+    "patchsets": {
+      "minItems": 1,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d(?::[0-5]\\d(?:\\.\\d+)?)?(?:Z))$"
+          },
+          "repository": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "root": {
+                "type": "object",
+                "properties": {
+                  "repoKey": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "displayName": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "relativePath": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "repoKey",
+                  "displayName"
+                ],
+                "additionalProperties": false
+              },
+              "commonDir": {
+                "type": "object",
+                "properties": {
+                  "repoKey": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "displayName": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "relativePath": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "repoKey",
+                  "displayName"
+                ],
+                "additionalProperties": false
+              },
+              "baseRef": {
+                "type": "string",
+                "minLength": 1
+              },
+              "baseOid": {
+                "type": "string",
+                "minLength": 1
+              },
+              "headOid": {
+                "type": "string",
+                "minLength": 1
+              },
+              "headRef": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "id",
+              "root",
+              "commonDir",
+              "baseRef",
+              "baseOid",
+              "headOid"
+            ],
+            "additionalProperties": false
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "previousPath": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string",
+                  "enum": [
+                    "added",
+                    "modified",
+                    "deleted",
+                    "renamed"
+                  ]
+                },
+                "additions": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "deletions": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "binary": {
+                  "type": "boolean"
+                },
+                "patch": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "status",
+                "additions",
+                "deletions",
+                "binary",
+                "patch"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "rawDiff": {
+            "type": "string"
+          },
+          "byteLength": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 9007199254740991
+          },
+          "truncated": {
+            "type": "boolean"
+          },
+          "source": {
+            "type": "string",
+            "enum": [
+              "local",
+              "github-local",
+              "github-rest"
+            ]
+          },
+          "degraded": {
+            "type": "boolean"
+          },
+          "degradationReason": {
+            "type": "string"
+          },
+          "projectSnapshotId": {
+            "type": "string"
+          },
+          "intent": {
+            "type": "object",
+            "properties": {
+              "surface": {
+                "type": "string",
+                "enum": [
+                  "github-pr",
+                  "github-rest",
+                  "working-tree"
+                ]
+              },
+              "prTitle": {
+                "type": "string"
+              },
+              "prBody": {
+                "type": "string"
+              },
+              "prBodyAbsent": {
+                "type": "boolean"
+              },
+              "specSnapshots": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "digest": {
+                      "type": "string"
+                    },
+                    "content": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "digest"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "commitSubjects": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "surface"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "required": [
+          "id",
+          "createdAt",
+          "repository",
+          "files",
+          "rawDiff",
+          "byteLength",
+          "truncated"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "activePatchsetId": {
+      "type": "string",
+      "minLength": 1
+    },
+    "pendingPatchsetId": {
+      "type": "string"
+    },
+    "dispositions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "anchor": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "contentDigest": {
+                "type": "string",
+                "minLength": 1
+              },
+              "span": {
+                "type": "object",
+                "properties": {
+                  "startLine": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "endLine": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "startLine"
+                ],
+                "additionalProperties": false
+              },
+              "side": {
+                "type": "string",
+                "enum": [
+                  "additions",
+                  "deletions",
+                  "context"
+                ]
+              },
+              "spanDigest": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "path",
+              "contentDigest"
+            ],
+            "additionalProperties": false
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "request-change",
+              "comment",
+              "question"
+            ]
+          },
+          "body": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "anchor",
+          "type",
+          "body"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "orphaned": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "anchor": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string"
+              },
+              "contentDigest": {
+                "type": "string",
+                "minLength": 1
+              },
+              "span": {
+                "type": "object",
+                "properties": {
+                  "startLine": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "endLine": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "startLine"
+                ],
+                "additionalProperties": false
+              },
+              "side": {
+                "type": "string",
+                "enum": [
+                  "additions",
+                  "deletions",
+                  "context"
+                ]
+              },
+              "spanDigest": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "path",
+              "contentDigest"
+            ],
+            "additionalProperties": false
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "approve",
+              "request-change",
+              "comment",
+              "question"
+            ]
+          },
+          "body": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "anchor",
+          "type",
+          "body"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "status": {
+      "type": "string",
+      "enum": [
+        "current",
+        "invalid"
+      ]
+    },
+    "retrospective": {
+      "type": "boolean"
+    },
+    "postTarget": {
+      "type": "object",
+      "properties": {
+        "repo": {
+          "type": "object",
+          "properties": {
+            "forge": {
+              "type": "string",
+              "minLength": 1
+            },
+            "owner": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "forge",
+            "owner",
+            "name"
+          ],
+          "additionalProperties": false
+        },
+        "number": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "forgeRef": {
+          "type": "string",
+          "minLength": 1
+        },
+        "headOid": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "repo",
+        "number",
+        "forgeRef",
+        "headOid"
+      ],
+      "additionalProperties": false
+    },
+    "deltaAccount": {
+      "type": "object",
+      "properties": {
+        "asks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "span": {
+                "type": "object",
+                "properties": {
+                  "startLine": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "endLine": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "startLine"
+                ],
+                "additionalProperties": false
+              },
+              "side": {
+                "type": "string",
+                "enum": [
+                  "additions",
+                  "deletions",
+                  "context"
+                ]
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "approve",
+                  "request-change",
+                  "comment",
+                  "question"
+                ]
+              },
+              "summary": {
+                "type": "string"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "addressed",
+                  "partially-addressed",
+                  "untouched"
+                ]
+              },
+              "handoffTask": {
+                "type": "object",
+                "properties": {
+                  "index": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "title": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "index",
+                  "title"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "required": [
+              "path",
+              "type",
+              "summary",
+              "status"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "beyondAsks": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "beyondAskHunks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "path": {
+                "type": "string",
+                "minLength": 1
+              },
+              "span": {
+                "type": "object",
+                "properties": {
+                  "startLine": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  },
+                  "endLine": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "startLine"
+                ],
+                "additionalProperties": false
+              },
+              "side": {
+                "type": "string",
+                "enum": [
+                  "additions",
+                  "deletions",
+                  "context"
+                ]
+              },
+              "bucket": {
+                "type": "string",
+                "enum": [
+                  "unasked-file",
+                  "asked-file"
+                ]
+              },
+              "excerpt": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "path",
+              "span",
+              "bucket",
+              "excerpt"
+            ],
+            "additionalProperties": false
+          }
+        }
+      },
+      "required": [
+        "asks",
+        "beyondAsks"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "id",
+    "repositoryRoot",
+    "patchsets",
+    "activePatchsetId",
+    "dispositions",
+    "status"
+  ],
+  "additionalProperties": false
+}

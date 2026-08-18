@@ -1571,6 +1571,23 @@ export const globalConfigSchema = z.object({
    * this same field with no migration.
    */
   keybindings: z.record(z.string(), z.string().nullable()).optional(),
+  /**
+   * Opt-in bind beyond loopback (issue #380). Absent ⇒ the daemon binds
+   * `127.0.0.1` on an ephemeral port exactly as before. `host` names a specific
+   * interface to bind (e.g. a Tailscale tailnet address); `port` optionally fixes
+   * the port. Append-only and additive: an untouched install stores nothing, and a
+   * daemon that predates this key reads its absence as loopback-default.
+   */
+  daemon: z
+    .object({
+      listen: z
+        .object({
+          host: z.string().min(1),
+          port: z.number().int().nonnegative().optional(),
+        })
+        .optional(),
+    })
+    .optional(),
 });
 export type GlobalConfig = z.infer<typeof globalConfigSchema>;
 
@@ -1864,6 +1881,21 @@ const composedHandoffBundleSchema = objectSchemaFor<ComposedHandoffBundle>()({
   composed: z.boolean(),
   traceMap: z.record(z.string(), z.number().int().nonnegative()),
 });
+
+/**
+ * A paired remote device as the settings panel and `rennet devices` show it
+ * (issue #380). The bearer token is NEVER on this shape — it lives only as a
+ * SHA-256 hash in `~/.rennet/devices.json`, shown once at pairing time. This is
+ * the safe, listable projection of a device row.
+ */
+export const pairedDeviceSchema = z.object({
+  deviceId: z.string().min(1),
+  name: z.string().min(1),
+  createdAt: z.iso.datetime(),
+  lastSeenAt: z.iso.datetime(),
+  expiresAt: z.iso.datetime(),
+});
+export type PairedDevice = z.infer<typeof pairedDeviceSchema>;
 
 export const commandDefinitions = {
   "app.bootstrap": {
@@ -2654,6 +2686,29 @@ export const commandDefinitions = {
     }),
     output: z.object({ bundle: composedHandoffBundleSchema }),
   },
+  // ── Device pairing (issue #380) — connection bootstrap, not ceremony ───────
+  // `mint` returns a short-lived single-use code the desktop shows as text (and QR
+  // when a renderer supports it); a token-less non-loopback connection exchanges a
+  // valid code for a long-lived device token, then just works — no per-action
+  // ceremony ever (Rule Zero). `mint`/`listDevices`/`revokeDevice` are private
+  // contract (loopback or an already-paired device); `exchange` is the ONE command a
+  // token-less projected connection may invoke. Revocation is deleting the row.
+  "pairing.mint": {
+    input: z.object({}),
+    output: z.object({ code: z.string().min(1), expiresAt: z.iso.datetime() }),
+  },
+  "pairing.exchange": {
+    input: z.object({ code: z.string().min(1), deviceName: z.string().min(1) }),
+    output: z.object({ deviceToken: z.string().min(1), deviceId: z.string().min(1) }),
+  },
+  "pairing.listDevices": {
+    input: z.object({}),
+    output: z.object({ devices: z.array(pairedDeviceSchema) }),
+  },
+  "pairing.revokeDevice": {
+    input: z.object({ deviceId: z.string().min(1) }),
+    output: z.object({ devices: z.array(pairedDeviceSchema) }),
+  },
 } as const;
 
 export type CommandName = keyof typeof commandDefinitions;
@@ -2742,3 +2797,89 @@ export const menuRunPayloadSchema = z.object({ id: z.string().min(1) }).strict()
 export type MenuTemplateItem = z.infer<typeof menuTemplateItemSchema>;
 export type MenuTemplateSection = z.infer<typeof menuTemplateSectionSchema>;
 export type MenuRunPayload = z.infer<typeof menuRunPayloadSchema>;
+
+// ── R19 public projection (issue #380) — the recipient-specific public contract ──
+//
+// A token-bearing REMOTE connection never sees a host-absolute path. These are the
+// PROJECTED shapes it sees instead: every structural host-path field is replaced by
+// a `repoReference` (`{repoKey, displayName, relativePath?}`) — a machine-local,
+// off-machine-meaningless key plus a human label. Built by `.extend()` over the
+// private schemas so they cannot silently drift from the real contract, and emitted
+// as checked-in JSON-Schema fixtures under `public-schema/` (the R19 deliverable a
+// future mobile client builds against). The runtime codec that maps private↔projected
+// instances lives in `@rennet/server` (it needs the project store to resolve keys).
+//
+// Loopback connections keep the PRIVATE contract byte-for-byte — these shapes never
+// touch them.
+
+/** A remote client's reference to a repository: a local key it echoes back inbound, plus a label. */
+export const repoReferenceSchema = z.object({
+  /** The snapshot-store repo key (`escapePath(realpath(top-level))`); stable + reverse-resolvable server-side. */
+  repoKey: z.string().min(1),
+  /** A human label (repo basename, disambiguated) — display only, never accepted inbound. */
+  displayName: z.string().min(1),
+  /** Optional repo-relative path when the field named a location inside the repo, not its root. */
+  relativePath: z.string().optional(),
+});
+export type RepoReference = z.infer<typeof repoReferenceSchema>;
+
+/** Projected `repositoryProvenance`: `root`/`commonDir` become repo references. */
+export const projectedRepositoryProvenanceSchema = patchsetSchema.shape.repository.extend({
+  root: repoReferenceSchema,
+  commonDir: repoReferenceSchema,
+});
+
+/** Projected `patchset`: its `repository` provenance is projected. */
+export const projectedPatchsetSchema = patchsetSchema.extend({
+  repository: projectedRepositoryProvenanceSchema,
+});
+
+/** Projected `review`: `repositoryRoot` becomes a reference and patchsets are projected. */
+export const projectedReviewSchema = reviewSchema.extend({
+  repositoryRoot: repoReferenceSchema,
+  patchsets: z.array(projectedPatchsetSchema).min(1),
+});
+
+/** Projected `project`: `path`/`openPath`/`includedRepoPaths` become references. */
+export const projectedProjectSchema = projectSchema.extend({
+  path: repoReferenceSchema,
+  openPath: repoReferenceSchema,
+  includedRepoPaths: z.array(repoReferenceSchema).optional(),
+});
+
+/** Projected `discoveredRepo`: `path` becomes a reference. */
+export const projectedDiscoveredRepoSchema = discoveredRepoSchema.extend({
+  path: repoReferenceSchema,
+});
+
+/** Projected `discoveryResult`: `path` and each repo `path` become references. */
+export const projectedDiscoveryResultSchema = discoveryResultSchema.extend({
+  path: repoReferenceSchema,
+  repos: z.array(projectedDiscoveredRepoSchema),
+});
+
+/** Projected `processedRepoSummary`: `path` becomes a reference. */
+export const projectedProcessedRepoSummarySchema = processedRepoSummarySchema.extend({
+  path: repoReferenceSchema,
+});
+
+/** Projected `repository.choose` output: the chosen `path` becomes a reference (nullable). */
+export const projectedRepositoryChooseOutputSchema = z.object({
+  path: repoReferenceSchema.nullable(),
+});
+
+/**
+ * The named public-projection schema set, keyed by fixture name. The fixtures
+ * generator and its drift test iterate this map, so adding a projected shape here
+ * is the ONLY edit needed to grow the checked-in public contract.
+ */
+export const publicProjectionSchemas = {
+  "repo-reference": repoReferenceSchema,
+  "projected-review": projectedReviewSchema,
+  "projected-patchset": projectedPatchsetSchema,
+  "projected-project": projectedProjectSchema,
+  "projected-discovery-result": projectedDiscoveryResultSchema,
+  "projected-processed-repo-summary": projectedProcessedRepoSummarySchema,
+  "projected-repository-choose-output": projectedRepositoryChooseOutputSchema,
+} as const;
+export type PublicProjectionName = keyof typeof publicProjectionSchemas;

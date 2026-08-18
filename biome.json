@@ -8,7 +8,8 @@
       "!!**/out",
       "!!**/.nx",
       "!!**/coverage",
-      "!!**/test-results"
+      "!!**/test-results",
+      "!!packages/protocol/public-schema"
     ]
   },
   "formatter": {

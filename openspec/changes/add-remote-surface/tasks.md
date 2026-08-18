@@ -2,11 +2,11 @@
 
 ## 1. Protocol: frames + pairing commands + config key
 
-- [ ] 1.1 `hello` gains optional `deviceToken` (append-only; tolerant decoders make this safe).
-- [ ] 1.2 New session frames per design D7: `serverRequest` / `serverResponse` / `serverRequestResolved`; union extension; round-trip + tolerance tests extended.
-- [ ] 1.3 `pairing.mint`, `pairing.exchange`, `pairing.listDevices`, `pairing.revokeDevice` in `commandDefinitions` (Zod, same style).
-- [ ] 1.4 `globalConfigSchema` gains optional `daemon.listen {host, port?}`.
-- [ ] 1.5 Public projection types + repo-reference shape (`{repoKey, displayName, relativePath?}`) in a browser-safe protocol sub-export.
+- [x] 1.1 `hello` gains optional `deviceToken` (append-only; tolerant decoders make this safe).
+- [x] 1.2 New session frames per design D7: `serverRequest` / `serverResponse` / `serverRequestResolved`; union extension; round-trip + tolerance tests extended.
+- [x] 1.3 `pairing.mint`, `pairing.exchange`, `pairing.listDevices`, `pairing.revokeDevice` in `commandDefinitions` (Zod, same style).
+- [x] 1.4 `globalConfigSchema` gains optional `daemon.listen {host, port?}`.
+- [x] 1.5 Public projection types + repo-reference shape (`{repoKey, displayName, relativePath?}`) in a browser-safe protocol sub-export.
 
 ## 2. Server: projection codec
 
