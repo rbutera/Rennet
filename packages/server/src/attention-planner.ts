@@ -53,6 +53,18 @@ export class AttentionRegistry {
   active(): AttentionItem[] {
     return [...this.#items.values()];
   }
+
+  /**
+   * Does this review have an active HIGH-priority attention (ask pending / review finished /
+   * turn failed)? This is the `needsYou` bit the projected review carries (#383 ruling): a
+   * cold-open list must not lie by omission about a mid-turn ask, so the projection reads it
+   * straight from this registry rather than the flagged queue.
+   */
+  needsYou(reviewId: string): boolean {
+    for (const item of this.#items.values())
+      if (item.reviewId === reviewId && FAMILY_PRIORITY[item.family] === "high") return true;
+    return false;
+  }
 }
 
 /**

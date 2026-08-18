@@ -81,6 +81,30 @@ describe("outbound structural projection", () => {
     // The whole serialized frame carries no host-absolute path.
     expect(JSON.stringify(out)).not.toContain(REPO);
     expect(JSON.stringify(out)).not.toContain(HOME);
+    // Without an attention-capable context, the projected review omits the summary entirely.
+    expect(projected.attention).toBeUndefined();
+  });
+
+  it("attaches the additive attention summary when the daemon advertises attention (#383)", () => {
+    // An attention-capable context reports needs-you for this review; `running` derives from the
+    // live pending patchset already on the review.
+    const attentiveCtx = {
+      ...ctx,
+      reviewNeedsYou: (reviewId: string) => reviewId === "r1",
+    };
+    const withPending = { ...review, pendingPatchsetId: "ps2" };
+    const out = projectCommandOutput("review.capture", { review: withPending }, attentiveCtx) as {
+      review: Record<string, unknown>;
+    };
+    expect(out.review.attention).toEqual({ needsYou: true, running: true });
+
+    // A different review with no active attention and no pending patchset reads all-false.
+    const quiet = projectCommandOutput(
+      "review.capture",
+      { review: { ...review, id: "r2" } },
+      attentiveCtx,
+    ) as { review: Record<string, unknown> };
+    expect(quiet.review.attention).toEqual({ needsYou: false, running: false });
   });
 
   it("projects a project list output", () => {

@@ -156,4 +156,34 @@ describe("AttentionRegistry — raise, dedupe, clear (handled once, quiet everyw
     // Only r2's item survives.
     expect(registry.active().map((i) => i.reviewId)).toEqual(["r2"]);
   });
+
+  it("needsYou is true for a review with an active HIGH-priority attention, false otherwise (#383)", () => {
+    const registry = new AttentionRegistry();
+    expect(registry.needsYou("r1")).toBe(false);
+
+    // A high-priority family (ask-pending) sets needs-you for its review only.
+    const ask = registry.raise({
+      family: "ask-pending",
+      reviewId: "r1",
+      deepLink: "d",
+      title: "t",
+      body: "",
+    });
+    expect(registry.needsYou("r1")).toBe(true);
+    expect(registry.needsYou("r2")).toBe(false);
+
+    // A silent family (processing-finished) never demands you — it must NOT set needs-you.
+    registry.raise({
+      family: "processing-finished",
+      reviewId: "r3",
+      deepLink: "d",
+      title: "t",
+      body: "",
+    });
+    expect(registry.needsYou("r3")).toBe(false);
+
+    // Clearing the ask drops needs-you for its review.
+    registry.clear({ attentionId: ask.id });
+    expect(registry.needsYou("r1")).toBe(false);
+  });
 });

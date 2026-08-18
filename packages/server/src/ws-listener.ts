@@ -315,12 +315,18 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
   const root = deps.uiDist ? resolve(deps.uiDist) : undefined;
   const nonLoopbackBind = !isLoopbackAddress(listenHost) && listenHost !== "localhost";
   const home = homedir();
-  const contextOf = (): ProjectionContext =>
-    deps.projectionContext?.() ?? buildProjectionContext([], home);
+  const attentionRegistry = new AttentionRegistry();
+  const contextOf = (): ProjectionContext => {
+    const base = deps.projectionContext?.() ?? buildProjectionContext([], home);
+    // COMPAT (#383): a daemon that runs the attention system advertises the summary on projected
+    // reviews; one that does not omits it, so old clients and pre-attention daemons interoperate.
+    return deps.attention
+      ? { ...base, reviewNeedsYou: (reviewId) => attentionRegistry.needsYou(reviewId) }
+      : base;
+  };
 
   const connections = new Set<Connection>();
   const byId = new Map<string, Connection>();
-  const attentionRegistry = new AttentionRegistry();
   let boundPort = 0;
 
   const httpServer: HttpServer = createServer((req, res) => {

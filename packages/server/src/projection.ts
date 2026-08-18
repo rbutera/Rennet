@@ -39,6 +39,13 @@ export interface ProjectionContext {
   readonly homeDir: string;
   /** `repoKey` → the host path to resolve inbound references to. */
   readonly byRepoKey: ReadonlyMap<string, string>;
+  /**
+   * COMPAT (attention, additive, #383): true when the daemon's attention system holds an
+   * active high-priority attention for this review id. Present only when the daemon advertises
+   * the attention capability; absent ⇒ the projected review omits its `attention` summary and
+   * a client falls back to deriving needs-you from the flagged queue + live events.
+   */
+  readonly reviewNeedsYou?: (reviewId: string) => boolean;
 }
 
 /** Thrown when an inbound reference names a repo the server does not know; becomes `rpcError invalid_input`. */
@@ -180,12 +187,23 @@ function projectReview(
   review: Record<string, unknown>,
   ctx: ProjectionContext,
 ): Record<string, unknown> {
+  // COMPAT (attention, #383): attach the attention summary only when the daemon advertises
+  // the capability (⇒ `reviewNeedsYou` is wired). `running` is the live-turn signal already on
+  // the review (a pending patchset is a turn producing its successor); `needsYou` is the
+  // attention registry's high-priority flag for this review. Absent ⇒ old daemon, client derives.
+  const attention = ctx.reviewNeedsYou
+    ? {
+        needsYou: ctx.reviewNeedsYou(String(review.id)),
+        running: review.pendingPatchsetId !== undefined,
+      }
+    : undefined;
   return {
     ...review,
     repositoryRoot: toRepoReference(String(review.repositoryRoot), ctx),
     patchsets: (review.patchsets as Record<string, unknown>[]).map((ps) =>
       projectPatchset(ps, ctx),
     ),
+    ...(attention ? { attention } : {}),
   };
 }
 
