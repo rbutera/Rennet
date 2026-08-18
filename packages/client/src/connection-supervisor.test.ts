@@ -190,6 +190,26 @@ describe("ConnectionSupervisor — resubscribe registry (#389 client half)", () 
     nth(bridges, 0).emitAsk("rev-1", ASK);
     expect(received).toHaveLength(0);
   });
+
+  it("keeps a shared callback's other subscription live when one is unsubscribed", async () => {
+    // ONE callback on TWO reviews: unsubscribing it from rev-A must not detach rev-B. Regresses
+    // the disposer-keyed-by-listener-alone bug (rev-A's disposer overwrote rev-B's).
+    const { supervisor, bridges } = makeSupervisor();
+    track(supervisor);
+    await waitFor(() => bridges.length === 1);
+    nth(bridges, 0).goOnline();
+    const received: string[] = [];
+    const shared = (e: ReviewAskStreamEvent): void => {
+      received.push(e.kind);
+    };
+    const offA = supervisor.onAskStream("rev-A", shared);
+    supervisor.onAskStream("rev-B", shared);
+    offA(); // detach rev-A only
+    expect(nth(bridges, 0).askListeners.get("rev-A")?.size ?? 0).toBe(0);
+    expect(nth(bridges, 0).askListeners.get("rev-B")?.size ?? 0).toBe(1); // rev-B still live
+    nth(bridges, 0).emitAsk("rev-B", ASK);
+    expect(received).toEqual(["ask-focus"]);
+  });
 });
 
 describe("ConnectionSupervisor — invoke honesty", () => {
@@ -212,6 +232,24 @@ describe("ConnectionSupervisor — invoke honesty", () => {
     nth(bridges, 0).goOnline();
     await expect(pending).resolves.toEqual({ ok: true });
     expect(nth(bridges, 0).invokes).toHaveLength(1);
+  });
+
+  it("rejects a queued invoke past the cap instead of growing unbounded (queue mode)", async () => {
+    const { supervisor, bridges } = makeSupervisor({ offlineInvoke: "queue", maxQueuedInvokes: 2 });
+    track(supervisor);
+    await waitFor(() => bridges.length === 1); // still connecting — everything queues
+    const held = [
+      supervisor.invoke("app.bootstrap" as never, {} as never),
+      supervisor.invoke("app.bootstrap" as never, {} as never),
+    ];
+    // The third exceeds the cap: rejected now, never enqueued.
+    await expect(supervisor.invoke("app.bootstrap" as never, {} as never)).rejects.toBeInstanceOf(
+      ConnectionError,
+    );
+    nth(bridges, 0).invokeImpl = () => Promise.resolve({ ok: true });
+    nth(bridges, 0).goOnline();
+    await expect(Promise.all(held)).resolves.toEqual([{ ok: true }, { ok: true }]);
+    expect(nth(bridges, 0).invokes).toHaveLength(2); // only the two under the cap flushed
   });
 });
 

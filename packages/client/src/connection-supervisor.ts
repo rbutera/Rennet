@@ -24,8 +24,11 @@ import type {
   RennetBridge,
   ReviewAskStreamEvent,
 } from "@rennet/protocol";
+import { ConnectionError } from "./connection-error";
 import type { ReplicaStore, StoredReplica, TokenStore } from "./stores";
 import type { BridgeLifecycleEvent, CapturedServerInfo } from "./ws-bridge";
+
+export { ConnectionError } from "./connection-error";
 
 /** The subset of a bridge the supervisor drives — `WsRennetBridge` satisfies it. */
 export interface SupervisedBridge {
@@ -77,14 +80,21 @@ export interface ConnectionSupervisorOptions {
   readonly replicaStore?: ReplicaStore;
   /** Invoke while not `online`: `reject` fast (default, behavior-neutral) or `queue` for reconnect. */
   readonly offlineInvoke?: "reject" | "queue";
+  /**
+   * Cap on invokes held while offline in `queue` mode (default 64). Past the cap a new invoke
+   * rejects with a `ConnectionError` instead of growing the queue unbounded — a daemon that
+   * stays down must not let a caller balloon memory. Ignored in `reject` mode (nothing queues).
+   */
+  readonly maxQueuedInvokes?: number;
   /** First reconnect delay in ms; doubles to the ceiling (default 500). */
   readonly initialBackoffMs?: number;
   /** Reconnect backoff ceiling in ms (default 8000). */
   readonly maxBackoffMs?: number;
   /**
    * Re-issue `review.reattach` for every subscribed review on `online` (default true), so
-   * a surviving turn's persisted state reconciles after a reconnect. The live-delta rebind
-   * is a daemon-side follow-on (issue #389 server half); this is the client nudge.
+   * a surviving turn's persisted state reconciles after a reconnect. Live deltas resume via
+   * the daemon's ask-stream broadcast (issue #389 server half, landed with this change);
+   * this reattach recovers what streamed while the socket was down.
    */
   readonly reconcileOnReconnect?: boolean;
 }
@@ -97,19 +107,15 @@ interface QueuedInvoke {
   readonly reject: (error: Error) => void;
 }
 
-/** An invoke rejected because the connection was not online — distinguishable by name. */
-export class ConnectionError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "ConnectionError";
-  }
-}
+/** Default ceiling on invokes held while offline (`offlineInvoke: "queue"`). */
+const DEFAULT_MAX_QUEUED_INVOKES = 64;
 
 export class ConnectionSupervisor implements RennetBridge {
   readonly #options: ConnectionSupervisorOptions;
   readonly #initialBackoff: number;
   readonly #maxBackoff: number;
   readonly #offlineInvoke: "reject" | "queue";
+  readonly #maxQueuedInvokes: number;
   readonly #reconcileOnReconnect: boolean;
 
   #status: ConnectionStatus = { state: "idle", since: Date.now() };
@@ -125,9 +131,11 @@ export class ConnectionSupervisor implements RennetBridge {
   readonly #progressRegistry = new Map<string, Set<ProgressListener>>();
   // Bridge-level unsubscribes for the CURRENT bridge, so a consumer unsubscribe detaches
   // the live listener too. Rebuilt on every bridge swap (the old bridge's listeners die
-  // with it). WeakMap-free: listeners are strong-held by the registry sets anyway.
-  #askBridgeUnsub = new Map<AskListener, () => void>();
-  #progressBridgeUnsub = new Map<ProgressListener, () => void>();
+  // with it). Keyed by [registry key][listener], NOT by listener alone: one callback
+  // subscribed to two reviews holds a distinct disposer per review, so unsubscribing it
+  // from review A never loses (or wrongly detaches) its live binding on review B.
+  #askBridgeUnsub = new Map<string, Map<AskListener, () => void>>();
+  #progressBridgeUnsub = new Map<string, Map<ProgressListener, () => void>>();
   #queued: QueuedInvoke[] = [];
 
   constructor(options: ConnectionSupervisorOptions) {
@@ -136,6 +144,7 @@ export class ConnectionSupervisor implements RennetBridge {
     this.#maxBackoff = options.maxBackoffMs ?? 8000;
     this.#backoff = this.#initialBackoff;
     this.#offlineInvoke = options.offlineInvoke ?? "reject";
+    this.#maxQueuedInvokes = options.maxQueuedInvokes ?? DEFAULT_MAX_QUEUED_INVOKES;
     this.#reconcileOnReconnect = options.reconcileOnReconnect ?? true;
     void this.#loadReplica();
     this.#connect();
@@ -244,7 +253,7 @@ export class ConnectionSupervisor implements RennetBridge {
 
   #register<L>(
     registry: Map<string, Set<L>>,
-    bridgeUnsub: Map<L, () => void>,
+    bridgeUnsub: Map<string, Map<L, () => void>>,
     key: string,
     listener: L,
     wire: (bridge: SupervisedBridge) => () => void,
@@ -255,15 +264,17 @@ export class ConnectionSupervisor implements RennetBridge {
       registry.set(key, set);
     }
     set.add(listener);
-    if (this.#bridge) bridgeUnsub.set(listener, wire(this.#bridge));
+    if (this.#bridge) mapSet(bridgeUnsub, key, listener, wire(this.#bridge));
     return () => {
       const current = registry.get(key);
       if (current) {
         current.delete(listener);
         if (current.size === 0) registry.delete(key);
       }
-      bridgeUnsub.get(listener)?.();
-      bridgeUnsub.delete(listener);
+      const byListener = bridgeUnsub.get(key);
+      byListener?.get(listener)?.();
+      byListener?.delete(listener);
+      if (byListener && byListener.size === 0) bridgeUnsub.delete(key);
     };
   }
 
@@ -273,12 +284,17 @@ export class ConnectionSupervisor implements RennetBridge {
     this.#progressBridgeUnsub = new Map();
     for (const [reviewId, listeners] of this.#askRegistry) {
       for (const listener of listeners) {
-        this.#askBridgeUnsub.set(listener, bridge.onAskStream(reviewId, listener));
+        mapSet(this.#askBridgeUnsub, reviewId, listener, bridge.onAskStream(reviewId, listener));
       }
     }
     for (const [commandId, listeners] of this.#progressRegistry) {
       for (const listener of listeners) {
-        this.#progressBridgeUnsub.set(listener, bridge.onProgress(commandId, listener));
+        mapSet(
+          this.#progressBridgeUnsub,
+          commandId,
+          listener,
+          bridge.onProgress(commandId, listener),
+        );
       }
     }
   }
@@ -286,8 +302,8 @@ export class ConnectionSupervisor implements RennetBridge {
   /**
    * Reconcile after `online`: re-issue `review.reattach` for every subscribed review so a
    * surviving turn's persisted state comes back. Best-effort and fire-and-forget — a
-   * failure just leaves the last painted state until the next event. (The live-delta
-   * rebind is the daemon-side #389 follow-on.)
+   * failure just leaves the last painted state until the next event. (Live deltas resume
+   * on their own via the daemon's #389 ask-stream broadcast.)
    */
   #reconcile(): void {
     const bridge = this.#bridge;
@@ -311,7 +327,12 @@ export class ConnectionSupervisor implements RennetBridge {
     if (this.#offlineInvoke === "reject") {
       return Promise.reject(new ConnectionError(`not connected (${this.#status.state})`));
     }
-    // queue mode: hold until the next online socket sends it.
+    // queue mode: hold until the next online socket sends it, up to the cap.
+    if (this.#queued.length >= this.#maxQueuedInvokes) {
+      return Promise.reject(
+        new ConnectionError(`offline invoke queue is full (${this.#maxQueuedInvokes})`),
+      );
+    }
     return new Promise<CommandOutput<K>>((resolve, reject) => {
       this.#queued.push({
         send: (bridge) => bridge.invoke(name, input).then(resolve, reject),
@@ -378,4 +399,14 @@ export class ConnectionSupervisor implements RennetBridge {
     this.#bridge = null;
     this.#setState("idle");
   }
+}
+
+/** Set a value in a two-level map, creating the inner map on first use. */
+function mapSet<K1, K2, V>(outer: Map<K1, Map<K2, V>>, k1: K1, k2: K2, value: V): void {
+  let inner = outer.get(k1);
+  if (!inner) {
+    inner = new Map<K2, V>();
+    outer.set(k1, inner);
+  }
+  inner.set(k2, value);
 }
