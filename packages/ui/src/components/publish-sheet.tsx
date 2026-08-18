@@ -275,6 +275,27 @@ export function PublishSheet({
   const targetBlocksSign =
     target !== undefined && !publishTargetAgrees(target, payload, variant.mode);
 
+  // The single source of truth for the sign button's disabled state — used by the
+  // button AND the guard below, so they can never diverge.
+  const signDisabled =
+    itemCount === 0 || targetBlocksSign || pending || ledgerBlocksSign(ledger, acknowledged);
+
+  // Cancel an in-flight hold the instant the button becomes disabled. A disabled
+  // button eats the mouseup/keyup, so `endHold` never runs — `holding` would stay
+  // true. Then a later re-enable + fresh press calls `setHolding(true)` on an
+  // already-true value: a no-op that never re-fires the [holding] epoch stamp, so the
+  // release measures against the STALE press timestamp and a sub-budget hold signs.
+  // Fully clearing the hold here forces the next press to be a real false→true
+  // transition that re-stamps the epoch.
+  useLayoutEffect(() => {
+    if (signDisabled) {
+      holdStart.current = null;
+      holdPayload.current = null;
+      setHolding(false);
+      setArmed(false);
+    }
+  }, [signDisabled]);
+
   function beginHold(): void {
     // Bind this hold to the exact bytes on screen NOW (#74 HIGH-2), so a later
     // recomposition cannot make the release sign different bytes. The eligibility
@@ -578,12 +599,7 @@ export function PublishSheet({
               aria-keyshortcuts="Enter Space"
               // Disabled while a publish is in flight (double-sign race): the sync ref
               // in `publishReview` is the real guard; this reflects it in the UI.
-              disabled={
-                itemCount === 0 ||
-                targetBlocksSign ||
-                pending ||
-                ledgerBlocksSign(ledger, acknowledged)
-              }
+              disabled={signDisabled}
               onMouseDown={beginHold}
               onMouseUp={endHold}
               onMouseLeave={clearHold}
