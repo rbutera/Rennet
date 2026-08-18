@@ -17,6 +17,7 @@
 // in wherever a bridge went before; it ADDS `state`/`subscribe`/`setPresence`/`replica`.
 
 import type {
+  AttentionEventFrame,
   CommandInput,
   CommandName,
   CommandOutput,
@@ -36,6 +37,8 @@ export interface SupervisedBridge {
   invoke<K extends CommandName>(name: K, input: CommandInput<K>): Promise<CommandOutput<K>>;
   onProgress(commandId: string, listener: (event: ProjectProcessEvent) => void): () => void;
   onAskStream(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void;
+  /** Subscribe to daemon attention events (#383 batch). Daemon-wide; returns an unsubscribe. */
+  onAttention(listener: (event: AttentionEventFrame) => void): () => void;
   /** Send a presence frame (issue #383 M1). Best-effort; the supervisor gates the call on capability. */
   sendPresence(presence: {
     focused: boolean;
@@ -111,6 +114,9 @@ export interface ConnectionSupervisorOptions {
 
 type AskListener = (event: ReviewAskStreamEvent) => void;
 type ProgressListener = (event: ProjectProcessEvent) => void;
+type AttentionListener = (event: AttentionEventFrame) => void;
+/** Attention is daemon-wide, not keyed by review; one registry bucket under this constant key. */
+const ATTENTION_KEY = "*";
 
 interface QueuedInvoke {
   readonly send: (bridge: SupervisedBridge) => void;
@@ -146,6 +152,8 @@ export class ConnectionSupervisor implements RennetBridge {
   // from review A never loses (or wrongly detaches) its live binding on review B.
   #askBridgeUnsub = new Map<string, Map<AskListener, () => void>>();
   #progressBridgeUnsub = new Map<string, Map<ProgressListener, () => void>>();
+  readonly #attentionRegistry = new Map<string, Set<AttentionListener>>();
+  #attentionBridgeUnsub = new Map<string, Map<AttentionListener, () => void>>();
   #queued: QueuedInvoke[] = [];
 
   constructor(options: ConnectionSupervisorOptions) {
@@ -265,6 +273,21 @@ export class ConnectionSupervisor implements RennetBridge {
     );
   }
 
+  /**
+   * Subscribe to daemon attention events (#383 batch). Registry-backed like `onAskStream`, so a
+   * reconnect re-attaches the listener to the fresh bridge and the connect-time attention replay
+   * lands on it — a client's needs-you set stays live across reconnects, not just the first socket.
+   */
+  onAttention(listener: AttentionListener): () => void {
+    return this.#register(
+      this.#attentionRegistry,
+      this.#attentionBridgeUnsub,
+      ATTENTION_KEY,
+      listener,
+      (bridge) => bridge.onAttention(listener),
+    );
+  }
+
   #register<L>(
     registry: Map<string, Set<L>>,
     bridgeUnsub: Map<string, Map<L, () => void>>,
@@ -296,6 +319,12 @@ export class ConnectionSupervisor implements RennetBridge {
   #wireRegistry(bridge: SupervisedBridge): void {
     this.#askBridgeUnsub = new Map();
     this.#progressBridgeUnsub = new Map();
+    this.#attentionBridgeUnsub = new Map();
+    for (const [key, listeners] of this.#attentionRegistry) {
+      for (const listener of listeners) {
+        mapSet(this.#attentionBridgeUnsub, key, listener, bridge.onAttention(listener));
+      }
+    }
     for (const [reviewId, listeners] of this.#askRegistry) {
       for (const listener of listeners) {
         mapSet(this.#askBridgeUnsub, reviewId, listener, bridge.onAskStream(reviewId, listener));

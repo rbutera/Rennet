@@ -8,6 +8,7 @@
 // exact behaviour the desktop app exercises daily.
 
 import type {
+  AttentionEventFrame,
   CommandInput,
   CommandName,
   CommandOutput,
@@ -115,6 +116,8 @@ export class WsRennetBridge implements RennetBridge {
   readonly #pending = new Map<string, Pending>();
   readonly #progressListeners = new Map<string, Set<(event: ProjectProcessEvent) => void>>();
   readonly #askListeners = new Map<string, Set<(event: ReviewAskStreamEvent) => void>>();
+  /** Daemon-wide attention listeners (#383 batch) — not keyed by review; a raise/clear fans to all. */
+  readonly #attentionListeners = new Set<(event: AttentionEventFrame) => void>();
 
   constructor(options: WsRennetBridgeOptions) {
     this.#url = options.url;
@@ -147,6 +150,16 @@ export class WsRennetBridge implements RennetBridge {
 
   onAskStream(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void {
     return subscribe(this.#askListeners, reviewId, listener);
+  }
+
+  /**
+   * Subscribe to daemon attention events (#383 batch): `raised` / `cleared` frames the client
+   * uses to keep its needs-you set live. Daemon-wide (not keyed), so every listener sees every
+   * event. Survives the bridge's own reconnects (the listener set is not cleared on reconnect).
+   */
+  onAttention(listener: (event: AttentionEventFrame) => void): () => void {
+    this.#attentionListeners.add(listener);
+    return () => void this.#attentionListeners.delete(listener);
   }
 
   /**
@@ -408,6 +421,10 @@ export class WsRennetBridge implements RennetBridge {
       case "askStreamEvent": {
         const listeners = this.#askListeners.get(frame.reviewId);
         if (listeners) for (const listener of listeners) listener(frame.event);
+        return;
+      }
+      case "attentionEvent": {
+        for (const listener of this.#attentionListeners) listener(frame);
         return;
       }
       case "serverRequest": {

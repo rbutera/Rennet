@@ -109,6 +109,8 @@ export function objectSchemaFor<T>() {
   return <S extends { [K in keyof T]-?: z.ZodType<T[K]> }>(shape: S) => z.object(shape);
 }
 
+import type { AttentionEventFrame } from "./session";
+
 export * from "./bodies";
 export * from "./rsp";
 export * from "./session";
@@ -2809,6 +2811,13 @@ export interface RennetBridge {
    * channel omits it, and a subscriber degrades to the command's final resolved value.
    */
   onAskStream?(reviewId: string, listener: (event: ReviewAskStreamEvent) => void): () => void;
+  /**
+   * Subscribe to daemon attention events (#383): `raised` / `cleared` frames that keep a
+   * client's needs-you set live. Daemon-wide (not keyed by review). Returns an unsubscribe.
+   * Optional: a bridge to a daemon that does not advertise `attention` omits it, and a
+   * subscriber falls back to deriving needs-you from the projected review + flagged queue.
+   */
+  onAttention?(listener: (event: AttentionEventFrame) => void): () => void;
   /**
    * Push the projected application-menu template to MAIN (#44). The renderer derives
    * these serializable sections from the command registry + live context + overrides;

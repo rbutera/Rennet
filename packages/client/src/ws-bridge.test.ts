@@ -260,6 +260,37 @@ describe("WsRennetBridge", () => {
     expect(asks).toEqual([{ kind: "ask-focus", anchor: "a" }]);
   });
 
+  it("fans attentionEvent frames out to onAttention listeners (#383 batch)", async () => {
+    const stub = await startStub();
+    stubs.push(stub);
+    const bridge = trackBridge(new WsRennetBridge({ url: stub.url }));
+    await waitFor(() => stub.helloCount > 0);
+    const seen: Array<{ event: string }> = [];
+    const off = bridge.onAttention((frame) => seen.push({ event: frame.event }));
+
+    stub.broadcast({
+      type: "attentionEvent",
+      event: "raised",
+      item: {
+        id: "review-finished:rev-1",
+        family: "review-finished",
+        reviewId: "rev-1",
+        deepLink: "rennet://review/rev-1/digest",
+        title: "Review finished",
+        body: "",
+      },
+    });
+    stub.broadcast({ type: "attentionEvent", event: "cleared", clearedIds: ["review-finished:rev-1"] });
+    await waitFor(() => seen.length === 2);
+    expect(seen.map((s) => s.event)).toEqual(["raised", "cleared"]);
+
+    // Unsubscribe stops delivery.
+    off();
+    stub.broadcast({ type: "attentionEvent", event: "cleared", clearedIds: ["x"] });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(seen).toHaveLength(2);
+  });
+
   it("stops delivery after unsubscribe", async () => {
     const stub = await startStub();
     stubs.push(stub);
