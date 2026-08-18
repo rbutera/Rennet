@@ -3230,10 +3230,8 @@ button.ospec-covchip {
 button.ospec-covchip:hover {
   border-color: var(--green);
 }
-button.ospec-covchip:focus-visible {
-  outline: 2px solid var(--green);
-  outline-offset: 1px;
-}
+/* Focus falls through to the systemic 3px review-blue `:focus-visible` ring (below).
+   DESIGN.md mandates ONE focus treatment; a bespoke green ring here contradicted it. */
 .ospec-covchip-zero {
   color: var(--amber);
   background: var(--amber-surface);
@@ -3722,12 +3720,14 @@ button.ospec-covchip:focus-visible {
  *
  * `:focus-visible` only (keyboard focus, never a mouse click), so the ring never fires
  * on pointer use. `outline` (not box-shadow) so it can't clobber an element's resting
- * shadow and is never clipped by an `overflow: hidden` ancestor; modern Chromium follows
- * the element's border-radius. canvas.css loads LAST (index.ts), so this wins equal-
+ * shadow; it sits OUTSIDE the box (an `overflow: hidden` on the element itself never
+ * clips it, though a clipping ancestor still can), and modern Chromium follows the
+ * element's border-radius. canvas.css loads LAST (index.ts), so this wins equal-
  * specificity ties against earlier `outline: none` resets (e.g. the command-palette
  * input). Text inputs keep their own softer box-shadow ring — their `:focus` rules
- * outrank this on specificity — and the bespoke focus-visible rules above (the coverage
- * chip's green ring, the discuss controls) likewise outrank it and keep their look. */
+ * outrank this on specificity — and the remaining bespoke focus-visible rules above (the
+ * discuss controls) likewise outrank it and keep their look. The coverage chip now falls
+ * through to this ring (its bespoke green ring was removed to honour the one-ring rule). */
 :focus-visible {
   outline: 3px solid var(--accent);
   outline-offset: 2px;
