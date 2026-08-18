@@ -73,8 +73,18 @@ try {
   }
   daemonPid = claim.pid;
 
+  // The served browser UI (#381): the packaged daemon resolves its `dist/browser` sibling
+  // (asar-unpacked) and serves the page at `/`. Prove the tab actually loads.
+  const page = await fetch(`http://127.0.0.1:${claim.wsPort}/`);
+  const pageBody = await page.text();
+  if (page.status !== 200 || !pageBody.includes('<div id="root">')) {
+    throw new Error(
+      `Served browser UI missing at /: status ${page.status}\n${pageBody.slice(0, 200)}`,
+    );
+  }
+
   console.log(
-    `Packaged app signature, fuse policy, launch, and bundled-daemon health smoke passed (daemon pid ${claim.pid}, port ${claim.wsPort}).`,
+    `Packaged app signature, fuse policy, launch, bundled-daemon health, and served browser UI smoke passed (daemon pid ${claim.pid}, port ${claim.wsPort}).`,
   );
 } finally {
   child.kill("SIGTERM");

@@ -50,9 +50,43 @@ hands the Electron-owned effects (data directory, repository-chooser dialog,
 `shell.openPath`, and `net.fetch`) to the server as options. Command invocation
 and the progress / ask-stream push streams travel the server's loopback
 WebSocket, which the renderer reaches through `WsRennetBridge` — the same wire
-every future client (browser, CLI, mobile) will use, so a transport bug shows up
-as a desktop bug. The renderer cannot import core or reach Node APIs directly, and
+the served browser tab and the `rennet` CLI already use, and future mobile clients
+will use, so a transport bug shows up as a bug in every shell. The renderer cannot import core or reach Node APIs directly, and
 adapters never leak host-specific behaviour back into the portable protocol.
+
+## Two shells, one UI
+
+The desktop app is no longer the only way to run Rennet. The daemon serves the
+**same** `@rennet/ui` as a browser client over its HTTP port, so a browser tab is a
+full peer of the Electron window — same surfaces, same capabilities, no read-only
+mode and no feature that exists in only one shell. Both shells mount one shared
+`ConnectionHost` (in `@rennet/ui`) that owns *which daemon this window is attached
+to*: the local daemon by default, plus any saved remote daemons (added with a
+phase-4 pairing code). Switching daemons remounts the app against the chosen one.
+
+The browser shell is a composition file (`apps/desktop/src/browser/`), not a second
+UI — it injects a bridge factory into `ConnectionHost` exactly as the renderer does,
+so `@rennet/ui` never imports a transport. A loopback tab is `private` (the full
+contract); a remote tab is `projected` (the R19 public projection, per the
+[remote access guide](/using/guide/remote-access/)). Reaching a remote daemon is a
+Tailscale hop — there is no relay and no hosted backend.
+
+```mermaid
+flowchart LR
+  desktop["Desktop shell<br/>renderer + ConnectionHost"]
+  tab["Browser tab<br/>served UI + ConnectionHost"]
+  localdaemon["Local daemon<br/>@rennet/server + WS + static UI"]
+  remotedaemon["Remote daemon<br/>projected (R19)"]
+
+  desktop -->|loopback WS · private| localdaemon
+  tab -->|loopback WS · private| localdaemon
+  desktop -.->|Tailscale WS · projected + token| remotedaemon
+  tab -.->|Tailscale WS · projected + token| remotedaemon
+```
+
+Machine-bound actions key on the daemon's machine, never the shell: open-in-editor
+opens where the daemon runs, and an absent capability reports itself honestly rather
+than breaking. No command is gated on which shell invoked it.
 
 ## Package graph
 
@@ -104,9 +138,9 @@ flowchart BT
 | `@rennet/core` | Capture-independent review logic, event folds, canvases, routing, lineage, publication decisions | Electron, GitHub clients, filesystem calls, or renderer state |
 | `@rennet/adapters` | Git, GitHub, SQLite, local files, harness SDKs, and other host integrations | UI or product policy |
 | `@rennet/server` | The `createRennetServer` composition root: stores, adapter wiring, harness memoisers, and the 49-command dispatch router | Electron imports (its effects are injected as options) or renderer state |
-| `@rennet/ui` | React surfaces and ephemeral view state | Core imports, Node APIs, or durable review truth |
-| `@rennet/client` | Browser-safe transport clients — the `WsRennetBridge` the renderer (and future browser, CLI, and mobile clients) use to speak the session protocol | Electron, Node APIs, filesystem, or review logic |
-| `apps/desktop` | Electron shell: windows, menu, `app://` protocol, auto-update, injecting the WS port, and composing the `WsRennetBridge` with the preload residue | The composition itself, or reusable domain logic that belongs in a package |
+| `@rennet/ui` | React surfaces, ephemeral view state, and the shared `ConnectionHost` daemon-attachment shell | Core imports, Node APIs, a transport client, or durable review truth |
+| `@rennet/client` | Browser-safe transport clients — the `WsRennetBridge` the renderer, the served browser tab, and the `rennet` CLI use to speak the session protocol (mobile clients will use it too) | Electron, Node APIs, filesystem, or review logic |
+| `apps/desktop` | Electron shell (windows, menu, `app://` protocol, auto-update, the WS port) **and** the served browser shell (`src/browser/` → `dist/browser`, which the daemon serves); both compose a `WsRennetBridge` into `ConnectionHost` | Reusable domain logic that belongs in a package, or a second copy of the UI |
 
 ## A review from input to outcome
 
@@ -204,9 +238,10 @@ The acting command runs the composer's exact output bound by its digest, refusin
 tampered or stale bundle, and the renderer composes, previews, and invokes it from
 the own-branch destination, surfacing the run outcome truthfully.
 
-The architecture still contains deliberate future seams: additional harnesses,
-remote/mobile clients, and public release machinery are not all live merely
-because their ports or contracts exist. The
+The architecture still contains deliberate future seams: additional harnesses, a
+dedicated mobile client, and public release machinery are not all live merely
+because their ports or contracts exist. (The browser shell and remote projected
+access over Tailscale ARE live.) The
 [architecture contracts](/developing/concepts/architecture-contracts/) page
 keeps those requirements separate from observed implementation.
 

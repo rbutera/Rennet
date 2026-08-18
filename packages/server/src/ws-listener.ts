@@ -15,8 +15,16 @@
 //     connection and cleans up on resolution or disconnect. No product flow uses it yet.
 
 import { randomUUID } from "node:crypto";
-import { createServer, type Server as HttpServer, type IncomingMessage } from "node:http";
+import { createReadStream, realpathSync } from "node:fs";
+import { stat } from "node:fs/promises";
+import {
+  createServer,
+  type Server as HttpServer,
+  type IncomingMessage,
+  type ServerResponse,
+} from "node:http";
 import { homedir } from "node:os";
+import { extname, normalize, resolve, sep } from "node:path";
 import type {
   CommandName,
   ProjectProcessEvent,
@@ -71,6 +79,70 @@ export interface WsListenerDeps {
   readonly projectionContext?: () => ProjectionContext;
   /** Opt-in bind beyond loopback (design D6). Default: `127.0.0.1` on an ephemeral port. */
   readonly listen?: { readonly host: string; readonly port?: number };
+  /**
+   * Directory of a built browser UI to serve over the HTTP port (issue #381, design D2).
+   * Absent ⇒ the daemon runs headless (serving is a capability, not a requirement). Every
+   * asset is served with a path-traversal guard; `/` maps to `index.html`.
+   */
+  readonly uiDist?: string;
+}
+
+/** Content types for the assets a Vite browser bundle emits; anything else is octet-stream. */
+const CONTENT_TYPES: Record<string, string> = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".svg": "image/svg+xml",
+  ".ico": "image/x-icon",
+  ".woff2": "font/woff2",
+};
+
+/**
+ * Serve one static asset from `uiDist` (design D2). GET/HEAD only; `/` → `index.html`. The
+ * traversal guard is the desktop app-protocol handler's, ported: resolve the request under
+ * the root and refuse anything that escapes it. Returns true once it has written a response
+ * (found or a 404), false when the caller should fall through (never — this always answers).
+ */
+async function serveStatic(req: IncomingMessage, res: ServerResponse, root: string): Promise<void> {
+  const notFound = (): void => {
+    res.writeHead(404, { "content-type": "text/plain" });
+    res.end("not found");
+  };
+  const rawPath = decodeURIComponent(new URL(req.url ?? "/", "http://localhost").pathname);
+  const requested = rawPath === "/" ? "/index.html" : rawPath;
+  const target = resolve(root, `.${normalize(requested)}`);
+  if (target !== root && !target.startsWith(root + sep)) return notFound();
+  let realRoot: string;
+  let realTarget: string;
+  try {
+    realRoot = realpathSync(root);
+    realTarget = realpathSync(target);
+  } catch {
+    return notFound();
+  }
+  if (realTarget !== realRoot && !realTarget.startsWith(realRoot + sep)) return notFound();
+  let fileStat: Awaited<ReturnType<typeof stat>>;
+  try {
+    fileStat = await stat(realTarget);
+  } catch {
+    return notFound();
+  }
+  if (!fileStat.isFile()) return notFound();
+  const contentType =
+    CONTENT_TYPES[extname(realTarget).toLowerCase()] ?? "application/octet-stream";
+  const headers: Record<string, string> = { "content-type": contentType };
+  // The entry document must never be cached: a redeploy changes the hashed asset names it
+  // points at, and a stale index.html would reference assets that no longer exist.
+  if (requested === "/index.html") headers["cache-control"] = "no-cache";
+  if (req.method === "HEAD") {
+    res.writeHead(200, headers);
+    res.end();
+    return;
+  }
+  res.writeHead(200, headers);
+  createReadStream(realTarget).pipe(res);
 }
 
 /** The daemon identity `GET /healthz` returns and a launcher probes before connecting (#379). */
@@ -179,6 +251,7 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
   const { dispatch, serverVersion } = deps;
   const listenHost = deps.listen?.host ?? "127.0.0.1";
   const listenPort = deps.listen?.port ?? 0;
+  const root = deps.uiDist ? resolve(deps.uiDist) : undefined;
   const nonLoopbackBind = !isLoopbackAddress(listenHost) && listenHost !== "localhost";
   const home = homedir();
   const contextOf = (): ProjectionContext =>
@@ -206,6 +279,17 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
       };
       res.writeHead(200, { "content-type": "application/json" });
       res.end(JSON.stringify(identity));
+      return;
+    }
+    // The served browser UI (design D2), slotted before the 404. GET/HEAD only; a missing
+    // asset answers 404 from within. Absent uiDist ⇒ the daemon is headless and falls through.
+    if (root && (req.method === "GET" || req.method === "HEAD")) {
+      void serveStatic(req, res, root).catch(() => {
+        if (!res.headersSent) {
+          res.writeHead(500, { "content-type": "text/plain" });
+          res.end("internal error");
+        }
+      });
       return;
     }
     res.writeHead(404, { "content-type": "text/plain" });

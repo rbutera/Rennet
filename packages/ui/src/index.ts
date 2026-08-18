@@ -200,6 +200,15 @@ export type { AskAnswersProps, AskControlProps } from "./components/ask";
 export { AskAnswers, AskControl } from "./components/ask";
 export { BatchView } from "./components/batch-view";
 export { CollationDraftCanvas } from "./components/collation-draft-canvas";
+// The connections surface (issue #381): the shared daemon-attachment shell both the
+// desktop renderer and the served browser tab mount. Transport-agnostic — the shell
+// injects the bridge factory, so `ui` never imports a client package.
+export type {
+  BridgeFactory,
+  ConnectionHostProps,
+  ConnectionTarget,
+} from "./components/connection-host";
+export { ConnectionHost } from "./components/connection-host";
 // The context-composition inspector: Rennet's deterministic, gate-free assembly manifest.
 export { ContextManifestPanel } from "./components/context-manifest-panel";
 // The inline conversation cluster UI (issue #36): the discuss verb (opens a thread),

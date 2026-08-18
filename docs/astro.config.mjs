@@ -45,6 +45,7 @@ export default defineConfig({
                     link: "/using/guide/reviewing-a-github-pr/",
                   },
                   { label: "Remote access", link: "/using/guide/remote-access/" },
+                  { label: "Rennet in a browser", link: "/using/guide/browser-rennet/" },
                   { label: "User journey", link: "/using/guide/user-journey/" },
                 ],
               },
