@@ -39,4 +39,4 @@
 ## 7. Close-out
 
 - [x] 7.1 Docs same-change: `using/guide/mobile.md` (pair, read, notifications) + sidebar entry; architecture-overview mobile client row + node; delivery-order M1 entry; mobile-plan M1 marked delivered + device smoke checklist; dependency-standard Mobile stack; protocol-compatibility feature + frames.
-- [ ] 7.2 Full `pnpm check` green (exit code captured directly); openspec validate strict; PR `Refs #383`.
+- [x] 7.2 Full `pnpm check` green (exit code `0`, captured directly, cold cache 0/46 — a genuine fresh pass across all 13 projects); `openspec validate mobile-app-m1 --strict` reports valid. NO push (per the task); PR is the reviewer's to open `Refs #383`.
