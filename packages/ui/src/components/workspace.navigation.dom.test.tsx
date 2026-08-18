@@ -81,31 +81,35 @@ describe("CanvasWorkspace keybinding overrides (#44)", () => {
 
   it("keeps the ArrowRight/Escape synonyms and the editable-target guard (control)", () => {
     const store = createViewStore({ angle: "decisions", zoom: { level: "cohort" } });
-    const { getByRole } = mount(
+    const { container } = mount(
       <CanvasWorkspace
         canvases={demoCanvases()}
         store={store}
         keybindingOverrides={{ "zoom.in": "j" }}
       />,
     );
-    const tab = getByRole("tab", { name: "Decisions" });
-    tab.focus();
+    // Dispatch from the canvas surface, NOT a lens tab: the tablist now owns the
+    // arrow keys (WAI-ARIA tabs), so a tab-targeted arrow moves tabs instead.
+    const surface = container.querySelector("main.canvas-surface") as Element;
 
     // ArrowRight is a hardcoded affordance synonym for zoom-in, not a registry chord.
-    fireEvent.keyDown(tab, { key: "ArrowRight" });
+    fireEvent.keyDown(surface, { key: "ArrowRight" });
     expect(store.getState().zoom.level).toBe("element");
   });
 
   it("an explicit zoom.in unbind also dead-keys the ArrowRight alias", () => {
     const store = createViewStore({ angle: "decisions", zoom: { level: "rollup" } });
-    const { getByRole } = mount(
+    const { container } = mount(
       <CanvasWorkspace
         canvases={demoCanvases()}
         store={store}
         keybindingOverrides={{ "zoom.in": null }}
       />,
     );
-    fireEvent.keyDown(getByRole("tab", { name: "Decisions" }), { key: "ArrowRight" });
+    // From the surface (not a tab: the tablist consumes arrows for tab movement).
+    fireEvent.keyDown(container.querySelector("main.canvas-surface") as Element, {
+      key: "ArrowRight",
+    });
     expect(store.getState().zoom.level).toBe("rollup");
   });
 
@@ -133,5 +137,52 @@ describe("CanvasWorkspace keybinding overrides (#44)", () => {
     );
     fireEvent.keyDown(getByRole("tab", { name: "Decisions" }), { key: "]" });
     expect(store.getState().angle).toBe("decisions");
+  });
+});
+
+describe("lens tablist arrows vs canvas zoom, and the tabpanel wiring (wave-3 fixes)", () => {
+  it("an arrow key on the lens tablist moves the tab selection without zooming the canvas", () => {
+    const store = createViewStore({ angle: "decisions", zoom: { level: "rollup" } });
+    const { container, getByRole } = mount(
+      <CanvasWorkspace canvases={demoCanvases()} store={store} />,
+    );
+    const tab = getByRole("tab", { name: "Decisions" });
+    tab.focus();
+
+    fireEvent.keyDown(tab, { key: "ArrowRight" });
+    // Selection follows focus to the next lens (WAI-ARIA tabs pattern)...
+    expect(store.getState().angle).toBe("noise");
+    // ...and the canvas did NOT also act on the arrow. Pre-fix the keydown bubbled
+    // into the workspace handler, whose ArrowRight alias zoomed rollup -> cohort.
+    expect(store.getState().zoom.level).toBe("rollup");
+
+    // Positive control: the same key OUTSIDE the tablist still zooms, so the
+    // arrow->zoom mapping this test protects the tablist from is genuinely alive.
+    const surface = container.querySelector("main.canvas-surface");
+    expect(surface).not.toBeNull();
+    fireEvent.keyDown(surface as Element, { key: "ArrowRight" });
+    expect(store.getState().zoom.level).toBe("cohort");
+    expect(store.getState().angle).toBe("noise");
+  });
+
+  it("the canvas surface is the tabs. tabpanel: id / aria-controls / aria-labelledby line up", () => {
+    const store = createViewStore({ angle: "decisions", zoom: { level: "rollup" } });
+    const { container, getByRole } = mount(
+      <CanvasWorkspace canvases={demoCanvases()} store={store} />,
+    );
+    const panel = container.querySelector("main.canvas-surface");
+    expect(panel?.getAttribute("id")).toBe("canvas-surface-panel");
+    expect(panel?.getAttribute("role")).toBe("tabpanel");
+    expect(panel?.getAttribute("aria-labelledby")).toBe("lens-tab-decisions");
+    // Every tab names the panel it controls, by the panel:s real id.
+    const tab = getByRole("tab", { name: "Decisions" });
+    expect(tab.getAttribute("id")).toBe("lens-tab-decisions");
+    expect(tab.getAttribute("aria-controls")).toBe("canvas-surface-panel");
+    // Switching lenses re-labels the panel by the NEWLY active tab.
+    fireEvent.click(getByRole("tab", { name: "Noise" }));
+    expect(panel?.getAttribute("aria-labelledby")).toBe("lens-tab-noise");
+    expect(getByRole("tab", { name: "Noise" }).getAttribute("aria-controls")).toBe(
+      "canvas-surface-panel",
+    );
   });
 });

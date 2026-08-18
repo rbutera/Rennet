@@ -47,21 +47,29 @@ export function LensSwitcher({
     tabRefs.current[wrapped]?.focus();
   };
   const onTabKeyDown = (event: KeyboardEvent<HTMLButtonElement>, index: number) => {
+    // A handled arrow/Home/End must NOT bubble to the canvas application handler
+    // (workspace onKeyDown maps ArrowRight/ArrowLeft to zoom): stopPropagation keeps
+    // tab movement from also zooming the canvas. preventDefault marks it handled so
+    // the app dispatcher's defaultPrevented guard is a second line of defence.
     switch (event.key) {
       case "ArrowRight":
         event.preventDefault();
+        event.stopPropagation();
         moveTo(index + 1);
         break;
       case "ArrowLeft":
         event.preventDefault();
+        event.stopPropagation();
         moveTo(index - 1);
         break;
       case "Home":
         event.preventDefault();
+        event.stopPropagation();
         moveTo(0);
         break;
       case "End":
         event.preventDefault();
+        event.stopPropagation();
         moveTo(CANVAS_LENSES.length - 1);
         break;
     }
@@ -74,6 +82,8 @@ export function LensSwitcher({
             type="button"
             role="tab"
             key={candidate}
+            id={`lens-tab-${candidate}`}
+            aria-controls="canvas-surface-panel"
             ref={(node) => {
               tabRefs.current[index] = node;
             }}
