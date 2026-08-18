@@ -87,6 +87,7 @@ added.
 | Feature key | Advertised when | Meaning |
 |---|---|---|
 | `serverRequests` | always, on current daemons | The daemon can send `serverRequest` frames and understands `serverResponse` (see the [frame vocabulary](#the-frame-vocabulary)). A client that reads this flag as true may register an `onServerRequest` handler; one that does not never sees a server-initiated request. No product flow raises one yet — the flag reserves the capability so a future client negotiates it once, at handshake. |
+| `attention` | when the daemon wires the attention system (issue #383 M1) | The daemon consumes client `presence` frames, delivers attention events presence-aware, and accepts `device.registerPush` / `attention.acknowledge`. A client that reads this flag as true transmits its `presence` frame (and re-sends it on every reconnect), registers a push token, and receives `attentionEvent` frames; one that does not (an M0-era daemon never advertises it) sends no presence, registers no token, and its presence seam stays a wire-silent no-op. Checked once at handshake, one path — the standard feature-gate. |
 
 ## Inbound decoders are tolerant
 
@@ -130,6 +131,21 @@ the `sessionFrame` discriminated union, keyed on `type`.
 | `serverRequest` | server → client | `serverRequestId`, `kind`, `payload` |
 | `serverResponse` | client → server | `serverRequestId`, `payload` |
 | `serverRequestResolved` | server → client | `serverRequestId` |
+| `presence` | client → server | `focused`, `visible`, `deviceClass`, optional `focusedReviewId` |
+| `attentionEvent` | server → client | `event` (`raised`/`cleared`), optional `item`, optional `clearedIds` |
+
+The last two frames are the attention layer (issue #383 M1), gated on the `attention`
+feature above. `presence` is the client's focus/visibility beacon the delivery planner reads
+to decide in-app-vs-push per client; a client sends it only to a daemon that advertised
+`attention`, so an M0-era daemon never receives it. `attentionEvent` broadcasts an attention
+raise (a `review-finished`, an `ask-pending`, …) or a clear to every authorized socket, so a
+focused client gets the live in-app event (its push is suppressed) and, on acknowledgment,
+every client's needs-you badge clears together. Both are additive arms of the `sessionFrame`
+union — an older peer that never sends or handles them is unaffected. The two commands that
+travel with the layer, `device.registerPush` (a paired device registers/replaces/clears its
+push token) and `attention.acknowledge` (clear on view, propagated to all clients), are
+ordinary additive `commandDefinitions` entries reachable only on a token-bearing connection
+while `attention` is advertised.
 
 `hello.deviceToken` is the append-only field a remote client presents to prove it
 was paired; a loopback client omits it. It carries the raw device token, which the

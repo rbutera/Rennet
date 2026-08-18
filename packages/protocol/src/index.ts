@@ -2715,6 +2715,39 @@ export const commandDefinitions = {
     input: z.object({ deviceId: z.string().min(1) }),
     output: z.object({ devices: z.array(pairedDeviceSchema) }),
   },
+  // ── Push registration (issue #383 M1) — token-bearing connections only ──────
+  // A paired device registers the platform push token the daemon posts attention
+  // pushes to (the ideation notification taxonomy). Additive and COMPAT-tagged: it is
+  // reachable only on a projected (token-bearing) connection while the daemon advertises
+  // the `attention` feature; an M0-era daemon never advertises it, so a phone never calls
+  // it. `remove: true` clears the token (the phone lost push permission); otherwise the
+  // token is set/replaced for THIS connection's authenticated device. Revoking a device's
+  // pairing deletes its push token too, so a revoked device is silently un-pushable.
+  "device.registerPush": {
+    input: z.object({
+      /** The Expo/native push token, or omitted with `remove: true` to clear it. */
+      pushToken: z.string().min(1).optional(),
+      /** The device platform, for the push service's routing. */
+      platform: z.enum(["ios", "android"]),
+      /** Clear the registered token instead of setting one (permission revoked on the phone). */
+      remove: z.boolean().optional(),
+    }),
+    output: z.object({ registered: z.boolean() }),
+  },
+  // ── Attention acknowledgment (issue #383 M1) — clear on view ────────────────
+  // A client calls this when it lands on an attention surface (the pushed review's
+  // digest, the ask, the error). The daemon clears the matching attention item(s) and
+  // broadcasts the clear to every authorized socket, so a handled item stops demanding
+  // attention everywhere at once (attention-notifications: "handled once, quiet
+  // everywhere"). Additive and COMPAT-gated on the `attention` feature. Clearing by
+  // `reviewId` clears every item on that review; `attentionId` clears exactly one.
+  "attention.acknowledge": {
+    input: z.object({
+      reviewId: z.string().min(1).optional(),
+      attentionId: z.string().min(1).optional(),
+    }),
+    output: z.object({ cleared: z.number().int().nonnegative() }),
+  },
 } as const;
 
 export type CommandName = keyof typeof commandDefinitions;
