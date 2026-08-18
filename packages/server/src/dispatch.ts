@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
+import { basename } from "node:path";
 import {
   type AskAnswer,
   askReview,
@@ -64,6 +65,7 @@ import type {
   ReviewNarration,
   SymbolInspection,
 } from "@rennet/types";
+import { deepLinkFor, type RaisedAttention } from "./attention-planner";
 import type { OrchestratorTurnRunner } from "./orchestrator";
 import { type PublishConsentAuthority, publishConsentKey } from "./publish-consent-authority";
 import {
@@ -91,6 +93,29 @@ export interface DispatchDeps {
   readonly service: ReviewService;
   /** Device pairing (mint code / exchange for token / list / revoke). Server-side secret store. */
   readonly pairing: PairingCommands;
+  /**
+   * Push-token registry for `device.registerPush` (issue #383 M1). Present only when the
+   * daemon wired the attention system; a connection's authenticated `ctx.deviceId` keys the
+   * token. Absent ⇒ the command is unreachable (the daemon never advertised `attention`, so
+   * a compliant client never calls it) and the handler rejects it.
+   */
+  readonly pushTokens?: {
+    set(deviceId: string, token: string, platform: "ios" | "android"): void;
+    delete(deviceId: string): void;
+  };
+  /**
+   * Attention acknowledgment for `attention.acknowledge` (issue #383 M1). Clears matching
+   * attention on the daemon and broadcasts the clear to every client; returns the count. Absent
+   * ⇒ attention is off and the handler returns `{ cleared: 0 }`.
+   */
+  readonly acknowledgeAttention?: (selector: { reviewId?: string; attentionId?: string }) => number;
+  /**
+   * Raise an attention event (issue #383 M1) — the planner decides live-vs-push per client.
+   * Fire-and-forget; absent ⇒ attention is off. Wired to the review-finished source (capture /
+   * openPr / regenerate) this pass; the other five families raise from their own sources as
+   * they are wired (see the attention-notifications spec and the mobile plan).
+   */
+  readonly raiseAttention?: (event: RaisedAttention) => void;
   /**
    * The live orchestrator turn runner (issue #13, wave 2): composes the wave-1 live
    * backend + the lean primer + a real `claude` turn over the in-process
@@ -484,6 +509,12 @@ export interface DispatchContext {
    * with no push channel (a #139 one-shot ask resolves its final value with no stream).
    */
   emitAskStream?(event: ReviewAskStreamEvent): void;
+  /**
+   * The authenticated device id for a projected (token-bearing) connection (issue #383 M1).
+   * `device.registerPush` keys its push token by it; absent for loopback/pairing-only
+   * connections (which cannot register a push token).
+   */
+  deviceId?: string;
 }
 
 interface LiveProjectRun {
@@ -510,6 +541,23 @@ export function createDispatch(
 ): (name: CommandName, rawInput: unknown, ctx?: DispatchContext) => Promise<unknown> {
   const { service, allowedRoots } = deps;
   const intelligenceSessions = createReviewIntelligenceSessions();
+
+  /**
+   * Raise a "review finished" attention (issue #383 M1) after a pipeline run produces a
+   * review. The push carries the repo name and deep-links to that review's digest; the real
+   * finding counts render on the digest screen the tap lands on (the pipeline does not expose
+   * counts cheaply here, so the body names the repo rather than fabricating a count — honest
+   * substance, never a placeholder number).
+   */
+  const raiseReviewFinished = (review: Review): void => {
+    deps.raiseAttention?.({
+      family: "review-finished",
+      reviewId: review.id,
+      deepLink: deepLinkFor("review-finished", { reviewId: review.id }),
+      title: "Review finished",
+      body: `${basename(review.repositoryRoot)} is ready to read`,
+    });
+  };
 
   // In-flight REAL posts, keyed by the deterministic idempotency marker (issue #21
   // double-sign race). Two concurrent real posts of the same (review, target, payload)
@@ -623,6 +671,7 @@ export function createDispatch(
         allowedRoots.add(review.repositoryRoot);
         deps.setRepositoryDirty(false);
         deps.startWatching(review.repositoryRoot);
+        raiseReviewFinished(review);
         return parseCommandOutput(name, { review });
       }
       case "review.openPr": {
@@ -640,6 +689,7 @@ export function createDispatch(
           input.retrospective ?? false,
         );
         allowedRoots.add(review.repositoryRoot);
+        raiseReviewFinished(review);
         return parseCommandOutput(name, { review });
       }
       case "review.load": {
@@ -690,6 +740,7 @@ export function createDispatch(
         assertAllowedRepository(input.repoPath);
         const review = await service.regenerate(input.commandId, input.reviewId, input.repoPath);
         deps.setRepositoryDirty(false);
+        raiseReviewFinished(review);
         return parseCommandOutput(name, { review });
       }
       case "publish.requestConsent": {
@@ -1757,6 +1808,25 @@ export function createDispatch(
       case "pairing.revokeDevice": {
         const input = parseCommandInput(name, rawInput);
         return parseCommandOutput(name, { devices: deps.pairing.revokeDevice(input.deviceId) });
+      }
+      case "device.registerPush": {
+        const input = parseCommandInput(name, rawInput);
+        // Token-bearing (projected) connections only: the authenticated device id keys the token.
+        const deviceId = ctx?.deviceId;
+        if (!deviceId || !deps.pushTokens) {
+          throw new Error("device.registerPush requires a paired (token-bearing) connection");
+        }
+        if (input.remove || !input.pushToken) {
+          deps.pushTokens.delete(deviceId);
+          return parseCommandOutput(name, { registered: false });
+        }
+        deps.pushTokens.set(deviceId, input.pushToken, input.platform);
+        return parseCommandOutput(name, { registered: true });
+      }
+      case "attention.acknowledge": {
+        const input = parseCommandInput(name, rawInput);
+        const cleared = deps.acknowledgeAttention?.(input) ?? 0;
+        return parseCommandOutput(name, { cleared });
       }
       default: {
         // Exhaustiveness guard: every CommandName is routed above, so `name` is

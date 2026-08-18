@@ -26,18 +26,28 @@ import {
 import { homedir } from "node:os";
 import { extname, normalize, resolve, sep } from "node:path";
 import type {
+  AttentionItem,
   CommandName,
   ProjectProcessEvent,
   ReviewAskStreamEvent,
   SessionFrame,
 } from "@rennet/protocol";
 import {
+  ATTENTION_FEATURE,
   MIN_COMPATIBLE_PROTOCOL_VERSION,
   PROTOCOL_VERSION,
   parseSessionFrame,
 } from "@rennet/protocol";
 import { WebSocket, WebSocketServer } from "ws";
 import { z } from "zod";
+import {
+  AttentionRegistry,
+  type ConnectedClient,
+  type PresenceState,
+  planDelivery,
+  type RaisedAttention,
+} from "./attention-planner";
+import { type ExpoPushMessage, sendExpoPushes } from "./expo-push";
 import {
   buildProjectionContext,
   type ProjectionContext,
@@ -48,6 +58,7 @@ import {
   scrubProjectedValue,
   scrubRoots,
 } from "./projection";
+import type { PushRegistration } from "./push-token-store";
 
 /** The dispatch surface the transport routes to — the exact shape createDispatch returns. */
 type Dispatch = (
@@ -57,6 +68,8 @@ type Dispatch = (
     emitProgress?(event: ProjectProcessEvent): void;
     progressRecipientId?: string | number;
     emitAskStream?(event: ReviewAskStreamEvent): void;
+    /** The authenticated device id for a projected connection (#383 M1: `device.registerPush`). */
+    deviceId?: string;
   },
 ) => Promise<unknown>;
 
@@ -85,6 +98,26 @@ export interface WsListenerDeps {
    * asset is served with a path-traversal guard; `/` maps to `index.html`.
    */
   readonly uiDist?: string;
+  /**
+   * The attention system (issue #383 M1). Present ⇒ the daemon advertises the `attention`
+   * feature, accepts client `presence` frames, and delivers attention events presence-aware
+   * (a focused client gets the live in-app frame; every other registered device gets a push).
+   * Absent ⇒ M0 behaviour unchanged: no `attention` flag, presence frames ignored, no pushes.
+   */
+  readonly attention?: AttentionDeps;
+}
+
+/** The attention wiring the listener needs to plan and post pushes (issue #383 M1). */
+export interface AttentionDeps {
+  /** The registered push tokens (planner input) and dead-token cleanup. */
+  readonly pushTokens: {
+    list(): PushRegistration[];
+    delete(deviceId: string): void;
+  };
+  /** Post pushes (default: the real Expo egress). Injected as a stub in tests. */
+  readonly sendPush?: typeof sendExpoPushes;
+  /** Non-fatal egress error sink (logging only). */
+  readonly onEgressError?: (error: unknown) => void;
 }
 
 /** Content types for the assets a Vite browser bundle emits; anything else is octet-stream. */
@@ -171,6 +204,21 @@ export interface WsListener {
    * frame is sent to the connection on resolution or rejection so it never shows a stale prompt.
    */
   askConnection(connectionId: string, kind: string, payload: unknown): Promise<unknown>;
+  /**
+   * Raise an attention event (issue #383 M1). Registers it, broadcasts the live in-app frame
+   * to every authorized socket, and posts a push to every registered device NOT connected-and-
+   * focused on the affected review. A no-op if the attention system is not wired. Returns the
+   * stored item (with its id) or null when attention is off.
+   */
+  raiseAttention(event: RaisedAttention): AttentionItem | null;
+  /**
+   * Acknowledge (clear) attention on view (issue #383 M1). Clears matching items and broadcasts
+   * the clear to every authorized socket so a handled item goes quiet everywhere. Returns the
+   * number cleared (0 when attention is off or nothing matched).
+   */
+  acknowledgeAttention(selector: { reviewId?: string; attentionId?: string }): number;
+  /** The attention items still active (a fresh client hydrates its needs-you set from these). */
+  activeAttention(): AttentionItem[];
   /** Close every socket and the HTTP listener. Resolves once the listener is fully down. */
   close(): Promise<void>;
 }
@@ -180,6 +228,15 @@ function inputString(input: unknown, key: string): string | undefined {
   if (input && typeof input === "object") {
     const value = (input as Record<string, unknown>)[key];
     if (typeof value === "string") return value;
+  }
+  return undefined;
+}
+
+/** Read a `deviceId` off whatever `verifyDeviceToken` returned (a `PairedDevice`), if present. */
+function readDeviceId(device: unknown): string | undefined {
+  if (device && typeof device === "object") {
+    const value = (device as Record<string, unknown>).deviceId;
+    if (typeof value === "string" && value.length > 0) return value;
   }
   return undefined;
 }
@@ -242,6 +299,10 @@ interface Connection {
   readonly connectionId: string;
   helloReceived: boolean;
   connectionClass: ConnectionClass;
+  /** The authenticated device id (projected connections only) — the push-token key (#383 M1). */
+  deviceId?: string;
+  /** The last presence this connection reported, or undefined until it does (⇒ away for delivery). */
+  presence?: PresenceState;
   /** Pending server→client asks on THIS connection, keyed by `serverRequestId`. */
   readonly serverRequests: Map<string, ServerRequestPending>;
 }
@@ -259,6 +320,7 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
 
   const connections = new Set<Connection>();
   const byId = new Map<string, Connection>();
+  const attentionRegistry = new AttentionRegistry();
   let boundPort = 0;
 
   const httpServer: HttpServer = createServer((req, res) => {
@@ -374,6 +436,7 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
           emitProgress,
           progressRecipientId: connectionId,
           emitAskStream,
+          deviceId: connection.deviceId,
         });
         send(socket, {
           type: "response",
@@ -427,8 +490,12 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
           if (loopback) {
             connection.connectionClass = "private";
           } else if (frame.deviceToken) {
-            if (deps.verifyDeviceToken?.(frame.deviceToken)) {
+            const device = deps.verifyDeviceToken?.(frame.deviceToken);
+            if (device) {
               connection.connectionClass = "projected";
+              // Capture the authenticated device id so `device.registerPush` keys its token by
+              // it and the planner can suppress a focused device's push (#383 M1).
+              connection.deviceId = readDeviceId(device);
             } else {
               send(socket, {
                 type: "rpcError",
@@ -448,7 +515,12 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
             version: serverVersion,
             protocolVersion: PROTOCOL_VERSION,
             minCompatibleProtocolVersion: MIN_COMPATIBLE_PROTOCOL_VERSION,
-            features: { serverRequests: true },
+            // `attention` advertised only when the daemon wires the attention system, so an
+            // M0-era build never advertises it and no client sends presence / registers a push.
+            features: {
+              serverRequests: true,
+              ...(deps.attention ? { [ATTENTION_FEATURE]: true } : {}),
+            },
           });
           return;
         }
@@ -491,7 +563,20 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
           }
           return;
         }
-        // response/rpcError/progress/askStream/serverRequest/resolved are server→client; ignore inbound.
+        case "presence": {
+          // Accepted ONLY when the daemon advertised `attention` (spec: capability-gated).
+          // A client that never sends it is treated as away by the planner (undefined presence).
+          if (!deps.attention) return;
+          connection.presence = {
+            focused: frame.focused,
+            visible: frame.visible,
+            deviceClass: frame.deviceClass,
+            ...(frame.focusedReviewId ? { focusedReviewId: frame.focusedReviewId } : {}),
+          };
+          return;
+        }
+        // response/rpcError/progress/askStream/serverRequest/resolved/attentionEvent are
+        // server→client; ignore them inbound.
         default:
           return;
       }
@@ -604,6 +689,77 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
     }
   };
 
+  /** Send an attention frame to every authorized (helloReceived, non-pairing-only) socket. */
+  const broadcastAttention = (frame: SessionFrame): void => {
+    const payload = JSON.stringify(frame);
+    for (const connection of connections) {
+      if (connection.socket.readyState !== WebSocket.OPEN) continue;
+      if (!connection.helloReceived || connection.connectionClass === "pairing-only") continue;
+      connection.socket.send(payload);
+    }
+  };
+
+  /** The current authorized connections as planner inputs (connectionId + device + presence). */
+  const connectedClients = (): ConnectedClient[] => {
+    const clients: ConnectedClient[] = [];
+    for (const connection of connections) {
+      if (!connection.helloReceived || connection.connectionClass === "pairing-only") continue;
+      clients.push({
+        connectionId: connection.connectionId,
+        ...(connection.deviceId ? { deviceId: connection.deviceId } : {}),
+        ...(connection.presence ? { presence: connection.presence } : {}),
+      });
+    }
+    return clients;
+  };
+
+  const raiseAttention = (event: RaisedAttention): AttentionItem | null => {
+    const attention = deps.attention;
+    if (!attention) return null;
+    const item = attentionRegistry.raise(event);
+    // Live in-app: every authorized socket gets the raised frame (its needs-you badge appears).
+    broadcastAttention({ type: "attentionEvent", event: "raised", item });
+    // Push: every registered device NOT connected-and-focused on this review (planner decision).
+    const registrations = attention.pushTokens.list();
+    const plan = planDelivery(item, connectedClients(), registrations);
+    if (plan.push.length > 0) {
+      const messages: ExpoPushMessage[] = plan.push.map((registration) => ({
+        to: registration.token,
+        title: item.title,
+        body: item.body,
+        // The app maps `deviceId` back to the delivering daemon and resolves `deepLink` under it.
+        data: { deviceId: registration.deviceId, deepLink: item.deepLink, family: item.family },
+        priority: plan.priority === "high" ? "high" : "normal",
+      }));
+      const post = attention.sendPush ?? sendExpoPushes;
+      // Fire-and-forget: push is best-effort, the in-app frame above is authoritative.
+      void post(messages, {
+        onDeadToken: (token) => {
+          const dead = plan.push.find((registration) => registration.token === token);
+          if (dead) attention.pushTokens.delete(dead.deviceId);
+        },
+        onError: (error) => attention.onEgressError?.(error),
+      });
+    }
+    return item;
+  };
+
+  const acknowledgeAttention = (selector: { reviewId?: string; attentionId?: string }): number => {
+    if (!deps.attention) return 0;
+    const cleared = attentionRegistry.clear(selector);
+    if (cleared.length > 0) {
+      // Quiet everywhere: broadcast the cleared ids so every client drops the needs-you badge.
+      broadcastAttention({
+        type: "attentionEvent",
+        event: "cleared",
+        clearedIds: cleared.map((item) => item.id),
+      });
+    }
+    return cleared.length;
+  };
+
+  const activeAttention = (): AttentionItem[] => attentionRegistry.active();
+
   const askConnection = (
     connectionId: string,
     kind: string,
@@ -633,5 +789,14 @@ export async function startWsListener(deps: WsListenerDeps): Promise<WsListener>
       wss.close(() => httpServer.close(() => resolve()));
     });
 
-  return { port: boundPort, host: listenHost, broadcastProgress, askConnection, close };
+  return {
+    port: boundPort,
+    host: listenHost,
+    broadcastProgress,
+    askConnection,
+    raiseAttention,
+    acknowledgeAttention,
+    activeAttention,
+    close,
+  };
 }

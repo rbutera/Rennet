@@ -180,6 +180,9 @@ function harness(
     flaggedReview?: DispatchDeps["flaggedReview"];
     readUiEvidence?: DispatchDeps["readUiEvidence"];
     repositoryExists?: DispatchDeps["repositoryExists"];
+    pushTokens?: DispatchDeps["pushTokens"];
+    acknowledgeAttention?: DispatchDeps["acknowledgeAttention"];
+    raiseAttention?: DispatchDeps["raiseAttention"];
   } = {},
 ): {
   dispatch: ReturnType<typeof createDispatch>;
@@ -295,6 +298,9 @@ function harness(
     buildCanvases,
     publishPort,
     publishConsent,
+    ...(extra.pushTokens ? { pushTokens: extra.pushTokens } : {}),
+    ...(extra.acknowledgeAttention ? { acknowledgeAttention: extra.acknowledgeAttention } : {}),
+    ...(extra.raiseAttention ? { raiseAttention: extra.raiseAttention } : {}),
     ...(extra.submitPullRequest ? { submitPullRequest: extra.submitPullRequest } : {}),
     ...(extra.draftDeltaDigest ? { draftDeltaDigest: extra.draftDeltaDigest } : {}),
     ...(extra.runHandoffTurn ? { runHandoffTurn: extra.runHandoffTurn } : {}),
@@ -3862,5 +3868,66 @@ describe("createDispatch — review.ask scoped reaping (issue #251, criterion 4)
     // Codex: no record at all — the cancel is NOT persisted as a codex failure. Drop the
     // guard and this reddens (a `tn::codex` "could not answer" message appears).
     expect(messages.some((m) => m.id === "tn::codex")).toBe(false);
+  });
+});
+
+describe("createDispatch — device.registerPush + attention.acknowledge (#383 M1)", () => {
+  function pushTokensSpy() {
+    return { set: vi.fn(), delete: vi.fn() };
+  }
+
+  it("registers a push token keyed by the connection's authenticated device id", async () => {
+    const pushTokens = pushTokensSpy();
+    const { dispatch } = harness(undefined, {}, { pushTokens });
+    const output = await dispatch(
+      "device.registerPush",
+      { pushToken: "ExponentPushToken[abc]", platform: "ios" },
+      { deviceId: "dev-1" },
+    );
+    expect(output).toEqual({ registered: true });
+    expect(pushTokens.set).toHaveBeenCalledWith("dev-1", "ExponentPushToken[abc]", "ios");
+  });
+
+  it("clears the token on remove (permission lost on the phone)", async () => {
+    const pushTokens = pushTokensSpy();
+    const { dispatch } = harness(undefined, {}, { pushTokens });
+    const output = await dispatch(
+      "device.registerPush",
+      { platform: "android", remove: true },
+      { deviceId: "dev-1" },
+    );
+    expect(output).toEqual({ registered: false });
+    expect(pushTokens.delete).toHaveBeenCalledWith("dev-1");
+  });
+
+  it("rejects registerPush on a connection with no authenticated device (loopback/pairing-only)", async () => {
+    const { dispatch } = harness(undefined, {}, { pushTokens: pushTokensSpy() });
+    await expect(
+      dispatch("device.registerPush", { pushToken: "t", platform: "ios" }, {}),
+    ).rejects.toThrow(/paired \(token-bearing\)/);
+  });
+
+  it("acknowledge routes the selector to the clear surface and returns the count", async () => {
+    const acknowledgeAttention = vi.fn(() => 2);
+    const { dispatch } = harness(undefined, {}, { acknowledgeAttention });
+    const output = await dispatch("attention.acknowledge", { reviewId: "rev-1" });
+    expect(output).toEqual({ cleared: 2 });
+    expect(acknowledgeAttention).toHaveBeenCalledWith({ reviewId: "rev-1" });
+  });
+
+  it("acknowledge returns { cleared: 0 } when attention is off (no dep wired)", async () => {
+    const { dispatch } = harness();
+    expect(await dispatch("attention.acknowledge", { reviewId: "rev-1" })).toEqual({ cleared: 0 });
+  });
+
+  it("review.capture raises a review-finished attention with a digest deep-link", async () => {
+    const raiseAttention = vi.fn();
+    const { dispatch } = harness(undefined, {}, { raiseAttention });
+    await dispatch("repository.choose", {});
+    await dispatch("review.capture", { commandId: crypto.randomUUID(), repoPath: REPO });
+    expect(raiseAttention).toHaveBeenCalledOnce();
+    const event = raiseAttention.mock.calls[0]?.[0];
+    expect(event).toMatchObject({ family: "review-finished" });
+    expect(event.deepLink).toMatch(/^rennet:\/\/review\/.+\/digest$/);
   });
 });

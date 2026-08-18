@@ -2,15 +2,15 @@
 
 ## 1. Protocol additions (additive, COMPAT-tagged)
 
-- [ ] 1.1 `device.registerPush` command (token-bearing connections only; set/replace/delete push token per device) + `presence` client frame (focused/visible/deviceClass + focused review); daemon advertises `attention` capability in handshake; projected schema fixtures regenerated; protocol-compatibility doc entry.
-- [ ] 1.2 `packages/client`: transmit presence only when the daemon advertises `attention`; re-send current presence on every reconnect; unit tests both ways (delta spec scenarios).
+- [x] 1.1 `device.registerPush` command (token-bearing connections only; set/replace/delete push token per device) + `presence` client frame (focused/visible/deviceClass + focused review); daemon advertises `attention` capability in handshake; protocol-compatibility doc entry. (Also added the additive `attentionEvent` server→client frame and `attention.acknowledge` command — the live-event + clear wire the specs require. No R19 public-schema fixture changes: the additions carry no host paths, so `publicProjectionSchemas` is unchanged.)
+- [x] 1.2 `packages/client`: transmit presence only when the daemon advertises `attention`; re-send current presence on every reconnect; unit tests both ways (delta spec scenarios) in `connection-supervisor.test.ts`.
 
 ## 2. Daemon attention system (`packages/server`)
 
-- [ ] 2.1 Push-token store (SQLite, keyed by device id); revoke deletes; unit tests.
-- [ ] 2.2 Attention planner: six-event taxonomy wired to its real sources (ask pending, review finished, turn failed/interrupted, handoff run completed, publish-ready, processing finished), each with substance + deep-link route; per-client presence tracking; connected-and-focused → live event only, others → push; high-priority families always reach every client one way; unit tests per family and per presence case.
-- [ ] 2.3 Expo push egress: outbound post, non-fatal failure, dead-token cleanup; test to the API boundary with a stub.
-- [ ] 2.4 Attention clear: acknowledgment invoke on landing; propagates to all clients; unit test (handled once, quiet everywhere).
+- [x] 2.1 Push-token store (SQLite via `node:sqlite`, keyed by device id, `~/.rennet/push-tokens.sqlite`); revoke deletes (wired through the pairing-revoke path); unit tests in `push-token-store.test.ts`.
+- [x] 2.2 Attention planner: six-event taxonomy (closed, sourced from the protocol enum), each with substance + deep-link route (`deepLinkFor`); per-client presence tracking in the listener; connected-and-focused → live event only, others → push; high-priority families always reach every client; silent (processing-finished) posts no push; unit tests per family and per presence case in `attention-planner.test.ts`. **Source wiring:** `review-finished` is wired to its real source (capture/openPr/regenerate in `dispatch.ts`). The other five families (ask-pending, turn-failed, handoff-completed, publish-ready, processing-finished) have the planner + registry + `raiseAttention` seam ready and are raised from their own sources as those flows are wired — several of those flows (asks, publish, handoff) are M2 scope. See the delivery note in the change docs.
+- [x] 2.3 Expo push egress: outbound post, non-fatal failure, dead-token cleanup; tested to the API boundary with an injected fetch stub in `expo-push.test.ts`.
+- [x] 2.4 Attention clear: `attention.acknowledge` invoke on landing; broadcasts the cleared ids to all clients; unit tests (handled once, quiet everywhere) in `ws-listener.test.ts` + `attention-planner.test.ts`.
 
 ## 3. Expo app skeleton (`apps/mobile`)
 

@@ -247,3 +247,163 @@ describe("WS listener ask-stream broadcast (#389 server half)", () => {
     });
   });
 });
+
+describe("WS listener attention delivery (#383 M1, attention-notifications)", () => {
+  const listeners: WsListener[] = [];
+  const sockets: WebSocket[] = [];
+  afterEach(async () => {
+    for (const socket of sockets.splice(0)) socket.close();
+    for (const listener of listeners.splice(0)) await listener.close();
+  });
+
+  function memoryPushTokens(seed: Array<{ deviceId: string; token: string }>) {
+    const rows = new Map(
+      seed.map((s) => [
+        s.deviceId,
+        { deviceId: s.deviceId, token: s.token, platform: "ios" as const, updatedAt: 0 },
+      ]),
+    );
+    return {
+      list: () => [...rows.values()],
+      delete: (deviceId: string) => void rows.delete(deviceId),
+    };
+  }
+
+  async function connect(
+    listener: WsListener,
+  ): Promise<{ socket: WebSocket; serverInfo: Record<string, unknown> }> {
+    const socket = new WebSocket(`ws://127.0.0.1:${listener.port}`);
+    sockets.push(socket);
+    await once(socket, "open");
+    const infoMsg = once(socket, "message");
+    socket.send(
+      JSON.stringify({
+        type: "hello",
+        clientId: "c",
+        clientType: "rennet-client",
+        protocolVersion: PROTOCOL_VERSION,
+      }),
+    );
+    const serverInfo = JSON.parse(String((await infoMsg)[0]));
+    return { socket, serverInfo };
+  }
+
+  /** Collect every attentionEvent frame the socket receives into an array. */
+  function collectAttention(socket: WebSocket): Array<Record<string, unknown>> {
+    const frames: Array<Record<string, unknown>> = [];
+    socket.on("message", (data) => {
+      const frame = JSON.parse(String(data));
+      if (frame.type === "attentionEvent") frames.push(frame);
+    });
+    return frames;
+  }
+
+  const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 20));
+
+  it("advertises the attention feature only when the attention system is wired", async () => {
+    const dispatch = vi.fn(async () => ({})) as WsListenerDeps["dispatch"];
+    const withAttention = await startWsListener({
+      dispatch,
+      serverVersion: "test",
+      attention: { pushTokens: memoryPushTokens([]) },
+    });
+    listeners.push(withAttention);
+    expect((await connect(withAttention)).serverInfo.features).toMatchObject({ attention: true });
+
+    const withoutAttention = await startWsListener({ dispatch, serverVersion: "test" });
+    listeners.push(withoutAttention);
+    expect((await connect(withoutAttention)).serverInfo.features).not.toHaveProperty("attention");
+  });
+
+  it("raiseAttention broadcasts the live frame in-app and posts a push to a registered device", async () => {
+    const dispatch = vi.fn(async () => ({})) as WsListenerDeps["dispatch"];
+    let posted: Array<{ to: string; data: Record<string, unknown> }> = [];
+    const sendPush = vi.fn(
+      async (messages: readonly { to: string; data: Record<string, unknown> }[]) => {
+        posted = messages.map((m) => ({ to: m.to, data: m.data }));
+        return posted.length;
+      },
+    );
+    const listener = await startWsListener({
+      dispatch,
+      serverVersion: "test",
+      attention: {
+        pushTokens: memoryPushTokens([{ deviceId: "phone", token: "tok-phone" }]),
+        sendPush,
+      },
+    });
+    listeners.push(listener);
+    const { socket } = await connect(listener);
+    const frames = collectAttention(socket);
+
+    const item = listener.raiseAttention({
+      family: "review-finished",
+      reviewId: "rev-1",
+      deepLink: "rennet://review/rev-1/digest",
+      title: "Review finished",
+      body: "acme is ready to read",
+    });
+    expect(item?.id).toBe("review-finished:rev-1");
+    await settle();
+
+    expect(frames).toHaveLength(1);
+    expect(frames[0]).toMatchObject({ type: "attentionEvent", event: "raised" });
+    const raisedItem = frames[0]?.item as Record<string, unknown>;
+    expect(raisedItem.reviewId).toBe("rev-1");
+
+    // The registered device (no focused connection covers it) gets a push.
+    expect(sendPush).toHaveBeenCalledOnce();
+    expect(posted.map((m) => m.to)).toEqual(["tok-phone"]);
+    expect(posted[0]?.data).toMatchObject({
+      deviceId: "phone",
+      deepLink: "rennet://review/rev-1/digest",
+    });
+  });
+
+  it("acknowledgeAttention clears and broadcasts the cleared ids (handled once, quiet everywhere)", async () => {
+    const dispatch = vi.fn(async () => ({})) as WsListenerDeps["dispatch"];
+    const listener = await startWsListener({
+      dispatch,
+      serverVersion: "test",
+      attention: { pushTokens: memoryPushTokens([]), sendPush: vi.fn(async () => 0) },
+    });
+    listeners.push(listener);
+    const { socket } = await connect(listener);
+    const frames = collectAttention(socket);
+
+    listener.raiseAttention({
+      family: "review-finished",
+      reviewId: "rev-1",
+      deepLink: "rennet://review/rev-1/digest",
+      title: "Review finished",
+      body: "",
+    });
+    expect(listener.activeAttention()).toHaveLength(1);
+
+    const count = listener.acknowledgeAttention({ reviewId: "rev-1" });
+    expect(count).toBe(1);
+    expect(listener.activeAttention()).toHaveLength(0);
+    await settle();
+
+    // The socket saw a raised then a cleared frame; the cleared one names the item's id.
+    expect(frames.map((f) => f.event)).toEqual(["raised", "cleared"]);
+    expect(frames[1]?.clearedIds).toEqual(["review-finished:rev-1"]);
+  });
+
+  it("accepts a presence frame only when attention is advertised (capability-gated)", async () => {
+    const dispatch = vi.fn(async () => ({})) as WsListenerDeps["dispatch"];
+    const listener = await startWsListener({
+      dispatch,
+      serverVersion: "test",
+      attention: { pushTokens: memoryPushTokens([]), sendPush: vi.fn(async () => 0) },
+    });
+    listeners.push(listener);
+    const { socket } = await connect(listener);
+    // A presence frame from a connected client must not error the socket or the listener.
+    socket.send(
+      JSON.stringify({ type: "presence", focused: true, visible: true, deviceClass: "phone" }),
+    );
+    await settle();
+    expect(socket.readyState).toBe(WebSocket.OPEN);
+  });
+});

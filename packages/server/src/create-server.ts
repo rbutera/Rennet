@@ -185,6 +185,7 @@ import {
 import { createProcessProject } from "./process-project";
 import { buildProjectionContext } from "./projection";
 import { createPublishConsentAuthority } from "./publish-consent-authority";
+import { PushTokenStore } from "./push-token-store";
 import { createLiveRefinePort } from "./refine-comment-live";
 import { CODEX_ASK_LABEL, createLiveCodexAsk, createLiveReviewAskPorts } from "./review-ask-live";
 import { type ReviewContextFeed, runWithReviewContextFeed } from "./review-context-feed";
@@ -1689,6 +1690,10 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   // device tokens (hashed at rest in `~/.rennet/devices.json`). Shared between the
   // `pairing.*` commands (below) and the WS listener's handshake token check.
   const pairingStore = new PairingStore();
+  // The push-token store (issue #383 M1): one row per paired device, keyed by device id,
+  // in `~/.rennet/push-tokens.sqlite`. Shared between `device.registerPush` (set/delete),
+  // the attention planner (list + dead-token cleanup), and revoke (delete stops pushes).
+  const pushTokenStore = new PushTokenStore();
   // The publish egress port + its consent authority (issue #21). The port constructs
   // requests purely (dry-run) and posts only via the gated `publish.review` command.
   const publishPort = new GitHubPublishAdapter({
@@ -1810,7 +1815,28 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
   const dispatch = createDispatch({
     service,
     allowedRoots,
-    pairing: pairingStore,
+    // Revoking a device deletes its push token too, so a revoked device is silently
+    // un-pushable (attention-notifications: "revoke stops pushes").
+    pairing: {
+      mint: () => pairingStore.mint(),
+      exchange: (code, deviceName) => pairingStore.exchange(code, deviceName),
+      listDevices: () => pairingStore.listDevices(),
+      revokeDevice: (deviceId) => {
+        pushTokenStore.delete(deviceId);
+        return pairingStore.revokeDevice(deviceId);
+      },
+    },
+    // `device.registerPush` set/delete, keyed by the connection's authenticated device id.
+    pushTokens: {
+      set: (deviceId, token, platform) => pushTokenStore.set(deviceId, token, platform),
+      delete: (deviceId) => pushTokenStore.delete(deviceId),
+    },
+    // `attention.acknowledge` clears + broadcasts through the live listener (late-bound).
+    acknowledgeAttention: (selector) => wsListener?.acknowledgeAttention(selector) ?? 0,
+    // Raise attention (review-finished this pass) through the live listener (late-bound).
+    raiseAttention: (event) => {
+      wsListener?.raiseAttention(event);
+    },
     orchestratorTurn,
     publishPort,
     submitPullRequest,
@@ -2195,6 +2221,15 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     serverVersion: options.serverVersion ?? "0.0.0-dev",
     // Non-loopback (remote) connections present a device token; verify it against the store.
     verifyDeviceToken: (token) => pairingStore.verifyToken(token),
+    // The attention system (issue #383 M1): advertising `attention`, accepting presence, and
+    // planning pushes off the registered tokens. Present ⇒ M1 delivery; the egress defaults to
+    // the real Expo call. Dead tokens the service reports are pruned from the store.
+    attention: {
+      pushTokens: {
+        list: () => pushTokenStore.list(),
+        delete: (deviceId) => pushTokenStore.delete(deviceId),
+      },
+    },
     // The R19 projection context: every host root the server could name — the granted
     // roots ∪ every stored project path — rebuilt per request so a new project is
     // referenceable at once. Loopback connections never consult it.
