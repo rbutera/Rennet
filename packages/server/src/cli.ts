@@ -8,6 +8,9 @@
 // It reuses the exact supervision helpers the desktop shell uses — no reimplemented
 // protocol-compat or claim logic to drift.
 
+import { existsSync } from "node:fs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { PROTOCOL_VERSION, parseSessionFrame } from "@rennet/protocol";
 import { WebSocket } from "ws";
@@ -41,7 +44,7 @@ const HELP = [
   "rennet — the local review daemon",
   "",
   "Usage:",
-  "  rennet serve   [--data-dir <dir>]   run the daemon in the foreground",
+  "  rennet serve   [--data-dir <dir>] [--ui-dist <dir>]   run the daemon in the foreground",
   "  rennet status  [--data-dir <dir>]   report the daemon's health",
   "  rennet stop    [--data-dir <dir>]   stop the running daemon",
   "  rennet pair    [--data-dir <dir>]   mint a device pairing code (5-minute TTL)",
@@ -59,7 +62,24 @@ export async function runCli(
 ): Promise<number> {
   const [subcommand, ...rest] = argv;
   switch (subcommand) {
-    case "serve":
+    case "serve": {
+      let parsed: { "data-dir"?: string; "ui-dist"?: string };
+      try {
+        parsed = parseArgs({
+          args: [...rest],
+          allowPositionals: false,
+          strict: true,
+          options: { "data-dir": { type: "string" }, "ui-dist": { type: "string" } },
+        }).values;
+      } catch (error) {
+        io.err(`rennet serve: ${error instanceof Error ? error.message : String(error)}`);
+        io.err("Usage: rennet serve [--data-dir <dir>] [--ui-dist <dir>]");
+        return 2;
+      }
+      const dataDir =
+        parsed["data-dir"] ?? env.RENNET_USER_DATA ?? defaultDataDir(process.platform, env);
+      return serve(dataDir, parsed["ui-dist"] ?? defaultUiDist(), io, env, deps);
+    }
     case "status":
     case "stop":
     case "pair": {
@@ -71,7 +91,6 @@ export async function runCli(
         io.err(`Usage: rennet ${subcommand} [--data-dir <dir>]`);
         return 2;
       }
-      if (subcommand === "serve") return serve(dataDir, io, env, deps);
       if (subcommand === "status") return status(dataDir, io, deps);
       if (subcommand === "pair") return pair(dataDir, io, deps);
       return stop(dataDir, io, deps);
@@ -118,9 +137,27 @@ function parseDataDir(argv: readonly string[], env: NodeJS.ProcessEnv): string {
   return values["data-dir"] ?? env.RENNET_USER_DATA ?? defaultDataDir(process.platform, env);
 }
 
+/**
+ * The served browser UI (issue #381, design D2): by convention `dist/browser` sits beside
+ * the server bundle. In the standalone `rennet` CLI (esbuild) import.meta.url is empty, so
+ * this yields undefined and `rennet serve` is headless unless `--ui-dist` is passed; the
+ * packaged app's own daemon (dist/server sibling) resolves its browser bundle directly.
+ */
+function defaultUiDist(): string | undefined {
+  try {
+    const url = import.meta.url;
+    if (!url) return undefined;
+    const candidate = resolve(dirname(fileURLToPath(url)), "../browser");
+    return existsSync(candidate) ? candidate : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Run the daemon in the foreground; resolves never (the process lives until a signal). */
 async function serve(
   dataDir: string,
+  uiDist: string | undefined,
   io: CliIo,
   env: NodeJS.ProcessEnv,
   deps: CliDeps,
@@ -134,6 +171,7 @@ async function serve(
     dataDir,
     serverVersion: env.RENNET_SERVER_VERSION ?? "0.0.0-dev",
     env,
+    uiDist,
   };
   const daemon = await runDaemon(config);
   io.out(

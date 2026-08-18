@@ -168,7 +168,12 @@ describe("rennet CLI argument and daemon-identity handling", () => {
         },
       );
       expect(code).toBe(2);
-      expect(captured.err.at(-1)).toBe(`Usage: rennet ${subcommand} [--data-dir <dir>]`);
+      // `serve` also advertises --ui-dist (#381); the others take only --data-dir.
+      const usage =
+        subcommand === "serve"
+          ? "Usage: rennet serve [--data-dir <dir>] [--ui-dist <dir>]"
+          : `Usage: rennet ${subcommand} [--data-dir <dir>]`;
+      expect(captured.err.at(-1)).toBe(usage);
     },
   );
 

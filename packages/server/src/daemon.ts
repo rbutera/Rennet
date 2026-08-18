@@ -31,6 +31,8 @@ export interface DaemonConfig {
   readonly dataDir: string;
   readonly serverVersion: string;
   readonly env: NodeJS.ProcessEnv;
+  /** Directory of a built browser UI to serve (issue #381). Absent ⇒ headless. */
+  readonly uiDist?: string;
 }
 
 /**
@@ -49,6 +51,7 @@ export function resolveDaemonConfig(
     options: {
       "data-dir": { type: "string" },
       "server-version": { type: "string" },
+      "ui-dist": { type: "string" },
     },
   });
   const dataDir =
@@ -57,6 +60,7 @@ export function resolveDaemonConfig(
     dataDir,
     serverVersion: values["server-version"] ?? env.RENNET_SERVER_VERSION ?? "0.0.0-dev",
     env,
+    uiDist: values["ui-dist"],
   };
 }
 
@@ -98,6 +102,7 @@ export async function runDaemon(
     env: config.env,
     serverVersion: config.serverVersion,
     httpFetch: nodeHttpFetch,
+    uiDist: config.uiDist,
   });
 
   const info: DaemonInfo = {

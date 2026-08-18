@@ -210,6 +210,11 @@ export interface RennetServerOptions {
   readonly httpFetch?: HttpFetch;
   /** The server application's own version, surfaced in the WS `serverInfo` handshake. Defaults to a dev sentinel. */
   readonly serverVersion?: string;
+  /**
+   * Directory of a built browser UI to serve over the HTTP port (issue #381). Absent ⇒
+   * the daemon runs headless. Passed straight to the WS listener's static handler.
+   */
+  readonly uiDist?: string;
 }
 
 export interface RennetServer {
@@ -2197,6 +2202,8 @@ export async function createRennetServer(options: RennetServerOptions): Promise<
     },
     // Opt-in bind beyond loopback (default stays 127.0.0.1:0).
     listen: configStore.read().daemon?.listen,
+    // The served browser UI (#381); absent ⇒ headless.
+    uiDist: options.uiDist,
   });
 
   let didShutdown = false;
