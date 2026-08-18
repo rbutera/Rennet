@@ -1,6 +1,6 @@
 {
   "name": "rennet",
-  "version": "0.1.9",
+  "version": "0.1.10",
   "private": true,
   "description": "A local-first code review harness",
   "license": "MIT",
