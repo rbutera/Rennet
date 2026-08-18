@@ -51,7 +51,12 @@ hands the Electron-owned effects (data directory, repository-chooser dialog,
 and the progress / ask-stream push streams travel the server's loopback
 WebSocket, which the renderer reaches through `WsRennetBridge` — the same wire
 the served browser tab and the `rennet` CLI already use, and future mobile clients
-will use, so a transport bug shows up as a bug in every shell. The renderer cannot import core or reach Node APIs directly, and
+will use, so a transport bug shows up as a bug in every shell. As of phase 6 M0
+each shell wraps that bridge in a `ConnectionSupervisor` (`@rennet/client`): the
+supervisor owns the reachability state machine (`idle/connecting/online/offline/
+error`), the capped-backoff reconnect loop, and a resubscribe registry that keeps
+every live `onAskStream`/`onProgress` listener bound across a reconnect, so a
+React component never constructs a transport, a retry loop, or an RPC client. The renderer cannot import core or reach Node APIs directly, and
 adapters never leak host-specific behaviour back into the portable protocol.
 
 ## Two shells, one UI
@@ -65,8 +70,9 @@ to*: the local daemon by default, plus any saved remote daemons (added with a
 phase-4 pairing code). Switching daemons remounts the app against the chosen one.
 
 The browser shell is a composition file (`apps/desktop/src/browser/`), not a second
-UI — it injects a bridge factory into `ConnectionHost` exactly as the renderer does,
-so `@rennet/ui` never imports a transport. A loopback tab is `private` (the full
+UI — it injects a connection factory into `ConnectionHost` exactly as the renderer does
+(each factory builds a `ConnectionSupervisor` per target; the legacy `createBridge`
+seam stays as an adapter), so `@rennet/ui` never imports a transport. A loopback tab is `private` (the full
 contract); a remote tab is `projected` (the R19 public projection, per the
 [remote access guide](/using/guide/remote-access/)). Reaching a remote daemon is a
 Tailscale hop — there is no relay and no hosted backend.
