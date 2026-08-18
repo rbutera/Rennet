@@ -184,30 +184,128 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
     }
   });
 
-  it("small amber-card text clears AA on --amber-surface (ratified amber is 4.07:1, ink-ified)", () => {
-    const canvasCss = readFileSync(fileURLToPath(new URL("./canvas.css", import.meta.url)), "utf8");
-    const decl = (selector: string): string => {
-      const start = canvasCss.indexOf(`\n${selector} {`);
-      if (start < 0) throw new Error(`${selector} not found`);
-      const open = canvasCss.indexOf("{", start);
-      return canvasCss.slice(open, canvasCss.indexOf("}", open));
-    };
-    const amberSurface = hex(LIGHT, "--amber-surface");
-    // These 4 cards render 10-12px text on --amber-surface. Whatever colour token they use
-    // must clear AA on it; ratified --amber (#a86125) is 4.07:1, so reverting reddens.
-    for (const sel of [
-      ".cohort-blast-reason",
-      ".flag-disagree-flare",
-      ".flag-dual-degraded",
-      ".ospec-cap-modified",
-    ]) {
-      const m = decl(sel).match(/color:\s*var\((--[a-z-]+)\)/);
-      if (!m || m[1] === undefined) throw new Error(`no color token on ${sel}`);
-      expect(
-        contrast(hex(LIGHT, m[1]), amberSurface),
-        `${sel} color ${m[1]} on --amber-surface`,
-      ).toBeGreaterThanOrEqual(4.5);
+  // ── Invariant guard: no small amber TEXT sits on an amber background ─────────
+  // Wave-2's ratified light --amber (#a86125) is 4.07:1 on --amber-surface and 3.85:1 on
+  // --amber-fill — both below AA. Every small amber-on-amber TEXT site is ink-ified; only
+  // non-text graphics (icons, the failed-orb spinner, the file-status square) keep amber on
+  // an amber ground, at the WCAG 1.4.11 graphics floor (3:1). This replaces the old 4-card
+  // whitelist: it discovers EVERY amber-text rule in canvas.css + styles.css, so a new
+  // amber-on-amber rule (or a reverted ink-ification) reddens the coverage assertion.
+  const readCss = (name: string): string =>
+    readFileSync(fileURLToPath(new URL(`./${name}`, import.meta.url)), "utf8");
+  type Rule = { selector: string; body: string };
+  const rules = (css: string): Rule[] => {
+    const out: Rule[] = [];
+    const re = /([^{}]+)\{([^{}]*)\}/g;
+    let m: RegExpExecArray | null;
+    // biome-ignore lint/suspicious/noAssignInExpressions: standard regex-exec walk
+    while ((m = re.exec(css)) !== null) {
+      const raw = (m[1] ?? "")
+        .replace(/\/\*[\s\S]*?\*\//g, "")
+        .trim()
+        .replace(/\s+/g, " ");
+      out.push({ selector: raw, body: m[2] ?? "" });
     }
+    return out;
+  };
+  const amberText = (r: Rule): boolean => /color:\s*var\(--amber\)/.test(r.body);
+  const amberBg = (r: Rule): boolean =>
+    /background[^;:]*:\s*var\(--amber-(?:surface|fill)\)/.test(r.body);
+  const allRules = [...rules(readCss("canvas.css")), ...rules(readCss("styles.css"))];
+
+  // Every amber-TEXT rule, classified by its resolved rendered background. 'plain' = a
+  // non-amber surface where amber clears AA (--surface 4.61, or --surface-2); 'graphic' = a
+  // non-text mark permitted on an amber ground at the 3:1 graphics floor. Reverting any
+  // ink-ification, or adding a new amber-text rule, makes the discovered set diverge from
+  // these keys and reddens the coverage test below.
+  const CLASSIFIED: Record<string, "plain" | "graphic"> = {
+    // amber on a plain (non-amber) surface — legible, so the hue stays:
+    ".overlay-legend": "plain",
+    ".blast-not-assessed-label": "plain",
+    ".flag-answer-model": "plain",
+    ".ci-signal-failure-label": "plain",
+    ".ci-signal-body .ci-signal-incomplete": "plain",
+    ".hypothesis-panel-open": "plain",
+    ".hypothesis-degraded": "plain",
+    ".hypothesis-count-open": "plain",
+    '.collation-rollup-verdict[data-verdict="request-changes"]': "plain",
+    '.delta-account-status[data-status="partially-addressed"]': "plain",
+    '.delta-account-hunk-item[data-bucket="unasked-file"] .delta-account-hunk-bucket': "plain",
+    '.context-manifest-state[data-state="truncated"]': "plain",
+    ".smart-row-dirty": "plain",
+    ".command-palette-key.is-conflict": "plain",
+    ".settings-key-conflict": "plain",
+    ".settings-key-recording-note, .settings-key-invalid": "plain",
+    // non-text graphics on an amber ground (icons / spinner / file-status square), 3:1:
+    ".status-modified": "graphic",
+    ".engine-fallback-icon": "graphic",
+    ".processing-orb.is-failed": "graphic",
+    '.processing-repo[data-state="error"] .processing-repo-icon': "graphic",
+  };
+
+  const rgba = (scope: string, name: string): [number, number, number, number] => {
+    const m = block(scope).match(new RegExp(`${name}:\\s*rgba\\(([^)]+)\\)`));
+    if (!m || m[1] === undefined) throw new Error(`${name} rgba not found in ${scope}`);
+    const p = m[1].split(",").map((x) => Number.parseFloat(x.trim()));
+    if (p.length !== 4 || p.some((x) => Number.isNaN(x))) throw new Error(`${name} bad rgba`);
+    return [p[0] as number, p[1] as number, p[2] as number, p[3] as number];
+  };
+  const composite = (fg: [number, number, number, number], bgHex: string): string => {
+    const [r, g, b, a] = fg;
+    const out = [r, g, b].map((c, i) => Math.round(c * a + channel(bgHex, i) * (1 - a)));
+    return `#${out.map((x) => x.toString(16).padStart(2, "0")).join("")}`;
+  };
+
+  it("every amber-TEXT rule is classified — no amber-on-amber small text slips in", () => {
+    const discovered = [...new Set(allRules.filter(amberText).map((r) => r.selector))].sort();
+    // Control: the discovery is not vacuous — there ARE amber-text rules to classify.
+    expect(discovered.length).toBeGreaterThan(10);
+    expect(discovered).toEqual(Object.keys(CLASSIFIED).sort());
+  });
+
+  it("amber TEXT never shares a block with an amber background, save documented graphics", () => {
+    const graphics = new Set(
+      Object.entries(CLASSIFIED)
+        .filter(([, k]) => k === "graphic")
+        .map(([s]) => s),
+    );
+    for (const r of allRules) {
+      if (amberText(r) && amberBg(r)) {
+        expect(graphics.has(r.selector), `${r.selector}: amber text on a self-set amber bg`).toBe(
+          true,
+        );
+      }
+    }
+  });
+
+  it("'plain'-classified amber-text rules never self-set an amber background", () => {
+    for (const r of allRules) {
+      if (amberText(r) && CLASSIFIED[r.selector] === "plain") {
+        expect(amberBg(r), `${r.selector} is 'plain' yet self-sets an amber bg`).toBe(false);
+      }
+    }
+  });
+
+  it("amber marks left on an amber ground are non-text graphics (3:1 floor, below AA text)", () => {
+    const amber = hex(LIGHT, "--amber");
+    const amberSurface = hex(LIGHT, "--amber-surface");
+    const amberFill = composite(rgba(LIGHT, "--amber-fill"), hex(LIGHT, "--surface"));
+    // Meets the graphics floor…
+    expect(contrast(amber, amberSurface)).toBeGreaterThanOrEqual(3);
+    expect(contrast(amber, amberFill)).toBeGreaterThanOrEqual(3);
+    // …but is genuinely below AA text — which is why every TEXT site is ink-ified, not left amber.
+    expect(contrast(amber, amberSurface)).toBeLessThan(4.5);
+    expect(contrast(amber, amberFill)).toBeLessThan(4.5);
+  });
+
+  it("ink (--text) and sheet ink clear AA text on the amber grounds they now sit on", () => {
+    const amberSurface = hex(LIGHT, "--amber-surface");
+    const amberFillOnSurface = composite(rgba(LIGHT, "--amber-fill"), hex(LIGHT, "--surface"));
+    const amberFillOnSheet = composite(rgba(LIGHT, "--amber-fill"), hex(LIGHT, "--sheet-bg"));
+    expect(contrast(hex(LIGHT, "--text"), amberSurface)).toBeGreaterThanOrEqual(4.5);
+    expect(contrast(hex(LIGHT, "--text"), amberFillOnSurface)).toBeGreaterThanOrEqual(4.5);
+    // The publish-sheet ledger keeps the sheet (paper) palette: its amber text ink-ifies to --sheet-text.
+    expect(contrast(hex(LIGHT, "--sheet-text"), amberFillOnSheet)).toBeGreaterThanOrEqual(4.5);
   });
 });
 

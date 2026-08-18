@@ -289,7 +289,7 @@ button {
   padding: 12px 24px;
   background: var(--amber-surface);
   border-bottom: 1px solid var(--amber-line);
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
 }
 .invalid-banner div {
   display: flex;
@@ -1172,13 +1172,13 @@ button {
   font-weight: 700;
   letter-spacing: 0.04em;
   text-transform: uppercase;
-  color: var(--amber);
+  color: var(--sheet-text); /* not amber: 3.85:1 on --amber-fill (AA fail) */
 }
 .publish-sheet-ledger-lede {
   margin: 0 0 8px;
   font-size: 12px;
   font-weight: 650;
-  color: var(--amber);
+  color: var(--sheet-text); /* not amber: 3.85:1 on --amber-fill (AA fail) */
 }
 .publish-sheet-ledger-entries {
   margin: 0 0 10px;
@@ -1338,7 +1338,7 @@ button {
   font-weight: 800;
   letter-spacing: 0.05em;
   text-transform: uppercase;
-  color: var(--amber);
+  color: var(--sheet-text); /* not amber: 3.85:1 on --amber-fill (AA fail) */
 }
 .publish-sheet-ledger-detail {
   display: block;
@@ -1448,12 +1448,12 @@ button {
 .engine-fallback-copy strong {
   font-size: 13px;
   font-weight: 650;
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
 }
 .engine-fallback-copy span {
   font-size: 12px;
   line-height: 1.45;
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   opacity: 0.85;
 }
 .engine-fallback button {
@@ -1565,7 +1565,7 @@ button {
   margin: 0;
   font-size: 12px;
   font-weight: 650;
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
 }
 .delta-account-beyond-list {
   display: flex;
@@ -1934,7 +1934,7 @@ button {
   border: 1px solid var(--amber-line);
   border-radius: var(--chip-radius);
   background: var(--amber-surface);
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font-size: 13px;
 }
 .front-door-loading {
@@ -2449,7 +2449,7 @@ button {
   border: 1px solid var(--amber-line);
   border-radius: var(--chip-radius);
   background: var(--amber-surface);
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font-size: 13px;
 }
 .reconciliation-mark {
@@ -2617,7 +2617,7 @@ button {
   color: var(--text-faint);
 }
 .processing-repo-counts.is-error {
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
 }
 .processing-trail {
   list-style: none;
@@ -2699,7 +2699,7 @@ button {
   border: 1px solid var(--amber-line);
   border-radius: var(--chip-radius);
   background: var(--amber-surface);
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font-size: 13px;
 }
 
@@ -2798,7 +2798,7 @@ button {
   border: 1px solid var(--amber-line);
   border-radius: var(--chip-radius);
   background: var(--amber-surface);
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font-size: 13px;
 }
 
@@ -3035,7 +3035,7 @@ button {
 .smart-row-badge.is-needs-you {
   border: 1px solid var(--amber-line);
   background: var(--amber-fill);
-  color: var(--amber);
+  color: var(--text); /* not amber: 3.85:1 on --amber-fill (AA fail) */
 }
 .smart-row-badge.is-read-only {
   border: 1px solid var(--green-line);
@@ -3284,7 +3284,7 @@ button {
   border: 1px solid var(--amber-line);
   border-radius: var(--chip-radius);
   background: var(--amber-surface);
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font-size: 13px;
 }
 .settings-error-inline {
@@ -3470,7 +3470,7 @@ button {
   border: 1px solid var(--amber-line);
   border-radius: var(--chip-radius);
   background: var(--amber-surface);
-  color: var(--amber);
+  color: var(--text); /* not amber: 4.07:1 on --amber-surface (AA fail) */
   font-size: 12px;
   line-height: 1.5;
 }
@@ -3589,7 +3589,7 @@ button {
   color: var(--text-faint);
 }
 .settings-sev-high {
-  color: var(--amber);
+  color: var(--text); /* not amber: 3.85:1 on --amber-fill (AA fail) */
   background: var(--amber-fill);
   border-color: var(--amber-line);
 }
