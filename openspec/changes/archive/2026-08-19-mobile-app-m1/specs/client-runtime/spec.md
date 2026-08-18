@@ -11,7 +11,7 @@ The runtime SHALL accept focus/visibility/device-class presence signals from its
 - **WHEN** the shell reports presence and the connected daemon advertised the attention capability
 - **THEN** the runtime sends the presence frame and re-sends current presence after every reconnect
 
-#### Scenario: presence stays silent otherwise
+#### Scenario: presence updates are accepted and inert today
 
 - **WHEN** the connected daemon did not advertise the capability
-- **THEN** the runtime records presence locally and sends nothing
+- **THEN** the runtime records the presence state locally and sends nothing — the seam stays inert exactly as it was against every pre-attention daemon
