@@ -37,7 +37,7 @@
       },
       "format": {
         "cache": true,
-        "command": "pnpm exec biome check packages/*/src apps/desktop/src apps/desktop/e2e apps/desktop/*.ts apps/desktop/*.cjs apps/desktop/*.json apps/marketing/astro.config.mjs apps/marketing/project.json apps/marketing/package.json apps/marketing/src/styles docs/astro.config.mjs docs/project.json docs/package.json docs/tsconfig.json docs/src/content.config.ts docs/src/plugins docs/src/styles scripts/*.mjs package.json biome.json",
+        "command": "pnpm exec biome check packages/*/src apps/desktop/src apps/desktop/e2e apps/desktop/*.ts apps/desktop/*.cjs apps/desktop/*.json apps/mobile/src apps/mobile/app apps/mobile/*.ts apps/mobile/*.js apps/mobile/app.json apps/mobile/package.json apps/mobile/tsconfig.json apps/mobile/project.json apps/marketing/astro.config.mjs apps/marketing/project.json apps/marketing/package.json apps/marketing/src/styles docs/astro.config.mjs docs/project.json docs/package.json docs/tsconfig.json docs/src/content.config.ts docs/src/plugins docs/src/styles scripts/*.mjs package.json biome.json",
         "inputs": [
           "{workspaceRoot}/packages/*/src/**/*",
           "{workspaceRoot}/apps/desktop/src/**/*",
@@ -45,6 +45,11 @@
           "{workspaceRoot}/apps/desktop/*.ts",
           "{workspaceRoot}/apps/desktop/*.cjs",
           "{workspaceRoot}/apps/desktop/*.json",
+          "{workspaceRoot}/apps/mobile/src/**/*",
+          "{workspaceRoot}/apps/mobile/app/**/*",
+          "{workspaceRoot}/apps/mobile/*.ts",
+          "{workspaceRoot}/apps/mobile/*.js",
+          "{workspaceRoot}/apps/mobile/*.json",
           "{workspaceRoot}/apps/marketing/**/*",
           "{workspaceRoot}/docs/astro.config.mjs",
           "{workspaceRoot}/docs/project.json",
@@ -96,6 +101,7 @@
     "@fission-ai/openspec": "1.7.0",
     "@nx/eslint": "23.1.0",
     "@nx/eslint-plugin": "23.1.0",
+    "@nx/expo": "23.1.0",
     "@nx/js": "23.1.0",
     "@nx/playwright": "23.1.0",
     "@nx/react": "23.1.0",

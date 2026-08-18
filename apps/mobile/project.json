@@ -1,0 +1,14 @@
+{
+  "name": "rennet-mobile",
+  "$schema": "../../node_modules/nx/schemas/project-schema.json",
+  "sourceRoot": "apps/mobile/src",
+  "projectType": "application",
+  "tags": ["scope:rennet", "layer:mobile"],
+  "targets": {
+    "lint": {
+      "command": "pnpm exec eslint apps/mobile/src apps/mobile/app --max-warnings=0 && pnpm exec biome check apps/mobile/src apps/mobile/app"
+    },
+    "typecheck": { "command": "pnpm exec tsc -p apps/mobile/tsconfig.json" },
+    "test": { "command": "pnpm exec vitest run apps/mobile/src" }
+  }
+}

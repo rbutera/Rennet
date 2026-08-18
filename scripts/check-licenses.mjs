@@ -16,6 +16,25 @@ const allowed = new Set([
   "ISC",
   "MIT",
   "Unlicense",
+  // The Expo/React-Native set (apps/mobile, issue #383 M1) pulls these additional
+  // permissive / compatible licences transitively. The dependency standard admits
+  // "compatible permissive licences" with attribution travelling with distributed
+  // artifacts; each is permissive or a weak (file-level) copyleft that does not
+  // infect Rennet's MIT code:
+  //   • the dual-licence "OR" expressions each offer a permissive arm we take (MIT,
+  //     BSD-3-Clause, CC0);
+  //   • "MIT AND Apache-2.0" is two permissive licences;
+  //   • MPL-2.0 (lightningcss) is file-level copyleft — no source obligation on our
+  //     own files; CC-BY-4.0 (caniuse-lite, a compat-DATA package) needs attribution;
+  //     Python-2.0 (argparse) is permissive.
+  "(BSD-3-Clause OR GPL-2.0)",
+  "(MIT OR Apache-2.0)",
+  "(MIT OR CC0-1.0)",
+  "CC-BY-4.0",
+  "CC0-1.0",
+  "MIT AND Apache-2.0",
+  "MPL-2.0",
+  "Python-2.0",
 ]);
 
 // Deliberate exception, Rai's decision 2026-08-06 (Master Plan R2). The Claude

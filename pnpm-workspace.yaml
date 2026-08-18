@@ -77,6 +77,12 @@ peerDependencyRules:
     - "zod"
     - "@anthropic-ai/sdk"
     - "@modelcontextprotocol/sdk"
+  # The Expo/React-Native set (apps/mobile, issue #383 M1) is built against TypeScript
+  # ^5; this workspace is on TS 6 (the `typescript` alias in root package.json). The
+  # mismatch is benign — Expo's config utilities read only compiler-API surface TS 6
+  # keeps — so admit TS 6 for Expo's peers rather than pinning the workspace back to TS 5.
+  allowedVersions:
+    typescript: "6"
 
 overrides:
   "@emnapi/core": "2.0.0-alpha.3"

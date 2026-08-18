@@ -62,6 +62,17 @@ export default [
               onlyDependOnLibsWithTags: ["layer:types", "layer:protocol", "layer:client"],
             },
             {
+              // apps/mobile (issue #383 M1): a native shell that consumes the shared client
+              // runtime + the projection contract only — never core/adapter/server/ui.
+              sourceTag: "layer:mobile",
+              onlyDependOnLibsWithTags: [
+                "layer:types",
+                "layer:protocol",
+                "layer:client",
+                "layer:mobile",
+              ],
+            },
+            {
               sourceTag: "layer:app",
               onlyDependOnLibsWithTags: [
                 "layer:types",

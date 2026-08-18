@@ -1,0 +1,30 @@
+{
+  "name": "@rennet/mobile",
+  "version": "0.0.0",
+  "private": true,
+  "main": "index.ts",
+  "dependencies": {
+    "@react-native-async-storage/async-storage": "2.2.0",
+    "@rennet/client": "workspace:*",
+    "@rennet/protocol": "workspace:*",
+    "@rennet/types": "workspace:*",
+    "expo": "~55.0.26",
+    "expo-camera": "~55.0.18",
+    "expo-constants": "~55.0.16",
+    "expo-linking": "~55.0.15",
+    "expo-notifications": "~55.0.23",
+    "expo-router": "~55.0.16",
+    "expo-secure-store": "~55.0.14",
+    "expo-splash-screen": "~55.0.21",
+    "expo-status-bar": "~55.0.6",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0",
+    "react-native": "0.83.6",
+    "react-native-safe-area-context": "~5.6.2",
+    "react-native-screens": "~4.23.0"
+  },
+  "devDependencies": {
+    "@expo/metro-runtime": "~55.0.11",
+    "@types/react": "^19.2.0"
+  }
+}
