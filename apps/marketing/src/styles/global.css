@@ -13,8 +13,9 @@
   --inverse-soft: #abb3bc;
   --blue: #396f96;
   --blue-soft: #e0ebf1;
-  --amber: #a86125;
+  --amber: #8f4e14;
   --amber-soft: #f1e2d0;
+  --amber-on-inverse: #e0a45f;
   --green: #41745b;
   --green-soft: #dce9e0;
   --red: #aa4c45;
@@ -44,6 +45,7 @@
   --blue-soft: #1c303d;
   --amber: #dda664;
   --amber-soft: #342619;
+  --amber-on-inverse: #8f4e14;
   --green: #88bc9b;
   --green-soft: #1d3026;
   --red: #d98b83;
@@ -369,7 +371,7 @@ h2 {
   gap: 8px;
   margin-bottom: 12px;
   color: var(--ink-soft);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .stage-label span {
@@ -398,7 +400,7 @@ h2 {
   padding: 0 16px;
   border-bottom: 1px solid #303741;
   color: #b5bec8;
-  font-size: 9px;
+  font-size: 11px;
 }
 
 .diff-body {
@@ -470,17 +472,17 @@ h2 {
 }
 .cohort-list span {
   flex: 1;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 650;
 }
 .cohort-list b {
   color: var(--ink-soft);
-  font-size: 10px;
+  font-size: 11px;
 }
 .cohort-list > p {
   margin: 0;
   color: var(--ink-soft);
-  font-size: 10px;
+  font-size: 11px;
   text-align: center;
 }
 
@@ -499,13 +501,13 @@ h2 {
   border-radius: 50%;
   background: var(--amber-soft);
   color: var(--amber);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
 }
 
 .decision-list p {
   margin: 2px 0 0;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 650;
   line-height: 1.25;
 }
@@ -522,7 +524,7 @@ h2 {
   display: flex;
   justify-content: space-between;
   color: var(--ink-soft);
-  font-size: 9px;
+  font-size: 11px;
 }
 .paper > div b {
   color: var(--green);
@@ -545,7 +547,7 @@ h2 {
   margin: 28px 0 0;
   padding: 0;
   color: var(--ink-soft);
-  font-size: 10px;
+  font-size: 11px;
   list-style: none;
 }
 .paper li {
@@ -852,7 +854,7 @@ h2 {
   line-height: 1.25;
 }
 .dual-proof b {
-  color: var(--amber);
+  color: var(--amber-on-inverse);
   font-size: 12px;
 }
 .dual-proof > p {
@@ -878,7 +880,7 @@ h2 {
   padding-top: 10px;
   background: var(--inverse);
   color: var(--inverse-soft);
-  font-size: 10px;
+  font-size: 11px;
   text-align: right;
 }
 
@@ -966,7 +968,7 @@ h2 {
   display: block;
   margin-top: 18px;
   color: var(--ink-soft);
-  font-size: 10px;
+  font-size: 11px;
   text-align: right;
 }
 
@@ -1023,7 +1025,7 @@ h2 {
   border-radius: 6px;
   background: rgb(255 255 255 / 90%);
   color: #59616b;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .lenses {
