@@ -35,3 +35,12 @@
 - [x] 6.1 Lint boundary: no DOM/Node globals in `packages/client` core paths (stores implemented in shells); Nx inputs/outputs declared for any new targets.
 - [x] 6.2 Docs same-change: `architecture-overview.md` client wiring paragraph, `reactive-streams.md` reconnect note, `mobile-plan.md` M0 marked delivered; delivery-order wave entry.
 - [x] 6.3 Full `pnpm check` green (exit 0, 12 projects). PR references prepared in commits (`Refs #383`, `Closes #389`); opening/pushing the PR is the merge agent's step (implementer does not push).
+
+## 7. Dual-review triage (post-implementation)
+
+- [x] 7.1 (High) Product seam: `conversation-host` kept its ask-stream subscription alive across a mid-turn reconnect — a `ConnectionError`-shaped invoke rejection no longer tears the stream down; `ask-complete` finalizes the turn. Regression test is the true #389 product-seam positive control (red→green proven).
+- [x] 7.2 (High) A present-but-rejected device token is now terminal `error`, not a silent `pairing-only` `online`: daemon answers `unauthorized` (rpcError) + closes; the bridge maps it to the `error` lifecycle. Unit tests both sides (red→green proven).
+- [x] 7.3 (Medium) Bounded the offline invoke queue (`maxQueuedInvokes`, default 64) — past the cap a new invoke rejects with `ConnectionError`.
+- [x] 7.4 (Medium) Disposer bookkeeping keyed by (key, listener), not listener alone — one callback on two reviews keeps a distinct disposer per review (ask + progress registries).
+- [x] 7.5 (Medium) `ConnectionStatus` carried through the `ConnectionHost` seam and rendered truthfully — the indicator announces connecting/offline/error + cause instead of an unconditional "Connected to …".
+- [x] 7.6 (Rejected) "Ask-stream broadcast leaks across clients" — no code change: single-user product, every authorized socket is the user's own paired peer, `ReviewAskStreamEvent` has no structural path fields, and the pre-fix path already sent the raw event to a projected invoker. Rationale recorded on `broadcastAskStream`.
