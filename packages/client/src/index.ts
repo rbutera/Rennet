@@ -3,9 +3,9 @@
 // contract); no Node imports, so the same bundle runs in the Electron renderer, a
 // browser tab, or Node ≥22 (all provide a global `WebSocket` and `crypto.randomUUID`).
 
+export { ConnectionError, isConnectionError } from "./connection-error";
 export {
   type BridgeHooks,
-  ConnectionError,
   type ConnectionState,
   type ConnectionStatus,
   ConnectionSupervisor,

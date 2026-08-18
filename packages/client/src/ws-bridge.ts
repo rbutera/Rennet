@@ -22,6 +22,7 @@ import {
   PROTOCOL_VERSION,
   parseSessionFrame,
 } from "@rennet/protocol";
+import { ConnectionError } from "./connection-error";
 
 export interface WsRennetBridgeOptions {
   /** The loopback WS URL the server bound, e.g. `ws://127.0.0.1:<port>`. */
@@ -251,8 +252,11 @@ export class WsRennetBridge implements RennetBridge {
     socket.addEventListener("close", () => {
       if (this.#socket === socket) this.#socket = null;
       if (this.#readySocket === socket) this.#readySocket = null;
-      // Fail in-flight invokes fast on a dropped connection (no offline queueing).
-      const error = new Error("connection lost");
+      // Fail in-flight invokes fast on a dropped connection (no offline queueing). A
+      // ConnectionError (not a bare Error) so a consumer — the supervisor, or the UI seam
+      // that keeps a live ask stream alive across a mid-turn reconnect (#389) — can tell a
+      // connection loss apart from a genuine command failure.
+      const error = new ConnectionError("connection lost");
       this.#rejectReady(socket, error);
       this.#rejectPending(error);
       // A handshake failure already emitted `error` and must not be retried; every
@@ -351,10 +355,15 @@ export class WsRennetBridge implements RennetBridge {
         return;
       }
       case "rpcError": {
+        // A handshake rejection correlated to our `hello` (before the socket is ready) is
+        // TERMINAL: an incompatible protocol, or a device token the daemon rejected
+        // (`unauthorized`, issue #383 — a present-but-invalid token must surface as `error`,
+        // never a silent pairing-only fallback the supervisor would retry into). Either way
+        // retrying the same hello is futile, so we fail the handshake → `error` lifecycle.
         if (
           this.#readySocket !== socket &&
-          frame.code === "incompatible_protocol" &&
-          frame.requestId === helloClientId
+          frame.requestId === helloClientId &&
+          (frame.code === "incompatible_protocol" || frame.code === "unauthorized")
         ) {
           this.#failHandshake(socket, frame.message);
           return;
