@@ -290,13 +290,25 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
   // The WINNING background VALUE for a selector: LAST matching rule (file/cascade
   // order for equal-specificity repeats — Codex proved `.find()` blessed stale
   // grounds), and within a rule the LAST background/background-color declaration
-  // (duplicate declarations: last wins). Returns the raw value; the caller decides
-  // whether it is resolvable.
+  // (duplicate declarations: last wins). FAIL-CLOSED: last-wins is only true for
+  // normal declarations of the same property — `!important` beats a later normal
+  // declaration, and a `background` shorthand paints layers a later
+  // `background-color` longhand does not reset. Either form makes "the last value"
+  // a lie, so both THROW instead of resolving. Returns the raw value otherwise;
+  // the caller decides whether it is resolvable.
   const winningBackground = (ruleList: Rule[], selector: string): string | undefined => {
     let value: string | undefined;
     for (const r of ruleList) {
       if (r.selector !== selector) continue;
       const decls = [...r.body.matchAll(/(?<![\w-])background(?:-color)?:\s*([^;]+)/gi)];
+      if (decls.some((d) => /!\s*important/i.test(d[1] ?? "")))
+        throw new Error(
+          `!important background on ${selector} — priority beats order, last-wins cannot resolve it; classify explicitly`,
+        );
+      if (/(?<![\w-])background:/i.test(r.body) && /(?<![\w-])background-color:/i.test(r.body))
+        throw new Error(
+          `background shorthand and background-color both declared on ${selector} — the shorthand's layers paint over the longhand; classify explicitly`,
+        );
       const last = decls[decls.length - 1];
       if (last?.[1] !== undefined) value = last[1].trim();
     }
@@ -310,7 +322,9 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
   const groundHexIn = (ruleList: Rule[], container: string): string => {
     const value = winningBackground(ruleList, container);
     if (value === undefined) throw new Error(`no background declaration on ${container}`);
-    const m = value.match(/^var\(--([a-z0-9-]+)\)$/i);
+    // EXHAUSTIVE whitelist: the value must be exactly one var(--token) — gradients,
+    // multiple layers, literals and every other form fall through to the throw.
+    const m = value.match(/^var\(--([\w-]+)\)$/);
     if (!m || m[1] === undefined)
       throw new Error(`unresolvable background on ${container}: "${value}" — classify explicitly`);
     const token = `--${m[1]}`;
@@ -336,6 +350,29 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
           .filter((r) => new RegExp(`\\.${token}(?![a-zA-Z0-9_-])`).test(r.selector))
           .filter((r) => /(?<![\w-])background(?:-color)?:/i.test(r.body))
           .map((r) => r.selector),
+      ),
+    ].sort();
+  // FAIL-CLOSED SYNTAX SWEEP: the mention-scan above only sees a class spelled as
+  // `.token` in the selector. `[class~="token"]` aliases, escaped characters and `*`
+  // reach the same elements WITHOUT spelling it, so instead of modelling ever more
+  // selector syntax, any background-declaring rule whose selector is not composed
+  // solely of simple `.class` / element / `:pseudo(simple)` / `::pseudo` /
+  // `[data-*]`/`[aria-*]` / descendant / `>` syntax (comma lists are pre-split) is
+  // an unmodeled form and must fail loudly. The shipped sheets contain none today,
+  // so this costs nothing now and turns every future exotic form into a red.
+  const SIMPLE_COMPOUND =
+    "(?:[a-zA-Z][a-zA-Z0-9]*)?" +
+    "(?:\\.[a-zA-Z0-9_-]+" +
+    '|\\[(?:data|aria)-[a-zA-Z0-9-]+(?:="[^"\\\\\\]]*")?\\]' +
+    "|::?[a-zA-Z-]+(?:\\([^()\\\\\\[\\]*]*\\))?)*";
+  const MODELED_SELECTOR = new RegExp(`^${SIMPLE_COMPOUND}(?:\\s*[> ]\\s*${SIMPLE_COMPOUND})*$`);
+  const unmodeledBackgroundSelectors = (ruleList: Rule[]): string[] =>
+    [
+      ...new Set(
+        ruleList
+          .filter((r) => /(?<![\w-])background(?:-color)?:/i.test(r.body))
+          .map((r) => r.selector)
+          .filter((s) => !MODELED_SELECTOR.test(s)),
       ),
     ].sort();
 
@@ -415,6 +452,61 @@ describe("computed contrast + ratified palette (DESIGN.md reconciliation)", () =
     expect(() => groundHexIn(rules(".s { background: var(--win-bg); }"), ".s")).toThrow(
       /translucent ground/,
     );
+  });
+
+  it("terminal fail-closed: !important, shorthand+longhand mixing and [class~=] aliases are loud", () => {
+    // 1. `!important` beats the LATER normal declaration — last-wins would bless the
+    //    loser (Codex's ordering mutation). The resolver refuses to play.
+    expect(() =>
+      winningBackground(
+        rules(
+          ".p { background: var(--raised) !important; } .p { background: var(--amber-surface); }",
+        ),
+        ".p",
+      ),
+    ).toThrow(/!important/);
+    // 2. Gradient shorthand + background-color longhand in ONE rule: the gradient
+    //    layer keeps painting over the longhand colour, so no single declaration IS
+    //    the ground (Codex's mixing mutation resolved silently to the longhand).
+    expect(() =>
+      winningBackground(
+        rules(".p { background: linear-gradient(#fff, #000); background-color: var(--raised); }"),
+        ".p",
+      ),
+    ).toThrow(/shorthand/);
+    // …and a lone gradient (any non-var(--token) value) dies on the whitelist.
+    expect(() =>
+      groundHexIn(rules(".s { background: linear-gradient(#fff, #000); }"), ".s"),
+    ).toThrow(/unresolvable/);
+    // 3. `[class~="ci-signal-panel"]` styles the panel without spelling
+    //    `.ci-signal-panel`, so the mention-scan cannot see it — the fail-closed
+    //    syntax sweep flags the alias (and `*`, and any escaped form) instead.
+    expect(
+      unmodeledBackgroundSelectors(
+        rules('[class~="ci-signal-panel"] { background: var(--amber-surface); }'),
+      ),
+    ).toEqual(['[class~="ci-signal-panel"]']);
+    expect(unmodeledBackgroundSelectors(rules("* { background: var(--raised); }"))).toEqual(["*"]);
+    // Control: the grammar accepts today's real syntax shapes.
+    expect(
+      unmodeledBackgroundSelectors(
+        rules(
+          '.a[data-x="1"]:hover:not(:disabled)::before .b > button { background: var(--raised); }',
+        ),
+      ),
+    ).toEqual([]);
+  });
+
+  it("no unmodeled selector syntax in background rules (fail-closed sweep over both sheets)", () => {
+    // Control: the sweep is not vacuous — it is looking at the real background rules.
+    const bgRules = allRules.filter((r) => /(?<![\w-])background(?:-color)?:/i.test(r.body));
+    expect(bgRules.length).toBeGreaterThan(100);
+    // Any selector form the mention-scan cannot canonicalize fails here with the
+    // fix spelled out: extend the guard or simplify the CSS.
+    expect(
+      unmodeledBackgroundSelectors(allRules),
+      "unmodeled selector syntax in background rule — extend the guard or simplify the CSS",
+    ).toEqual([]);
   });
 
   it("no unclassified sibling grounds: every background rule touching a mapped container's class is accounted for", () => {
